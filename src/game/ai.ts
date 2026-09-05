@@ -44,7 +44,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       b.target = 0;
       b.mode = "advance";
     }
-    b.aimError = s.rng.range(-0.2, 0.2) * (b.preference === "rusher" ? 1.3 : 1);
+    b.aimError = s.rng.range(-0.21, 0.21) * (b.preference === "rusher" ? 1.3 : 1);
     const useful = s.pickups.filter(
       (q) =>
         q.available &&

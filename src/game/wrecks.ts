@@ -107,7 +107,7 @@ export function breakTank(s: Simulation, tank: Tank) {
       RAPIER.ColliderDesc.cuboid(
         size[0] * scale,
         size[1] * scale,
-        size[2] * scale,
+        size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
         .setCollisionGroups(GROUP.fragment)
         .setMass(part === "hull" ? 1.2 : 0.5)

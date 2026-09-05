@@ -149,6 +149,7 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
     scout = kind === "scout";
   const width = heavy ? 2.14 : scout ? 1.8 : 2.02;
   root.add(hull);
+  if (heavy) hull.scale.z = 1.18;
   // Broad shoulder plates and a pronounced sloping nose, as in the reference silhouettes.
   put(hull, armor(width, 0.32, 2.75, shade, 0.94), 0, 0.22, 0);
   put(hull, armor(width, 0.56, 2.8, color, 0.77), 0, 0.51, 0);

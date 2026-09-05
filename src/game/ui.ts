@@ -70,7 +70,7 @@ export class UI {
     else if (phase === "results")
       this.overlay.innerHTML = `<section class="menu compact"><div class="eyebrow">ROUND COMPLETE / PINE VILLAGE</div><h2>${this.s.match.winner === this.s.humanTeam ? "NICE MESS." : "NEXT ONE’S YOURS."}</h2><div class="result-score"><span>${this.s.match.scores[0]}</span> : <span>${this.s.match.scores[1]}</span></div><p>${TEAM_NAMES[this.s.match.winner ?? 0]} wins${this.s.match.overtime ? " in overtime" : ""}.<br>You scored ${this.s.human.kills} eliminations · ${this.s.human.deaths} wrecks<br>${this.s.destroyed} pieces of cover demolished.</p><button id="restart" class="primary">ANOTHER ROUND ↗</button></section>`;
     else if (!this.s.human.alive)
-      this.overlay.innerHTML = `<section class="menu respawn"><div class="eyebrow">THAT’LL BUFF OUT</div><h2>Respond in <span id="respawn-count">3</span></h2><p>Choose your next ride while the crew finds a safe spawn.</p>${this.chooseCards()}</section>`;
+      this.overlay.innerHTML = `<section class="menu respawn"><div class="eyebrow">THAT’LL BUFF OUT</div><h2>Respawn in <span id="respawn-count">3</span></h2><p>Choose your next ride while the crew finds a safe spawn.</p>${this.chooseCards()}</section>`;
     this.bindCards();
 
     this.overlay
