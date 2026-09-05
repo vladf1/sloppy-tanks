@@ -1,0 +1,28 @@
+{
+  "name": "sloppy-tanks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && node scripts/copy-artifacts.mjs",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "validate": "node --import tsx scripts/validate.ts"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "0.20.0",
+    "howler": "2.2.4",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@tweakpane/core": "2.0.5",
+    "@types/howler": "2.2.13",
+    "@types/node": "26.4.1",
+    "@types/three": "0.185.4",
+    "playwright": "1.63.0",
+    "tsx": "4.23.13",
+    "tweakpane": "4.0.5",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  }
+}

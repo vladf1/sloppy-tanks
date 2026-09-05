@@ -1,0 +1,1941 @@
+{
+  "method": "Real Playwright keyboard and mouse input; read-only game-state navigation assistance, no direct damage or teleportation",
+  "results": [
+    {
+      "kind": "scout",
+      "wallSeconds": 153.963,
+      "aimAndFireCommands": 120,
+      "observedWeaponPickups": 3,
+      "mineClicks": 11,
+      "match": {
+        "phase": "results",
+        "time": 150.09999999995574,
+        "scores": [
+          50,
+          48
+        ],
+        "overtime": false,
+        "winner": 0,
+        "round": 3
+      },
+      "human": {
+        "kills": 5,
+        "deaths": 8,
+        "kind": "scout"
+      },
+      "snapshot": {
+        "seed": 252768,
+        "elapsed": 149.90000000001143,
+        "match": {
+          "phase": "results",
+          "time": 150.09999999995574,
+          "scores": [
+            50,
+            48
+          ],
+          "overtime": false,
+          "winner": 0,
+          "round": 3
+        },
+        "tanks": [
+          {
+            "id": 68,
+            "team": 0,
+            "kind": "scout",
+            "alive": false,
+            "hp": 0,
+            "x": 18.8857479095459,
+            "z": -8.088850975036621,
+            "aim": 0.624492946521128,
+            "kills": 5,
+            "deaths": 8,
+            "mode": "advance"
+          },
+          {
+            "id": 69,
+            "team": 1,
+            "kind": "scout",
+            "alive": true,
+            "hp": 80,
+            "x": -2.03503680229187,
+            "z": 23.24995231628418,
+            "aim": 10.99569115182878,
+            "kills": 3,
+            "deaths": 10,
+            "mode": "advance"
+          },
+          {
+            "id": 70,
+            "team": 0,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 60,
+            "x": -0.49177324771881104,
+            "z": -22.67887306213379,
+            "aim": -5.896651436382703,
+            "kills": 10,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 71,
+            "team": 1,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": -4.080478191375732,
+            "z": 12.750020027160645,
+            "aim": -14.13732390269774,
+            "kills": 11,
+            "deaths": 9,
+            "mode": "retreat"
+          },
+          {
+            "id": 72,
+            "team": 0,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 33,
+            "x": -2.8273844718933105,
+            "z": -17.318588256835938,
+            "aim": 0.40208177151141833,
+            "kills": 8,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 73,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 69,
+            "x": 2.719440221786499,
+            "z": -2.3708677291870117,
+            "aim": -15.271267682013773,
+            "kills": 11,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 74,
+            "team": 0,
+            "kind": "scout",
+            "alive": true,
+            "hp": 64,
+            "x": 16.705989837646484,
+            "z": -17.242290496826172,
+            "aim": -19.442142178591293,
+            "kills": 6,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 75,
+            "team": 1,
+            "kind": "scout",
+            "alive": false,
+            "hp": 0,
+            "x": 15.887266159057617,
+            "z": -3.2225735187530518,
+            "aim": 2.636169067183451,
+            "kills": 7,
+            "deaths": 6,
+            "mode": "fight"
+          },
+          {
+            "id": 76,
+            "team": 0,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 100,
+            "x": -29.4168643951416,
+            "z": -25.3460693359375,
+            "aim": 12.819761101096963,
+            "kills": 7,
+            "deaths": 10,
+            "mode": "retreat"
+          },
+          {
+            "id": 77,
+            "team": 1,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 100,
+            "x": 2.863543748855591,
+            "z": 12.749835014343262,
+            "aim": 4.712553327079248,
+            "kills": 7,
+            "deaths": 8,
+            "mode": "advance"
+          },
+          {
+            "id": 78,
+            "team": 0,
+            "kind": "heavy",
+            "alive": false,
+            "hp": 0,
+            "x": 4.329379081726074,
+            "z": -3.7325634956359863,
+            "aim": 12.095131937909233,
+            "kills": 14,
+            "deaths": 7,
+            "mode": "retreat"
+          },
+          {
+            "id": 79,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 86,
+            "x": 0.6582202911376953,
+            "z": 4.670425891876221,
+            "aim": -21.633962680389114,
+            "kills": 9,
+            "deaths": 9,
+            "mode": "fight"
+          }
+        ],
+        "counts": {
+          "bodies": 79,
+          "colliders": 79,
+          "shots": 14,
+          "mines": 3,
+          "fragments": 44,
+          "covers": 26
+        },
+        "destroyed": 30,
+        "navVersion": 33,
+        "botReroutes": 1200,
+        "botBreachShots": 32
+      },
+      "events": [
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 79  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 75  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SHIELD"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 69  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SPREAD SHOT"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 77  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "REPAIR"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "pickup",
+          "label": "BREACHER"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 75  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "pickup",
+          "label": "SPEED BOOST"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 73  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "RAPID FIRE"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 71  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "RAPID FIRE"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 77  ▸  YOU"
+        }
+      ]
+    },
+    {
+      "kind": "balanced",
+      "wallSeconds": 149.403,
+      "aimAndFireCommands": 119,
+      "observedWeaponPickups": 3,
+      "mineClicks": 13,
+      "match": {
+        "phase": "results",
+        "time": 150.66666666662286,
+        "scores": [
+          50,
+          47
+        ],
+        "overtime": false,
+        "winner": 0,
+        "round": 5
+      },
+      "human": {
+        "kills": 6,
+        "deaths": 6,
+        "kind": "balanced"
+      },
+      "snapshot": {
+        "seed": 252768,
+        "elapsed": 149.3333333333443,
+        "match": {
+          "phase": "results",
+          "time": 150.66666666662286,
+          "scores": [
+            50,
+            47
+          ],
+          "overtime": false,
+          "winner": 0,
+          "round": 5
+        },
+        "tanks": [
+          {
+            "id": 68,
+            "team": 0,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": 20.55788803100586,
+            "z": -16.64862823486328,
+            "aim": -0.16013295304646905,
+            "kills": 6,
+            "deaths": 6,
+            "mode": "advance"
+          },
+          {
+            "id": 69,
+            "team": 1,
+            "kind": "scout",
+            "alive": true,
+            "hp": 80,
+            "x": -14.170612335205078,
+            "z": 23.291519165039062,
+            "aim": 16.86835219384612,
+            "kills": 5,
+            "deaths": 8,
+            "mode": "pickup"
+          },
+          {
+            "id": 70,
+            "team": 0,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 16,
+            "x": -10.764535903930664,
+            "z": -4.0355544090271,
+            "aim": 7.317420033145977,
+            "kills": 14,
+            "deaths": 8,
+            "mode": "retreat"
+          },
+          {
+            "id": 71,
+            "team": 1,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 100,
+            "x": 29.303842544555664,
+            "z": 27.842378616333008,
+            "aim": -14.817420379077772,
+            "kills": 8,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 72,
+            "team": 0,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 140,
+            "x": -8.074252128601074,
+            "z": -23.248056411743164,
+            "aim": 1.5703259815501207,
+            "kills": 9,
+            "deaths": 8,
+            "mode": "advance"
+          },
+          {
+            "id": 73,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 59,
+            "x": 29.504192352294922,
+            "z": 12.586796760559082,
+            "aim": -2.7492655130647488,
+            "kills": 8,
+            "deaths": 9,
+            "mode": "fight"
+          },
+          {
+            "id": 74,
+            "team": 0,
+            "kind": "scout",
+            "alive": true,
+            "hp": 8,
+            "x": -3.8258187770843506,
+            "z": -21.749967575073242,
+            "aim": -20.39025317728477,
+            "kills": 5,
+            "deaths": 5,
+            "mode": "retreat"
+          },
+          {
+            "id": 75,
+            "team": 1,
+            "kind": "scout",
+            "alive": true,
+            "hp": 80,
+            "x": -5.3193559646606445,
+            "z": 23.24078369140625,
+            "aim": -2.6791909084965173,
+            "kills": 5,
+            "deaths": 7,
+            "mode": "fight"
+          },
+          {
+            "id": 76,
+            "team": 0,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": -2.7345216274261475,
+            "z": -17.354732513427734,
+            "aim": -6.16718695990443,
+            "kills": 9,
+            "deaths": 10,
+            "mode": "retreat"
+          },
+          {
+            "id": 77,
+            "team": 1,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": 7.810832977294922,
+            "z": 5.248611927032471,
+            "aim": -1.9501725410674797,
+            "kills": 13,
+            "deaths": 9,
+            "mode": "retreat"
+          },
+          {
+            "id": 78,
+            "team": 0,
+            "kind": "heavy",
+            "alive": false,
+            "hp": 0,
+            "x": 27.30010986328125,
+            "z": 2.235132932662964,
+            "aim": 4.951634524363618,
+            "kills": 7,
+            "deaths": 10,
+            "mode": "retreat"
+          },
+          {
+            "id": 79,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 6,
+            "x": -7.872872829437256,
+            "z": 23.25054931640625,
+            "aim": -2.9118506761594793,
+            "kills": 8,
+            "deaths": 9,
+            "mode": "retreat"
+          }
+        ],
+        "counts": {
+          "bodies": 78,
+          "colliders": 78,
+          "shots": 13,
+          "mines": 0,
+          "fragments": 43,
+          "covers": 26
+        },
+        "destroyed": 30,
+        "navVersion": 33,
+        "botReroutes": 1240,
+        "botBreachShots": 33
+      },
+      "events": [
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "BREACHER"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SHIELD"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 69  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "pickup",
+          "label": "RAPID FIRE"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 71  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SPEED BOOST"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 79  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 79  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SPEED BOOST"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 73  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "BREACHER"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 77  ▸  YOU"
+        }
+      ]
+    },
+    {
+      "kind": "heavy",
+      "wallSeconds": 147.814,
+      "aimAndFireCommands": 119,
+      "observedWeaponPickups": 0,
+      "mineClicks": 11,
+      "match": {
+        "phase": "results",
+        "time": 151.9499999999572,
+        "scores": [
+          47,
+          50
+        ],
+        "overtime": false,
+        "winner": 1,
+        "round": 7
+      },
+      "human": {
+        "kills": 2,
+        "deaths": 5,
+        "kind": "heavy"
+      },
+      "snapshot": {
+        "seed": 252768,
+        "elapsed": 148.05000000000996,
+        "match": {
+          "phase": "results",
+          "time": 151.9499999999572,
+          "scores": [
+            47,
+            50
+          ],
+          "overtime": false,
+          "winner": 1,
+          "round": 7
+        },
+        "tanks": [
+          {
+            "id": 68,
+            "team": 0,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 20,
+            "x": 18.267440795898438,
+            "z": -20.929052352905273,
+            "aim": -0.8610896837106098,
+            "kills": 2,
+            "deaths": 5,
+            "mode": "advance"
+          },
+          {
+            "id": 69,
+            "team": 1,
+            "kind": "scout",
+            "alive": true,
+            "hp": 9.774156612700828,
+            "x": -11.844532012939453,
+            "z": 12.589146614074707,
+            "aim": 11.417008289779115,
+            "kills": 6,
+            "deaths": 6,
+            "mode": "retreat"
+          },
+          {
+            "id": 70,
+            "team": 0,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": -20.885366439819336,
+            "z": -21.663827896118164,
+            "aim": -6.318049986318752,
+            "kills": 10,
+            "deaths": 10,
+            "mode": "retreat"
+          },
+          {
+            "id": 71,
+            "team": 1,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 2.75,
+            "x": -14.135117530822754,
+            "z": 5.108315944671631,
+            "aim": -0.6742611113258945,
+            "kills": 10,
+            "deaths": 7,
+            "mode": "retreat"
+          },
+          {
+            "id": 72,
+            "team": 0,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 11.200000000000006,
+            "x": -21.95506477355957,
+            "z": 17.94826889038086,
+            "aim": -9.602053155799936,
+            "kills": 9,
+            "deaths": 7,
+            "mode": "retreat"
+          },
+          {
+            "id": 73,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 140,
+            "x": 2.4903225898742676,
+            "z": 1.943934440612793,
+            "aim": -3.839063079998921,
+            "kills": 14,
+            "deaths": 7,
+            "mode": "fight"
+          },
+          {
+            "id": 74,
+            "team": 0,
+            "kind": "scout",
+            "alive": true,
+            "hp": 80,
+            "x": 16.05603790283203,
+            "z": -15.311844825744629,
+            "aim": -0.9458683907043687,
+            "kills": 7,
+            "deaths": 11,
+            "mode": "fight"
+          },
+          {
+            "id": 75,
+            "team": 1,
+            "kind": "scout",
+            "alive": false,
+            "hp": 0,
+            "x": -11.90485668182373,
+            "z": -0.5630781650543213,
+            "aim": -9.254314986937816,
+            "kills": 6,
+            "deaths": 8,
+            "mode": "fight"
+          },
+          {
+            "id": 76,
+            "team": 0,
+            "kind": "balanced",
+            "alive": false,
+            "hp": 0,
+            "x": -8.710724830627441,
+            "z": -13.203441619873047,
+            "aim": 6.3316934727834635,
+            "kills": 9,
+            "deaths": 11,
+            "mode": "retreat"
+          },
+          {
+            "id": 77,
+            "team": 1,
+            "kind": "balanced",
+            "alive": true,
+            "hp": 100,
+            "x": 4.264580249786377,
+            "z": 12.751203536987305,
+            "aim": -1.572776059323776,
+            "kills": 7,
+            "deaths": 11,
+            "mode": "advance"
+          },
+          {
+            "id": 78,
+            "team": 0,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 140,
+            "x": -13.69795036315918,
+            "z": -23.3554744720459,
+            "aim": 6.65411932474536,
+            "kills": 10,
+            "deaths": 7,
+            "mode": "pickup"
+          },
+          {
+            "id": 79,
+            "team": 1,
+            "kind": "heavy",
+            "alive": true,
+            "hp": 118,
+            "x": -2.964834451675415,
+            "z": -2.4162254333496094,
+            "aim": -3.469603047208894,
+            "kills": 7,
+            "deaths": 8,
+            "mode": "fight"
+          }
+        ],
+        "counts": {
+          "bodies": 63,
+          "colliders": 63,
+          "shots": 12,
+          "mines": 2,
+          "fragments": 27,
+          "covers": 26
+        },
+        "destroyed": 30,
+        "navVersion": 33,
+        "botReroutes": 1238,
+        "botBreachShots": 31
+      },
+      "events": [
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 77  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 73  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "pickup",
+          "label": "SPEED BOOST"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 71  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 73  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "death",
+          "label": "BOT 73  ▸  YOU"
+        },
+        {
+          "type": "respawn"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "hurt"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        },
+        {
+          "type": "shot"
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

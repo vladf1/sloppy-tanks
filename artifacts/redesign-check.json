@@ -1,0 +1,117 @@
+{
+  "date": "2026-09-05T15:35:45.129Z",
+  "before": {
+    "x": -53.0124397277832,
+    "y": 0.5999659299850464,
+    "z": -46
+  },
+  "driven": {
+    "pos": {
+      "x": -53.0124397277832,
+      "y": 0.5999614000320435,
+      "z": -56.628543853759766
+    },
+    "shots": 18
+  },
+  "scene": {
+    "shells": 5,
+    "cores": 5,
+    "marker": true,
+    "parts": [
+      {
+        "shape": "armor",
+        "count": 1
+      },
+      {
+        "shape": "wheel",
+        "count": 1
+      },
+      {
+        "shape": "track",
+        "count": 4
+      },
+      {
+        "shape": "shard",
+        "count": 1
+      }
+    ],
+    "geometry": 585,
+    "shotColors": [
+      {
+        "team": 0,
+        "color": 36095
+      },
+      {
+        "team": 1,
+        "color": 16724030
+      },
+      {
+        "team": 0,
+        "color": 36095
+      },
+      {
+        "team": 1,
+        "color": 16724030
+      },
+      {
+        "team": 0,
+        "color": 36095
+      }
+    ]
+  },
+  "centering": [
+    {
+      "x": 0,
+      "z": 0,
+      "screenX": 0,
+      "screenY": 5.463731610704504e-16
+    },
+    {
+      "x": -57,
+      "z": -57,
+      "screenX": 3.83419762154702e-16,
+      "screenY": 0
+    },
+    {
+      "x": 57,
+      "z": -57,
+      "screenX": -3.83419762154702e-16,
+      "screenY": 0
+    },
+    {
+      "x": -57,
+      "z": 57,
+      "screenX": 3.834197621547019e-16,
+      "screenY": 6.13471619447523e-16
+    },
+    {
+      "x": 57,
+      "z": 57,
+      "screenX": -3.834197621547019e-16,
+      "screenY": 6.13471619447523e-16
+    }
+  ],
+  "resets": [
+    {
+      "bodies": 73,
+      "geometries": 571
+    },
+    {
+      "bodies": 73,
+      "geometries": 571
+    },
+    {
+      "bodies": 73,
+      "geometries": 571
+    },
+    {
+      "bodies": 73,
+      "geometries": 571
+    },
+    {
+      "bodies": 73,
+      "geometries": 571
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,548 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700;800&display=swap");
+:root {
+  font-family: Barlow, Arial, sans-serif;
+  color: #f5faff;
+  background: #55bde9;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+}
+button,
+input,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+canvas#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  outline: none;
+  cursor: crosshair;
+}
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+#hud button {
+  pointer-events: auto;
+}
+.brand {
+  position: absolute;
+  top: 28px;
+  left: 32px;
+  font:
+    900 30px/0.83 "Barlow Condensed",
+    Impact,
+    sans-serif;
+  letter-spacing: -0.6px;
+  text-shadow: 0 2px 10px #27433555;
+  transform: rotate(-3deg);
+}
+.brand span {
+  display: block;
+  font-size: 44px;
+}
+.brand small {
+  display: block;
+  font:
+    600 8px/2.7 Barlow,
+    sans-serif;
+  letter-spacing: 2px;
+}
+.scoreboard {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  filter: drop-shadow(0 6px 10px #28372d30);
+}
+.team {
+  width: 100px;
+  padding: 9px 18px;
+  text-align: center;
+  background: #152c49ed;
+}
+.team small {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+.team b {
+  display: block;
+  font:
+    800 42px/0.95 "Barlow Condensed",
+    Impact,
+    sans-serif;
+}
+.mint {
+  border-bottom: 4px solid #008cff;
+  color: #64c6ff;
+  border-radius: 8px 0 0 8px;
+}
+.coral {
+  border-bottom: 4px solid #ff303e;
+  color: #ff8190;
+  border-radius: 0 8px 8px 0;
+}
+.clock {
+  background: #f2f9ff;
+  color: #163656;
+  text-align: center;
+  min-width: 104px;
+  padding: 9px 12px;
+}
+.clock b {
+  display: block;
+  font:
+    800 32px/1.1 "Barlow Condensed",
+    Impact,
+    sans-serif;
+}
+.clock small {
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  font-weight: 800;
+}
+.quiet {
+  position: absolute;
+  right: 28px;
+  top: 29px;
+  border: 1px solid #f0e9ce66;
+  border-radius: 6px;
+  background: #16314d99;
+  color: #eee6cc;
+  padding: 12px 15px;
+  letter-spacing: 2px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.bottom {
+  position: absolute;
+  left: 30px;
+  right: 30px;
+  bottom: 25px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.status,
+.weapon {
+  padding: 15px 20px;
+  background: #122b47e8;
+  border: 1px solid #eef4d12a;
+  border-radius: 8px;
+  box-shadow: 0 5px 20px #1b33232b;
+}
+.status {
+  width: 210px;
+}
+.status small,
+.weapon small {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  font-weight: 700;
+}
+.status div {
+  display: flex;
+  align-items: baseline;
+  position: relative;
+  padding-bottom: 8px;
+}
+.status b {
+  font:
+    800 36px "Barlow Condensed",
+    Impact;
+}
+.status span {
+  font-size: 10px;
+  margin-left: 8px;
+  opacity: 0.7;
+}
+.status i {
+  position: absolute;
+  height: 3px;
+  bottom: 0;
+  left: 0;
+  background: #41baff;
+  transition: width 0.15s;
+}
+.status em {
+  display: block;
+  font-size: 9px;
+  font-style: normal;
+  margin-top: 5px;
+  color: #88e5ff;
+  min-height: 10px;
+}
+.weapon {
+  min-width: 220px;
+}
+.weapon div {
+  letter-spacing: 8px;
+  font-size: 24px;
+  color: #f4d181;
+  margin-top: 3px;
+}
+.weapon span {
+  font-size: 10px;
+  letter-spacing: 1px;
+  opacity: 0.65;
+}
+.keyhint {
+  margin-left: auto;
+  text-align: right;
+  font-size: 11px;
+  line-height: 2.1;
+  font-weight: 800;
+  text-shadow: 0 1px 6px #233729;
+}
+.keyhint span {
+  font-size: 9px;
+  opacity: 0.8;
+  letter-spacing: 1px;
+}
+#feed {
+  position: absolute;
+  right: 30px;
+  top: 90px;
+  font-size: 10px;
+  text-align: right;
+  letter-spacing: 1px;
+}
+#feed div {
+  padding: 8px 12px;
+  background: #163a59b8;
+  margin-top: 5px;
+  border-radius: 3px;
+}
+#toast {
+  position: absolute;
+  top: 24%;
+  left: 50%;
+  transform: translate(-50%, -10px);
+  opacity: 0;
+  background: #ffe572;
+  color: #153954;
+  font-weight: 800;
+  padding: 12px 24px;
+  letter-spacing: 2px;
+  border-radius: 3px;
+  transition: 0.15s;
+}
+#toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(90deg, #12375880, #12375815);
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+.menu {
+  background: #142e4df2;
+  border: 1px solid #f2eac42c;
+  border-radius: 14px;
+  box-shadow: 0 30px 100px #19382e44;
+  padding: 32px 38px;
+  max-width: 960px;
+  width: 100%;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: #a6dfff;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+h1 {
+  font:
+    900 clamp(40px, 5vw, 72px)/0.91 "Barlow Condensed",
+    Impact,
+    sans-serif;
+  letter-spacing: -1px;
+  margin: 0;
+}
+h1 span {
+  color: #ffcf38;
+}
+h2 {
+  font:
+    800 46px/0.98 "Barlow Condensed",
+    Impact,
+    sans-serif;
+  margin: 12px 0 20px;
+}
+.intro {
+  font-size: 14px;
+  color: #c4dfef;
+  margin: 15px 0 25px;
+}
+.vehicles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.vehicle {
+  text-align: left;
+  position: relative;
+  padding: 18px 18px 13px;
+  background: #21486c;
+  color: #f0f8ff;
+  border: 1px solid #71826977;
+  border-radius: 7px;
+  transition: 0.15s;
+}
+.vehicle:hover {
+  background: #2b6189;
+  transform: translateY(-2px);
+}
+.vehicle.selected {
+  border: 2px solid #ffcf38;
+  padding: 17px 17px 12px;
+  background: #28618a;
+}
+.vehicle strong {
+  display: block;
+  font:
+    800 27px "Barlow Condensed",
+    Impact;
+}
+.vehicle small {
+  font-size: 10px;
+  color: #c0dbee;
+}
+.number {
+  position: absolute;
+  right: 15px;
+  top: 15px;
+  font-size: 11px;
+  opacity: 0.5;
+}
+.vehicle p {
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 8px 0 15px;
+  color: #d4e7f5;
+  min-height: 34px;
+}
+.spec {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #b7c39738;
+  padding-top: 10px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+.mini-tank {
+  height: 66px;
+  position: relative;
+  margin: 12px 0;
+  transform: rotate(-12deg);
+}
+.mini-tank i {
+  position: absolute;
+  left: calc(50% - 29px);
+  top: 9px;
+  width: 58px;
+  height: 48px;
+  background: #008cff;
+  border: 4px solid #49baff;
+  border-radius: 8px;
+  box-shadow:
+    -9px 0 #112338,
+    9px 0 #112338;
+}
+.mini-tank b {
+  position: absolute;
+  left: calc(50% - 19px);
+  top: 17px;
+  width: 38px;
+  height: 30px;
+  border-radius: 8px;
+  background: #259fff;
+  box-shadow: 0 3px #0061b5;
+}
+.mini-tank em {
+  position: absolute;
+  left: calc(50% - 5px);
+  top: -4px;
+  width: 10px;
+  height: 32px;
+  border-radius: 3px;
+  background: #b8e8ff;
+  border: 2px solid #193b60;
+}
+.mini-tank.scout {
+  transform: rotate(-12deg) scale(0.85);
+}
+.mini-tank.heavy {
+  transform: rotate(-12deg) scale(1.1);
+}
+.menu-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 25px;
+  gap: 20px;
+}
+.menu-foot b {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.menu-foot small {
+  display: block;
+  font-size: 9px;
+  color: #c0dbee;
+  margin-top: 7px;
+  letter-spacing: 1px;
+}
+.primary {
+  border: none;
+  border-radius: 5px;
+  background: #ffcf38;
+  color: #162d46;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 1px;
+  padding: 17px 25px;
+  box-shadow: 0 4px #bc9e60;
+  transition: background 0.1s;
+}
+.primary:hover {
+  background: #ffe2a0;
+}
+.primary span {
+  margin-left: 30px;
+  font-size: 21px;
+}
+.menu-help {
+  text-align: center;
+  font-size: 10px;
+  color: #c0dbee;
+  margin-top: 24px;
+}
+.compact {
+  max-width: 520px;
+  text-align: center;
+  padding: 38px;
+}
+.compact p {
+  color: #c4cbb2;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.compact button {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+}
+.compact label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  font-size: 13px;
+}
+.compact input {
+  accent-color: #ffcf38;
+  width: 55%;
+}
+.secondary {
+  color: #d8ddc1;
+  background: none;
+  border: 1px solid #80967a;
+  border-radius: 5px;
+  padding: 12px;
+}
+.compact a {
+  color: #a9c5a9;
+  font-size: 11px;
+  display: block;
+  margin-top: 25px;
+}
+.result-score {
+  font:
+    800 80px "Barlow Condensed",
+    Impact;
+  color: #ffcf38;
+}
+.respawn {
+  max-width: 780px;
+}
+.respawn h2 {
+  margin-bottom: 8px;
+}
+.respawn p {
+  font-size: 13px;
+  color: #c4dfef;
+}
+@media (max-width: 800px) {
+  .menu {
+    padding: 22px;
+  }
+  .menu-help,
+  .keyhint {
+    display: none;
+  }
+  .vehicle {
+    padding: 12px;
+  }
+  .vehicle.selected {
+    padding: 11px;
+  }
+  .vehicle p {
+    font-size: 10px;
+  }
+  .menu-foot {
+    margin-top: 16px;
+  }
+  .mini-tank {
+    height: 45px;
+    transform: rotate(-12deg) scale(0.7);
+  }
+  .brand {
+    left: 18px;
+    top: 20px;
+  }
+  .bottom {
+    left: 15px;
+    bottom: 15px;
+  }
+  .scoreboard {
+    top: 15px;
+  }
+  h1 {
+    font-size: 44px;
+  }
+  .intro {
+    margin: 12px 0;
+  }
+  .menu-foot small {
+    font-size: 8px;
+  }
+  .primary {
+    padding: 14px;
+  }
+  .quiet span {
+    display: none;
+  }
+}

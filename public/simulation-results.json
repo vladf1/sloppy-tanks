@@ -1,0 +1,148 @@
+{
+  "type": "accelerated simulation, no rendering",
+  "wallSeconds": 24.803002166,
+  "rounds": [
+    {
+      "seed": 79,
+      "humanIdle": true,
+      "seconds": 136.33333333333334,
+      "scores": [
+        39,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1188,
+      "breachShots": 26,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 158,
+      "humanIdle": true,
+      "seconds": 140.43333333333334,
+      "scores": [
+        50,
+        45
+      ],
+      "winner": 0,
+      "destroyed": 30,
+      "reroutes": 1232,
+      "breachShots": 28,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 237,
+      "humanIdle": true,
+      "seconds": 156.43333333333334,
+      "scores": [
+        48,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1328,
+      "breachShots": 31,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 316,
+      "humanIdle": false,
+      "seconds": 146.36666666666667,
+      "scores": [
+        45,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1354,
+      "breachShots": 37,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 395,
+      "humanIdle": false,
+      "seconds": 162.9,
+      "scores": [
+        50,
+        47
+      ],
+      "winner": 0,
+      "destroyed": 30,
+      "reroutes": 1527,
+      "breachShots": 33,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 474,
+      "humanIdle": false,
+      "seconds": 142.06666666666666,
+      "scores": [
+        50,
+        47
+      ],
+      "winner": 0,
+      "destroyed": 30,
+      "reroutes": 1352,
+      "breachShots": 34,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 553,
+      "humanIdle": false,
+      "seconds": 142.08333333333334,
+      "scores": [
+        50,
+        48
+      ],
+      "winner": 0,
+      "destroyed": 30,
+      "reroutes": 1330,
+      "breachShots": 31,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 632,
+      "humanIdle": false,
+      "seconds": 135.5,
+      "scores": [
+        42,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1265,
+      "breachShots": 37,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 711,
+      "humanIdle": false,
+      "seconds": 142.28333333333333,
+      "scores": [
+        41,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1342,
+      "breachShots": 29,
+      "towersRemaining": 0
+    },
+    {
+      "seed": 790,
+      "humanIdle": false,
+      "seconds": 150.05,
+      "scores": [
+        48,
+        50
+      ],
+      "winner": 1,
+      "destroyed": 30,
+      "reroutes": 1362,
+      "breachShots": 31,
+      "towersRemaining": 0
+    }
+  ],
+  "maxBodies": 203,
+  "maxFragments": 150
+}

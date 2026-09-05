@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" href="/favicon.svg" />
+    <title>Sloppy Tanks · Performance notebook</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #e8e5d3;
+        color: #293e34;
+        font:
+          15px/1.6 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1150px;
+        margin: 50px auto;
+        padding: 0 30px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: center;
+        border-bottom: 1px solid #bac0a9;
+        padding-bottom: 25px;
+      }
+      h1 {
+        font-size: 36px;
+        line-height: 1.1;
+        letter-spacing: -1px;
+        margin: 7px 0;
+      }
+      h2 {
+        font-size: 19px;
+        margin: 28px 0 12px;
+      }
+      small,
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        font-weight: 700;
+        color: #6b795f;
+      }
+      a {
+        color: inherit;
+      }
+      header a {
+        background: #2c493c;
+        color: #eee9cb;
+        padding: 12px 20px;
+        border-radius: 5px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+      .card {
+        padding: 20px;
+        background: #f6f2e2;
+        border: 1px solid #ccd0ba;
+        border-radius: 8px;
+      }
+      .card b {
+        display: block;
+        font-size: 31px;
+        letter-spacing: -1px;
+      }
+      .card span {
+        font-size: 11px;
+        color: #788269;
+      }
+      .good {
+        color: #39785a;
+      }
+      .warn {
+        color: #a56a33;
+      }
+      .note {
+        padding: 16px 20px;
+        background: #d8dec8;
+        border-left: 3px solid #8fa87e;
+        border-radius: 3px;
+      }
+      .muted {
+        color: #737f69;
+        font-size: 12px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+        background: #f1eedf;
+      }
+      th,
+      td {
+        text-align: left;
+        border-bottom: 1px solid #d2d6c1;
+        padding: 10px 14px;
+      }
+      th {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: #7c856f;
+      }
+      details {
+        margin: 25px 0;
+      }
+      pre {
+        max-height: 360px;
+        overflow: auto;
+        background: #253e33;
+        color: #dee5c8;
+        padding: 20px;
+        border-radius: 8px;
+        font-size: 11px;
+      }
+      .bar {
+        height: 7px;
+        display: inline-block;
+        background: #729c76;
+        border-radius: 2px;
+        min-width: 2px;
+        max-width: 250px;
+      }
+      footer {
+        margin: 40px 0;
+        color: #77816a;
+        font-size: 12px;
+      }
+      @media (max-width: 800px) {
+        .cards {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        main {
+          padding: 0 20px;
+          margin-top: 25px;
+        }
+        header {
+          display: block;
+        }
+        header a {
+          display: inline-block;
+          margin-top: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">SLOPPY TANKS / ENGINEERING NOTEBOOK</div>
+          <h1>Small tanks. Real numbers.</h1>
+          <div id="hardware" class="muted">Loading measurements…</div>
+        </div>
+        <a href="/">BACK TO THE YARD ↗</a>
+      </header>
+      <p class="note">
+        <b>Previous build measurements.</b> The timing and longevity results
+        below predate the larger arena and visual redesign. They have not been
+        rerun for this version.
+      </p>
+      <div id="results"></div>
+      <section>
+        <h2>What these numbers mean</h2>
+        <p>
+          Chrome renders at <b>2560 × 1440 physical pixels</b>, with one
+          shadow-casting sun, a 60 Hz physics step and 12 live tank slots. The
+          first five seconds of each timing sample are excluded. Frame time
+          includes browser scheduling; simulation and render CPU submission
+          times are measured separately.
+        </p>
+        <p class="muted">
+          Normal target: sustained 60 FPS, p95 ≤ 20 ms, p99 ≤ 33 ms. Stress
+          repeatedly injects 24 tanks, 200 projectiles, 150 physical fragments
+          and drum chains; these are diagnostic loads. Live counts decrease as
+          projectiles collide and fragments expire. Longevity uses real elapsed
+          time and automatic completed-match restarts. Garbage collection is
+          requested for comparable retained-memory snapshots.
+        </p>
+      </section>
+      <section id="sim"></section>
+      <details>
+        <summary>Raw measurements and reproducibility data</summary>
+        <pre id="raw"></pre>
+      </details>
+      <footer>
+        Vite 8.2.2 · TypeScript 7.0.2 · Three.js 0.185.1 · Rapier 0.20.0 · No UI
+        framework<br />This view refreshes its saved results every 15 seconds.
+        Timing runs are controlled by scripts/benchmark.mjs.
+      </footer>
+    </main>
+    <script type="module">
+      const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : "—");
+      const card = (name, value, unit, good = true) =>
+        `<div class="card"><small>${name}</small><b class="${good ? "good" : "warn"}">${value}</b><span>${unit}</span></div>`;
+      async function load() {
+        const r = await fetch(
+          "/artifacts/benchmark-results.json?" + Date.now(),
+        ).then((r) => r.json());
+        document.querySelector("#hardware").textContent =
+          (r.hardware ?? "") + (r.chrome ? " · Chrome " + r.chrome : "");
+        let html = "";
+        if (r.status) html += `<p class="note">${r.status}</p>`;
+        if (r.validationSummary?.frameTimeTargetMet === false)
+          html +=
+            '<p class="note"><b>Frame-time target remains unmet.</b> Average FPS exceeds 60, but p95/p99 are above the requested limits. Earlier measurements are retained below.</p>';
+        for (const [key, title] of [
+          ["normal", "Normal match · 12 tanks"],
+          ["stress", "Stress · 24 tanks / repeated bursts"],
+          ["longevity", "20-minute bot session"],
+        ]) {
+          const a = r[key];
+          if (!a) continue;
+          html += `<h2>${title}</h2><div class="cards">${card("FRAME RATE", fmt(a.fps), "frames / second", a.fps >= 59)}${card("P95 FRAME", fmt(a.frameP95), "milliseconds", a.frameP95 <= 20)}${card("P99 FRAME", fmt(a.frameP99), "milliseconds", a.frameP99 <= 33)}${card("SIMULATION", fmt(a.simulationMean), "ms / rendered frame")}</div><p class="muted">${a.samples} samples · ${fmt(a.seconds)} seconds · ${a.drawCalls} average draw calls · ${a.triangles.toLocaleString()} triangles · ${a.maxBodies} peak bodies · ${a.maxProjectiles} peak projectiles · ${a.maxFragments} peak fragments · Render submission ${fmt(a.renderMean)} ms</p>`;
+        }
+        if (r.previousTimingSamples)
+          html += `<h2>Before debris instancing · same-seed comparison</h2><p class="muted">${r.previousTimingSamples.conditions}</p><table><tr><th>SCENARIO</th><th>FPS</th><th>P95</th><th>P99</th><th>DRAW CALLS</th></tr>${[
+            "normal",
+            "stress",
+          ]
+            .map((k) => {
+              const a = r.previousTimingSamples[k];
+              return `<tr><td>${k}</td><td>${fmt(a.fps)}</td><td>${fmt(a.frameP95)} ms</td><td>${fmt(a.frameP99)} ms</td><td>${a.drawCalls}</td></tr>`;
+            })
+            .join("")}</table>`;
+        if (r.validationSummary)
+          html += `<p class="note">${r.validationSummary.unitTests} tests passed · ${r.validationSummary.realInputRounds} complete real-input rounds · ${fmt(r.validationSummary.soakActiveSeconds)} active soak seconds.<br><span class="muted">${r.validationSummary.note}</span></p>`;
+        if (r.resets?.length)
+          html += `<h2>Ten rendered round resets</h2><table><tr><th>RESET</th><th>BODIES</th><th>GEOMETRIES</th><th>TEXTURES</th><th>LISTENERS</th><th>RETAINED HEAP</th></tr>${r.resets.map((x, i) => `<tr><td>${i + 1}</td><td>${x.bodies}</td><td>${x.geometry}</td><td>${x.textures}</td><td>${x.dom.jsEventListeners}</td><td>${fmt(x.heap / 1048576)} MB</td></tr>`).join("")}</table>`;
+        if (r.checkpoints?.length)
+          html += `<h2>Longevity checkpoints</h2><table><tr><th>ELAPSED</th><th>ROUNDS</th><th>BODIES / FRAGMENTS</th><th>PARTICLES</th><th>HEAP</th><th>RETAINED HEAP TREND</th></tr>${r.checkpoints.map((x) => `<tr><td>${Math.round(x.wallSeconds / 60)} min</td><td>${x.round}</td><td>${x.bodies} / ${x.fragments}</td><td>${x.particles}</td><td>${fmt(x.heap / 1048576)} MB</td><td><i class="bar" style="width:${(x.heap / 1048576) * 2}px"></i></td></tr>`).join("")}</table>`;
+        if (r.errors?.length)
+          html += `<p class="note">Runtime errors: ${r.errors.join("; ")}</p>`;
+        else if (r.normal)
+          html +=
+            '<p class="note">No JavaScript runtime errors recorded in this run.</p>';
+        document.querySelector("#results").innerHTML = html;
+        document.querySelector("#raw").textContent = JSON.stringify(r, null, 2);
+        try {
+          const s = await fetch("/artifacts/simulation-results.json").then(
+            (r) => r.json(),
+          );
+          document.querySelector("#sim").innerHTML =
+            `<h2>Seeded simulation matches</h2><p class="muted">Accelerated simulation, no rendering. ${s.rounds.length} complete rounds in ${fmt(s.wallSeconds)} wall seconds. The first three leave the human idle.</p><table><tr><th>SEED</th><th>HUMAN</th><th>ROUND TIME</th><th>MINT / CORAL</th><th>DESTROYED</th><th>TOWERS LEFT</th></tr>${s.rounds.map((x) => `<tr><td>${x.seed}</td><td>${x.humanIdle ? "Idle" : "Bot command"}</td><td>${fmt(x.seconds)} s</td><td>${x.scores.join(" / ")}</td><td>${x.destroyed}</td><td>${x.towersRemaining}</td></tr>`).join("")}</table>`;
+        } catch {}
+      }
+      load();
+      setInterval(load, 15000);
+    </script>
+  </body>
+</html>
