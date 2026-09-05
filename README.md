@@ -91,3 +91,10 @@ Latest tuning: the camera tracks the player's interpolated position at screen ce
 The latest reference pass replaces the service yard with a 120 × 120 village: 14 pitched-roof cabins, 12 collidable pines, breakable wooden garden fences, two watchtowers, dirt lanes, textured grass and team spawn flags. Twelve cabins remain as permanent cover so the village retains its routes throughout a round; the two central cabins, trees, fences and towers can be demolished. The outside tree line is scenery beyond the arena boundary.
 
 Tank silhouettes now follow the supplied examples: tall cast or angular turrets, thick gray guns, broad dark tracks and prominent gray armor panels. Every projectile uses its owner's blue/red team color with a white core. The outlined aiming reticle stays visible over terrain and cover. All shell speeds are 20% lower (standard 19.2, rapid 21.6, spread 17.6, rocket 13.6, ricochet 22.4 units/second); lifetime increases to 3.5 seconds to preserve travel range. Shell size, player-centered camera and reduced bot accuracy/cadence are retained.
+
+
+## Movement, breakup and quick selection
+
+Clicking a vehicle card starts immediately. The selector displays whole-number road speeds: Skipper 35 km/h, Bruiser 28 km/h, Big Rig 23 km/h. These are canonical tuning values converted to metres/second internally, approximately 20% faster than the preceding build.
+
+Destroyed tanks separate into actual hull and turret models. In 40% of breakups the barrel detaches too; otherwise it stays on the spinning turret. Planned landing separation is roughly 14–28 world metres, constrained by arena and visible-view margins. Occasional high launches rise 11–15 metres above their starting height. Physical collisions can shorten or redirect a throw. Parts land before the normal three-second respawn, then clear shortly afterwards, within the shared 80-piece cap. The compact respawn strip leaves the effect visible. Pieces remain cosmetic and cannot damage or obstruct living tanks.

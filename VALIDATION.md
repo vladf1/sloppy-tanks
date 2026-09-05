@@ -1,5 +1,9 @@
 # Validation record
 
+## Latest movement and breakup checks
+
+27 tests cover both breakup variants across 12 seeds, wide hull/turret separation, high arcs, landing, cleanup, scoring, respawn and the shared debris cap. `scripts/wreck-check.mjs` verifies one-click selection for all three classes, whole-number km/h labels, real rendered airborne assemblies, on-screen landings and expiry. `artifacts/wreck-check.json` stores the observations and browser errors; screenshots are `artifacts/wreck-flight.png` and `artifacts/wreck-landed.png`. The browser landing scenario clears cover to measure the trajectories; ordinary cover collisions can alter them. Previous full-match and timing records below predate this update.
+
 ## Pine Village and reference tank pass
 
 Current checks: 27 tests, production build, and Chrome input/render verification. The browser checks verify all three tank silhouettes, exact blue/red projectile instance colors, the outlined reticle, screen centering at all four corners and five stable resets (73 bodies and 571 geometries each). Village cover tests exercise destruction and navigation updates, and all spawn slots reach midfield and both outer flanks. Screenshots are `artifacts/pine-village.png`, `artifacts/redesign-models.png` and `artifacts/redesign-aim.png`. The latest ten-match smoke test is recorded in `artifacts/simulation-results.json`; all older prose measurements below are historical. This pass does not rerun the long render benchmark.

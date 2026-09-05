@@ -3,6 +3,8 @@ export const STEP = 1 / 60,
   ARENA = 60,
   ROUND_TIME = 300,
   SCORE_LIMIT = 50;
+// Vehicle tuning uses familiar km/h; simulation distances use world metres.
+const roadSpeed = (speedKmh: number) => ({ speedKmh, speed: speedKmh / 3.6 });
 export const VEHICLES: Record<
   VehicleKind,
   {
@@ -10,6 +12,7 @@ export const VEHICLES: Record<
     tag: string;
     health: number;
     speed: number;
+    speedKmh: number;
     mass: number;
     scale: number;
     description: string;
@@ -19,7 +22,7 @@ export const VEHICLES: Record<
     name: "SKIPPER",
     tag: "Light scout",
     health: 80,
-    speed: 8,
+    ...roadSpeed(35),
     mass: 1,
     scale: 0.82,
     description: "Find the gap. Beat the turret. Never sit still.",
@@ -28,7 +31,7 @@ export const VEHICLES: Record<
     name: "BRUISER",
     tag: "Balanced tank",
     health: 100,
-    speed: 6.5,
+    ...roadSpeed(28),
     mass: 1.45,
     scale: 1,
     description: "A little speed, a little steel. A whole lot of trouble.",
@@ -37,7 +40,7 @@ export const VEHICLES: Record<
     name: "BIG RIG",
     tag: "Heavy tank",
     health: 140,
-    speed: 5.3,
+    ...roadSpeed(23),
     mass: 2.5,
     scale: 1.15,
     description: "Hold your ground. Punch through the mess.",

@@ -113,6 +113,7 @@ export interface Pickup extends Vec2 {
   available: boolean;
   cooldown: number;
 }
+export type WreckPart = "hull" | "turret" | "turret-barrel" | "barrel";
 export interface Fragment {
   id: number;
   body: RAPIER.RigidBody;
@@ -121,6 +122,8 @@ export interface Fragment {
   color: number;
   shape?: "armor" | "wheel" | "track" | "shard";
   wreck?: VehicleKind;
+  part?: WreckPart;
+  cleanup?: "shrink" | "fade";
   team?: Team;
 }
 export type SimEvent = {

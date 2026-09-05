@@ -1,17 +1,17 @@
 {
-  "date": "2026-09-05T15:35:45.129Z",
+  "date": "2026-09-05T22:05:51.481Z",
   "before": {
-    "x": -53.0124397277832,
-    "y": 0.5999659299850464,
-    "z": -46
+    "x": 53.03728103637695,
+    "y": 0.5999642610549927,
+    "z": 46
   },
   "driven": {
     "pos": {
-      "x": -53.0124397277832,
+      "x": 53.03728103637695,
       "y": 0.5999614000320435,
-      "z": -56.628543853759766
+      "z": 33.51637649536133
     },
-    "shots": 18
+    "shots": 16
   },
   "scene": {
     "shells": 5,
@@ -35,7 +35,7 @@
         "count": 1
       }
     ],
-    "geometry": 585,
+    "geometry": 575,
     "shotColors": [
       {
         "team": 0,
@@ -94,23 +94,23 @@
   "resets": [
     {
       "bodies": 73,
-      "geometries": 571
+      "geometries": 576
     },
     {
       "bodies": 73,
-      "geometries": 571
+      "geometries": 576
     },
     {
       "bodies": 73,
-      "geometries": 571
+      "geometries": 576
     },
     {
       "bodies": 73,
-      "geometries": 571
+      "geometries": 576
     },
     {
       "bodies": 73,
-      "geometries": 571
+      "geometries": 576
     }
   ],
   "errors": []

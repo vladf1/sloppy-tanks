@@ -52,6 +52,7 @@ export class Simulation {
   humanTeam: Team;
   humanKind: VehicleKind = "balanced";
   maxFragments = 80;
+  wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
   destroyed = 0;
   shotsFired = 0;
   botBreachShots = 0;
@@ -77,6 +78,7 @@ export class Simulation {
     this.fragments = [];
     this.events = [];
     this.elapsed = 0;
+    this.wreckView = undefined;
     this.destroyed = 0;
     this.shotsFired = 0;
     this.botBreachShots = 0;
@@ -370,6 +372,12 @@ export class Simulation {
       (c) => this.covers.some((o) => o.alive && o.collider.handle === c.handle),
     );
   }
+  reserveFragments(count: number) {
+    while (this.fragments.length + count > this.maxFragments) {
+      const old = this.fragments.shift()!;
+      this.world.removeRigidBody(old.body);
+    }
+  }
   fragment(
     x: number,
     z: number,
@@ -378,10 +386,7 @@ export class Simulation {
     shape: NonNullable<Fragment["shape"]> = "shard",
   ) {
     size = Math.round(size * 5) / 5;
-    while (this.fragments.length >= this.maxFragments) {
-      const old = this.fragments.shift()!;
-      this.world.removeRigidBody(old.body);
-    }
+    this.reserveFragments(1);
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(x, this.rng.range(1, 3), z)

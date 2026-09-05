@@ -22,8 +22,8 @@ try {
     window.sloppy.sim.world.bodies.len(),
   );
   await page.screenshot({ path: "artifacts/redesign-menu.png" });
-  assert.match(await page.locator("#deploy").innerText(), /LET’S GO/);
-  await page.locator("#deploy").click();
+  assert.equal(await page.locator("#deploy").count(), 0);
+  await page.locator('[data-kind="balanced"]').click();
   await page.waitForTimeout(200);
   await page.screenshot({ path: "artifacts/redesign-spawn.png" });
   const before = await page.evaluate(() => ({

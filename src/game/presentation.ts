@@ -6,6 +6,7 @@ import {
   cylinder,
   material,
   tankModel,
+  wreckModel,
   coverModel,
   labelTexture,
 } from "./models";
@@ -336,11 +337,65 @@ export class Presentation {
         0.05,
         z,
       );
+    const spawnRimGeometry = new THREE.RingGeometry(
+      2.05,
+      2.3,
+      12,
+      1,
+      0.06,
+      Math.PI / 4 - 0.12,
+    ).rotateX(-Math.PI / 2);
+    const arrowShape = new THREE.Shape();
+    arrowShape.moveTo(-0.28, -0.55);
+    arrowShape.lineTo(0.28, 0);
+    arrowShape.lineTo(-0.28, 0.55);
+    arrowShape.lineTo(-0.48, 0.37);
+    arrowShape.lineTo(-0.1, 0);
+    arrowShape.lineTo(-0.48, -0.37);
+    arrowShape.closePath();
+    const spawnArrowGeometry = new THREE.ShapeGeometry(arrowShape).rotateX(
+      -Math.PI / 2,
+    );
     for (const team of [0, 1] as const) {
       const side = team === 0 ? -1 : 1,
         color = TEAM_COLORS[team];
       for (const p of spawnPositions(team)) {
-        put(details, box(3.8, 0.035, 3.4, color, 0.02), p.x, 0.065, p.z);
+        // Low octagonal deployment plinth with a recessed deck and segmented team lights.
+        put(details, cylinder(2.75, 0.1, 0x283c4e, 8), p.x, 0.08, p.z);
+        put(details, cylinder(2.52, 0.045, 0x718898, 8), p.x, 0.135, p.z);
+        put(details, cylinder(2.37, 0.035, 0x223d51, 32), p.x, 0.17, p.z);
+        put(details, cylinder(1.98, 0.025, 0x455e70, 8), p.x, 0.193, p.z);
+        for (let i = 0; i < 8; i++) {
+          const angle = (i * Math.PI) / 4;
+          const segment = new THREE.Mesh(spawnRimGeometry, material(color));
+          segment.rotation.y = angle;
+          put(details, segment, p.x, 0.198, p.z);
+          put(
+            details,
+            cylinder(0.075, 0.025, 0xc9d6dd, 8),
+            p.x + Math.cos(angle) * 2.58,
+            0.175,
+            p.z + Math.sin(angle) * 2.58,
+          );
+        }
+        for (const z of [-1.25, 1.25])
+          for (let i = 0; i < 5; i++)
+            put(
+              details,
+              box(0.18, 0.02, 0.4, 0x1a2b3c, 0.005),
+              p.x - 0.52 + i * 0.26,
+              0.218,
+              p.z + z,
+            );
+        // Concentric paint and inward chevrons make the pad legible when unoccupied.
+        const badge = box(0.7, 0.025, 0.7, color, 0.035);
+        badge.rotation.y = Math.PI / 4;
+        put(details, badge, p.x, 0.22, p.z);
+        for (const offset of [3.1, 3.8]) {
+          const arrow = new THREE.Mesh(spawnArrowGeometry, material(color));
+          arrow.rotation.y = team === 0 ? 0 : Math.PI;
+          put(details, arrow, p.x - side * offset, 0.09, p.z);
+        }
         // Team pennants sit behind the spawn line, outside the playable boundary.
         put(details, cylinder(0.055, 4.8, 0x68523b, 8), side * 62, 2.4, p.z);
         put(
@@ -563,6 +618,25 @@ export class Presentation {
       this.follow.z + zoom * 0.72,
     );
     this.camera.lookAt(this.follow);
+    this.camera.updateMatrixWorld();
+    const corners = [
+      [-0.8, -0.7],
+      [0.8, -0.7],
+      [-0.8, 0.65],
+      [0.8, 0.65],
+    ].map(([x, y]) => {
+      this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
+      return this.raycaster.ray.intersectPlane(
+        new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+        new THREE.Vector3(),
+      )!;
+    });
+    s.wreckView = {
+      minX: Math.max(corners[0].x, corners[2].x),
+      maxX: Math.min(corners[1].x, corners[3].x),
+      minZ: corners[2].z,
+      maxZ: corners[0].z,
+    };
     this.flash.intensity *= Math.exp(-dt * 12);
     if (s.human.alive && !this.playerWasAlive) this.spawnCue = 2.5;
     this.playerWasAlive = s.human.alive;
@@ -662,14 +736,49 @@ export class Presentation {
       }
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
-        g = tankModel(f.wreck, f.team ?? 0, true);
-        batchTank(g as THREE.Group);
+        g = wreckModel(f.wreck, f.team ?? 0, f.part ?? "hull");
+        // Flatten the selected assembly before batching its material groups.
+        g.updateMatrixWorld(true);
+        const meshes: THREE.Mesh[] = [];
+        g.traverse((o) => {
+          if (o instanceof THREE.Mesh) meshes.push(o);
+        });
+        const flat = new THREE.Group();
+        for (const mesh of meshes) {
+          mesh.applyMatrix4(mesh.parent!.matrixWorld);
+          flat.add(mesh);
+        }
+        batch(flat);
+        if (f.cleanup === "fade") {
+          flat.traverse((o) => {
+            if (!(o instanceof THREE.Mesh)) return;
+            const clone = (material: THREE.Material) => {
+              const copy = material.clone();
+              copy.transparent = true;
+              copy.userData.owned = true;
+              return copy;
+            };
+            o.material = Array.isArray(o.material)
+              ? o.material.map(clone)
+              : clone(o.material);
+          });
+        }
+        g = flat;
         this.fragmentMeshes.set(f.id, g);
         this.worldGroup.add(g);
       }
       g.position.set(pos.x, pos.y, pos.z);
       g.quaternion.set(q.x, q.y, q.z, q.w);
-      g.scale.setScalar(VEHICLES[f.wreck].scale * Math.min(1, f.life * 2));
+      const remaining = Math.min(1, f.life * 2);
+      g.scale.setScalar(VEHICLES[f.wreck].scale * (f.cleanup === "fade" ? 1 : remaining));
+      if (f.cleanup === "fade") {
+        g.traverse((o) => {
+          if (!(o instanceof THREE.Mesh)) return;
+          const materials = Array.isArray(o.material) ? o.material : [o.material];
+          for (const material of materials) material.opacity = remaining;
+          o.castShadow = remaining === 1;
+        });
+      }
     }
     for (const mesh of this.debrisMeshes.values()) {
       mesh.instanceMatrix.needsUpdate = true;

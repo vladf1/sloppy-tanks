@@ -1,4 +1,5 @@
-import { GROUP, VEHICLES, TEAM_COLORS, distance } from "./data";
+import { distance } from "./data";
+import { breakTank } from "./wrecks";
 import { awardKill } from "./match";
 import type { Simulation } from "./simulation";
 import type { Tank, Cover, Team, Vec2 } from "./types";
@@ -30,26 +31,7 @@ export function damageTank(
   const killer = s.tanks.find((a) => a.id === owner);
   if (killer && killer !== t && killer.team !== t.team) killer.kills++;
   awardKill(s.match, t.team, team, owner === t.id);
-  t.body.setEnabledRotations(true, true, true, true);
-  t.collider.setCollisionGroups(GROUP.fragment);
-  t.body.applyImpulse(
-    {
-      x: s.rng.range(-7, 7),
-      y: 12 * VEHICLES[t.kind].mass,
-      z: s.rng.range(-7, 7),
-    },
-    true,
-  );
-  t.body.applyTorqueImpulse({ x: 5, y: 3, z: 4 }, true);
-  s.fragments.push({
-    id: s.nextId++,
-    body: t.body,
-    life: 2.4,
-    size: 1,
-    color: 0x46534c,
-    wreck: t.kind,
-    team: t.team,
-  });
+  breakTank(s, t);
   s.events.push({
     type: "death",
     x: p.x,
@@ -59,9 +41,6 @@ export function damageTank(
     size: 3,
     label: `${killer?.human ? "YOU" : killer ? `BOT ${killer.id}` : "YARD"}  ▸  ${t.human ? "YOU" : `BOT ${t.id}`}`,
   });
-  s.fragment(p.x, p.z, TEAM_COLORS[t.team], 0.65, "armor");
-  s.fragment(p.x, p.z, 0x263447, 0.5, "wheel");
-  s.fragment(p.x, p.z, 0x43566a, 0.55, "track");
 }
 export function damageCover(
   s: Simulation,

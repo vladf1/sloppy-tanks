@@ -37,7 +37,7 @@ export class UI {
     return `<div class="vehicles">${(Object.keys(VEHICLES) as VehicleKind[])
       .map((kind, i) => {
         const v = VEHICLES[kind];
-        return `<button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}"><span class="number">0${i + 1}</span><strong>${v.name}</strong><small>${v.tag}</small><div class="mini-tank ${kind}"><i></i><b></b><em></em></div><p>${v.description}</p><div class="spec"><span>${v.health} HP</span><span>${v.speed} SPEED</span></div></button>`;
+        return `<button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}"><span class="number">0${i + 1}</span><strong>${v.name}</strong><small>${v.tag}</small><div class="mini-tank ${kind}"><i></i><b></b><em></em></div><p>${v.description}</p><div class="spec"><span>${v.health} HP</span><span>${v.speedKmh} KM/H</span></div></button>`;
       })
       .join("")}</div>`;
   }
@@ -47,6 +47,10 @@ export class UI {
       .forEach((b) =>
         b.addEventListener("click", () => {
           this.s.humanKind = b.dataset.kind as VehicleKind;
+          if (this.s.match.phase === "ready") {
+            this.start();
+            return;
+          }
           this.overlay
             .querySelectorAll(".vehicle")
             .forEach((n) => n.classList.remove("selected"));
@@ -60,17 +64,15 @@ export class UI {
       phase === "playing" && this.s.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     if (phase === "ready")
-      this.overlay.innerHTML = `<section class="menu start"><div class="eyebrow">PINE VILLAGE / 6 V 6 / TOY DEMOLITION</div><h1>LITTLE TANKS.<br><span>BIG MESS.</span></h1><p class="intro">Pick your tank. Find your route. Take the village.</p>${this.chooseCards()}<div class="menu-foot"><div><b>YOUR CREW: ${this.s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[this.s.humanTeam]}</b><small>5 MINUTES · FIRST TO 50 · FRIENDLY FIRE OFF</small></div><button id="deploy" class="primary">LET’S GO <span>↗</span></button></div><div class="menu-help">WASD drive · Mouse aim · Hold left click to fire · Right click mine · Scroll zoom · Esc pause</div></section>`;
+      this.overlay.innerHTML = `<section class="menu start"><div class="eyebrow">PINE VILLAGE / 6 V 6 / TOY DEMOLITION</div><h1>LITTLE TANKS.<br><span>BIG MESS.</span></h1><p class="intro">Click a tank to jump into the village.</p>${this.chooseCards()}<div class="menu-foot"><div><b>YOUR CREW: ${this.s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[this.s.humanTeam]}</b><small>5 MINUTES · FIRST TO 50 · FRIENDLY FIRE OFF</small></div></div><div class="menu-help">WASD drive · Mouse aim · Hold left click to fire · Right click mine · Scroll zoom · Esc pause</div></section>`;
     else if (phase === "paused")
       this.overlay.innerHTML = `<section class="menu compact"><div class="eyebrow">TAKE A BREATHER</div><h2>YARD ON HOLD.</h2><p>WASD drive · Mouse aim · Hold left click to fire<br>Right click mine · Scroll zoom · Escape pause</p><label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label><button id="resume" class="primary">BACK TO THE MESS ↗</button><button id="restart" class="secondary">New round / choose vehicle</button><a href="/benchmark.html" target="_blank">Open performance notebook ↗</a></section>`;
     else if (phase === "results")
       this.overlay.innerHTML = `<section class="menu compact"><div class="eyebrow">ROUND COMPLETE / PINE VILLAGE</div><h2>${this.s.match.winner === this.s.humanTeam ? "NICE MESS." : "NEXT ONE’S YOURS."}</h2><div class="result-score"><span>${this.s.match.scores[0]}</span> : <span>${this.s.match.scores[1]}</span></div><p>${TEAM_NAMES[this.s.match.winner ?? 0]} wins${this.s.match.overtime ? " in overtime" : ""}.<br>You scored ${this.s.human.kills} eliminations · ${this.s.human.deaths} wrecks<br>${this.s.destroyed} pieces of cover demolished.</p><button id="restart" class="primary">ANOTHER ROUND ↗</button></section>`;
     else if (!this.s.human.alive)
-      this.overlay.innerHTML = `<section class="menu respawn"><div class="eyebrow">THAT’LL BUFF OUT</div><h2>BACK IN <span id="respawn-count">3</span></h2><p>Choose your next ride while the crew finds a safe spawn.</p>${this.chooseCards()}</section>`;
+      this.overlay.innerHTML = `<section class="menu respawn"><div class="eyebrow">THAT’LL BUFF OUT</div><h2>Respond in <span id="respawn-count">3</span></h2><p>Choose your next ride while the crew finds a safe spawn.</p>${this.chooseCards()}</section>`;
     this.bindCards();
-    this.overlay
-      .querySelector("#deploy")
-      ?.addEventListener("click", this.start);
+
     this.overlay
       .querySelector("#resume")
       ?.addEventListener("click", this.resume);

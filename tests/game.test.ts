@@ -465,23 +465,46 @@ test("expanded flanks have navigable routes from both spawn lines", async () => 
       }
   s.dispose();
 });
-test("tank destruction leaves three distinct parts and clears within three seconds", () => {
-  const s = game(),
-    t = s.human;
-  s.damageTank(t, 1000, 999, (1 - t.team) as Team);
-  assert.deepEqual(
-    s.fragments
-      .filter((f) => !f.wreck)
-      .map((f) => f.shape)
-      .sort(),
-    ["armor", "track", "wheel"],
-  );
-  const bodies = s.fragments.map((f) => f.body.handle);
-  // Step only the physics and fragment cleanup; disable other actors' firing.
-  for (const tank of s.tanks) tank.cooldown = 10;
-  for (let i = 0; i < 180; i++) s.step();
-  assert.ok(s.fragments.every((f) => !bodies.includes(f.body.handle)));
-  s.dispose();
+test("tank breakup varies assemblies, travels widely, lands, and clears after flight", () => {
+  const variants = new Set<string>();
+  let highest = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const s = game();
+    clear(s);
+    const t = place(s, s.tanks.indexOf(s.human), 0, 0);
+    s.rng = new Random(seed);
+    s.damageTank(t, 1000, 999, (1 - t.team) as Team);
+    const pieces = [...s.fragments];
+    const names = pieces.map((f) => f.part).sort();
+    assert.ok(names.includes("hull"));
+    assert.ok(
+      names.includes("turret-barrel") ||
+        (names.includes("turret") && names.includes("barrel")),
+    );
+    variants.add(names.join("/"));
+    assert.ok(pieces.length <= 3);
+    for (let i = 0; i < 180; i++) {
+      s.world.step();
+      highest = Math.max(highest, ...pieces.map((f) => f.body.translation().y));
+    }
+    assert.ok(
+      pieces.every((f) => f.body.translation().y < 2),
+      "parts land before respawn camera moves",
+    );
+    const a = pieces[0].body.translation(),
+      b = pieces[1].body.translation();
+    assert.ok(
+      Math.hypot(a.x - b.x, a.z - b.z) > 12,
+      "hull and turret separate by several tank lengths",
+    );
+    for (const tank of s.tanks) tank.cooldown = 100;
+    const ids = new Set(pieces.map((f) => f.id));
+    for (let i = 0; i < 360; i++) s.step();
+    assert.ok(s.fragments.every((f) => !ids.has(f.id)));
+    s.dispose();
+  }
+  assert.equal(variants.size, 2);
+  assert.ok(highest > 10, "some turrets take high arcs");
 });
 
 test("bots pause between shots even when breaching; human weapon cadence is unchanged", async () => {

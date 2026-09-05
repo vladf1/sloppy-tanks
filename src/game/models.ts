@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { TEAM_COLORS, VEHICLES } from "./data";
-import type { VehicleKind, Team, Cover } from "./types";
+import type { VehicleKind, Team, Cover, WreckPart } from "./types";
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 export function material(color: number, metalness = 0.05, roughness = 0.65) {
   const key = `${color}/${metalness}/${roughness}`;
@@ -286,6 +286,23 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
       );
   root.userData = { hull, turret, barrel, tracks };
   return root;
+}
+/** Extract actual tank assemblies and center each on its own physics pivot. */
+export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
+  const source = tankModel(kind, team),
+    result = new THREE.Group();
+  const { hull, turret, barrel } = source.userData;
+  if (part === "hull") result.add(hull);
+  else if (part === "barrel") result.add(barrel);
+  else {
+    if (part === "turret") turret.remove(barrel);
+    result.add(turret);
+  }
+  const center = new THREE.Box3()
+    .setFromObject(result)
+    .getCenter(new THREE.Vector3());
+  for (const child of result.children) child.position.sub(center);
+  return result;
 }
 const roofProfile = new THREE.Shape();
 roofProfile.moveTo(-0.5, 0);

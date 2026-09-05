@@ -19,7 +19,7 @@ try {
   });
   await page.waitForFunction(() => !!window.sloppy);
   await page.screenshot({ path: "artifacts/start.png" });
-  await page.locator("#deploy").click();
+  await page.locator('[data-kind="balanced"]').click();
   const before = await page.evaluate(() => window.sloppy.sim.snapshot());
   await page.mouse.move(1100, 440);
   await page.keyboard.down("d");

@@ -546,3 +546,38 @@ h2 {
     display: none;
   }
 }
+
+/* Leave the airborne wreck visible while choosing the next spawn. */
+#overlay:has(.respawn) {
+  background: transparent;
+  backdrop-filter: none;
+  place-items: end center;
+  pointer-events: none;
+  padding-bottom: 22px;
+}
+.menu.respawn {
+  pointer-events: auto;
+  padding: 18px 24px;
+  max-width: 760px;
+}
+.respawn .eyebrow,
+.respawn .vehicle p,
+.respawn .spec,
+.respawn .vehicle small,
+.respawn .number,
+.respawn > p {
+  display: none;
+}
+.respawn h2 {
+  font-size: 23px;
+  margin: 0 0 10px;
+}
+.respawn .vehicle {
+  padding: 8px 12px;
+}
+.respawn .vehicle.selected {
+  padding: 7px 11px;
+}
+.respawn .vehicle strong {
+  font-size: 20px;
+}
