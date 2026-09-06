@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { batch, freezeStatic } from "../src/game/batching";
+import { arenaLayout } from "../src/game/arena";
 import { coverModel, tankModel } from "../src/game/models";
 
 test("batching preserves triangle positions and linear colors while combining compatible paints", () => {
@@ -70,4 +71,20 @@ test("batched tank assemblies still follow their moving parents and static cover
   cover.visible = true;
   const after = new THREE.Box3().setFromObject(cover);
   assert.ok(before.equals(after));
+});
+
+
+test("detailed arena houses stay within the scenery polygon budget", () => {
+  let triangles = 0;
+  for (const definition of arenaLayout().filter(c => c.kind === "house")) {
+    const house = coverModel(definition);
+    batch(house);
+    house.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      triangles += (object.geometry.index?.count ?? object.geometry.getAttribute("position").count) / 3;
+      if (object.geometry.userData.owned) object.geometry.dispose();
+    });
+  }
+  // Tiny bevels previously pushed these houses above 112k triangles.
+  assert.ok(triangles <= 20_000, `House geometry exceeded its budget: ${triangles}`);
 });

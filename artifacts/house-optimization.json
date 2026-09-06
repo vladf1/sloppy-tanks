@@ -1,0 +1,32 @@
+{
+  "resolution": [
+    1920,
+    1080
+  ],
+  "scenario": "Same static arena, 30 warmup and 240 measured frames per mode; no simulation stepping",
+  "houseGeometry": {
+    "beforeOriginalDetails": 67720,
+    "beforeOptimization": 112128,
+    "optimized": 17088,
+    "batchedMeshesBefore": 42,
+    "batchedMeshesAfter": 42
+  },
+  "samples": [
+    {
+      "mode": "before",
+      "fps": 122,
+      "frameMs": 8.19,
+      "renderCpuMs": 1.27,
+      "calls": 401,
+      "triangles": 487808
+    },
+    {
+      "mode": "optimized",
+      "fps": 122.2,
+      "frameMs": 8.19,
+      "renderCpuMs": 1.22,
+      "calls": 401,
+      "triangles": 351488
+    }
+  ]
+}

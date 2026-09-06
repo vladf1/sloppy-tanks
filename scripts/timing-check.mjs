@@ -129,7 +129,7 @@ try {
           damage: 40,
           bounces: 4,
           life: 4,
-          weapon: "ricochet",
+          weapon: "standard",
         });
       }
       for (const x of [-5, 0, 5]) {

@@ -85,7 +85,7 @@ try {
       t.protection = 0;
     });
     s.shots = [];
-    ["standard", "rapid", "spread", "rocket", "ricochet"].forEach((weapon, i) =>
+    ["standard", "spread", "rocket"].forEach((weapon, i) =>
       s.shots.push({
         id: s.nextId++,
         x: -6 + i * 3,

@@ -12,17 +12,25 @@ export function damageTank(
 ) {
   if (!t.alive || t.protection > 0 || (t.team === team && t.id !== owner))
     return;
-  t.hp -= amount * (t.shield > 0 ? 0.4 : 1);
+  if (t.shield > 0 && t.shieldPoints > 0) {
+    const absorbed = Math.min(amount, t.shieldPoints);
+    t.shieldPoints -= absorbed;
+    amount -= absorbed;
+    if (t.shieldPoints === 0) t.shield = 0;
+  }
+  t.hp -= amount;
   const p = t.body.translation();
-  s.events.push({
-    type: "hurt",
-    x: p.x,
-    z: p.z,
-    id: t.id,
-    team: t.team,
-    size: amount,
-  });
-  if (t.hp > 0) return;
+  if (t.hp > 0) {
+    if (amount > 0) s.events.push({
+      type: "hurt",
+      x: p.x,
+      z: p.z,
+      id: t.id,
+      team: t.team,
+      size: amount,
+    });
+    return;
+  }
   t.hp = 0;
   t.alive = false;
   t.deaths++;
@@ -39,7 +47,7 @@ export function damageTank(
     id: t.id,
     team: t.team,
     size: 3,
-    label: `${killer?.human ? "YOU" : killer ? `BOT ${killer.id}` : "YARD"}  ▸  ${t.human ? "YOU" : `BOT ${t.id}`}`,
+    label: `${killer?.human ? "YOU" : killer?.name ?? "YARD"}  ▸  ${t.human ? "YOU" : t.name}`,
   });
 }
 export function damageCover(
@@ -58,18 +66,19 @@ export function damageCover(
   s.nav.rebuild(s.covers, c);
   s.events.push({
     type: "destroy",
+    coverKind: c.kind,
+    height: c.h,
     x: c.x,
     z: c.z,
     id: c.id,
     size: c.kind === "tower" ? 7 : 2,
     color: c.color,
-    label: c.kind === "tower" ? "SHORTCUT OPEN" : "COVER BREACHED",
   });
-  for (let i = 0; i < (c.kind === "tower" ? 10 : 3); i++)
+  for (let i = 0; i < (c.kind === "tower" ? 10 : c.kind === "tree" ? 9 : 3); i++)
     s.fragment(
       c.x + s.rng.range(-c.w / 2, c.w / 2),
       c.z + s.rng.range(-c.d / 2, c.d / 2),
-      c.color,
+      c.kind === "tree" ? (i % 3 === 0 ? 0x825333 : c.color) : c.color,
       s.rng.range(0.3, 0.7),
       c.kind === "shed" ||
         c.kind === "fence" ||

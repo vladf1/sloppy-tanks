@@ -1,7 +1,10 @@
+import { botAssignment, shuffledBotNames, BOT_PROFILES } from "./bot-personalities";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { arenaLayout, pickupLayout, spawnPositions } from "./arena";
 import {
   Random,
+  MOVE_ACCELERATION,
+  HULL_TURN_SPEED,
   STEP,
   VEHICLES,
   GROUP,
@@ -10,6 +13,7 @@ import {
   angleDelta,
 } from "./data";
 import { Navigation } from "./navigation";
+import { tankContactCollider } from "./hitboxes";
 import { newMatch, tickMatch } from "./match";
 import { botCommand } from "./ai";
 import {
@@ -58,6 +62,7 @@ export class Simulation {
   botBreachShots = 0;
   botReroutes = 0;
   roundCount = 12;
+  private botNames: string[] = [];
   constructor(seed = 12345) {
     this.seed = seed;
     this.rng = new Random(seed);
@@ -85,6 +90,7 @@ export class Simulation {
     this.botReroutes = 0;
     this.roundCount = count;
     this.match = newMatch(this.match.round + 1);
+    this.botNames = shuffledBotNames((this.seed + this.match.round * 0x9e3779b9) >>> 0);
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
     );
@@ -152,6 +158,9 @@ export class Simulation {
   addTank(team: Team, human: boolean, kind: VehicleKind, slot = 0) {
     const p = spawnPositions(team)[slot % 5];
     const offset = slot >= 5 ? 2 : 0;
+    const ordinal = this.tanks.filter((t) => !t.human).length;
+    const assignment = botAssignment(slot, team, ordinal);
+    if (!human) kind = BOT_PROFILES[assignment.personality].chassis;
     const desc = VEHICLES[kind];
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -159,7 +168,8 @@ export class Simulation {
         .enabledRotations(false, true, false)
         .setLinearDamping(0.35)
         .setAngularDamping(8)
-        .setCcdEnabled(true),
+        .setCcdEnabled(true)
+        .setSoftCcdPrediction(desc.speed * 1.5 * STEP * 2),
     );
     const collider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(0.83 * desc.scale, 0.6, 1.03 * desc.scale)
@@ -169,8 +179,11 @@ export class Simulation {
         .setRestitution(0.1),
       body,
     );
+    this.world.createCollider(tankContactCollider(kind), body);
     const tank: Tank = {
       id: this.nextId++,
+      name: human ? "YOU" : this.botNames[ordinal % this.botNames.length] +
+        (ordinal >= this.botNames.length ? ` ${Math.floor(ordinal / this.botNames.length) + 1}` : ""),
       team,
       human,
       kind,
@@ -183,6 +196,9 @@ export class Simulation {
       weapon: "standard",
       weaponTime: 0,
       shield: 0,
+      shieldPoints: 0,
+      rapid: 0,
+      ricochet: 0,
       speed: 0,
       cooldown: 0,
       mineCooldown: 0,
@@ -194,7 +210,8 @@ export class Simulation {
       deaths: 0,
       command: idleCommand(),
       brain: {
-        preference: (["rusher", "cautious", "hunter"] as const)[slot % 3],
+        ...assignment,
+        lastSeen: { ...p },
         decision: slot * 0.05,
         target: 0,
         memory: 0,
@@ -235,6 +252,9 @@ export class Simulation {
       t.cooldown = Math.max(0, t.cooldown - STEP);
       t.mineCooldown = Math.max(0, t.mineCooldown - STEP);
       t.shield = Math.max(0, t.shield - STEP);
+      if (t.shield === 0) t.shieldPoints = 0;
+      t.rapid = Math.max(0, t.rapid - STEP);
+      t.ricochet = Math.max(0, t.ricochet - STEP);
       t.speed = Math.max(0, t.speed - STEP);
       t.recoil = Math.max(0, t.recoil - STEP * 6);
       t.weaponTime = Math.max(0, t.weaponTime - STEP);
@@ -243,13 +263,13 @@ export class Simulation {
       t.command = c;
       t.aim = c.aim;
       const mag = Math.hypot(c.moveX, c.moveZ);
-      const speed = VEHICLES[t.kind].speed * (t.speed > 0 ? 1.4 : 1);
+      const speed = VEHICLES[t.kind].speed * (t.speed > 0 ? 1.5 : 1);
       const dx = (c.moveX / Math.max(1, mag)) * speed,
         dz = (c.moveZ / Math.max(1, mag)) * speed;
       const v = t.body.linvel(),
         ax = dx - v.x,
         az = dz - v.z,
-        amount = Math.min(1, (27 * STEP) / (Math.hypot(ax, az) || 1));
+        amount = Math.min(1, (MOVE_ACCELERATION * STEP) / (Math.hypot(ax, az) || 1));
       // Bounded impulses preserve knockback; no per-frame velocity overwrite.
       t.body.applyImpulse(
         {
@@ -261,8 +281,8 @@ export class Simulation {
       );
       if (mag > 0.05)
         t.heading +=
-          angleDelta(t.heading, Math.atan2(c.moveX, c.moveZ)) *
-          Math.min(1, STEP * 9);
+          Math.max(-HULL_TURN_SPEED * STEP, Math.min(HULL_TURN_SPEED * STEP,
+            angleDelta(t.heading, Math.atan2(c.moveX, c.moveZ))));
       t.body.setRotation(
         { x: 0, y: Math.sin(t.heading / 2), z: 0, w: Math.cos(t.heading / 2) },
         true,
@@ -271,7 +291,7 @@ export class Simulation {
       if (c.mine) placeMine(this, t);
     }
     this.world.step();
-    stepProjectiles(this, STEP);
+    stepProjectiles(this, STEP, true);
     stepMines(this, STEP);
     for (const p of this.pickups) {
       if (!p.available) {
@@ -318,7 +338,8 @@ export class Simulation {
         .enabledRotations(false, true, false)
         .setLinearDamping(0.35)
         .setAngularDamping(8)
-        .setCcdEnabled(true),
+        .setCcdEnabled(true)
+        .setSoftCcdPrediction(stats.speed * 1.5 * STEP * 2),
     );
     const collider = this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(0.83 * stats.scale, 0.6, 1.03 * stats.scale)
@@ -327,6 +348,7 @@ export class Simulation {
         .setFriction(0.05),
       body,
     );
+    this.world.createCollider(tankContactCollider(kind), body);
     t.body = body;
     t.collider = collider;
     t.hp = stats.health;
@@ -335,6 +357,9 @@ export class Simulation {
     t.weapon = "standard";
     t.weaponTime = 0;
     t.shield = 0;
+    t.shieldPoints = 0;
+    t.rapid = 0;
+    t.ricochet = 0;
     t.speed = 0;
     t.cooldown = 0;
     t.mineCooldown = 0;
@@ -342,6 +367,10 @@ export class Simulation {
     t.brain.path = [];
     t.brain.decision = 0;
     t.brain.fireDelay = 0;
+    t.brain.target = 0;
+    t.brain.memory = 0;
+    t.brain.reaction = 0.3;
+    t.brain.lastSeen = { ...p };
     this.events.push({ type: "respawn", ...p, id: t.id });
   }
   spawnScore(p: Vec2, enemies: Tank[], friends: Tank[]) {
@@ -439,6 +468,7 @@ export class Simulation {
       match: { ...this.match, scores: [...this.match.scores] },
       tanks: this.tanks.map((t) => ({
         id: t.id,
+        name: t.name,
         team: t.team,
         kind: t.kind,
         alive: t.alive,
@@ -449,6 +479,8 @@ export class Simulation {
         kills: t.kills,
         deaths: t.deaths,
         mode: t.brain.mode,
+        personality: t.human ? "player" : t.brain.personality,
+        ultraAggressive: !t.human && t.brain.ultraAggressive,
       })),
       counts: {
         bodies: this.world.bodies.len(),

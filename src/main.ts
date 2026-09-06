@@ -6,11 +6,18 @@ import { Controls } from "./game/controls";
 import { AudioSystem } from "./game/audio";
 import { UI } from "./game/ui";
 import { STEP } from "./game/data";
+import { tuneSpeed } from "./game/speed-tuning";
 import { idleCommand } from "./game/types";
 await RAPIER.init();
 const root = document.querySelector<HTMLDivElement>("#app")!;
 root.innerHTML =
-  '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
+  '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas><div id="fps" aria-label="Frames per second">— FPS</div>';
+const fpsDisplay = root.querySelector<HTMLElement>("#fps")!;
+let fpsStart = 0, fpsFrames = 0;
+document.addEventListener("visibilitychange", () => {
+  fpsStart = 0;
+  fpsFrames = 0;
+});
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!,
   sim = new Simulation(Math.floor(Math.random() * 1000000)),
   view = new Presentation(canvas),
@@ -34,10 +41,13 @@ const controls = new Controls(
   (n) => (view.zoom = Math.max(23, Math.min(52, view.zoom + n))),
 );
 const settings = (key: string, value: number) => {
+  if (key === "tank-speed" || key === "bullet-speed") value = tuneSpeed(sim, key, value);
   localStorage.setItem("sloppy-" + key, String(value));
   if (key === "volume") audio.volume(value);
 };
 settings("volume", Number(localStorage.getItem("sloppy-volume") ?? ".6"));
+for (const key of ["tank-speed", "bullet-speed"] as const)
+  settings(key, Number(localStorage.getItem("sloppy-" + key) ?? "1"));
 function start() {
   controls.clear();
   sim.reset();
@@ -126,6 +136,15 @@ function loop(now: number) {
       overview,
     );
     const renderCost = performance.now() - renderStart;
+    if (fpsStart === 0) fpsStart = now;
+    else {
+      fpsFrames++;
+      if (now - fpsStart >= 500) {
+        fpsDisplay.textContent = `${Math.round(fpsFrames * 1000 / (now - fpsStart))} FPS`;
+        fpsStart = now;
+        fpsFrames = 0;
+      }
+    }
     if (frameIndex++ % 4 === 0) ui.update(dt * 4);
     if (recording) {
       samples.push({
@@ -239,7 +258,7 @@ if (import.meta.env.DEV) {
           damage: 40,
           bounces: 4,
           life: 4,
-          weapon: "ricochet",
+          weapon: "standard",
         });
       }
     },

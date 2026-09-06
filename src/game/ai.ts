@@ -1,9 +1,16 @@
+import { botProfile, botReload, combatMovement, equippedWeapon } from "./bot-personalities";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { distance, VEHICLES, WEAPONS, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
 import { idleCommand, type Tank, type Vec2 } from "./types";
 export function botCommand(s: Simulation, t: Tank, dt: number) {
   const role = Math.floor(s.tanks.indexOf(t) / 2);
+  const profile = botProfile(t);
+  const aggressive = t.brain.ultraAggressive;
+  const turnSpeed = aggressive ? Math.max(5.2, profile.turn * 1.4) : profile.turn;
+  const turn = (desired: number) => t.aim + Math.max(-turnSpeed * dt,
+    Math.min(turnSpeed * dt, angleDelta(t.aim, desired)));
+  const weapon = equippedWeapon(t);
   const b = t.brain,
     p = t.body.translation();
   b.decision -= dt;
@@ -17,12 +24,12 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     s.world.intersectionsWithShape(
       p,
       { x: 0, y: 0, z: 0, w: 1 },
-      new RAPIER.Ball(28),
+      new RAPIER.Ball(profile.sight),
       (c) => {
         const e = s.tanks.find(
           (a) => a.alive && a.team !== t.team && a.collider.handle === c.handle,
         );
-        if (e && s.visible(p, e.body.translation())) threats.push(e);
+        if (e && (aggressive || s.visible(p, e.body.translation()))) threats.push(e);
         return true;
       },
     );
@@ -32,23 +39,28 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     );
     const target = threats[0];
     if (target) {
-      if (target.id !== b.target) b.reaction = s.rng.range(0.4, 0.8);
+      if (target.id !== b.target) b.reaction = aggressive ? s.rng.range(0.3, 0.5) : s.rng.range(0.4, 0.8);
       b.target = target.id;
-      b.memory = 1.5;
+      b.memory = aggressive ? 3 : 1.5;
       b.goal = {
         x: target.body.translation().x,
         z: target.body.translation().z,
       };
+      b.lastSeen = { ...b.goal };
       b.mode = "fight";
     } else if (b.memory <= 0) {
       b.target = 0;
       b.mode = "advance";
     }
-    b.aimError = s.rng.range(-0.21, 0.21) * (b.preference === "rusher" ? 1.3 : 1);
+    b.aimError = s.rng.range(-profile.aimError, profile.aimError);
     const useful = s.pickups.filter(
       (q) =>
         q.available &&
-        (q.kind !== "repair" || t.hp < VEHICLES[t.kind].health * 0.8),
+        (q.kind !== "repair" || t.hp < VEHICLES[t.kind].health * 0.8) &&
+        (q.kind !== "rapid" || t.rapid < 2) &&
+        (q.kind !== "ricochet" || t.ricochet < 2) &&
+        (q.kind !== "speed" || t.speed < 2) &&
+        (q.kind !== "shield" || t.shield < 2 || t.shieldPoints < 40),
     );
     useful.sort((a, c) => distance(p, a) - distance(p, c));
     const hurt = t.hp < VEHICLES[t.kind].health * 0.4;
@@ -58,10 +70,10 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       b.mode = "retreat";
     } else if (
       useful[0] &&
-      distance(p, useful[0]) < (b.preference === "hunter" ? 24 : 10) &&
+      distance(p, useful[0]) < (profile.stationary && target ? 5 : aggressive ? 7 : 12) &&
       (!target || t.weapon === "standard")
     ) {
-      b.goal = { ...useful[0] };
+      b.goal = { x: useful[0].x, z: useful[0].z };
       b.mode = "pickup";
     } else if (!b.target && b.memory <= 0) {
       // Distributed flank waypoints are symmetric and independent of the human.
@@ -72,6 +84,16 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       if (distance(p, b.goal) < 4)
         b.goal = { x: t.team === 0 ? 46 : -46, z: s.rng.range(-44, 44) };
     }
+    if (!target && b.mode === "advance" && b.personality === "support") {
+      const allies = s.tanks.filter((a) => a.alive && a.team === t.team && a !== t
+        && a.brain.personality !== "support");
+      allies.sort((a, c) => distance(p, a.body.translation()) - distance(p, c.body.translation()));
+      if (allies[0]) {
+        const ally = allies[0].body.translation();
+        b.goal = { x: ally.x + (t.team === 0 ? -4 : 4), z: ally.z };
+        b.mode = "escort";
+      }
+    }
     if (
       b.navVersion !== s.nav.version ||
       !b.path.length ||
@@ -81,7 +103,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       b.navVersion = s.nav.version;
       s.botReroutes++;
     }
-    if (distance(p, b.last) < 0.6) {
+    if (distance(p, b.last) < 0.6 && Math.hypot(t.command.moveX, t.command.moveZ) > 0.1) {
       b.stuck += b.decision;
       if (b.stuck > 1.1) {
         const side = role % 2 ? 1 : -1;
@@ -100,30 +122,27 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     mz = waypoint.z - p.z;
   const target = s.tanks.find((e) => e.id === b.target && e.alive);
   if (target && b.memory > 0) {
-    const q = target.body.translation(),
-      v = target.body.linvel(),
-      d = distance(p, q);
-    const desired =
-      Math.atan2(
-        q.x + (v.x * d * 0.65) / WEAPONS[t.weapon].speed - p.x,
-        q.z + (v.z * d * 0.65) / WEAPONS[t.weapon].speed - p.z,
-      ) + b.aimError;
-    c.aim = t.aim + angleDelta(t.aim, desired) * Math.min(1, dt * 5);
-    const seen = s.visible(p, q);
-    c.fire =
-      seen && b.reaction <= 0 && Math.abs(angleDelta(c.aim, desired)) < 0.2;
-    if (b.mode === "fight" && seen && d < 17) {
-      const side = role % 2 ? 1 : -1;
-      mx = (q.z - p.z) * 0.5 * side;
-      mz = -(q.x - p.x) * 0.5 * side;
-      if (d < 7 || (b.preference === "cautious" && d < 12)) {
-        mx += p.x - q.x;
-        mz += p.z - q.z;
-      }
+    const actual = target.body.translation();
+    const seen = s.visible(p, actual);
+    if (seen || aggressive) b.lastSeen = { x: actual.x, z: actual.z };
+    const q = seen || aggressive ? actual : b.lastSeen;
+    const v = seen ? target.body.linvel() : { x: 0, z: 0 };
+    const d = distance(p, q);
+    const desired = Math.atan2(
+      q.x + v.x * d * 0.65 / WEAPONS[weapon].speed - p.x,
+      q.z + v.z * d * 0.65 / WEAPONS[weapon].speed - p.z,
+    ) + b.aimError;
+    c.aim = turn(desired);
+    c.fire = seen && d <= profile.sight && b.reaction <= 0
+      && Math.abs(angleDelta(c.aim, desired)) < (profile.stationary ? 0.13 : 0.2);
+    if (b.mode === "fight" && seen) {
+      const movement = combatMovement(t, q.x - p.x, q.z - p.z, role % 2 ? 1 : -1);
+      mx = movement.x; mz = movement.z;
     }
-    c.mine = d < 8 && s.rng.next() < dt * 0.6;
-  } else
-    c.aim = t.aim + angleDelta(t.aim, Math.atan2(mx, mz)) * Math.min(1, dt * 5);
+    c.mine = b.personality === "minelayer" && d < 17 && t.mineCooldown <= 0;
+  } else {
+    c.aim = turn(Math.atan2(mx, mz));
+  }
   // Deliberately clear nearby weak timber and towers that obstruct a useful route.
   if (!c.fire) {
     const weak = s.covers.find(
@@ -141,20 +160,25 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     );
     if (weak) {
       const desired = Math.atan2(weak.x - p.x, weak.z - p.z);
-      c.aim = t.aim + angleDelta(t.aim, desired) * Math.min(1, dt * 5);
+      c.aim = turn(desired);
       c.fire = Math.abs(angleDelta(c.aim, desired)) < 0.15;
       if (c.fire && t.cooldown === 0 && b.fireDelay === 0) s.botBreachShots++;
     }
   }
-  // Bots take an extra beat between shots, including when breaching cover.
-  // This controller delay leaves the human's weapon handling unchanged.
+  // Personality cadence also applies when breaching; human weapon cadence is separate.
   if (b.fireDelay > 0) c.fire = false;
   else if (c.fire && t.cooldown === 0)
-    b.fireDelay = WEAPONS[t.weapon].interval * 1.4 + s.rng.range(0.1, 0.25);
+    b.fireDelay = botReload(t, s.rng.range(0.1, 0.25));
   const mag = Math.hypot(mx, mz) || 1;
   mx /= mag;
   mz /= mag;
-  // Short query-based probes steer away from static cover and other live vehicles.
+  // Retreats and strafes must not drive blindly into the edge of a firing lane.
+  if (s.nav.blocked[s.nav.index({ x: p.x + mx * 3, z: p.z + mz * 3 })]) {
+    const pathX = waypoint.x - p.x, pathZ = waypoint.z - p.z;
+    const length = Math.hypot(pathX, pathZ) || 1;
+    mx = pathX / length; mz = pathZ / length;
+  }
+  // Nearby allies and enemies both participate in congestion avoidance.
   const near: Tank[] = [];
   s.world.intersectionsWithShape(
     p,
@@ -176,7 +200,9 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       mz += ((p.z - q.z) / d) * (2.8 - d) * 1.1;
     }
   }
-  c.moveX = mx;
-  c.moveZ = mz;
+  const movementScale = aggressive ? Math.min(1, profile.speed * 1.35 + 0.15) : profile.speed;
+  const length = Math.max(1, Math.hypot(mx, mz));
+  c.moveX = mx / length * movementScale;
+  c.moveZ = mz / length * movementScale;
   return c;
 }

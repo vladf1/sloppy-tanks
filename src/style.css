@@ -28,6 +28,17 @@ canvas#game {
   outline: none;
   cursor: crosshair;
 }
+#fps {
+  position: fixed;
+  right: 8px;
+  bottom: 5px;
+  z-index: 20;
+  pointer-events: none;
+  color: rgba(255, 255, 255, 0.65);
+  font: 10px/1.2 ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px #000;
+}
 #hud {
   position: absolute;
   inset: 0;
@@ -203,6 +214,7 @@ canvas#game {
 }
 .keyhint {
   margin-left: auto;
+  white-space: nowrap;
   text-align: right;
   font-size: 11px;
   line-height: 2.1;
@@ -435,6 +447,15 @@ h2 {
 .compact input {
   accent-color: #ffcf38;
   width: 55%;
+}
+.speed-tuning output {
+  display: block;
+  color: #ffcf38;
+  font-variant-numeric: tabular-nums;
+}
+.speed-tuning small {
+  color: #a9c5a9;
+  font-size: 11px;
 }
 .secondary {
   color: #d8ddc1;

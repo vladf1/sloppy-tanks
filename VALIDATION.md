@@ -1,5 +1,62 @@
 # Validation record
 
+## House optimization and health-bar behavior — September 6, 2026
+
+- Removed rounded bevel geometry from house trim while retaining all textures and architectural detail. Across 14 houses: original pre-detail geometry 67,720 triangles; detailed version 112,128; optimized detail 17,088. Textured houses still batch into three meshes each (42 total).
+- Same static production scene at 1920×1080, 30 warmup plus 240 measured frames per mode: before 487,808 rendered triangles / 401 calls / 122.0 FPS / 1.27 ms render CPU; after 351,488 triangles / 401 calls / 122.2 FPS / 1.22 ms CPU. FPS was effectively unchanged in this refresh-limited sample; the geometry reduction is confirmed. Raw results: `artifacts/house-optimization.json`. The user's active game continued separately.
+- Added a 20,000-triangle budget regression for arena houses. All 61 preceding tests and the new budget check pass; production build passes. Inspected the optimized scene with no browser warnings/errors. Temporary benchmark source/tab were removed.
+- Matched V-Tanks' health-bar behavior: fixed left edge, outlined dark track, yellow at <=60% and red at <=30%; player HUD shares these thresholds. Rendered checks confirmed 0.6 and 0.3 fill scales with an unchanged left anchor. Shield state remains in the effects text.
+- Removed the tower notification label and the UI branch that displayed it. Tower destruction still clears its passage.
+
+## House surface details — September 6, 2026
+
+- Added shared procedural shingle and wood-siding textures with subtle bump detail, plus shutters, window frames/sills, door panels/steps, corner boards, eave trim, ridge caps and chimney brick courses. Collision shapes are unchanged.
+- Production build and all 61 existing tests pass. Inspected both roof colors and multiple sides in a rendered, batched model preview. No JavaScript errors; the temporary preview emitted a shadow-map deprecation warning from its own lighting setup and was removed after inspection.
+
+## Playtest controls, visual polish and shootable mines — September 6, 2026
+
+- Applied a shared 13% increase to tank and projectile base speeds. Temporary pause sliders scale each category independently from 50–200%, persist locally, update existing shells and collision prediction, and retain class/weapon ratios. Verified both controls render with the user's saved 115% settings; those preferences were preserved.
+- Shells and spread pellets now start at the model-derived muzzle, including render height. A swept obstruction check prevents barrels from spawning shots through nearby cover or enemy hulls.
+- Expanded names to 84 and shuffle an independent seeded deck per round; names remain stable through respawn.
+- Pickup cubes grew from 0.8 to 1.25 m, with original cached pictogram textures on every face. Collection produces 24 sparks, an expanding ring and a brief tank glow. Pine trees gained staggered foliage, branch clusters, bark and roots; destruction emits 96 green/brown particles and nine bounded physical fragments.
+- Direct swept shell hits detonate friendly/enemy mines, armed or arming. Contact ordering respects cover; removal occurs before blast chains and kill credit follows the shooter.
+- All 61 tests, strict TypeScript, production build and whitespace checks pass. Ten complete simulated matches and ten reset checks pass; seven blue wins and three red. Current results are in `artifacts/simulation-results.json`. This is not a rendering benchmark.
+- Browser inspection confirmed the pickup symbols, detailed trees, collection burst and tree debris using the production renderer in a temporary controlled scene. No browser warnings/errors were reported; the preview was removed and its tab closed. The user's active game was preserved.
+
+## Tank-to-tank contact — September 6, 2026
+
+- Added a massless contact collider measured from the same hull/track geometry as combat. It collides only with other tank hulls; cover and ground use the existing compact collider. Both spawn and respawn create it, and body removal cleans it up.
+- Added predictive contacts based on boosted travel per tick. Without them, the new regression reproduced a brief 0.35 m overlap at boosted impact despite the larger shape. With them, 24 combinations of chassis, front/side impacts, orientation and friendly/enemy contact stay within 1 cm of the model-derived boundary under sustained drive impulses.
+- All 54 tests and the production build pass. Ten complete simulated matches split five wins per team; ten body-count resets pass. Updated simulation results are in `artifacts/simulation-results.json`. No rendering benchmark was rerun.
+
+## Model-derived hitboxes — September 6, 2026
+
+- Removed the copied hull dimensions. Combat boxes are now measured directly from `tankModel` hull/track geometry and its transforms, once per chassis. Model size and proportions automatically carry into hit detection; only the intentional 0.18 m shell allowance remains separate.
+- Boundary regression checks compare hits and misses 1 mm inside/outside every measured hull edge for all three chassis.
+
+## Hull hit registration — September 6, 2026
+
+- Reproduced missed outer-track, nose and grazing hits with three failing tests against the previous compact movement collider. Combat now uses the rendered hull footprint plus a 0.18 m shell-radius allowance, including the longer heavy chassis and tank translation during each simulation tick.
+- 52 tests pass. Coverage includes all chassis, rotated hulls, visible mesh bounds, clean misses, moving-target crossings, cover, friendly tanks, shields and spawn protection. Production build and whitespace checks pass.
+- Ten complete simulated matches and ten body-count resets pass. Blue won seven and red three, including one overtime; this is a smoke check, not a balance or rendering benchmark. Updated results are in `artifacts/simulation-results.json`.
+
+## Bot personalities, track fading and base speed — September 6, 2026
+
+- Adapted seven local V-Tanks roles plus a hunter variant on every tenth bot slot. Source behavior lives in `src/game/bot-personalities.ts`; the controller retains pathfinding, team-neutral targeting, reaction delays and imperfect aim. Support escorts; artillery uses existing rockets. Added personality labels were removed at the user's request.
+- Base speeds increased 20% to 9.826 / 7.924 / 6.022 m/s (displayed as 35 / 29 / 22 km/h). The speed pickup remains +50% for 12 seconds.
+- Tracks fade from age 4 to 18 seconds. A full ring buffer waits for a slot to fade completely before reusing it. A controlled rendered preview showed progressively lighter trails at 2, 8, 13 and 17 seconds, and invisible trails at 19 seconds. The temporary preview was removed after inspection.
+- 45 tests pass, including role assignment, rare-hunter distribution, stand-off movement, stationary firing lanes, mine use, blocked line of sight, artillery pickups, the player's cadence edge and track-buffer overwrite protection. Production build passes. Ten complete simulated rounds and ten body-count resets pass; blue won four and red six, with one overtime. Current output is `artifacts/simulation-results.json`.
+- Live autoplay was inspected with no reported browser errors; final tanks retain team markers and health/reload bars without personality labels. This pass did not rerun the long rendering benchmark.
+
+## V-Tanks mechanics and tread trails — September 5, 2026
+
+- Verified the reference checkout matches GitHub main at `570bf8dd46a48c0761a4faccafa40197a821267a`. Inspected the deployed game's mission/controls UI and made brief keyboard/fire attempts; exact powerup values and interception rules are source-verified, not claimed as independently collected during play.
+- `npm test`: 39 passing tests. Added continuous interception, asynchronous crossing misses, earliest-contact ordering, thin-wall occlusion, ricochet interception, tank-hit/expiry precedence, opposing kill credit, stacking/expiry, finite shields, speed/diagonal/braking checks, and distance-spaced/capped/resetting tracks.
+- `npm run validate`: ten complete five-minute simulated matches and ten successful body-count resets. Blue won six and red four; all towers were destroyed. These are accelerated simulation checks, not a rendered performance benchmark. The current run is in `artifacts/simulation-results.json`.
+- `npm run build`: strict TypeScript and production bundle pass. The existing large-chunk advisory remains.
+- In-app browser: verified the 29/24/18 km/h selector, gameplay rendering, twin tread trails on the village roads, and pause/resume. No browser warnings/errors were reported in the inspected live session. Brief key presses are limited for subjective handling assessment; user play remains the acceptance test for feel.
+- Synthetic 200-shell simultaneous burst, projectile step only in Node: ten measured samples after two warmups averaged 10.03 ms, maximum 11.13 ms. This intentionally dense case includes repeated collision resolution; it is not browser FPS. Track rendering adds one instanced draw call with at most 8,192 treads; fading runs in the shader. The long browser benchmark was not rerun.
+
 ## Latest movement and breakup checks
 
 27 tests cover both breakup variants across 12 seeds, wide hull/turret separation, high arcs, landing, cleanup, scoring, respawn and the shared debris cap. `scripts/wreck-check.mjs` verifies one-click selection for all three classes, whole-number km/h labels, real rendered airborne assemblies, on-screen landings and expiry. `artifacts/wreck-check.json` stores the observations and browser errors; screenshots are `artifacts/wreck-flight.png` and `artifacts/wreck-landed.png`. The browser landing scenario clears cover to measure the trajectories; ordinary cover collisions can alter them. Previous full-match and timing records below predate this update.

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sidingBox, shingleRoof } from "./house-surfaces";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { TEAM_COLORS, VEHICLES } from "./data";
 import type { VehicleKind, Team, Cover, WreckPart } from "./types";
@@ -285,7 +286,7 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
         roof + 0.018,
         0.22,
       );
-  root.userData = { hull, turret, barrel, tracks };
+  root.userData = { hull, turret, barrel, tracks, muzzle: bore };
   return root;
 }
 /** Extract actual tank assemblies and center each on its own physics pivot. */
@@ -314,7 +315,19 @@ const roofGeometry = new THREE.ExtrudeGeometry(roofProfile, {
   depth: 1,
   bevelEnabled: false,
 }).translate(0, 0, -0.5);
-const pineGeometry = new THREE.ConeGeometry(1, 1, 7);
+// Scalloped branch skirts create pointed boughs instead of smooth stacked cones.
+const pineGeometry = (() => {
+  const geometry = new THREE.ConeGeometry(1, 1, 24, 2).toNonIndexed();
+  const positions = geometry.getAttribute("position");
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
+    const angle = Math.atan2(z, x);
+    const scallop = 0.87 + 0.13 * Math.cos(angle * 12);
+    positions.setXYZ(i, x * scallop, y + (0.5 - y) * 0.035 * Math.cos(angle * 12), z * scallop);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+})();
 function pitchedRoof(w: number, h: number, d: number, color: number) {
   const mesh = new THREE.Mesh(roofGeometry, material(color));
   mesh.scale.set(w, h, d);
@@ -328,45 +341,41 @@ export function coverModel(
   g.position.set(c.x, 0, c.z);
   if (c.kind === "house") {
     const wall = c.h * 0.68;
-    put(g, box(c.w + 0.2, 0.22, c.d + 0.2, 0xa1977c), 0, 0.11, 0);
-    put(g, box(c.w, wall, c.d, c.color, 0.025), 0, wall / 2, 0);
-    for (let y = 0.45; y < wall; y += 0.48) {
-      for (const side of [-1, 1]) {
-        put(
-          g,
-          box(c.w + 0.12, 0.06, 0.09, 0x8b5837, 0.008),
-          0,
-          y,
-          (side * c.d) / 2,
-        );
-        put(
-          g,
-          box(0.09, 0.06, c.d + 0.12, 0x8b5837, 0.008),
-          (side * c.w) / 2,
-          y,
-          0,
-        );
-      }
+    put(g, box(c.w + 0.2, 0.22, c.d + 0.2, 0xa1977c, 0), 0, 0.11, 0);
+    put(g, sidingBox(c.w, wall, c.d, c.color), 0, wall / 2, 0);
+    // Pale corner boards and a stone sill frame the clapboard walls.
+    for (const x of [-1, 1]) for (const z of [-1, 1])
+      put(g, box(0.14, wall, 0.14, 0xd4be95, 0), x * c.w / 2, wall / 2, z * c.d / 2);
+    for (const side of [-1, 1]) {
+      put(g, box(c.w + 0.16, 0.16, 0.12, 0x856447, 0), 0, 0.28, side * c.d / 2);
+      put(g, box(0.12, 0.16, c.d + 0.16, 0x856447, 0), side * c.w / 2, 0.28, 0);
     }
     for (const side of [-1, 1]) {
       for (const x of [-c.w * 0.29, c.w * 0.29]) {
+        put(g, box(1.24, 1.16, 0.1, 0xe5cea1, 0), x, wall * 0.59, side * (c.d / 2 + 0.025));
+        put(g, box(1.36, 0.1, 0.25, 0xc8b087, 0), x, wall * 0.59 - 0.6, side * (c.d / 2 + 0.09));
+        for (const shutter of [-1, 1]) {
+          put(g, box(0.22, 1.05, 0.1, 0x4d6650, 0), x + shutter * 0.75, wall * 0.59, side * (c.d / 2 + 0.06));
+          for (const y of [-0.3, 0, 0.3])
+            put(g, box(0.24, 0.035, 0.11, 0x334a3c, 0), x + shutter * 0.75, wall * 0.59 + y, side * (c.d / 2 + 0.08));
+        }
         put(
           g,
-          box(1.05, 0.97, 0.07, 0xffd94e, 0.025),
+          box(1.05, 0.97, 0.07, 0xffd94e, 0),
           x,
           wall * 0.59,
           side * (c.d / 2 + 0.045),
         );
         put(
           g,
-          box(0.075, 0.97, 0.085, 0x875534),
+          box(0.075, 0.97, 0.085, 0x875534, 0),
           x,
           wall * 0.59,
           side * (c.d / 2 + 0.09),
         );
         put(
           g,
-          box(1.05, 0.075, 0.085, 0x875534),
+          box(1.05, 0.075, 0.085, 0x875534, 0),
           x,
           wall * 0.59,
           side * (c.d / 2 + 0.09),
@@ -374,14 +383,24 @@ export function coverModel(
       }
       put(
         g,
-        box(0.07, 1.05, 1.1, 0xffd94e),
+        box(0.07, 1.05, 1.1, 0xffd94e, 0),
         side * (c.w / 2 + 0.05),
         wall * 0.58,
         0,
       );
     }
-    put(g, box(0.82, 1.55, 0.1, 0x64452f), 0, 0.85, c.d / 2 + 0.06);
-    put(g, box(0.1, 0.1, 0.12, 0xffd24a), 0.24, 0.83, c.d / 2 + 0.12);
+    for (const side of [-1, 1]) {
+      put(g, box(0.08, 1.22, 1.28, 0xe5cea1, 0), side * (c.w / 2 + 0.01), wall * 0.58, 0);
+      put(g, box(0.10, 1.05, 0.07, 0x875534, 0), side * (c.w / 2 + 0.09), wall * 0.58, 0);
+      put(g, box(0.10, 0.07, 1.1, 0x875534, 0), side * (c.w / 2 + 0.09), wall * 0.58, 0);
+      put(g, box(0.25, 0.1, 1.36, 0xc8b087, 0), side * (c.w / 2 + 0.07), wall * 0.58 - 0.65, 0);
+    }
+    put(g, box(1.03, 1.72, 0.11, 0xe5cea1, 0), 0, 0.88, c.d / 2 + 0.015);
+    put(g, box(1.2, 0.18, 0.62, 0x9a9585, 0), 0, 0.14, c.d / 2 + 0.2);
+    put(g, box(0.82, 1.55, 0.1, 0x64452f, 0), 0, 0.85, c.d / 2 + 0.06);
+    put(g, box(0.1, 0.1, 0.12, 0xffd24a, 0), 0.24, 0.83, c.d / 2 + 0.12);
+    for (const y of [0.5, 1.15])
+      put(g, box(0.6, 0.42, 0.035, 0x805b3d, 0), 0, y, c.d / 2 + 0.12);
     const roofColor = Math.abs(c.z) > 35 ? 0xcc493c : 0x167857;
     put(
       g,
@@ -390,24 +409,57 @@ export function coverModel(
       wall,
       0,
     );
+    put(g, shingleRoof(c.w + 0.6, c.h - wall, c.d + 0.6, roofColor), 0, wall, 0);
+    for (const side of [-1, 1])
+      put(g, box(0.16, 0.15, c.d + 0.7, 0xe0c79d, 0), side * (c.w + 0.6) / 2, wall, 0);
+    for (let z = -(c.d + 0.6) / 2; z < (c.d + 0.6) / 2; z += 0.48)
+      put(g, box(0.22, 0.11, Math.min(0.46, (c.d + 0.6) / 2 - z), 0x334a40, 0), 0, c.h + 0.04, z + 0.23);
+    put(g, box(0.74, 0.14, 0.74, 0x705a4d, 0), -c.w * 0.25, c.h + 0.19, -c.d * 0.2);
+    put(g, box(0.43, 0.015, 0.43, 0x302c29, 0), -c.w * 0.25, c.h + 0.27, -c.d * 0.2);
+    for (let y = c.h - 0.75; y < c.h + 0.12; y += 0.22) {
+      put(g, box(0.59, 0.026, 0.59, 0xd3b095, 0), -c.w * 0.25, y, -c.d * 0.2);
+    }
     put(
       g,
-      box(0.58, 1.0, 0.58, 0xbc5c3e, 0.02),
+      box(0.58, 1.0, 0.58, 0xbc5c3e, 0),
       -c.w * 0.25,
       c.h - 0.36,
       -c.d * 0.2,
     );
   } else if (c.kind === "tree") {
-    put(g, cylinder(0.22, c.h * 0.55, 0x805034, 7), 0, c.h * 0.275, 0);
-    for (const [y, radius, height, color] of [
-      [0.43, 0.5, 0.56, 0x128458],
-      [0.65, 0.39, 0.5, c.color],
-      [0.85, 0.26, 0.3, 0x31b96c],
-    ]) {
+    const twist = Math.sin(c.x * 2.3 + c.z * 0.7) * Math.PI;
+    put(g, cylinder(0.2, c.h * 0.72, 0x705039, 9), 0, c.h * 0.36, 0);
+    // Exposed roots and ridges give the lower trunk a readable bark silhouette.
+    for (let i = 0; i < 5; i++) {
+      const angle = twist + i * Math.PI * 2 / 5;
+      const root = box(0.13, 0.13, c.w * 0.26, i % 2 ? 0x563b2c : 0x896044, 0.025);
+      root.rotation.y = angle;
+      put(g, root, Math.sin(angle) * c.w * 0.14, 0.1, Math.cos(angle) * c.d * 0.14);
+      const ridge = cylinder(0.035, c.h * 0.24, 0x9b704b, 4);
+      put(g, ridge, Math.sin(angle) * 0.19, c.h * 0.15, Math.cos(angle) * 0.19);
+    }
+    const layers = [
+      [0.32, 0.50, 0.38, 0x176646],
+      [0.47, 0.44, 0.38, 0x1a8053],
+      [0.63, 0.35, 0.34, c.color],
+      [0.77, 0.26, 0.29, 0x289a5b],
+      [0.9, 0.15, 0.20, 0x39ac69],
+    ];
+    for (const [i, [y, radius, height, color]] of layers.entries()) {
       const leaves = new THREE.Mesh(pineGeometry, material(color));
       leaves.scale.set(c.w * radius, c.h * height, c.d * radius);
+      leaves.rotation.y = twist + i * 0.39;
       leaves.castShadow = leaves.receiveShadow = true;
       put(g, leaves, 0, c.h * y, 0);
+      if (i < 3) for (let branch = 0; branch < 6; branch++) {
+        const angle = twist + i * 0.61 + branch * Math.PI / 3;
+        const tuft = new THREE.Mesh(pineGeometry, material(i % 2 ? 0x278f59 : 0x21774d));
+        tuft.scale.set(c.w * radius * 0.30, c.h * 0.18, c.d * radius * 0.30);
+        tuft.rotation.set(Math.cos(angle) * 0.4, angle, -Math.sin(angle) * 0.4);
+        tuft.castShadow = tuft.receiveShadow = true;
+        put(g, tuft, Math.sin(angle) * c.w * radius * 0.63,
+          c.h * (y - height * 0.20), Math.cos(angle) * c.d * radius * 0.63);
+      }
     }
   } else if (c.kind === "fence") {
     const along = c.w > c.d,

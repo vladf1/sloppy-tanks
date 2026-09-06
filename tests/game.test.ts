@@ -85,7 +85,7 @@ test("respawn occurs after three seconds with protection and selected class", ()
   assert.ok(a.protection > 1.9);
   s.dispose();
 });
-test("weapon modifiers replace, expire; utility refreshes and repair clamps", () => {
+test("special weapons replace and expire; upgrades persist independently and repair fully heals", () => {
   const s = game(),
     a = s.human;
   const p = {
@@ -97,7 +97,8 @@ test("weapon modifiers replace, expire; utility refreshes and repair clamps", ()
     cooldown: 0,
   };
   collectPickup(s, a, p);
-  assert.equal(a.weapon, "rapid");
+  assert.equal(a.weapon, "standard");
+  assert.equal(a.rapid, 12);
   collectPickup(s, a, { ...p, kind: "rocket", available: true });
   assert.equal(a.weapon, "rocket");
   a.weaponTime = STEP;
@@ -105,10 +106,11 @@ test("weapon modifiers replace, expire; utility refreshes and repair clamps", ()
   assert.equal(a.weapon, "standard");
   a.shield = 7;
   collectPickup(s, a, { ...p, kind: "shield", available: true });
-  assert.equal(a.shield, 9);
+  assert.equal(a.shield, 15);
+  assert.equal(a.shieldPoints, 120);
   a.hp = 1;
   collectPickup(s, a, { ...p, kind: "repair", available: true });
-  assert.equal(a.hp, 66);
+  assert.equal(a.hp, VEHICLES[a.kind].health);
   collectPickup(s, a, { ...p, kind: "repair", available: true });
   assert.equal(a.hp, VEHICLES[a.kind].health);
   s.dispose();
@@ -355,13 +357,15 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });
-test("enhanced rounds have four reflections; standard has one", () => {
+test("ricochet core adds two reflections and doubles damage; standard has one", () => {
   const s = game();
   const t = s.human;
-  t.weapon = "ricochet";
+  t.ricochet = 12;
   fireWeapon(s, t);
-  assert.equal(s.shots.at(-1)!.bounces, 4);
+  assert.equal(s.shots.at(-1)!.bounces, 3);
+  assert.equal(s.shots.at(-1)!.damage, 80);
   t.cooldown = 0;
+  t.ricochet = 0;
   t.weapon = "standard";
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 1);
@@ -376,7 +380,7 @@ test("bots cross opened tower footprint and continue combat through ruins", () =
   const tower = towers[0];
   const scoutIndex = s.tanks.findIndex((t) => !t.human && t.kind === "scout");
   const scout = place(s, scoutIndex, tower.x, tower.z - 5);
-  scout.brain.preference = "hunter";
+  scout.brain.personality = "scout";
   s.pickups.push({
     id: s.nextId++,
     kind: "rapid",
@@ -507,10 +511,10 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
   assert.ok(highest > 10, "some turrets take high arcs");
 });
 
-test("bots pause between shots even when breaching; human weapon cadence is unchanged", async () => {
+test("bots pause between shots even when breaching; human fires faster with and without rapid upgrade", async () => {
   const { botCommand } = await import("../src/game/ai");
   const { WEAPONS } = await import("../src/game/data");
-  for (const weapon of ["standard", "rapid"] as const) {
+  for (const rapid of [false, true]) {
     const s = game();
     clear(s);
     const bot = place(
@@ -520,7 +524,7 @@ test("bots pause between shots even when breaching; human weapon cadence is unch
       0,
     );
     bot.aim = Math.PI / 2;
-    bot.weapon = weapon;
+    bot.rapid = rapid ? 12 : 0;
     bot.brain.goal = { x: 4, z: 0 };
     bot.brain.decision = bot.brain.memory = 100;
     s.addCover({
@@ -534,7 +538,7 @@ test("bots pause between shots even when breaching; human weapon cadence is unch
       color: 0,
     });
     const human = s.human;
-    human.weapon = weapon;
+    human.rapid = rapid ? 12 : 0;
     let botShots = 0,
       humanShots = 0;
     for (let i = 0; i < 600; i++) {
@@ -552,9 +556,9 @@ test("bots pause between shots even when breaching; human weapon cadence is unch
     }
     assert.ok(
       botShots > 0 && botShots < humanShots * 0.8,
-      JSON.stringify({ weapon, botShots, humanShots }),
+      JSON.stringify({ rapid, botShots, humanShots }),
     );
-    assert.ok(humanShots >= Math.floor(10 / (WEAPONS[weapon].interval + STEP)));
+    assert.ok(humanShots >= Math.floor(10 / (WEAPONS.standard.interval * (rapid ? 0.5 : 1) / 1.2 + STEP)));
     s.dispose();
   }
 });

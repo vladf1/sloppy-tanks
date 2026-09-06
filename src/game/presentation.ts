@@ -1,3 +1,7 @@
+import { pickupCube } from "./pickup-visuals";
+import { healthBarState } from "./health-bar";
+import { TrackTrails } from "./tracks";
+import { weaponInterval } from "./weapons";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
 import {
@@ -10,11 +14,12 @@ import {
   coverModel,
   labelTexture,
 } from "./models";
-import { ARENA, TEAM_COLORS, PICKUPS, WEAPONS, VEHICLES } from "./data";
+import { ARENA, TEAM_COLORS, PICKUPS, VEHICLES, MINE_RADIUS } from "./data";
 import { spawnPositions } from "./arena";
 import type { Simulation } from "./simulation";
 import type { SimEvent, Fragment } from "./types";
 interface Particle {
+  shape?: "leaf" | "splinter";
   x: number;
   y: number;
   z: number;
@@ -73,6 +78,11 @@ export class Presentation {
   playerWasAlive = false;
   debrisColor = new THREE.Color();
   particles: Particle[] = [];
+  hitUntil = new Map<number, number>();
+  pickupEffects: { group: THREE.Group; age: number; tankId?: number }[] = [];
+  pickupRingGeometry = new THREE.RingGeometry(0.88, 1, 48);
+  pickupGlowGeometry = new THREE.SphereGeometry(1, 16, 10);
+  tracks = new TrackTrails();
   dummy = new THREE.Object3D();
   follow = new THREE.Vector3();
   zoom = 34;
@@ -109,6 +119,7 @@ export class Presentation {
     this.scene.add(sun);
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
+    this.scene.add(this.tracks.mesh);
     const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
     put(this.scene, board, 0, -0.8, 0);
     const floor = box(ARENA * 2, 0.15, ARENA * 2, 0xffdb92, 0.03);
@@ -430,6 +441,13 @@ export class Presentation {
     this.mineMeshes.clear();
     this.bars.clear();
     this.particles = [];
+    this.hitUntil.clear();
+    for (const effect of this.pickupEffects) {
+      this.scene.remove(effect.group);
+      disposeOwned(effect.group);
+    }
+    this.pickupEffects = [];
+    this.tracks.reset();
     for (const mesh of this.debrisMeshes.values()) mesh.count = 0;
     this.playerWasAlive = false;
     for (const c of s.covers) {
@@ -450,26 +468,17 @@ export class Presentation {
     for (const p of s.pickups) {
       const g = new THREE.Group(),
         def = PICKUPS[p.kind];
-      put(g, cylinder(0.95, 0.12, 0x25435f, 24), 0, 0.08, 0);
+      put(g, cylinder(1.05, 0.12, 0x25435f, 24), 0, 0.08, 0);
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.8, 0.04, 5, 24),
+        new THREE.TorusGeometry(0.94, 0.045, 5, 24),
         material(def.color),
       );
       ring.geometry.userData.owned = true;
       ring.rotation.x = Math.PI / 2;
       put(g, ring, 0, 0.2, 0);
-      const gem = box(0.8, 0.8, 0.8, def.color, 0.14);
+      const gem = pickupCube(p.kind);
       gem.rotation.y = Math.PI / 4;
       put(g, gem, 0, 1.25, 0);
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: labelTexture(def.icon),
-          depthTest: false,
-        }),
-      );
-      sprite.material.userData.owned = true;
-      sprite.scale.set(1.15, 0.65, 1);
-      put(g, sprite, 0, 2.05, 0);
       g.userData.gem = gem;
       g.position.set(p.x, 0, p.z);
       this.worldGroup.add(g);
@@ -480,19 +489,26 @@ export class Presentation {
   }
   makeBar(id: number, team: number, human: boolean) {
     const g = new THREE.Group();
+    const border = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.87, 0.28),
+      new THREE.MeshBasicMaterial({ color: 0x9eb8ab, depthTest: false, toneMapped: false }),
+    );
     const bg = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.75, 0.16),
-      new THREE.MeshBasicMaterial({ color: 0x293a34, depthTest: false }),
+      new THREE.PlaneGeometry(1.81, 0.22),
+      new THREE.MeshBasicMaterial({ color: 0x010504, depthTest: false, toneMapped: false }),
     );
     const fg = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.65, 0.09),
+      new THREE.PlaneGeometry(1.75, 0.16).translate(1.75 / 2, 0, 0),
       new THREE.MeshBasicMaterial({
         color: TEAM_COLORS[team],
         depthTest: false,
+        toneMapped: false,
       }),
     );
-    fg.position.z = 0.01;
-    g.add(bg, fg);
+    bg.position.z = 0.005;
+    fg.position.set(-1.75 / 2, 0, 0.01);
+    border.renderOrder = 10; bg.renderOrder = 11; fg.renderOrder = 12;
+    g.add(border, bg, fg);
     if (!human) {
       const icon = new THREE.Sprite(
         new THREE.SpriteMaterial({
@@ -538,46 +554,101 @@ export class Presentation {
     return p;
   }
   event(e: SimEvent) {
-    if (e.type === "hurt") return;
-    if (e.type === "respawn" || e.type === "pickup") return;
+    if ((e.type === "death" || e.type === "respawn") && e.id !== undefined)
+      this.hitUntil.delete(e.id);
+    const hurt = e.type === "hurt";
+    if (hurt) {
+      if (e.id === undefined || (e.size ?? 0) <= 0) return;
+      this.hitUntil.set(e.id, this.time + 0.28);
+    }
+    if (e.type === "respawn") return;
+    const pickup = e.type === "pickup";
+    if (pickup) {
+      if (this.pickupEffects.length >= 24) {
+        const oldest = this.pickupEffects.shift()!;
+        this.scene.remove(oldest.group); disposeOwned(oldest.group);
+      }
+      const group = new THREE.Group();
+      const ringMaterial = new THREE.MeshBasicMaterial({ color: e.color ?? 0xffffff,
+        transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending });
+      ringMaterial.userData.owned = true;
+      const glowMaterial = ringMaterial.clone();
+      glowMaterial.opacity = 0.2; glowMaterial.side = THREE.BackSide;
+      glowMaterial.userData.owned = true;
+      const ring = new THREE.Mesh(this.pickupRingGeometry, ringMaterial);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.08;
+      group.add(ring, new THREE.Mesh(this.pickupGlowGeometry, glowMaterial));
+      group.position.set(e.x, 0, e.z);
+      this.scene.add(group);
+      this.pickupEffects.push({ group, age: 0, tankId: e.id });
+    }
     const explosion =
       e.type === "explosion" || e.type === "death" || e.type === "destroy";
-    const count = explosion ? 18 : e.type === "shot" ? 5 : 8;
+    const tree = e.type === "destroy" && e.coverKind === "tree";
+    const count = tree ? 96 : pickup ? 24 : explosion ? 18 : hurt ? 12 : e.type === "shot" ? 5 : 8;
     for (let i = 0; i < count && this.particles.length < 1200; i++) {
-      const life = explosion
+      const life = tree ? 0.85 + Math.random() * 0.9 : pickup ? 0.5 + Math.random() * 0.3 : explosion
         ? 0.35 + Math.random() * 0.45
-        : 0.1 + Math.random() * 0.2;
-      const speed = explosion ? (e.size ?? 3) * 1.2 : 4;
+        : hurt ? 0.22 + Math.random() * 0.16 : 0.1 + Math.random() * 0.2;
+      const speed = tree ? 7 + Math.random() * 4 : pickup ? 5 : explosion ? (e.size ?? 3) * 1.2 : hurt ? 6 : 4;
       this.particles.push({
-        x: e.x,
-        y: explosion ? 0.8 : 1,
-        z: e.z,
+        shape: tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
+        x: e.x + (tree ? (Math.random() - 0.5) * 1.5 : hurt ? (Math.random() - 0.5) * 0.9 : 0),
+        y: tree ? 0.6 + Math.random() * (e.height ?? 5) * 0.85 : pickup ? 1.3 : explosion ? 0.8 : hurt ? 2.1 : 1,
+        z: e.z + (tree ? (Math.random() - 0.5) * 1.5 : hurt ? (Math.random() - 0.5) * 0.9 : 0),
         vx: (Math.random() - 0.5) * speed,
-        vy: Math.random() * speed,
+        vy: tree ? 1 + Math.random() * 5 : (pickup ? 4 : hurt ? 1.5 : 0) + Math.random() * speed,
         vz: (Math.random() - 0.5) * speed,
         life,
         max: life,
-        size: explosion
+        size: tree ? 0.18 + Math.random() * 0.25 : pickup ? 0.12 + Math.random() * 0.1 : explosion
           ? 0.22 + Math.random() * 0.5
-          : 0.04 + Math.random() * 0.09,
+          : hurt ? 0.09 + Math.random() * 0.09 : 0.04 + Math.random() * 0.09,
         color: new THREE.Color(
-          explosion
+          tree ? (i % 4 === 0 ? 0x98633e : [0x175e3b, 0x2c9452, e.color ?? 0x389b58][i % 3]) : pickup ? (i % 4 === 0 ? 0xffffff : e.color ?? 0xffffff) : explosion
             ? i % 3 === 0
               ? 0x536779
               : i % 2 === 0
                 ? 0xffc569
                 : 0xff9250
-            : (e.color ?? 0xffdf91),
+            : hurt ? (i % 3 === 0 ? 0xffffff : 0xffcb58) : (e.color ?? 0xffdf91),
         ),
       });
     }
-    if (explosion) {
+    if (explosion && !tree) {
       this.flash.position.set(e.x, 3, e.z);
       this.flash.intensity = 45;
     }
   }
   render(s: Simulation, alpha: number, dt: number, overview = false) {
     this.time += dt;
+    for (let i = this.pickupEffects.length - 1; i >= 0; i--) {
+      const effect = this.pickupEffects[i];
+      effect.age += dt;
+      const progress = effect.age / 0.8;
+      if (progress >= 1) {
+        this.scene.remove(effect.group); disposeOwned(effect.group);
+        this.pickupEffects.splice(i, 1); continue;
+      }
+      const [ring, glow] = effect.group.children as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
+      ring.scale.setScalar(1 + progress * 3);
+      ring.material.opacity = 0.85 * (1 - progress) ** 2;
+      const tank = s.tanks.find((t) => t.id === effect.tankId && t.alive);
+      glow.visible = !!tank;
+      if (tank) {
+        const pos = tank.body.translation();
+        glow.position.set(
+          THREE.MathUtils.lerp(tank.previous.x, pos.x, alpha) - effect.group.position.x,
+          1.1,
+          THREE.MathUtils.lerp(tank.previous.z, pos.z, alpha) - effect.group.position.z,
+        );
+        glow.scale.set(1.65, 1.25, 1.9).multiplyScalar(VEHICLES[tank.kind].scale * (1 + progress * 0.15));
+        glow.material.opacity = 0.2 * (1 - progress) ** 2;
+      }
+    }
+    this.tracks.update(s, alpha);
     const p = s.human.alive ? s.human.body.translation() : s.human.previous;
     // Follow the same interpolated pose as the tank, with no edge clamp or trailing lag.
     this.follow.set(
@@ -643,13 +714,25 @@ export class Presentation {
       g.visible = t.alive;
       const bar = this.bars.get(t.id)!;
       bar.visible = t.alive;
-      if (!t.alive) continue;
+      if (!t.alive) {
+        this.hitUntil.delete(t.id);
+        continue;
+      }
       const pos = t.body.translation();
       g.position.set(
         THREE.MathUtils.lerp(t.previous.x, pos.x, alpha),
         pos.y - 0.4,
         THREE.MathUtils.lerp(t.previous.z, pos.z, alpha),
       );
+      const hitRemaining = Math.max(0, (this.hitUntil.get(t.id) ?? 0) - this.time);
+      const hitFade = hitRemaining / 0.28;
+      const hitAge = 0.28 - hitRemaining;
+      // Render-only recoil: physics, steering and the camera keep their true pose.
+      g.position.x += Math.cos(hitAge * 70) * 0.12 * hitFade;
+      g.position.z += Math.sin(hitAge * 55) * 0.09 * hitFade;
+      g.rotation.x = Math.sin(hitAge * 60) * 0.035 * hitFade;
+      g.rotation.z = Math.cos(hitAge * 65) * 0.045 * hitFade;
+      if (hitRemaining === 0) this.hitUntil.delete(t.id);
       g.userData.hull.rotation.y = t.heading;
       g.userData.turret.rotation.y = t.aim;
       g.userData.barrel.position.z = -t.recoil * 0.2;
@@ -659,15 +742,11 @@ export class Presentation {
       g.scale.setScalar(VEHICLES[t.kind].scale);
       bar.position.set(g.position.x, t.human ? 3.2 : 2.5, g.position.z);
       bar.quaternion.copy(this.camera.quaternion);
-      bar.userData.fg.scale.x = t.hp / VEHICLES[t.kind].health;
-      bar.userData.ammo.scale.x = 1 - t.cooldown / WEAPONS[t.weapon].interval;
-      bar.userData.fg.material.color.set(
-        t.protection > 0
-          ? 0xffffff
-          : t.shield > 0
-            ? 0x78d9ff
-            : TEAM_COLORS[t.team],
-      );
+      const health = healthBarState(t.hp, VEHICLES[t.kind].health, t.team);
+      bar.userData.fg.scale.x = health.ratio;
+      bar.userData.fg.visible = health.ratio > 0;
+      bar.userData.ammo.scale.x = Math.max(0, 1 - t.cooldown / weaponInterval(t));
+      bar.userData.fg.material.color.setHex(health.color);
     }
     for (const c of s.covers) {
       let g = this.coverMeshes.get(c.id);
@@ -769,7 +848,7 @@ export class Presentation {
       let g = this.mineMeshes.get(m.id);
       if (!g) {
         g = new THREE.Group();
-        put(g, cylinder(0.5, 0.17, 0x384f47), 0, 0.12, 0);
+        put(g, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
         put(g, cylinder(0.17, 0.07, TEAM_COLORS[m.team]), 0, 0.24, 0);
         g.position.set(m.x, 0, m.z);
         this.mineMeshes.set(m.id, g);
@@ -784,17 +863,17 @@ export class Presentation {
     for (let i = 0; i < this.shotMesh.count; i++) {
       const shot = s.shots[i],
         length = shot.weapon === "rocket" ? 3 : 2.25;
-      this.dummy.position.set(shot.x, 1, shot.z);
+      this.dummy.position.set(shot.x, shot.y ?? 1, shot.z);
       this.dummy.rotation.set(0, Math.atan2(shot.vx, shot.vz), 0);
       this.dummy.scale.set(1.15, 1.15, length + 0.2);
       this.dummy.updateMatrix();
       this.shotOutline.setMatrixAt(i, this.dummy.matrix);
-      this.dummy.position.y = 1.105;
+      this.dummy.position.y = (shot.y ?? 1) + 0.105;
       this.dummy.scale.set(1, 1, length);
       this.dummy.updateMatrix();
       this.shotMesh.setMatrixAt(i, this.dummy.matrix);
       this.shotMesh.setColorAt(i, this.debrisColor.set(TEAM_COLORS[shot.team]));
-      this.dummy.position.y = 1.21;
+      this.dummy.position.y = (shot.y ?? 1) + 0.21;
       this.dummy.scale.set(0.43, 0.43, length * 0.72);
       this.dummy.updateMatrix();
       this.shotCore.setMatrixAt(i, this.dummy.matrix);
@@ -821,6 +900,12 @@ export class Presentation {
       this.dummy.position.set(q.x, Math.max(0.1, q.y), q.z);
       this.dummy.rotation.set(0, this.time, 0);
       this.dummy.scale.setScalar((q.size * q.life) / q.max);
+      if (q.shape) {
+        this.dummy.rotation.set(this.time * 5 + i, this.time * 3 + i, this.time * 4);
+        this.dummy.scale.x *= q.shape === "leaf" ? 1.5 : 0.4;
+        this.dummy.scale.y *= q.shape === "leaf" ? 0.25 : 2.4;
+        this.dummy.scale.z *= q.shape === "leaf" ? 0.8 : 0.4;
+      }
       this.dummy.updateMatrix();
       this.particlesMesh.setMatrixAt(i, this.dummy.matrix);
       this.particlesMesh.setColorAt(i, q.color);

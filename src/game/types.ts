@@ -1,9 +1,10 @@
+import type { BotPersonality } from "./bot-personalities";
 import type RAPIER from "@dimforge/rapier3d-compat";
 export type Team = 0 | 1;
 export type VehicleKind = "scout" | "balanced" | "heavy";
-export type Weapon = "standard" | "rapid" | "spread" | "rocket" | "ricochet";
+export type Weapon = "standard" | "spread" | "rocket";
 export type PickupKind =
-  Exclude<Weapon, "standard"> | "shield" | "speed" | "repair";
+  Exclude<Weapon, "standard"> | "rapid" | "ricochet" | "shield" | "speed" | "repair";
 export interface Vec2 {
   x: number;
   z: number;
@@ -25,6 +26,7 @@ export const idleCommand = (): VehicleCommand => ({
 });
 export interface Tank {
   id: number;
+  name: string;
   team: Team;
   human: boolean;
   kind: VehicleKind;
@@ -37,6 +39,9 @@ export interface Tank {
   weapon: Weapon;
   weaponTime: number;
   shield: number;
+  shieldPoints: number;
+  rapid: number;
+  ricochet: number;
   speed: number;
   cooldown: number;
   mineCooldown: number;
@@ -50,7 +55,9 @@ export interface Tank {
   brain: Brain;
 }
 export interface Brain {
-  preference: "rusher" | "cautious" | "hunter";
+  personality: BotPersonality;
+  ultraAggressive: boolean;
+  lastSeen: Vec2;
   decision: number;
   target: number;
   memory: number;
@@ -90,6 +97,7 @@ export interface Cover extends Vec2 {
   color: number;
 }
 export interface Shot extends Vec2 {
+  y?: number; // Render height at the muzzle; combat remains on the arena plane.
   id: number;
   owner: number;
   team: Team;
@@ -127,6 +135,8 @@ export interface Fragment {
   team?: Team;
 }
 export type SimEvent = {
+  coverKind?: CoverKind;
+  height?: number;
   type:
     | "shot"
     | "impact"

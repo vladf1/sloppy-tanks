@@ -39,9 +39,9 @@ Choose Skipper (80 HP), Bruiser (100 HP), or Big Rig (140 HP). Standard shells d
 
 Rounds last up to five minutes or end at 50 team kills. A timed tie enters next-kill overtime. Death launches a cosmetic physical wreck and gives a three-second respawn window with vehicle selection. A respawn has two seconds of protection, cancelled by firing. Spawn selection considers enemy distance, line of sight and friendly congestion.
 
-Pickups are collected by driving through them. Rapid fire, spread, breaching rockets and enhanced ricochet replace the current weapon for 14 seconds. Shield and speed refresh rather than stack; repair restores up to 65 HP. Mines are independent of weapon pickups. Allies do not take damage or block projectiles. Self-inflicted explosions can kill the owner without awarding a point. Drum and mine chains preserve the initiating damage owner.
+Pickups are collected by driving through them. Spread and breaching rockets replace the current weapon for 14 seconds. Rapid fire halves reload time; ricochet doubles damage and adds two bounces. These upgrades last 12 seconds and combine with each other and special weapons. Speed adds 50% for 12 seconds. Shield absorbs 120 damage (three standard shells) or expires after 15 seconds; excess damage reaches the hull. Repair fully heals. Repeated upgrades refresh their timer or shield capacity without multiplying their strength. Mines are independent of weapon pickups. Allies do not take damage or block projectiles. Self-inflicted explosions can kill the owner without awarding a point. Drum and mine chains preserve the initiating damage owner.
 
-The current pacing incorporates play feedback: standard shell speed is 24 world units/second, balanced movement is 6.5 units/second, and standard firing interval is 0.85 seconds. **There is no camera shake.** Impact feedback comes from recoil, sparks, fragments, light and sound.
+The current pacing keeps standard shell speed at 21.696 world units/second and bot weapon interval at 0.85 seconds. The human fires 20% faster (about 0.71 seconds per standard shot); the same advantage applies to special weapons and rapid-fire upgrades. Bots also retain their extra aiming/fire delays. Balanced movement is about 8.95 units/second, adapted from V-Tanks as described below. **There is no camera shake.** Impact feedback comes from recoil, sparks, fragments, light and sound. Surviving a hull hit gives the tank a brief 0.28-second visual jolt, a gold/white spark burst and clear health loss in the overhead bar. This does not move the physics body or shake the camera; fully shield-absorbed hits do not trigger hull-damage feedback.
 
 ## Destruction and navigation
 
@@ -64,7 +64,7 @@ The 48 × 48 navigation grid has conservative clearance for vehicles and cardina
 | `src/game/controls.ts` / `audio.ts` / `ui.ts` | Input, spatial sound, minimal menus and HUD                     |
 | `src/main.ts`                                 | Bounded fixed-step loop, system wiring, development diagnostics |
 
-Physics runs at 60 Hz with at most five catch-up steps. Dynamic live tanks lock roll and pitch, using acceleration-limited impulses that preserve external knockback. Death unlocks rotation and retains momentum. Projectiles use swept Rapier rays; damage is never inferred from rendered meshes. Human and bot controllers produce the same `VehicleCommand`. Stable IDs, a seed and a read-only snapshot provide a future command/snapshot boundary; networking and replay synchronization are not implemented.
+Physics runs at 60 Hz with at most five catch-up steps. Dynamic live tanks lock roll and pitch, using acceleration-limited impulses that preserve external knockback. Death unlocks rotation and retains momentum. Projectiles use swept Rapier queries. Tank hits use a hull-sized combat box with 0.18 m shell allowance and account for tank translation during the physics tick; model-derived tank-to-tank contact boxes use the unpadded hull footprint, while compact colliders remain for cover and ground. Predictive contacts account for boosted closing speeds to prevent initial impact overlap. Cover still uses its physical collider. Combat dimensions are calculated directly from each rendered hull and its tracks, including model scaling, and cached once per chassis. Regression tests check hits and misses immediately around all four model-derived boundaries. Human and bot controllers produce the same `VehicleCommand`. Stable IDs, a seed and a read-only snapshot provide a future command/snapshot boundary; networking and replay synchronization are not implemented.
 
 Static authored mesh parts are batched by material. Projectiles, physical debris visuals, and short-lived visual particles are instanced. Physical fragments are capped at 80; visual particles at 1,200. Temporary merged geometries and per-entity resources are disposed when removed or reset. One directional sun casts shadows; the brief explosion light does not.
 
@@ -99,7 +99,7 @@ Tank silhouettes now follow the supplied examples: tall cast or angular turrets,
 
 ## Movement, breakup and quick selection
 
-Clicking a vehicle card starts immediately. The selector displays whole-number road speeds: Skipper 35 km/h, Bruiser 28 km/h, Big Rig 23 km/h. These are canonical tuning values converted to metres/second internally, approximately 20% faster than the preceding build.
+Clicking a vehicle card starts immediately. The selector displays rounded road speeds: Skipper 35 km/h, Bruiser 29 km/h, Big Rig 22 km/h. Simulation uses the precise speeds below.
 
 Destroyed tanks separate into actual hull and turret models. In 40% of breakups the barrel detaches too; otherwise it stays on the spinning turret. Planned landing separation is roughly 14–28 world metres, constrained by arena and visible-view margins. Occasional high launches rise 11–15 metres above their starting height. Physical collisions can shorten or redirect a throw. Parts land before the normal three-second respawn, then clear shortly afterwards, within the shared 80-piece cap. The compact respawn strip leaves the effect visible. Pieces remain cosmetic and cannot damage or obstruct living tanks.
 
@@ -108,3 +108,37 @@ Destroyed tanks separate into actual hull and turret models. In 40% of breakups 
 Play at https://fridman.me/sloppy-tanks/. Every push to `main` runs the tests and production build in GitHub Actions, then deploys `dist/` to GitHub Pages after they succeed. You can also run the workflow manually from the Actions tab.
 
 The Vite base path is `/sloppy-tanks/`. GitHub Pages inherits `fridman.me` from the account site.
+
+
+## V-Tanks movement, upgrades and tracks
+
+Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-tanks` revision `570bf8dd46a48c0761a4faccafa40197a821267a`. Its balanced tank travels at 184 source units/second and its standard shell at 535. Scaling that ratio to our 19.2 m/s shell and adding the requested 20% base-speed increase gives 7.924 m/s; light and heavy use its 1.24 and 0.76 class multipliers (9.826 and 6.022 m/s). A further shared 13% speed increase brings light/balanced/heavy to 11.103 / 8.954 / 6.805 m/s and standard/spread/rocket projectiles to 21.696 / 19.888 / 15.368 m/s. Acceleration/braking is 100 m/s² and hull rotation is capped at 9 radians/second. This adapts the dodge timing and responsive handling to our 3D arena; screen-space speed still depends on zoom.
+
+Opposing shells intercept continuously, including between simulation ticks and after ricochets. Allied shells pass through each other. The earliest wall, tank, expiry or shell contact wins; thin cover blocks interception. Both shells disappear with a small blast that deals one standard 40-damage hit to nearby tanks on either team, credited to the opposing shell's shooter. Ordinary blast radius is 3 m; intercepted rockets use 5.3 m. This blast does not damage cover or trigger mines.
+
+All moving tanks leave paired tread impressions following their hull heading. Marks are distance-spaced, fade progressively from 4 to 18 seconds, and use one instanced draw call capped at 8,192 treads. A full buffer skips new impressions until the oldest pair has completely faded; visible marks are never overwritten abruptly. Tracks freeze during pause, clear with a new round, and are cosmetic. Camera shake remains absent.
+
+
+## Bot personalities
+
+Adapted from the local V-Tanks enemy profiles:
+
+- **Scout:** fast approach, close fighting range and loose aim.
+- **Guard:** holds medium range, retreats when crowded and strafes across firing lanes.
+- **Sniper:** moves into a long firing lane, stops to aim, and retreats from close threats.
+- **Heavy:** slow advance with a deliberate firing rhythm.
+- **Minelayer:** closes in and deliberately drops mines near opponents.
+- **Support:** escorts nearby teammates and fights from farther back.
+- **Artillery:** takes a distant position and fires slow breaching rockets; special pickups temporarily override its normal rockets.
+
+Every tenth bot slot is an aggressive **Hunter** variant (one of eleven bots in a normal round). Hunters pursue through cover using navigation, close to short range and turn faster, but still need line of sight to fire. Personality reloads retain a floor that preserves the human's firing-rate advantage under matching weapon/upgrades. Roles persist through respawn and appear on both sides of larger rosters; ordinary 6v6 has sniper and artillery on opposite sides. All roles use the existing health, damage, pickup and mine systems. Support is an escort behavior and artillery uses existing rockets; V-Tanks' damage-transfer ability and delayed mortar strikes are not ported.
+
+Bots have persistent names such as Iron Jack, Sidewinder and Nitro in the kill feed. Their names survive respawn; the overhead display uses team markers and health/reload bars. The bottom-right controls show drive, aim/fire and zoom. Escape still pauses.
+
+Hit registration follows the visible hull and tracks, including the heavy tank’s longer body. It does not require the shell centerline to pass through the smaller movement collider. Spawn protection and depleted/active shields continue to determine whether a registered hit actually removes hull health.
+
+### Temporary playtest controls and visual feedback
+
+Pause to adjust tank and projectile base speeds independently from 50–200%; 100% is the checked-in speed after the shared 13% increase. The settings persist locally and apply immediately. Mines can be detonated with direct shell hits, even while arming; nearby mines chain and the shooter receives kill credit. All spread pellets originate at the barrel muzzle, with close cover checked before spawning.
+
+Pickup crates carry high-contrast pictograms on every face and emit sparks, a ring and a brief tank glow when collected. Pines use layered boughs, bark and roots, with green foliage and wood splinters on destruction. The 84-name bot pool is shuffled at round start and names persist through respawn.
