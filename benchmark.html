@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <link rel="icon" href="/favicon.svg" />
+    <link rel="icon" href="./favicon.svg" />
     <title>Sloppy Tanks · Performance notebook</title>
     <style>
       * {
@@ -163,7 +163,7 @@
           <h1>Small tanks. Real numbers.</h1>
           <div id="hardware" class="muted">Loading measurements…</div>
         </div>
-        <a href="/">BACK TO THE YARD ↗</a>
+        <a href="./">BACK TO THE YARD ↗</a>
       </header>
       <p class="note">
         <b>Previous build measurements.</b> The timing and longevity results
@@ -206,7 +206,7 @@
         `<div class="card"><small>${name}</small><b class="${good ? "good" : "warn"}">${value}</b><span>${unit}</span></div>`;
       async function load() {
         const r = await fetch(
-          "/artifacts/benchmark-results.json?" + Date.now(),
+          "./artifacts/benchmark-results.json?" + Date.now(),
         ).then((r) => r.json());
         document.querySelector("#hardware").textContent =
           (r.hardware ?? "") + (r.chrome ? " · Chrome " + r.chrome : "");
@@ -248,7 +248,7 @@
         document.querySelector("#results").innerHTML = html;
         document.querySelector("#raw").textContent = JSON.stringify(r, null, 2);
         try {
-          const s = await fetch("/artifacts/simulation-results.json").then(
+          const s = await fetch("./artifacts/simulation-results.json").then(
             (r) => r.json(),
           );
           document.querySelector("#sim").innerHTML =

@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal (normally http://127.0.0.1:5173). The performance notebook is at `/benchmark.html`.
+Open the Vite URL printed in the terminal (normally http://127.0.0.1:5173/sloppy-tanks/). The performance notebook is at `/sloppy-tanks/benchmark.html`.
 
 ```sh
 npm test           # focused simulation regression tests
@@ -98,3 +98,9 @@ Tank silhouettes now follow the supplied examples: tall cast or angular turrets,
 Clicking a vehicle card starts immediately. The selector displays whole-number road speeds: Skipper 35 km/h, Bruiser 28 km/h, Big Rig 23 km/h. These are canonical tuning values converted to metres/second internally, approximately 20% faster than the preceding build.
 
 Destroyed tanks separate into actual hull and turret models. In 40% of breakups the barrel detaches too; otherwise it stays on the spinning turret. Planned landing separation is roughly 14–28 world metres, constrained by arena and visible-view margins. Occasional high launches rise 11–15 metres above their starting height. Physical collisions can shorten or redirect a throw. Parts land before the normal three-second respawn, then clear shortly afterwards, within the shared 80-piece cap. The compact respawn strip leaves the effect visible. Pieces remain cosmetic and cannot damage or obstruct living tanks.
+
+## Publishing
+
+Play at https://fridman.me/sloppy-tanks/. Every push to `main` runs the tests and production build in GitHub Actions, then deploys `dist/` to GitHub Pages after they succeed. You can also run the workflow manually from the Actions tab.
+
+The Vite base path is `/sloppy-tanks/`. GitHub Pages inherits `fridman.me` from the account site.
