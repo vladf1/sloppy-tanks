@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build && node scripts/copy-artifacts.mjs",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
-    "generate:textures": "node --import tsx scripts/generate-textures.ts"
+    "generate:textures": "node --import tsx scripts/generate-textures.ts",
+    "generate:audio": "node --import tsx scripts/generate-audio.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",

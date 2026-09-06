@@ -31,6 +31,12 @@ The September 5 rendering pass combines compatible model colors into vertex-colo
 
 AI-generated grass and dirt are separate: runtime WebPs are in `public/textures/ground/`, with original PNGs and prompts in `assets/texture-sources/`. The offline script does not overwrite those images.
 
+## Saved sounds
+
+The browser loads four shared MP3 files from `public/audio/`: `shot.mp3`, `explosion.mp3`, `impact.mp3`, and `pickup.mp3`. Howler handles playback, volume and stereo placement; the browser does not synthesize sounds. These are mono MP3 effects encoded offline from 22,050 Hz PCM using FFmpeg/libmp3lame at VBR quality 2, totaling about 11 KB.
+
+With FFmpeg installed (`brew install ffmpeg` on macOS), run `npm run generate:audio` offline when changing the sound design in `scripts/generate-audio.ts`, then commit the updated MP3s. Seeded noise makes the output reproducible. Local development and GitHub Pages builds use the saved files directly, without regenerating them.
+
 ## Play
 
 - **WASD**: screen-relative movement.
