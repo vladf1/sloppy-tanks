@@ -38,7 +38,8 @@ export const VEHICLES: Record<
     health: 80,
     ...referenceSpeed(1.24),
     mass: 1,
-    scale: 0.82,
+    // Comparable game sizes; Bruiser anchors the fleet at 1.95 units wide.
+    scale: (3.59 / 2.3) * (1.95 / 3.66),
   },
   balanced: {
     name: "BRUISER",
@@ -46,7 +47,7 @@ export const VEHICLES: Record<
     health: 100,
     ...referenceSpeed(1),
     mass: 1.45,
-    scale: 1,
+    scale: 1.95 / 2.42,
   },
   heavy: {
     name: "BIG RIG",
@@ -54,7 +55,7 @@ export const VEHICLES: Record<
     health: 140,
     ...referenceSpeed(0.76),
     mass: 2.5,
-    scale: 1.15,
+    scale: (3.5 / 2.5) * (1.95 / 3.66),
   },
 };
 export const WEAPONS: Record<
@@ -109,7 +110,7 @@ export const PICKUPS: Record<
 export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 export const GROUP = {
-  tank: 0x00010006, // Compact collider touches cover and ground only.
+  tank: 0x00010006, // Model-sized hull touches cover and ground only.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   cover: 0x0002000b,
   ground: 0x00040009,

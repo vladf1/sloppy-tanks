@@ -21,8 +21,8 @@ export function tankPreview(kind: VehicleKind, team: Team): string {
     rim.position.set(4, 3, -4);
     scene.add(rim);
     const camera = new THREE.OrthographicCamera(-3.5, 3.5, 2.1875, -2.1875, 0.1, 40);
-    camera.position.set(6, 5, 8);
-    camera.lookAt(0, 0.65, 0.35);
+    camera.position.set(8, 6, 6);
+    camera.lookAt(0, 0.6, 0.65);
     try {
       for (const color of [0, 1] as Team[]) {
         for (const vehicle of Object.keys(VEHICLES) as VehicleKind[]) {

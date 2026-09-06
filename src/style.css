@@ -346,13 +346,7 @@ h2 {
   font-size: 10px;
   color: #c0dbee;
 }
-.number {
-  position: absolute;
-  right: 15px;
-  top: 15px;
-  font-size: 11px;
-  opacity: 0.5;
-}
+
 .vehicle p {
   font-size: 12px;
   line-height: 1.45;
@@ -560,7 +554,6 @@ h2 {
 .respawn .vehicle p,
 .respawn .spec,
 .respawn .vehicle small,
-.respawn .number,
 .respawn > p {
   display: none;
 }

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { sidingBox, shingleRoof } from "./house-surfaces";
+import { applyTankSurface } from "./tank-surfaces";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { TEAM_COLORS, VEHICLES } from "./data";
 import type { VehicleKind, Team, Cover, WreckPart } from "./types";
@@ -109,6 +110,15 @@ function armor(w: number, h: number, d: number, color: number, taper = 0.76) {
         2,
       ),
     );
+    // Planar UVs per face keep armor texture visible on tops, cheeks and sides.
+    const positions = geo.getAttribute("position"), normals = geo.getAttribute("normal");
+    const uv = geo.getAttribute("uv");
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
+      const nx = Math.abs(normals.getX(i)), ny = Math.abs(normals.getY(i)), nz = Math.abs(normals.getZ(i));
+      uv.setXY(i, (ny >= nx && ny >= nz ? x : nx > nz ? z : x) + 0.5,
+        (ny >= nx && ny >= nz ? z : y) + 0.5);
+    }
     armorGeometry.set(taper, geo);
   }
   const mesh = new THREE.Mesh(geo, material(color, 0.18, 0.58));
@@ -135,158 +145,164 @@ function trackBelt(color: number) {
   return mesh;
 }
 
-const scoutTurretGeometry = new THREE.CylinderGeometry(0.54, 0.66, 0.72, 12);
 export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
-  const root = new THREE.Group(),
-    hull = new THREE.Group(),
-    turret = new THREE.Group();
+  const root = new THREE.Group(), hull = new THREE.Group(), turret = new THREE.Group();
+  const scout = kind === "scout", heavy = kind === "heavy";
   const color = wreck ? 0x3c4650 : TEAM_COLORS[team];
-  const dark = 0x132c3f,
-    steel = wreck ? 0x37424c : 0x5c6b7c;
-  const shade = wreck
-    ? dark
-    : new THREE.Color(color).multiplyScalar(0.65).getHex();
-  const heavy = kind === "heavy",
-    scout = kind === "scout";
-  const width = heavy ? 2.14 : scout ? 1.8 : 2.02;
+  const dark = 0x13232c, steel = wreck ? 0x37424c : 0x637581;
+  const shade = wreck ? dark : new THREE.Color(color).multiplyScalar(0.62).getHex();
+  // Dimensions include the tracks and skirts, not just the center armor slab.
+  // Hull length/overall width: compact scout ~1.94, Abrams/Type 99 ~2.17.
+  const overallWidth = scout ? 2.3 : heavy ? 2.5 : 2.42;
+  const width = overallWidth - 0.42;
+  const length = scout ? 4.415 : heavy ? 5.425 : 5.244;
+  const deck = scout ? 0.58 : heavy ? 0.67 : 0.65;
   root.add(hull);
-  if (heavy) hull.scale.z = 1.18;
-  // Broad shoulder plates and a pronounced sloping nose, as in the reference silhouettes.
-  put(hull, armor(width, 0.32, 2.75, shade, 0.94), 0, 0.22, 0);
-  put(hull, armor(width, 0.56, 2.8, color, 0.77), 0, 0.51, 0);
+  put(hull, armor(width, 0.32, length, shade, 0.94), 0, 0.22, 0);
+  put(hull, armor(width, deck - 0.2, length, color, scout ? 0.72 : 0.86), 0, deck / 2 + 0.16, 0);
   const tracks: THREE.Mesh[] = [];
   for (const side of [-1, 1]) {
+    const trackX = side * (overallWidth / 2 - 0.23);
     const belt = trackBelt(dark);
-    belt.scale.set(1, 1.08, 1.19);
-    put(hull, belt, side * 1.0, 0.17, 0);
-    // Keep the running gear a clean dark silhouette, with restrained tread definition.
-    for (let j = 0; j < 10; j++) {
-      const tread = box(0.54, 0.025, 0.065, 0x294152, 0.005);
-      put(hull, tread, side * 1, 0.53, -1.2 + j * 0.25);
+    belt.scale.set(0.7, 1.12, length / 2.46);
+    put(hull, belt, trackX, 0.19, 0);
+    const wheels = scout || heavy ? 6 : 7;
+    for (let j = 0; j < wheels; j++) {
+      const z = -length * 0.37 + j * length * 0.74 / (wheels - 1);
+      const wheel = cylinder(scout ? 0.3 : 0.34, 0.055, shade, 10);
+      wheel.rotation.z = Math.PI / 2;
+      put(hull, wheel, trackX + side * 0.1925, 0.18, z);
+      const hub = cylinder(0.1, 0.04, steel, 8);
+      hub.rotation.z = Math.PI / 2;
+      put(hull, hub, trackX + side * 0.205, 0.18, z);
+    }
+    for (let j = 0; j < 18; j++) {
+      const tread = box(0.42, 0.03, 0.075, steel, 0);
+      put(hull, tread, trackX, 0.565, -length * 0.44 + j * length * 0.052);
       tracks.push(tread);
     }
-    put(hull, box(0.51, 0.12, 2.65, color, 0.025), side * 0.98, 0.64, 0);
-    if (!scout) {
-      for (let j = 0; j < 3; j++)
-        put(
-          hull,
-          box(0.35, 0.04, 0.48, steel, 0.008),
-          side * 0.98,
-          0.724,
-          -0.72 + j * 0.67,
-        );
+    put(hull, box(0.46, 0.07, length, color, 0), trackX, deck, 0);
+    {
+      // Booker: short modular skirts. Abrams: long panels. Type 99: heavy blocks.
+      const panels = scout ? 4 : heavy ? 5 : 3;
+      for (let j = 0; j < panels; j++) {
+        const skirt = box(heavy ? 0.12 : 0.07, heavy ? 0.3 : 0.26, length / panels - 0.04,
+          heavy && j % 2 ? shade : color, 0);
+        put(hull, skirt, trackX + side * (heavy ? 0.17 : 0.19), deck - 0.17, -length / 2 + (j + 0.5) * length / panels);
+      }
     }
-    put(hull, box(0.16, 0.13, 0.12, steel, 0.015), side * 0.66, 0.53, 1.31);
-    put(hull, box(0.17, 0.11, 0.08, 0x91333b, 0.01), side * 0.64, 0.43, -1.4);
+    put(hull, box(0.16, 0.11, 0.1, 0xd9e6df, 0), side * 0.65, deck - 0.1, length / 2 - 0.05);
   }
-  put(hull, box(width + 0.34, 0.14, 0.23, color, 0.015), 0, 0.47, 1.34);
-  for (let i = 0; i < (scout ? 3 : 4); i++)
-    put(
-      hull,
-      box(0.15, 0.035, 0.42, steel, 0.005),
-      -0.4 + i * 0.24,
-      0.77,
-      -0.94,
-    );
+  // Exposed rear engine deck gives the hull a direction even with the turret turned.
+  for (let i = 0; i < 7; i++)
+    put(hull, box(width * 0.53, 0.025, 0.05, dark, 0), 0, deck + 0.025, -length / 2 + 0.12 + i * 0.075);
+  put(hull, box(0.32, 0.045, 0.3, steel, 0), 0, deck + 0.02, length / 2 - 0.45);
+  if (heavy) {
+    for (const side of [-1, 1]) for (let j = 0; j < 3; j++) {
+      const tile = box(0.31, 0.1, 0.24, shade, 0);
+      tile.rotation.x = -0.18;
+      put(hull, tile, side * (0.24 + j * 0.32), deck - 0.06, length / 2 - 0.3);
+    }
+  }
 
-  put(turret, cylinder(scout ? 0.56 : 0.73, 0.1, steel, 20), 0, 0.79, -0.15);
+  put(turret, cylinder(scout ? 0.59 : 0.76, 0.1, dark, 16), 0, deck + 0.055, -0.12);
   let roof: number;
   if (scout) {
-    // A simple tall cast turret gives the light tank its own recognizable outline.
-    const cast = new THREE.Mesh(scoutTurretGeometry, material(color));
-    cast.scale.z = 1.12;
-    cast.castShadow = cast.receiveShadow = true;
-    put(turret, cast, 0, 1.15, -0.13);
-    put(turret, armor(0.96, 0.45, 0.6, color, 0.83), 0, 1.21, -0.57);
-    roof = 1.52;
-  } else {
-    // Large angular turrets, wide rear shoulders and a thick mantlet carry the heavier classes.
-    put(
-      turret,
-      armor(
-        heavy ? 2.03 : 1.78,
-        0.76,
-        heavy ? 1.96 : 1.9,
-        color,
-        heavy ? 0.62 : 0.78,
-      ),
-      0,
-      1.19,
-      -0.17,
-    );
-    roof = 1.58;
+    // M10 Booker-inspired compact welded turret, smooth armor and enclosed bustle.
+    put(turret, armor(1.66, 0.43, 2.03, color, 0.8), 0, deck + 0.28, -0.12);
     for (const side of [-1, 1]) {
-      const panel = box(0.055, 0.28, 0.63, steel, 0.01);
-      panel.rotation.z = side * -0.3;
-      put(turret, panel, side * (heavy ? 0.91 : 0.8), 1.18, -0.26);
-      for (let j = 0; j < 2; j++)
-        put(
-          turret,
-          box(0.24, 0.035, 0.43, steel, 0.005),
-          side * (0.28 + j * 0.25),
-          roof + 0.025,
-          -0.61,
-        );
+      const cheek = armor(0.5, 0.33, 0.72, shade, 0.67);
+      cheek.rotation.y = side * -0.16;
+      put(turret, cheek, side * 0.56, deck + 0.27, 0.48);
+      put(turret, box(0.18, 0.27, 0.67, color, 0), side * 0.74, deck + 0.23, -0.64);
+    }
+    roof = deck + 0.5;
+    put(turret, box(1.22, 0.3, 0.45, shade, 0), 0, deck + 0.22, -1.12);
+    put(turret, box(0.28, 0.19, 0.27, steel, 0), 0.35, roof + 0.095, 0.11);
+    put(turret, box(0.2, 0.08, 0.025, 0x8adeec, 0), 0.35, roof + 0.11, 0.26);
+  } else if (!heavy) {
+    // Abrams: broad trapezoidal cheeks and a long, boxy bustle behind the ring.
+    put(turret, armor(1.97, 0.46, 2.65, color, 0.83), 0, deck + 0.31, -0.3);
+    for (const side of [-1, 1]) {
+      const cheek = armor(0.76, 0.4, 1.08, color, 0.66);
+      cheek.rotation.y = side * -0.2;
+      put(turret, cheek, side * 0.58, deck + 0.3, 0.58);
+    }
+    roof = deck + 0.56;
+    put(turret, box(1.64, 0.36, 0.65, shade, 0), 0, deck + 0.27, -1.58);
+    // Open rear stowage basket is a large, recognizable silhouette feature.
+    for (const y of [deck + 0.18, deck + 0.49]) {
+      put(turret, box(1.92, 0.055, 0.055, steel, 0), 0, y, -1.96);
+      for (const side of [-1, 1])
+        put(turret, box(0.055, 0.055, 0.69, steel, 0), side * 0.93, y, -1.64);
+    }
+    for (const x of [-0.93, -0.46, 0, 0.46, 0.93])
+      put(turret, box(0.04, 0.31, 0.04, steel, 0), x, deck + 0.335, -1.96);
+    put(turret, cylinder(0.19, 0.25, shade, 10), 0.49, roof + 0.13, 0.14);
+    put(turret, box(0.19, 0.09, 0.08, 0x8adeec, 0), 0.49, roof + 0.2, 0.3);
+  } else {
+    // Type 99: compact center, sharply pointed twin wedges and tiled armor.
+    put(turret, armor(1.5, 0.47, 2.25, shade, 0.73), 0, deck + 0.32, -0.23);
+    roof = deck + 0.58;
+    for (const side of [-1, 1]) {
+      const wedge = armor(0.82, 0.48, 1.65, color, 0.48);
+      wedge.rotation.y = side * -0.36;
+      put(turret, wedge, side * 0.64, deck + 0.31, 0.38);
+      for (let j = 0; j < 4; j++) {
+        const tile = box(0.36, 0.1, 0.22, shade, 0);
+        tile.rotation.set(-0.28, side * -0.36, side * 0.12);
+        put(turret, tile, side * (0.36 + j * 0.17), roof - 0.06 - j * 0.07, 0.72 - j * 0.28);
+      }
+      put(turret, box(0.3, 0.38, 0.65, color, 0), side * 0.73, deck + 0.27, -1.15);
+    }
+    put(turret, box(0.34, 0.3, 0.32, steel, 0), 0.4, roof + 0.15, -0.52);
+    put(turret, box(0.19, 0.1, 0.04, 0x8adeec, 0), 0.4, roof + 0.2, -0.35);
+  }
+  for (const side of [-1, 1]) {
+    put(turret, cylinder(scout ? 0.18 : 0.21, 0.065, steel, 12), side * 0.28, roof + 0.025, -0.24);
+    for (let j = 0; j < 3; j++) {
+      const smoke = cylinder(0.055, 0.2, steel, 8);
+      smoke.rotation.x = Math.PI / 3;
+      put(turret, smoke, side * (scout ? 0.72 : 0.88), roof - 0.32, 0.06 - j * 0.15);
     }
   }
-  put(
-    turret,
-    cylinder(scout ? 0.17 : 0.2, 0.08, steel, 12),
-    -0.2,
-    roof + 0.04,
-    -0.17,
-  );
-  if (!scout)
-    put(turret, cylinder(0.17, 0.07, steel, 12), 0.19, roof + 0.035, -0.28);
-  put(turret, box(0.23, 0.045, 0.11, steel, 0.008), 0.23, roof + 0.025, 0.11);
-  const barrel = new THREE.Group(),
-    gunY = scout ? 1.08 : 1.15;
-  const tubeRadius = scout ? 0.13 : heavy ? 0.18 : 0.16;
-  const mantlet = cylinder(tubeRadius * 1.65, 0.48, steel, 12);
-  mantlet.rotation.x = Math.PI / 2;
-  put(barrel, mantlet, 0, gunY, 0.63);
-  const tube = cylinder(tubeRadius, 1.55, steel, 12);
+  // A compact roof gun and antenna distinguish equipment without expensive meshes.
+  put(turret, box(0.09, 0.18, 0.1, dark, 0), -0.28, roof + 0.16, -0.24);
+  put(turret, box(0.07, 0.07, scout ? 0.42 : 0.6, steel, 0), -0.28, roof + 0.25, -0.02);
+  put(turret, cylinder(0.018, scout ? 0.5 : 0.7, dark, 5), 0.53, roof + 0.25, -0.67);
+
+  const barrel = new THREE.Group();
+  const gunY = deck + (scout ? 0.27 : 0.31);
+  const tubeRadius = scout ? 0.062 : heavy ? 0.074 : 0.068;
+  const muzzleZ = scout ? 3.72 : heavy ? 4.44 : 3.84;
+  const tube = cylinder(tubeRadius, muzzleZ - 0.6, steel, 12);
   tube.rotation.x = Math.PI / 2;
-  put(barrel, tube, 0, gunY, 1.5);
-  if (!scout) {
-    put(
-      barrel,
-      box(tubeRadius * 2.6, tubeRadius * 2.3, 0.45, steel, 0.025),
-      0,
-      gunY,
-      2.25,
-    );
-    for (const side of [-1, 1])
-      for (let j = 0; j < 3; j++)
-        put(
-          barrel,
-          box(0.012, 0.17, 0.055, dark, 0.002),
-          side * tubeRadius * 1.31,
-          gunY,
-          2.1 + j * 0.12,
-        );
+  put(barrel, tube, 0, gunY, (muzzleZ + 0.6) / 2);
+  for (const [z, radius, length] of [[0.67, tubeRadius * 2.1, 0.42], [muzzleZ * 0.58, tubeRadius * 1.5, 0.36]]) {
+    const sleeve = cylinder(radius, length, shade, 12);
+    sleeve.rotation.x = Math.PI / 2;
+    put(barrel, sleeve, 0, gunY, z);
   }
-  const bore = cylinder(tubeRadius * 0.72, 0.008, dark, 12);
+  if (scout) {
+    // Squared muzzle brake is visually distinct from the two smoothbore guns.
+    put(barrel, box(0.22, 0.17, 0.27, steel, 0), 0, gunY, muzzleZ - 0.135);
+    for (const side of [-1, 1]) for (const z of [muzzleZ - 0.2, muzzleZ - 0.09])
+      put(barrel, box(0.012, 0.1, 0.05, dark, 0), side * 0.111, gunY, z);
+  }
+  const bore = cylinder(tubeRadius * 0.76, 0.008, dark, 12);
   bore.rotation.x = Math.PI / 2;
-  put(barrel, bore, 0, gunY, scout ? 2.28 : 2.48);
+  put(barrel, bore, 0, gunY, muzzleZ + 0.005);
   turret.add(barrel);
   root.add(turret);
   root.scale.setScalar(VEHICLES[kind].scale);
-  // Small team symbols preserve identification without dominating the gray armor details.
   if (team === 0) {
-    const badge = box(0.18, 0.025, 0.18, 0xdce7ee, 0.005);
+    const badge = box(0.18, 0.025, 0.18, 0xdce7ee, 0);
     badge.rotation.y = Math.PI / 4;
-    put(turret, badge, -0.23, roof + 0.018, 0.22);
-  } else
-    for (const x of [-0.28, -0.15])
-      put(
-        turret,
-        box(0.06, 0.025, 0.2, 0xdce7ee, 0.005),
-        x,
-        roof + 0.018,
-        0.22,
-      );
+    put(turret, badge, 0, roof + 0.018, 0.12);
+  } else for (const x of [-0.07, 0.07])
+    put(turret, box(0.06, 0.025, 0.2, 0xdce7ee, 0), x, roof + 0.018, 0.12);
   root.userData = { hull, turret, barrel, tracks, muzzle: bore };
+  applyTankSurface(root, [color, shade, steel]);
   return root;
 }
 /** Extract actual tank assemblies and center each on its own physics pivot. */

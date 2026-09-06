@@ -3,20 +3,21 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
-/** The generated models use opaque, untextured standard materials. Bake their
- * diffuse colors into vertices while keeping each distinct lighting response. */
+/** Bake opaque paint colors into vertices; identical color/bump maps can share
+ * a batch while retaining their UVs and distinct lighting responses. */
 function vertexMaterial(source: THREE.Material) {
   if (
     !(source instanceof THREE.MeshStandardMaterial) ||
-    source.map || source.normalMap || source.roughnessMap || source.metalnessMap ||
+    source.normalMap || source.roughnessMap || source.metalnessMap ||
     source.alphaMap || source.aoMap || source.lightMap || source.emissiveMap ||
-    source.envMap || source.bumpMap || source.displacementMap ||
+    source.envMap || source.displacementMap ||
     source.transparent || source.opacity !== 1 || source.alphaTest ||
     source.vertexColors || source.wireframe ||
     source.emissive.getHex() !== 0
   ) return source;
   const key = [source.metalness, source.roughness, source.toneMapped,
-    source.side, source.flatShading, source.depthTest, source.depthWrite].join("/");
+    source.side, source.flatShading, source.depthTest, source.depthWrite,
+    source.map?.uuid, source.bumpMap?.uuid, source.bumpScale].join("/");
   let mat = coloredMaterials.get(key);
   if (!mat) {
     mat = source.clone();

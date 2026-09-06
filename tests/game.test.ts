@@ -471,6 +471,8 @@ test("expanded flanks have navigable routes from both spawn lines", async () => 
 });
 test("tank breakup varies assemblies, travels widely, lands, and clears after flight", () => {
   const variants = new Set<string>();
+  const axes = new Set<string>();
+  let highLaunches = 0;
   let highest = 0;
   for (let seed = 1; seed <= 12; seed++) {
     const s = game();
@@ -487,13 +489,22 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
     );
     variants.add(names.join("/"));
     assert.ok(pieces.length <= 3);
-    for (let i = 0; i < 180; i++) {
+    if (pieces[1].body.linvel().y ** 2 / 44 >= 20) highLaunches++;
+    assert.ok(pieces[0].body.linvel().y ** 2 / 44 <= 8.01, "hulls keep normal arcs");
+    for (const piece of pieces) {
+      const v = piece.body.angvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      assert.ok(speed >= 6.99 && speed <= 14.01);
+      axes.add(Object.entries(v).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]);
+    }
+    const landingSteps = Math.ceil(Math.max(...pieces.map(f => f.life - 1.8)) * 60) + 60;
+    for (let i = 0; i < landingSteps; i++) {
       s.world.step();
       highest = Math.max(highest, ...pieces.map((f) => f.body.translation().y));
     }
     assert.ok(
       pieces.every((f) => f.body.translation().y < 2),
-      "parts land before respawn camera moves",
+      "parts land after their ballistic flight, including high launches",
     );
     const a = pieces[0].body.translation(),
       b = pieces[1].body.translation();
@@ -503,12 +514,14 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
     );
     for (const tank of s.tanks) tank.cooldown = 100;
     const ids = new Set(pieces.map((f) => f.id));
-    for (let i = 0; i < 360; i++) s.step();
+    for (let i = 0; i < 480; i++) s.step();
     assert.ok(s.fragments.every((f) => !ids.has(f.id)));
     s.dispose();
   }
   assert.equal(variants.size, 2);
-  assert.ok(highest > 10, "some turrets take high arcs");
+  assert.ok(highest > 20, "some turrets take spectacular high arcs");
+  assert.ok(highLaunches > 0 && highLaunches < 6, "high launches are occasional");
+  assert.equal(axes.size, 3, "tumbling varies across all three axes");
 });
 
 test("bots pause between shots even when breaching; human fires faster with and without rapid upgrade", async () => {

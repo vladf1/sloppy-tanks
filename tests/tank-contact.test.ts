@@ -67,3 +67,83 @@ test("model-sized contact collider is recreated on class-changing respawn and cl
   assert.equal(s.world.colliders.len(), count);
   s.dispose();
 });
+
+test("hull proportions preserve elongated reference-style silhouettes, including tracks and skirts", () => {
+  for (const [kind, ratio] of [["scout", 1.94], ["balanced", 2.17], ["heavy", 2.17]] as const) {
+    const model = tankModel(kind, 0);
+    model.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(model.userData.hull);
+    const actual = (bounds.max.z - bounds.min.z) / (bounds.max.x - bounds.min.x);
+    assert.ok(Math.abs(actual - ratio) < 0.04, `${kind}: ${actual} versus reference ${ratio}`);
+  }
+});
+
+test("different chassis meeting at right angles cannot overlap their visible hulls", () => {
+  for (const aKind of ["scout", "balanced", "heavy"] as const)
+    for (const bKind of ["scout", "balanced", "heavy"] as const) {
+      const s = new Simulation(123);
+      for (const t of s.tanks) s.world.removeRigidBody(t.body);
+      for (const c of s.covers) s.world.removeRigidBody(c.body);
+      s.tanks = []; s.covers = [];
+      s.addTank(0, true, aKind); s.addTank(1, true, bKind);
+      const [a, b] = s.tanks;
+      let expected = 0;
+      for (const [i, t] of s.tanks.entries()) {
+        const model = tankModel(t.kind, t.team);
+        model.rotation.y = i * Math.PI / 2;
+        model.updateMatrixWorld(true);
+        const bounds = new Box3().setFromObject(model.userData.hull);
+        expected += i === 0 ? bounds.max.z : -bounds.min.z;
+        t.body.setTranslation({ x: 0, y: 0.65, z: i === 0 ? -6 : 6 }, true);
+        t.body.setRotation({ x: 0, y: Math.sin(i * Math.PI / 4), z: 0, w: Math.cos(i * Math.PI / 4) }, true);
+        t.body.lockRotations(true, true);
+      }
+      let minimum = Infinity;
+      for (let frame = 0; frame < 180; frame++) {
+        for (const [i, t] of s.tanks.entries()) {
+          const target = VEHICLES[t.kind].speed * 1.5 * (i === 0 ? 1 : -1);
+          const change = Math.max(-MOVE_ACCELERATION * STEP, Math.min(MOVE_ACCELERATION * STEP, target - t.body.linvel().z));
+          t.body.applyImpulse({ x: 0, y: 0, z: change * t.body.mass() }, true);
+        }
+        s.world.timestep = STEP; s.world.step();
+        minimum = Math.min(minimum, b.body.translation().z - a.body.translation().z);
+      }
+      assert.ok(minimum >= expected - 0.015, `${aKind}/${bKind}: ${minimum} versus ${expected}`);
+      s.dispose();
+    }
+});
+
+test("long hulls stop at walls using their visible nose and tail", () => {
+  for (const kind of ["scout", "balanced", "heavy"] as const) for (const side of [-1, 1]) {
+    const s = new Simulation(123);
+    for (const t of s.tanks) s.world.removeRigidBody(t.body);
+    for (const c of s.covers) s.world.removeRigidBody(c.body);
+    s.tanks = []; s.covers = [];
+    s.addTank(0, true, kind);
+    const t = s.tanks[0];
+    t.body.setTranslation({ x: 0, y: 0.65, z: -side * 7 }, true);
+    t.body.lockRotations(true, true);
+    s.addCover({ kind: "concrete", x: 0, z: 0, w: 20, d: 0.5, h: 3, hp: Infinity, color: 0 });
+    const model = tankModel(kind, 0); model.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(model.userData.hull);
+    const reach = side === 1 ? bounds.max.z : -bounds.min.z;
+    for (let frame = 0; frame < 180; frame++) {
+      const change = Math.max(-MOVE_ACCELERATION * STEP, Math.min(MOVE_ACCELERATION * STEP,
+        VEHICLES[kind].speed * side * 1.5 - t.body.linvel().z));
+      t.body.applyImpulse({ x: 0, y: 0, z: change * t.body.mass() }, true);
+      s.world.timestep = STEP; s.world.step();
+      assert.ok(t.body.translation().z * side + reach <= -0.25 + 0.015, `${kind}/${side} clipped wall`);
+    }
+    s.dispose();
+  }
+});
+
+test("reference MBTs use comparable widths instead of exaggerated class-size multipliers", () => {
+  const widths = (["scout", "balanced", "heavy"] as const).map(kind => {
+    const model = tankModel(kind, 0); model.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(model.userData.hull);
+    return bounds.max.x - bounds.min.x;
+  });
+  assert.ok(Math.max(...widths) / Math.min(...widths) < 1.06);
+  assert.ok(widths.every(width => width > 1.8 && width < 2));
+});

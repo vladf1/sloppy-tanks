@@ -11,9 +11,10 @@ export function breakTank(s: Simulation, tank: Tank) {
   const pieces: WreckPart[] = detached
     ? ["hull", "turret", "barrel"]
     : ["hull", "turret-barrel"];
-  const halfSeparation = s.rng.range(7, 14) * scale;
+  // Explosion travel is in world units, independent of visual model scale.
+  const halfSeparation = s.rng.range(7, 14);
   const angle = s.rng.range(-0.45, 0.45);
-  const high = s.rng.next() < 0.35;
+  const high = s.rng.next() < 0.25;
   const view = s.wreckView;
   // Only on-screen explosions use view bounds; off-screen combat stays local.
   const onScreen =
@@ -74,9 +75,13 @@ export function breakTank(s: Simulation, tank: Tank) {
       };
     const y = origin.y + (part === "hull" ? 0 : 0.75 * scale);
     const peak =
-      high && part !== "hull" ? s.rng.range(11, 15) : s.rng.range(4.5, 8);
+      high && part !== "hull" ? s.rng.range(20, 30) : s.rng.range(4.5, 8);
     const vy = Math.sqrt(44 * peak),
       flight = (vy + Math.sqrt(vy * vy + 44 * Math.max(0, y - 0.3))) / 22;
+    // Uniform directions on a sphere give cartwheels and barrel rolls as often
+    // as yaw spins, with an independent axis and spin speed for every piece.
+    const axisY = s.rng.range(-1, 1), azimuth = s.rng.range(0, Math.PI * 2);
+    const radius = Math.sqrt(1 - axisY * axisY), spin = s.rng.range(7, 14);
     const body = s.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(origin.x, y, origin.z)
@@ -86,9 +91,9 @@ export function breakTank(s: Simulation, tank: Tank) {
           (landing.z - origin.z) / flight,
         )
         .setAngvel({
-          x: s.rng.range(-5, 5),
-          y: s.rng.range(5, 10) * side,
-          z: s.rng.range(-5, 5),
+          x: radius * Math.cos(azimuth) * spin,
+          y: axisY * spin,
+          z: radius * Math.sin(azimuth) * spin,
         })
         .setCcdEnabled(true),
     );

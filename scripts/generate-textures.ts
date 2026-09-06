@@ -98,3 +98,55 @@ for (const [team, symbol] of [["blue", "◆"], ["red", "Ⅱ"]]) {
   c.fillText(symbol, 128, 64);
   await save(`teams/${team}.png`, canvas);
 }
+
+// Neutral paint wear multiplies team paint without introducing another hue.
+{
+  const size = 512, canvas = createCanvas(size, size), c = canvas.getContext("2d");
+  let state = 4817;
+  const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const image = c.createImageData(size, size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const broad = Math.sin(x / size * Math.PI * 6) * Math.cos(y / size * Math.PI * 4);
+    const value = Math.min(255, Math.round(237 + broad * 15 + (random() - 0.5) * 12));
+    const i = (y * size + x) * 4;
+    image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
+    image.data[i + 3] = 255;
+  }
+  c.putImageData(image, 0, 0);
+  // Broad rubbed paint survives mipmapping when a tank is only 40–80px wide.
+  for (let i = 0; i < 28; i++) {
+    const x = random() * size, y = random() * size;
+    const radius = 18 + random() * 52;
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+      const wash = c.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, radius);
+      wash.addColorStop(0, "#77777765"); wash.addColorStop(1, "#77777700");
+      c.fillStyle = wash; c.fillRect(x + ox - radius, y + oy - radius, radius * 2, radius * 2);
+    }
+  }
+  // Recessed plate joins and bolts give the paint readable manufactured detail.
+  c.lineJoin = "round";
+  for (const [x, y, w, h] of [[20, 22, 220, 198], [258, 22, 234, 198], [20, 238, 472, 254]]) {
+    c.strokeStyle = "#929292"; c.lineWidth = 4;
+    c.strokeRect(x, y, w, h);
+    c.strokeStyle = "#ffffff"; c.lineWidth = 2;
+    c.strokeRect(x + 3, y + 3, w - 6, h - 6);
+    for (const bx of [x + 13, x + w - 13]) for (const by of [y + 13, y + h - 13]) {
+      c.fillStyle = "#8a8a8a"; c.beginPath(); c.arc(bx, by, 4, 0, Math.PI * 2); c.fill();
+      c.fillStyle = "#ffffff"; c.beginPath(); c.arc(bx - 1, by - 1, 2, 0, Math.PI * 2); c.fill();
+    }
+  }
+  // Mix fine scratches with larger chipped streaks, wrapping across tile edges.
+  for (let i = 0; i < 100; i++) {
+    const x = random() * size, y = random() * size;
+    const angle = random() * Math.PI * 2, length = 5 + random() ** 2 * 70;
+    const dx = Math.cos(angle) * length, dy = Math.sin(angle) * length;
+    const width = i < 24 ? 3 + random() * 3 : 0.8 + random() * 1.4;
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+      c.lineWidth = width; c.strokeStyle = i < 24 ? "#aaaaaa" : "#bcbcbc";
+      c.beginPath(); c.moveTo(x + ox, y + oy); c.lineTo(x + dx + ox, y + dy + oy); c.stroke();
+      c.lineWidth = Math.max(1, width * 0.4); c.strokeStyle = "#ffffff";
+      c.beginPath(); c.moveTo(x + ox, y + oy + width / 2); c.lineTo(x + dx + ox, y + dy + oy + width / 2); c.stroke();
+    }
+  }
+  await save("tanks/armor-wear.png", canvas);
+}

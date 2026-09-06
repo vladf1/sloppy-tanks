@@ -39,9 +39,9 @@ export class UI {
   }
   chooseCards() {
     return `<div class="vehicles">${(Object.keys(VEHICLES) as VehicleKind[])
-      .map((kind, i) => {
+      .map((kind) => {
         const v = VEHICLES[kind];
-        return `<button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}"><span class="number">0${i + 1}</span><strong>${v.name}</strong><small>${v.tag}</small><img class="tank-preview" src="${tankPreview(kind, this.s.humanTeam)}" alt="${v.name} tank" draggable="false"><div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div></button>`;
+        return `<button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}"><strong>${v.name}</strong><small>${v.tag}</small><img class="tank-preview" src="${tankPreview(kind, this.s.humanTeam)}" alt="${v.name} tank" draggable="false"><div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div></button>`;
       })
       .join("")}</div>`;
   }

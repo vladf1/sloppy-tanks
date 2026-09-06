@@ -9,6 +9,33 @@ import { coverModel, tankModel } from "../src/game/models";
 mock.method(THREE.TextureLoader.prototype, "load", () => new THREE.Texture());
 after(() => mock.restoreAll());
 
+test("textured batching preserves UVs and paint, and separates different surface maps", () => {
+  const group = new THREE.Group(), wear = new THREE.Texture();
+  const other = new THREE.Texture();
+  const base = new THREE.BoxGeometry().toNonIndexed();
+  const paints = [0x216ac8, 0xc73120, 0x216ac8, 0x216ac8];
+  paints.forEach((color, i) => group.add(new THREE.Mesh(base,
+    new THREE.MeshStandardMaterial({ color, map: i === 2 ? other : wear,
+      bumpMap: wear, bumpScale: i === 3 ? 0.02 : 0.009 }))));
+  batch(group);
+  assert.equal(group.children.length, 3);
+  const mesh = group.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+  assert.equal(mesh.material.map, wear);
+  assert.equal(mesh.material.bumpMap, wear);
+  assert.equal(mesh.material.bumpScale, 0.009);
+  const uv = mesh.geometry.getAttribute("uv"), original = base.getAttribute("uv");
+  const colors = mesh.geometry.getAttribute("color");
+  assert.equal(uv.count, original.count * 2);
+  for (let i = 0; i < uv.count; i++) {
+    assert.equal(uv.getX(i), original.getX(i % original.count));
+    assert.equal(uv.getY(i), original.getY(i % original.count));
+    const paint = new THREE.Color(paints[Math.floor(i / original.count)]);
+    assert.ok(Math.abs(colors.getX(i) - paint.r) < 1e-7);
+    assert.ok(Math.abs(colors.getY(i) - paint.g) < 1e-7);
+    assert.ok(Math.abs(colors.getZ(i) - paint.b) < 1e-7);
+  }
+});
+
 test("batching preserves triangle positions and linear colors while combining compatible paints", () => {
   const group = new THREE.Group();
   const paints = [0xc73120, 0x216ac8];

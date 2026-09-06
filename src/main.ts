@@ -8,7 +8,9 @@ import { UI } from "./game/ui";
 import { STEP } from "./game/data";
 import { tuneSpeed } from "./game/speed-tuning";
 import { idleCommand } from "./game/types";
+import { loadTankSurface } from "./game/tank-surfaces";
 await RAPIER.init();
+await loadTankSurface();
 const root = document.querySelector<HTMLDivElement>("#app")!;
 root.innerHTML =
   '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas><div id="fps" aria-label="Frames per second">— FPS</div>';

@@ -55,19 +55,21 @@ test("visible nose and rear armor register, including the heavy's longer hull", 
 });
 
 test("shell radius grazes count, but a clean gap beyond the visible hull remains a miss", () => {
-  for (const [x, expected] of [[1.38, 60], [1.7, 100]]) {
+  for (const [gap, expected] of [[SHELL_HIT_RADIUS - 0.01, 60], [SHELL_HIT_RADIUS + 0.01, 100]]) {
     const { s, target } = fixture();
+    const model = tankModel("balanced", 0); model.updateMatrixWorld(true);
+    const x = new THREE.Box3().setFromObject(model.userData.hull).max.x + gap;
     shell(s, x, -5, 0, 600); stepProjectiles(s, STEP);
-    assert.equal(target.hp, expected, `offset ${x}`);
+    assert.equal(target.hp, expected, `gap ${gap}`);
     s.dispose();
   }
 });
 
 test("cover still blocks shots at the widened hull, and protected targets do not lose health", () => {
   const { s, target } = fixture();
-  s.addCover({ kind: "concrete", x: 0, z: -2.5, w: 5, d: 0.25, h: 3, hp: Infinity, color: 0 });
+  s.addCover({ kind: "concrete", x: 0, z: -3.8, w: 5, d: 0.25, h: 3, hp: Infinity, color: 0 });
   s.world.step();
-  shell(s, 1.15, -5, 0, 600); stepProjectiles(s, STEP);
+  shell(s, 1.1 * VEHICLES.balanced.scale, -5, 0, 600); stepProjectiles(s, STEP);
   assert.equal(target.hp, 100); assert.equal(s.shots.length, 0);
   for (const c of s.covers) s.world.removeRigidBody(c.body); s.covers = [];
   target.protection = 1;
@@ -98,13 +100,13 @@ test("combat hit boundaries match rendered hull bounds plus shell radius on ever
     }
     const physical = target.collider.halfExtents();
     assert.ok(physical);
-    assert.ok(Math.abs(physical.x - 0.83 * scale) < 1e-6);
+    assert.ok(Math.abs(physical.x - (bounds.max.x - bounds.min.x) / 2) < 1e-6);
     s.dispose();
   }
 });
 
 test("moving tanks are hit at the crossing time, not just their end-of-tick location", () => {
-  for (const [start, end, expected] of [[-5, 5, 60], [-6, 0, 100]]) {
+  for (const [start, end, expected] of [[-5, 5, 60], [-12, 0, 100]]) {
     const { s, target } = fixture();
     target.body.setTranslation({ x: 0, y: 0.65, z: end }, true);
     target.previous = { x: 0, z: start };
@@ -117,7 +119,7 @@ test("moving tanks are hit at the crossing time, not just their end-of-tick loca
 
 test("allied outer tracks remain transparent to shells", () => {
   const { s, target } = fixture(); target.team = 0;
-  shell(s, 1.15, -5, 0, 600);
+  shell(s, 1.1 * VEHICLES.balanced.scale, -5, 0, 600);
   assert.equal(tankHitTime(s.shots[0], target, STEP), null);
   stepProjectiles(s, STEP);
   assert.equal(target.hp, 100); assert.equal(s.shots.length, 1);

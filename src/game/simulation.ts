@@ -172,7 +172,7 @@ export class Simulation {
         .setSoftCcdPrediction(desc.speed * 1.5 * STEP * 2),
     );
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(0.83 * desc.scale, 0.6, 1.03 * desc.scale)
+      tankContactCollider(kind)
         .setMass(desc.mass)
         .setCollisionGroups(GROUP.tank)
         .setFriction(0.05)
@@ -342,7 +342,7 @@ export class Simulation {
         .setSoftCcdPrediction(stats.speed * 1.5 * STEP * 2),
     );
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(0.83 * stats.scale, 0.6, 1.03 * stats.scale)
+      tankContactCollider(kind)
         .setMass(stats.mass)
         .setCollisionGroups(GROUP.tank)
         .setFriction(0.05),
