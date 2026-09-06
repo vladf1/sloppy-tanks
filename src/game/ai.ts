@@ -71,7 +71,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     } else if (
       useful[0] &&
       distance(p, useful[0]) < (profile.stationary && target ? 5 : aggressive ? 7 : 12) &&
-      (!target || t.weapon === "standard")
+      (!target || (t.spread === 0 && t.rocket === 0))
     ) {
       b.goal = { x: useful[0].x, z: useful[0].z };
       b.mode = "pickup";

@@ -3,6 +3,7 @@ import type { Simulation } from "./simulation";
 import type { VehicleKind, SimEvent } from "./types";
 import { tankPreview } from "./tank-previews";
 import { speedTuning } from "./speed-tuning";
+import { equippedWeapon } from "./bot-personalities";
 import { healthBarState } from "./health-bar";
 export class UI {
   overlay: HTMLElement;
@@ -132,8 +133,8 @@ export class UI {
     set("vehicle-name", VEHICLES[t.kind].name);
     set(
       "weapon",
-      WEAPONS[t.weapon].name.toUpperCase() +
-        (t.weaponTime > 0 ? ` · ${Math.ceil(t.weaponTime)}s` : ""),
+      WEAPONS[equippedWeapon(t)].name.toUpperCase() +
+        ((t.rocket || t.spread) > 0 ? ` · ${Math.ceil(t.rocket || t.spread)}s` : ""),
     );
     set(
       "mine",
@@ -144,6 +145,7 @@ export class UI {
     set(
       "effects",
       [
+        t.spread > 0 && t.rocket > 0 ? `SPREAD ${Math.ceil(t.spread)}s` : null,
         t.protection > 0 ? "SPAWN SHIELD" : null,
         t.shield > 0 ? `◇ SHIELD ${Math.ceil(t.shieldPoints)} HP · ${Math.ceil(t.shield)}s` : null,
         t.rapid > 0 ? `» RAPID ${Math.ceil(t.rapid)}s` : null,

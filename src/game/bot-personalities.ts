@@ -40,8 +40,8 @@ export function botProfile(t: Tank): BotProfile {
 }
 
 export function equippedWeapon(t: Tank): Weapon {
-  return !t.human && t.weapon === "standard" && t.brain.personality === "artillery"
-    ? "rocket" : t.weapon;
+  if (t.rocket > 0 || (!t.human && t.brain.personality === "artillery")) return "rocket";
+  return t.spread > 0 ? "spread" : "standard";
 }
 
 export function botReload(t: Tank, jitter: number) {

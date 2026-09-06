@@ -195,3 +195,58 @@ test("tracks are distance-spaced at 30/120 FPS, skip stationary tanks and telepo
   }
   assert.equal(counts[0], counts[1]);
 });
+
+for (const order of [["spread", "rocket"], ["rocket", "spread"]] as const) {
+  test(`${order.join(" then ")} combines three explosive projectiles with rapid and damage boosts`, () => {
+    const s = arena(1), t = s.human;
+    for (const kind of order) pickup(s, kind);
+    pickup(s, "rapid"); pickup(s, "ricochet");
+    fireWeapon(s, t);
+    assert.equal(s.shots.length, 3);
+    assert.ok(s.shots.every(p => p.weapon === "rocket" && p.damage === WEAPONS.rocket.damage * 2));
+    assert.equal(t.cooldown, WEAPONS.rocket.interval / 2 / 1.2);
+    const angles = s.shots.map(p => Math.atan2(p.vx, p.vz));
+    assert.ok(Math.abs(angles[1] - angles[0] - 0.19) < 1e-9);
+    assert.ok(Math.abs(angles[2] - angles[1] - 0.19) < 1e-9);
+    t.rocket = 7; t.spread = 4;
+    pickup(s, "spread");
+    assert.equal(t.spread, 14); assert.equal(t.rocket, 7);
+    pickup(s, "rocket");
+    assert.equal(t.rocket, 14); assert.equal(t.spread, 14);
+    s.respawn(t);
+    assert.deepEqual([t.spread, t.rocket, t.rapid, t.ricochet], [0, 0, 0, 0]);
+    s.dispose();
+  });
+}
+
+for (const expires of ["spread", "rocket"] as const) {
+  test(`${expires} expiration preserves the other weapon upgrade`, () => {
+    const s = arena(1), t = s.human;
+    pickup(s, "spread"); pickup(s, "rocket");
+    t[expires] = STEP;
+    s.step();
+    s.shots = []; t.cooldown = 0;
+    fireWeapon(s, t);
+    assert.equal(t[expires], 0);
+    assert.equal(s.shots.length, expires === "spread" ? 1 : 3);
+    assert.ok(s.shots.every(p => p.weapon === (expires === "spread" ? "rocket" : "spread")));
+    t.spread = t.rocket = STEP;
+    s.step(); s.shots = []; t.cooldown = 0;
+    fireWeapon(s, t);
+    assert.equal(s.shots.length, 1);
+    assert.equal(s.shots[0].weapon, "standard");
+    s.dispose();
+  });
+}
+
+test("four repair pickups are symmetric and leave tank clearance from cover", () => {
+  const s = new Simulation(123);
+  const repairs = s.pickups.filter(p => p.kind === "repair");
+  assert.equal(repairs.length, 4);
+  for (const p of repairs) {
+    assert.ok(repairs.some(other => other.x === -p.x && other.z === -p.z));
+    assert.ok(s.covers.every(c => Math.abs(p.x - c.x) > c.w / 2 + 2
+      || Math.abs(p.z - c.z) > c.d / 2 + 2));
+  }
+  s.dispose();
+});

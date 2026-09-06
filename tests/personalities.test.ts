@@ -78,15 +78,19 @@ test("snipers actually hold their firing lane and minelayers deliberately deploy
   s.dispose();
 });
 
-test("artillery uses slow rockets, special pickups override them, and every role preserves the player cadence edge", () => {
+test("artillery uses slow rockets, spread stacks with them, and every role preserves the player cadence edge", () => {
   const { s, bot, human } = duel();
   bot.brain.personality = "artillery";
   fireWeapon(s, bot); assert.equal(s.shots.at(-1)!.weapon, "rocket");
   collectPickup(s, bot, { id: 9999, x: 0, z: 0, kind: "spread", available: true, cooldown: 0 });
-  fireWeapon(s, bot); assert.equal(s.shots.at(-1)!.weapon, "spread");
+  const before = s.shots.length;
+  fireWeapon(s, bot);
+  assert.equal(s.shots.length - before, 3);
+  assert.ok(s.shots.slice(before).every(p => p.weapon === "rocket"));
   for (const role of BOT_PERSONALITIES) for (const ultra of [false, true]) for (const rapid of [0, 12]) {
     bot.brain.personality = role; bot.brain.ultraAggressive = ultra;
-    bot.weapon = human.weapon = role === "artillery" ? "rocket" : "standard";
+    bot.spread = human.spread = 0;
+    bot.rocket = human.rocket = role === "artillery" ? 14 : 0;
     bot.rapid = human.rapid = rapid;
     assert.ok(botReload(bot, 0) > weaponInterval(human) * 1.2, `${role} cadence`);
   }

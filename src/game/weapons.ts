@@ -34,7 +34,7 @@ export function fireWeapon(s: Simulation, t: Tank) {
     if (hit !== null) spawnDistance = Math.min(spawnDistance, hit);
   }
   if (spawnDistance < muzzle.z) spawnDistance = Math.max(0, spawnDistance - 0.001);
-  for (const offset of weapon === "spread" ? [-0.19, 0, 0.19] : [0]) {
+  for (const offset of t.spread > 0 ? [-0.19, 0, 0.19] : [0]) {
     const angle = t.aim + offset;
     s.shots.push({
       id: s.nextId++,
@@ -268,8 +268,7 @@ export function collectPickup(s: Simulation, t: Tank, p: Pickup) {
   }
   else if (kind === "speed") t.speed = PICKUPS[kind].duration;
   else {
-    t.weapon = kind;
-    t.weaponTime = PICKUPS[kind].duration;
+    t[kind] = PICKUPS[kind].duration;
     t.cooldown = 0;
   }
   s.events.push({

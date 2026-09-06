@@ -85,7 +85,7 @@ test("respawn occurs after three seconds with protection and selected class", ()
   assert.ok(a.protection > 1.9);
   s.dispose();
 });
-test("special weapons replace and expire; upgrades persist independently and repair fully heals", () => {
+test("special weapons expire; upgrades persist independently and repair fully heals", () => {
   const s = game(),
     a = s.human;
   const p = {
@@ -97,13 +97,13 @@ test("special weapons replace and expire; upgrades persist independently and rep
     cooldown: 0,
   };
   collectPickup(s, a, p);
-  assert.equal(a.weapon, "standard");
+  assert.equal(a.rocket, 0);
   assert.equal(a.rapid, 12);
   collectPickup(s, a, { ...p, kind: "rocket", available: true });
-  assert.equal(a.weapon, "rocket");
-  a.weaponTime = STEP;
+  assert.equal(a.rocket, 14);
+  a.rocket = STEP;
   s.step();
-  assert.equal(a.weapon, "standard");
+  assert.equal(a.rocket, 0);
   a.shield = 7;
   collectPickup(s, a, { ...p, kind: "shield", available: true });
   assert.equal(a.shield, 15);
@@ -366,7 +366,7 @@ test("ricochet core adds two reflections and doubles damage; standard has one", 
   assert.equal(s.shots.at(-1)!.damage, 80);
   t.cooldown = 0;
   t.ricochet = 0;
-  t.weapon = "standard";
+  t.spread = t.rocket = 0;
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 1);
   s.dispose();

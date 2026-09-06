@@ -73,6 +73,8 @@ export const pickupLayout: { kind: PickupKind; x: number; z: number }[] = [
   { kind: "ricochet", x: 0, z: 3 },
   { kind: "repair", x: -52, z: 0 },
   { kind: "repair", x: 52, z: 0 },
+  { kind: "repair", x: 0, z: -52 },
+  { kind: "repair", x: 0, z: 52 },
   { kind: "shield", x: -29, z: 46 },
   { kind: "shield", x: 29, z: -46 },
   { kind: "speed", x: -29, z: -46 },

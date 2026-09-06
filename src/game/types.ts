@@ -36,8 +36,8 @@ export interface Tank {
   alive: boolean;
   respawn: number;
   protection: number;
-  weapon: Weapon;
-  weaponTime: number;
+  spread: number;
+  rocket: number;
   shield: number;
   shieldPoints: number;
   rapid: number;

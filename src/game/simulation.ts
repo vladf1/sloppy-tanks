@@ -193,8 +193,8 @@ export class Simulation {
       alive: true,
       respawn: 0,
       protection: 2,
-      weapon: "standard",
-      weaponTime: 0,
+      spread: 0,
+      rocket: 0,
       shield: 0,
       shieldPoints: 0,
       rapid: 0,
@@ -257,8 +257,8 @@ export class Simulation {
       t.ricochet = Math.max(0, t.ricochet - STEP);
       t.speed = Math.max(0, t.speed - STEP);
       t.recoil = Math.max(0, t.recoil - STEP * 6);
-      t.weaponTime = Math.max(0, t.weaponTime - STEP);
-      if (t.weaponTime === 0) t.weapon = "standard";
+      t.spread = Math.max(0, t.spread - STEP);
+      t.rocket = Math.max(0, t.rocket - STEP);
       const c = t.human && !autoplay ? command : botCommand(this, t, STEP);
       t.command = c;
       t.aim = c.aim;
@@ -354,8 +354,8 @@ export class Simulation {
     t.hp = stats.health;
     t.alive = true;
     t.protection = 2;
-    t.weapon = "standard";
-    t.weaponTime = 0;
+    t.spread = 0;
+    t.rocket = 0;
     t.shield = 0;
     t.shieldPoints = 0;
     t.rapid = 0;
