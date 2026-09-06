@@ -2,6 +2,7 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
+import { spawnPositions } from "../src/game/arena";
 import { collectPickup, fireWeapon, interceptionTime, stepProjectiles } from "../src/game/weapons";
 import { STEP, VEHICLES, WEAPONS, MOVE_ACCELERATION } from "../src/game/data";
 import { TrackTrails, TRACK_CAPACITY } from "../src/game/tracks";
@@ -239,7 +240,7 @@ for (const expires of ["spread", "rocket"] as const) {
   });
 }
 
-test("four repair pickups are symmetric and leave tank clearance from cover", () => {
+test("four repair pickups are symmetric, clear of cover, and away from spawn pads", () => {
   const s = new Simulation(123);
   const repairs = s.pickups.filter(p => p.kind === "repair");
   assert.equal(repairs.length, 4);
@@ -247,6 +248,9 @@ test("four repair pickups are symmetric and leave tank clearance from cover", ()
     assert.ok(repairs.some(other => other.x === -p.x && other.z === -p.z));
     assert.ok(s.covers.every(c => Math.abs(p.x - c.x) > c.w / 2 + 2
       || Math.abs(p.z - c.z) > c.d / 2 + 2));
+    for (const spawn of [...spawnPositions(0), ...spawnPositions(1)])
+      assert.ok(Math.hypot(p.x - spawn.x, p.z - spawn.z) >= 8,
+        `Repair pickup at ${p.x},${p.z} is too close to a spawn pad`);
   }
   s.dispose();
 });
