@@ -1,6 +1,7 @@
 import "../src/main";
 import { tuneSpeed } from "../src/game/speed-tuning";
 import { idleCommand } from "../src/game/types";
+import { damageCover } from "../src/game/damage";
 // This page is a dev-only control surface for repeatable Chrome profiling.
 const game = (window as any).sloppy;
 const panel = document.createElement("aside");
@@ -8,6 +9,15 @@ panel.style.cssText = "position:fixed;z-index:100;left:8px;top:8px;background:#1
 panel.innerHTML = '<button id="normal">Normal · 40 seconds</button> <button id="busy">Crowded · 40 seconds</button> <button id="tree">Tree geometry preview</button><pre id="profile-status">Ready · fixed seed 207 · 2560×1440 · speeds 115%</pre>';
 document.body.append(panel);
 const output = panel.querySelector("pre")!;
+const stumpButton = document.createElement("button");
+stumpButton.textContent = "Destroy preview tree";
+panel.insertBefore(stumpButton, output);
+stumpButton.addEventListener("click", () => {
+  if (running) return;
+  (panel.querySelector("#tree") as HTMLButtonElement).click();
+  const tree = game.sim.covers.find((c: any) => c.kind === "tree");
+  damageCover(game.sim, tree, tree.hp, game.sim.human.id, game.sim.human.team);
+});
 let running = false, busy = false, stressAt = 0;
 const gl = game.view.renderer.getContext();
 const timer = gl.getExtension("EXT_disjoint_timer_query_webgl2");

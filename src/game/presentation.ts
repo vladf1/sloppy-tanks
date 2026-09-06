@@ -13,6 +13,7 @@ import {
   tankModel,
   wreckModel,
   coverModel,
+  stumpModel,
   teamTexture,
 } from "./models";
 import { ARENA, TEAM_COLORS, PICKUPS, VEHICLES, MINE_RADIUS } from "./data";
@@ -113,11 +114,12 @@ export class Presentation {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.0;
     this.scene.background = new THREE.Color(0x59bbed);
     this.scene.fog = new THREE.Fog(0x59bbed, 150, 260);
-    this.scene.add(new THREE.HemisphereLight(0xeaf7ff, 0xbda07c, 2.0));
-    const sun = new THREE.DirectionalLight(0xffead2, 2.8);
+    // Cooler fill and a neutral sun preserve paint colors and give cover more depth.
+    this.scene.add(new THREE.HemisphereLight(0xe2efff, 0x918571, 1.65));
+    const sun = new THREE.DirectionalLight(0xfff1df, 2.8);
     sun.position.set(-45, 85, 25);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -730,14 +732,19 @@ export class Presentation {
     }
     for (const c of s.covers) {
       let g = this.coverMeshes.get(c.id);
-      if (!g) {
-        g = coverModel(c);
+      const stump = c.kind === "tree" && !c.alive;
+      if (!g || !!g.userData.stump !== stump) {
+        if (g) {
+          disposeOwned(g);
+          this.worldGroup.remove(g);
+        }
+        g = stump ? stumpModel(c) : coverModel(c);
         batch(g);
         this.coverMeshes.set(c.id, g);
         this.worldGroup.add(g);
         freezeStatic(g);
       }
-      g.visible = c.alive;
+      g.visible = c.alive || stump;
     }
     for (const pickup of s.pickups) {
       const g = this.pickupMeshes.get(pickup.id)!;

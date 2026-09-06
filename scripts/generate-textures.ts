@@ -2,6 +2,7 @@ import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { PICKUPS } from "../src/game/data";
+import "./generate-barrels";
 import type { PickupKind } from "../src/game/types";
 
 // Offline only: checked-in PNGs are loaded by the game, never this generator.

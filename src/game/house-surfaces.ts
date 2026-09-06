@@ -45,6 +45,29 @@ export function sidingBox(w: number, h: number, d: number, color: number) {
   mesh.castShadow = mesh.receiveShadow = true; return mesh;
 }
 
+/** Triangular roof body with horizontal boards at the same scale as the walls. */
+export function sidingGable(w: number, h: number, d: number, color: number) {
+  const key = `gable/${w}/${h}/${d}`;
+  let geo = geometries.get(key);
+  if (!geo) {
+    const profile = new THREE.Shape();
+    profile.moveTo(-w / 2, 0);
+    profile.lineTo(0, h);
+    profile.lineTo(w / 2, 0);
+    profile.closePath();
+    geo = new THREE.ExtrudeGeometry(profile, { depth: d, bevelEnabled: false })
+      .translate(0, 0, -d / 2);
+    const positions = geo.getAttribute("position"), uv = geo.getAttribute("uv");
+    for (let i = 0; i < uv.count; i++)
+      uv.setXY(i, (positions.getX(i) + w / 2) / TILE_METRES,
+        positions.getY(i) / TILE_METRES);
+    geometries.set(key, geo);
+  }
+  const mesh = new THREE.Mesh(geo, surfaceMaterial("siding", color));
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
+
 export function shingleRoof(w: number, h: number, d: number, color: number) {
   const key = `roof/${w}/${h}/${d}`;
   let geo = geometries.get(key);
