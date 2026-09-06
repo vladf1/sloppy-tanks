@@ -1,0 +1,901 @@
+{
+  "before": {
+    "label": "before",
+    "date": "2026-09-06T00:29:37.861Z",
+    "chrome": "152.0.7977.82",
+    "resolution": [
+      2560,
+      1440
+    ],
+    "seeds": [
+      12345,
+      45678,
+      98765
+    ],
+    "warmupSeconds": 5,
+    "sampleSeconds": 20,
+    "errors": [],
+    "runs": [
+      {
+        "scenario": "normal",
+        "seed": 12345,
+        "date": "2026-09-06T00:29:59.256Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1796,
+        "seconds": 19.99530000001192,
+        "fps": 119.73732457748591,
+        "frameP50": 8.300000000000182,
+        "frameP95": 9.199999999999818,
+        "frameP99": 9.300000000000182,
+        "simulationMean": 0.1968819590115335,
+        "simulationP95": 0.5999999940395355,
+        "renderMean": 1.6741091317615424,
+        "drawCalls": 669,
+        "triangles": 301335,
+        "maxBodies": 83,
+        "maxProjectiles": 30,
+        "maxFragments": 21,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "normal",
+        "seed": 45678,
+        "date": "2026-09-06T00:30:20.139Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1798,
+        "seconds": 19.99580000001788,
+        "fps": 119.86666666666669,
+        "frameP50": 8.300000000001091,
+        "frameP95": 9.100000000002183,
+        "frameP99": 9.300000000000182,
+        "simulationMean": 0.17741935457350547,
+        "simulationP95": 0.5,
+        "renderMean": 1.521523916217456,
+        "drawCalls": 652,
+        "triangles": 298990,
+        "maxBodies": 79,
+        "maxProjectiles": 29,
+        "maxFragments": 24,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "normal",
+        "seed": 98765,
+        "date": "2026-09-06T00:30:41.006Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1800,
+        "seconds": 19.99579999999404,
+        "fps": 120.00080000533335,
+        "frameP50": 8.300000000001091,
+        "frameP95": 9.19999999999709,
+        "frameP99": 9.299999999999272,
+        "simulationMean": 0.18133333269092772,
+        "simulationP95": 0.5,
+        "renderMean": 1.5858333338300388,
+        "drawCalls": 643,
+        "triangles": 292760,
+        "maxBodies": 91,
+        "maxProjectiles": 34,
+        "maxFragments": 33,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 12345,
+        "date": "2026-09-06T00:31:19.463Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1790,
+        "seconds": 19.99779999998808,
+        "fps": 119.32776470431382,
+        "frameP50": 8.300000000000182,
+        "frameP95": 9.099999999998545,
+        "frameP99": 9.299999999999272,
+        "simulationMean": 0.25815642361201385,
+        "simulationP95": 0.7000000178813934,
+        "renderMean": 2.7239664809497377,
+        "drawCalls": 1178,
+        "triangles": 525466,
+        "maxBodies": 125,
+        "maxProjectiles": 200,
+        "maxFragments": 80,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 45678,
+        "date": "2026-09-06T00:31:40.611Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1791,
+        "seconds": 20.000000000005958,
+        "fps": 119.39602013266227,
+        "frameP50": 8.300000000001091,
+        "frameP95": 9.099999999998545,
+        "frameP99": 9.299999999999272,
+        "simulationMean": 0.26460078090745465,
+        "simulationP95": 0.699999988079071,
+        "renderMean": 2.6808486884030334,
+        "drawCalls": 1176,
+        "triangles": 524857,
+        "maxBodies": 125,
+        "maxProjectiles": 200,
+        "maxFragments": 80,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 98765,
+        "date": "2026-09-06T00:32:01.761Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1792,
+        "seconds": 20.001199999988078,
+        "fps": 119.40298507462687,
+        "frameP50": 8.300000000000182,
+        "frameP95": 8.899999999997817,
+        "frameP99": 9.200000000000728,
+        "simulationMean": 0.25948660695991876,
+        "simulationP95": 0.7000000178813934,
+        "renderMean": 2.806584821332113,
+        "drawCalls": 1175,
+        "triangles": 525375,
+        "maxBodies": 125,
+        "maxProjectiles": 201,
+        "maxFragments": 80,
+        "completedRounds": 0
+      }
+    ],
+    "profiles": {
+      "normal": [
+        [
+          "(idle) @ :0",
+          7797.349000000076
+        ],
+        [
+          "(program) @ :0",
+          308.6049999999997
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:46908",
+          273.0619999999998
+        ],
+        [
+          "bindVertexArray @ :0",
+          133.031
+        ],
+        [
+          "updateMatrixWorld @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:9897",
+          116.94800000000002
+        ],
+        [
+          "multiplyMatrices @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:8108",
+          107.76800000000001
+        ],
+        [
+          "WebGLRenderer.renderBufferDirect @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51294",
+          91.64900000000003
+        ],
+        [
+          "setProgram @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51818",
+          79.44800000000002
+        ],
+        [
+          "projectObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51577",
+          72.39700000000002
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51705",
+          50.031
+        ],
+        [
+          "loop @ http://127.0.0.1:5173/src/main.ts?t=1788654269929:55",
+          49.598
+        ],
+        [
+          "intersectsObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:18484",
+          48.549
+        ],
+        [
+          "needsUpdate @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:42477",
+          40.37800000000001
+        ],
+        [
+          "drawArrays @ :0",
+          40.17500000000002
+        ],
+        [
+          "arraysEqual @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44492",
+          37.689
+        ],
+        [
+          "getParameters @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:45676",
+          37.37700000000002
+        ],
+        [
+          "copyArray @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44497",
+          36.53400000000001
+        ],
+        [
+          "render @ http://127.0.0.1:5173/src/game/presentation.ts?t=1788654084191:466",
+          25.345
+        ],
+        [
+          "bufferSubData @ :0",
+          25.060000000000006
+        ],
+        [
+          "wasm-function[35] @ wasm://wasm/007b5d42:1",
+          24.754000000000005
+        ],
+        [
+          "setValueM4 @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44595",
+          23.945000000000004
+        ],
+        [
+          "getBindingState @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:42431",
+          23.894999999999996
+        ],
+        [
+          "getProgram @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51721",
+          23.862000000000005
+        ],
+        [
+          "flatten @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44474",
+          20.214
+        ],
+        [
+          "uniformMatrix4fv @ :0",
+          19.974
+        ],
+        [
+          "setup @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:42406",
+          19.941000000000006
+        ],
+        [
+          "update @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:41639",
+          17.680999999999997
+        ],
+        [
+          "sort @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:46162",
+          16.839000000000002
+        ],
+        [
+          "disable @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:47203",
+          14.966999999999999
+        ],
+        [
+          "markUniformsLightsNeedsUpdate @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51980",
+          13.735
+        ],
+        [
+          "setValue @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44998",
+          12.619
+        ],
+        [
+          "getUv @ http://127.0.0.1:5173/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=05e394ee:4",
+          11.673
+        ],
+        [
+          "step @ http://127.0.0.1:5173/src/game/simulation.ts?t=1788654084191:163",
+          11.644999999999998
+        ],
+        [
+          "setFromEuler @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:3569",
+          11.386000000000001
+        ],
+        [
+          "setValueV3f @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44529",
+          11.334999999999999
+        ]
+      ],
+      "stress": [
+        [
+          "(idle) @ :0",
+          6248.842000000033
+        ],
+        [
+          "(program) @ :0",
+          326.88499999999976
+        ],
+        [
+          "updateMatrixWorld @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:9897",
+          259.25399999999996
+        ],
+        [
+          "bindVertexArray @ :0",
+          212.98599999999993
+        ],
+        [
+          "WebGLRenderer.renderBufferDirect @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51294",
+          179.82099999999997
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:46908",
+          178.05699999999993
+        ],
+        [
+          "setValueM4 @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44595",
+          162.86999999999995
+        ],
+        [
+          "setProgram @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51818",
+          145.14299999999994
+        ],
+        [
+          "projectObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51577",
+          118.36800000000001
+        ],
+        [
+          "multiplyMatrices @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:8108",
+          98.64500000000002
+        ],
+        [
+          "needsUpdate @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:42477",
+          96.92500000000003
+        ],
+        [
+          "getUv @ http://127.0.0.1:5173/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=05e394ee:4",
+          75.53900000000004
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51705",
+          71.537
+        ],
+        [
+          "sort @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:46162",
+          61.631000000000014
+        ],
+        [
+          "uniformMatrix4fv @ :0",
+          54.97200000000001
+        ],
+        [
+          "render @ http://127.0.0.1:5173/src/game/presentation.ts?t=1788654084191:466",
+          48.983000000000004
+        ],
+        [
+          "drawArrays @ :0",
+          46.27
+        ],
+        [
+          "intersectsObject @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:18484",
+          39.03999999999999
+        ],
+        [
+          "setValueM3 @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44581",
+          38.91800000000001
+        ],
+        [
+          "getProgram @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51721",
+          38.902
+        ],
+        [
+          "painterSortStable @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:46089",
+          38.376
+        ],
+        [
+          "loop @ http://127.0.0.1:5173/src/main.ts?t=1788654269929:55",
+          37.569999999999986
+        ],
+        [
+          "RoundedBoxGeometry @ http://127.0.0.1:5173/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=05e394ee:39",
+          37.304
+        ],
+        [
+          "setValue @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44998",
+          36.535999999999994
+        ],
+        [
+          "invert @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:5172",
+          36.47500000000001
+        ],
+        [
+          "upload @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:45006",
+          34.822
+        ],
+        [
+          "update @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44202",
+          33.739999999999995
+        ],
+        [
+          "setFromEuler @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:3569",
+          31.101000000000003
+        ],
+        [
+          "setMaterial @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:47355",
+          30.663000000000004
+        ],
+        [
+          "disable @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:47203",
+          30.258
+        ],
+        [
+          "flatten @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:44474",
+          29.964999999999996
+        ],
+        [
+          "find @ http://127.0.0.1:5173/src/game/navigation.ts?t=1788654084191:35",
+          26.761
+        ],
+        [
+          "getBindingState @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:42431",
+          26.419
+        ],
+        [
+          "convert @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:5405",
+          24.033
+        ],
+        [
+          "markUniformsLightsNeedsUpdate @ http://127.0.0.1:5173/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=8ade4137:51980",
+          23.855
+        ]
+      ]
+    }
+  },
+  "after": {
+    "label": "after",
+    "date": "2026-09-06T00:36:18.014Z",
+    "chrome": "152.0.7977.82",
+    "resolution": [
+      2560,
+      1440
+    ],
+    "seeds": [
+      12345,
+      45678,
+      98765
+    ],
+    "warmupSeconds": 5,
+    "sampleSeconds": 20,
+    "errors": [],
+    "runs": [
+      {
+        "scenario": "normal",
+        "seed": 12345,
+        "date": "2026-09-06T00:36:39.494Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1799,
+        "seconds": 20.00179999998212,
+        "fps": 119.86700692283605,
+        "frameP50": 8.300000000001091,
+        "frameP95": 9.100000000002183,
+        "frameP99": 9.300000000001091,
+        "simulationMean": 0.1865480825628023,
+        "simulationP95": 0.5,
+        "renderMean": 1.0894385770899246,
+        "drawCalls": 335,
+        "triangles": 301963,
+        "maxBodies": 83,
+        "maxProjectiles": 30,
+        "maxFragments": 21,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "normal",
+        "seed": 45678,
+        "date": "2026-09-06T00:37:00.382Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1795,
+        "seconds": 19.99649999999404,
+        "fps": 119.66427338119902,
+        "frameP50": 8.300000000000182,
+        "frameP95": 9.199999999998909,
+        "frameP99": 9.30000000000291,
+        "simulationMean": 0.21086350991533329,
+        "simulationP95": 0.5999999940395355,
+        "renderMean": 1.2760445685439787,
+        "drawCalls": 326,
+        "triangles": 299599,
+        "maxBodies": 79,
+        "maxProjectiles": 29,
+        "maxFragments": 24,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "normal",
+        "seed": 98765,
+        "date": "2026-09-06T00:37:21.268Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1800,
+        "seconds": 19.99420000001788,
+        "fps": 119.99360034131513,
+        "frameP50": 8.300000000001091,
+        "frameP95": 9.19999999999709,
+        "frameP99": 9.300000000001091,
+        "simulationMean": 0.20338888929949867,
+        "simulationP95": 0.6000000238418579,
+        "renderMean": 1.2077777779267893,
+        "drawCalls": 325,
+        "triangles": 293327,
+        "maxBodies": 91,
+        "maxProjectiles": 34,
+        "maxFragments": 33,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 12345,
+        "date": "2026-09-06T00:37:59.745Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1793,
+        "seconds": 19.99739999998808,
+        "fps": 119.50465221680129,
+        "frameP50": 8.300000000000182,
+        "frameP95": 9.100000000002183,
+        "frameP99": 9.399999999999636,
+        "simulationMean": 0.270496374608017,
+        "simulationP95": 0.7000000178813934,
+        "renderMean": 2.0523703297256293,
+        "drawCalls": 669,
+        "triangles": 525514,
+        "maxBodies": 125,
+        "maxProjectiles": 200,
+        "maxFragments": 80,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 45678,
+        "date": "2026-09-06T00:38:20.955Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1820,
+        "seconds": 19.99339999997616,
+        "fps": 121.32362744313788,
+        "frameP50": 8.100000000000364,
+        "frameP95": 10,
+        "frameP99": 10.899999999999636,
+        "simulationMean": 0.28714285697583314,
+        "simulationP95": 0.800000011920929,
+        "renderMean": 1.91565934079034,
+        "drawCalls": 669,
+        "triangles": 524936,
+        "maxBodies": 125,
+        "maxProjectiles": 200,
+        "maxFragments": 80,
+        "completedRounds": 0
+      },
+      {
+        "scenario": "stress",
+        "seed": 98765,
+        "date": "2026-09-06T00:38:42.082Z",
+        "resolution": [
+          2560,
+          1440
+        ],
+        "samples": 1780,
+        "seconds": 19.99990000000596,
+        "fps": 118.64451968965794,
+        "frameP50": 8.300000000001091,
+        "frameP95": 10,
+        "frameP99": 12.400000000000546,
+        "simulationMean": 0.2864606743448236,
+        "simulationP95": 0.800000011920929,
+        "renderMean": 2.020337078661731,
+        "drawCalls": 666,
+        "triangles": 525250,
+        "maxBodies": 125,
+        "maxProjectiles": 201,
+        "maxFragments": 80,
+        "completedRounds": 0
+      }
+    ],
+    "profiles": {
+      "normal": [
+        [
+          "(idle) @ :0",
+          8032.588999999999
+        ],
+        [
+          "(program) @ :0",
+          311.9899999999998
+        ],
+        [
+          "updateMatrixWorld @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:9897",
+          150.33100000000005
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:46908",
+          149.50199999999995
+        ],
+        [
+          "projectObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51577",
+          117.54900000000005
+        ],
+        [
+          "bindVertexArray @ :0",
+          87.87000000000002
+        ],
+        [
+          "WebGLRenderer.renderBufferDirect @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51294",
+          78.762
+        ],
+        [
+          "intersectsObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:18484",
+          57.040000000000006
+        ],
+        [
+          "copyArray @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44497",
+          54.52300000000002
+        ],
+        [
+          "getParameters @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:45676",
+          53.44500000000001
+        ],
+        [
+          "multiplyMatrices @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:8108",
+          45.84200000000002
+        ],
+        [
+          "getProgram @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51721",
+          40.68500000000001
+        ],
+        [
+          "setProgram @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51818",
+          38.14800000000001
+        ],
+        [
+          "loop @ http://127.0.0.1:5173/sloppy-tanks/src/main.ts:55",
+          33.81
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51705",
+          31.748
+        ],
+        [
+          "render @ http://127.0.0.1:5173/sloppy-tanks/src/game/presentation.ts:445",
+          30.725
+        ],
+        [
+          "bufferSubData @ :0",
+          27.307000000000002
+        ],
+        [
+          "uniformMatrix4fv @ :0",
+          27.158
+        ],
+        [
+          "needsUpdate @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:42477",
+          23.062000000000005
+        ],
+        [
+          "arraysEqual @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44492",
+          20.633
+        ],
+        [
+          "update @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:41639",
+          20.035
+        ],
+        [
+          "getBindingState @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:42431",
+          19.664
+        ],
+        [
+          "getProgramCacheKey @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:45891",
+          16.925
+        ],
+        [
+          "disable @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:47203",
+          16.914
+        ],
+        [
+          "wasm-function[35] @ wasm://wasm/007b5d42:1",
+          16.474
+        ],
+        [
+          "drawArrays @ :0",
+          15.480999999999998
+        ],
+        [
+          "flatten @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44474",
+          13.800999999999998
+        ],
+        [
+          "setFromEuler @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:3569",
+          13.579
+        ],
+        [
+          "setValueM4 @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44595",
+          13.425
+        ],
+        [
+          "sort @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:46162",
+          13.169999999999998
+        ],
+        [
+          "setup @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:42406",
+          12.677
+        ],
+        [
+          "update @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44202",
+          11.972999999999999
+        ],
+        [
+          "find @ http://127.0.0.1:5173/sloppy-tanks/src/game/navigation.ts:35",
+          10.082999999999998
+        ],
+        [
+          "refreshMaterialUniforms @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:49567",
+          9.719
+        ],
+        [
+          "wasm-function[28] @ wasm://wasm/007b5d42:1",
+          9.167
+        ]
+      ],
+      "stress": [
+        [
+          "(idle) @ :0",
+          6964.9410000000335
+        ],
+        [
+          "(program) @ :0",
+          326.4499999999999
+        ],
+        [
+          "updateMatrixWorld @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:9897",
+          193.04999999999998
+        ],
+        [
+          "bindVertexArray @ :0",
+          145.77999999999997
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:46908",
+          133.96300000000005
+        ],
+        [
+          "WebGLRenderer.renderBufferDirect @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51294",
+          133.23400000000012
+        ],
+        [
+          "projectObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51577",
+          97.51100000000001
+        ],
+        [
+          "setValueM4 @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44595",
+          92.70499999999998
+        ],
+        [
+          "getUv @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=0f766f0c:4",
+          91.139
+        ],
+        [
+          "setProgram @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51818",
+          85.65700000000002
+        ],
+        [
+          "render @ http://127.0.0.1:5173/sloppy-tanks/src/game/presentation.ts:445",
+          82.64000000000003
+        ],
+        [
+          "multiplyMatrices @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:8108",
+          76.18100000000001
+        ],
+        [
+          "needsUpdate @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:42477",
+          60.095000000000006
+        ],
+        [
+          "renderObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51705",
+          57.778999999999996
+        ],
+        [
+          "RoundedBoxGeometry @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=0f766f0c:39",
+          41.88900000000001
+        ],
+        [
+          "drawArrays @ :0",
+          39.919000000000004
+        ],
+        [
+          "uniformMatrix4fv @ :0",
+          39.651
+        ],
+        [
+          "getProgram @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:51721",
+          36.986000000000004
+        ],
+        [
+          "sort @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:46162",
+          36.466
+        ],
+        [
+          "getBindingState @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:42431",
+          35.373999999999995
+        ],
+        [
+          "update @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44202",
+          31.48100000000001
+        ],
+        [
+          "loop @ http://127.0.0.1:5173/sloppy-tanks/src/main.ts:55",
+          31.46
+        ],
+        [
+          "intersectsObject @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:18484",
+          31.450999999999997
+        ],
+        [
+          "convert @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:5405",
+          28.962000000000007
+        ],
+        [
+          "wasm-function[35] @ wasm://wasm/007b5d42:1",
+          28.809
+        ],
+        [
+          "getParameters @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:45676",
+          27.569
+        ],
+        [
+          "setValue @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44949",
+          26.363000000000003
+        ],
+        [
+          "find @ http://127.0.0.1:5173/sloppy-tanks/src/game/navigation.ts:35",
+          24.682000000000002
+        ],
+        [
+          "setFromEuler @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:3569",
+          22.507000000000005
+        ],
+        [
+          "setMaterial @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:47355",
+          21.057000000000002
+        ],
+        [
+          "bufferSubData @ :0",
+          20.970999999999997
+        ],
+        [
+          "(garbage collector) @ :0",
+          20.023
+        ],
+        [
+          "invert @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:5172",
+          19.945
+        ],
+        [
+          "setValueM3 @ http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c:44581",
+          18.916
+        ],
+        [
+          "toDataURL @ :0",
+          18.648
+        ]
+      ]
+    },
+    "complete": true
+  }
+}

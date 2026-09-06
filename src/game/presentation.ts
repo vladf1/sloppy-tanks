@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { batch, freezeStatic } from "./batching";
 import {
   box,
   put,
@@ -25,35 +25,6 @@ interface Particle {
   max: number;
   size: number;
   color: THREE.Color;
-}
-/** Batch static pieces while retaining authored movable turret/barrel/track groups. */
-function batch(group: THREE.Group) {
-  group.updateMatrixWorld(true);
-  const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
-  for (const child of [...group.children])
-    if (child instanceof THREE.Mesh) {
-      const mat = child.material as THREE.Material;
-      const geo = (
-        child.geometry.index
-          ? child.geometry.toNonIndexed()
-          : child.geometry.clone()
-      ).applyMatrix4(child.matrix);
-      const list = byMat.get(mat) ?? [];
-      list.push(geo);
-      byMat.set(mat, list);
-      group.remove(child);
-    }
-  for (const [mat, geos] of byMat) {
-    const geo = mergeGeometries(geos);
-    if (geo) {
-      const m = new THREE.Mesh(geo, mat);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      geo.userData.owned = true;
-      group.add(m);
-    }
-    for (const g of geos) g.dispose();
-  }
 }
 function disposeOwned(g: THREE.Object3D) {
   g.traverse((o) => {
@@ -430,6 +401,7 @@ export class Presentation {
     }
     batch(details);
     this.scene.add(details);
+    freezeStatic(details);
     // The tree line frames the board; in-arena trees have matching cover colliders.
     for (const side of [-1, 1])
       for (let i = 0; i < 12; i++) {
@@ -445,6 +417,7 @@ export class Presentation {
         tree.position.y = -0.8;
         batch(tree);
         this.scene.add(tree);
+        freezeStatic(tree);
       }
   }
   reset(s: Simulation) {
@@ -464,6 +437,7 @@ export class Presentation {
       batch(g);
       this.coverMeshes.set(c.id, g);
       this.worldGroup.add(g);
+      freezeStatic(g);
     }
     for (const t of s.tanks) {
       const g = tankModel(t.kind, t.team);
@@ -702,6 +676,7 @@ export class Presentation {
         batch(g);
         this.coverMeshes.set(c.id, g);
         this.worldGroup.add(g);
+        freezeStatic(g);
       }
       g.visible = c.alive;
     }

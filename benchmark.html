@@ -165,6 +165,9 @@
         </div>
         <a href="./">BACK TO THE YARD ↗</a>
       </header>
+      <section id="optimization"></section>
+      <details>
+        <summary>Historical measurements and longevity tests · earlier builds</summary>
       <p class="note">
         <b>Previous build measurements.</b> The timing and longevity results
         below predate the larger arena and visual redesign. They have not been
@@ -194,6 +197,7 @@
         <summary>Raw measurements and reproducibility data</summary>
         <pre id="raw"></pre>
       </details>
+      </details>
       <footer>
         Vite 8.2.2 · TypeScript 7.0.2 · Three.js 0.185.1 · Rapier 0.20.0 · No UI
         framework<br />This view refreshes its saved results every 15 seconds.
@@ -204,12 +208,37 @@
       const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : "—");
       const card = (name, value, unit, good = true) =>
         `<div class="card"><small>${name}</small><b class="${good ? "good" : "warn"}">${value}</b><span>${unit}</span></div>`;
+      async function loadOptimization() {
+        const response = await fetch("./artifacts/performance-results.json?" + Date.now());
+        if (!response.ok) return;
+        const data = await response.json();
+        document.querySelector("#hardware").textContent =
+          `Chrome ${data.after.chrome} · 2560 × 1440 · Three runs per scenario`;
+        const mean = (runs, key) => runs.reduce((sum, run) => sum + run[key], 0) / runs.length;
+        let html = `<h2>Chrome profiler optimization · ${data.after.date.slice(0, 10)}</h2><p>Same machine and Chrome ${data.after.chrome}, 2560 × 1440 pixels, three seeded runs per scenario. Each run lasts 20 seconds; the first five seconds are excluded. CPU profiles are recorded separately from timing runs.</p>`;
+        for (const scenario of ["normal", "stress"]) {
+          const before = data.before.runs.filter(run => run.scenario === scenario);
+          const after = data.after.runs.filter(run => run.scenario === scenario);
+          const reduction = key => (1 - mean(after, key) / mean(before, key)) * 100;
+          html += `<h2>${scenario === "normal" ? "Normal match · 12 tanks" : "Stress · 24 tanks + repeated destruction"}</h2><div class="cards">${card("RENDER CPU SAVED", fmt(reduction("renderMean")) + "%", "less CPU time per frame")}${card("DRAW CALLS SAVED", fmt(reduction("drawCalls")) + "%", "includes the shadow pass")}${card("AFTER RENDER CPU", fmt(mean(after, "renderMean")), "milliseconds / frame")}${card("AFTER FRAME RATE", fmt(mean(after, "fps")), "frames / second")}</div><table><tr><th>MEASUREMENT</th><th>BEFORE</th><th>AFTER</th></tr>${[
+            ["Render CPU (ms/frame)", "renderMean"], ["Draw calls/frame", "drawCalls"],
+            ["Simulation CPU (ms/frame)", "simulationMean"], ["FPS", "fps"],
+            ["p95 frame (ms)", "frameP95"], ["p99 frame (ms)", "frameP99"],
+          ].map(([label, key]) => `<tr><td>${label}</td><td>${fmt(mean(before, key))}</td><td>${fmt(mean(after, key))}</td></tr>`).join("")}</table>`;
+        }
+        html += `<p class="note">The baseline already runs near the display's 120 Hz ceiling. The gain is lower rendering CPU cost and fewer draw calls; average FPS remains near that ceiling. Table values are means of three run summaries, including the per-run percentiles.</p><p>Compatible model paints now share draws through vertex colors; distinct metallic, emissive and tone-mapping responses remain separate. Static scenery keeps its calculated transforms. Geometry, shadows, resolution and simulation rules are preserved.</p><p class="muted">Stress refills up to 200 projectiles and 80 physical fragments and triggers drum chains every five simulation seconds. Counts fall as objects collide or expire. Fixed seeds and burst schedules are repeated; real-time rendering and cosmetic randomness can vary slightly between runs. These short runs do not measure long-session memory stability.</p><details><summary>Individual runs and CPU profiler samples</summary><pre></pre></details>`;
+        const section = document.querySelector("#optimization");
+        section.innerHTML = html;
+        section.querySelector("pre").textContent = JSON.stringify(data, null, 2);
+      }
+      loadOptimization().catch(console.warn);
       async function load() {
         const r = await fetch(
           "./artifacts/benchmark-results.json?" + Date.now(),
         ).then((r) => r.json());
-        document.querySelector("#hardware").textContent =
-          (r.hardware ?? "") + (r.chrome ? " · Chrome " + r.chrome : "");
+        if (!document.querySelector("#optimization .card"))
+          document.querySelector("#hardware").textContent =
+            (r.hardware ?? "") + (r.chrome ? " · Chrome " + r.chrome : "");
         let html = "";
         if (r.status) html += `<p class="note">${r.status}</p>`;
         if (r.validationSummary?.frameTimeTargetMet === false)

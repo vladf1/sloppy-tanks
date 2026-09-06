@@ -21,6 +21,10 @@ node scripts/benchmark.mjs      # 1440p Chrome normal, stress, ten resets, 20-mi
 
 The browser scripts use installed Google Chrome and isolated temporary profiles. They do not access the user's existing Chrome profile. The benchmark takes approximately 23 active minutes; sleep or focus pauses extend it. It writes `artifacts/benchmark-results.json`; the notebook reads that file. `artifacts/simulation-results.json` contains accelerated, non-rendered match validation. These are deliberately labeled separately.
 
+For a shorter before/after comparison, run `node scripts/profile.mjs before` on the original revision and `node scripts/profile.mjs after` on the changed revision with Vite running. Each pass records three seeded 20-second normal runs and three stress runs at 1440p, excluding the first five seconds, plus separate Chrome DevTools CPU profiles. Avoid source edits or other browser workloads during measurement. Full results and importable `.cpuprofile` files stay locally in `artifacts/performance/`; the compact comparison is saved to `artifacts/performance-results.json` and shown at the top of the performance notebook.
+
+The September 5 rendering pass combines compatible model colors into vertex-colored batches and freezes stationary scenery transforms. Three-run mean render CPU time fell from 1.59 to 1.19 ms/frame in normal play and 2.74 to 2.00 ms/frame under stress; draw calls fell from 655 to 329 and 1,176 to 668. FPS stayed near 120. Stress p99 increased from 9.3 to 10.9 ms, so these results demonstrate lower submission cost, not improved frame pacing. Geometry, shadow settings, resolution and gameplay rules are preserved. The 30 tests and production build pass; these short measurements do not replace the earlier longevity test.
+
 ## Play
 
 - **WASD**: screen-relative movement.
