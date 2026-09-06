@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { sidingBox, shingleRoof } from "./house-surfaces";
 import { applyTankSurface } from "./tank-surfaces";
+import { concreteWall } from "./concrete-surfaces";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { TEAM_COLORS, VEHICLES } from "./data";
 import type { VehicleKind, Team, Cover, WreckPart } from "./types";
@@ -544,7 +545,8 @@ export function coverModel(
   } else {
     put(
       g,
-      box(c.w, c.h, c.d, c.color, c.kind === "boundary" ? 0.06 : 0.16),
+      c.kind === "boundary" ? concreteWall(c.w, c.h, c.d)
+        : box(c.w, c.h, c.d, c.color, 0.16),
       0,
       c.h / 2,
       0,
