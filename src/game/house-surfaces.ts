@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-// Shared procedural surface tiles: readable seams and restrained grain, no image downloads.
-const textures = new Map<string, THREE.DataTexture>();
+// Shared offline-generated tiles; drawing code lives in scripts/generate-textures.ts.
+const textures = new Map<string, THREE.Texture>();
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 const geometries = new Map<string, THREE.BufferGeometry>();
 const TILE_METRES = 2.56;
@@ -10,26 +10,11 @@ function surfaceMaterial(kind: "siding" | "shingles", color: number) {
   const cached = materials.get(key); if (cached) return cached;
   let texture = textures.get(kind);
   if (!texture) {
-    const size = 256, pixels = new Uint8Array(size * size * 4);
-    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-      const row = Math.floor(y / 32), offset = y % 32;
-      const width = kind === "shingles" ? 64 : 128;
-      const column = Math.floor((x + (row % 2) * width / 2) / width);
-      const seam = (x + (row % 2) * width / 2) % width;
-      const variation = ((column * 37 + row * 19) % 23) - 11;
-      const grain = kind === "siding"
-        ? Math.sin(x * 0.12 + Math.sin(y * 0.7) * 2) * 4
-        : ((x * 13 + y * 23) % 9) - 4;
-      let value = 225 + variation + grain;
-      if (offset < 3) value = 125;
-      else if (offset < 5) value = 250;
-      else if (offset > 28) value -= 24;
-      if (seam < 2) value -= kind === "shingles" ? 65 : 25;
-      const i = (y * size + x) * 4;
-      pixels[i] = pixels[i + 1] = pixels[i + 2] = Math.max(0, Math.min(255, value));
-      pixels[i + 3] = 255;
-    }
-    texture = new THREE.DataTexture(pixels, size, size);
+    texture = new THREE.TextureLoader().load(
+      `${import.meta.env?.BASE_URL ?? "/"}textures/houses/${kind}.png`,
+    );
+    // Preserve the row orientation of the original DataTexture.
+    texture.flipY = false;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.magFilter = THREE.LinearFilter;

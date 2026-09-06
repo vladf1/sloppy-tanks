@@ -4,6 +4,7 @@ import { TrackTrails } from "./tracks";
 import { weaponInterval } from "./weapons";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
+import { groundMaterial, groundUVs } from "./ground-surfaces";
 import {
   box,
   put,
@@ -12,7 +13,7 @@ import {
   tankModel,
   wreckModel,
   coverModel,
-  labelTexture,
+  teamTexture,
 } from "./models";
 import { ARENA, TEAM_COLORS, PICKUPS, VEHICLES, MINE_RADIUS } from "./data";
 import { spawnPositions } from "./arena";
@@ -134,17 +135,15 @@ export class Presentation {
     const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
     put(this.scene, board, 0, -0.8, 0);
     const floor = box(ARENA * 2, 0.15, ARENA * 2, 0xffdb92, 0.03);
-    const groundTexture = this.groundTexture();
-    floor.material = new THREE.MeshStandardMaterial({
-      map: groundTexture,
-      roughness: 1,
-    });
+    floor.material = groundMaterial(this.renderer, "dry-grass");
+    groundUVs(floor.geometry);
     put(this.scene, floor, 0, -0.07, 0);
     const outskirts = new THREE.Mesh(
       new THREE.BoxGeometry(180, 0.15, 180),
       floor.material,
     );
     outskirts.receiveShadow = true;
+    groundUVs(outskirts.geometry);
     put(this.scene, outskirts, 0, -0.9, 0);
     this.createYardDetails();
     const fragmentGeometry = {
@@ -280,56 +279,19 @@ export class Presentation {
     this.scene.add(this.crosshair);
     this.resize();
   }
-  groundTexture() {
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 256;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#bbbf73";
-    ctx.fillRect(0, 0, 256, 256);
-    let seed = 719;
-    const random = () => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-    for (let i = 0; i < 18000; i++) {
-      ctx.fillStyle = ["#939f58", "#d2cd8d", "#adb269", "#c6c87a"][i % 4];
-      ctx.globalAlpha = 0.2 + random() * 0.35;
-      ctx.fillRect(
-        random() * 256,
-        random() * 256,
-        0.6 + random() * 1.3,
-        1 + random() * 2.5,
-      );
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(24, 24);
-    texture.anisotropy = Math.min(
-      8,
-      this.renderer.capabilities.getMaxAnisotropy(),
-    );
-    return texture;
-  }
   createYardDetails() {
     const details = new THREE.Group();
+    const roadMaterial = groundMaterial(this.renderer, "packed-dirt");
+    const road = (w: number, d: number, x: number, z: number, y: number) => {
+      const geometry = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2);
+      groundUVs(geometry, x, z);
+      put(details, new THREE.Mesh(geometry, roadMaterial), x, y, z);
+    };
     // Broad village roads retain the roomy midfield and outer flanking circuits.
     for (const x of [-52, 0, 52])
-      put(
-        details,
-        box(x === 0 ? 18 : 10, 0.025, ARENA * 2 - 2, 0xddbd80, 0),
-        x,
-        0.03,
-        0,
-      );
+      road(x === 0 ? 18 : 10, ARENA * 2 - 2, x, 0, 0.0425);
     for (const z of [-38, 0, 38])
-      put(
-        details,
-        box(ARENA * 2 - 2, 0.025, z === 0 ? 12 : 8, 0xddbd80, 0),
-        0,
-        0.05,
-        z,
-      );
+      road(ARENA * 2 - 2, z === 0 ? 12 : 8, 0, z, 0.0625);
     const spawnRimGeometry = new THREE.RingGeometry(
       2.05,
       2.3,
@@ -531,7 +493,7 @@ export class Presentation {
       const icon = new THREE.Sprite(
         new THREE.SpriteMaterial({
           toneMapped: false,
-          map: labelTexture(team === 0 ? "◆" : "Ⅱ", "#ffffff"),
+          map: teamTexture(team),
           depthTest: false,
         }),
       );

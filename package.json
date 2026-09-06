@@ -7,7 +7,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build && node scripts/copy-artifacts.mjs",
     "test": "node --import tsx --test tests/*.test.ts",
-    "validate": "node --import tsx scripts/validate.ts"
+    "validate": "node --import tsx scripts/validate.ts",
+    "generate:textures": "node --import tsx scripts/generate-textures.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",
@@ -15,6 +16,7 @@
     "three": "0.185.1"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.8",
     "@tweakpane/core": "2.0.5",
     "@types/howler": "2.2.13",
     "@types/node": "26.4.1",

@@ -1,9 +1,13 @@
-import { test } from "node:test";
+import { test, mock, after } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { batch, freezeStatic } from "../src/game/batching";
 import { arenaLayout } from "../src/game/arena";
 import { coverModel, tankModel } from "../src/game/models";
+
+// Geometry tests do not decode external images; retain real textured materials.
+mock.method(THREE.TextureLoader.prototype, "load", () => new THREE.Texture());
+after(() => mock.restoreAll());
 
 test("batching preserves triangle positions and linear colors while combining compatible paints", () => {
   const group = new THREE.Group();

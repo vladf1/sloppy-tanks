@@ -25,6 +25,12 @@ For a shorter before/after comparison, run `node scripts/profile.mjs before` on 
 
 The September 5 rendering pass combines compatible model colors into vertex-colored batches and freezes stationary scenery transforms. Three-run mean render CPU time fell from 1.59 to 1.19 ms/frame in normal play and 2.74 to 2.00 ms/frame under stress; draw calls fell from 655 to 329 and 1,176 to 668. FPS stayed near 120. Stress p99 increased from 9.3 to 10.9 ms, so these results demonstrate lower submission cost, not improved frame pacing. Geometry, shadow settings, resolution and gameplay rules are preserved. The 30 tests and production build pass; these short measurements do not replace the earlier longevity test.
 
+## Static textures
+
+`npm run generate:textures` runs `scripts/generate-textures.ts` using the development-only Node canvas library. It writes seven power-up faces to `public/textures/pickups/`, siding and shingles to `public/textures/houses/`, and two team symbols to `public/textures/teams/`. These PNGs are checked in; local dev/build commands use them directly. The GitHub Pages workflow regenerates them after `npm ci`, before tests and the production build, so the deployed images match the drawing code and pickup colors. Regenerate and commit the images when changing their drawing code or pickup colors locally. Font rendering can vary across operating systems.
+
+AI-generated grass and dirt are separate: runtime WebPs are in `public/textures/ground/`, with original PNGs and prompts in `assets/texture-sources/`. The offline script does not overwrite those images.
+
 ## Play
 
 - **WASD**: screen-relative movement.

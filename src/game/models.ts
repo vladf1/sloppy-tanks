@@ -555,27 +555,14 @@ export function coverModel(
   }
   return g;
 }
-const textures = new Map<string, THREE.CanvasTexture>();
-export function labelTexture(
-  text: string,
-  color = "#fff4cf",
-  bg = "transparent",
-) {
-  const key = text + color + bg;
-  const cached = textures.get(key);
-  if (cached) return cached;
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 128;
-  const c = canvas.getContext("2d")!;
-  c.fillStyle = bg;
-  c.fillRect(0, 0, 256, 128);
-  c.fillStyle = color;
-  c.font = "bold 76px sans-serif";
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  c.fillText(text, 128, 64);
-  const texture = new THREE.CanvasTexture(canvas);
-  textures.set(key, texture);
+const teamTextures = new Map<number, THREE.Texture>();
+export function teamTexture(team: number) {
+  let texture = teamTextures.get(team);
+  if (!texture) {
+    texture = new THREE.TextureLoader().load(
+      `${import.meta.env.BASE_URL}textures/teams/${team === 0 ? "blue" : "red"}.png`,
+    );
+    teamTextures.set(team, texture);
+  }
   return texture;
 }
