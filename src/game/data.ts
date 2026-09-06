@@ -15,7 +15,6 @@ export const VEHICLES: Record<
     speedKmh: number;
     mass: number;
     scale: number;
-    description: string;
   }
 > = {
   scout: {
@@ -25,7 +24,6 @@ export const VEHICLES: Record<
     ...roadSpeed(35),
     mass: 1,
     scale: 0.82,
-    description: "Find the gap. Beat the turret. Never sit still.",
   },
   balanced: {
     name: "BRUISER",
@@ -34,7 +32,6 @@ export const VEHICLES: Record<
     ...roadSpeed(28),
     mass: 1.45,
     scale: 1,
-    description: "A little speed, a little steel. A whole lot of trouble.",
   },
   heavy: {
     name: "BIG RIG",
@@ -43,7 +40,6 @@ export const VEHICLES: Record<
     ...roadSpeed(23),
     mass: 2.5,
     scale: 1.15,
-    description: "Hold your ground. Punch through the mess.",
   },
 };
 export const WEAPONS: Record<
