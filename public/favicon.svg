@@ -1,1 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#233d35"/><rect x="10" y="18" width="10" height="37" rx="4" fill="#d7cb9b"/><rect x="44" y="18" width="10" height="37" rx="4" fill="#d7cb9b"/><rect x="18" y="20" width="28" height="31" rx="7" fill="#5aceba"/><rect x="27" y="7" width="10" height="30" rx="3" fill="#e8c47b"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Sloppy Tanks — blue Bruiser</title>
+  <rect width="64" height="64" rx="15" fill="#ffd43b"/>
+  <!-- Broad, dark tracks keep the silhouette legible at tab size. -->
+  <path d="m8 36 25-14 9 5v11L17 53c-5 3-10-1-10-6v-6q0-3 1-5Z" fill="#102c44"/>
+  <path d="m29 44 23-14 6 4v10L35 58c-5 3-10-1-10-6v-3Z" fill="#102c44"/>
+  <path d="m31 48 22-13v7L32 55q-3 1-3-2v-2q0-2 2-3Z" fill="#284e68"/>
+  <path d="m9 43 7 4v5l-6-3Z" fill="#284e68"/>
+  <!-- Sloped blue hull and bright front glacis. -->
+  <path d="m8 35 26-15 23 13-27 16Z" fill="#008cff"/>
+  <path d="m8 35 22 12v6L8 41Z" fill="#53c6ff"/>
+  <path d="m30 47 27-16v6L30 53Z" fill="#0067c4"/>
+  <path d="m13 34 22-12 17 10-23 13Z" fill="#30b3ff"/>
+  <!-- Bruiser's tall, faceted turret and roof hatch. -->
+  <path d="m23 22 15-9 12 7-15 9Z" fill="#72d4ff"/>
+  <path d="m23 22 12 7v13l-16-9Z" fill="#008cff"/>
+  <path d="m35 29 15-9 4 14-19 11Z" fill="#0875d5"/>
+  <path d="m29 21 8-5 7 4-8 5Z" fill="#325974"/>
+  <path d="m30 20 7-4 6 3-7 4Z" fill="#8db8ce"/>
+  <path d="m42 30 7-4 1 3-8 5Z" fill="#153e5f"/>
+  <!-- Steel mantlet and short, oversized muzzle. -->
+  <path d="m23 27 6 3v8l-6-3-3-5Z" fill="#305675"/>
+  <path d="m23 28 4 3-12 9-5-3Z" fill="#aecbd9"/>
+  <path d="m15 40 12-9v5l-12 9Z" fill="#476f88"/>
+  <path d="m8 36 5-3 7 4-6 4Z" fill="#d2e5ed"/>
+  <path d="m8 36 6 3v8l-6-3Z" fill="#365c76"/>
+  <path d="m14 39 6-3v7l-6 4Z" fill="#6f99b2"/>
+  <path d="m9.5 38.5 3 1.5v4l-3-1.5Z" fill="#0b2338"/>
+  <path d="m20 43 5 3v3l-5-3Z" fill="#e3f4ff"/>
+</svg>
