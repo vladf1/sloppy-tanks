@@ -23,7 +23,7 @@ export class UI {
   ) {
     root.insertAdjacentHTML(
       "beforeend",
-      `<div id="hud"><div class="brand">SLOPPY<span>TANKS</span></div><div class="scoreboard"><div class="team mint"><small>◆ BLUE</small><b id="score0">0</b></div><div class="clock"><b id="time">5:00</b><small>FIRST TO 50</small></div><div class="team coral"><small>RED Ⅱ</small><b id="score1">0</b></div></div><button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button><div id="feed"></div><div id="toast"></div><div class="bottom"><div class="status"><small id="vehicle-name">BRUISER</small><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div><em id="effects"></em></div><div class="weapon"><small id="weapon">STANDARD SHELLS</small><div id="ammo">● ● ●</div><span id="mine">MINE READY · RMB</span></div><div class="keyhint">W A S D <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 SCROLL <span>ZOOM</span></div></div></div><div id="overlay"></div>`,
+      `<div id="hud"><div class="brand">SLOPPY<span>TANKS</span></div><div class="scoreboard"><div class="team mint"><small>◆ BLUE</small><b id="score0">0</b></div><div class="clock"><b id="time">5:00</b><small>FIRST TO 50</small></div><div class="team coral"><small>RED Ⅱ</small><b id="score1">0</b></div></div><button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button><div id="feed"></div><div id="toast"></div><div class="bottom"><div class="combat-status"><div class="status"><small id="vehicle-name">BRUISER</small><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div><div class="weapon"><small id="weapon">STANDARD SHELLS</small><span id="mine">MINE READY · RMB</span></div><em id="effects"></em></div><div class="keyhint">W A S D <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 SCROLL <span>ZOOM</span></div></div></div><div id="overlay"></div>`,
     );
     this.overlay = root.querySelector("#overlay")!;
     this.hud = root.querySelector("#hud")!;
@@ -141,7 +141,6 @@ export class UI {
         ? `MINE ${t.mineCooldown.toFixed(1)}s`
         : "MINE READY · RMB",
     );
-    set("ammo", t.cooldown > 0 ? "○ ○ ○" : "● ● ●");
     set(
       "effects",
       [

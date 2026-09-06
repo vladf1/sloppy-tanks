@@ -149,37 +149,38 @@ canvas#game {
   align-items: flex-end;
   gap: 12px;
 }
-.status,
-.weapon {
-  padding: 15px 20px;
+.combat-status {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 14px;
+  width: 310px;
+  max-width: 100%;
+  padding: 10px 14px;
   background: #122b47e8;
   border: 1px solid #eef4d12a;
   border-radius: 8px;
   box-shadow: 0 5px 20px #1b33232b;
 }
-.status {
-  width: 210px;
-}
 .status small,
 .weapon small {
   font-size: 11px;
-  letter-spacing: 1.4px;
+  letter-spacing: 0.8px;
   font-weight: 700;
 }
 .status div {
   display: flex;
   align-items: baseline;
   position: relative;
-  padding-bottom: 8px;
+  padding-bottom: 5px;
 }
 .status b {
-  font:
-    800 36px "Barlow Condensed",
-    Impact;
+  font: 800 28px/1.1 "Barlow Condensed", Impact, sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 .status span {
   font-size: 10px;
-  margin-left: 8px;
+  margin-left: 6px;
   opacity: 0.7;
 }
 .status i {
@@ -190,27 +191,32 @@ canvas#game {
   background: #41baff;
   transition: width 0.15s;
 }
-.status em {
-  display: block;
-  font-size: 9px;
+#effects {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  line-height: 1.4;
   font-style: normal;
-  margin-top: 5px;
+  margin-top: 7px;
   color: #88e5ff;
-  min-height: 10px;
+}
+#effects:empty {
+  display: none;
 }
 .weapon {
-  min-width: 220px;
+  border-left: 1px solid #ffffff24;
+  padding-left: 14px;
 }
-.weapon div {
-  letter-spacing: 8px;
-  font-size: 24px;
-  color: #f4d181;
-  margin-top: 3px;
+.weapon small {
+  display: block;
+  line-height: 1.4;
 }
 .weapon span {
+  display: block;
+  margin-top: 5px;
   font-size: 10px;
-  letter-spacing: 1px;
-  opacity: 0.65;
+  letter-spacing: 0.5px;
+  color: #b3cadd;
+  font-variant-numeric: tabular-nums;
 }
 .keyhint {
   margin-left: auto;
