@@ -317,13 +317,13 @@ const roofGeometry = new THREE.ExtrudeGeometry(roofProfile, {
 }).translate(0, 0, -0.5);
 // Scalloped branch skirts create pointed boughs instead of smooth stacked cones.
 const pineGeometry = (() => {
-  const geometry = new THREE.ConeGeometry(1, 1, 24, 2).toNonIndexed();
+  const geometry = new THREE.ConeGeometry(1, 1, 12, 1).toNonIndexed();
   const positions = geometry.getAttribute("position");
   for (let i = 0; i < positions.count; i++) {
     const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
     const angle = Math.atan2(z, x);
-    const scallop = 0.87 + 0.13 * Math.cos(angle * 12);
-    positions.setXYZ(i, x * scallop, y + (0.5 - y) * 0.035 * Math.cos(angle * 12), z * scallop);
+    const scallop = 0.87 + 0.13 * Math.cos(angle * 6);
+    positions.setXYZ(i, x * scallop, y + (0.5 - y) * 0.035 * Math.cos(angle * 6), z * scallop);
   }
   geometry.computeVertexNormals();
   return geometry;
@@ -336,6 +336,7 @@ function pitchedRoof(w: number, h: number, d: number, color: number) {
 }
 export function coverModel(
   c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color">,
+  detail: "full" | "background" = "full",
 ) {
   const g = new THREE.Group();
   g.position.set(c.x, 0, c.z);
@@ -430,9 +431,9 @@ export function coverModel(
     const twist = Math.sin(c.x * 2.3 + c.z * 0.7) * Math.PI;
     put(g, cylinder(0.2, c.h * 0.72, 0x705039, 9), 0, c.h * 0.36, 0);
     // Exposed roots and ridges give the lower trunk a readable bark silhouette.
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; detail === "full" && i < 5; i++) {
       const angle = twist + i * Math.PI * 2 / 5;
-      const root = box(0.13, 0.13, c.w * 0.26, i % 2 ? 0x563b2c : 0x896044, 0.025);
+      const root = box(0.13, 0.13, c.w * 0.26, i % 2 ? 0x563b2c : 0x896044, 0);
       root.rotation.y = angle;
       put(g, root, Math.sin(angle) * c.w * 0.14, 0.1, Math.cos(angle) * c.d * 0.14);
       const ridge = cylinder(0.035, c.h * 0.24, 0x9b704b, 4);
@@ -451,7 +452,7 @@ export function coverModel(
       leaves.rotation.y = twist + i * 0.39;
       leaves.castShadow = leaves.receiveShadow = true;
       put(g, leaves, 0, c.h * y, 0);
-      if (i < 3) for (let branch = 0; branch < 6; branch++) {
+      if (detail === "full" && i < 3) for (let branch = 0; branch < 6; branch++) {
         const angle = twist + i * 0.61 + branch * Math.PI / 3;
         const tuft = new THREE.Mesh(pineGeometry, material(i % 2 ? 0x278f59 : 0x21774d));
         tuft.scale.set(c.w * radius * 0.30, c.h * 0.18, c.d * radius * 0.30);
@@ -467,7 +468,7 @@ export function coverModel(
     for (let offset = -length / 2 + 0.12; offset <= length / 2; offset += 0.55)
       put(
         g,
-        box(along ? 0.24 : 0.18, c.h, along ? 0.18 : 0.24, c.color, 0.018),
+        box(along ? 0.24 : 0.18, c.h, along ? 0.18 : 0.24, c.color, 0),
         along ? offset : 0,
         c.h / 2,
         along ? 0 : offset,
@@ -475,7 +476,7 @@ export function coverModel(
     for (const y of [0.45, 1.12])
       put(
         g,
-        box(along ? length : 0.2, 0.18, along ? 0.2 : length, 0x8f603a, 0.01),
+        box(along ? length : 0.2, 0.18, along ? 0.2 : length, 0x8f603a, 0),
         0,
         y,
         0,

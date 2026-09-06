@@ -88,3 +88,21 @@ test("detailed arena houses stay within the scenery polygon budget", () => {
   // Tiny bevels previously pushed these houses above 112k triangles.
   assert.ok(triangles <= 20_000, `House geometry exceeded its budget: ${triangles}`);
 });
+
+test("tree and fence detail stays within scenery budgets", () => {
+  const triangles = (model: THREE.Group) => {
+    let count = 0;
+    model.traverse(object => {
+      if (object instanceof THREE.Mesh)
+        count += (object.geometry.index?.count ?? object.geometry.getAttribute("position").count) / 3;
+    });
+    return count;
+  };
+  for (const [kind, budget] of [["tree", 9_000], ["fence", 3_500]] as const) {
+    const count = arenaLayout().filter(c => c.kind === kind)
+      .reduce((sum, c) => sum + triangles(coverModel(c)), 0);
+    assert.ok(count <= budget, `${kind}: ${count} triangles exceeds ${budget}`);
+  }
+  const tree = arenaLayout().find(c => c.kind === "tree")!;
+  assert.ok(triangles(coverModel(tree, "background")) <= 200);
+});

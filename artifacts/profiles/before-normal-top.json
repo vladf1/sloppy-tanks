@@ -1,0 +1,182 @@
+[
+  {
+    "ms": 16060.5,
+    "fn": "(idle)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 552.7,
+    "fn": "(program)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 110.2,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  },
+  {
+    "ms": 107.4,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 78.2,
+    "fn": "render",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/src/game/presentation.ts",
+    "line": 510
+  },
+  {
+    "ms": 75.6,
+    "fn": "renderObjects",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51695
+  },
+  {
+    "ms": 73.1,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 70.1,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  },
+  {
+    "ms": 66.5,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 61.7,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 61.1,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  },
+  {
+    "ms": 60.3,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 56.4,
+    "fn": "setProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51818
+  },
+  {
+    "ms": 54.3,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 53.8,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 53.8,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 51.7,
+    "fn": "bufferSubData",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 50.9,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  },
+  {
+    "ms": 47.5,
+    "fn": "getProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51721
+  },
+  {
+    "ms": 45.6,
+    "fn": "intersectsObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 18484
+  },
+  {
+    "ms": 44.4,
+    "fn": "copyArray",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 44497
+  },
+  {
+    "ms": 44.2,
+    "fn": "getProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51721
+  },
+  {
+    "ms": 44,
+    "fn": "wasm-function[35]",
+    "url": "wasm://wasm/007b5d42",
+    "line": 1
+  },
+  {
+    "ms": 37.7,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 37.5,
+    "fn": "getParameters",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 45676
+  },
+  {
+    "ms": 36.7,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 34.9,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  },
+  {
+    "ms": 34.1,
+    "fn": "getParameters",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 45676
+  },
+  {
+    "ms": 33.9,
+    "fn": "loop",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/src/main.ts",
+    "line": 64
+  },
+  {
+    "ms": 33.1,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  }
+]

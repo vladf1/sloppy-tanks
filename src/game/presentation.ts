@@ -31,6 +31,17 @@ interface Particle {
   size: number;
   color: THREE.Color;
 }
+function updateInstances(mesh: THREE.InstancedMesh) {
+  if (!mesh.count) return;
+  mesh.instanceMatrix.clearUpdateRanges();
+  mesh.instanceMatrix.addUpdateRange(0, mesh.count * 16);
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) {
+    mesh.instanceColor.clearUpdateRanges();
+    mesh.instanceColor.addUpdateRange(0, mesh.count * 3);
+    mesh.instanceColor.needsUpdate = true;
+  }
+}
 function disposeOwned(g: THREE.Object3D) {
   g.traverse((o) => {
     if (o instanceof THREE.Mesh && o.geometry.userData.owned)
@@ -414,7 +425,8 @@ export class Presentation {
     this.scene.add(details);
     freezeStatic(details);
     // The tree line frames the board; in-arena trees have matching cover colliders.
-    for (const side of [-1, 1])
+    for (const side of [-1, 1]) {
+      const row = new THREE.Group();
       for (let i = 0; i < 12; i++) {
         const tree = coverModel({
           kind: "tree",
@@ -424,12 +436,18 @@ export class Presentation {
           d: 3.8,
           h: 6 + (i % 3),
           color: 0x19935c,
-        } as Parameters<typeof coverModel>[0]);
+        } as Parameters<typeof coverModel>[0], "background");
         tree.position.y = -0.8;
-        batch(tree);
-        this.scene.add(tree);
-        freezeStatic(tree);
+        tree.updateMatrix();
+        for (const mesh of [...tree.children]) {
+          mesh.applyMatrix4(tree.matrix);
+          row.add(mesh);
+        }
       }
+      batch(row);
+      this.scene.add(row);
+      freezeStatic(row);
+    }
   }
   reset(s: Simulation) {
     disposeOwned(this.worldGroup);
@@ -835,8 +853,7 @@ export class Presentation {
       }
     }
     for (const mesh of this.debrisMeshes.values()) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      updateInstances(mesh);
     }
     const mineIds = new Set(s.mines.map((m) => m.id));
     for (const [id, g] of this.mineMeshes)
@@ -878,10 +895,7 @@ export class Presentation {
       this.dummy.updateMatrix();
       this.shotCore.setMatrixAt(i, this.dummy.matrix);
     }
-    for (const mesh of [this.shotMesh, this.shotCore, this.shotOutline])
-      mesh.instanceMatrix.needsUpdate = true;
-    if (this.shotMesh.instanceColor)
-      this.shotMesh.instanceColor.needsUpdate = true;
+    for (const mesh of [this.shotMesh, this.shotCore, this.shotOutline]) updateInstances(mesh);
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const q = this.particles[i];
       q.life -= dt;
@@ -910,9 +924,7 @@ export class Presentation {
       this.particlesMesh.setMatrixAt(i, this.dummy.matrix);
       this.particlesMesh.setColorAt(i, q.color);
     }
-    this.particlesMesh.instanceMatrix.needsUpdate = true;
-    if (this.particlesMesh.instanceColor)
-      this.particlesMesh.instanceColor.needsUpdate = true;
+    updateInstances(this.particlesMesh);
     this.crosshair.visible = s.match.phase === "playing";
     this.renderer.render(this.scene, this.camera);
   }

@@ -1,0 +1,182 @@
+[
+  {
+    "ms": 15593.2,
+    "fn": "(idle)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 474.1,
+    "fn": "(program)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 117.6,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 115.4,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 112.5,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 87.4,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  },
+  {
+    "ms": 83.7,
+    "fn": "renderObjects",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51695
+  },
+  {
+    "ms": 79,
+    "fn": "render",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/src/game/presentation.ts",
+    "line": 510
+  },
+  {
+    "ms": 74.1,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 71.6,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  },
+  {
+    "ms": 70.1,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 61.3,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  },
+  {
+    "ms": 58.8,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 56.7,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 50.9,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 49.9,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  },
+  {
+    "ms": 48.2,
+    "fn": "getProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51721
+  },
+  {
+    "ms": 46.4,
+    "fn": "getParameters",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 45676
+  },
+  {
+    "ms": 46.3,
+    "fn": "copyArray",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 44497
+  },
+  {
+    "ms": 45.9,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 46908
+  },
+  {
+    "ms": 45.2,
+    "fn": "wasm-function[35]",
+    "url": "wasm://wasm/007b5d42",
+    "line": 1
+  },
+  {
+    "ms": 45,
+    "fn": "getProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51721
+  },
+  {
+    "ms": 41.4,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 9897
+  },
+  {
+    "ms": 41,
+    "fn": "getUv",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three_addons_geometries_RoundedBoxGeometry__js.js?v=cd03554d",
+    "line": 4
+  },
+  {
+    "ms": 40,
+    "fn": "wasm-function[28]",
+    "url": "wasm://wasm/007b5d42",
+    "line": 1
+  },
+  {
+    "ms": 39.8,
+    "fn": "setProgram",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51818
+  },
+  {
+    "ms": 39.6,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 38,
+    "fn": "d",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/@dimforge_rapier3d-compat.js?v=dea44c1e",
+    "line": 2752
+  },
+  {
+    "ms": 37.3,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51294
+  },
+  {
+    "ms": 33.3,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5178/sloppy-tanks/node_modules/.vite/deps/three.module-DCBAxRZ4.js?v=dc2ab826",
+    "line": 51577
+  }
+]

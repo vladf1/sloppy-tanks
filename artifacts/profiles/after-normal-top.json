@@ -1,0 +1,182 @@
+[
+  {
+    "ms": 15950.9,
+    "fn": "(idle)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 678.5,
+    "fn": "(program)",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 137.5,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51294
+  },
+  {
+    "ms": 112.1,
+    "fn": "setProgram",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51818
+  },
+  {
+    "ms": 95,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51294
+  },
+  {
+    "ms": 90.5,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 46908
+  },
+  {
+    "ms": 88.1,
+    "fn": "setValueM4",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 44595
+  },
+  {
+    "ms": 86.3,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 9897
+  },
+  {
+    "ms": 86.1,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51577
+  },
+  {
+    "ms": 71.1,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51294
+  },
+  {
+    "ms": 62.6,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 9897
+  },
+  {
+    "ms": 61,
+    "fn": "renderObject",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 46908
+  },
+  {
+    "ms": 57.8,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 55.2,
+    "fn": "projectObject",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51577
+  },
+  {
+    "ms": 54.9,
+    "fn": "render",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/src/game/presentation.ts?t=1788669469538",
+    "line": 529
+  },
+  {
+    "ms": 52.4,
+    "fn": "updateMatrixWorld",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 9897
+  },
+  {
+    "ms": 48.9,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 45,
+    "fn": "renderObjects",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51695
+  },
+  {
+    "ms": 41.5,
+    "fn": "bindVertexArray",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 38.6,
+    "fn": "loop",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/src/main.ts?t=1788669469538",
+    "line": 64
+  },
+  {
+    "ms": 37.2,
+    "fn": "wasm-function[35]",
+    "url": "wasm://wasm/007b5d42",
+    "line": 1
+  },
+  {
+    "ms": 35.9,
+    "fn": "WebGLRenderer.renderBufferDirect",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51294
+  },
+  {
+    "ms": 34.5,
+    "fn": "update",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 44202
+  },
+  {
+    "ms": 34.1,
+    "fn": "uniformMatrix4fv",
+    "url": "",
+    "line": 0
+  },
+  {
+    "ms": 33.6,
+    "fn": "setProgram",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51818
+  },
+  {
+    "ms": 32.7,
+    "fn": "getParameters",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 45676
+  },
+  {
+    "ms": 32.7,
+    "fn": "getProgram",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 51721
+  },
+  {
+    "ms": 31.8,
+    "fn": "find",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/src/game/navigation.ts?t=1788667438598",
+    "line": 35
+  },
+  {
+    "ms": 31,
+    "fn": "intersectsObject",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 18484
+  },
+  {
+    "ms": 29.6,
+    "fn": "getParameters",
+    "url": "http://127.0.0.1:5173/sloppy-tanks/node_modules/.vite/deps/three.module-Cg0SxxSv.js?v=0f766f0c",
+    "line": 45676
+  }
+]

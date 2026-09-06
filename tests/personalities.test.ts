@@ -1,6 +1,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
+import { InstancedBufferAttribute } from "three";
 import { Simulation } from "../src/game/simulation";
 import { botAssignment, BOT_PERSONALITIES, BOT_PROFILES, botReload, combatMovement } from "../src/game/bot-personalities";
 import { botCommand } from "../src/game/ai";
@@ -110,5 +111,37 @@ test("a full track buffer cannot replace still-visible marks and can reuse fully
   s.elapsed = TRACK_LIFETIME + 0.1;
   human.body.setTranslation({ x: 4010, y: 0.65, z: 0 }, true); trails.update(s, 1);
   assert.notDeepEqual(trails.mesh.instanceMatrix.array, before);
+  trails.dispose(); s.dispose();
+});
+
+test("track uploads cover changed marks across ring wrap without uploading the whole buffer", () => {
+  const { s, bot, human } = duel();
+  bot.alive = false;
+  const trails = new TrackTrails();
+  const matrix = trails.mesh.instanceMatrix;
+  const birth = trails.mesh.geometry.getAttribute("trackBirth");
+  assert.ok(birth instanceof InstancedBufferAttribute);
+  let wrapped = false;
+  for (let i = 0; i < 2100; i++) {
+    matrix.clearUpdateRanges(); birth.clearUpdateRanges();
+    s.elapsed = i / 60;
+    human.body.setTranslation({ x: i, y: 0.65, z: 0 }, true);
+    trails.update(s, 1);
+    assert.ok(matrix.updateRanges.reduce((n, r) => n + r.count, 0) <= 96);
+    assert.deepEqual(matrix.updateRanges.map(r => ({start:r.start/16,count:r.count/16})), birth.updateRanges);
+    if (matrix.updateRanges.length === 2) {
+      wrapped = true;
+      assert.equal(matrix.updateRanges[0].start + matrix.updateRanges[0].count, TRACK_CAPACITY * 16);
+      assert.equal(matrix.updateRanges[1].start, 0);
+      birth.updateRanges.forEach(({ start, count }) => {
+        for (let j = start; j < start + count; j++)
+          assert.ok(Math.abs(birth.getX(j) - s.elapsed) < 0.00001);
+      });
+    }
+  }
+  assert.ok(wrapped, "the workload must exercise a two-range wrap");
+  trails.reset();
+  assert.equal(matrix.updateRanges.length, 0);
+  assert.equal(birth.updateRanges.length, 0);
   trails.dispose(); s.dispose();
 });

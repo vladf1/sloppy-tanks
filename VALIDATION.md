@@ -1,5 +1,12 @@
 # Validation record
 
+## Chrome rendering profile and optimization — September 6, 2026
+
+- Captured four real 20-second Chrome CPU profiles plus six 40-second live gameplay measurements at 2560×1440, seed 207 and 115% speed. Rendering dominated sampled CPU work; simulation averaged 0.20–0.33 ms/frame.
+- Reduced arena tree geometry 34,368→8,736 triangles, boundary trees 68,736→3,744, fences 28,080→3,120. Batched 24 boundary trees into two rows. Upload only changed track spans and active effect instances. House/pickup textures, collisions, effects and track fading remain intact.
+- Conservative final crowded repeat: draw calls 443→400, rendered triangles 361,811→296,232, render CPU 1.546→1.485 ms, GPU median 2.129→2.046 ms. FPS remained about 120; p95 frame interval remained 9.3 ms. Larger GPU improvements in the initial run were variable and are not the claimed stable result. Sustained 111 FPS was not reproduced.
+- All 64 tests and production build pass, including new scenery budgets and track ring-wrap upload coverage. Compared model appearance through the production renderer in Chrome. Details and raw Chrome profiles: [profiling report](artifacts/profiles/README.md).
+
 ## House optimization and health-bar behavior — September 6, 2026
 
 - Removed rounded bevel geometry from house trim while retaining all textures and architectural detail. Across 14 houses: original pre-detail geometry 67,720 triangles; detailed version 112,128; optimized detail 17,088. Textured houses still batch into three meshes each (42 total).

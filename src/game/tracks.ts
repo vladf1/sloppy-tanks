@@ -43,12 +43,15 @@ export class TrackTrails {
     this.mesh.count = 0;
     this.cursor = 0;
     this.poses.clear();
+    this.mesh.instanceMatrix.clearUpdateRanges();
+    this.birth.clearUpdateRanges();
     this.clock.value = 0;
   }
 
   update(s: Simulation, alpha: number) {
     this.clock.value = s.elapsed;
-    let changed = false;
+    const first = this.cursor;
+    let written = 0;
     for (const t of s.tanks) {
       if (!t.alive) { this.poses.delete(t.id); continue; }
       const p = t.body.translation();
@@ -81,17 +84,28 @@ export class TrackTrails {
             this.dummy.scale.set(0.48 * scale, 1, 0.16 * scale);
             this.dummy.updateMatrix();
             this.mesh.setMatrixAt(this.cursor, this.dummy.matrix);
+            written++;
             this.birth.setX(this.cursor, s.elapsed);
             this.cursor = (this.cursor + 1) % TRACK_CAPACITY;
             this.mesh.count = Math.min(TRACK_CAPACITY, this.mesh.count + 1);
           }
-          changed = true;
         }
         previous.pending = (previous.pending + length) % spacing;
       }
       previous.x = x; previous.z = z; previous.heading = t.heading;
     }
-    if (changed) {
+    if (written) {
+      // A wrapped ring touches at most two contiguous ranges, not the full buffer.
+      const addRange = (start: number, count: number) => {
+        this.mesh.instanceMatrix.addUpdateRange(start * 16, count * 16);
+        this.birth.addUpdateRange(start, count);
+      };
+      if (written >= TRACK_CAPACITY) addRange(0, TRACK_CAPACITY);
+      else {
+        const tail = Math.min(written, TRACK_CAPACITY - first);
+        addRange(first, tail);
+        if (written > tail) addRange(0, written - tail);
+      }
       this.mesh.instanceMatrix.needsUpdate = true;
       this.birth.needsUpdate = true;
     }
