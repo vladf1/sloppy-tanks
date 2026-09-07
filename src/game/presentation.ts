@@ -15,6 +15,7 @@ import {
   coverModel,
   stumpModel,
   teamTexture,
+  type TankModel,
 } from "./models";
 import { ARENA, TEAM_COLORS, PICKUPS, VEHICLES, MINE_RADIUS } from "./data";
 import { spawnPositions } from "./arena";
@@ -33,6 +34,19 @@ interface Particle {
   size: number;
   color: THREE.Color;
 }
+// Life and size pairs are [minimum, random span]. Choose once per event.
+const PARTICLE_STYLES = {
+  tree: { count: 96, life: [0.85, 0.9], size: [0.18, 0.25],
+    speed: 7, scatter: 1.5, height: 0.6, lift: 1 },
+  pickup: { count: 24, life: [0.5, 0.3], size: [0.12, 0.1],
+    speed: 5, scatter: 0, height: 1.3, lift: 4 },
+  explosion: { count: 18, life: [0.35, 0.45], size: [0.22, 0.5],
+    speed: 1.2, scatter: 0, height: 0.8, lift: 0 },
+  hurt: { count: 12, life: [0.22, 0.16], size: [0.09, 0.09],
+    speed: 6, scatter: 0.9, height: 2.1, lift: 1.5 },
+  impact: { count: 8, life: [0.1, 0.2], size: [0.04, 0.09],
+    speed: 4, scatter: 0, height: 1, lift: 0 },
+};
 function updateInstances(mesh: THREE.InstancedMesh) {
   if (!mesh.count) return;
   mesh.instanceMatrix.clearUpdateRanges();
@@ -56,13 +70,9 @@ function disposeOwned(g: THREE.Object3D) {
       o.material.dispose();
   });
 }
-function batchTank(g: THREE.Group) {
+function batchTank(g: TankModel) {
   const d = g.userData;
-  const tracks = new THREE.Group();
-  for (const t of d.tracks) tracks.add(t);
-  d.hull.add(tracks);
-  batch(tracks);
-  d.trackGroup = tracks;
+  batch(d.trackGroup);
   batch(d.hull);
   batch(d.turret);
   batch(d.barrel);
@@ -73,8 +83,12 @@ export class Presentation {
   camera = new THREE.PerspectiveCamera(43, 1, 0.1, 320);
   raycaster = new THREE.Raycaster();
   groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1);
+  private floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private pointer = new THREE.Vector2();
+  private aimPoint = new THREE.Vector3();
+  private corners = Array.from({ length: 4 }, () => new THREE.Vector3());
   worldGroup = new THREE.Group();
-  tankMeshes = new Map<number, THREE.Group>();
+  tankMeshes = new Map<number, TankModel>();
   coverMeshes = new Map<number, THREE.Group>();
   fragmentMeshes = new Map<number, THREE.Object3D>();
   pickupMeshes = new Map<number, THREE.Group>();
@@ -102,7 +116,6 @@ export class Presentation {
   time = 0;
   flash = new THREE.PointLight(0xffc178, 0, 20, 2);
   crosshair = new THREE.Group();
-  resolution = 1;
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -454,7 +467,6 @@ export class Presentation {
     for (const t of s.tanks) {
       const g = tankModel(t.kind, t.team);
       batchTank(g);
-      g.userData.kind = t.kind;
       this.tankMeshes.set(t.id, g);
       this.worldGroup.add(g);
       this.makeBar(t.id, t.team, t.human);
@@ -549,8 +561,8 @@ export class Presentation {
     this.camera.updateProjectionMatrix();
   }
   aim(nx: number, ny: number) {
-    this.raycaster.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
-    const p = new THREE.Vector3();
+    this.raycaster.setFromCamera(this.pointer.set(nx, ny), this.camera);
+    const p = this.aimPoint;
     this.raycaster.ray.intersectPlane(this.groundPlane, p);
     this.crosshair.position.x = p.x;
     this.crosshair.position.z = p.z;
@@ -590,34 +602,29 @@ export class Presentation {
     const explosion =
       e.type === "explosion" || e.type === "death" || e.type === "destroy";
     const tree = e.type === "destroy" && e.coverKind === "tree";
-    const count = tree ? 96 : pickup ? 24 : explosion ? 18 : hurt ? 12 : e.type === "shot" ? 5 : 8;
+    const style = PARTICLE_STYLES[tree ? "tree" : pickup ? "pickup" : explosion ? "explosion" : hurt ? "hurt" : "impact"];
+    const count = e.type === "shot" ? 5 : style.count;
+    const baseSpeed = style.speed * (explosion && !tree ? e.size ?? 3 : 1);
+    const colors = tree
+      ? Array.from({ length: 12 }, (_, i) => i % 4 === 0 ? 0x98633e : [0x175e3b, 0x2c9452, e.color ?? 0x389b58][i % 3])
+      : pickup ? [0xffffff, e.color ?? 0xffffff, e.color ?? 0xffffff, e.color ?? 0xffffff]
+      : explosion ? [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250]
+      : hurt ? [0xffffff, 0xffcb58, 0xffcb58] : [e.color ?? 0xffdf91];
     for (let i = 0; i < count && this.particles.length < 1200; i++) {
-      const life = tree ? 0.85 + Math.random() * 0.9 : pickup ? 0.5 + Math.random() * 0.3 : explosion
-        ? 0.35 + Math.random() * 0.45
-        : hurt ? 0.22 + Math.random() * 0.16 : 0.1 + Math.random() * 0.2;
-      const speed = tree ? 7 + Math.random() * 4 : pickup ? 5 : explosion ? (e.size ?? 3) * 1.2 : hurt ? 6 : 4;
+      const life = style.life[0] + Math.random() * style.life[1];
+      const speed = baseSpeed + (tree ? Math.random() * 4 : 0);
       this.particles.push({
         shape: tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
-        x: e.x + (tree ? (Math.random() - 0.5) * 1.5 : hurt ? (Math.random() - 0.5) * 0.9 : 0),
-        y: tree ? 0.6 + Math.random() * (e.height ?? 5) * 0.85 : pickup ? 1.3 : explosion ? 0.8 : hurt ? 2.1 : 1,
-        z: e.z + (tree ? (Math.random() - 0.5) * 1.5 : hurt ? (Math.random() - 0.5) * 0.9 : 0),
+        x: e.x + (Math.random() - 0.5) * style.scatter,
+        y: style.height + (tree ? Math.random() * (e.height ?? 5) * 0.85 : 0),
+        z: e.z + (Math.random() - 0.5) * style.scatter,
         vx: (Math.random() - 0.5) * speed,
-        vy: tree ? 1 + Math.random() * 5 : (pickup ? 4 : hurt ? 1.5 : 0) + Math.random() * speed,
+        vy: style.lift + Math.random() * (tree ? 5 : speed),
         vz: (Math.random() - 0.5) * speed,
         life,
         max: life,
-        size: tree ? 0.18 + Math.random() * 0.25 : pickup ? 0.12 + Math.random() * 0.1 : explosion
-          ? 0.22 + Math.random() * 0.5
-          : hurt ? 0.09 + Math.random() * 0.09 : 0.04 + Math.random() * 0.09,
-        color: new THREE.Color(
-          tree ? (i % 4 === 0 ? 0x98633e : [0x175e3b, 0x2c9452, e.color ?? 0x389b58][i % 3]) : pickup ? (i % 4 === 0 ? 0xffffff : e.color ?? 0xffffff) : explosion
-            ? i % 3 === 0
-              ? 0x536779
-              : i % 2 === 0
-                ? 0xffc569
-                : 0xff9250
-            : hurt ? (i % 3 === 0 ? 0xffffff : 0xffcb58) : (e.color ?? 0xffdf91),
-        ),
+        size: style.size[0] + Math.random() * style.size[1],
+        color: new THREE.Color(colors[i % colors.length]),
       });
     }
     if (explosion && !tree) {
@@ -667,24 +674,16 @@ export class Presentation {
     );
     this.camera.lookAt(this.follow);
     this.camera.updateMatrixWorld();
-    const corners = [
-      [-0.8, -0.7],
-      [0.8, -0.7],
-      [-0.8, 0.65],
-      [0.8, 0.65],
-    ].map(([x, y]) => {
-      this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
-      return this.raycaster.ray.intersectPlane(
-        new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
-        new THREE.Vector3(),
-      )!;
-    });
-    s.wreckView = {
-      minX: Math.max(corners[0].x, corners[2].x),
-      maxX: Math.min(corners[1].x, corners[3].x),
-      minZ: corners[2].z,
-      maxZ: corners[0].z,
-    };
+    const corners = this.corners;
+    for (let i = 0; i < corners.length; i++) {
+      this.raycaster.setFromCamera(this.pointer.set(i % 2 ? 0.8 : -0.8, i < 2 ? -0.7 : 0.65), this.camera);
+      this.raycaster.ray.intersectPlane(this.floorPlane, corners[i]);
+    }
+    const bounds = s.wreckView ??= { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
+    bounds.minX = Math.max(corners[0].x, corners[2].x);
+    bounds.maxX = Math.min(corners[1].x, corners[3].x);
+    bounds.minZ = corners[2].z;
+    bounds.maxZ = corners[0].z;
     this.flash.intensity *= Math.exp(-dt * 12);
     if (s.human.alive && !this.playerWasAlive) this.spawnCue = 2.5;
     this.playerWasAlive = s.human.alive;
@@ -713,7 +712,6 @@ export class Presentation {
         }
         g = tankModel(t.kind, t.team);
         batchTank(g);
-        g.userData.kind = t.kind;
         this.tankMeshes.set(t.id, g);
         this.worldGroup.add(g);
       }
@@ -743,9 +741,8 @@ export class Presentation {
       g.userData.hull.rotation.y = t.heading;
       g.userData.turret.rotation.y = t.aim;
       g.userData.barrel.position.z = -t.recoil * 0.2;
-      g.userData.trackGroup.position.z =
-        (this.time * Math.hypot(t.body.linvel().x, t.body.linvel().z) * 0.4) %
-        0.25;
+      const velocity = t.body.linvel();
+      g.userData.trackGroup.position.z = (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
       g.scale.setScalar(VEHICLES[t.kind].scale);
       bar.position.set(g.position.x, t.human ? 3.2 : 2.5, g.position.z);
       bar.quaternion.copy(this.camera.quaternion);
@@ -803,20 +800,8 @@ export class Presentation {
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
         g = wreckModel(f.wreck, f.team ?? 0, f.part ?? "hull");
-        // Flatten the selected assembly before batching its material groups.
-        g.updateMatrixWorld(true);
-        const meshes: THREE.Mesh[] = [];
-        g.traverse((o) => {
-          if (o instanceof THREE.Mesh) meshes.push(o);
-        });
-        const flat = new THREE.Group();
-        for (const mesh of meshes) {
-          mesh.applyMatrix4(mesh.parent!.matrixWorld);
-          flat.add(mesh);
-        }
-        batch(flat);
         if (f.cleanup === "fade") {
-          flat.traverse((o) => {
+          g.traverse((o) => {
             if (!(o instanceof THREE.Mesh)) return;
             const clone = (material: THREE.Material) => {
               const copy = material.clone();
@@ -829,7 +814,6 @@ export class Presentation {
               : clone(o.material);
           });
         }
-        g = flat;
         this.fragmentMeshes.set(f.id, g);
         this.worldGroup.add(g);
       }
@@ -890,18 +874,17 @@ export class Presentation {
       this.shotCore.setMatrixAt(i, this.dummy.matrix);
     }
     for (const mesh of [this.shotMesh, this.shotCore, this.shotOutline]) updateInstances(mesh);
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const q = this.particles[i];
+    let live = 0;
+    for (const q of this.particles) {
       q.life -= dt;
-      if (q.life <= 0) {
-        this.particles.splice(i, 1);
-        continue;
-      }
+      if (q.life <= 0) continue;
       q.x += q.vx * dt;
       q.y += q.vy * dt;
       q.z += q.vz * dt;
       q.vy -= 8 * dt;
+      this.particles[live++] = q;
     }
+    this.particles.length = live;
     this.particlesMesh.count = this.particles.length;
     for (let i = 0; i < this.particles.length; i++) {
       const q = this.particles[i];

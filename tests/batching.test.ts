@@ -3,11 +3,34 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { batch, freezeStatic } from "../src/game/batching";
 import { arenaLayout } from "../src/game/arena";
-import { coverModel, tankModel } from "../src/game/models";
+import { coverModel, tankModel, wreckModel } from "../src/game/models";
 
 // Geometry tests do not decode external images; retain real textured materials.
 mock.method(THREE.TextureLoader.prototype, "load", () => new THREE.Texture());
 after(() => mock.restoreAll());
+
+test("cached wrecks preserve assembly bounds and share geometry with independent transforms", () => {
+  for (const kind of ["scout", "balanced", "heavy"] as const)
+    for (const team of [0, 1] as const)
+      for (const part of ["hull", "turret", "turret-barrel", "barrel"] as const) {
+        const source = tankModel(kind, team).userData;
+        if (part === "turret") source.turret.remove(source.barrel);
+        const assembly = part === "turret-barrel" ? source.turret : source[part];
+        const pivot = new THREE.Box3().setFromObject(assembly).getCenter(new THREE.Vector3());
+        const expected = new THREE.Box3().setFromObject(assembly, true).translate(pivot.negate());
+        const a = wreckModel(kind, team, part), b = wreckModel(kind, team, part);
+        const bounds = new THREE.Box3().setFromObject(a);
+        assert.ok(bounds.min.distanceTo(expected.min) < 1e-5, `${kind} ${part} min`);
+        assert.ok(bounds.max.distanceTo(expected.max) < 1e-5, `${kind} ${part} max`);
+        assert.notEqual(a, b);
+        a.position.x = 20;
+        assert.equal(b.position.x, 0);
+        for (const [i, mesh] of (a.children as THREE.Mesh[]).entries()) {
+          assert.equal(mesh.geometry, (b.children[i] as THREE.Mesh).geometry);
+          assert.equal(mesh.geometry.userData.owned, false, "round cleanup must retain shared geometry");
+        }
+      }
+});
 
 test("textured batching preserves UVs and paint, and separates different surface maps", () => {
   const group = new THREE.Group(), wear = new THREE.Texture();

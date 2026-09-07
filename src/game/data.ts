@@ -110,6 +110,7 @@ export const PICKUPS: Record<
 export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 export const GROUP = {
+  coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
   tank: 0x00010006, // Model-sized hull touches cover and ground only.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   cover: 0x0002000b,
@@ -134,3 +135,13 @@ export const distance = (
 ) => Math.hypot(a.x - b.x, a.z - b.z);
 export const angleDelta = (a: number, b: number) =>
   Math.atan2(Math.sin(b - a), Math.cos(b - a));
+
+/** Highest score wins; equal scores retain the original candidate order. */
+export function bestBy<T>(items: Iterable<T>, score: (item: T) => number): T | undefined {
+  let best: T | undefined, highest = -Infinity;
+  for (const item of items) {
+    const value = score(item);
+    if (value > highest) { best = item; highest = value; }
+  }
+  return best;
+}

@@ -69,7 +69,7 @@ export interface Brain {
   last: Vec2;
   stuck: number;
   navVersion: number;
-  mode: string;
+  mode: "advance" | "fight" | "retreat" | "pickup" | "escort";
 }
 export type CoverKind =
   | "house"

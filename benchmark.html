@@ -201,7 +201,7 @@
       <footer>
         Vite 8.2.2 · TypeScript 7.0.2 · Three.js 0.185.1 · Rapier 0.20.0 · No UI
         framework<br />This view refreshes its saved results every 15 seconds.
-        Timing runs are controlled by scripts/benchmark.mjs.
+        Timing runs use scripts/profile.mjs; historical longevity checks use scripts/benchmark.mjs.
       </footer>
     </main>
     <script type="module">
@@ -212,21 +212,25 @@
         const response = await fetch("./artifacts/performance-results.json?" + Date.now());
         if (!response.ok) return;
         const data = await response.json();
+        const repeat = data.alternating;
         document.querySelector("#hardware").textContent =
-          `Chrome ${data.after.chrome} · 2560 × 1440 · Three runs per scenario`;
+          `Chrome ${data.after.chrome} · 2560 × 1440 · ${repeat ? "Alternating original and updated builds" : "Three runs per scenario"}`;
         const mean = (runs, key) => runs.reduce((sum, run) => sum + run[key], 0) / runs.length;
-        let html = `<h2>Chrome profiler optimization · ${data.after.date.slice(0, 10)}</h2><p>Same machine and Chrome ${data.after.chrome}, 2560 × 1440 pixels, three seeded runs per scenario. Each run lasts 20 seconds; the first five seconds are excluded. CPU profiles are recorded separately from timing runs.</p>`;
+        const runsFor = (revision, scenario) => (repeat
+          ? repeat.runs.filter(run => run.revision === revision) : data[revision].runs)
+          .filter(run => run.scenario === scenario);
+        let html = `<h2>Code review measurements · ${data.after.date.slice(0, 10)}</h2><p>Same machine and Chrome ${data.after.chrome}, 2560 × 1440 pixels. ${repeat ? `Follow-up verification uses seed ${repeat.seed} and alternates original → updated → updated → original, with two samples per build and scenario. The initial three-seed comparison is retained in the raw data below.` : "Three seeded runs per scenario."} Each run lasts 20 seconds; the first five seconds are excluded. CPU profiles are recorded separately from timing runs.</p>`;
         for (const scenario of ["normal", "stress"]) {
-          const before = data.before.runs.filter(run => run.scenario === scenario);
-          const after = data.after.runs.filter(run => run.scenario === scenario);
-          const reduction = key => (1 - mean(after, key) / mean(before, key)) * 100;
-          html += `<h2>${scenario === "normal" ? "Normal match · 12 tanks" : "Stress · 24 tanks + repeated destruction"}</h2><div class="cards">${card("RENDER CPU SAVED", fmt(reduction("renderMean")) + "%", "less CPU time per frame")}${card("DRAW CALLS SAVED", fmt(reduction("drawCalls")) + "%", "includes the shadow pass")}${card("AFTER RENDER CPU", fmt(mean(after, "renderMean")), "milliseconds / frame")}${card("AFTER FRAME RATE", fmt(mean(after, "fps")), "frames / second")}</div><table><tr><th>MEASUREMENT</th><th>BEFORE</th><th>AFTER</th></tr>${[
+          const before = runsFor("before", scenario), after = runsFor("after", scenario);
+          const change = key => (mean(after, key) / mean(before, key) - 1) * 100;
+          const changeCard = (label, key) => card(label, (change(key) > 0 ? "+" : "") + fmt(change(key)) + "%", "negative means less CPU time", change(key) <= 0);
+          html += `<h2>${scenario === "normal" ? "Normal match · 12 tanks" : "Stress · 24 tanks + repeated destruction"}</h2><div class="cards">${changeCard("RENDER CPU CHANGE", "renderMean")}${changeCard("SIMULATION CPU CHANGE", "simulationMean")}${card("AFTER RENDER CPU", fmt(mean(after, "renderMean")), "milliseconds / frame")}${card("AFTER FRAME RATE", fmt(mean(after, "fps")), "frames / second")}</div><table><tr><th>MEASUREMENT</th><th>BEFORE</th><th>AFTER</th></tr>${[
             ["Render CPU (ms/frame)", "renderMean"], ["Draw calls/frame", "drawCalls"],
             ["Simulation CPU (ms/frame)", "simulationMean"], ["FPS", "fps"],
             ["p95 frame (ms)", "frameP95"], ["p99 frame (ms)", "frameP99"],
           ].map(([label, key]) => `<tr><td>${label}</td><td>${fmt(mean(before, key))}</td><td>${fmt(mean(after, key))}</td></tr>`).join("")}</table>`;
         }
-        html += `<p class="note">The baseline already runs near the display's 120 Hz ceiling. The gain is lower rendering CPU cost and fewer draw calls; average FPS remains near that ceiling. Table values are means of three run summaries, including the per-run percentiles.</p><p>Compatible model paints now share draws through vertex colors; distinct metallic, emissive and tone-mapping responses remain separate. Static scenery keeps its calculated transforms. Geometry, shadows, resolution and simulation rules are preserved.</p><p class="muted">Stress refills up to 200 projectiles and 80 physical fragments and triggers drum chains every five simulation seconds. Counts fall as objects collide or expire. Fixed seeds and burst schedules are repeated; real-time rendering and cosmetic randomness can vary slightly between runs. These short runs do not measure long-session memory stability.</p><details><summary>Individual runs and CPU profiler samples</summary><pre></pre></details>`;
+        html += `<p class="note">Positive CPU changes indicate regressions. Near the display's 120 Hz ceiling, average FPS alone does not establish a speedup or smoother pacing; compare CPU costs and frame percentiles in both scenarios. Table values are means of run summaries, including the per-run percentiles.</p><p>The September 7 review reuses navigation and camera buffers, caches prepared wreck assemblies, filters cover queries in physics, selects AI/spawn candidates without sorting, and compacts particles in place. It also fixes queued mine input, randomized tower alignment and respawn physics. No dependencies were added.</p><p class="muted">Stress refills up to 200 projectiles and 80 physical fragments and triggers drum chains every five simulation seconds. Counts fall as objects collide or expire. Fixed seeds and burst schedules are repeated; real-time rendering and cosmetic randomness can vary between runs. These short runs do not measure long-session memory stability.</p><details><summary>Individual runs and CPU profiler samples</summary><pre></pre></details>`;
         const section = document.querySelector("#optimization");
         section.innerHTML = html;
         section.querySelector("pre").textContent = JSON.stringify(data, null, 2);

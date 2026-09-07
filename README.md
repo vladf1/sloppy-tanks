@@ -21,9 +21,9 @@ node scripts/benchmark.mjs      # 1440p Chrome normal, stress, ten resets, 20-mi
 
 The browser scripts use installed Google Chrome and isolated temporary profiles. They do not access the user's existing Chrome profile. The benchmark takes approximately 23 active minutes; sleep or focus pauses extend it. It writes `artifacts/benchmark-results.json`; the notebook reads that file. `artifacts/simulation-results.json` contains accelerated, non-rendered match validation. These are deliberately labeled separately.
 
-For a shorter before/after comparison, run `node scripts/profile.mjs before` on the original revision and `node scripts/profile.mjs after` on the changed revision with Vite running. Each pass records three seeded 20-second normal runs and three stress runs at 1440p, excluding the first five seconds, plus separate Chrome DevTools CPU profiles. Avoid source edits or other browser workloads during measurement. Full results and importable `.cpuprofile` files stay locally in `artifacts/performance/`; the compact comparison is saved to `artifacts/performance-results.json` and shown at the top of the performance notebook.
+For a shorter before/after comparison, run `node scripts/profile.mjs before` on the original revision and `node scripts/profile.mjs after` on the changed revision with Vite running. Each pass records three seeded 20-second normal runs and three stress runs at 1440p, excluding the first five seconds, plus separate Chrome DevTools CPU profiles. Avoid source edits or other browser workloads during measurement. Full results, browser-check output and importable `.cpuprofile` files stay locally in `artifacts/performance/`; the compact comparison is saved to `artifacts/performance-results.json` only after both passes finish without browser errors. The production build also type-checks the profiler's gameplay fixtures. For a different Vite port, prefix either `profile.mjs` or `browser-check.mjs` with `SLOPPY_URL=http://127.0.0.1:5175/sloppy-tanks/`.
 
-The September 5 rendering pass combines compatible model colors into vertex-colored batches and freezes stationary scenery transforms. Three-run mean render CPU time fell from 1.59 to 1.19 ms/frame in normal play and 2.74 to 2.00 ms/frame under stress; draw calls fell from 655 to 329 and 1,176 to 668. FPS stayed near 120. Stress p99 increased from 9.3 to 10.9 ms, so these results demonstrate lower submission cost, not improved frame pacing. Geometry, shadow settings, resolution and gameplay rules are preserved. The 30 tests and production build pass; these short measurements do not replace the earlier longevity test.
+The September 7 review fixes queued mine input, random tower alignment and respawn physics, and reduces repeated searches, allocations and wreck preparation. All 82 tests, ten complete simulated matches, browser controls and ten rendered resets pass. Alternating original/updated Chrome runs measured normal render CPU 1.57→1.50 ms/frame and stress 2.63→2.76 ms/frame; stress p99 rose 9.30→9.45 ms. The result is mixed, with no overall speedup claimed. The performance notebook includes the initial three-seed comparison and the alternating repeat; older results remain in VALIDATION.md.
 
 ## Static textures
 
@@ -39,7 +39,7 @@ With FFmpeg installed (`brew install ffmpeg` on macOS), run `npm run generate:au
 
 ## Play
 
-- **WASD**: screen-relative movement.
+- **WASD / Arrow keys**: screen-relative movement.
 - **Mouse**: independent turret aim.
 - **Hold left mouse**: fire.
 - **Right click**: drop a mine; 0.8-second arming delay and 7-second cooldown.

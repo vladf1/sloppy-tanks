@@ -12,8 +12,39 @@ import {
 } from "../src/game/weapons";
 import { STEP, VEHICLES, Random } from "../src/game/data";
 import { idleCommand, type Team } from "../src/game/types";
+import { Navigation } from "../src/game/navigation";
 before(async () => {
   await RAPIER.init();
+});
+test("reused navigation searches recover from unreachable goals and changed topology", () => {
+  const nav = new Navigation(), from = { x: -40, z: -40 }, to = { x: 40, z: 40 };
+  const first = nav.find(from, to), saved = structuredClone(first);
+  nav.blocked.fill(1);
+  assert.deepEqual(nav.find(from, to), []);
+  nav.rebuild([]);
+  assert.deepEqual(nav.find(to, from), new Navigation().find(to, from));
+  assert.deepEqual(nav.find(from, to), saved);
+  assert.deepEqual(nav.find(from, from), []);
+  assert.deepEqual(first, saved, "later searches cannot mutate a bot's existing path");
+});
+
+test("cover queries ignore tanks and debris and release destroyed collider identities", () => {
+  const s = new Simulation(123);
+  const c = s.addCover({ kind: "wall", x: 0, z: 50, w: 1, d: 4, h: 2, hp: 10, color: 0 });
+  const handle = c.collider.handle;
+  s.human.body.setTranslation({ x: -2, y: 0.65, z: 50 }, true);
+  s.fragment(2, 50, 0);
+  s.world.step();
+  const a = { x: -5, z: 50 }, b = { x: 5, z: 50 };
+  assert.equal(s.visible(a, b), false);
+  assert.equal(s.coverByCollider.get(handle), c);
+  s.damageCover(c, 10, s.human.id, s.humanTeam);
+  assert.equal(s.coverByCollider.has(handle), false);
+  assert.equal(s.visible(a, b), true);
+  s.reset();
+  assert.equal(s.coverByCollider.size, s.covers.length);
+  for (const cover of s.covers) assert.equal(s.coverByCollider.get(cover.collider.handle), cover);
+  s.dispose();
 });
 function game() {
   const s = new Simulation(123);

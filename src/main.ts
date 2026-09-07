@@ -112,10 +112,10 @@ function loop(now: number) {
       accumulator = Math.min(accumulator + dt, STEP * 5);
       const aim = view.aim(controls.nx, controls.ny),
         p = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
-      const cmd = controls.command(Math.atan2(aim.x - p.x, aim.z - p.z));
+      const angle = Math.atan2(aim.x - p.x, aim.z - p.z);
       let steps = 0;
       while (accumulator >= STEP && steps < 5) {
-        sim.step(cmd, autoplay);
+        sim.step(controls.command(angle), autoplay);
         accumulator -= STEP;
         steps++;
       }
@@ -203,8 +203,8 @@ function report() {
         .memory?.usedJSHeapSize ?? null,
   };
 }
-if (import.meta.env.DEV) {
-  const debug = {
+function createDebug() {
+  return {
     sim,
     view,
     controls,
@@ -293,7 +293,12 @@ if (import.meta.env.DEV) {
       };
     },
   };
-  Object.assign(window, { sloppy: debug });
+}
+declare global {
+  interface Window { sloppy: ReturnType<typeof createDebug> }
+}
+if (import.meta.env.DEV) {
+  Object.assign(window, { sloppy: createDebug() });
   if (new URLSearchParams(location.search).has("tweak")) {
     const { Pane } = await import("tweakpane");
     const pane = new Pane({ title: "Yard workshop" });

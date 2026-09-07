@@ -1,6 +1,6 @@
 import { botProfile, botReload, combatMovement, equippedWeapon } from "./bot-personalities";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { distance, VEHICLES, WEAPONS, angleDelta } from "./data";
+import { distance, bestBy, WEAPONS, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
 import { idleCommand, type Tank, type Vec2 } from "./types";
 export function botCommand(s: Simulation, t: Tank, dt: number) {
@@ -34,11 +34,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         return true;
       },
     );
-    threats.sort(
-      (a, c) =>
-        distance(p, a.body.translation()) - distance(p, c.body.translation()),
-    );
-    const target = threats[0];
+    const target = bestBy(threats, a => -distance(p, a.body.translation()));
     if (target) {
       if (target.id !== b.target) b.reaction = easy ? s.rng.range(1, 1.6) : aggressive ? s.rng.range(0.3, 0.5) : s.rng.range(0.4, 0.8);
       b.target = target.id;
@@ -63,18 +59,18 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         (q.kind !== "speed" || t.speed < 2) &&
         (q.kind !== "shield" || t.shield < 2 || t.shieldPoints < 40),
     );
-    useful.sort((a, c) => distance(p, a) - distance(p, c));
+    const nearest = bestBy(useful, q => -distance(p, q));
     const hurt = t.hp < s.maxHealth(t) * 0.4;
-    const repair = useful.find((q) => q.kind === "repair");
+    const repair = bestBy(useful, q => q.kind === "repair" ? -distance(p, q) : -Infinity);
     if (hurt && repair) {
       b.goal = { ...repair };
       b.mode = "retreat";
     } else if (
-      useful[0] &&
-      distance(p, useful[0]) < (profile.stationary && target ? 5 : aggressive ? 7 : 12) &&
+      nearest &&
+      distance(p, nearest) < (profile.stationary && target ? 5 : aggressive ? 7 : 12) &&
       (!target || (t.spread === 0 && t.rocket === 0))
     ) {
-      b.goal = { x: useful[0].x, z: useful[0].z };
+      b.goal = { x: nearest.x, z: nearest.z };
       b.mode = "pickup";
     } else if (!b.target && b.memory <= 0) {
       // Distributed flank waypoints are symmetric and independent of the human.
@@ -88,9 +84,9 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     if (!easy && !target && b.mode === "advance" && b.personality === "support") {
       const allies = s.tanks.filter((a) => a.alive && a.team === t.team && a !== t
         && a.brain.personality !== "support");
-      allies.sort((a, c) => distance(p, a.body.translation()) - distance(p, c.body.translation()));
-      if (allies[0]) {
-        const ally = allies[0].body.translation();
+      const closest = bestBy(allies, a => -distance(p, a.body.translation()));
+      if (closest) {
+        const ally = closest.body.translation();
         b.goal = { x: ally.x + (t.team === 0 ? -4 : 4), z: ally.z };
         b.mode = "escort";
       }

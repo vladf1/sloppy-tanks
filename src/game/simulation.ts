@@ -11,6 +11,7 @@ import {
   ARENA,
   distance,
   angleDelta,
+  bestBy,
 } from "./data";
 import { Navigation } from "./navigation";
 import { tankContactCollider } from "./hitboxes";
@@ -43,6 +44,7 @@ export class Simulation {
   rng: Random;
   tanks: Tank[] = [];
   covers: Cover[] = [];
+  coverByCollider = new Map<number, Cover>();
   shots: Shot[] = [];
   mines: Mine[] = [];
   pickups: Pickup[] = [];
@@ -87,6 +89,7 @@ export class Simulation {
     this.nextId = 1;
     this.tanks = [];
     this.covers = [];
+    this.coverByCollider.clear();
     this.shots = [];
     this.mines = [];
     this.pickups = [];
@@ -169,7 +172,26 @@ export class Simulation {
       collider,
     };
     this.covers.push(cover);
+    this.coverByCollider.set(collider.handle, cover);
     return cover;
+  }
+  private tankBody(kind: VehicleKind, p: Vec2) {
+    const stats = VEHICLES[kind];
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(p.x, 0.65, p.z)
+        .enabledRotations(false, true, false)
+        .setLinearDamping(0.35)
+        .setAngularDamping(8)
+        .setCcdEnabled(true)
+        .setSoftCcdPrediction(stats.speed * 1.5 * STEP * 2),
+    );
+    const collider = this.world.createCollider(
+      tankContactCollider(kind).setMass(stats.mass).setCollisionGroups(GROUP.tank)
+        .setFriction(0.05).setRestitution(0.1), body,
+    );
+    this.world.createCollider(tankContactCollider(kind), body);
+    return { body, collider };
   }
   addTank(team: Team, human: boolean, kind: VehicleKind, slot = 0) {
     const p = this.gameMode === "solo" && !human
@@ -180,24 +202,9 @@ export class Simulation {
     const assignment = botAssignment(slot, team, ordinal);
     if (!human) kind = BOT_PROFILES[assignment.personality].chassis;
     const desc = VEHICLES[kind];
-    const body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(p.x + (team === 0 ? offset : -offset), 0.65, p.z)
-        .enabledRotations(false, true, false)
-        .setLinearDamping(0.35)
-        .setAngularDamping(8)
-        .setCcdEnabled(true)
-        .setSoftCcdPrediction(desc.speed * 1.5 * STEP * 2),
-    );
-    const collider = this.world.createCollider(
-      tankContactCollider(kind)
-        .setMass(desc.mass)
-        .setCollisionGroups(GROUP.tank)
-        .setFriction(0.05)
-        .setRestitution(0.1),
-      body,
-    );
-    this.world.createCollider(tankContactCollider(kind), body);
+    const { body, collider } = this.tankBody(kind, {
+      x: p.x + (team === 0 ? offset : -offset), z: p.z,
+    });
     const tank: Tank = {
       id: this.nextId++,
       name: human ? "YOU" : this.botNames[ordinal % this.botNames.length] +
@@ -352,9 +359,9 @@ export class Simulation {
     const slots = Array.from({ length: this.activeEnemyLimit }, (_, slot) => ({
       slot, x: team === 0 ? -53 : 53, z: -46 + slot * 92 / (this.activeEnemyLimit - 1),
     })).filter(p => this.tanks.every(t => !t.alive || distance(p, t.body.translation()) > 4));
-    slots.sort((a, b) => this.spawnScore(b, [this.human], living) - this.spawnScore(a, [this.human], living));
-    if (!slots.length) return;
-    this.addTank(team, false, "scout", slots[0].slot);
+    const spawn = bestBy(slots, p => this.spawnScore(p, [this.human], living));
+    if (!spawn) return;
+    this.addTank(team, false, "scout", spawn.slot);
     this.reinforcementDelay = 1;
   }
   checkSoloResult() {
@@ -369,38 +376,13 @@ export class Simulation {
   }
   respawn(t: Tank) {
     const kind = t.human ? this.humanKind : t.kind;
-    const stats = VEHICLES[kind];
     t.kind = kind;
     const enemies = this.tanks.filter((e) => e.alive && e.team !== t.team);
     const friends = this.tanks.filter(
       (e) => e.alive && e.team === t.team && e !== t,
     );
-    const points = spawnPositions(t.team);
-    points.sort(
-      (a, b) =>
-        this.spawnScore(b, enemies, friends) -
-        this.spawnScore(a, enemies, friends),
-    );
-    const p = points[0];
-    const body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(p.x, 0.65, p.z)
-        .enabledRotations(false, true, false)
-        .setLinearDamping(0.35)
-        .setAngularDamping(8)
-        .setCcdEnabled(true)
-        .setSoftCcdPrediction(stats.speed * 1.5 * STEP * 2),
-    );
-    const collider = this.world.createCollider(
-      tankContactCollider(kind)
-        .setMass(stats.mass)
-        .setCollisionGroups(GROUP.tank)
-        .setFriction(0.05),
-      body,
-    );
-    this.world.createCollider(tankContactCollider(kind), body);
-    t.body = body;
-    t.collider = collider;
+    const p = bestBy(spawnPositions(t.team), p => this.spawnScore(p, enemies, friends))!;
+    Object.assign(t, this.tankBody(kind, p));
     t.hp = this.maxHealth(t);
     t.alive = true;
     t.protection = 2;
@@ -440,16 +422,7 @@ export class Simulation {
       { x: a.x, y: 1, z: a.z },
       { x: (b.x - a.x) / len, y: 0, z: (b.z - a.z) / len },
     );
-    return !this.world.castRay(
-      ray,
-      len,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (c) => this.covers.some((o) => o.alive && o.collider.handle === c.handle),
-    );
+    return !this.world.castRay(ray, len, true, undefined, GROUP.coverQuery);
   }
   reserveFragments(count: number) {
     while (this.fragments.length + count > this.maxFragments) {

@@ -15,7 +15,7 @@ export class Controls {
         pause();
         return;
       }
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(e.code)) {
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Space"].includes(e.code)) {
         if ((e.target as HTMLElement).tagName === "INPUT") return;
         e.preventDefault();
         this.keys.add(e.code);
@@ -64,8 +64,10 @@ export class Controls {
     const mine = this.mine;
     this.mine = false;
     return {
-      moveX: Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA")),
-      moveZ: Number(this.keys.has("KeyS")) - Number(this.keys.has("KeyW")),
+      moveX: Number(this.keys.has("KeyD") || this.keys.has("ArrowRight"))
+        - Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft")),
+      moveZ: Number(this.keys.has("KeyS") || this.keys.has("ArrowDown"))
+        - Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")),
       aim,
       fire: this.fire,
       mine,

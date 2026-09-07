@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { batch } from "./batching";
 import { explosiveBarrel } from "./barrel-surfaces";
 import { sidingBox, sidingGable, shingleRoof } from "./house-surfaces";
 import { applyTankSurface } from "./tank-surfaces";
@@ -147,8 +148,18 @@ function trackBelt(color: number) {
   return mesh;
 }
 
-export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
-  const root = new THREE.Group(), hull = new THREE.Group(), turret = new THREE.Group();
+export interface TankModel extends THREE.Group {
+  userData: {
+    kind: VehicleKind;
+    hull: THREE.Group;
+    turret: THREE.Group;
+    barrel: THREE.Group;
+    trackGroup: THREE.Group;
+    muzzle: THREE.Object3D;
+  };
+}
+export function tankModel(kind: VehicleKind, team: Team, wreck = false): TankModel {
+  const root = new THREE.Group() as TankModel, hull = new THREE.Group(), turret = new THREE.Group();
   const scout = kind === "scout", heavy = kind === "heavy";
   const color = wreck ? 0x3c4650 : TEAM_COLORS[team];
   const dark = 0x13232c, steel = wreck ? 0x37424c : 0x637581;
@@ -162,7 +173,8 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
   root.add(hull);
   put(hull, armor(width, 0.32, length, shade, 0.94), 0, 0.22, 0);
   put(hull, armor(width, deck - 0.2, length, color, scout ? 0.72 : 0.86), 0, deck / 2 + 0.16, 0);
-  const tracks: THREE.Mesh[] = [];
+  const trackGroup = new THREE.Group();
+  hull.add(trackGroup);
   for (const side of [-1, 1]) {
     const trackX = side * (overallWidth / 2 - 0.23);
     const belt = trackBelt(dark);
@@ -180,8 +192,7 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
     }
     for (let j = 0; j < 18; j++) {
       const tread = box(0.42, 0.03, 0.075, steel, 0);
-      put(hull, tread, trackX, 0.565, -length * 0.44 + j * length * 0.052);
-      tracks.push(tread);
+      put(trackGroup, tread, trackX, 0.565, -length * 0.44 + j * length * 0.052);
     }
     put(hull, box(0.46, 0.07, length, color, 0), trackX, deck, 0);
     {
@@ -303,12 +314,17 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false) {
     put(turret, badge, 0, roof + 0.018, 0.12);
   } else for (const x of [-0.07, 0.07])
     put(turret, box(0.06, 0.025, 0.2, 0xdce7ee, 0), x, roof + 0.018, 0.12);
-  root.userData = { hull, turret, barrel, tracks, muzzle: bore };
+  root.userData = { kind, hull, turret, barrel, trackGroup, muzzle: bore };
   applyTankSurface(root, [color, shade, steel]);
   return root;
 }
-/** Extract actual tank assemblies and center each on its own physics pivot. */
+// At most 3 chassis × 2 teams × 4 assemblies. Shared geometry lives across rounds.
+const wreckTemplates = new Map<string, THREE.Group>();
+/** Extract, center and batch once; instances share geometry but own their transforms. */
 export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
+  const key = `${kind}/${team}/${part}`;
+  const cached = wreckTemplates.get(key);
+  if (cached) return cached.clone();
   const source = tankModel(kind, team),
     result = new THREE.Group();
   const { hull, turret, barrel } = source.userData;
@@ -322,7 +338,18 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
     .setFromObject(result)
     .getCenter(new THREE.Vector3());
   for (const child of result.children) child.position.sub(center);
-  return result;
+  result.updateMatrixWorld(true);
+  const meshes: THREE.Mesh[] = [];
+  result.traverse(o => { if (o instanceof THREE.Mesh) meshes.push(o); });
+  const flat = new THREE.Group();
+  for (const mesh of meshes) {
+    mesh.applyMatrix4(mesh.parent!.matrixWorld);
+    flat.add(mesh);
+  }
+  batch(flat);
+  for (const mesh of flat.children as THREE.Mesh[]) mesh.geometry.userData.owned = false;
+  wreckTemplates.set(key, flat);
+  return flat.clone();
 }
 const roofProfile = new THREE.Shape();
 roofProfile.moveTo(-0.5, 0);

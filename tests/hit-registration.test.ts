@@ -84,7 +84,7 @@ test("cover still blocks shots at the widened hull, and protected targets do not
 
 test("combat hit boundaries match rendered hull bounds plus shell radius on every side", () => {
   for (const kind of ["scout", "balanced", "heavy"] as const) {
-    const { s, target } = fixture(kind), scale = VEHICLES[kind].scale;
+    const { s, target } = fixture(kind);
     const model = tankModel(kind, 1); model.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(model.userData.hull);
     // Check both hits and misses immediately around the model-derived boundary.

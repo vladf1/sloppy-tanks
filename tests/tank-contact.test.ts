@@ -52,11 +52,14 @@ test("boosted tanks stop at visible hull edges in head-on and side contacts, inc
 test("model-sized contact collider is recreated on class-changing respawn and cleaned on death", () => {
   const s = new Simulation(123), t = s.human;
   const count = s.world.colliders.len();
+  const restitution = t.collider.restitution(), friction = t.collider.friction();
   t.protection = 0;
   s.damageTank(t, 1000, 999, 1);
   s.humanKind = "heavy";
   s.respawn(t);
   assert.equal(t.body.numColliders(), 2);
+  assert.equal(t.collider.restitution(), restitution, "respawn preserves hull bounce");
+  assert.equal(t.collider.friction(), friction, "respawn preserves hull friction");
   const contact = t.body.collider(1);
   assert.equal(contact.collisionGroups(), GROUP.tankContact);
   const model = tankModel("heavy", 0); model.updateMatrixWorld(true);

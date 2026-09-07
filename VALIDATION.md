@@ -1,5 +1,13 @@
 # Validation record
 
+## Code quality, performance and readability review — September 7, 2026
+
+- Fixed mine commands lost between physics ticks, kept randomized towers on their authored axes, and shared tank creation/respawn physics. Reused navigation and camera buffers, cached 24 wreck assemblies, replaced cover scans with native collision filtering plus a handle map, selected AI/spawn candidates without sorting, compacted expired particles in place, and simplified effect presets and UI templates. Added typed tank parts/AI modes and unused-code checks. No new dependencies; production source grew about 0.6% and the game JavaScript chunk grew 0.48 kB (0.32 kB gzip).
+- All 82 tests and the strict production build pass. Regression coverage includes reused navigation after blocked goals/topology changes, cover-handle removal/reset, all 24 cached wreck bounds and independent transforms, 100 random maps, and respawn friction/restitution. An intentionally invalid profiler weapon fails TypeScript; browser errors abort profiling and incomplete runs cannot replace notebook data.
+- Chrome checks passed for a right-click between physics ticks and exactly-once consumption during catch-up, movement/fire, pause/resume, zoom and destruction. Ten rendered death/reset cycles retained exactly 436 geometries and 19 textures each, with no page errors. Local output: `artifacts/performance/browser-controls.json`. This is a reset check, not a long-session soak.
+- Ten full seeded simulations completed with seven blue wins and three red; all physics reset counts matched. Peak 107 bodies and 50 fragments. Saved to `artifacts/simulation-results.json`.
+- Initial 1440p Chrome comparison: three seeded 20-second runs per scenario/build, excluding five seconds, plus separate CPU profiles. Normal render CPU 1.876→1.477 ms/frame; stress 2.459→2.589 ms/frame. A same-seed follow-up alternated original, updated, updated, original builds using the same profiler workload. Normal render CPU 1.571→1.495 ms (−4.8%); stress 2.633→2.761 ms (+4.9%). Simulation CPU fell 3.9% normal and 5.2% stress in that repeat. FPS stayed around 118–120, normal p99 stayed 9.35 ms, and stress p99 rose 9.30→9.45 ms. Draw calls were effectively unchanged. Timing varies and the stress regression remains in these samples; no overall speedup or smoother pacing is claimed. Both comparisons are retained in `artifacts/performance-results.json` and shown in the notebook.
+
 ## Chrome rendering profile and optimization — September 6, 2026
 
 - Captured four real 20-second Chrome CPU profiles plus six 40-second live gameplay measurements at 2560×1440, seed 207 and 115% speed. Rendering dominated sampled CPU work; simulation averaged 0.20–0.33 ms/frame.

@@ -12,6 +12,8 @@ before(async () => { await RAPIER.init(); });
 test("100 random maps keep pickups and spawn strips connected", () => {
   for (let seed = 1; seed <= 100; seed++) {
     const layout = randomArenaLayout(seed);
+    for (const tower of layout.filter(c => c.kind === "tower"))
+      assert.deepEqual([tower.w, tower.d], [6, 5], "tower supports and rubble keep their authored axes");
     assert.ok(layout.length >= 35, `cover count seed ${seed}`);
     const nav = new Navigation();
     nav.rebuild(layout.map(c => ({ ...c, alive: true })) as Cover[]);

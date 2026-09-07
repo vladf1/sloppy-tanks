@@ -96,7 +96,8 @@ export function randomArenaLayout(seed: number): CoverDef[] {
   const templates = arenaLayout().filter(c => c.kind !== "boundary");
   for (let attempt = 0; attempt < 1600 && result.length < 60; attempt++) {
     const template = templates[Math.floor(rng.next() * templates.length)];
-    const rotated = rng.next() < 0.5;
+    // Towers have authored supports, roof and collapse rubble on fixed axes.
+    const rotated = rng.next() < 0.5 && template.kind !== "tower";
     const a = { ...template, x: rng.range(5, 44), z: rng.range(-49, 49),
       w: rotated ? template.d : template.w, d: rotated ? template.w : template.d };
     const b = { ...a, x: -a.x, z: -a.z };

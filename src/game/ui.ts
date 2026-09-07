@@ -1,4 +1,4 @@
-import { VEHICLES, WEAPONS, TEAM_NAMES, PICKUPS } from "./data";
+import { VEHICLES, WEAPONS, TEAM_NAMES } from "./data";
 import type { Simulation } from "./simulation";
 import type { VehicleKind, SimEvent } from "./types";
 import { tankPreview } from "./tank-previews";
@@ -24,7 +24,16 @@ export class UI {
   ) {
     root.insertAdjacentHTML(
       "beforeend",
-      `<div id="hud"><div class="brand">SLOPPY<span>TANKS</span></div><div class="scoreboard"><div class="team mint"><small id="label0">◆ BLUE</small><b id="score0">0</b></div><div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO 50</small></div><div class="team coral"><small id="label1">RED Ⅱ</small><b id="score1">0</b></div></div><button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button><div id="feed"></div><div id="toast"></div><div class="bottom"><div class="combat-status"><div class="status"><small id="vehicle-name">BRUISER</small><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div><div class="weapon"><small id="weapon">STANDARD SHELLS</small><span id="mine">MINE READY · RMB</span></div><em id="effects"></em></div><div class="keyhint">W A S D <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 SCROLL <span>ZOOM</span></div></div></div><div id="overlay"></div>`,
+      `<div id="hud"><div class="brand">SLOPPY<span>TANKS</span></div>
+        <div class="scoreboard"><div class="team mint"><small id="label0">◆ BLUE</small><b id="score0">0</b></div>
+        <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO 50</small></div>
+        <div class="team coral"><small id="label1">RED Ⅱ</small><b id="score1">0</b></div></div>
+        <button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button>
+        <div id="feed"></div><div id="toast"></div>
+        <div class="bottom"><div class="combat-status"><div class="status"><small id="vehicle-name">BRUISER</small><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
+        <div class="weapon"><small id="weapon">STANDARD SHELLS</small><span id="mine">MINE READY · RMB</span></div><em id="effects"></em></div>
+        <div class="keyhint">WASD / ARROWS <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 SCROLL <span>ZOOM</span></div></div></div>
+        <div id="overlay"></div>`,
     );
     this.overlay = root.querySelector("#overlay")!;
     this.hud = root.querySelector("#hud")!;
@@ -41,7 +50,12 @@ export class UI {
     return `<div class="vehicles">${(Object.keys(VEHICLES) as VehicleKind[])
       .map((kind) => {
         const v = VEHICLES[kind];
-        return `<button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}"><strong>${v.name}</strong><small>${v.tag}</small><img class="tank-preview" src="${tankPreview(kind, this.s.humanTeam)}" alt="${v.name} tank" draggable="false"><div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div></button>`;
+        return `
+          <button class="vehicle ${this.s.humanKind === kind ? "selected" : ""}" data-kind="${kind}">
+            <strong>${v.name}</strong><small>${v.tag}</small>
+            <img class="tank-preview" src="${tankPreview(kind, this.s.humanTeam)}" alt="${v.name} tank" draggable="false">
+            <div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div>
+          </button>`;
       })
       .join("")}</div>`;
   }
@@ -63,26 +77,62 @@ export class UI {
       );
   }
   show() {
-    const phase = this.s.match.phase;
+    const s = this.s, phase = s.match.phase;
     this.overlay.style.display =
-      phase === "playing" && this.s.human.alive ? "none" : "grid";
+      phase === "playing" && s.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     if (phase === "ready")
-      this.overlay.innerHTML = `<section class="menu start"><div class="eyebrow">${this.s.mapName} / ${this.s.gameMode === "solo" ? "1 V 20" : "6 V 6"}</div><h1>CHOOSE YOUR TANK</h1><p class="intro">Choose your battle, then click a tank to start.</p>${this.modeOptions()}${this.chooseCards()}<div class="menu-foot"><div><b>${this.s.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${this.s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[this.s.humanTeam]}</b><small>${this.s.gameMode === "solo" ? "5 MINUTES · CLEAR ALL 20 ENEMIES · ONE LIFE" : "5 MINUTES · FIRST TO 50 · FRIENDLY FIRE OFF"}</small></div></div><div class="menu-help">WASD drive · Mouse aim · Hold left click to fire · Right click mine · Scroll zoom · Esc pause<br>Shoot incoming shells to intercept · Collect upgrades to combine their effects</div></section>`;
+      this.overlay.innerHTML = `
+      <section class="menu start">
+        <div class="eyebrow">${s.mapName} / ${s.gameMode === "solo" ? "1 V 20" : "6 V 6"}</div>
+        <h1>CHOOSE YOUR TANK</h1>
+        <p class="intro">Choose your battle, then click a tank to start.</p>
+        ${this.modeOptions()}
+        ${this.chooseCards()}
+        <div class="menu-foot"><div><b>${s.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[s.humanTeam]}</b><small>${s.gameMode === "solo" ? "5 MINUTES · CLEAR ALL 20 ENEMIES · ONE LIFE" : "5 MINUTES · FIRST TO 50 · FRIENDLY FIRE OFF"}</small></div></div>
+        <div class="menu-help">WASD / Arrow keys drive · Mouse aim · Hold left click to fire · Right click mine · Scroll zoom · Esc pause<br>Shoot incoming shells to intercept · Collect upgrades to combine their effects</div>
+        </section>`;
     else if (phase === "paused")
-      this.overlay.innerHTML = `<section class="menu compact"><h2>PAUSED</h2><p>WASD drive · Mouse aim · Hold left click to fire<br>Right click mine · Scroll zoom · Escape pause</p><label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>${this.speedSliders()}<button id="resume" class="primary">RESUME</button><button id="restart" class="secondary">New round / choose vehicle</button><a href="${import.meta.env.BASE_URL}benchmark.html" target="_blank">Open performance notebook</a></section>`;
-    else if (phase === "results" && this.s.gameMode === "solo")
-      this.overlay.innerHTML = `<section class="menu compact"><div class="eyebrow">SOLO ASSAULT / ${this.s.mapName}</div><h2>${this.s.match.winner === this.s.humanTeam ? "AREA CLEARED" : "ASSAULT FAILED"}</h2><div class="result-score">${this.s.enemiesEliminated} / ${this.s.enemyCount}</div><p>Enemies eliminated.<br>${!this.s.human.alive ? "Your tank was destroyed." : this.s.match.time === 0 ? "Time ran out." : "Every enemy is down."}</p><button id="restart" class="primary">ANOTHER ROUND</button></section>`;
+      this.overlay.innerHTML = `
+      <section class="menu compact">
+        <h2>PAUSED</h2>
+        <p>WASD / Arrow keys drive · Mouse aim · Hold left click to fire<br>Right click mine · Scroll zoom · Escape pause</p>
+        <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
+        ${this.speedSliders()}
+        <button id="resume" class="primary">RESUME</button>
+        <button id="restart" class="secondary">New round / choose vehicle</button>
+        <a href="${import.meta.env.BASE_URL}benchmark.html" target="_blank">Open performance notebook</a>
+        </section>`;
+    else if (phase === "results" && s.gameMode === "solo")
+      this.overlay.innerHTML = `
+      <section class="menu compact">
+        <div class="eyebrow">SOLO ASSAULT / ${s.mapName}</div>
+        <h2>${s.match.winner === s.humanTeam ? "AREA CLEARED" : "ASSAULT FAILED"}</h2>
+        <div class="result-score">${s.enemiesEliminated} / ${s.enemyCount}</div>
+        <p>Enemies eliminated.<br>${!s.human.alive ? "Your tank was destroyed." : s.match.time === 0 ? "Time ran out." : "Every enemy is down."}</p>
+        <button id="restart" class="primary">ANOTHER ROUND</button>
+        </section>`;
     else if (phase === "results")
-      this.overlay.innerHTML = `<section class="menu compact"><div class="eyebrow">ROUND COMPLETE / ${this.s.mapName}</div><h2>${this.s.match.winner === this.s.humanTeam ? "VICTORY" : "DEFEAT"}</h2><div class="result-score"><span>${this.s.match.scores[0]}</span> : <span>${this.s.match.scores[1]}</span></div><p>${TEAM_NAMES[this.s.match.winner ?? 0]} wins${this.s.match.overtime ? " in overtime" : ""}.<br>You scored ${this.s.human.kills} eliminations · ${this.s.human.deaths} wrecks<br>${this.s.destroyed} pieces of cover demolished.</p><button id="restart" class="primary">ANOTHER ROUND</button></section>`;
-    else if (!this.s.human.alive)
-      this.overlay.innerHTML = `<section class="menu respawn"><h2>Respawn in <span id="respawn-count">3</span></h2>${this.chooseCards()}</section>`;
+      this.overlay.innerHTML = `
+      <section class="menu compact">
+        <div class="eyebrow">ROUND COMPLETE / ${s.mapName}</div>
+        <h2>${s.match.winner === s.humanTeam ? "VICTORY" : "DEFEAT"}</h2>
+        <div class="result-score"><span>${s.match.scores[0]}</span> : <span>${s.match.scores[1]}</span></div>
+        <p>${TEAM_NAMES[s.match.winner ?? 0]} wins${s.match.overtime ? " in overtime" : ""}.<br>You scored ${s.human.kills} eliminations · ${s.human.deaths} wrecks<br>${s.destroyed} pieces of cover demolished.</p>
+        <button id="restart" class="primary">ANOTHER ROUND</button>
+        </section>`;
+    else if (!s.human.alive)
+      this.overlay.innerHTML = `
+      <section class="menu respawn">
+        <h2>Respawn in <span id="respawn-count">3</span></h2>
+        ${this.chooseCards()}
+        </section>`;
     this.bindCards();
     for (const key of ["gameMode", "mapMode"] as const)
       this.overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach(input =>
         input.addEventListener("change", () => {
-          if (key === "gameMode") this.s.gameMode = input.value as Simulation["gameMode"];
-          else this.s.mapMode = input.value as Simulation["mapMode"];
+          if (key === "gameMode") s.gameMode = input.value as Simulation["gameMode"];
+          else s.mapMode = input.value as Simulation["mapMode"];
           this.show();
         }));
 

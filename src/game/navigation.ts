@@ -3,8 +3,13 @@ import { ARENA } from "./data";
 const CELL = 1.5,
   HALF = ARENA,
   N = Math.ceil((2 * HALF) / CELL);
+const DIRECTIONS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 export class Navigation {
   blocked = new Uint8Array(N * N);
+  private costs = new Float32Array(N * N);
+  private parent = new Int32Array(N * N);
+  private closed = new Uint8Array(N * N);
+  private open: number[] = [];
   version = 0;
   paths = 0;
   rebuild(covers: Cover[], region?: Cover) {
@@ -62,10 +67,12 @@ export class Navigation {
     this.paths++;
     const start = this.nearest(this.index(from)),
       goal = this.nearest(this.index(to));
-    const costs = new Float32Array(N * N).fill(Infinity),
-      parent = new Int32Array(N * N).fill(-1),
-      closed = new Uint8Array(N * N);
-    const open = [start];
+    const { costs, parent, closed, open } = this;
+    costs.fill(Infinity);
+    parent.fill(-1);
+    closed.fill(0);
+    open.length = 0;
+    open.push(start);
     costs[start] = 0;
     const heuristic = (i: number) =>
       Math.abs((i % N) - (goal % N)) +
@@ -88,12 +95,7 @@ export class Navigation {
       }
       const x = current % N,
         z = Math.floor(current / N);
-      for (const [dx, dz] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
+      for (const [dx, dz] of DIRECTIONS) {
         const nx = x + dx,
           nz = z + dz;
         if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;

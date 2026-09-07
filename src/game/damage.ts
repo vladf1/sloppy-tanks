@@ -64,6 +64,7 @@ export function damageCover(
   if (c.hp > 0) return;
   c.alive = false;
   s.destroyed++;
+  s.coverByCollider.delete(c.collider.handle);
   s.world.removeRigidBody(c.body);
   s.nav.rebuild(s.covers, c);
   s.events.push({

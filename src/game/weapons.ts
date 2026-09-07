@@ -2,7 +2,7 @@ import { tankHitTime, tankMuzzle, SHELL_HIT_RADIUS } from "./hitboxes";
 import { equippedWeapon } from "./bot-personalities";
 import RAPIER from "@dimforge/rapier3d-compat";
 import {
-  WEAPONS, PICKUPS, VEHICLES, TEAM_COLORS, distance,
+  WEAPONS, PICKUPS, GROUP, TEAM_COLORS, distance,
   SHIELD_CAPACITY, INTERCEPTION_RADIUS, INTERCEPTION_BLAST_RADIUS,
   PLAYER_FIRE_RATE_MULTIPLIER,
   MINE_RADIUS,
@@ -23,8 +23,7 @@ export function fireWeapon(s: Simulation, t: Tank) {
   let spawnDistance = muzzle.z;
   const coverHit = s.world.castRay(
     new RAPIER.Ray({ x: p.x, y: 1, z: p.z }, direction), spawnDistance, true,
-    undefined, undefined, undefined, undefined,
-    (c) => s.covers.some((cover) => cover.alive && cover.collider.handle === c.handle),
+    undefined, GROUP.coverQuery,
   );
   if (coverHit) spawnDistance = Math.min(spawnDistance, coverHit.timeOfImpact);
   const probe: Shot = { id: 0, x: p.x, z: p.z, vx: direction.x, vz: direction.z,
@@ -131,8 +130,7 @@ export function stepProjectiles(s: Simulation, dt: number, sweepTankMotion = fal
       const hit = speed > 0 ? s.world.castRayAndGetNormal(
         new RAPIER.Ray({ x: p.x, y: 1, z: p.z },
           { x: p.vx / speed, y: 0, z: p.vz / speed }),
-        speed * time, true, undefined, undefined, undefined, undefined,
-        (c) => s.covers.some((o) => o.alive && o.collider.handle === c.handle),
+        speed * time, true, undefined, GROUP.coverQuery,
       ) : null;
       if (hit && hit.timeOfImpact / speed <= time) {
         time = hit.timeOfImpact / speed;
@@ -165,8 +163,7 @@ export function stepProjectiles(s: Simulation, dt: number, sweepTankMotion = fal
           if (separation > 1e-6 && s.world.castRay(
             new RAPIER.Ray({ x: ax, y: 1, z: az },
               { x: (bx - ax) / separation, y: 0, z: (bz - az) / separation }),
-            separation, true, undefined, undefined, undefined, undefined,
-            (c) => s.covers.some((cover) => cover.alive && cover.collider.handle === c.handle),
+            separation, true, undefined, GROUP.coverQuery,
           )) continue;
           time = contact;
           next = { kind: "pair", shot: a, other: b };
@@ -195,7 +192,7 @@ export function stepProjectiles(s: Simulation, dt: number, sweepTankMotion = fal
       s.events.push({ type: "impact", x: p.x, z: p.z, size: 0.6, color: wColor(p.weapon) });
     } else if (next.kind === "world") {
       const hit = next.hit;
-      const cover = s.covers.find((c) => c.alive && c.collider.handle === hit.collider.handle);
+      const cover = s.coverByCollider.get(hit.collider.handle);
       if (p.weapon === "rocket") {
         s.explode(p, 5.3, p.damage, p.owner, p.team);
       } else if (cover) {
