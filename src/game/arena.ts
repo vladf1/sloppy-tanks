@@ -1,4 +1,4 @@
-import { ARENA } from "./data";
+import { ARENA, Random } from "./data";
 import type { CoverKind, PickupKind, Team, Vec2 } from "./types";
 export interface CoverDef extends Vec2 {
   kind: CoverKind;
@@ -87,3 +87,26 @@ export const spawnPositions = (team: Team): Vec2[] =>
     x: team === 0 ? -53 : 53,
     z: team === 0 ? z : -z,
   }));
+
+/** Seeded, rotationally balanced cover with wide connected lanes between objects.
+ * Keep the outer spawn strips and every pickup's approach clear. */
+export function randomArenaLayout(seed: number): CoverDef[] {
+  const rng = new Random(seed);
+  const result = arenaLayout().filter(c => c.kind === "boundary");
+  const templates = arenaLayout().filter(c => c.kind !== "boundary");
+  for (let attempt = 0; attempt < 1600 && result.length < 60; attempt++) {
+    const template = templates[Math.floor(rng.next() * templates.length)];
+    const rotated = rng.next() < 0.5;
+    const a = { ...template, x: rng.range(5, 44), z: rng.range(-49, 49),
+      w: rotated ? template.d : template.w, d: rotated ? template.w : template.d };
+    const b = { ...a, x: -a.x, z: -a.z };
+    const clear = (c: CoverDef) =>
+      Math.abs(c.x) + c.w / 2 < 47 && Math.abs(c.z) + c.d / 2 < 53 &&
+      pickupLayout.every(p => Math.abs(p.x - c.x) > c.w / 2 + 3.5 ||
+        Math.abs(p.z - c.z) > c.d / 2 + 3.5) &&
+      result.every(o => Math.abs(o.x - c.x) > (o.w + c.w) / 2 + 6 ||
+        Math.abs(o.z - c.z) > (o.d + c.d) / 2 + 6);
+    if (clear(a) && clear(b)) result.push(a, b);
+  }
+  return result;
+}

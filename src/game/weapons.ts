@@ -258,7 +258,7 @@ export function collectPickup(s: Simulation, t: Tank, p: Pickup) {
   p.available = false;
   p.cooldown = 13;
   const kind = p.kind;
-  if (kind === "repair") t.hp = VEHICLES[t.kind].health;
+  if (kind === "repair") t.hp = s.maxHealth(t);
   else if (kind === "shield") {
     t.shield = PICKUPS[kind].duration;
     t.shieldPoints = SHIELD_CAPACITY;

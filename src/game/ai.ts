@@ -6,8 +6,9 @@ import { idleCommand, type Tank, type Vec2 } from "./types";
 export function botCommand(s: Simulation, t: Tank, dt: number) {
   const role = Math.floor(s.tanks.indexOf(t) / 2);
   const profile = botProfile(t);
-  const aggressive = t.brain.ultraAggressive;
-  const turnSpeed = aggressive ? Math.max(5.2, profile.turn * 1.4) : profile.turn;
+  const easy = s.isEasyEnemy(t);
+  const aggressive = !easy && t.brain.ultraAggressive;
+  const turnSpeed = easy ? 1.5 : aggressive ? Math.max(5.2, profile.turn * 1.4) : profile.turn;
   const turn = (desired: number) => t.aim + Math.max(-turnSpeed * dt,
     Math.min(turnSpeed * dt, angleDelta(t.aim, desired)));
   const weapon = equippedWeapon(t);
@@ -39,7 +40,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     );
     const target = threats[0];
     if (target) {
-      if (target.id !== b.target) b.reaction = aggressive ? s.rng.range(0.3, 0.5) : s.rng.range(0.4, 0.8);
+      if (target.id !== b.target) b.reaction = easy ? s.rng.range(1, 1.6) : aggressive ? s.rng.range(0.3, 0.5) : s.rng.range(0.4, 0.8);
       b.target = target.id;
       b.memory = aggressive ? 3 : 1.5;
       b.goal = {
@@ -52,18 +53,18 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       b.target = 0;
       b.mode = "advance";
     }
-    b.aimError = s.rng.range(-profile.aimError, profile.aimError);
+    b.aimError = s.rng.range(-profile.aimError, profile.aimError) + (easy ? s.rng.range(-0.2, 0.2) : 0);
     const useful = s.pickups.filter(
       (q) =>
         q.available &&
-        (q.kind !== "repair" || t.hp < VEHICLES[t.kind].health * 0.8) &&
+        (q.kind !== "repair" || t.hp < s.maxHealth(t) * 0.8) &&
         (q.kind !== "rapid" || t.rapid < 2) &&
         (q.kind !== "ricochet" || t.ricochet < 2) &&
         (q.kind !== "speed" || t.speed < 2) &&
         (q.kind !== "shield" || t.shield < 2 || t.shieldPoints < 40),
     );
     useful.sort((a, c) => distance(p, a) - distance(p, c));
-    const hurt = t.hp < VEHICLES[t.kind].health * 0.4;
+    const hurt = t.hp < s.maxHealth(t) * 0.4;
     const repair = useful.find((q) => q.kind === "repair");
     if (hurt && repair) {
       b.goal = { ...repair };
@@ -84,7 +85,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       if (distance(p, b.goal) < 4)
         b.goal = { x: t.team === 0 ? 46 : -46, z: s.rng.range(-44, 44) };
     }
-    if (!target && b.mode === "advance" && b.personality === "support") {
+    if (!easy && !target && b.mode === "advance" && b.personality === "support") {
       const allies = s.tanks.filter((a) => a.alive && a.team === t.team && a !== t
         && a.brain.personality !== "support");
       allies.sort((a, c) => distance(p, a.body.translation()) - distance(p, c.body.translation()));
@@ -93,6 +94,10 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         b.goal = { x: ally.x + (t.team === 0 ? -4 : 4), z: ally.z };
         b.mode = "escort";
       }
+    }
+    if (easy && !target && b.mode === "advance" && s.human.alive) {
+      const human = s.human.body.translation();
+      b.goal = { x: human.x, z: human.z };
     }
     if (
       b.navVersion !== s.nav.version ||
@@ -129,8 +134,8 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     const v = seen ? target.body.linvel() : { x: 0, z: 0 };
     const d = distance(p, q);
     const desired = Math.atan2(
-      q.x + v.x * d * 0.65 / WEAPONS[weapon].speed - p.x,
-      q.z + v.z * d * 0.65 / WEAPONS[weapon].speed - p.z,
+      q.x + v.x * d * (easy ? 0.1 : 0.65) / WEAPONS[weapon].speed - p.x,
+      q.z + v.z * d * (easy ? 0.1 : 0.65) / WEAPONS[weapon].speed - p.z,
     ) + b.aimError;
     c.aim = turn(desired);
     c.fire = seen && d <= profile.sight && b.reaction <= 0
@@ -139,7 +144,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       const movement = combatMovement(t, q.x - p.x, q.z - p.z, role % 2 ? 1 : -1);
       mx = movement.x; mz = movement.z;
     }
-    c.mine = b.personality === "minelayer" && d < 17 && t.mineCooldown <= 0;
+    c.mine = !easy && b.personality === "minelayer" && d < 17 && t.mineCooldown <= 0;
   } else {
     c.aim = turn(Math.atan2(mx, mz));
   }
@@ -168,7 +173,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
   // Personality cadence also applies when breaching; human weapon cadence is separate.
   if (b.fireDelay > 0) c.fire = false;
   else if (c.fire && t.cooldown === 0)
-    b.fireDelay = botReload(t, s.rng.range(0.1, 0.25));
+    b.fireDelay = easy ? s.rng.range(2, 3) : botReload(t, s.rng.range(0.1, 0.25));
   const mag = Math.hypot(mx, mz) || 1;
   mx /= mag;
   mz /= mag;
@@ -200,7 +205,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       mz += ((p.z - q.z) / d) * (2.8 - d) * 1.1;
     }
   }
-  const movementScale = aggressive ? Math.min(1, profile.speed * 1.35 + 0.15) : profile.speed;
+  const movementScale = easy ? 0.65 : aggressive ? Math.min(1, profile.speed * 1.35 + 0.15) : profile.speed;
   const length = Math.max(1, Math.hypot(mx, mz));
   c.moveX = mx / length * movementScale;
   c.moveZ = mz / length * movementScale;

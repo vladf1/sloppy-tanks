@@ -704,10 +704,13 @@ export class Presentation {
       Math.min(1, this.spawnCue) * (1 - ((2.5 - this.spawnCue) % 1.25) / 1.25);
 
     for (const t of s.tanks) {
-      let g = this.tankMeshes.get(t.id)!;
-      if (g.userData.kind !== t.kind) {
-        disposeOwned(g);
-        this.worldGroup.remove(g);
+      let g = this.tankMeshes.get(t.id);
+      // Reinforcements arrive after reset, so create their visuals on first render.
+      if (!g || g.userData.kind !== t.kind) {
+        if (g) {
+          disposeOwned(g);
+          this.worldGroup.remove(g);
+        }
         g = tankModel(t.kind, t.team);
         batchTank(g);
         g.userData.kind = t.kind;
@@ -715,6 +718,7 @@ export class Presentation {
         this.worldGroup.add(g);
       }
       g.visible = t.alive;
+      if (!this.bars.has(t.id)) this.makeBar(t.id, t.team, t.human);
       const bar = this.bars.get(t.id)!;
       bar.visible = t.alive;
       if (!t.alive) {
@@ -745,7 +749,7 @@ export class Presentation {
       g.scale.setScalar(VEHICLES[t.kind].scale);
       bar.position.set(g.position.x, t.human ? 3.2 : 2.5, g.position.z);
       bar.quaternion.copy(this.camera.quaternion);
-      const health = healthBarState(t.hp, VEHICLES[t.kind].health, t.team);
+      const health = healthBarState(t.hp, s.maxHealth(t), t.team);
       bar.userData.fg.scale.x = health.ratio;
       bar.userData.fg.visible = health.ratio > 0;
       bar.userData.ammo.scale.x = Math.max(0, 1 - t.cooldown / weaponInterval(t));

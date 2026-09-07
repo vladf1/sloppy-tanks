@@ -12,6 +12,7 @@ export function damageTank(
 ) {
   if (!t.alive || t.protection > 0 || (t.team === team && t.id !== owner))
     return;
+  if (s.gameMode === "solo" && team !== s.humanTeam) amount *= 0.4;
   if (t.shield > 0 && t.shieldPoints > 0) {
     const absorbed = Math.min(amount, t.shieldPoints);
     t.shieldPoints -= absorbed;
@@ -39,6 +40,7 @@ export function damageTank(
   const killer = s.tanks.find((a) => a.id === owner);
   if (killer && killer !== t && killer.team !== t.team) killer.kills++;
   awardKill(s.match, t.team, team, owner === t.id);
+  s.checkSoloResult();
   breakTank(s, t);
   s.events.push({
     type: "death",

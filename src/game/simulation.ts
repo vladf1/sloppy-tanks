@@ -1,6 +1,6 @@
 import { botAssignment, shuffledBotNames, BOT_PROFILES } from "./bot-personalities";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { arenaLayout, pickupLayout, spawnPositions } from "./arena";
+import { arenaLayout, randomArenaLayout, pickupLayout, spawnPositions } from "./arena";
 import {
   Random,
   MOVE_ACCELERATION,
@@ -55,6 +55,16 @@ export class Simulation {
   seed: number;
   humanTeam: Team;
   humanKind: VehicleKind = "balanced";
+  gameMode: "team" | "solo" = "team";
+  mapMode: "village" | "random" = "village";
+  mapSeed = 0;
+  readonly enemyCount = 20;
+  readonly activeEnemyLimit = 6;
+  reinforcementDelay = 0;
+  get enemiesEliminated() { return this.tanks.filter(t => !t.human && !t.alive).length; }
+  isEasyEnemy(t: Tank) { return this.gameMode === "solo" && !t.human; }
+  maxHealth(t: Tank) { return VEHICLES[t.kind].health * (this.isEasyEnemy(t) ? 0.4 : 1); }
+  get mapName() { return this.mapMode === "random" ? "RANDOM MAP" : "PINE VILLAGE"; }
   maxFragments = 80;
   wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
   destroyed = 0;
@@ -83,6 +93,7 @@ export class Simulation {
     this.fragments = [];
     this.events = [];
     this.elapsed = 0;
+    this.reinforcementDelay = 0;
     this.wreckView = undefined;
     this.destroyed = 0;
     this.shotsFired = 0;
@@ -100,7 +111,8 @@ export class Simulation {
       ),
       ground,
     );
-    for (const c of arenaLayout()) this.addCover(c);
+    this.mapSeed = (this.seed + this.match.round * 0x9e3779b9) >>> 0;
+    for (const c of this.mapMode === "random" ? randomArenaLayout(this.mapSeed) : arenaLayout()) this.addCover(c);
     this.pickups = pickupLayout.map((p) => ({
       ...p,
       id: this.nextId++,
@@ -109,7 +121,11 @@ export class Simulation {
     }));
     this.nav = new Navigation();
     this.nav.rebuild(this.covers);
-    for (let i = 0; i < count; i++) {
+    if (this.gameMode === "solo") {
+      this.addTank(this.humanTeam, true, this.humanKind, 2);
+      for (let i = 0; i < this.activeEnemyLimit; i++)
+        this.addTank((1 - this.humanTeam) as Team, false, "scout", i);
+    } else for (let i = 0; i < count; i++) {
       const team = (i % 2) as Team;
       this.addTank(
         team,
@@ -156,8 +172,10 @@ export class Simulation {
     return cover;
   }
   addTank(team: Team, human: boolean, kind: VehicleKind, slot = 0) {
-    const p = spawnPositions(team)[slot % 5];
-    const offset = slot >= 5 ? 2 : 0;
+    const p = this.gameMode === "solo" && !human
+      ? { x: team === 0 ? -53 : 53, z: -46 + (slot % this.activeEnemyLimit) * 92 / (this.activeEnemyLimit - 1) }
+      : spawnPositions(team)[slot % 5];
+    const offset = this.gameMode === "solo" ? 0 : Math.floor(slot / 5) * 3;
     const ordinal = this.tanks.filter((t) => !t.human).length;
     const assignment = botAssignment(slot, team, ordinal);
     if (!human) kind = BOT_PROFILES[assignment.personality].chassis;
@@ -226,6 +244,8 @@ export class Simulation {
         mode: "advance",
       },
     };
+    tank.hp = this.maxHealth(tank);
+    if (this.isEasyEnemy(tank)) tank.brain.ultraAggressive = false;
     this.tanks.push(tank);
     return tank;
   }
@@ -238,10 +258,15 @@ export class Simulation {
   step(command: VehicleCommand = idleCommand(), autoplay = false) {
     if (this.match.phase !== "playing") return;
     this.elapsed += STEP;
-    tickMatch(this.match, STEP);
+    if (this.gameMode === "solo") {
+      this.match.time = Math.max(0, this.match.time - STEP);
+      this.checkSoloResult();
+      if (this.match.phase === "playing") this.reinforceSolo();
+    } else tickMatch(this.match, STEP);
     if (this.match.phase !== "playing") return;
     for (const t of this.tanks) {
       if (!t.alive) {
+        if (this.gameMode === "solo") continue;
         t.respawn -= STEP;
         if (t.respawn <= 0) this.respawn(t);
         continue;
@@ -317,6 +342,31 @@ export class Simulation {
     if (this.events.length > 400)
       this.events.splice(0, this.events.length - 400);
   }
+  reinforceSolo() {
+    this.reinforcementDelay = Math.max(0, this.reinforcementDelay - STEP);
+    const enemies = this.tanks.filter(t => !t.human);
+    if (enemies.length >= this.enemyCount || this.reinforcementDelay > 0) return;
+    const living = enemies.filter(t => t.alive);
+    if (living.length >= this.activeEnemyLimit) return;
+    const team = (1 - this.humanTeam) as Team;
+    const slots = Array.from({ length: this.activeEnemyLimit }, (_, slot) => ({
+      slot, x: team === 0 ? -53 : 53, z: -46 + slot * 92 / (this.activeEnemyLimit - 1),
+    })).filter(p => this.tanks.every(t => !t.alive || distance(p, t.body.translation()) > 4));
+    slots.sort((a, b) => this.spawnScore(b, [this.human], living) - this.spawnScore(a, [this.human], living));
+    if (!slots.length) return;
+    this.addTank(team, false, "scout", slots[0].slot);
+    this.reinforcementDelay = 1;
+  }
+  checkSoloResult() {
+    if (this.gameMode !== "solo" || this.match.phase !== "playing") return;
+    if (!this.human.alive || this.match.time === 0) {
+      this.match.winner = (1 - this.humanTeam) as Team;
+      this.match.phase = "results";
+    } else if (this.enemiesEliminated === this.enemyCount) {
+      this.match.winner = this.humanTeam;
+      this.match.phase = "results";
+    }
+  }
   respawn(t: Tank) {
     const kind = t.human ? this.humanKind : t.kind;
     const stats = VEHICLES[kind];
@@ -351,7 +401,7 @@ export class Simulation {
     this.world.createCollider(tankContactCollider(kind), body);
     t.body = body;
     t.collider = collider;
-    t.hp = stats.health;
+    t.hp = this.maxHealth(t);
     t.alive = true;
     t.protection = 2;
     t.spread = 0;
