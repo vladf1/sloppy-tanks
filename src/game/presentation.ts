@@ -4,7 +4,7 @@ import { TrackTrails } from "./tracks";
 import { weaponInterval } from "./weapons";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
-import { groundMaterial, groundUVs } from "./ground-surfaces";
+import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
 import {
   box,
   put,
@@ -229,6 +229,7 @@ export class Presentation {
         side: THREE.DoubleSide,
         depthTest: false,
         depthWrite: false,
+        transparent: true,
         toneMapped: false,
       });
     const outline = reticleMaterial(0x12263c),
@@ -283,17 +284,28 @@ export class Presentation {
   }
   createYardDetails() {
     const details = new THREE.Group();
+    const roads = new THREE.Group();
     const roadMaterial = groundMaterial(this.renderer, "packed-dirt");
+    roadMaterial.vertexColors = true;
+    roadMaterial.transparent = true;
+    roadMaterial.depthWrite = false;
     const road = (w: number, d: number, x: number, z: number, y: number) => {
-      const geometry = new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2);
-      groundUVs(geometry, x, z);
-      put(details, new THREE.Mesh(geometry, roadMaterial), x, y, z);
+      const geometry = roadGeometry(w, d, x, z);
+      put(roads, new THREE.Mesh(geometry, roadMaterial), x, y, z);
     };
     // Broad village roads retain the roomy midfield and outer flanking circuits.
     for (const x of [-52, 0, 52])
       road(x === 0 ? 18 : 10, ARENA * 2 - 2, x, 0, 0.0425);
     for (const z of [-38, 0, 38])
       road(ARENA * 2 - 2, z === 0 ? 12 : 8, 0, z, 0.0625);
+    batch(roads);
+    for (const mesh of roads.children) {
+      mesh.castShadow = false;
+      // Ground blending must precede shields, pickup glows and track decals.
+      mesh.renderOrder = -1;
+    }
+    this.scene.add(roads);
+    freezeStatic(roads);
     const spawnRimGeometry = new THREE.RingGeometry(
       2.05,
       2.3,
@@ -509,9 +521,18 @@ export class Presentation {
       new THREE.MeshBasicMaterial({ color: 0xf1d286, depthTest: false }),
     );
     ammo.position.y = -0.21;
+    ammo.renderOrder = 13;
     g.add(ammo);
     g.userData.ammo = ammo;
     g.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {
+        // Transparent terrain is drawn after opaque meshes regardless of their
+        // renderOrder. Keep all world-space HUD layers in the later pass too.
+        const mat = o.material as THREE.Material;
+        mat.transparent = true;
+        mat.depthWrite = false;
+        if (o instanceof THREE.Sprite) o.renderOrder = 13;
+      }
       if (o instanceof THREE.Mesh) {
         o.geometry.userData.owned = true;
         (o.material as THREE.Material).userData.owned = true;

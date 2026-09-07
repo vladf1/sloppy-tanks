@@ -445,7 +445,10 @@ export function coverModel(
     put(g, box(0.1, 0.1, 0.12, 0xffd24a, 0), 0.24, 0.83, c.d / 2 + 0.12);
     for (const y of [0.5, 1.15])
       put(g, box(0.6, 0.42, 0.035, 0x805b3d, 0), 0, y, c.d / 2 + 0.12);
-    const roofColor = Math.abs(c.z) > 35 ? 0xcc493c : 0x167857;
+    // Gentle paint weathering varies per cottage without splitting material batches.
+    const roofColor = new THREE.Color(Math.abs(c.z) > 35 ? 0xcc493c : 0x167857)
+      .multiplyScalar(0.9 + 0.12 * (0.5 + 0.5 * Math.sin(c.x * 3.7 + c.z * 1.9)))
+      .getHex();
     put(
       g,
       sidingGable(c.w + 0.6, c.h - wall, c.d + 0.6, roofColor),
