@@ -175,9 +175,11 @@ export class UI {
     ).join("")}<small>50–200% · 100% = default speed · Saved automatically</small></div>`;
   }
   event(e: SimEvent) {
-    if ((e.type === "pickup" || e.type === "promotion") && e.id === this.s.human.id) {
-      this.toast.textContent = e.label ?? "";
-      this.toastTime = e.type === "promotion" ? 3 : 2.4;
+    if ((e.type === "pickup" || e.type === "promotion" || e.type === "death") && e.id === this.s.human.id) {
+      this.toast.textContent = e.type === "death"
+        ? `KILLED BY ${this.s.tanks.find(t => t.id === e.owner)?.name ?? "YARD"}`
+        : e.label ?? "";
+      this.toastTime = e.type === "pickup" ? 1.5 : 2;
       this.toast.classList.add("visible");
     }
     if (e.type === "death" && e.label)

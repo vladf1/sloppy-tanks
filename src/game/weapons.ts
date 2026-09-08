@@ -319,7 +319,7 @@ export function collectPickup(s: Simulation, t: Tank, p: Pickup) {
   else if (kind === "speed") t.speed = PICKUPS[kind].duration;
   else if (kind === "laser") {
     t.laser = PICKUPS.laser.duration;
-    label = `LASER DEFENSE · ${t.laser}s · ${LASER_DEFENSE.chance * 100}% INTERCEPT CHANCE`;
+    label = "LASER DEFENSE";
   }
   s.events.push({
     type: "pickup",
