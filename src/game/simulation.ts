@@ -155,6 +155,7 @@ export class Simulation {
     h: number;
     hp: number;
     color: number;
+    debrisSeed?: number;
   }): Cover {
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(c.x, c.h / 2, c.z),
@@ -455,6 +456,7 @@ export class Simulation {
     color: number,
     size = 0.5,
     shape: NonNullable<Fragment["shape"]> = "shard",
+    lifetimeScale = 1,
   ) {
     size = Math.round(size * 5) / 5;
     this.reserveFragments(1);
@@ -475,7 +477,7 @@ export class Simulation {
     this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(
         size / 2,
-        size * (shape === "armor" || shape === "track" ? 0.12 : 0.4),
+        size * (shape === "armor" || shape === "track" || shape === "wood" ? 0.12 : 0.4),
         size / 2,
       )
         .setCollisionGroups(GROUP.fragment)
@@ -486,7 +488,7 @@ export class Simulation {
     this.fragments.push({
       id: this.nextId++,
       body,
-      life: this.rng.range(1.6, 2.6),
+      life: this.rng.range(1.6, 2.6) * lifetimeScale,
       shape,
       size,
       color,

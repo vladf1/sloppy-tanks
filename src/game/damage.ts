@@ -3,6 +3,7 @@ import { distance } from "./data";
 import { clearAmmo } from "./ammunition";
 import { breakTank } from "./wrecks";
 import { awardKill } from "./match";
+import { TOWER_BASE } from "./tower-layout";
 import type { Simulation } from "./simulation";
 import type { Tank, Cover, Team, Vec2 } from "./types";
 export function damageTank(
@@ -96,7 +97,7 @@ export function damageCover(
       c.z + s.rng.range(-c.d / 2, c.d / 2),
       c.kind === "tree" ? (i % 3 === 0 ? 0x825333 : c.color) : c.color,
       s.rng.range(0.3, 0.7),
-      c.kind === "shed" ||
+      c.kind === "tower" ? "wood" : c.kind === "shed" ||
         c.kind === "fence" ||
         c.kind === "timber" ||
         c.kind === "house" ||
@@ -105,19 +106,21 @@ export function damageCover(
         : c.kind === "drum"
           ? "armor"
           : "shard",
+      c.kind === "tree" || c.kind === "timber" || c.kind === "fence" ? 2 : 1,
     );
   if (c.kind === "tower") {
     // One authored support object; its destruction leaves two flank foundations and an open middle.
     for (const side of [-1, 1])
       s.addCover({
         kind: "rubble",
-        x: c.x + side * 2.55,
+        x: c.x + side * TOWER_BASE.offset,
         z: c.z,
-        w: 1.3,
-        d: 3,
-        h: 1.25,
+        w: TOWER_BASE.width,
+        d: TOWER_BASE.depth,
+        h: TOWER_BASE.rubbleHeight,
         hp: Infinity,
-        color: 0x9b9481,
+        color: c.color,
+        debrisSeed: Math.floor(s.rng.next() * 0x100000000),
       });
     s.nav.rebuild(s.covers, c);
   }

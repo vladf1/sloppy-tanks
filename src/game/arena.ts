@@ -50,9 +50,9 @@ function authoredLayout(): CoverDef[] {
     for (const z of [-28, 28]) {
       add("tree", s * 23, z, 2.6, 2.6, 6, 80, 0x169f65);
       // Open cottage gardens provide flanking space; each timber bay breaks independently.
-      add("timber", s * 28, z - 4, 7, 0.9, 2.8, 120, 0xb47a49);
-      add("timber", s * 28, z + 4, 7, 0.9, 2.8, 120, 0xb47a49);
-      add("timber", s * 31.2, z, 0.9, 8, 2.8, 120, 0xb47a49);
+      add("timber", s * 29, z - 5, 9, 0.9, 2.8, 120, 0xb47a49);
+      add("timber", s * 29, z + 5, 9, 0.9, 2.8, 120, 0xb47a49);
+      add("timber", s * 33.2, z, 0.9, 10, 2.8, 120, 0xb47a49);
       add("drum", s * 25, z - s, 1.2, 1.2, 1.7, 30, 0xff5b24);
     }
     for (const x of [-6, -2, 2, 6])

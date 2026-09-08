@@ -108,6 +108,8 @@ export interface Cover extends Vec2 {
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   color: number;
+  /** Chosen at collapse so rubble stays stable when its model is rebuilt. */
+  debrisSeed?: number;
 }
 export interface Shot extends Vec2 {
   y?: number; // Render height at the muzzle; combat remains on the arena plane.
@@ -151,7 +153,7 @@ export interface Fragment {
   life: number;
   size: number;
   color: number;
-  shape?: "armor" | "wheel" | "track" | "shard";
+  shape?: "armor" | "wheel" | "track" | "shard" | "wood";
   wreck?: VehicleKind;
   part?: WreckPart;
   cleanup?: "shrink" | "fade";

@@ -9,6 +9,7 @@ import { isSpecialAmmo, AMMO_RESPAWN_SECONDS } from "./ammunition";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
+import { sidingBox } from "./house-surfaces";
 import {
   box,
   put,
@@ -167,7 +168,9 @@ export class Presentation {
     groundUVs(outskirts.geometry);
     put(this.scene, outskirts, 0, -0.9, 0);
     this.createYardDetails();
+    const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const fragmentGeometry = {
+      wood: woodFragment.geometry,
       armor: box(1.25, 0.16, 0.85, 0xffffff).geometry,
       wheel: new THREE.CylinderGeometry(0.48, 0.48, 0.28, 10),
       track: box(0.5, 0.2, 1.5, 0xffffff).geometry,
@@ -178,7 +181,7 @@ export class Presentation {
     >[]) {
       const mesh = new THREE.InstancedMesh(
         fragmentGeometry[shape],
-        material(0xffffff),
+        shape === "wood" ? woodFragment.material : material(0xffffff),
         80,
       );
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -642,7 +645,8 @@ export class Presentation {
       : explosion ? [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250]
       : hurt ? [0xffffff, 0xffcb58, 0xffcb58] : [e.color ?? 0xffdf91];
     for (let i = 0; i < count && this.particles.length < 1200; i++) {
-      const life = style.life[0] + Math.random() * style.life[1];
+      const life = (style.life[0] + Math.random() * style.life[1]) *
+        (tree || timber || (e.type === "destroy" && e.coverKind === "fence") ? 2 : 1);
       const speed = baseSpeed + (tree ? Math.random() * 4 : 0);
       this.particles.push({
         shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,

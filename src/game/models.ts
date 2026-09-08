@@ -4,8 +4,9 @@ import { explosiveBarrel } from "./barrel-surfaces";
 import { sidingBox, sidingGable, shingleRoof } from "./house-surfaces";
 import { applyTankSurface } from "./tank-surfaces";
 import { concreteWall } from "./concrete-surfaces";
+import { TOWER_BASE } from "./tower-layout";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { TEAM_COLORS, VEHICLES } from "./data";
+import { Random, TEAM_COLORS, VEHICLES } from "./data";
 import type { VehicleKind, Team, Cover, WreckPart } from "./types";
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 export function material(color: number, metalness = 0.05, roughness = 0.65) {
@@ -351,15 +352,6 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
   wreckTemplates.set(key, flat);
   return flat.clone();
 }
-const roofProfile = new THREE.Shape();
-roofProfile.moveTo(-0.5, 0);
-roofProfile.lineTo(0, 1);
-roofProfile.lineTo(0.5, 0);
-roofProfile.closePath();
-const roofGeometry = new THREE.ExtrudeGeometry(roofProfile, {
-  depth: 1,
-  bevelEnabled: false,
-}).translate(0, 0, -0.5);
 // Scalloped branch skirts create pointed boughs instead of smooth stacked cones.
 const pineGeometry = (() => {
   const geometry = new THREE.ConeGeometry(1, 1, 12, 1).toNonIndexed();
@@ -398,14 +390,18 @@ export function stumpModel(c: Pick<Cover, "x" | "z" | "w" | "d">) {
   }
   return g;
 }
-function pitchedRoof(w: number, h: number, d: number, color: number) {
-  const mesh = new THREE.Mesh(roofGeometry, material(color));
-  mesh.scale.set(w, h, d);
-  mesh.castShadow = mesh.receiveShadow = true;
-  return mesh;
+function towerFoundation(g: THREE.Group, x: number) {
+  put(g, concreteWall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
+    x, TOWER_BASE.height / 2, 0);
+}
+function towerPost(height: number) {
+  // Turn the long axis of the boards upright for continuous vertical wood grain.
+  const post = sidingBox(height, 0.35, 0.35, 0x887454);
+  post.rotation.z = Math.PI / 2;
+  return post;
 }
 export function coverModel(
-  c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color">,
+  c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color" | "debrisSeed">,
   detail: "full" | "background" = "full",
   damageStage = 0,
 ) {
@@ -618,23 +614,56 @@ export function coverModel(
       put(g, cylinder(0.63, 0.1, 0x574e3e), 0, y, 0);
     put(g, cylinder(0.15, 0.05, 0x343c31), 0.25, 1.63, 0);
   } else if (c.kind === "tower") {
-    for (const x of [-2.5, 2.5])
-      for (const z of [-2, 2]) {
-        put(g, box(0.35, 5.5, 0.35, 0x766f56), x, 2.75, z);
-        put(g, box(0.85, 0.3, 0.85, 0xb5ad96), x, 0.15, z);
+    for (const side of [-1, 1]) {
+      const x = side * TOWER_BASE.offset;
+      towerFoundation(g, x);
+      for (const z of [-TOWER_BASE.postZ, TOWER_BASE.postZ])
+        put(g, towerPost(4.3), x, TOWER_BASE.height + 2.15, z);
+      // Cross bracing terminates at the same posts that survive the collapse.
+      for (const direction of [-1, 1]) {
+        const brace = sidingBox(0.18, 4.35, 0.18, 0x96734c);
+        brace.rotation.x = direction * Math.atan2(2 * TOWER_BASE.postZ, 3.8);
+        put(g, brace, x, 2.85, 0);
       }
-    for (const x of [-2.5, 2.5]) {
-      const brace = box(0.2, 6, 0.22, c.color);
-      brace.rotation.x = 0.65;
-      put(g, brace, x, 2.7, 0);
     }
-    put(g, box(6, 0.35, 5, 0x887d59), 0, 5, 0);
-    put(g, box(5.7, 2.15, 4.7, c.color), 0, 6.15, 0);
+    put(g, sidingBox(6, 0.35, 5, 0x887d59), 0, 5, 0);
+    put(g, sidingBox(5.7, 2.15, 4.7, c.color), 0, 6.15, 0);
     for (const z of [-2.4, 2.4])
       put(g, box(4, 0.65, 0.08, 0x164e79), 0, 6.4, z);
-    put(g, pitchedRoof(6.5, 1.2, 5.5, 0x197451), 0, 7.25, 0);
+    put(g, sidingGable(6.5, 1.2, 5.5, 0x197451), 0, 7.25, 0);
+    put(g, shingleRoof(6.5, 1.2, 5.5, 0x197451), 0, 7.25, 0);
+    for (const x of [2.2, 3.1])
+      put(g, towerPost(4.9), x, 2.45, 2.15);
     for (let i = 0; i < 9; i++)
-      put(g, box(0.9, 0.08, 0.18, 0xe2cc93), 2.65, 0.4 + i * 0.55, 2.15);
+      put(g, sidingBox(0.9, 0.08, 0.18, 0xe2cc93), 2.65, 0.4 + i * 0.55, 2.15);
+  } else if (c.kind === "rubble") {
+    towerFoundation(g, 0);
+    const rng = new Random(c.debrisSeed ?? Math.round(c.x * 73856093 + c.z * 19349663));
+    const choose = (values: number[]) => values[Math.floor(rng.next() * values.length)];
+    for (const z of [-TOWER_BASE.postZ, TOWER_BASE.postZ]) {
+      // Cut posts keep their original position, section and grain direction.
+      const height = choose([0.12, 0.2, 0.28, 0.34]);
+      put(g, towerPost(height), 0, TOWER_BASE.height + height / 2, z);
+      if (rng.next() < 0.7) {
+        const splinter = sidingBox(0.09, 0.12, 0.16, 0xc5a073);
+        splinter.rotation.z = rng.range(-0.4, 0.4);
+        put(g, splinter, rng.range(-0.1, 0.1), TOWER_BASE.height + height - 0.01, z);
+      }
+    }
+    // Discrete sizes reuse cached geometry; each foundation gets its own scatter.
+    const count = choose([2, 3, 4]);
+    for (let i = 0; i < count; i++) {
+      const width = choose([0.16, 0.3, 0.55]);
+      const length = choose([0.7, 1.1, 1.5]);
+      const yaw = rng.range(-0.55, 0.55);
+      const board = sidingBox(width, 0.09, length, choose([c.color, 0x887d59, 0x96734c]));
+      board.rotation.y = yaw;
+      // Keep the pile inside its foundation, preserving the opened center route.
+      const roomX = Math.max(0, (TOWER_BASE.width - width * Math.cos(yaw) - length * Math.abs(Math.sin(yaw))) / 2 - 0.02);
+      const roomZ = (TOWER_BASE.depth - length * Math.cos(yaw) - width * Math.abs(Math.sin(yaw))) / 2 - 0.02;
+      put(g, board, rng.range(-roomX, roomX), TOWER_BASE.height + 0.045 + i * 0.055,
+        rng.range(-roomZ, roomZ));
+    }
   } else if (c.kind === "shed") {
     put(g, box(c.w, c.h, c.d, c.color), 0, c.h / 2, 0);
     const along = c.w > c.d;
