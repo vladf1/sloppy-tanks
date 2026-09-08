@@ -4,9 +4,9 @@ import type { Tank } from "./types";
 /** Per-life combat experience; bonuses apply equally to humans and bots. */
 export const RANKS = [
   { name: "Rookie", xp: 0, damage: 1, fireRate: 1, health: 1, repair: 0 },
-  { name: "Veteran", xp: 200, damage: 1.1, fireRate: 1.1, health: 1.1, repair: 0 },
-  { name: "Elite", xp: 500, damage: 1.2, fireRate: 1.15, health: 1.15, repair: 0.01 },
-  { name: "Heroic", xp: 1000, damage: 1.3, fireRate: 1.2, health: 1.2, repair: 0.02 },
+  { name: "Veteran", xp: 300, damage: 1.1, fireRate: 1.1, health: 1.1, repair: 0 },
+  { name: "Elite", xp: 750, damage: 1.2, fireRate: 1.15, health: 1.15, repair: 0.01 },
+  { name: "Heroic", xp: 1500, damage: 1.3, fireRate: 1.2, health: 1.2, repair: 0.02 },
 ] as const;
 export const KILL_XP = 50;
 export const REPAIR_DELAY = 5;

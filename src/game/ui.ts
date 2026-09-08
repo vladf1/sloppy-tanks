@@ -6,7 +6,7 @@ import { speedTuning } from "./speed-tuning";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { healthBarState } from "./health-bar";
 import { RANKS, rankIndex, REPAIR_DELAY } from "./veterancy";
-const CONTROL_HELP = "WASD / Arrow keys drive · Mouse aim · Hold left click to fire · Right click mine<br>Q / E or scroll cycles ammo · 1–5 selects ammo · Shift + scroll zooms · Esc pauses";
+const CONTROL_HELP = "WASD / Arrows: drive · Mouse: aim · Hold left click: fire · Right click: mine · Esc: pause<br>Q / E / scroll: cycle ammo · 1–5: select · Shift + scroll: zoom · Crates refill ammo · Standard shells: unlimited";
 export class UI {
   overlay: HTMLElement;
   hud: HTMLElement;
@@ -38,7 +38,7 @@ export class UI {
           `<div class="ammo-slot" id="ammo-${w}" role="listitem" style="--ammo-color:#${WEAPONS[w].color.toString(16).padStart(6, "0")}"><small>${WEAPONS[w].label}</small><b id="ammo-count-${w}">${w === "standard" ? "∞" : "0"}</b></div>`
         ).join("")}</div><span id="mine">MINE READY · RMB</span></div>
         <em id="effects"></em></div>
-        <div class="keyhint">WASD / ARROWS <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 Q / E <span>CYCLE AMMO</span>　 1–5 <span>SELECT</span></div></div></div>
+        </div></div>
         <div id="overlay"></div>`,
     );
     this.overlay = root.querySelector("#overlay")!;
@@ -96,7 +96,7 @@ export class UI {
         ${this.modeOptions()}
         ${this.chooseCards()}
         <div class="menu-foot"><div><b>${s.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[s.humanTeam]}</b><small>${s.gameMode === "solo" ? "10 MINUTES · ENDLESS ENEMIES · ONE LIFE" : `5 MINUTES · FIRST TO ${SCORE_LIMIT} · FRIENDLY FIRE OFF`}</small></div></div>
-        <div class="menu-help">${CONTROL_HELP}<br>Collect ammo crates to refill · Standard shells are unlimited</div>
+        <div class="menu-help">${CONTROL_HELP}</div>
         </section>`;
     else if (phase === "paused")
       this.overlay.innerHTML = `
@@ -107,7 +107,6 @@ export class UI {
         ${this.speedSliders()}
         <button id="resume" class="primary">RESUME</button>
         <button id="restart" class="secondary">New round / choose vehicle</button>
-        <a href="${import.meta.env.BASE_URL}benchmark.html" target="_blank">Open performance notebook</a>
         </section>`;
     else if (phase === "results" && s.gameMode === "solo")
       this.overlay.innerHTML = `

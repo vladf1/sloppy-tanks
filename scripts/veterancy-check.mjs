@@ -29,7 +29,7 @@ try {
       b.protection = 0; b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     }
     // One real hit must cross the threshold; leave the bot unable to fire/move during this fixture.
-    t.xp = 180; enemy.brain.reaction = 999; enemy.brain.decision = 999;
+    t.xp = 280; enemy.brain.reaction = 999; enemy.brain.decision = 999;
     enemy.body.setEnabledTranslations(false, true, false, true);
     d.view.reset(s); d.view.zoom = 23; s.world.step();
     window.advanceFrame(17);
@@ -55,9 +55,9 @@ try {
   checks.push("Real mouse aim and firing earn hull-damage XP, promote to Veteran, show rank beside tank name/chevron/toast and play the saved chime");
   await page.evaluate(async () => {
     const d = window.sloppy, s = d.sim, t = s.human, bot = s.tanks[1];
-    t.xp = 499; s.damageTank(bot, 1, t.id, t.team);
+    t.xp = 749; s.damageTank(bot, 1, t.id, t.team);
     // Bot promotes through real damage credit too, with a small nudge to reach the threshold.
-    bot.xp = 990; s.damageTank(t, 10, bot.id, bot.team);
+    bot.xp = 1490; s.damageTank(t, 10, bot.id, bot.team);
     window.advanceFrame(17);
   });
   await advance();
@@ -75,7 +75,7 @@ try {
   assert.match(await page.locator("#effects").innerText(), /SELF-REPAIR/);
   checks.push("Bot earns Heroic rank through damage with three small chevrons; Elite repair waits five combat-free seconds and freezes while paused");
   await page.evaluate(async () => {
-    const s = window.sloppy.sim; s.human.xp = 999;
+    const s = window.sloppy.sim; s.human.xp = 1499;
     s.damageTank(s.tanks[1], 1, s.human.id, s.human.team); window.advanceFrame(17);
   });
   await advance();

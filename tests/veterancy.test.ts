@@ -57,12 +57,12 @@ test("player and bots promote at exact thresholds, preserve hull percentage, and
   const { s, player, ally } = fixture();
   for (const t of [player, ally]) {
     t.hp = s.maxHealth(t) * 0.4;
-    earnExperience(s, t, 199.5); assert.equal(rankIndex(t), 0);
+    earnExperience(s, t, RANKS[1].xp - 0.5); assert.equal(rankIndex(t), 0);
     earnExperience(s, t, 0.5); assert.equal(rankIndex(t), 1);
     near(t.hp, s.maxHealth(t) * 0.4);
-    earnExperience(s, t, 300); assert.equal(rankIndex(t), 2);
-    earnExperience(s, t, 500); assert.equal(rankIndex(t), 3);
-    earnExperience(s, t, 99999); assert.equal(t.xp, 1000);
+    earnExperience(s, t, RANKS[2].xp - RANKS[1].xp); assert.equal(rankIndex(t), 2);
+    earnExperience(s, t, RANKS[3].xp - RANKS[2].xp); assert.equal(rankIndex(t), 3);
+    earnExperience(s, t, 99999); assert.equal(t.xp, RANKS[3].xp);
     near(t.hp, s.maxHealth(t) * 0.4);
     assert.equal(s.events.filter(e => e.type === "promotion" && e.id === t.id).length, 3);
   }
@@ -71,7 +71,7 @@ test("player and bots promote at exact thresholds, preserve hull percentage, and
 
 test("one large XP award reaches the correct rank and emits one promotion", () => {
   const { s, player } = fixture();
-  earnExperience(s, player, 500);
+  earnExperience(s, player, RANKS[2].xp);
   assert.equal(rankIndex(player), 2);
   assert.equal(s.events.filter(e => e.type === "promotion").length, 1);
   assert.match(s.events[0].label!, /ELITE/); s.dispose();
@@ -83,7 +83,7 @@ test("all five weapons snapshot rank damage; human and bot reload bonuses stack 
     t.xp = 0; t.selectedAmmo = weapon;
     if (weapon !== "standard") refillAmmo(t, weapon);
     const rookie = weaponInterval(t), botRookie = botReload(t, 0, weapon);
-    t.xp = 1000; t.rapid = 12; t.cooldown = 0;
+    t.xp = RANKS[3].xp; t.rapid = 12; t.cooldown = 0;
     near(weaponInterval(t), rookie / 1.2 / 2);
     near(botReload(t, 0, weapon), botRookie / 1.2 / 2);
     s.shots = []; fireWeapon(s, t);
@@ -100,14 +100,14 @@ test("all five weapons snapshot rank damage; human and bot reload bonuses stack 
 
 test("promotion scales a pending cannon reload and the bot decision timer", () => {
   const { s, ally } = fixture(); ally.cooldown = 0.6; ally.brain.fireDelay = 2;
-  earnExperience(s, ally, 200);
+  earnExperience(s, ally, RANKS[1].xp);
   near(ally.cooldown, 0.6 / 1.1); near(ally.brain.fireDelay, 2 / 1.1); s.dispose();
 });
 
 test("mines snapshot damage and destroyed owners or replacements cannot gain XP from old ordnance", () => {
   for (const respawn of [false, true]) {
     const { s, player, enemy } = fixture();
-    player.xp = 1000; placeMine(s, player); const mine = s.mines[0];
+    player.xp = RANKS[3].xp; placeMine(s, player); const mine = s.mines[0];
     assert.equal(mine.damage, 130); assert.equal(mine.ownerLife, 0);
     s.damageTank(player, 9999, player.id, player.team);
     if (respawn) { s.respawn(player); move(player, -30, -30); }
@@ -169,7 +169,7 @@ test("promoted max hull and repair pickups respect every chassis and Solo diffic
   for (const solo of [false, true]) for (const t of [player, enemy]) {
     s.gameMode = solo ? "solo" : "team";
     for (const kind of ["scout", "balanced", "heavy"] as VehicleKind[]) {
-      t.kind = kind; t.xp = 1000; t.hp = 1;
+      t.kind = kind; t.xp = RANKS[3].xp; t.hp = 1;
       const expected = Math.round(VEHICLES[kind].health * (solo && t === enemy ? 0.4 : 1) * 1.2 * 100) / 100;
       near(s.maxHealth(t), expected);
       collectPickup(s, t, { id: s.nextId++, kind: "repair", x: 0, z: 0, available: true, cooldown: 0 });
@@ -182,14 +182,14 @@ test("promoted max hull and repair pickups respect every chassis and Solo diffic
 test("death stops XP, respawn resets rank before computing new chassis hull, and round reset clears all", () => {
   const { s, player, ally } = fixture();
   for (const t of [player, ally]) {
-    earnExperience(s, t, 1000); s.damageTank(t, 9999, t.id, t.team);
-    earnExperience(s, t, 30); assert.equal(t.xp, 1000);
+    earnExperience(s, t, RANKS[3].xp); s.damageTank(t, 9999, t.id, t.team);
+    earnExperience(s, t, 30); assert.equal(t.xp, RANKS[3].xp);
     s.humanKind = "heavy"; s.respawn(t);
     assert.equal(t.xp, 0); assert.equal(t.hp, VEHICLES[t.kind].health);
   }
-  earnExperience(s, player, 500);
+  earnExperience(s, player, RANKS[2].xp);
   const snapshot = s.snapshot();
   assert.equal(snapshot.tanks[0].rank, 2); assert.equal(snapshot.tanks[0].maxHp, 161);
-  snapshot.tanks[0].xp = 0; assert.equal(player.xp, 500);
+  snapshot.tanks[0].xp = 0; assert.equal(player.xp, RANKS[2].xp);
   s.reset(); assert.ok(s.tanks.every(t => t.xp === 0 && rankIndex(t) === 0)); s.dispose();
 });
