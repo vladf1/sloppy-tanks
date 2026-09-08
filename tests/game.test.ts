@@ -116,7 +116,7 @@ test("respawn occurs after three seconds with protection and selected class", ()
   assert.ok(a.protection > 1.9);
   s.dispose();
 });
-test("special weapons expire; upgrades persist independently and repair fully heals", () => {
+test("ammunition persists while power-ups expire and repair fully heals", () => {
   const s = game(),
     a = s.human;
   const p = {
@@ -128,13 +128,12 @@ test("special weapons expire; upgrades persist independently and repair fully he
     cooldown: 0,
   };
   collectPickup(s, a, p);
-  assert.equal(a.rocket, 0);
+  assert.equal(a.ammo.rocket, 0);
   assert.equal(a.rapid, 12);
   collectPickup(s, a, { ...p, kind: "rocket", available: true });
-  assert.equal(a.rocket, 14);
-  a.rocket = STEP;
+  assert.equal(a.ammo.rocket, 12);
   s.step();
-  assert.equal(a.rocket, 0);
+  assert.equal(a.ammo.rocket, 12);
   a.shield = 7;
   collectPickup(s, a, { ...p, kind: "shield", available: true });
   assert.equal(a.shield, 15);
@@ -163,7 +162,7 @@ test("swept fast shell hits a target between frame endpoints and ignores ally", 
     damage: 40,
     bounces: 1,
     life: 2,
-    weapon: "standard",
+    piercing: 0, weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(enemy.hp, VEHICLES[enemy.kind].health - 40);
@@ -196,7 +195,7 @@ test("standard ricochet reflects once off surviving cover and removes on next hi
     damage: 40,
     bounces: 1,
     life: 2,
-    weapon: "standard",
+    piercing: 0, weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(s.shots[0].bounces, 0);
@@ -228,7 +227,7 @@ test("destroyed cover does not reflect shells and breaks exactly once", () => {
     damage: 40,
     bounces: 1,
     life: 2,
-    weapon: "standard",
+    piercing: 0, weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(c.alive, false);
@@ -308,7 +307,7 @@ test("tower collapse opens center route and retains side rubble", () => {
   );
   s.dispose();
 });
-test("match time, tie overtime, next valid kill and 50 kill limit", () => {
+test("match time, tie overtime, next valid kill and 100 kill limit", () => {
   const m = newMatch();
   m.phase = "playing";
   m.time = STEP;
@@ -322,6 +321,13 @@ test("match time, tie overtime, next valid kill and 50 kill limit", () => {
   n.phase = "playing";
   n.scores = [49, 48];
   awardKill(n, 1, 0, false);
+  assert.equal(n.phase, "playing");
+  assert.equal(n.winner, null);
+  n.scores = [98, 48];
+  awardKill(n, 1, 0, false);
+  assert.equal(n.phase, "playing");
+  awardKill(n, 1, 0, false);
+  assert.equal(n.scores[0], 100);
   assert.equal(n.winner, 0);
   const timed = newMatch();
   timed.phase = "playing";
@@ -340,7 +346,7 @@ test("complete reset restores counts, cover, pickups, scores, nav and RNG", () =
   assert.deepEqual(s.snapshot().counts, counts);
   assert.deepEqual(s.match.scores, [0, 0]);
   assert.equal(s.destroyed, 0);
-  assert.ok(s.pickups.every((p) => p.available));
+  assert.ok(s.pickups.every((p) => p.available === (p.kind !== "laser")));
   s.dispose();
 });
 test("seeded random and team roster are reproducible and symmetric", () => {
@@ -388,16 +394,15 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });
-test("ricochet core adds two reflections and doubles damage; standard has one", () => {
+test("selected ricochet has three reflections and 80 damage; standard has one", () => {
   const s = game();
   const t = s.human;
-  t.ricochet = 12;
+  t.ammo.ricochet = 12; t.selectedAmmo = "ricochet";
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 3);
   assert.equal(s.shots.at(-1)!.damage, 80);
   t.cooldown = 0;
-  t.ricochet = 0;
-  t.spread = t.rocket = 0;
+  t.selectedAmmo = "standard";
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 1);
   s.dispose();

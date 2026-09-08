@@ -12,8 +12,15 @@ for (let seed = 1; seed <= 10; seed++) {
   const initialBodies = s.world.bodies.len();
   s.start();
   let steps = 0;
+  const veterancy = { promotions: 0, botPromotions: 0, elite: 0, heroic: 0 };
   while (s.match.phase === "playing" && steps < 60 * 360) {
     s.step(idleCommand(), seed > 3);
+    for (const e of s.events.splice(0)) if (e.type === "promotion") {
+      veterancy.promotions++;
+      if (e.id !== s.human.id) veterancy.botPromotions++;
+      if (e.label === "PROMOTED TO ELITE") veterancy.elite++;
+      if (e.label === "PROMOTED TO HEROIC") veterancy.heroic++;
+    }
     maxBodies = Math.max(maxBodies, s.world.bodies.len());
     maxFragments = Math.max(maxFragments, s.fragments.length);
     steps++;
@@ -27,6 +34,7 @@ for (let seed = 1; seed <= 10; seed++) {
     destroyed: s.destroyed,
     reroutes: s.botReroutes,
     breachShots: s.botBreachShots,
+    veterancy,
     towersRemaining: s.covers.filter((c) => c.kind === "tower" && c.alive)
       .length,
   });

@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { PICKUPS } from "../src/game/data";
 import "./generate-barrels";
 import type { PickupKind } from "../src/game/types";
+import { isSpecialAmmo } from "../src/game/ammunition";
+import "./generate-ammo-icons";
+import "./generate-laser-pickup";
 
 // Offline only: checked-in PNGs are loaded by the game, never this generator.
 const output = new URL("../public/textures/", import.meta.url);
@@ -16,10 +19,11 @@ async function save(path: string, canvas: Canvas) {
 
 const names: Record<PickupKind, string> = {
   rapid: "RAPID", spread: "SPREAD", rocket: "ROCKET", ricochet: "BOUNCE",
-  shield: "SHIELD", speed: "SPEED", repair: "REPAIR",
+  piercing: "PIERCING", shield: "SHIELD", speed: "SPEED", repair: "REPAIR", laser: "LASER",
 };
 
 for (const kind of Object.keys(PICKUPS) as PickupKind[]) {
+  if (isSpecialAmmo(kind) || kind === "laser") continue;
   const canvas = createCanvas(256, 256);
   const c = canvas.getContext("2d");
   const color = `#${PICKUPS[kind].color.toString(16).padStart(6, "0")}`;

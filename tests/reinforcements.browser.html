@@ -16,35 +16,38 @@ try {
   view.reset(s);
   view.render(s, 1, 1 / 60);
   let replacements = 0;
-  for (let kill = 0; kill < s.enemyCount; kill++) {
+  for (let kill = 0; kill < 120; kill++) {
     const victim = s.tanks.find(t => !t.human && t.alive);
     check(victim, 'An enemy must be available');
     victim.protection = 0;
     s.damageTank(victim, 999, s.human.id, s.humanTeam);
-    const previousCount = s.tanks.length;
+    view.render(s, 1, 1 / 60);
+    check(!view.tankMeshes.get(victim.id).visible, "Destroyed tank hidden before replacement");
     s.reinforcementDelay = 0;
     s.step();
-    replacements += s.tanks.length - previousCount;
+    replacements++;
     view.render(s, 1, 1 / 60);
     const objects = view.worldGroup.children.length;
     view.render(s, 1, 1 / 60);
     check(view.worldGroup.children.length === objects, 'Repeated frames must not duplicate visuals');
-    check(!view.tankMeshes.get(victim.id).visible, 'Destroyed tank must be hidden');
-    check(!view.bars.get(victim.id).visible, 'Destroyed health bar must be hidden');
+    check(view.tankMeshes.get(victim.id).visible, 'Replacement tank must be visible');
+    check(view.bars.get(victim.id).visible, 'Replacement health bar must be visible');
+    check(view.tankMeshes.size === 7 && view.bars.size === 7, 'Models and bars stay bounded');
     for (const tank of s.tanks.filter(t => t.alive)) {
       check(view.tankMeshes.get(tank.id)?.visible, 'Live tank needs a visible model');
       check(view.bars.get(tank.id)?.visible, 'Live tank needs a visible health bar');
     }
     check(s.tanks.filter(t => !t.human && t.alive).length <= 6, 'Six active enemies maximum');
-    if (kill < 19) check(s.match.phase === 'playing', 'No premature victory');
+    check(s.match.phase === 'playing', 'No kill-count victory');
   }
-  check(replacements === 14, 'Exactly fourteen replacements');
-  check(s.match.phase === 'results' && s.match.winner === s.humanTeam, 'Victory after twenty kills');
+  check(replacements === 120 && s.human.kills === 120, 'All kills counted');
+  s.match.time = 0.001; s.step();
+  check(s.match.phase === 'results' && s.match.winner === s.humanTeam, 'Survived at time limit');
   s.reset(); view.reset(s); view.render(s, 1, 1 / 60);
   check(view.tankMeshes.size === 7 && view.bars.size === 7, 'Reset clears old models and bars');
   s.gameMode = 'team'; s.reset(); view.reset(s); view.render(s, 1, 1 / 60);
   check(view.tankMeshes.size === 12, 'Team mode still renders');
-  result.textContent = 'PASS: 20 kills, 14 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.';
+  result.textContent = 'PASS: 120 kills, 120 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.';
 } catch (error) {
   result.textContent = 'FAIL: ' + error.stack;
   console.error(error);

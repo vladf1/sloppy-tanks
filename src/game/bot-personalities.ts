@@ -1,5 +1,7 @@
+import { rankStats } from "./veterancy";
 import { WEAPONS, Random } from "./data";
 import type { Tank, VehicleKind, Weapon } from "./types";
+import { equippedWeapon, hasAmmo, AMMO_ORDER } from "./ammunition";
 
 export const BOT_PERSONALITIES = [
   "scout", "guard", "sniper", "heavy", "minelayer", "support", "artillery",
@@ -39,16 +41,21 @@ export function botProfile(t: Tank): BotProfile {
   return BOT_PROFILES[t.brain.personality];
 }
 
-export function equippedWeapon(t: Tank): Weapon {
-  if (t.rocket > 0 || (!t.human && t.brain.personality === "artillery")) return "rocket";
-  return t.spread > 0 ? "spread" : "standard";
+export const BOT_AMMO: Record<BotPersonality, Weapon> = {
+  artillery: "rocket", heavy: "rocket", scout: "spread", minelayer: "spread",
+  sniper: "piercing", guard: "ricochet", support: "ricochet",
+};
+export function preferredAmmo(t: Tank): Weapon {
+  const preferred = BOT_AMMO[t.brain.personality];
+  return hasAmmo(t, preferred) ? preferred
+    : AMMO_ORDER.find(w => w !== "standard" && hasAmmo(t, w)) ?? "standard";
 }
 
-export function botReload(t: Tank, jitter: number) {
+export function botReload(t: Tank, jitter: number, weapon = equippedWeapon(t)) {
   const base = botProfile(t).reload * (t.brain.ultraAggressive ? 0.48 : 1);
   // Hunters close faster, but never erase the human's matched-weapon advantage.
-  return Math.max(base + jitter, WEAPONS[equippedWeapon(t)].interval * 1.15)
-    * (t.rapid > 0 ? 0.5 : 1);
+  return Math.max(base + jitter, WEAPONS[weapon].interval * 1.15)
+    * (t.rapid > 0 ? 0.5 : 1) / rankStats(t).fireRate;
 }
 
 export function combatMovement(t: Tank, dx: number, dz: number, strafe: number) {

@@ -1,22 +1,42 @@
-import type { VehicleCommand } from "./types";
+import type { AmmoSelection, VehicleCommand } from "./types";
+import { AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS } from "./ammunition";
+const ammoKeys = new Map<string, AmmoSelection>([["KeyQ", -1], ["KeyE", 1]]);
+AMMO_ORDER.forEach((weapon, i) => {
+  ammoKeys.set(`Digit${i + 1}`, weapon);
+  ammoKeys.set(`Numpad${i + 1}`, weapon);
+});
 export class Controls {
   keys = new Set<string>();
   fire = false;
   mine = false;
   nx = 0;
   ny = 0;
+  ammoSelection: AmmoSelection | undefined;
+  lastAmmoScroll = -Infinity;
   constructor(
     canvas: HTMLCanvasElement,
     public pause: () => void,
     zoom: (amount: number) => void,
+    public active: () => boolean = () => true,
   ) {
     window.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
+        this.clear();
         pause();
         return;
       }
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "") ||
+        e.metaKey || e.ctrlKey || e.altKey) return;
+      const selection = ammoKeys.get(e.code);
+      if (selection !== undefined) {
+        if (this.active()) {
+          e.preventDefault();
+          if (!e.repeat) this.ammoSelection = selection;
+        }
+        return;
+      }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Space"].includes(e.code)) {
-        if ((e.target as HTMLElement).tagName === "INPUT") return;
         e.preventDefault();
         this.keys.add(e.code);
       }
@@ -40,7 +60,13 @@ export class Controls {
       "wheel",
       (e) => {
         e.preventDefault();
-        zoom(Math.sign(e.deltaY) * 2);
+        if (!e.deltaY) return;
+        if (e.shiftKey) {
+          zoom(Math.sign(e.deltaY) * 2);
+        } else if (this.active() && performance.now() - this.lastAmmoScroll >= AMMO_SCROLL_INTERVAL_MS) {
+          this.ammoSelection = e.deltaY > 0 ? 1 : -1;
+          this.lastAmmoScroll = performance.now();
+        }
       },
       { passive: false },
     );
@@ -59,9 +85,13 @@ export class Controls {
     this.keys.clear();
     this.fire = false;
     this.mine = false;
+    this.ammoSelection = undefined;
+    this.lastAmmoScroll = -Infinity;
   }
   command(aim: number): VehicleCommand {
     const mine = this.mine;
+    const ammoSelection = this.active() ? this.ammoSelection : undefined;
+    this.ammoSelection = undefined;
     this.mine = false;
     return {
       moveX: Number(this.keys.has("KeyD") || this.keys.has("ArrowRight"))
@@ -71,6 +101,7 @@ export class Controls {
       aim,
       fire: this.fire,
       mine,
+      ammoSelection,
     };
   }
 }

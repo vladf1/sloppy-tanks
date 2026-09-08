@@ -63,6 +63,16 @@ export class Navigation {
         }
     return i;
   }
+  /** Conservative grid visibility for shortening routes without cutting corners. */
+  clearLine(from: Vec2, to: Vec2) {
+    const steps = Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) / (CELL / 3));
+    for (let i = 0; i <= steps; i++) {
+      const f = steps ? i / steps : 0;
+      if (this.blocked[this.index({ x: from.x + (to.x - from.x) * f,
+        z: from.z + (to.z - from.z) * f })]) return false;
+    }
+    return true;
+  }
   find(from: Vec2, to: Vec2): Vec2[] {
     this.paths++;
     const start = this.nearest(this.index(from)),

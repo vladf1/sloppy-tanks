@@ -27,13 +27,13 @@ The September 7 review fixes queued mine input, random tower alignment and respa
 
 ## Static textures
 
-`npm run generate:textures` runs `scripts/generate-textures.ts` using the development-only Node canvas library. It writes seven power-up faces to `public/textures/pickups/`, siding and shingles to `public/textures/houses/`, two team symbols to `public/textures/teams/`, and grayscale armor wear to `public/textures/tanks/armor-wear.png`. The shared 512 × 512 armor map adds visible paint wear, panel seams, scratches and bump detail while retaining each tank’s team color. These PNGs are checked in; local dev/build commands use them directly. Local development and GitHub Pages builds load/copy the saved assets directly; they do not run the generator. Run the offline command and commit the updated images only when changing the artwork or pickup colors. Font rendering can vary across operating systems.
+`npm run generate:textures` runs `scripts/generate-textures.ts` using the development-only Node canvas library. It writes nine pickup faces (five power-ups and four ammo crates) to `public/textures/pickups/`, siding and shingles to `public/textures/houses/`, two team symbols to `public/textures/teams/`, and grayscale armor wear to `public/textures/tanks/armor-wear.png`. The shared 512 × 512 armor map adds visible paint wear, panel seams, scratches and bump detail while retaining each tank’s team color. These PNGs are checked in; local dev/build commands use them directly. Local development and GitHub Pages builds load/copy the saved assets directly; they do not run the generator. Run the offline command and commit the updated images only when changing the artwork or pickup colors. Run `npm run generate:ammo` to regenerate only the four ammunition pictograms from `scripts/generate-ammo-icons.ts`; `node --import tsx scripts/generate-laser-pickup.ts` regenerates the laser-defense pictogram. Crates use shared box/rim/handle geometry with colored shell symbols visible on their sides and lids; non-ammo cubes retain their original artwork. Font rendering can vary across operating systems.
 
 AI-generated grass and dirt are separate: runtime WebPs are in `public/textures/ground/`, with original PNGs and prompts in `assets/texture-sources/`. The offline script does not overwrite those images.
 
 ## Saved sounds
 
-The browser loads four shared MP3 files from `public/audio/`: `shot.mp3`, `explosion.mp3`, `impact.mp3`, and `pickup.mp3`. Howler handles playback, volume and stereo placement; the browser does not synthesize sounds. These are mono MP3 effects encoded offline from 22,050 Hz PCM using FFmpeg/libmp3lame at VBR quality 2, totaling about 11 KB.
+The browser loads eleven shared MP3 files from `public/audio/`: the original `shot.mp3`, `explosion.mp3`, `impact.mp3`, and `pickup.mp3`, four `shot-{spread,rocket,ricochet,piercing}.mp3` variants, a quiet `hit.mp3` confirmation tick, `laser.mp3` for defensive zaps, and a short rising `promotion.mp3` chime for the player's rank upgrades. Spread has a sharp noisy attack, rockets a longer low thump, ricochet a metallic tone, and piercing a brief high snap. Howler handles playback, volume and stereo placement; the browser does not synthesize sounds. These are mono MP3 effects encoded offline from 22,050 Hz PCM using FFmpeg/libmp3lame at VBR quality 2, totaling 24,026 bytes. Player shots remain audible when nearby bots fire at the same time; clustered hit confirmations share an 80 ms sound throttle and defensive zaps a 50 ms throttle.
 
 With FFmpeg installed (`brew install ffmpeg` on macOS), run `npm run generate:audio` offline when changing the sound design in `scripts/generate-audio.ts`, then commit the updated MP3s. Seeded noise makes the output reproducible. Local development and GitHub Pages builds use the saved files directly, without regenerating them.
 
@@ -43,17 +43,53 @@ With FFmpeg installed (`brew install ffmpeg` on macOS), run `npm run generate:au
 - **Mouse**: independent turret aim.
 - **Hold left mouse**: fire.
 - **Right click**: drop a mine; 0.8-second arming delay and 7-second cooldown.
-- **Wheel**: zoom.
+- **Q / E**: previous / next stocked ammunition; wraps and skips empty slots.
+- **1–5**: Standard, Spread, Rocket, Ricochet, Piercing in HUD order. Empty types leave the selection unchanged. Number-pad keys also work; held-key repeat is ignored.
+- **Wheel / two-finger trackpad scroll**: next stocked ammo when scrolling down, previous when scrolling up; wraps and skips empty slots. One change per 120 ms.
+- **Shift + wheel / two-finger scroll**: zoom, retaining the 23–52 limits. Mac finger direction follows the Natural scrolling setting.
 - **Escape** or **Pause**: pause; resume from the menu.
 - Losing focus clears controls and pauses. Hidden tabs stop simulation and rendering.
 
 Choose Skipper (80 HP), Bruiser (100 HP), or Big Rig (140 HP). Standard shells deal 40 damage. The human's team is chosen randomly. Blue uses diamonds; red uses twin bars. Health and reload bars float above vehicles, and the human has a yellow ground ring and a brief spawn pulse.
 
-Rounds last up to five minutes or end at 50 team kills. A timed tie enters next-kill overtime. Death launches a cosmetic physical wreck with a random tumble axis per part. One in four breakups sends the turret 20–30 units higher, while ordinary arcs stay at 4.5–8 units. Pieces persist through their flight, then clear. Death gives a three-second respawn window with vehicle selection. A respawn has two seconds of protection, cancelled by firing. Spawn selection considers enemy distance, line of sight and friendly congestion.
+Team rounds last up to five minutes or end at 100 team kills. A timed tie enters next-kill overtime. Death launches a cosmetic physical wreck with a random tumble axis per part. One in four breakups sends the turret 20–30 units higher, while ordinary arcs stay at 4.5–8 units. Pieces persist through their flight, then clear. Death gives a three-second respawn window with vehicle selection. A respawn has two seconds of protection, cancelled by firing. Spawn selection considers enemy distance, line of sight and friendly congestion.
 
-Pickups are collected by driving through them. Spread and breaching rockets each last 14 seconds and combine: collecting both fires three explosive rockets per volley. Their timers expire independently; collecting the same pickup refreshes its timer. Four repair pickups sit on the west, east, north and south routes. Rapid fire halves reload time; ricochet doubles damage and adds two bounces. These upgrades last 12 seconds and combine with each other and special weapons. Speed adds 50% for 12 seconds. Shield absorbs 120 damage (three standard shells) or expires after 15 seconds; excess damage reaches the hull. Repair fully heals. Repeated upgrades refresh their timer or shield capacity without multiplying their strength. Mines are independent of weapon pickups. Allies do not take damage or block projectiles. Self-inflicted explosions can kill the owner without awarding a point. Drum and mine chains preserve the initiating damage owner.
+**Solo Assault** is a one-life survival run with a **ten-minute limit** and unlimited enemy replacements, up to six active at once. The scoreboard shows your credited **KILLS**, active enemies and remaining time; there is no kill target or finite reserve. Dying ends the run immediately; surviving ten minutes completes it. Both outcomes show your final kill count, and a new run starts at zero. Enemies replenish at safe edge positions with at least one second between replacements. The six enemy slots and their render objects are reused, and each replacement starts Rookie, so long runs keep bounded tank/HUD counts. Solo retains its weaker enemy armor, slower firing and reduced enemy damage. Pausing freezes the timer.
+
+Drive through ammunition crates to refill reserves without changing the selected type. Standard is unlimited; special ammo comes only from map crates, persists until fired, and is cleared on death, respawn and round reset. Every tank starts with standard selected. The HUD shows all five types, counts, `∞` for standard, dimmed empty slots and a highlighted selection.
+
+| Ammo | Damage / behavior | Per crate | Carry limit |
+| --- | --- | ---: | ---: |
+| Standard | 40 damage, one bounce | — | Unlimited |
+| Spread | Three 27-damage shells; one unit per volley | 18 volleys | 36 |
+| Rocket | 65-damage breaching rocket with existing blast and cadence | 12 | 24 |
+| Ricochet | 80 damage, three bounces | 24 | 48 |
+| Piercing | Standard damage, speed and cadence; no bounce; intercepts one opposing shell and continues | 24 | 48 |
+
+Eight ammo crates, two per special type, occupy four route pairs mirrored by 180 degrees in Pine Village and randomized maps. They refill after 13 seconds. Tanks at that type's carry limit leave the crate available; partial refills report the actual amount received, such as `+3 ROCKETS`. Ammo types never combine. Selection is applied before firing in each simulation tick. Switching and collection preserve an active reload; only emitted shots consume ammo. The final special shot automatically selects standard, and held fire resumes after the fired weapon's normal cooldown. Selection is ignored while dead or outside play; pause, blur and round transitions clear pending input.
+
+Collected ammunition leaves a dim supply pad with a colored ring that fills over the existing 13-second refill. Progress stops while paused, and the crate returns when ready. The crosshair dims while reloading and brightens when ready; credited enemy hull damage briefly flashes it white and plays a quiet centered tick, including lethal hits. Cover impacts, self damage and fully protected hits do not confirm. Below 25% health the existing hull panel pulses gently, stops on repair/death, and pauses with the game; reduced-motion settings use a static tint.
+
+Rapid fire halves the selected weapon's firing interval for 12 seconds. Speed adds 50% for 12 seconds. Shield absorbs 120 damage (three standard shells) or expires after 15 seconds; excess damage reaches the hull. Repair fully heals, with four pickups on west, east, north and south routes. Repeated power-ups refresh their timer or shield capacity without multiplying their strength. Mines remain the independent right-click ability. Allies do not take damage or block projectiles. Self-inflicted explosions can kill the owner without awarding a point. Drum and mine chains preserve the initiating damage owner.
+
+**Laser Defense** is a rare automatic point-defense power-up. One cyan pickup appears at the map center after 25 seconds and takes 45 seconds to refill after collection. It lasts six seconds, with a **50% chance per incoming enemy projectile** within seven world units. A small turret emitter sends a brief, thin beam to each successful intercept. The laser checks approaching paths near the tank, ignores allies/outgoing shots, and requires clear line of sight. Each projectile gets only one roll per defending tank, including after a miss or bounce; it is not a repeated per-frame probability. Interceptions share the swept collision timeline with cover, hulls, mines and other shells. Successful zaps remove rockets without an explosion, award no kills and leave cannon ammunition/reload alone. The timer pauses with the game and clears on death, respawn or reset. Bots use the same rules. Balance constants are in `LASER_DEFENSE` in `src/game/data.ts`; mechanics and visuals are in `laser-defense.ts` and `laser-visuals.ts`.
 
 The current pacing keeps standard shell speed at 21.696 world units/second and bot weapon interval at 0.85 seconds. The human fires 20% faster (about 0.71 seconds per standard shot); the same advantage applies to special weapons and rapid-fire upgrades. Bots also retain their extra aiming/fire delays. Balanced movement is about 8.95 units/second, adapted from V-Tanks as described below. **There is no camera shake.** Impact feedback comes from recoil, sparks, fragments, light and sound. Surviving a hull hit gives the tank a brief 0.28-second visual jolt, a gold/white spark burst and clear health loss in the overhead bar. This does not move the physics body or shake the camera; fully shield-absorbed hits do not trigger hull-damage feedback.
+
+## Tank veterancy
+
+Every tank, including friendly and enemy bots, starts as a **Rookie**. Deal enemy hull damage to earn **1 XP per actual HP removed**, plus **50 XP for a kill**. Assisting tanks keep the XP from their own damage. Overkill, shield absorption, spawn protection, friendly/self damage, scenery destruction and laser interceptions give no XP. Ranks belong to the current tank's life: respawning starts fresh, while surviving keeps all progress. Delayed mines, shells and explosive chains retain their firing life and cannot promote a replacement tank.
+
+| Rank | Total XP | Damage | Fire rate | Max hull | Self-repair |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Rookie | 0 | Base | Base | Base | None |
+| Veteran | 200 | +10% | +10% | +10% | None |
+| Elite | 500 | +20% | +15% | +15% | 1% of max hull per second |
+| Heroic | 1,000 | +30% | +20% | +20% | 2% of max hull per second |
+
+Bonuses are totals relative to Rookie. Promotion preserves the tank's remaining hull percentage. Damage bonuses apply to fired ammunition and laid mines, using rank at the time of firing/placement; secondary scenery blasts and shell-interception blasts retain their usual damage. Fire-rate bonuses affect both cannon reload and the bots' extra firing delays, and combine with rapid fire. Self-repair begins after five seconds without firing, laying a mine or taking damage (including shield hits). It pauses with the game and cannot exceed the upgraded max hull; repair pickups also respect that maximum. Solo enemies retain their difficulty scaling.
+
+One to three small gold chevrons appear beside promoted tanks' health bars. The compact player panel shows the current rank beside the tank name, without an XP bar or point counter; hovering over the rank explains its bonuses. Promotions produce a brief gold pickup-style glow, a player toast and a saved chime. Balance values and XP/repair rules live in `src/game/veterancy.ts`. The Veteran/Elite/Heroic progression is inspired by [EA's published Generals Zero Hour veterancy tiers](https://github.com/electronicarts/CnC_Generals_Zero_Hour/blob/main/GeneralsMD/Code/GameEngine/Include/Common/GameCommon.h); these XP thresholds and bonuses are tuned for this game.
 
 ## Destruction and navigation
 
@@ -69,8 +105,10 @@ The 48 × 48 navigation grid has conservative clearance for vehicles and cardina
 | `src/game/data.ts`                            | Vehicle, weapon, pickup definitions and seeded RNG              |
 | `src/game/arena.ts`                           | Authored cover, pickups, spawn positions                        |
 | `src/game/simulation.ts`                      | Fixed-step world, movement, respawns, reset, snapshot boundary  |
+| `src/game/ammunition.ts`                    | Shared availability, inventory, selection, refill and depletion rules |
 | `src/game/weapons.ts`                         | Swept shells, ricochets, mines, pickup effects                  |
 | `src/game/damage.ts`                          | Damage ownership, kill credit, chain reactions, destruction     |
+| `src/game/bot-movement.ts`                  | Hull-aware steering, arrival braking and committed recovery |
 | `src/game/navigation.ts` / `ai.ts`            | Clearance grid, A*, bot perception and commands                 |
 | `src/game/models.ts` / `presentation.ts`      | Original geometry, batching, interpolated scene, effects        |
 | `src/game/controls.ts` / `audio.ts` / `ui.ts` | Input, spatial sound, minimal menus and HUD                     |
@@ -106,7 +144,9 @@ Latest tuning: the camera tracks the player's interpolated position at screen ce
 
 The latest reference pass replaces the service yard with a 120 × 120 village: 14 pitched-roof cabins, 12 collidable pines, breakable wooden garden fences, two watchtowers, dirt lanes, textured grass and team spawn flags. Twelve cabins remain as permanent cover so the village retains its routes throughout a round; the two central cabins, trees, fences and towers can be demolished. The outside tree line is scenery beyond the arena boundary.
 
-Tank silhouettes now follow the supplied examples: tall cast or angular turrets, thick gray guns, broad dark tracks and prominent gray armor panels. Every projectile uses its owner's blue/red team color with a white core. The outlined aiming reticle stays visible over terrain and cover. All shell speeds are 20% lower (standard 19.2, rapid 21.6, spread 17.6, rocket 13.6, ricochet 22.4 units/second); lifetime increases to 3.5 seconds to preserve travel range. Shell size, player-centered camera and reduced bot accuracy/cadence are retained.
+Tank silhouettes now follow the supplied examples: tall cast or angular turrets, thick gray guns, broad dark tracks and prominent gray armor panels. Projectiles use distinct compact models with blue/red team markings: a pointed standard shell, round spread pellets, a rocket with a nose cone and four swept fins, a spinning hexagonal ricochet puck, and a slim cyan piercing dart. Rockets have a short flickering exhaust. The rocket body is approximately 0.94 world units long, matching the previous stretched-sphere rocket; the standard shell is 0.70 units long. All five bodies are at most 1.0 unit long and 0.52 units wide, with shape and markings providing the distinction. `src/game/projectile-visuals.ts` builds and batches the geometry once, retaining the 600-projectile display cap; it does not change projectile physics, damage, speed or hitboxes.
+
+The outlined aiming reticle stays visible over terrain and cover. At the earlier redesign revision, shell speeds were reduced by 20%; the current standard/ricochet/piercing speed is 21.696, spread 19.888 and rocket 15.368 units/second after later shared tuning. Rapid fire changes cadence rather than shell speed; lifetime increases to 3.5 seconds to preserve travel range. The player-centered camera and reduced bot accuracy/cadence are retained.
 
 
 ## Movement, breakup and quick selection
@@ -126,7 +166,7 @@ The Vite base path is `/sloppy-tanks/`. GitHub Pages inherits `fridman.me` from 
 
 Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-tanks` revision `570bf8dd46a48c0761a4faccafa40197a821267a`. Its balanced tank travels at 184 source units/second and its standard shell at 535. Scaling that ratio to our 19.2 m/s shell and adding the requested 20% base-speed increase gives 7.924 m/s; light and heavy use its 1.24 and 0.76 class multipliers (9.826 and 6.022 m/s). A further shared 13% speed increase brings light/balanced/heavy to 11.103 / 8.954 / 6.805 m/s and standard/spread/rocket projectiles to 21.696 / 19.888 / 15.368 m/s. Acceleration/braking is 100 m/s² and hull rotation is capped at 9 radians/second. This adapts the dodge timing and responsive handling to our 3D arena; screen-space speed still depends on zoom.
 
-Opposing shells intercept continuously, including between simulation ticks and after ricochets. Allied shells pass through each other. The earliest wall, tank, expiry or shell contact wins; thin cover blocks interception. Both shells disappear with a small blast that deals one standard 40-damage hit to nearby tanks on either team, credited to the opposing shell's shooter. Ordinary blast radius is 3 m; intercepted rockets use 5.3 m. This blast does not damage cover or trigger mines.
+Opposing shells intercept continuously, including between simulation ticks and after ricochets. Allied shells pass through each other. The earliest wall, tank, expiry or shell contact wins; thin cover blocks interception. Ordinary interceptions remove both shells with a small blast that deals one standard 40-damage hit to nearby tanks on either team, credited to the opposing shell's shooter. Ordinary blast radius is 3 m; intercepted rockets use 5.3 m. This blast does not damage cover or trigger mines. A fresh piercing shell instead destroys the opposing shell and continues with its one interception allowance spent, producing a small impact without blast damage, including against rockets. Two fresh piercing shells both continue with their allowances spent; that pair is resolved only once, even if still touching next tick. Later contacts use normal interception rules. Piercing stops on tanks and cover.
 
 All moving tanks leave paired tread impressions following their hull heading. Marks are distance-spaced, fade progressively from 4 to 18 seconds, and use one instanced draw call capped at 8,192 treads. A full buffer skips new impressions until the oldest pair has completely faded; visible marks are never overwritten abruptly. Tracks freeze during pause, clear with a new round, and are cosmetic. Camera shake remains absent.
 
@@ -141,11 +181,15 @@ Adapted from the local V-Tanks enemy profiles:
 - **Heavy:** slow advance with a deliberate firing rhythm.
 - **Minelayer:** closes in and deliberately drops mines near opponents.
 - **Support:** escorts nearby teammates and fights from farther back.
-- **Artillery:** takes a distant position and fires slow breaching rockets; special pickups temporarily override its normal rockets.
+- **Artillery:** takes a distant position and prefers finite breaching rockets collected from crates; uses standard when special stock is empty.
 
 Every tenth bot slot is an aggressive **Hunter** variant (one of eleven bots in a normal round). Hunters pursue through cover using navigation, close to short range and turn faster, but still need line of sight to fire. Personality reloads retain a floor that preserves the human's firing-rate advantage under matching weapon/upgrades. Roles persist through respawn and appear on both sides of larger rosters; ordinary 6v6 has sniper and artillery on opposite sides. All roles use the existing health, damage, pickup and mine systems. Support is an escort behavior and artillery uses existing rockets; V-Tanks' damage-transfer ability and delayed mortar strikes are not ported.
 
-Bots have persistent names such as Iron Jack, Sidewinder and Nitro in the kill feed. Their names survive respawn; the overhead display uses team markers and health/reload bars. The bottom-right controls show drive, aim/fire and zoom. Escape still pauses.
+Bots keep a patrol destination until arrival, retain a useful crate while approaching it, and prefer their current visible enemy unless another is substantially closer. Route following looks several clear grid waypoints ahead and brakes near the destination. Before moving, bots sweep their actual hull against cover and other tanks, choose an open side and hold that direction briefly. This replaces the retreat-toward-target flip and competing separation forces that caused twitching and head-on deadlocks. Lack of movement for 1.2 seconds starts a committed local detour that combat decisions cannot immediately overwrite; respawn clears that recovery state. Random-map patrol goals inside cover move to a navigable neighboring cell. Existing aiming error, reaction time, role ranges, fire cadence and easy-mode damage remain in effect.
+
+Bots seek useful crates and skip full reserves. Artillery/heavy prefer rockets, scouts/minelayers spread, snipers piercing, and guards/support ricochet. They use another stocked special when their preferred type is empty, and standard for routine cover clearing or empty special reserves. The generous initial supply and carry limits live beside the weapon stats in `src/game/data.ts`; cycling/refill rules live in `src/game/ammunition.ts`.
+
+Bots have persistent names such as Iron Jack, Sidewinder and Nitro in the kill feed. Their names survive respawn; the overhead display uses team markers and health/reload bars. The bottom-right controls show drive, aim/fire and keyboard ammunition shortcuts. Start and pause menus share the full controls, including scroll selection and Shift-scroll zoom. Escape still pauses.
 
 Hit registration follows the visible hull and tracks, including the heavy tank’s longer body. It does not require the shell centerline to pass through the smaller movement collider. Spawn protection and depleted/active shields continue to determine whether a registered hit actually removes hull health.
 
@@ -154,3 +198,17 @@ Hit registration follows the visible hull and tracks, including the heavy tank�
 Pause to adjust tank and projectile base speeds independently from 50–200%; 100% is the checked-in speed after the shared 13% increase. The settings persist locally and apply immediately. Mines can be detonated with direct shell hits, even while arming; nearby mines chain and the shooter receives kill credit. All spread pellets originate at the barrel muzzle, with close cover checked before spawning.
 
 Pickup crates carry high-contrast pictograms on every face and emit sparks, a ring and a brief tank glow when collected. Pines use layered boughs, bark and roots, with green foliage and wood splinters on destruction. The 84-name bot pool is shuffled at round start and names persist through respawn.
+
+
+## Ammunition validation
+
+`npm test` covers inventories, consumption/caps, cooldown protection, selection and input clearing, crate contention/refill, each ammunition type, piercing contact ordering/ownership/cover, role preferences and pickup routes across 100 seeded random maps. `npm run validate` runs ten seeded full matches and checks reset body counts. `npm run build` checks TypeScript and produces the release assets.
+
+With Vite running, use `SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scripts/ammunition-check.mjs` (substitute the port Vite reports). It drives real wheel/Shift-wheel and pointer input, captures the production crate/HUD at desktop and narrow sizes, and measures three seeds each of standard vs plentiful spread/piercing combat with 24 tanks and rapid fire. Results are saved in `artifacts/ammunition-results.json`; screenshots stay under ignored `artifacts/performance/ammunition/`. Add `--visual-only` to repeat input and screenshot checks without rerunning performance or replacing its results.
+
+
+## Bot movement validation
+
+`node --import tsx scripts/bot-movement-check.ts after` repeats three controlled movement cases and six 90-second village/random-map runs. `before` is reserved for capturing a baseline before changing the controller. Reports live in `artifacts/bot-movement-before.json` and `artifacts/bot-movement-after.json`. A measured stall is a two-second window with movement requested for more than 80 of 120 ticks but under one metre of net displacement; stationary firing roles are excluded. The detector also records direction reversals greater than 120 degrees and stalls with at least eight such reversals. These are repeatable regression indicators, not a guarantee that every pause in gameplay is a bug.
+
+`SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scripts/bot-movement-browser.mjs` verifies the retreat-at-wall and head-on scenarios through the real rendering loop, then records a 24-tank random-map match. Substitute the live Vite port. Results are in `artifacts/bot-movement-browser.json`, with screenshots under ignored `artifacts/performance/bot-movement/`.

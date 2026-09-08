@@ -41,6 +41,7 @@ const controls = new Controls(
   canvas,
   pause,
   (n) => (view.zoom = Math.max(23, Math.min(52, view.zoom + n))),
+  () => sim.match.phase === "playing" && sim.human.alive,
 );
 const settings = (key: string, value: number) => {
   if (key === "tank-speed" || key === "bullet-speed") value = tuneSpeed(sim, key, value);
@@ -77,6 +78,7 @@ const ui = new UI(
   },
   restart,
   settings,
+  pause,
 );
 window.addEventListener("resize", () => view.resize());
 if (autoplay) start();
@@ -102,6 +104,7 @@ function loop(now: number) {
   last = now;
   if (!document.hidden) {
     if (sim.match.phase === "results" && autoRounds) {
+      controls.clear();
       completedRounds++;
       sim.reset();
       view.reset(sim);
@@ -120,13 +123,18 @@ function loop(now: number) {
         steps++;
       }
     } else accumulator = 0;
+    if (sim.match.phase !== "playing" || !sim.human.alive) controls.clear();
     const simCost = performance.now() - startSim;
     const events = sim.events.splice(0);
     for (const e of events) {
-      view.event(e);
+      const playerHit = (e.type === "hurt" || e.type === "death") &&
+        e.owner === sim.human.id && e.team !== sim.human.team;
+      view.event(e, playerHit);
       audio.event(
         e,
         sim.human.alive ? sim.human.body.translation() : sim.human.previous,
+        playerHit,
+        e.id === sim.human.id,
       );
       ui.event(e);
     }
@@ -207,6 +215,7 @@ function createDebug() {
   return {
     sim,
     view,
+    audio,
     controls,
     start,
     restart,
@@ -260,7 +269,7 @@ function createDebug() {
           damage: 40,
           bounces: 4,
           life: 4,
-          weapon: "standard",
+          piercing: 0, weapon: "standard",
         });
       }
     },

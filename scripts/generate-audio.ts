@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Offline only: preserve the original sound envelopes with reproducible noise.
-function wave(frequency: number, duration: number, noise: number, seed: number) {
+function wave(frequency: number | readonly number[], duration: number, noise: number, seed: number) {
   let state = seed;
   const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296);
   const rate = 22050,
@@ -29,8 +29,17 @@ function wave(frequency: number, duration: number, noise: number, seed: number) 
   for (let i = 0; i < n; i++) {
     const t = i / rate,
       env = Math.pow(1 - i / n, 2);
+    let tone: number;
+    if (typeof frequency === "number") tone = Math.sin(t * frequency * Math.PI * 2 * (1 - t * 0.6));
+    else {
+      // A short rising three-note promotion chime, baked into the saved MP3.
+      const noteLength = duration / frequency.length, note = Math.min(frequency.length - 1, Math.floor(t / noteLength));
+      const local = t - note * noteLength;
+      tone = Math.sin(local * frequency[note] * Math.PI * 2)
+        * Math.min(1, local / 0.005) * (1 - local / noteLength);
+    }
     const sample =
-      (Math.sin(t * frequency * Math.PI * 2 * (1 - t * 0.6)) * (1 - noise) +
+      (tone * (1 - noise) +
         (random() * 2 - 1) * noise) *
       env *
       0.7;
@@ -46,6 +55,14 @@ for (const [name, frequency, duration, noise, seed] of [
   ["explosion", 65, 0.7, 0.75, 65],
   ["impact", 600, 0.08, 0.55, 600],
   ["pickup", 700, 0.3, 0.05, 700],
+  // Distinct pitch, envelope and noise give each munition its own attack.
+  ["shot-spread", 310, 0.11, 0.8, 310],
+  ["shot-rocket", 72, 0.38, 0.48, 72],
+  ["shot-ricochet", 880, 0.18, 0.2, 880],
+  ["shot-piercing", 1250, 0.075, 0.6, 1250],
+  ["hit", 1800, 0.045, 0.15, 1800],
+  ["laser", 1600, 0.075, 0.05, 1600],
+  ["promotion", [660, 830, 990], 0.48, 0, 660],
 ] as const) {
   const data = wave(frequency, duration, noise, seed);
   const target = new URL(`${name}.mp3`, output);

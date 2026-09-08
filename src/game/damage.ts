@@ -1,4 +1,6 @@
+import { earnExperience, KILL_XP } from "./veterancy";
 import { distance } from "./data";
+import { clearAmmo } from "./ammunition";
 import { breakTank } from "./wrecks";
 import { awardKill } from "./match";
 import type { Simulation } from "./simulation";
@@ -9,17 +11,23 @@ export function damageTank(
   amount: number,
   owner: number,
   team: Team,
+  ownerLife?: number,
 ) {
   if (!t.alive || t.protection > 0 || (t.team === team && t.id !== owner))
     return;
   if (s.gameMode === "solo" && team !== s.humanTeam) amount *= 0.4;
+  if (amount > 0) t.lastCombat = s.elapsed;
   if (t.shield > 0 && t.shieldPoints > 0) {
     const absorbed = Math.min(amount, t.shieldPoints);
     t.shieldPoints -= absorbed;
     amount -= absorbed;
     if (t.shieldPoints === 0) t.shield = 0;
   }
+  const hullDamage = Math.min(t.hp, Math.max(0, amount));
   t.hp -= amount;
+  const attacker = s.tanks.find((a) => a.id === owner);
+  if (attacker && attacker.team === team && attacker.team !== t.team && hullDamage > 0)
+    earnExperience(s, attacker, hullDamage + (t.hp <= 0 ? KILL_XP : 0), ownerLife);
   const p = t.body.translation();
   if (t.hp > 0) {
     if (amount > 0) s.events.push({
@@ -27,6 +35,7 @@ export function damageTank(
       x: p.x,
       z: p.z,
       id: t.id,
+      owner,
       team: t.team,
       size: amount,
     });
@@ -34,12 +43,14 @@ export function damageTank(
   }
   t.hp = 0;
   t.alive = false;
+  t.laser = 0;
+  clearAmmo(t);
   t.deaths++;
   t.respawn = 3;
   t.previous = { x: p.x, z: p.z };
   const killer = s.tanks.find((a) => a.id === owner);
   if (killer && killer !== t && killer.team !== t.team) killer.kills++;
-  awardKill(s.match, t.team, team, owner === t.id);
+  if (s.gameMode === "team") awardKill(s.match, t.team, team, owner === t.id);
   s.checkSoloResult();
   breakTank(s, t);
   s.events.push({
@@ -47,6 +58,7 @@ export function damageTank(
     x: p.x,
     z: p.z,
     id: t.id,
+    owner,
     team: t.team,
     size: 3,
     label: `${killer?.human ? "YOU" : killer?.name ?? "YARD"}  ▸  ${t.human ? "YOU" : t.name}`,
@@ -58,6 +70,7 @@ export function damageCover(
   amount: number,
   owner: number,
   team: Team,
+  ownerLife?: number,
 ) {
   if (!c.alive || !c.destructible) return;
   c.hp -= amount;
@@ -107,7 +120,7 @@ export function damageCover(
       });
     s.nav.rebuild(s.covers, c);
   }
-  if (c.kind === "drum") explode(s, c, 6, 75, owner, team);
+  if (c.kind === "drum") explode(s, c, 6, 75, owner, team, ownerLife);
 }
 export function explode(
   s: Simulation,
@@ -116,19 +129,20 @@ export function explode(
   damage: number,
   owner: number,
   team: Team,
+  ownerLife?: number,
 ) {
   s.events.push({ type: "explosion", ...p, size: radius });
   // Blast-triggered mines retain the initiator of this chain, like drums.
   const chained = s.mines.filter((m) => distance(p, m) < radius);
   s.mines = s.mines.filter((m) => distance(p, m) >= radius);
-  for (const m of chained) explode(s, m, 5.7, 100, owner, team);
+  for (const m of chained) explode(s, m, 5.7, m.damage ?? 100, owner, team, ownerLife);
   for (const t of s.tanks) {
     if (!t.alive) continue;
     const q = t.body.translation(),
       d = distance(p, q);
     if (d > radius) continue;
     const factor = Math.max(0.25, 1 - d / radius);
-    damageTank(s, t, damage * factor, owner, team);
+    damageTank(s, t, damage * factor, owner, team, ownerLife);
     if (t.alive && (t.team !== team || t.id === owner)) {
       const m = Math.max(0.1, d);
       t.body.applyImpulse(
@@ -148,5 +162,5 @@ export function explode(
       c.destructible &&
       distance(p, c) < radius + Math.max(c.w, c.d) * 0.35
     )
-      damageCover(s, c, damage, owner, team);
+      damageCover(s, c, damage, owner, team, ownerLife);
 }

@@ -2,7 +2,8 @@ import type { PickupKind, VehicleKind, Weapon } from "./types";
 export const STEP = 1 / 60,
   ARENA = 60,
   ROUND_TIME = 300,
-  SCORE_LIMIT = 50;
+  SOLO_TIME = 600,
+  SCORE_LIMIT = 100;
 const BASE_SPEED_MULTIPLIER = 1.13;
 // Simulation distances use world metres; the selector rounds speeds to km/h.
 // V-Tanks 570bf8d: Vanguard 184, standard shell 535; preserve that dodge
@@ -67,9 +68,14 @@ export const WEAPONS: Record<
     speed: number;
     bounces: number;
     color: number;
+    label: string;
+    unit: string;
+    perCrate: number;
+    carryLimit: number;
   }
 > = {
   standard: {
+    label: "STANDARD", unit: "SHELLS", perCrate: 0, carryLimit: Infinity,
     name: "Standard shells",
     interval: 0.85,
     damage: 40,
@@ -78,6 +84,7 @@ export const WEAPONS: Record<
     color: 0xffdf00,
   },
   spread: {
+    label: "SPREAD", unit: "SPREAD VOLLEYS", perCrate: 18, carryLimit: 36,
     name: "Spread shot",
     interval: 1.1,
     damage: 27,
@@ -86,6 +93,7 @@ export const WEAPONS: Record<
     color: 0xff38d4,
   },
   rocket: {
+    label: "ROCKET", unit: "ROCKETS", perCrate: 12, carryLimit: 24,
     name: "Breaching rockets",
     interval: 1.3,
     damage: 65,
@@ -93,24 +101,38 @@ export const WEAPONS: Record<
     bounces: 0,
     color: 0xff591c,
   },
-
+  ricochet: {
+    name: "Ricochet shells", label: "RICOCHET", unit: "RICOCHET SHELLS",
+    perCrate: 24, carryLimit: 48, interval: 0.85, damage: 80,
+    speed: 19.2 * BASE_SPEED_MULTIPLIER, bounces: 3, color: 0xb19afc,
+  },
+  piercing: {
+    name: "Piercing shells", label: "PIERCING", unit: "PIERCING SHELLS",
+    perCrate: 24, carryLimit: 48, interval: 0.85, damage: 40,
+    speed: 19.2 * BASE_SPEED_MULTIPLIER, bounces: 0, color: 0x54e6dc,
+  },
 };
+export const LASER_DEFENSE = { chance: 0.5, duration: 6, range: 7, threatRadius: 3,
+  initialDelay: 25, respawn: 45 } as const;
 export const PICKUPS: Record<
   PickupKind,
   { name: string; icon: string; color: number; duration: number }
 > = {
   rapid: { name: "RAPID FIRE", icon: "»", color: 0xffcf54, duration: 12 },
-  spread: { name: "SPREAD SHOT", icon: "⋔", color: 0xf191cb, duration: 14 },
-  rocket: { name: "BREACHER", icon: "↑", color: 0xff8a4c, duration: 14 },
-  ricochet: { name: "RICOCHET CORE", icon: "↗", color: 0xb19afc, duration: 12 },
+  spread: { name: "SPREAD AMMO", icon: "⋔", color: WEAPONS.spread.color, duration: 0 },
+  rocket: { name: "ROCKET AMMO", icon: "↑", color: WEAPONS.rocket.color, duration: 0 },
+  ricochet: { name: "RICOCHET AMMO", icon: "↗", color: WEAPONS.ricochet.color, duration: 0 },
+  piercing: { name: "PIERCING AMMO", icon: "↟", color: WEAPONS.piercing.color, duration: 0 },
   shield: { name: "SHIELD", icon: "◇", color: 0x72dbef, duration: 15 },
   speed: { name: "SPEED BOOST", icon: "ϟ", color: 0xbbe574, duration: 12 },
   repair: { name: "REPAIR", icon: "+", color: 0x88ddb0, duration: 0 },
+  laser: { name: "LASER DEFENSE", icon: "✧", color: 0x7bfff2, duration: LASER_DEFENSE.duration },
 };
 export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 export const GROUP = {
   coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
+  steeringQuery: 0xffff0012, // Cover and tank-contact hulls, excluding cosmetic debris.
   tank: 0x00010006, // Model-sized hull touches cover and ground only.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   cover: 0x0002000b,

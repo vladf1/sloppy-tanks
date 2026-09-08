@@ -14,7 +14,7 @@ function arena() {
 }
 function shell(s: Simulation, x = 0) {
   s.shots.push({ id: s.nextId++, x, z: -5, vx: 0, vz: 600, damage: 40,
-    bounces: 0, life: 1, weapon: "standard", owner: 999, team: 0 });
+    bounces: 0, life: 1, piercing: 0, weapon: "standard", owner: 999, team: 0 });
 }
 test("fast shells detonate enemy and friendly mines, armed or arming, exactly once", () => {
   for (const team of [0, 1] as const) for (const arm of [0, 0.8]) {

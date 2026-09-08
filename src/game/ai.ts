@@ -1,8 +1,10 @@
-import { botProfile, botReload, combatMovement, equippedWeapon } from "./bot-personalities";
+import { botProfile, botReload, combatMovement, preferredAmmo, BOT_AMMO } from "./bot-personalities";
+import { isSpecialAmmo, canCollectAmmo } from "./ammunition";
+import { routeDirection, steerBot, recoverBot } from "./bot-movement";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { distance, bestBy, WEAPONS, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
-import { idleCommand, type Tank, type Vec2 } from "./types";
+import { idleCommand, type Tank } from "./types";
 export function botCommand(s: Simulation, t: Tank, dt: number) {
   const role = Math.floor(s.tanks.indexOf(t) / 2);
   const profile = botProfile(t);
@@ -11,7 +13,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
   const turnSpeed = easy ? 1.5 : aggressive ? Math.max(5.2, profile.turn * 1.4) : profile.turn;
   const turn = (desired: number) => t.aim + Math.max(-turnSpeed * dt,
     Math.min(turnSpeed * dt, angleDelta(t.aim, desired)));
-  const weapon = equippedWeapon(t);
+  const weapon = preferredAmmo(t);
   const b = t.brain,
     p = t.body.translation();
   b.decision -= dt;
@@ -19,6 +21,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
   b.fireDelay = Math.max(0, b.fireDelay - dt);
   b.memory -= dt;
   if (b.decision <= 0) {
+    const previousMode = b.mode;
     b.decision = s.rng.range(0.22, 0.42);
     const threats: Tank[] = [];
     // Rapier broad phase gathers local actors; team and perception rules are controller-level filters.
@@ -34,7 +37,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         return true;
       },
     );
-    const target = bestBy(threats, a => -distance(p, a.body.translation()));
+    const target = bestBy(threats, a => -distance(p, a.body.translation()) * (a.id === b.target ? 0.75 : 1));
     if (target) {
       if (target.id !== b.target) b.reaction = easy ? s.rng.range(1, 1.6) : aggressive ? s.rng.range(0.3, 0.5) : s.rng.range(0.4, 0.8);
       b.target = target.id;
@@ -55,31 +58,37 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         q.available &&
         (q.kind !== "repair" || t.hp < s.maxHealth(t) * 0.8) &&
         (q.kind !== "rapid" || t.rapid < 2) &&
-        (q.kind !== "ricochet" || t.ricochet < 2) &&
+        (!isSpecialAmmo(q.kind) || canCollectAmmo(t, q.kind)) &&
         (q.kind !== "speed" || t.speed < 2) &&
+        (q.kind !== "laser" || t.laser < 2) &&
         (q.kind !== "shield" || t.shield < 2 || t.shieldPoints < 40),
     );
-    const nearest = bestBy(useful, q => -distance(p, q));
+    const nearest = useful.find(q => q.id === b.pickupTarget) ?? bestBy(useful, q => -distance(p, q)
+      + (q.kind === BOT_AMMO[b.personality] ? 3 : 0));
     const hurt = t.hp < s.maxHealth(t) * 0.4;
     const repair = bestBy(useful, q => q.kind === "repair" ? -distance(p, q) : -Infinity);
+    b.pickupTarget = 0;
     if (hurt && repair) {
+      b.pickupTarget = repair.id;
       b.goal = { ...repair };
       b.mode = "retreat";
     } else if (
       nearest &&
       distance(p, nearest) < (profile.stationary && target ? 5 : aggressive ? 7 : 12) &&
-      (!target || (t.spread === 0 && t.rocket === 0))
+      (!target || weapon === "standard")
     ) {
+      b.pickupTarget = nearest.id;
       b.goal = { x: nearest.x, z: nearest.z };
       b.mode = "pickup";
     } else if (!b.target && b.memory <= 0) {
-      // Distributed flank waypoints are symmetric and independent of the human.
-      b.goal = {
-        x: t.team === 0 ? 20 : -20,
-        z: [-38, 0, 38][role % 3] * (t.team === 0 ? 1 : -1),
-      };
-      if (distance(p, b.goal) < 4)
-        b.goal = { x: t.team === 0 ? 46 : -46, z: s.rng.range(-44, 44) };
+      // Keep the chosen patrol destination until arrival instead of flipping
+      // between a flank waypoint and a new random destination every decision.
+      if (previousMode !== "advance" || b.navVersion === 0 || distance(p, b.goal) < 2) {
+        const flank = { x: t.team === 0 ? 20 : -20,
+          z: [-38, 0, 38][role % 3] * (t.team === 0 ? 1 : -1) };
+        b.goal = distance(p, flank) < 4
+          ? { x: t.team === 0 ? 46 : -46, z: s.rng.range(-44, 44) } : flank;
+      }
     }
     if (!easy && !target && b.mode === "advance" && b.personality === "support") {
       const allies = s.tanks.filter((a) => a.alive && a.team === t.team && a !== t
@@ -95,36 +104,27 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
       const human = s.human.body.translation();
       b.goal = { x: human.x, z: human.z };
     }
-    if (
-      b.navVersion !== s.nav.version ||
-      !b.path.length ||
-      distance(b.path[b.path.length - 1], b.goal) > 4
-    ) {
-      b.path = s.nav.find(p, b.goal);
+    // A patrol/escort point can land inside randomized cover. Finish at its
+    // navigable neighbor rather than stopping short of an impossible destination.
+    if (s.nav.blocked[s.nav.index(b.goal)])
+      b.goal = s.nav.point(s.nav.nearest(s.nav.index(b.goal)));
+    const routeGoal = b.recovery > 0 ? b.recoveryGoal : b.goal;
+    if (b.navVersion !== s.nav.version ||
+      (!b.path.length && distance(p, routeGoal) > 0.7) ||
+      (b.recovery <= 0 && b.path.length && distance(b.path[b.path.length - 1], routeGoal) > 4)) {
+      b.path = s.nav.find(p, routeGoal);
       b.navVersion = s.nav.version;
       s.botReroutes++;
     }
-    if (distance(p, b.last) < 0.6 && Math.hypot(t.command.moveX, t.command.moveZ) > 0.1) {
-      b.stuck += b.decision;
-      if (b.stuck > 1.1) {
-        const side = role % 2 ? 1 : -1;
-        b.path = s.nav.find(p, { x: p.x + side * 5, z: p.z + 5 });
-        b.stuck = 0;
-        s.botReroutes++;
-      }
-    } else b.stuck = 0;
-    b.last = { x: p.x, z: p.z };
   }
   const c = idleCommand();
-  let waypoint: Vec2 = b.path[0] ?? b.goal;
-  while (b.path.length && distance(p, b.path[0]) < 1.25) b.path.shift();
-  waypoint = b.path[0] ?? b.goal;
-  let mx = waypoint.x - p.x,
-    mz = waypoint.z - p.z;
+  c.ammoSelection = "standard";
+  let { x: mx, z: mz } = routeDirection(s, t);
   const target = s.tanks.find((e) => e.id === b.target && e.alive);
   if (target && b.memory > 0) {
     const actual = target.body.translation();
     const seen = s.visible(p, actual);
+    if (seen) c.ammoSelection = weapon;
     if (seen || aggressive) b.lastSeen = { x: actual.x, z: actual.z };
     const q = seen || aggressive ? actual : b.lastSeen;
     const v = seen ? target.body.linvel() : { x: 0, z: 0 };
@@ -136,7 +136,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
     c.aim = turn(desired);
     c.fire = seen && d <= profile.sight && b.reaction <= 0
       && Math.abs(angleDelta(c.aim, desired)) < (profile.stationary ? 0.13 : 0.2);
-    if (b.mode === "fight" && seen) {
+    if (b.mode === "fight" && seen && b.recovery <= 0) {
       const movement = combatMovement(t, q.x - p.x, q.z - p.z, role % 2 ? 1 : -1);
       mx = movement.x; mz = movement.z;
     }
@@ -160,6 +160,7 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
         ) < 0.5,
     );
     if (weak) {
+      c.ammoSelection = "standard";
       const desired = Math.atan2(weak.x - p.x, weak.z - p.z);
       c.aim = turn(desired);
       c.fire = Math.abs(angleDelta(c.aim, desired)) < 0.15;
@@ -169,38 +170,10 @@ export function botCommand(s: Simulation, t: Tank, dt: number) {
   // Personality cadence also applies when breaching; human weapon cadence is separate.
   if (b.fireDelay > 0) c.fire = false;
   else if (c.fire && t.cooldown === 0)
-    b.fireDelay = easy ? s.rng.range(2, 3) : botReload(t, s.rng.range(0.1, 0.25));
-  const mag = Math.hypot(mx, mz) || 1;
-  mx /= mag;
-  mz /= mag;
-  // Retreats and strafes must not drive blindly into the edge of a firing lane.
-  if (s.nav.blocked[s.nav.index({ x: p.x + mx * 3, z: p.z + mz * 3 })]) {
-    const pathX = waypoint.x - p.x, pathZ = waypoint.z - p.z;
-    const length = Math.hypot(pathX, pathZ) || 1;
-    mx = pathX / length; mz = pathZ / length;
-  }
-  // Nearby allies and enemies both participate in congestion avoidance.
-  const near: Tank[] = [];
-  s.world.intersectionsWithShape(
-    p,
-    { x: 0, y: 0, z: 0, w: 1 },
-    new RAPIER.Ball(3),
-    (collider) => {
-      const other = s.tanks.find(
-        (a) => a.alive && a !== t && a.collider.handle === collider.handle,
-      );
-      if (other) near.push(other);
-      return true;
-    },
-  );
-  for (const other of near) {
-    const q = other.body.translation(),
-      d = distance(p, q);
-    if (d < 2.8 && d > 0.01) {
-      mx += ((p.x - q.x) / d) * (2.8 - d) * 1.1;
-      mz += ((p.z - q.z) / d) * (2.8 - d) * 1.1;
-    }
-  }
+    b.fireDelay = easy ? s.rng.range(2, 3) : botReload(t, s.rng.range(0.1, 0.25), c.ammoSelection);
+  recoverBot(s, t, { x: mx, z: mz }, dt);
+  if (b.recovery > 0) ({ x: mx, z: mz } = routeDirection(s, t));
+  ({ x: mx, z: mz } = steerBot(s, t, { x: mx, z: mz }, dt));
   const movementScale = easy ? 0.65 : aggressive ? Math.min(1, profile.speed * 1.35 + 0.15) : profile.speed;
   const length = Math.max(1, Math.hypot(mx, mz));
   c.moveX = mx / length * movementScale;

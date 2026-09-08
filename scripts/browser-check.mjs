@@ -70,7 +70,9 @@ try {
   await page.locator("#resume").click();
   await page.waitForFunction(() => document.querySelector("#overlay").style.display === "none");
   const zoom = await page.evaluate(() => window.sloppy.view.zoom);
+  await page.keyboard.down("Shift");
   await page.mouse.wheel(0, 100);
+  await page.keyboard.up("Shift");
   await page.waitForFunction(value => window.sloppy.view.zoom !== value, zoom);
   await page.evaluate(() => {
     window.sloppy.overview();

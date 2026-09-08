@@ -115,8 +115,8 @@ try {
   const scene = await page.evaluate(() => {
     const d = window.sloppy;
     return {
-      shells: d.view.shotMesh.count,
-      cores: d.view.shotCore.count,
+      shells: Object.values(d.view.projectiles.batches).reduce((n, b) => n + b.body.count, 0),
+      cores: Object.values(d.view.projectiles.batches).reduce((n, b) => n + b.team.count, 0),
       marker: d.view.playerRing.visible,
       parts: [...d.view.debrisMeshes].map(([shape, m]) => ({
         shape,
@@ -125,7 +125,8 @@ try {
       geometry: d.view.renderer.info.memory.geometries,
       shotColors: d.sim.shots.map((shot, i) => {
         const color = d.view.debrisColor.clone();
-        d.view.shotMesh.getColorAt(i, color);
+        const index = d.sim.shots.slice(0, i).filter(s => s.weapon === shot.weapon).length;
+        d.view.projectiles.batches[shot.weapon].team.getColorAt(index, color);
         return { team: shot.team, color: color.getHex() };
       }),
     };

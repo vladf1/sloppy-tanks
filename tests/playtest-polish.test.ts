@@ -24,7 +24,7 @@ function arena(kind: VehicleKind = "balanced") {
 test("shells and spread pellets emerge from the model muzzle for all chassis and aim directions", () => {
   for (const kind of ["scout", "balanced", "heavy"] as const) for (const angle of [0, 1.2]) {
     const { s, t } = arena(kind);
-    t.aim = angle; t.spread = 14;
+    t.aim = angle; t.ammo.spread = 18; t.selectedAmmo = "spread";
     const model = tankModel(kind, 0); model.userData.turret.rotation.y = angle;
     model.position.y = 0.25; model.updateMatrixWorld(true);
     const muzzle = model.userData.muzzle.getWorldPosition(new Vector3());

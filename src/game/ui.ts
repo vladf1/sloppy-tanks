@@ -1,10 +1,12 @@
-import { VEHICLES, WEAPONS, TEAM_NAMES } from "./data";
+import { VEHICLES, WEAPONS, TEAM_NAMES, SCORE_LIMIT } from "./data";
 import type { Simulation } from "./simulation";
 import type { VehicleKind, SimEvent } from "./types";
 import { tankPreview } from "./tank-previews";
 import { speedTuning } from "./speed-tuning";
-import { equippedWeapon } from "./bot-personalities";
+import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { healthBarState } from "./health-bar";
+import { RANKS, rankIndex, REPAIR_DELAY } from "./veterancy";
+const CONTROL_HELP = "WASD / Arrow keys drive · Mouse aim · Hold left click to fire · Right click mine<br>Q / E or scroll cycles ammo · 1–5 selects ammo · Shift + scroll zooms · Esc pauses";
 export class UI {
   overlay: HTMLElement;
   hud: HTMLElement;
@@ -21,18 +23,22 @@ export class UI {
     public resume: () => void,
     public restart: () => void,
     public setting: (key: string, value: number) => void,
+    public pause: () => void,
   ) {
     root.insertAdjacentHTML(
       "beforeend",
       `<div id="hud"><div class="brand">SLOPPY<span>TANKS</span></div>
         <div class="scoreboard"><div class="team mint"><small id="label0">◆ BLUE</small><b id="score0">0</b></div>
-        <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO 50</small></div>
+        <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO ${SCORE_LIMIT}</small></div>
         <div class="team coral"><small id="label1">RED Ⅱ</small><b id="score1">0</b></div></div>
         <button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button>
         <div id="feed"></div><div id="toast"></div>
-        <div class="bottom"><div class="combat-status"><div class="status"><small id="vehicle-name">BRUISER</small><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
-        <div class="weapon"><small id="weapon">STANDARD SHELLS</small><span id="mine">MINE READY · RMB</span></div><em id="effects"></em></div>
-        <div class="keyhint">WASD / ARROWS <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 SCROLL <span>ZOOM</span></div></div></div>
+        <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
+        <div class="weapon"><div class="ammo-strip" role="list" aria-label="Ammunition">${AMMO_ORDER.map(w =>
+          `<div class="ammo-slot" id="ammo-${w}" role="listitem" style="--ammo-color:#${WEAPONS[w].color.toString(16).padStart(6, "0")}"><small>${WEAPONS[w].label}</small><b id="ammo-count-${w}">${w === "standard" ? "∞" : "0"}</b></div>`
+        ).join("")}</div><span id="mine">MINE READY · RMB</span></div>
+        <em id="effects"></em></div>
+        <div class="keyhint">WASD / ARROWS <span>DRIVE</span>　 MOUSE <span>AIM & FIRE</span>　 Q / E <span>CYCLE AMMO</span>　 1–5 <span>SELECT</span></div></div></div>
         <div id="overlay"></div>`,
     );
     this.overlay = root.querySelector("#overlay")!;
@@ -41,7 +47,7 @@ export class UI {
     this.feed = root.querySelector("#feed")!;
     root.querySelector("#pause")!.addEventListener("click", () => {
       if (s.match.phase === "playing") {
-        s.match.phase = "paused";
+        this.pause();
         this.lastPhase = "";
       }
     });
@@ -84,19 +90,19 @@ export class UI {
     if (phase === "ready")
       this.overlay.innerHTML = `
       <section class="menu start">
-        <div class="eyebrow">${s.mapName} / ${s.gameMode === "solo" ? "1 V 20" : "6 V 6"}</div>
+        <div class="eyebrow">${s.mapName} / ${s.gameMode === "solo" ? "SURVIVAL" : "6 V 6"}</div>
         <h1>CHOOSE YOUR TANK</h1>
         <p class="intro">Choose your battle, then click a tank to start.</p>
         ${this.modeOptions()}
         ${this.chooseCards()}
-        <div class="menu-foot"><div><b>${s.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[s.humanTeam]}</b><small>${s.gameMode === "solo" ? "5 MINUTES · CLEAR ALL 20 ENEMIES · ONE LIFE" : "5 MINUTES · FIRST TO 50 · FRIENDLY FIRE OFF"}</small></div></div>
-        <div class="menu-help">WASD / Arrow keys drive · Mouse aim · Hold left click to fire · Right click mine · Scroll zoom · Esc pause<br>Shoot incoming shells to intercept · Collect upgrades to combine their effects</div>
+        <div class="menu-foot"><div><b>${s.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${s.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[s.humanTeam]}</b><small>${s.gameMode === "solo" ? "10 MINUTES · ENDLESS ENEMIES · ONE LIFE" : `5 MINUTES · FIRST TO ${SCORE_LIMIT} · FRIENDLY FIRE OFF`}</small></div></div>
+        <div class="menu-help">${CONTROL_HELP}<br>Collect ammo crates to refill · Standard shells are unlimited</div>
         </section>`;
     else if (phase === "paused")
       this.overlay.innerHTML = `
       <section class="menu compact">
         <h2>PAUSED</h2>
-        <p>WASD / Arrow keys drive · Mouse aim · Hold left click to fire<br>Right click mine · Scroll zoom · Escape pause</p>
+        <p>${CONTROL_HELP}</p>
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
         ${this.speedSliders()}
         <button id="resume" class="primary">RESUME</button>
@@ -107,9 +113,9 @@ export class UI {
       this.overlay.innerHTML = `
       <section class="menu compact">
         <div class="eyebrow">SOLO ASSAULT / ${s.mapName}</div>
-        <h2>${s.match.winner === s.humanTeam ? "AREA CLEARED" : "ASSAULT FAILED"}</h2>
-        <div class="result-score">${s.enemiesEliminated} / ${s.enemyCount}</div>
-        <p>Enemies eliminated.<br>${!s.human.alive ? "Your tank was destroyed." : s.match.time === 0 ? "Time ran out." : "Every enemy is down."}</p>
+        <h2>${s.match.winner === s.humanTeam ? "SURVIVED" : "TANK DESTROYED"}</h2>
+        <div class="result-score">${s.human.kills}</div>
+        <p>Enemy kills.<br>${!s.human.alive ? "Your run is over." : "You survived the full ten minutes."}</p>
         <button id="restart" class="primary">ANOTHER ROUND</button>
         </section>`;
     else if (phase === "results")
@@ -157,8 +163,8 @@ export class UI {
       `<fieldset><legend>${title}</legend>${options.map(([value, title, detail]) =>
         `<label class="mode-option"><input type="radio" name="${key}" value="${value}" ${this.s[key] === value ? "checked" : ""}><span><b>${title}</b><small>${detail}</small></span></label>`).join("")}</fieldset>`;
     return `<div class="mode-options">${group("gameMode", "BATTLE", [
-      ["team", "Team Battle", "6 vs 6 · Respawns · First to 50"],
-      ["solo", "Solo Assault", "1 vs 20 · 6 at a time · One life"],
+      ["team", "Team Battle", `6 vs 6 · Respawns · First to ${SCORE_LIMIT}`],
+      ["solo", "Solo Assault", "Endless enemies · 10 minutes · One life"],
     ])}${group("mapMode", "MAP", [
       ["village", "Pine Village", "The original arena"],
       ["random", "Random Map", "Fresh layout every round"],
@@ -170,9 +176,9 @@ export class UI {
     ).join("")}<small>50–200% · 100% = default speed · Saved automatically</small></div>`;
   }
   event(e: SimEvent) {
-    if (e.type === "pickup" && e.id === this.s.human.id) {
+    if ((e.type === "pickup" || e.type === "promotion") && e.id === this.s.human.id) {
       this.toast.textContent = e.label ?? "";
-      this.toastTime = 2.4;
+      this.toastTime = e.type === "promotion" ? 3 : 2.4;
       this.toast.classList.add("visible");
     }
     if (e.type === "death" && e.label)
@@ -192,12 +198,11 @@ export class UI {
       if (e && e.textContent !== text) e.textContent = text;
     };
     const solo = s.gameMode === "solo";
-    const remaining = s.enemyCount - s.enemiesEliminated;
-    set("label0", solo ? "ELIMINATED" : "◆ BLUE");
-    set("label1", solo ? "REMAINING" : "RED Ⅱ");
-    set("objective", solo ? "ONE LIFE · CLEAR ALL" : "FIRST TO 50");
-    set("score0", String(solo ? s.enemyCount - remaining : s.match.scores[0]));
-    set("score1", String(solo ? remaining : s.match.scores[1]));
+    set("label0", solo ? "KILLS" : "◆ BLUE");
+    set("label1", solo ? "ACTIVE" : "RED Ⅱ");
+    set("objective", solo ? "SURVIVE · ONE LIFE" : `FIRST TO ${SCORE_LIMIT}`);
+    set("score0", String(solo ? t.kills : s.match.scores[0]));
+    set("score1", String(solo ? s.tanks.filter(t => !t.human && t.alive).length : s.match.scores[1]));
     const sec = Math.ceil(s.match.time);
     set(
       "time",
@@ -207,11 +212,22 @@ export class UI {
     );
     set("hp", String(Math.ceil(t.hp)));
     set("vehicle-name", VEHICLES[t.kind].name);
-    set(
-      "weapon",
-      WEAPONS[equippedWeapon(t)].name.toUpperCase() +
-        ((t.rocket || t.spread) > 0 ? ` · ${Math.ceil(t.rocket || t.spread)}s` : ""),
-    );
+    const rank = rankIndex(t), stats = RANKS[rank];
+    set("rank", stats.name.toUpperCase());
+    const rankLabel = document.getElementById("rank")!;
+    rankLabel.dataset.rank = String(rank);
+    rankLabel.title = rank === 0 ? "Earn XP from enemy hull damage and kills. Ranks reset on respawn."
+      : `+${Math.round((stats.damage - 1) * 100)}% damage · +${Math.round((stats.fireRate - 1) * 100)}% fire rate · +${Math.round((stats.health - 1) * 100)}% hull${stats.repair ? ` · repairs ${stats.repair * 100}% hull/s after ${REPAIR_DELAY}s out of combat` : ""}`;
+    const selected = equippedWeapon(t);
+    for (const w of AMMO_ORDER) {
+      const count = w === "standard" ? "∞" : String(t.ammo[w]);
+      set(`ammo-count-${w}`, count);
+      const slot = document.getElementById(`ammo-${w}`)!;
+      slot.classList.toggle("selected", selected === w);
+      slot.classList.toggle("empty", !hasAmmo(t, w));
+      const label = `${WEAPONS[w].label}: ${count}${selected === w ? ", selected" : ""}`;
+      if (slot.getAttribute("aria-label") !== label) slot.setAttribute("aria-label", label);
+    }
     set(
       "mine",
       t.mineCooldown > 0
@@ -221,18 +237,20 @@ export class UI {
     set(
       "effects",
       [
-        t.spread > 0 && t.rocket > 0 ? `SPREAD ${Math.ceil(t.spread)}s` : null,
         t.protection > 0 ? "SPAWN SHIELD" : null,
         t.shield > 0 ? `◇ SHIELD ${Math.ceil(t.shieldPoints)} HP · ${Math.ceil(t.shield)}s` : null,
         t.rapid > 0 ? `» RAPID ${Math.ceil(t.rapid)}s` : null,
-        t.ricochet > 0 ? `↗ RICOCHET ${Math.ceil(t.ricochet)}s` : null,
         t.speed > 0 ? `ϟ BOOST ${Math.ceil(t.speed)}s` : null,
+        t.laser > 0 ? `✧ LASER DEFENSE ${Math.ceil(t.laser)}s` : null,
+        t.alive && stats.repair && t.hp < s.maxHealth(t) && s.elapsed - t.lastCombat >= REPAIR_DELAY ? "SELF-REPAIR" : null,
       ]
         .filter(Boolean)
         .join("  "),
     );
     set("respawn-count", String(Math.ceil(t.respawn)));
-    const health = healthBarState(t.hp, VEHICLES[t.kind].health, t.team);
+    const health = healthBarState(t.hp, s.maxHealth(t), t.team);
+    this.hud.querySelector(".status")!.classList.toggle("critical-health", t.alive && health.ratio < 0.25);
+    this.hud.classList.toggle("paused", s.match.phase !== "playing");
     const hpbar = document.getElementById("hpbar")!;
     hpbar.style.width = `${health.ratio * 100}%`;
     hpbar.style.backgroundColor = `#${health.color.toString(16).padStart(6, "0")}`;

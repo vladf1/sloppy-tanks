@@ -1,4 +1,6 @@
+import { rankStats, rankIndex, repairVeteran } from "./veterancy";
 import { botAssignment, shuffledBotNames, BOT_PROFILES } from "./bot-personalities";
+import { emptyAmmo, clearAmmo, selectAmmo } from "./ammunition";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { arenaLayout, randomArenaLayout, pickupLayout, spawnPositions } from "./arena";
 import {
@@ -12,6 +14,8 @@ import {
   distance,
   angleDelta,
   bestBy,
+  LASER_DEFENSE,
+  SOLO_TIME,
 } from "./data";
 import { Navigation } from "./navigation";
 import { tankContactCollider } from "./hitboxes";
@@ -60,12 +64,10 @@ export class Simulation {
   gameMode: "team" | "solo" = "team";
   mapMode: "village" | "random" = "village";
   mapSeed = 0;
-  readonly enemyCount = 20;
   readonly activeEnemyLimit = 6;
   reinforcementDelay = 0;
-  get enemiesEliminated() { return this.tanks.filter(t => !t.human && !t.alive).length; }
   isEasyEnemy(t: Tank) { return this.gameMode === "solo" && !t.human; }
-  maxHealth(t: Tank) { return VEHICLES[t.kind].health * (this.isEasyEnemy(t) ? 0.4 : 1); }
+  maxHealth(t: Tank) { return Math.round(VEHICLES[t.kind].health * (this.isEasyEnemy(t) ? 0.4 : 1) * rankStats(t).health * 100) / 100; }
   get mapName() { return this.mapMode === "random" ? "RANDOM MAP" : "PINE VILLAGE"; }
   maxFragments = 80;
   wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -104,6 +106,7 @@ export class Simulation {
     this.botReroutes = 0;
     this.roundCount = count;
     this.match = newMatch(this.match.round + 1);
+    if (this.gameMode === "solo") this.match.time = SOLO_TIME;
     this.botNames = shuffledBotNames((this.seed + this.match.round * 0x9e3779b9) >>> 0);
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
@@ -119,8 +122,8 @@ export class Simulation {
     this.pickups = pickupLayout.map((p) => ({
       ...p,
       id: this.nextId++,
-      available: true,
-      cooldown: 0,
+      available: p.kind !== "laser",
+      cooldown: p.kind === "laser" ? LASER_DEFENSE.initialDelay : 0,
     }));
     this.nav = new Navigation();
     this.nav.rebuild(this.covers);
@@ -218,13 +221,13 @@ export class Simulation {
       alive: true,
       respawn: 0,
       protection: 2,
-      spread: 0,
-      rocket: 0,
+      selectedAmmo: "standard",
+      ammo: emptyAmmo(),
       shield: 0,
       shieldPoints: 0,
       rapid: 0,
-      ricochet: 0,
       speed: 0,
+      laser: 0,
       cooldown: 0,
       mineCooldown: 0,
       aim: team === 0 ? Math.PI / 2 : -Math.PI / 2,
@@ -233,6 +236,8 @@ export class Simulation {
       recoil: 0,
       kills: 0,
       deaths: 0,
+      xp: 0,
+      lastCombat: 0,
       command: idleCommand(),
       brain: {
         ...assignment,
@@ -247,6 +252,12 @@ export class Simulation {
         goal: { x: 0, z: 0 },
         last: { ...p },
         stuck: 0,
+        recovery: 0,
+        recoveryGoal: { ...p },
+        recoveries: 0,
+        avoidance: { x: 0, z: 0 },
+        avoidanceTime: 0,
+        pickupTarget: 0,
         navVersion: 0,
         mode: "advance",
       },
@@ -286,13 +297,12 @@ export class Simulation {
       t.shield = Math.max(0, t.shield - STEP);
       if (t.shield === 0) t.shieldPoints = 0;
       t.rapid = Math.max(0, t.rapid - STEP);
-      t.ricochet = Math.max(0, t.ricochet - STEP);
       t.speed = Math.max(0, t.speed - STEP);
+      t.laser = Math.max(0, t.laser - STEP);
       t.recoil = Math.max(0, t.recoil - STEP * 6);
-      t.spread = Math.max(0, t.spread - STEP);
-      t.rocket = Math.max(0, t.rocket - STEP);
       const c = t.human && !autoplay ? command : botCommand(this, t, STEP);
       t.command = c;
+      selectAmmo(t, c.ammoSelection);
       t.aim = c.aim;
       const mag = Math.hypot(c.moveX, c.moveZ);
       const speed = VEHICLES[t.kind].speed * (t.speed > 0 ? 1.5 : 1);
@@ -325,6 +335,7 @@ export class Simulation {
     this.world.step();
     stepProjectiles(this, STEP, true);
     stepMines(this, STEP);
+    for (const t of this.tanks) repairVeteran(this, t, STEP);
     for (const p of this.pickups) {
       if (!p.available) {
         p.cooldown -= STEP;
@@ -333,8 +344,7 @@ export class Simulation {
       }
       for (const t of this.tanks)
         if (t.alive && distance(t.body.translation(), p) < 1.8) {
-          collectPickup(this, t, p);
-          break;
+          if (collectPickup(this, t, p)) break;
         }
     }
     for (let i = this.fragments.length - 1; i >= 0; i--) {
@@ -352,7 +362,7 @@ export class Simulation {
   reinforceSolo() {
     this.reinforcementDelay = Math.max(0, this.reinforcementDelay - STEP);
     const enemies = this.tanks.filter(t => !t.human);
-    if (enemies.length >= this.enemyCount || this.reinforcementDelay > 0) return;
+    if (this.reinforcementDelay > 0) return;
     const living = enemies.filter(t => t.alive);
     if (living.length >= this.activeEnemyLimit) return;
     const team = (1 - this.humanTeam) as Team;
@@ -361,38 +371,42 @@ export class Simulation {
     })).filter(p => this.tanks.every(t => !t.alive || distance(p, t.body.translation()) > 4));
     const spawn = bestBy(slots, p => this.spawnScore(p, [this.human], living));
     if (!spawn) return;
-    this.addTank(team, false, "scout", spawn.slot);
+    // Reuse the six enemy slots so long runs do not accumulate tanks or HUD meshes.
+    const replacement = enemies.find(t => !t.alive);
+    if (!replacement) return;
+    this.respawn(replacement, spawn);
     this.reinforcementDelay = 1;
   }
   checkSoloResult() {
     if (this.gameMode !== "solo" || this.match.phase !== "playing") return;
-    if (!this.human.alive || this.match.time === 0) {
+    if (!this.human.alive) {
       this.match.winner = (1 - this.humanTeam) as Team;
       this.match.phase = "results";
-    } else if (this.enemiesEliminated === this.enemyCount) {
+    } else if (this.match.time === 0) {
       this.match.winner = this.humanTeam;
       this.match.phase = "results";
     }
   }
-  respawn(t: Tank) {
+  respawn(t: Tank, position?: Vec2) {
     const kind = t.human ? this.humanKind : t.kind;
     t.kind = kind;
     const enemies = this.tanks.filter((e) => e.alive && e.team !== t.team);
     const friends = this.tanks.filter(
       (e) => e.alive && e.team === t.team && e !== t,
     );
-    const p = bestBy(spawnPositions(t.team), p => this.spawnScore(p, enemies, friends))!;
+    const p = position ?? bestBy(spawnPositions(t.team), p => this.spawnScore(p, enemies, friends))!;
     Object.assign(t, this.tankBody(kind, p));
+    t.xp = 0;
+    t.lastCombat = this.elapsed;
     t.hp = this.maxHealth(t);
     t.alive = true;
     t.protection = 2;
-    t.spread = 0;
-    t.rocket = 0;
+    clearAmmo(t);
     t.shield = 0;
     t.shieldPoints = 0;
     t.rapid = 0;
-    t.ricochet = 0;
     t.speed = 0;
+    t.laser = 0;
     t.cooldown = 0;
     t.mineCooldown = 0;
     t.previous = { ...p };
@@ -403,6 +417,11 @@ export class Simulation {
     t.brain.memory = 0;
     t.brain.reaction = 0.3;
     t.brain.lastSeen = { ...p };
+    t.brain.last = { ...p };
+    t.brain.stuck = t.brain.recovery = t.brain.avoidanceTime = 0;
+    t.brain.recoveries = t.brain.pickupTarget = 0;
+    t.brain.avoidance = { x: 0, z: 0 };
+    t.brain.recoveryGoal = { ...p };
     this.events.push({ type: "respawn", ...p, id: t.id });
   }
   spawnScore(p: Vec2, enemies: Tank[], friends: Tank[]) {
@@ -473,17 +492,18 @@ export class Simulation {
       color,
     });
   }
-  damageTank = (t: Tank, amount: number, owner: number, team: Team) =>
-    damageTank(this, t, amount, owner, team);
-  damageCover = (c: Cover, amount: number, owner: number, team: Team) =>
-    damageCover(this, c, amount, owner, team);
+  damageTank = (t: Tank, amount: number, owner: number, team: Team, ownerLife?: number) =>
+    damageTank(this, t, amount, owner, team, ownerLife);
+  damageCover = (c: Cover, amount: number, owner: number, team: Team, ownerLife?: number) =>
+    damageCover(this, c, amount, owner, team, ownerLife);
   explode = (
     p: Vec2,
     radius: number,
     damage: number,
     owner: number,
     team: Team,
-  ) => explode(this, p, radius, damage, owner, team);
+    ownerLife?: number,
+  ) => explode(this, p, radius, damage, owner, team, ownerLife);
   snapshot() {
     return {
       seed: this.seed,
@@ -496,12 +516,20 @@ export class Simulation {
         kind: t.kind,
         alive: t.alive,
         hp: t.hp,
+        maxHp: this.maxHealth(t),
+        xp: t.xp,
+        rank: rankIndex(t),
+        selectedAmmo: t.selectedAmmo,
+        ammo: { ...t.ammo },
+        laser: t.laser,
         x: t.alive ? t.body.translation().x : t.previous.x,
         z: t.alive ? t.body.translation().z : t.previous.z,
         aim: t.aim,
         kills: t.kills,
         deaths: t.deaths,
         mode: t.brain.mode,
+        recovering: t.brain.recovery > 0,
+        recoveries: t.brain.recoveries,
         personality: t.human ? "player" : t.brain.personality,
         ultraAggressive: !t.human && t.brain.ultraAggressive,
       })),

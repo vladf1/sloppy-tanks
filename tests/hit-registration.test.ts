@@ -27,7 +27,7 @@ function fixture(kind: VehicleKind = "balanced", heading = 0) {
 }
 function shell(s: Simulation, x: number, z: number, vx: number, vz: number) {
   s.shots.push({ id: s.nextId++, x, z, vx, vz, owner: 999, team: 0,
-    damage: 40, bounces: 0, life: 2, weapon: "standard" });
+    damage: 40, bounces: 0, life: 2, piercing: 0, weapon: "standard" });
 }
 
 test("hits on the visible outer tracks register for every chassis and rotated hull", () => {
@@ -123,5 +123,24 @@ test("allied outer tracks remain transparent to shells", () => {
   assert.equal(tankHitTime(s.shots[0], target, STEP), null);
   stepProjectiles(s, STEP);
   assert.equal(target.hp, 100); assert.equal(s.shots.length, 1);
+  s.dispose();
+});
+
+test("damage events credit the owner on surviving and lethal hits, excluding protected hits", () => {
+  const { s, target } = fixture();
+  s.events = [];
+  target.protection = 1;
+  s.damageTank(target, 40, 999, 0);
+  target.protection = 0; target.shield = 10; target.shieldPoints = 40;
+  s.damageTank(target, 40, 999, 0);
+  s.damageTank(target, 40, 999, target.team);
+  assert.equal(s.events.length, 0);
+  s.damageTank(target, 40, 999, 0);
+  assert.equal(s.events.at(-1)!.type, "hurt");
+  assert.equal(s.events.at(-1)!.owner, 999);
+  assert.equal(s.events.at(-1)!.team, target.team);
+  s.damageTank(target, 100, 999, 0);
+  const death = s.events.find(e => e.type === "death")!;
+  assert.equal(death.owner, 999); assert.equal(death.id, target.id);
   s.dispose();
 });

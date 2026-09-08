@@ -2,9 +2,12 @@ import type { BotPersonality } from "./bot-personalities";
 import type RAPIER from "@dimforge/rapier3d-compat";
 export type Team = 0 | 1;
 export type VehicleKind = "scout" | "balanced" | "heavy";
-export type Weapon = "standard" | "spread" | "rocket";
+export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing";
+export type SpecialAmmo = Exclude<Weapon, "standard">;
+export type AmmoInventory = Record<SpecialAmmo, number>;
+export type AmmoSelection = Weapon | -1 | 1;
 export type PickupKind =
-  Exclude<Weapon, "standard"> | "rapid" | "ricochet" | "shield" | "speed" | "repair";
+  SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
 export interface Vec2 {
   x: number;
   z: number;
@@ -16,6 +19,7 @@ export interface VehicleCommand {
   aim: number;
   fire: boolean;
   mine: boolean;
+  ammoSelection?: AmmoSelection;
 }
 export const idleCommand = (): VehicleCommand => ({
   moveX: 0,
@@ -36,13 +40,13 @@ export interface Tank {
   alive: boolean;
   respawn: number;
   protection: number;
-  spread: number;
-  rocket: number;
+  selectedAmmo: Weapon;
+  ammo: AmmoInventory;
   shield: number;
   shieldPoints: number;
   rapid: number;
-  ricochet: number;
   speed: number;
+  laser: number;
   cooldown: number;
   mineCooldown: number;
   aim: number;
@@ -51,6 +55,8 @@ export interface Tank {
   recoil: number;
   kills: number;
   deaths: number;
+  xp: number;
+  lastCombat: number;
   command: VehicleCommand;
   brain: Brain;
 }
@@ -68,6 +74,12 @@ export interface Brain {
   goal: Vec2;
   last: Vec2;
   stuck: number;
+  recovery: number;
+  recoveryGoal: Vec2;
+  recoveries: number;
+  avoidance: Vec2;
+  avoidanceTime: number;
+  pickupTarget: number;
   navVersion: number;
   mode: "advance" | "fight" | "retreat" | "pickup" | "escort";
 }
@@ -100,6 +112,8 @@ export interface Shot extends Vec2 {
   y?: number; // Render height at the muzzle; combat remains on the arena plane.
   id: number;
   owner: number;
+  /** Owner's death count when fired, to keep XP attached to that life. */
+  ownerLife?: number;
   team: Team;
   vx: number;
   vz: number;
@@ -107,10 +121,18 @@ export interface Shot extends Vec2 {
   bounces: number;
   life: number;
   weapon: Weapon;
+  /** One shell interception for a fresh piercing round, zero otherwise. */
+  piercing: number;
+  /** Two fresh piercing rounds pass through each other exactly once. */
+  piercedShot?: number;
+  /** A defense gets one chance per projectile, even after a miss or bounce. */
+  laserCheckedBy?: number[];
 }
 export interface Mine extends Vec2 {
   id: number;
   owner: number;
+  ownerLife?: number;
+  damage?: number;
   team: Team;
   arm: number;
   life: number;
@@ -146,14 +168,19 @@ export type SimEvent = {
     | "pickup"
     | "respawn"
     | "hurt"
-    | "ricochet";
+    | "ricochet"
+    | "laser"
+    | "promotion";
   x: number;
   z: number;
   id?: number;
+  owner?: number;
+  weapon?: Weapon;
   team?: Team;
   size?: number;
   label?: string;
   color?: number;
+  from?: Vec2 & { y: number };
 };
 export interface Match {
   phase: "ready" | "playing" | "paused" | "results";

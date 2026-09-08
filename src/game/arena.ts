@@ -64,13 +64,19 @@ export function arenaLayout(): CoverDef[] {
   return result;
 }
 export const pickupLayout: { kind: PickupKind; x: number; z: number }[] = [
+  // One rare, contested pickup at the rotationally symmetric center.
+  { kind: "laser", x: 0, z: 0 },
   { kind: "rapid", x: 0, z: -36 },
   { kind: "rapid", x: 0, z: 36 },
-  { kind: "spread", x: 0, z: -20 },
-  { kind: "spread", x: 0, z: 20 },
-  { kind: "rocket", x: 0, z: 0 },
-  { kind: "ricochet", x: 0, z: -3 },
-  { kind: "ricochet", x: 0, z: 3 },
+  // Four distinct route pairs, mirrored by 180 degrees for equal team access.
+  { kind: "spread", x: -38, z: -22 },
+  { kind: "spread", x: 38, z: 22 },
+  { kind: "rocket", x: -16, z: -18 },
+  { kind: "rocket", x: 16, z: 18 },
+  { kind: "ricochet", x: -18, z: 36 },
+  { kind: "ricochet", x: 18, z: -36 },
+  { kind: "piercing", x: -38, z: 22 },
+  { kind: "piercing", x: 38, z: -22 },
   { kind: "repair", x: -38, z: 0 },
   { kind: "repair", x: 38, z: 0 },
   { kind: "repair", x: 0, z: -52 },
@@ -79,8 +85,6 @@ export const pickupLayout: { kind: PickupKind; x: number; z: number }[] = [
   { kind: "shield", x: 29, z: -46 },
   { kind: "speed", x: -29, z: -46 },
   { kind: "speed", x: 29, z: 46 },
-  { kind: "rocket", x: -29, z: 28 },
-  { kind: "rocket", x: 29, z: -28 },
 ];
 export const spawnPositions = (team: Team): Vec2[] =>
   [-46, -23, 0, 23, 46].map((z) => ({

@@ -1,7 +1,11 @@
 import { pickupCube } from "./pickup-visuals";
+import { ProjectileVisuals } from "./projectile-visuals";
+import { LaserVisuals } from "./laser-visuals";
 import { healthBarState } from "./health-bar";
+import { rankIndex } from "./veterancy";
 import { TrackTrails } from "./tracks";
 import { weaponInterval } from "./weapons";
+import { isSpecialAmmo, AMMO_RESPAWN_SECONDS } from "./ammunition";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
@@ -94,9 +98,8 @@ export class Presentation {
   pickupMeshes = new Map<number, THREE.Group>();
   mineMeshes = new Map<number, THREE.Group>();
   bars = new Map<number, THREE.Group>();
-  shotMesh: THREE.InstancedMesh;
-  shotCore: THREE.InstancedMesh;
-  shotOutline: THREE.InstancedMesh;
+  projectiles = new ProjectileVisuals();
+  laserVisuals = new LaserVisuals();
   particlesMesh: THREE.InstancedMesh;
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
   playerRing = new THREE.Group();
@@ -116,6 +119,9 @@ export class Presentation {
   time = 0;
   flash = new THREE.PointLight(0xffc178, 0, 20, 2);
   crosshair = new THREE.Group();
+  reticleInk: THREE.MeshBasicMaterial;
+  reticleCenter: THREE.MeshBasicMaterial;
+  hitConfirmUntil = 0;
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -182,22 +188,8 @@ export class Presentation {
       this.debrisMeshes.set(shape, mesh);
       this.scene.add(mesh);
     }
-    const shellGeometry = new THREE.SphereGeometry(0.1575, 8, 6);
-    const shellLayer = (color: number) => {
-      const mesh = new THREE.InstancedMesh(
-        shellGeometry,
-        new THREE.MeshBasicMaterial({ color, toneMapped: false }),
-        600,
-      );
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.frustumCulled = false;
-      mesh.count = 0;
-      this.scene.add(mesh);
-      return mesh;
-    };
-    this.shotMesh = shellLayer(0xffffff);
-    this.shotCore = shellLayer(0xfffbed);
-    this.shotOutline = shellLayer(0x283245);
+    this.scene.add(this.projectiles.group);
+    this.scene.add(this.laserVisuals.group);
     // A thin dark rim reads on sand; the yellow ring identifies the player on either team.
     for (const [inner, outer, color, y] of [
       [1.48, 1.9, 0x172f4a, 0.1],
@@ -247,6 +239,7 @@ export class Presentation {
       });
     const outline = reticleMaterial(0x12263c),
       ink = reticleMaterial(0xfff9da);
+    this.reticleInk = ink;
     const ring = (
       inner: number,
       outer: number,
@@ -289,6 +282,7 @@ export class Presentation {
       reticleMaterial(0xffdf38),
     );
     center.rotation.x = -Math.PI / 2;
+    this.reticleCenter = center.material;
     center.renderOrder = 52;
     this.crosshair.add(center);
     this.crosshair.position.y = 1.05;
@@ -449,6 +443,9 @@ export class Presentation {
     this.bars.clear();
     this.particles = [];
     this.hitUntil.clear();
+    this.hitConfirmUntil = 0;
+    this.projectiles.reset();
+    this.laserVisuals.reset();
     for (const effect of this.pickupEffects) {
       this.scene.remove(effect.group);
       disposeOwned(effect.group);
@@ -480,6 +477,23 @@ export class Presentation {
         material(def.color),
       );
       ring.geometry.userData.owned = true;
+      if (isSpecialAmmo(p.kind)) {
+        ring.material = ring.material.clone();
+        ring.material.transparent = true;
+        ring.material.userData.owned = true;
+        const refill = new THREE.Mesh(
+          new THREE.RingGeometry(0.89, 1.02, 48, 1, Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: def.color, transparent: true,
+            opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }),
+        );
+        refill.geometry.userData.owned = true;
+        refill.material.userData.owned = true;
+        refill.rotation.x = -Math.PI / 2;
+        refill.visible = false;
+        put(g, refill, 0, 0.23, 0);
+        g.userData.refill = refill;
+        g.userData.ring = ring;
+      }
       ring.rotation.x = Math.PI / 2;
       put(g, ring, 0, 0.2, 0);
       const gem = pickupCube(p.kind);
@@ -536,6 +550,19 @@ export class Presentation {
     ammo.renderOrder = 13;
     g.add(ammo);
     g.userData.ammo = ammo;
+    // One to three small gold chevrons beside the hull bar; keep team icons clear.
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.16, -0.015); shape.lineTo(0, 0.075);
+    shape.lineTo(0.16, -0.015); shape.lineTo(0.16, -0.075);
+    shape.lineTo(0, 0.015); shape.lineTo(-0.16, -0.075); shape.closePath();
+    const rankGeometry = new THREE.ShapeGeometry(shape);
+    const rankMaterial = new THREE.MeshBasicMaterial({ color: 0xffd477, depthTest: false, toneMapped: false });
+    g.userData.ranks = Array.from({ length: 3 }, (_, i) => {
+      const chevron = new THREE.Mesh(rankGeometry, rankMaterial);
+      chevron.position.set(-1.18, 0.15 - i * 0.15, 0.015);
+      chevron.renderOrder = 13; chevron.visible = false;
+      g.add(chevron); return chevron;
+    });
     g.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) {
         // Transparent terrain is drawn after opaque meshes regardless of their
@@ -568,7 +595,9 @@ export class Presentation {
     this.crosshair.position.z = p.z;
     return p;
   }
-  event(e: SimEvent) {
+  event(e: SimEvent, playerHit = false) {
+    this.laserVisuals.event(e);
+    if (playerHit) this.hitConfirmUntil = this.time + 0.16;
     if ((e.type === "death" || e.type === "respawn") && e.id !== undefined)
       this.hitUntil.delete(e.id);
     const hurt = e.type === "hurt";
@@ -577,7 +606,7 @@ export class Presentation {
       this.hitUntil.set(e.id, this.time + 0.28);
     }
     if (e.type === "respawn") return;
-    const pickup = e.type === "pickup";
+    const pickup = e.type === "pickup" || e.type === "promotion";
     if (pickup) {
       if (this.pickupEffects.length >= 24) {
         const oldest = this.pickupEffects.shift()!;
@@ -685,6 +714,13 @@ export class Presentation {
     bounds.minZ = corners[2].z;
     bounds.maxZ = corners[0].z;
     this.flash.intensity *= Math.exp(-dt * 12);
+    const confirmed = this.hitConfirmUntil > this.time;
+    const ready = s.human.cooldown <= 0;
+    this.reticleInk.opacity = confirmed || ready ? 1 : 0.3;
+    this.reticleCenter.opacity = confirmed || ready ? 1 : 0.3;
+    this.reticleInk.color.setHex(confirmed ? 0xffffff : 0xfff9da);
+    this.reticleCenter.color.setHex(confirmed ? 0xffffff : 0xffdf38);
+    this.crosshair.scale.setScalar(confirmed ? 1.2 : 1);
     if (s.human.alive && !this.playerWasAlive) this.spawnCue = 2.5;
     this.playerWasAlive = s.human.alive;
     this.spawnCue = Math.max(0, this.spawnCue - dt);
@@ -751,6 +787,8 @@ export class Presentation {
       bar.userData.fg.visible = health.ratio > 0;
       bar.userData.ammo.scale.x = Math.max(0, 1 - t.cooldown / weaponInterval(t));
       bar.userData.fg.material.color.setHex(health.color);
+      const rank = rankIndex(t);
+      (bar.userData.ranks as THREE.Mesh[]).forEach((chevron, i) => { chevron.visible = i < rank; });
     }
     for (const c of s.covers) {
       let g = this.coverMeshes.get(c.id);
@@ -770,7 +808,15 @@ export class Presentation {
     }
     for (const pickup of s.pickups) {
       const g = this.pickupMeshes.get(pickup.id)!;
-      g.visible = pickup.available;
+      const refill = g.userData.refill as THREE.Mesh<THREE.RingGeometry> | undefined;
+      g.visible = pickup.available || !!refill;
+      g.userData.gem.visible = pickup.available;
+      if (refill) {
+        g.userData.ring.material.opacity = pickup.available ? 1 : 0.2;
+        refill.visible = !pickup.available;
+        const progress = THREE.MathUtils.clamp(1 - pickup.cooldown / AMMO_RESPAWN_SECONDS, 0, 1);
+        refill.geometry.setDrawRange(0, Math.floor(progress * 48) * 6);
+      }
       g.userData.gem.rotation.y += dt;
       g.userData.gem.position.y =
         1.2 + Math.sin(this.time * 2 + pickup.id) * 0.18;
@@ -851,29 +897,8 @@ export class Presentation {
       }
       g.children[1].visible = m.arm > 0 || Math.sin(this.time * 10) > 0;
     }
-    this.shotMesh.count =
-      this.shotCore.count =
-      this.shotOutline.count =
-        Math.min(s.shots.length, 600);
-    for (let i = 0; i < this.shotMesh.count; i++) {
-      const shot = s.shots[i],
-        length = shot.weapon === "rocket" ? 3 : 2.25;
-      this.dummy.position.set(shot.x, shot.y ?? 1, shot.z);
-      this.dummy.rotation.set(0, Math.atan2(shot.vx, shot.vz), 0);
-      this.dummy.scale.set(1.15, 1.15, length + 0.2);
-      this.dummy.updateMatrix();
-      this.shotOutline.setMatrixAt(i, this.dummy.matrix);
-      this.dummy.position.y = (shot.y ?? 1) + 0.105;
-      this.dummy.scale.set(1, 1, length);
-      this.dummy.updateMatrix();
-      this.shotMesh.setMatrixAt(i, this.dummy.matrix);
-      this.shotMesh.setColorAt(i, this.debrisColor.set(TEAM_COLORS[shot.team]));
-      this.dummy.position.y = (shot.y ?? 1) + 0.21;
-      this.dummy.scale.set(0.43, 0.43, length * 0.72);
-      this.dummy.updateMatrix();
-      this.shotCore.setMatrixAt(i, this.dummy.matrix);
-    }
-    for (const mesh of [this.shotMesh, this.shotCore, this.shotOutline]) updateInstances(mesh);
+    this.projectiles.update(s.shots, this.time);
+    this.laserVisuals.update(s, alpha, dt);
     let live = 0;
     for (const q of this.particles) {
       q.life -= dt;

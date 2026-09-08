@@ -151,10 +151,11 @@ canvas#game {
 }
 .combat-status {
   display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
+  grid-template-columns: 140px minmax(0, 1fr);
   align-items: center;
   gap: 0 14px;
-  width: 310px;
+  width: 570px;
+  flex-shrink: 0;
   max-width: 100%;
   padding: 10px 14px;
   background: #122b47e8;
@@ -167,6 +168,16 @@ canvas#game {
   font-size: 11px;
   letter-spacing: 0.8px;
   font-weight: 700;
+}
+.status { border-radius: 4px; }
+.status.critical-health { animation: critical-health 1.6s ease-in-out infinite; }
+#hud.paused .status.critical-health { animation-play-state: paused; }
+@keyframes critical-health {
+  0%, 100% { background: #ff665512; box-shadow: 0 0 0 4px #ff665512; }
+  50% { background: #ff665539; box-shadow: 0 0 0 4px #ff665539; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status.critical-health { animation: none; background: #ff665530; box-shadow: 0 0 0 4px #ff665530; }
 }
 .status div {
   display: flex;
@@ -191,6 +202,9 @@ canvas#game {
   background: #41baff;
   transition: width 0.15s;
 }
+.tank-label { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+#rank { font: 700 10px/1.2 "Barlow", sans-serif; color: #ffd477; pointer-events: auto; cursor: help; }
+#rank[data-rank="0"] { color: #b2c4d7; }
 #effects {
   grid-column: 1 / -1;
   font-size: 10px;
@@ -217,6 +231,36 @@ canvas#game {
   letter-spacing: 0.5px;
   color: #b3cadd;
   font-variant-numeric: tabular-nums;
+}
+.ammo-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+.ammo-slot {
+  text-align: center;
+  padding: 5px 2px 4px;
+  border: 1px solid #ffffff22;
+  border-top: 3px solid var(--ammo-color);
+  border-radius: 4px;
+  background: #091c30;
+  font-variant-numeric: tabular-nums;
+}
+.ammo-slot small { font-size: 9px; letter-spacing: 0.3px; }
+.ammo-slot b { font-size: 20px; line-height: 1.2; }
+.ammo-slot.empty { opacity: 0.38; }
+.ammo-slot.selected {
+  border-color: var(--ammo-color);
+  background: #294564;
+  box-shadow: inset 0 -3px var(--ammo-color);
+}
+@media (max-width: 1400px) { .keyhint { display: none; } }
+@media (max-width: 650px) {
+  .bottom { left: 10px; right: 10px; bottom: 10px; }
+  .combat-status { grid-template-columns: 1fr; width: 100%; padding: 8px; gap: 7px; }
+  .status { display: flex; gap: 12px; align-items: center; }
+  .status div { min-width: 100px; }
+  .weapon { padding-left: 0; border-left: 0; }
 }
 .keyhint {
   margin-left: auto;

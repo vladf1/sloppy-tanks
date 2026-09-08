@@ -44,7 +44,7 @@ function solo(seed = 123) {
   for (const t of s.tanks) t.protection = 0;
   return s;
 }
-test("solo roster, weak armor, reduced damage, repairs, and no respawns", () => {
+test("solo roster, weak armor, reduced damage, repairs, and enemy replacements", () => {
   const s = solo();
   try {
     assert.equal(s.tanks.length, 7);
@@ -60,36 +60,40 @@ test("solo roster, weak armor, reduced damage, repairs, and no respawns", () => 
     assert.equal(enemy.hp, s.maxHealth(enemy));
     s.damageTank(enemy, 999, s.human.id, s.humanTeam);
     for (let i = 0; i < 200; i++) s.step();
-    assert.equal(enemy.alive, false);
+    assert.equal(enemy.alive, true);
     assert.equal(s.match.phase, "playing");
   } finally { s.world.free(); }
 });
-test("solo victory, player death, timeout, new layouts and return to teams", () => {
+test("solo survives beyond 50 kills, ends on death or ten minutes, and resets cleanly", () => {
   const s = solo();
   try {
-    while (s.enemiesEliminated < s.enemyCount) {
-      for (const t of s.tanks.filter(t => !t.human && t.alive)) {
-        t.protection = 0;
-        s.damageTank(t, 999, s.human.id, s.humanTeam);
-      }
-      if (s.enemiesEliminated < s.enemyCount) {
-        assert.equal(s.match.phase, "playing", "reserves prevent early victory");
-        s.reinforcementDelay = 0;
-        s.step();
-      }
+    assert.equal(s.match.time, 600);
+    const initialBodies = s.world.bodies.len();
+    for (let i = 0; i < 120; i++) {
+      const enemy = s.tanks.find(t => !t.human && t.alive)!;
+      enemy.protection = 0;
+      s.damageTank(enemy, 9999, s.human.id, s.humanTeam);
+      s.reinforcementDelay = 0; s.reinforceSolo();
+      assert.equal(s.match.phase, "playing", "Neither 20 nor 50 kills ends survival");
+      assert.equal(s.tanks.length, 7, "Enemy slots stay bounded");
+      assert.equal(enemy.xp, 0, "Replacement starts Rookie");
+      assert.ok(s.world.bodies.len() <= initialBodies + s.maxFragments);
     }
-    assert.equal(s.enemiesEliminated, 20);
-    assert.equal(s.tanks.length, 21);
-    assert.equal(s.match.phase, "results"); assert.equal(s.match.winner, s.humanTeam);
+    assert.equal(s.human.kills, 120);
+    assert.equal(s.tanks.filter(t => !t.human && t.alive).length, 6);
+    s.match.phase = "paused"; const time = s.match.time; s.step(); assert.equal(s.match.time, time);
     const previousSeed = s.mapSeed;
     s.reset(); s.start(); assert.notEqual(s.mapSeed, previousSeed);
     s.human.protection = 0;
     s.damageTank(s.human, 9999, s.tanks[1].id, s.tanks[1].team);
     assert.equal(s.match.phase, "results"); assert.notEqual(s.match.winner, s.humanTeam);
     s.reset(); s.start(); s.match.time = 0.001; s.step();
-    assert.equal(s.match.phase, "results"); assert.notEqual(s.match.winner, s.humanTeam);
+    assert.equal(s.match.phase, "results"); assert.equal(s.match.winner, s.humanTeam);
+    assert.equal(s.match.time, 0); assert.equal(s.match.overtime, false);
+    assert.equal(s.human.kills, 0);
     s.gameMode = "team"; s.reset();
     assert.equal(s.tanks.length, 12);
+    assert.equal(s.match.time, 300);
     assert.equal(s.tanks.filter(t => t.team === 0).length, 6);
   } finally { s.world.free(); }
 });
@@ -110,7 +114,7 @@ test("solo enemies fire slowly and never lay mines", () => {
 });
 
 
-test("solo reinforcements replenish six active enemies and reset reserves", () => {
+test("solo reinforcements replenish six active enemies and reset the kill counter", () => {
   const s = solo();
   try {
     const active = () => s.tanks.filter(t => !t.human && t.alive);
@@ -120,8 +124,8 @@ test("solo reinforcements replenish six active enemies and reset reserves", () =
     assert.equal(active().length, 5);
     s.step();
     assert.equal(active().length, 6);
-    assert.equal(victim.alive, false);
-    assert.equal(s.enemyCount - s.enemiesEliminated, 19);
+    assert.equal(victim.alive, true);
+    assert.equal(s.human.kills, 1);
     for (let i = 0; i < 90; i++) {
       s.step();
       assert.ok(active().length <= 6);
@@ -129,6 +133,6 @@ test("solo reinforcements replenish six active enemies and reset reserves", () =
     s.reset();
     assert.equal(active().length, 6);
     assert.equal(s.tanks.length, 7);
-    assert.equal(s.enemiesEliminated, 0);
+    assert.equal(s.human.kills, 0);
   } finally { s.world.free(); }
 });

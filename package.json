@@ -9,6 +9,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
     "generate:textures": "node --import tsx scripts/generate-textures.ts",
+    "generate:ammo": "node --import tsx scripts/generate-ammo-icons.ts",
     "generate:audio": "node --import tsx scripts/generate-audio.ts"
   },
   "dependencies": {

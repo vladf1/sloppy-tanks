@@ -49,7 +49,7 @@ async function setup(scenario, seed) {
         for (let i = s.fragments.length; i < s.maxFragments; i++) s.fragment(s.rng.range(-15,15),s.rng.range(-15,15),0xc5a978,0.5);
         for (let i = s.shots.length; i < 200; i++) {
           const a = i * Math.PI * 2 / 200;
-          s.shots.push({id:s.nextId++,x:Math.sin(a)*15,z:Math.cos(a)*15,vx:Math.cos(a)*45,vz:Math.sin(a)*45,owner:s.tanks[i%24].id,team:i%2 === 0 ? 0 : 1,damage:40,bounces:4,life:4,weapon:'standard'});
+          s.shots.push({id:s.nextId++,x:Math.sin(a)*15,z:Math.cos(a)*15,vx:Math.cos(a)*45,vz:Math.sin(a)*45,owner:s.tanks[i%24].id,team:i%2 === 0 ? 0 : 1,damage:40,bounces:4,life:4,piercing:0,weapon:'standard'});
         }
         for (const x of [-5,0,5]) {
           const c = s.addCover({kind:'drum',x,z:0,w:1.2,d:1.2,h:1.7,hp:30,color:0xe3854d});

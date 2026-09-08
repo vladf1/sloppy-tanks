@@ -1,0 +1,13 @@
+{
+  "lifecycle": "PASS: 120 kills, 120 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.",
+  "checks": [
+    "10-minute start",
+    "55 kills without early finish",
+    "live kill/active scoreboard",
+    "pause freezes timer",
+    "time limit preserves final kills",
+    "death ends run",
+    "restart clears kills"
+  ],
+  "errors": []
+}

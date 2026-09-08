@@ -30,7 +30,7 @@ function arena(tanks = 0) {
 }
 function shot(s: Simulation, x: number, z: number, vx: number, vz: number, team: Team): Shot {
   return { id: s.nextId++, x, z, vx, vz, team, owner: s.tanks.find((t) => t.team === team)?.id ?? team,
-    damage: 40, bounces: 0, life: 3.5, weapon: "standard" };
+    damage: 40, bounces: 0, life: 3.5, piercing: 0, weapon: "standard" };
 }
 function pickup(s: Simulation, kind: PickupKind) {
   collectPickup(s, s.human, { id: s.nextId++, x: 0, z: 0, kind, available: true, cooldown: 0 });
@@ -112,22 +112,23 @@ test("interception blast hurts both teams once and credits the opposing shooter"
   s.dispose();
 });
 
-test("rapid and ricochet combine with special weapons, refresh without multiplying, and expire independently", () => {
+test("rapid fire modifies only selected ammunition and expires independently", () => {
   const s = arena(1), t = s.human;
   pickup(s, "spread"); pickup(s, "rapid"); pickup(s, "ricochet");
+  t.selectedAmmo = "spread";
   fireWeapon(s, t);
   assert.equal(s.shots.length, 3);
   assert.equal(t.cooldown, WEAPONS.spread.interval / 2 / 1.2);
-  assert.ok(s.shots.every((p) => p.damage === 54 && p.bounces === 3));
+  assert.ok(s.shots.every(p => p.damage === 27 && p.bounces === 1));
+  const cooldown = t.cooldown;
   pickup(s, "rapid"); pickup(s, "ricochet");
-  assert.equal(t.rapid, 12); assert.equal(t.ricochet, 12);
-  t.rapid = STEP; t.ricochet = 3; t.cooldown = 0;
+  assert.equal(t.cooldown, cooldown);
+  assert.equal(t.rapid, 12); assert.equal(t.ammo.ricochet, 48);
+  t.rapid = STEP; t.cooldown = 0;
   s.step();
-  assert.equal(t.rapid, 0); assert.ok(t.ricochet > 2.9);
+  assert.equal(t.rapid, 0); assert.equal(t.ammo.ricochet, 48);
   fireWeapon(s, t);
   assert.equal(t.cooldown, WEAPONS.spread.interval / 1.2);
-  pickup(s, "rocket");
-  assert.ok(t.ricochet > 2.9);
   t.hp = 1; pickup(s, "repair");
   assert.equal(t.hp, VEHICLES[t.kind].health);
   s.dispose();
@@ -145,7 +146,7 @@ test("shield absorbs three shells, spills excess damage, expires and resets on r
   pickup(s, "shield"); t.shield = STEP; s.step(); assert.equal(t.shieldPoints, 0);
   pickup(s, "rapid"); pickup(s, "ricochet"); pickup(s, "shield");
   s.respawn(t);
-  assert.deepEqual([t.rapid, t.ricochet, t.shield, t.shieldPoints], [0, 0, 0, 0]);
+  assert.deepEqual([t.rapid, t.ammo.ricochet, t.shield, t.shieldPoints], [0, 0, 0, 0]);
   s.dispose();
 });
 
@@ -198,44 +199,18 @@ test("tracks are distance-spaced at 30/120 FPS, skip stationary tanks and telepo
 });
 
 for (const order of [["spread", "rocket"], ["rocket", "spread"]] as const) {
-  test(`${order.join(" then ")} combines three explosive projectiles with rapid and damage boosts`, () => {
+  test(`${order.join(" then ")} supplies independent ammo without selecting or combining it`, () => {
     const s = arena(1), t = s.human;
     for (const kind of order) pickup(s, kind);
     pickup(s, "rapid"); pickup(s, "ricochet");
-    fireWeapon(s, t);
-    assert.equal(s.shots.length, 3);
-    assert.ok(s.shots.every(p => p.weapon === "rocket" && p.damage === WEAPONS.rocket.damage * 2));
-    assert.equal(t.cooldown, WEAPONS.rocket.interval / 2 / 1.2);
-    const angles = s.shots.map(p => Math.atan2(p.vx, p.vz));
-    assert.ok(Math.abs(angles[1] - angles[0] - 0.19) < 1e-9);
-    assert.ok(Math.abs(angles[2] - angles[1] - 0.19) < 1e-9);
-    t.rocket = 7; t.spread = 4;
-    pickup(s, "spread");
-    assert.equal(t.spread, 14); assert.equal(t.rocket, 7);
-    pickup(s, "rocket");
-    assert.equal(t.rocket, 14); assert.equal(t.spread, 14);
-    s.respawn(t);
-    assert.deepEqual([t.spread, t.rocket, t.rapid, t.ricochet], [0, 0, 0, 0]);
-    s.dispose();
-  });
-}
-
-for (const expires of ["spread", "rocket"] as const) {
-  test(`${expires} expiration preserves the other weapon upgrade`, () => {
-    const s = arena(1), t = s.human;
-    pickup(s, "spread"); pickup(s, "rocket");
-    t[expires] = STEP;
-    s.step();
-    s.shots = []; t.cooldown = 0;
-    fireWeapon(s, t);
-    assert.equal(t[expires], 0);
-    assert.equal(s.shots.length, expires === "spread" ? 1 : 3);
-    assert.ok(s.shots.every(p => p.weapon === (expires === "spread" ? "rocket" : "spread")));
-    t.spread = t.rocket = STEP;
-    s.step(); s.shots = []; t.cooldown = 0;
-    fireWeapon(s, t);
-    assert.equal(s.shots.length, 1);
-    assert.equal(s.shots[0].weapon, "standard");
+    assert.equal(t.selectedAmmo, "standard");
+    for (const weapon of ["standard", "spread", "rocket", "ricochet"] as const) {
+      t.selectedAmmo = weapon; t.cooldown = 0; s.shots = [];
+      fireWeapon(s, t);
+      assert.equal(s.shots.length, weapon === "spread" ? 3 : 1);
+      assert.ok(s.shots.every(p => p.weapon === weapon && p.damage === WEAPONS[weapon].damage));
+      assert.equal(t.cooldown, WEAPONS[weapon].interval / 2 / 1.2);
+    }
     s.dispose();
   });
 }

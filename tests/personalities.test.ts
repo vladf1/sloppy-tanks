@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { InstancedBufferAttribute } from "three";
 import { Simulation } from "../src/game/simulation";
-import { botAssignment, BOT_PERSONALITIES, BOT_PROFILES, botReload, combatMovement } from "../src/game/bot-personalities";
+import { botAssignment, BOT_PERSONALITIES, BOT_PROFILES, botReload, combatMovement, preferredAmmo } from "../src/game/bot-personalities";
 import { botCommand } from "../src/game/ai";
 import { collectPickup, fireWeapon, weaponInterval } from "../src/game/weapons";
 import { STEP } from "../src/game/data";
@@ -78,21 +78,24 @@ test("snipers actually hold their firing lane and minelayers deliberately deploy
   s.dispose();
 });
 
-test("artillery uses slow rockets, spread stacks with them, and every role preserves the player cadence edge", () => {
+test("artillery needs crates and every role preserves the player cadence edge", () => {
   const { s, bot, human } = duel();
   bot.brain.personality = "artillery";
-  fireWeapon(s, bot); assert.equal(s.shots.at(-1)!.weapon, "rocket");
-  collectPickup(s, bot, { id: 9999, x: 0, z: 0, kind: "spread", available: true, cooldown: 0 });
-  const before = s.shots.length;
+  fireWeapon(s, bot); assert.equal(s.shots.at(-1)!.weapon, "standard");
+  collectPickup(s, bot, { id: 9999, x: 0, z: 0, kind: "rocket", available: true, cooldown: 0 });
+  assert.equal(bot.selectedAmmo, "standard");
+  bot.selectedAmmo = preferredAmmo(bot); bot.cooldown = 0;
   fireWeapon(s, bot);
-  assert.equal(s.shots.length - before, 3);
-  assert.ok(s.shots.slice(before).every(p => p.weapon === "rocket"));
+  assert.equal(s.shots.at(-1)!.weapon, "rocket");
+  assert.equal(bot.ammo.rocket, 11);
   for (const role of BOT_PERSONALITIES) for (const ultra of [false, true]) for (const rapid of [0, 12]) {
     bot.brain.personality = role; bot.brain.ultraAggressive = ultra;
-    bot.spread = human.spread = 0;
-    bot.rocket = human.rocket = role === "artillery" ? 14 : 0;
-    bot.rapid = human.rapid = rapid;
-    assert.ok(botReload(bot, 0) > weaponInterval(human) * 1.2, `${role} cadence`);
+    for (const weapon of ["standard", "spread", "rocket", "ricochet", "piercing"] as const) {
+      bot.selectedAmmo = human.selectedAmmo = weapon;
+      if (weapon !== "standard") bot.ammo[weapon] = human.ammo[weapon] = 5;
+      bot.rapid = human.rapid = rapid;
+      assert.ok(botReload(bot, 0) > weaponInterval(human) * 1.2, `${role} ${weapon} cadence`);
+    }
   }
   assert.ok(BOT_PROFILES.artillery.reload > BOT_PROFILES.sniper.reload);
   s.dispose();
