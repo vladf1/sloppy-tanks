@@ -6,7 +6,7 @@ import { speedTuning } from "./speed-tuning";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { healthBarState } from "./health-bar";
 import { RANKS, rankIndex, REPAIR_DELAY } from "./veterancy";
-const CONTROL_HELP = "WASD / Arrows: drive · Mouse: aim · Hold left click: fire · Right click: mine · Esc: pause<br>Q / E / scroll: cycle ammo · 1–5: select · Shift + scroll: zoom · Crates refill ammo · Standard shells: unlimited";
+const CONTROL_HELP = "WASD / Arrows: steer toward direction · Opposite direction: reverse · Mouse: aim · Hold left click: fire · Right click: mine · Esc: pause<br>Q / E / scroll: cycle ammo · 1–5: select · Shift + scroll: zoom · Crates refill ammo · Standard shells: unlimited";
 export class UI {
   overlay: HTMLElement;
   hud: HTMLElement;

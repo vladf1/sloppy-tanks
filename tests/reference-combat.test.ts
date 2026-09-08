@@ -157,6 +157,7 @@ test("movement adds 20% to V-Tanks-scaled speeds, preserves class ratios and nor
   const distances: number[] = [];
   for (const diagonal of [false, true]) {
     const s = arena(1), t = s.human;
+    t.heading = diagonal ? Math.PI / 4 : 0; // Compare travel after alignment.
     for (let i = 0; i < 60; i++) s.step({ ...idleCommand(), moveX: diagonal ? 1 : 0, moveZ: 1 });
     const p = t.body.translation(); distances.push(Math.hypot(p.x, p.z));
     assert.ok(Math.hypot(t.body.linvel().x, t.body.linvel().z) > VEHICLES[t.kind].speed * 0.98);
@@ -165,8 +166,8 @@ test("movement adds 20% to V-Tanks-scaled speeds, preserves class ratios and nor
     assert.ok(Math.hypot(t.body.linvel().x, t.body.linvel().z) < 0.01);
     pickup(s, "speed");
     const boostSteps = Math.ceil(VEHICLES[t.kind].speed * 1.5 / (MOVE_ACCELERATION * STEP)) + 2;
-    for (let i = 0; i < boostSteps; i++) s.step({ ...idleCommand(), moveZ: 1 });
-    assert.ok(Math.abs(t.body.linvel().z / VEHICLES[t.kind].speed - 1.5) < 0.03);
+    for (let i = 0; i < boostSteps; i++) s.step({ ...idleCommand(), moveX: diagonal ? 1 : 0, moveZ: 1 });
+    assert.ok(Math.abs(Math.hypot(t.body.linvel().x, t.body.linvel().z) / VEHICLES[t.kind].speed - 1.5) < 0.03);
     s.dispose();
   }
   assert.ok(Math.abs(distances[0] - distances[1]) < 0.02);

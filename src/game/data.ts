@@ -14,7 +14,8 @@ const referenceSpeed = (multiplier: number) => {
   return { speed, speedKmh: Math.round(speed * 3.6) };
 };
 export const MOVE_ACCELERATION = 100;
-export const HULL_TURN_SPEED = 9;
+export const HULL_TURN_SPEED = 3.5; // A quarter turn takes about 0.45 seconds.
+export const REVERSE_SPEED = 0.8;
 export const PLAYER_FIRE_RATE_MULTIPLIER = 1.2;
 export const SHIELD_CAPACITY = 120; // Three standard 40-damage shells.
 export const INTERCEPTION_RADIUS = 0.8;

@@ -39,7 +39,7 @@ With FFmpeg installed (`brew install ffmpeg` on macOS), run `npm run generate:au
 
 ## Play
 
-- **WASD / Arrow keys**: screen-relative movement.
+- **WASD / Arrow keys**: screen-relative steering. The hull turns gradually toward the requested direction; requesting a direction behind it reverses.
 - **Mouse**: independent turret aim.
 - **Hold left mouse**: fire.
 - **Right click**: drop a mine; 0.8-second arming delay and 7-second cooldown.
@@ -164,7 +164,7 @@ The Vite base path is `/sloppy-tanks/`. GitHub Pages inherits `fridman.me` from 
 
 ## V-Tanks movement, upgrades and tracks
 
-Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-tanks` revision `570bf8dd46a48c0761a4faccafa40197a821267a`. Its balanced tank travels at 184 source units/second and its standard shell at 535. Scaling that ratio to our 19.2 m/s shell and adding the requested 20% base-speed increase gives 7.924 m/s; light and heavy use its 1.24 and 0.76 class multipliers (9.826 and 6.022 m/s). A further shared 13% speed increase brings light/balanced/heavy to 11.103 / 8.954 / 6.805 m/s and standard/spread/rocket projectiles to 21.696 / 19.888 / 15.368 m/s. Acceleration/braking is 100 m/s² and hull rotation is capped at 9 radians/second. This adapts the dodge timing and responsive handling to our 3D arena; screen-space speed still depends on zoom.
+Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-tanks` revision `570bf8dd46a48c0761a4faccafa40197a821267a`. Its balanced tank travels at 184 source units/second and its standard shell at 535. Scaling that ratio to our 19.2 m/s shell and adding the requested 20% base-speed increase gives 7.924 m/s; light and heavy use its 1.24 and 0.76 class multipliers (9.826 and 6.022 m/s). A further shared 13% speed increase brings light/balanced/heavy to 11.103 / 8.954 / 6.805 m/s and standard/spread/rocket projectiles to 21.696 / 19.888 / 15.368 m/s. Acceleration/braking is 100 m/s² and hull rotation is capped at 3.5 radians/second (about 0.45 seconds for a 90° turn). Movement follows the hull, with reduced drive during sharp turns and automatic reverse at 80% of forward speed when the requested direction is behind the tank. Releasing movement brakes promptly; mouse aiming stays independent. Players and bots share this steering model. This adapts the dodge timing and responsive handling to our 3D arena; screen-space speed still depends on zoom.
 
 Opposing shells intercept continuously, including between simulation ticks and after ricochets. Allied shells pass through each other. The earliest wall, tank, expiry or shell contact wins; thin cover blocks interception. Ordinary interceptions remove both shells with a small blast that deals one standard 40-damage hit to nearby tanks on either team, credited to the opposing shell's shooter. Ordinary blast radius is 3 m; intercepted rockets use 5.3 m. This blast does not damage cover or trigger mines. A fresh piercing shell instead destroys the opposing shell and continues with its one interception allowance spent, producing a small impact without blast damage, including against rockets. Two fresh piercing shells both continue with their allowances spent; that pair is resolved only once, even if still touching next tick. Later contacts use normal interception rules. Piercing stops on tanks and cover.
 
@@ -208,6 +208,8 @@ With Vite running, use `SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scri
 
 
 ## Bot movement validation
+
+`SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/driving-check.mjs` checks real WASD and arrow-key input through the rendered application loop: forward travel, automatic reverse, gradual turns, release braking and pause. Substitute the live Vite port. Screenshots and measurements are saved under ignored `artifacts/performance/driving/`.
 
 `node --import tsx scripts/bot-movement-check.ts after` repeats three controlled movement cases and six 90-second village/random-map runs. `before` is reserved for capturing a baseline before changing the controller. Reports live in `artifacts/bot-movement-before.json` and `artifacts/bot-movement-after.json`. A measured stall is a two-second window with movement requested for more than 80 of 120 ticks but under one metre of net displacement; stationary firing roles are excluded. The detector also records direction reversals greater than 120 degrees and stalls with at least eight such reversals. These are repeatable regression indicators, not a guarantee that every pause in gameplay is a bug.
 

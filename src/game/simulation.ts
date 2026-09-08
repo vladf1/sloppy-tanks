@@ -7,6 +7,7 @@ import {
   Random,
   MOVE_ACCELERATION,
   HULL_TURN_SPEED,
+  REVERSE_SPEED,
   STEP,
   VEHICLES,
   GROUP,
@@ -307,8 +308,20 @@ export class Simulation {
       t.aim = c.aim;
       const mag = Math.hypot(c.moveX, c.moveZ);
       const speed = VEHICLES[t.kind].speed * (t.speed > 0 ? 1.5 : 1);
-      const dx = (c.moveX / Math.max(1, mag)) * speed,
-        dz = (c.moveZ / Math.max(1, mag)) * speed;
+      let drive = 0;
+      if (mag > 0.05) {
+        const desired = Math.atan2(c.moveX, c.moveZ);
+        // Choose the nearer end of the hull; perpendicular input favors forward.
+        const reverse = Math.abs(angleDelta(t.heading, desired)) > Math.PI / 2 + 1e-6;
+        const target = desired + (reverse ? Math.PI : 0);
+        const turn = angleDelta(t.heading, target);
+        t.heading += Math.max(-HULL_TURN_SPEED * STEP, Math.min(HULL_TURN_SPEED * STEP, turn));
+        // Unequal track speeds make an arc. Sharp turns shed speed toward a pivot.
+        const alignment = Math.max(0, Math.cos(angleDelta(t.heading, target)));
+        drive = Math.min(1, mag) * speed * alignment * alignment * (reverse ? -REVERSE_SPEED : 1);
+      }
+      const dx = Math.sin(t.heading) * drive,
+        dz = Math.cos(t.heading) * drive;
       const v = t.body.linvel(),
         ax = dx - v.x,
         az = dz - v.z,
@@ -322,10 +335,6 @@ export class Simulation {
         },
         true,
       );
-      if (mag > 0.05)
-        t.heading +=
-          Math.max(-HULL_TURN_SPEED * STEP, Math.min(HULL_TURN_SPEED * STEP,
-            angleDelta(t.heading, Math.atan2(c.moveX, c.moveZ))));
       t.body.setRotation(
         { x: 0, y: Math.sin(t.heading / 2), z: 0, w: Math.cos(t.heading / 2) },
         true,
