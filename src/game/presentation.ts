@@ -630,11 +630,13 @@ export class Presentation {
     }
     const explosion =
       e.type === "explosion" || e.type === "death" || e.type === "destroy";
+    const timber = e.type === "destroy" && e.coverKind === "timber";
     const tree = e.type === "destroy" && e.coverKind === "tree";
     const style = PARTICLE_STYLES[tree ? "tree" : pickup ? "pickup" : explosion ? "explosion" : hurt ? "hurt" : "impact"];
     const count = e.type === "shot" ? 5 : style.count;
     const baseSpeed = style.speed * (explosion && !tree ? e.size ?? 3 : 1);
-    const colors = tree
+    const colors = timber ? [0x805336, 0xb47a49, 0xc99a65, 0x947958]
+      : tree
       ? Array.from({ length: 12 }, (_, i) => i % 4 === 0 ? 0x98633e : [0x175e3b, 0x2c9452, e.color ?? 0x389b58][i % 3])
       : pickup ? [0xffffff, e.color ?? 0xffffff, e.color ?? 0xffffff, e.color ?? 0xffffff]
       : explosion ? [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250]
@@ -643,7 +645,7 @@ export class Presentation {
       const life = style.life[0] + Math.random() * style.life[1];
       const speed = baseSpeed + (tree ? Math.random() * 4 : 0);
       this.particles.push({
-        shape: tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
+        shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
         x: e.x + (Math.random() - 0.5) * style.scatter,
         y: style.height + (tree ? Math.random() * (e.height ?? 5) * 0.85 : 0),
         z: e.z + (Math.random() - 0.5) * style.scatter,
@@ -793,12 +795,13 @@ export class Presentation {
     for (const c of s.covers) {
       let g = this.coverMeshes.get(c.id);
       const stump = c.kind === "tree" && !c.alive;
-      if (!g || !!g.userData.stump !== stump) {
+      const damageStage = c.kind === "timber" ? Math.min(2, Math.floor((c.maxHp - c.hp) * 3 / c.maxHp)) : 0;
+      if (!g || !!g.userData.stump !== stump || (c.alive && (g.userData.damageStage ?? 0) !== damageStage)) {
         if (g) {
           disposeOwned(g);
           this.worldGroup.remove(g);
         }
-        g = stump ? stumpModel(c) : coverModel(c);
+        g = stump ? stumpModel(c) : coverModel(c, "full", damageStage);
         batch(g);
         this.coverMeshes.set(c.id, g);
         this.worldGroup.add(g);

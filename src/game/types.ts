@@ -87,6 +87,7 @@ export type CoverKind =
   | "house"
   | "tree"
   | "fence"
+  | "timber"
   | "concrete"
   | "wall"
   | "shed"

@@ -8,7 +8,7 @@ export interface CoverDef extends Vec2 {
   hp: number;
   color: number;
 }
-export function arenaLayout(): CoverDef[] {
+function authoredLayout(): CoverDef[] {
   const result: CoverDef[] = [];
   const add = (
     kind: CoverKind,
@@ -49,20 +49,34 @@ export function arenaLayout(): CoverDef[] {
       add("house", s * 17, z, 7, 5, 5.2, Infinity, 0xc78b50);
     for (const z of [-28, 28]) {
       add("tree", s * 23, z, 2.6, 2.6, 6, 80, 0x169f65);
-      // Open cottage gardens provide flanking space; each fence section breaks independently.
-      add("fence", s * 28, z - 4, 7, 0.65, 1.6, 60, 0xb47a49);
-      add("fence", s * 28, z + 4, 7, 0.65, 1.6, 60, 0xb47a49);
-      add("fence", s * 31.2, z, 0.65, 8, 1.6, 60, 0xb47a49);
+      // Open cottage gardens provide flanking space; each timber bay breaks independently.
+      add("timber", s * 28, z - 4, 7, 0.9, 2.8, 120, 0xb47a49);
+      add("timber", s * 28, z + 4, 7, 0.9, 2.8, 120, 0xb47a49);
+      add("timber", s * 31.2, z, 0.9, 8, 2.8, 120, 0xb47a49);
       add("drum", s * 25, z - s, 1.2, 1.2, 1.7, 30, 0xff5b24);
     }
     for (const x of [-6, -2, 2, 6])
-      add("fence", x, s * 13, 3.7, 0.65, 1.6, 60, 0xb47a49);
+      add("timber", x, s * 13, 3.7, 0.9, 2.8, 120, 0xb47a49);
     add("tower", s * 12.75, -s * 28, 6, 5, 7.5, 180, 0xbd864a);
     for (const z of [-2, 2]) add("drum", s * 6, z, 1.2, 1.2, 1.7, 30, 0xff5b24);
     add("house", s * 24, 0, 5, 7, 4.9, 180, 0xb87b4c);
   }
   return result;
 }
+/** Split after placement so random-map clearance treats each wall as one footprint. */
+function segmentWalls(layout: CoverDef[]): CoverDef[] {
+  return layout.flatMap(c => {
+    if (c.kind !== "timber") return [c];
+    const along = c.w > c.d, length = Math.max(c.w, c.d);
+    const count = Math.max(1, Math.round(length / 3.7)), span = length / count;
+    return Array.from({ length: count }, (_, i) => {
+      const offset = -length / 2 + span * (i + 0.5);
+      return { ...c, x: c.x + (along ? offset : 0), z: c.z + (along ? 0 : offset),
+        w: along ? span : c.w, d: along ? c.d : span };
+    });
+  });
+}
+export function arenaLayout(): CoverDef[] { return segmentWalls(authoredLayout()); }
 export const pickupLayout: { kind: PickupKind; x: number; z: number }[] = [
   // One rare, contested pickup at the rotationally symmetric center.
   { kind: "laser", x: 0, z: 0 },
@@ -97,7 +111,7 @@ export const spawnPositions = (team: Team): Vec2[] =>
 export function randomArenaLayout(seed: number): CoverDef[] {
   const rng = new Random(seed);
   const result = arenaLayout().filter(c => c.kind === "boundary");
-  const templates = arenaLayout().filter(c => c.kind !== "boundary");
+  const templates = authoredLayout().filter(c => c.kind !== "boundary");
   for (let attempt = 0; attempt < 1600 && result.length < 60; attempt++) {
     const template = templates[Math.floor(rng.next() * templates.length)];
     // Towers have authored supports, roof and collapse rubble on fixed axes.
@@ -113,5 +127,5 @@ export function randomArenaLayout(seed: number): CoverDef[] {
         Math.abs(o.z - c.z) > (o.d + c.d) / 2 + 6);
     if (clear(a) && clear(b)) result.push(a, b);
   }
-  return result;
+  return segmentWalls(result);
 }

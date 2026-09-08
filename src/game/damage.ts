@@ -90,7 +90,7 @@ export function damageCover(
     size: c.kind === "tower" ? 7 : 2,
     color: c.color,
   });
-  for (let i = 0; i < (c.kind === "tower" ? 10 : c.kind === "tree" ? 9 : 3); i++)
+  for (let i = 0; i < (c.kind === "tower" ? 10 : c.kind === "tree" ? 9 : c.kind === "timber" ? 7 : 3); i++)
     s.fragment(
       c.x + s.rng.range(-c.w / 2, c.w / 2),
       c.z + s.rng.range(-c.d / 2, c.d / 2),
@@ -98,6 +98,7 @@ export function damageCover(
       s.rng.range(0.3, 0.7),
       c.kind === "shed" ||
         c.kind === "fence" ||
+        c.kind === "timber" ||
         c.kind === "house" ||
         c.kind === "tree"
         ? "track"

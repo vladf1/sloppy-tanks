@@ -407,6 +407,7 @@ function pitchedRoof(w: number, h: number, d: number, color: number) {
 export function coverModel(
   c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color">,
   detail: "full" | "background" = "full",
+  damageStage = 0,
 ) {
   const g = new THREE.Group();
   g.position.set(c.x, 0, c.z);
@@ -571,6 +572,26 @@ export function coverModel(
     for (const child of g.children) {
       const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
       mesh.material = material(mesh.material.color.getHex(), 0, 1);
+    }
+  } else if (c.kind === "timber") {
+    g.userData.damageStage = damageStage;
+    const along = c.w > c.d, length = Math.max(c.w, c.d);
+    const colors = [c.color, 0x94613e, 0xa66f46];
+    // Closely stacked beams stay opaque at shell height, even when chipped.
+    for (let row = 0; row < 7; row++) {
+      const chipped = damageStage > 0 && row >= 7 - damageStage * 2;
+      const span = length - (chipped ? 0.35 + (row % 2) * 0.4 : 0.04);
+      const beam = box(along ? span : 0.64, 0.38, along ? 0.64 : span,
+        damageStage === 2 ? 0x795035 : colors[row % 3], 0);
+      put(g, beam, along && chipped ? (row % 2 ? -0.16 : 0.16) : 0,
+        0.2 + row * 0.39, !along && chipped ? (row % 2 ? -0.16 : 0.16) : 0);
+    }
+    for (const offset of [-length / 2 + 0.22, length / 2 - 0.22]) {
+      put(g, box(along ? 0.3 : 0.9, c.h, along ? 0.9 : 0.3, 0x805336, 0),
+        along ? offset : 0, c.h / 2, along ? 0 : offset);
+      for (const y of [0.6, 2.15])
+        put(g, box(along ? 0.32 : 0.92, 0.09, along ? 0.92 : 0.32, 0x49423a, 0),
+          along ? offset : 0, y, along ? 0 : offset);
     }
   } else if (c.kind === "fence") {
     const along = c.w > c.d,

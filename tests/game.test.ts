@@ -615,8 +615,8 @@ test("bots pause between shots even when breaching; human fires faster with and 
 test("village buildings and trees block routes until destroyed, while all spawns reach midfield", async () => {
   const { spawnPositions } = await import("../src/game/arena");
   const s = game();
-  for (const kind of ["house", "tree", "fence"] as const) {
-    const c = s.covers.find((c) => c.kind === kind && c.destructible)!;
+  for (const kind of ["house", "tree", "timber"] as const) {
+    const c = s.covers.find((c) => c.kind === kind && c.destructible && (kind !== "timber" || (c.x === -2 && c.z === 13)))!;
     assert.ok(c && c.destructible);
     assert.equal(s.nav.blocked[s.nav.index(c)], 1);
     s.damageCover(c, 1000, s.human.id, s.humanTeam);
