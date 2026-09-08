@@ -5,6 +5,8 @@ import { sidingBox, sidingGable, shingleRoof } from "./house-surfaces";
 import { applyTankSurface } from "./tank-surfaces";
 import { concreteWall } from "./concrete-surfaces";
 import { TOWER_BASE } from "./tower-layout";
+import { treeModel } from "./tree-models";
+export { stumpModel } from "./tree-models";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { Random, TEAM_COLORS, VEHICLES } from "./data";
 import type { VehicleKind, Team, Cover, WreckPart } from "./types";
@@ -352,44 +354,6 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
   wreckTemplates.set(key, flat);
   return flat.clone();
 }
-// Scalloped branch skirts create pointed boughs instead of smooth stacked cones.
-const pineGeometry = (() => {
-  const geometry = new THREE.ConeGeometry(1, 1, 12, 1).toNonIndexed();
-  const positions = geometry.getAttribute("position");
-  for (let i = 0; i < positions.count; i++) {
-    const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
-    const angle = Math.atan2(z, x);
-    const scallop = 0.87 + 0.13 * Math.cos(angle * 6);
-    positions.setXYZ(i, x * scallop, y + (0.5 - y) * 0.035 * Math.cos(angle * 6), z * scallop);
-  }
-  geometry.computeVertexNormals();
-  return geometry;
-})();
-const broadleafGeometry = new THREE.IcosahedronGeometry(1, 0);
-export function stumpModel(c: Pick<Cover, "x" | "z" | "w" | "d">) {
-  const g = new THREE.Group();
-  g.position.set(c.x, 0, c.z);
-  g.userData.stump = true;
-  const twist = Math.sin(c.x * 2.3 + c.z * 0.7) * Math.PI;
-  put(g, cylinder(0.25, 0.42, 0x705039, 9), 0, 0.21, 0);
-  // Nested end-grain colors suggest growth rings without a new texture.
-  for (const [radius, y, color] of [
-    [0.215, 0.425, 0xd2a56b],
-    [0.15, 0.431, 0x9e7045],
-    [0.12, 0.437, 0xd2a56b],
-  ]) put(g, cylinder(radius, 0.008, color, 9), 0, y, 0);
-  for (let i = 0; i < 5; i++) {
-    const angle = twist + i * Math.PI * 2 / 5;
-    const root = box(0.13, 0.13, c.w * 0.26, i % 2 ? 0x563b2c : 0x896044, 0);
-    root.rotation.y = angle;
-    put(g, root, Math.sin(angle) * c.w * 0.14, 0.1, Math.cos(angle) * c.d * 0.14);
-  }
-  for (const child of g.children) {
-    const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-    mesh.material = material(mesh.material.color.getHex(), 0, 1);
-  }
-  return g;
-}
 function towerFoundation(g: THREE.Group, x: number) {
   put(g, concreteWall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
     x, TOWER_BASE.height / 2, 0);
@@ -405,6 +369,7 @@ export function coverModel(
   detail: "full" | "background" = "full",
   damageStage = 0,
 ) {
+  if (c.kind === "tree") return treeModel(c, detail);
   const g = new THREE.Group();
   g.position.set(c.x, 0, c.z);
   if (c.kind === "house") {
@@ -497,78 +462,6 @@ export function coverModel(
       c.h - 0.36,
       -c.d * 0.2,
     );
-  } else if (c.kind === "tree") {
-    const twist = Math.sin(c.x * 2.3 + c.z * 0.7) * Math.PI;
-    const variety = Math.abs(Math.round(Math.sin(c.x * 12.9898 + c.z * 78.233) * 43758)) % 3;
-    // Three stable tint families keep the tree line from looking cloned. These
-    // colors bake into existing batches; matte needles need no extra geometry.
-    const tint = [0xe0e9d8, 0xffffff, 0xe5eff0][
-      Math.abs(Math.round(c.x * 3 + c.z * 7)) % 3
-    ];
-    const foliage = (color: number) => material(
-      new THREE.Color(color).multiply(new THREE.Color(tint)).getHex(), 0, 1,
-    );
-    put(g, cylinder(0.2, c.h * 0.72, 0x705039, 9), 0, c.h * 0.36, 0);
-    // Exposed roots and ridges give the lower trunk a readable bark silhouette.
-    for (let i = 0; detail === "full" && i < 5; i++) {
-      const angle = twist + i * Math.PI * 2 / 5;
-      const root = box(0.13, 0.13, c.w * 0.26, i % 2 ? 0x563b2c : 0x896044, 0);
-      root.rotation.y = angle;
-      put(g, root, Math.sin(angle) * c.w * 0.14, 0.1, Math.cos(angle) * c.d * 0.14);
-      const ridge = cylinder(0.035, c.h * 0.24, 0x9b704b, 4);
-      put(g, ridge, Math.sin(angle) * 0.19, c.h * 0.15, Math.cos(angle) * 0.19);
-    }
-    if (variety === 2) {
-      // Five overlapping twenty-triangle crowns, within the original footprint.
-      const crowns = [
-        [-0.17, 0.57, 0.08, 0.32, 0x42763d],
-        [0.16, 0.62, 0.08, 0.32, 0x658b3b],
-        [0, 0.65, -0.17, 0.32, 0x397446],
-        [0, 0.79, 0, 0.34, 0x729b48],
-        [0.03, 0.47, 0, 0.31, 0x396c38],
-      ];
-      for (const [x, y, z, radius, color] of crowns) {
-        const crown = new THREE.Mesh(broadleafGeometry, foliage(color));
-        crown.scale.set(c.w * radius, c.h * 0.23, c.d * radius);
-        crown.rotation.y = twist;
-        crown.castShadow = crown.receiveShadow = true;
-        put(g, crown, c.w * x, c.h * y, c.d * z);
-      }
-    } else {
-      const layers = variety === 1 ? [
-        [0.35, 0.43, 0.48, 0x245c4d],
-        [0.55, 0.34, 0.43, 0x327c65],
-        [0.73, 0.24, 0.36, 0x468e72],
-        [0.90, 0.13, 0.22, 0x68a58a],
-      ] : [
-        [0.32, 0.50, 0.38, 0x176646],
-        [0.47, 0.44, 0.38, 0x1a8053],
-        [0.63, 0.35, 0.34, c.color],
-        [0.77, 0.26, 0.29, 0x289a5b],
-        [0.9, 0.15, 0.20, 0x39ac69],
-      ];
-      for (const [i, [y, radius, height, color]] of layers.entries()) {
-        const leaves = new THREE.Mesh(pineGeometry, foliage(color));
-        leaves.scale.set(c.w * radius, c.h * height, c.d * radius);
-        leaves.rotation.y = twist + i * 0.39;
-        leaves.castShadow = leaves.receiveShadow = true;
-        put(g, leaves, 0, c.h * y, 0);
-        if (detail === "full" && variety === 0 && i < 3) for (let branch = 0; branch < 6; branch++) {
-          const angle = twist + i * 0.61 + branch * Math.PI / 3;
-          const tuft = new THREE.Mesh(pineGeometry, foliage(i % 2 ? 0x278f59 : 0x21774d));
-          tuft.scale.set(c.w * radius * 0.30, c.h * 0.18, c.d * radius * 0.30);
-          tuft.rotation.set(Math.cos(angle) * 0.4, angle, -Math.sin(angle) * 0.4);
-          tuft.castShadow = tuft.receiveShadow = true;
-          put(g, tuft, Math.sin(angle) * c.w * radius * 0.63,
-            c.h * (y - height * 0.20), Math.cos(angle) * c.d * radius * 0.63);
-        }
-      }
-    }
-    // Bark and needles share one matte response, so the entire tree can batch.
-    for (const child of g.children) {
-      const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-      mesh.material = material(mesh.material.color.getHex(), 0, 1);
-    }
   } else if (c.kind === "timber") {
     g.userData.damageStage = damageStage;
     const along = c.w > c.d, length = Math.max(c.w, c.d);

@@ -70,7 +70,7 @@ function segmentWalls(layout: CoverDef[]): CoverDef[] {
     const along = c.w > c.d, length = Math.max(c.w, c.d);
     const count = Math.max(1, Math.round(length / 3.7)), span = length / count;
     return Array.from({ length: count }, (_, i) => {
-      const offset = -length / 2 + span * (i + 0.5);
+      const offset = (i - (count - 1) / 2) * span;
       return { ...c, x: c.x + (along ? offset : 0), z: c.z + (along ? 0 : offset),
         w: along ? span : c.w, d: along ? c.d : span };
     });

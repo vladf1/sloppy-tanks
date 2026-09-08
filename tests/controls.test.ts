@@ -71,7 +71,11 @@ test("wheel queues one ammo change per 120 ms; Shift-wheel only zooms", () => {
   assert.equal(f.controls.command(0).ammoSelection, undefined);
   f.emit(f.canvas, "wheel", { deltaY: 100, shiftKey: true });
   f.emit(f.canvas, "wheel", { deltaY: -100, shiftKey: true });
-  assert.deepEqual(f.zooms, [2, -2]);
+  f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 100, shiftKey: true });
+  f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: -100, shiftKey: true });
+  f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 0, shiftKey: true });
+  f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 100, shiftKey: false });
+  assert.deepEqual(f.zooms, [2, -2, 2, -2]);
   assert.equal(f.controls.command(0).ammoSelection, undefined);
   f.dispose();
 });

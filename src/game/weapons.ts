@@ -253,7 +253,10 @@ export function stepProjectiles(s: Simulation, dt: number, sweepTankMotion = fal
           remove = false;
         }
       }
-      s.events.push({ type: "impact", x: p.x, z: p.z, size: 0.6, color: wColor(p.weapon) });
+      const chipped = cover?.alive && ["tree", "timber", "fence"].includes(cover.kind);
+      s.events.push({ type: "impact", x: p.x, z: p.z, size: 0.6,
+        color: chipped ? cover.color : wColor(p.weapon),
+        coverKind: chipped ? cover.kind : undefined, height: chipped ? cover.h : undefined });
     }
     if (remove) s.shots.splice(s.shots.indexOf(p), 1);
   }

@@ -9,6 +9,7 @@ import { isSpecialAmmo, AMMO_RESPAWN_SECONDS } from "./ammunition";
 import * as THREE from "three";
 import { batch, freezeStatic } from "./batching";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
+import { setTreeDestroyed } from "./tree-models";
 import { sidingBox } from "./house-surfaces";
 import {
   box,
@@ -18,7 +19,6 @@ import {
   tankModel,
   wreckModel,
   coverModel,
-  stumpModel,
   teamTexture,
   type TankModel,
 } from "./models";
@@ -41,6 +41,10 @@ interface Particle {
 }
 // Life and size pairs are [minimum, random span]. Choose once per event.
 const PARTICLE_STYLES = {
+  treeHit: { count: 18, life: [0.45, 0.35], size: [0.10, 0.12],
+    speed: 3.8, scatter: 0.55, height: 0.7, lift: 1.8 },
+  woodHit: { count: 12, life: [0.45, 0.4], size: [0.07, 0.10],
+    speed: 4, scatter: 0.35, height: 0.8, lift: 1.5 },
   tree: { count: 96, life: [0.85, 0.9], size: [0.18, 0.25],
     speed: 7, scatter: 1.5, height: 0.6, lift: 1 },
   pickup: { count: 24, life: [0.5, 0.3], size: [0.12, 0.1],
@@ -633,9 +637,11 @@ export class Presentation {
     }
     const explosion =
       e.type === "explosion" || e.type === "death" || e.type === "destroy";
-    const timber = e.type === "destroy" && e.coverKind === "timber";
-    const tree = e.type === "destroy" && e.coverKind === "tree";
-    const style = PARTICLE_STYLES[tree ? "tree" : pickup ? "pickup" : explosion ? "explosion" : hurt ? "hurt" : "impact"];
+    const coverEffect = e.type === "destroy" || e.type === "impact";
+    const timber = coverEffect && (e.coverKind === "timber" || e.coverKind === "fence");
+    const tree = coverEffect && e.coverKind === "tree";
+    const chipHit = e.type === "impact" && (tree || timber);
+    const style = PARTICLE_STYLES[chipHit ? tree ? "treeHit" : "woodHit" : tree ? "tree" : pickup ? "pickup" : explosion ? "explosion" : hurt ? "hurt" : "impact"];
     const count = e.type === "shot" ? 5 : style.count;
     const baseSpeed = style.speed * (explosion && !tree ? e.size ?? 3 : 1);
     const colors = timber ? [0x805336, 0xb47a49, 0xc99a65, 0x947958]
@@ -646,12 +652,14 @@ export class Presentation {
       : hurt ? [0xffffff, 0xffcb58, 0xffcb58] : [e.color ?? 0xffdf91];
     for (let i = 0; i < count && this.particles.length < 1200; i++) {
       const life = (style.life[0] + Math.random() * style.life[1]) *
-        (tree || timber || (e.type === "destroy" && e.coverKind === "fence") ? 2 : 1);
-      const speed = baseSpeed + (tree ? Math.random() * 4 : 0);
+        (tree ? 3 : timber || (e.type === "destroy" && e.coverKind === "fence") ? 2 : 1);
+      const speed = baseSpeed + (tree && !chipHit ? Math.random() * 4 : 0);
       this.particles.push({
         shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
         x: e.x + (Math.random() - 0.5) * style.scatter,
-        y: style.height + (tree ? Math.random() * (e.height ?? 5) * 0.85 : 0),
+        y: chipHit && tree
+          ? i % 4 === 0 ? 0.7 + Math.random() * 0.4 : (e.height ?? 5) * (0.45 + Math.random() * 0.35)
+          : style.height + (tree ? Math.random() * (e.height ?? 5) * 0.85 : 0),
         z: e.z + (Math.random() - 0.5) * style.scatter,
         vx: (Math.random() - 0.5) * speed,
         vy: style.lift + Math.random() * (tree ? 5 : speed),
@@ -800,17 +808,18 @@ export class Presentation {
       let g = this.coverMeshes.get(c.id);
       const stump = c.kind === "tree" && !c.alive;
       const damageStage = c.kind === "timber" ? Math.min(2, Math.floor((c.maxHp - c.hp) * 3 / c.maxHp)) : 0;
-      if (!g || !!g.userData.stump !== stump || (c.alive && (g.userData.damageStage ?? 0) !== damageStage)) {
+      if (!g || (c.alive && (g.userData.damageStage ?? 0) !== damageStage)) {
         if (g) {
           disposeOwned(g);
           this.worldGroup.remove(g);
         }
-        g = stump ? stumpModel(c) : coverModel(c, "full", damageStage);
+        g = coverModel(c, "full", damageStage);
         batch(g);
         this.coverMeshes.set(c.id, g);
         this.worldGroup.add(g);
         freezeStatic(g);
       }
+      if (c.kind === "tree") setTreeDestroyed(g, stump);
       g.visible = c.alive || stump;
     }
     for (const pickup of s.pickups) {

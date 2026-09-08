@@ -60,10 +60,11 @@ export class Controls {
       "wheel",
       (e) => {
         e.preventDefault();
-        if (!e.deltaY) return;
         if (e.shiftKey) {
-          zoom(Math.sign(e.deltaY) * 2);
-        } else if (this.active() && performance.now() - this.lastAmmoScroll >= AMMO_SCROLL_INTERVAL_MS) {
+          // Shift-wheel can arrive as horizontal scrolling on desktop browsers.
+          const delta = e.deltaY || e.deltaX;
+          if (delta) zoom(Math.sign(delta) * 2);
+        } else if (e.deltaY && this.active() && performance.now() - this.lastAmmoScroll >= AMMO_SCROLL_INTERVAL_MS) {
           this.ammoSelection = e.deltaY > 0 ? 1 : -1;
           this.lastAmmoScroll = performance.now();
         }

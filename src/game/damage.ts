@@ -95,18 +95,17 @@ export function damageCover(
     s.fragment(
       c.x + s.rng.range(-c.w / 2, c.w / 2),
       c.z + s.rng.range(-c.d / 2, c.d / 2),
-      c.kind === "tree" ? (i % 3 === 0 ? 0x825333 : c.color) : c.color,
+      c.kind === "tree" ? 0x825333 : c.color,
       s.rng.range(0.3, 0.7),
-      c.kind === "tower" ? "wood" : c.kind === "shed" ||
+      c.kind === "tower" || c.kind === "tree" ? "wood" : c.kind === "shed" ||
         c.kind === "fence" ||
         c.kind === "timber" ||
-        c.kind === "house" ||
-        c.kind === "tree"
+        c.kind === "house"
         ? "track"
         : c.kind === "drum"
           ? "armor"
           : "shard",
-      c.kind === "tree" || c.kind === "timber" || c.kind === "fence" ? 2 : 1,
+      c.kind === "tree" ? 3 : c.kind === "timber" || c.kind === "fence" ? 2 : 1,
     );
   if (c.kind === "tower") {
     // One authored support object; its destruction leaves two flank foundations and an open middle.
