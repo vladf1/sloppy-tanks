@@ -148,7 +148,7 @@ test("rapid fire modifies only selected ammunition and expires independently", (
   pickup(s, "rapid");
   pickup(s, "ricochet");
   assert.equal(t.cooldown, cooldown);
-  assert.equal(t.rapid, 12);
+  assert.equal(t.rapid, 20);
   assert.equal(t.ammo.ricochet, 48);
   t.rapid = STEP;
   t.cooldown = 0;

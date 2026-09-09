@@ -215,21 +215,21 @@ test("multiple missed defenses do not exhaust the contact budget or freeze proje
   s.dispose();
 });
 
-test("laser refreshes to six seconds, pauses, expires, and clears on death/respawn/reset", () => {
+test("laser refreshes to twenty seconds, pauses, expires, and clears on death/respawn/reset", () => {
   const { s, t } = fixture();
   const p = pickup(s);
   t.laser = 2;
   t.cooldown = 0.4;
   assert.equal(collectPickup(s, t, p), true);
-  assert.equal(t.laser, 6);
+  assert.equal(t.laser, 20);
   assert.equal(p.cooldown, 45);
   assert.equal(t.cooldown, 0.4);
   assert.equal(collectPickup(s, t, p), false);
   s.match.phase = "paused";
   for (let i = 0; i < 60; i++) s.step();
-  assert.equal(t.laser, 6);
+  assert.equal(t.laser, 20);
   s.start();
-  for (let i = 0; i < 361; i++) s.step(idleCommand());
+  for (let i = 0; i < 1201; i++) s.step(idleCommand());
   assert.equal(t.laser, 0);
   collectPickup(s, t, pickup(s));
   s.damageTank(t, 999, t.id, t.team);

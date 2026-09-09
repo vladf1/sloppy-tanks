@@ -133,14 +133,14 @@ test("ammunition persists while power-ups expire and repair fully heals", () => 
   };
   collectPickup(s, a, p);
   assert.equal(a.ammo.rocket, 0);
-  assert.equal(a.rapid, 12);
+  assert.equal(a.rapid, 20);
   collectPickup(s, a, { ...p, kind: "rocket", available: true });
   assert.equal(a.ammo.rocket, 12);
   s.step();
   assert.equal(a.ammo.rocket, 12);
   a.shield = 7;
   collectPickup(s, a, { ...p, kind: "shield", available: true });
-  assert.equal(a.shield, 15);
+  assert.equal(a.shield, 20);
   assert.equal(a.shieldPoints, 120);
   a.hp = 1;
   collectPickup(s, a, { ...p, kind: "repair", available: true });

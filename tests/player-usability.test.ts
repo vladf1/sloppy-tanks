@@ -71,7 +71,7 @@ test("difficulty applies to Solo damage before shield absorption", () => {
     player.shieldPoints = 3;
     const hp = player.hp;
     s.damageTank(player, 40, enemy.id, enemy.team);
-    assert.equal(player.hp, hp - (40 * 0.7 * SOLO.enemyDamageMultiplier - 3));
+    assert.equal(player.hp, hp - (40 * 0.9 * SOLO.enemyDamageMultiplier - 3));
     assert.equal(player.shieldPoints, 0);
   } finally {
     s.world.free();

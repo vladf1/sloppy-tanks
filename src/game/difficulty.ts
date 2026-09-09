@@ -4,11 +4,11 @@ import type { Tank } from "./types";
 export const DIFFICULTIES = {
   easy: {
     label: "Easy",
-    description: "Slower, less accurate enemies · 30% less enemy damage",
-    reaction: 1.7,
-    aimError: 1.65,
-    reload: 1.35,
-    damage: 0.7,
+    description: "Slightly more forgiving enemies · 10% less enemy damage",
+    reaction: 1.2,
+    aimError: 1.2,
+    reload: 1.1,
+    damage: 0.9,
   },
   normal: {
     label: "Normal",

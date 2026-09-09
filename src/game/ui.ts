@@ -1,4 +1,4 @@
-import { AMMO_HELP, AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
+import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
 import { DIFFICULTIES, parseDifficulty } from "./difficulty";
 import { healthBarState } from "./health-bar";
@@ -56,14 +56,6 @@ export class UI {
         this.lastPhase = "";
       }
     });
-  }
-  updateAmmoHelp(): void {
-    const weapon = equippedWeapon(this.simulation.human);
-    const text = `${WEAPONS[weapon].label}: ${AMMO_HELP[weapon]}${hasAmmo(this.simulation.human, weapon) ? "" : " · Empty — collect an ammo crate"}`;
-    const help = this.hud.querySelector("#ammo-help")!;
-    if (help.textContent !== text) {
-      help.textContent = text;
-    }
   }
   bindCards(): void {
     this.overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((b) =>
@@ -159,8 +151,14 @@ export class UI {
         const killer = this.simulation.tanks.find((tank) => tank.id === event.owner);
         const cause = event.damageSource
           ? DAMAGE_LABELS[event.damageSource.cause]
-          : "Combat damage";
-        this.deathCause = `${cause} · ${event.owner === event.id ? "Self-inflicted" : killer ? `Fired or triggered by ${killer.name}` : "Arena hazard"}`;
+          : "Unknown weapon";
+        const weapon = `${/^[aeiou]/i.test(cause) ? "an" : "a"} ${cause.toLowerCase()}`;
+        this.deathCause =
+          event.owner === event.id
+            ? `You destroyed yourself with ${weapon}.`
+            : killer
+              ? `${killer.name} killed you with ${weapon}.`
+              : `You were destroyed by ${weapon}.`;
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
       if (event.type === "respawn") {
@@ -251,7 +249,6 @@ export class UI {
         slot.setAttribute("aria-label", label);
       }
     }
-    this.updateAmmoHelp();
     set(
       "mine",
       tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",

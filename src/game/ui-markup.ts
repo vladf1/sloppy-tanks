@@ -20,10 +20,8 @@ export function hudMarkup(): string {
         <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
         <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_ORDER.map(
           (weapon, index) =>
-            `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-describedby="ammo-help" title="${index + 1}: ${WEAPONS[weapon].name} — ${AMMO_HELP[weapon]}" style="--ammo-color:#${WEAPONS[weapon].color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd><small>${WEAPONS[weapon].label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
-        ).join(
-          "",
-        )}</div><div id="ammo-help">${AMMO_HELP.standard}</div><span id="mine">MINE READY · RMB</span></div></div>
+            `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-description="${AMMO_HELP[weapon]}" title="${index + 1}: ${WEAPONS[weapon].name} — ${AMMO_HELP[weapon]}" style="--ammo-color:#${WEAPONS[weapon].color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd><small>${WEAPONS[weapon].label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
+        ).join("")}</div><span id="mine">MINE READY · RMB</span></div></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div><em id="effects"></em></div>
         </div></div>
         <div id="overlay"></div>`;

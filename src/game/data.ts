@@ -149,7 +149,7 @@ export const WEAPONS: Record<
 };
 export const LASER_DEFENSE = {
   chance: 0.5,
-  duration: 6,
+  duration: 20,
   range: 7,
   threatRadius: 3,
   initialDelay: 25,
@@ -159,13 +159,13 @@ export const PICKUPS: Record<
   PickupKind,
   { name: string; icon: string; color: number; duration: number }
 > = {
-  rapid: { name: "RAPID FIRE", icon: "»", color: 0xffcf54, duration: 12 },
+  rapid: { name: "RAPID FIRE", icon: "»", color: 0xffcf54, duration: 20 },
   spread: { name: "SPREAD AMMO", icon: "⋔", color: WEAPONS.spread.color, duration: 0 },
   rocket: { name: "ROCKET AMMO", icon: "↑", color: WEAPONS.rocket.color, duration: 0 },
   ricochet: { name: "RICOCHET AMMO", icon: "↗", color: WEAPONS.ricochet.color, duration: 0 },
   piercing: { name: "PIERCING AMMO", icon: "↟", color: WEAPONS.piercing.color, duration: 0 },
-  shield: { name: "SHIELD", icon: "◇", color: 0x72dbef, duration: 15 },
-  speed: { name: "SPEED BOOST", icon: "ϟ", color: 0xbbe574, duration: 12 },
+  shield: { name: "SHIELD", icon: "◇", color: 0x72dbef, duration: 20 },
+  speed: { name: "SPEED BOOST", icon: "ϟ", color: 0xbbe574, duration: 20 },
   repair: { name: "REPAIR", icon: "+", color: 0x88ddb0, duration: 0 },
   laser: { name: "LASER DEFENSE", icon: "✧", color: 0x7bfff2, duration: LASER_DEFENSE.duration },
 };

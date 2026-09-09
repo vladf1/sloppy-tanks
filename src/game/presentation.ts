@@ -3,6 +3,7 @@ import { AMMO_RESPAWN_SECONDS, isSpecialAmmo } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
 import { ARENA, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
+import { Flags } from "./flags";
 import { sidingBox } from "./house-surfaces";
 import { LaserVisuals } from "./laser-visuals";
 import {
@@ -63,6 +64,7 @@ export class Presentation {
   bars = new Map<number, TankBar>();
   projectiles = new ProjectileVisuals();
   laserVisuals = new LaserVisuals();
+  private flags = new Flags();
   private particleEffects = new ParticleEffects();
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
   playerRing = new THREE.Group();
@@ -104,6 +106,7 @@ export class Presentation {
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
     createTerrain(this.scene, this.renderer);
+    this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const fragmentGeometry = {
       wood: woodFragment.geometry,
@@ -631,6 +634,7 @@ export class Presentation {
   /** Synchronize entity visuals before drawing; alpha blends the previous and current physics poses. */
   render(simulation: Simulation, alpha: number, dt: number, overview = false): void {
     this.time += dt;
+    this.flags.update(this.time);
     this.updatePickupEffects(simulation, alpha, dt);
     this.tracks.update(simulation, alpha);
     this.updateCamera(simulation, alpha, overview);

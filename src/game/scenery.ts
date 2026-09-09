@@ -93,7 +93,6 @@ export function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRende
       }
       // Team pennants sit behind the spawn line, outside the playable boundary.
       put(details, cylinder(0.055, 4.8, 0x68523b, 8), side * 62, 2.4, position.z);
-      put(details, box(0.04, 0.9, 1.4, color, 0.01), side * 62, 4.15, position.z + 0.6);
     }
     for (let z = -57; z <= 57; z += 2) {
       put(details, box(0.16, 1.7, 0.16, color, 0.015), side * ARENA, 2.7, z);

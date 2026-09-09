@@ -299,7 +299,7 @@
           check(
             document
               .querySelector("#death-cause")
-              .textContent.includes("Mine explosion · Self-inflicted"),
+              .textContent.includes("You destroyed yourself with a mine explosion."),
             "Cause persists in respawn menu",
           );
           advance(190);
@@ -336,7 +336,9 @@
           hurt(-1, 0, 999, "rocket");
           check(
             s.match.phase === "results" &&
-              document.querySelector("#death-cause").textContent.includes("Rocket blast"),
+              document
+                .querySelector("#death-cause")
+                .textContent.includes("killed you with a rocket blast."),
             "Solo results retain cause",
           );
           click("#restart");
