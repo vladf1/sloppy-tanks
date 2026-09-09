@@ -12,6 +12,7 @@ npm run dev
 Open the Vite URL printed in the terminal (normally http://127.0.0.1:5173/sloppy-tanks/). The performance notebook is at `/sloppy-tanks/benchmark.html`.
 
 ```sh
+npm run check      # lint, formatting, TypeScript 7 build and regression tests
 npm test           # focused simulation regression tests
 npm run validate   # ten complete seeded matches and reset checks
 npm run build      # strict TypeScript and production bundle
@@ -58,13 +59,13 @@ Team rounds last up to five minutes or end at 100 team kills. A timed tie enters
 
 Drive through ammunition crates to refill reserves without changing the selected type. Standard is unlimited; special ammo comes only from map crates, persists until fired, and is cleared on death, respawn and round reset. Every tank starts with standard selected. The HUD shows all five types, counts, `∞` for standard, dimmed empty slots and a highlighted selection.
 
-| Ammo | Damage / behavior | Per crate | Carry limit |
-| --- | --- | ---: | ---: |
-| Standard | 40 damage, one bounce | — | Unlimited |
-| Spread | Three 27-damage shells; one unit per volley | 18 volleys | 36 |
-| Rocket | 65-damage breaching rocket with existing blast and cadence | 12 | 24 |
-| Ricochet | 80 damage, three bounces | 24 | 48 |
-| Piercing | Standard damage, speed and cadence; no bounce; intercepts one opposing shell and continues | 24 | 48 |
+| Ammo     | Damage / behavior                                                                          |  Per crate | Carry limit |
+| -------- | ------------------------------------------------------------------------------------------ | ---------: | ----------: |
+| Standard | 40 damage, one bounce                                                                      |          — |   Unlimited |
+| Spread   | Three 27-damage shells; one unit per volley                                                | 18 volleys |          36 |
+| Rocket   | 65-damage breaching rocket with existing blast and cadence                                 |         12 |          24 |
+| Ricochet | 80 damage, three bounces                                                                   |         24 |          48 |
+| Piercing | Standard damage, speed and cadence; no bounce; intercepts one opposing shell and continues |         24 |          48 |
 
 Eight ammo crates, two per special type, occupy four route pairs mirrored by 180 degrees in Pine Village and randomized maps. They refill after 13 seconds. Tanks at that type's carry limit leave the crate available; partial refills report the actual amount received, such as `+3 ROCKETS`. Ammo types never combine. Selection is applied before firing in each simulation tick. Switching and collection preserve an active reload; only emitted shots consume ammo. The final special shot automatically selects standard, and held fire resumes after the fired weapon's normal cooldown. Selection is ignored while dead or outside play; pause, blur and round transitions clear pending input.
 
@@ -80,12 +81,12 @@ The current pacing keeps standard shell speed at 21.696 world units/second and b
 
 Every tank, including friendly and enemy bots, starts as a **Rookie**. Deal enemy hull damage to earn **1 XP per actual HP removed**, plus **50 XP for a kill**. Assisting tanks keep the XP from their own damage. Overkill, shield absorption, spawn protection, friendly/self damage, scenery destruction and laser interceptions give no XP. Ranks belong to the current tank's life: respawning starts fresh, while surviving keeps all progress. Delayed mines, shells and explosive chains retain their firing life and cannot promote a replacement tank.
 
-| Rank | Total XP | Damage | Fire rate | Max hull | Self-repair |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Rookie | 0 | Base | Base | Base | None |
-| Veteran | 200 | +10% | +10% | +10% | None |
-| Elite | 500 | +20% | +15% | +15% | 1% of max hull per second |
-| Heroic | 1,000 | +30% | +20% | +20% | 2% of max hull per second |
+| Rank    | Total XP | Damage | Fire rate | Max hull | Self-repair               |
+| ------- | -------: | -----: | --------: | -------: | ------------------------- |
+| Rookie  |        0 |   Base |      Base |     Base | None                      |
+| Veteran |      200 |   +10% |      +10% |     +10% | None                      |
+| Elite   |      500 |   +20% |      +15% |     +15% | 1% of max hull per second |
+| Heroic  |    1,000 |   +30% |      +20% |     +20% | 2% of max hull per second |
 
 Bonuses are totals relative to Rookie. Promotion preserves the tank's remaining hull percentage. Damage bonuses apply to fired ammunition and laid mines, using rank at the time of firing/placement; secondary scenery blasts and shell-interception blasts retain their usual damage. Fire-rate bonuses affect both cannon reload and the bots' extra firing delays, and combine with rapid fire. Self-repair begins after five seconds without firing, laying a mine or taking damage (including shield hits). It pauses with the game and cannot exceed the upgraded max hull; repair pickups also respect that maximum. Solo enemies retain their difficulty scaling.
 
@@ -99,24 +100,27 @@ The 48 × 48 navigation grid has conservative clearance for vehicles and cardina
 
 ## Code map
 
-| File                                          | Responsibility                                                  |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| `src/game/types.ts`                           | Typed commands, entities and simulation events                  |
-| `src/game/data.ts`                            | Vehicle, weapon, pickup definitions and seeded RNG              |
-| `src/game/arena.ts`                           | Authored cover, pickups, spawn positions                        |
-| `src/game/simulation.ts`                      | Fixed-step world, movement, respawns, reset, snapshot boundary  |
-| `src/game/ammunition.ts`                    | Shared availability, inventory, selection, refill and depletion rules |
-| `src/game/weapons.ts`                         | Swept shells, ricochets, mines, pickup effects                  |
-| `src/game/damage.ts`                          | Damage ownership, kill credit, chain reactions, destruction     |
-| `src/game/bot-movement.ts`                  | Hull-aware steering, arrival braking and committed recovery |
-| `src/game/navigation.ts` / `ai.ts`            | Clearance grid, A*, bot perception and commands                 |
-| `src/game/models.ts` / `presentation.ts`      | Original geometry, batching, interpolated scene, effects        |
-| `src/game/controls.ts` / `audio.ts` / `ui.ts` | Input, spatial sound, minimal menus and HUD                     |
-| `src/main.ts`                                 | Bounded fixed-step loop, system wiring, development diagnostics |
+Start with `src/main.ts`, which wires input, fixed simulation steps, rendering, audio and the DOM. See [CONTRIBUTING.md](CONTRIBUTING.md) for the coding conventions and validation commands.
 
-Physics runs at 60 Hz with at most five catch-up steps. Dynamic live tanks lock roll and pitch, using acceleration-limited impulses that preserve external knockback. Death unlocks rotation and retains momentum. Projectiles use swept Rapier queries. Tank hits use a hull-sized combat box with 0.18 m shell allowance and account for tank translation during the physics tick; model-derived tank-to-tank contact boxes use the unpadded hull footprint, while compact colliders remain for cover and ground. Predictive contacts account for boosted closing speeds to prevent initial impact overlap. Cover still uses its physical collider. Combat dimensions are calculated directly from each rendered hull and its tracks, including model scaling, and cached once per chassis. Regression tests check hits and misses immediately around all four model-derived boundaries. Human and bot controllers produce the same `VehicleCommand`. Stable IDs, a seed and a read-only snapshot provide a future command/snapshot boundary; networking and replay synchronization are not implemented.
+| Responsibility                                   | Files under `src/`                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Application loop and performance recording       | `main.ts`, `diagnostics.ts`                                                                                     |
+| Simulation state, tick order and match lifecycle | `game/simulation.ts`, `game/match.ts`                                                                           |
+| Tank spawning, respawning and tracked movement   | `game/tank-lifecycle.ts`, `game/tank-driving.ts`                                                                |
+| Weapon firing and ordered projectile contacts    | `game/weapons.ts`, `game/projectiles.ts`, `game/hitboxes.ts`, `game/laser-defense.ts`                           |
+| Mines, pickups, damage and experience            | `game/mines.ts`, `game/pickups.ts`, `game/damage.ts`, `game/ammunition.ts`, `game/veterancy.ts`                 |
+| Bot strategy, personalities, steering and paths  | `game/ai.ts`, `game/bot-strategy.ts`, `game/bot-personalities.ts`, `game/bot-movement.ts`, `game/navigation.ts` |
+| Authored balance and shared rules                | `game/data.ts`, `game/combat-rules.ts`, `game/simulation-rules.ts`, `game/view-settings.ts`                     |
+| Arena layout and deterministic math              | `game/arena.ts`, `game/math.ts`                                                                                 |
+| Scene synchronization and static environment     | `game/presentation.ts`, `game/scenery.ts`                                                                       |
+| Geometry and shared mesh factories               | `game/tank-model.ts`, `game/cover-model.ts`, `game/wreck-model.ts`, `game/model-primitives.ts`                  |
+| Physical debris and cosmetic effects             | `game/fragments.ts`, `game/wrecks.ts`, `game/particle-effects.ts`, `game/tracks.ts`, `game/*-visuals.ts`        |
+| World-space HUD and GPU resource ownership       | `game/tank-bars.ts`, `game/reticle.ts`, `game/render-resources.ts`                                              |
+| DOM controller, markup, input and audio          | `game/ui.ts`, `game/ui-markup.ts`, `game/controls.ts`, `game/audio.ts`                                          |
+| Texture loading and UV mapping                   | `game/*-surfaces.ts`, `game/team-textures.ts`                                                                   |
+| Entity and command contracts                     | `game/types.ts`                                                                                                 |
 
-Static authored mesh parts are batched by material. Projectiles, physical debris visuals, and short-lived visual particles are instanced. Physical fragments are capped at 80; visual particles at 1,200. Temporary merged geometries and per-entity resources are disposed when removed or reset. One directional sun casts shadows; the brief explosion light does not.
+`models.ts` and the combat re-exports in `weapons.ts` preserve the entry points used by existing preview pages and regression harnesses. New implementation code should import the module that owns the behavior.
 
 ## Development diagnostics
 
@@ -136,9 +140,7 @@ The yard is now 120 × 120 units (formerly 72 × 72): 2.78 times the area, with 
 
 Current validation is recorded at the top of VALIDATION.md. Older timing, full-input rounds and longevity results describe the preceding build.
 
-
 Latest tuning: the camera tracks the player's interpolated position at screen center, including at arena edges. Tank proportions are longer and lower, with faceted armor, rear turret bustles, hatches, exhausts and visible wheel hubs. Shells were reduced and then enlarged 50% from that smaller size following play feedback. Bots use less precise leading, wider aim error, slower turret tracking and an extra pause between shots; human weapon cadence is unchanged.
-
 
 ## Pine Village
 
@@ -147,7 +149,6 @@ The latest reference pass replaces the service yard with a 120 × 120 village: 1
 Tank silhouettes now follow the supplied examples: tall cast or angular turrets, thick gray guns, broad dark tracks and prominent gray armor panels. Projectiles use distinct compact models with blue/red team markings: a pointed standard shell, round spread pellets, a rocket with a nose cone and four swept fins, a spinning hexagonal ricochet puck, and a slim cyan piercing dart. Rockets have a short flickering exhaust. The rocket body is approximately 0.94 world units long, matching the previous stretched-sphere rocket; the standard shell is 0.70 units long. All five bodies are at most 1.0 unit long and 0.52 units wide, with shape and markings providing the distinction. `src/game/projectile-visuals.ts` builds and batches the geometry once, retaining the 600-projectile display cap; it does not change projectile physics, damage, speed or hitboxes.
 
 The outlined aiming reticle stays visible over terrain and cover. At the earlier redesign revision, shell speeds were reduced by 20%; the current standard/ricochet/piercing speed is 21.696, spread 19.888 and rocket 15.368 units/second after later shared tuning. Rapid fire changes cadence rather than shell speed; lifetime increases to 3.5 seconds to preserve travel range. The player-centered camera and reduced bot accuracy/cadence are retained.
-
 
 ## Movement, breakup and quick selection
 
@@ -161,7 +162,6 @@ Play at https://fridman.me/sloppy-tanks/. Every push to `main` runs the tests an
 
 The Vite base path is `/sloppy-tanks/`. GitHub Pages inherits `fridman.me` from the account site.
 
-
 ## V-Tanks movement, upgrades and tracks
 
 Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-tanks` revision `570bf8dd46a48c0761a4faccafa40197a821267a`. Its balanced tank travels at 184 source units/second and its standard shell at 535. Scaling that ratio to our 19.2 m/s shell and adding the requested 20% base-speed increase gives 7.924 m/s; light and heavy use its 1.24 and 0.76 class multipliers (9.826 and 6.022 m/s). A further shared 13% speed increase brings light/balanced/heavy to 11.103 / 8.954 / 6.805 m/s and standard/spread/rocket projectiles to 21.696 / 19.888 / 15.368 m/s. Acceleration/braking is 100 m/s² and hull rotation is capped at 3.5 radians/second (about 0.45 seconds for a 90° turn). Movement follows the hull, with reduced drive during sharp turns and automatic reverse at 80% of forward speed when the requested direction is behind the tank. Releasing movement brakes promptly; mouse aiming stays independent. Players and bots share this steering model. This adapts the dodge timing and responsive handling to our 3D arena; screen-space speed still depends on zoom.
@@ -169,7 +169,6 @@ Reference: [V-Tanks](https://fridman.me/v-tanks/), verified against `vladf1/v-ta
 Opposing shells intercept continuously, including between simulation ticks and after ricochets. Allied shells pass through each other. The earliest wall, tank, expiry or shell contact wins; thin cover blocks interception. Ordinary interceptions remove both shells with a small blast that deals one standard 40-damage hit to nearby tanks on either team, credited to the opposing shell's shooter. Ordinary blast radius is 3 m; intercepted rockets use 5.3 m. This blast does not damage cover or trigger mines. A fresh piercing shell instead destroys the opposing shell and continues with its one interception allowance spent, producing a small impact without blast damage, including against rockets. Two fresh piercing shells both continue with their allowances spent; that pair is resolved only once, even if still touching next tick. Later contacts use normal interception rules. Piercing stops on tanks and cover.
 
 All moving tanks leave paired tread impressions following their hull heading. Marks are distance-spaced, fade progressively from 4 to 18 seconds, and use one instanced draw call capped at 8,192 treads. A full buffer skips new impressions until the oldest pair has completely faded; visible marks are never overwritten abruptly. Tracks freeze during pause, clear with a new round, and are cosmetic. Camera shake remains absent.
-
 
 ## Bot personalities
 
@@ -199,13 +198,11 @@ Pause to adjust tank and projectile base speeds independently from 50–200%; 10
 
 Pickup crates carry high-contrast pictograms on every face and emit sparks, a ring and a brief tank glow when collected. Pines use layered boughs, bark and roots, with green foliage and wood splinters on destruction. The 84-name bot pool is shuffled at round start and names persist through respawn.
 
-
 ## Ammunition validation
 
 `npm test` covers inventories, consumption/caps, cooldown protection, selection and input clearing, crate contention/refill, each ammunition type, piercing contact ordering/ownership/cover, role preferences and pickup routes across 100 seeded random maps. `npm run validate` runs ten seeded full matches and checks reset body counts. `npm run build` checks TypeScript and produces the release assets.
 
 With Vite running, use `SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scripts/ammunition-check.mjs` (substitute the port Vite reports). It drives real wheel/Shift-wheel and pointer input, captures the production crate/HUD at desktop and narrow sizes, and measures three seeds each of standard vs plentiful spread/piercing combat with 24 tanks and rapid fire. Results are saved in `artifacts/ammunition-results.json`; screenshots stay under ignored `artifacts/performance/ammunition/`. Add `--visual-only` to repeat input and screenshot checks without rerunning performance or replacing its results.
-
 
 ## Bot movement validation
 

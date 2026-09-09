@@ -14,20 +14,25 @@ const shapes = Object.fromEntries(
     const bounds = new Box3().setFromObject(model.userData.hull);
     const size = bounds.getSize(new Vector3());
     const center = bounds.getCenter(new Vector3());
-    return [kind, {
-      shape: new RAPIER.Cuboid(
-        size.x / 2 + SHELL_HIT_RADIUS,
-        0.9, // Combat is planar: shells travel at a fixed height.
-        size.z / 2 + SHELL_HIT_RADIUS,
-      ),
-      center,
-      size,
-      muzzle: model.userData.muzzle.getWorldPosition(new Vector3()) as Vector3,
-    }];
+    return [
+      kind,
+      {
+        shape: new RAPIER.Cuboid(
+          size.x / 2 + SHELL_HIT_RADIUS,
+          0.9, // Combat is planar: shells travel at a fixed height.
+          size.z / 2 + SHELL_HIT_RADIUS,
+        ),
+        center,
+        size,
+        muzzle: model.userData.muzzle.getWorldPosition(new Vector3()),
+      },
+    ];
   }),
 ) as Record<VehicleKind, { shape: RAPIER.Cuboid; center: Vector3; size: Vector3; muzzle: Vector3 }>;
 
-export function tankMuzzle(kind: VehicleKind) { return shapes[kind].muzzle; }
+export function tankMuzzle(kind: VehicleKind) {
+  return shapes[kind].muzzle;
+}
 
 /** Full visible footprint for tank contact, without the shell-radius allowance. */
 export function tankContactCollider(kind: VehicleKind) {
@@ -42,10 +47,15 @@ export function tankContactCollider(kind: VehicleKind) {
 
 /** Sweep a shell against the hull, accounting for this tick's tank translation. */
 export function tankHitTime(
-  shot: Shot, tank: Tank, limit: number,
-  elapsed = 0, frameDelta = 0,
+  shot: Shot,
+  tank: Tank,
+  limit: number,
+  elapsed = 0,
+  frameDelta = 0,
 ): number | null {
-  if (!tank.alive || tank.team === shot.team) return null;
+  if (!tank.alive || tank.team === shot.team) {
+    return null;
+  }
   const end = tank.body.translation();
   const vx = frameDelta > 0 ? (end.x - tank.previous.x) / frameDelta : 0;
   const vz = frameDelta > 0 ? (end.z - tank.previous.z) / frameDelta : 0;
@@ -60,9 +70,11 @@ export function tankHitTime(
     z: end.z - vz * (frameDelta - elapsed) - center.x * sin + center.z * cos,
   };
   const time = shape.castRay(
-    new RAPIER.Ray({ x: shot.x, y: 1, z: shot.z },
-      { x: shot.vx - vx, y: 0, z: shot.vz - vz }),
-    position, rotation, limit, true,
+    new RAPIER.Ray({ x: shot.x, y: 1, z: shot.z }, { x: shot.vx - vx, y: 0, z: shot.vz - vz }),
+    position,
+    rotation,
+    limit,
+    true,
   );
   return time >= 0 && time <= limit ? time : null;
 }

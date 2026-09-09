@@ -18,9 +18,7 @@ try {
   });
   await page.goto("http://127.0.0.1:5173/");
   await page.waitForFunction(() => !!window.sloppy);
-  const initialBodies = await page.evaluate(() =>
-    window.sloppy.sim.world.bodies.len(),
-  );
+  const initialBodies = await page.evaluate(() => window.sloppy.sim.world.bodies.len());
   await page.screenshot({ path: "artifacts/redesign-menu.png" });
   assert.equal(await page.locator("#deploy").count(), 0);
   await page.locator('[data-kind="balanced"]').click();
@@ -44,10 +42,7 @@ try {
   await page.mouse.move(1100, 470);
   await page.screenshot({ path: "artifacts/redesign-aim.png" });
   await page.keyboard.press("Escape");
-  assert.equal(
-    await page.evaluate(() => window.sloppy.sim.match.phase),
-    "paused",
-  );
+  assert.equal(await page.evaluate(() => window.sloppy.sim.match.phase), "paused");
   await page.locator("#resume").click();
   await page.evaluate(() => {
     const d = window.sloppy;
@@ -104,9 +99,7 @@ try {
     d.view.zoom = 25;
     for (const [i, shape] of ["armor", "wheel", "track", "shard"].entries()) {
       s.fragment(-4 + i * 2, -4, 0x327fbb, 0.8, shape);
-      s.fragments
-        .at(-1)
-        .body.setTranslation({ x: -4 + i * 2, y: 0.3, z: -4 }, true);
+      s.fragments.at(-1).body.setTranslation({ x: -4 + i * 2, y: 0.3, z: -4 }, true);
     }
   });
   await page.waitForTimeout(200);
@@ -125,18 +118,14 @@ try {
       geometry: d.view.renderer.info.memory.geometries,
       shotColors: d.sim.shots.map((shot, i) => {
         const color = d.view.debrisColor.clone();
-        const index = d.sim.shots.slice(0, i).filter(s => s.weapon === shot.weapon).length;
+        const index = d.sim.shots.slice(0, i).filter((s) => s.weapon === shot.weapon).length;
         d.view.projectiles.batches[shot.weapon].team.getColorAt(index, color);
         return { team: shot.team, color: color.getHex() };
       }),
     };
   });
   assert.equal(scene.shells, 5);
-  assert.ok(
-    scene.shotColors.every(
-      (s) => s.color === (s.team === 0 ? 0x008cff : 0xff303e),
-    ),
-  );
+  assert.ok(scene.shotColors.every((s) => s.color === (s.team === 0 ? 0x008cff : 0xff303e)));
   assert.equal(scene.cores, 5);
   assert.ok(scene.marker);
   assert.ok(scene.parts.every((p) => p.count > 0));
@@ -159,11 +148,7 @@ try {
       return { x, z, screenX: projected.x, screenY: projected.y };
     });
   });
-  assert.ok(
-    centering.every(
-      (p) => Math.abs(p.screenX) < 1e-6 && Math.abs(p.screenY) < 1e-6,
-    ),
-  );
+  assert.ok(centering.every((p) => Math.abs(p.screenX) < 1e-6 && Math.abs(p.screenY) < 1e-6));
   const resets = [];
   for (let i = 0; i < 5; i++) {
     await page.evaluate(() => {
@@ -190,10 +175,7 @@ try {
     resets,
     errors,
   };
-  writeFileSync(
-    "artifacts/redesign-check.json",
-    JSON.stringify(result, null, 2),
-  );
+  writeFileSync("artifacts/redesign-check.json", JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {
   await browser.close();

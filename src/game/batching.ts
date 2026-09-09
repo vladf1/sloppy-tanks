@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { isMesh } from "./render-resources";
 
 const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
@@ -8,16 +9,36 @@ const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
 function vertexMaterial(source: THREE.Material) {
   if (
     !(source instanceof THREE.MeshStandardMaterial) ||
-    source.normalMap || source.roughnessMap || source.metalnessMap ||
-    source.alphaMap || source.aoMap || source.lightMap || source.emissiveMap ||
-    source.envMap || source.displacementMap ||
-    source.transparent || source.opacity !== 1 || source.alphaTest ||
-    source.vertexColors || source.wireframe ||
+    source.normalMap ||
+    source.roughnessMap ||
+    source.metalnessMap ||
+    source.alphaMap ||
+    source.aoMap ||
+    source.lightMap ||
+    source.emissiveMap ||
+    source.envMap ||
+    source.displacementMap ||
+    source.transparent ||
+    source.opacity !== 1 ||
+    source.alphaTest ||
+    source.vertexColors ||
+    source.wireframe ||
     source.emissive.getHex() !== 0
-  ) return source;
-  const key = [source.metalness, source.roughness, source.toneMapped,
-    source.side, source.flatShading, source.depthTest, source.depthWrite,
-    source.map?.uuid, source.bumpMap?.uuid, source.bumpScale].join("/");
+  ) {
+    return source;
+  }
+  const key = [
+    source.metalness,
+    source.roughness,
+    source.toneMapped,
+    source.side,
+    source.flatShading,
+    source.depthTest,
+    source.depthWrite,
+    source.map?.uuid,
+    source.bumpMap?.uuid,
+    source.bumpScale,
+  ].join("/");
   let mat = coloredMaterials.get(key);
   if (!mat) {
     mat = source.clone();
@@ -29,16 +50,18 @@ function vertexMaterial(source: THREE.Material) {
 }
 
 /** Batch only direct mesh children, preserving movable assembly groups. */
-export function batch(group: THREE.Group) {
+export function batch(group: THREE.Group): void {
   group.updateMatrixWorld(true);
   const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
   for (const child of [...group.children]) {
-    if (!(child instanceof THREE.Mesh) || Array.isArray(child.material)) continue;
-    const source = child.material as THREE.Material;
+    if (!isMesh(child) || Array.isArray(child.material)) {
+      continue;
+    }
+    const source = child.material;
     const mat = vertexMaterial(source);
-    const geo = (child.geometry.index
-      ? child.geometry.toNonIndexed()
-      : child.geometry.clone()).applyMatrix4(child.matrix);
+    const geo = (
+      child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone()
+    ).applyMatrix4(child.matrix);
     if (mat !== source) {
       const color = (source as THREE.MeshStandardMaterial).color;
       const colors = new Float32Array(geo.getAttribute("position").count * 3);
@@ -65,14 +88,16 @@ export function batch(group: THREE.Group) {
       geo.userData.owned = true;
       group.add(mesh);
     }
-    for (const geo of geos) geo.dispose();
+    for (const geo of geos) {
+      geo.dispose();
+    }
   }
 }
 
 /** Use only for scenery whose ancestors and local transforms remain stationary. */
-export function freezeStatic(group: THREE.Object3D) {
+export function freezeStatic(group: THREE.Object3D): void {
   group.updateMatrixWorld(true);
-  group.traverse(object => {
+  group.traverse((object) => {
     object.matrixAutoUpdate = false;
     object.matrixWorldAutoUpdate = false;
   });

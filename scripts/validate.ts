@@ -15,12 +15,13 @@ for (let seed = 1; seed <= 10; seed++) {
   const veterancy = { promotions: 0, botPromotions: 0, elite: 0, heroic: 0 };
   while (s.match.phase === "playing" && steps < 60 * 360) {
     s.step(idleCommand(), seed > 3);
-    for (const e of s.events.splice(0)) if (e.type === "promotion") {
-      veterancy.promotions++;
-      if (e.id !== s.human.id) veterancy.botPromotions++;
-      if (e.label === "PROMOTED TO ELITE") veterancy.elite++;
-      if (e.label === "PROMOTED TO HEROIC") veterancy.heroic++;
-    }
+    for (const e of s.events.splice(0))
+      if (e.type === "promotion") {
+        veterancy.promotions++;
+        if (e.id !== s.human.id) veterancy.botPromotions++;
+        if (e.label === "PROMOTED TO ELITE") veterancy.elite++;
+        if (e.label === "PROMOTED TO HEROIC") veterancy.heroic++;
+      }
     maxBodies = Math.max(maxBodies, s.world.bodies.len());
     maxFragments = Math.max(maxFragments, s.fragments.length);
     steps++;
@@ -35,8 +36,7 @@ for (let seed = 1; seed <= 10; seed++) {
     reroutes: s.botReroutes,
     breachShots: s.botBreachShots,
     veterancy,
-    towersRemaining: s.covers.filter((c) => c.kind === "tower" && c.alive)
-      .length,
+    towersRemaining: s.covers.filter((c) => c.kind === "tower" && c.alive).length,
   });
   s.reset();
   if (s.world.bodies.len() !== initialBodies)
@@ -51,7 +51,4 @@ const result = {
   maxBodies,
   maxFragments,
 };
-writeFileSync(
-  "artifacts/simulation-results.json",
-  JSON.stringify(result, null, 2),
-);
+writeFileSync("artifacts/simulation-results.json", JSON.stringify(result, null, 2));

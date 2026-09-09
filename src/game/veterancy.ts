@@ -11,32 +11,57 @@ export const RANKS = [
 export const KILL_XP = 50;
 export const REPAIR_DELAY = 5;
 
-export function rankIndex(t: Pick<Tank, "xp">) {
-  for (let i = RANKS.length - 1; i > 0; i--) if (t.xp >= RANKS[i].xp) return i;
+export function rankIndex(tank: Pick<Tank, "xp">): number {
+  for (let i = RANKS.length - 1; i > 0; i--) {
+    if (tank.xp >= RANKS[i].xp) {
+      return i;
+    }
+  }
   return 0;
 }
-export function rankStats(t: Pick<Tank, "xp">) { return RANKS[rankIndex(t)]; }
-
-export function earnExperience(s: Simulation, t: Tank, amount: number, ownerLife?: number) {
-  // A mine/shell from a destroyed tank must not promote its replacement.
-  if (!t.alive || amount <= 0 || (ownerLife !== undefined && ownerLife !== t.deaths)) return;
-  const before = rankIndex(t), oldMax = s.maxHealth(t);
-  t.xp = Math.min(RANKS.at(-1)!.xp, t.xp + amount);
-  const after = rankIndex(t);
-  if (after === before) return;
-  // Preserve the hull percentage: promotion is a capacity upgrade, not a full repair.
-  t.hp = Math.min(s.maxHealth(t), t.hp / oldMax * s.maxHealth(t));
-  const reloadScale = RANKS[before].fireRate / RANKS[after].fireRate;
-  t.cooldown *= reloadScale;
-  t.brain.fireDelay *= reloadScale;
-  const p = t.body.translation();
-  s.events.push({ type: "promotion", id: t.id, team: t.team, x: p.x, z: p.z,
-    label: `PROMOTED TO ${RANKS[after].name.toUpperCase()}`, color: 0xffd477 });
+export function rankStats(tank: Pick<Tank, "xp">) {
+  return RANKS[rankIndex(tank)];
 }
 
-export function repairVeteran(s: Simulation, t: Tank, dt: number) {
-  const rate = rankStats(t).repair;
-  if (!t.alive || !rate || s.elapsed - t.lastCombat < REPAIR_DELAY) return;
-  const max = s.maxHealth(t);
-  t.hp = Math.min(max, t.hp + max * rate * dt);
+export function earnExperience(
+  simulation: Simulation,
+  tank: Tank,
+  amount: number,
+  ownerLife?: number,
+): void {
+  // A mine/shell from a destroyed tank must not promote its replacement.
+  if (!tank.alive || amount <= 0 || (ownerLife !== undefined && ownerLife !== tank.deaths)) {
+    return;
+  }
+  const before = rankIndex(tank);
+  const oldMax = simulation.maxHealth(tank);
+  tank.xp = Math.min(RANKS.at(-1)!.xp, tank.xp + amount);
+  const after = rankIndex(tank);
+  if (after === before) {
+    return;
+  }
+  // Preserve the hull percentage: promotion is a capacity upgrade, not a full repair.
+  tank.hp = Math.min(simulation.maxHealth(tank), (tank.hp / oldMax) * simulation.maxHealth(tank));
+  const reloadScale = RANKS[before].fireRate / RANKS[after].fireRate;
+  tank.cooldown *= reloadScale;
+  tank.brain.fireDelay *= reloadScale;
+  const position = tank.body.translation();
+  simulation.events.push({
+    type: "promotion",
+    id: tank.id,
+    team: tank.team,
+    x: position.x,
+    z: position.z,
+    label: `PROMOTED TO ${RANKS[after].name.toUpperCase()}`,
+    color: 0xffd477,
+  });
+}
+
+export function repairVeteran(simulation: Simulation, tank: Tank, dt: number): void {
+  const rate = rankStats(tank).repair;
+  if (!tank.alive || !rate || simulation.elapsed - tank.lastCombat < REPAIR_DELAY) {
+    return;
+  }
+  const max = simulation.maxHealth(tank);
+  tank.hp = Math.min(max, tank.hp + max * rate * dt);
 }

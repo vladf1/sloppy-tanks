@@ -41,10 +41,7 @@ try {
     checkpoints: [],
   };
   const save = () =>
-    writeFileSync(
-      "artifacts/benchmark-results.json",
-      JSON.stringify(result, null, 2),
-    );
+    writeFileSync("artifacts/benchmark-results.json", JSON.stringify(result, null, 2));
   const metrics = async () => {
     const dom = await cdp.send("Memory.getDOMCounters");
     return await page.evaluate(
@@ -67,10 +64,7 @@ try {
     console.log("Normal sample", 30 * (i + 1), "seconds");
   }
   result.normal = await page.evaluate(() => window.sloppy.stop());
-  if (
-    result.normal.snapshot.elapsed < 80 &&
-    result.normal.completedRounds === 0
-  )
+  if (result.normal.snapshot.elapsed < 80 && result.normal.completedRounds === 0)
     throw new Error("Normal sample interrupted or paused; repeat it");
   await page.screenshot({ path: "artifacts/benchmark-normal.png" });
   save();
@@ -81,9 +75,7 @@ try {
     window.sloppy.overview();
     window.sloppy.record();
   });
-  result.stressInitial = await page.evaluate(
-    () => window.sloppy.sim.snapshot().counts,
-  );
+  result.stressInitial = await page.evaluate(() => window.sloppy.sim.snapshot().counts);
   for (let i = 0; i < 6; i++) {
     await page.evaluate(() => {
       const s = window.sloppy.sim;
@@ -177,12 +169,7 @@ try {
       result.checkpoints.push(point);
       save();
       console.log("LONGEVITY", JSON.stringify(point));
-    } else
-      console.log(
-        "Longevity",
-        Math.round(activeSeconds),
-        "active simulation seconds",
-      );
+    } else console.log("Longevity", Math.round(activeSeconds), "active simulation seconds");
   }
   result.longevity = {
     wallSeconds: (Date.now() - soakStart) / 1000,
@@ -190,9 +177,7 @@ try {
     ...(await page.evaluate(() => window.sloppy.stop())),
   };
   if (activeSeconds < 1200 || navigations !== 1)
-    throw new Error(
-      `Incomplete longevity: ${activeSeconds}s, ${navigations} navigations`,
-    );
+    throw new Error(`Incomplete longevity: ${activeSeconds}s, ${navigations} navigations`);
   result.navigations = navigations;
   result.finished = new Date().toISOString();
   save();

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { isMesh } from "./render-resources";
 
 let wear: THREE.Texture | undefined;
 const materials = new Map<THREE.MeshStandardMaterial, THREE.MeshStandardMaterial>();
@@ -17,13 +18,19 @@ export async function loadTankSurface() {
   }
 }
 
-export function applyTankSurface(root: THREE.Group, colors: number[]) {
+export function applyTankSurface(root: THREE.Group, colors: number[]): void {
   const texture = wear;
-  if (!texture) return;
-  root.traverse(object => {
-    if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.MeshStandardMaterial)) return;
+  if (!texture) {
+    return;
+  }
+  root.traverse((object) => {
+    if (!isMesh(object) || !(object.material instanceof THREE.MeshStandardMaterial)) {
+      return;
+    }
     const source = object.material;
-    if (!colors.includes(source.color.getHex())) return;
+    if (!colors.includes(source.color.getHex())) {
+      return;
+    }
     let painted = materials.get(source);
     if (!painted) {
       painted = source.clone();

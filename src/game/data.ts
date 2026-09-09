@@ -1,17 +1,28 @@
+/** Gameplay balance uses metres, seconds, radians and hit points unless stated otherwise. */
+export { angleDelta, bestBy, distance, Random } from "./math";
 import type { PickupKind, VehicleKind, Weapon } from "./types";
-export const STEP = 1 / 60,
-  ARENA = 60,
-  ROUND_TIME = 300,
-  SOLO_TIME = 600,
-  SCORE_LIMIT = 100;
+export const STEP = 1 / 60;
+export const ARENA = 60;
+export const ROUND_TIME = 300;
+export const SOLO_TIME = 600;
+export const SCORE_LIMIT = 100;
 const BASE_SPEED_MULTIPLIER = 1.13;
+const BASE_STANDARD_SHELL_SPEED = 19.2;
+const REFERENCE_TANK_SPEED = 184;
+const REFERENCE_SHELL_SPEED = 535;
+const TANK_PACING_MULTIPLIER = 1.2;
+export const KMH_PER_METRE_PER_SECOND = 3.6;
 // Simulation distances use world metres; the selector rounds speeds to km/h.
 // V-Tanks 570bf8d: Vanguard 184, standard shell 535; preserve that dodge
 // ratio at our existing 19.2 m/s shell speed, then apply chassis ratios
 // and the tank-only 20% increase, followed by the shared 13% pacing increase.
 const referenceSpeed = (multiplier: number) => {
-  const speed = (19.2 * 184 / 535) * multiplier * 1.2 * BASE_SPEED_MULTIPLIER;
-  return { speed, speedKmh: Math.round(speed * 3.6) };
+  const speed =
+    ((BASE_STANDARD_SHELL_SPEED * REFERENCE_TANK_SPEED) / REFERENCE_SHELL_SPEED) *
+    multiplier *
+    TANK_PACING_MULTIPLIER *
+    BASE_SPEED_MULTIPLIER;
+  return { speed, speedKmh: Math.round(speed * KMH_PER_METRE_PER_SECOND) };
 };
 export const MOVE_ACCELERATION = 100;
 export const HULL_TURN_SPEED = 3.5; // A quarter turn takes about 0.45 seconds.
@@ -76,16 +87,22 @@ export const WEAPONS: Record<
   }
 > = {
   standard: {
-    label: "STANDARD", unit: "SHELLS", perCrate: 0, carryLimit: Infinity,
+    label: "STANDARD",
+    unit: "SHELLS",
+    perCrate: 0,
+    carryLimit: Infinity,
     name: "Standard shells",
     interval: 0.85,
     damage: 40,
-    speed: 19.2 * BASE_SPEED_MULTIPLIER,
+    speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
     bounces: 1,
     color: 0xffdf00,
   },
   spread: {
-    label: "SPREAD", unit: "SPREAD VOLLEYS", perCrate: 18, carryLimit: 36,
+    label: "SPREAD",
+    unit: "SPREAD VOLLEYS",
+    perCrate: 18,
+    carryLimit: 36,
     name: "Spread shot",
     interval: 1.1,
     damage: 27,
@@ -94,7 +111,10 @@ export const WEAPONS: Record<
     color: 0xff38d4,
   },
   rocket: {
-    label: "ROCKET", unit: "ROCKETS", perCrate: 12, carryLimit: 24,
+    label: "ROCKET",
+    unit: "ROCKETS",
+    perCrate: 12,
+    carryLimit: 24,
     name: "Breaching rockets",
     interval: 1.3,
     damage: 65,
@@ -103,18 +123,38 @@ export const WEAPONS: Record<
     color: 0xff591c,
   },
   ricochet: {
-    name: "Ricochet shells", label: "RICOCHET", unit: "RICOCHET SHELLS",
-    perCrate: 24, carryLimit: 48, interval: 0.85, damage: 80,
-    speed: 19.2 * BASE_SPEED_MULTIPLIER, bounces: 3, color: 0xb19afc,
+    name: "Ricochet shells",
+    label: "RICOCHET",
+    unit: "RICOCHET SHELLS",
+    perCrate: 24,
+    carryLimit: 48,
+    interval: 0.85,
+    damage: 80,
+    speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
+    bounces: 3,
+    color: 0xb19afc,
   },
   piercing: {
-    name: "Piercing shells", label: "PIERCING", unit: "PIERCING SHELLS",
-    perCrate: 24, carryLimit: 48, interval: 0.85, damage: 40,
-    speed: 19.2 * BASE_SPEED_MULTIPLIER, bounces: 0, color: 0x54e6dc,
+    name: "Piercing shells",
+    label: "PIERCING",
+    unit: "PIERCING SHELLS",
+    perCrate: 24,
+    carryLimit: 48,
+    interval: 0.85,
+    damage: 40,
+    speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
+    bounces: 0,
+    color: 0x54e6dc,
   },
 };
-export const LASER_DEFENSE = { chance: 0.5, duration: 6, range: 7, threatRadius: 3,
-  initialDelay: 25, respawn: 45 } as const;
+export const LASER_DEFENSE = {
+  chance: 0.5,
+  duration: 6,
+  range: 7,
+  threatRadius: 3,
+  initialDelay: 25,
+  respawn: 45,
+} as const;
 export const PICKUPS: Record<
   PickupKind,
   { name: string; icon: string; color: number; duration: number }
@@ -140,31 +180,3 @@ export const GROUP = {
   ground: 0x00040009,
   fragment: 0x00080006,
 };
-export class Random {
-  constructor(public state: number) {}
-  next() {
-    let t = (this.state += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
-  range(a: number, b: number) {
-    return a + (b - a) * this.next();
-  }
-}
-export const distance = (
-  a: { x: number; z: number },
-  b: { x: number; z: number },
-) => Math.hypot(a.x - b.x, a.z - b.z);
-export const angleDelta = (a: number, b: number) =>
-  Math.atan2(Math.sin(b - a), Math.cos(b - a));
-
-/** Highest score wins; equal scores retain the original candidate order. */
-export function bestBy<T>(items: Iterable<T>, score: (item: T) => number): T | undefined {
-  let best: T | undefined, highest = -Infinity;
-  for (const item of items) {
-    const value = score(item);
-    if (value > highest) { best = item; highest = value; }
-  }
-  return best;
-}

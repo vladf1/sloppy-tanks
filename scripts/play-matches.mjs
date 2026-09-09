@@ -50,34 +50,18 @@ try {
             .filter((e) => e.alive && e.team !== t.team)
             .sort(
               (a, b) =>
-                Math.hypot(
-                  a.body.translation().x - p.x,
-                  a.body.translation().z - p.z,
-                ) -
-                Math.hypot(
-                  b.body.translation().x - p.x,
-                  b.body.translation().z - p.z,
-                ),
+                Math.hypot(a.body.translation().x - p.x, a.body.translation().z - p.z) -
+                Math.hypot(b.body.translation().x - p.x, b.body.translation().z - p.z),
             );
         const q = enemies[0]?.body.translation() ?? { x: 0, y: 0, z: 0 };
         const useful = s.pickups
           .filter((q) => q.available)
-          .sort(
-            (a, b) =>
-              Math.hypot(a.x - p.x, a.z - p.z) -
-              Math.hypot(b.x - p.x, b.z - p.z),
-          );
+          .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
         const goal =
-          useful[0] && Math.hypot(useful[0].x - p.x, useful[0].z - p.z) < 12
-            ? useful[0]
-            : q;
+          useful[0] && Math.hypot(useful[0].x - p.x, useful[0].z - p.z) < 12 ? useful[0] : q;
         const path = s.nav.find(p, goal),
-          next =
-            path.find((n) => Math.hypot(n.x - p.x, n.z - p.z) > 1.5) ?? goal;
-        const aim = d.view.follow
-          .clone()
-          .set(q.x, 1, q.z)
-          .project(d.view.camera);
+          next = path.find((n) => Math.hypot(n.x - p.x, n.z - p.z) > 1.5) ?? goal;
+        const aim = d.view.follow.clone().set(q.x, 1, q.z).project(d.view.camera);
         return {
           phase: "playing",
           dx: next.x - p.x,
@@ -106,8 +90,7 @@ try {
           await page.mouse.click(800, 450, { button: "right" });
           mines++;
         }
-        if (state.weapon !== previousWeapon && state.weapon !== "standard")
-          pickups++;
+        if (state.weapon !== previousWeapon && state.weapon !== "standard") pickups++;
         previousWeapon = state.weapon;
       } else {
         await page.mouse.up();
@@ -126,12 +109,7 @@ try {
       await page.waitForTimeout(160);
       iterations++;
       if (iterations % 180 === 0)
-        console.log(
-          "Playing",
-          kind,
-          Math.round((Date.now() - begin) / 1000),
-          "seconds",
-        );
+        console.log("Playing", kind, Math.round((Date.now() - begin) / 1000), "seconds");
     }
     await page.mouse.up();
     for (const key of held) await page.keyboard.up(key);
@@ -153,8 +131,7 @@ try {
       snapshot: window.sloppy.sim.snapshot(),
       events: window.playEvents,
     }));
-    if (result.match.phase !== "results")
-      throw new Error("Round did not finish");
+    if (result.match.phase !== "results") throw new Error("Round did not finish");
     results.push({
       kind,
       wallSeconds: (Date.now() - begin) / 1000,

@@ -168,40 +168,37 @@
       <section id="optimization"></section>
       <details>
         <summary>Historical measurements and longevity tests · earlier builds</summary>
-      <p class="note">
-        <b>Previous build measurements.</b> The timing and longevity results
-        below predate the larger arena and visual redesign. They have not been
-        rerun for this version.
-      </p>
-      <div id="results"></div>
-      <section>
-        <h2>What these numbers mean</h2>
-        <p>
-          Chrome renders at <b>2560 × 1440 physical pixels</b>, with one
-          shadow-casting sun, a 60 Hz physics step and 12 live tank slots. The
-          first five seconds of each timing sample are excluded. Frame time
-          includes browser scheduling; simulation and render CPU submission
-          times are measured separately.
+        <p class="note">
+          <b>Previous build measurements.</b> The timing and longevity results below predate the
+          larger arena and visual redesign. They have not been rerun for this version.
         </p>
-        <p class="muted">
-          Normal target: sustained 60 FPS, p95 ≤ 20 ms, p99 ≤ 33 ms. Stress
-          repeatedly injects 24 tanks, 200 projectiles, 150 physical fragments
-          and drum chains; these are diagnostic loads. Live counts decrease as
-          projectiles collide and fragments expire. Longevity uses real elapsed
-          time and automatic completed-match restarts. Garbage collection is
-          requested for comparable retained-memory snapshots.
-        </p>
-      </section>
-      <section id="sim"></section>
-      <details>
-        <summary>Raw measurements and reproducibility data</summary>
-        <pre id="raw"></pre>
-      </details>
+        <div id="results"></div>
+        <section>
+          <h2>What these numbers mean</h2>
+          <p>
+            Chrome renders at <b>2560 × 1440 physical pixels</b>, with one shadow-casting sun, a 60
+            Hz physics step and 12 live tank slots. The first five seconds of each timing sample are
+            excluded. Frame time includes browser scheduling; simulation and render CPU submission
+            times are measured separately.
+          </p>
+          <p class="muted">
+            Normal target: sustained 60 FPS, p95 ≤ 20 ms, p99 ≤ 33 ms. Stress repeatedly injects 24
+            tanks, 200 projectiles, 150 physical fragments and drum chains; these are diagnostic
+            loads. Live counts decrease as projectiles collide and fragments expire. Longevity uses
+            real elapsed time and automatic completed-match restarts. Garbage collection is
+            requested for comparable retained-memory snapshots.
+          </p>
+        </section>
+        <section id="sim"></section>
+        <details>
+          <summary>Raw measurements and reproducibility data</summary>
+          <pre id="raw"></pre>
+        </details>
       </details>
       <footer>
-        Vite 8.2.2 · TypeScript 7.0.2 · Three.js 0.185.1 · Rapier 0.20.0 · No UI
-        framework<br />This view refreshes its saved results every 15 seconds.
-        Timing runs use scripts/profile.mjs; historical longevity checks use scripts/benchmark.mjs.
+        Vite 8.2.2 · TypeScript 7.0.2 · Three.js 0.185.1 · Rapier 0.20.0 · No UI framework<br />This
+        view refreshes its saved results every 15 seconds. Timing runs use scripts/profile.mjs;
+        historical longevity checks use scripts/benchmark.mjs.
       </footer>
     </main>
     <script type="module">
@@ -216,19 +213,36 @@
         document.querySelector("#hardware").textContent =
           `Chrome ${data.after.chrome} · 2560 × 1440 · ${repeat ? "Alternating original and updated builds" : "Three runs per scenario"}`;
         const mean = (runs, key) => runs.reduce((sum, run) => sum + run[key], 0) / runs.length;
-        const runsFor = (revision, scenario) => (repeat
-          ? repeat.runs.filter(run => run.revision === revision) : data[revision].runs)
-          .filter(run => run.scenario === scenario);
+        const runsFor = (revision, scenario) =>
+          (repeat
+            ? repeat.runs.filter((run) => run.revision === revision)
+            : data[revision].runs
+          ).filter((run) => run.scenario === scenario);
         let html = `<h2>Code review measurements · ${data.after.date.slice(0, 10)}</h2><p>Same machine and Chrome ${data.after.chrome}, 2560 × 1440 pixels. ${repeat ? `Follow-up verification uses seed ${repeat.seed} and alternates original → updated → updated → original, with two samples per build and scenario. The initial three-seed comparison is retained in the raw data below.` : "Three seeded runs per scenario."} Each run lasts 20 seconds; the first five seconds are excluded. CPU profiles are recorded separately from timing runs.</p>`;
         for (const scenario of ["normal", "stress"]) {
-          const before = runsFor("before", scenario), after = runsFor("after", scenario);
-          const change = key => (mean(after, key) / mean(before, key) - 1) * 100;
-          const changeCard = (label, key) => card(label, (change(key) > 0 ? "+" : "") + fmt(change(key)) + "%", "negative means less CPU time", change(key) <= 0);
+          const before = runsFor("before", scenario),
+            after = runsFor("after", scenario);
+          const change = (key) => (mean(after, key) / mean(before, key) - 1) * 100;
+          const changeCard = (label, key) =>
+            card(
+              label,
+              (change(key) > 0 ? "+" : "") + fmt(change(key)) + "%",
+              "negative means less CPU time",
+              change(key) <= 0,
+            );
           html += `<h2>${scenario === "normal" ? "Normal match · 12 tanks" : "Stress · 24 tanks + repeated destruction"}</h2><div class="cards">${changeCard("RENDER CPU CHANGE", "renderMean")}${changeCard("SIMULATION CPU CHANGE", "simulationMean")}${card("AFTER RENDER CPU", fmt(mean(after, "renderMean")), "milliseconds / frame")}${card("AFTER FRAME RATE", fmt(mean(after, "fps")), "frames / second")}</div><table><tr><th>MEASUREMENT</th><th>BEFORE</th><th>AFTER</th></tr>${[
-            ["Render CPU (ms/frame)", "renderMean"], ["Draw calls/frame", "drawCalls"],
-            ["Simulation CPU (ms/frame)", "simulationMean"], ["FPS", "fps"],
-            ["p95 frame (ms)", "frameP95"], ["p99 frame (ms)", "frameP99"],
-          ].map(([label, key]) => `<tr><td>${label}</td><td>${fmt(mean(before, key))}</td><td>${fmt(mean(after, key))}</td></tr>`).join("")}</table>`;
+            ["Render CPU (ms/frame)", "renderMean"],
+            ["Draw calls/frame", "drawCalls"],
+            ["Simulation CPU (ms/frame)", "simulationMean"],
+            ["FPS", "fps"],
+            ["p95 frame (ms)", "frameP95"],
+            ["p99 frame (ms)", "frameP99"],
+          ]
+            .map(
+              ([label, key]) =>
+                `<tr><td>${label}</td><td>${fmt(mean(before, key))}</td><td>${fmt(mean(after, key))}</td></tr>`,
+            )
+            .join("")}</table>`;
         }
         html += `<p class="note">Positive CPU changes indicate regressions. Near the display's 120 Hz ceiling, average FPS alone does not establish a speedup or smoother pacing; compare CPU costs and frame percentiles in both scenarios. Table values are means of run summaries, including the per-run percentiles.</p><p>The September 7 review reuses navigation and camera buffers, caches prepared wreck assemblies, filters cover queries in physics, selects AI/spawn candidates without sorting, and compacts particles in place. It also fixes queued mine input, randomized tower alignment and respawn physics. No dependencies were added.</p><p class="muted">Stress refills up to 200 projectiles and 80 physical fragments and triggers drum chains every five simulation seconds. Counts fall as objects collide or expire. Fixed seeds and burst schedules are repeated; real-time rendering and cosmetic randomness can vary between runs. These short runs do not measure long-session memory stability.</p><details><summary>Individual runs and CPU profiler samples</summary><pre></pre></details>`;
         const section = document.querySelector("#optimization");
@@ -237,9 +251,9 @@
       }
       loadOptimization().catch(console.warn);
       async function load() {
-        const r = await fetch(
-          "./artifacts/benchmark-results.json?" + Date.now(),
-        ).then((r) => r.json());
+        const r = await fetch("./artifacts/benchmark-results.json?" + Date.now()).then((r) =>
+          r.json(),
+        );
         if (!document.querySelector("#optimization .card"))
           document.querySelector("#hardware").textContent =
             (r.hardware ?? "") + (r.chrome ? " · Chrome " + r.chrome : "");
@@ -273,17 +287,13 @@
           html += `<h2>Ten rendered round resets</h2><table><tr><th>RESET</th><th>BODIES</th><th>GEOMETRIES</th><th>TEXTURES</th><th>LISTENERS</th><th>RETAINED HEAP</th></tr>${r.resets.map((x, i) => `<tr><td>${i + 1}</td><td>${x.bodies}</td><td>${x.geometry}</td><td>${x.textures}</td><td>${x.dom.jsEventListeners}</td><td>${fmt(x.heap / 1048576)} MB</td></tr>`).join("")}</table>`;
         if (r.checkpoints?.length)
           html += `<h2>Longevity checkpoints</h2><table><tr><th>ELAPSED</th><th>ROUNDS</th><th>BODIES / FRAGMENTS</th><th>PARTICLES</th><th>HEAP</th><th>RETAINED HEAP TREND</th></tr>${r.checkpoints.map((x) => `<tr><td>${Math.round(x.wallSeconds / 60)} min</td><td>${x.round}</td><td>${x.bodies} / ${x.fragments}</td><td>${x.particles}</td><td>${fmt(x.heap / 1048576)} MB</td><td><i class="bar" style="width:${(x.heap / 1048576) * 2}px"></i></td></tr>`).join("")}</table>`;
-        if (r.errors?.length)
-          html += `<p class="note">Runtime errors: ${r.errors.join("; ")}</p>`;
+        if (r.errors?.length) html += `<p class="note">Runtime errors: ${r.errors.join("; ")}</p>`;
         else if (r.normal)
-          html +=
-            '<p class="note">No JavaScript runtime errors recorded in this run.</p>';
+          html += '<p class="note">No JavaScript runtime errors recorded in this run.</p>';
         document.querySelector("#results").innerHTML = html;
         document.querySelector("#raw").textContent = JSON.stringify(r, null, 2);
         try {
-          const s = await fetch("./artifacts/simulation-results.json").then(
-            (r) => r.json(),
-          );
+          const s = await fetch("./artifacts/simulation-results.json").then((r) => r.json());
           document.querySelector("#sim").innerHTML =
             `<h2>Seeded simulation matches</h2><p class="muted">Accelerated simulation, no rendering. ${s.rounds.length} complete rounds in ${fmt(s.wallSeconds)} wall seconds. The first three leave the human idle.</p><table><tr><th>SEED</th><th>HUMAN</th><th>ROUND TIME</th><th>MINT / CORAL</th><th>DESTROYED</th><th>TOWERS LEFT</th></tr>${s.rounds.map((x) => `<tr><td>${x.seed}</td><td>${x.humanIdle ? "Idle" : "Bot command"}</td><td>${fmt(x.seconds)} s</td><td>${x.scores.join(" / ")}</td><td>${x.destroyed}</td><td>${x.towersRemaining}</td></tr>`).join("")}</table>`;
         } catch {}

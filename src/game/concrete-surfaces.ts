@@ -14,8 +14,11 @@ export function concreteWall(w: number, h: number, d: number) {
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.anisotropy = 4;
     material = new THREE.MeshStandardMaterial({
-      map: texture, bumpMap: texture, bumpScale: 0.035,
-      roughness: 0.95, metalness: 0,
+      map: texture,
+      bumpMap: texture,
+      bumpScale: 0.035,
+      roughness: 0.95,
+      metalness: 0,
     });
   }
   const key = `${w}/${h}/${d}`;
@@ -23,14 +26,17 @@ export function concreteWall(w: number, h: number, d: number) {
   if (!geometry) {
     geometry = new RoundedBoxGeometry(w, h, d, 1, 0.06);
     const positions = geometry.getAttribute("position");
-    const normals = geometry.getAttribute("normal"), uv = geometry.getAttribute("uv");
+    const normals = geometry.getAttribute("normal");
+    const uv = geometry.getAttribute("uv");
     for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
-      const nx = Math.abs(normals.getX(i)), ny = Math.abs(normals.getY(i));
+      const x = positions.getX(i);
+      const y = positions.getY(i);
+      const z = positions.getZ(i);
+      const nx = Math.abs(normals.getX(i));
+      const ny = Math.abs(normals.getY(i));
       const nz = Math.abs(normals.getZ(i));
       // World-sized projection covers long faces, narrow ends and top surfaces.
-      uv.setXY(i, (nx > ny && nx > nz ? z : x) / 4,
-        (ny >= nx && ny >= nz ? z : y) / 4);
+      uv.setXY(i, (nx > ny && nx > nz ? z : x) / 4, (ny >= nx && ny >= nz ? z : y) / 4);
     }
     geometries.set(key, geometry);
   }

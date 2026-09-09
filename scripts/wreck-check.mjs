@@ -71,25 +71,17 @@ try {
       .filter((f) => window.wreckIds.includes(f.id))
       .map((f) => {
         const p = f.body.translation(),
-          ndc = d.view.camera.position
-            .clone()
-            .set(p.x, p.y, p.z)
-            .project(d.view.camera);
+          ndc = d.view.camera.position.clone().set(p.x, p.y, p.z).project(d.view.camera);
         return { part: f.part, pos: p, screen: { x: ndc.x, y: ndc.y } };
       });
   });
   assert.ok(flight.length >= 2 && flight.some((f) => f.pos.y > 3));
   assert.ok(
-    landed.every(
-      (f) =>
-        f.pos.y < 2 && Math.abs(f.screen.x) < 1 && Math.abs(f.screen.y) < 1,
-    ),
+    landed.every((f) => f.pos.y < 2 && Math.abs(f.screen.x) < 1 && Math.abs(f.screen.y) < 1),
   );
   await page.waitForTimeout(2000);
   const remaining = await page.evaluate(
-    () =>
-      window.sloppy.sim.fragments.filter((f) => window.wreckIds.includes(f.id))
-        .length,
+    () => window.sloppy.sim.fragments.filter((f) => window.wreckIds.includes(f.id)).length,
   );
   assert.equal(remaining, 0);
   assert.deepEqual(errors, []);

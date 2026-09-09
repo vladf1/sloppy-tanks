@@ -1,9 +1,59 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Tank surface visual check</title><style>body{margin:20px;background:#243a52;color:white;font:16px system-ui}main{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}article{background:#314b66;padding:12px;border-radius:10px}img{display:block;width:100%}.small{width:100px}h2{font-size:16px}</style></head><body><h1>Saved armor texture · actual tank renderer</h1><p>Large preview and small gameplay scale. Blue and red paint remain the base colors.</p><main></main><script type="module">
-import {loadTankSurface} from '../src/game/tank-surfaces';
-import {tankPreview} from '../src/game/tank-previews';
-await loadTankSurface();
-for(const team of [0,1])for(const kind of ['scout','balanced','heavy']){
- const card=document.createElement('article');const title=document.createElement('h2');title.textContent=`${team?'Red':'Blue'} · ${kind}`;card.append(title);
- for(const size of ['large','small']){const img=new Image();img.className=size;img.src=tankPreview(kind,team);card.append(img);}document.querySelector('main').append(card);
-}
-</script></body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tank surface visual check</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #243a52;
+        color: white;
+        font: 16px system-ui;
+      }
+      main {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      article {
+        background: #314b66;
+        padding: 12px;
+        border-radius: 10px;
+      }
+      img {
+        display: block;
+        width: 100%;
+      }
+      .small {
+        width: 100px;
+      }
+      h2 {
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Saved armor texture · actual tank renderer</h1>
+    <p>Large preview and small gameplay scale. Blue and red paint remain the base colors.</p>
+    <main></main>
+    <script type="module">
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      import { tankPreview } from "../src/game/tank-previews";
+      await loadTankSurface();
+      for (const team of [0, 1])
+        for (const kind of ["scout", "balanced", "heavy"]) {
+          const card = document.createElement("article");
+          const title = document.createElement("h2");
+          title.textContent = `${team ? "Red" : "Blue"} · ${kind}`;
+          card.append(title);
+          for (const size of ["large", "small"]) {
+            const img = new Image();
+            img.className = size;
+            img.src = tankPreview(kind, team);
+            card.append(img);
+          }
+          document.querySelector("main").append(card);
+        }
+    </script>
+  </body>
+</html>

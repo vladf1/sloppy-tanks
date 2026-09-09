@@ -24,13 +24,9 @@ function fixture() {
   const controls = new Controls(
     canvas as unknown as HTMLCanvasElement,
     () => pauses++,
-    n => zooms.push(n),
+    (n) => zooms.push(n),
   );
-  const emit = (
-    target: EventTarget,
-    name: string,
-    props: Record<string, unknown>,
-  ) => {
+  const emit = (target: EventTarget, name: string, props: Record<string, unknown>) => {
     const event = new Event(name, { cancelable: true });
     Object.assign(event, props);
     target.dispatchEvent(event);
@@ -91,7 +87,8 @@ test("inactive play rejects wheel selection and pause, blur, visibility and clea
     if (action === "clear") f.controls.clear();
     else if (action === "Escape") f.emit(f.win, "keydown", { code: "Escape" });
     else if (action === "visibilitychange") {
-      Object.assign(f.doc, { hidden: true }); f.emit(f.doc, action, {});
+      Object.assign(f.doc, { hidden: true });
+      f.emit(f.doc, action, {});
     } else f.emit(f.win, action, {});
     assert.equal(f.controls.command(0).ammoSelection, undefined);
   }
@@ -117,8 +114,12 @@ test("Q/E and number keys queue exactly one selection without consuming held fir
   f.controls.fire = true;
   const expected = ["standard", "spread", "rocket", "ricochet", "piercing"];
   for (const [code, selection] of [
-    ["KeyQ", -1], ["KeyE", 1],
-    ...expected.flatMap((weapon, i) => [[`Digit${i + 1}`, weapon], [`Numpad${i + 1}`, weapon]]),
+    ["KeyQ", -1],
+    ["KeyE", 1],
+    ...expected.flatMap((weapon, i) => [
+      [`Digit${i + 1}`, weapon],
+      [`Numpad${i + 1}`, weapon],
+    ]),
   ]) {
     f.emit(f.win, "keydown", { code });
     const command = f.controls.command(0);

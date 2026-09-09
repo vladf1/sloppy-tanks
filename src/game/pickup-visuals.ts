@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import type { PickupKind } from "./types";
-import { isSpecialAmmo } from "./ammunition";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { isSpecialAmmo } from "./ammunition";
+import type { PickupKind } from "./types";
 
 const cubeGeometry = new THREE.BoxGeometry(1.25, 1.25, 1.25);
 const crateGeometry = new THREE.BoxGeometry(1.8, 1.05, 1.2);
@@ -17,20 +17,30 @@ const hardwareGeometry = mergeGeometries([
   new THREE.BoxGeometry(0.12, 0.24, 0.12).translate(0.32, 0.67, 0),
   new THREE.BoxGeometry(0.2, 0.28, 0.08).translate(0, 0.38, 0.64),
 ]);
-const hardwareMaterial = new THREE.MeshStandardMaterial({ color: 0x273544, roughness: 0.55, metalness: 0.5 });
+const hardwareMaterial = new THREE.MeshStandardMaterial({
+  color: 0x273544,
+  roughness: 0.55,
+  metalness: 0.5,
+});
 const faceMaterials = new Map<PickupKind, THREE.MeshStandardMaterial>();
 /** Original high-contrast pictograms, shared across every face and pickup of a type. */
 function faceMaterial(kind: PickupKind) {
   const cached = faceMaterials.get(kind);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
   const texture = new THREE.TextureLoader().load(
     `${import.meta.env.BASE_URL}textures/pickups/${kind}.png`,
   );
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   const material = new THREE.MeshStandardMaterial({
-    map: texture, roughness: 0.55, metalness: 0.15,
-    emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: 0.3,
+    map: texture,
+    roughness: 0.55,
+    metalness: 0.15,
+    emissive: 0xffffff,
+    emissiveMap: texture,
+    emissiveIntensity: 0.3,
     toneMapped: false,
   });
   faceMaterials.set(kind, material);

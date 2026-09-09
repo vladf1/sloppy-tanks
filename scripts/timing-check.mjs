@@ -17,10 +17,6 @@ try {
   const page = await context.newPage(),
     errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  let navigations = 0;
-  page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) navigations++;
-  });
   await page.goto("http://127.0.0.1:5173/?autoplay", {
     waitUntil: "domcontentloaded",
     timeout: 60000,
@@ -31,22 +27,18 @@ try {
     window.sloppy.autoRounds();
     window.sloppy.record();
   });
-  const cdp = await context.newCDPSession(page);
   const gpu = await page.evaluate(() => {
     const g = window.sloppy.view.renderer.getContext(),
       e = g.getExtension("WEBGL_debug_renderer_info");
     return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : "Unavailable";
   });
-  const result = JSON.parse(
-    readFileSync("artifacts/benchmark-results.json", "utf8"),
-  );
+  const result = JSON.parse(readFileSync("artifacts/benchmark-results.json", "utf8"));
   result.timingHistory ??= [];
   result.timingHistory.push({ normal: result.normal, stress: result.stress });
   result.previousTimingSamples = {
     normal: result.normal,
     stress: result.stress,
-    conditions:
-      "Collected while build and test work also ran; retained for comparison.",
+    conditions: "Collected while build and test work also ran; retained for comparison.",
   };
   result.gpu = gpu;
   result.timingRecheckStarted = new Date().toISOString();
@@ -68,36 +60,13 @@ try {
   );
   result.errors.push(...errors);
   const save = () =>
-    writeFileSync(
-      "artifacts/benchmark-results.json",
-      JSON.stringify(result, null, 2),
-    );
-  const metrics = async () => {
-    const dom = await cdp.send("Memory.getDOMCounters");
-    return await page.evaluate(
-      (dom) => ({
-        dom,
-        geometry: window.sloppy.view.renderer.info.memory.geometries,
-        textures: window.sloppy.view.renderer.info.memory.textures,
-        bodies: window.sloppy.sim.world.bodies.len(),
-        fragments: window.sloppy.sim.fragments.length,
-        particles: window.sloppy.view.particles.length,
-        heap: performance.memory?.usedJSHeapSize ?? null,
-        round: window.sloppy.report().completedRounds,
-        elapsed: window.sloppy.sim.elapsed,
-      }),
-      dom,
-    );
-  };
+    writeFileSync("artifacts/benchmark-results.json", JSON.stringify(result, null, 2));
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(30000);
     console.log("Normal sample", 30 * (i + 1), "seconds");
   }
   result.normal = await page.evaluate(() => window.sloppy.stop());
-  if (
-    result.normal.snapshot.elapsed < 80 &&
-    result.normal.completedRounds === 0
-  )
+  if (result.normal.snapshot.elapsed < 80 && result.normal.completedRounds === 0)
     throw new Error("Normal sample interrupted or paused; repeat it");
   await page.screenshot({ path: "artifacts/benchmark-normal.png" });
   save();
@@ -108,9 +77,7 @@ try {
     window.sloppy.overview();
     window.sloppy.record();
   });
-  result.stressInitial = await page.evaluate(
-    () => window.sloppy.sim.snapshot().counts,
-  );
+  result.stressInitial = await page.evaluate(() => window.sloppy.sim.snapshot().counts);
   for (let i = 0; i < 6; i++) {
     await page.evaluate(() => {
       const s = window.sloppy.sim;

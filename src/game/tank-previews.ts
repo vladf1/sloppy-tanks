@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { tankModel } from "./models";
 import { VEHICLES } from "./data";
+import { tankModel } from "./models";
 import type { Team, VehicleKind } from "./types";
 
 const previews = new Map<string, string>();

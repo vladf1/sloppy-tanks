@@ -26,10 +26,12 @@ export function groundMaterial(renderer: THREE.WebGLRenderer, kind: "dry-grass" 
 }
 
 /** One tile per eight world meters, aligned across roads and intersections. */
-export function groundUVs(geometry: THREE.BufferGeometry, x = 0, z = 0) {
-  const positions = geometry.getAttribute("position"), uv = geometry.getAttribute("uv");
-  for (let i = 0; i < positions.count; i++)
+export function groundUVs(geometry: THREE.BufferGeometry, x = 0, z = 0): void {
+  const positions = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
+  for (let i = 0; i < positions.count; i++) {
     uv.setXY(i, (positions.getX(i) + x) / 8, (positions.getZ(i) + z) / 8);
+  }
   uv.needsUpdate = true;
 }
 
@@ -38,15 +40,22 @@ export function roadGeometry(w: number, d: number, x: number, z: number) {
   const shoulder = 0.7;
   const xs = [-w / 2, -w / 2 + shoulder, w / 2 - shoulder, w / 2];
   const zs = [-d / 2, -d / 2 + shoulder, d / 2 - shoulder, d / 2];
-  const positions: number[] = [], colors: number[] = [], uvs: number[] = [], indices: number[] = [];
-  for (let row = 0; row < 4; row++) for (let col = 0; col < 4; col++) {
-    positions.push(xs[col], 0, zs[row]);
-    uvs.push((xs[col] + x) / 8, (zs[row] + z) / 8);
-    colors.push(1, 1, 1, row === 0 || row === 3 || col === 0 || col === 3 ? 0 : 1);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      positions.push(xs[col], 0, zs[row]);
+      uvs.push((xs[col] + x) / 8, (zs[row] + z) / 8);
+      colors.push(1, 1, 1, row === 0 || row === 3 || col === 0 || col === 3 ? 0 : 1);
+    }
   }
-  for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
-    const i = row * 4 + col;
-    indices.push(i, i + 4, i + 1, i + 1, i + 4, i + 5);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      const i = row * 4 + col;
+      indices.push(i, i + 4, i + 1, i + 1, i + 4, i + 5);
+    }
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));

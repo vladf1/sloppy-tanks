@@ -10,7 +10,6 @@ These are stylized game classes, not accurate scale replicas or claims about rea
 
 Additional references discussed: [German Leopard 2](https://knds.com/en/products/leopard), [British Challenger 2](https://www.army.mod.uk/learn-and-explore/equipment/combat-vehicles/challenger-2/). Neither is a separate playable model in this pass.
 
-
 ## Proportions and common scale
 
 Hull proportions include tracks and skirts. Targets are approximately 1.94 length/width for the compact Skipper and 2.17 for Abrams and Type 99. Model detail remains simplified. The fleet uses a common world scale, with comparable overall widths. Skipper retains its established game size after changing its visual reference to the M10 Booker; it is not an exact scale replica. Abrams is 1.95 game units wide; the other two are within 5% of that. The former 0.82/1.0/1.15 class multipliers exaggerated their size differences and are no longer used.

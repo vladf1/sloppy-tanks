@@ -15,12 +15,16 @@ export function explosiveBarrel() {
   }
   if (!geometry) {
     geometry = new THREE.CylinderGeometry(0.6, 0.6, 1.6, 12);
-    const uv = geometry.getAttribute("uv"), normal = geometry.getAttribute("normal");
+    const uv = geometry.getAttribute("uv");
+    const normal = geometry.getAttribute("normal");
     for (let i = 0; i < uv.count; i++) {
-      const u = uv.getX(i), v = uv.getY(i);
-      if (Math.abs(normal.getY(i)) > 0.5)
+      const u = uv.getX(i);
+      const v = uv.getY(i);
+      if (Math.abs(normal.getY(i)) > 0.5) {
         uv.setXY(i, 0.75 + u * 0.25, 0.25 + v * 0.5);
-      else uv.setXY(i, u * 0.75, v);
+      } else {
+        uv.setXY(i, u * 0.75, v);
+      }
     }
   }
   const mesh = new THREE.Mesh(geometry, surface);

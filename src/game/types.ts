@@ -1,13 +1,12 @@
-import type { BotPersonality } from "./bot-personalities";
 import type RAPIER from "@dimforge/rapier3d-compat";
+import type { BotPersonality } from "./bot-personalities";
 export type Team = 0 | 1;
 export type VehicleKind = "scout" | "balanced" | "heavy";
 export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing";
 export type SpecialAmmo = Exclude<Weapon, "standard">;
 export type AmmoInventory = Record<SpecialAmmo, number>;
 export type AmmoSelection = Weapon | -1 | 1;
-export type PickupKind =
-  SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
+export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
 export interface Vec2 {
   x: number;
   z: number;
@@ -28,6 +27,7 @@ export const idleCommand = (): VehicleCommand => ({
   fire: false,
   mine: false,
 });
+/** Persistent entity identity. Timers are seconds; aim/heading are radians around Y. */
 export interface Tank {
   id: number;
   name: string;
@@ -60,6 +60,7 @@ export interface Tank {
   command: VehicleCommand;
   brain: Brain;
 }
+/** Bot memory survives between decisions; steering and recovery update every fixed tick. */
 export interface Brain {
   personality: BotPersonality;
   ultraAggressive: boolean;
@@ -95,6 +96,7 @@ export type CoverKind =
   | "tower"
   | "rubble"
   | "boundary";
+/** Axis-aligned cover footprint: w/d/h are full dimensions in world metres. */
 export interface Cover extends Vec2 {
   id: number;
   kind: CoverKind;
@@ -111,6 +113,7 @@ export interface Cover extends Vec2 {
   /** Chosen at collapse so rubble stays stable when its model is rebuilt. */
   debrisSeed?: number;
 }
+/** Planar projectile state. vx/vz are metres per second; life is remaining seconds. */
 export interface Shot extends Vec2 {
   y?: number; // Render height at the muzzle; combat remains on the arena plane.
   id: number;

@@ -3,9 +3,14 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Offline only: preserve the original sound envelopes with reproducible noise.
-function wave(frequency: number | readonly number[], duration: number, noise: number, seed: number) {
+function wave(
+  frequency: number | readonly number[],
+  duration: number,
+  noise: number,
+  seed: number,
+) {
   let state = seed;
-  const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296;
   const rate = 22050,
     n = Math.floor(rate * duration),
     buffer = new ArrayBuffer(44 + n * 2),
@@ -33,16 +38,15 @@ function wave(frequency: number | readonly number[], duration: number, noise: nu
     if (typeof frequency === "number") tone = Math.sin(t * frequency * Math.PI * 2 * (1 - t * 0.6));
     else {
       // A short rising three-note promotion chime, baked into the saved MP3.
-      const noteLength = duration / frequency.length, note = Math.min(frequency.length - 1, Math.floor(t / noteLength));
+      const noteLength = duration / frequency.length,
+        note = Math.min(frequency.length - 1, Math.floor(t / noteLength));
       const local = t - note * noteLength;
-      tone = Math.sin(local * frequency[note] * Math.PI * 2)
-        * Math.min(1, local / 0.005) * (1 - local / noteLength);
+      tone =
+        Math.sin(local * frequency[note] * Math.PI * 2) *
+        Math.min(1, local / 0.005) *
+        (1 - local / noteLength);
     }
-    const sample =
-      (tone * (1 - noise) +
-        (random() * 2 - 1) * noise) *
-      env *
-      0.7;
+    const sample = (tone * (1 - noise) + (random() * 2 - 1) * noise) * env * 0.7;
     v.setInt16(44 + i * 2, sample * 32767, true);
   }
   return new Uint8Array(buffer);
@@ -66,12 +70,34 @@ for (const [name, frequency, duration, noise, seed] of [
 ] as const) {
   const data = wave(frequency, duration, noise, seed);
   const target = new URL(`${name}.mp3`, output);
-  const result = spawnSync("ffmpeg", [
-    "-hide_banner", "-loglevel", "error", "-y", "-f", "wav", "-i", "pipe:0",
-    "-c:a", "libmp3lame", "-q:a", "2", "-map_metadata", "-1",
-    "-id3v2_version", "0", "-write_id3v1", "0", fileURLToPath(target),
-  ], { input: data });
+  const result = spawnSync(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "wav",
+      "-i",
+      "pipe:0",
+      "-c:a",
+      "libmp3lame",
+      "-q:a",
+      "2",
+      "-map_metadata",
+      "-1",
+      "-id3v2_version",
+      "0",
+      "-write_id3v1",
+      "0",
+      fileURLToPath(target),
+    ],
+    { input: data },
+  );
   if (result.error || result.status !== 0)
-    throw new Error(`Offline audio encoding requires FFmpeg with libmp3lame: ${result.error?.message ?? result.stderr.toString()}`);
+    throw new Error(
+      `Offline audio encoding requires FFmpeg with libmp3lame: ${result.error?.message ?? result.stderr.toString()}`,
+    );
   console.log(`${name}.mp3: ${(await stat(target)).size} bytes`);
 }

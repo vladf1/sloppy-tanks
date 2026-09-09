@@ -1,5 +1,17 @@
 # Validation record
 
+## September 8, 2026: human-readable code refactor
+
+The root build retains TypeScript 7.0.2. ESLint runs its supported TypeScript 6.0.3 API in an isolated development-tool package. The production dependency list is unchanged. A fresh `npm ci` followed by `npm run check` passes lint with zero warnings, repository formatting, strict TypeScript/build and all 147 regression tests.
+
+Twelve 30-second deterministic scenarios (seeds 79, 207 and 12345 across team/Solo and village/random maps) match revision `ecb09df4fefb9414ccda1ae078d426d40764f517` exactly. The comparison hashes emitted events every tick, simulation snapshots every second and at completion, and final RNG state. Rapier body/collider objects are excluded from event serialization. See `artifacts/readability-parity.json` for both sets of hashes. Ten additional full seeded matches and reset checks passed; the observed peak was 143 physics bodies and the fragment cap remained 80.
+
+The Chrome checks cover actual keyboard/mouse controls and queued mine input; ammunition selection, depletion and refill; narrow HUD layout; pause/resume; hit/reload feedback and audio; ranks; all five projectile visuals; laser interception; six tree families/stumps; tower rubble; and timber damage stages. Bot retreat/head-on steering checks also passed, as did 120 consecutive Solo kills/replacements, the six-enemy cap, reset and return to team mode. Repeated rendered resets retain stable GPU resource counts. Local screenshots and detailed reports remain under `artifacts/performance/`.
+
+Two older browser fixtures needed correction: the combat-feedback test expected obsolete help wording, and the laser test assumed collection after a fixed 25-frame drive. The original revision also stops short in that laser fixture (Z about 1.96, outside the 1.8-metre pickup radius). The corrected test holds the real movement key until collection with a bounded timeout and verifies the existing toast text. Neither correction changes game behavior.
+
+This is a maintainability refactor, not a claimed performance improvement. The production build still reports the large vendor-bundle warning for its Three.js/Rapier dependencies.
+
 ## Compact rank display and team score target — September 7, 2026
 
 - Removed the XP bar, points and separate progression row. The current rank now sits beside the tank name; promotion mechanics and world chevrons remain. The updated veterancy browser check passed all rank transitions, absence of XP elements, and the 700 px layout; screenshots were refreshed.
@@ -49,15 +61,15 @@
 - All **115 tests** and the production build pass. Seven new regressions exercise arrival at default/double speed across chassis, wall escape, both head-on destinations, committed recovery through repeated decisions/respawn, target continuity, pickup/patrol commitment and blocked route handling. Existing ammo, combat, solo modes, physics and 100 seeded map-connectivity regressions pass.
 - `scripts/bot-movement-check.ts`: same three fixture setups and six 90-second runs (three seeds × village/random), before and after. A stalled window requests movement on >80 of 120 ticks but moves <1 m net; intentionally stationary firing does not count. Active windows differ because the bots' actions and match histories diverge. Saved reports: `artifacts/bot-movement-before.json`, `artifacts/bot-movement-after.json`.
 
-| Measurement | Before | After |
-| --- | ---: | ---: |
-| Close-goal reversals, 4 seconds | 98 | 0 |
-| Wall-retreat reversals, 10 seconds | 35 | 0 |
-| Head-on allies, 10 seconds | Both stuck near the meeting point | Both finish within 0.25 m of their goals |
-| Stalled / active movement windows | 211 / 2,787 (7.57%) | 19 / 2,679 (0.71%) |
-| Stalled windows with ≥8 reversals | 9 | 0 |
-| Total direction reversals | 4,518 | 1,227 |
-| Mean simulation cost per tick, no rendering | 0.145 ms | 0.154 ms |
+| Measurement                                 |                            Before |                                    After |
+| ------------------------------------------- | --------------------------------: | ---------------------------------------: |
+| Close-goal reversals, 4 seconds             |                                98 |                                        0 |
+| Wall-retreat reversals, 10 seconds          |                                35 |                                        0 |
+| Head-on allies, 10 seconds                  | Both stuck near the meeting point | Both finish within 0.25 m of their goals |
+| Stalled / active movement windows           |               211 / 2,787 (7.57%) |                       19 / 2,679 (0.71%) |
+| Stalled windows with ≥8 reversals           |                                 9 |                                        0 |
+| Total direction reversals                   |                             4,518 |                                    1,227 |
+| Mean simulation cost per tick, no rendering |                          0.145 ms |                                 0.154 ms |
 
 - The measured stall rate fell about **91%**. The extra hull queries add roughly 0.009 ms per simulation tick in this sample; the result is improved navigation rather than a CPU optimization. Some measured stalls remain, and six seeds do not prove every layout is free of congestion.
 - Real Chrome at 1600×900: wall escape and head-on passing passed with zero reversals in each check. A 24-tank random-map run measured **119.47 FPS**, 0.387 ms mean simulation cost per rendered frame and 9.7 ms p99 frame interval (20 seconds total, first five excluded). No page errors. Results: `artifacts/bot-movement-browser.json`; production screenshots were inspected under `artifacts/performance/bot-movement/`.
@@ -72,10 +84,10 @@
 - Real Chrome input passed: wheel event queued until the next simulation tick; forward/reverse/wrap; short trackpad-style bursts throttled; Shift-wheel zoom with both limits; selected ammo before held fire; final volley and standard continuation; right-click mine; pause-button clearing before a frame; ignored input while dead/paused; restart clearing. Production screenshots at 1600×900 and 600×780 confirm all five counts, selected/empty states and no HUD overflow. The final crate rim exposes the top-face symbol to the overhead camera. Screenshots: `artifacts/performance/ammunition/hud-crates.png` and `hud-narrow.png`. No page errors.
 - Combat performance: Chrome 1600×900, 24 tanks, rapid fire, three seeds per scenario, five seconds warmup plus ten seconds measured per run. The abundant scenario continually refills spread/piercing to exercise more active shells; it is a stress comparison within this build, not a before/after optimization claim. Both scenarios use the same map seeds and roles. Results are in `artifacts/ammunition-results.json`; the cosmetic lid-rim adjustment was checked afterward with the input/visual suite.
 
-| Scenario | Mean FPS | Simulation ms/frame | Render ms/frame | Mean run p99 frame interval | Peak shells |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Standard ammunition | 119.67 | 0.341 | 2.543 | 9.37 ms | 28 |
-| Plentiful spread + piercing | 119.80 | 0.442 | 2.667 | 9.40 ms | 67 |
+| Scenario                    | Mean FPS | Simulation ms/frame | Render ms/frame | Mean run p99 frame interval | Peak shells |
+| --------------------------- | -------: | ------------------: | --------------: | --------------------------: | ----------: |
+| Standard ammunition         |   119.67 |               0.341 |           2.543 |                     9.37 ms |          28 |
+| Plentiful spread + piercing |   119.80 |               0.442 |           2.667 |                     9.40 ms |          67 |
 
 The entries below record earlier revisions; their timed/combined special-weapon checks have been replaced by the current ammunition regressions above.
 

@@ -1,22 +1,86 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Tree and barrel preview</title><style>body{margin:0;background:#bec8cf}canvas{display:block}p{position:absolute;top:12px;left:24px;font:18px sans-serif;color:#253627}</style></head><body><p>Pine · Fir · Broadleaf · Explosive barrel</p><script type="module">
-import * as THREE from 'three';
-import {coverModel} from '../src/game/models';
-import {batch} from '../src/game/batching';
-const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));document.body.append(renderer.domElement);
-renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.shadowMap.enabled=true;
-const scene=new THREE.Scene();scene.background=new THREE.Color(0xbec8cf);
-scene.add(new THREE.HemisphereLight(0xe2efff,0x918571,1.65));const sun=new THREE.DirectionalLight(0xfff1df,2.8);sun.position.set(-10,20,15);sun.castShadow=true;scene.add(sun);
-const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);camera.position.set(12,12,27);camera.lookAt(0,2,0);
-for(let variety=0;variety<3;variety++) {let x=0;while(Math.abs(Math.round(Math.sin(x*12.9898)*43758))%3!==variety)x++;
-const tree=coverModel({kind:'tree',x,z:0,w:3.8,d:3.8,h:6,color:0x19935c});tree.position.set(-7+variety*5,0,0);batch(tree);scene.add(tree);}
-const barrel=coverModel({kind:'drum',x:0,z:0,w:1.2,d:1.2,h:1.7,color:0xff5b24});barrel.position.set(7,0,0);barrel.scale.setScalar(1.6);batch(barrel);scene.add(barrel);
-if (new URLSearchParams(location.search).has('house')) {
-  for (const child of scene.children) if (child instanceof THREE.Group) child.visible=false;
-  const house=coverModel({kind:'house',x:0,z:38,w:8,d:7,h:6,color:0xac7856});
-  house.position.set(0,0,0);batch(house);scene.add(house);
-  camera.position.set(9,10,17);camera.lookAt(0,3,0);
-  document.querySelector('p').textContent='Textured gables';
-}
-const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStandardMaterial({color:0x899675,roughness:1}));floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
-renderer.setAnimationLoop(()=>renderer.render(scene,camera));
-</script></body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tree and barrel preview</title>
+    <style>
+      body {
+        margin: 0;
+        background: #bec8cf;
+      }
+      canvas {
+        display: block;
+      }
+      p {
+        position: absolute;
+        top: 12px;
+        left: 24px;
+        font: 18px sans-serif;
+        color: #253627;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Pine · Fir · Broadleaf · Explosive barrel</p>
+    <script type="module">
+      import * as THREE from "three";
+      import { coverModel } from "../src/game/models";
+      import { batch } from "../src/game/batching";
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+      document.body.append(renderer.domElement);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.shadowMap.enabled = true;
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xbec8cf);
+      scene.add(new THREE.HemisphereLight(0xe2efff, 0x918571, 1.65));
+      const sun = new THREE.DirectionalLight(0xfff1df, 2.8);
+      sun.position.set(-10, 20, 15);
+      sun.castShadow = true;
+      scene.add(sun);
+      const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(12, 12, 27);
+      camera.lookAt(0, 2, 0);
+      for (let variety = 0; variety < 3; variety++) {
+        let x = 0;
+        while (Math.abs(Math.round(Math.sin(x * 12.9898) * 43758)) % 3 !== variety) x++;
+        const tree = coverModel({ kind: "tree", x, z: 0, w: 3.8, d: 3.8, h: 6, color: 0x19935c });
+        tree.position.set(-7 + variety * 5, 0, 0);
+        batch(tree);
+        scene.add(tree);
+      }
+      const barrel = coverModel({
+        kind: "drum",
+        x: 0,
+        z: 0,
+        w: 1.2,
+        d: 1.2,
+        h: 1.7,
+        color: 0xff5b24,
+      });
+      barrel.position.set(7, 0, 0);
+      barrel.scale.setScalar(1.6);
+      batch(barrel);
+      scene.add(barrel);
+      if (new URLSearchParams(location.search).has("house")) {
+        for (const child of scene.children) if (child instanceof THREE.Group) child.visible = false;
+        const house = coverModel({ kind: "house", x: 0, z: 38, w: 8, d: 7, h: 6, color: 0xac7856 });
+        house.position.set(0, 0, 0);
+        batch(house);
+        scene.add(house);
+        camera.position.set(9, 10, 17);
+        camera.lookAt(0, 3, 0);
+        document.querySelector("p").textContent = "Textured gables";
+      }
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(100, 100),
+        new THREE.MeshStandardMaterial({ color: 0x899675, roughness: 1 }),
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      scene.add(floor);
+      renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    </script>
+  </body>
+</html>

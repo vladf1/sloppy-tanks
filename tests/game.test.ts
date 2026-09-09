@@ -17,8 +17,11 @@ before(async () => {
   await RAPIER.init();
 });
 test("reused navigation searches recover from unreachable goals and changed topology", () => {
-  const nav = new Navigation(), from = { x: -40, z: -40 }, to = { x: 40, z: 40 };
-  const first = nav.find(from, to), saved = structuredClone(first);
+  const nav = new Navigation(),
+    from = { x: -40, z: -40 },
+    to = { x: 40, z: 40 };
+  const first = nav.find(from, to),
+    saved = structuredClone(first);
   nav.blocked.fill(1);
   assert.deepEqual(nav.find(from, to), []);
   nav.rebuild([]);
@@ -35,7 +38,8 @@ test("cover queries ignore tanks and debris and release destroyed collider ident
   s.human.body.setTranslation({ x: -2, y: 0.65, z: 50 }, true);
   s.fragment(2, 50, 0);
   s.world.step();
-  const a = { x: -5, z: 50 }, b = { x: 5, z: 50 };
+  const a = { x: -5, z: 50 },
+    b = { x: 5, z: 50 };
   assert.equal(s.visible(a, b), false);
   assert.equal(s.coverByCollider.get(handle), c);
   s.damageCover(c, 10, s.human.id, s.humanTeam);
@@ -162,7 +166,8 @@ test("swept fast shell hits a target between frame endpoints and ignores ally", 
     damage: 40,
     bounces: 1,
     life: 2,
-    piercing: 0, weapon: "standard",
+    piercing: 0,
+    weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(enemy.hp, VEHICLES[enemy.kind].health - 40);
@@ -195,7 +200,8 @@ test("standard ricochet reflects once off surviving cover and removes on next hi
     damage: 40,
     bounces: 1,
     life: 2,
-    piercing: 0, weapon: "standard",
+    piercing: 0,
+    weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(s.shots[0].bounces, 0);
@@ -227,7 +233,8 @@ test("destroyed cover does not reflect shells and breaks exactly once", () => {
     damage: 40,
     bounces: 1,
     life: 2,
-    piercing: 0, weapon: "standard",
+    piercing: 0,
+    weapon: "standard",
   });
   stepProjectiles(s, STEP);
   assert.equal(c.alive, false);
@@ -296,15 +303,8 @@ test("tower collapse opens center route and retains side rubble", () => {
   assert.equal(s.nav.blocked[s.nav.index(tower)], 0);
   assert.ok(s.nav.version > version);
   assert.equal(s.covers.filter((c) => c.kind === "rubble").length, 2);
-  const path = s.nav.find(
-    { x: tower.x, z: tower.z - 6 },
-    { x: tower.x, z: tower.z + 6 },
-  );
-  assert.ok(
-    path.some(
-      (p) => Math.abs(p.x - tower.x) < 1 && Math.abs(p.z - tower.z) < 2,
-    ),
-  );
+  const path = s.nav.find({ x: tower.x, z: tower.z - 6 }, { x: tower.x, z: tower.z + 6 });
+  assert.ok(path.some((p) => Math.abs(p.x - tower.x) < 1 && Math.abs(p.z - tower.z) < 2));
   s.dispose();
 });
 test("match time, tie overtime, next valid kill and 100 kill limit", () => {
@@ -365,10 +365,7 @@ test("seeded random and team roster are reproducible and symmetric", () => {
 test("bots independently fight on both teams while human is idle", () => {
   const s = game();
   for (let i = 0; i < 60 * 45; i++) s.step(idleCommand());
-  assert.ok(
-    s.match.scores[0] > 0 && s.match.scores[1] > 0,
-    JSON.stringify(s.match),
-  );
+  assert.ok(s.match.scores[0] > 0 && s.match.scores[1] > 0, JSON.stringify(s.match));
   assert.equal(s.human.kills, 0);
   assert.ok(s.botReroutes > 0);
   s.dispose();
@@ -397,7 +394,8 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
 test("selected ricochet has three reflections and 80 damage; standard has one", () => {
   const s = game();
   const t = s.human;
-  t.ammo.ricochet = 12; t.selectedAmmo = "ricochet";
+  t.ammo.ricochet = 12;
+  t.selectedAmmo = "ricochet";
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 3);
   assert.equal(s.shots.at(-1)!.damage, 80);
@@ -431,11 +429,7 @@ test("bots cross opened tower footprint and continue combat through ruins", () =
     for (const t of s.tanks)
       if (t.alive) {
         const p = t.body.translation();
-        if (
-          towers.some(
-            (c) => Math.abs(p.x - c.x) < 1.2 && Math.abs(p.z - c.z) < 2,
-          )
-        )
+        if (towers.some((c) => Math.abs(p.x - c.x) < 1.2 && Math.abs(p.z - c.z) < 2))
           crossed = true;
       }
   }
@@ -453,26 +447,18 @@ test("fragment cap bounds bodies and cosmetics cannot block live tanks", () => {
   s.dispose();
 });
 test("arena cover, pickup types and spawn slots have rotated team symmetry", async () => {
-  const { arenaLayout, pickupLayout, spawnPositions } =
-    await import("../src/game/arena");
+  const { arenaLayout, pickupLayout, spawnPositions } = await import("../src/game/arena");
   const covers = arenaLayout();
   for (const c of covers)
     assert.ok(
       covers.some(
-        (o) =>
-          o.kind === c.kind &&
-          o.x === -c.x &&
-          o.z === -c.z &&
-          o.w === c.w &&
-          o.d === c.d,
+        (o) => o.kind === c.kind && o.x === -c.x && o.z === -c.z && o.w === c.w && o.d === c.d,
       ),
       JSON.stringify(c),
     );
   for (const p of pickupLayout)
     assert.ok(
-      pickupLayout.some(
-        (o) => o.kind === p.kind && o.x === -p.x && o.z === -p.z,
-      ),
+      pickupLayout.some((o) => o.kind === p.kind && o.x === -p.x && o.z === -p.z),
       JSON.stringify(p),
     );
   const a = spawnPositions(0),
@@ -520,8 +506,7 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
     const names = pieces.map((f) => f.part).sort();
     assert.ok(names.includes("hull"));
     assert.ok(
-      names.includes("turret-barrel") ||
-        (names.includes("turret") && names.includes("barrel")),
+      names.includes("turret-barrel") || (names.includes("turret") && names.includes("barrel")),
     );
     variants.add(names.join("/"));
     assert.ok(pieces.length <= 3);
@@ -533,7 +518,7 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
       assert.ok(speed >= 6.99 && speed <= 14.01);
       axes.add(Object.entries(v).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]);
     }
-    const landingSteps = Math.ceil(Math.max(...pieces.map(f => f.life - 1.8)) * 60) + 60;
+    const landingSteps = Math.ceil(Math.max(...pieces.map((f) => f.life - 1.8)) * 60) + 60;
     for (let i = 0; i < landingSteps; i++) {
       s.world.step();
       highest = Math.max(highest, ...pieces.map((f) => f.body.translation().y));
@@ -607,7 +592,9 @@ test("bots pause between shots even when breaching; human fires faster with and 
       botShots > 0 && botShots < humanShots * 0.8,
       JSON.stringify({ rapid, botShots, humanShots }),
     );
-    assert.ok(humanShots >= Math.floor(10 / (WEAPONS.standard.interval * (rapid ? 0.5 : 1) / 1.2 + STEP)));
+    assert.ok(
+      humanShots >= Math.floor(10 / ((WEAPONS.standard.interval * (rapid ? 0.5 : 1)) / 1.2 + STEP)),
+    );
     s.dispose();
   }
 });
@@ -616,7 +603,9 @@ test("village buildings and trees block routes until destroyed, while all spawns
   const { spawnPositions } = await import("../src/game/arena");
   const s = game();
   for (const kind of ["house", "tree", "timber"] as const) {
-    const c = s.covers.find((c) => c.kind === kind && c.destructible && (kind !== "timber" || (c.x === -2 && c.z === 13)))!;
+    const c = s.covers.find(
+      (c) => c.kind === kind && c.destructible && (kind !== "timber" || (c.x === -2 && c.z === 13)),
+    )!;
     assert.ok(c && c.destructible);
     assert.equal(s.nav.blocked[s.nav.index(c)], 1);
     s.damageCover(c, 1000, s.human.id, s.humanTeam);
@@ -624,7 +613,6 @@ test("village buildings and trees block routes until destroyed, while all spawns
     assert.equal(s.nav.blocked[s.nav.index(c)], 0);
   }
   for (const team of [0, 1] as const)
-    for (const p of spawnPositions(team))
-      assert.ok(s.nav.find(p, { x: 0, z: 0 }).length > 0);
+    for (const p of spawnPositions(team)) assert.ok(s.nav.find(p, { x: 0, z: 0 }).length > 0);
   s.dispose();
 });

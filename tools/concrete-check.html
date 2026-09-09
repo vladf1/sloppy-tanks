@@ -1,8 +1,24 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Perimeter concrete check</title><style>#hud,#overlay{display:none!important}</style></head><body><div id="app"></div><script type="module">
-import '../src/main';
-const {sim,view}=window.sloppy;
-sim.match.phase='paused';
-sim.human.body.setTranslation({x:-53,y:0.65,z:-53},true);
-sim.human.previous={x:-53,y:0.65,z:-53};
-view.zoom=24;
-</script></body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Perimeter concrete check</title>
+    <style>
+      #hud,
+      #overlay {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import "../src/main";
+      const { sim, view } = window.sloppy;
+      sim.match.phase = "paused";
+      sim.human.body.setTranslation({ x: -53, y: 0.65, z: -53 }, true);
+      sim.human.previous = { x: -53, y: 0.65, z: -53 };
+      view.zoom = 24;
+    </script>
+  </body>
+</html>

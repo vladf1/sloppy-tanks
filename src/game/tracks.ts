@@ -5,7 +5,12 @@ import type { Simulation } from "./simulation";
 export const TRACK_CAPACITY = 8192;
 export const TRACK_LIFETIME = 18;
 const SPACING = 0.42;
-interface Pose { x: number; z: number; heading: number; pending: number }
+interface Pose {
+  x: number;
+  z: number;
+  heading: number;
+  pending: number;
+}
 
 /** Cosmetic, distance-spaced twin treads in one bounded draw call. */
 export class TrackTrails {
@@ -20,15 +25,25 @@ export class TrackTrails {
     const geometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     geometry.setAttribute("trackBirth", this.birth);
     const material = new THREE.MeshBasicMaterial({
-      color: 0x283222, transparent: true, opacity: 0.38, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+      color: 0x283222,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     material.onBeforeCompile = (shader) => {
       shader.uniforms.trackTime = this.clock;
-      shader.vertexShader = `attribute float trackBirth;\nvarying float treadAge;\nuniform float trackTime;\n${shader.vertexShader}`
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\ntreadAge = trackTime - trackBirth;");
-      shader.fragmentShader = `varying float treadAge;\n${shader.fragmentShader}`
-        .replace("#include <color_fragment>", `#include <color_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(4.0, ${TRACK_LIFETIME.toFixed(1)}, treadAge);`);
+      shader.vertexShader =
+        `attribute float trackBirth;\nvarying float treadAge;\nuniform float trackTime;\n${shader.vertexShader}`.replace(
+          "#include <begin_vertex>",
+          "#include <begin_vertex>\ntreadAge = trackTime - trackBirth;",
+        );
+      shader.fragmentShader = `varying float treadAge;\n${shader.fragmentShader}`.replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(4.0, ${TRACK_LIFETIME.toFixed(1)}, treadAge);`,
+      );
     };
     material.customProgramCacheKey = () => "tank-tread-fade-v1";
     this.mesh = new THREE.InstancedMesh(geometry, material, TRACK_CAPACITY);
@@ -39,7 +54,7 @@ export class TrackTrails {
     this.mesh.renderOrder = 1;
   }
 
-  reset() {
+  reset(): void {
     this.mesh.count = 0;
     this.cursor = 0;
     this.poses.clear();
@@ -48,36 +63,45 @@ export class TrackTrails {
     this.clock.value = 0;
   }
 
-  update(s: Simulation, alpha: number) {
-    this.clock.value = s.elapsed;
+  update(simulation: Simulation, alpha: number): void {
+    this.clock.value = simulation.elapsed;
     const first = this.cursor;
     let written = 0;
-    for (const t of s.tanks) {
-      if (!t.alive) { this.poses.delete(t.id); continue; }
-      const p = t.body.translation();
-      const x = THREE.MathUtils.lerp(t.previous.x, p.x, alpha);
-      const z = THREE.MathUtils.lerp(t.previous.z, p.z, alpha);
-      const previous = this.poses.get(t.id);
+    for (const tank of simulation.tanks) {
+      if (!tank.alive) {
+        this.poses.delete(tank.id);
+        continue;
+      }
+      const position = tank.body.translation();
+      const x = THREE.MathUtils.lerp(tank.previous.x, position.x, alpha);
+      const z = THREE.MathUtils.lerp(tank.previous.z, position.z, alpha);
+      const previous = this.poses.get(tank.id);
       if (!previous) {
-        this.poses.set(t.id, { x, z, heading: t.heading, pending: 0 });
+        this.poses.set(tank.id, { x, z, heading: tank.heading, pending: 0 });
         continue;
       }
       const length = Math.hypot(x - previous.x, z - previous.z);
-      const scale = VEHICLES[t.kind].scale;
+      const scale = VEHICLES[tank.kind].scale;
       const spacing = SPACING * scale;
-      if (length > 5 || p.y > 1.25) previous.pending = 0;
-      else if (length > 1e-6) {
+      if (length > 5 || position.y > 1.25) {
+        previous.pending = 0;
+      } else if (length > 1e-6) {
         // Subdivide travel so marks remain evenly spaced at different frame rates.
         for (let d = spacing - previous.pending; d <= length; d += spacing) {
           const u = d / length;
-          const angle = previous.heading + angleDelta(previous.heading, t.heading) * u;
-          const sin = Math.sin(angle), cos = Math.cos(angle);
+          const angle = previous.heading + angleDelta(previous.heading, tank.heading) * u;
+          const sin = Math.sin(angle);
+          const cos = Math.cos(angle);
           const cx = previous.x + (x - previous.x) * u - sin * 1.1 * scale;
           const cz = previous.z + (z - previous.z) * u - cos * 1.1 * scale;
           // Never overwrite a visible tread when traffic fills the ring buffer.
           // Skip this pair until its oldest slot has finished fading instead.
-          if (this.mesh.count === TRACK_CAPACITY &&
-              s.elapsed - this.birth.getX(this.cursor) < TRACK_LIFETIME) continue;
+          if (
+            this.mesh.count === TRACK_CAPACITY &&
+            simulation.elapsed - this.birth.getX(this.cursor) < TRACK_LIFETIME
+          ) {
+            continue;
+          }
           for (const side of [-1, 1]) {
             this.dummy.position.set(cx + cos * side * scale, 0.075, cz - sin * side * scale);
             this.dummy.rotation.set(0, angle, 0);
@@ -85,14 +109,16 @@ export class TrackTrails {
             this.dummy.updateMatrix();
             this.mesh.setMatrixAt(this.cursor, this.dummy.matrix);
             written++;
-            this.birth.setX(this.cursor, s.elapsed);
+            this.birth.setX(this.cursor, simulation.elapsed);
             this.cursor = (this.cursor + 1) % TRACK_CAPACITY;
             this.mesh.count = Math.min(TRACK_CAPACITY, this.mesh.count + 1);
           }
         }
         previous.pending = (previous.pending + length) % spacing;
       }
-      previous.x = x; previous.z = z; previous.heading = t.heading;
+      previous.x = x;
+      previous.z = z;
+      previous.heading = tank.heading;
     }
     if (written) {
       // A wrapped ring touches at most two contiguous ranges, not the full buffer.
@@ -100,18 +126,21 @@ export class TrackTrails {
         this.mesh.instanceMatrix.addUpdateRange(start * 16, count * 16);
         this.birth.addUpdateRange(start, count);
       };
-      if (written >= TRACK_CAPACITY) addRange(0, TRACK_CAPACITY);
-      else {
+      if (written >= TRACK_CAPACITY) {
+        addRange(0, TRACK_CAPACITY);
+      } else {
         const tail = Math.min(written, TRACK_CAPACITY - first);
         addRange(first, tail);
-        if (written > tail) addRange(0, written - tail);
+        if (written > tail) {
+          addRange(0, written - tail);
+        }
       }
       this.mesh.instanceMatrix.needsUpdate = true;
       this.birth.needsUpdate = true;
     }
   }
 
-  dispose() {
+  dispose(): void {
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.dispose();

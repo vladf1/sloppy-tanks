@@ -35,7 +35,9 @@ canvas#game {
   z-index: 20;
   pointer-events: none;
   color: rgba(255, 255, 255, 0.65);
-  font: 10px/1.2 ui-monospace, monospace;
+  font:
+    10px/1.2 ui-monospace,
+    monospace;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 3px #000;
 }
@@ -169,15 +171,32 @@ canvas#game {
   letter-spacing: 0.8px;
   font-weight: 700;
 }
-.status { border-radius: 4px; }
-.status.critical-health { animation: critical-health 1.6s ease-in-out infinite; }
-#hud.paused .status.critical-health { animation-play-state: paused; }
+.status {
+  border-radius: 4px;
+}
+.status.critical-health {
+  animation: critical-health 1.6s ease-in-out infinite;
+}
+#hud.paused .status.critical-health {
+  animation-play-state: paused;
+}
 @keyframes critical-health {
-  0%, 100% { background: #ff665512; box-shadow: 0 0 0 4px #ff665512; }
-  50% { background: #ff665539; box-shadow: 0 0 0 4px #ff665539; }
+  0%,
+  100% {
+    background: #ff665512;
+    box-shadow: 0 0 0 4px #ff665512;
+  }
+  50% {
+    background: #ff665539;
+    box-shadow: 0 0 0 4px #ff665539;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .status.critical-health { animation: none; background: #ff665530; box-shadow: 0 0 0 4px #ff665530; }
+  .status.critical-health {
+    animation: none;
+    background: #ff665530;
+    box-shadow: 0 0 0 4px #ff665530;
+  }
 }
 .status div {
   display: flex;
@@ -186,7 +205,10 @@ canvas#game {
   padding-bottom: 5px;
 }
 .status b {
-  font: 800 28px/1.1 "Barlow Condensed", Impact, sans-serif;
+  font:
+    800 28px/1.1 "Barlow Condensed",
+    Impact,
+    sans-serif;
   font-variant-numeric: tabular-nums;
 }
 .status span {
@@ -202,9 +224,23 @@ canvas#game {
   background: #41baff;
   transition: width 0.15s;
 }
-.tank-label { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
-#rank { font: 700 10px/1.2 "Barlow", sans-serif; color: #ffd477; pointer-events: auto; cursor: help; }
-#rank[data-rank="0"] { color: #b2c4d7; }
+.tank-label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+}
+#rank {
+  font:
+    700 10px/1.2 "Barlow",
+    sans-serif;
+  color: #ffd477;
+  pointer-events: auto;
+  cursor: help;
+}
+#rank[data-rank="0"] {
+  color: #b2c4d7;
+}
 #effects {
   grid-column: 1 / -1;
   font-size: 10px;
@@ -246,20 +282,46 @@ canvas#game {
   background: #091c30;
   font-variant-numeric: tabular-nums;
 }
-.ammo-slot small { font-size: 9px; letter-spacing: 0.3px; }
-.ammo-slot b { font-size: 20px; line-height: 1.2; }
-.ammo-slot.empty { opacity: 0.38; }
+.ammo-slot small {
+  font-size: 9px;
+  letter-spacing: 0.3px;
+}
+.ammo-slot b {
+  font-size: 20px;
+  line-height: 1.2;
+}
+.ammo-slot.empty {
+  opacity: 0.38;
+}
 .ammo-slot.selected {
   border-color: var(--ammo-color);
   background: #294564;
   box-shadow: inset 0 -3px var(--ammo-color);
 }
 @media (max-width: 650px) {
-  .bottom { left: 10px; right: 10px; bottom: 10px; }
-  .combat-status { grid-template-columns: 1fr; width: 100%; padding: 8px; gap: 7px; }
-  .status { display: flex; gap: 12px; align-items: center; }
-  .status div { min-width: 100px; }
-  .weapon { padding-left: 0; border-left: 0; }
+  .bottom {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+  }
+  .combat-status {
+    grid-template-columns: 1fr;
+    width: 100%;
+    padding: 8px;
+    gap: 7px;
+  }
+  .status {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .status div {
+    min-width: 100px;
+  }
+  .weapon {
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 #feed {
   position: absolute;
@@ -600,13 +662,59 @@ h2 {
   font-size: 20px;
 }
 
-.mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 20px; }
-.mode-options fieldset { border: 1px solid #71826977; border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
-.mode-options legend { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #a6dfff; padding: 0 6px; }
-.mode-option { display: flex; align-items: center; gap: 10px; padding: 9px; border-radius: 5px; cursor: pointer; }
-.mode-option:has(input:checked) { background: #315d81; }
-.mode-option input { accent-color: #ffcf38; }
-.mode-option b { display: block; font-size: 15px; }
-.mode-option small { display: block; margin-top: 3px; font-size: 12px; color: #c4dfef; }
-#overlay { overflow-y: auto; }
-@media (max-width: 500px) { .mode-options { gap: 8px; } .mode-option { padding: 7px 3px; gap: 6px; } }
+.mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin: 0 0 20px;
+}
+.mode-options fieldset {
+  border: 1px solid #71826977;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 0;
+  min-width: 0;
+}
+.mode-options legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #a6dfff;
+  padding: 0 6px;
+}
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mode-option:has(input:checked) {
+  background: #315d81;
+}
+.mode-option input {
+  accent-color: #ffcf38;
+}
+.mode-option b {
+  display: block;
+  font-size: 15px;
+}
+.mode-option small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #c4dfef;
+}
+#overlay {
+  overflow-y: auto;
+}
+@media (max-width: 500px) {
+  .mode-options {
+    gap: 8px;
+  }
+  .mode-option {
+    padding: 7px 3px;
+    gap: 6px;
+  }
+}

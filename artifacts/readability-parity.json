@@ -1,0 +1,161 @@
+{
+  "description": "Readability refactor behavioral comparison against original HEAD; no rendering",
+  "ticksPerScenario": 1800,
+  "secondsPerScenario": 30,
+  "seeds": [
+    79,
+    207,
+    12345
+  ],
+  "hashedData": "Events every tick (excluding Rapier body/collider handles), snapshots every second and at completion, final RNG state",
+  "allEqual": true,
+  "before": [
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 79,
+      "hash": "393714d5ba55f84c0a90ac48e7ae0b29e179e214652efc17b75f62282b88fd40"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 207,
+      "hash": "b56434119c9b06ec1c45615163fca3e5db45d51457eb60fe739de653dabd45e4"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 12345,
+      "hash": "466ae833e056f97c64f0bbd988b0906b2fbae78c6d56fa0056e7ee3d55d173a2"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 79,
+      "hash": "7caaeb4fb7ae6dff251e211bee7300e0e7dfb496b1b99587b28fe75597d27116"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 207,
+      "hash": "d629f155c39150799aa73c000ec6603dce73457030d58be287e73e8026d4c5b3"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 12345,
+      "hash": "7be254eee078b6b422c848744c1db257a3861fad3094633263ba4716462c60eb"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 79,
+      "hash": "d2fe759332baa51e508d2b5eb0986ccf19474c6068ab948b209e59aeb6a80d7a"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 207,
+      "hash": "38aafe6c10958abc3dca43109cba265cd8ff766dda16cc989613b0fc9c7a84f9"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 12345,
+      "hash": "d46998f7058ad2c1d2c783562c739e459d5fadc7fc6a414c78ea5c5587e6da70"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 79,
+      "hash": "4d12c08e66316e8612f174eea740febbc23e07d30591741aba19518258c567dd"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 207,
+      "hash": "5f2c99d1b5b3bae0bfa0b361c96458a1051b23ba8b9a8c7d5219401336f65973"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 12345,
+      "hash": "18ee8289d2e20d96986704c8218d9badbc350f6606e12a99a1144447c4ceb979"
+    }
+  ],
+  "after": [
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 79,
+      "hash": "393714d5ba55f84c0a90ac48e7ae0b29e179e214652efc17b75f62282b88fd40"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 207,
+      "hash": "b56434119c9b06ec1c45615163fca3e5db45d51457eb60fe739de653dabd45e4"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "village",
+      "seed": 12345,
+      "hash": "466ae833e056f97c64f0bbd988b0906b2fbae78c6d56fa0056e7ee3d55d173a2"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 79,
+      "hash": "7caaeb4fb7ae6dff251e211bee7300e0e7dfb496b1b99587b28fe75597d27116"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 207,
+      "hash": "d629f155c39150799aa73c000ec6603dce73457030d58be287e73e8026d4c5b3"
+    },
+    {
+      "gameMode": "team",
+      "mapMode": "random",
+      "seed": 12345,
+      "hash": "7be254eee078b6b422c848744c1db257a3861fad3094633263ba4716462c60eb"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 79,
+      "hash": "d2fe759332baa51e508d2b5eb0986ccf19474c6068ab948b209e59aeb6a80d7a"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 207,
+      "hash": "38aafe6c10958abc3dca43109cba265cd8ff766dda16cc989613b0fc9c7a84f9"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "village",
+      "seed": 12345,
+      "hash": "d46998f7058ad2c1d2c783562c739e459d5fadc7fc6a414c78ea5c5587e6da70"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 79,
+      "hash": "4d12c08e66316e8612f174eea740febbc23e07d30591741aba19518258c567dd"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 207,
+      "hash": "5f2c99d1b5b3bae0bfa0b361c96458a1051b23ba8b9a8c7d5219401336f65973"
+    },
+    {
+      "gameMode": "solo",
+      "mapMode": "random",
+      "seed": 12345,
+      "hash": "18ee8289d2e20d96986704c8218d9badbc350f6606e12a99a1144447c4ceb979"
+    }
+  ],
+  "baselineRevision": "ecb09df4fefb9414ccda1ae078d426d40764f517"
+}

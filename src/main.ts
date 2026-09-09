@@ -1,35 +1,46 @@
-import "./style.css";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { Simulation } from "./game/simulation";
-import { Presentation } from "./game/presentation";
-import { Controls } from "./game/controls";
+import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
-import { UI } from "./game/ui";
+import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
+import { Presentation } from "./game/presentation";
+import { Simulation } from "./game/simulation";
 import { tuneSpeed } from "./game/speed-tuning";
-import { idleCommand } from "./game/types";
 import { loadTankSurface } from "./game/tank-surfaces";
+import { UI } from "./game/ui";
+import { CAMERA } from "./game/view-settings";
+import "./style.css";
+const MAX_FRAME_DELTA_SECONDS = 0.1;
+const MAX_CATCH_UP_STEPS = 5;
+const HUD_UPDATE_EVERY_FRAMES = 4;
+const FPS_UPDATE_INTERVAL_MS = 500;
+const MILLISECONDS_PER_SECOND = 1000;
+
 await RAPIER.init();
 await loadTankSurface();
 const root = document.querySelector<HTMLDivElement>("#app")!;
 root.innerHTML =
   '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas><div id="fps" aria-label="Frames per second">— FPS</div>';
 const fpsDisplay = root.querySelector<HTMLElement>("#fps")!;
-let fpsStart = 0, fpsFrames = 0;
+let fpsStart = 0;
+let fpsFrames = 0;
 document.addEventListener("visibilitychange", () => {
   fpsStart = 0;
   fpsFrames = 0;
 });
-const canvas = document.querySelector<HTMLCanvasElement>("#game")!,
-  sim = new Simulation(Math.floor(Math.random() * 1000000)),
-  view = new Presentation(canvas),
-  audio = new AudioSystem();
+const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
+const sim = new Simulation(Math.floor(Math.random() * 1000000));
+const view = new Presentation(canvas);
+const audio = new AudioSystem();
 view.reset(sim);
-let autoplay = new URLSearchParams(location.search).has("autoplay"),
-  overview = false,
-  accumulator = 0,
-  last = performance.now(),
-  frameIndex = 0;
+const playback = {
+  autoplay: new URLSearchParams(location.search).has("autoplay"),
+  overview: false,
+  autoRounds: false,
+};
+let accumulator = 0;
+let last = performance.now();
+let frameIndex = 0;
 const pause = () => {
   if (sim.match.phase === "playing") {
     sim.match.phase = "paused";
@@ -40,18 +51,23 @@ const pause = () => {
 const controls = new Controls(
   canvas,
   pause,
-  (n) => (view.zoom = Math.max(23, Math.min(52, view.zoom + n))),
+  (n) => (view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + n))),
   () => sim.match.phase === "playing" && sim.human.alive,
 );
 const settings = (key: string, value: number) => {
-  if (key === "tank-speed" || key === "bullet-speed") value = tuneSpeed(sim, key, value);
+  if (key === "tank-speed" || key === "bullet-speed") {
+    value = tuneSpeed(sim, key, value);
+  }
   localStorage.setItem("sloppy-" + key, String(value));
-  if (key === "volume") audio.volume(value);
+  if (key === "volume") {
+    audio.volume(value);
+  }
 };
 settings("volume", Number(localStorage.getItem("sloppy-volume") ?? ".6"));
-for (const key of ["tank-speed", "bullet-speed"] as const)
+for (const key of ["tank-speed", "bullet-speed"] as const) {
   settings(key, Number(localStorage.getItem("sloppy-" + key) ?? "1"));
-function start() {
+}
+function start(): void {
   controls.clear();
   sim.reset();
   view.reset(sim);
@@ -60,7 +76,7 @@ function start() {
   canvas.focus();
   accumulator = 0;
 }
-function restart() {
+function restart(): void {
   controls.clear();
   sim.reset();
   view.reset(sim);
@@ -81,84 +97,76 @@ const ui = new UI(
   pause,
 );
 window.addEventListener("resize", () => view.resize());
-if (autoplay) start();
-interface Frame {
-  frame: number;
-  sim: number;
-  render: number;
-  calls: number;
-  triangles: number;
-  bodies: number;
-  shots: number;
-  fragments: number;
-  time: number;
+if (playback.autoplay) {
+  start();
 }
-const samples: Frame[] = [];
-let recording = false,
-  recordStart = 0;
-let autoRounds = false,
-  completedRounds = 0;
-function loop(now: number) {
-  const raw = (now - last) / 1000,
-    dt = Math.min(0.1, raw);
+const recorder = new FrameRecorder(sim, canvas);
+function loop(now: number): void {
+  const raw = (now - last) / MILLISECONDS_PER_SECOND;
+  const dt = Math.min(MAX_FRAME_DELTA_SECONDS, raw);
   last = now;
   if (!document.hidden) {
-    if (sim.match.phase === "results" && autoRounds) {
+    if (sim.match.phase === "results" && playback.autoRounds) {
       controls.clear();
-      completedRounds++;
+      recorder.completedRounds++;
       sim.reset();
       view.reset(sim);
       sim.start();
     }
     const startSim = performance.now();
     if (sim.match.phase === "playing") {
-      accumulator = Math.min(accumulator + dt, STEP * 5);
-      const aim = view.aim(controls.nx, controls.ny),
-        p = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
-      const angle = Math.atan2(aim.x - p.x, aim.z - p.z);
+      // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.
+      accumulator = Math.min(accumulator + dt, STEP * MAX_CATCH_UP_STEPS);
+      const aim = view.aim(controls.nx, controls.ny);
+      const position = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
+      const angle = Math.atan2(aim.x - position.x, aim.z - position.z);
       let steps = 0;
-      while (accumulator >= STEP && steps < 5) {
-        sim.step(controls.command(angle), autoplay);
+      while (accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
+        sim.step(controls.command(angle), playback.autoplay);
         accumulator -= STEP;
         steps++;
       }
-    } else accumulator = 0;
-    if (sim.match.phase !== "playing" || !sim.human.alive) controls.clear();
+    } else {
+      accumulator = 0;
+    }
+    if (sim.match.phase !== "playing" || !sim.human.alive) {
+      controls.clear();
+    }
     const simCost = performance.now() - startSim;
     const events = sim.events.splice(0);
-    for (const e of events) {
-      const playerHit = (e.type === "hurt" || e.type === "death") &&
-        e.owner === sim.human.id && e.team !== sim.human.team;
-      view.event(e, playerHit);
+    for (const event of events) {
+      const playerHit =
+        (event.type === "hurt" || event.type === "death") &&
+        event.owner === sim.human.id &&
+        event.team !== sim.human.team;
+      view.event(event, playerHit);
       audio.event(
-        e,
+        event,
         sim.human.alive ? sim.human.body.translation() : sim.human.previous,
         playerHit,
-        e.id === sim.human.id,
+        event.id === sim.human.id,
       );
-      ui.event(e);
+      ui.event(event);
     }
     const renderStart = performance.now();
-    view.render(
-      sim,
-      sim.match.phase === "playing" ? accumulator / STEP : 1,
-      dt,
-      overview,
-    );
+    view.render(sim, sim.match.phase === "playing" ? accumulator / STEP : 1, dt, playback.overview);
     const renderCost = performance.now() - renderStart;
-    if (fpsStart === 0) fpsStart = now;
-    else {
+    if (fpsStart === 0) {
+      fpsStart = now;
+    } else {
       fpsFrames++;
-      if (now - fpsStart >= 500) {
-        fpsDisplay.textContent = `${Math.round(fpsFrames * 1000 / (now - fpsStart))} FPS`;
+      if (now - fpsStart >= FPS_UPDATE_INTERVAL_MS) {
+        fpsDisplay.textContent = `${Math.round((fpsFrames * MILLISECONDS_PER_SECOND) / (now - fpsStart))} FPS`;
         fpsStart = now;
         fpsFrames = 0;
       }
     }
-    if (frameIndex++ % 4 === 0) ui.update(dt * 4);
-    if (recording) {
-      samples.push({
-        frame: raw * 1000,
+    if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
+      ui.update(dt * HUD_UPDATE_EVERY_FRAMES);
+    }
+    if (recorder.recording) {
+      recorder.capture({
+        frame: raw * MILLISECONDS_PER_SECOND,
         sim: simCost,
         render: renderCost,
         calls: view.renderer.info.render.calls,
@@ -166,151 +174,20 @@ function loop(now: number) {
         bodies: sim.world.bodies.len(),
         shots: sim.shots.length,
         fragments: sim.fragments.length,
-        time: (now - recordStart) / 1000,
+        time: (now - recorder.recordStart) / MILLISECONDS_PER_SECOND,
       });
-      if (samples.length > 90000) samples.shift();
     }
   }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-const percentile = (a: number[], q: number) =>
-  a.slice().sort((a, b) => a - b)[
-    Math.min(a.length - 1, Math.floor(a.length * q))
-  ] ?? 0;
-const average = (a: number[]) =>
-  a.reduce((s, n) => s + n, 0) / Math.max(1, a.length);
-function report() {
-  const frames = samples.filter((r) => r.time > 5);
-  const f = frames.map((r) => r.frame);
-  return {
-    date: new Date().toISOString(),
-    userAgent: navigator.userAgent,
-    resolution: [canvas.width, canvas.height],
-    samples: frames.length,
-    seconds: samples.at(-1)?.time ?? 0,
-    fps: 1000 / average(f),
-    frameP50: percentile(f, 0.5),
-    frameP95: percentile(f, 0.95),
-    frameP99: percentile(f, 0.99),
-    simulationMean: average(frames.map((r) => r.sim)),
-    simulationP95: percentile(
-      frames.map((r) => r.sim),
-      0.95,
-    ),
-    renderMean: average(frames.map((r) => r.render)),
-    drawCalls: Math.round(average(frames.map((r) => r.calls))),
-    triangles: Math.round(average(frames.map((r) => r.triangles))),
-    maxBodies: Math.max(0, ...frames.map((r) => r.bodies)),
-    maxProjectiles: Math.max(0, ...frames.map((r) => r.shots)),
-    maxFragments: Math.max(0, ...frames.map((r) => r.fragments)),
-    completedRounds,
-    snapshot: sim.snapshot(),
-    memory:
-      (performance as Performance & { memory?: { usedJSHeapSize: number } })
-        .memory?.usedJSHeapSize ?? null,
-  };
-}
-function createDebug() {
-  return {
-    sim,
-    view,
-    audio,
-    controls,
-    start,
-    restart,
-    report,
-    samples,
-    autoplay(value = true) {
-      autoplay = value;
-      return autoplay;
-    },
-    overview(value = true) {
-      overview = value;
-    },
-    record() {
-      samples.length = 0;
-      recording = true;
-      recordStart = performance.now();
-    },
-    stop() {
-      recording = false;
-      return report();
-    },
-    autoRounds(value = true) {
-      autoRounds = value;
-      return autoRounds;
-    },
-    exactResolution() {
-      view.resize(2560, 1440, true);
-    },
-    stress() {
-      sim.reset(24);
-      view.reset(sim);
-      sim.start();
-      autoplay = true;
-      for (let i = 0; i < sim.maxFragments; i++)
-        sim.fragment(
-          sim.rng.range(-15, 15),
-          sim.rng.range(-15, 15),
-          0xc5a978,
-          0.5,
-        );
-      for (let i = 0; i < 200; i++) {
-        const a = (i * Math.PI * 2) / 200;
-        sim.shots.push({
-          id: sim.nextId++,
-          x: Math.sin(a) * 3,
-          z: Math.cos(a) * 3,
-          vx: Math.cos(a) * 45,
-          vz: Math.sin(a) * 45,
-          owner: sim.tanks[i % 24].id,
-          team: (i % 2) as 0 | 1,
-          damage: 40,
-          bounces: 4,
-          life: 4,
-          piercing: 0, weapon: "standard",
-        });
-      }
-    },
-    collapse() {
-      for (const c of [...sim.covers])
-        if (c.kind === "tower" || c.kind === "drum")
-          sim.damageCover(c, 999, sim.human.id, sim.humanTeam);
-    },
-    async soak(seconds = 1200) {
-      let resets = 0,
-        steps = 0;
-      const startTime = performance.now();
-      for (let i = 0; i < seconds * 60; i++) {
-        if (sim.match.phase !== "playing") {
-          sim.reset();
-          view.reset(sim);
-          sim.start();
-          resets++;
-        }
-        sim.step(idleCommand(), true);
-        steps++;
-        if (i % 600 === 0)
-          await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      return {
-        simulatedSeconds: steps / 60,
-        wallSeconds: (performance.now() - startTime) / 1000,
-        resets,
-        snapshot: sim.snapshot(),
-      };
-    },
-  };
-}
-declare global {
-  interface Window { sloppy: ReturnType<typeof createDebug> }
-}
 if (import.meta.env.DEV) {
-  Object.assign(window, { sloppy: createDebug() });
+  Object.assign(window, {
+    sloppy: createDebug(sim, view, audio, controls, start, restart, recorder, playback),
+  });
   if (new URLSearchParams(location.search).has("tweak")) {
     const { Pane } = await import("tweakpane");
     const pane = new Pane({ title: "Yard workshop" });
-    pane.addBinding(view, "zoom", { min: 23, max: 52 });
+    pane.addBinding(view, "zoom", { min: CAMERA.minZoom, max: CAMERA.maxZoom });
   }
 }

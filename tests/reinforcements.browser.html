@@ -1,55 +1,91 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><title>Solo reinforcement rendering regression</title></head>
-<body><h1>Solo reinforcement rendering regression</h1><pre id="result">Running…</pre><canvas id="game" width="800" height="600"></canvas>
-<script type="module">
-import RAPIER from '@dimforge/rapier3d-compat';
-import { Simulation } from '../src/game/simulation';
-import { Presentation } from '../src/game/presentation';
-const result = document.querySelector('#result');
-let s, view;
-const check = (condition, message) => { if (!condition) throw new Error(message); };
-try {
-  await RAPIER.init();
-  s = new Simulation(123);
-  s.gameMode = 'solo'; s.mapMode = 'random'; s.reset(); s.start();
-  view = new Presentation(document.querySelector('#game'));
-  view.reset(s);
-  view.render(s, 1, 1 / 60);
-  let replacements = 0;
-  for (let kill = 0; kill < 120; kill++) {
-    const victim = s.tanks.find(t => !t.human && t.alive);
-    check(victim, 'An enemy must be available');
-    victim.protection = 0;
-    s.damageTank(victim, 999, s.human.id, s.humanTeam);
-    view.render(s, 1, 1 / 60);
-    check(!view.tankMeshes.get(victim.id).visible, "Destroyed tank hidden before replacement");
-    s.reinforcementDelay = 0;
-    s.step();
-    replacements++;
-    view.render(s, 1, 1 / 60);
-    const objects = view.worldGroup.children.length;
-    view.render(s, 1, 1 / 60);
-    check(view.worldGroup.children.length === objects, 'Repeated frames must not duplicate visuals');
-    check(view.tankMeshes.get(victim.id).visible, 'Replacement tank must be visible');
-    check(view.bars.get(victim.id).visible, 'Replacement health bar must be visible');
-    check(view.tankMeshes.size === 7 && view.bars.size === 7, 'Models and bars stay bounded');
-    for (const tank of s.tanks.filter(t => t.alive)) {
-      check(view.tankMeshes.get(tank.id)?.visible, 'Live tank needs a visible model');
-      check(view.bars.get(tank.id)?.visible, 'Live tank needs a visible health bar');
-    }
-    check(s.tanks.filter(t => !t.human && t.alive).length <= 6, 'Six active enemies maximum');
-    check(s.match.phase === 'playing', 'No kill-count victory');
-  }
-  check(replacements === 120 && s.human.kills === 120, 'All kills counted');
-  s.match.time = 0.001; s.step();
-  check(s.match.phase === 'results' && s.match.winner === s.humanTeam, 'Survived at time limit');
-  s.reset(); view.reset(s); view.render(s, 1, 1 / 60);
-  check(view.tankMeshes.size === 7 && view.bars.size === 7, 'Reset clears old models and bars');
-  s.gameMode = 'team'; s.reset(); view.reset(s); view.render(s, 1, 1 / 60);
-  check(view.tankMeshes.size === 12, 'Team mode still renders');
-  result.textContent = 'PASS: 120 kills, 120 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.';
-} catch (error) {
-  result.textContent = 'FAIL: ' + error.stack;
-  console.error(error);
-}
-</script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Solo reinforcement rendering regression</title>
+  </head>
+  <body>
+    <h1>Solo reinforcement rendering regression</h1>
+    <pre id="result">Running…</pre>
+    <canvas id="game" width="800" height="600"></canvas>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      const result = document.querySelector("#result");
+      let s, view;
+      const check = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      try {
+        await RAPIER.init();
+        s = new Simulation(123);
+        s.gameMode = "solo";
+        s.mapMode = "random";
+        s.reset();
+        s.start();
+        view = new Presentation(document.querySelector("#game"));
+        view.reset(s);
+        view.render(s, 1, 1 / 60);
+        let replacements = 0;
+        for (let kill = 0; kill < 120; kill++) {
+          const victim = s.tanks.find((t) => !t.human && t.alive);
+          check(victim, "An enemy must be available");
+          victim.protection = 0;
+          s.damageTank(victim, 999, s.human.id, s.humanTeam);
+          view.render(s, 1, 1 / 60);
+          check(
+            !view.tankMeshes.get(victim.id).visible,
+            "Destroyed tank hidden before replacement",
+          );
+          s.reinforcementDelay = 0;
+          s.step();
+          replacements++;
+          view.render(s, 1, 1 / 60);
+          const objects = view.worldGroup.children.length;
+          view.render(s, 1, 1 / 60);
+          check(
+            view.worldGroup.children.length === objects,
+            "Repeated frames must not duplicate visuals",
+          );
+          check(view.tankMeshes.get(victim.id).visible, "Replacement tank must be visible");
+          check(view.bars.get(victim.id).visible, "Replacement health bar must be visible");
+          check(view.tankMeshes.size === 7 && view.bars.size === 7, "Models and bars stay bounded");
+          for (const tank of s.tanks.filter((t) => t.alive)) {
+            check(view.tankMeshes.get(tank.id)?.visible, "Live tank needs a visible model");
+            check(view.bars.get(tank.id)?.visible, "Live tank needs a visible health bar");
+          }
+          check(
+            s.tanks.filter((t) => !t.human && t.alive).length <= 6,
+            "Six active enemies maximum",
+          );
+          check(s.match.phase === "playing", "No kill-count victory");
+        }
+        check(replacements === 120 && s.human.kills === 120, "All kills counted");
+        s.match.time = 0.001;
+        s.step();
+        check(
+          s.match.phase === "results" && s.match.winner === s.humanTeam,
+          "Survived at time limit",
+        );
+        s.reset();
+        view.reset(s);
+        view.render(s, 1, 1 / 60);
+        check(
+          view.tankMeshes.size === 7 && view.bars.size === 7,
+          "Reset clears old models and bars",
+        );
+        s.gameMode = "team";
+        s.reset();
+        view.reset(s);
+        view.render(s, 1, 1 / 60);
+        check(view.tankMeshes.size === 12, "Team mode still renders");
+        result.textContent =
+          "PASS: 120 kills, 120 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.";
+      } catch (error) {
+        result.textContent = "FAIL: " + error.stack;
+        console.error(error);
+      }
+    </script>
+  </body>
+</html>
