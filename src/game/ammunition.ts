@@ -8,6 +8,13 @@ export const AMMO_ORDER: readonly Weapon[] = [
   "ricochet",
   "piercing",
 ];
+export const AMMO_HELP: Record<Weapon, string> = {
+  standard: "Unlimited shells · one bounce",
+  spread: "Three shells per volley · best up close",
+  rocket: "Accelerates in flight · explosive blast · can hurt you",
+  ricochet: "High damage · bounces up to three times",
+  piercing: "Passes through one enemy shell · stops at tanks and cover",
+};
 export const AMMO_RESPAWN_SECONDS = 13;
 export const AMMO_SCROLL_INTERVAL_MS = 120;
 export const emptyAmmo = (): AmmoInventory => ({ spread: 0, rocket: 0, ricochet: 0, piercing: 0 });

@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
 import { Controls } from "./game/controls";
+import { parseDifficulty } from "./game/difficulty";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
 import { Simulation } from "./game/simulation";
@@ -30,6 +31,7 @@ document.addEventListener("visibilitychange", () => {
 });
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const sim = new Simulation(Math.floor(Math.random() * 1000000));
+sim.difficulty = parseDifficulty(localStorage.getItem("sloppy-difficulty"));
 const view = new Presentation(canvas);
 const audio = new AudioSystem();
 view.reset(sim);
@@ -95,6 +97,12 @@ const ui = new UI(
   restart,
   settings,
   pause,
+  (weapon) => {
+    if (sim.match.phase === "playing" && sim.human.alive) {
+      controls.ammoSelection = weapon;
+    }
+  },
+  (event) => view.damageAngle(event),
 );
 window.addEventListener("resize", () => view.resize());
 if (playback.autoplay) {

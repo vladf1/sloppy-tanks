@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { botCommand } from "./ai";
-import { selectAmmo } from "./ammunition";
+import { hasAmmo, selectAmmo } from "./ammunition";
 import { arenaLayout, pickupLayout, randomArenaLayout } from "./arena";
 import { shuffledBotNames } from "./bot-personalities";
 import { damageCover, damageTank, explode } from "./damage";
@@ -15,6 +15,7 @@ import {
   STEP,
   VEHICLES,
 } from "./data";
+import type { Difficulty } from "./difficulty";
 import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
 import { Navigation } from "./navigation";
@@ -24,6 +25,8 @@ import { respawnTank, spawnTank } from "./tank-lifecycle";
 import {
   idleCommand,
   type Cover,
+  type DamageSource,
+  type DamageCause,
   type Fragment,
   type Mine,
   type Pickup,
@@ -55,6 +58,7 @@ export class Simulation {
   seed: number;
   humanTeam: Team;
   humanKind: VehicleKind = "balanced";
+  difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
   mapMode: "village" | "random" = "village";
   mapSeed = 0;
@@ -243,6 +247,15 @@ export class Simulation {
       tank.recoil = Math.max(0, tank.recoil - STEP * SIMULATION_RULES.recoilRecoveryPerSecond);
       const c = tank.human && !autoplay ? command : botCommand(this, tank, STEP);
       tank.command = c;
+      if (tank.human && typeof c.ammoSelection === "string" && !hasAmmo(tank, c.ammoSelection)) {
+        this.events.push({
+          type: "notice",
+          id: tank.id,
+          x: position.x,
+          z: position.z,
+          label: `${c.ammoSelection.toUpperCase()} EMPTY — collect an ammo crate`,
+        });
+      }
       selectAmmo(tank, c.ammoSelection);
       tank.aim = c.aim;
       driveTank(tank, c, STEP);
@@ -379,8 +392,14 @@ export class Simulation {
   ): void {
     createFragment(this, x, z, color, size, shape, lifetimeScale);
   }
-  damageTank = (tank: Tank, amount: number, owner: number, team: Team, ownerLife?: number) =>
-    damageTank(this, tank, amount, owner, team, ownerLife);
+  damageTank = (
+    tank: Tank,
+    amount: number,
+    owner: number,
+    team: Team,
+    ownerLife?: number,
+    source?: DamageSource,
+  ) => damageTank(this, tank, amount, owner, team, ownerLife, source);
   damageCover = (cover: Cover, amount: number, owner: number, team: Team, ownerLife?: number) =>
     damageCover(this, cover, amount, owner, team, ownerLife);
   explode = (
@@ -390,10 +409,12 @@ export class Simulation {
     owner: number,
     team: Team,
     ownerLife?: number,
-  ) => explode(this, position, radius, damage, owner, team, ownerLife);
+    cause?: DamageCause,
+  ) => explode(this, position, radius, damage, owner, team, ownerLife, cause);
   snapshot() {
     return {
       seed: this.seed,
+      difficulty: this.difficulty,
       elapsed: this.elapsed,
       match: { ...this.match, scores: [...this.match.scores] },
       tanks: this.tanks.map((tank) => ({

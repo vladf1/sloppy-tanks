@@ -3,6 +3,8 @@ export const COMBAT = {
   projectileLifetime: 3.5,
   spreadAngle: 0.19,
   rocketBlastRadius: 5.3,
+  rocketTopSpeedMultiplier: 2.5,
+  rocketAccelerationSeconds: 1,
   rapidReloadMultiplier: 0.5,
   // Leave a gap after a ray contact so the next query does not hit the same face at time zero.
   muzzleClearance: 0.001,

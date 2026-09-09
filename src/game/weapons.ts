@@ -73,13 +73,22 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       team: tank.team,
       bounces: w.bounces,
       piercing: weapon === "piercing" ? 1 : 0,
-      // Preserve travel range while giving players 25% more flight time.
+      // Rockets accelerate during flight; all rounds share the expiry limit.
       life: COMBAT.projectileLifetime,
       weapon,
     });
     simulation.shotsFired++;
   }
   consumeAmmo(tank, weapon);
+  if (tank.human && weapon !== "standard" && tank.selectedAmmo === "standard") {
+    simulation.events.push({
+      type: "notice",
+      id: tank.id,
+      x: position.x,
+      z: position.z,
+      label: `${w.label} EMPTY — switched to STANDARD (unlimited)`,
+    });
+  }
   simulation.events.push({
     type: "shot",
     weapon,

@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sloppy Tanks usability checks</title>
+    <style>
+      #test-tools {
+        position: fixed;
+        top: 80px;
+        right: 10px;
+        z-index: 100;
+        max-width: 300px;
+        padding: 10px;
+        background: #102139ee;
+        color: white;
+        font:
+          12px/1.4 Arial,
+          sans-serif;
+        border-radius: 6px;
+      }
+      #test-tools button {
+        margin: 3px;
+        font-size: 12px;
+      }
+      #result {
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <aside id="test-tools">
+      <strong>Usability test — controlled frames</strong><br />
+      <button id="run-checks">Run checks</button>
+      <button id="prepare">Prepare ammo</button>
+      <button id="pickup-layout">Test pickup layout</button>
+      <button id="rocket-flight">Test rocket flight</button>
+      <button data-direction="-1,0">Damage left</button>
+      <button data-direction="1,0">Damage right</button>
+      <button data-direction="0,-1">Damage above</button>
+      <button data-direction="0,1">Damage below</button>
+      <button data-death="rocket">Die: rocket</button>
+      <button data-death="mine">Die: own mine</button>
+      <button id="advance">Advance 3 seconds</button>
+      <pre id="result">Ready</pre>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { UI } from "../src/game/ui";
+      import { fireWeapon, stepProjectiles } from "../src/game/weapons";
+      import { collectPickup } from "../src/game/pickups";
+      import { Controls } from "../src/game/controls";
+      import { parseDifficulty } from "../src/game/difficulty";
+      import "../src/style.css";
+      await RAPIER.init();
+      const s = new Simulation(123);
+      s.difficulty = parseDifficulty(localStorage.getItem("sloppy-difficulty"));
+      const root = document.querySelector("#app");
+      root.innerHTML = '<canvas id="game" tabindex="0"></canvas>';
+      const canvas = document.querySelector("#game");
+      const view = new Presentation(canvas);
+      const pause = () => {
+        s.match.phase = "paused";
+        controls.clear();
+      };
+      const controls = new Controls(
+        canvas,
+        pause,
+        () => {},
+        () => s.match.phase === "playing" && s.human.alive,
+      );
+      const restart = () => {
+        controls.clear();
+        s.reset();
+        view.reset(s);
+      };
+      const start = () => {
+        restart();
+        s.start();
+      };
+      const ui = new UI(
+        root,
+        s,
+        start,
+        () => s.start(),
+        restart,
+        () => {},
+        pause,
+        (weapon) => {
+          if (s.match.phase === "playing" && s.human.alive) controls.ammoSelection = weapon;
+        },
+        (event) => view.damageAngle(event),
+      );
+      const d = { start, controls };
+      const result = document.querySelector("#result");
+      const advance = (n = 5) => {
+        for (let i = 0; i < n; i++) {
+          s.step(controls.command(0));
+          for (const event of s.events.splice(0)) {
+            view.event(event);
+            ui.event(event);
+          }
+          view.render(s, 1, 1 / 60);
+          ui.update(1 / 60);
+        }
+      };
+      view.reset(s);
+      window.addEventListener("resize", () => {
+        view.resize();
+        advance();
+      });
+      const click = (selector) => {
+        document.querySelector(selector).click();
+        advance();
+      };
+      const prepare = () => {
+        d.start();
+        for (const t of s.tanks) if (!t.human) t.brain.fireDelay = 999;
+        s.human.protection = 999;
+        s.human.ammo.rocket = 1;
+        s.human.ammo.piercing = 2;
+        advance();
+      };
+      const hurt = (x, z, amount = 1, cause = "ricochet", self = false) => {
+        const p = s.human,
+          q = p.body.translation();
+        const owner = self ? p : s.tanks.find((t) => t.team !== p.team);
+        p.protection = 0;
+        s.damageTank(p, amount, owner.id, owner.team, owner.deaths, {
+          cause,
+          origin: { x: q.x + x, z: q.z + z },
+        });
+        advance();
+      };
+      document.querySelector("#prepare").onclick = prepare;
+      document.querySelector("#rocket-flight").onclick = (event) => {
+        event.stopPropagation();
+        prepare();
+        for (const cover of s.covers) s.world.removeRigidBody(cover.body);
+        s.covers = [];
+        s.coverByCollider.clear();
+        s.nav.rebuild([]);
+        const player = s.human;
+        player.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+        player.previous = { x: 0, z: 0 };
+        player.aim = Math.PI;
+        player.selectedAmmo = "rocket";
+        s.world.step();
+        view.reset(s);
+        fireWeapon(s, player);
+        const rocket = s.shots.find((shot) => shot.weapon === "rocket");
+        const samples = [{ seconds: 0, speed: Math.hypot(rocket.vx, rocket.vz) }];
+        let ticks = 0,
+          last = performance.now(),
+          pending = 0;
+        const frame = (now) => {
+          pending += Math.min(0.1, (now - last) / 1000);
+          last = now;
+          while (pending >= 1 / 60 && ticks < 90) {
+            stepProjectiles(s, 1 / 60);
+            pending -= 1 / 60;
+            ticks++;
+            if (ticks % 30 === 0)
+              samples.push({ seconds: ticks / 60, speed: Math.hypot(rocket.vx, rocket.vz) });
+          }
+          for (const event of s.events.splice(0)) {
+            view.event(event);
+            ui.event(event);
+          }
+          view.render(s, 1, 1 / 60);
+          ui.update(1 / 60);
+          result.textContent = samples
+            .map((sample) => `${sample.seconds}s: ${sample.speed.toFixed(2)} m/s`)
+            .join("\n");
+          if (ticks < 90) requestAnimationFrame(frame);
+          else
+            result.textContent =
+              (Math.abs(samples[2].speed / samples[0].speed - 2.5) < 1e-8 &&
+              Math.abs(samples[3].speed - samples[2].speed) < 1e-8
+                ? "PASS rocket flight\n"
+                : "FAIL rocket flight\n") + result.textContent;
+        };
+        requestAnimationFrame(frame);
+      };
+      document.querySelector("#pickup-layout").onclick = () => {
+        prepare();
+        s.human.protection = 0;
+        advance();
+        const panel = document.querySelector(".combat-status");
+        const initial = panel.getBoundingClientRect().height;
+        for (const kind of ["laser", "shield", "rapid", "speed"]) {
+          collectPickup(s, s.human, {
+            id: s.nextId++,
+            kind,
+            x: 0,
+            z: 0,
+            available: true,
+            cooldown: 0,
+          });
+          advance();
+          if (panel.getBoundingClientRect().height !== initial) {
+            result.textContent = `FAIL: ${kind} resized panel`;
+            return;
+          }
+        }
+        const active = panel.getBoundingClientRect().height;
+        s.human.laser = s.human.shield = s.human.rapid = s.human.speed = 0.01;
+        advance();
+        const expired = panel.getBoundingClientRect().height;
+        result.textContent =
+          expired === initial
+            ? `PASS pickup layout: ${initial}px empty / ${active}px active / ${expired}px expired`
+            : "FAIL: expiry resized panel";
+        collectPickup(s, s.human, {
+          id: s.nextId++,
+          kind: "laser",
+          x: 0,
+          z: 0,
+          available: true,
+          cooldown: 0,
+        });
+        advance();
+      };
+      document.querySelectorAll("[data-direction]").forEach((button) => {
+        button.onclick = () => hurt(...button.dataset.direction.split(",").map(Number));
+      });
+      document.querySelectorAll("[data-death]").forEach((button) => {
+        button.onclick = () =>
+          hurt(-1, 0, 999, button.dataset.death, button.dataset.death === "mine");
+      });
+      document.querySelector("#advance").onclick = () => advance(190);
+      let checks = 0;
+      const check = (value, message) => {
+        if (!value) throw Error(message);
+        checks++;
+      };
+      document.querySelector("#run-checks").onclick = () => {
+        checks = 0;
+        const savedDifficulty = localStorage.getItem("sloppy-difficulty");
+        try {
+          prepare();
+          click("#ammo-rocket");
+          check(s.human.selectedAmmo === "rocket", "Click selects stocked ammo");
+          check(
+            document.querySelector("#ammo-rocket").getAttribute("aria-pressed") === "true",
+            "Selection is accessible",
+          );
+          click("#ammo-spread");
+          check(s.human.selectedAmmo === "rocket", "Empty click preserves selection");
+          check(
+            document.querySelector("#ammo-notice").textContent.includes("SPREAD EMPTY"),
+            "Empty click explains why",
+          );
+          window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit5" }));
+          advance();
+          check(s.human.selectedAmmo === "piercing", "Number shortcut selects ammo");
+          click("#ammo-rocket");
+          d.controls.fire = true;
+          advance();
+          d.controls.fire = false;
+          check(s.human.selectedAmmo === "standard", "Final rocket falls back");
+          check(
+            document.querySelector("#ammo-notice").textContent.includes("switched to STANDARD"),
+            "Fallback is announced",
+          );
+          const panel = document.querySelector(".combat-status");
+          const height = panel.getBoundingClientRect().height;
+          for (const slot of document.querySelectorAll(".ammo-slot")) {
+            slot.dispatchEvent(new PointerEvent("pointerenter"));
+            slot.focus();
+            advance();
+            check(
+              panel.getBoundingClientRect().height === height,
+              "Hover/focus cannot resize panel",
+            );
+          }
+          for (const [x, z, expected] of [
+            [-1, 0, -Math.PI / 2],
+            [1, 0, Math.PI / 2],
+            [0, -1, 0],
+            [0, 1, Math.PI],
+          ]) {
+            hurt(x, z);
+            const indicator = document.querySelector("#damage-direction");
+            const angle = Number(indicator.style.transform.match(/rotate\(([^r]+)rad\)/)[1]);
+            check(
+              !indicator.hidden &&
+                Math.abs(Math.abs(angle) - Math.abs(expected)) < 0.01 &&
+                (expected === Math.PI || Math.abs(angle - expected) < 0.01),
+              "Camera-relative damage direction",
+            );
+          }
+          advance(80);
+          check(document.querySelector("#damage-direction").hidden, "Direction expires");
+          hurt(-1, 0, 999, "mine", true);
+          check(
+            document
+              .querySelector("#death-cause")
+              .textContent.includes("Mine explosion · Self-inflicted"),
+            "Cause persists in respawn menu",
+          );
+          advance(190);
+          check(
+            s.human.alive && !document.querySelector("#death-cause"),
+            "Respawn clears death cause",
+          );
+          check(document.querySelector("#damage-direction").hidden, "Respawn clears direction");
+          click("#pause");
+          check(
+            !document.querySelector('input[name="difficulty"]'),
+            "Pause has no difficulty control",
+          );
+          check(document.querySelector("#ammo-standard").disabled, "Ammo disabled while paused");
+          click("#restart");
+          click('input[name="difficulty"][value="hard"]');
+          check(
+            s.difficulty === "hard" && localStorage.getItem("sloppy-difficulty") === "hard",
+            "Start-screen difficulty is saved",
+          );
+          click('[data-kind="balanced"]');
+          click("#pause");
+          check(
+            s.difficulty === "hard" && !document.querySelector('input[name="difficulty"]'),
+            "Round difficulty stays fixed while paused",
+          );
+          click("#restart");
+          check(
+            document.querySelector('input[name="difficulty"]:checked').value === "hard",
+            "Difficulty survives reset",
+          );
+          s.gameMode = "solo";
+          prepare();
+          hurt(-1, 0, 999, "rocket");
+          check(
+            s.match.phase === "results" &&
+              document.querySelector("#death-cause").textContent.includes("Rocket blast"),
+            "Solo results retain cause",
+          );
+          click("#restart");
+          check(document.querySelector("#ammo-notice").textContent === "", "Reset clears notices");
+          s.gameMode = "team";
+          prepare();
+          result.textContent = `PASS: ${checks} checks — ammo, stable layout, four damage directions, death/respawn, difficulty, Solo results.`;
+        } catch (error) {
+          result.textContent = `FAIL after ${checks}: ${error.message}`;
+          console.error(error);
+        } finally {
+          if (savedDifficulty === null) localStorage.removeItem("sloppy-difficulty");
+          else localStorage.setItem("sloppy-difficulty", savedDifficulty);
+        }
+      };
+      // Native clicks/keys still go through the real UI and Controls; then advance actual application frames.
+      document.addEventListener("click", () => setTimeout(() => advance(), 0));
+      document.addEventListener("keyup", () => setTimeout(() => advance(), 0));
+      advance();
+    </script>
+  </body>
+</html>

@@ -1,3 +1,4 @@
+import { enemyDifficulty } from "./difficulty";
 import { recoverBot, routeDirection, steerBot } from "./bot-movement";
 import { botProfile, botReload, combatMovement, preferredAmmo } from "./bot-personalities";
 import { updateBotGoal } from "./bot-strategy";
@@ -95,6 +96,7 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     brain.fireDelay = easy
       ? simulation.rng.range(2, 3)
       : botReload(tank, simulation.rng.range(0.1, 0.25), command.ammoSelection);
+    brain.fireDelay *= enemyDifficulty(simulation, tank).reload;
   }
   recoverBot(simulation, tank, { x: mx, z: mz }, dt);
   if (brain.recovery > 0) {

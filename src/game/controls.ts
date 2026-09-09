@@ -53,6 +53,9 @@ export class Controls {
         }
         return;
       }
+      if (e.code === "Space" && target?.tagName === "BUTTON") {
+        return;
+      }
       if (
         [
           "KeyW",

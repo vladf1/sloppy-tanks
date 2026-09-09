@@ -63,7 +63,7 @@ Drive through ammunition crates to refill reserves without changing the selected
 | -------- | ------------------------------------------------------------------------------------------ | ---------: | ----------: |
 | Standard | 40 damage, one bounce                                                                      |          — |   Unlimited |
 | Spread   | Three 27-damage shells; one unit per volley                                                | 18 volleys |          36 |
-| Rocket   | 65-damage breaching rocket with existing blast and cadence                                 |         12 |          24 |
+| Rocket   | 65-damage breaching rocket; accelerates to 2.5× launch speed over one second               |         12 |          24 |
 | Ricochet | 80 damage, three bounces                                                                   |         24 |          48 |
 | Piercing | Standard damage, speed and cadence; no bounce; intercepts one opposing shell and continues |         24 |          48 |
 
@@ -211,3 +211,13 @@ With Vite running, use `SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scri
 `node --import tsx scripts/bot-movement-check.ts after` repeats three controlled movement cases and six 90-second village/random-map runs. `before` is reserved for capturing a baseline before changing the controller. Reports live in `artifacts/bot-movement-before.json` and `artifacts/bot-movement-after.json`. A measured stall is a two-second window with movement requested for more than 80 of 120 ticks but under one metre of net displacement; stationary firing roles are excluded. The detector also records direction reversals greater than 120 degrees and stalls with at least eight such reversals. These are repeatable regression indicators, not a guarantee that every pause in gameplay is a bug.
 
 `SLOPPY_URL=http://127.0.0.1:5179/sloppy-tanks/ node scripts/bot-movement-browser.mjs` verifies the retreat-at-wall and head-on scenarios through the real rendering loop, then records a 24-tank random-map match. Substitute the live Vite port. Results are in `artifacts/bot-movement-browser.json`, with screenshots under ignored `artifacts/performance/bot-movement/`.
+
+## Difficulty and combat help
+
+Choose Easy, Normal or Hard on the start screen. Difficulty stays fixed for the round; return to the start screen to choose it for a new round. The choice is saved locally and applies to Team Battle and Solo Assault. Normal preserves the original balance, including Solo's existing enemy adjustments. Easy gives opposing bots 1.7× reaction delay, 1.65× aim error, 1.35× firing delay and 70% damage; Hard uses 0.7× reaction delay, 0.65× aim error, 0.85× firing delay and 115% damage. Allied bot behavior, tank health and human weapons retain their original settings.
+
+Click the ammo buttons or use 1–5, Q/E or scrolling. Hover tooltips explain each type; the selected weapon's description stays below the buttons. The panel keeps a fixed description area. Active-effect labels and empty-ammo notices stack above it without resizing it. Empty direct selections explain that a crate is needed. Firing the last special round announces the automatic return to unlimited standard shells.
+
+A brief red chevron around the player points toward incoming hull damage, using the shell's incoming direction (including ricochets) or explosion location. Death feedback names the weapon or hazard and its credited initiator, including self-inflicted damage, and stays on the respawn or Solo results screen. Spawn protection and fully absorbed shield hits do not produce hull-damage indicators.
+
+For repeatable checks in the built-in browser, open `/sloppy-tanks/tests/usability.browser.html` on the local Vite server and click **Run checks**. This development-only page controls application frames and provides ammo/damage fixtures for inspecting the real HUD. `tests/player-usability.test.ts` covers difficulty, ammo notices and combat-source attribution as part of `npm test`.

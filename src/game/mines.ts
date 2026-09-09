@@ -47,6 +47,7 @@ export function stepMines(simulation: Simulation, dt: number): void {
         m.owner,
         m.team,
         m.ownerLife,
+        "mine",
       );
     } else if (m.life <= 0) {
       simulation.mines.splice(simulation.mines.indexOf(m), 1);

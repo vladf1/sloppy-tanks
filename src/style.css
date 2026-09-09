@@ -242,17 +242,16 @@ canvas#game {
   color: #b2c4d7;
 }
 #effects {
-  grid-column: 1 / -1;
   font-size: 10px;
   line-height: 1.4;
   font-style: normal;
-  margin-top: 7px;
   color: #88e5ff;
 }
 #effects:empty {
   display: none;
 }
 .weapon {
+  position: relative;
   border-left: 1px solid #ffffff24;
   padding-left: 14px;
 }
@@ -717,4 +716,155 @@ h2 {
     padding: 7px 3px;
     gap: 6px;
   }
+}
+
+.difficulty-setting {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid #71826977;
+  border-radius: 8px;
+}
+.difficulty-setting legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #a6dfff;
+}
+.difficulty-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.difficulty-setting .difficulty-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 11px 6px;
+  border: 1px solid #87bad955;
+  border-radius: 5px;
+  background: #183c5b;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.difficulty-option input {
+  width: auto;
+  margin: 0;
+  accent-color: #ffdf38;
+}
+.difficulty-option:hover {
+  background: #294e70;
+}
+.difficulty-option:has(input:checked) {
+  background: #315d81;
+  border-color: #ffdf38;
+}
+.difficulty-option:has(input:focus-visible) {
+  outline: 2px solid #ffdf38;
+  outline-offset: 2px;
+}
+.difficulty-setting small {
+  display: block;
+  margin-top: 7px;
+  color: #c4dfef;
+  font-size: 12px;
+}
+.ammo-slot {
+  color: #f5faff;
+  min-height: 64px;
+}
+.ammo-slot kbd {
+  display: block;
+  font:
+    600 10px/1.2 Barlow,
+    Arial,
+    sans-serif;
+  color: #c4dfef;
+  margin-bottom: 2px;
+}
+.ammo-slot.empty {
+  opacity: 1;
+  color: #9cb2c6;
+  background: #091522;
+  border-top-color: #566d80;
+}
+.ammo-slot:hover:not(:disabled) {
+  background: #315473;
+}
+.ammo-slot:focus-visible {
+  outline: 3px solid #ffdf38;
+  outline-offset: 2px;
+}
+#hud .ammo-slot:disabled {
+  pointer-events: none;
+  cursor: default;
+}
+#ammo-help {
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 6px;
+  max-width: 350px;
+  color: #c4dfef;
+}
+#ammo-help {
+  height: 2.8em;
+  overflow: hidden;
+}
+.combat-notices {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  width: 570px;
+  max-width: 100%;
+}
+#ammo-notice,
+#effects {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #122b47f5;
+  border: 1px solid #88e5ff55;
+}
+#ammo-notice {
+  font-size: 11px;
+  line-height: 1.4;
+  border-color: #ffdf9177;
+  color: #ffdf91;
+}
+#ammo-notice:empty {
+  display: none;
+}
+#death-cause:not(:empty) {
+  display: block;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #ffcfab;
+  margin: 8px 0 14px;
+}
+#death-cause:empty {
+  display: none;
+}
+#damage-direction {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 180px;
+  height: 180px;
+  pointer-events: none;
+}
+#damage-direction i {
+  position: absolute;
+  left: calc(50% - 19px);
+  top: 0;
+  width: 38px;
+  height: 18px;
+  background: #ff624e;
+  clip-path: polygon(50% 0, 100% 100%, 50% 65%, 0 100%);
+  filter: drop-shadow(0 2px 2px #000);
 }

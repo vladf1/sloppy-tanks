@@ -263,7 +263,22 @@ export class Presentation {
     this.crosshair.position.z = position.z;
     return position;
   }
+  damageAngle(event: SimEvent): number | null {
+    const origin = event.damageSource?.origin;
+    if (!origin || Math.hypot(origin.x - event.x, origin.z - event.z) < 0.001) {
+      return null;
+    }
+    const direction = new THREE.Vector3(
+      origin.x - event.x,
+      0,
+      origin.z - event.z,
+    ).transformDirection(this.camera.matrixWorldInverse);
+    return Math.atan2(direction.x, direction.y);
+  }
   event(event: SimEvent, playerHit = false): void {
+    if (event.type === "notice") {
+      return;
+    }
     this.laserVisuals.event(event);
     if (playerHit) {
       this.hitConfirmUntil = this.time + FEEDBACK.hitConfirmationSeconds;

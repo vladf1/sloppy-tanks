@@ -294,3 +294,54 @@ test("four repair pickups are symmetric, clear of cover, and away from spawn pad
   }
   s.dispose();
 });
+
+test("rockets accelerate along their flight path, reach a cap, and outpace their launch speed", () => {
+  const s = arena();
+  try {
+    const base = WEAPONS.rocket.speed;
+    const rocket = { ...shot(s, 0, 0, base * 0.6, base * 0.8, 0), weapon: "rocket" as const };
+    const shell = shot(s, 0, 10, WEAPONS.standard.speed, 0, 0);
+    s.shots = [rocket, shell];
+    let previous = base;
+    for (let i = 0; i < 60; i++) {
+      stepProjectiles(s, STEP);
+      const speed = Math.hypot(rocket.vx, rocket.vz);
+      assert.ok(speed > previous - 1e-9);
+      assert.ok(Math.abs(rocket.vx / rocket.vz - 0.75) < 1e-9);
+      previous = speed;
+    }
+    assert.ok(Math.abs(previous - base * 2.5) < 1e-9);
+    assert.ok(Math.hypot(rocket.x, rocket.z) > base * 1.7);
+    assert.equal(shell.vx, WEAPONS.standard.speed);
+    for (let i = 0; i < 60; i++) stepProjectiles(s, STEP);
+    assert.ok(Math.abs(Math.hypot(rocket.vx, rocket.vz) - base * 2.5) < 1e-9);
+  } finally {
+    s.dispose();
+  }
+});
+
+test("accelerated rockets still hit thin cover and intercept crossing enemy shells", () => {
+  for (const obstacle of ["wall", "shell"] as const) {
+    const s = arena();
+    try {
+      const rocket = {
+        ...shot(s, -0.4, 0, WEAPONS.rocket.speed * 2.49, 0, 0),
+        weapon: "rocket" as const,
+      };
+      s.shots = [rocket];
+      if (obstacle === "wall") {
+        s.addCover({ kind: "concrete", x: 0, z: 0, w: 0.1, d: 4, h: 3, hp: Infinity, color: 0 });
+        s.world.step();
+      } else {
+        s.shots.push(shot(s, 0.7, 0, -WEAPONS.standard.speed, 0, 1));
+      }
+      stepProjectiles(s, STEP);
+      assert.equal(s.shots.length, 0, obstacle);
+      assert.equal(s.events.filter((event) => event.type === "explosion").length, 1, obstacle);
+      if (obstacle === "wall")
+        assert.ok(s.events.find((event) => event.type === "explosion")!.x < 0);
+    } finally {
+      s.dispose();
+    }
+  }
+});

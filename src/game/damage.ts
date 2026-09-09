@@ -1,3 +1,4 @@
+import { DIFFICULTIES } from "./difficulty";
 import { clearAmmo } from "./ammunition";
 import { COMBAT, MINE } from "./combat-rules";
 import { distance } from "./data";
@@ -5,7 +6,7 @@ import { awardKill } from "./match";
 import type { Simulation } from "./simulation";
 import { SIMULATION_RULES, SOLO } from "./simulation-rules";
 import { TOWER_BASE } from "./tower-layout";
-import type { Cover, Tank, Team, Vec2 } from "./types";
+import type { Cover, DamageCause, DamageSource, Tank, Team, Vec2 } from "./types";
 import { earnExperience, KILL_XP } from "./veterancy";
 import { breakTank } from "./wrecks";
 export function damageTank(
@@ -15,9 +16,13 @@ export function damageTank(
   owner: number,
   team: Team,
   ownerLife?: number,
+  source?: DamageSource,
 ): void {
   if (!tank.alive || tank.protection > 0 || (tank.team === team && tank.id !== owner)) {
     return;
+  }
+  if (team !== simulation.humanTeam && tank.team === simulation.humanTeam) {
+    amount *= DIFFICULTIES[simulation.difficulty].damage;
   }
   if (simulation.gameMode === "solo" && team !== simulation.humanTeam) {
     amount *= SOLO.enemyDamageMultiplier;
@@ -44,6 +49,7 @@ export function damageTank(
     if (amount > 0) {
       simulation.events.push({
         type: "hurt",
+        damageSource: source,
         x: position.x,
         z: position.z,
         id: tank.id,
@@ -72,6 +78,7 @@ export function damageTank(
   breakTank(simulation, tank);
   simulation.events.push({
     type: "death",
+    damageSource: source,
     x: position.x,
     z: position.z,
     id: tank.id,
@@ -152,7 +159,16 @@ export function damageCover(
     simulation.nav.rebuild(simulation.covers, cover);
   }
   if (cover.kind === "drum") {
-    explode(simulation, cover, COMBAT.drumBlastRadius, COMBAT.drumDamage, owner, team, ownerLife);
+    explode(
+      simulation,
+      cover,
+      COMBAT.drumBlastRadius,
+      COMBAT.drumDamage,
+      owner,
+      team,
+      ownerLife,
+      "drum",
+    );
   }
 }
 export function explode(
@@ -163,13 +179,23 @@ export function explode(
   owner: number,
   team: Team,
   ownerLife?: number,
+  cause: DamageCause = "explosion",
 ): void {
   simulation.events.push({ type: "explosion", ...position, size: radius });
   // Blast-triggered mines retain the initiator of this chain, like drums.
   const chained = simulation.mines.filter((m) => distance(position, m) < radius);
   simulation.mines = simulation.mines.filter((m) => distance(position, m) >= radius);
   for (const m of chained) {
-    explode(simulation, m, MINE.blastRadius, m.damage ?? MINE.damage, owner, team, ownerLife);
+    explode(
+      simulation,
+      m,
+      MINE.blastRadius,
+      m.damage ?? MINE.damage,
+      owner,
+      team,
+      ownerLife,
+      "mine",
+    );
   }
   for (const tank of simulation.tanks) {
     if (!tank.alive) {
@@ -181,7 +207,10 @@ export function explode(
       continue;
     }
     const factor = Math.max(COMBAT.minimumBlastDamageFraction, 1 - d / radius);
-    damageTank(simulation, tank, damage * factor, owner, team, ownerLife);
+    damageTank(simulation, tank, damage * factor, owner, team, ownerLife, {
+      cause,
+      origin: { x: position.x, z: position.z },
+    });
     if (tank.alive && (tank.team !== team || tank.id === owner)) {
       const m = Math.max(COMBAT.minimumBlastDistance, d);
       tank.body.applyImpulse(

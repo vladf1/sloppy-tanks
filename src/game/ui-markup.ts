@@ -1,4 +1,5 @@
-import { AMMO_ORDER } from "./ammunition";
+import { AMMO_HELP, AMMO_ORDER } from "./ammunition";
+import { DIFFICULTIES } from "./difficulty";
 import { SCORE_LIMIT, TEAM_NAMES, VEHICLES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
 import { speedTuning } from "./speed-tuning";
@@ -15,13 +16,15 @@ export function hudMarkup(): string {
         <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO ${SCORE_LIMIT}</small></div>
         <div class="team coral"><small id="label1">RED Ⅱ</small><b id="score1">0</b></div></div>
         <button id="pause" class="quiet">Ⅱ <span>PAUSE</span></button>
-        <div id="feed"></div><div id="toast"></div>
+        <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
         <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
-        <div class="weapon"><div class="ammo-strip" role="list" aria-label="Ammunition">${AMMO_ORDER.map(
-          (weapon) =>
-            `<div class="ammo-slot" id="ammo-${weapon}" role="listitem" style="--ammo-color:#${WEAPONS[weapon].color.toString(16).padStart(6, "0")}"><small>${WEAPONS[weapon].label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></div>`,
-        ).join("")}</div><span id="mine">MINE READY · RMB</span></div>
-        <em id="effects"></em></div>
+        <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_ORDER.map(
+          (weapon, index) =>
+            `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-describedby="ammo-help" title="${index + 1}: ${WEAPONS[weapon].name} — ${AMMO_HELP[weapon]}" style="--ammo-color:#${WEAPONS[weapon].color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd><small>${WEAPONS[weapon].label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
+        ).join(
+          "",
+        )}</div><div id="ammo-help">${AMMO_HELP.standard}</div><span id="mine">MINE READY · RMB</span></div></div>
+        <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div><em id="effects"></em></div>
         </div></div>
         <div id="overlay"></div>`;
 }
@@ -57,6 +60,19 @@ export function modeOptions(simulation: Simulation): string {
   ])}</div>`;
 }
 
+export function difficultyOptions(simulation: Simulation): string {
+  return `<fieldset class="difficulty-setting" aria-describedby="difficulty-help"><legend>DIFFICULTY</legend><div class="difficulty-options">${Object.entries(
+    DIFFICULTIES,
+  )
+    .map(
+      ([key, value]) =>
+        `<label class="difficulty-option"><input type="radio" name="difficulty" value="${key}" ${simulation.difficulty === key ? "checked" : ""}><span>${value.label}</span></label>`,
+    )
+    .join(
+      "",
+    )}</div><small id="difficulty-help">${DIFFICULTIES[simulation.difficulty].description}</small></fieldset>`;
+}
+
 export function speedSliders(): string {
   return `<div class="speed-tuning">${(["tank-speed", "bullet-speed"] as const)
     .map(
@@ -75,6 +91,7 @@ export function menuMarkup(simulation: Simulation): string {
         <h1>CHOOSE YOUR TANK</h1>
         <p class="intro">Choose your battle, then click a tank to start.</p>
         ${modeOptions(simulation)}
+        ${difficultyOptions(simulation)}
         ${vehicleCards(simulation)}
         <div class="menu-foot"><div><b>${simulation.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${simulation.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[simulation.humanTeam]}</b><small>${simulation.gameMode === "solo" ? "10 MINUTES · ENDLESS ENEMIES · ONE LIFE" : `5 MINUTES · FIRST TO ${SCORE_LIMIT} · FRIENDLY FIRE OFF`}</small></div></div>
         <div class="menu-help">${CONTROL_HELP}</div>
@@ -96,6 +113,7 @@ export function menuMarkup(simulation: Simulation): string {
         <h2>${simulation.match.winner === simulation.humanTeam ? "SURVIVED" : "TANK DESTROYED"}</h2>
         <div class="result-score">${simulation.human.kills}</div>
         <p>Enemy kills.<br>${!simulation.human.alive ? "Your run is over." : "You survived the full ten minutes."}</p>
+        <p id="death-cause" role="status"></p>
         <button id="restart" class="primary">ANOTHER ROUND</button>
         </section>`;
   } else if (phase === "results") {
@@ -105,12 +123,14 @@ export function menuMarkup(simulation: Simulation): string {
         <h2>${simulation.match.winner === simulation.humanTeam ? "VICTORY" : "DEFEAT"}</h2>
         <div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div>
         <p>${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}.<br>You scored ${simulation.human.kills} eliminations · ${simulation.human.deaths} wrecks<br>${simulation.destroyed} pieces of cover demolished.</p>
+        <p id="death-cause" role="status"></p>
         <button id="restart" class="primary">ANOTHER ROUND</button>
         </section>`;
   } else if (!simulation.human.alive) {
     return `
       <section class="menu respawn">
         <h2>Respawn in <span id="respawn-count">3</span></h2>
+        <p id="death-cause" role="status"></p>
         ${vehicleCards(simulation)}
         </section>`;
   }

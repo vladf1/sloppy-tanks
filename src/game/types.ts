@@ -162,10 +162,17 @@ export interface Fragment {
   cleanup?: "shrink" | "fade";
   team?: Team;
 }
+export type DamageCause = Weapon | "mine" | "drum" | "interception" | "explosion";
+export interface DamageSource {
+  cause: DamageCause;
+  origin: Vec2;
+}
 export type SimEvent = {
+  damageSource?: DamageSource;
   coverKind?: CoverKind;
   height?: number;
   type:
+    | "notice"
     | "shot"
     | "impact"
     | "explosion"

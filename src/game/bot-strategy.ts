@@ -1,3 +1,4 @@
+import { enemyDifficulty } from "./difficulty";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { canCollectAmmo, isSpecialAmmo } from "./ammunition";
 import { BOT_AMMO, botProfile } from "./bot-personalities";
@@ -57,6 +58,7 @@ export function updateBotGoal(
         : aggressive
           ? simulation.rng.range(0.3, 0.5)
           : simulation.rng.range(0.4, 0.8);
+      brain.reaction *= enemyDifficulty(simulation, tank).reaction;
     }
     brain.target = target.id;
     brain.memory = aggressive ? 3 : 1.5;
@@ -73,6 +75,7 @@ export function updateBotGoal(
   brain.aimError =
     simulation.rng.range(-profile.aimError, profile.aimError) +
     (easy ? simulation.rng.range(-0.2, 0.2) : 0);
+  brain.aimError *= enemyDifficulty(simulation, tank).aimError;
   const useful = simulation.pickups.filter(
     (pickup) =>
       pickup.available &&

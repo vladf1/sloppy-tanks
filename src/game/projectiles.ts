@@ -61,6 +61,7 @@ function intercept(simulation: Simulation, a: Shot, b: Shot): void {
       enemyShot.owner,
       enemyShot.team,
       enemyShot.ownerLife,
+      { cause: "interception", origin: point },
     );
   }
 }
@@ -87,6 +88,23 @@ function mineHitTime(shot: Shot, mine: Mine, limit: number): number | null {
 
 export function stepProjectiles(simulation: Simulation, dt: number, sweepTankMotion = false): void {
   simulation.shots = simulation.shots.filter((shot) => shot.life > 0);
+  // Accelerate once per fixed tick, before all continuous collision sweeps.
+  // Contact retries within this tick must not apply thrust again.
+  const rocketTopSpeed = WEAPONS.rocket.speed * COMBAT.rocketTopSpeedMultiplier;
+  const rocketAcceleration =
+    (rocketTopSpeed - WEAPONS.rocket.speed) / COMBAT.rocketAccelerationSeconds;
+  for (const shot of simulation.shots) {
+    if (shot.weapon !== "rocket") {
+      continue;
+    }
+    const speed = Math.hypot(shot.vx, shot.vz);
+    if (speed > 0 && speed < rocketTopSpeed) {
+      const scale =
+        Math.min(rocketTopSpeed, speed + rocketAcceleration * Math.min(dt, shot.life)) / speed;
+      shot.vx *= scale;
+      shot.vz *= scale;
+    }
+  }
   let remaining = dt;
   // Resolve the earliest contact across all shells, then query again after any
   // bounce/destruction. A wall or tank hit cannot be undone by a later intercept.
@@ -288,6 +306,7 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
       shot.owner,
       shot.team,
       shot.ownerLife,
+      "mine",
     );
   } else if (next.kind === "tank") {
     if (shot.weapon === "rocket") {
@@ -298,9 +317,15 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
         shot.owner,
         shot.team,
         shot.ownerLife,
+        "rocket",
       );
     } else {
-      simulation.damageTank(next.tank, shot.damage, shot.owner, shot.team, shot.ownerLife);
+      const position = next.tank.body.translation();
+      const speed = Math.hypot(shot.vx, shot.vz) || 1;
+      simulation.damageTank(next.tank, shot.damage, shot.owner, shot.team, shot.ownerLife, {
+        cause: shot.weapon,
+        origin: { x: position.x - shot.vx / speed, z: position.z - shot.vz / speed },
+      });
     }
     simulation.events.push({
       type: "impact",
@@ -320,6 +345,7 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
         shot.owner,
         shot.team,
         shot.ownerLife,
+        "rocket",
       );
     } else if (cover) {
       simulation.damageCover(cover, shot.damage, shot.owner, shot.team, shot.ownerLife);
