@@ -68,7 +68,7 @@ export const VEHICLES: Record<
     health: 140,
     ...referenceSpeed(0.76),
     mass: 2.5,
-    scale: (3.5 / 2.5) * (1.95 / 3.66),
+    scale: (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
   },
 };
 export const WEAPONS: Record<

@@ -188,13 +188,14 @@ test("long hulls stop at walls using their visible nose and tail", () => {
     }
 });
 
-test("reference MBTs use comparable widths instead of exaggerated class-size multipliers", () => {
+test("Big Rig is the widest chassis while tank sizes remain comparable", () => {
   const widths = (["scout", "balanced", "heavy"] as const).map((kind) => {
     const model = tankModel(kind, 0);
     model.updateMatrixWorld(true);
     const bounds = new Box3().setFromObject(model.userData.hull);
     return bounds.max.x - bounds.min.x;
   });
-  assert.ok(Math.max(...widths) / Math.min(...widths) < 1.06);
-  assert.ok(widths.every((width) => width > 1.8 && width < 2));
+  assert.ok(widths[2] > widths[1] && widths[2] > widths[0]);
+  assert.ok(Math.max(...widths) / Math.min(...widths) < 1.15);
+  assert.ok(widths.every((width) => width > 1.8 && width < 2.2));
 });
