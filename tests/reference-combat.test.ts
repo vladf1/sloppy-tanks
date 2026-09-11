@@ -257,13 +257,13 @@ for (const order of [
   ["spread", "rocket"],
   ["rocket", "spread"],
 ] as const) {
-  test(`${order.join(" then ")} supplies independent ammo without selecting or combining it`, () => {
+  test(`${order.join(" then ")} auto-selects the first crate and keeps ammo independent`, () => {
     const s = arena(1),
       t = s.human;
     for (const kind of order) pickup(s, kind);
     pickup(s, "rapid");
     pickup(s, "ricochet");
-    assert.equal(t.selectedAmmo, "standard");
+    assert.equal(t.selectedAmmo, order[0]);
     for (const weapon of ["standard", "spread", "rocket", "ricochet"] as const) {
       t.selectedAmmo = weapon;
       t.cooldown = 0;

@@ -1,4 +1,11 @@
-import { AMMO_RESPAWN_SECONDS, canCollectAmmo, isSpecialAmmo, refillAmmo } from "./ammunition";
+import {
+  AMMO_RESPAWN_SECONDS,
+  canCollectAmmo,
+  hasAdvancedAmmo,
+  isSpecialAmmo,
+  refillAmmo,
+  selectAmmo,
+} from "./ammunition";
 import { LASER_DEFENSE, PICKUPS, SHIELD_CAPACITY, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
 import type { Pickup, Tank } from "./types";
@@ -7,6 +14,9 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
     return false;
   }
   const kind = pickup.kind;
+  if (kind === "repair" && tank.hp >= simulation.maxHealth(tank)) {
+    return false;
+  }
   if (isSpecialAmmo(kind) && !canCollectAmmo(tank, kind)) {
     return false;
   }
@@ -14,7 +24,11 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
   pickup.cooldown = kind === "laser" ? LASER_DEFENSE.respawn : AMMO_RESPAWN_SECONDS;
   let label = PICKUPS[kind].name;
   if (isSpecialAmmo(kind)) {
+    const shouldAutoSelect = tank.human && !hasAdvancedAmmo(tank);
     label = `+${refillAmmo(tank, kind)} ${WEAPONS[kind].unit}`;
+    if (shouldAutoSelect) {
+      selectAmmo(tank, kind);
+    }
   } else if (kind === "repair") {
     tank.hp = simulation.maxHealth(tank);
   } else if (kind === "shield") {

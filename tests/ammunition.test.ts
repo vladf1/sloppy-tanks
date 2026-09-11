@@ -191,14 +191,14 @@ test("paused and results simulations ignore selection", () => {
 });
 
 for (const kind of AMMO_ORDER.filter(isSpecialAmmo))
-  test(`${kind} crates cap stock and report actual receipt without equipping or clearing cooldown`, () => {
+  test(`${kind} crates equip the first advanced ammo and report actual receipt without clearing cooldown`, () => {
     const s = arena(),
       t = s.human;
     t.cooldown = 0.6;
     const p = crate(s, kind);
     assert.equal(collectPickup(s, t, p), true);
     assert.equal(t.ammo[kind], WEAPONS[kind].perCrate);
-    assert.equal(t.selectedAmmo, "standard");
+    assert.equal(t.selectedAmmo, kind);
     assert.equal(t.cooldown, 0.6);
     assert.equal(p.cooldown, 13);
     t.ammo[kind] = WEAPONS[kind].carryLimit - 3;
@@ -213,6 +213,18 @@ for (const kind of AMMO_ORDER.filter(isSpecialAmmo))
     assert.equal(s.events.length, count);
     s.dispose();
   });
+
+test("collecting another ammo type preserves selection when advanced ammo is already stocked", () => {
+  const s = arena(),
+    t = s.human;
+  collectPickup(s, t, crate(s, "spread"));
+  selectAmmo(t, "standard");
+  collectPickup(s, t, crate(s, "rocket"));
+  assert.equal(t.selectedAmmo, "standard");
+  assert.equal(t.ammo.spread, WEAPONS.spread.perCrate);
+  assert.equal(t.ammo.rocket, WEAPONS.rocket.perCrate);
+  s.dispose();
+});
 
 test("simultaneous collection skips full tanks, awards one recipient, and refills after 13 seconds", () => {
   const s = arena(3),

@@ -24,6 +24,9 @@ export function isSpecialAmmo(kind: string): kind is SpecialAmmo {
 export function hasAmmo(tank: Tank, weapon: Weapon): boolean {
   return weapon === "standard" || tank.ammo[weapon] > 0;
 }
+export function hasAdvancedAmmo(tank: Tank): boolean {
+  return Object.values(tank.ammo).some((count) => count > 0);
+}
 export function canCollectAmmo(tank: Tank, kind: SpecialAmmo): boolean {
   return tank.ammo[kind] < WEAPONS[kind].carryLimit;
 }
