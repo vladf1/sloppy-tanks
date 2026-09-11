@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { AMMO_RESPAWN_SECONDS, isSpecialAmmo } from "./ammunition";
+import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
-import { ARENA, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
+import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
 import { Flags } from "./flags";
 import { sidingBox } from "./house-surfaces";
@@ -34,8 +34,8 @@ import { weaponInterval } from "./weapons";
 interface PickupModel extends THREE.Group {
   userData: {
     gem: THREE.Object3D;
-    ring?: THREE.Mesh<THREE.TorusGeometry, THREE.MeshStandardMaterial>;
-    refill?: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+    ring: THREE.Mesh<THREE.TorusGeometry, THREE.MeshStandardMaterial>;
+    refill: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   };
 }
 function batchTank(model: TankModel): void {
@@ -211,29 +211,27 @@ export class Presentation {
       put(group, cylinder(1.05, 0.12, 0x25435f, 24), 0, 0.08, 0);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.94, 0.045, 5, 24), material(def.color));
       ring.geometry.userData.owned = true;
-      if (isSpecialAmmo(pickup.kind)) {
-        ring.material = ring.material.clone();
-        ring.material.transparent = true;
-        ring.material.userData.owned = true;
-        const refill = new THREE.Mesh(
-          new THREE.RingGeometry(0.89, 1.02, 48, 1, Math.PI / 2),
-          new THREE.MeshBasicMaterial({
-            color: def.color,
-            transparent: true,
-            opacity: 0.9,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-            toneMapped: false,
-          }),
-        );
-        refill.geometry.userData.owned = true;
-        refill.material.userData.owned = true;
-        refill.rotation.x = -Math.PI / 2;
-        refill.visible = false;
-        put(group, refill, 0, 0.23, 0);
-        group.userData.refill = refill;
-        group.userData.ring = ring;
-      }
+      ring.material = ring.material.clone();
+      ring.material.transparent = true;
+      ring.material.userData.owned = true;
+      const refill = new THREE.Mesh(
+        new THREE.RingGeometry(0.89, 1.02, 48, 1, Math.PI / 2),
+        new THREE.MeshBasicMaterial({
+          color: def.color,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          toneMapped: false,
+        }),
+      );
+      refill.geometry.userData.owned = true;
+      refill.material.userData.owned = true;
+      refill.rotation.x = -Math.PI / 2;
+      refill.visible = false;
+      put(group, refill, 0, 0.23, 0);
+      group.userData.refill = refill;
+      group.userData.ring = ring;
       ring.rotation.x = Math.PI / 2;
       put(group, ring, 0, 0.2, 0);
       const gem = pickupCube(pickup.kind);
@@ -528,15 +526,16 @@ export class Presentation {
   private updatePickups(simulation: Simulation, dt: number): void {
     for (const pickup of simulation.pickups) {
       const group = this.pickupMeshes.get(pickup.id)!;
-      const refill = group.userData.refill as THREE.Mesh<THREE.RingGeometry> | undefined;
-      group.visible = pickup.available || !!refill;
+      const { refill, ring } = group.userData;
+      group.visible = true;
       group.userData.gem.visible = pickup.available;
-      if (refill) {
-        group.userData.ring!.material.opacity = pickup.available ? 1 : 0.2;
-        refill.visible = !pickup.available;
-        const progress = THREE.MathUtils.clamp(1 - pickup.cooldown / AMMO_RESPAWN_SECONDS, 0, 1);
-        refill.geometry.setDrawRange(0, Math.floor(progress * 48) * 6);
-      }
+      ring.material.opacity = pickup.available ? 1 : 0.2;
+      refill.visible = !pickup.available;
+      const fallbackDuration =
+        pickup.kind === "laser" ? LASER_DEFENSE.initialDelay : AMMO_RESPAWN_SECONDS;
+      const cooldownDuration = pickup.cooldownDuration || fallbackDuration;
+      const progress = THREE.MathUtils.clamp(1 - pickup.cooldown / cooldownDuration, 0, 1);
+      refill.geometry.setDrawRange(0, Math.floor(progress * 48) * 6);
       group.userData.gem.rotation.y += dt;
       group.userData.gem.position.y = 1.2 + Math.sin(this.time * 2 + pickup.id) * 0.18;
     }

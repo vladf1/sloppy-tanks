@@ -139,6 +139,7 @@ export class Simulation {
       id: this.nextId++,
       available: p.kind !== "laser",
       cooldown: p.kind === "laser" ? LASER_DEFENSE.initialDelay : 0,
+      cooldownDuration: p.kind === "laser" ? LASER_DEFENSE.initialDelay : 0,
     }));
     this.nav = new Navigation();
     this.nav.rebuild(this.covers);

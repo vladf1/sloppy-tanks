@@ -224,20 +224,30 @@ try {
   checks.push(
     "HP threshold, repair clearing, paused animation, paused shortcuts and shared menu hints",
   );
-  // Arrange the real production crates at three refill stages and one stocked pad.
+  // Arrange every ordinary pickup type across refill stages, plus one available pickup.
   await page.evaluate(() => {
     const d = window.sloppy,
       s = d.sim;
     s.shots = [];
     s.events = [];
     s.human.hp = 24;
-    s.pickups = ["spread", "rocket", "ricochet", "piercing"].map((kind, i) => ({
+    s.pickups = [
+      "rapid",
+      "spread",
+      "rocket",
+      "ricochet",
+      "piercing",
+      "repair",
+      "shield",
+      "speed",
+    ].map((kind, i) => ({
       id: s.nextId++,
       kind,
-      x: (i - 1.5) * 4,
+      x: (i - 3.5) * 4,
       z: 36,
-      available: i === 3,
-      cooldown: [13, 6.5, 1, 0][i],
+      available: i === 7,
+      cooldown: [13, 11, 9, 7, 5, 3, 1, 0][i],
+      cooldownDuration: 13,
     }));
     d.view.reset(s);
     window.advanceFrame(17);
@@ -260,15 +270,12 @@ try {
   assert.ok(initialPads.every((p) => p.visible));
   assert.deepEqual(
     initialPads.map((p) => p.gem),
-    [false, false, false, true],
+    [false, false, false, false, false, false, false, true],
   );
-  assert.ok(
-    initialPads[0].progress < initialPads[1].progress &&
-      initialPads[1].progress < initialPads[2].progress,
-  );
+  for (let i = 1; i < 7; i++) assert.ok(initialPads[i - 1].progress < initialPads[i].progress);
   assert.deepEqual(
     initialPads.map((p) => p.ring),
-    [0.2, 0.2, 0.2, 1],
+    [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1],
   );
   await page.screenshot({ path: `${out}/refill-pads-low-health.png` });
   await page.keyboard.press("Escape");
@@ -297,7 +304,7 @@ try {
   await page.keyboard.press("5");
   assert.equal(await page.evaluate(() => window.sloppy.controls.ammoSelection), undefined);
   checks.push(
-    "Dim ammo pads show refill progress, pause freezes it, all crates reappear after 13 seconds; narrow HUD and death clearing",
+    "Every ordinary pickup leaves a dim podium with refill progress, pause freezes it, and all return after 13 seconds; narrow HUD and death clearing",
   );
   // Check actual decoded playback of every saved file, with completion callbacks.
   const durations = await page.evaluate(async () => {

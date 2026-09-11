@@ -22,6 +22,7 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
   }
   pickup.available = false;
   pickup.cooldown = kind === "laser" ? LASER_DEFENSE.respawn : AMMO_RESPAWN_SECONDS;
+  pickup.cooldownDuration = pickup.cooldown;
   let label = PICKUPS[kind].name;
   if (isSpecialAmmo(kind)) {
     const shouldAutoSelect = tank.human && !hasAdvancedAmmo(tank);

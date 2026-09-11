@@ -223,6 +223,7 @@ test("laser refreshes to twenty seconds, pauses, expires, and clears on death/re
   assert.equal(collectPickup(s, t, p), true);
   assert.equal(t.laser, 20);
   assert.equal(p.cooldown, 45);
+  assert.equal(p.cooldownDuration, 45);
   assert.equal(t.cooldown, 0.4);
   assert.equal(collectPickup(s, t, p), false);
   s.match.phase = "paused";
@@ -250,6 +251,7 @@ test("one central rare pickup starts delayed and refills much slower than ordina
   assert.deepEqual([rare[0].x, rare[0].z], [0, 0]);
   assert.equal(rare[0].available, false);
   assert.equal(rare[0].cooldown, 25);
+  assert.equal(rare[0].cooldownDuration, 25);
   assert.ok(s.pickups.filter((p) => p.kind !== "laser").every((p) => p.available));
   s.dispose();
   const { s: arena, t } = fixture();

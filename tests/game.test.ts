@@ -11,7 +11,7 @@ import {
   stepProjectiles,
 } from "../src/game/weapons";
 import { STEP, VEHICLES, Random } from "../src/game/data";
-import { idleCommand, type Team } from "../src/game/types";
+import { idleCommand, type Pickup, type Team } from "../src/game/types";
 import { Navigation } from "../src/game/navigation";
 before(async () => {
   await RAPIER.init();
@@ -123,7 +123,7 @@ test("respawn occurs after three seconds with protection and selected class", ()
 test("ammunition persists while power-ups expire and repair fully heals", () => {
   const s = game(),
     a = s.human;
-  const p = {
+  const p: Pickup = {
     id: 1,
     x: 0,
     z: 0,
@@ -132,6 +132,7 @@ test("ammunition persists while power-ups expire and repair fully heals", () => 
     cooldown: 0,
   };
   collectPickup(s, a, p);
+  assert.equal(p.cooldownDuration, 13);
   assert.equal(a.ammo.rocket, 0);
   assert.equal(a.rapid, 20);
   collectPickup(s, a, { ...p, kind: "rocket", available: true });

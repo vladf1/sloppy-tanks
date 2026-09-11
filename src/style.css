@@ -52,19 +52,19 @@ canvas#game {
 }
 .brand {
   position: absolute;
-  top: 28px;
-  left: 32px;
+  top: 14px;
+  left: 16px;
   font:
-    900 30px/0.83 "Barlow Condensed",
+    900 24px/0.83 "Barlow Condensed",
     Impact,
     sans-serif;
-  letter-spacing: -0.6px;
+  letter-spacing: -0.4px;
   text-shadow: 0 2px 10px #27433555;
   transform: rotate(-3deg);
 }
 .brand span {
   display: block;
-  font-size: 44px;
+  font-size: 34px;
 }
 .brand small {
   display: block;
@@ -75,7 +75,7 @@ canvas#game {
 }
 .scoreboard {
   position: absolute;
-  top: 22px;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -131,8 +131,8 @@ canvas#game {
 }
 .quiet {
   position: absolute;
-  right: 28px;
-  top: 29px;
+  right: 14px;
+  top: 14px;
   border: 1px solid #f0e9ce66;
   border-radius: 6px;
   background: #16314d99;
@@ -144,9 +144,9 @@ canvas#game {
 }
 .bottom {
   position: absolute;
-  left: 30px;
-  right: 30px;
-  bottom: 25px;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
   display: flex;
   align-items: flex-end;
   gap: 12px;
@@ -329,8 +329,8 @@ canvas#game {
 }
 #feed {
   position: absolute;
-  right: 30px;
-  top: 90px;
+  right: 14px;
+  top: 68px;
   font-size: 10px;
   text-align: right;
   letter-spacing: 1px;
@@ -605,15 +605,20 @@ h2 {
     height: 100px;
   }
   .brand {
-    left: 18px;
-    top: 20px;
+    left: 10px;
+    top: 10px;
   }
   .bottom {
-    left: 15px;
-    bottom: 15px;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
   }
   .scoreboard {
-    top: 15px;
+    top: 8px;
+  }
+  .quiet {
+    right: 10px;
+    top: 10px;
   }
   h1 {
     font-size: 44px;

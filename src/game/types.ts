@@ -148,6 +148,8 @@ export interface Pickup extends Vec2 {
   kind: PickupKind;
   available: boolean;
   cooldown: number;
+  /** Starting duration for the current cooldown, used by the refill indicator. */
+  cooldownDuration?: number;
 }
 export type WreckPart = "hull" | "turret" | "turret-barrel" | "barrel";
 export interface Fragment {

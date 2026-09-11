@@ -55,6 +55,21 @@ try {
       for (let i = 0; i < n; i++) window.advanceFrame(17);
     }, n);
   assert.equal(await page.evaluate(() => window.sloppy.sim.pickups[0].available), false);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const d = window.sloppy,
+        p = d.sim.pickups[0],
+        g = d.view.pickupMeshes.get(p.id);
+      return {
+        podium: g.visible,
+        gem: g.userData.gem.visible,
+        refill: g.userData.refill.visible,
+        progress: g.userData.refill.geometry.drawRange.count,
+        duration: p.cooldownDuration,
+      };
+    }),
+    { podium: true, gem: false, refill: true, progress: 0, duration: 25 },
+  );
   await advance(1480);
   assert.equal(await page.evaluate(() => window.sloppy.sim.pickups[0].available), true);
   await page.screenshot({ path: `${out}/rare-pickup.png` });
@@ -75,8 +90,22 @@ try {
   assert.match(await page.locator("#effects").innerText(), /LASER DEFENSE/);
   assert.equal(await page.evaluate(() => window.sloppy.view.laserVisuals.lens.count), 1);
   assert.equal(await page.evaluate(() => window.sloppy.sim.pickups[0].available), false);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const d = window.sloppy,
+        p = d.sim.pickups[0],
+        g = d.view.pickupMeshes.get(p.id);
+      return {
+        podium: g.visible,
+        gem: g.userData.gem.visible,
+        refill: g.userData.refill.visible,
+        duration: p.cooldownDuration,
+      };
+    }),
+    { podium: true, gem: false, refill: true, duration: 45 },
+  );
   checks.push(
-    "Rare pickup starts hidden, appears after 25 seconds, real W-key collection activates defense and HUD",
+    "Rare pickup starts on an empty 25-second podium, appears on time, and leaves a 45-second podium after real W-key collection",
   );
   // Pin the fixture for a visible successful rocket interception; the real game loop handles it.
   await page.mouse.click(800, 350);
