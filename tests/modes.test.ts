@@ -1,12 +1,8 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
-import {
-  randomArenaLayout,
-  randomArenaTheme,
-  pickupLayout,
-  spawnPositions,
-} from "../src/game/arena";
+import { pickupLayout, spawnPositions, type CoverDef } from "../src/game/arena";
+import { MAPS } from "../src/game/maps";
 import { Navigation } from "../src/game/navigation";
 import { Simulation } from "../src/game/simulation";
 import { collectPickup } from "../src/game/weapons";
@@ -16,93 +12,24 @@ before(async () => {
   await RAPIER.init();
 });
 
-test("100 random maps keep pickups and spawn strips connected", () => {
-  const themes = new Set<string>();
-  const containerSizes = new Set<string>();
-  const containerColors = new Set<number>();
-  for (let seed = 1; seed <= 100; seed++) {
-    const layout = randomArenaLayout(seed);
-    themes.add(randomArenaTheme(seed));
-    for (const kind of ["container", "cargo", "house", "tree"]) {
-      assert.ok(
-        layout.some((c) => c.kind === kind),
-        `missing ${kind} on seed ${seed}`,
-      );
-    }
-    for (const c of layout.filter((c) => c.kind !== "boundary")) {
-      assert.ok(
-        layout.some(
-          (o) =>
-            o.kind === c.kind &&
-            o.x === -c.x &&
-            o.z === -c.z &&
-            o.w === c.w &&
-            o.d === c.d &&
-            o.hp === c.hp &&
-            o.color === c.color,
-        ),
-        `unpaired ${c.kind} seed ${seed}`,
-      );
-      if (c.kind === "container") {
-        containerSizes.add(`${c.w}/${c.d}`);
-        containerColors.add(c.color);
-      }
-      for (const other of layout) {
-        if (other === c) continue;
-        assert.ok(
-          Math.abs(c.x - other.x) >= (c.w + other.w) / 2 - 0.001 ||
-            Math.abs(c.z - other.z) >= (c.d + other.d) / 2 - 0.001,
-          `overlapping cover on seed ${seed}`,
-        );
-      }
-    }
-    for (const tower of layout.filter((c) => c.kind === "tower"))
-      assert.deepEqual(
-        [tower.w, tower.d],
-        [6, 5],
-        "tower supports and rubble keep their authored axes",
-      );
-    assert.ok(layout.length >= 35, `cover count seed ${seed}`);
+test("authored maps keep every pickup and spawn connected", () => {
+  for (const map of MAPS) {
     const nav = new Navigation();
-    nav.rebuild(layout.map((c) => ({ ...c, alive: true })) as Cover[]);
-    const points = [...pickupLayout, ...spawnPositions(0), ...spawnPositions(1)];
-    const n = Math.sqrt(nav.blocked.length);
-    const seen = new Set<number>([nav.index(points[0])]);
-    const queue = [...seen];
-    for (let i = 0; i < queue.length; i++) {
-      const a = queue[i],
-        x = a % n,
-        z = Math.floor(a / n);
-      for (const [dx, dz] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const nx = x + dx,
-          nz = z + dz,
-          b = nz * n + nx;
-        if (nx < 0 || nx >= n || nz < 0 || nz >= n || nav.blocked[b] || seen.has(b)) continue;
-        seen.add(b);
-        queue.push(b);
-      }
-    }
-    for (const p of points) {
-      assert.equal(nav.blocked[nav.index(p)], 0, `blocked ${seed}: ${JSON.stringify(p)}`);
-      assert.ok(seen.has(nav.index(p)), `unreachable ${seed}: ${JSON.stringify(p)}`);
+    nav.rebuild(map.layout().map((c) => ({ ...c, alive: true })) as Cover[]);
+    for (const p of [...pickupLayout, ...spawnPositions(0), ...spawnPositions(1)]) {
+      assert.equal(nav.blocked[nav.index(p)], 0, `blocked ${map.id}: ${JSON.stringify(p)}`);
+      assert.ok(
+        nav.find({ x: 0, z: 0 }, p).length > 0 || (p.x === 0 && p.z === 0),
+        `unreachable ${map.id}: ${JSON.stringify(p)}`,
+      );
     }
   }
-  assert.equal(themes.size, 2, "both scenery themes occur");
-  assert.ok(containerSizes.size >= 4, "container lengths and orientations vary");
-  assert.ok(containerColors.size >= 4, "container paint varies");
-  assert.deepEqual(randomArenaLayout(7), randomArenaLayout(7));
-  assert.notDeepEqual(randomArenaLayout(7), randomArenaLayout(8));
 });
 
 function solo(seed = 123) {
   const s = new Simulation(seed);
   s.gameMode = "solo";
-  s.mapMode = "random";
+  s.mapMode = "surprise";
   s.reset();
   s.start();
   for (const t of s.tanks) t.protection = 0;
@@ -156,10 +83,8 @@ test("solo survives beyond 50 kills, ends on death or ten minutes, and resets cl
     const time = s.match.time;
     s.step();
     assert.equal(s.match.time, time);
-    const previousSeed = s.mapSeed;
     s.reset();
     s.start();
-    assert.notEqual(s.mapSeed, previousSeed);
     s.human.protection = 0;
     s.damageTank(s.human, 9999, s.tanks[1].id, s.tanks[1].team);
     assert.equal(s.match.phase, "results");
@@ -230,29 +155,46 @@ test("solo reinforcements replenish six active enemies and reset the kill counte
   }
 });
 
-test("random scenery matches boundaries through new rounds and fixed map switches", () => {
-  const sim = new Simulation(912);
-  try {
-    sim.mapMode = "random";
-    const themes = new Set<string>();
-    let previous = "";
-    for (let round = 0; round < 12; round++) {
-      sim.reset();
-      themes.add(sim.mapTheme);
-      assert.equal(sim.mapTheme, randomArenaTheme(sim.mapSeed));
-      const boundary = sim.covers.find((c) => c.kind === "boundary")!;
-      assert.equal(boundary.h, sim.mapTheme === "harbor" ? 1.2 : 2.2);
-      const layout = JSON.stringify(sim.covers.map((c) => [c.kind, c.x, c.z]));
-      assert.notEqual(layout, previous, "new rounds produce new layouts");
-      previous = layout;
+test("Surprise me picks complete authored maps in both modes and keeps the choice for the match", () => {
+  const signature = (covers: CoverDef[]) =>
+    covers.map(({ kind, x, z, w, d, h, hp, color }) => [kind, x, z, w, d, h, hp, color]);
+  for (const gameMode of ["team", "solo"] as const) {
+    const sim = new Simulation(912);
+    const replay = new Simulation(912);
+    try {
+      sim.gameMode = replay.gameMode = gameMode;
+      sim.mapMode = replay.mapMode = "surprise";
+      const selected = new Set<string>();
+      for (let round = 0; round < 20; round++) {
+        sim.reset();
+        replay.reset();
+        const map = MAPS.find((map) => map.id === sim.mapTheme)!;
+        selected.add(map.id);
+        assert.equal(sim.mapMode, "surprise", "selection survives a new round");
+        assert.equal(sim.mapTheme, replay.mapTheme, "seeded matches remain reproducible");
+        assert.equal(sim.mapName, map.name.toUpperCase(), "show the actual battlefield name");
+        assert.deepEqual(
+          signature(sim.covers),
+          signature(map.layout()),
+          "use the entire authored layout",
+        );
+        assert.equal(sim.tanks.length, gameMode === "solo" ? 7 : 12);
+        sim.start();
+        sim.step();
+        sim.match.phase = "paused";
+        sim.step();
+        assert.equal(sim.mapTheme, map.id, "playing and pausing never reroll the map");
+      }
+      assert.deepEqual(selected, new Set(MAPS.map((map) => map.id)));
+      for (const map of MAPS) {
+        sim.mapMode = map.id;
+        sim.reset();
+        assert.equal(sim.mapTheme, map.id, "manual selection overrides Surprise me");
+        assert.deepEqual(signature(sim.covers), signature(map.layout()));
+      }
+    } finally {
+      sim.world.free();
+      replay.world.free();
     }
-    assert.equal(themes.size, 2);
-    for (const mode of ["harbor", "village"] as const) {
-      sim.mapMode = mode;
-      sim.reset();
-      assert.equal(sim.mapTheme, mode);
-    }
-  } finally {
-    sim.world.free();
   }
 });

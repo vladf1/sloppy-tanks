@@ -39,7 +39,7 @@
       <button id="cargo">Cargo close-up</button>
       <button id="crate-stages">Crate damage stages</button>
       <button id="crate-hit">Hit middle crate</button>
-      <button id="random">New random map</button>
+      <button id="surprise">Surprise me</button>
       <button id="checks">Check map switches and resets</button>
       <output id="result">Harbor scene ready</output>
     </aside>
@@ -115,21 +115,20 @@
         location(22, 21);
         view.zoom = 27;
       };
-      document.querySelector("#random").onclick = () => {
+      document.querySelector("#surprise").onclick = () => {
         crateExamples = [];
-        sim.mapMode = "random";
+        sim.mapMode = "surprise";
         sim.reset();
         view.reset(sim);
         overview = true;
-        document.querySelector("#result").textContent =
-          `Random map ${sim.mapSeed} · ${sim.mapTheme} scenery`;
+        document.querySelector("#result").textContent = `Surprise me · ${sim.mapName}`;
       };
       document.querySelector("#checks").onclick = () => {
         crateExamples = [];
         const failures = [];
         let baseline;
         for (let round = 0; round < 4; round++) {
-          for (const mode of ["village", "random", "harbor"]) {
+          for (const mode of ["village", "surprise", "harbor"]) {
             sim.mapMode = mode;
             sim.reset();
             view.reset(sim);

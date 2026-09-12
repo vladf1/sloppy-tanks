@@ -301,7 +301,7 @@ test("piercing stops on tanks and cover and cannot intercept through thin cover"
   stepProjectiles(s, 0.3);
   assert.equal(s.shots.length, 0);
   assert.equal(s.human.hp, hp - 40);
-  s.addCover({ kind: "wall", x: 0, z: 0, w: 0.1, d: 10, h: 3, hp: Infinity, color: 0 });
+  s.addCover({ kind: "concrete", x: 0, z: 0, w: 0.1, d: 10, h: 3, hp: Infinity, color: 0 });
   s.world.step();
   s.events = [];
   s.shots = [shot(s, "piercing", -0.3, 20, 0), shot(s, "piercing", 0.3, -20, 1)];
@@ -351,7 +351,7 @@ test("bot roles select stocked ammo, use standard on cover, and fall back after 
   bot.brain.memory = 0;
   bot.brain.decision = 99;
   bot.brain.goal = { x: 0, z: 10 };
-  s.addCover({ kind: "fence", x: 0, z: 7, w: 4, d: 0.6, h: 2, hp: 60, color: 0 });
+  s.addCover({ kind: "timber", x: 0, z: 7, w: 4, d: 0.6, h: 2, hp: 60, color: 0 });
   s.world.step();
   assert.equal(botCommand(s, bot, STEP).ammoSelection, "standard");
   bot.ammo = emptyAmmo();

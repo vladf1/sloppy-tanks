@@ -13,12 +13,12 @@ try {
   const results = await page.evaluate(async () => {
     const { stepProjectiles } = await import("/sloppy-tanks/src/game/weapons.ts");
     const { sim: s, view: v } = window.sloppy;
-    s.mapMode = "classic";
+    s.mapMode = "village";
     window.sloppy.start();
     const covers = [
       s.covers.find((c) => c.kind === "tree"),
       s.covers.find((c) => c.kind === "timber"),
-      s.addCover({ kind: "fence", x: 0, z: 30, w: 4, d: 0.9, h: 1.5, hp: 80, color: 0xb47a49 }),
+      s.addCover({ kind: "cargo", x: 0, z: 30, w: 4, d: 0.9, h: 1.5, hp: 80, color: 0xb47a49 }),
     ];
     s.world.step();
     return covers.map((c) => {

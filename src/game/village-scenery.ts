@@ -8,7 +8,7 @@ import { VillageVegetation } from "./village-vegetation";
 import { VillageAtmosphere } from "./village-atmosphere";
 import type { Cover } from "./types";
 
-/** Persistent scenery is shared by Pine Village and woodland random maps. */
+/** Pine Village scenery is retained across matches. */
 export class VillageScenery extends THREE.Scene {
   private landscape: VillageLandscape;
   private vegetation = new VillageVegetation();

@@ -2,7 +2,7 @@ import { KMH_PER_METRE_PER_SECOND, STEP, VEHICLES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
 
 export const speedTuning = { "tank-speed": 1, "bullet-speed": 1 };
-export type SpeedSetting = keyof typeof speedTuning;
+type SpeedSetting = keyof typeof speedTuning;
 const tankBases = Object.values(VEHICLES).map((v) => v.speed);
 const bulletBases = Object.values(WEAPONS).map((w) => w.speed);
 

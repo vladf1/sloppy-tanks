@@ -50,7 +50,7 @@ test("a protruding barrel cannot spawn shots beyond nearby cover or an enemy", (
   for (const obstruction of ["cover", "enemy"] as const) {
     const { s, t } = arena();
     if (obstruction === "cover")
-      s.addCover({ kind: "fence", x: 0, z: 1, w: 3, d: 0.2, h: 2, hp: 100, color: 0 });
+      s.addCover({ kind: "timber", x: 0, z: 1, w: 3, d: 0.2, h: 2, hp: 100, color: 0 });
     else {
       s.addTank(1, true, "balanced");
       const target = s.tanks[1];

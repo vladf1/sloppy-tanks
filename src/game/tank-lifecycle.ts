@@ -10,7 +10,7 @@ import type { Tank, Team, Vec2, VehicleKind } from "./types";
 import { idleCommand } from "./types";
 
 // The body and contact hull are recreated for each life; identity and score survive respawn.
-export function createTankBody(world: RAPIER.World, kind: VehicleKind, position: Vec2) {
+function createTankBody(world: RAPIER.World, kind: VehicleKind, position: Vec2) {
   const stats = VEHICLES[kind];
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()

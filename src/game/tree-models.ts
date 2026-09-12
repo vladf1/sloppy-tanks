@@ -152,7 +152,7 @@ function stumpGeometry(variant: number) {
   return cached;
 }
 
-export function treeModel(c: TreeDef, detail: "full" | "background" = "full", destroyed = false) {
+export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
   const seed = ((Math.round(c.x * 100) * 73856093) ^ (Math.round(c.z * 100) * 19349663)) >>> 0;
   const rng = new Random(seed);
   const family = Math.floor(rng.next() * TREE_FAMILIES.length);
@@ -216,11 +216,11 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full", de
     );
     cut.rotation.y = twist;
     cut.name = "exposed-wood";
-    cut.visible = destroyed;
+    cut.visible = false;
     group.add(stump, crown);
     group.userData.cutSurface = cut;
     group.userData.crown = crown;
-    group.userData.stump = destroyed;
+    group.userData.stump = false;
   }
   const leanX = rng.range(-0.1, 0.1) * c.w;
   const leanZ = rng.range(-0.07, 0.07) * c.d;
@@ -317,7 +317,6 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full", de
   }
   if (detail === "full") {
     batch(crown);
-    crown.visible = !destroyed;
   }
   return group;
 }
@@ -332,7 +331,4 @@ export function setTreeDestroyed(tree: THREE.Group, destroyed: boolean): void {
   crown.visible = !destroyed;
   cutSurface.visible = destroyed;
   tree.userData.stump = destroyed;
-}
-export function stumpModel(c: TreeDef) {
-  return treeModel(c, "full", true);
 }

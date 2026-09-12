@@ -107,9 +107,7 @@ export class ParticleEffects {
     const explosion =
       event.type === "explosion" || event.type === "death" || event.type === "destroy";
     const coverEffect = event.type === "destroy" || event.type === "impact";
-    const timber =
-      coverEffect &&
-      (event.coverKind === "timber" || event.coverKind === "fence" || event.coverKind === "cargo");
+    const timber = coverEffect && (event.coverKind === "timber" || event.coverKind === "cargo");
     const tree = coverEffect && event.coverKind === "tree";
     const chipHit = event.type === "impact" && (tree || timber);
     const style =
@@ -144,9 +142,7 @@ export class ParticleEffects {
               ? [0xffffff, 0xffcb58, 0xffcb58]
               : [event.color ?? 0xffdf91];
     for (let i = 0; i < count && this.particles.length < MAX_PARTICLES; i++) {
-      const life =
-        (style.life[0] + Math.random() * style.life[1]) *
-        (tree ? 3 : timber || (event.type === "destroy" && event.coverKind === "fence") ? 2 : 1);
+      const life = (style.life[0] + Math.random() * style.life[1]) * (tree ? 3 : timber ? 2 : 1);
       const speed = baseSpeed + (tree && !chipHit ? Math.random() * 4 : 0);
       this.particles.push({
         shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,

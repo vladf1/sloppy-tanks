@@ -33,7 +33,7 @@ test("reused navigation searches recover from unreachable goals and changed topo
 
 test("cover queries ignore tanks and debris and release destroyed collider identities", () => {
   const s = new Simulation(123);
-  const c = s.addCover({ kind: "wall", x: 0, z: 50, w: 1, d: 4, h: 2, hp: 10, color: 0 });
+  const c = s.addCover({ kind: "concrete", x: 0, z: 50, w: 1, d: 4, h: 2, hp: 10, color: 0 });
   const handle = c.collider.handle;
   s.human.body.setTranslation({ x: -2, y: 0.65, z: 50 }, true);
   s.fragment(2, 50, 0);
@@ -213,7 +213,7 @@ test("destroyed cover does not reflect shells and breaks exactly once", () => {
   const s = game();
   clear(s);
   const c = s.addCover({
-    kind: "wall",
+    kind: "concrete",
     x: 0,
     z: 0,
     w: 1,
@@ -563,7 +563,7 @@ test("bots pause between shots even when breaching; human fires faster with and 
     bot.brain.goal = { x: 4, z: 0 };
     bot.brain.decision = bot.brain.memory = 100;
     s.addCover({
-      kind: "wall",
+      kind: "concrete",
       x: 0,
       z: 0,
       w: 1,

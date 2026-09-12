@@ -172,21 +172,6 @@ export function coverModel(
         );
       }
     }
-  } else if (c.kind === "fence") {
-    const along = c.w > c.d;
-    const length = Math.max(c.w, c.d);
-    for (let offset = -length / 2 + 0.12; offset <= length / 2; offset += 0.55) {
-      put(
-        group,
-        box(along ? 0.24 : 0.18, c.h, along ? 0.18 : 0.24, c.color, 0),
-        along ? offset : 0,
-        c.h / 2,
-        along ? 0 : offset,
-      );
-    }
-    for (const y of [0.45, 1.12]) {
-      put(group, box(along ? length : 0.2, 0.18, along ? 0.2 : length, 0x8f603a, 0), 0, y, 0);
-    }
   } else if (c.kind === "drum") {
     put(group, explosiveBarrel(), 0, 0.8, 0);
     for (const y of [0.22, 1.35]) {
@@ -257,20 +242,6 @@ export function coverModel(
         rng.range(-roomZ, roomZ),
       );
     }
-  } else if (c.kind === "shed") {
-    put(group, box(c.w, c.h, c.d, c.color), 0, c.h / 2, 0);
-    const along = c.w > c.d;
-    const length = along ? c.w : c.d;
-    for (let i = -length / 2 + 0.2; i < length / 2; i += 0.52) {
-      put(
-        group,
-        box(along ? 0.035 : c.w + 0.04, c.h - 0.1, along ? c.d + 0.04 : 0.035, 0x9c713e, 0.005),
-        along ? i : 0,
-        c.h / 2,
-        along ? 0 : i,
-      );
-    }
-    put(group, box(c.w + 0.14, 0.18, c.d + 0.14, 0x187fbe), 0, c.h, 0);
   } else {
     put(
       group,
@@ -279,7 +250,7 @@ export function coverModel(
       c.h / 2,
       0,
     );
-    if (c.kind === "concrete" || c.kind === "wall") {
+    if (c.kind === "concrete") {
       const along = c.w > c.d;
       for (let i = 0; i < Math.floor((along ? c.w : c.d) / 1.1); i++) {
         const mark = box(along ? 0.55 : 0.035, 0.22, along ? 0.035 : 0.55, 0x499ac7, 0.01);

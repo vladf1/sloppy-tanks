@@ -1,5 +1,4 @@
-import { ARENA, Random } from "./data";
-import { harborLayout } from "./harbor-layout";
+import { ARENA } from "./data";
 import type { CoverKind, PickupKind, Team, Vec2 } from "./types";
 export interface CoverDef extends Vec2 {
   kind: CoverKind;
@@ -52,7 +51,7 @@ function authoredLayout(): CoverDef[] {
   }
   return result;
 }
-/** Split after placement so random-map clearance treats each wall as one footprint. */
+/** Each timber bay can break independently. */
 function segmentWalls(layout: CoverDef[]): CoverDef[] {
   return layout.flatMap((c) => {
     if (c.kind !== "timber") {
@@ -105,68 +104,3 @@ export const spawnPositions = (team: Team): Vec2[] =>
     x: team === 0 ? -53 : 53,
     z: team === 0 ? z : -z,
   }));
-
-/** A separate seeded stream keeps scenery independent of cover-placement attempts. */
-export function randomArenaTheme(seed: number): "village" | "harbor" {
-  return new Random(seed ^ 0x6a09e667).next() < 0.5 ? "village" : "harbor";
-}
-
-/** Seeded, rotationally balanced cover with wide connected lanes between objects.
- * Keep the outer spawn strips and every pickup's approach clear. */
-export function randomArenaLayout(seed: number): CoverDef[] {
-  const rng = new Random(seed);
-  const village = authoredLayout();
-  const harbor = harborLayout();
-  const theme = randomArenaTheme(seed);
-  const result = (theme === "harbor" ? harbor : village).filter((c) => c.kind === "boundary");
-  // Sample object families deliberately; authored tree/wall counts must not dominate the pool.
-  const villageKinds = ["tree", "house", "timber", "tower", "drum"] as const;
-  const villageTemplates = villageKinds.map((kind) => village.find((c) => c.kind === kind)!);
-  const container = harbor.find((c) => c.kind === "container")!;
-  const harborTemplates = [
-    ...[6, 9, 12].map((w) => ({ ...container, w, d: 4 })),
-    harbor.find((c) => c.kind === "cargo")!,
-    harbor.find((c) => c.kind === "concrete")!,
-  ];
-  const templates = [
-    ...villageTemplates,
-    ...harborTemplates,
-    ...(theme === "harbor" ? harborTemplates : villageTemplates),
-  ];
-  const guaranteedKinds = ["container", "cargo", "house", "tree"] as const;
-  for (let attempt = 0; attempt < 1600 && result.length < 60; attempt++) {
-    // Place a mixed opening set before filling the remaining space, even on crowded seeds.
-    const required = guaranteedKinds[(result.length - 4) / 2];
-    const pool = required ? templates.filter((c) => c.kind === required) : templates;
-    const template = pool[Math.floor(rng.next() * pool.length)];
-    // Towers have authored supports, roof and collapse rubble on fixed axes.
-    const rotated = rng.next() < 0.5 && template.kind !== "tower";
-    const a = {
-      ...template,
-      x: rng.range(5, 44),
-      z: rng.range(-49, 49),
-      w: rotated ? template.d : template.w,
-      d: rotated ? template.w : template.d,
-    };
-    if (a.kind === "container") {
-      const colors = [0xd37c38, 0x31958d, 0x6689ad, 0xb5a475, 0xa65c55];
-      a.color = colors[Math.floor(rng.next() * colors.length)];
-    }
-    const b = { ...a, x: -a.x, z: -a.z };
-    const clear = (c: CoverDef) =>
-      Math.abs(c.x) + c.w / 2 < 47 &&
-      Math.abs(c.z) + c.d / 2 < 53 &&
-      pickupLayout.every(
-        (p) => Math.abs(p.x - c.x) > c.w / 2 + 3.5 || Math.abs(p.z - c.z) > c.d / 2 + 3.5,
-      ) &&
-      result.every(
-        (o) =>
-          Math.abs(o.x - c.x) > (o.w + c.w) / 2 + 6 || Math.abs(o.z - c.z) > (o.d + c.d) / 2 + 6,
-      );
-    const pairClear = Math.abs(a.x - b.x) > a.w + 6 || Math.abs(a.z - b.z) > a.d + 6;
-    if (pairClear && clear(a) && clear(b)) {
-      result.push(a, b);
-    }
-  }
-  return segmentWalls(result);
-}

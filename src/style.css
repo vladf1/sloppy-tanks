@@ -66,13 +66,6 @@ canvas#game {
   display: block;
   font-size: 34px;
 }
-.brand small {
-  display: block;
-  font:
-    600 8px/2.7 Barlow,
-    sans-serif;
-  letter-spacing: 2px;
-}
 .scoreboard {
   position: absolute;
   top: 10px;
@@ -302,20 +295,12 @@ canvas#game {
   font-size: 20px;
   line-height: 1.2;
 }
-.ammo-slot.empty {
-  opacity: 0.38;
-}
 .ammo-slot.selected {
   border-color: var(--ammo-color);
   background: #294564;
   box-shadow: inset 0 -3px var(--ammo-color);
 }
 @media (max-width: 650px) {
-  .bottom {
-    left: 10px;
-    right: 10px;
-    bottom: 10px;
-  }
   .combat-status {
     grid-template-columns: 1fr;
     width: 100%;
@@ -375,6 +360,7 @@ canvas#game {
   background: linear-gradient(90deg, #12375880, #12375815);
   padding: 24px;
   backdrop-filter: blur(2px);
+  overflow-y: auto;
 }
 .menu {
   background: #142e4df2;
@@ -399,9 +385,6 @@ h1 {
     sans-serif;
   letter-spacing: -1px;
   margin: 0;
-}
-h1 span {
-  color: #ffcf38;
 }
 h2 {
   font:
@@ -450,13 +433,6 @@ h2 {
   color: #c0dbee;
 }
 
-.vehicle p {
-  font-size: 12px;
-  line-height: 1.45;
-  margin: 8px 0 15px;
-  color: #d4e7f5;
-  min-height: 34px;
-}
 .spec {
   display: flex;
   justify-content: space-between;
@@ -515,10 +491,6 @@ h2 {
 .primary:hover {
   background: #ffe2a0;
 }
-.primary span {
-  margin-left: 30px;
-  font-size: 21px;
-}
 .menu-help {
   text-align: center;
   font-size: 13px;
@@ -568,23 +540,11 @@ h2 {
   border-radius: 5px;
   padding: 12px;
 }
-.compact a {
-  color: #a9c5a9;
-  font-size: 11px;
-  display: block;
-  margin-top: 25px;
-}
 .result-score {
   font:
     800 80px "Barlow Condensed",
     Impact;
   color: #ffcf38;
-}
-.respawn {
-  max-width: 780px;
-}
-.respawn h2 {
-  margin-bottom: 8px;
 }
 .respawn p {
   font-size: 13px;
@@ -602,9 +562,6 @@ h2 {
   }
   .vehicle.selected {
     padding: 11px;
-  }
-  .vehicle p {
-    font-size: 10px;
   }
   .menu-foot {
     margin-top: 16px;
@@ -658,8 +615,6 @@ h2 {
   padding: 18px 24px;
   max-width: 760px;
 }
-.respawn .eyebrow,
-.respawn .vehicle p,
 .respawn .spec,
 .respawn .vehicle small,
 .respawn > p {
@@ -722,9 +677,6 @@ h2 {
   margin-top: 3px;
   font-size: 12px;
   color: #c4dfef;
-}
-#overlay {
-  overflow-y: auto;
 }
 @media (max-width: 500px) {
   .mode-options {

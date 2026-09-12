@@ -14,7 +14,7 @@ function beam(group: THREE.Group, a: number[], b: number[], width: number, color
   put(group, mesh, center.x, center.y, center.z);
 }
 
-export function footbridge() {
+function footbridge() {
   const group = new THREE.Group();
   group.name = "village-timber-bridge";
   const arch = (z: number) => -0.65 + 2.0 * (1 - (z / 9) ** 2);
@@ -40,7 +40,7 @@ export function footbridge() {
   return group;
 }
 
-export function watermill() {
+function watermill() {
   const group = new THREE.Group();
   const building = new THREE.Group();
   const wheel = new THREE.Group();
@@ -124,7 +124,7 @@ export function watermill() {
   return { group, wheel };
 }
 
-export function logCamp() {
+function logCamp() {
   const group = new THREE.Group();
   group.name = "village-log-cart";
   put(group, sidingBox(4, 0.24, 5, 0x9f7c4e), 0, 1.05, 0);

@@ -15,7 +15,7 @@ try {
       await import("/sloppy-tanks/src/game/tree-models.ts");
     const THREE = await import("/sloppy-tanks/node_modules/three/build/three.module.js");
     const { sim: s, view: v } = window.sloppy;
-    s.mapMode = "classic";
+    s.mapMode = "village";
     window.sloppy.start();
     document.querySelector("#overlay").style.display = "none";
     const trees = s.covers.filter((c) => c.kind === "tree");

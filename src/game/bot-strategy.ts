@@ -154,7 +154,7 @@ export function updateBotGoal(
     const human = simulation.human.body.translation();
     brain.goal = { x: human.x, z: human.z };
   }
-  // A patrol/escort point can land inside randomized cover. Finish at its
+  // A patrol/escort point can land inside cover. Finish at its
   // navigable neighbor rather than stopping short of an impossible destination.
   if (simulation.nav.blocked[simulation.nav.index(brain.goal)]) {
     brain.goal = simulation.nav.point(simulation.nav.nearest(simulation.nav.index(brain.goal)));

@@ -4,6 +4,7 @@ import { SCORE_LIMIT, TEAM_NAMES, VEHICLES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
 import { speedTuning } from "./speed-tuning";
 import { tankPreview } from "./tank-previews";
+import { MAPS } from "./maps";
 import type { VehicleKind } from "./types";
 
 const CONTROL_HELP =
@@ -27,7 +28,7 @@ export function hudMarkup(): string {
         <div id="overlay"></div>`;
 }
 
-export function vehicleCards(simulation: Simulation): string {
+function vehicleCards(simulation: Simulation): string {
   return `<div class="vehicles">${(Object.keys(VEHICLES) as VehicleKind[])
     .map((kind) => {
       const v = VEHICLES[kind];
@@ -41,7 +42,7 @@ export function vehicleCards(simulation: Simulation): string {
     .join("")}</div>`;
 }
 
-export function modeOptions(simulation: Simulation): string {
+function modeOptions(simulation: Simulation): string {
   const group = (key: "gameMode" | "mapMode", title: string, options: string[][]) =>
     `<fieldset><legend>${title}</legend>${options
       .map(
@@ -53,13 +54,12 @@ export function modeOptions(simulation: Simulation): string {
     ["team", "Team Battle", `6 vs 6 · Respawns · First to ${SCORE_LIMIT}`],
     ["solo", "Solo Assault", "Endless enemies · 10 minutes · One life"],
   ])}${group("mapMode", "MAP", [
-    ["village", "Pine Village", "A quiet little village. Bring the noise."],
-    ["harbor", "Harbor Havoc", "Salt air. Hot steel. Dockside mayhem."],
-    ["random", "Random Map", "Roll the dice. Wreck somewhere new."],
+    ...MAPS.map((map) => [map.id, map.name, map.description]),
+    ["surprise", "Surprise me", "Pick my next battleground."],
   ])}</div>`;
 }
 
-export function difficultyOptions(simulation: Simulation): string {
+function difficultyOptions(simulation: Simulation): string {
   return `<fieldset class="difficulty-setting" aria-describedby="difficulty-help"><legend>DIFFICULTY</legend><div class="difficulty-options">${Object.entries(
     DIFFICULTIES,
   )
@@ -72,7 +72,7 @@ export function difficultyOptions(simulation: Simulation): string {
     )}</div><small id="difficulty-help">${DIFFICULTIES[simulation.difficulty].description}</small></fieldset>`;
 }
 
-export function speedSliders(): string {
+function speedSliders(): string {
   return `<div class="speed-tuning">${(["tank-speed", "bullet-speed"] as const)
     .map(
       (key) =>
@@ -86,7 +86,7 @@ export function menuMarkup(simulation: Simulation): string {
   if (phase === "ready") {
     return `
       <section class="menu start">
-        <div class="eyebrow">${simulation.mapName} / ${simulation.gameMode === "solo" ? "SURVIVAL" : "6 V 6"}</div>
+        <div class="eyebrow">${simulation.mapMode === "surprise" ? "SURPRISE ME" : MAPS.find((map) => map.id === simulation.mapMode)!.name.toUpperCase()} / ${simulation.gameMode === "solo" ? "SURVIVAL" : "6 V 6"}</div>
         <h1>CHOOSE YOUR TANK</h1>
         <p class="intro">Choose your battle, then click a tank to start.</p>
         ${modeOptions(simulation)}

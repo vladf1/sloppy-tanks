@@ -5,7 +5,7 @@ import { ARENA, TEAM_COLORS } from "./data";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
 import { box, cylinder, material, put } from "./model-primitives";
 /** Static village dressing; collidable objects are created separately from the arena layout. */
-export function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
+function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
   const details = new THREE.Group();
   const roads = new THREE.Group();
   const roadMaterial = groundMaterial(renderer, "packed-dirt");

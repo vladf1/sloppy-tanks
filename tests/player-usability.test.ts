@@ -239,7 +239,7 @@ test("protected and fully shielded hits do not emit hull damage direction", () =
 test("a reflected shell points toward its bounce, not the original shooter", () => {
   const { s, player, enemy } = arena();
   try {
-    s.addCover({ kind: "wall", x: 5, z: 0, w: 1, d: 10, h: 3, hp: Infinity, color: 0 });
+    s.addCover({ kind: "concrete", x: 5, z: 0, w: 1, d: 10, h: 3, hp: Infinity, color: 0 });
     s.world.step();
     s.shots = [{ ...incoming(s, "ricochet", enemy.id, enemy.team), x: 3, bounces: 1 }];
     stepProjectiles(s, 0.4);

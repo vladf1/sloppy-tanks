@@ -71,7 +71,7 @@ test("spawn protection, allies, self-damage, shield absorption and scenery give 
   enemy.shield = 12;
   enemy.shieldPoints = 60;
   s.damageTank(enemy, 50, player.id, player.team);
-  const c = s.addCover({ kind: "fence", x: 0, z: 20, w: 2, d: 1, h: 1, hp: 10, color: 0 });
+  const c = s.addCover({ kind: "timber", x: 0, z: 20, w: 2, d: 1, h: 1, hp: 10, color: 0 });
   s.damageCover(c, 999, player.id, player.team);
   assert.equal(player.xp, 0);
   s.damageTank(enemy, 25, player.id, player.team);

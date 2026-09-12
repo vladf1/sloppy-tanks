@@ -130,15 +130,12 @@ export function damageCover(
       simulation.rng.range(0.3, 0.7),
       cover.kind === "tower" || cover.kind === "tree" || cover.kind === "cargo"
         ? "wood"
-        : cover.kind === "shed" ||
-            cover.kind === "fence" ||
-            cover.kind === "timber" ||
-            cover.kind === "house"
+        : cover.kind === "timber" || cover.kind === "house"
           ? "track"
           : cover.kind === "drum"
             ? "armor"
             : "shard",
-      cover.kind === "tree" ? 3 : cover.kind === "timber" || cover.kind === "fence" ? 2 : 1,
+      cover.kind === "tree" ? 3 : cover.kind === "timber" ? 2 : 1,
     );
   }
   if (cover.kind === "tower") {

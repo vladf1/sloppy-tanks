@@ -12,7 +12,7 @@ try {
   await page.waitForFunction(() => !!window.sloppy);
   const result = await page.evaluate(() => {
     const { sim: s, view: v } = window.sloppy;
-    s.mapMode = "classic";
+    s.mapMode = "village";
     s.reset();
     v.reset(s);
     window.sloppy.start();

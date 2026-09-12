@@ -61,7 +61,7 @@ export interface Tank {
   brain: Brain;
 }
 /** Bot memory survives between decisions; steering and recovery update every fixed tick. */
-export interface Brain {
+interface Brain {
   personality: BotPersonality;
   ultraAggressive: boolean;
   lastSeen: Vec2;
@@ -89,11 +89,8 @@ export type CoverKind =
   | "cargo"
   | "house"
   | "tree"
-  | "fence"
   | "timber"
   | "concrete"
-  | "wall"
-  | "shed"
   | "drum"
   | "tower"
   | "rubble"

@@ -91,7 +91,7 @@ const scenarios = [];
   s.dispose();
 }
 const rounds = [];
-for (const mapMode of ["village", "random"] as const)
+for (const mapMode of ["village", "harbor"] as const)
   for (const seed of [123, 456, 789]) {
     const s = new Simulation(seed);
     s.mapMode = mapMode;

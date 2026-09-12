@@ -22,7 +22,6 @@ export const SOLO = {
   reinforcementSeconds: 1,
   spawnX: 53,
   spawnHalfSpanZ: 46,
-  spawnClearance: 4,
 } as const;
 export const SPAWN_SCORING = {
   maximumEnemyDistance: 50,

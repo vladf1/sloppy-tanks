@@ -344,7 +344,7 @@ try {
     const d = window.sloppy;
     d.sim.seed = 12345;
     d.sim.roundCount = 24;
-    d.sim.mapMode = "random";
+    d.sim.mapMode = "surprise";
     d.start();
     d.autoplay();
     d.record();

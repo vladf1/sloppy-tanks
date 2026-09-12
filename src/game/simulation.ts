@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { botCommand } from "./ai";
 import { hasAmmo, selectAmmo } from "./ammunition";
-import { arenaLayout, pickupLayout, randomArenaLayout, randomArenaTheme } from "./arena";
+import { pickupLayout } from "./arena";
 import { shuffledBotNames } from "./bot-personalities";
 import { damageCover, damageTank, explode } from "./damage";
 import {
@@ -18,7 +18,7 @@ import {
 import type { Difficulty } from "./difficulty";
 import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
-import { harborLayout } from "./harbor-layout";
+import { MAPS } from "./maps";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -61,8 +61,8 @@ export class Simulation {
   humanKind: VehicleKind = "balanced";
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
-  mapMode: "village" | "harbor" | "random" = "village";
-  mapSeed = 0;
+  mapMode: (typeof MAPS)[number]["id"] | "surprise" = "village";
+  private currentMap: (typeof MAPS)[number] = MAPS[0];
   readonly activeEnemyLimit = SOLO.activeEnemies;
   reinforcementDelay = 0;
   isEasyEnemy(tank: Tank): boolean {
@@ -78,15 +78,11 @@ export class Simulation {
       ) / 100
     );
   }
-  get mapTheme(): "village" | "harbor" {
-    return this.mapMode === "random" ? randomArenaTheme(this.mapSeed) : this.mapMode;
+  get mapTheme() {
+    return this.currentMap.id;
   }
   get mapName() {
-    return this.mapMode === "harbor"
-      ? "HARBOR HAVOC"
-      : this.mapMode === "random"
-        ? "RANDOM MAP"
-        : "PINE VILLAGE";
+    return this.currentMap.name.toUpperCase();
   }
   maxFragments: number = MAX_FRAGMENTS;
   wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -128,9 +124,13 @@ export class Simulation {
     if (this.gameMode === "solo") {
       this.match.time = SOLO_TIME;
     }
-    this.botNames = shuffledBotNames(
-      (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0,
-    );
+    const roundSeed = (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0;
+    this.botNames = shuffledBotNames(roundSeed);
+    // Pick once per reset without consuming the combat RNG stream.
+    this.currentMap =
+      this.mapMode === "surprise"
+        ? MAPS[Math.floor(new Random(roundSeed).next() * MAPS.length)]
+        : MAPS.find((map) => map.id === this.mapMode)!;
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
     );
@@ -138,12 +138,7 @@ export class Simulation {
       RAPIER.ColliderDesc.cuboid(ARENA + 2, 0.5, ARENA + 2).setCollisionGroups(GROUP.ground),
       ground,
     );
-    this.mapSeed = (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0;
-    for (const c of this.mapMode === "harbor"
-      ? harborLayout()
-      : this.mapMode === "random"
-        ? randomArenaLayout(this.mapSeed)
-        : arenaLayout()) {
+    for (const c of this.currentMap.layout()) {
       this.addCover(c);
     }
     this.pickups = pickupLayout.map((p) => ({

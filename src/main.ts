@@ -6,6 +6,7 @@ import { parseDifficulty } from "./game/difficulty";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
 import { Simulation } from "./game/simulation";
+import { MAPS } from "./game/maps";
 import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
 import { UI } from "./game/ui";
@@ -32,8 +33,10 @@ document.addEventListener("visibilitychange", () => {
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const sim = new Simulation(Math.floor(Math.random() * 1000000));
 const requestedMap = new URLSearchParams(location.search).get("map");
-if (requestedMap === "harbor" || requestedMap === "village" || requestedMap === "random") {
-  sim.mapMode = requestedMap;
+const fixedMap = MAPS.find((map) => map.id === requestedMap);
+// Existing Random Map bookmarks now open the authored-map shuffle.
+if (requestedMap === "surprise" || requestedMap === "random" || fixedMap) {
+  sim.mapMode = fixedMap?.id ?? "surprise";
   sim.reset();
 }
 sim.difficulty = parseDifficulty(localStorage.getItem("sloppy-difficulty"));
