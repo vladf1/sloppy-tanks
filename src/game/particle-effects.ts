@@ -107,7 +107,9 @@ export class ParticleEffects {
     const explosion =
       event.type === "explosion" || event.type === "death" || event.type === "destroy";
     const coverEffect = event.type === "destroy" || event.type === "impact";
-    const timber = coverEffect && (event.coverKind === "timber" || event.coverKind === "fence");
+    const timber =
+      coverEffect &&
+      (event.coverKind === "timber" || event.coverKind === "fence" || event.coverKind === "cargo");
     const tree = coverEffect && event.coverKind === "tree";
     const chipHit = event.type === "impact" && (tree || timber);
     const style =

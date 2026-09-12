@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { botCommand } from "./ai";
 import { hasAmmo, selectAmmo } from "./ammunition";
-import { arenaLayout, pickupLayout, randomArenaLayout } from "./arena";
+import { arenaLayout, pickupLayout, randomArenaLayout, randomArenaTheme } from "./arena";
 import { shuffledBotNames } from "./bot-personalities";
 import { damageCover, damageTank, explode } from "./damage";
 import {
@@ -18,6 +18,7 @@ import {
 import type { Difficulty } from "./difficulty";
 import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
+import { harborLayout } from "./harbor-layout";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -60,7 +61,7 @@ export class Simulation {
   humanKind: VehicleKind = "balanced";
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
-  mapMode: "village" | "random" = "village";
+  mapMode: "village" | "harbor" | "random" = "village";
   mapSeed = 0;
   readonly activeEnemyLimit = SOLO.activeEnemies;
   reinforcementDelay = 0;
@@ -77,8 +78,15 @@ export class Simulation {
       ) / 100
     );
   }
+  get mapTheme(): "village" | "harbor" {
+    return this.mapMode === "random" ? randomArenaTheme(this.mapSeed) : this.mapMode;
+  }
   get mapName() {
-    return this.mapMode === "random" ? "RANDOM MAP" : "PINE VILLAGE";
+    return this.mapMode === "harbor"
+      ? "HARBOR HAVOC"
+      : this.mapMode === "random"
+        ? "RANDOM MAP"
+        : "PINE VILLAGE";
   }
   maxFragments: number = MAX_FRAGMENTS;
   wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -131,7 +139,11 @@ export class Simulation {
       ground,
     );
     this.mapSeed = (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0;
-    for (const c of this.mapMode === "random" ? randomArenaLayout(this.mapSeed) : arenaLayout()) {
+    for (const c of this.mapMode === "harbor"
+      ? harborLayout()
+      : this.mapMode === "random"
+        ? randomArenaLayout(this.mapSeed)
+        : arenaLayout()) {
       this.addCover(c);
     }
     this.pickups = pickupLayout.map((p) => ({

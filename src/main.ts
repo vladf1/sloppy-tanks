@@ -31,6 +31,11 @@ document.addEventListener("visibilitychange", () => {
 });
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const sim = new Simulation(Math.floor(Math.random() * 1000000));
+const requestedMap = new URLSearchParams(location.search).get("map");
+if (requestedMap === "harbor" || requestedMap === "village" || requestedMap === "random") {
+  sim.mapMode = requestedMap;
+  sim.reset();
+}
 sim.difficulty = parseDifficulty(localStorage.getItem("sloppy-difficulty"));
 const view = new Presentation(canvas);
 const audio = new AudioSystem();

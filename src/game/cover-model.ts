@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { explosiveBarrel } from "./barrel-surfaces";
 import { concreteWall } from "./concrete-surfaces";
+import { cargoStack, shippingContainer } from "./harbor-models";
 import { Random } from "./data";
 import { shingleRoof, sidingBox, sidingGable } from "./house-surfaces";
 import { box, cylinder, put } from "./model-primitives";
@@ -32,7 +33,11 @@ export function coverModel(
   }
   const group = new THREE.Group();
   group.position.set(c.x, 0, c.z);
-  if (c.kind === "house") {
+  if (c.kind === "container") {
+    shippingContainer(group, c);
+  } else if (c.kind === "cargo") {
+    cargoStack(group, c);
+  } else if (c.kind === "house") {
     const wall = c.h * 0.68;
     put(group, box(c.w + 0.2, 0.22, c.d + 0.2, 0xa1977c, 0), 0, 0.11, 0);
     put(group, sidingBox(c.w, wall, c.d, c.color), 0, wall / 2, 0);

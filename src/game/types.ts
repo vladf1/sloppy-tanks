@@ -85,6 +85,8 @@ export interface Brain {
   mode: "advance" | "fight" | "retreat" | "pickup" | "escort";
 }
 export type CoverKind =
+  | "container"
+  | "cargo"
   | "house"
   | "tree"
   | "fence"

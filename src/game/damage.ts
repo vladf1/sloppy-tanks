@@ -128,7 +128,7 @@ export function damageCover(
       cover.z + simulation.rng.range(-cover.d / 2, cover.d / 2),
       cover.kind === "tree" ? 0x825333 : cover.color,
       simulation.rng.range(0.3, 0.7),
-      cover.kind === "tower" || cover.kind === "tree"
+      cover.kind === "tower" || cover.kind === "tree" || cover.kind === "cargo"
         ? "wood"
         : cover.kind === "shed" ||
             cover.kind === "fence" ||

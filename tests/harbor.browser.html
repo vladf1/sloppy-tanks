@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Harbor Havoc scene checks</title>
+    <style>
+      body {
+        margin: 0;
+        background: #142e39;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 12px;
+        background: #132936eb;
+        color: #fff;
+        font: 13px sans-serif;
+      }
+      button {
+        margin: 3px;
+        padding: 8px;
+      }
+      output {
+        display: block;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <aside>
+      <button id="overview">Overview</button>
+      <button id="dock">Dock close-up</button>
+      <button id="berth">Side berth & water</button>
+      <button id="cargo">Cargo close-up</button>
+      <button id="random">New random map</button>
+      <button id="checks">Check map switches and resets</button>
+      <output id="result">Harbor scene ready</output>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      await RAPIER.init();
+      await loadTankSurface();
+      const sim = new Simulation(417);
+      sim.mapMode = "harbor";
+      sim.reset();
+      const view = new Presentation(document.querySelector("canvas"));
+      view.reset(sim);
+      let overview = true;
+      function location(x, z) {
+        overview = false;
+        sim.human.previous = { x, z };
+        sim.human.body.setTranslation({ x, y: 0.65, z }, true);
+      }
+      document.querySelector("#overview").onclick = () => {
+        overview = true;
+      };
+      document.querySelector("#dock").onclick = () => {
+        location(0, -53);
+        view.zoom = 52;
+      };
+      document.querySelector("#berth").onclick = () => {
+        location(-54, 2);
+        view.zoom = 34;
+      };
+      document.querySelector("#cargo").onclick = () => {
+        location(22, 21);
+        view.zoom = 27;
+      };
+      document.querySelector("#random").onclick = () => {
+        sim.mapMode = "random";
+        sim.reset();
+        view.reset(sim);
+        overview = true;
+        document.querySelector("#result").textContent =
+          `Random map ${sim.mapSeed} · ${sim.mapTheme} scenery`;
+      };
+      document.querySelector("#checks").onclick = () => {
+        const failures = [];
+        let baseline;
+        for (let round = 0; round < 4; round++) {
+          for (const mode of ["village", "random", "harbor"]) {
+            sim.mapMode = mode;
+            sim.reset();
+            view.reset(sim);
+            view.render(sim, 1, 1 / 60, true);
+            const expected = sim.mapTheme === "harbor";
+            const visibleHarbor = view.scene.children.some(
+              (child) => child.visible && child === view.harborScenery?.group,
+            );
+            if (expected !== visibleHarbor) failures.push(`Wrong scenery: ${mode}`);
+            if (view.coverMeshes.size !== sim.covers.length)
+              failures.push(`Missing cover: ${mode}`);
+          }
+          const memory = view.renderer.info.memory;
+          const current = `${memory.geometries}/${memory.textures}`;
+          if (round === 1) baseline = current;
+          if (round > 1 && current !== baseline)
+            failures.push(`Resources grew: ${baseline} -> ${current}`);
+        }
+        overview = true;
+        document.querySelector("#result").textContent = failures.length
+          ? failures.join("; ")
+          : `PASS: 12 map switches, cover models match, stable GPU resources (${baseline})`;
+      };
+      let last = performance.now();
+      function render(now) {
+        view.render(sim, 1, Math.min((now - last) / 1000, 0.1), overview);
+        last = now;
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+      addEventListener("resize", () => view.resize());
+    </script>
+  </body>
+</html>

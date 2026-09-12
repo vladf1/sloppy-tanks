@@ -360,7 +360,7 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
         remove = false;
       }
     }
-    const chipped = cover?.alive && ["tree", "timber", "fence"].includes(cover.kind);
+    const chipped = cover?.alive && ["tree", "timber", "fence", "cargo"].includes(cover.kind);
     simulation.events.push({
       type: "impact",
       x: shot.x,

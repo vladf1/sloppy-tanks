@@ -3,6 +3,7 @@ import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
 import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
+import { HarborScenery } from "./harbor-scenery";
 import { Flags } from "./flags";
 import { sidingBox } from "./house-surfaces";
 import { LaserVisuals } from "./laser-visuals";
@@ -65,6 +66,9 @@ export class Presentation {
   projectiles = new ProjectileVisuals();
   laserVisuals = new LaserVisuals();
   private flags = new Flags();
+  private villageScenery = new THREE.Scene();
+  private harborScenery?: HarborScenery;
+  private lighting: ReturnType<typeof createLighting>;
   private particleEffects = new ParticleEffects();
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
   playerRing = new THREE.Group();
@@ -101,11 +105,12 @@ export class Presentation {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    createLighting(this.scene);
+    this.lighting = createLighting(this.scene);
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
-    createTerrain(this.scene, this.renderer);
+    createTerrain(this.villageScenery, this.renderer);
+    this.scene.add(this.villageScenery);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const fragmentGeometry = {
@@ -168,6 +173,21 @@ export class Presentation {
     this.resize();
   }
   reset(simulation: Simulation): void {
+    const harbor = simulation.mapTheme === "harbor";
+    if (harbor && !this.harborScenery) {
+      this.harborScenery = new HarborScenery();
+      this.scene.add(this.harborScenery.group);
+    }
+    this.villageScenery.visible = !harbor;
+    if (this.harborScenery) {
+      this.harborScenery.group.visible = harbor;
+    }
+    this.scene.background = new THREE.Color(harbor ? 0xb9a4a0 : 0x59bbed);
+    this.scene.fog = new THREE.Fog(harbor ? 0xb9a4a0 : 0x59bbed, 150, 260);
+    this.lighting.sun.color.setHex(harbor ? 0xffc58a : 0xfff1df);
+    this.lighting.sun.position.set(-45, harbor ? 55 : 85, 25);
+    this.lighting.fill.color.setHex(harbor ? 0xc2e2ef : 0xe2efff);
+    this.lighting.fill.groundColor.setHex(harbor ? 0x626c76 : 0x918571);
     disposeOwned(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
@@ -634,6 +654,9 @@ export class Presentation {
   render(simulation: Simulation, alpha: number, dt: number, overview = false): void {
     this.time += dt;
     this.flags.update(this.time);
+    if (this.harborScenery?.group.visible) {
+      this.harborScenery.update(this.time);
+    }
     this.updatePickupEffects(simulation, alpha, dt);
     this.tracks.update(simulation, alpha);
     this.updateCamera(simulation, alpha, overview);

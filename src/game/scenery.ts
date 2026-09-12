@@ -144,11 +144,12 @@ export function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRende
   }
 }
 
-export function createLighting(scene: THREE.Scene): void {
+export function createLighting(scene: THREE.Scene) {
   scene.background = new THREE.Color(0x59bbed);
   scene.fog = new THREE.Fog(0x59bbed, 150, 260);
   // Cooler fill and a neutral sun preserve paint colors and give cover more depth.
-  scene.add(new THREE.HemisphereLight(0xe2efff, 0x918571, 1.65));
+  const fill = new THREE.HemisphereLight(0xe2efff, 0x918571, 1.65);
+  scene.add(fill);
   const sun = new THREE.DirectionalLight(0xfff1df, 2.8);
   sun.position.set(-45, 85, 25);
   sun.castShadow = true;
@@ -161,6 +162,7 @@ export function createLighting(scene: THREE.Scene): void {
   sun.shadow.normalBias = 0.05;
   sun.shadow.bias = -0.0002;
   scene.add(sun);
+  return { sun, fill };
 }
 
 export function createTerrain(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {

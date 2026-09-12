@@ -32,6 +32,8 @@ The September 7 review fixes queued mine input, random tower alignment and respa
 
 AI-generated grass and dirt are separate: runtime WebPs are in `public/textures/ground/`, with original PNGs and prompts in `assets/texture-sources/`. The offline script does not overwrite those images.
 
+Harbor concrete and steel use 512px WebPs in `public/textures/harbor/` (about 87 KiB combined). Higher-resolution editing sources are also WebP, with generation prompts and conversion commands in `assets/texture-sources/harbor/README.md`; these sources are excluded from the game build.
+
 ## Saved sounds
 
 The browser loads eleven shared MP3 files from `public/audio/`: the original `shot.mp3`, `explosion.mp3`, `impact.mp3`, and `pickup.mp3`, four `shot-{spread,rocket,ricochet,piercing}.mp3` variants, a quiet `hit.mp3` confirmation tick, `laser.mp3` for defensive zaps, and a short rising `promotion.mp3` chime for the player's rank upgrades. Spread has a sharp noisy attack, rockets a longer low thump, ricochet a metallic tone, and piercing a brief high snap. Howler handles playback, volume and stereo placement; the browser does not synthesize sounds. These are mono MP3 effects encoded offline from 22,050 Hz PCM using FFmpeg/libmp3lame at VBR quality 2, totaling 24,026 bytes. Player shots remain audible when nearby bots fire at the same time; clustered hit confirmations share an 80 ms sound throttle and defensive zaps a 50 ms throttle.
@@ -221,3 +223,11 @@ Click the ammo buttons or use 1–5, Q/E or scrolling. Hover tooltips explain ea
 A brief red chevron around the player points toward incoming hull damage, using the shell's incoming direction (including ricochets) or explosion location. Death feedback names the weapon or hazard and its credited initiator, including self-inflicted damage, and stays on the respawn or Solo results screen. Spawn protection and fully absorbed shield hits do not produce hull-damage indicators.
 
 For repeatable checks in the built-in browser, open `/sloppy-tanks/tests/usability.browser.html` on the local Vite server and click **Run checks**. This development-only page controls application frames and provides ammo/damage fixtures for inspecting the real HUD. `tests/player-usability.test.ts` covers difficulty, ammo notices and combat-source attribution as part of `npm test`.
+
+### Harbor Havoc
+
+Choose **Harbor Havoc** in the map selector for a sunset container port, available in Team Battle and Solo Assault. Steel containers form permanent cover; wooden cargo stacks break apart to open shortcuts. Wide dockside lanes flank the central loading yard, with weathered concrete and painted steel surfaces. Three detailed container ships, four gantry cranes with swaying lifting gear, forklifts, mooring lines, and animated water surround the arena. The water uses continuous ripples, sky and sun highlights, shallow-water color, and foam along the quay; all ships and dock machinery stay outside the arena walls.
+
+Use `?map=harbor` on the game URL to open with Harbor Havoc selected. For development, `tests/harbor.browser.html` previews the docks and cargo and checks scenery switches and GPU resource reuse.
+
+Random Map mixes village trees, cottages, timber, towers, and explosive barrels with harbor containers, breakable cargo, and concrete cover. Each seeded round chooses woodland or dockside scenery and varies container lengths, orientations, and colors. Both teams receive mirrored cover; spawn strips and pickup approaches stay connected.

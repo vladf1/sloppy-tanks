@@ -1,7 +1,12 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { randomArenaLayout, pickupLayout, spawnPositions } from "../src/game/arena";
+import {
+  randomArenaLayout,
+  randomArenaTheme,
+  pickupLayout,
+  spawnPositions,
+} from "../src/game/arena";
 import { Navigation } from "../src/game/navigation";
 import { Simulation } from "../src/game/simulation";
 import { collectPickup } from "../src/game/weapons";
@@ -12,8 +17,45 @@ before(async () => {
 });
 
 test("100 random maps keep pickups and spawn strips connected", () => {
+  const themes = new Set<string>();
+  const containerSizes = new Set<string>();
+  const containerColors = new Set<number>();
   for (let seed = 1; seed <= 100; seed++) {
     const layout = randomArenaLayout(seed);
+    themes.add(randomArenaTheme(seed));
+    for (const kind of ["container", "cargo", "house", "tree"]) {
+      assert.ok(
+        layout.some((c) => c.kind === kind),
+        `missing ${kind} on seed ${seed}`,
+      );
+    }
+    for (const c of layout.filter((c) => c.kind !== "boundary")) {
+      assert.ok(
+        layout.some(
+          (o) =>
+            o.kind === c.kind &&
+            o.x === -c.x &&
+            o.z === -c.z &&
+            o.w === c.w &&
+            o.d === c.d &&
+            o.hp === c.hp &&
+            o.color === c.color,
+        ),
+        `unpaired ${c.kind} seed ${seed}`,
+      );
+      if (c.kind === "container") {
+        containerSizes.add(`${c.w}/${c.d}`);
+        containerColors.add(c.color);
+      }
+      for (const other of layout) {
+        if (other === c) continue;
+        assert.ok(
+          Math.abs(c.x - other.x) >= (c.w + other.w) / 2 - 0.001 ||
+            Math.abs(c.z - other.z) >= (c.d + other.d) / 2 - 0.001,
+          `overlapping cover on seed ${seed}`,
+        );
+      }
+    }
     for (const tower of layout.filter((c) => c.kind === "tower"))
       assert.deepEqual(
         [tower.w, tower.d],
@@ -50,6 +92,9 @@ test("100 random maps keep pickups and spawn strips connected", () => {
       assert.ok(seen.has(nav.index(p)), `unreachable ${seed}: ${JSON.stringify(p)}`);
     }
   }
+  assert.equal(themes.size, 2, "both scenery themes occur");
+  assert.ok(containerSizes.size >= 4, "container lengths and orientations vary");
+  assert.ok(containerColors.size >= 4, "container paint varies");
   assert.deepEqual(randomArenaLayout(7), randomArenaLayout(7));
   assert.notDeepEqual(randomArenaLayout(7), randomArenaLayout(8));
 });
@@ -182,5 +227,32 @@ test("solo reinforcements replenish six active enemies and reset the kill counte
     assert.equal(s.human.kills, 0);
   } finally {
     s.world.free();
+  }
+});
+
+test("random scenery matches boundaries through new rounds and fixed map switches", () => {
+  const sim = new Simulation(912);
+  try {
+    sim.mapMode = "random";
+    const themes = new Set<string>();
+    let previous = "";
+    for (let round = 0; round < 12; round++) {
+      sim.reset();
+      themes.add(sim.mapTheme);
+      assert.equal(sim.mapTheme, randomArenaTheme(sim.mapSeed));
+      const boundary = sim.covers.find((c) => c.kind === "boundary")!;
+      assert.equal(boundary.h, sim.mapTheme === "harbor" ? 1.2 : 2.2);
+      const layout = JSON.stringify(sim.covers.map((c) => [c.kind, c.x, c.z]));
+      assert.notEqual(layout, previous, "new rounds produce new layouts");
+      previous = layout;
+    }
+    assert.equal(themes.size, 2);
+    for (const mode of ["harbor", "village"] as const) {
+      sim.mapMode = mode;
+      sim.reset();
+      assert.equal(sim.mapTheme, mode);
+    }
+  } finally {
+    sim.world.free();
   }
 });
