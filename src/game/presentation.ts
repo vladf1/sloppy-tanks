@@ -27,13 +27,13 @@ import { createLighting } from "./scenery";
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
-import { createTankBar, type TankBar } from "./tank-bars";
+import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
-import { setTreeDestroyed } from "./tree-models";
+import { setTreeDamage, setTreeDestroyed } from "./tree-models";
+import { TreeDebris } from "./tree-debris";
 import type { Fragment, SimEvent } from "./types";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK } from "./view-settings";
-import { weaponInterval } from "./weapons";
 interface PickupModel extends THREE.Group {
   userData: {
     gem: THREE.Object3D;
@@ -67,6 +67,7 @@ export class Presentation {
   bars = new Map<number, TankBar>();
   projectiles = new ProjectileVisuals();
   laserVisuals = new LaserVisuals();
+  treeDebris = new TreeDebris();
   private flags = new Flags();
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
@@ -135,6 +136,7 @@ export class Presentation {
     }
     this.scene.add(this.projectiles.group);
     this.scene.add(this.laserVisuals.group);
+    this.scene.add(this.treeDebris.group);
     // A thin dark rim reads on sand; the yellow ring identifies the player on either team.
     for (const [inner, outer, color, y] of [
       [1.48, 1.9, 0x172f4a, 0.1],
@@ -214,6 +216,7 @@ export class Presentation {
     this.hitConfirmUntil = 0;
     this.projectiles.reset();
     this.laserVisuals.reset();
+    this.treeDebris.reset();
     for (const effect of this.pickupEffects) {
       this.scene.remove(effect.group);
       disposeOwned(effect.group);
@@ -236,7 +239,7 @@ export class Presentation {
       batchTank(model);
       this.tankMeshes.set(tank.id, model);
       this.worldGroup.add(model);
-      this.makeBar(tank.id, tank.team, tank.human);
+      this.makeBar(tank.id, tank.team);
     }
     for (const pickup of simulation.pickups) {
       const group = new THREE.Group() as PickupModel;
@@ -278,8 +281,8 @@ export class Presentation {
     const position = simulation.human.body.translation();
     this.follow.set(position.x, 0, position.z);
   }
-  makeBar(id: number, team: number, human: boolean): void {
-    const bar = createTankBar(team, human);
+  makeBar(id: number, team: number): void {
+    const bar = createTankBar(team);
     this.bars.set(id, bar);
     this.worldGroup.add(bar);
   }
@@ -486,10 +489,11 @@ export class Presentation {
       }
       group.visible = tank.alive;
       if (!this.bars.has(tank.id)) {
-        this.makeBar(tank.id, tank.team, tank.human);
+        this.makeBar(tank.id, tank.team);
       }
       const bar = this.bars.get(tank.id)!;
       bar.visible = tank.alive;
+      updateTankProtection(bar, tank);
       if (!tank.alive) {
         this.hitUntil.delete(tank.id);
         continue;
@@ -518,12 +522,11 @@ export class Presentation {
       group.userData.trackGroup.position.z =
         (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
       group.scale.setScalar(VEHICLES[tank.kind].scale);
-      bar.position.set(group.position.x, tank.human ? 3.2 : 2.5, group.position.z);
+      bar.position.set(group.position.x, tank.human ? 2.85 : 2.15, group.position.z);
       bar.quaternion.copy(this.camera.quaternion);
       const health = healthBarState(tank.hp, simulation.maxHealth(tank), tank.team);
       bar.userData.fg.scale.x = health.ratio;
       bar.userData.fg.visible = health.ratio > 0;
-      bar.userData.ammo.scale.x = Math.max(0, 1 - tank.cooldown / weaponInterval(tank));
       bar.userData.fg.material.color.setHex(health.color);
       const rank = rankIndex(tank);
       (bar.userData.ranks as THREE.Mesh[]).forEach((chevron, i) => {
@@ -548,6 +551,9 @@ export class Presentation {
         freezeStatic(group);
       }
       if (cover.kind === "tree") {
+        if (cover.alive) {
+          setTreeDamage(group, cover.hp / cover.maxHp, this.treeDebris.shed);
+        }
         setTreeDestroyed(group, stump);
       }
       group.visible = cover.alive || stump;
@@ -675,6 +681,7 @@ export class Presentation {
     this.updateCamera(simulation, alpha, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
     this.updateTanks(simulation, alpha);
+    this.treeDebris.update(dt);
     this.updateCover(simulation);
     this.updatePickups(simulation, dt);
     this.updateFragments(simulation);

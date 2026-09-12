@@ -124,20 +124,6 @@ for (const kind of ["siding", "shingles"] as const) {
   await save(`houses/${kind}.png`, canvas);
 }
 
-for (const [team, symbol] of [
-  ["blue", "◆"],
-  ["red", "Ⅱ"],
-]) {
-  const canvas = createCanvas(256, 128),
-    c = canvas.getContext("2d");
-  c.fillStyle = "#ffffff";
-  c.font = "bold 76px sans-serif";
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  c.fillText(symbol, 128, 64);
-  await save(`teams/${team}.png`, canvas);
-}
-
 // Neutral paint wear multiplies team paint without introducing another hue.
 {
   const size = 512,

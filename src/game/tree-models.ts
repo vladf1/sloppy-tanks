@@ -7,7 +7,7 @@ type TreeDef = Pick<Cover, "x" | "z" | "w" | "d" | "h">;
 export const TREE_FAMILIES = ["Pine", "Spruce", "Fir", "Oak", "Birch", "Aspen"] as const;
 const textures = new Map<string, THREE.Texture>();
 const materials = new Map<string, THREE.MeshStandardMaterial>();
-function surface(kind: "bark" | "birch" | "rings" | "leaves" | "needles", color: number) {
+function surface(kind: "bark" | "birch" | "rings" | "leaves" | "conifer-spray", color: number) {
   const key = `${kind}/${color}`;
   let mat = materials.get(key);
   if (!mat) {
@@ -26,34 +26,48 @@ function surface(kind: "bark" | "birch" | "rings" | "leaves" | "needles", color:
       color,
       roughness: 1,
       metalness: 0,
-      bumpMap: map,
+      bumpMap: kind === "conifer-spray" ? null : map,
       bumpScale: kind === "bark" ? 0.055 : 0.018,
+      ...(kind === "conifer-spray"
+        ? { alphaTest: 0.35, alphaToCoverage: true, side: THREE.DoubleSide }
+        : {}),
     });
     materials.set(key, mat);
   }
   return mat;
 }
 const stemGeometry = new THREE.CylinderGeometry(0.6, 1, 1, 8, 1, true);
+const coniferStemGeometry = new THREE.CylinderGeometry(0.025, 1, 1, 7, 1, true);
 const branchGeometry = new THREE.CylinderGeometry(0.6, 1, 1, 5, 1, true);
 const rootGeometry = new THREE.CylinderGeometry(0.08, 1, 1, 5, 1, true);
 const broadGeometry = new THREE.IcosahedronGeometry(1, 1);
 const smallCrownGeometry = new THREE.IcosahedronGeometry(1, 0);
-const boughGeometry = (() => {
-  const geo = new THREE.ConeGeometry(1, 1, 10, 1).toNonIndexed();
-  const p = geo.getAttribute("position");
-  for (let i = 0; i < p.count; i++) {
-    const angle = Math.atan2(p.getZ(i), p.getX(i));
-    const bottom = 0.5 - p.getY(i);
-    const scallop = 0.9 + Math.cos(angle * 5) * 0.1;
-    p.setXYZ(
-      i,
-      p.getX(i) * scallop,
-      p.getY(i) + bottom * Math.cos(angle * 5) * 0.1,
-      p.getZ(i) * scallop,
-    );
+// Three intersecting needle cards retain volume from the overhead camera and at the horizon.
+// A complete spray is six triangles; even distant trees get individual branching silhouettes.
+const sprayGeometry = (() => {
+  const vertices: number[] = [];
+  const uv: number[] = [];
+  const indices: number[] = [];
+  for (let card = 0; card < 3; card++) {
+    const angle = (card * Math.PI) / 3;
+    for (const [x, z] of [
+      [-0.5, 0],
+      [0.5, 0],
+      [-0.5, 1],
+      [0.5, 1],
+    ]) {
+      vertices.push(x * Math.cos(angle), x * Math.sin(angle), z);
+      uv.push(x + 0.5, z);
+    }
+    const n = card * 4;
+    indices.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
   }
-  geo.computeVertexNormals();
-  return geo;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
 })();
 const up = new THREE.Vector3(0, 1, 0);
 function mesh(
@@ -81,7 +95,7 @@ function limb(
   to: THREE.Vector3,
   radius: number,
   root = false,
-): void {
+) {
   const delta = to.clone().sub(from);
   const m = mesh(
     parent,
@@ -95,6 +109,7 @@ function limb(
     radius,
   );
   m.quaternion.setFromUnitVectors(up, delta.normalize());
+  return m;
 }
 
 // A bounded set of reusable stump meshes: irregular flared bark and matching cut surface.
@@ -166,11 +181,11 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
     pale ? "birch" : "bark",
     pale ? [0xe5ddc5, 0xc4c6a0][family - 4] : 0xd0b598,
   );
-  const leafColors = [0x3a7847, 0x367267, 0x528746, 0x5c8c35, 0x80a64c, 0x9aae43];
+  const leafColors = [0x9eb783, 0x80a69a, 0xa3bd8e, 0x5c8c35, 0x80a64c, 0x9aae43];
   const shades = [0xb1c7a4, 0xd9e2c0, 0xffffff];
   const leafMats = shades.map((tint) =>
     surface(
-      conifer ? "needles" : "leaves",
+      conifer ? "conifer-spray" : "leaves",
       new THREE.Color(leafColors[family]).multiply(new THREE.Color(tint)).getHex(),
     ),
   );
@@ -222,67 +237,115 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
     group.userData.crown = crown;
     group.userData.stump = false;
   }
+  const branches: THREE.Group[] = [];
+  group.userData.branches = branches;
+  const branchParent = (stage: number) => {
+    if (detail === "background" || stage === 0) {
+      return crown;
+    }
+    const branch = new THREE.Group();
+    branch.name = "shedding-branch";
+    branch.userData.dropStage = stage;
+    crown.add(branch);
+    branches.push(branch);
+    return branch;
+  };
   const leanX = rng.range(-0.1, 0.1) * c.w;
   const leanZ = rng.range(-0.07, 0.07) * c.d;
-  limb(
+  const trunk = limb(
     crown,
     barkMat,
     new THREE.Vector3(0, detail === "full" ? stumpHeight * 0.88 : 0, 0),
-    new THREE.Vector3(leanX, height * 0.78, leanZ),
+    new THREE.Vector3(leanX, height * (conifer ? 0.98 : 0.78), leanZ),
     radius,
   );
   if (conifer) {
-    const tiers = detail === "background" ? 4 : family === 1 ? 6 : 5;
+    trunk.geometry = coniferStemGeometry;
+    const tiers = detail === "background" ? 6 : 7;
+    const arms = detail === "background" ? 5 : 6;
+    // Pines carry a looser, higher crown; spruce and fir retain their lower boughs.
+    const base = family === 0 ? 0.36 : family === 1 ? 0.17 : 0.23;
     for (let i = 0; i < tiers; i++) {
       const t = i / (tiers - 1);
-      const y = height * (0.32 + t * 0.58);
-      const span = c.w * (family === 2 ? 0.42 : 0.48) * (1 - t * 0.78);
-      const h = height * (family === 0 ? 0.29 : 0.26) * (1 - t * 0.25);
-      const layer = mesh(
-        crown,
-        boughGeometry,
-        leafMats[i % 3],
-        leanX * t,
-        y,
-        leanZ * t,
-        span,
-        h,
-        span * rng.range(0.87, 1.02),
-      );
-      layer.rotation.y = twist + i * 0.73;
-      if (detail === "full" && i < tiers - 1) {
-        for (let j = 0; j < 3; j++) {
-          const angle = twist + i * 0.9 + (j * Math.PI * 2) / 3;
-          const tip = new THREE.Vector3(
-            Math.sin(angle) * span * 0.72,
-            y - h * 0.1,
-            Math.cos(angle) * span * 0.72,
-          );
-          limb(
+      const y = height * (base + t * (0.87 - base));
+      const span = c.w * (family === 2 ? 0.44 : 0.5) * (1 - t * 0.76);
+      for (let j = 0; j < arms; j++) {
+        const angle = twist + i * 2.39996 + (j * Math.PI * 2) / arms + rng.range(-0.24, 0.24);
+        const reach = span * rng.range(0.78, 1.16);
+        const start = new THREE.Vector3(
+          leanX * (base + t * (1 - base)),
+          y + rng.range(-0.05, 0.05) * height,
+          leanZ * (base + t * (1 - base)),
+        );
+        // An upright inner shoot fills the crown between whorls without solid foliage cones.
+        if (j === arms - 1) {
+          const shoot = mesh(
             crown,
-            barkMat,
-            new THREE.Vector3(leanX * t, y - h * 0.3, leanZ * t),
-            tip,
-            radius * 0.19,
+            sprayGeometry,
+            leafMats[i % 3],
+            start.x,
+            start.y - height * 0.06,
+            start.z,
+            span * 0.85,
+            span * 0.85,
+            height * (0.27 - t * 0.1),
           );
-          const tuft = mesh(
-            crown,
-            boughGeometry,
-            leafMats[(i + j + 1) % 3],
-            tip.x,
-            tip.y,
-            tip.z,
-            span * 0.42,
-            h * 0.48,
-            span * 0.42,
-          );
-          tuft.rotation.set(Math.cos(angle) * 0.24, angle, -Math.sin(angle) * 0.24);
+          shoot.rotation.x = -Math.PI / 2;
+          shoot.rotateZ(angle);
+          continue;
         }
+        const parent = branchParent(
+          (i === 1 && j === 0) || (i === 2 && j === 3)
+            ? 1
+            : (i === 0 && j === 2) || (i === 3 && j === 1)
+              ? 2
+              : 0,
+        );
+        const rise = reach * (family === 0 ? 0.24 : family === 1 ? -0.16 : 0.06);
+        if (detail === "full" && i < tiers - 2) {
+          limb(
+            parent,
+            barkMat,
+            start,
+            new THREE.Vector3(
+              start.x + Math.sin(angle) * reach * 0.92,
+              start.y + rise,
+              start.z + Math.cos(angle) * reach * 0.92,
+            ),
+            radius * (0.17 - t * 0.1),
+          );
+        }
+        const spray = mesh(
+          parent,
+          sprayGeometry,
+          leafMats[(i + j) % 3],
+          start.x,
+          start.y,
+          start.z,
+          reach * (family === 0 ? 0.95 : 0.85),
+          height * (0.25 - t * 0.12),
+          reach * 1.1,
+        );
+        spray.rotation.set(-Math.atan2(rise, reach), angle, rng.range(-0.2, 0.2), "YXZ");
       }
     }
+    const leader = mesh(
+      crown,
+      sprayGeometry,
+      leafMats[2],
+      leanX * 0.9,
+      height * 0.82,
+      leanZ * 0.9,
+      c.w * 0.2,
+      c.w * 0.2,
+      height * 0.2,
+    );
+    leader.rotation.x = -Math.PI / 2;
+    leader.rotateZ(twist);
   } else {
     const count = detail === "background" ? 6 : 7;
     for (let i = 0; i < count; i++) {
+      const parent = branchParent(i < 2 ? 1 : i === 3 || i === 4 ? 2 : 0);
       const a = twist + i * 2.39996;
       const t = i / (count - 1);
       const spread = (1 - t * 0.65) * (family === 3 ? 0.27 : 0.2);
@@ -293,7 +356,7 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
       );
       if (detail === "full") {
         limb(
-          crown,
+          parent,
           barkMat,
           new THREE.Vector3(leanX * 0.5, center.y - height * 0.2, leanZ * 0.5),
           center,
@@ -302,7 +365,7 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
       }
       const size = c.w * (family === 3 ? 0.3 : 0.25) * rng.range(0.84, 1.09);
       const leaves = mesh(
-        crown,
+        parent,
         detail === "full" ? broadGeometry : smallCrownGeometry,
         leafMats[i % 3],
         center.x,
@@ -316,6 +379,17 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
     }
   }
   if (detail === "full") {
+    group.updateMatrixWorld(true);
+    for (const branch of branches) {
+      batch(branch);
+      // Pivot each falling bough around its own center, not around the tree trunk.
+      const center = new THREE.Box3().setFromObject(branch).getCenter(new THREE.Vector3());
+      center.sub(group.position);
+      for (const child of branch.children as THREE.Mesh[]) {
+        child.geometry.translate(-center.x, -center.y, -center.z);
+      }
+      branch.position.copy(center);
+    }
     batch(crown);
   }
   return group;
@@ -331,4 +405,24 @@ export function setTreeDestroyed(tree: THREE.Group, destroyed: boolean): void {
   crown.visible = !destroyed;
   cutSurface.visible = destroyed;
   tree.userData.stump = destroyed;
+}
+
+/** Shed two boughs after the first damage, then two more at 35% health. */
+export function setTreeDamage(
+  tree: THREE.Group,
+  healthRatio: number,
+  onDrop?: (branch: THREE.Group) => void,
+): void {
+  const stage = healthRatio >= 1 ? 0 : healthRatio > 0.35 ? 1 : 2;
+  if (stage === (tree.userData.branchDamageStage ?? 0)) {
+    return;
+  }
+  for (const branch of (tree.userData.branches ?? []) as THREE.Group[]) {
+    const visible = branch.userData.dropStage > stage;
+    if (branch.visible && !visible) {
+      onDrop?.(branch);
+    }
+    branch.visible = visible;
+  }
+  tree.userData.branchDamageStage = stage;
 }

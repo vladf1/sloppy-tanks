@@ -1,14 +1,78 @@
 import * as THREE from "three";
-import { TEAM_COLORS } from "./data";
+import { PICKUPS, SHIELD_CAPACITY, TEAM_COLORS } from "./data";
 import { isMesh } from "./render-resources";
-import { teamTexture } from "./team-textures";
+import { SIMULATION_RULES } from "./simulation-rules";
+import type { Tank } from "./types";
 type HudMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+type ProtectionMeter = { group: THREE.Group; fill: HudMesh };
 export interface TankBar extends THREE.Group {
-  userData: { fg: HudMesh; ammo: HudMesh; ranks: HudMesh[] };
+  userData: {
+    fg: HudMesh;
+    ranks: HudMesh[];
+    shield: ProtectionMeter;
+    spawn: ProtectionMeter;
+  };
+}
+
+function protectionMeter(color: number, segmented: boolean): ProtectionMeter {
+  const group = new THREE.Group();
+  const paint = new THREE.MeshBasicMaterial({ color, depthTest: false, toneMapped: false });
+  const dark = new THREE.MeshBasicMaterial({
+    color: 0x07141f,
+    depthTest: false,
+    toneMapped: false,
+  });
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.13, 0.12);
+  shape.lineTo(0.13, 0.12);
+  shape.lineTo(0.11, -0.035);
+  shape.lineTo(0, -0.14);
+  shape.lineTo(-0.11, -0.035);
+  shape.closePath();
+  const badge = new THREE.Mesh(new THREE.ShapeGeometry(shape), paint);
+  badge.position.x = -0.8;
+  const rim = new THREE.Mesh(badge.geometry, dark);
+  rim.position.copy(badge.position);
+  rim.scale.setScalar(1.3);
+  rim.renderOrder = 13;
+  badge.renderOrder = 14;
+  const track = new THREE.Mesh(new THREE.PlaneGeometry(1.42, 0.18), dark);
+  track.position.x = 0.16;
+  track.renderOrder = 13;
+  const fill = new THREE.Mesh(new THREE.PlaneGeometry(1.34, 0.1).translate(0.67, 0, 0), paint);
+  fill.position.x = -0.51;
+  fill.renderOrder = 14;
+  group.add(rim, badge, track, fill);
+  // Three charge sections distinguish pickup armor from the continuous spawn timer.
+  if (segmented) {
+    for (const fraction of [1 / 3, 2 / 3]) {
+      const divider = new THREE.Mesh(new THREE.PlaneGeometry(0.035, 0.12), dark);
+      divider.position.x = -0.51 + 1.34 * fraction;
+      divider.renderOrder = 15;
+      group.add(divider);
+    }
+  }
+  group.visible = false;
+  return { group, fill };
+}
+
+/** Read live protection state so absorption, expiry, firing and respawn update immediately. */
+export function updateTankProtection(bar: TankBar, tank: Tank): void {
+  const { shield, spawn } = bar.userData;
+  shield.group.visible = tank.alive && tank.shield > 0 && tank.shieldPoints > 0;
+  shield.fill.scale.x = THREE.MathUtils.clamp(tank.shieldPoints / SHIELD_CAPACITY, 0, 1);
+  shield.group.position.y = 0.38;
+  spawn.group.visible = tank.alive && tank.protection > 0;
+  spawn.fill.scale.x = THREE.MathUtils.clamp(
+    tank.protection / SIMULATION_RULES.spawnProtectionSeconds,
+    0,
+    1,
+  );
+  spawn.group.position.y = shield.group.visible ? 0.72 : 0.38;
 }
 
 /** Billboard layers share the transparent pass so terrain cannot draw over them. */
-export function createTankBar(team: number, human: boolean): TankBar {
+export function createTankBar(team: number): TankBar {
   const g = new THREE.Group() as TankBar;
   const border = new THREE.Mesh(
     new THREE.PlaneGeometry(1.87, 0.28),
@@ -32,28 +96,11 @@ export function createTankBar(team: number, human: boolean): TankBar {
   bg.renderOrder = 11;
   fg.renderOrder = 12;
   g.add(border, bg, fg);
-  if (!human) {
-    const icon = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        toneMapped: false,
-        map: teamTexture(team),
-        depthTest: false,
-      }),
-    );
-    icon.scale.set(0.8, 0.4, 1);
-    icon.position.y = 0.35;
-    g.add(icon);
-  }
   g.userData.fg = fg;
-  const ammo = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.5, 0.045),
-    new THREE.MeshBasicMaterial({ color: 0xf1d286, depthTest: false }),
-  );
-  ammo.position.y = -0.21;
-  ammo.renderOrder = 13;
-  g.add(ammo);
-  g.userData.ammo = ammo;
-  // One to three small gold chevrons beside the hull bar; keep team icons clear.
+  g.userData.shield = protectionMeter(PICKUPS.shield.color, true);
+  g.userData.spawn = protectionMeter(0xffdf86, false);
+  g.add(g.userData.shield.group, g.userData.spawn.group);
+  // One to three small gold chevrons beside the hull bar.
   const shape = new THREE.Shape();
   shape.moveTo(-0.16, -0.015);
   shape.lineTo(0, 0.075);
@@ -77,21 +124,13 @@ export function createTankBar(team: number, human: boolean): TankBar {
     return chevron;
   });
   g.traverse((o) => {
-    if (isMesh(o) || o instanceof THREE.Sprite) {
+    if (isMesh(o)) {
       // Transparent terrain is drawn after opaque meshes regardless of their
       // renderOrder. Keep all world-space HUD layers in the later pass too.
       const mat = o.material as THREE.Material;
       mat.transparent = true;
       mat.depthWrite = false;
-      if (o instanceof THREE.Sprite) {
-        o.renderOrder = 13;
-      }
-    }
-    if (isMesh(o)) {
       o.geometry.userData.owned = true;
-      (o.material as THREE.Material).userData.owned = true;
-    }
-    if (o instanceof THREE.Sprite) {
       (o.material as THREE.Material).userData.owned = true;
     }
   });
