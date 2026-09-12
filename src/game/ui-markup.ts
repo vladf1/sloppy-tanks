@@ -53,9 +53,9 @@ export function modeOptions(simulation: Simulation): string {
     ["team", "Team Battle", `6 vs 6 · Respawns · First to ${SCORE_LIMIT}`],
     ["solo", "Solo Assault", "Endless enemies · 10 minutes · One life"],
   ])}${group("mapMode", "MAP", [
-    ["village", "Pine Village", "Woodland lanes · Cottages & breakable timber"],
-    ["harbor", "Harbor Havoc", "Sunset docks · Containers & cargo shortcuts"],
-    ["random", "Random Map", "Village × harbor · Mixed cover & scenery each round"],
+    ["village", "Pine Village", "A quiet little village. Bring the noise."],
+    ["harbor", "Harbor Havoc", "Salt air. Hot steel. Dockside mayhem."],
+    ["random", "Random Map", "Roll the dice. Wreck somewhere new."],
   ])}</div>`;
 }
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pickupLayout, spawnPositions } from "../src/game/arena";
 import { harborLayout } from "../src/game/harbor-layout";
+import { coverDamageStage } from "../src/game/cover-model";
 import { Simulation } from "../src/game/simulation";
 
 before(async () => {
@@ -69,10 +70,17 @@ test("cargo destruction removes collision and opens its navigation footprint; co
     const cargo = sim.covers.find((c) => c.kind === "cargo" && c.x === 4)!;
     const container = sim.covers.find((c) => c.kind === "container")!;
     const handle = cargo.collider.handle;
+    assert.equal(coverDamageStage(cargo), 0);
     assert.equal(sim.nav.blocked[sim.nav.index(cargo)], 1);
     sim.damageCover(cargo, 40, sim.human.id, sim.humanTeam);
     assert.equal(cargo.alive, true);
-    sim.damageCover(cargo, 60, sim.human.id, sim.humanTeam);
+    assert.equal(coverDamageStage(cargo), 1);
+    sim.damageCover(cargo, 40, sim.human.id, sim.humanTeam);
+    assert.equal(coverDamageStage(cargo), 2);
+    assert.equal(cargo.alive, true);
+    assert.equal(sim.coverByCollider.has(handle), true, "damaged crates still stop shells");
+    assert.equal(sim.nav.blocked[sim.nav.index(cargo)], 1, "damage does not open the route early");
+    sim.damageCover(cargo, 20, sim.human.id, sim.humanTeam);
     assert.equal(cargo.alive, false);
     assert.equal(sim.coverByCollider.has(handle), false);
     assert.equal(sim.nav.blocked[sim.nav.index(cargo)], 0);

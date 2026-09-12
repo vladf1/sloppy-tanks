@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pine Village scene preview</title>
+    <style>
+      body {
+        margin: 0;
+        background: #abc9bd;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 12px;
+        background: #16342cde;
+        color: white;
+        font: 13px sans-serif;
+      }
+      button {
+        padding: 8px;
+        margin: 3px;
+      }
+      output {
+        display: block;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <aside>
+      <button id="overview">Valley overview</button>
+      <button id="cottages">Village close-up</button>
+      <button id="mill">Watermill & bridge</button>
+      <button id="creek">Creek bank</button>
+      <button id="reset">Check map resets</button>
+      <output id="result">Village preview ready</output>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      await RAPIER.init();
+      await loadTankSurface();
+      const sim = new Simulation(417);
+      const view = new Presentation(document.querySelector("canvas"));
+      sim.mapMode = "village";
+      sim.reset();
+      view.reset(sim);
+      let overview = true;
+      const result = document.querySelector("#result");
+      function location(x, z, zoom) {
+        overview = false;
+        sim.human.previous = { x, z };
+        sim.human.body.setTranslation({ x, y: 0.65, z }, true);
+        view.zoom = zoom;
+        view.render(sim, 1, 1 / 60, overview);
+        const r = view.renderer.info;
+        result.textContent = `${r.render.calls} draw calls · ${r.render.triangles} triangles · ${r.memory.geometries} geometries`;
+      }
+      document.querySelector("#overview").onclick = () => {
+        location(0, -42, 185);
+      };
+      document.querySelector("#cottages").onclick = () => location(-38, -39, 27);
+      document.querySelector("#mill").onclick = () => location(-20, -55, 52);
+      document.querySelector("#creek").onclick = () => location(-56, 30, 42);
+      document.querySelector("#reset").onclick = () => {
+        const failures = [];
+        let baseline;
+        for (let cycle = 0; cycle < 4; cycle++) {
+          for (const mode of ["harbor", "random", "village"]) {
+            sim.mapMode = mode;
+            sim.reset();
+            view.reset(sim);
+            view.render(sim, 1, 1 / 60, true);
+            if (view.coverMeshes.size !== sim.covers.length)
+              failures.push(`Missing cover on ${mode}`);
+          }
+          const m = view.renderer.info.memory;
+          const current = `${m.geometries}/${m.textures}`;
+          if (cycle === 1) baseline = current;
+          if (cycle > 1 && current !== baseline)
+            failures.push(`Resources changed ${baseline} -> ${current}`);
+        }
+        sim.mapMode = "village";
+        sim.reset();
+        view.reset(sim);
+        overview = true;
+        result.textContent = failures.length
+          ? failures.join("; ")
+          : `PASS: 12 map resets · stable resources (${baseline})`;
+      };
+      let last = performance.now();
+      function frame(now) {
+        view.render(sim, 1, Math.min((now - last) / 1000, 0.1), overview);
+        last = now;
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+      addEventListener("resize", () => view.resize());
+    </script>
+  </body>
+</html>

@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
-import { coverModel } from "./cover-model";
 import { ARENA, TEAM_COLORS } from "./data";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
 import { box, cylinder, material, put } from "./model-primitives";
@@ -99,49 +98,9 @@ export function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRende
       put(details, box(0.13, 0.16, 2.2, color, 0.01), side * ARENA, 3.0, z);
     }
   }
-  // Low tufts add terrain detail without obscuring shots or pretending to be solid cover.
-  for (let i = 0; i < 160; i++) {
-    const x = Math.sin(i * 71.3) * 57;
-    const z = Math.sin(i * 39.7 + 2) * 57;
-    if (Math.abs(x) < 11 || Math.abs(x) > 46 || Math.abs(z) < 8 || Math.abs(Math.abs(z) - 38) < 6) {
-      continue;
-    }
-    const tuft = new THREE.Mesh(
-      new THREE.ConeGeometry(0.13, 0.35, 3),
-      material(i % 2 ? 0x8caa54 : 0xd6c880),
-    );
-    put(details, tuft, x, 0.18, z);
-  }
   batch(details);
   scene.add(details);
   freezeStatic(details);
-  // The tree line frames the board; in-arena trees have matching cover colliders.
-  for (const side of [-1, 1]) {
-    const row = new THREE.Group();
-    for (let i = 0; i < 12; i++) {
-      const tree = coverModel(
-        {
-          kind: "tree",
-          x: -57 + i * 10.2,
-          z: side * 65,
-          w: 3.8,
-          d: 3.8,
-          h: 6 + (i % 3),
-          color: 0x19935c,
-        },
-        "background",
-      );
-      tree.position.y = -0.8;
-      tree.updateMatrix();
-      for (const mesh of [...tree.children]) {
-        mesh.applyMatrix4(tree.matrix);
-        row.add(mesh);
-      }
-    }
-    batch(row);
-    scene.add(row);
-    freezeStatic(row);
-  }
 }
 
 export function createLighting(scene: THREE.Scene) {
@@ -165,16 +124,29 @@ export function createLighting(scene: THREE.Scene) {
   return { sun, fill };
 }
 
-export function createTerrain(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
+export function createTerrain(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+): THREE.MeshStandardMaterial {
   const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
   put(scene, board, 0, -0.8, 0);
-  const floor = box(ARENA * 2, 0.15, ARENA * 2, 0xffdb92, 0.03);
-  floor.material = groundMaterial(renderer, "dry-grass");
-  groundUVs(floor.geometry);
-  put(scene, floor, 0, -0.07, 0);
-  const outskirts = new THREE.Mesh(new THREE.BoxGeometry(180, 0.15, 180), floor.material);
-  outskirts.receiveShadow = true;
-  groundUVs(outskirts.geometry);
-  put(scene, outskirts, 0, -0.9, 0);
+  const grass = groundMaterial(renderer, "dry-grass");
+  grass.color.setHex(0xaee6a6);
+  grass.vertexColors = true;
+  const geometry = new THREE.PlaneGeometry(ARENA * 2, ARENA * 2, 48, 48).rotateX(-Math.PI / 2);
+  groundUVs(geometry);
+  const positions = geometry.getAttribute("position");
+  const colors: number[] = [];
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i);
+    const z = positions.getZ(i);
+    const patch = 0.5 + 0.25 * Math.sin(x * 0.18 + z * 0.09) + 0.25 * Math.sin(z * 0.22 - x * 0.1);
+    colors.push(0.68 + patch * 0.28, 0.83 + patch * 0.14, 0.42 + patch * 0.36);
+  }
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const floor = new THREE.Mesh(geometry, grass);
+  floor.receiveShadow = true;
+  put(scene, floor, 0, 0.008, 0);
   createYardDetails(scene, renderer);
+  return grass;
 }

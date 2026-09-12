@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
+import { coverDamageStage } from "./cover-model";
 import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
 import { HarborScenery } from "./harbor-scenery";
@@ -22,7 +23,8 @@ import { pickupCube } from "./pickup-visuals";
 import { ProjectileVisuals } from "./projectile-visuals";
 import { disposeOwned, isMesh, updateInstances } from "./render-resources";
 import { createReticle } from "./reticle";
-import { createLighting, createTerrain } from "./scenery";
+import { createLighting } from "./scenery";
+import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
 import { createTankBar, type TankBar } from "./tank-bars";
@@ -66,7 +68,7 @@ export class Presentation {
   projectiles = new ProjectileVisuals();
   laserVisuals = new LaserVisuals();
   private flags = new Flags();
-  private villageScenery = new THREE.Scene();
+  private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
   private lighting: ReturnType<typeof createLighting>;
   private particleEffects = new ParticleEffects();
@@ -109,8 +111,6 @@ export class Presentation {
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
-    createTerrain(this.villageScenery, this.renderer);
-    this.scene.add(this.villageScenery);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const fragmentGeometry = {
@@ -174,18 +174,31 @@ export class Presentation {
   }
   reset(simulation: Simulation): void {
     const harbor = simulation.mapTheme === "harbor";
+    if (!harbor && !this.villageScenery) {
+      this.villageScenery = new VillageScenery(this.renderer);
+      this.scene.add(this.villageScenery);
+    }
     if (harbor && !this.harborScenery) {
       this.harborScenery = new HarborScenery();
       this.scene.add(this.harborScenery.group);
     }
-    this.villageScenery.visible = !harbor;
+    if (this.villageScenery) {
+      this.villageScenery.visible = !harbor;
+    }
+    if (!harbor) {
+      this.villageScenery?.setCovers(simulation.covers);
+    }
     if (this.harborScenery) {
       this.harborScenery.group.visible = harbor;
     }
-    this.scene.background = new THREE.Color(harbor ? 0xb9a4a0 : 0x59bbed);
-    this.scene.fog = new THREE.Fog(harbor ? 0xb9a4a0 : 0x59bbed, 150, 260);
-    this.lighting.sun.color.setHex(harbor ? 0xffc58a : 0xfff1df);
-    this.lighting.sun.position.set(-45, harbor ? 55 : 85, 25);
+    this.scene.background = new THREE.Color(harbor ? 0xb9a4a0 : 0xaacbc2);
+    this.scene.fog = new THREE.Fog(
+      harbor ? 0xb9a4a0 : 0xaacbc2,
+      harbor ? 150 : 210,
+      harbor ? 260 : 380,
+    );
+    this.lighting.sun.color.setHex(harbor ? 0xffc58a : 0xffe1b2);
+    this.lighting.sun.position.set(-45, harbor ? 55 : 68, 25);
     this.lighting.fill.color.setHex(harbor ? 0xc2e2ef : 0xe2efff);
     this.lighting.fill.groundColor.setHex(harbor ? 0x626c76 : 0x918571);
     disposeOwned(this.worldGroup);
@@ -212,7 +225,7 @@ export class Presentation {
     }
     this.playerWasAlive = false;
     for (const cover of simulation.covers) {
-      const group = coverModel(cover);
+      const group = coverModel(cover, "full", coverDamageStage(cover));
       batch(group);
       this.coverMeshes.set(cover.id, group);
       this.worldGroup.add(group);
@@ -522,10 +535,7 @@ export class Presentation {
     for (const cover of simulation.covers) {
       let group = this.coverMeshes.get(cover.id);
       const stump = cover.kind === "tree" && !cover.alive;
-      const damageStage =
-        cover.kind === "timber"
-          ? Math.min(2, Math.floor(((cover.maxHp - cover.hp) * 3) / cover.maxHp))
-          : 0;
+      const damageStage = coverDamageStage(cover);
       if (!group || (cover.alive && (group.userData.damageStage ?? 0) !== damageStage)) {
         if (group) {
           disposeOwned(group);
@@ -656,6 +666,9 @@ export class Presentation {
     this.flags.update(this.time);
     if (this.harborScenery?.group.visible) {
       this.harborScenery.update(this.time);
+    }
+    if (this.villageScenery?.visible) {
+      this.villageScenery.update(this.time);
     }
     this.updatePickupEffects(simulation, alpha, dt);
     this.tracks.update(simulation, alpha);

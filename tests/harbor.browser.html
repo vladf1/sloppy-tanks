@@ -37,6 +37,8 @@
       <button id="dock">Dock close-up</button>
       <button id="berth">Side berth & water</button>
       <button id="cargo">Cargo close-up</button>
+      <button id="crate-stages">Crate damage stages</button>
+      <button id="crate-hit">Hit middle crate</button>
       <button id="random">New random map</button>
       <button id="checks">Check map switches and resets</button>
       <output id="result">Harbor scene ready</output>
@@ -54,6 +56,45 @@
       const view = new Presentation(document.querySelector("canvas"));
       view.reset(sim);
       let overview = true;
+      let crateExamples = [];
+      function crateStatus() {
+        view.render(sim, 1, 1 / 60, false);
+        const names = ["Intact", "Split wood", "Broken lid"];
+        document.querySelector("#result").textContent = crateExamples
+          .map(
+            (crate, i) =>
+              `${["Left", "Middle", "Right"][i]}: ${crate.alive ? names[view.coverMeshes.get(crate.id).userData.damageStage] : "Destroyed"} (${Math.max(0, crate.hp)}/${crate.maxHp})`,
+          )
+          .join(" · ");
+      }
+      document.querySelector("#crate-stages").onclick = () => {
+        sim.mapMode = "harbor";
+        sim.reset();
+        crateExamples = [-5, 0, 5].map((x, i) => {
+          const crate = sim.addCover({
+            kind: "cargo",
+            x,
+            z: 44,
+            w: 3.1,
+            d: 3,
+            h: 2.6,
+            hp: 90,
+            color: 0xb88b53,
+          });
+          sim.damageCover(crate, i * 40, sim.human.id, sim.humanTeam);
+          return crate;
+        });
+        sim.nav.rebuild(sim.covers);
+        view.reset(sim);
+        location(0, 48);
+        view.zoom = 24;
+        crateStatus();
+      };
+      document.querySelector("#crate-hit").onclick = () => {
+        if (!crateExamples[1]) return;
+        sim.damageCover(crateExamples[1], 40, sim.human.id, sim.humanTeam);
+        crateStatus();
+      };
       function location(x, z) {
         overview = false;
         sim.human.previous = { x, z };
@@ -75,6 +116,7 @@
         view.zoom = 27;
       };
       document.querySelector("#random").onclick = () => {
+        crateExamples = [];
         sim.mapMode = "random";
         sim.reset();
         view.reset(sim);
@@ -83,6 +125,7 @@
           `Random map ${sim.mapSeed} · ${sim.mapTheme} scenery`;
       };
       document.querySelector("#checks").onclick = () => {
+        crateExamples = [];
         const failures = [];
         let baseline;
         for (let round = 0; round < 4; round++) {

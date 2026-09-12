@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { explosiveBarrel } from "./barrel-surfaces";
 import { concreteWall } from "./concrete-surfaces";
+import { cottageDetails } from "./cottage-details";
 import { cargoStack, shippingContainer } from "./harbor-models";
 import { Random } from "./data";
 import { shingleRoof, sidingBox, sidingGable } from "./house-surfaces";
@@ -23,6 +24,12 @@ function towerPost(height: number) {
   post.rotation.z = Math.PI / 2;
   return post;
 }
+export function coverDamageStage(c: Pick<Cover, "kind" | "hp" | "maxHp">): number {
+  if (c.kind === "cargo") {
+    return c.hp >= c.maxHp ? 0 : c.hp > c.maxHp * 0.35 ? 1 : 2;
+  }
+  return c.kind === "timber" ? Math.min(2, Math.floor(((c.maxHp - c.hp) * 3) / c.maxHp)) : 0;
+}
 export function coverModel(
   c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color" | "debrisSeed">,
   detail: "full" | "background" = "full",
@@ -36,7 +43,7 @@ export function coverModel(
   if (c.kind === "container") {
     shippingContainer(group, c);
   } else if (c.kind === "cargo") {
-    cargoStack(group, c);
+    cargoStack(group, c, damageStage);
   } else if (c.kind === "house") {
     const wall = c.h * 0.68;
     put(group, box(c.w + 0.2, 0.22, c.d + 0.2, 0xa1977c, 0), 0, 0.11, 0);
@@ -122,6 +129,7 @@ export function coverModel(
       put(group, box(0.59, 0.026, 0.59, 0xd3b095, 0), -c.w * 0.25, y, -c.d * 0.2);
     }
     put(group, box(0.58, 1.0, 0.58, 0xbc5c3e, 0), -c.w * 0.25, c.h - 0.36, -c.d * 0.2);
+    cottageDetails(group, c);
   } else if (c.kind === "timber") {
     group.userData.damageStage = damageStage;
     const along = c.w > c.d;

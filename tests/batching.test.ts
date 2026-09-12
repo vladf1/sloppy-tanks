@@ -9,6 +9,38 @@ import { coverModel, tankModel, wreckModel } from "../src/game/models";
 mock.method(THREE.TextureLoader.prototype, "load", () => new THREE.Texture());
 after(() => mock.restoreAll());
 
+test("crate damage varies by crate, survives rebuilds, and deepens existing cracks", () => {
+  const crate = { kind: "cargo" as const, x: 0, z: 44, w: 3.1, d: 3, h: 2.6, color: 0xb88b53 };
+  const cracks = (group: THREE.Group) =>
+    group.children
+      .filter((child) => child.name === "cargo-split")
+      .map((child) => ({
+        shape: (child as THREE.Mesh).geometry.uuid,
+        position: child.position.toArray(),
+        rotation: child.quaternion.toArray(),
+        length: child.scale.y,
+        width: child.scale.x,
+      }));
+  const damaged = cracks(coverModel(crate, "full", 1));
+  const rebuilt = cracks(coverModel(crate, "full", 1));
+  const different = cracks(coverModel({ ...crate, x: 5 }, "full", 1));
+  const critical = cracks(coverModel(crate, "full", 2));
+  assert.ok(damaged.length > 0);
+  assert.deepEqual(rebuilt, damaged, "rebuilding must not reroll the scars");
+  assert.notDeepEqual(different, damaged, "neighboring crates need different damage patterns");
+  assert.deepEqual(
+    critical.map(({ width: _width, ...scar }) => scar),
+    damaged.map(({ width: _width, ...scar }) => scar),
+    "later damage keeps existing cracks in place",
+  );
+  assert.ok(critical.every((scar, i) => scar.width > damaged[i].width));
+  const model = coverModel(crate, "full", 2);
+  batch(model);
+  assert.ok(model.children.length <= 3, "damage details share material batches");
+  const bounds = new THREE.Box3().setFromObject(model);
+  assert.ok(bounds.max.y < crate.h + 0.5, "loose boards stay close to the lid");
+});
+
 test("cached wrecks preserve assembly bounds and share geometry with independent transforms", () => {
   for (const kind of ["scout", "balanced", "heavy"] as const)
     for (const team of [0, 1] as const)

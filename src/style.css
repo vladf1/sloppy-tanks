@@ -84,48 +84,56 @@ canvas#game {
 }
 .team {
   width: 100px;
-  padding: 9px 18px;
+  padding: 5px 18px;
   text-align: center;
-  background: #152c49ed;
+  background: #152c49a6;
+  text-shadow: 0 1px 2px #071520b3;
 }
 .team small {
-  font-size: 11px;
+  display: block;
+  font-size: 10px;
+  line-height: 1.2;
   font-weight: 800;
   letter-spacing: 2px;
 }
 .team b {
   display: block;
   font:
-    800 42px/0.95 "Barlow Condensed",
+    800 34px/1 "Barlow Condensed",
     Impact,
     sans-serif;
 }
 .mint {
-  border-bottom: 4px solid #008cff;
+  border-bottom: 3px solid #008cff;
   color: #64c6ff;
   border-radius: 8px 0 0 8px;
 }
 .coral {
-  border-bottom: 4px solid #ff303e;
+  border-bottom: 3px solid #ff303e;
   color: #ff8190;
   border-radius: 0 8px 8px 0;
 }
 .clock {
-  background: #f2f9ff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: #f2f9ffb3;
   color: #163656;
   text-align: center;
   min-width: 104px;
-  padding: 9px 12px;
+  padding: 5px 12px;
 }
 .clock b {
   display: block;
   font:
-    800 32px/1.1 "Barlow Condensed",
+    800 28px/1 "Barlow Condensed",
     Impact,
     sans-serif;
 }
 .clock small {
   font-size: 9px;
+  line-height: 1.2;
   letter-spacing: 1.6px;
   font-weight: 800;
 }
