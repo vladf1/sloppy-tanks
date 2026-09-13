@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { TEAM_COLORS } from "./data";
-import { groundMaterial, groundUVs } from "./ground-surfaces";
+import { quarryTerrain } from "./quarry-terrain";
+import { quarryBench } from "./quarry-benches";
+import { quarrySiteDetails } from "./quarry-site-details";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
@@ -14,53 +16,32 @@ export class QuarryScenery extends THREE.Group {
   constructor(renderer: THREE.WebGLRenderer) {
     super();
     this.name = "dusty-dig-scenery";
-    const ground = groundMaterial(renderer, "packed-dirt");
-    ground.color.setHex(0xd9d9d4);
-    ground.vertexColors = true;
-    const geometry = new THREE.PlaneGeometry(420, 420, 140, 140).rotateX(-Math.PI / 2);
-    groundUVs(geometry);
-    const positions = geometry.getAttribute("position");
-    const colors: number[] = [];
-    for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i);
-      const z = positions.getZ(i);
-      // Flat physics arena surrounded by a shallow excavation and raised benches.
-      const outside = Math.max(Math.abs(x), Math.abs(z)) - 60;
-      positions.setY(i, outside > 0 ? -Math.min(1.8, outside * 0.3) : 0);
-      const grain =
-        0.5 + 0.25 * Math.sin(x * 0.31 + z * 0.17) + 0.25 * Math.sin(z * 0.47 - x * 0.19);
-      const lane = Math.exp(-Math.pow(z / 6, 2)) + Math.exp(-Math.pow((Math.abs(z) - 51) / 4, 2));
-      const wear = Math.min(1, lane) * 0.14;
-      colors.push(
-        0.81 + grain * 0.16 - wear,
-        0.8 + grain * 0.16 - wear,
-        0.82 + grain * 0.16 - wear,
-      );
-    }
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    geometry.computeVertexNormals();
-    const floor = new THREE.Mesh(geometry, ground);
-    floor.receiveShadow = true;
-    put(this, floor, 0, 0.008, 0);
+    this.add(quarryTerrain(renderer));
 
     const geology = new THREE.Group();
     const equipment = new THREE.Group();
     const rng = new Random(9182);
-    // Quarry benches step upward into the landscape. Close southern walls stay low.
+    // Long, connected cuts replace the repeated perimeter boulders. Offset benches
+    // expose broad shelves and a broken skyline above the machinery apron.
     for (const side of [-1, 1]) {
-      for (let i = -4; i <= 4; i++) {
-        for (const [distance, height, depth] of [
-          [82, 4.8, 15],
-          [97, 9, 22],
-          [128, 15, 30],
-        ]) {
-          const rock = sandstoneRock(30, height + rng.range(-0.7, 0.7), depth, (i + 4) % 4);
-          put(geology, rock, i * 23 + rng.range(-1, 1), -1.6, side * distance);
+      for (const [distance, height, base, depth] of [
+        [77, 6.5, -1.8, 22],
+        [94, 8, 2.5, 26],
+        [115, 11, 7.8, 70],
+      ]) {
+        const face = quarryBench(280, height, depth, distance + side * 17);
+        if (side < 0) {
+          face.rotation.y = Math.PI;
         }
+        put(geology, face, 0, base, side * distance);
       }
-      for (let i = -2; i <= 2; i++) {
-        const rock = sandstoneRock(19, rng.range(5, 8), 23, (i + 2) % 4);
-        put(geology, rock, side * 85, -1.5, i * 23);
+      for (const [distance, height, base] of [
+        [78, 6, -1.8],
+        [97, 10, 2.2],
+      ]) {
+        const face = quarryBench(155, height, 50, distance + side * 37);
+        face.rotation.y = (side * Math.PI) / 2;
+        put(geology, face, side * distance, base, 0);
       }
     }
     // Local rubble stays outside the boundary; it never advertises nonexistent cover.
@@ -113,6 +94,7 @@ export class QuarryScenery extends THREE.Group {
     for (const z of [-2, 2]) {
       put(geology, sandstoneRock(5, 2.2, 3.5), -48, -1.79, 68 + z);
     }
+    quarrySiteDetails(equipment, geology);
     batch(geology);
     batch(equipment);
     this.add(geology, equipment);

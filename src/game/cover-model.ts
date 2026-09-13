@@ -10,7 +10,7 @@ import { TOWER_BASE } from "./tower-layout";
 import { treeModel } from "./tree-models";
 import type { Cover } from "./types";
 import { quarryRockVariant } from "./quarry-rock-shape";
-import { sandstoneRock } from "./quarry-surfaces";
+import { sandstoneFooting, sandstoneRock } from "./quarry-surfaces";
 import { dragonTooth, steelHedgehog } from "./quarry-barriers";
 function towerFoundation(group: THREE.Group, x: number): void {
   put(
@@ -50,6 +50,15 @@ export function coverModel(
   } else if (c.kind === "rock") {
     const variant = quarryRockVariant(c.x, c.z);
     put(group, sandstoneRock(c.w, c.h, c.d, variant));
+    put(group, sandstoneFooting(c.w, c.d, variant));
+    // Flat spalls at the foot read as fallen chips, not additional tank obstacles.
+    const rubble = new Random(variant + 902);
+    for (let i = 0; i < 7; i++) {
+      const angle = rubble.range(0, Math.PI * 2);
+      const chip = sandstoneRock(rubble.range(0.25, 0.65), 0.09, rubble.range(0.2, 0.5), i);
+      chip.rotation.y = angle;
+      put(group, chip, Math.cos(angle) * c.w * 0.5, 0.01, Math.sin(angle) * c.d * 0.5);
+    }
   } else if (c.kind === "container") {
     shippingContainer(group, c);
   } else if (c.kind === "cargo") {

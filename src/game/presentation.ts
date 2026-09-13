@@ -204,11 +204,17 @@ export class Presentation {
     if (this.quarryScenery) {
       this.quarryScenery.visible = quarry;
     }
-    const sky = quarry ? 0xc9c3ad : harbor ? 0xb9a4a0 : 0xaacbc2;
+    const sky = quarry ? 0xc4d1d4 : harbor ? 0xb9a4a0 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = new THREE.Fog(sky, harbor ? 150 : 210, harbor ? 260 : 380);
-    this.lighting.sun.color.setHex(quarry ? 0xffebcf : harbor ? 0xffc58a : 0xffe1b2);
-    this.lighting.sun.position.set(-45, quarry ? 76 : harbor ? 55 : 68, 25);
+    this.scene.fog = new THREE.Fog(
+      sky,
+      quarry ? 155 : harbor ? 150 : 210,
+      quarry ? 330 : harbor ? 260 : 380,
+    );
+    this.lighting.sun.color.setHex(quarry ? 0xffe9cd : harbor ? 0xffc58a : 0xffe1b2);
+    this.lighting.sun.position.set(-45, quarry ? 57 : harbor ? 55 : 68, 25);
+    this.lighting.sun.intensity = quarry ? 3.1 : 2.8;
+    this.lighting.fill.intensity = quarry ? 1.15 : 1.65;
     this.lighting.fill.color.setHex(harbor ? 0xc2e2ef : 0xe2efff);
     this.lighting.fill.groundColor.setHex(quarry ? 0x9f8965 : harbor ? 0x626c76 : 0x918571);
     disposeOwned(this.worldGroup);

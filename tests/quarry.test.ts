@@ -67,13 +67,13 @@ test("quarry crate cuts open to tanks only after destruction; barriers and rock 
     const a = { x: 32.5, z: 26 };
     const b = { x: 32.5, z: 48 };
     assert.equal(sim.nav.clearLine(a, b), false);
-    for (const crate of sim.covers.filter((c) => c.kind === "cargo" && c.x === 32.5)) {
-      sim.damageCover(crate, 50, sim.human.id, sim.humanTeam);
+    for (const crate of sim.covers.filter((c) => c.kind === "cargo" && c.x > 30 && c.z > 30)) {
+      sim.damageCover(crate, 30, sim.human.id, sim.humanTeam);
       assert.equal(sim.nav.blocked[sim.nav.index(crate)], 1);
-      sim.damageCover(crate, 50, sim.human.id, sim.humanTeam);
+      sim.damageCover(crate, 30, sim.human.id, sim.humanTeam);
       assert.equal(sim.coverByCollider.has(crate.collider.handle), false);
     }
-    assert.equal(sim.nav.clearLine(a, b), true, "both crates open the rock cut");
+    assert.equal(sim.nav.clearLine(a, b), true, "all four supply crates open the rock cut");
     for (const c of sim.covers.filter((c) => ["rock", "teeth", "hedgehog"].includes(c.kind))) {
       sim.damageCover(c, 10000, sim.human.id, sim.humanTeam);
       assert.equal(c.alive, true);
@@ -88,8 +88,8 @@ test("barrier collision follows tapered concrete and open steel rather than invi
   const sim = quarry();
   try {
     sim.world.step();
-    const tooth = sim.covers.find((c) => c.kind === "teeth")!;
-    const hedgehog = sim.covers.find((c) => c.kind === "hedgehog")!;
+    const tooth = sim.covers.filter((c) => c.kind === "teeth").sort((a, b) => a.x - b.x)[0];
+    const hedgehog = sim.covers.filter((c) => c.kind === "hedgehog").sort((a, b) => a.x - b.x)[0];
     const ray = (cover: typeof tooth, x: number, y: number) =>
       cover.collider.castRay(
         new RAPIER.Ray({ x: cover.x + x, y, z: cover.z - 4 }, { x: 0, y: 0, z: 1 }),
@@ -153,5 +153,43 @@ test("quarry supports both modes, combat, resets and Surprise me selection", () 
     assert.deepEqual([...themes].sort(), ["harbor", "quarry", "village"]);
   } finally {
     sim.world.free();
+  }
+});
+
+test("quarry defenses form mirrored belts and supply bays use individual crates", () => {
+  const layout = quarryLayout();
+  for (const side of [-1, 1]) {
+    const teeth = layout.filter((c) => c.kind === "teeth" && Math.sign(c.x) === side);
+    assert.equal(teeth.length, 8);
+    assert.equal(new Set(teeth.map((c) => c.x)).size, 2, "two staggered ranks");
+    const steel = layout.filter((c) => c.kind === "hedgehog" && Math.sign(c.x) === side);
+    assert.equal(steel.length, 4);
+    assert.equal(new Set(steel.map((c) => c.z)).size, 1, "one aligned steel belt");
+    for (const barrier of [...teeth, ...steel]) {
+      assert.ok(
+        [...teeth, ...steel].some(
+          (other) =>
+            other !== barrier &&
+            other.kind === barrier.kind &&
+            Math.hypot(other.x - barrier.x, other.z - barrier.z) < 3.6,
+        ),
+        "every obstacle belongs to a connected barrier",
+      );
+    }
+    const crates = layout.filter((c) => c.kind === "cargo" && c.x * side > 30 && c.z * side > 30);
+    assert.equal(crates.length, 4);
+    assert.ok(crates.every((c) => c.w <= 2.4 && c.d <= 2.8));
+    for (const crate of crates) {
+      assert.ok(
+        layout
+          .filter((c) => c.kind === "rock")
+          .every(
+            (rock) =>
+              Math.abs(crate.x - rock.x) >= (crate.w + rock.w) / 2 ||
+              Math.abs(crate.z - rock.z) >= (crate.d + rock.d) / 2,
+          ),
+        "supply crates never intersect rock footprints",
+      );
+    }
   }
 });

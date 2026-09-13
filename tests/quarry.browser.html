@@ -37,7 +37,8 @@
     <aside>
       <button id="overview">Overview</button>
       <button id="rocks">Sandstone & crates</button>
-      <button id="barriers">Anti-tank barriers</button>
+      <button id="barriers">Dragon’s teeth</button>
+      <button id="steel">Steel barrier</button>
       <button id="excavator">Excavator</button>
       <button id="truck">Haul truck</button>
       <button id="break">Break shortcut crates</button>
@@ -73,8 +74,12 @@
           [31, 1, 37],
         ],
         barriers: [
-          [22, 12, 22],
-          [15, 1, 6],
+          [59, 19, 13],
+          [43, 0, -10],
+        ],
+        steel: [
+          [34, 15, 41],
+          [19, 0, 22],
         ],
         excavator: [
           [-7, 12, -45],
@@ -102,7 +107,7 @@
         };
       }
       document.querySelector("#break").onclick = () => {
-        for (const c of sim.covers.filter((c) => c.kind === "cargo" && c.x === 32.5))
+        for (const c of sim.covers.filter((c) => c.kind === "cargo" && c.x > 30 && c.z > 30))
           sim.damageCover(c, 100, sim.human.id, sim.humanTeam);
         pose = poses.rocks;
         output.textContent = "Shortcut crates destroyed; collider and navigation removed";
