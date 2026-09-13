@@ -9,6 +9,9 @@ import { box, cylinder, put } from "./model-primitives";
 import { TOWER_BASE } from "./tower-layout";
 import { treeModel } from "./tree-models";
 import type { Cover } from "./types";
+import { quarryRockVariant } from "./quarry-rock-shape";
+import { sandstoneRock } from "./quarry-surfaces";
+import { dragonTooth, steelHedgehog } from "./quarry-barriers";
 function towerFoundation(group: THREE.Group, x: number): void {
   put(
     group,
@@ -40,7 +43,14 @@ export function coverModel(
   }
   const group = new THREE.Group();
   group.position.set(c.x, 0, c.z);
-  if (c.kind === "container") {
+  if (c.kind === "teeth") {
+    put(group, dragonTooth(c.w, c.h, c.d), 0, c.h / 2, 0);
+  } else if (c.kind === "hedgehog") {
+    steelHedgehog(group);
+  } else if (c.kind === "rock") {
+    const variant = quarryRockVariant(c.x, c.z);
+    put(group, sandstoneRock(c.w, c.h, c.d, variant));
+  } else if (c.kind === "container") {
     shippingContainer(group, c);
   } else if (c.kind === "cargo") {
     cargoStack(group, c, damageStage);

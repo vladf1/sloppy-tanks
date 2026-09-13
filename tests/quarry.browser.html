@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dusty Dig scene checks</title>
+    <style>
+      body {
+        margin: 0;
+        background: #a9997b;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 12px;
+        background: #17242bec;
+        color: white;
+        font: 13px sans-serif;
+        max-width: 850px;
+      }
+      button {
+        padding: 8px;
+        margin: 3px;
+      }
+      output {
+        display: block;
+        margin-top: 8px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas></canvas>
+    <aside>
+      <button id="overview">Overview</button>
+      <button id="rocks">Sandstone & crates</button>
+      <button id="barriers">Anti-tank barriers</button>
+      <button id="excavator">Excavator</button>
+      <button id="truck">Haul truck</button>
+      <button id="break">Break shortcut crates</button>
+      <button id="checks">Check resets & render cost</button>
+      <output>Dusty Dig ready</output>
+    </aside>
+    <script type="module">
+      import * as THREE from "three";
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      await RAPIER.init();
+      await loadTankSurface();
+      let loading = false;
+      THREE.DefaultLoadingManager.onStart = () => {
+        loading = true;
+      };
+      THREE.DefaultLoadingManager.onLoad = () => {
+        loading = false;
+      };
+      const sim = new Simulation(417);
+      sim.mapMode = "quarry";
+      sim.reset();
+      const view = new Presentation(document.querySelector("canvas"));
+      view.reset(sim);
+      let pose;
+      let checking = false;
+      const output = document.querySelector("output");
+      const poses = {
+        rocks: [
+          [43, 20, 59],
+          [31, 1, 37],
+        ],
+        barriers: [
+          [22, 12, 22],
+          [15, 1, 6],
+        ],
+        excavator: [
+          [-7, 12, -45],
+          [-20, 2, -68],
+        ],
+        truck: [
+          [18, 12, 49],
+          [36, 2, 68],
+        ],
+      };
+      function draw() {
+        view.render(sim, 1, 1 / 60, true);
+        if (pose) {
+          view.camera.position.set(...pose[0]);
+          view.camera.lookAt(...pose[1]);
+          view.renderer.render(view.scene, view.camera);
+        }
+      }
+      document.querySelector("#overview").onclick = () => {
+        pose = undefined;
+      };
+      for (const [name, position] of Object.entries(poses)) {
+        document.querySelector(`#${name}`).onclick = () => {
+          pose = position;
+        };
+      }
+      document.querySelector("#break").onclick = () => {
+        for (const c of sim.covers.filter((c) => c.kind === "cargo" && c.x === 32.5))
+          sim.damageCover(c, 100, sim.human.id, sim.humanTeam);
+        pose = poses.rocks;
+        output.textContent = "Shortcut crates destroyed; collider and navigation removed";
+      };
+      const frame = () => new Promise(requestAnimationFrame);
+      document.querySelector("#checks").onclick = async () => {
+        checking = true;
+        pose = undefined;
+        const failures = [];
+        const reports = [];
+        let baseline;
+        for (let round = 0; round < 5; round++) {
+          for (const mode of ["village", "harbor", "quarry"]) {
+            sim.mapMode = mode;
+            sim.reset();
+            view.reset(sim);
+            draw();
+            await frame();
+            const visible = [
+              view.villageScenery?.visible,
+              view.harborScenery?.group.visible,
+              view.quarryScenery?.visible,
+            ].filter(Boolean).length;
+            if (visible !== 1 || view.coverMeshes.size !== sim.covers.length)
+              failures.push(`Wrong map/cover: ${mode}`);
+            // Wait for texture upload before the retained-resource baseline.
+            if (round === 0) {
+              while (loading) await frame();
+              draw();
+              await frame();
+            }
+          }
+          const memory = view.renderer.info.memory;
+          const current = `${memory.geometries}/${memory.textures}`;
+          if (round === 2) baseline = current;
+          if (round > 2 && baseline !== current)
+            failures.push(`Resource growth ${baseline} -> ${current}`);
+          output.textContent = `Checking reset cycle ${round + 1}/5 · ${current}`;
+        }
+        for (const mode of ["village", "harbor", "quarry"]) {
+          sim.mapMode = mode;
+          sim.reset();
+          view.reset(sim);
+          sim.start();
+          const costs = [];
+          let calls = 0;
+          let triangles = 0;
+          for (let i = 0; i < 240; i++) {
+            await frame();
+            const start = performance.now();
+            sim.step(undefined, true);
+            draw();
+            if (i >= 60) {
+              costs.push(performance.now() - start);
+              calls += view.renderer.info.render.calls;
+              triangles += view.renderer.info.render.triangles;
+            }
+          }
+          costs.sort((a, b) => a - b);
+          reports.push(
+            `${mode}: CPU median ${costs[90].toFixed(2)}ms / p95 ${costs[171].toFixed(2)}ms · ${Math.round(calls / 180)} calls · ${Math.round(triangles / 180)} triangles`,
+          );
+        }
+        sim.mapMode = "quarry";
+        sim.reset();
+        view.reset(sim);
+        output.textContent =
+          (failures.length
+            ? failures.join("; ")
+            : `PASS: 15 map switches; stable GPU resources ${baseline}`) +
+          "\n" +
+          reports.join("\n");
+        checking = false;
+      };
+      function loop() {
+        if (!checking) draw();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+      addEventListener("resize", () => view.resize());
+    </script>
+  </body>
+</html>

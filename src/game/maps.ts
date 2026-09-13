@@ -1,5 +1,6 @@
 import { arenaLayout } from "./arena";
 import { harborLayout } from "./harbor-layout";
+import { quarryLayout } from "./quarry-layout";
 
 /** The menu and Surprise me draw from the same authored maps. */
 export const MAPS = [
@@ -14,5 +15,11 @@ export const MAPS = [
     name: "Harbor Havoc",
     description: "Salt air. Hot steel. Dockside mayhem.",
     layout: harborLayout,
+  },
+  {
+    id: "quarry",
+    name: "Dusty Dig",
+    description: "Open ground. Weathered stone. Dig your own shortcut.",
+    layout: quarryLayout,
   },
 ] as const;

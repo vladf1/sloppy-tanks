@@ -85,6 +85,9 @@ interface Brain {
   mode: "advance" | "fight" | "retreat" | "pickup" | "escort";
 }
 export type CoverKind =
+  | "rock"
+  | "teeth"
+  | "hedgehog"
   | "container"
   | "cargo"
   | "house"

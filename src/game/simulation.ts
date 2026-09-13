@@ -19,6 +19,8 @@ import type { Difficulty } from "./difficulty";
 import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
 import { MAPS } from "./maps";
+import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
+import { quarryBarrierCollider } from "./quarry-barrier-shapes";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -184,10 +186,19 @@ export class Simulation {
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(c.x, c.h / 2, c.z),
     );
+    let shape =
+      c.kind === "teeth" || c.kind === "hedgehog"
+        ? quarryBarrierCollider(c.kind, c.w, c.h, c.d)
+        : RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2);
+    if (c.kind === "rock") {
+      const rock = quarryRockShape(c.w, c.h, c.d, quarryRockVariant(c.x, c.z));
+      for (let i = 1; i < rock.positions.length; i += 3) {
+        rock.positions[i] -= c.h / 2;
+      }
+      shape = RAPIER.ColliderDesc.trimesh(rock.positions, rock.indices);
+    }
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)
-        .setCollisionGroups(GROUP.cover)
-        .setFriction(0.4),
+      shape.setCollisionGroups(GROUP.cover).setFriction(0.4),
       body,
     );
     const cover: Cover = {

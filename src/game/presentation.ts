@@ -5,6 +5,7 @@ import { coverDamageStage } from "./cover-model";
 import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
 import { HarborScenery } from "./harbor-scenery";
+import { QuarryScenery } from "./quarry-scenery";
 import { Flags } from "./flags";
 import { sidingBox } from "./house-surfaces";
 import { LaserVisuals } from "./laser-visuals";
@@ -71,6 +72,7 @@ export class Presentation {
   private flags = new Flags();
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
+  private quarryScenery?: QuarryScenery;
   private lighting: ReturnType<typeof createLighting>;
   private particleEffects = new ParticleEffects();
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
@@ -176,7 +178,9 @@ export class Presentation {
   }
   reset(simulation: Simulation): void {
     const harbor = simulation.mapTheme === "harbor";
-    if (!harbor && !this.villageScenery) {
+    const quarry = simulation.mapTheme === "quarry";
+    const village = simulation.mapTheme === "village";
+    if (village && !this.villageScenery) {
       this.villageScenery = new VillageScenery(this.renderer);
       this.scene.add(this.villageScenery);
     }
@@ -185,24 +189,28 @@ export class Presentation {
       this.scene.add(this.harborScenery.group);
     }
     if (this.villageScenery) {
-      this.villageScenery.visible = !harbor;
+      this.villageScenery.visible = village;
     }
-    if (!harbor) {
+    if (village) {
       this.villageScenery?.setCovers(simulation.covers);
     }
     if (this.harborScenery) {
       this.harborScenery.group.visible = harbor;
     }
-    this.scene.background = new THREE.Color(harbor ? 0xb9a4a0 : 0xaacbc2);
-    this.scene.fog = new THREE.Fog(
-      harbor ? 0xb9a4a0 : 0xaacbc2,
-      harbor ? 150 : 210,
-      harbor ? 260 : 380,
-    );
-    this.lighting.sun.color.setHex(harbor ? 0xffc58a : 0xffe1b2);
-    this.lighting.sun.position.set(-45, harbor ? 55 : 68, 25);
+    if (quarry && !this.quarryScenery) {
+      this.quarryScenery = new QuarryScenery(this.renderer);
+      this.scene.add(this.quarryScenery);
+    }
+    if (this.quarryScenery) {
+      this.quarryScenery.visible = quarry;
+    }
+    const sky = quarry ? 0xc9c3ad : harbor ? 0xb9a4a0 : 0xaacbc2;
+    this.scene.background = new THREE.Color(sky);
+    this.scene.fog = new THREE.Fog(sky, harbor ? 150 : 210, harbor ? 260 : 380);
+    this.lighting.sun.color.setHex(quarry ? 0xffebcf : harbor ? 0xffc58a : 0xffe1b2);
+    this.lighting.sun.position.set(-45, quarry ? 76 : harbor ? 55 : 68, 25);
     this.lighting.fill.color.setHex(harbor ? 0xc2e2ef : 0xe2efff);
-    this.lighting.fill.groundColor.setHex(harbor ? 0x626c76 : 0x918571);
+    this.lighting.fill.groundColor.setHex(quarry ? 0x9f8965 : harbor ? 0x626c76 : 0x918571);
     disposeOwned(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
