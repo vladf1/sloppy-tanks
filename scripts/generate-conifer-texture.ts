@@ -1,3 +1,4 @@
+import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { writeFile } from "node:fs/promises";
 import { Random } from "../src/game/data";
@@ -54,6 +55,6 @@ for (let i = 0; i < 75; i++) {
   }
 }
 await writeFile(
-  new URL("../assets/texture-sources/trees/conifer-spray.png", import.meta.url),
-  canvas.toBuffer("image/png"),
+  new URL("../assets/texture-sources/trees/conifer-spray.webp", import.meta.url),
+  encodeWebp(canvas),
 );

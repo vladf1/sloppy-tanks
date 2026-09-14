@@ -1,3 +1,4 @@
+import { encodeWebp } from "./encode-webp";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -6,12 +7,12 @@ import "./generate-barrels";
 import "./generate-ammo-icons";
 import "./generate-laser-pickup";
 
-// Offline only: checked-in PNGs are loaded by the game, never this generator.
+// Offline only: checked-in WebP images are loaded by the game, never this generator.
 const output = new URL("../public/textures/", import.meta.url);
 async function save(path: string, canvas: Canvas) {
   const target = new URL(path, output);
   await mkdir(new URL(".", target), { recursive: true });
-  await writeFile(target, canvas.toBuffer("image/png"));
+  await writeFile(target, encodeWebp(canvas));
   console.log(fileURLToPath(target));
 }
 
@@ -89,7 +90,7 @@ for (const kind of Object.keys(names) as (keyof typeof names)[]) {
   c.font = "900 25px sans-serif";
   c.textAlign = "center";
   c.fillText(names[kind], 128, 218);
-  await save(`pickups/${kind}.png`, canvas);
+  await save(`pickups/${kind}.webp`, canvas);
 }
 
 for (const kind of ["siding", "shingles"] as const) {
@@ -121,7 +122,7 @@ for (const kind of ["siding", "shingles"] as const) {
   const image = c.createImageData(size, size);
   image.data.set(pixels);
   c.putImageData(image, 0, 0);
-  await save(`houses/${kind}.png`, canvas);
+  await save(`houses/${kind}.webp`, canvas);
 }
 
 // Neutral paint wear multiplies team paint without introducing another hue.
@@ -207,7 +208,7 @@ for (const kind of ["siding", "shingles"] as const) {
   }
   await mkdir(new URL("../assets/texture-sources/tanks/", import.meta.url), { recursive: true });
   await writeFile(
-    new URL("../assets/texture-sources/tanks/armor-wear.png", import.meta.url),
-    canvas.toBuffer("image/png"),
+    new URL("../assets/texture-sources/tanks/armor-wear.webp", import.meta.url),
+    encodeWebp(canvas),
   );
 }

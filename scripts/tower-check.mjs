@@ -82,9 +82,9 @@ try {
       assert.equal(result.stablePiles, true);
       assert.ok(result.rubble.every((c) => c.textured && c.colorMatches));
       for (const c of result.rubble) {
-        for (const name of ["weathered-concrete.webp", "siding.png"])
+        for (const name of ["weathered-concrete.webp", "siding.webp"])
           assert.ok(c.textures.some((url) => url.endsWith(name)));
-        assert.ok(c.textures.every((url) => !url.endsWith("shingles.png")));
+        assert.ok(c.textures.every((url) => !url.endsWith("shingles.webp")));
       }
     }
     console.log(state, JSON.stringify(result));

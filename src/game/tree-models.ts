@@ -14,7 +14,7 @@ function surface(kind: "bark" | "birch" | "rings" | "leaves" | "conifer-spray", 
     let map = textures.get(kind);
     if (!map) {
       map = new THREE.TextureLoader().load(
-        `${import.meta.env?.BASE_URL ?? "/"}textures/trees/${kind}.${kind === "bark" || kind === "conifer-spray" ? "webp" : "png"}`,
+        `${import.meta.env?.BASE_URL ?? "/"}textures/trees/${kind}.webp`,
       );
       map.colorSpace = THREE.SRGBColorSpace;
       map.wrapS = map.wrapT = THREE.RepeatWrapping;

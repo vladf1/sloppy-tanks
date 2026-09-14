@@ -14,7 +14,7 @@ function surfaceMaterial(kind: "siding" | "shingles", color: number) {
   let texture = textures.get(kind);
   if (!texture) {
     texture = new THREE.TextureLoader().load(
-      `${import.meta.env?.BASE_URL ?? "/"}textures/houses/${kind}.png`,
+      `${import.meta.env?.BASE_URL ?? "/"}textures/houses/${kind}.webp`,
     );
     // Preserve the row orientation of the original DataTexture.
     texture.flipY = false;

@@ -27,7 +27,7 @@ function faceMaterial(kind: PickupKind) {
     return cached;
   }
   const texture = new THREE.TextureLoader().load(
-    `${import.meta.env.BASE_URL}textures/pickups/${kind}.png`,
+    `${import.meta.env.BASE_URL}textures/pickups/${kind}.webp`,
   );
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;

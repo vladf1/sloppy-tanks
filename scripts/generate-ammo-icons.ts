@@ -1,9 +1,10 @@
+import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { AMMO_ORDER, isSpecialAmmo } from "../src/game/ammunition";
 import { WEAPONS } from "../src/game/data";
 
-// Original vector pictograms rasterized offline; the game only loads these PNGs.
+// Original vector pictograms rasterized offline; the game only loads these WebP images.
 const output = new URL("../public/textures/pickups/", import.meta.url);
 await mkdir(output, { recursive: true });
 for (const kind of AMMO_ORDER.filter(isSpecialAmmo)) {
@@ -88,5 +89,5 @@ for (const kind of AMMO_ORDER.filter(isSpecialAmmo)) {
   c.font = "900 25px sans-serif";
   c.textAlign = "center";
   c.fillText(WEAPONS[kind].label, 128, 223);
-  await writeFile(new URL(`${kind}.png`, output), canvas.toBuffer("image/png"));
+  await writeFile(new URL(`${kind}.webp`, output), encodeWebp(canvas));
 }

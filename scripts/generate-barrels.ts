@@ -1,3 +1,4 @@
+import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 
@@ -59,4 +60,4 @@ for (let i = 0; i < 100; i++) {
 }
 const target = new URL("../public/textures/barrels/", import.meta.url);
 await mkdir(target, { recursive: true });
-await writeFile(new URL("painted-drum.png", target), canvas.toBuffer("image/png"));
+await writeFile(new URL("painted-drum.webp", target), encodeWebp(canvas));

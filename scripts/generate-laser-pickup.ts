@@ -1,3 +1,4 @@
+import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { PICKUPS } from "../src/game/data";
@@ -57,7 +58,7 @@ c.font = "900 25px sans-serif";
 c.textAlign = "center";
 c.fillStyle = accent;
 c.fillText("LASER", 128, 218);
-const output = new URL("../public/textures/pickups/laser.png", import.meta.url);
+const output = new URL("../public/textures/pickups/laser.webp", import.meta.url);
 await mkdir(new URL(".", output), { recursive: true });
-await writeFile(output, canvas.toBuffer("image/png"));
+await writeFile(output, encodeWebp(canvas));
 console.log("Saved laser-defense pickup pictogram.");

@@ -7,7 +7,7 @@ let geometry: THREE.CylinderGeometry | undefined;
 export function explosiveBarrel() {
   if (!surface) {
     const map = new THREE.TextureLoader().load(
-      `${import.meta.env?.BASE_URL ?? "/"}textures/barrels/painted-drum.png`,
+      `${import.meta.env?.BASE_URL ?? "/"}textures/barrels/painted-drum.webp`,
     );
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = 4;
