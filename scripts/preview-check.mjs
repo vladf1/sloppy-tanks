@@ -15,11 +15,12 @@ try {
   );
   await page.screenshot({ path: "artifacts/tank-selection.png" });
   await page.locator('[data-kind="heavy"]').click();
+  await page.locator("#start").click();
   await page.waitForFunction(
     () => window.sloppy.sim.match.phase === "playing" && window.sloppy.sim.human.kind === "heavy",
   );
   assert.deepEqual(errors, []);
-  console.log("Three actual-model previews loaded; Big Rig click starts play; no page errors.");
+  console.log("Three actual-model previews loaded; GO starts play with Big Rig; no page errors.");
 } finally {
   await browser.close();
 }

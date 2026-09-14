@@ -33,7 +33,7 @@ function vehicleCards(simulation: Simulation): string {
     .map((kind) => {
       const v = VEHICLES[kind];
       return `
-          <button class="vehicle ${simulation.humanKind === kind ? "selected" : ""}" data-kind="${kind}">
+          <button class="vehicle ${simulation.humanKind === kind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${simulation.humanKind === kind}">
             <strong>${v.name}</strong><small>${v.tag}</small>
             <img class="tank-preview" src="${tankPreview(kind, simulation.humanTeam)}" alt="${v.name} tank" draggable="false">
             <div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div>
@@ -86,13 +86,10 @@ export function menuMarkup(simulation: Simulation): string {
   if (phase === "ready") {
     return `
       <section class="menu start">
-        <div class="eyebrow">${simulation.mapMode === "surprise" ? "SURPRISE ME" : MAPS.find((map) => map.id === simulation.mapMode)!.name.toUpperCase()} / ${simulation.gameMode === "solo" ? "SURVIVAL" : "6 V 6"}</div>
-        <h1>CHOOSE YOUR TANK</h1>
-        <p class="intro">Choose your battle, then click a tank to start.</p>
+        <div class="start-heading"><h1>CHOOSE YOUR TANK</h1><button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button></div>
         ${modeOptions(simulation)}
         ${difficultyOptions(simulation)}
         ${vehicleCards(simulation)}
-        <div class="menu-foot"><div><b>${simulation.gameMode === "solo" ? "YOUR TANK" : "YOUR TEAM"}: ${simulation.humanTeam === 0 ? "◆" : "Ⅱ"} ${TEAM_NAMES[simulation.humanTeam]}</b><small>${simulation.gameMode === "solo" ? "10 MINUTES · ENDLESS ENEMIES · ONE LIFE" : `5 MINUTES · FIRST TO ${SCORE_LIMIT} · FRIENDLY FIRE OFF`}</small></div></div>
         <div class="menu-help">${CONTROL_HELP}</div>
         </section>`;
   } else if (phase === "paused") {

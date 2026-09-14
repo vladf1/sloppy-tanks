@@ -12,9 +12,6 @@ const hardwareGeometry = mergeGeometries([
   new THREE.BoxGeometry(0.09, 0.14, 1.14).translate(-0.925, 0.49, 0),
   new THREE.BoxGeometry(0.09, 0.14, 1.14).translate(0.925, 0.49, 0),
   new THREE.BoxGeometry(1.9, 0.1, 1.28).translate(0, -0.5, 0),
-  new THREE.BoxGeometry(0.75, 0.1, 0.12).translate(0, 0.78, 0),
-  new THREE.BoxGeometry(0.12, 0.24, 0.12).translate(-0.32, 0.67, 0),
-  new THREE.BoxGeometry(0.12, 0.24, 0.12).translate(0.32, 0.67, 0),
   new THREE.BoxGeometry(0.2, 0.28, 0.08).translate(0, 0.38, 0.64),
 ]);
 const hardwareMaterial = new THREE.MeshStandardMaterial({

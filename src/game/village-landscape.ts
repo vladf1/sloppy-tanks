@@ -4,6 +4,7 @@ import { groundUVs } from "./ground-surfaces";
 import { Random } from "./math";
 import { put } from "./model-primitives";
 import { treeModel } from "./tree-models";
+import { WaterSurface } from "./water-surface";
 
 const creek = new THREE.CatmullRomCurve3(
   [
@@ -75,7 +76,8 @@ function streamGeometry() {
     const tangent = creek.getTangent(i / (creekPoints.length - 1));
     const width = 6.5 + Math.sin(i * 0.12) * 0.55;
     for (const side of [-1, 1]) {
-      positions.push(p.x - tangent.z * width * side, p.y, p.z + tangent.x * width * side);
+      // Local XY becomes world XZ when the Water mesh rotates onto its mirror plane.
+      positions.push(p.x - tangent.z * width * side, -p.z - tangent.x * width * side, 0);
       uvs.push((side + 1) / 2, i * 1.9);
     }
     if (i < creekPoints.length - 1) {
@@ -93,39 +95,7 @@ function streamGeometry() {
 
 export class VillageLandscape {
   readonly group = new THREE.Group();
-  private water = new THREE.ShaderMaterial({
-    side: THREE.DoubleSide,
-    uniforms: { time: { value: 0 } },
-    vertexShader: `varying vec2 flow; varying vec3 world; void main() {
-      flow = uv; world = (modelMatrix * vec4(position, 1.)).xyz;
-      gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
-    }`,
-    fragmentShader: `uniform float time; varying vec2 flow; varying vec3 world;
-      float hash(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
-      float noise(vec2 p) {
-        vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f);
-        return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);
-      }
-      float ripple(vec2 p) { float n=noise(p*.6); return n*.7+noise(p*1.7+n)*.22+noise(p*4.)*.08; }
-      void main() {
-        vec2 p=vec2(flow.x*12.,flow.y-time*.85);
-        float r=ripple(p);
-        vec3 normal=normalize(vec3((r-ripple(p+vec2(.13,0)))*4.,1.,(r-ripple(p+vec2(0,.13)))*4.));
-        vec3 eye=normalize(cameraPosition-world);
-        float fresnel=.045+.5*pow(1.-max(dot(normal,eye),0.),4.);
-        float bank = pow(abs(flow.x * 2. - 1.), 2.);
-        vec3 color = mix(vec3(.022,.10,.105), vec3(.09,.23,.15), bank)*(.86+r*.28);
-        color=mix(color,vec3(.35,.48,.40),fresnel);
-        float glint=pow(max(dot(normal,normalize(eye+vec3(-.48,.76,.3))),0.),120.);
-        color += vec3(.7,.76,.54)*glint*.4;
-        float foam = smoothstep(.67,.97,bank) * smoothstep(.55,.78,r);
-        color = mix(color,vec3(.42,.59,.43),foam*.45);
-        color = mix(color,vec3(.40,.59,.54),smoothstep(210.,380.,distance(cameraPosition,world)));
-        gl_FragColor=vec4(color,1.);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-  });
+  private water = new WaterSurface(streamGeometry(), "creek", -2.65);
   constructor(grass: THREE.MeshStandardMaterial) {
     this.group.name = "pine-valley-landscape";
     const geo = new THREE.PlaneGeometry(340, 340, 112, 112).rotateX(-Math.PI / 2);
@@ -154,9 +124,7 @@ export class VillageLandscape {
     const terrain = new THREE.Mesh(geo, grass);
     terrain.receiveShadow = true;
     this.group.add(terrain);
-    const stream = new THREE.Mesh(streamGeometry(), this.water);
-    stream.name = "village-creek";
-    this.group.add(stream);
+    this.group.add(this.water);
     this.backdrop();
   }
   private backdrop() {
@@ -271,6 +239,6 @@ export class VillageLandscape {
     this.group.add(rocks, forest);
   }
   update(time: number) {
-    this.water.uniforms.time.value = time;
+    this.water.update(time);
   }
 }

@@ -22,6 +22,7 @@ try {
   await page.screenshot({ path: "artifacts/redesign-menu.png" });
   assert.equal(await page.locator("#deploy").count(), 0);
   await page.locator('[data-kind="balanced"]').click();
+  await page.locator("#start").click();
   await page.waitForTimeout(200);
   await page.screenshot({ path: "artifacts/redesign-spawn.png" });
   const before = await page.evaluate(() => ({

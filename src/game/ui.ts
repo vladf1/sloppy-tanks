@@ -61,12 +61,11 @@ export class UI {
     this.overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((b) =>
       b.addEventListener("click", () => {
         this.simulation.humanKind = b.dataset.kind as VehicleKind;
-        if (this.simulation.match.phase === "ready") {
-          this.start();
-          return;
-        }
-        this.overlay.querySelectorAll(".vehicle").forEach((n) => n.classList.remove("selected"));
-        b.classList.add("selected");
+        this.overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((card) => {
+          const selected = card === b;
+          card.classList.toggle("selected", selected);
+          card.setAttribute("aria-pressed", String(selected));
+        });
       }),
     );
   }
@@ -105,6 +104,7 @@ export class UI {
       );
     }
 
+    this.overlay.querySelector("#start")?.addEventListener("click", this.start);
     this.overlay.querySelector("#resume")?.addEventListener("click", this.resume);
     this.overlay.querySelector("#restart")?.addEventListener("click", this.restart);
     for (const key of ["volume", "tank-speed", "bullet-speed"]) {

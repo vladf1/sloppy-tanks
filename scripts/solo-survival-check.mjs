@@ -14,8 +14,12 @@ try {
   await page.goto(base);
   await page.waitForFunction(() => !!window.sloppy);
   await page.locator('input[value="solo"]').check();
-  assert.match(await page.locator(".menu-foot").innerText(), /10 MINUTES/);
+  assert.match(
+    await page.locator(".mode-option:has(input[value='solo'])").innerText(),
+    /10 minutes/,
+  );
   await page.locator('[data-kind="balanced"]').click();
+  await page.locator("#start").click();
   await page.waitForFunction(() => document.querySelector("#label0").textContent === "KILLS");
   assert.match(await page.locator("#time").innerText(), /10:00|9:59/);
   assert.equal(await page.locator("#score0").innerText(), "0");
@@ -50,6 +54,7 @@ try {
   await page.screenshot({ path: "artifacts/performance/solo-survival/results.png" });
   await page.locator("#restart").click();
   await page.locator('[data-kind="balanced"]').click();
+  await page.locator("#start").click();
   await page.evaluate(() => {
     const s = window.sloppy.sim;
     s.human.protection = 0;

@@ -65,6 +65,7 @@ try {
   await page.waitForFunction(() => !!window.sloppy);
   await page.screenshot({ path: "artifacts/start.png" });
   await page.locator('[data-kind="balanced"]').click();
+  await page.locator("#start").click();
   const before = await page.evaluate(() => window.sloppy.sim.snapshot());
   await page.mouse.move(1100, 440);
   await page.keyboard.down("d");

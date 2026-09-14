@@ -34,16 +34,23 @@ export function quarryLayout(): CoverDef[] {
     // Small, separated cover islands leave the direct route wide enough to dodge.
     add("cargo", side * 9, -side * 7, 3, 3, 2.6, 90, 0xa18e6f);
     add("drum", side * 15, side * 27, 1.2, 1.2, 1.7, 30, 0xff5b24);
-    // Two staggered ranks defend each approach as a coherent obstacle belt.
-    // Spacing stops tanks between teeth; the ends and central haul road remain open.
-    for (let row = 0; row < 2; row++) {
-      for (let i = 0; i < 4; i++) {
-        add("teeth", side * (42 + row * 3.2), side * (-15 + i * 2.9 + row * 1.45), 1.9, 1.9, 1.9);
-      }
+    // Crane-set, staggered ranks follow the verge with uneven gaps and offsets.
+    // Mirror the same irregular belt for fair approaches; keep the haul road open.
+    for (const [x, z, width, height] of [
+      [41.7, -15.3, 1.9, 1.9],
+      [42.25, -12.45, 2, 2.05],
+      [41.85, -9.35, 1.9, 1.8],
+      [42.5, -6.7, 1.9, 1.9],
+      [45.25, -13.85, 2, 2.05],
+      [44.7, -10.8, 1.9, 1.8],
+      [45.4, -7.9, 1.9, 1.9],
+      [45.05, -4.75, 2, 2.05],
+    ]) {
+      add("teeth", side * x, side * z, width, width, height);
     }
     // A close-set steel line ties into each midfield rock shoulder.
     for (let i = 0; i < 4; i++) {
-      add("hedgehog", side * (14 + i * 3), side * 22, 2.9, 3.2, 2.7);
+      add("hedgehog", side * (15.8 + i * 2.4), side * 22, 2.32, 2.56, 2.16);
     }
   }
   return covers;

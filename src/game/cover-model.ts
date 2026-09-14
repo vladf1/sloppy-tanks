@@ -44,9 +44,10 @@ export function coverModel(
   const group = new THREE.Group();
   group.position.set(c.x, 0, c.z);
   if (c.kind === "teeth") {
-    put(group, dragonTooth(c.w, c.h, c.d), 0, c.h / 2, 0);
+    dragonTooth(group, c.w, c.h, c.d, c.x, c.z);
   } else if (c.kind === "hedgehog") {
     steelHedgehog(group);
+    group.scale.set(c.w / 2.9, c.h / 2.7, c.d / 3.2);
   } else if (c.kind === "rock") {
     const variant = quarryRockVariant(c.x, c.z);
     put(group, sandstoneRock(c.w, c.h, c.d, variant));

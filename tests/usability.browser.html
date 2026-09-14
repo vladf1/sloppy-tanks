@@ -320,7 +320,18 @@
             s.difficulty === "hard" && localStorage.getItem("sloppy-difficulty") === "hard",
             "Start-screen difficulty is saved",
           );
+          click('[data-kind="scout"]');
+          check(s.match.phase === "ready", "Picking a tank does not start the round");
+          check(
+            document.querySelector('[data-kind="scout"]').getAttribute("aria-pressed") === "true",
+            "Tank selection is accessible",
+          );
           click('[data-kind="balanced"]');
+          click("#start");
+          check(
+            s.match.phase === "playing" && s.human.kind === "balanced",
+            "GO starts the selected tank",
+          );
           click("#pause");
           check(
             s.difficulty === "hard" && !document.querySelector('input[name="difficulty"]'),

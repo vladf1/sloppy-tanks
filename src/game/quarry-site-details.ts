@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { concreteWall } from "./concrete-surfaces";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
@@ -57,18 +56,6 @@ function siteSign(group: THREE.Group) {
 /** All tall dressing is outside the playable wall; in-arena chips are only 3–7cm high. */
 export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group): void {
   const rng = new Random(62541);
-  // Recessed concrete footings visually connect each defensive rank.
-  for (const side of [-1, 1]) {
-    for (let row = 0; row < 2; row++) {
-      put(
-        equipment,
-        concreteWall(2.2, 0.035, 11),
-        side * (42 + row * 3.2),
-        0.02,
-        side * (-10.65 + row * 1.45),
-      );
-    }
-  }
   // Scree gathers against the cut, with occasional flat spalls across the work floor.
   for (let i = 0; i < 700; i++) {
     const outer = i < 500;

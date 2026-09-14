@@ -31,6 +31,7 @@ try {
   const held = new Set();
   for (const kind of ["scout", "balanced", "heavy"]) {
     await page.locator(`[data-kind="${kind}"]`).click();
+    await page.locator("#start").click();
     await page.evaluate(() => (window.playEvents = []));
     let iterations = 0,
       shots = 0,

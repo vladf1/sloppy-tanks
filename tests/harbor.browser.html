@@ -41,6 +41,7 @@
       <button id="crate-hit">Hit middle crate</button>
       <button id="surprise">Surprise me</button>
       <button id="checks">Check map switches and resets</button>
+      <button id="water-checks">Check both water reflections</button>
       <output id="result">Harbor scene ready</output>
     </aside>
     <script type="module">
@@ -48,6 +49,7 @@
       import { Simulation } from "../src/game/simulation";
       import { Presentation } from "../src/game/presentation";
       import { loadTankSurface } from "../src/game/tank-surfaces";
+      import { checkWater } from "./water-checks";
       await RAPIER.init();
       await loadTankSurface();
       const sim = new Simulation(417);
@@ -57,6 +59,26 @@
       view.reset(sim);
       let overview = true;
       let crateExamples = [];
+      document.querySelector("#water-checks").onclick = () => {
+        const results = [];
+        try {
+          for (const mode of ["harbor", "village"]) {
+            sim.mapMode = mode;
+            sim.reset();
+            view.reset(sim);
+            view.render(sim, 1, 0, true);
+            results.push(checkWater(view, sim));
+          }
+        } catch (error) {
+          results.push(`FAIL: ${error.message}`);
+        } finally {
+          sim.mapMode = "harbor";
+          sim.reset();
+          view.reset(sim);
+          overview = true;
+        }
+        document.querySelector("#result").textContent = results.join(" | ");
+      };
       function crateStatus() {
         view.render(sim, 1, 1 / 60, false);
         const names = ["Intact", "Split wood", "Broken lid"];
@@ -123,16 +145,18 @@
         overview = true;
         document.querySelector("#result").textContent = `Surprise me · ${sim.mapName}`;
       };
-      document.querySelector("#checks").onclick = () => {
+      document.querySelector("#checks").onclick = async () => {
         crateExamples = [];
         const failures = [];
         let baseline;
         for (let round = 0; round < 4; round++) {
-          for (const mode of ["village", "surprise", "harbor"]) {
+          for (const mode of ["village", "quarry", "surprise", "harbor"]) {
             sim.mapMode = mode;
             sim.reset();
             view.reset(sim);
             view.render(sim, 1, 1 / 60, true);
+            // Warm every map explicitly and let pending texture uploads complete.
+            await new Promise(requestAnimationFrame);
             const expected = sim.mapTheme === "harbor";
             const visibleHarbor = view.scene.children.some(
               (child) => child.visible && child === view.harborScenery?.group,
@@ -150,7 +174,7 @@
         overview = true;
         document.querySelector("#result").textContent = failures.length
           ? failures.join("; ")
-          : `PASS: 12 map switches, cover models match, stable GPU resources (${baseline})`;
+          : `PASS: 16 map switches, cover models match, stable GPU resources (${baseline})`;
       };
       let last = performance.now();
       function render(now) {

@@ -173,9 +173,10 @@ export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 export const GROUP = {
   coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
-  steeringQuery: 0xffff0012, // Cover and tank-contact hulls, excluding cosmetic debris.
-  tank: 0x00010006, // Model-sized hull touches cover and ground only.
+  steeringQuery: 0xffff0032, // Cover and tank-contact hulls, excluding cosmetic debris.
+  tank: 0x00010026, // Model-sized hull touches cover, ground and anti-tank footprints.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
+  toothContact: 0x00200001, // Planar tank blocking; excluded from projectile queries.
   cover: 0x0002000b,
   ground: 0x00040009,
   fragment: 0x00080006,

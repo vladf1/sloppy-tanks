@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pickupLayout, spawnPositions } from "../src/game/arena";
 import { quarryLayout } from "../src/game/quarry-layout";
+import { GROUP } from "../src/game/data";
 import { Simulation } from "../src/game/simulation";
 
 before(async () => {
@@ -98,6 +99,20 @@ test("barrier collision follows tapered concrete and open steel rather than invi
       );
     assert.ok(ray(tooth, 0, 1) >= 0);
     assert.equal(ray(tooth, 0.8, 1.7), -1, "shot clears the sloping shoulder");
+    assert.equal(
+      sim.world.castRay(
+        new RAPIER.Ray({ x: tooth.x + 0.8, y: 1.7, z: tooth.z - 4 }, { x: 0, y: 0, z: 1 }),
+        8,
+        true,
+        undefined,
+        GROUP.coverQuery,
+        undefined,
+        undefined,
+        (collider) => collider.parent()?.handle === tooth.body.handle,
+      ),
+      null,
+      "the tank footprint never creates invisible cover for shells",
+    );
     assert.ok(ray(hedgehog, 0, 1.3) >= 0, "central steel stops a shot");
     assert.equal(ray(hedgehog, 0.95, 1.3), -1, "visible opening between steel arms remains open");
     const tank = sim.human;
@@ -161,7 +176,12 @@ test("quarry defenses form mirrored belts and supply bays use individual crates"
   for (const side of [-1, 1]) {
     const teeth = layout.filter((c) => c.kind === "teeth" && Math.sign(c.x) === side);
     assert.equal(teeth.length, 8);
-    assert.equal(new Set(teeth.map((c) => c.x)).size, 2, "two staggered ranks");
+    assert.equal(teeth.filter((c) => Math.abs(c.x) < 43).length, 4, "inner staggered rank");
+    assert.equal(teeth.filter((c) => Math.abs(c.x) > 44).length, 4, "outer staggered rank");
+    assert.ok(
+      new Set(teeth.map((c) => c.x)).size > 4,
+      "individual placement breaks straight lines",
+    );
     const steel = layout.filter((c) => c.kind === "hedgehog" && Math.sign(c.x) === side);
     assert.equal(steel.length, 4);
     assert.equal(new Set(steel.map((c) => c.z)).size, 1, "one aligned steel belt");

@@ -30,8 +30,13 @@ test("village landmarks and flowing creek stay outside the combat arena", () => 
   const landscape = new VillageLandscape(new THREE.MeshStandardMaterial({ vertexColors: true }));
   const river = landscape.group.getObjectByName("village-creek") as THREE.Mesh;
   const p = river.geometry.getAttribute("position");
-  for (let i = 0; i < p.count; i++)
-    assert.ok(Math.abs(p.getX(i)) > 63 || Math.abs(p.getZ(i)) > 63, "creek crosses the arena wall");
+  const point = new THREE.Vector3();
+  river.updateWorldMatrix(true, false);
+  for (let i = 0; i < p.count; i++) {
+    point.fromBufferAttribute(p, i).applyMatrix4(river.matrixWorld);
+    assert.ok(Math.abs(point.x) > 63 || Math.abs(point.z) > 63, "creek crosses the arena wall");
+    assert.ok(Math.abs(point.y + 2.65) < 0.0001, "creek must stay on its horizontal mirror plane");
+  }
   for (let x = -60; x <= 60; x += 10)
     for (let z = -60; z <= 60; z += 10)
       assert.ok(valleyHeight(x, z) < -0.5, "landscape protrudes through the playable ground");

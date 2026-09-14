@@ -22,6 +22,7 @@ try {
   const choices = [];
   for (const kind of ["scout", "balanced", "heavy"]) {
     await page.locator(`[data-kind="${kind}"]`).click();
+    await page.locator("#start").click();
     const state = await page.evaluate(() => ({
       kind: window.sloppy.sim.human.kind,
       phase: window.sloppy.sim.match.phase,
@@ -32,6 +33,7 @@ try {
     await page.waitForFunction(() => window.sloppy.sim.match.phase === "ready");
   }
   await page.locator('[data-kind="balanced"]').click();
+  await page.locator("#start").click();
   await page.evaluate(() => {
     const { sim, view } = window.sloppy;
     // Open a controlled landing patch and leave ordinary physics/rendering running.

@@ -8,6 +8,43 @@ const STEEL = 0x51504a;
 const RUBBER = 0x343431;
 const GLASS = 0x526c72;
 
+// Reuse the existing scratched panel atlas, with its own material cache so
+// excavator paint can weather independently of harbor props and the haul truck.
+const excavatorPaint = new Map<number, THREE.MeshStandardMaterial>();
+let paintWear: THREE.Texture | undefined;
+function weatherExcavator(group: THREE.Group) {
+  group.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !(child.material instanceof THREE.MeshStandardMaterial)) {
+      return;
+    }
+    const color = child.material.color.getHex();
+    if (color !== PAINT && color !== 0xd2c6a2) {
+      return;
+    }
+    let material = excavatorPaint.get(color);
+    if (!material) {
+      if (!paintWear) {
+        paintWear = new THREE.TextureLoader().load(
+          `${import.meta.env?.BASE_URL ?? "/"}textures/tanks/armor-wear.png`,
+        );
+        paintWear.colorSpace = THREE.SRGBColorSpace;
+        paintWear.wrapS = paintWear.wrapT = THREE.RepeatWrapping;
+        paintWear.anisotropy = 4;
+      }
+      material = new THREE.MeshStandardMaterial({
+        color: color === PAINT ? 0xd3a33f : color,
+        map: paintWear,
+        bumpMap: paintWear,
+        bumpScale: 0.045,
+        roughness: 0.84,
+        metalness: 0.18,
+      });
+      excavatorPaint.set(color, material);
+    }
+    child.material = material;
+  });
+}
+
 function beam(group: THREE.Group, a: number[], b: number[], width: number, color: number) {
   const from = new THREE.Vector3(...a);
   const to = new THREE.Vector3(...b);
@@ -99,6 +136,7 @@ export function quarryExcavator(): THREE.Group {
   }
   bucket.rotation.z = -0.22;
   put(group, bucket, 11.5, 0.6, 0.9);
+  weatherExcavator(group);
   batch(bucket);
   batch(group);
   return group;

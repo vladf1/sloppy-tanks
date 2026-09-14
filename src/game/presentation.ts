@@ -110,6 +110,8 @@ export class Presentation {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
+    // Count the main view and water reflection together, including their draw calls.
+    this.renderer.info.autoReset = false;
     this.lighting = createLighting(this.scene);
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
@@ -204,7 +206,7 @@ export class Presentation {
     if (this.quarryScenery) {
       this.quarryScenery.visible = quarry;
     }
-    const sky = quarry ? 0xc4d1d4 : harbor ? 0xb9a4a0 : 0xaacbc2;
+    const sky = quarry ? 0xc4d1d4 : harbor ? 0xa7bdc5 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
     this.scene.fog = new THREE.Fog(
       sky,
@@ -704,6 +706,7 @@ export class Presentation {
     this.laserVisuals.update(simulation, alpha, dt);
     this.particleEffects.update(dt, this.time);
     this.crosshair.visible = simulation.match.phase === "playing";
+    this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
   }
 }

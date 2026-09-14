@@ -20,7 +20,7 @@ import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
 import { MAPS } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
-import { quarryBarrierCollider } from "./quarry-barrier-shapes";
+import { dragonToothVariant, quarryBarrierCollider } from "./quarry-barrier-shapes";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -188,7 +188,7 @@ export class Simulation {
     );
     let shape =
       c.kind === "teeth" || c.kind === "hedgehog"
-        ? quarryBarrierCollider(c.kind, c.w, c.h, c.d)
+        ? quarryBarrierCollider(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z))
         : RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2);
     if (c.kind === "rock") {
       const rock = quarryRockShape(c.w, c.h, c.d, quarryRockVariant(c.x, c.z));
@@ -201,6 +201,16 @@ export class Simulation {
       shape.setCollisionGroups(GROUP.cover).setFriction(0.4),
       body,
     );
+    if (c.kind === "teeth") {
+      // Tanks use the navigation footprint so the slope cannot lift their planar hulls.
+      // Shells still hit only the visible pyramid, including its open upper shoulders.
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)
+          .setCollisionGroups(GROUP.toothContact)
+          .setFriction(0.4),
+        body,
+      );
+    }
     const cover: Cover = {
       ...c,
       id: this.nextId++,
