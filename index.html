@@ -8,6 +8,12 @@
     <link rel="preload" as="image" crossorigin="anonymous" href="/textures/tanks/armor-wear.webp" />
     <title>Sloppy Tanks · Little tanks. Big mess.</title>
     <style>
+      /* Keep the startup screen independent of the deferred game stylesheet. */
+      #loading,
+      #loading * {
+        box-sizing: border-box;
+        font-synthesis: none;
+      }
       #loading {
         position: fixed;
         inset: 0;
@@ -24,12 +30,17 @@
       }
       #loading h1 {
         margin: 0;
-        font: 700 36px/normal system-ui, sans-serif;
+        font:
+          700 36px/normal system-ui,
+          sans-serif;
         letter-spacing: 3px;
       }
       #loading p {
         margin: 0;
         color: #becfca;
+        font:
+          400 16px/normal system-ui,
+          sans-serif;
       }
       #loading button {
         margin-top: 12px;
