@@ -1,6 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700;800&display=swap");
 :root {
-  font-family: Barlow, Arial, sans-serif;
+  font-family: Arial, sans-serif;
   color: #f5faff;
   background: #55bde9;
   font-synthesis: none;
@@ -55,8 +54,7 @@ canvas#game {
   top: 14px;
   left: 16px;
   font:
-    900 24px/0.83 "Barlow Condensed",
-    Impact,
+    900 24px/0.83 Impact,
     sans-serif;
   letter-spacing: -0.4px;
   text-shadow: 0 2px 10px #27433555;
@@ -92,8 +90,7 @@ canvas#game {
 .team b {
   display: block;
   font:
-    800 34px/1 "Barlow Condensed",
-    Impact,
+    800 34px/1 Impact,
     sans-serif;
 }
 .mint {
@@ -120,8 +117,7 @@ canvas#game {
 .clock b {
   display: block;
   font:
-    800 28px/1 "Barlow Condensed",
-    Impact,
+    800 28px/1 Impact,
     sans-serif;
 }
 .clock small {
@@ -207,8 +203,7 @@ canvas#game {
 }
 .status b {
   font:
-    800 28px/1.1 "Barlow Condensed",
-    Impact,
+    800 28px/1.1 Impact,
     sans-serif;
   font-variant-numeric: tabular-nums;
 }
@@ -233,7 +228,7 @@ canvas#game {
 }
 #rank {
   font:
-    700 10px/1.2 "Barlow",
+    700 10px/1.2 Arial,
     sans-serif;
   color: #ffd477;
   pointer-events: auto;
@@ -380,16 +375,14 @@ canvas#game {
 }
 h1 {
   font:
-    900 clamp(40px, 5vw, 72px)/0.91 "Barlow Condensed",
-    Impact,
+    900 clamp(40px, 5vw, 72px)/0.91 Impact,
     sans-serif;
   letter-spacing: -1px;
   margin: 0;
 }
 h2 {
   font:
-    800 46px/0.98 "Barlow Condensed",
-    Impact,
+    800 46px/0.98 Impact,
     sans-serif;
   margin: 12px 0 20px;
 }
@@ -420,8 +413,8 @@ h2 {
 .vehicle strong {
   display: block;
   font:
-    800 27px "Barlow Condensed",
-    Impact;
+    800 27px Impact,
+    sans-serif;
 }
 .vehicle small {
   font-size: 10px;
@@ -518,8 +511,8 @@ h2 {
 }
 .result-score {
   font:
-    800 80px "Barlow Condensed",
-    Impact;
+    800 80px Impact,
+    sans-serif;
   color: #ffcf38;
 }
 .respawn p {
@@ -716,8 +709,7 @@ h2 {
 .ammo-slot kbd {
   display: block;
   font:
-    600 10px/1.2 Barlow,
-    Arial,
+    600 10px/1.2 Arial,
     sans-serif;
   color: #c4dfef;
   margin-bottom: 0;
