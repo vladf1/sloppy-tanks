@@ -51,3 +51,28 @@ Gameplay uses the seeded `Random` stream. Reordering its draws changes a match e
 Rendering interpolates poses without moving physics bodies. New or respawned entities need their models and health bars before drawing. `Presentation` delegates visual work to named stages; static scene creation belongs in scenery/model builders.
 
 Cached geometry and materials outlive round resets. Only per-instance resources marked `userData.owned` are disposed by round cleanup. `isMesh` retains concrete Three.js field types after an `instanceof` check. Keep bounded capacities for particles, physics fragments, track marks and diagnostics.
+
+## Browser and performance checks
+
+Use the URL printed by the running Vite server for `SLOPPY_URL`. Browser scripts use installed Google Chrome with isolated profiles. Select checks relevant to the change:
+
+| Area                                     | Script or local browser page                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------- |
+| General keyboard/mouse play              | `scripts/browser-check.mjs`                                                 |
+| Ammunition input and crate/HUD visuals   | `scripts/ammunition-check.mjs` (`--visual-only` skips its performance pass) |
+| Driving controls                         | `scripts/driving-check.mjs`                                                 |
+| Bot retreat and head-on movement         | `scripts/bot-movement-browser.mjs`                                          |
+| Reload, hit and repair feedback          | `scripts/combat-feedback-check.mjs`                                         |
+| Difficulty and combat HUD fixtures       | `/sloppy-tanks/tests/usability.browser.html`                                |
+| Harbor scenery and resource reuse        | `/sloppy-tanks/tests/harbor.browser.html`                                   |
+| Quarry layout, rock and barrier previews | `/sloppy-tanks/tests/quarry.browser.html`                                   |
+
+For a loading comparison, save each production `dist` under `artifacts/performance/loading/<label>/`, then run `npm run benchmark:loading -- <label>`. The default is five cold-cache Chrome runs at 10 Mbps / 50 ms through a local gzip server. Compare first visible content, menu appearance, final download and main-thread blocking separately. Keep each baseline and candidate snapshot unchanged during measurement.
+
+For runtime comparisons, run `node scripts/profile.mjs before` on the baseline and `node scripts/profile.mjs after` on the changed revision, with Vite running and `SLOPPY_URL` set. Detailed results and CPU profiles stay in `artifacts/performance/`; the compact comparison is written to `artifacts/performance-results.json` after both passes complete. Avoid unrelated browser workloads while measuring.
+
+`node scripts/benchmark.mjs` runs normal/stress workloads, ten rendered resets and a twenty-minute active-play longevity check, writing `artifacts/benchmark-results.json`. Focus pauses extend elapsed time. `npm run validate` writes accelerated simulation results to `artifacts/simulation-results.json`; those are not browser FPS measurements. The notebook at `/sloppy-tanks/benchmark.html` displays saved results.
+
+For manual CPU profiling, open `/sloppy-tanks/tools/profile.html` in an isolated Chrome instance with remote debugging on port 9227, then run `node scripts/capture-cpu-profile.mjs LABEL 20`. The helper captures the CPU profile; use the browser UI for navigation and input.
+
+Keep one-off reports, screenshots and raw profiles under ignored `artifacts/performance/`. Update enduring documentation only for current behavior, workflows, invariants or asset provenance; historical measurements belong in local artifacts or the commit description. CPU submission times are not GPU timings, and local frame rates are not guarantees for other devices.
