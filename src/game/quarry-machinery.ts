@@ -25,7 +25,7 @@ function weatherExcavator(group: THREE.Group) {
     if (!material) {
       if (!paintWear) {
         paintWear = new THREE.TextureLoader().load(
-          `${import.meta.env?.BASE_URL ?? "/"}textures/tanks/armor-wear.png`,
+          `${import.meta.env?.BASE_URL ?? "/"}textures/tanks/armor-wear.webp`,
         );
         paintWear.colorSpace = THREE.SRGBColorSpace;
         paintWear.wrapS = paintWear.wrapT = THREE.RepeatWrapping;

@@ -54,6 +54,6 @@ for (let i = 0; i < 75; i++) {
   }
 }
 await writeFile(
-  new URL("../public/textures/trees/conifer-spray.png", import.meta.url),
+  new URL("../assets/texture-sources/trees/conifer-spray.png", import.meta.url),
   canvas.toBuffer("image/png"),
 );

@@ -5,10 +5,52 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#192a28" />
     <link rel="icon" href="/favicon.svg" />
+    <link rel="preload" as="image" crossorigin="anonymous" href="/textures/tanks/armor-wear.webp" />
     <title>Sloppy Tanks · Little tanks. Big mess.</title>
+    <style>
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 12px;
+        background: #192a28;
+        color: #f5faff;
+        font:
+          16px system-ui,
+          sans-serif;
+      }
+      #loading h1 {
+        margin: 0;
+        font-size: 36px;
+        letter-spacing: 3px;
+      }
+      #loading p {
+        margin: 0;
+        color: #becfca;
+      }
+      #loading button {
+        margin-top: 12px;
+        padding: 12px 24px;
+        border: 0;
+        border-radius: 6px;
+        background: #e1f79a;
+        color: #192a28;
+        font: inherit;
+        font-weight: bold;
+        cursor: pointer;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="loading" role="status" aria-live="polite">
+      <h1>SLOPPY TANKS</h1>
+      <p>Preparing your battleground…</p>
+      <noscript>This game needs JavaScript enabled to load the arena.</noscript>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

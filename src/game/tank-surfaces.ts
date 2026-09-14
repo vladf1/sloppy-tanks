@@ -8,7 +8,7 @@ const materials = new Map<THREE.MeshStandardMaterial, THREE.MeshStandardMaterial
 export async function loadTankSurface() {
   try {
     wear = await new THREE.TextureLoader().loadAsync(
-      `${import.meta.env.BASE_URL}textures/tanks/armor-wear.png`,
+      `${import.meta.env.BASE_URL}textures/tanks/armor-wear.webp`,
     );
     wear.colorSpace = THREE.SRGBColorSpace;
     wear.wrapS = wear.wrapT = THREE.RepeatWrapping;

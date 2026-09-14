@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build && node scripts/copy-artifacts.mjs",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
-    "generate:textures": "node --import tsx scripts/generate-textures.ts",
+    "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs",
+    "optimize:textures": "node scripts/optimize-textures.mjs",
+    "generate:previews": "node scripts/generate-previews.mjs",
+    "benchmark:loading": "node scripts/loading-benchmark.mjs",
     "generate:ammo": "node --import tsx scripts/generate-ammo-icons.ts",
     "generate:audio": "node --import tsx scripts/generate-audio.ts",
     "lint": "eslint . --max-warnings 0",
@@ -20,11 +23,12 @@
     "postinstall": "npm ci --prefix tools/lint"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "0.20.0",
+    "@dimforge/rapier3d": "0.20.0",
     "howler": "2.2.4",
     "three": "0.185.1"
   },
   "devDependencies": {
+    "@dimforge/rapier3d-compat": "0.20.0",
     "@eslint/js": "10.0.1",
     "@napi-rs/canvas": "^1.0.8",
     "@tweakpane/core": "2.0.5",
@@ -39,6 +43,7 @@
     "tsx": "4.23.13",
     "tweakpane": "4.0.5",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vite-plugin-wasm": "3.6.0"
   }
 }

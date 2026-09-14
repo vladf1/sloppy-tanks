@@ -205,5 +205,9 @@ for (const kind of ["siding", "shingles"] as const) {
         c.stroke();
       }
   }
-  await save("tanks/armor-wear.png", canvas);
+  await mkdir(new URL("../assets/texture-sources/tanks/", import.meta.url), { recursive: true });
+  await writeFile(
+    new URL("../assets/texture-sources/tanks/armor-wear.png", import.meta.url),
+    canvas.toBuffer("image/png"),
+  );
 }

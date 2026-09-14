@@ -5,7 +5,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://127.0.0.1:5173/");
+  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
   await page.waitForFunction(
     () =>
       document.querySelectorAll(".tank-preview").length === 3 &&
