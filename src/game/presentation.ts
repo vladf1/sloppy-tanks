@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
 import { coverDamageStage } from "./cover-model";
+import { debrisCleanupProgress } from "./debris-cleanup";
+import { addDebrisFade } from "./debris-fade";
 import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
 import { HarborScenery } from "./harbor-scenery";
@@ -100,6 +102,7 @@ export class Presentation {
   spawnCue = 0;
   playerWasAlive = false;
   debrisColor = new THREE.Color();
+  private debrisBounds = new THREE.Box3();
   get particles(): readonly Particle[] {
     return this.particleEffects.particles;
   }
@@ -163,6 +166,7 @@ export class Presentation {
               : material(0xffffff),
         MAX_FRAGMENTS,
       );
+      addDebrisFade(mesh);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
       mesh.castShadow = mesh.receiveShadow = true;
@@ -645,6 +649,7 @@ export class Presentation {
     for (const f of simulation.fragments) {
       const pos = f.body.translation();
       const q = f.body.rotation();
+      const cleanup = debrisCleanupProgress(f.life);
       if (!f.wreck) {
         const mesh = this.debrisMeshes.get(f.shape ?? "shard")!;
         if (mesh.count >= MAX_FRAGMENTS) {
@@ -652,7 +657,7 @@ export class Presentation {
         }
         this.dummy.position.set(pos.x, pos.y, pos.z);
         this.dummy.quaternion.set(q.x, q.y, q.z, q.w);
-        const scale = f.size * Math.min(1, f.life * 2);
+        const scale = f.size;
         if (f.dimensions) {
           this.dummy.scale.set(
             f.dimensions.x * scale,
@@ -663,48 +668,64 @@ export class Presentation {
           this.dummy.scale.setScalar(scale);
         }
         this.dummy.updateMatrix();
+        // Project the piece's bounds onto world Y, including its resting rotation.
+        // A flat panel should descend by its thickness, not by a whole metre.
+        const bounds = mesh.geometry.boundingBox!;
+        const e = this.dummy.matrix.elements;
+        const height =
+          Math.abs(e[1]) * (bounds.max.x - bounds.min.x) +
+          Math.abs(e[5]) * (bounds.max.y - bounds.min.y) +
+          Math.abs(e[9]) * (bounds.max.z - bounds.min.z);
+        e[13] -= cleanup * (height + 0.03);
         mesh.setMatrixAt(mesh.count, this.dummy.matrix);
+        mesh.geometry.getAttribute("debrisOpacity").setX(mesh.count, 1 - cleanup);
         mesh.setColorAt(mesh.count++, this.debrisColor.set(f.color));
         continue;
       }
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
         g = wreckModel(f.wreck, f.team ?? 0, f.part ?? "hull");
-        if (f.cleanup === "fade") {
-          g.traverse((o) => {
-            if (!isMesh(o)) {
-              return;
-            }
-            const clone = (material: THREE.Material) => {
-              const copy = material.clone();
-              copy.transparent = true;
-              copy.userData.owned = true;
-              return copy;
-            };
-            o.material = Array.isArray(o.material) ? o.material.map(clone) : clone(o.material);
-          });
-        }
+        g.traverse((o) => {
+          if (!isMesh(o)) {
+            return;
+          }
+          const clone = (material: THREE.Material) => {
+            const copy = material.clone();
+            copy.transparent = true;
+            copy.depthWrite = false;
+            copy.userData.owned = true;
+            return copy;
+          };
+          o.material = Array.isArray(o.material) ? o.material.map(clone) : clone(o.material);
+        });
         this.fragmentMeshes.set(f.id, g);
         this.worldGroup.add(g);
       }
       g.position.set(pos.x, pos.y, pos.z);
       g.quaternion.set(q.x, q.y, q.z, q.w);
-      const remaining = Math.min(1, f.life * 2);
-      g.scale.setScalar(VEHICLES[f.wreck].scale * (f.cleanup === "fade" ? 1 : remaining));
-      if (f.cleanup === "fade") {
-        g.traverse((o) => {
-          if (!isMesh(o)) {
-            return;
-          }
-          const materials = Array.isArray(o.material) ? o.material : [o.material];
-          for (const material of materials) {
-            material.opacity = remaining;
-          }
-          o.castShadow = remaining === 1;
-        });
+      const remaining = 1 - cleanup;
+      g.scale.setScalar(VEHICLES[f.wreck].scale);
+      if (cleanup > 0) {
+        if (g.userData.sinkDepth === undefined) {
+          this.debrisBounds.setFromObject(g);
+          g.userData.sinkDepth = this.debrisBounds.max.y - this.debrisBounds.min.y + 0.03;
+        }
+        g.position.y -= cleanup * g.userData.sinkDepth;
       }
+      g.traverse((o) => {
+        if (!isMesh(o)) {
+          return;
+        }
+        const materials = Array.isArray(o.material) ? o.material : [o.material];
+        for (const material of materials) {
+          material.opacity = remaining;
+        }
+        o.castShadow = remaining === 1;
+      });
     }
     for (const mesh of this.debrisMeshes.values()) {
+      (mesh.geometry.getAttribute("debrisOpacity") as THREE.InstancedBufferAttribute).needsUpdate =
+        true;
       updateInstances(mesh);
     }
   }

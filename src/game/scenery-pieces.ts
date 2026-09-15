@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GROUP, Random } from "./data";
+import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { DEBRIS_MATERIALS, trackDebrisContacts, type DebrisMaterial } from "./debris-physics";
 import type { Simulation } from "./simulation";
 import { TOWER_BASE } from "./tower-layout";
@@ -54,7 +55,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
         ? RAPIER.ColliderDesc.cylinder(h / 2, w / 2)
         : RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2)
       )
-        .setCollisionGroups(GROUP.fragment)
+        .setCollisionGroups(GROUP.pushableDebris)
         .setMass(Math.max(0.18, w * h * d * (material === "metal" ? 0.65 : 0.35)))
         .setFriction(DEBRIS_MATERIALS[material].friction)
         .setRestitution(DEBRIS_MATERIALS[material].restitution),
@@ -81,7 +82,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       dimensions: { x: w, y: h, z: d },
       material,
       sourceKind: cover.kind,
-      life: 10,
+      life: 9.5 + DEBRIS_CLEANUP_SECONDS,
       expiresAt: sim.elapsed + 18,
     });
   };

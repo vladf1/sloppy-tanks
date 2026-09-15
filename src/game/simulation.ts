@@ -19,6 +19,7 @@ import type { Difficulty } from "./difficulty";
 import { DEBRIS_MATERIALS, drainDebrisContacts, trackDebrisContacts } from "./debris-physics";
 import { updateMovableCover } from "./movable-cover";
 import { createFragment } from "./fragments";
+import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { newMatch, tickMatch } from "./match";
 import { MAPS } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
@@ -374,6 +375,12 @@ export class Simulation {
     for (let i = this.fragments.length - 1; i >= 0; i--) {
       const f = this.fragments[i];
       f.life -= STEP;
+      if (f.life <= DEBRIS_CLEANUP_SECONDS) {
+        const collider = f.body.collider(0);
+        if (collider.collisionGroups() !== GROUP.fragment) {
+          collider.setCollisionGroups(GROUP.fragment);
+        }
+      }
       if (f.life <= 0) {
         this.world.removeRigidBody(f.body);
         this.fragments.splice(i, 1);

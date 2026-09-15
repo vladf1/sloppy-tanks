@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GROUP } from "./data";
+import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import type { Simulation } from "./simulation";
 import type { Fragment } from "./types";
 
@@ -44,7 +45,7 @@ export function createFragment(
   simulation.fragments.push({
     id: simulation.nextId++,
     body,
-    life: simulation.rng.range(1.6, 2.6) * lifetimeScale,
+    life: simulation.rng.range(1.6, 2.6) * lifetimeScale + DEBRIS_CLEANUP_SECONDS - 0.5,
     shape,
     size,
     color,

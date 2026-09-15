@@ -190,7 +190,6 @@ export interface Fragment {
   expiresAt?: number;
   wreck?: VehicleKind;
   part?: WreckPart;
-  cleanup?: "shrink" | "fade";
   team?: Team;
 }
 export type DamageCause = Weapon | "mine" | "drum" | "interception" | "explosion";

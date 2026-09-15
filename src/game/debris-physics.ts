@@ -1,4 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
+import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import type { Simulation } from "./simulation";
 import type { Cover, Shot, Vec2 } from "./types";
 
@@ -28,7 +29,7 @@ export function trackDebrisContacts(
  * Sleeping bodies are deliberately included, and this never consumes combat RNG. */
 export function blastDebris(sim: Simulation, origin: Vec2, radius: number, power: number): void {
   for (const fragment of sim.fragments) {
-    if (fragment.life <= 0.5) {
+    if (fragment.life <= DEBRIS_CLEANUP_SECONDS) {
       continue;
     }
     const lever = fragment.wreck

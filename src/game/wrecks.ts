@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { trackDebrisContacts } from "./debris-physics";
+import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { ARENA, GROUP, VEHICLES } from "./data";
 import type { Simulation } from "./simulation";
 import { GRAVITY } from "./simulation-rules";
@@ -107,7 +108,7 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
         size[1] * scale,
         size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
-        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.pushableWreck)
+        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.pushableDebris)
         .setMass(part === "hull" ? 1.2 : 0.5)
         .setFriction(0.95)
         .setRestitution(0.12),
@@ -115,10 +116,12 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
     );
     const id = simulation.nextId++;
     trackDebrisContacts(body, collider, id, "metal");
+    // Preserve the old random cleanup-choice draw in the seeded combat stream.
+    simulation.rng.next();
     simulation.fragments.push({
       id,
       body,
-      life: flight + 3.2,
+      life: flight + 2.7 + DEBRIS_CLEANUP_SECONDS,
       expiresAt: simulation.elapsed + 18,
       material: "metal",
       size: 1,
@@ -126,7 +129,6 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
       wreck: tank.kind,
       team: tank.team,
       part,
-      cleanup: simulation.rng.next() < 0.5 ? "shrink" : "fade",
     });
   }
 }

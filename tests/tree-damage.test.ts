@@ -64,7 +64,7 @@ test("falling branches start at the exact frozen tree pose, retain foliage, and 
     const meshes = source.children as THREE.Mesh[];
     for (const [i, child] of (branch.model.children as THREE.Mesh[]).entries()) {
       assert.equal(child.geometry, meshes[i].geometry, "falling copies borrow existing geometry");
-      assert.equal(child.material, meshes[i].material);
+      assert.notEqual(child.material, meshes[i].material, "fading must not alter standing trees");
     }
     const initialY = branch.model.position.y;
     debris.update(0.1);
@@ -73,6 +73,11 @@ test("falling branches start at the exact frozen tree pose, retain foliage, and 
     assert.equal(branch.landed, true);
     assert.equal(branch.model.position.y, 0.2);
     assert.ok(branch.model.scale.y < branch.scale.y);
+    const settledScale = branch.model.scale.clone();
+    debris.update(2.4);
+    assert.deepEqual(branch.model.scale, settledScale, "cleanup never shrinks foliage");
+    assert.ok(branch.model.position.y < 0.2);
+    assert.ok(branch.materials.every((material) => material.opacity < 1));
     debris.update(6);
     assert.equal(debris.branches.length, 0);
     assert.equal(debris.group.children.length, 0);

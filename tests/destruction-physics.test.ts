@@ -2,6 +2,7 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { blastDebris } from "../src/game/debris-physics";
+import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";
 import { GROUP, Random, STEP } from "../src/game/data";
 import { Simulation } from "../src/game/simulation";
 import { stepProjectiles } from "../src/game/projectiles";
@@ -206,7 +207,7 @@ test("authored scenery emits a few material-specific pieces with matching dimens
         assert.equal(f.sourceKind, kind);
         assert.ok(f.dimensions);
         assert.ok(f.body.isDynamic());
-        assert.equal(f.body.collider(0).collisionGroups(), GROUP.fragment);
+        assert.equal(f.body.collider(0).collisionGroups(), GROUP.pushableDebris);
         assert.equal(f.body.isCcdEnabled(), false);
       }
       tick(s, 4);
@@ -219,7 +220,7 @@ test("authored scenery emits a few material-specific pieces with matching dimens
   }
 });
 
-test("physical pieces stay within the shared body budget, cannot hit tanks or intercept shells, and reset cleanly", () => {
+test("physical pieces stay within the shared body budget, cannot intercept shells, and reset cleanly", () => {
   const s = arena();
   try {
     const initial = s.world.bodies.len();
@@ -432,25 +433,25 @@ test("tanks physically shove landed hulls and turrets without damage, and wreck 
 test("only large wrecks accept tank contact; wrecks remain excluded from projectile and steering queries", () => {
   const allows = (a: number, b: number) =>
     ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
-  assert.equal(allows(GROUP.pushableWreck, GROUP.tank), true);
+  assert.equal(allows(GROUP.pushableDebris, GROUP.tank), true);
   for (const group of [
     GROUP.fragment,
-    GROUP.pushableWreck,
+    GROUP.pushableDebris,
     GROUP.coverQuery,
     GROUP.steeringQuery,
   ]) {
-    assert.equal(allows(GROUP.pushableWreck, group), false);
+    assert.equal(allows(GROUP.pushableDebris, group), false);
   }
   assert.equal(allows(GROUP.fragment, GROUP.tank), false);
-  assert.equal(allows(GROUP.pushableWreck, GROUP.ground), true);
-  assert.equal(allows(GROUP.pushableWreck, GROUP.movableCover), true);
+  assert.equal(allows(GROUP.pushableDebris, GROUP.ground), true);
+  assert.equal(allows(GROUP.pushableDebris, GROUP.movableCover), true);
   const s = arena();
   try {
     wreck(s);
     for (const f of s.fragments) {
       assert.equal(
         f.body.collider(0).collisionGroups(),
-        f.part === "barrel" ? GROUP.fragment : GROUP.pushableWreck,
+        f.part === "barrel" ? GROUP.fragment : GROUP.pushableDebris,
       );
       park(f.body, 0, 1);
     }
@@ -469,5 +470,59 @@ test("only large wrecks accept tank contact; wrecks remain excluded from project
     }
   } finally {
     s.dispose();
+  }
+});
+
+test("a scout pushes fallen logs, beams, panels and drum pieces while small chips stay nonblocking", () => {
+  for (const [kind, shape] of [
+    ["tree", "log"],
+    ["timber", "beam"],
+    ["cargo", "panel"],
+    ["drum", "drum-shell"],
+    ["drum", "drum-lid"],
+  ] as const) {
+    const s = arena();
+    try {
+      const c = cover(s, kind);
+      s.damageCover(c, 999, 999, 0);
+      const f = s.fragments.find((fragment) => fragment.shape === shape)!;
+      for (const other of s.fragments) park(other.body, 30, 1);
+      // Lay tall panels and logs flat, exercising ground contact rather than upright props.
+      const tipped = shape === "log" || shape === "panel";
+      f.body.setRotation(
+        { x: tipped ? Math.SQRT1_2 : 0, y: 0, z: 0, w: tipped ? Math.SQRT1_2 : 1 },
+        true,
+      );
+      park(f.body, 0, 2);
+      f.body.wakeUp();
+      tick(s, 1.5);
+      const startX = f.body.translation().x;
+      const tank = s.addTank(0, true, "scout");
+      tank.heading = Math.PI / 2;
+      park(tank.body, -4, 0.65);
+      const hp = tank.hp;
+      for (let i = 0; i < 120; i++) s.step({ ...idleCommand(), moveX: 1 });
+      assert.ok(f.body.translation().x > startX + 1, `${shape} must move through tank contact`);
+      assert.ok(tank.body.translation().x > 0, `${shape} must not trap the scout`);
+      assert.ok(tank.body.translation().y < 0.8, "tank stays grounded");
+      assert.equal(tank.hp, hp);
+      s.fragment(0, 0, 0x999999, 0.4);
+      assert.equal(s.fragments.at(-1)!.body.collider(0).collisionGroups(), GROUP.fragment);
+      f.life = DEBRIS_CLEANUP_SECONDS + STEP / 2;
+      s.step();
+      assert.equal(
+        f.body.collider(0).collisionGroups(),
+        GROUP.fragment,
+        "sinking pieces cannot block tanks",
+      );
+      const life = f.life;
+      const position = f.body.translation();
+      blastDebris(s, position, 5, 100);
+      assert.equal(f.life, life, "cleanup cannot be restarted by another blast");
+      tick(s, 1.1);
+      assert.equal(f.body.isValid(), false);
+    } finally {
+      s.dispose();
+    }
   }
 });
