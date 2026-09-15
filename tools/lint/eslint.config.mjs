@@ -5,7 +5,7 @@ import prettier from "eslint-config-prettier";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "artifacts/**", "node_modules/**", "public/**"] },
+  { ignores: ["dist/**", "dist-cloudflare/**", "artifacts/**", "node_modules/**", "public/**"] },
   js.configs.recommended,
   {
     languageOptions: { globals: { ...globals.browser, ...globals.node } },

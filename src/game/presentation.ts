@@ -30,9 +30,9 @@ import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
 import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
-import { setTreeDamage, setTreeDestroyed } from "./tree-models";
+import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
-import type { Fragment, SimEvent } from "./types";
+import type { Cover, Fragment, SimEvent } from "./types";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK } from "./view-settings";
 interface PickupModel extends THREE.Group {
@@ -48,6 +48,25 @@ function batchTank(model: TankModel): void {
   batch(d.hull);
   batch(d.turret);
   batch(d.barrel);
+}
+/** Move only the cover root; batched children keep their cached local matrices. */
+function physicalCoverModel(cover: Cover): THREE.Group {
+  const m = cover.motion;
+  const group = coverModel(
+    m ? { ...cover, x: m.originX, z: m.originZ, w: m.w, d: m.d } : cover,
+    "full",
+    coverDamageStage(cover),
+  );
+  if (m) {
+    for (const child of group.children) {
+      child.position.y -= cover.h / (2 * group.scale.y);
+    }
+  }
+  batch(group);
+  if (!m) {
+    freezeStatic(group);
+  }
+  return group;
 }
 export class Presentation {
   renderer: THREE.WebGLRenderer;
@@ -118,7 +137,14 @@ export class Presentation {
     this.scene.add(this.tracks.mesh);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
+    const woodPiece = sidingBox(1, 1, 1, 0xffffff);
+    const trunk = trunkFragment();
     const fragmentGeometry = {
+      panel: woodPiece.geometry,
+      beam: woodPiece.geometry,
+      log: trunk.geometry,
+      "drum-shell": new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, true),
+      "drum-lid": new THREE.CylinderGeometry(0.5, 0.5, 1, 12),
       wood: woodFragment.geometry,
       armor: box(1.25, 0.16, 0.85, 0xffffff).geometry,
       wheel: new THREE.CylinderGeometry(0.48, 0.48, 0.28, 10),
@@ -128,7 +154,13 @@ export class Presentation {
     for (const shape of Object.keys(fragmentGeometry) as NonNullable<Fragment["shape"]>[]) {
       const mesh = new THREE.InstancedMesh(
         fragmentGeometry[shape],
-        shape === "wood" ? woodFragment.material : material(0xffffff),
+        shape === "wood"
+          ? woodFragment.material
+          : shape === "panel" || shape === "beam"
+            ? woodPiece.material
+            : shape === "log"
+              ? trunk.material
+              : material(0xffffff),
         MAX_FRAGMENTS,
       );
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -244,11 +276,9 @@ export class Presentation {
     }
     this.playerWasAlive = false;
     for (const cover of simulation.covers) {
-      const group = coverModel(cover, "full", coverDamageStage(cover));
-      batch(group);
+      const group = physicalCoverModel(cover);
       this.coverMeshes.set(cover.id, group);
       this.worldGroup.add(group);
-      freezeStatic(group);
     }
     for (const tank of simulation.tanks) {
       const model = tankModel(tank.kind, tank.team);
@@ -329,6 +359,10 @@ export class Presentation {
     return Math.atan2(direction.x, direction.y);
   }
   event(event: SimEvent, playerHit = false): void {
+    // Contact telemetry is available for future material-specific sounds/effects.
+    if (event.type === "debris-impact") {
+      return;
+    }
     if (event.type === "notice") {
       return;
     }
@@ -560,11 +594,15 @@ export class Presentation {
           disposeOwned(group);
           this.worldGroup.remove(group);
         }
-        group = coverModel(cover, "full", damageStage);
-        batch(group);
+        group = physicalCoverModel(cover);
         this.coverMeshes.set(cover.id, group);
         this.worldGroup.add(group);
-        freezeStatic(group);
+      }
+      if (cover.motion) {
+        const p = cover.body.translation();
+        const q = cover.body.rotation();
+        group.position.set(p.x, p.y, p.z);
+        group.quaternion.set(q.x, q.y, q.z, q.w);
       }
       if (cover.kind === "tree") {
         if (cover.alive) {
@@ -614,7 +652,16 @@ export class Presentation {
         }
         this.dummy.position.set(pos.x, pos.y, pos.z);
         this.dummy.quaternion.set(q.x, q.y, q.z, q.w);
-        this.dummy.scale.setScalar(f.size * Math.min(1, f.life * 2));
+        const scale = f.size * Math.min(1, f.life * 2);
+        if (f.dimensions) {
+          this.dummy.scale.set(
+            f.dimensions.x * scale,
+            f.dimensions.y * scale,
+            f.dimensions.z * scale,
+          );
+        } else {
+          this.dummy.scale.setScalar(scale);
+        }
         this.dummy.updateMatrix();
         mesh.setMatrixAt(mesh.count, this.dummy.matrix);
         mesh.setColorAt(mesh.count++, this.debrisColor.set(f.color));

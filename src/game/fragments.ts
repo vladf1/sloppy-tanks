@@ -36,7 +36,8 @@ export function createFragment(
       size / 2,
     )
       .setCollisionGroups(GROUP.fragment)
-      .setRestitution(0.25)
+      .setFriction(shape === "wood" ? 0.65 : 0.9)
+      .setRestitution(shape === "wood" ? 0.16 : 0.12)
       .setMass(0.1),
     body,
   );

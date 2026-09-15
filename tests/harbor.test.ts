@@ -84,7 +84,7 @@ test("cargo destruction removes collision and opens its navigation footprint; co
     assert.equal(cargo.alive, false);
     assert.equal(sim.coverByCollider.has(handle), false);
     assert.equal(sim.nav.blocked[sim.nav.index(cargo)], 0);
-    assert.ok(sim.fragments.some((f) => f.shape === "wood"));
+    assert.ok(sim.fragments.some((f) => f.shape === "panel" && f.material === "wood"));
     sim.damageCover(container, 10000, sim.human.id, sim.humanTeam);
     assert.equal(container.alive, true);
     assert.equal(sim.nav.blocked[sim.nav.index(container)], 1);

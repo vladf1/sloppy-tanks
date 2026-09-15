@@ -1,3 +1,4 @@
+import { DRAGON_TOOTH_SCALE } from "./quarry-barrier-shapes";
 import { ARENA } from "./data";
 import type { CoverDef } from "./arena";
 
@@ -46,7 +47,14 @@ export function quarryLayout(): CoverDef[] {
       [45.4, -7.9, 1.9, 1.9],
       [45.05, -4.75, 2, 2.05],
     ]) {
-      add("teeth", side * x, side * z, width, width, height);
+      add(
+        "teeth",
+        side * x,
+        side * z,
+        width * DRAGON_TOOTH_SCALE,
+        width * DRAGON_TOOTH_SCALE,
+        height * DRAGON_TOOTH_SCALE,
+      );
     }
     // A close-set steel line ties into each midfield rock shoulder.
     for (let i = 0; i < 4; i++) {

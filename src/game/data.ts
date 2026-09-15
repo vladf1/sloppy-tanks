@@ -178,6 +178,7 @@ export const GROUP = {
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   toothContact: 0x00200001, // Planar tank blocking; excluded from projectile queries.
   cover: 0x0002000b,
-  ground: 0x00040009,
+  movableCover: 0x0002000f, // Cover membership also contacts the ground.
+  ground: 0x0004000b, // Accept movable cover as well as tanks and debris.
   fragment: 0x00080006,
 };

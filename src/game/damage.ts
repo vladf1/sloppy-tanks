@@ -1,3 +1,5 @@
+import { blastDebris } from "./debris-physics";
+import { breakScenery } from "./scenery-pieces";
 import { DIFFICULTIES } from "./difficulty";
 import { clearAmmo } from "./ammunition";
 import { COMBAT, MINE } from "./combat-rules";
@@ -75,6 +77,7 @@ export function damageTank(
     awardKill(simulation.match, tank.team, team, owner === tank.id);
   }
   simulation.checkSoloResult();
+  blastDebris(simulation, position, 3, 60);
   breakTank(simulation, tank);
   simulation.events.push({
     type: "death",
@@ -105,7 +108,9 @@ export function damageCover(
   }
   cover.alive = false;
   simulation.destroyed++;
-  simulation.coverByCollider.delete(cover.collider.handle);
+  for (let i = 0; i < cover.body.numColliders(); i++) {
+    simulation.coverByCollider.delete(cover.body.collider(i).handle);
+  }
   simulation.world.removeRigidBody(cover.body);
   simulation.nav.rebuild(simulation.covers, cover);
   simulation.events.push({
@@ -118,25 +123,16 @@ export function damageCover(
     size: cover.kind === "tower" ? 7 : 2,
     color: cover.color,
   });
-  for (
-    let i = 0;
-    i < (cover.kind === "tower" ? 10 : cover.kind === "tree" ? 9 : cover.kind === "timber" ? 7 : 3);
-    i++
-  ) {
-    simulation.fragment(
-      cover.x + simulation.rng.range(-cover.w / 2, cover.w / 2),
-      cover.z + simulation.rng.range(-cover.d / 2, cover.d / 2),
-      cover.kind === "tree" ? 0x825333 : cover.color,
-      simulation.rng.range(0.3, 0.7),
-      cover.kind === "tower" || cover.kind === "tree" || cover.kind === "cargo"
-        ? "wood"
-        : cover.kind === "timber" || cover.kind === "house"
-          ? "track"
-          : cover.kind === "drum"
-            ? "armor"
-            : "shard",
-      cover.kind === "tree" ? 3 : cover.kind === "timber" ? 2 : 1,
-    );
+  if (!breakScenery(simulation, cover)) {
+    for (let i = 0; i < 3; i++) {
+      simulation.fragment(
+        cover.x + simulation.rng.range(-cover.w / 2, cover.w / 2),
+        cover.z + simulation.rng.range(-cover.d / 2, cover.d / 2),
+        cover.color,
+        simulation.rng.range(0.3, 0.7),
+        cover.kind === "house" ? "track" : "shard",
+      );
+    }
   }
   if (cover.kind === "tower") {
     // One authored support object; its destruction leaves two flank foundations and an open middle.
@@ -179,6 +175,7 @@ export function explode(
   cause: DamageCause = "explosion",
 ): void {
   simulation.events.push({ type: "explosion", ...position, size: radius });
+  blastDebris(simulation, position, radius, damage);
   // Blast-triggered mines retain the initiator of this chain, like drums.
   const chained = simulation.mines.filter((m) => distance(position, m) < radius);
   simulation.mines = simulation.mines.filter((m) => distance(position, m) >= radius);

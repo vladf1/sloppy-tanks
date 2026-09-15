@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sloppy Tanks destruction checks</title>
+    <style>
+      body {
+        margin: 0;
+        background: #a9997b;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        padding: 12px;
+        background: #17242bec;
+        color: white;
+        font: 13px sans-serif;
+      }
+      button {
+        padding: 8px;
+        margin: 3px;
+      }
+      output {
+        display: block;
+        white-space: pre-wrap;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas></canvas>
+    <aside>
+      <button id="reset">Reset showcase</button>
+      <button id="break">Break scenery</button>
+      <button id="step">Advance one second</button>
+      <button id="shot">Shoot concrete</button>
+      <button id="blast">Blast concrete</button>
+      <button id="steel">Blast hedgehog</button>
+      <button id="wreck">Land a wreck</button>
+      <button id="chain">Drum beside wreck</button>
+      <output>Loading…</output>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { stepProjectiles } from "../src/game/projectiles";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      await RAPIER.init();
+      await loadTankSurface();
+      const sim = new Simulation(731);
+      const view = new Presentation(document.querySelector("canvas"));
+      const output = document.querySelector("output");
+      let tooth, turret, hedgehog;
+      function add(kind, x, z, w, h, d, color = 0x92734e) {
+        return sim.addCover({
+          kind,
+          x,
+          z,
+          w,
+          h,
+          d,
+          color,
+          hp: kind === "teeth" || kind === "hedgehog" ? Infinity : 40,
+        });
+      }
+      function advance(n) {
+        for (let i = 0; i < n; i++) sim.step();
+        for (const event of sim.events.splice(0)) view.event(event);
+        output.textContent = `${sim.fragments.length}/${sim.maxFragments} pieces · ${sim.world.bodies.len()} bodies · concrete x=${tooth.x.toFixed(2)}, speed=${Math.hypot(...Object.values(tooth.body.linvel())).toFixed(2)} · nav ${sim.nav.version}`;
+      }
+      function reset() {
+        sim.mapMode = "quarry";
+        sim.reset(2);
+        for (const c of sim.covers) sim.world.removeRigidBody(c.body);
+        sim.covers = [];
+        sim.movableCovers = [];
+        sim.coverByCollider.clear();
+        sim.pickups = [];
+        for (const t of sim.tanks) {
+          t.body.setTranslation({ x: 50, y: 0.65, z: 50 }, true);
+          t.previous = { x: 50, z: 50 };
+          t.brain.decision = 999;
+          t.brain.goal = { x: 50, z: 50 };
+          t.protection = 999;
+          t.cooldown = 999;
+        }
+        add("cargo", -8, 0, 2.4, 2.3, 2.5);
+        add("timber", -3, 0, 3, 2.8, 0.8);
+        add("tree", 3, 0, 2.5, 7, 2.5, 0x389b58);
+        tooth = add("teeth", 8, 0, 1.89, 1.89, 1.89);
+        hedgehog = add("hedgehog", 8, 6, 2.32, 2.16, 2.56);
+        add("drum", -6, 7, 1.2, 1.7, 1.2, 0xc8763c);
+        add("tower", 3, -9, 6.5, 8.5, 5.5, 0xb29663);
+        sim.nav.rebuild(sim.covers);
+        sim.world.step();
+        view.reset(sim);
+        sim.start();
+        turret = undefined;
+        advance(0);
+      }
+      document.querySelector("#reset").onclick = reset;
+      document.querySelector("#break").onclick = () => {
+        for (const c of [...sim.covers]) if (c.destructible) sim.damageCover(c, 999, 999, 0);
+        advance(20);
+      };
+      document.querySelector("#step").onclick = () => advance(60);
+      document.querySelector("#shot").onclick = () => {
+        sim.shots.push({
+          id: sim.nextId++,
+          owner: 999,
+          team: 0,
+          x: tooth.x - 2,
+          z: tooth.z,
+          vx: 25,
+          vz: 0,
+          life: 2,
+          damage: 40,
+          bounces: 0,
+          piercing: 0,
+          weapon: "standard",
+        });
+        stepProjectiles(sim, 0.2);
+        advance(8);
+      };
+      document.querySelector("#blast").onclick = () => {
+        sim.explode({ x: tooth.x - 1, z: tooth.z }, 5, 100, 999, 0);
+        advance(25);
+      };
+      document.querySelector("#steel").onclick = () => {
+        sim.explode({ x: hedgehog.x - 1, z: hedgehog.z }, 5, 80, 999, 0);
+        advance(25);
+        output.textContent += ` · steel x=${hedgehog.x.toFixed(2)}, speed=${Math.hypot(...Object.values(hedgehog.body.linvel())).toFixed(2)}`;
+      };
+      document.querySelector("#wreck").onclick = () => {
+        const t = sim.addTank(1, false, "balanced", 0);
+        t.body.setTranslation({ x: 0, y: 0.65, z: 7 }, true);
+        t.previous = { x: 0, z: 7 };
+        t.protection = 0;
+        sim.damageTank(t, 1000, 999, 0);
+        t.respawn = 999;
+        turret = sim.fragments.find((f) => f.part?.startsWith("turret"));
+        advance(240);
+      };
+      document.querySelector("#chain").onclick = () => {
+        if (!turret || !turret.body.isValid()) return;
+        const p = turret.body.translation();
+        const drum = add("drum", p.x + 1.4, p.z, 1.2, 1.7, 1.2, 0xc8763c);
+        sim.damageCover(drum, 999, 999, 0);
+        advance(15);
+      };
+      reset();
+      function draw() {
+        view.render(sim, 1, 1 / 60, true);
+        view.camera.position.set(17, 22, 30);
+        view.camera.lookAt(0, 1, 0);
+        view.renderer.render(view.scene, view.camera);
+        requestAnimationFrame(draw);
+      }
+      requestAnimationFrame(draw);
+      addEventListener("resize", () => view.resize());
+    </script>
+  </body>
+</html>

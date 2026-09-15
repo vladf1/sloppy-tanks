@@ -16,11 +16,17 @@ import {
   VEHICLES,
 } from "./data";
 import type { Difficulty } from "./difficulty";
+import { DEBRIS_MATERIALS, drainDebrisContacts, trackDebrisContacts } from "./debris-physics";
+import { updateMovableCover } from "./movable-cover";
 import { createFragment } from "./fragments";
 import { newMatch, tickMatch } from "./match";
 import { MAPS } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
-import { dragonToothVariant, quarryBarrierCollider } from "./quarry-barrier-shapes";
+import {
+  DRAGON_TOOTH_MASS,
+  dragonToothVariant,
+  quarryBarrierColliders,
+} from "./quarry-barrier-shapes";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -45,6 +51,8 @@ import { rankIndex, rankStats, repairVeteran } from "./veterancy";
 import { collectPickup, fireWeapon, placeMine, stepMines, stepProjectiles } from "./weapons";
 export class Simulation {
   world!: RAPIER.World;
+  contactEvents!: RAPIER.EventQueue;
+  movableCovers: Cover[] = [];
   rng: Random;
   tanks: Tank[] = [];
   covers: Cover[] = [];
@@ -102,6 +110,9 @@ export class Simulation {
   }
   reset(count = this.roundCount): void {
     this.world?.free();
+    this.contactEvents?.free();
+    this.contactEvents = new RAPIER.EventQueue(true);
+    this.movableCovers = [];
     this.rng = new Random(this.seed);
     this.world = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
     this.world.timestep = STEP;
@@ -183,31 +194,50 @@ export class Simulation {
     color: number;
     debrisSeed?: number;
   }): Cover {
+    const movable = c.kind === "teeth" || c.kind === "hedgehog";
     const body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(c.x, c.h / 2, c.z),
+      (movable
+        ? RAPIER.RigidBodyDesc.dynamic()
+            .setCanSleep(true)
+            .setSleeping(true)
+            .setLinearDamping(0.2)
+            .setAngularDamping(0.4)
+        : RAPIER.RigidBodyDesc.fixed()
+      ).setTranslation(c.x, c.h / 2, c.z),
     );
-    let shape =
+    let shapes =
       c.kind === "teeth" || c.kind === "hedgehog"
-        ? quarryBarrierCollider(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z))
-        : RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2);
+        ? quarryBarrierColliders(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z))
+        : [RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)];
     if (c.kind === "rock") {
       const rock = quarryRockShape(c.w, c.h, c.d, quarryRockVariant(c.x, c.z));
       for (let i = 1; i < rock.positions.length; i += 3) {
         rock.positions[i] -= c.h / 2;
       }
-      shape = RAPIER.ColliderDesc.trimesh(rock.positions, rock.indices);
+      shapes = [RAPIER.ColliderDesc.trimesh(rock.positions, rock.indices)];
     }
-    const collider = this.world.createCollider(
-      shape.setCollisionGroups(GROUP.cover).setFriction(0.4),
-      body,
+    const surface = c.kind === "hedgehog" ? "metal" : "concrete";
+    const colliders = shapes.map((shape) =>
+      this.world.createCollider(
+        movable
+          ? shape
+              .setCollisionGroups(GROUP.movableCover)
+              .setMass((c.kind === "teeth" ? DRAGON_TOOTH_MASS : 6) / shapes.length)
+              .setFriction(DEBRIS_MATERIALS[surface].friction)
+              .setRestitution(DEBRIS_MATERIALS[surface].restitution)
+          : shape.setCollisionGroups(GROUP.cover).setFriction(0.4),
+        body,
+      ),
     );
+    const collider = colliders[0];
     if (c.kind === "teeth") {
       // Tanks use the navigation footprint so the slope cannot lift their planar hulls.
       // Shells still hit only the visible pyramid, including its open upper shoulders.
       this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)
           .setCollisionGroups(GROUP.toothContact)
-          .setFriction(0.4),
+          .setMass(0)
+          .setFriction(0.8),
         body,
       );
     }
@@ -220,8 +250,27 @@ export class Simulation {
       body,
       collider,
     };
+    if (movable) {
+      cover.motion = {
+        originX: c.x,
+        originZ: c.z,
+        w: c.w,
+        d: c.d,
+        x: c.x,
+        z: c.z,
+        navW: c.w,
+        navD: c.d,
+        checkAt: 0,
+      };
+      this.movableCovers.push(cover);
+      for (const part of colliders) {
+        trackDebrisContacts(body, part, cover.id, surface);
+      }
+    }
     this.covers.push(cover);
-    this.coverByCollider.set(collider.handle, cover);
+    for (const part of colliders) {
+      this.coverByCollider.set(part.handle, cover);
+    }
     return cover;
   }
   addTank(team: Team, human: boolean, kind: VehicleKind, slot = 0): Tank {
@@ -295,7 +344,9 @@ export class Simulation {
         placeMine(this, tank);
       }
     }
-    this.world.step();
+    this.world.step(this.contactEvents);
+    drainDebrisContacts(this);
+    updateMovableCover(this);
     stepProjectiles(this, STEP, true);
     stepMines(this, STEP);
     for (const tank of this.tanks) {
@@ -485,6 +536,7 @@ export class Simulation {
     };
   }
   dispose(): void {
+    this.contactEvents.free();
     this.world.free();
   }
 }

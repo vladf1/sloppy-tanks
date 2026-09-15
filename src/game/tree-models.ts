@@ -426,3 +426,12 @@ export function setTreeDamage(
   }
   tree.userData.branchDamageStage = stage;
 }
+
+/** Shared bark and exposed end grain for instanced physical trunk sections. */
+export function trunkFragment() {
+  return new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.5, 1, 8), [
+    surface("bark", 0xffffff),
+    surface("rings", 0xffffff),
+    surface("rings", 0xffffff),
+  ]);
+}

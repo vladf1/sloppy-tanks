@@ -1,5 +1,8 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 
+export const DRAGON_TOOTH_SCALE = 0.9;
+export const DRAGON_TOOTH_MASS = 9.6 * DRAGON_TOOTH_SCALE ** 3;
+
 // Narrow lifting crowns and pointed castings, with imperfect field orientation.
 const TOOTH_PROFILES = [
   { yaw: -0.24, topScale: 0.12 },
@@ -40,8 +43,8 @@ export const HEDGEHOG_BEAMS = [
 ] as const;
 
 /** Match sloping concrete and open steel shapes, so shots pass through visible gaps.
- * Navigation still uses the full tank-blocking footprint. Static trimeshes cost no dynamics. */
-export function quarryBarrierCollider(
+ * Each steel flange/web is convex, preserving the open gaps on a dynamic body. */
+export function quarryBarrierColliders(
   kind: "teeth" | "hedgehog",
   w: number,
   h: number,
@@ -57,17 +60,16 @@ export function quarryBarrierCollider(
         }
       }
     }
-    return RAPIER.ColliderDesc.convexHull(new Float32Array(points))!;
+    return [RAPIER.ColliderDesc.convexHull(new Float32Array(points))!];
   }
-  const vertices: number[] = [];
-  const indices: number[] = [];
+  const shapes: RAPIER.ColliderDesc[] = [];
   for (const beam of HEDGEHOG_BEAMS) {
     for (const [offset, width, depth] of [
       [0, 0.12, 0.44],
       [-0.22, 0.1, 0.52],
       [0.22, 0.1, 0.52],
     ]) {
-      const first = vertices.length / 3;
+      const vertices: number[] = [];
       for (const z of [-depth / 2, depth / 2]) {
         for (const y of [-beam.length / 2, beam.length / 2]) {
           for (const x of [-width / 2, width / 2]) {
@@ -82,13 +84,8 @@ export function quarryBarrierCollider(
           }
         }
       }
-      for (const index of [
-        0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1,
-        3, 5, 3, 7, 5,
-      ]) {
-        indices.push(first + index);
-      }
+      shapes.push(RAPIER.ColliderDesc.convexHull(new Float32Array(vertices))!);
     }
   }
-  return RAPIER.ColliderDesc.trimesh(new Float32Array(vertices), new Uint32Array(indices));
+  return shapes;
 }

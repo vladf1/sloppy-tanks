@@ -1,4 +1,5 @@
 import type RAPIER from "@dimforge/rapier3d-compat";
+import type { DebrisMaterial } from "./debris-physics";
 import type { BotPersonality } from "./bot-personalities";
 export type Team = 0 | 1;
 export type VehicleKind = "scout" | "balanced" | "heavy";
@@ -114,6 +115,18 @@ export interface Cover extends Vec2 {
   color: number;
   /** Chosen at collapse so rubble stays stable when its model is rebuilt. */
   debrisSeed?: number;
+  /** Original casting dimensions and last navigation footprint for movable concrete. */
+  motion?: {
+    originX: number;
+    originZ: number;
+    w: number;
+    d: number;
+    x: number;
+    z: number;
+    navW: number;
+    navD: number;
+    checkAt: number;
+  };
 }
 /** Planar projectile state. vx/vz are metres per second; life is remaining seconds. */
 export interface Shot extends Vec2 {
@@ -160,7 +173,21 @@ export interface Fragment {
   life: number;
   size: number;
   color: number;
-  shape?: "armor" | "wheel" | "track" | "shard" | "wood";
+  shape?:
+    | "armor"
+    | "wheel"
+    | "track"
+    | "shard"
+    | "wood"
+    | "panel"
+    | "beam"
+    | "log"
+    | "drum-shell"
+    | "drum-lid";
+  dimensions?: { x: number; y: number; z: number };
+  material?: DebrisMaterial;
+  sourceKind?: CoverKind;
+  expiresAt?: number;
   wreck?: VehicleKind;
   part?: WreckPart;
   cleanup?: "shrink" | "fade";
@@ -172,10 +199,13 @@ export interface DamageSource {
   origin: Vec2;
 }
 export type SimEvent = {
+  material?: DebrisMaterial;
+  force?: number;
   damageSource?: DamageSource;
   coverKind?: CoverKind;
   height?: number;
   type:
+    | "debris-impact"
     | "notice"
     | "shot"
     | "impact"

@@ -1,4 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
+import { blastDebris, hitMovableCover } from "./debris-physics";
 import { COMBAT, MINE } from "./combat-rules";
 import {
   distance,
@@ -47,6 +48,7 @@ function intercept(simulation: Simulation, a: Shot, b: Shot): void {
       ? COMBAT.rocketBlastRadius
       : INTERCEPTION_BLAST_RADIUS;
   simulation.events.push({ type: "explosion", ...point, size: radius, color: 0xfff0b4 });
+  blastDebris(simulation, point, radius, WEAPONS.standard.damage);
   // One standard hit, like V-Tanks. Each team receives the opposing shell's
   // damage ownership: both sides can be hurt, without double damage or ally fire.
   // This blast only hits tanks; it does not invent cover/mine chain reactions.
@@ -337,6 +339,9 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
   } else if (next.kind === "world") {
     const hit = next.hit;
     const cover = simulation.coverByCollider.get(hit.collider.handle);
+    if (cover) {
+      hitMovableCover(cover, shot);
+    }
     if (shot.weapon === "rocket") {
       simulation.explode(
         shot,

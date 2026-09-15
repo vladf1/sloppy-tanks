@@ -1,0 +1,56 @@
+{
+  "seed": 731,
+  "stepsPerRun": 600,
+  "runs": [
+    {
+      "simulationMean": 0.06771979166666474,
+      "simulationP95": 0.2695420000000013,
+      "physicsMean": 0.06479847499999968,
+      "physicsP95": 0.2660420000000272,
+      "peakBodies": 97,
+      "fragments": 0,
+      "dynamic": 0,
+      "sleeping": 0
+    },
+    {
+      "simulationMean": 0.038296718333333125,
+      "simulationP95": 0.15333300000003192,
+      "physicsMean": 0.0373975716666654,
+      "physicsP95": 0.15225000000003774,
+      "peakBodies": 97,
+      "fragments": 0,
+      "dynamic": 0,
+      "sleeping": 0
+    },
+    {
+      "simulationMean": 0.03270216666666452,
+      "simulationP95": 0.14724999999998545,
+      "physicsMean": 0.03198311833333283,
+      "physicsP95": 0.1448329999999487,
+      "peakBodies": 97,
+      "fragments": 0,
+      "dynamic": 0,
+      "sleeping": 0
+    },
+    {
+      "simulationMean": 0.029847641666667545,
+      "simulationP95": 0.13150000000001683,
+      "physicsMean": 0.029214714999999104,
+      "physicsP95": 0.1307920000000422,
+      "peakBodies": 97,
+      "fragments": 0,
+      "dynamic": 0,
+      "sleeping": 0
+    },
+    {
+      "simulationMean": 0.03065369333333223,
+      "simulationP95": 0.13820900000001757,
+      "physicsMean": 0.029460493333334056,
+      "physicsP95": 0.13299999999998136,
+      "peakBodies": 97,
+      "fragments": 0,
+      "dynamic": 0,
+      "sleeping": 0
+    }
+  ]
+}

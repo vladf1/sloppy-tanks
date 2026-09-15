@@ -519,7 +519,7 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
       assert.ok(speed >= 6.99 && speed <= 14.01);
       axes.add(Object.entries(v).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]);
     }
-    const landingSteps = Math.ceil(Math.max(...pieces.map((f) => f.life - 1.8)) * 60) + 60;
+    const landingSteps = Math.ceil(Math.max(...pieces.map((f) => f.life - 3.2)) * 60) + 60;
     for (let i = 0; i < landingSteps; i++) {
       s.world.step();
       highest = Math.max(highest, ...pieces.map((f) => f.body.translation().y));
@@ -536,7 +536,7 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
     );
     for (const tank of s.tanks) tank.cooldown = 100;
     const ids = new Set(pieces.map((f) => f.id));
-    for (let i = 0; i < 480; i++) s.step();
+    for (let i = 0; i < 1140; i++) s.step();
     assert.ok(s.fragments.every((f) => !ids.has(f.id)));
     s.dispose();
   }

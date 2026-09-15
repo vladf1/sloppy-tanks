@@ -6,19 +6,21 @@ const label = process.argv[2] ?? "before";
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 if (!["before", "after"].includes(label))
   throw new Error("Use before or after as the measurement label.");
+const width = Number(process.env.SLOPPY_WIDTH ?? 1280);
+const height = Number(process.env.SLOPPY_HEIGHT ?? 720);
 const out = `artifacts/performance/${label}`;
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
   channel: "chrome",
   headless: false,
   args: [
-    "--window-size=2560,1440",
+    `--window-size=${width},${height + 100}`,
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
   ],
 });
 const context = await browser.newContext({
-  viewport: { width: 2560, height: 1440 },
+  viewport: { width, height },
   deviceScaleFactor: 1,
 });
 const page = await context.newPage();
@@ -38,7 +40,7 @@ const results = {
   label,
   date: new Date().toISOString(),
   chrome: browser.version(),
-  resolution: [2560, 1440],
+  resolution: [width, height],
   seeds: [12345, 45678, 98765],
   warmupSeconds: 5,
   sampleSeconds: 15,
@@ -63,7 +65,7 @@ async function setup(scenario, seed) {
       d.sim.humanTeam = 0;
       d.start();
       if (scenario === "stress") d.stress();
-      d.exactResolution();
+      d.view.resize(innerWidth, innerHeight, true);
       d.overview(scenario === "stress");
       d.autoplay();
       if (scenario === "stress") {

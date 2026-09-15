@@ -1,4 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
+import { trackDebrisContacts } from "./debris-physics";
 import { ARENA, GROUP, VEHICLES } from "./data";
 import type { Simulation } from "./simulation";
 import { GRAVITY } from "./simulation-rules";
@@ -100,7 +101,7 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
         : part === "barrel"
           ? [0.2, 0.2, 0.95]
           : [0.95, 0.45, part === "turret-barrel" ? 1.55 : 1];
-    simulation.world.createCollider(
+    const collider = simulation.world.createCollider(
       RAPIER.ColliderDesc.cuboid(
         size[0] * scale,
         size[1] * scale,
@@ -112,10 +113,14 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
         .setRestitution(0.12),
       body,
     );
+    const id = simulation.nextId++;
+    trackDebrisContacts(body, collider, id, "metal");
     simulation.fragments.push({
-      id: simulation.nextId++,
+      id,
       body,
-      life: flight + 1.8,
+      life: flight + 3.2,
+      expiresAt: simulation.elapsed + 18,
+      material: "metal",
       size: 1,
       color: 0x46534c,
       wreck: tank.kind,

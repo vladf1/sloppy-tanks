@@ -92,11 +92,16 @@ test("barrier collision follows tapered concrete and open steel rather than invi
     const tooth = sim.covers.filter((c) => c.kind === "teeth").sort((a, b) => a.x - b.x)[0];
     const hedgehog = sim.covers.filter((c) => c.kind === "hedgehog").sort((a, b) => a.x - b.x)[0];
     const ray = (cover: typeof tooth, x: number, y: number) =>
-      cover.collider.castRay(
+      sim.world.castRay(
         new RAPIER.Ray({ x: cover.x + x, y, z: cover.z - 4 }, { x: 0, y: 0, z: 1 }),
         8,
         true,
-      );
+        undefined,
+        GROUP.coverQuery,
+        undefined,
+        undefined,
+        (collider) => collider.parent()?.handle === cover.body.handle,
+      )?.timeOfImpact ?? -1;
     assert.ok(ray(tooth, 0, 1) >= 0);
     assert.equal(ray(tooth, 0.8, 1.7), -1, "shot clears the sloping shoulder");
     assert.equal(
@@ -121,15 +126,22 @@ test("barrier collision follows tapered concrete and open steel rather than invi
       tank.body.setLinvel({ x: 7, y: 0, z: 0 }, true);
       sim.world.step();
     }
-    assert.ok(tank.body.translation().x < tooth.x, "a tank cannot drive through dragon teeth");
+    assert.ok(
+      tank.body.translation().x < tooth.body.translation().x,
+      "a tank pushes concrete but cannot pass through it",
+    );
     tank.body.setTranslation({ x: hedgehog.x - 4, y: 0.65, z: hedgehog.z }, true);
     for (let i = 0; i < 180; i++) {
       tank.body.setLinvel({ x: 7, y: 0, z: 0 }, true);
       sim.world.step();
     }
     assert.ok(
-      tank.body.translation().x < hedgehog.x,
-      "a tank cannot drive through steel hedgehogs",
+      tank.body.translation().x < hedgehog.body.translation().x ||
+        Math.hypot(
+          hedgehog.body.translation().x - hedgehog.x,
+          hedgehog.body.translation().z - hedgehog.z,
+        ) > 0.8,
+      "a tank remains blocked unless it physically pushes the steel aside",
     );
   } finally {
     sim.world.free();
