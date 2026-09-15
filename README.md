@@ -83,6 +83,20 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 ## Deployment
 
-The GitHub Pages workflow runs `npm run check` and publishes `dist/` on pushes to `main`. The configured base path is `/sloppy-tanks/`; change `base` and the physics preload path in `vite.config.ts` if hosting elsewhere.
+Two independent workflows publish on pushes to `main`, after `npm run check` passes:
+
+- **GitHub Pages:** `npm run build` produces `dist/` with the default `/sloppy-tanks/` base for <https://fridman.me/sloppy-tanks/>.
+- **Cloudflare Pages:** `npm run build:cloudflare` produces `dist-cloudflare/` with the `/` base for <https://sloppy-tanks.fridman.me/>. The Pages project is `sloppy-tanks`, with <https://sloppy-tanks.pages.dev/> as its provider URL.
+
+`DEPLOY_BASE` controls both Vite asset URLs and the physics preload. The Cloudflare build uses its own output directory and leaves `dist/` intact. Its workflow requires the GitHub Actions secret `CLOUDFLARE_API_TOKEN`, scoped to Cloudflare Pages:Edit on the deployment account. Never commit the token.
+
+For a manual Cloudflare deployment with authenticated Wrangler:
+
+```sh
+npm run build:cloudflare
+wrangler pages deploy dist-cloudflare --project-name sloppy-tanks --branch main
+```
+
+The Namecheap CNAME `sloppy-tanks` points to `sloppy-tanks.pages.dev`; the apex, `www`, and existing GitHub Pages configuration remain separate. To stop the experiment, disable the Cloudflare workflow and remove only that subdomain's CNAME and Pages custom-domain association.
 
 The build separates gameplay, graphics, physics and audio dependencies. Rapier's WASM is emitted as a separate hashed file and preloaded from HTML. Hosts should serve it as `application/wasm` with gzip or Brotli compression. The small startup entry displays the HTML loading screen while the game loads.

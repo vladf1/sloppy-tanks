@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build && node scripts/copy-artifacts.mjs",
+    "build:cloudflare": "tsc --noEmit && DEPLOY_BASE=/ vite build --outDir dist-cloudflare && node scripts/copy-artifacts.mjs dist-cloudflare",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs",

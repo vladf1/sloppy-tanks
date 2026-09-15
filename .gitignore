@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-cloudflare/
+.wrangler/
 .DS_Store
 artifacts/*.png
 artifacts/performance/

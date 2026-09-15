@@ -2,8 +2,10 @@ import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import wasm from "vite-plugin-wasm";
 
+const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
+
 export default defineConfig({
-  base: "/sloppy-tanks/",
+  base,
   resolve: {
     alias: [
       {
@@ -29,7 +31,7 @@ export default defineConfig({
                     as: "fetch",
                     type: "application/wasm",
                     crossorigin: "anonymous",
-                    href: `/sloppy-tanks/${binary}`,
+                    href: `${base}${binary}`,
                   },
                   injectTo: "head",
                 },
