@@ -6,7 +6,9 @@ export type DebrisMaterial = "wood" | "metal" | "concrete";
 export const DEBRIS_MATERIALS = {
   wood: { friction: 0.65, restitution: 0.16 },
   metal: { friction: 0.95, restitution: 0.12 },
-  concrete: { friction: 1.15, restitution: 0.02 },
+  // The lightest tank must overcome ground friction under sustained drive.
+  // Keep the concrete mass and low bounce; grip must not pin it in place.
+  concrete: { friction: 0.65, restitution: 0.02 },
 } as const;
 
 /** Metadata lives on substantial bodies, allowing contacts to feed presentation later. */

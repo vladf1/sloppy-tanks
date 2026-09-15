@@ -1,23 +1,23 @@
 {
   "type": "accelerated simulation, no rendering",
-  "wallSeconds": 30.438455375,
+  "wallSeconds": 31.047726917,
   "rounds": [
     {
       "seed": 79,
       "humanIdle": true,
       "seconds": 300,
       "scores": [
-        48,
-        60
+        51,
+        66
       ],
       "winner": 1,
-      "destroyed": 59,
-      "reroutes": 2368,
-      "breachShots": 75,
+      "destroyed": 60,
+      "reroutes": 2453,
+      "breachShots": 102,
       "veterancy": {
-        "promotions": 20,
-        "botPromotions": 20,
-        "elite": 7,
+        "promotions": 19,
+        "botPromotions": 19,
+        "elite": 4,
         "heroic": 0
       },
       "towersRemaining": 0
@@ -27,18 +27,18 @@
       "humanIdle": true,
       "seconds": 300,
       "scores": [
-        37,
-        95
+        67,
+        73
       ],
       "winner": 1,
-      "destroyed": 59,
-      "reroutes": 2545,
-      "breachShots": 104,
+      "destroyed": 60,
+      "reroutes": 2560,
+      "breachShots": 89,
       "veterancy": {
-        "promotions": 24,
-        "botPromotions": 24,
-        "elite": 7,
-        "heroic": 1
+        "promotions": 23,
+        "botPromotions": 23,
+        "elite": 5,
+        "heroic": 0
       },
       "towersRemaining": 0
     },
@@ -47,37 +47,37 @@
       "humanIdle": true,
       "seconds": 300,
       "scores": [
-        76,
-        45
+        79,
+        22
       ],
       "winner": 0,
-      "destroyed": 59,
-      "reroutes": 2393,
-      "breachShots": 121,
+      "destroyed": 54,
+      "reroutes": 2146,
+      "breachShots": 102,
       "veterancy": {
-        "promotions": 28,
-        "botPromotions": 28,
-        "elite": 6,
-        "heroic": 1
+        "promotions": 22,
+        "botPromotions": 22,
+        "elite": 5,
+        "heroic": 3
       },
       "towersRemaining": 0
     },
     {
       "seed": 316,
       "humanIdle": false,
-      "seconds": 307.31666666666666,
+      "seconds": 300,
       "scores": [
-        55,
-        54
+        77,
+        47
       ],
       "winner": 0,
       "destroyed": 60,
-      "reroutes": 2719,
-      "breachShots": 121,
+      "reroutes": 2700,
+      "breachShots": 124,
       "veterancy": {
-        "promotions": 18,
-        "botPromotions": 17,
-        "elite": 3,
+        "promotions": 22,
+        "botPromotions": 21,
+        "elite": 5,
         "heroic": 0
       },
       "towersRemaining": 0
@@ -87,18 +87,18 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        48,
-        50
+        43,
+        52
       ],
       "winner": 1,
       "destroyed": 60,
-      "reroutes": 2529,
-      "breachShots": 95,
+      "reroutes": 2639,
+      "breachShots": 113,
       "veterancy": {
-        "promotions": 20,
-        "botPromotions": 20,
+        "promotions": 21,
+        "botPromotions": 19,
         "elite": 3,
-        "heroic": 1
+        "heroic": 0
       },
       "towersRemaining": 0
     },
@@ -107,17 +107,17 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        47,
-        56
+        72,
+        54
       ],
-      "winner": 1,
-      "destroyed": 59,
-      "reroutes": 2637,
-      "breachShots": 101,
+      "winner": 0,
+      "destroyed": 60,
+      "reroutes": 2746,
+      "breachShots": 117,
       "veterancy": {
-        "promotions": 19,
-        "botPromotions": 18,
-        "elite": 1,
+        "promotions": 26,
+        "botPromotions": 24,
+        "elite": 4,
         "heroic": 0
       },
       "towersRemaining": 0
@@ -127,18 +127,18 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        56,
-        57
+        74,
+        49
       ],
-      "winner": 1,
-      "destroyed": 60,
-      "reroutes": 2641,
-      "breachShots": 107,
+      "winner": 0,
+      "destroyed": 58,
+      "reroutes": 2782,
+      "breachShots": 114,
       "veterancy": {
-        "promotions": 18,
-        "botPromotions": 16,
-        "elite": 4,
-        "heroic": 1
+        "promotions": 24,
+        "botPromotions": 21,
+        "elite": 1,
+        "heroic": 0
       },
       "towersRemaining": 0
     },
@@ -147,18 +147,18 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        46,
-        50
+        82,
+        46
       ],
-      "winner": 1,
+      "winner": 0,
       "destroyed": 60,
-      "reroutes": 2446,
-      "breachShots": 91,
+      "reroutes": 2759,
+      "breachShots": 105,
       "veterancy": {
-        "promotions": 19,
+        "promotions": 20,
         "botPromotions": 16,
-        "elite": 3,
-        "heroic": 0
+        "elite": 5,
+        "heroic": 1
       },
       "towersRemaining": 0
     },
@@ -167,18 +167,18 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        46,
-        57
+        55,
+        56
       ],
       "winner": 1,
       "destroyed": 60,
-      "reroutes": 2644,
-      "breachShots": 106,
+      "reroutes": 2655,
+      "breachShots": 111,
       "veterancy": {
-        "promotions": 22,
-        "botPromotions": 21,
-        "elite": 4,
-        "heroic": 0
+        "promotions": 16,
+        "botPromotions": 13,
+        "elite": 3,
+        "heroic": 1
       },
       "towersRemaining": 0
     },
@@ -187,22 +187,22 @@
       "humanIdle": false,
       "seconds": 300,
       "scores": [
-        80,
-        49
+        43,
+        41
       ],
       "winner": 0,
       "destroyed": 60,
-      "reroutes": 2766,
-      "breachShots": 90,
+      "reroutes": 2528,
+      "breachShots": 112,
       "veterancy": {
-        "promotions": 23,
-        "botPromotions": 20,
-        "elite": 3,
+        "promotions": 14,
+        "botPromotions": 12,
+        "elite": 2,
         "heroic": 0
       },
       "towersRemaining": 0
     }
   ],
-  "maxBodies": 113,
+  "maxBodies": 115,
   "maxFragments": 50
 }

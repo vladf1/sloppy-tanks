@@ -6,6 +6,7 @@ import { GROUP, Random, STEP } from "../src/game/data";
 import { Simulation } from "../src/game/simulation";
 import { stepProjectiles } from "../src/game/projectiles";
 import type { CoverKind, Shot } from "../src/game/types";
+import { idleCommand } from "../src/game/types";
 
 before(async () => {
   await RAPIER.init();
@@ -137,7 +138,7 @@ test("real projectile hits shove concrete cumulatively, while rockets and nearby
       assert.equal(c.alive, true);
       assert.equal(c.hp, Infinity);
       assert.ok(Math.abs(c.body.mass() - 6.9984) < 0.001);
-      assert.ok(c.collider.friction() >= 1);
+      assert.ok(c.collider.friction() >= 0.6);
       assert.ok(c.collider.restitution() < 0.05);
       if (mode === "standard") {
         shot(s);
@@ -349,6 +350,123 @@ test("quarry dragon teeth are 10 percent smaller in every dimension with density
     assert.ok(Math.abs(c.d - 1.71) < 0.001);
     assert.ok(Math.abs(c.h - 1.71) < 0.001);
     assert.ok(Math.abs(c.body.mass() - 9.6 * 0.9 ** 3) < 0.001);
+  } finally {
+    s.dispose();
+  }
+});
+
+test("a scout can steadily push every concrete profile, with throttled navigation and no damage", () => {
+  // x = 0..3 selects all four authored profiles, using the tallest quarry tooth.
+  for (const x of [0, 1, 2, 3]) {
+    const s = arena();
+    try {
+      const c = s.addCover({
+        kind: "teeth",
+        x,
+        z: 0,
+        w: 1.845,
+        h: 1.845,
+        d: 1.845,
+        hp: Infinity,
+        color: 0xaaaaaa,
+      });
+      s.nav.rebuild(s.covers);
+      const version = s.nav.version;
+      const tank = s.addTank(0, true, "scout");
+      tank.heading = Math.PI / 2;
+      park(tank.body, x - 2.8, 0.65);
+      const hp = tank.hp;
+      for (let i = 0; i < 240; i++) s.step({ ...idleCommand(), moveX: 1 });
+      assert.ok(c.x - x > 1, `profile ${x} moved only ${c.x - x}`);
+      assert.ok(tank.body.translation().x > x - 1.8);
+      assert.ok(tank.body.translation().y < 0.8, "tank does not climb the concrete");
+      assert.equal(tank.hp, hp);
+      assert.equal(c.hp, Infinity);
+      assert.ok(s.nav.version > version && s.nav.version - version <= 16);
+      assert.equal(s.nav.blocked[s.nav.index(c)], 1);
+      s.world.removeRigidBody(tank.body);
+      s.tanks = [];
+      tick(s, 8);
+      assert.ok(c.body.isSleeping(), "concrete settles after pushing stops");
+    } finally {
+      s.dispose();
+    }
+  }
+});
+
+test("tanks physically shove landed hulls and turrets without damage, and wreck cleanup still removes bodies", () => {
+  for (const part of ["hull", "turret"] as const) {
+    const s = arena();
+    try {
+      const turret = wreck(s);
+      const f = part === "hull" ? s.fragments.find((f) => f.part === "hull")! : turret;
+      for (const other of s.fragments) park(other.body, 30, 1);
+      f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      park(f.body, 0, 0.5);
+      tick(s, 0.5);
+      const tank = s.addTank(0, true, "scout");
+      tank.heading = Math.PI / 2;
+      park(tank.body, -4, 0.65);
+      const hp = tank.hp;
+      for (let i = 0; i < 120; i++) s.step({ ...idleCommand(), moveX: 1 });
+      assert.ok(f.body.translation().x > 2, `${part} must move through tank contact`);
+      assert.ok(tank.body.translation().x > 0, "wreck does not trap the tank");
+      assert.ok(tank.body.translation().y < 0.8, "tank stays grounded");
+      assert.equal(tank.hp, hp);
+      tick(s, 19);
+      assert.equal(s.fragments.length, 0);
+      assert.equal(f.body.isValid(), false);
+      assert.equal(s.world.bodies.len(), 2, "only tank and ground remain");
+      wreck(s);
+      s.reset();
+      assert.equal(s.fragments.length, 0);
+      const bodies = s.world.bodies.len();
+      s.reset();
+      assert.equal(s.world.bodies.len(), bodies, "reset does not retain wreck bodies");
+    } finally {
+      s.dispose();
+    }
+  }
+});
+
+test("only large wrecks accept tank contact; wrecks remain excluded from projectile and steering queries", () => {
+  const allows = (a: number, b: number) =>
+    ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
+  assert.equal(allows(GROUP.pushableWreck, GROUP.tank), true);
+  for (const group of [
+    GROUP.fragment,
+    GROUP.pushableWreck,
+    GROUP.coverQuery,
+    GROUP.steeringQuery,
+  ]) {
+    assert.equal(allows(GROUP.pushableWreck, group), false);
+  }
+  assert.equal(allows(GROUP.fragment, GROUP.tank), false);
+  assert.equal(allows(GROUP.pushableWreck, GROUP.ground), true);
+  assert.equal(allows(GROUP.pushableWreck, GROUP.movableCover), true);
+  const s = arena();
+  try {
+    wreck(s);
+    for (const f of s.fragments) {
+      assert.equal(
+        f.body.collider(0).collisionGroups(),
+        f.part === "barrel" ? GROUP.fragment : GROUP.pushableWreck,
+      );
+      park(f.body, 0, 1);
+    }
+    s.world.step();
+    for (const group of [GROUP.coverQuery, GROUP.steeringQuery]) {
+      assert.equal(
+        s.world.castRay(
+          new RAPIER.Ray({ x: -5, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }),
+          10,
+          true,
+          undefined,
+          group,
+        ),
+        null,
+      );
+    }
   } finally {
     s.dispose();
   }

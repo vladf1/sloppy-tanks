@@ -5,7 +5,7 @@ import type { Simulation } from "./simulation";
 import { GRAVITY } from "./simulation-rules";
 import type { Tank, Vec2, WreckPart } from "./types";
 
-/** Cosmetic bodies use the same gravity as combat, but cannot hit living tanks. */
+/** Hulls and turrets can be pushed by tanks; detached barrels remain nonblocking debris. */
 export function breakTank(simulation: Simulation, tank: Tank): void {
   const origin = { ...tank.body.translation() };
   const scale = VEHICLES[tank.kind].scale;
@@ -107,7 +107,7 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
         size[1] * scale,
         size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
-        .setCollisionGroups(GROUP.fragment)
+        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.pushableWreck)
         .setMass(part === "hull" ? 1.2 : 0.5)
         .setFriction(0.95)
         .setRestitution(0.12),
