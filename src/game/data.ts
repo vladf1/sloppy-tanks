@@ -129,7 +129,7 @@ export const WEAPONS: Record<
     perCrate: 24,
     carryLimit: 48,
     interval: 0.85,
-    damage: 80,
+    damage: 60,
     speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
     bounces: 3,
     color: 0xb19afc,

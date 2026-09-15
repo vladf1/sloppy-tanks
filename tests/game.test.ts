@@ -392,14 +392,14 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });
-test("selected ricochet has three reflections and 80 damage; standard has one", () => {
+test("selected ricochet has three reflections and 60 damage; standard has one", () => {
   const s = game();
   const t = s.human;
   t.ammo.ricochet = 12;
   t.selectedAmmo = "ricochet";
   fireWeapon(s, t);
   assert.equal(s.shots.at(-1)!.bounces, 3);
-  assert.equal(s.shots.at(-1)!.damage, 80);
+  assert.equal(s.shots.at(-1)!.damage, 60);
   t.cooldown = 0;
   t.selectedAmmo = "standard";
   fireWeapon(s, t);

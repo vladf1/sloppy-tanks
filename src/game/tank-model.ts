@@ -80,6 +80,8 @@ const beltGeometry = new THREE.ExtrudeGeometry(beltShape, {
 })
   .translate(0, 0, -0.27)
   .rotateY(Math.PI / 2);
+// Rubber pads only need an exposed face; their backing is the solid track shoe.
+const trackPadGeometry = new THREE.PlaneGeometry(1, 1).rotateX(Math.PI / 2);
 function trackBelt(color: number) {
   const mesh = new THREE.Mesh(beltGeometry, material(color));
   mesh.castShadow = mesh.receiveShadow = true;
@@ -113,8 +115,34 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false): TankMod
   const length = scout ? 4.415 : heavy ? 5.425 : 5.244;
   const deck = scout ? 0.58 : heavy ? 0.67 : 0.65;
   root.add(hull);
-  put(hull, armor(width, 0.32, length, shade, 0.94), 0, 0.22, 0);
+  // The lower hull narrows toward the belly, leaving room for the running gear.
+  const lowerHull = armor(width, 0.32, length, shade, 0.8);
+  lowerHull.rotation.z = Math.PI;
+  put(hull, lowerHull, 0, 0.22, 0);
   put(hull, armor(width, deck - 0.2, length, color, scout ? 0.72 : 0.86), 0, deck / 2 + 0.16, 0);
+  // Shallow armored belly and service covers stay above the track contact plane.
+  // These are hull meshes so the same details survive on overturned wrecks.
+  const belly = armor(width * 0.7, 0.1, length * 0.83, shade, 0.91);
+  belly.rotation.z = Math.PI;
+  put(hull, belly, 0, 0.035, 0);
+  for (const z of [-length * 0.25, length * 0.18]) {
+    const coverWidth = width * (z < 0 ? 0.43 : 0.3);
+    const coverLength = length * (z < 0 ? 0.2 : 0.15);
+    // Dark seams outline raised, bolted access plates without coplanar faces.
+    put(hull, box(coverWidth + 0.045, 0.025, coverLength + 0.045, dark, 0), 0, -0.025, z);
+    put(hull, box(coverWidth, 0.035, coverLength, shade, 0), 0, -0.045, z);
+    for (const side of [-1, 1]) {
+      for (const end of [-1, 1]) {
+        put(
+          hull,
+          box(0.04, 0.018, 0.04, steel, 0),
+          side * (coverWidth / 2 - 0.055),
+          -0.068,
+          z + end * (coverLength / 2 - 0.055),
+        );
+      }
+    }
+  }
   const trackGroup = new THREE.Group();
   hull.add(trackGroup);
   for (const side of [-1, 1]) {
@@ -135,6 +163,34 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false): TankMod
     for (let j = 0; j < 18; j++) {
       const tread = box(0.42, 0.03, 0.075, steel, 0);
       put(trackGroup, tread, trackX, 0.565, -length * 0.44 + j * length * 0.052);
+    }
+    // Lower shoes and their rubber pads break up the otherwise smooth belt bottom.
+    // Keep them on the hull: the top tread group's small scrolling motion must not
+    // slide these shoes away from the curved ends of the track.
+    for (let j = 0; j < 14; j++) {
+      const z = -length * 0.35 + (j * length * 0.7) / 13;
+      put(hull, box(0.41, 0.035, length * 0.044, steel, 0), trackX, -0.177, z);
+      const pad = new THREE.Mesh(trackPadGeometry, material(dark));
+      pad.scale.set(0.28, 1, length * 0.03);
+      pad.receiveShadow = true;
+      put(hull, pad, trackX, -0.197, z);
+    }
+    for (const end of [-1, 1]) {
+      for (let j = 1; j < 4; j++) {
+        const angle = (j * Math.PI) / 4;
+        const tread = box(0.41, 0.035, length * 0.038, steel, 0);
+        tread.rotation.x = Math.atan2(
+          -end * 1.12 * Math.sin(angle),
+          (length / 2.46) * Math.cos(angle),
+        );
+        put(
+          hull,
+          tread,
+          trackX,
+          0.19 - 0.375 * Math.cos(angle),
+          end * (0.9 + 0.335 * Math.sin(angle)) * (length / 2.46),
+        );
+      }
     }
     put(hull, box(0.46, 0.07, length, color, 0), trackX, deck, 0);
     {
