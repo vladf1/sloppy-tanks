@@ -136,58 +136,71 @@ test("a full track buffer cannot replace still-visible marks and can reuse fully
   const { s, bot, human } = duel();
   bot.alive = false;
   const trails = new TrackTrails();
-  for (let i = 0; i < 4000; i++) {
+  const fillSteps = TRACK_CAPACITY / 2;
+  for (let i = 0; i < fillSteps; i++) {
     human.body.setTranslation({ x: i, y: 0.65, z: 0 }, true);
     trails.update(s, 1);
   }
   assert.equal(trails.mesh.count, TRACK_CAPACITY);
   const before = trails.mesh.instanceMatrix.array.slice();
-  for (let i = 4000; i < 4010; i++) {
+  for (let i = fillSteps; i < fillSteps + 10; i++) {
     human.body.setTranslation({ x: i, y: 0.65, z: 0 }, true);
     trails.update(s, 1);
   }
   assert.deepEqual(trails.mesh.instanceMatrix.array, before);
   s.elapsed = TRACK_LIFETIME + 0.1;
-  human.body.setTranslation({ x: 4010, y: 0.65, z: 0 }, true);
+  human.body.setTranslation({ x: fillSteps + 10, y: 0.65, z: 0 }, true);
   trails.update(s, 1);
   assert.notDeepEqual(trails.mesh.instanceMatrix.array, before);
   trails.dispose();
   s.dispose();
 });
 
-test("track uploads cover changed marks across ring wrap without uploading the whole buffer", () => {
+test("track expiry compacts live marks and uploads only changed slots", () => {
   const { s, bot, human } = duel();
   bot.alive = false;
   const trails = new TrackTrails();
   const matrix = trails.mesh.instanceMatrix;
   const birth = trails.mesh.geometry.getAttribute("trackBirth");
   assert.ok(birth instanceof InstancedBufferAttribute);
-  let wrapped = false;
-  for (let i = 0; i < 2100; i++) {
-    matrix.clearUpdateRanges();
-    birth.clearUpdateRanges();
-    s.elapsed = i / 60;
-    human.body.setTranslation({ x: i, y: 0.65, z: 0 }, true);
-    trails.update(s, 1);
-    assert.ok(matrix.updateRanges.reduce((n, r) => n + r.count, 0) <= 96);
-    assert.deepEqual(
-      matrix.updateRanges.map((r) => ({ start: r.start / 16, count: r.count / 16 })),
-      birth.updateRanges,
-    );
-    if (matrix.updateRanges.length === 2) {
-      wrapped = true;
-      assert.equal(
-        matrix.updateRanges[0].start + matrix.updateRanges[0].count,
-        TRACK_CAPACITY * 16,
-      );
-      assert.equal(matrix.updateRanges[1].start, 0);
-      birth.updateRanges.forEach(({ start, count }) => {
-        for (let j = start; j < start + count; j++)
-          assert.ok(Math.abs(birth.getX(j) - s.elapsed) < 0.00001);
-      });
-    }
+  human.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+  trails.update(s, 1);
+  human.body.setTranslation({ x: 1, y: 0.65, z: 0 }, true);
+  trails.update(s, 1);
+  const oldCount = trails.mesh.count;
+  s.elapsed = 10;
+  human.body.setTranslation({ x: 2, y: 0.65, z: 0 }, true);
+  trails.update(s, 1);
+  const liveCount = trails.mesh.count - oldCount;
+  const expected = [];
+  for (let i = oldCount; i < trails.mesh.count; i++) {
+    expected.push(Array.from(matrix.array.slice(i * 16, (i + 1) * 16)).join(","));
   }
-  assert.ok(wrapped, "the workload must exercise a two-range wrap");
+  matrix.clearUpdateRanges();
+  birth.clearUpdateRanges();
+  s.elapsed = TRACK_LIFETIME - 0.001;
+  trails.update(s, 1);
+  assert.equal(trails.mesh.count, oldCount + liveCount, "keep marks until completely faded");
+  s.elapsed = TRACK_LIFETIME;
+  trails.update(s, 1);
+  assert.equal(trails.mesh.count, liveCount);
+  const actual = [];
+  for (let i = 0; i < trails.mesh.count; i++) {
+    actual.push(Array.from(matrix.array.slice(i * 16, (i + 1) * 16)).join(","));
+    assert.equal(birth.getX(i), 10, "moving a slot preserves its fade age");
+  }
+  assert.deepEqual(actual.sort(), expected.sort(), "expiry preserves every younger mark");
+  assert.ok(matrix.updateRanges.reduce((n, r) => n + r.count, 0) <= oldCount * 16);
+  assert.deepEqual(
+    matrix.updateRanges.map((r) => ({ start: r.start / 16, count: r.count / 16 })),
+    birth.updateRanges,
+  );
+  s.elapsed = 10 + TRACK_LIFETIME;
+  trails.update(s, 1);
+  assert.equal(trails.mesh.count, 0, "no expired instances remain in the draw");
+  human.body.setTranslation({ x: 3, y: 0.65, z: 0 }, true);
+  trails.update(s, 1);
+  assert.ok(trails.mesh.count > 0, "new tracks resume after all previous marks expire");
   trails.reset();
   assert.equal(matrix.updateRanges.length, 0);
   assert.equal(birth.updateRanges.length, 0);

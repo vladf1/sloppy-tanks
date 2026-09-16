@@ -745,8 +745,11 @@ export class Presentation {
           }
           const clone = (material: THREE.Material) => {
             const copy = material.clone();
-            copy.transparent = true;
-            copy.depthWrite = false;
+            // Keep wreck surfaces and ground decals correctly occluded, including
+            // during cleanup. Alpha hashing fades without transparent mesh sorting.
+            copy.transparent = false;
+            copy.depthWrite = true;
+            copy.alphaHash = true;
             copy.userData.owned = true;
             return copy;
           };

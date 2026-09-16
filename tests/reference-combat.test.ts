@@ -1,6 +1,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
+import { InstancedBufferAttribute } from "three";
 import { Simulation } from "../src/game/simulation";
 import { spawnPositions } from "../src/game/arena";
 import { collectPickup, fireWeapon, interceptionTime, stepProjectiles } from "../src/game/weapons";
@@ -241,7 +242,7 @@ test("tracks are distance-spaced at 30/120 FPS, skip stationary tanks and telepo
     t.body.setTranslation({ x: 50, y: 0.65, z: 0 }, true);
     tracks.update(s, 1);
     assert.equal(tracks.mesh.count, before);
-    for (let i = 0; i < 3000; i++) {
+    for (let i = 0; i < TRACK_CAPACITY / 2; i++) {
       t.body.setTranslation({ x: 50 + i, y: 0.65, z: 0 }, true);
       tracks.update(s, 1);
     }
@@ -254,6 +255,39 @@ test("tracks are distance-spaced at 30/120 FPS, skip stationary tanks and telepo
     s.dispose();
   }
   assert.equal(counts[0], counts[1]);
+});
+
+test("thirty boosted scouts keep laying fresh tracks through multiple buffer wraps", () => {
+  const s = new Simulation(123);
+  s.reset(30);
+  const tracks = new TrackTrails();
+  const speed = VEHICLES.scout.speed * 1.5;
+  for (const tank of s.tanks) tank.kind = "scout";
+  const birth = tracks.mesh.geometry.getAttribute("trackBirth");
+  assert.ok(birth instanceof InstancedBufferAttribute);
+  for (let frame = 0; frame <= 60 * 60; frame++) {
+    s.elapsed = frame / 60;
+    for (const [i, tank] of s.tanks.entries()) {
+      tank.body.setTranslation({ x: s.elapsed * speed, y: 0.65, z: i * 3 }, true);
+    }
+    tracks.update(s, 1);
+    // A live renderer clears upload ranges after submitting them each frame.
+    tracks.mesh.instanceMatrix.clearUpdateRanges();
+    birth.clearUpdateRanges();
+    if (frame > 0 && frame % 60 === 0) {
+      let fresh = 0;
+      for (let i = 0; i < tracks.mesh.count; i++) {
+        if (s.elapsed - birth.getX(i) < 1) fresh++;
+      }
+      assert.ok(fresh > 2500, `fresh trails stalled at ${s.elapsed}s: ${fresh} marks`);
+    }
+  }
+  assert.ok(tracks.mesh.count > 50000 && tracks.mesh.count < TRACK_CAPACITY);
+  for (let i = 0; i < tracks.mesh.count; i++) {
+    assert.ok(s.elapsed - birth.getX(i) < 18, "expired marks must not be submitted");
+  }
+  tracks.dispose();
+  s.dispose();
 });
 
 for (const order of [

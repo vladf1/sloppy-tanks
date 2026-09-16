@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Wreck depth regression</title>
+  </head>
+  <body>
+    <canvas></canvas>
+    <pre id="result">Running…</pre>
+    <script type="module">
+      import * as THREE from "three";
+      import { Presentation } from "../src/game/presentation";
+      import { TrackTrails } from "../src/game/tracks";
+      const view = new Presentation(document.querySelector("canvas"));
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x243a52);
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x778899, 3));
+      const camera = new THREE.OrthographicCamera(-3, 3, 3, -3, 0.1, 20);
+      camera.position.set(0, 10, 0);
+      camera.up.set(0, 0, -1);
+      camera.lookAt(0, 0, 0);
+      const target = new THREE.WebGLRenderTarget(256, 256);
+      const tracks = new TrackTrails();
+      tracks.mesh.count = 1;
+      tracks.mesh.setMatrixAt(
+        0,
+        new THREE.Matrix4().compose(
+          new THREE.Vector3(0, 0.02, 0),
+          new THREE.Quaternion(),
+          new THREE.Vector3(0.5, 1, 2),
+        ),
+      );
+      tracks.mesh.instanceMatrix.needsUpdate = true;
+      scene.add(tracks.mesh);
+      function pixels(showTracks) {
+        tracks.mesh.visible = showTracks;
+        view.renderer.setRenderTarget(target);
+        view.renderer.render(scene, camera);
+        const pixels = new Uint8Array(256 * 256 * 4);
+        view.renderer.readRenderTargetPixels(target, 0, 0, 256, 256, pixels);
+        return pixels;
+      }
+      function differences(a, b) {
+        return a.reduce((count, value, i) => count + Number(value !== b[i]), 0);
+      }
+      function assert(ok, message) {
+        if (!ok) throw new Error(message);
+      }
+      const results = [];
+      const exposedTrackChanges = differences(pixels(false), pixels(true));
+      assert(exposedTrackChanges > 0, "Exposed ground tracks are missing");
+      for (const kind of ["scout", "balanced", "heavy"]) {
+        const fragment = {
+          id: 1,
+          wreck: kind,
+          team: 0,
+          part: "hull",
+          life: 3,
+          body: {
+            translation: () => ({ x: 0, y: 1, z: 0 }),
+            rotation: () => ({ x: 0, y: 0, z: 1, w: 0 }),
+          },
+        };
+        const simulation = { fragments: [fragment] };
+        view.updateFragments(simulation);
+        const hull = view.fragmentMeshes.get(1);
+        scene.add(hull);
+        const solid = pixels(false);
+        const hiddenTrackChanges = differences(solid, pixels(true));
+        assert(hiddenTrackChanges === 0, `${kind}: ground tracks show through solid hull`);
+        hull.position.x = 2;
+        const besideWreckChanges = differences(pixels(false), pixels(true));
+        assert(besideWreckChanges > 0, `${kind}: tracks beside the wreck are missing`);
+        hull.position.x = 0;
+        // Prove the fixture detects the original production material bug.
+        hull.traverse((mesh) => {
+          if (!mesh.isMesh) return;
+          mesh.material.transparent = true;
+          mesh.material.depthWrite = false;
+          mesh.material.alphaHash = false;
+        });
+        const oldBugChanges = differences(pixels(false), pixels(true));
+        assert(oldBugChanges > 0, `${kind}: fixture missed original depth bug`);
+        scene.remove(hull);
+        view.updateFragments({ fragments: [] });
+        fragment.life = 0.5;
+        view.updateFragments(simulation);
+        const fadingHull = view.fragmentMeshes.get(1);
+        scene.add(fadingHull);
+        const fading = pixels(false);
+        scene.remove(fadingHull);
+        const empty = pixels(false);
+        assert(differences(solid, fading) > 0, `${kind}: cleanup did not change hull`);
+        assert(differences(fading, empty) > 0, `${kind}: hull vanished before fade completed`);
+        scene.add(fadingHull);
+        fragment.life = 0;
+        view.updateFragments(simulation);
+        assert(differences(pixels(false), empty) === 0, `${kind}: zero-opacity hull still visible`);
+        const clearedTrackChanges = differences(pixels(false), pixels(true));
+        assert(clearedTrackChanges > 0, `${kind}: cleaned-up hull still hides tracks`);
+        scene.remove(fadingHull);
+        view.updateFragments({ fragments: [] });
+        results.push({
+          kind,
+          exposedTrackChanges,
+          hiddenTrackChanges,
+          besideWreckChanges,
+          clearedTrackChanges,
+          oldBugChanges,
+          cleanup: "passed",
+        });
+      }
+      view.renderer.setRenderTarget(null);
+      target.dispose();
+      document.querySelector("#result").textContent = JSON.stringify(results, null, 2);
+      window.wreckDepthResults = results;
+    </script>
+  </body>
+</html>

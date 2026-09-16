@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { VEHICLES, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
 
-export const TRACK_CAPACITY = 8192;
+// Thirty boosted scouts can leave about 52,000 marks during the 18-second fade.
+// Reserve that lifetime budget so busy scenes do not stop drawing new trails.
+export const TRACK_CAPACITY = 65536;
 export const TRACK_LIFETIME = 18;
 const SPACING = 0.42;
 interface Pose {
@@ -18,7 +20,10 @@ export class TrackTrails {
   private birth = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_CAPACITY), 1);
   private clock = { value: 0 };
   private poses = new Map<number, Pose>();
-  private cursor = 0;
+  // Expiry order is a ring; render slots stay dense so mesh.count excludes dead marks.
+  private oldest = 0;
+  private slots = new Uint32Array(TRACK_CAPACITY);
+  private queueIndices = new Uint32Array(TRACK_CAPACITY);
   private dummy = new THREE.Object3D();
 
   constructor() {
@@ -56,7 +61,7 @@ export class TrackTrails {
 
   reset(): void {
     this.mesh.count = 0;
-    this.cursor = 0;
+    this.oldest = 0;
     this.poses.clear();
     this.mesh.instanceMatrix.clearUpdateRanges();
     this.birth.clearUpdateRanges();
@@ -65,8 +70,28 @@ export class TrackTrails {
 
   update(simulation: Simulation, alpha: number): void {
     this.clock.value = simulation.elapsed;
-    const first = this.cursor;
-    let written = 0;
+    let changed = false;
+    // Retire only expired entries, not a scan of every live mark each frame.
+    // Moving the last live slot into each hole keeps a single compact draw call.
+    while (this.mesh.count > 0) {
+      const slot = this.slots[this.oldest];
+      if (simulation.elapsed - this.birth.getX(slot) < TRACK_LIFETIME) {
+        break;
+      }
+      const last = --this.mesh.count;
+      if (slot !== last) {
+        this.mesh.instanceMatrix.array.copyWithin(slot * 16, last * 16, (last + 1) * 16);
+        this.birth.setX(slot, this.birth.getX(last));
+        const queueIndex = this.queueIndices[last];
+        this.queueIndices[slot] = queueIndex;
+        this.slots[queueIndex] = slot;
+        this.mesh.instanceMatrix.addUpdateRange(slot * 16, 16);
+        this.birth.addUpdateRange(slot, 1);
+        changed = true;
+      }
+      this.oldest = (this.oldest + 1) % TRACK_CAPACITY;
+    }
+    const first = this.mesh.count;
     for (const tank of simulation.tanks) {
       if (!tank.alive) {
         this.poses.delete(tank.id);
@@ -94,12 +119,8 @@ export class TrackTrails {
           const cos = Math.cos(angle);
           const cx = previous.x + (x - previous.x) * u - sin * 1.1 * scale;
           const cz = previous.z + (z - previous.z) * u - cos * 1.1 * scale;
-          // Never overwrite a visible tread when traffic fills the ring buffer.
-          // Skip this pair until its oldest slot has finished fading instead.
-          if (
-            this.mesh.count === TRACK_CAPACITY &&
-            simulation.elapsed - this.birth.getX(this.cursor) < TRACK_LIFETIME
-          ) {
+          // Capacity pressure must not erase marks before they finish fading.
+          if (this.mesh.count === TRACK_CAPACITY) {
             continue;
           }
           for (const side of [-1, 1]) {
@@ -107,11 +128,12 @@ export class TrackTrails {
             this.dummy.rotation.set(0, angle, 0);
             this.dummy.scale.set(0.48 * scale, 1, 0.16 * scale);
             this.dummy.updateMatrix();
-            this.mesh.setMatrixAt(this.cursor, this.dummy.matrix);
-            written++;
-            this.birth.setX(this.cursor, simulation.elapsed);
-            this.cursor = (this.cursor + 1) % TRACK_CAPACITY;
-            this.mesh.count = Math.min(TRACK_CAPACITY, this.mesh.count + 1);
+            const slot = this.mesh.count++;
+            const queueIndex = (this.oldest + slot) % TRACK_CAPACITY;
+            this.slots[queueIndex] = slot;
+            this.queueIndices[slot] = queueIndex;
+            this.mesh.setMatrixAt(slot, this.dummy.matrix);
+            this.birth.setX(slot, simulation.elapsed);
           }
         }
         previous.pending = (previous.pending + length) % spacing;
@@ -120,21 +142,13 @@ export class TrackTrails {
       previous.z = z;
       previous.heading = tank.heading;
     }
+    const written = this.mesh.count - first;
     if (written) {
-      // A wrapped ring touches at most two contiguous ranges, not the full buffer.
-      const addRange = (start: number, count: number) => {
-        this.mesh.instanceMatrix.addUpdateRange(start * 16, count * 16);
-        this.birth.addUpdateRange(start, count);
-      };
-      if (written >= TRACK_CAPACITY) {
-        addRange(0, TRACK_CAPACITY);
-      } else {
-        const tail = Math.min(written, TRACK_CAPACITY - first);
-        addRange(first, tail);
-        if (written > tail) {
-          addRange(0, written - tail);
-        }
-      }
+      this.mesh.instanceMatrix.addUpdateRange(first * 16, written * 16);
+      this.birth.addUpdateRange(first, written);
+      changed = true;
+    }
+    if (changed) {
       this.mesh.instanceMatrix.needsUpdate = true;
       this.birth.needsUpdate = true;
     }
