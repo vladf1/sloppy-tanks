@@ -1,13 +1,47 @@
+import { COMBAT } from "./combat-rules";
+import { tankHitTime } from "./hitboxes";
 import { enemyDifficulty } from "./difficulty";
 import { recoverBot, routeDirection, steerBot } from "./bot-movement";
 import { botProfile, botReload, combatMovement, preferredAmmo } from "./bot-personalities";
 import { updateBotGoal } from "./bot-strategy";
 import { angleDelta, distance, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
-import { idleCommand, type Tank } from "./types";
+import { idleCommand, type Tank, type Weapon } from "./types";
 const BREACH_RANGE = 14;
 const BREACH_ROUTE_ANGLE = 0.5;
 const BREACH_FIRE_ANGLE = 0.15;
+
+/** Check each firing lane against the same hulls used by projectile collision. */
+export function friendlyBlocksShot(
+  simulation: Simulation,
+  tank: Tank,
+  aim: number,
+  weapon: Weapon,
+  range: number,
+): boolean {
+  const position = tank.body.translation();
+  return (weapon === "spread" ? [-COMBAT.spreadAngle, 0, COMBAT.spreadAngle] : [0]).some(
+    (offset) => {
+      const probe = {
+        x: position.x,
+        z: position.z,
+        vx: Math.sin(aim + offset),
+        vz: Math.cos(aim + offset),
+        owner: tank.id,
+      };
+      let nearest = range;
+      let blocked = false;
+      for (const candidate of simulation.tanks) {
+        const hit = tankHitTime(probe, candidate, nearest);
+        if (hit !== null) {
+          nearest = hit;
+          blocked = candidate.team === tank.team;
+        }
+      }
+      return blocked;
+    },
+  );
+}
 
 /** Choose goals on decision ticks, then produce the same input command used by human controls. */
 export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
@@ -28,6 +62,8 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
   if (brain.decision <= 0) {
     updateBotGoal(simulation, tank, role, easy, aggressive, weapon);
   }
+  let firingRange = BREACH_RANGE;
+  let breaching = false;
   const command = idleCommand();
   command.ammoSelection = "standard";
   let { x: mx, z: mz } = routeDirection(simulation, tank);
@@ -44,6 +80,7 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     const q = seen || aggressive ? actual : brain.lastSeen;
     const velocity = seen ? target.body.linvel() : { x: 0, z: 0 };
     const d = distance(position, q);
+    firingRange = d;
     const desired =
       Math.atan2(
         q.x + (velocity.x * d * (easy ? 0.1 : 0.65)) / WEAPONS[weapon].speed - position.x,
@@ -84,15 +121,23 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
       const desired = Math.atan2(weak.x - position.x, weak.z - position.z);
       command.aim = turn(desired);
       command.fire = Math.abs(angleDelta(command.aim, desired)) < BREACH_FIRE_ANGLE;
-      if (command.fire && tank.cooldown === 0 && brain.fireDelay === 0) {
-        simulation.botBreachShots++;
-      }
+      firingRange = distance(position, weak);
+      breaching = true;
     }
+  }
+  if (
+    command.fire &&
+    friendlyBlocksShot(simulation, tank, command.aim, command.ammoSelection, firingRange)
+  ) {
+    command.fire = false;
   }
   // Personality cadence also applies when breaching; human weapon cadence is separate.
   if (brain.fireDelay > 0) {
     command.fire = false;
   } else if (command.fire && tank.cooldown === 0) {
+    if (breaching) {
+      simulation.botBreachShots++;
+    }
     brain.fireDelay = easy
       ? simulation.rng.range(2, 3)
       : botReload(tank, simulation.rng.range(0.1, 0.25), command.ammoSelection);

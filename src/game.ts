@@ -67,6 +67,7 @@ const controls = new Controls(
   pause,
   (n) => (view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + n))),
   () => sim.match.phase === "playing" && sim.human.alive,
+  !stressTest,
 );
 const settings = (key: string, value: number) => {
   if (key === "tank-speed" || key === "bullet-speed") {
@@ -121,11 +122,21 @@ if (stressTest || playback.autoplay) {
   start();
 }
 const recorder = new FrameRecorder(sim, canvas);
+let frameRequest = 0;
+let backgroundTimer = 0;
+document.addEventListener("visibilitychange", () => {
+  if (!stressTest) {
+    return;
+  }
+  cancelAnimationFrame(frameRequest);
+  clearTimeout(backgroundTimer);
+  loop(performance.now());
+});
 function loop(now: number): void {
   const raw = (now - last) / MILLISECONDS_PER_SECOND;
   const dt = Math.min(MAX_FRAME_DELTA_SECONDS, raw);
   last = now;
-  if (!document.hidden) {
+  if (stressTest || !document.hidden) {
     if (sim.match.phase === "results" && playback.autoRounds) {
       controls.clear();
       recorder.completedRounds++;
@@ -201,9 +212,13 @@ function loop(now: number): void {
       });
     }
   }
-  requestAnimationFrame(loop);
+  if (stressTest && document.hidden) {
+    backgroundTimer = window.setTimeout(() => loop(performance.now()), 1000 / 60);
+  } else {
+    frameRequest = requestAnimationFrame(loop);
+  }
 }
-requestAnimationFrame(loop);
+frameRequest = requestAnimationFrame(loop);
 if (import.meta.env.DEV) {
   Object.assign(window, {
     sloppy: createDebug(sim, view, audio, controls, start, restart, recorder, playback),

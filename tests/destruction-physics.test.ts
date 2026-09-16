@@ -185,7 +185,7 @@ test("authored scenery emits a few material-specific pieces with matching dimens
     ["cargo", ["panel", "panel", "panel", "beam"]],
     ["timber", ["beam", "beam", "beam"]],
     ["tree", ["log", "beam"]],
-    ["drum", ["drum-shell", "drum-lid"]],
+    ["drum", ["drum-shell", "drum-shell", "drum-shell", "drum-lid"]],
     ["tower", ["panel", "beam", "panel", "beam"]],
   ] as const) {
     const s = arena();
@@ -210,6 +210,13 @@ test("authored scenery emits a few material-specific pieces with matching dimens
         assert.ok(f.body.isDynamic());
         assert.equal(f.body.collider(0).collisionGroups(), GROUP.pushableDebris);
         assert.equal(f.body.isCcdEnabled(), false);
+      }
+      if (kind === "tree") {
+        const trunk = s.fragments.find((f) => f.shape === "log")!;
+        assert.equal(trunk.treeCoverId, c.id, "the falling model retains its source crown");
+        assert.ok(Math.abs(trunk.body.translation().y - trunk.treeCenterY!) < 1e-5);
+        assert.equal(trunk.body.linvel().y, 0, "a severed tree falls rather than launching upward");
+        assert.equal(trunk.body.numColliders(), 2, "both trunk and crown contact the ground");
       }
       tick(s, 4);
       assert.ok(s.events.some((e) => e.type === "debris-impact" && e.material && e.force! > 0));
@@ -587,5 +594,30 @@ test("a scout pushes fallen logs, beams, panels and drum pieces while small chip
     } finally {
       s.dispose();
     }
+  }
+});
+
+test("barrels rupture radially and a centered blast adds no sideways bias", () => {
+  const s = arena();
+  try {
+    const c = cover(s, "drum");
+    s.damageCover(c, 999, 999, 0);
+    const scraps = s.fragments.filter((f) => f.shape === "drum-shell");
+    assert.ok(scraps.some((f) => f.body.linvel().x < 0));
+    assert.ok(scraps.some((f) => f.body.linvel().x > 0));
+    for (const f of scraps) {
+      const p = f.body.translation();
+      const v = f.body.linvel();
+      assert.ok((p.x - c.x) * v.x + (p.z - c.z) * v.z > 0);
+      assert.ok(f.dimensions!.x < c.w / 2 && f.dimensions!.y < c.h / 2);
+    }
+    const lid = s.fragments.find((f) => f.shape === "drum-lid")!;
+    lid.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    blastDebris(s, c, 6, 75);
+    assert.equal(lid.body.linvel().x, 0);
+    assert.equal(lid.body.linvel().z, 0);
+    assert.ok(lid.body.linvel().y > 0);
+  } finally {
+    s.dispose();
   }
 });

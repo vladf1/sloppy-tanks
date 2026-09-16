@@ -382,8 +382,9 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
       type: "impact",
       x: shot.x,
       z: shot.z,
+      height: 1,
       size: 0.6,
-      color: wColor(shot.weapon),
+      color: next.tank.team === shot.team ? 0xb9d7e5 : wColor(shot.weapon),
     });
   } else if (next.kind === "world") {
     const hit = next.hit;

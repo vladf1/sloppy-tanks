@@ -11,6 +11,7 @@ type FallingBranch = {
   scale: THREE.Vector3;
   life: number;
   landed: boolean;
+  restingY: number;
   materials: THREE.Material[];
 };
 
@@ -34,7 +35,6 @@ export class TreeDebris {
       if (isMesh(object)) {
         const clone = (source: THREE.Material) => {
           const material = source.clone();
-          material.alphaTest = 0;
           material.transparent = true;
           material.depthWrite = false;
           materials.push(material);
@@ -56,6 +56,7 @@ export class TreeDebris {
       scale: model.scale.clone(),
       life: LIFETIME,
       landed: false,
+      restingY: 0,
       materials,
     });
   };
@@ -76,8 +77,11 @@ export class TreeDebris {
         model.rotateX(spin.x * dt * 3);
         model.rotateY(spin.y * dt * 3);
         model.rotateZ(spin.z * dt * 3);
-        if (model.position.y <= 0.2) {
-          model.position.y = 0.2;
+        model.updateMatrixWorld(true);
+        const bottom = new THREE.Box3().setFromObject(model).min.y;
+        if (bottom <= 0.03) {
+          model.position.y += 0.03 - bottom;
+          branch.restingY = model.position.y;
           branch.landed = true;
         }
       }
@@ -87,9 +91,8 @@ export class TreeDebris {
         material.opacity = 1 - cleanup;
       }
       if (branch.landed) {
-        // Settle the loose needles against the ground rather than leaving upright foliage.
-        model.scale.y *= 0.22;
-        model.position.y = 0.2 - cleanup * 0.6;
+        model.position.y = branch.restingY - cleanup * 0.6;
+        model.updateMatrixWorld(true);
       }
     }
   }

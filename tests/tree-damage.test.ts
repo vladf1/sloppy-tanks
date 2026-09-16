@@ -71,12 +71,13 @@ test("falling branches start at the exact frozen tree pose, retain foliage, and 
     assert.ok(branch.model.position.y < initialY);
     for (let i = 0; i < 180; i++) debris.update(1 / 60);
     assert.equal(branch.landed, true);
-    assert.equal(branch.model.position.y, 0.2);
-    assert.ok(branch.model.scale.y < branch.scale.y);
+    assert.equal(branch.model.position.y, branch.restingY);
+    assert.deepEqual(branch.model.scale, branch.scale);
+    assert.ok(Math.abs(new THREE.Box3().setFromObject(branch.model).min.y - 0.03) < 1e-5);
     const settledScale = branch.model.scale.clone();
     debris.update(2.4);
     assert.deepEqual(branch.model.scale, settledScale, "cleanup never shrinks foliage");
-    assert.ok(branch.model.position.y < 0.2);
+    assert.ok(branch.model.position.y < branch.restingY);
     assert.ok(branch.materials.every((material) => material.opacity < 1));
     debris.update(6);
     assert.equal(debris.branches.length, 0);

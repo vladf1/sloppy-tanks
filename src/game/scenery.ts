@@ -32,6 +32,23 @@ function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): v
   }
   scene.add(roads);
   freezeStatic(roads);
+  details.add(createSpawnPads());
+  for (const team of [0, 1] as const) {
+    const side = team === 0 ? -1 : 1;
+    const color = TEAM_COLORS[team];
+    for (let z = -57; z <= 57; z += 2) {
+      put(details, box(0.16, 1.7, 0.16, color, 0.015), side * ARENA, 2.7, z);
+      put(details, box(0.13, 0.16, 2.2, color, 0.01), side * ARENA, 3.0, z);
+    }
+  }
+  batch(details);
+  scene.add(details);
+  freezeStatic(details);
+}
+
+export function createSpawnPads(): THREE.Group {
+  const details = new THREE.Group();
+  details.name = "spawn-pads";
   const spawnRimGeometry = new THREE.RingGeometry(
     2.05,
     2.3,
@@ -92,14 +109,10 @@ function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): v
         put(details, arrow, position.x - side * offset, 0.09, position.z);
       }
     }
-    for (let z = -57; z <= 57; z += 2) {
-      put(details, box(0.16, 1.7, 0.16, color, 0.015), side * ARENA, 2.7, z);
-      put(details, box(0.13, 0.16, 2.2, color, 0.01), side * ARENA, 3.0, z);
-    }
   }
   batch(details);
-  scene.add(details);
   freezeStatic(details);
+  return details;
 }
 
 export function createLighting(scene: THREE.Scene) {

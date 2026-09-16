@@ -74,7 +74,8 @@ function blastBody(
     return false;
   }
   const horizontal = Math.hypot(dx, dz);
-  const nx = horizontal > 0.001 ? dx / horizontal : 1;
+  // At the epicenter pressure has no preferred horizontal direction.
+  const nx = horizontal > 0.001 ? dx / horizontal : 0;
   const nz = horizontal > 0.001 ? dz / horizontal : 0;
   const falloff = (1 - distance / radius) ** 2;
   const strength = Math.min(1.8, power / 60) * falloff;

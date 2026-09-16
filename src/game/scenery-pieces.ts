@@ -49,7 +49,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
         .setAngularDamping(0.25)
         .setCanSleep(true),
     );
-    const round = shape === "log" || shape === "drum-shell";
+    const round = shape === "log";
     const collider = sim.world.createCollider(
       (round
         ? RAPIER.ColliderDesc.cylinder(h / 2, w / 2)
@@ -85,6 +85,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       life: 9.5 + DEBRIS_CLEANUP_SECONDS,
       expiresAt: sim.elapsed + 18,
     });
+    return sim.fragments[sim.fragments.length - 1];
   };
   if (cover.kind === "cargo") {
     // Two broad crate sides, a lid, and one broken frame beam (four bodies).
@@ -108,23 +109,58 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       );
     }
   } else if (cover.kind === "tree") {
-    const radius = Math.max(0.22, Math.min(0.48, cover.w * 0.14));
-    const length = Math.min(4.5, cover.h * 0.62);
-    piece("log", 0, 0.65 + length / 2, 0, radius * 2, length, radius * 2, 0x98734f);
-    piece("beam", radius, length * 0.8, 0, radius * 0.65, length * 0.45, radius * 0.65, 0x825333);
-  } else if (cover.kind === "drum") {
-    piece(
-      "drum-shell",
-      0,
-      cover.h * 0.4,
-      0,
-      cover.w * 0.9,
-      cover.h * 0.7,
-      cover.w * 0.9,
-      cover.color,
-      "metal",
+    // Match the standing tree's deterministic trunk proportions.
+    const seed =
+      ((Math.round(cover.x * 100) * 73856093) ^ (Math.round(cover.z * 100) * 19349663)) >>> 0;
+    const treeRng = new Random(seed);
+    const family = Math.floor(treeRng.next() * 6);
+    treeRng.next(); // crown twist
+    const height = cover.h * treeRng.range(0.9, 1.07);
+    const radius = Math.min(cover.w, cover.d) * (family === 3 ? 0.14 : family >= 4 ? 0.1 : 0.12);
+    const stump = radius * treeRng.range(1.5, 1.9);
+    const length = height * (family < 3 ? 0.98 : 0.78) - stump;
+    const center = stump + length / 2;
+    const trunk = piece("log", 0, center, 0, radius * 2, length, radius * 2, 0x98734f);
+    trunk.treeCoverId = cover.id;
+    trunk.treeCenterY = center;
+    // A light crown volume keeps foliage above the ground as the trunk rolls.
+    sim.world.createCollider(
+      RAPIER.ColliderDesc.ball(Math.min(cover.w, cover.d) * 0.34)
+        .setTranslation(0, height * 0.72 - center, 0)
+        .setCollisionGroups(GROUP.fragment)
+        .setMass(0.12)
+        .setFriction(0.9)
+        .setRestitution(0.05),
+      trunk.body,
     );
-    piece("drum-lid", 0, cover.h, 0, cover.w * 0.95, 0.08, cover.w * 0.95, 0x574e3e, "metal");
+    // A small sideways lean initiates a gravity-driven fall instead of a launch.
+    const angle = rng.range(0, Math.PI * 2);
+    trunk.body.setLinvel({ x: Math.sin(angle) * 0.45, y: 0, z: Math.cos(angle) * 0.45 }, true);
+    trunk.body.setAngvel({ x: Math.cos(angle) * 0.65, y: 0, z: -Math.sin(angle) * 0.65 }, true);
+    piece("beam", radius, stump, 0, radius * 0.3, radius * 1.4, radius * 0.25, 0xb59a69);
+  } else if (cover.kind === "drum") {
+    // Internal pressure tears the thin wall into small curled sheets, not a
+    // surviving cylinder. Offset each sheet so the blast spreads them radially.
+    const phase = rng.range(0, Math.PI * 2);
+    for (let i = 0; i < 3; i++) {
+      const angle = phase + (i * Math.PI * 2) / 3;
+      const scrap = piece(
+        "drum-shell",
+        Math.cos(angle) * cover.w * 0.3,
+        cover.h * rng.range(0.3, 0.6),
+        Math.sin(angle) * cover.d * 0.3,
+        cover.w * rng.range(0.28, 0.4),
+        cover.h * rng.range(0.25, 0.4),
+        0.12,
+        i === 1 ? 0x493e35 : 0x765443,
+        "metal",
+      );
+      scrap.body.setRotation(
+        { x: 0, y: Math.sin(-angle / 2), z: 0, w: Math.cos(-angle / 2) },
+        true,
+      );
+    }
+    piece("drum-lid", 0, cover.h, 0, cover.w * 0.65, 0.16, cover.w * 0.65, 0x574e3e, "metal");
   } else if (cover.kind === "tower") {
     // Split deck and two structural posts; foundations still use the existing rubble.
     for (const side of [-1, 1]) {

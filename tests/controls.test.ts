@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Controls } from "../src/game/controls";
-function fixture() {
+function fixture(pauseOnFocusLoss = true) {
   const win = new EventTarget(),
     doc = new EventTarget(),
     canvas = new EventTarget();
@@ -25,6 +25,8 @@ function fixture() {
     canvas as unknown as HTMLCanvasElement,
     () => pauses++,
     (n) => zooms.push(n),
+    () => true,
+    pauseOnFocusLoss,
   );
   const emit = (target: EventTarget, name: string, props: Record<string, unknown>) => {
     const event = new Event(name, { cancelable: true });
@@ -154,5 +156,19 @@ test("ammo shortcuts ignore inactive play, browser modifiers and editable contro
   f.emit(f.win, "keydown", { code: "KeyE" });
   f.emit(f.win, "blur", {});
   assert.equal(f.controls.command(0).ammoSelection, undefined);
+  f.dispose();
+});
+
+test("stress controls clear input on focus loss without pausing; Escape still pauses", () => {
+  const f = fixture(false);
+  for (const action of ["blur", "visibilitychange"]) {
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    Object.assign(f.doc, { hidden: true });
+    f.emit(action === "blur" ? f.win : f.doc, action, {});
+    assert.equal(f.controls.command(0).fire, false);
+    assert.equal(f.pauses, 0);
+  }
+  f.emit(f.win, "keydown", { code: "Escape" });
+  assert.equal(f.pauses, 1);
   f.dispose();
 });

@@ -40,7 +40,6 @@ const stemGeometry = new THREE.CylinderGeometry(0.6, 1, 1, 8, 1, true);
 const coniferStemGeometry = new THREE.CylinderGeometry(0.025, 1, 1, 7, 1, true);
 const branchGeometry = new THREE.CylinderGeometry(0.6, 1, 1, 5, 1, true);
 const rootGeometry = new THREE.CylinderGeometry(0.08, 1, 1, 5, 1, true);
-const broadGeometry = new THREE.IcosahedronGeometry(1, 1);
 const smallCrownGeometry = new THREE.IcosahedronGeometry(1, 0);
 // Three intersecting needle cards retain volume from the overhead camera and at the horizon.
 // A complete spray is six triangles; even distant trees get individual branching silhouettes.
@@ -345,7 +344,7 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
   } else {
     const count = detail === "background" ? 6 : 7;
     for (let i = 0; i < count; i++) {
-      const parent = branchParent(i < 2 ? 1 : i === 3 || i === 4 ? 2 : 0);
+      const parent = crown;
       const a = twist + i * 2.39996;
       const t = i / (count - 1);
       const spread = (1 - t * 0.65) * (family === 3 ? 0.27 : 0.2);
@@ -364,18 +363,38 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
         );
       }
       const size = c.w * (family === 3 ? 0.3 : 0.25) * rng.range(0.84, 1.09);
-      const leaves = mesh(
-        parent,
-        detail === "full" ? broadGeometry : smallCrownGeometry,
-        leafMats[i % 3],
-        center.x,
-        center.y,
-        center.z,
-        size,
-        height * (family === 3 ? 0.155 : 0.185),
-        size * rng.range(0.8, 1.07),
-      );
-      leaves.rotation.set(rng.range(-0.3, 0.3), a, rng.range(-0.2, 0.2));
+      // Smaller overlapping lobes give the crown an irregular, branching silhouette.
+      const lobes = detail === "full" ? 4 : 1;
+      for (let j = 0; j < lobes; j++) {
+        const angle = a + j * 2.39996;
+        const reach = j === 0 ? 0 : size * 0.55;
+        const tip = center
+          .clone()
+          .add(
+            new THREE.Vector3(
+              Math.sin(angle) * reach,
+              rng.range(-0.25, 0.35) * size,
+              Math.cos(angle) * reach,
+            ),
+          );
+        // Damage sheds small outer twigs, never an entire section of the crown.
+        const foliageParent = j === lobes - 1 && i < 4 ? branchParent(i < 2 ? 1 : 2) : parent;
+        if (detail === "full" && foliageParent !== crown) {
+          limb(foliageParent, barkMat, center, tip, radius * 0.075);
+        }
+        const leaves = mesh(
+          foliageParent,
+          smallCrownGeometry,
+          leafMats[(i + j) % 3],
+          tip.x,
+          tip.y,
+          tip.z,
+          size * rng.range(0.48, 0.66),
+          size * rng.range(0.55, 0.85),
+          size * rng.range(0.45, 0.65),
+        );
+        leaves.rotation.set(rng.range(-0.5, 0.5), angle, rng.range(-0.4, 0.4));
+      }
     }
   }
   if (detail === "full") {

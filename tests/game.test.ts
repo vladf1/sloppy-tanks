@@ -12,6 +12,7 @@ import {
 } from "../src/game/weapons";
 import { STEP, VEHICLES, WEAPONS, Random } from "../src/game/data";
 import { idleCommand, type Pickup, type Team } from "../src/game/types";
+import { botCommand, friendlyBlocksShot } from "../src/game/ai";
 import { Navigation } from "../src/game/navigation";
 before(async () => {
   await RAPIER.init();
@@ -150,7 +151,7 @@ test("ammunition persists while power-ups expire and repair fully heals", () => 
   assert.equal(a.hp, VEHICLES[a.kind].health);
   s.dispose();
 });
-test("swept fast shell hits a target between frame endpoints and ignores ally", () => {
+test("swept fast shell stops at an ally and protects the enemy behind it", () => {
   const s = game();
   clear(s);
   const a = place(s, 0, -12, 0),
@@ -171,7 +172,7 @@ test("swept fast shell hits a target between frame endpoints and ignores ally", 
     weapon: "standard",
   });
   stepProjectiles(s, STEP);
-  assert.equal(enemy.hp, VEHICLES[enemy.kind].health - 40);
+  assert.equal(enemy.hp, VEHICLES[enemy.kind].health);
   assert.equal(ally.hp, 100);
   assert.equal(s.shots.length, 0);
   s.dispose();
@@ -651,5 +652,79 @@ test("village buildings and trees block routes until destroyed, while all spawns
   }
   for (const team of [0, 1] as const)
     for (const p of spawnPositions(team)) assert.ok(s.nav.find(p, { x: 0, z: 0 }).length > 0);
+  s.dispose();
+});
+
+for (const weapon of ["standard", "spread", "ricochet", "piercing", "rocket"] as const)
+  test(`${weapon} stops at teammates without draining hull or shields`, () => {
+    const s = game();
+    clear(s);
+    const shooter = place(s, 0, 0, -12);
+    const ally = place(s, 2, 0, 0);
+    const enemy = place(s, 1, 0, 12);
+    ally.shield = 20;
+    ally.shieldPoints = 120;
+    const hp = ally.hp;
+    shooter.aim = 0;
+    shooter.selectedAmmo = weapon;
+    if (weapon !== "standard") shooter.ammo[weapon] = 1;
+    fireWeapon(s, shooter);
+    for (const shot of s.shots) {
+      shot.x = 0;
+      shot.z = -5;
+      shot.vx = 0;
+      shot.vz = 600;
+    }
+    stepProjectiles(s, STEP);
+    assert.equal(s.shots.length, 0);
+    assert.equal(ally.hp, hp);
+    assert.equal(ally.shieldPoints, 120);
+    assert.equal(enemy.hp, VEHICLES[enemy.kind].health);
+    assert.equal(
+      s.events.some((e) => e.type === "hurt" && e.id === ally.id),
+      false,
+    );
+    assert.ok(s.events.some((e) => e.type === "impact" && e.color === 0xb9d7e5));
+    assert.equal(
+      s.events.some((e) => e.type === "explosion"),
+      weapon === "rocket",
+    );
+    s.dispose();
+  });
+
+test("bots hold fire for allies and resume when their firing lane clears", () => {
+  const s = game();
+  clear(s);
+  const bot = place(s, 2, 0, -12);
+  const ally = place(s, 0, 0, -5);
+  const enemy = place(s, 1, 0, 8);
+  bot.aim = 0;
+  Object.assign(bot.brain, {
+    target: enemy.id,
+    memory: 10,
+    decision: 10,
+    reaction: 0,
+    fireDelay: 0,
+    aimError: 0,
+    mode: "fight",
+  });
+  assert.equal(botCommand(s, bot, STEP).fire, false);
+  assert.equal(bot.brain.fireDelay, 0);
+  ally.body.setTranslation({ x: 12, y: 0.65, z: -5 }, true);
+  assert.equal(botCommand(s, bot, STEP).fire, true);
+  ally.body.setTranslation({ x: 0, y: 0.65, z: 16 }, true);
+  assert.equal(friendlyBlocksShot(s, bot, 0, "standard", 35), false);
+  s.dispose();
+});
+
+test("bot spread checks side pellets and ignores dead allies", () => {
+  const s = game();
+  clear(s);
+  const bot = place(s, 2, 0, -20);
+  const ally = place(s, 0, Math.sin(0.19) * 30, -20 + Math.cos(0.19) * 30);
+  assert.equal(friendlyBlocksShot(s, bot, 0, "standard", 35), false);
+  assert.equal(friendlyBlocksShot(s, bot, 0, "spread", 35), true);
+  ally.alive = false;
+  assert.equal(friendlyBlocksShot(s, bot, 0, "spread", 35), false);
   s.dispose();
 });

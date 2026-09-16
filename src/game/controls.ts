@@ -26,6 +26,7 @@ export class Controls {
     public pause: () => void,
     zoom: (amount: number) => void,
     public active: () => boolean = () => true,
+    pauseOnFocusLoss = true,
   ) {
     window.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
@@ -117,12 +118,16 @@ export class Controls {
     );
     window.addEventListener("blur", () => {
       this.clear();
-      pause();
+      if (pauseOnFocusLoss) {
+        pause();
+      }
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         this.clear();
-        pause();
+        if (pauseOnFocusLoss) {
+          pause();
+        }
       }
     });
   }

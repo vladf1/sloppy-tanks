@@ -187,6 +187,8 @@ export interface Fragment {
   dimensions?: { x: number; y: number; z: number };
   material?: DebrisMaterial;
   sourceKind?: CoverKind;
+  treeCoverId?: number;
+  treeCenterY?: number;
   expiresAt?: number;
   wreck?: VehicleKind;
   part?: WreckPart;

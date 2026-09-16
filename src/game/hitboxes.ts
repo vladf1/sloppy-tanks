@@ -47,13 +47,13 @@ export function tankContactCollider(kind: VehicleKind) {
 
 /** Sweep a shell against the hull, accounting for this tick's tank translation. */
 export function tankHitTime(
-  shot: Shot,
+  shot: Pick<Shot, "x" | "z" | "vx" | "vz" | "owner">,
   tank: Tank,
   limit: number,
   elapsed = 0,
   frameDelta = 0,
 ): number | null {
-  if (!tank.alive || tank.team === shot.team) {
+  if (!tank.alive || tank.id === shot.owner) {
     return null;
   }
   const end = tank.body.translation();

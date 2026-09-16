@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { barrelScrapGeometry } from "./barrel-debris";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
 import { coverDamageStage } from "./cover-model";
@@ -26,7 +27,7 @@ import { pickupCube } from "./pickup-visuals";
 import { ProjectileVisuals } from "./projectile-visuals";
 import { disposeOwned, isMesh, updateInstances } from "./render-resources";
 import { createReticle } from "./reticle";
-import { createArenaFloor, createLighting } from "./scenery";
+import { createArenaFloor, createLighting, createSpawnPads } from "./scenery";
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
@@ -94,6 +95,7 @@ export class Presentation {
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
   private quarryScenery?: QuarryScenery;
+  private stressSpawnPads?: THREE.Group;
   private customFloor?: THREE.Mesh;
   private customOuterFloor?: THREE.Mesh;
   private lighting: ReturnType<typeof createLighting>;
@@ -148,8 +150,8 @@ export class Presentation {
       panel: woodPiece.geometry,
       beam: woodPiece.geometry,
       log: trunk.geometry,
-      "drum-shell": new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, true),
-      "drum-lid": new THREE.CylinderGeometry(0.5, 0.5, 1, 12),
+      "drum-shell": barrelScrapGeometry("shell"),
+      "drum-lid": barrelScrapGeometry("lid"),
       wood: woodFragment.geometry,
       armor: box(1.25, 0.16, 0.85, 0xffffff).geometry,
       wheel: new THREE.CylinderGeometry(0.48, 0.48, 0.28, 10),
@@ -217,6 +219,14 @@ export class Presentation {
     this.resize();
   }
   reset(simulation: Simulation): void {
+    const stress = simulation.customMap?.id === "stress-test";
+    if (stress && !this.stressSpawnPads) {
+      this.stressSpawnPads = createSpawnPads();
+      this.scene.add(this.stressSpawnPads);
+    }
+    if (this.stressSpawnPads) {
+      this.stressSpawnPads.visible = stress;
+    }
     const harbor = simulation.mapTheme === "harbor";
     const quarry = simulation.mapTheme === "quarry";
     const village = simulation.mapTheme === "village";
@@ -674,7 +684,7 @@ export class Presentation {
       const pos = f.body.translation();
       const q = f.body.rotation();
       const cleanup = debrisCleanupProgress(f.life);
-      if (!f.wreck) {
+      if (!f.wreck && f.treeCoverId === undefined) {
         const mesh = this.debrisMeshes.get(f.shape ?? "shard")!;
         if (mesh.count >= MAX_FRAGMENTS) {
           continue;
@@ -708,7 +718,27 @@ export class Presentation {
       }
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
-        g = wreckModel(f.wreck, f.team ?? 0, f.part ?? "hull");
+        if (f.treeCoverId !== undefined) {
+          const source = this.coverMeshes.get(f.treeCoverId)?.userData.crown as
+            THREE.Group | undefined;
+          if (!source) {
+            continue;
+          }
+          const crown = source.clone(true);
+          crown.visible = true;
+          crown.position.set(0, -(f.treeCenterY ?? 0), 0);
+          crown.traverse((object) => {
+            object.matrixWorldAutoUpdate = true;
+            object.matrixAutoUpdate = true;
+            if (isMesh(object) && object.geometry.userData.owned) {
+              object.geometry = object.geometry.clone();
+            }
+          });
+          g = new THREE.Group();
+          g.add(crown);
+        } else {
+          g = wreckModel(f.wreck!, f.team ?? 0, f.part ?? "hull");
+        }
         g.traverse((o) => {
           if (!isMesh(o)) {
             return;
@@ -728,7 +758,7 @@ export class Presentation {
       g.position.set(pos.x, pos.y, pos.z);
       g.quaternion.set(q.x, q.y, q.z, q.w);
       const remaining = 1 - cleanup;
-      g.scale.setScalar(VEHICLES[f.wreck].scale);
+      g.scale.setScalar(f.wreck ? VEHICLES[f.wreck].scale : 1);
       if (cleanup > 0) {
         if (g.userData.sinkDepth === undefined) {
           this.debrisBounds.setFromObject(g);

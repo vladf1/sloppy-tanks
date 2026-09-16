@@ -164,14 +164,14 @@ test("moving tanks are hit at the crossing time, not just their end-of-tick loca
   }
 });
 
-test("allied outer tracks remain transparent to shells", () => {
+test("allied outer tracks block shells without damage", () => {
   const { s, target } = fixture();
   target.team = 0;
   shell(s, 1.1 * VEHICLES.balanced.scale, -5, 0, 600);
-  assert.equal(tankHitTime(s.shots[0], target, STEP), null);
+  assert.notEqual(tankHitTime(s.shots[0], target, STEP), null);
   stepProjectiles(s, STEP);
   assert.equal(target.hp, 100);
-  assert.equal(s.shots.length, 1);
+  assert.equal(s.shots.length, 0);
   s.dispose();
 });
 
