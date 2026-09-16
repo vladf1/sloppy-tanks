@@ -93,7 +93,10 @@ test("a wall blocks interception, while a reflected shell can intercept on its n
   assert.equal(s.events.filter((e) => e.type === "explosion").length, 0);
   assert.equal(s.shots.length, 0);
   s.events = [];
-  s.shots = [{ ...shot(s, -1, 0, 60, 0, 0), bounces: 1 }, shot(s, -3, 0, 60, 0, 1)];
+  s.shots = [
+    { ...shot(s, -1, 0, 60, 0, 0), weapon: "ricochet", bounces: 1 },
+    shot(s, -3, 0, 60, 0, 1),
+  ];
   stepProjectiles(s, 0.05);
   assert.equal(s.events.filter((e) => e.type === "ricochet").length, 1);
   assert.equal(s.events.filter((e) => e.type === "explosion").length, 1);
@@ -143,7 +146,7 @@ test("rapid fire modifies only selected ammunition and expires independently", (
   fireWeapon(s, t);
   assert.equal(s.shots.length, 3);
   assert.equal(t.cooldown, WEAPONS.spread.interval / 2 / 1.2);
-  assert.ok(s.shots.every((p) => p.damage === 27 && p.bounces === 1));
+  assert.ok(s.shots.every((p) => p.damage === 27 && p.bounces === 0));
   const cooldown = t.cooldown;
   pickup(s, "rapid");
   pickup(s, "ricochet");

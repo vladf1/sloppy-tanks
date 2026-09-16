@@ -95,7 +95,7 @@ export const WEAPONS: Record<
     interval: 0.85,
     damage: 40,
     speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
-    bounces: 1,
+    bounces: 0,
     color: 0xffdf00,
   },
   spread: {
@@ -107,7 +107,7 @@ export const WEAPONS: Record<
     interval: 1.1,
     damage: 27,
     speed: 17.6 * BASE_SPEED_MULTIPLIER,
-    bounces: 1,
+    bounces: 0,
     color: 0xff38d4,
   },
   rocket: {

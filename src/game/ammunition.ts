@@ -9,7 +9,7 @@ export const AMMO_ORDER: readonly Weapon[] = [
   "piercing",
 ];
 export const AMMO_HELP: Record<Weapon, string> = {
-  standard: "Unlimited shells · one bounce",
+  standard: "Unlimited shells · stops at walls",
   spread: "Three shells per volley · best up close",
   rocket: "Accelerates in flight · explosive blast · can hurt you",
   ricochet: "High damage · bounces up to three times",

@@ -10,7 +10,7 @@ import {
   stepMines,
   stepProjectiles,
 } from "../src/game/weapons";
-import { STEP, VEHICLES, Random } from "../src/game/data";
+import { STEP, VEHICLES, WEAPONS, Random } from "../src/game/data";
 import { idleCommand, type Pickup, type Team } from "../src/game/types";
 import { Navigation } from "../src/game/navigation";
 before(async () => {
@@ -176,39 +176,46 @@ test("swept fast shell hits a target between frame endpoints and ignores ally", 
   assert.equal(s.shots.length, 0);
   s.dispose();
 });
-test("standard ricochet reflects once off surviving cover and removes on next hit", () => {
-  const s = game();
-  clear(s);
-  s.addCover({
-    kind: "concrete",
-    x: 0,
-    z: 0,
-    w: 1,
-    d: 10,
-    h: 2,
-    hp: Infinity,
-    color: 0,
+for (const weapon of ["standard", "spread", "ricochet"] as const)
+  test(`${weapon} only reflects off surviving cover when using ricochet ammo`, () => {
+    const s = game();
+    clear(s);
+    const cover = s.addCover({
+      kind: "concrete",
+      x: 0,
+      z: 0,
+      w: 1,
+      d: 10,
+      h: 2,
+      hp: 200,
+      color: 0,
+    });
+    s.world.step();
+    s.shots.push({
+      id: 999,
+      x: -3,
+      z: 0,
+      vx: 180,
+      vz: 0,
+      owner: s.human.id,
+      team: s.humanTeam,
+      damage: WEAPONS[weapon].damage,
+      bounces: WEAPONS[weapon].bounces,
+      life: 2,
+      piercing: 0,
+      weapon,
+    });
+    stepProjectiles(s, STEP);
+    assert.equal(cover.hp, 200 - WEAPONS[weapon].damage);
+    if (weapon === "ricochet") {
+      assert.equal(s.shots[0].bounces, 2);
+      assert.ok(s.shots[0].vx < 0);
+    } else {
+      assert.equal(s.shots.length, 0);
+      assert.equal(s.events.filter((e) => e.type === "ricochet").length, 0);
+    }
+    s.dispose();
   });
-  s.world.step();
-  s.shots.push({
-    id: 999,
-    x: -3,
-    z: 0,
-    vx: 180,
-    vz: 0,
-    owner: s.human.id,
-    team: s.humanTeam,
-    damage: 40,
-    bounces: 1,
-    life: 2,
-    piercing: 0,
-    weapon: "standard",
-  });
-  stepProjectiles(s, STEP);
-  assert.equal(s.shots[0].bounces, 0);
-  assert.ok(s.shots[0].vx < 0);
-  s.dispose();
-});
 test("destroyed cover does not reflect shells and breaks exactly once", () => {
   const s = game();
   clear(s);
@@ -421,7 +428,7 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });
-test("selected ricochet has three reflections and 60 damage; standard has one", () => {
+test("selected ricochet has three reflections and 60 damage; standard has none", () => {
   const s = game();
   const t = s.human;
   t.ammo.ricochet = 12;
@@ -432,7 +439,7 @@ test("selected ricochet has three reflections and 60 damage; standard has one", 
   t.cooldown = 0;
   t.selectedAmmo = "standard";
   fireWeapon(s, t);
-  assert.equal(s.shots.at(-1)!.bounces, 1);
+  assert.equal(s.shots.at(-1)!.bounces, 0);
   s.dispose();
 });
 test("bots cross opened tower footprint and continue combat through ruins", () => {
