@@ -74,7 +74,7 @@ export function damageTank(
     killer.kills++;
   }
   if (simulation.gameMode === "team") {
-    awardKill(simulation.match, tank.team, team, owner === tank.id);
+    awardKill(simulation.match, tank.team, team, owner === tank.id, !simulation.endlessMatch);
   }
   simulation.checkSoloResult();
   blastDebris(simulation, position, 3, 60);

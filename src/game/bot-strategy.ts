@@ -82,7 +82,8 @@ export function updateBotGoal(
       (pickup.kind !== "repair" ||
         tank.hp < simulation.maxHealth(tank) * REPAIR_COLLECT_HEALTH_FRACTION) &&
       (pickup.kind !== "rapid" || tank.rapid < EFFECT_REFRESH_SECONDS) &&
-      (!isSpecialAmmo(pickup.kind) || canCollectAmmo(tank, pickup.kind)) &&
+      (!isSpecialAmmo(pickup.kind) ||
+        canCollectAmmo(tank, pickup.kind, simulation.ammoCrateMultiplier)) &&
       (pickup.kind !== "speed" || tank.speed < EFFECT_REFRESH_SECONDS) &&
       (pickup.kind !== "laser" || tank.laser < EFFECT_REFRESH_SECONDS) &&
       (pickup.kind !== "shield" ||

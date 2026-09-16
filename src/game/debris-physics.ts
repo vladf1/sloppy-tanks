@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import type { Simulation } from "./simulation";
-import type { Cover, Shot, Vec2 } from "./types";
+import type { Cover, Fragment, Shot, Vec2 } from "./types";
 
 export type DebrisMaterial = "wood" | "metal" | "concrete";
 export const DEBRIS_MATERIALS = {
@@ -106,6 +106,20 @@ export function hitMovableCover(cover: Cover, shot: Shot): void {
     { x: (shot.vx / speed) * impulse, y: 0, z: (shot.vz / speed) * impulse },
     // Projectile collision queries run at y=1, independently of the rendered muzzle.
     { x: shot.x, y: 1, z: shot.z },
+    true,
+  );
+}
+
+/** Wreck hulls and turrets absorb the round and take only physical impulse. */
+export function hitWreck(wreck: Fragment, shot: Shot): void {
+  const speed = Math.hypot(shot.vx, shot.vz);
+  if (!wreck.wreck || speed === 0) {
+    return;
+  }
+  const impulse = shot.weapon === "rocket" ? 10 : shot.weapon === "piercing" ? 7 : 5;
+  wreck.body.applyImpulseAtPoint(
+    { x: (shot.vx / speed) * impulse, y: 0, z: (shot.vz / speed) * impulse },
+    { x: shot.x, y: shot.y ?? 1, z: shot.z },
     true,
   );
 }

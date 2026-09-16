@@ -336,6 +336,35 @@ test("match time, tie overtime, next valid kill and 100 kill limit", () => {
   timed.scores = [2, 3];
   tickMatch(timed, 0.2);
   assert.equal(timed.winner, 1);
+
+  const endless = newMatch();
+  endless.phase = "playing";
+  endless.scores = [99, 99];
+  awardKill(endless, 1, 0, false, false);
+  assert.deepEqual(endless.scores, [100, 99]);
+  assert.equal(endless.phase, "playing");
+  assert.equal(endless.winner, null);
+});
+
+test("endless team matches ignore both the score limit and match timer", () => {
+  const s = game();
+  try {
+    s.endlessMatch = true;
+    s.match.scores = [99, 99];
+    s.match.time = STEP;
+    const victim = s.tanks.find((tank) => tank.team === 1)!;
+    const killer = s.tanks.find((tank) => tank.team === 0)!;
+    victim.protection = 0;
+    s.damageTank(victim, 9999, killer.id, killer.team);
+    s.step();
+    assert.deepEqual(s.match.scores, [100, 99]);
+    assert.equal(s.match.time, STEP);
+    assert.equal(s.match.phase, "playing");
+    assert.equal(s.match.winner, null);
+    assert.equal(s.match.overtime, false);
+  } finally {
+    s.dispose();
+  }
 });
 test("complete reset restores counts, cover, pickups, scores, nav and RNG", () => {
   const s = game();

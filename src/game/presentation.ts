@@ -26,7 +26,7 @@ import { pickupCube } from "./pickup-visuals";
 import { ProjectileVisuals } from "./projectile-visuals";
 import { disposeOwned, isMesh, updateInstances } from "./render-resources";
 import { createReticle } from "./reticle";
-import { createLighting } from "./scenery";
+import { createArenaFloor, createLighting } from "./scenery";
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
@@ -94,6 +94,8 @@ export class Presentation {
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
   private quarryScenery?: QuarryScenery;
+  private customFloor?: THREE.Mesh;
+  private customOuterFloor?: THREE.Mesh;
   private lighting: ReturnType<typeof createLighting>;
   private particleEffects = new ParticleEffects();
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
@@ -218,6 +220,26 @@ export class Presentation {
     const harbor = simulation.mapTheme === "harbor";
     const quarry = simulation.mapTheme === "quarry";
     const village = simulation.mapTheme === "village";
+    if (simulation.mapOuterFloor && !this.customOuterFloor) {
+      this.customOuterFloor = createArenaFloor(
+        this.renderer,
+        simulation.mapOuterFloor,
+        simulation.mapOuterFloorExtent,
+      );
+      this.customOuterFloor.position.y = -0.002;
+      this.scene.add(this.customOuterFloor);
+    }
+    if (this.customOuterFloor) {
+      this.customOuterFloor.visible = Boolean(simulation.mapOuterFloor);
+    }
+    if (simulation.mapFloor && !this.customFloor) {
+      this.customFloor = createArenaFloor(this.renderer, simulation.mapFloor);
+      this.customFloor.position.y = 0.008;
+      this.scene.add(this.customFloor);
+    }
+    if (this.customFloor) {
+      this.customFloor.visible = Boolean(simulation.mapFloor);
+    }
     if (village && !this.villageScenery) {
       this.villageScenery = new VillageScenery(this.renderer);
       this.scene.add(this.villageScenery);
@@ -602,7 +624,9 @@ export class Presentation {
         this.coverMeshes.set(cover.id, group);
         this.worldGroup.add(group);
       }
-      if (cover.motion) {
+      // Destruction removes a movable cover's Rapier body immediately. Never read a transform
+      // from that invalid handle; doing so traps inside WASM and stops the entire render loop.
+      if (cover.motion && cover.alive) {
         const p = cover.body.translation();
         const q = cover.body.rotation();
         group.position.set(p.x, p.y, p.z);

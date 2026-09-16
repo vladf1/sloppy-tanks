@@ -43,6 +43,9 @@ function vehicleCards(simulation: Simulation): string {
 }
 
 function modeOptions(simulation: Simulation): string {
+  if (simulation.customMap) {
+    return `<div class="mode-options"><fieldset><legend>BATTLE</legend><div class="mode-option fixed"><span><b>30-Tank Stress Battle</b><small>15 vs 15 · Endless respawns and scoring · No victory</small></span></div></fieldset><fieldset><legend>MAP</legend><div class="mode-option fixed"><span><b>${simulation.customMap.name}</b><small>${simulation.customMap.description}</small></span></div></fieldset></div>`;
+  }
   const group = (key: "gameMode" | "mapMode", title: string, options: string[][]) =>
     `<fieldset><legend>${title}</legend>${options
       .map(

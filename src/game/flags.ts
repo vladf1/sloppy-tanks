@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { spawnPositions } from "./arena";
 import { TEAM_COLORS } from "./data";
+import { cylinder, put } from "./model-primitives";
 
 function randomWind() {
   return { strength: 0.15 + Math.random() * 0.85, direction: (Math.random() - 0.5) * 1.3 };
@@ -23,12 +24,17 @@ export class Flags {
         side: THREE.DoubleSide,
       });
       for (const position of spawnPositions(team)) {
+        const x = team === 0 ? -62 : 62;
+        const pole = cylinder(0.055, 4.8, 0x59656a, 8);
+        pole.name = "flag-pole";
+        put(this.group, pole, x, 2.4, position.z);
         const geometry = new THREE.PlaneGeometry(1.4, 0.9, 16, 6);
         (geometry.getAttribute("position") as THREE.BufferAttribute).setUsage(
           THREE.DynamicDrawUsage,
         );
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(team === 0 ? -62 : 62, 4.6, position.z);
+        mesh.name = "flag-cloth";
+        mesh.position.set(x, 4.6, position.z);
         mesh.castShadow = mesh.receiveShadow = true;
         this.cloth.push(mesh);
         this.group.add(mesh);

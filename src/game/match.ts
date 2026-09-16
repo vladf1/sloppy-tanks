@@ -10,12 +10,18 @@ export function newMatch(round = 1): Match {
     round,
   };
 }
-export function awardKill(match: Match, victim: Team, killer: Team, self: boolean): void {
+export function awardKill(
+  match: Match,
+  victim: Team,
+  killer: Team,
+  self: boolean,
+  allowVictory = true,
+): void {
   if (self || victim === killer || match.phase !== "playing") {
     return;
   }
   match.scores[killer]++;
-  if (match.overtime || match.scores[killer] >= SCORE_LIMIT) {
+  if (allowVictory && (match.overtime || match.scores[killer] >= SCORE_LIMIT)) {
     finish(match, killer);
   }
 }

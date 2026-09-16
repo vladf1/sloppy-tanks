@@ -27,8 +27,8 @@ export function hasAmmo(tank: Tank, weapon: Weapon): boolean {
 export function hasAdvancedAmmo(tank: Tank): boolean {
   return Object.values(tank.ammo).some((count) => count > 0);
 }
-export function canCollectAmmo(tank: Tank, kind: SpecialAmmo): boolean {
-  return tank.ammo[kind] < WEAPONS[kind].carryLimit;
+export function canCollectAmmo(tank: Tank, kind: SpecialAmmo, multiplier = 1): boolean {
+  return tank.ammo[kind] < WEAPONS[kind].carryLimit * multiplier;
 }
 export function equippedWeapon(tank: Tank): Weapon {
   return hasAmmo(tank, tank.selectedAmmo) ? tank.selectedAmmo : "standard";
@@ -63,8 +63,11 @@ export function consumeAmmo(tank: Tank, weapon: Weapon): void {
     tank.selectedAmmo = "standard";
   }
 }
-export function refillAmmo(tank: Tank, kind: SpecialAmmo): number {
-  const received = Math.min(WEAPONS[kind].perCrate, WEAPONS[kind].carryLimit - tank.ammo[kind]);
+export function refillAmmo(tank: Tank, kind: SpecialAmmo, multiplier = 1): number {
+  const received = Math.min(
+    WEAPONS[kind].perCrate * multiplier,
+    WEAPONS[kind].carryLimit * multiplier - tank.ammo[kind],
+  );
   tank.ammo[kind] += received;
   return received;
 }

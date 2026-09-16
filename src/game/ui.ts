@@ -207,7 +207,14 @@ export class UI {
     const solo = simulation.gameMode === "solo";
     set("label0", solo ? "KILLS" : "◆ BLUE");
     set("label1", solo ? "ACTIVE" : "RED Ⅱ");
-    set("objective", solo ? "SURVIVE · ONE LIFE" : `FIRST TO ${SCORE_LIMIT}`);
+    set(
+      "objective",
+      solo
+        ? "SURVIVE · ONE LIFE"
+        : simulation.endlessMatch
+          ? "ENDLESS STRESS"
+          : `FIRST TO ${SCORE_LIMIT}`,
+    );
     set("score0", String(solo ? tank.kills : simulation.match.scores[0]));
     set(
       "score1",
@@ -217,12 +224,16 @@ export class UI {
           : simulation.match.scores[1],
       ),
     );
-    const sec = Math.ceil(simulation.match.time);
+    const sec = simulation.endlessMatch
+      ? Math.floor(simulation.elapsed)
+      : Math.ceil(simulation.match.time);
     set(
       "time",
-      simulation.match.overtime
-        ? "NEXT KILL"
-        : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`,
+      simulation.endlessMatch
+        ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
+        : simulation.match.overtime
+          ? "NEXT KILL"
+          : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`,
     );
     set("hp", String(Math.ceil(tank.hp)));
     set("vehicle-name", VEHICLES[tank.kind].name);

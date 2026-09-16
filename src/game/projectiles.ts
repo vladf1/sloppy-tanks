@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { blastDebris, hitMovableCover } from "./debris-physics";
+import { blastDebris, hitMovableCover, hitWreck } from "./debris-physics";
 import { COMBAT, MINE } from "./combat-rules";
 import {
   distance,
@@ -14,7 +14,9 @@ import {
 import { SHELL_HIT_RADIUS, tankHitTime, tankMuzzle } from "./hitboxes";
 import { laserContactTime } from "./laser-defense";
 import type { Simulation } from "./simulation";
-import type { Mine, Shot, Tank } from "./types";
+import type { Fragment, Mine, Shot, Tank } from "./types";
+
+const shellShape = new RAPIER.Ball(SHELL_HIT_RADIUS);
 /** Continuous relative-motion contact, including shots that cross between ticks. */
 export function interceptionTime(a: Shot, b: Shot, limit: number): number | null {
   if (a.team === b.team || a.piercedShot === b.id || b.piercedShot === a.id) {
@@ -145,6 +147,7 @@ function wColor(weapon: keyof typeof WEAPONS): number {
 
 type Contact =
   | { kind: "world"; shot: Shot; hit: RAPIER.RayColliderIntersection }
+  | { kind: "wreck"; shot: Shot; wreck: Fragment }
   | { kind: "tank"; shot: Shot; tank: Tank }
   | { kind: "mine"; shot: Shot; mine: Mine }
   | { kind: "pair"; shot: Shot; other: Shot }
@@ -183,6 +186,30 @@ function findNextContact(
     if (hit && hit.timeOfImpact / speed <= time) {
       time = hit.timeOfImpact / speed;
       next = { kind: "world", shot: shot, hit };
+    }
+    const wreckHit =
+      speed > 0
+        ? simulation.world.castShape(
+            { x: shot.x, y: shot.y ?? 1, z: shot.z },
+            { x: 0, y: 0, z: 0, w: 1 },
+            { x: shot.vx, y: 0, z: shot.vz },
+            shellShape,
+            0,
+            time,
+            true,
+            undefined,
+            GROUP.wreckQuery,
+          )
+        : null;
+    if (wreckHit && wreckHit.time_of_impact <= time) {
+      const wreck = simulation.fragments.find(
+        (fragment) =>
+          fragment.wreck && fragment.body.collider(0).handle === wreckHit.collider.handle,
+      );
+      if (wreck) {
+        time = wreckHit.time_of_impact;
+        next = { kind: "wreck", shot, wreck };
+      }
     }
     for (const tank of simulation.tanks) {
       const contact = tankHitTime(shot, tank, time, elapsed, tankFrameDelta);
@@ -310,6 +337,28 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
       shot.ownerLife,
       "mine",
     );
+  } else if (next.kind === "wreck") {
+    if (shot.weapon === "rocket") {
+      simulation.explode(
+        shot,
+        COMBAT.rocketBlastRadius,
+        shot.damage,
+        shot.owner,
+        shot.team,
+        shot.ownerLife,
+        "rocket",
+      );
+    } else {
+      hitWreck(next.wreck, shot);
+    }
+    simulation.events.push({
+      type: "impact",
+      x: shot.x,
+      z: shot.z,
+      height: shot.y ?? 1,
+      size: 0.6,
+      color: wColor(shot.weapon),
+    });
   } else if (next.kind === "tank") {
     if (shot.weapon === "rocket") {
       simulation.explode(

@@ -21,7 +21,7 @@ import { updateMovableCover } from "./movable-cover";
 import { createFragment } from "./fragments";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { newMatch, tickMatch } from "./match";
-import { MAPS } from "./maps";
+import { MAPS, type ArenaMap } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
 import {
   DRAGON_TOOTH_MASS,
@@ -72,8 +72,13 @@ export class Simulation {
   humanKind: VehicleKind = "balanced";
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
+  endlessMatch = false;
   mapMode: (typeof MAPS)[number]["id"] | "surprise" = "village";
-  private currentMap: (typeof MAPS)[number] = MAPS[0];
+  customMap?: ArenaMap;
+  humanHealthMultiplier = 1;
+  powerUpDurationMultiplier = 1;
+  ammoCrateMultiplier = 1;
+  private currentMap: ArenaMap = MAPS[0];
   readonly activeEnemyLimit = SOLO.activeEnemies;
   reinforcementDelay = 0;
   isEasyEnemy(tank: Tank): boolean {
@@ -83,6 +88,7 @@ export class Simulation {
     return (
       Math.round(
         VEHICLES[tank.kind].health *
+          (tank.human ? this.humanHealthMultiplier : 1) *
           (this.isEasyEnemy(tank) ? SOLO.enemyHealthMultiplier : 1) *
           rankStats(tank).health *
           100,
@@ -90,7 +96,16 @@ export class Simulation {
     );
   }
   get mapTheme() {
-    return this.currentMap.id;
+    return this.currentMap.theme ?? this.currentMap.id;
+  }
+  get mapFloor() {
+    return this.currentMap.floor;
+  }
+  get mapOuterFloor() {
+    return this.currentMap.outerFloor;
+  }
+  get mapOuterFloorExtent() {
+    return this.currentMap.outerFloorExtent;
   }
   get mapName() {
     return this.currentMap.name.toUpperCase();
@@ -142,9 +157,10 @@ export class Simulation {
     this.botNames = shuffledBotNames(roundSeed);
     // Pick once per reset without consuming the combat RNG stream.
     this.currentMap =
-      this.mapMode === "surprise"
+      this.customMap ??
+      (this.mapMode === "surprise"
         ? MAPS[Math.floor(new Random(roundSeed).next() * MAPS.length)]
-        : MAPS.find((map) => map.id === this.mapMode)!;
+        : MAPS.find((map) => map.id === this.mapMode)!);
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
     );
@@ -294,7 +310,7 @@ export class Simulation {
       if (this.match.phase === "playing") {
         this.reinforceSolo();
       }
-    } else {
+    } else if (!this.endlessMatch) {
       tickMatch(this.match, STEP);
     }
     if (this.match.phase !== "playing") {

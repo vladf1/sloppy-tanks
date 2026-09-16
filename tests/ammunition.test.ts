@@ -4,7 +4,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { AMMO_ORDER, emptyAmmo, isSpecialAmmo, selectAmmo } from "../src/game/ammunition";
 import { collectPickup, fireWeapon, stepProjectiles } from "../src/game/weapons";
-import { WEAPONS, STEP, distance } from "../src/game/data";
+import { PICKUPS, WEAPONS, STEP, distance } from "../src/game/data";
 import {
   idleCommand,
   type Shot,
@@ -105,6 +105,33 @@ test("standard remains unlimited over sustained firing", () => {
   assert.equal(s.shotsFired, 500);
   assert.deepEqual(t.ammo, emptyAmmo());
   assert.equal(t.selectedAmmo, "standard");
+  s.dispose();
+});
+
+test("stress multipliers extend power-ups and weapon-crate payloads tenfold", () => {
+  const s = arena();
+  const t = s.human;
+  s.powerUpDurationMultiplier = 10;
+  s.ammoCrateMultiplier = 10;
+
+  for (const kind of ["rapid", "speed", "shield", "laser"] as const) {
+    assert.equal(
+      collectPickup(s, t, {
+        id: s.nextId++,
+        kind,
+        x: 0,
+        z: 0,
+        available: true,
+        cooldown: 0,
+      }),
+      true,
+    );
+    assert.equal(t[kind], PICKUPS[kind].duration * 10);
+  }
+  for (const kind of AMMO_ORDER.filter(isSpecialAmmo)) {
+    assert.equal(collectPickup(s, t, crate(s, kind)), true);
+    assert.equal(t.ammo[kind], WEAPONS[kind].perCrate * 10);
+  }
   s.dispose();
 });
 

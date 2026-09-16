@@ -17,7 +17,7 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
   if (kind === "repair" && tank.hp >= simulation.maxHealth(tank)) {
     return false;
   }
-  if (isSpecialAmmo(kind) && !canCollectAmmo(tank, kind)) {
+  if (isSpecialAmmo(kind) && !canCollectAmmo(tank, kind, simulation.ammoCrateMultiplier)) {
     return false;
   }
   pickup.available = false;
@@ -26,21 +26,21 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
   let label = PICKUPS[kind].name;
   if (isSpecialAmmo(kind)) {
     const shouldAutoSelect = tank.human && !hasAdvancedAmmo(tank);
-    label = `+${refillAmmo(tank, kind)} ${WEAPONS[kind].unit}`;
+    label = `+${refillAmmo(tank, kind, simulation.ammoCrateMultiplier)} ${WEAPONS[kind].unit}`;
     if (shouldAutoSelect) {
       selectAmmo(tank, kind);
     }
   } else if (kind === "repair") {
     tank.hp = simulation.maxHealth(tank);
   } else if (kind === "shield") {
-    tank.shield = PICKUPS[kind].duration;
+    tank.shield = PICKUPS[kind].duration * simulation.powerUpDurationMultiplier;
     tank.shieldPoints = SHIELD_CAPACITY;
   } else if (kind === "rapid") {
-    tank[kind] = PICKUPS[kind].duration;
+    tank[kind] = PICKUPS[kind].duration * simulation.powerUpDurationMultiplier;
   } else if (kind === "speed") {
-    tank.speed = PICKUPS[kind].duration;
+    tank.speed = PICKUPS[kind].duration * simulation.powerUpDurationMultiplier;
   } else if (kind === "laser") {
-    tank.laser = PICKUPS.laser.duration;
+    tank.laser = PICKUPS.laser.duration * simulation.powerUpDurationMultiplier;
     label = "LASER DEFENSE";
   }
   simulation.events.push({

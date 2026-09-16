@@ -31,12 +31,17 @@ document.addEventListener("visibilitychange", () => {
 });
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const sim = new Simulation(Math.floor(Math.random() * 1000000));
+const stressTest = document.documentElement.dataset.scenario === "stress-test";
 const requestedMap = new URLSearchParams(location.search).get("map");
 const fixedMap = MAPS.find((map) => map.id === requestedMap);
 // Existing Random Map bookmarks now open the authored-map shuffle.
 if (requestedMap === "surprise" || requestedMap === "random" || fixedMap) {
   sim.mapMode = fixedMap?.id ?? "surprise";
   sim.reset();
+}
+if (stressTest) {
+  const { configureStressTest } = await import("./stress-test-level");
+  configureStressTest(sim);
 }
 sim.difficulty = parseDifficulty(localStorage.getItem("sloppy-difficulty"));
 const view = new Presentation(canvas);
@@ -112,7 +117,7 @@ const ui = new UI(
   (event) => view.damageAngle(event),
 );
 window.addEventListener("resize", () => view.resize());
-if (playback.autoplay) {
+if (stressTest || playback.autoplay) {
   start();
 }
 const recorder = new FrameRecorder(sim, canvas);

@@ -625,6 +625,10 @@ h2 {
 .mode-option:has(input:checked) {
   background: #315d81;
 }
+.mode-option.fixed {
+  cursor: default;
+  background: #315d81;
+}
 .mode-option input {
   accent-color: #ffcf38;
 }

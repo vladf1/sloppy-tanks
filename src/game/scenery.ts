@@ -3,6 +3,7 @@ import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { ARENA, TEAM_COLORS } from "./data";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
+import type { GroundKind } from "./ground-surfaces";
 import { box, cylinder, material, put } from "./model-primitives";
 /** Static village dressing; collidable objects are created separately from the arena layout. */
 function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
@@ -90,8 +91,6 @@ function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): v
         arrow.rotation.y = team === 0 ? 0 : Math.PI;
         put(details, arrow, position.x - side * offset, 0.09, position.z);
       }
-      // Team pennants sit behind the spawn line, outside the playable boundary.
-      put(details, cylinder(0.055, 4.8, 0x68523b, 8), side * 62, 2.4, position.z);
     }
     for (let z = -57; z <= 57; z += 2) {
       put(details, box(0.16, 1.7, 0.16, color, 0.015), side * ARENA, 2.7, z);
@@ -124,29 +123,44 @@ export function createLighting(scene: THREE.Scene) {
   return { sun, fill };
 }
 
+export function createArenaFloor(
+  renderer: THREE.WebGLRenderer,
+  kind: GroundKind,
+  extent = ARENA * 2,
+): THREE.Mesh {
+  const surface = groundMaterial(renderer, kind);
+  const segments = kind === "dry-grass" ? Math.max(1, Math.round(extent / 2.5)) : 1;
+  const geometry = new THREE.PlaneGeometry(extent, extent, segments, segments).rotateX(
+    -Math.PI / 2,
+  );
+  groundUVs(geometry);
+  if (kind === "dry-grass") {
+    surface.color.setHex(0xaee6a6);
+    surface.vertexColors = true;
+    const positions = geometry.getAttribute("position");
+    const colors: number[] = [];
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i);
+      const z = positions.getZ(i);
+      const patch =
+        0.5 + 0.25 * Math.sin(x * 0.18 + z * 0.09) + 0.25 * Math.sin(z * 0.22 - x * 0.1);
+      colors.push(0.68 + patch * 0.28, 0.83 + patch * 0.14, 0.42 + patch * 0.36);
+    }
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  }
+  const floor = new THREE.Mesh(geometry, surface);
+  floor.receiveShadow = true;
+  return floor;
+}
+
 export function createTerrain(
   scene: THREE.Scene,
   renderer: THREE.WebGLRenderer,
 ): THREE.MeshStandardMaterial {
   const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
   put(scene, board, 0, -0.8, 0);
-  const grass = groundMaterial(renderer, "dry-grass");
-  grass.color.setHex(0xaee6a6);
-  grass.vertexColors = true;
-  const geometry = new THREE.PlaneGeometry(ARENA * 2, ARENA * 2, 48, 48).rotateX(-Math.PI / 2);
-  groundUVs(geometry);
-  const positions = geometry.getAttribute("position");
-  const colors: number[] = [];
-  for (let i = 0; i < positions.count; i++) {
-    const x = positions.getX(i);
-    const z = positions.getZ(i);
-    const patch = 0.5 + 0.25 * Math.sin(x * 0.18 + z * 0.09) + 0.25 * Math.sin(z * 0.22 - x * 0.1);
-    colors.push(0.68 + patch * 0.28, 0.83 + patch * 0.14, 0.42 + patch * 0.36);
-  }
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const floor = new THREE.Mesh(geometry, grass);
-  floor.receiveShadow = true;
+  const floor = createArenaFloor(renderer, "dry-grass");
   put(scene, floor, 0, 0.008, 0);
   createYardDetails(scene, renderer);
-  return grass;
+  return floor.material as THREE.MeshStandardMaterial;
 }

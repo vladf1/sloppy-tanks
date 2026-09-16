@@ -40,13 +40,14 @@ function cover(s: Simulation, kind: CoverKind, x = 0, z = 0) {
   s.world.step();
   return c;
 }
-function shot(s: Simulation, weapon: Shot["weapon"] = "standard") {
+function shot(s: Simulation, weapon: Shot["weapon"] = "standard", y = 1) {
   s.shots.push({
     id: s.nextId++,
     owner: 999,
     team: 0,
     x: -4,
     z: 0,
+    y,
     vx: 25,
     vz: 0,
     damage: 40,
@@ -268,6 +269,23 @@ test("physical pieces stay within the shared body budget, cannot intercept shell
   }
 });
 
+test("destroying finite movable cover removes its body without poisoning later simulation steps", () => {
+  const s = arena();
+  try {
+    const movable = cover(s, "teeth");
+    movable.hp = movable.maxHp = 40;
+    movable.destructible = true;
+
+    s.damageCover(movable, 40, 999, 0);
+
+    assert.equal(movable.alive, false);
+    assert.equal(movable.body.isValid(), false);
+    assert.doesNotThrow(() => s.step());
+  } finally {
+    s.dispose();
+  }
+});
+
 test("physical destruction and blast replay remain deterministic for a fixed seed", () => {
   const run = () => {
     const s = arena();
@@ -430,28 +448,29 @@ test("tanks physically shove landed hulls and turrets without damage, and wreck 
   }
 });
 
-test("only large wrecks accept tank contact; wrecks remain excluded from projectile and steering queries", () => {
+test("only large wrecks accept tank contact and projectile hits; steering still excludes wrecks", () => {
   const allows = (a: number, b: number) =>
     ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
-  assert.equal(allows(GROUP.pushableDebris, GROUP.tank), true);
+  assert.equal(allows(GROUP.wreck, GROUP.tank), true);
+  assert.equal(allows(GROUP.wreck, GROUP.wreckQuery), true);
   for (const group of [
     GROUP.fragment,
     GROUP.pushableDebris,
     GROUP.coverQuery,
     GROUP.steeringQuery,
   ]) {
-    assert.equal(allows(GROUP.pushableDebris, group), false);
+    assert.equal(allows(GROUP.wreck, group), false);
   }
   assert.equal(allows(GROUP.fragment, GROUP.tank), false);
-  assert.equal(allows(GROUP.pushableDebris, GROUP.ground), true);
-  assert.equal(allows(GROUP.pushableDebris, GROUP.movableCover), true);
+  assert.equal(allows(GROUP.wreck, GROUP.ground), true);
+  assert.equal(allows(GROUP.wreck, GROUP.movableCover), true);
   const s = arena();
   try {
     wreck(s);
     for (const f of s.fragments) {
       assert.equal(
         f.body.collider(0).collisionGroups(),
-        f.part === "barrel" ? GROUP.fragment : GROUP.pushableDebris,
+        f.part === "barrel" ? GROUP.fragment : GROUP.wreck,
       );
       park(f.body, 0, 1);
     }
@@ -470,6 +489,50 @@ test("only large wrecks accept tank contact; wrecks remain excluded from project
     }
   } finally {
     s.dispose();
+  }
+});
+
+test("shells shove indestructible wrecks, rockets detonate on them, and high rounds clear them", () => {
+  for (const part of ["hull", "turret"] as const) {
+    const s = arena();
+    try {
+      const turret = wreck(s);
+      const f =
+        part === "hull" ? s.fragments.find((fragment) => fragment.part === "hull")! : turret;
+      for (const other of s.fragments) park(other.body, 30, 1);
+      f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      park(f.body, 0, 0.65);
+      s.world.step();
+      s.events = [];
+      shot(s, "standard", 1);
+      assert.equal(s.shots.length, 0, `${part} absorbs the shell`);
+      assert.ok(f.body.linvel().x > 0, `${part} moves from the impact`);
+      assert.equal(
+        s.events.some((event) => event.type === "explosion"),
+        false,
+      );
+
+      park(f.body, 0, 0.65);
+      s.world.propagateModifiedBodyPositionsToColliders();
+      s.events = [];
+      shot(s, "rocket", 1);
+      assert.equal(s.shots.length, 0, `rocket impacts the ${part}`);
+      assert.equal(
+        s.events.some((event) => event.type === "explosion"),
+        true,
+      );
+      assert.ok(s.fragments.includes(f), `${part} survives the rocket blast`);
+      assert.equal(f.body.isValid(), true);
+
+      park(f.body, 0, 0.25);
+      s.world.propagateModifiedBodyPositionsToColliders();
+      s.events = [];
+      shot(s, "standard", 1);
+      assert.equal(s.shots.length, 1, `shell passes above half-sunken ${part}`);
+      assert.ok(s.shots[0].x > 0);
+    } finally {
+      s.dispose();
+    }
   }
 });
 

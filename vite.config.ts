@@ -44,6 +44,10 @@ export default defineConfig({
   optimizeDeps: { exclude: ["@dimforge/rapier3d"] },
   build: {
     rolldownOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        stresstest: fileURLToPath(new URL("./stresstest.html", import.meta.url)),
+      },
       output: {
         codeSplitting: {
           groups: [

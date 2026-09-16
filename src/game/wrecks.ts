@@ -108,7 +108,7 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
         size[1] * scale,
         size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
-        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.pushableDebris)
+        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.wreck)
         .setMass(part === "hull" ? 1.2 : 0.5)
         .setFriction(0.95)
         .setRestitution(0.12),

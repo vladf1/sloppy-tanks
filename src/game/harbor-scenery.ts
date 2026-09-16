@@ -107,7 +107,6 @@ export class HarborScenery {
     paintLabel(this.group, "PORT 07", 0, 48, 15, 3.5);
     paintLabel(this.group, "LOADING", 0, 3.5, 8, 1.1);
     for (const team of [0, 1] as const) {
-      const side = team === 0 ? -1 : 1;
       for (const p of spawnPositions(team)) {
         put(details, cylinder(2.65, 0.08, 0x293f4a, 12), p.x, 0.06, p.z);
         const ring = new THREE.Mesh(
@@ -116,7 +115,6 @@ export class HarborScenery {
         );
         ring.rotation.x = -Math.PI / 2;
         put(details, ring, p.x, 0.11, p.z);
-        put(details, cylinder(0.055, 4.8, 0x63767b, 8), side * 62, 2.4, p.z);
       }
     }
     // Working berths sit beyond the wall: forklifts, pallets, drainage and tied mooring lines.

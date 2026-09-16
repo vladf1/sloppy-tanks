@@ -173,6 +173,7 @@ export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 export const GROUP = {
   coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
+  wreckQuery: 0xffff0040, // Projectiles only: substantial tank wrecks.
   steeringQuery: 0xffff0032, // Cover and tank-contact hulls, excluding cosmetic debris.
   tank: 0x0001002e, // Hull touches cover, ground, anti-tank footprints and large debris.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
@@ -182,4 +183,5 @@ export const GROUP = {
   ground: 0x0004000b, // Accept movable cover as well as tanks and debris.
   fragment: 0x00080006,
   pushableDebris: 0x00080007, // Large pieces accept tank hulls, never other debris.
+  wreck: 0x00480007, // Pushable debris plus a dedicated projectile-query membership.
 };

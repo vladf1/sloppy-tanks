@@ -1,6 +1,19 @@
 import { arenaLayout } from "./arena";
+import type { CoverDef } from "./arena";
+import type { GroundKind } from "./ground-surfaces";
 import { harborLayout } from "./harbor-layout";
 import { quarryLayout } from "./quarry-layout";
+
+export interface ArenaMap {
+  id: string;
+  name: string;
+  description: string;
+  theme?: "village" | "harbor" | "quarry";
+  floor?: GroundKind;
+  outerFloor?: GroundKind;
+  outerFloorExtent?: number;
+  layout: () => CoverDef[];
+}
 
 /** The menu and Surprise me draw from the same authored maps. */
 export const MAPS = [
@@ -22,4 +35,4 @@ export const MAPS = [
     description: "Open ground. Weathered stone. Dig your own shortcut.",
     layout: quarryLayout,
   },
-] as const;
+] as const satisfies readonly ArenaMap[];
