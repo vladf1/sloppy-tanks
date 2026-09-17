@@ -360,7 +360,7 @@ canvas#game {
 }
 #startup-overlay,
 #overlay:has(.start) {
-  background: #163b5c;
+  background: #0d1b2a;
   backdrop-filter: none;
 }
 #startup-overlay {
