@@ -23,6 +23,7 @@ function arena(count = 1) {
   const s = new Simulation(123);
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   s.coverByCollider.clear();
   s.pickups = [];
   s.nav.rebuild([]);

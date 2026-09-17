@@ -26,6 +26,7 @@ function duel(range = 18) {
   s.tanks = [human, bot];
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   s.pickups = [];
   s.nav.rebuild([]);
   bot.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);

@@ -52,6 +52,7 @@ try {
       for (const c of s.covers) s.world.removeRigidBody(c.body);
       for (const other of s.tanks) if (other !== t) s.world.removeRigidBody(other.body);
       s.covers = [];
+      s.movableCovers = [];
       s.coverByCollider.clear();
       s.tanks = [t];
       s.pickups = [];

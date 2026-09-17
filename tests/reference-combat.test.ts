@@ -15,6 +15,7 @@ function arena(tanks = 0) {
   const s = new Simulation(123);
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   for (const t of s.tanks.slice(tanks)) s.world.removeRigidBody(t.body);
   s.tanks = s.tanks.slice(0, tanks);
   for (const [i, t] of s.tanks.entries()) {

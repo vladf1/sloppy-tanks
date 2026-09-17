@@ -13,6 +13,7 @@ function arena() {
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.tanks = [];
   s.covers = [];
+  s.movableCovers = [];
   s.mines = [];
   s.events = [];
   return s;

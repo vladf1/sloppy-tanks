@@ -1,4 +1,5 @@
 import { blastDebris } from "./debris-physics";
+import { movedCoverRegion } from "./movable-cover";
 import { breakScenery } from "./scenery-pieces";
 import { DIFFICULTIES } from "./difficulty";
 import { clearAmmo } from "./ammunition";
@@ -113,6 +114,13 @@ export function damageCover(
   if (cover.hp > 0) {
     return;
   }
+  const pose = cover.motion
+    ? { position: cover.body.translation(), rotation: cover.body.rotation() }
+    : undefined;
+  if (pose) {
+    cover.x = pose.position.x;
+    cover.z = pose.position.z;
+  }
   cover.alive = false;
   simulation.destroyed++;
   for (let i = 0; i < cover.body.numColliders(); i++) {
@@ -127,7 +135,7 @@ export function damageCover(
   } else {
     simulation.world.removeRigidBody(cover.body);
   }
-  simulation.nav.rebuild(simulation.covers, cover);
+  simulation.nav.rebuild(simulation.covers, movedCoverRegion(cover));
   simulation.events.push({
     type: "destroy",
     coverKind: cover.kind,
@@ -138,7 +146,7 @@ export function damageCover(
     size: cover.kind === "tower" ? 7 : 2,
     color: cover.color,
   });
-  if (!breakScenery(simulation, cover)) {
+  if (!breakScenery(simulation, cover, pose)) {
     for (let i = 0; i < 3; i++) {
       simulation.fragment(
         cover.x + simulation.rng.range(-cover.w / 2, cover.w / 2),
@@ -164,7 +172,7 @@ export function damageCover(
         debrisSeed: Math.floor(simulation.rng.next() * 0x100000000),
       });
     }
-    simulation.nav.rebuild(simulation.covers, cover);
+    simulation.nav.rebuild(simulation.covers, movedCoverRegion(cover));
   }
   if (cover.kind === "drum") {
     explode(

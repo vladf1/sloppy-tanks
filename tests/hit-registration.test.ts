@@ -18,6 +18,7 @@ function fixture(kind: VehicleKind = "balanced", heading = 0) {
   s.tanks = [target];
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   s.pickups = [];
   s.nav.rebuild([]);
   target.team = 1;
@@ -105,6 +106,7 @@ test("cover still blocks shots at the widened hull, and protected targets do not
   assert.equal(s.shots.length, 0);
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   target.protection = 1;
   shell(s, 0, -5, 0, 600);
   stepProjectiles(s, STEP);

@@ -115,7 +115,7 @@ export interface Cover extends Vec2 {
   color: number;
   /** Chosen at collapse so rubble stays stable when its model is rebuilt. */
   debrisSeed?: number;
-  /** Original casting dimensions and last navigation footprint for movable concrete. */
+  /** Original dimensions and last navigation footprint for movable cover. */
   motion?: {
     originX: number;
     originZ: number;

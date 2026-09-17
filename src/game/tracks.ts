@@ -105,16 +105,18 @@ export class TrackTrails {
         this.poses.set(tank.id, { x, z, heading: tank.heading, pending: 0 });
         continue;
       }
-      const length = Math.hypot(x - previous.x, z - previous.z);
+      const distance = Math.hypot(x - previous.x, z - previous.z);
+      const turn = angleDelta(previous.heading, tank.heading);
       const scale = VEHICLES[tank.kind].scale;
       const spacing = SPACING * scale;
-      if (length > 5 || position.y > 1.25) {
+      const length = distance + Math.abs(turn) * 1.5 * scale;
+      if (distance > 5 || Math.abs(turn) > 0.8 || position.y > 1.25) {
         previous.pending = 0;
       } else if (length > 1e-6) {
         // Subdivide travel so marks remain evenly spaced at different frame rates.
         for (let d = spacing - previous.pending; d <= length; d += spacing) {
           const u = d / length;
-          const angle = previous.heading + angleDelta(previous.heading, tank.heading) * u;
+          const angle = previous.heading + turn * u;
           const sin = Math.sin(angle);
           const cos = Math.cos(angle);
           const cx = previous.x + (x - previous.x) * u - sin * 1.1 * scale;

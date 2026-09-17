@@ -44,6 +44,7 @@ try {
     s.events = [];
     for (const c of s.covers) s.world.removeRigidBody(c.body);
     s.covers = [];
+    s.movableCovers = [];
     s.coverByCollider.clear();
     s.nav.rebuild([]);
     for (const [b, z] of [

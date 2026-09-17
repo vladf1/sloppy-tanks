@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { VEHICLES } from "./data";
+import { angleDelta, VEHICLES } from "./data";
 import { updateInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
+import { TrackGravel } from "./track-gravel";
 import { isVillageDirt } from "./village-roads";
 
 export const TRACK_DUST_CAPACITY = 384;
@@ -19,6 +20,7 @@ interface Puff {
 /** Pooled, cosmetic dust: two triangles per puff, no textures, lights or physics bodies. */
 export class TrackDust {
   readonly mesh: THREE.InstancedMesh;
+  readonly gravel = new TrackGravel();
   private opacity = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_DUST_CAPACITY), 1);
   private color = { value: new THREE.Color(0xc3ad85) };
   private puffs: Puff[] = [];
@@ -32,7 +34,10 @@ export class TrackDust {
     max: 0,
     size: 0,
   }));
-  private poses = new Map<number, { x: number; z: number; pending: number }>();
+  private poses = new Map<
+    number,
+    { x: number; z: number; heading: number; pending: number; gravelCooldown: number }
+  >();
   private previousTime?: number;
   private dummy = new THREE.Object3D();
 
@@ -74,6 +79,7 @@ export class TrackDust {
   }
 
   reset(): void {
+    this.gravel.reset();
     this.free.push(...this.puffs);
     this.puffs.length = 0;
     this.poses.clear();
@@ -93,9 +99,11 @@ export class TrackDust {
     }
     // A suspended tab or respawn must not generate a long catch-up trail.
     const dt = Math.min(elapsed, 0.1);
+    this.gravel.update(elapsed);
     const quarry = simulation.mapTheme === "quarry";
     const harbor = simulation.mapTheme === "harbor";
     const village = simulation.mapTheme === "village";
+    const grassFloor = simulation.mapFloor === "dry-grass";
     this.color.value.setHex(quarry ? 0xd9bc8b : harbor ? 0xaeb0ab : 0xe1caa2);
     let live = 0;
     for (const puff of this.puffs) {
@@ -122,24 +130,47 @@ export class TrackDust {
       const p = tank.body.translation();
       let previous = this.poses.get(tank.id);
       if (!previous) {
-        previous = { x: p.x, z: p.z, pending: 0 };
+        previous = { x: p.x, z: p.z, heading: tank.heading, pending: 0, gravelCooldown: 0 };
         this.poses.set(tank.id, previous);
       }
       const distance = Math.hypot(p.x - previous.x, p.z - previous.z);
       const velocity = tank.body.linvel();
       const speed = Math.hypot(velocity.x, velocity.z);
       const scale = VEHICLES[tank.kind].scale;
+      const turn = angleDelta(previous.heading, tank.heading);
+      const sin = Math.sin(tank.heading);
+      const cos = Math.cos(tank.heading);
+      const forward = velocity.x * sin + velocity.z * cos;
+      const lateral = Math.abs(velocity.x * cos - velocity.z * sin);
+      const strength = THREE.MathUtils.clamp(
+        Math.abs(turn) / dt / 2.4 + (lateral / (speed + 1)) * 0.6,
+        0,
+        1,
+      );
+      const halfLength = (tank.kind === "scout" ? 2.1 : 2.6) * scale;
+      // Use the faster of translation and belt travel during a pivot, not both added.
+      // Turns stir the same surface as driving; they do not multiply dust production.
+      const contactTravel = Math.max(distance, Math.abs(turn) * scale);
       const spacing = (quarry ? 1 : harbor ? 3 : 2.1) * scale;
-      if (elapsed > 0.1 || distance > 5 || p.y > 1.25 || speed < 1.5) {
+      previous.gravelCooldown -= dt;
+      if (
+        elapsed > 0.1 ||
+        distance > 5 ||
+        Math.abs(turn) > 0.8 ||
+        p.y > 1.25 ||
+        contactTravel / dt < 1.5
+      ) {
         previous.pending = 0;
-      } else if (distance > 1e-6) {
-        const sin = Math.sin(tank.heading);
-        const cos = Math.cos(tank.heading);
-        const direction = velocity.x * sin + velocity.z * cos >= 0 ? 1 : -1;
-        const halfLength = (tank.kind === "scout" ? 2.1 : 2.6) * scale;
-        for (let d = spacing - previous.pending; d <= distance; d += spacing) {
-          const u = d / distance;
+      } else if (contactTravel > 1e-6) {
+        let threwGravel = false;
+        for (let d = spacing - previous.pending; d <= contactTravel; d += spacing) {
+          const u = THREE.MathUtils.clamp(d / contactTravel, 0, 1);
+          const heading = previous.heading + turn * u;
+          const sin = Math.sin(heading);
+          const cos = Math.cos(heading);
           for (const side of [-1, 1]) {
+            const trackSpeed = forward - ((side * turn) / dt) * scale;
+            const direction = trackSpeed >= 0 ? 1 : -1;
             const x =
               previous.x +
               (p.x - previous.x) * u -
@@ -150,8 +181,14 @@ export class TrackDust {
               (p.z - previous.z) * u -
               cos * halfLength * direction -
               sin * side * scale;
-            if (village && !isVillageDirt(x, z)) {
+            if (grassFloor || (village && !isVillageDirt(x, z))) {
               continue;
+            }
+            const vx = -sin * direction * 0.4 + cos * side * (0.45 + strength * 0.35);
+            const vz = -cos * direction * 0.4 - sin * side * (0.45 + strength * 0.35);
+            if (quarry && previous.gravelCooldown <= 0 && (strength > 0.25 || speed > 10)) {
+              this.gravel.emit(x, z, vx * 1.5, vz * 1.5, strength);
+              threwGravel = true;
             }
             const puff = this.free.pop();
             if (!puff) {
@@ -160,17 +197,22 @@ export class TrackDust {
             puff.x = x;
             puff.z = z;
             puff.y = 0.25;
-            puff.vx = -sin * direction * 0.4 + cos * side * 0.45;
-            puff.vz = -cos * direction * 0.4 - sin * side * 0.45;
+            puff.vx = vx;
+            puff.vz = vz;
             puff.life = puff.max = (quarry ? 0.55 : 0.45) + Math.random() * 0.2;
-            puff.size = (0.8 + Math.random() * 0.2) * scale * (quarry ? 1.15 : 1);
+            puff.size =
+              (0.8 + Math.random() * 0.2) * scale * (quarry ? 1.15 : 1) * (1 + strength * 0.1);
             this.puffs.push(puff);
           }
+          if (threwGravel) {
+            previous.gravelCooldown = 0.12;
+          }
         }
-        previous.pending = (previous.pending + distance) % spacing;
+        previous.pending = (previous.pending + contactTravel) % spacing;
       }
       previous.x = p.x;
       previous.z = p.z;
+      previous.heading = tank.heading;
     }
     this.mesh.count = this.puffs.length;
     for (let i = 0; i < this.puffs.length; i++) {

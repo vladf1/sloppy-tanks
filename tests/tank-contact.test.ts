@@ -20,6 +20,7 @@ test("boosted tanks stop at visible hull edges in head-on and side contacts, inc
           s.tanks = [];
           for (const c of s.covers) s.world.removeRigidBody(c.body);
           s.covers = [];
+          s.movableCovers = [];
           s.addTank(0, true, kind);
           s.addTank(team, true, kind);
           const [a, b] = s.tanks;
@@ -118,6 +119,7 @@ test("different chassis meeting at right angles cannot overlap their visible hul
       for (const c of s.covers) s.world.removeRigidBody(c.body);
       s.tanks = [];
       s.covers = [];
+      s.movableCovers = [];
       s.addTank(0, true, aKind);
       s.addTank(1, true, bKind);
       const [a, b] = s.tanks;
@@ -162,6 +164,7 @@ test("long hulls stop at walls using their visible nose and tail", () => {
       for (const c of s.covers) s.world.removeRigidBody(c.body);
       s.tanks = [];
       s.covers = [];
+      s.movableCovers = [];
       s.addTank(0, true, kind);
       const t = s.tanks[0];
       t.body.setTranslation({ x: 0, y: 0.65, z: -side * 7 }, true);

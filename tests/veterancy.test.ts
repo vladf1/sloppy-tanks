@@ -33,6 +33,7 @@ function fixture() {
   s.tanks = [player, enemy, ally];
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.covers = [];
+  s.movableCovers = [];
   s.coverByCollider.clear();
   s.nav.rebuild([]);
   s.pickups = [];

@@ -1,4 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
+import { barrelCollider } from "./barrel-physics";
 import { botCommand } from "./ai";
 import { hasAmmo, selectAmmo } from "./ammunition";
 import { pickupLayout } from "./arena";
@@ -211,21 +212,25 @@ export class Simulation {
     color: number;
     debrisSeed?: number;
   }): Cover {
-    const movable = c.kind === "teeth" || c.kind === "hedgehog";
+    const drum = c.kind === "drum";
+    const movable = drum || c.kind === "teeth" || c.kind === "hedgehog";
     const body = this.world.createRigidBody(
       (movable
         ? RAPIER.RigidBodyDesc.dynamic()
             .setCanSleep(true)
             .setSleeping(true)
-            .setLinearDamping(0.2)
-            .setAngularDamping(0.4)
+            .setLinearDamping(drum ? 0.6 : 0.2)
+            .setAngularDamping(drum ? 0.3 : 0.4)
+            .setCcdEnabled(drum)
         : RAPIER.RigidBodyDesc.fixed()
       ).setTranslation(c.x, c.h / 2, c.z),
     );
     let shapes =
       c.kind === "teeth" || c.kind === "hedgehog"
         ? quarryBarrierColliders(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z))
-        : [RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)];
+        : drum
+          ? [barrelCollider(c.w, c.h, c.d)]
+          : [RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)];
     if (c.kind === "rock") {
       const rock = quarryRockShape(c.w, c.h, c.d, quarryRockVariant(c.x, c.z));
       for (let i = 1; i < rock.positions.length; i += 3) {
@@ -233,13 +238,13 @@ export class Simulation {
       }
       shapes = [RAPIER.ColliderDesc.trimesh(rock.positions, rock.indices)];
     }
-    const surface = c.kind === "hedgehog" ? "metal" : "concrete";
+    const surface = drum || c.kind === "hedgehog" ? "metal" : "concrete";
     const colliders = shapes.map((shape) =>
       this.world.createCollider(
         movable
           ? shape
               .setCollisionGroups(GROUP.movableCover)
-              .setMass((c.kind === "teeth" ? DRAGON_TOOTH_MASS : 6) / shapes.length)
+              .setMass((drum ? 0.45 : c.kind === "teeth" ? DRAGON_TOOTH_MASS : 6) / shapes.length)
               .setFriction(DEBRIS_MATERIALS[surface].friction)
               .setRestitution(DEBRIS_MATERIALS[surface].restitution)
           : shape.setCollisionGroups(GROUP.cover).setFriction(0.4),

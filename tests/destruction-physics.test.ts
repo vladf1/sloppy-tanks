@@ -355,7 +355,8 @@ test("physical pieces stay within the shared body budget, cannot intercept shell
     assert.equal(s.world.bodies.len(), bodies);
     assert.equal(s.world.colliders.len(), colliders);
     assert.equal(s.fragments.length, 0);
-    assert.equal(s.movableCovers.length, 24);
+    assert.equal(s.movableCovers.filter((c) => c.kind !== "drum").length, 24);
+    assert.equal(s.movableCovers.filter((c) => c.kind === "drum").length, 2);
     assert.ok(s.movableCovers.every((c) => c.body.isValid()));
   } finally {
     s.dispose();

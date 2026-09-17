@@ -1,4 +1,18 @@
 import type { Simulation } from "./simulation";
+import type { Cover } from "./types";
+
+/** Clear both the last baked footprint and the current one, even between navigation ticks. */
+export function movedCoverRegion(cover: Cover): Cover {
+  const m = cover.motion;
+  if (!m) {
+    return cover;
+  }
+  const left = Math.min(m.x - m.navW / 2, cover.x - cover.w / 2);
+  const right = Math.max(m.x + m.navW / 2, cover.x + cover.w / 2);
+  const near = Math.min(m.z - m.navD / 2, cover.z - cover.d / 2);
+  const far = Math.max(m.z + m.navD / 2, cover.z + cover.d / 2);
+  return { ...cover, x: (left + right) / 2, z: (near + far) / 2, w: right - left, d: far - near };
+}
 
 /** Keep AI footprints current, including tipped blocks. Navigation patches are throttled
  * to 4 Hz and only rebuilt after a half-metre change, or once a block settles. */
@@ -34,17 +48,7 @@ export function updateMovableCover(sim: Simulation): void {
     if (change < (cover.body.isSleeping() ? 0.02 : 0.5)) {
       continue;
     }
-    const left = Math.min(m.x - m.navW / 2, cover.x - cover.w / 2);
-    const right = Math.max(m.x + m.navW / 2, cover.x + cover.w / 2);
-    const near = Math.min(m.z - m.navD / 2, cover.z - cover.d / 2);
-    const far = Math.max(m.z + m.navD / 2, cover.z + cover.d / 2);
-    sim.nav.rebuild(sim.covers, {
-      ...cover,
-      x: (left + right) / 2,
-      z: (near + far) / 2,
-      w: right - left,
-      d: far - near,
-    });
+    sim.nav.rebuild(sim.covers, movedCoverRegion(cover));
     m.x = cover.x;
     m.z = cover.z;
     m.navW = cover.w;

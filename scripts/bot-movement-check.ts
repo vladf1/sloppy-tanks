@@ -11,6 +11,7 @@ function fixture() {
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   for (const t of s.tanks) s.world.removeRigidBody(t.body);
   s.covers = [];
+  s.movableCovers = [];
   s.coverByCollider.clear();
   s.tanks = [];
   s.pickups = [];

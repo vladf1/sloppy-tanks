@@ -147,7 +147,7 @@ export class Presentation {
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
-    this.scene.add(this.trackDust.mesh);
+    this.scene.add(this.trackDust.mesh, this.trackDust.gravel.mesh);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const woodPiece = sidingBox(1, 1, 1, 0xffffff);

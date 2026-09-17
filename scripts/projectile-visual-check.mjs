@@ -43,6 +43,7 @@ try {
     s.events = [];
     for (const c of s.covers) s.world.removeRigidBody(c.body);
     s.covers = [];
+    s.movableCovers = [];
     s.coverByCollider.clear();
     s.nav.rebuild([]);
     t.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);

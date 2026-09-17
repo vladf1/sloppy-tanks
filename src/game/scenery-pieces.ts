@@ -1,4 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
+import { Quaternion, Vector3 } from "three";
 import { GROUP, Random } from "./data";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { DEBRIS_MATERIALS, trackDebrisContacts, type DebrisMaterial } from "./debris-physics";
@@ -9,7 +10,18 @@ import { treeProportions } from "./tree-proportions";
 
 /** Authored major components only. Dust, foliage and chips remain presentation particles.
  * Dimensions are shared by simple colliders and instanced unit geometry. */
-export function breakScenery(sim: Simulation, cover: Cover): boolean {
+export function breakScenery(
+  sim: Simulation,
+  cover: Cover,
+  pose?: { position: RAPIER.Vector; rotation: RAPIER.Rotation },
+): boolean {
+  // Navigation bounds expand as a barrel tips; fragments keep its original dimensions.
+  if (cover.motion) {
+    cover = { ...cover, w: cover.motion.w, d: cover.motion.d };
+  }
+  const rotation =
+    pose && new Quaternion(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+  const pieces: Fragment[] = [];
   const legacyCount =
     cover.kind === "tower"
       ? 10
@@ -74,7 +86,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       true,
     );
     trackDebrisContacts(body, collider, id, material);
-    sim.fragments.push({
+    const fragment: Fragment = {
       id,
       body,
       shape,
@@ -85,8 +97,10 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       sourceKind: cover.kind,
       life: 9.5 + DEBRIS_CLEANUP_SECONDS,
       expiresAt: sim.elapsed + 18,
-    });
-    return sim.fragments[sim.fragments.length - 1];
+    };
+    sim.fragments.push(fragment);
+    pieces.push(fragment);
+    return fragment;
   };
   if (cover.kind === "cargo") {
     // Two broad crate sides, a lid, and one broken frame beam (four bodies).
@@ -171,6 +185,28 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
     }
   } else {
     return false;
+  }
+  if (pose && rotation) {
+    // Carry the authored breakup into the barrel's current world pose before the blast.
+    for (const fragment of pieces) {
+      const body = fragment.body;
+      const p = body.translation();
+      body.setTranslation(
+        new Vector3(p.x - cover.x, p.y - cover.h / 2, p.z - cover.z)
+          .applyQuaternion(rotation)
+          .add(new Vector3(pose.position.x, pose.position.y, pose.position.z)),
+        true,
+      );
+      const q = body.rotation();
+      body.setRotation(rotation.clone().multiply(new Quaternion(q.x, q.y, q.z, q.w)), true);
+      const velocity = body.linvel();
+      const spin = body.angvel();
+      body.setLinvel(
+        new Vector3(velocity.x, velocity.y, velocity.z).applyQuaternion(rotation),
+        true,
+      );
+      body.setAngvel(new Vector3(spin.x, spin.y, spin.z).applyQuaternion(rotation), true);
+    }
   }
   return true;
 }

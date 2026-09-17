@@ -142,6 +142,7 @@
         prepare();
         for (const cover of s.covers) s.world.removeRigidBody(cover.body);
         s.covers = [];
+        s.movableCovers = [];
         s.coverByCollider.clear();
         s.nav.rebuild([]);
         const player = s.human;

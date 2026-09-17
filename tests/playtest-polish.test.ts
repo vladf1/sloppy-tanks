@@ -18,6 +18,7 @@ function arena(kind: VehicleKind = "balanced") {
   for (const c of s.covers) s.world.removeRigidBody(c.body);
   s.tanks = [];
   s.covers = [];
+  s.movableCovers = [];
   s.addTank(0, true, kind);
   const t = s.tanks[0];
   t.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);

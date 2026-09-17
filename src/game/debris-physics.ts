@@ -49,7 +49,7 @@ export function blastDebris(sim: Simulation, origin: Vec2, radius: number, power
   }
   for (const cover of sim.movableCovers) {
     if (cover.alive) {
-      blastBody(cover.body, origin, radius, power, true, 0.35);
+      blastBody(cover.body, origin, radius, power, cover.kind !== "drum", 0.35);
     }
   }
 }

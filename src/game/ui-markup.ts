@@ -40,7 +40,7 @@ export function menuMarkup(simulation: Simulation, controlHelp: string): string 
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
         ${speedSliders()}
         <button id="resume" class="primary">RESUME</button>
-        <button id="restart" class="secondary">New round / choose vehicle</button>
+        <button id="restart" class="secondary">New Battle</button>
         </section>`;
   } else if (phase === "results" && simulation.gameMode === "solo") {
     return `
