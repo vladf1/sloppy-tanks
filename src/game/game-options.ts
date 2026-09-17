@@ -8,7 +8,6 @@ export type GameOptions = Pick<
   Simulation,
   "humanKind" | "humanTeam" | "gameMode" | "mapMode" | "difficulty"
 >;
-export type MenuOptions = GameOptions & Pick<Simulation, "customMap">;
 
 export function initialGameOptions(
   seed: number,
@@ -35,6 +34,27 @@ export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
     a.mapMode === b.mapMode &&
     a.difficulty === b.difficulty
   );
+}
+
+/** Apply per-visit choices to the build-time menu without replacing its DOM. */
+export function syncGameOptions(overlay: HTMLElement, options: GameOptions): void {
+  overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((button) => {
+    const selected = button.dataset.kind === options.humanKind;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  for (const key of ["gameMode", "mapMode", "difficulty"] as const) {
+    overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) => {
+      input.checked = input.value === options[key];
+    });
+  }
+  const help = overlay.querySelector("#difficulty-help");
+  if (help) {
+    help.textContent = DIFFICULTIES[options.difficulty].description;
+  }
+  overlay.querySelectorAll(".tank-preview image").forEach((image) => {
+    image.setAttribute("y", String(-options.humanTeam * 400));
+  });
 }
 
 /** Both the lightweight startup menu and later rounds edit the same choices. */

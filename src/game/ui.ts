@@ -1,6 +1,6 @@
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
-import { bindGameOptions } from "./game-options";
+import { bindGameOptions, syncGameOptions } from "./game-options";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
 import type { DamageCause, SimEvent, Weapon } from "./types";
@@ -29,6 +29,7 @@ export class UI {
   damageTime = 0;
   deathCause = "";
   lastRound = 0;
+  private readonly battleSetup: HTMLElement;
   feedRows: { text: string; time: number }[] = [];
   constructor(
     root: HTMLElement,
@@ -41,6 +42,14 @@ export class UI {
     public selectAmmo: (weapon: Weapon) => void,
     public damageAngle: (event: SimEvent) => number | null,
   ) {
+    // Keep the HTML-delivered UI for later rounds, without retaining event handlers.
+    this.battleSetup = document
+      .querySelector<HTMLElement>("#startup-overlay .start")!
+      .cloneNode(true) as HTMLElement;
+    this.battleSetup.querySelector("#startup-status")?.remove();
+    const startButton = this.battleSetup.querySelector<HTMLButtonElement>("#start")!;
+    startButton.disabled = false;
+    startButton.textContent = "GO!";
     root.insertAdjacentHTML("beforeend", hudMarkup());
     this.overlay = root.querySelector("#overlay")!;
     this.hud = root.querySelector("#hud")!;
@@ -62,7 +71,36 @@ export class UI {
     const phase = simulation.match.phase;
     this.overlay.style.display = phase === "playing" && simulation.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
-    this.overlay.innerHTML = menuMarkup(simulation);
+    if (phase === "ready") {
+      this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
+      if (simulation.customMap) {
+        const details = [
+          ["30-Tank Stress Battle", "15 vs 15 · Endless respawns and scoring · No victory"],
+          [simulation.customMap.name, simulation.customMap.description],
+        ];
+        this.overlay.querySelectorAll(".mode-options fieldset").forEach((fieldset, index) => {
+          const choices = fieldset.querySelectorAll(".mode-option");
+          choices.forEach((choice, i) => {
+            if (i > 0) {
+              choice.remove();
+            }
+          });
+          choices[0].classList.add("fixed");
+          choices[0].querySelector("input")?.remove();
+          choices[0].querySelector("b")!.textContent = details[index][0];
+          choices[0].querySelector("small")!.textContent = details[index][1];
+        });
+      }
+    } else {
+      this.overlay.innerHTML = menuMarkup(
+        simulation,
+        this.battleSetup.querySelector(".menu-help")!.innerHTML,
+      );
+      this.overlay
+        .querySelector(".respawn")
+        ?.append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+    }
+    syncGameOptions(this.overlay, simulation);
     bindGameOptions(this.overlay, simulation);
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     const death = this.overlay.querySelector("#death-cause");

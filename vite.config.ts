@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import wasm from "vite-plugin-wasm";
+import { startupHtml } from "./scripts/startup-html.ts";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
 
@@ -16,13 +17,14 @@ export default defineConfig({
   },
   plugins: [
     wasm(),
+    startupHtml(base),
     {
       name: "preload-physics",
       transformIndexHtml: {
         order: "post",
         handler(_html, context) {
           const binary = Object.keys(context.bundle ?? {}).find((name) => name.endsWith(".wasm"));
-          return binary
+          return binary && context.filename.endsWith("stresstest.html")
             ? [
                 {
                   tag: "link",

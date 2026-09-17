@@ -18,24 +18,30 @@ const load = async () => {
 };
 
 if (autoStart) {
+  const setup = document.querySelector<HTMLElement>("#startup-overlay");
+  if (setup) {
+    setup.style.display = "none";
+  }
   void load()
-    .then((start) => start(options))
+    .then((start) => {
+      start(options);
+      setup?.remove();
+    })
     .catch((error: unknown) => {
       console.error("Game startup failed", error);
       const loading = document.querySelector("#loading p");
       if (loading) {
         loading.textContent = "The arena could not load. Please reload to try again.";
+      } else {
+        root.textContent = "The arena could not load. Please reload to try again.";
       }
     });
 } else {
   const menu = new StartMenu(root, options, load);
-  // Let the interactive menu paint before evaluating or constructing the engine.
+  // A second frame leaves a paint opportunity before any engine work begins.
   requestAnimationFrame(() => {
-    const loading = document.querySelector<HTMLElement>("#loading");
-    loading?.classList.add("leaving");
-    window.setTimeout(() => loading?.remove(), 180);
-    window.setTimeout(() => {
+    requestAnimationFrame(() => {
       void menu.prepare().catch(() => {});
-    }, 0);
+    });
   });
 }

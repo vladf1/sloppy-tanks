@@ -1,4 +1,3 @@
-import { CONTROL_HELP, startMenuMarkup, vehicleCards } from "./start-menu-markup";
 import { AMMO_HELP, AMMO_ORDER } from "./ammunition";
 import { SCORE_LIMIT, TEAM_NAMES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
@@ -31,15 +30,13 @@ function speedSliders(): string {
     .join("")}<small>50–200% · 100% = default speed · Saved automatically</small></div>`;
 }
 
-export function menuMarkup(simulation: Simulation): string {
+export function menuMarkup(simulation: Simulation, controlHelp: string): string {
   const phase = simulation.match.phase;
-  if (phase === "ready") {
-    return startMenuMarkup(simulation);
-  } else if (phase === "paused") {
+  if (phase === "paused") {
     return `
       <section class="menu compact">
         <h2>PAUSED</h2>
-        <p>${CONTROL_HELP}</p>
+        <p>${controlHelp}</p>
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
         ${speedSliders()}
         <button id="resume" class="primary">RESUME</button>
@@ -70,7 +67,6 @@ export function menuMarkup(simulation: Simulation): string {
       <section class="menu respawn">
         <h2>Respawn in <span id="respawn-count">3</span></h2>
         <p id="death-cause" role="status"></p>
-        ${vehicleCards(simulation)}
         </section>`;
   }
   return "";

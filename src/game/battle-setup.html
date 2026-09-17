@@ -1,0 +1,115 @@
+<section class="menu start">
+  <div class="start-heading">
+    <h1>BATTLE SETUP</h1>
+    <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
+  </div>
+  <div class="mode-options">
+    <fieldset>
+      <legend>BATTLE</legend>
+      <label class="mode-option"
+        ><input type="radio" name="gameMode" value="team" checked /><span
+          ><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span
+        ></label
+      ><label class="mode-option"
+        ><input type="radio" name="gameMode" value="solo" /><span
+          ><b>Solo Assault</b><small>Endless enemies · 10 minutes · One life</small></span
+        ></label
+      >
+    </fieldset>
+    <fieldset>
+      <legend>MAP</legend>
+      <label class="mode-option"
+        ><input type="radio" name="mapMode" value="village" checked /><span
+          ><b>Pine Village</b><small>A quiet little village. Bring the noise.</small></span
+        ></label
+      ><label class="mode-option"
+        ><input type="radio" name="mapMode" value="harbor" /><span
+          ><b>Harbor Havoc</b><small>Salt air. Hot steel. Dockside mayhem.</small></span
+        ></label
+      ><label class="mode-option"
+        ><input type="radio" name="mapMode" value="quarry" /><span
+          ><b>Dusty Dig</b><small>Open ground. Weathered stone. Dig your own shortcut.</small></span
+        ></label
+      ><label class="mode-option"
+        ><input type="radio" name="mapMode" value="surprise" /><span
+          ><b>Surprise me</b><small>Pick my next battleground.</small></span
+        ></label
+      >
+    </fieldset>
+  </div>
+  <fieldset class="difficulty-setting" aria-describedby="difficulty-help">
+    <legend>DIFFICULTY</legend>
+    <div class="difficulty-options">
+      <label class="difficulty-option"
+        ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
+      ><label class="difficulty-option"
+        ><input type="radio" name="difficulty" value="normal" checked /><span>Normal</span></label
+      ><label class="difficulty-option"
+        ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
+      >
+    </div>
+    <small id="difficulty-help">The original combat balance</small>
+  </fieldset>
+  <fieldset class="tank-setting">
+    <legend>TANK</legend>
+    <!-- Frame each sprite around its visible bounds, not its transparent canvas. -->
+    <div class="vehicles">
+      <button class="vehicle" data-kind="scout" aria-pressed="false">
+        <strong>SKIPPER</strong><small>Light scout</small>
+        <svg
+          class="tank-preview"
+          viewBox="23.5 11.5 640 400"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="SKIPPER tank"
+          focusable="false"
+        >
+          <svg width="640" height="400" overflow="hidden">
+            <image href="%BASE_URL%previews/tanks.webp" x="0" y="0" width="1920" height="800" />
+          </svg>
+        </svg>
+        <div class="spec"><span>80 HIT POINTS</span><span>40 KM/H</span></div>
+      </button>
+      <button class="vehicle selected" data-kind="balanced" aria-pressed="true">
+        <strong>BRUISER</strong><small>Balanced tank</small>
+        <svg
+          class="tank-preview"
+          viewBox="35.5 4.5 640 400"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="BRUISER tank"
+          focusable="false"
+        >
+          <svg width="640" height="400" overflow="hidden">
+            <image href="%BASE_URL%previews/tanks.webp" x="-640" y="0" width="1920" height="800" />
+          </svg>
+        </svg>
+        <div class="spec"><span>100 HIT POINTS</span><span>32 KM/H</span></div>
+      </button>
+      <button class="vehicle" data-kind="heavy" aria-pressed="false">
+        <strong>BIG RIG</strong><small>Heavy tank</small>
+        <svg
+          class="tank-preview"
+          viewBox="18.5 7.5 640 400"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="BIG RIG tank"
+          focusable="false"
+        >
+          <svg width="640" height="400" overflow="hidden">
+            <image href="%BASE_URL%previews/tanks.webp" x="-1280" y="0" width="1920" height="800" />
+          </svg>
+        </svg>
+        <div class="spec"><span>140 HIT POINTS</span><span>24 KM/H</span></div>
+      </button>
+    </div>
+  </fieldset>
+  <div class="menu-footer">
+    <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
+    <div class="menu-help">
+      WASD / Arrows: steer toward direction · Opposite direction: reverse · Mouse: aim · Hold left
+      click: fire · Right click: mine · Esc: pause<br />Q / E / scroll: cycle ammo · 1–5: select ·
+      Shift + scroll: zoom · Crates refill ammo · Standard shells: unlimited
+    </div>
+  </div>
+</section>

@@ -1,10 +1,9 @@
-import { bindGameOptions, type GameOptions } from "./game-options";
-import { startMenuMarkup } from "./start-menu-markup";
+import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 
 export type StartGame = (options: GameOptions) => void;
 
 export class StartMenu {
-  readonly overlay = document.createElement("div");
+  readonly overlay: HTMLDivElement;
   private readonly button: HTMLButtonElement;
   private readonly status: HTMLElement;
   private preparation?: Promise<StartGame>;
@@ -16,18 +15,10 @@ export class StartMenu {
     readonly options: GameOptions,
     private readonly load: () => Promise<StartGame>,
   ) {
-    this.overlay.id = "startup-overlay";
-    this.overlay.dataset.state = "loading";
-    this.overlay.innerHTML = startMenuMarkup(options);
-    root.append(this.overlay);
+    this.overlay = root.querySelector<HTMLDivElement>("#startup-overlay")!;
     this.button = this.overlay.querySelector<HTMLButtonElement>("#start")!;
-    this.overlay
-      .querySelector(".menu-footer")!
-      .insertAdjacentHTML(
-        "afterbegin",
-        '<span id="startup-status" role="status" aria-live="polite">Loading game…</span>',
-      );
     this.status = this.overlay.querySelector("#startup-status")!;
+    syncGameOptions(this.overlay, options);
     bindGameOptions(this.overlay, options);
     this.button.addEventListener("click", () => {
       void this.start();
