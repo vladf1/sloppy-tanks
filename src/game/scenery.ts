@@ -5,6 +5,7 @@ import { ARENA, TEAM_COLORS } from "./data";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
 import type { GroundKind } from "./ground-surfaces";
 import { box, cylinder, material, put } from "./model-primitives";
+import { VILLAGE_ROADS } from "./village-roads";
 /** Static village dressing; collidable objects are created separately from the arena layout. */
 function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
   const details = new THREE.Group();
@@ -13,16 +14,9 @@ function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): v
   roadMaterial.vertexColors = true;
   roadMaterial.transparent = true;
   roadMaterial.depthWrite = false;
-  const road = (w: number, d: number, x: number, z: number, y: number) => {
+  for (const { w, d, x, z, y } of VILLAGE_ROADS) {
     const geometry = roadGeometry(w, d, x, z);
     put(roads, new THREE.Mesh(geometry, roadMaterial), x, y, z);
-  };
-  // Broad village roads retain the roomy midfield and outer flanking circuits.
-  for (const x of [-52, 0, 52]) {
-    road(x === 0 ? 18 : 10, ARENA * 2 - 2, x, 0, 0.0425);
-  }
-  for (const z of [-38, 0, 38]) {
-    road(ARENA * 2 - 2, z === 0 ? 12 : 8, 0, z, 0.0625);
   }
   batch(roads);
   for (const mesh of roads.children) {

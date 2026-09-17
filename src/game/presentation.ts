@@ -33,6 +33,7 @@ import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
 import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
+import { TrackDust } from "./track-dust";
 import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
@@ -117,6 +118,7 @@ export class Presentation {
   pickupRingGeometry = new THREE.RingGeometry(0.88, 1, 48);
   pickupGlowGeometry = new THREE.SphereGeometry(1, 16, 10);
   tracks = new TrackTrails();
+  trackDust = new TrackDust();
   dummy = new THREE.Object3D();
   follow = new THREE.Vector3();
   zoom: number = CAMERA.defaultZoom;
@@ -144,6 +146,7 @@ export class Presentation {
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
+    this.scene.add(this.trackDust.mesh);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const woodPiece = sidingBox(1, 1, 1, 0xffffff);
@@ -310,6 +313,7 @@ export class Presentation {
     }
     this.pickupEffects = [];
     this.tracks.reset();
+    this.trackDust.reset();
     for (const mesh of this.debrisMeshes.values()) {
       mesh.count = 0;
     }
@@ -846,6 +850,7 @@ export class Presentation {
     }
     this.updatePickupEffects(simulation, alpha, dt);
     this.tracks.update(simulation, alpha);
+    this.trackDust.update(simulation);
     this.updateCamera(simulation, alpha, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
     this.updateTanks(simulation, alpha, dt);

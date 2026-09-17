@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ROAD_SHOULDER } from "./village-roads";
 
 export type GroundKind = "dry-grass" | "packed-dirt";
 
@@ -39,7 +40,7 @@ export function groundUVs(geometry: THREE.BufferGeometry, x = 0, z = 0): void {
 
 /** Narrow alpha shoulders soften road borders; the opaque center stays flat. */
 export function roadGeometry(w: number, d: number, x: number, z: number) {
-  const shoulder = 0.7;
+  const shoulder = ROAD_SHOULDER;
   const xs = [-w / 2, -w / 2 + shoulder, w / 2 - shoulder, w / 2];
   const zs = [-d / 2, -d / 2 + shoulder, d / 2 - shoulder, d / 2];
   const positions: number[] = [];
