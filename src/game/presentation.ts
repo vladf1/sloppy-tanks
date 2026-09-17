@@ -283,12 +283,12 @@ export class Presentation {
       quarry ? 155 : harbor ? 150 : 210,
       quarry ? 330 : harbor ? 260 : 380,
     );
-    this.lighting.sun.color.setHex(quarry ? 0xffe9cd : harbor ? 0xffc58a : 0xffe1b2);
+    this.lighting.sun.color.setHex(quarry ? 0xffdfb5 : harbor ? 0xffbf85 : 0xffd59b);
     this.lighting.sun.position.set(-45, quarry ? 57 : harbor ? 55 : 68, 25);
     this.lighting.sun.intensity = quarry ? 3.1 : 2.8;
     this.lighting.fill.intensity = quarry ? 1.15 : 1.65;
-    this.lighting.fill.color.setHex(harbor ? 0xc2e2ef : 0xe2efff);
-    this.lighting.fill.groundColor.setHex(quarry ? 0x9f8965 : harbor ? 0x626c76 : 0x918571);
+    this.lighting.fill.color.setHex(quarry ? 0xc8dafa : harbor ? 0xafcfee : 0xbdd5f5);
+    this.lighting.fill.groundColor.setHex(quarry ? 0x7c8799 : harbor ? 0x63778e : 0x75859b);
     disposeOwned(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
