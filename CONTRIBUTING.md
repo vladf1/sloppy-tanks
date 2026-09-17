@@ -56,16 +56,17 @@ Cached geometry and materials outlive round resets. Only per-instance resources 
 
 Use the URL printed by the running Vite server for `SLOPPY_URL`. Browser scripts use installed Google Chrome with isolated profiles. Select checks relevant to the change:
 
-| Area                                     | Script or local browser page                                                |
-| ---------------------------------------- | --------------------------------------------------------------------------- |
-| General keyboard/mouse play              | `scripts/browser-check.mjs`                                                 |
-| Ammunition input and crate/HUD visuals   | `scripts/ammunition-check.mjs` (`--visual-only` skips its performance pass) |
-| Driving controls                         | `scripts/driving-check.mjs`                                                 |
-| Bot retreat and head-on movement         | `scripts/bot-movement-browser.mjs`                                          |
-| Reload, hit and repair feedback          | `scripts/combat-feedback-check.mjs`                                         |
-| Difficulty and combat HUD fixtures       | `/sloppy-tanks/tests/usability.browser.html`                                |
-| Harbor scenery and resource reuse        | `/sloppy-tanks/tests/harbor.browser.html`                                   |
-| Quarry layout, rock and barrier previews | `/sloppy-tanks/tests/quarry.browser.html`                                   |
+| Area                                         | Script or local browser page                                                |
+| -------------------------------------------- | --------------------------------------------------------------------------- |
+| General keyboard/mouse play                  | `scripts/browser-check.mjs`                                                 |
+| Early menu, background preparation and retry | `scripts/startup-check.mjs`                                                 |
+| Ammunition input and crate/HUD visuals       | `scripts/ammunition-check.mjs` (`--visual-only` skips its performance pass) |
+| Driving controls                             | `scripts/driving-check.mjs`                                                 |
+| Bot retreat and head-on movement             | `scripts/bot-movement-browser.mjs`                                          |
+| Reload, hit and repair feedback              | `scripts/combat-feedback-check.mjs`                                         |
+| Difficulty and combat HUD fixtures           | `/sloppy-tanks/tests/usability.browser.html`                                |
+| Harbor scenery and resource reuse            | `/sloppy-tanks/tests/harbor.browser.html`                                   |
+| Quarry layout, rock and barrier previews     | `/sloppy-tanks/tests/quarry.browser.html`                                   |
 
 For a loading comparison, save each production `dist` under `artifacts/performance/loading/<label>/`, then run `npm run benchmark:loading -- <label>`. The default is five cold-cache Chrome runs at 10 Mbps / 50 ms through a local gzip server. Compare first visible content, menu appearance, final download and main-thread blocking separately. Keep each baseline and candidate snapshot unchanged during measurement.
 

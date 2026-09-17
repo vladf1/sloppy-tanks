@@ -26,6 +26,29 @@ test("authored maps keep every pickup and spawn connected", () => {
   }
 });
 
+test("every spawn row starts interpolation and bot history at its actual body position", () => {
+  const sim = new Simulation(123);
+  try {
+    for (const team of [0, 1] as const) {
+      for (const slot of [0, 4, 5, 9, 10, 14]) {
+        const tank = sim.addTank(team, false, "balanced", slot);
+        const body = tank.body.translation();
+        const position = { x: body.x, z: body.z };
+        assert.deepEqual(
+          tank.previous,
+          position,
+          `team ${team}, slot ${slot}: initial render pose`,
+        );
+        assert.deepEqual(tank.brain.last, position, "movement history starts at spawn");
+        assert.deepEqual(tank.brain.lastSeen, position, "target history starts at spawn");
+        assert.deepEqual(tank.brain.recoveryGoal, position, "recovery starts at spawn");
+      }
+    }
+  } finally {
+    sim.dispose();
+  }
+});
+
 function solo(seed = 123) {
   const s = new Simulation(seed);
   s.gameMode = "solo";

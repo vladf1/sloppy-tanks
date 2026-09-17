@@ -18,8 +18,10 @@ try {
   // Drive the actual application loop between physics ticks, independent of display Hz.
   await inputPage.addInitScript(() => {
     let frame, now;
+    const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (callback) => {
       frame = callback;
+      if (!window.sloppy) return requestFrame(callback);
       return 1;
     };
     window.advanceFrame = (ms) => {

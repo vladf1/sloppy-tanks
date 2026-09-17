@@ -1,9 +1,9 @@
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
-import { DIFFICULTIES, parseDifficulty } from "./difficulty";
+import { bindGameOptions } from "./game-options";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
-import type { DamageCause, SimEvent, VehicleKind, Weapon } from "./types";
+import type { DamageCause, SimEvent, Weapon } from "./types";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { rankIndex, RANKS, REPAIR_DELAY } from "./veterancy";
 const DAMAGE_LABELS: Record<DamageCause, string> = {
@@ -57,53 +57,18 @@ export class UI {
       }
     });
   }
-  bindCards(): void {
-    this.overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((b) =>
-      b.addEventListener("click", () => {
-        this.simulation.humanKind = b.dataset.kind as VehicleKind;
-        this.overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((card) => {
-          const selected = card === b;
-          card.classList.toggle("selected", selected);
-          card.setAttribute("aria-pressed", String(selected));
-        });
-      }),
-    );
-  }
   show(): void {
     const simulation = this.simulation;
     const phase = simulation.match.phase;
     this.overlay.style.display = phase === "playing" && simulation.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     this.overlay.innerHTML = menuMarkup(simulation);
-    this.bindCards();
+    bindGameOptions(this.overlay, simulation);
+    this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     const death = this.overlay.querySelector("#death-cause");
     if (death) {
       death.textContent = this.deathCause;
     }
-    this.overlay.querySelectorAll<HTMLInputElement>('input[name="difficulty"]').forEach((input) =>
-      input.addEventListener("change", () => {
-        if (simulation.match.phase !== "ready") {
-          return;
-        }
-        simulation.difficulty = parseDifficulty(input.value);
-        localStorage.setItem("sloppy-difficulty", simulation.difficulty);
-        this.overlay.querySelector("#difficulty-help")!.textContent =
-          DIFFICULTIES[simulation.difficulty].description;
-      }),
-    );
-    for (const key of ["gameMode", "mapMode"] as const) {
-      this.overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) =>
-        input.addEventListener("change", () => {
-          if (key === "gameMode") {
-            simulation.gameMode = input.value as Simulation["gameMode"];
-          } else {
-            simulation.mapMode = input.value as Simulation["mapMode"];
-          }
-          this.show();
-        }),
-      );
-    }
-
     this.overlay.querySelector("#start")?.addEventListener("click", this.start);
     this.overlay.querySelector("#resume")?.addEventListener("click", this.resume);
     this.overlay.querySelector("#restart")?.addEventListener("click", this.restart);

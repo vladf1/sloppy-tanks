@@ -40,7 +40,7 @@ export function spawnTank(
   kind: VehicleKind,
   slot = 0,
 ) {
-  const position =
+  const spawn =
     simulation.gameMode === "solo" && !human
       ? {
           x: team === 0 ? -SOLO.spawnX : SOLO.spawnX,
@@ -51,16 +51,19 @@ export function spawnTank(
         }
       : spawnPositions(team)[slot % 5];
   const offset = simulation.gameMode === "solo" ? 0 : Math.floor(slot / 5) * 3;
+  // Later rows share a spawn lane, but interpolation and AI history must start
+  // at their offset body positions, not at the first tank in that lane.
+  const position = {
+    x: spawn.x + (team === 0 ? offset : -offset),
+    z: spawn.z,
+  };
   const ordinal = simulation.tanks.filter((tank) => !tank.human).length;
   const assignment = botAssignment(slot, team, ordinal);
   if (!human) {
     kind = BOT_PROFILES[assignment.personality].chassis;
   }
   const desc = VEHICLES[kind];
-  const { body, collider } = createTankBody(simulation.world, kind, {
-    x: position.x + (team === 0 ? offset : -offset),
-    z: position.z,
-  });
+  const { body, collider } = createTankBody(simulation.world, kind, position);
   const tank: Tank = {
     id: simulation.nextId++,
     name: human

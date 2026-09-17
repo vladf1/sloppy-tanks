@@ -1,0 +1,235 @@
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { chromium } from "playwright";
+
+const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
+const output = "artifacts/performance/startup";
+mkdirSync(output, { recursive: true });
+const browser = await chromium.launch({ channel: "chrome", headless: true });
+const results = {};
+const errors = [];
+async function fresh(viewport = { width: 1440, height: 1000 }) {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  page.on("pageerror", (error) => errors.push(error.message));
+  return { context, page };
+}
+async function ready(page) {
+  await page.waitForFunction(
+    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
+  );
+}
+async function playing(page) {
+  await page.waitForFunction(
+    () => window.sloppy?.sim.match.phase === "playing" && window.sloppy.view.time > 0,
+  );
+}
+try {
+  // The menu must remain interactive with the entire physics download held back.
+  const delayed = await fresh();
+  let releasePhysics;
+  const physics = new Promise((resolve) => {
+    releasePhysics = resolve;
+  });
+  await delayed.page.route(/\.wasm(?:\?|$)/, async (route) => {
+    await physics;
+    await route.continue();
+  });
+  await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
+  await delayed.page.locator("#loading").waitFor({ state: "detached" });
+  assert.equal(await delayed.page.locator("canvas").count(), 0);
+  assert.equal(await delayed.page.locator('input[value="harbor"]').isChecked(), true);
+  await delayed.page.locator('[data-kind="heavy"]').click();
+  await delayed.page.locator('input[value="solo"]').check();
+  await delayed.page.locator('input[value="hard"]').check();
+  await delayed.page.locator("#start").click();
+  assert.equal(await delayed.page.locator("#start").isDisabled(), true);
+  // A last-minute choice during the queued start must reach the actual round.
+  await delayed.page.locator('input[value="quarry"]').check();
+  assert.equal(await delayed.page.locator("canvas").count(), 0);
+  releasePhysics();
+  await playing(delayed.page);
+  results.delayed = await delayed.page.evaluate(() => ({
+    tank: window.sloppy.sim.human.kind,
+    map: window.sloppy.sim.mapMode,
+    mode: window.sloppy.sim.gameMode,
+    difficulty: window.sloppy.sim.difficulty,
+    round: window.sloppy.sim.match.round,
+    canvases: document.querySelectorAll("canvas#game").length,
+  }));
+  assert.deepEqual(results.delayed, {
+    tank: "heavy",
+    map: "quarry",
+    mode: "solo",
+    difficulty: "hard",
+    round: 3,
+    canvases: 1,
+  });
+  await delayed.context.close();
+
+  const warm = await fresh();
+  await warm.page.goto(url);
+  await ready(warm.page);
+  results.prepared = await warm.page.evaluate(() => {
+    window.preparedWorld = window.sloppy.sim.world;
+    window.preparedRenderer = window.sloppy.view.renderer;
+    return {
+      time: window.sloppy.view.time,
+      elapsed: window.sloppy.sim.elapsed,
+      draws: window.sloppy.view.renderer.info.render.calls,
+    };
+  });
+  assert.deepEqual(results.prepared, { time: 0, elapsed: 0, draws: 0 });
+  assert.equal(await warm.page.locator("#game").isVisible(), false);
+  await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
+  await warm.page.locator("#start").click();
+  await playing(warm.page);
+  assert.equal(
+    await warm.page.evaluate(() => window.preparedWorld === window.sloppy.sim.world),
+    true,
+  );
+  await warm.page.mouse.move(950, 450);
+  await warm.page.keyboard.down("d");
+  await warm.page.mouse.down();
+  await warm.page.waitForFunction(
+    () => window.sloppy.sim.shotsFired > 3 && window.sloppy.sim.elapsed > 0.5,
+  );
+  await warm.page.keyboard.up("d");
+  await warm.page.mouse.up();
+  await warm.page.keyboard.press("Escape");
+  await warm.page.locator("#resume").waitFor();
+  await warm.page.locator("#resume").click();
+  await playing(warm.page);
+  await warm.page.keyboard.press("Escape");
+  await warm.page.locator("#restart").click();
+  await warm.page.locator("#start").waitFor();
+  const frozen = await warm.page.evaluate(() => window.sloppy.view.time);
+  await warm.page.waitForTimeout(150);
+  assert.equal(await warm.page.evaluate(() => window.sloppy.view.time), frozen);
+  assert.equal(await warm.page.locator("#game").isVisible(), false);
+  await warm.page.locator('input[value="harbor"]').check();
+  await warm.page.locator('[data-kind="scout"]').click();
+  await warm.page.locator("#start").click();
+  await playing(warm.page);
+  results.newRound = await warm.page.evaluate(() => ({
+    map: window.sloppy.sim.mapMode,
+    tank: window.sloppy.sim.human.kind,
+    sameRenderer: window.preparedRenderer === window.sloppy.view.renderer,
+  }));
+  assert.deepEqual(results.newRound, { map: "harbor", tank: "scout", sameRenderer: true });
+  await warm.page.screenshot({ path: `${output}/gameplay.png` });
+  await warm.context.close();
+
+  // Changing choices after preparation rebuilds the selected arena before playing.
+  const changed = await fresh();
+  await changed.page.goto(url);
+  await ready(changed.page);
+  await changed.page.locator('input[value="solo"]').check();
+  await changed.page.locator('input[value="harbor"]').check();
+  await changed.page.locator('[data-kind="heavy"]').click();
+  await changed.page.locator("#start").click();
+  await playing(changed.page);
+  assert.equal(
+    await changed.page.evaluate(
+      () =>
+        window.sloppy.sim.gameMode === "solo" &&
+        window.sloppy.sim.mapMode === "harbor" &&
+        window.sloppy.sim.human.kind === "heavy",
+    ),
+    true,
+  );
+  await changed.context.close();
+
+  console.log("Delayed loading, prepared arena reuse, gameplay, and new rounds passed.");
+  const failure = await fresh();
+  await failure.page.route(/\/src\/game\.ts(?:\?|$)/, (route) => route.abort(), { times: 1 });
+  await failure.page.goto(url);
+  await failure.page.waitForFunction(
+    () => document.querySelector("#startup-overlay")?.dataset.state === "error",
+  );
+  assert.equal(await failure.page.locator("#start").isEnabled(), true);
+  await failure.page.locator('input[value="easy"]').check();
+  await failure.page.locator("#start").click();
+  await ready(failure.page);
+  assert.equal(await failure.page.locator('input[value="easy"]').isChecked(), true);
+  await failure.context.close();
+  results.retry = "passed";
+  console.log("Failed-download retry passed.");
+
+  for (const path of ["?autoplay", "stresstest.html"]) {
+    const automatic = await fresh();
+    await automatic.page.goto(url + path);
+    await playing(automatic.page);
+    assert.equal(await automatic.page.locator("#startup-overlay").count(), 0);
+    if (path === "stresstest.html") {
+      assert.equal(await automatic.page.evaluate(() => window.sloppy.sim.tanks.length), 30);
+    }
+    await automatic.context.close();
+  }
+  results.automaticStarts = "passed";
+  console.log("Autoplay and stress-test startup passed.");
+
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    const layout = await fresh(viewport);
+    let releaseCss;
+    const css = new Promise((resolve) => {
+      releaseCss = resolve;
+    });
+    await layout.page.route(/\/src\/style\.css(?:\?|$)/, async (route) => {
+      await css;
+      await route.continue();
+    });
+    await layout.page.addInitScript(() => {
+      window.loaderStyles = () =>
+        [...document.querySelectorAll("#loading, #loading h1, #loading p")].map((element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return {
+            font: style.font,
+            color: style.color,
+            background: style.backgroundColor,
+            boxSizing: style.boxSizing,
+            width: rect.width,
+            height: rect.height,
+            x: rect.x,
+            y: rect.y,
+          };
+        });
+      new MutationObserver(() => {
+        if (document.querySelector("#loading.leaving") && !window.styledLoader)
+          window.styledLoader = window.loaderStyles();
+      }).observe(document, { attributes: true, subtree: true });
+    });
+    await layout.page.goto(url, { waitUntil: "commit" });
+    await layout.page.locator("#loading h1").waitFor();
+    const before = await layout.page.evaluate(() => window.loaderStyles());
+    await layout.page.screenshot({ path: `${output}/loader-${viewport.width}.png` });
+    releaseCss();
+    await layout.page.waitForFunction(() => !!window.styledLoader);
+    assert.deepEqual(await layout.page.evaluate(() => window.styledLoader), before);
+    await ready(layout.page);
+    await layout.page.screenshot({ path: `${output}/menu-${viewport.width}.png` });
+    assert.equal(
+      await layout.page.evaluate(
+        () => document.querySelector("#startup-overlay").scrollWidth <= innerWidth,
+      ),
+      true,
+    );
+    assert.equal(
+      await layout.page
+        .locator(".vehicle strong")
+        .evaluateAll((titles) => titles.every((title) => title.scrollWidth <= title.clientWidth)),
+      true,
+    );
+    results[`layout${viewport.width}`] = "stable loader; no horizontal overflow";
+    await layout.context.close();
+  }
+  assert.deepEqual(errors, []);
+  writeFileSync(`${output}/checks.json`, JSON.stringify({ ...results, errors }, null, 2));
+  console.log(JSON.stringify(results));
+} finally {
+  await browser.close();
+}

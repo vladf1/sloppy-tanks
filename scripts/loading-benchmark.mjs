@@ -88,7 +88,19 @@ try {
     await page.addInitScript(() => {
       Math.random = () => 0.424242;
       performance.setResourceTimingBufferSize(10000);
-      window.loadingAudit = { tasks: [], menu: 0, firstFrame: 0 };
+      window.loadingAudit = { tasks: [], menu: 0, firstFrame: 0, menuClear: 0 };
+      const checkMenu = () => {
+        const loading = document.querySelector("#loading");
+        if (
+          document.querySelector("#start") &&
+          (!loading || Number(getComputedStyle(loading).opacity) <= 0.05)
+        ) {
+          window.loadingAudit.menuClear = performance.now();
+        } else {
+          requestAnimationFrame(checkMenu);
+        }
+      };
+      requestAnimationFrame(checkMenu);
       new PerformanceObserver((list) => {
         window.loadingAudit.tasks.push(
           ...list.getEntries().map((e) => ({ start: e.startTime, duration: e.duration })),
@@ -108,6 +120,10 @@ try {
     await page.goto(url, { waitUntil: "load" });
     await page.waitForFunction(() => window.loadingAudit.firstFrame > 0);
     await page.waitForLoadState("networkidle");
+    await page.waitForFunction(() => {
+      const menu = document.querySelector("#startup-overlay");
+      return window.loadingAudit.menuClear > 0 && (!menu || menu.dataset.state === "ready");
+    });
     await page
       .locator(".tank-preview")
       .evaluateAll((images) => Promise.all(images.map((image) => image.decode())));
@@ -144,9 +160,27 @@ try {
     result.errors = errors;
     if (errors.length) throw new Error(errors.join("\n"));
     if (i === 0) await page.screenshot({ path: `${output}/${label}.png` });
+    result.startDelay = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const started = performance.now();
+          document.querySelector("#start").click();
+          const check = () => {
+            if (
+              document.querySelector("#overlay")?.style.display === "none" &&
+              getComputedStyle(document.querySelector("#hud")).opacity === "1"
+            ) {
+              requestAnimationFrame(() => resolve(performance.now() - started));
+            } else {
+              requestAnimationFrame(check);
+            }
+          };
+          requestAnimationFrame(check);
+        }),
+    );
     runs.push(result);
     console.log(
-      `${label} ${i + 1}/${repeats}: ${(result.download / 1e6).toFixed(3)} MB; content ${Math.round(result.firstPaint)} ms; menu ${Math.round(result.firstFrame)} ms; blocking ${result.blocking} ms`,
+      `${label} ${i + 1}/${repeats}: ${(result.download / 1e6).toFixed(3)} MB; content ${Math.round(result.firstPaint)} ms; menu ${Math.round(result.firstFrame)} ms; clear ${Math.round(result.menuClear)} ms; GO ${Math.round(result.startDelay)} ms; blocking ${result.blocking} ms`,
     );
     await context.close();
   }
@@ -169,9 +203,17 @@ const report = {
     compression: "gzip",
   },
   median: Object.fromEntries(
-    ["download", "decoded", "firstPaint", "menu", "firstFrame", "lastResource", "blocking"].map(
-      (key) => [key, median(key)],
-    ),
+    [
+      "download",
+      "decoded",
+      "firstPaint",
+      "menu",
+      "firstFrame",
+      "menuClear",
+      "startDelay",
+      "lastResource",
+      "blocking",
+    ].map((key) => [key, median(key)]),
   ),
   runs,
 };

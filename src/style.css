@@ -347,7 +347,8 @@ canvas#game {
 #toast.visible {
   opacity: 1;
 }
-#overlay {
+#overlay,
+#startup-overlay {
   position: absolute;
   inset: 0;
   display: grid;
@@ -356,6 +357,54 @@ canvas#game {
   padding: 24px;
   backdrop-filter: blur(2px);
   overflow-y: auto;
+}
+#startup-overlay,
+#overlay:has(.start) {
+  background: #163b5c;
+  backdrop-filter: none;
+}
+#startup-overlay {
+  z-index: 30;
+}
+#startup-overlay[data-state="error"] #start {
+  font-size: 16px;
+}
+.menu-ready #game,
+.menu-ready #fps {
+  visibility: hidden;
+}
+#startup-status {
+  flex: 0 0 120px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffcf38;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+#startup-status::before {
+  content: "";
+  flex: 0 0 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px #ffcf3820;
+}
+#startup-overlay[data-state="ready"] #startup-status {
+  color: #a2e6b0;
+}
+#startup-overlay[data-state="ready"] #startup-status::before {
+  box-shadow: 0 0 0 3px #a2e6b020;
+}
+#startup-overlay[data-state="error"] #startup-status {
+  color: #ffb2a7;
+}
+#startup-overlay[data-state="error"] #startup-status::before {
+  box-shadow: 0 0 0 3px #ffb2a720;
+}
+#start:disabled {
+  cursor: wait;
 }
 .menu {
   background: #142e4df2;
@@ -467,6 +516,19 @@ h2 {
   color: #c0dbee;
   margin-top: 24px;
 }
+.menu-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 20px;
+}
+.menu-footer .menu-help {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  font-size: 12px;
+  text-align: left;
+}
 .compact {
   max-width: 520px;
   text-align: center;
@@ -524,6 +586,9 @@ h2 {
     padding: 22px;
   }
   .menu-help {
+    display: none;
+  }
+  .menu-footer:has(.menu-help:only-child) {
     display: none;
   }
   .vehicle {
@@ -643,6 +708,18 @@ h2 {
   color: #c4dfef;
 }
 @media (max-width: 500px) {
+  .vehicles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .vehicle strong {
+    font-size: 18px;
+  }
+  .spec {
+    flex-direction: column;
+    gap: 5px;
+    letter-spacing: 0;
+  }
   .mode-options {
     gap: 8px;
   }
@@ -805,19 +882,6 @@ h2 {
   flex: 0 0 auto;
   font-size: 30px;
   padding: 15px 32px;
-}
-.start .vehicle::after {
-  content: "SELECTED";
-  display: block;
-  visibility: hidden;
-  color: #ffcf38;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  margin-top: 10px;
-}
-.start .vehicle.selected::after {
-  visibility: visible;
 }
 .vehicle:focus-visible,
 #start:focus-visible {

@@ -1,3 +1,4 @@
+import { MAP_OPTIONS } from "./map-options";
 import { arenaLayout } from "./arena";
 import type { CoverDef } from "./arena";
 import type { GroundKind } from "./ground-surfaces";
@@ -15,24 +16,9 @@ export interface ArenaMap {
   layout: () => CoverDef[];
 }
 
-/** The menu and Surprise me draw from the same authored maps. */
-export const MAPS = [
-  {
-    id: "village",
-    name: "Pine Village",
-    description: "A quiet little village. Bring the noise.",
-    layout: arenaLayout,
-  },
-  {
-    id: "harbor",
-    name: "Harbor Havoc",
-    description: "Salt air. Hot steel. Dockside mayhem.",
-    layout: harborLayout,
-  },
-  {
-    id: "quarry",
-    name: "Dusty Dig",
-    description: "Open ground. Weathered stone. Dig your own shortcut.",
-    layout: quarryLayout,
-  },
-] as const satisfies readonly ArenaMap[];
+const layouts = { village: arenaLayout, harbor: harborLayout, quarry: quarryLayout };
+
+export const MAPS = MAP_OPTIONS.map((map) => ({
+  ...map,
+  layout: layouts[map.id],
+})) satisfies ArenaMap[];

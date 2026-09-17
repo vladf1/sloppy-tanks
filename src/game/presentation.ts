@@ -362,6 +362,8 @@ export class Presentation {
     }
     const position = simulation.human.body.translation();
     this.follow.set(position.x, 0, position.z);
+    // Startup no longer renders a preview frame to establish the aiming camera.
+    this.updateCamera(simulation, 1, false);
   }
   makeBar(id: number, team: number): void {
     const bar = createTankBar(team);

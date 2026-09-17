@@ -3,11 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#192a28" />
+    <meta name="theme-color" content="#163b5c" />
     <link rel="icon" href="/favicon.svg" />
-    <link rel="preload" as="image" crossorigin="anonymous" href="/textures/tanks/armor-wear.webp" />
     <title>Sloppy Tanks · Little tanks. Big mess.</title>
     <style>
+      html {
+        background: #163b5c;
+      }
       /* Keep the startup screen independent of the deferred game stylesheet. */
       #loading,
       #loading * {
@@ -22,24 +24,34 @@
         align-content: center;
         justify-items: center;
         gap: 12px;
-        background: #192a28;
+        background: #163b5c;
         color: #f5faff;
         font:
-          16px system-ui,
+          16px Arial,
           sans-serif;
+        transition: opacity 180ms ease-out;
+      }
+      #loading.leaving {
+        opacity: 0;
+        pointer-events: none;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #loading {
+          transition: none;
+        }
       }
       #loading h1 {
         margin: 0;
         font:
-          700 36px/normal system-ui,
+          900 44px/0.95 Impact,
           sans-serif;
-        letter-spacing: 3px;
+        letter-spacing: -0.4px;
       }
       #loading p {
         margin: 0;
-        color: #becfca;
+        color: #c4dfef;
         font:
-          400 16px/normal system-ui,
+          400 14px/normal Arial,
           sans-serif;
       }
       #loading button {
@@ -59,7 +71,7 @@
     <div id="app"></div>
     <div id="loading" role="status" aria-live="polite">
       <h1>SLOPPY TANKS</h1>
-      <p>Preparing your battleground…</p>
+      <p>Opening the garage…</p>
       <noscript>This game needs JavaScript enabled to load the arena.</noscript>
     </div>
     <script type="module" src="/src/main.ts"></script>
