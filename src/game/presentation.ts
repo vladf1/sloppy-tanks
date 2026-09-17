@@ -33,6 +33,7 @@ import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
 import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
+import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
 import type { Cover, Fragment, SimEvent } from "./types";
@@ -83,6 +84,7 @@ export class Presentation {
   private corners = Array.from({ length: 4 }, () => new THREE.Vector3());
   worldGroup = new THREE.Group();
   tankMeshes = new Map<number, TankModel>();
+  private suspensions = new Map<number, TankSuspension>();
   coverMeshes = new Map<number, THREE.Group>();
   fragmentMeshes = new Map<number, THREE.Object3D>();
   pickupMeshes = new Map<number, PickupModel>();
@@ -290,6 +292,7 @@ export class Presentation {
     disposeOwned(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
+    this.suspensions.clear();
     this.coverMeshes.clear();
     this.fragmentMeshes.clear();
     this.pickupMeshes.clear();
@@ -561,11 +564,12 @@ export class Presentation {
         ((FEEDBACK.spawnCueSeconds - this.spawnCue) % FEEDBACK.spawnPulseSeconds) /
           FEEDBACK.spawnPulseSeconds);
   }
-  private updateTanks(simulation: Simulation, alpha: number): void {
+  private updateTanks(simulation: Simulation, alpha: number, dt: number): void {
     for (const tank of simulation.tanks) {
       let group = this.tankMeshes.get(tank.id);
       // Reinforcements arrive after reset, so create their visuals on first render.
       if (!group || group.userData.kind !== tank.kind) {
+        this.suspensions.delete(tank.id);
         if (group) {
           disposeOwned(group);
           this.worldGroup.remove(group);
@@ -584,6 +588,7 @@ export class Presentation {
       updateTankProtection(bar, tank);
       if (!tank.alive) {
         this.hitUntil.delete(tank.id);
+        this.suspensions.delete(tank.id);
         continue;
       }
       const pos = tank.body.translation();
@@ -603,10 +608,28 @@ export class Presentation {
       if (hitRemaining === 0) {
         this.hitUntil.delete(tank.id);
       }
-      group.userData.hull.rotation.y = tank.heading;
+      const velocity = tank.body.linvel();
+      let suspension = this.suspensions.get(tank.id);
+      if (!suspension) {
+        suspension = new TankSuspension();
+        this.suspensions.set(tank.id, suspension);
+      }
+      suspension.update(
+        velocity.x,
+        velocity.z,
+        tank.heading,
+        simulation.elapsed,
+        simulation.match.phase === "playing" ? dt : 0,
+      );
+      // Hull-local tilt leaves the independently aimed turret and physics pose untouched.
+      group.userData.hull.rotation.set(
+        suspension.pitch.angle,
+        tank.heading,
+        suspension.roll.angle,
+        "YXZ",
+      );
       group.userData.turret.rotation.y = tank.aim;
       group.userData.barrel.position.z = -tank.recoil * 0.2;
-      const velocity = tank.body.linvel();
       group.userData.trackGroup.position.z =
         (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
       group.scale.setScalar(VEHICLES[tank.kind].scale);
@@ -823,7 +846,7 @@ export class Presentation {
     this.tracks.update(simulation, alpha);
     this.updateCamera(simulation, alpha, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
-    this.updateTanks(simulation, alpha);
+    this.updateTanks(simulation, alpha, dt);
     this.treeDebris.update(dt);
     this.updateCover(simulation);
     this.updatePickups(simulation, dt);

@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tank suspension checks</title>
+    <style>
+      body {
+        margin: 0;
+        background: #163b5c;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        padding: 12px;
+        color: white;
+        background: #142e4df2;
+        font: 14px Arial;
+        max-width: 350px;
+        border-radius: 8px;
+      }
+      button,
+      select {
+        padding: 7px;
+        margin: 3px;
+      }
+      label {
+        display: block;
+        margin: 6px 0;
+      }
+      p {
+        font-size: 12px;
+        line-height: 1.5;
+        color: #c4dfef;
+      }
+      output {
+        display: block;
+        white-space: pre-wrap;
+        margin-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas></canvas>
+    <aside>
+      <strong>Suspension live preview</strong>
+      <p>Actual game motion, shown close up. Slow playback makes the small lean easier to see.</p>
+      <label
+        >Tank
+        <select id="chassis">
+          <option value="scout">Skipper</option>
+          <option value="balanced" selected>Bruiser</option>
+          <option value="heavy">Big Rig</option>
+        </select></label
+      >
+      <label
+        >Playback
+        <select id="speed">
+          <option value="1">Normal speed</option>
+          <option value="0.5">Half speed</option>
+          <option value="0.25">Quarter speed</option>
+        </select></label
+      >
+      <button id="demo">Loop demo</button>
+      <button id="pause">Pause</button><br />
+      <button id="accelerate">Accelerate</button>
+      <button id="brake">Brake</button>
+      <button id="turn">Turn</button>
+      <button id="settle">Settle</button>
+      <br /><button id="checks">Run checks</button>
+      <output>Loading…</output>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { idleCommand } from "../src/game/types";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      await RAPIER.init();
+      await loadTankSurface();
+      const sim = new Simulation(123);
+      const view = new Presentation(document.querySelector("canvas"));
+      const output = document.querySelector("output");
+      const chassis = document.querySelector("#chassis");
+      const speed = document.querySelector("#speed");
+      const pause = document.querySelector("#pause");
+      const STEP = 1 / 60;
+      // Durations use simulation time; slow motion changes playback, not suspension strength.
+      const rest = ["Settling", 0.9, 0, 0];
+      const acceleration = ["Accelerating", 0.65, 0, 1];
+      const braking = ["Braking", 0.45, 0, 0];
+      const demo = [
+        ["At rest", 0.5, 0, 0],
+        acceleration,
+        ["Cruising", 0.45, 0, 1],
+        braking,
+        rest,
+        ["Reversing", 0.7, 0, -1],
+        braking,
+        rest,
+        acceleration,
+        ["Turning left", 0.6, -1, 0],
+        ["Turning right", 0.9, 1, 0],
+        braking,
+        rest,
+      ];
+      let sequence = demo;
+      let looping = true;
+      let playing = false;
+      let completed = false;
+      let stage = 0;
+      let stageTime = 0;
+      let accumulator = 0;
+      let previousFrame;
+      let lastReadout = 0;
+      function playSequence(next, loop = false) {
+        completed = false;
+        sequence = next;
+        looping = loop;
+        stage = stageTime = accumulator = 0;
+        reset(chassis.value);
+        playing = true;
+        pause.textContent = "Pause";
+        showMotion();
+      }
+      function showMotion() {
+        const state = pose();
+        const velocity = sim.human.body.linvel();
+        output.textContent = `${sequence[stage][0]}${playing ? "" : " · paused"}
+Pitch: ${((state.pitch * 180) / Math.PI).toFixed(2)}°
+Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°
+Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
+      }
+      function reset(kind = "balanced") {
+        sim.humanKind = kind;
+        sim.reset(2);
+        for (const cover of sim.covers) sim.world.removeRigidBody(cover.body);
+        for (const tank of sim.tanks) sim.world.removeRigidBody(tank.body);
+        sim.covers = [];
+        sim.movableCovers = [];
+        sim.coverByCollider.clear();
+        sim.tanks = [];
+        sim.pickups = [];
+        sim.nav.rebuild([]);
+        const tank = sim.addTank(0, true, kind);
+        tank.heading = tank.aim = 0;
+        tank.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+        tank.previous = { x: 0, z: 0 };
+        sim.world.step();
+        sim.start();
+        view.reset(sim);
+        view.zoom = 8;
+        view.render(sim, 1, 1 / 60);
+      }
+      function pose() {
+        const model = view.tankMeshes.get(sim.human.id);
+        let meshes = 0;
+        model.traverse((object) => {
+          if (object.isMesh) meshes++;
+        });
+        return {
+          meshes,
+          pitch: model.userData.hull.rotation.x,
+          roll: model.userData.hull.rotation.z,
+          turret: model.userData.turret.rotation.toArray().slice(0, 3),
+          body: sim.human.body.rotation(),
+          draws: view.renderer.info.render.calls,
+        };
+      }
+      function advance(n, moveX = 0, moveZ = 0) {
+        for (let i = 0; i < n; i++) {
+          sim.step({ ...idleCommand(), moveX, moveZ });
+          view.render(sim, 1, 1 / 60);
+        }
+        output.textContent = JSON.stringify(pose(), null, 2);
+        return pose();
+      }
+      document.querySelector("#demo").onclick = () => playSequence(demo, true);
+      document.querySelector("#accelerate").onclick = () =>
+        playSequence([acceleration, ["Cruising", 0.5, 0, 1], braking, rest]);
+      document.querySelector("#brake").onclick = () => playSequence([acceleration, braking, rest]);
+      document.querySelector("#turn").onclick = () =>
+        playSequence([
+          acceleration,
+          ["Turning left", 0.6, -1, 0],
+          ["Turning right", 0.9, 1, 0],
+          braking,
+          rest,
+        ]);
+      document.querySelector("#settle").onclick = () => playSequence([acceleration, braking, rest]);
+      chassis.onchange = () => playSequence(sequence, looping);
+      pause.onclick = () => {
+        if (completed) {
+          playSequence(sequence, looping);
+          return;
+        }
+        playing = !playing;
+        previousFrame = undefined;
+        pause.textContent = playing ? "Pause" : "Play";
+        showMotion();
+      };
+      window.addEventListener("resize", () => {
+        view.resize();
+        view.render(sim, 1, 0);
+      });
+      function animate(now) {
+        const elapsed =
+          previousFrame === undefined ? 0 : Math.min((now - previousFrame) / 1000, 0.05);
+        previousFrame = now;
+        if (playing && !document.hidden) {
+          const dt = elapsed * Number(speed.value);
+          accumulator += dt;
+          while (accumulator >= STEP && playing) {
+            const [, duration, moveX, moveZ] = sequence[stage];
+            sim.step({ ...idleCommand(), moveX, moveZ });
+            accumulator -= STEP;
+            stageTime += STEP;
+            if (stageTime + 1e-8 >= duration) {
+              stageTime = 0;
+              if (stage + 1 < sequence.length) stage++;
+              else if (looping) {
+                stage = 0;
+                reset(chassis.value);
+              } else {
+                playing = false;
+                completed = true;
+                pause.textContent = "Replay";
+              }
+            }
+          }
+          view.render(sim, playing ? accumulator / STEP : 1, dt);
+          if (now - lastReadout > 50 || !playing) {
+            showMotion();
+            lastReadout = now;
+          }
+        }
+        requestAnimationFrame(animate);
+      }
+      document.querySelector("#checks").onclick = () => {
+        playing = false;
+        completed = true;
+        accumulator = 0;
+        pause.textContent = "Replay";
+        const results = [];
+        const assert = (value, message) => {
+          if (!value) throw new Error(message);
+        };
+        for (const kind of ["scout", "balanced", "heavy"]) {
+          reset(kind);
+          const meshes = pose().meshes;
+          const accelerating = advance(7, 0, 1);
+          assert(accelerating.pitch < -0.001, `${kind}: acceleration tilt`);
+          advance(30, 0, 1);
+          const braking = advance(7);
+          assert(braking.pitch > 0.001, `${kind}: braking tilt`);
+          assert(braking.meshes === meshes, `${kind}: no added meshes`);
+          assert(
+            braking.turret.every((v) => v === 0),
+            `${kind}: turret remains level and aimed`,
+          );
+          assert(
+            Math.abs(braking.body.x) + Math.abs(braking.body.z) < 1e-8,
+            `${kind}: physics remains level`,
+          );
+          advance(30, 0, 1);
+          const turning = advance(12, 1, 0);
+          assert(Math.abs(turning.roll) > 0.001, `${kind}: turning lean`);
+          const settled = advance(120);
+          assert(Math.abs(settled.pitch) + Math.abs(settled.roll) < 1e-6, `${kind}: settles flat`);
+          reset(kind);
+          assert(pose().pitch === 0 && pose().roll === 0, `${kind}: reset clears motion`);
+          results.push(`${kind}: passed`);
+        }
+        reset();
+        advance(7, 0, 1);
+        output.textContent =
+          results.join("\n") +
+          "\nPASS: driving, braking, turning, settling, reset, level aim/physics, unchanged mesh count.";
+      };
+      playSequence(demo, true);
+      requestAnimationFrame(animate);
+    </script>
+  </body>
+</html>
