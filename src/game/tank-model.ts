@@ -4,9 +4,10 @@ import { box, cylinder, material, put } from "./model-primitives";
 import { applyTankSurface } from "./tank-surfaces";
 import type { Team, VehicleKind } from "./types";
 // Shared geometry keeps the more detailed silhouette inexpensive to instance/batch.
-const armorGeometry = new Map<number, THREE.BufferGeometry>();
-function armor(w: number, h: number, d: number, color: number, taper = 0.76) {
-  let geo = armorGeometry.get(taper);
+const armorGeometry = new Map<string, THREE.BufferGeometry>();
+function armor(w: number, h: number, d: number, color: number, taper = 0.76, opening = 0) {
+  const key = opening ? `${taper}/${w}/${d}/${opening}` : String(taper);
+  let geo = armorGeometry.get(key);
   if (!geo) {
     // Chamfered rectangular plates, with a recessed roof and sloping front glacis.
     const outline = [
@@ -31,7 +32,27 @@ function armor(w: number, h: number, d: number, color: number, taper = 0.76) {
       indices.push(i, i + 8, next, next, i + 8, next + 8);
     }
     for (let i = 1; i < 7; i++) {
-      indices.push(0, i, i + 1, 8, i + 9, i + 8);
+      indices.push(0, i, i + 1);
+      if (!opening) {
+        indices.push(8, i + 9, i + 8);
+      }
+    }
+    if (opening) {
+      const contour = outline.map(([x, z]) => new THREE.Vector2(x * taper, z * taper - 0.04));
+      const hole = Array.from({ length: 24 }, (_, i) => {
+        const angle = (i / 24) * Math.PI * 2;
+        return new THREE.Vector2(
+          (Math.cos(angle) * opening) / w,
+          (Math.sin(angle) * opening - 0.12) / d,
+        );
+      });
+      const offset = vertices.length / 3;
+      for (const p of [...contour, ...hole]) {
+        vertices.push(p.x, 0.5, p.y);
+      }
+      for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(contour, [hole])) {
+        indices.push(offset + a, offset + c, offset + b);
+      }
     }
     const indexed = new THREE.BufferGeometry();
     indexed.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
@@ -60,7 +81,7 @@ function armor(w: number, h: number, d: number, color: number, taper = 0.76) {
         (ny >= nx && ny >= nz ? z : y) + 0.5,
       );
     }
-    armorGeometry.set(taper, geo);
+    armorGeometry.set(key, geo);
   }
   const mesh = new THREE.Mesh(geo, material(color, 0.18, 0.58));
   mesh.scale.set(w, h, d);
@@ -98,7 +119,12 @@ export interface TankModel extends THREE.Group {
     muzzle: THREE.Object3D;
   };
 }
-export function tankModel(kind: VehicleKind, team: Team, wreck = false): TankModel {
+export function tankModel(
+  kind: VehicleKind,
+  team: Team,
+  wreck = false,
+  openTurretRing = false,
+): TankModel {
   const root = new THREE.Group() as TankModel;
   const hull = new THREE.Group();
   const turret = new THREE.Group();
@@ -119,7 +145,36 @@ export function tankModel(kind: VehicleKind, team: Team, wreck = false): TankMod
   const lowerHull = armor(width, 0.32, length, shade, 0.8);
   lowerHull.rotation.z = Math.PI;
   put(hull, lowerHull, 0, 0.22, 0);
-  put(hull, armor(width, deck - 0.2, length, color, scout ? 0.72 : 0.86), 0, deck / 2 + 0.16, 0);
+  const opening = scout ? 0.5 : 0.65;
+  const ringRadius = scout ? 0.59 : 0.76;
+  put(
+    hull,
+    armor(width, deck - 0.2, length, color, scout ? 0.72 : 0.86, openTurretRing ? ringRadius : 0),
+    0,
+    deck / 2 + 0.16,
+    0,
+  );
+  if (openTurretRing) {
+    const roofY = deck + 0.06;
+    const floorY = 0.395;
+    // A real cutout with visible inner walls and a dark recessed floor, not a
+    // black decal on the closed deck. Keep it inside the original hull bounds.
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(opening, ringRadius, 24).rotateX(-Math.PI / 2),
+      material(0x4a5358, 0.55, 0.8),
+    );
+    rim.castShadow = rim.receiveShadow = true;
+    put(hull, rim, 0, roofY, -0.12);
+    const wallMaterial = material(0x3b454a, 0.15, 0.9).clone();
+    wallMaterial.side = THREE.BackSide;
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(opening, opening, roofY - floorY, 24, 1, true),
+      wallMaterial,
+    );
+    wall.receiveShadow = true;
+    put(hull, wall, 0, (roofY + floorY) / 2, -0.12);
+    put(hull, cylinder(opening, 0.02, 0x293238, 24), 0, floorY - 0.01, -0.12);
+  }
   // Shallow armored belly and service covers stay above the track contact plane.
   // These are hull meshes so the same details survive on overturned wrecks.
   const belly = armor(width * 0.7, 0.1, length * 0.83, shade, 0.91);

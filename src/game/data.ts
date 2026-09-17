@@ -178,6 +178,7 @@ export const GROUP = {
   tank: 0x0001002e, // Hull touches cover, ground, anti-tank footprints and large debris.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   toothContact: 0x00200001, // Planar tank blocking; excluded from projectile queries.
+  stumpContact: 0x00200001, // Same tank-only membership for rooted stump footprints.
   cover: 0x0002000b,
   movableCover: 0x0002000f, // Cover membership also contacts the ground.
   ground: 0x0004000b, // Accept movable cover as well as tanks and debris.

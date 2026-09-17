@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { batch } from "./batching";
 import { Random } from "./data";
 import type { Cover } from "./types";
+import { treeProportions } from "./tree-proportions";
 
 type TreeDef = Pick<Cover, "x" | "z" | "w" | "d" | "h">;
 export const TREE_FAMILIES = ["Pine", "Spruce", "Fir", "Oak", "Birch", "Aspen"] as const;
@@ -167,14 +168,8 @@ function stumpGeometry(variant: number) {
 }
 
 export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
-  const seed = ((Math.round(c.x * 100) * 73856093) ^ (Math.round(c.z * 100) * 19349663)) >>> 0;
-  const rng = new Random(seed);
-  const family = Math.floor(rng.next() * TREE_FAMILIES.length);
+  const { seed, rng, family, twist, height, radius, stumpHeight } = treeProportions(c);
   const conifer = family < 3;
-  const twist = rng.range(0, Math.PI * 2);
-  const height = c.h * rng.range(0.9, 1.07);
-  const radius = Math.min(c.w, c.d) * (family === 3 ? 0.14 : family >= 4 ? 0.1 : 0.12);
-  const stumpHeight = radius * rng.range(1.5, 1.9);
   const pale = family === 4 || family === 5;
   const barkMat = surface(
     pale ? "birch" : "bark",

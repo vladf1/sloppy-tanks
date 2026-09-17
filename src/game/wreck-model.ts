@@ -12,7 +12,7 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
   if (cached) {
     return cached.clone();
   }
-  const source = tankModel(kind, team);
+  const source = tankModel(kind, team, false, part === "hull");
   const result = new THREE.Group();
   const { hull, turret, barrel } = source.userData;
   if (part === "hull") {

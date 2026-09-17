@@ -1,5 +1,6 @@
 import { ARENA } from "./data";
 import type { Cover, Vec2 } from "./types";
+import { treeProportions } from "./tree-proportions";
 const CELL_SIZE = 1.5;
 const HALF_ARENA = ARENA;
 const GRID_SIZE = Math.ceil((2 * HALF_ARENA) / CELL_SIZE);
@@ -22,6 +23,16 @@ export class Navigation {
   version = 0;
   paths = 0;
   rebuild(covers: Cover[], region?: Cover): void {
+    const obstacles = covers.flatMap((cover) => {
+      if (cover.alive) {
+        return [cover];
+      }
+      if (cover.kind === "tree") {
+        const diameter = treeProportions(cover).stumpRadius * 2;
+        return [{ ...cover, w: diameter, d: diameter }];
+      }
+      return [];
+    });
     const x0 = region
       ? Math.max(
           0,
@@ -49,9 +60,8 @@ export class Navigation {
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
         const position = this.point(z * GRID_SIZE + x);
-        this.blocked[z * GRID_SIZE + x] = covers.some(
+        this.blocked[z * GRID_SIZE + x] = obstacles.some(
           (cover) =>
-            cover.alive &&
             Math.abs(position.x - cover.x) < cover.w / 2 + HULL_CLEARANCE &&
             Math.abs(position.z - cover.z) < cover.d / 2 + HULL_CLEARANCE,
         )

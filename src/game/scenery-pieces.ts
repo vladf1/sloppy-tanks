@@ -5,6 +5,7 @@ import { DEBRIS_MATERIALS, trackDebrisContacts, type DebrisMaterial } from "./de
 import type { Simulation } from "./simulation";
 import { TOWER_BASE } from "./tower-layout";
 import type { Cover, Fragment } from "./types";
+import { treeProportions } from "./tree-proportions";
 
 /** Authored major components only. Dust, foliage and chips remain presentation particles.
  * Dimensions are shared by simple colliders and instanced unit geometry. */
@@ -109,15 +110,7 @@ export function breakScenery(sim: Simulation, cover: Cover): boolean {
       );
     }
   } else if (cover.kind === "tree") {
-    // Match the standing tree's deterministic trunk proportions.
-    const seed =
-      ((Math.round(cover.x * 100) * 73856093) ^ (Math.round(cover.z * 100) * 19349663)) >>> 0;
-    const treeRng = new Random(seed);
-    const family = Math.floor(treeRng.next() * 6);
-    treeRng.next(); // crown twist
-    const height = cover.h * treeRng.range(0.9, 1.07);
-    const radius = Math.min(cover.w, cover.d) * (family === 3 ? 0.14 : family >= 4 ? 0.1 : 0.12);
-    const stump = radius * treeRng.range(1.5, 1.9);
+    const { family, height, radius, stumpHeight: stump } = treeProportions(cover);
     const length = height * (family < 3 ? 0.98 : 0.78) - stump;
     const center = stump + length / 2;
     const trunk = piece("log", 0, center, 0, radius * 2, length, radius * 2, 0x98734f);

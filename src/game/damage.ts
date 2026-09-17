@@ -3,7 +3,9 @@ import { breakScenery } from "./scenery-pieces";
 import { DIFFICULTIES } from "./difficulty";
 import { clearAmmo } from "./ammunition";
 import { COMBAT, MINE } from "./combat-rules";
-import { distance } from "./data";
+import RAPIER from "@dimforge/rapier3d-compat";
+import { distance, GROUP } from "./data";
+import { treeProportions } from "./tree-proportions";
 import { awardKill } from "./match";
 import type { Simulation } from "./simulation";
 import { SIMULATION_RULES, SOLO } from "./simulation-rules";
@@ -111,7 +113,15 @@ export function damageCover(
   for (let i = 0; i < cover.body.numColliders(); i++) {
     simulation.coverByCollider.delete(cover.body.collider(i).handle);
   }
-  simulation.world.removeRigidBody(cover.body);
+  if (cover.kind === "tree") {
+    // A tank-only upright footprint stops planar hulls climbing or crossing the
+    // stump while shells can still fly through the space left by the crown.
+    cover.collider.setShape(new RAPIER.Cylinder(0.8, treeProportions(cover).stumpRadius));
+    cover.collider.setTranslationWrtParent({ x: 0, y: 0.8 - cover.h / 2, z: 0 });
+    cover.collider.setCollisionGroups(GROUP.stumpContact);
+  } else {
+    simulation.world.removeRigidBody(cover.body);
+  }
   simulation.nav.rebuild(simulation.covers, cover);
   simulation.events.push({
     type: "destroy",

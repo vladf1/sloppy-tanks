@@ -637,7 +637,7 @@ test("bots pause between shots even when breaching; human fires faster with and 
   }
 });
 
-test("village buildings and trees block routes until destroyed, while all spawns reach midfield", async () => {
+test("destroyed village cover opens routes except rooted stumps, while all spawns reach midfield", async () => {
   const { spawnPositions } = await import("../src/game/arena");
   const s = game();
   for (const kind of ["house", "tree", "timber"] as const) {
@@ -648,7 +648,7 @@ test("village buildings and trees block routes until destroyed, while all spawns
     assert.equal(s.nav.blocked[s.nav.index(c)], 1);
     s.damageCover(c, 1000, s.human.id, s.humanTeam);
     assert.equal(c.alive, false);
-    assert.equal(s.nav.blocked[s.nav.index(c)], 0);
+    assert.equal(s.nav.blocked[s.nav.index(c)], kind === "tree" ? 1 : 0);
   }
   for (const team of [0, 1] as const)
     for (const p of spawnPositions(team)) assert.ok(s.nav.find(p, { x: 0, z: 0 }).length > 0);

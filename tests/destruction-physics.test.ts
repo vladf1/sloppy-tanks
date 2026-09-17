@@ -8,6 +8,7 @@ import { Simulation } from "../src/game/simulation";
 import { stepProjectiles } from "../src/game/projectiles";
 import type { CoverKind, Shot } from "../src/game/types";
 import { idleCommand } from "../src/game/types";
+import { treeProportions } from "../src/game/tree-proportions";
 
 before(async () => {
   await RAPIER.init();
@@ -75,6 +76,91 @@ function park(body: RAPIER.RigidBody, x: number, y: number, z = 0) {
   body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   body.sleep();
 }
+
+test("rooted stumps block every chassis after debris cleanup and leave the crown space open", () => {
+  for (const kind of ["scout", "balanced", "heavy"] as const) {
+    for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const s = arena();
+      try {
+        const tree = cover(s, "tree");
+        s.damageCover(tree, 1000, 999, 0);
+        // Isolate the permanent stump from the temporary falling log.
+        for (const fragment of s.fragments) s.world.removeRigidBody(fragment.body);
+        s.fragments = [];
+        const tank = s.addTank(0, true, kind);
+        const direction = { x: Math.sin(heading), z: Math.cos(heading) };
+        tank.heading = heading;
+        tank.body.setRotation(
+          { x: 0, y: Math.sin(heading / 2), z: 0, w: Math.cos(heading / 2) },
+          true,
+        );
+        tank.body.setTranslation({ x: -5 * direction.x, y: 0.65, z: -5 * direction.z }, true);
+        tank.previous = { x: -5 * direction.x, z: -5 * direction.z };
+        s.world.step();
+        for (let i = 0; i < 180; i++) {
+          s.step({ ...idleCommand(), moveX: direction.x, moveZ: direction.z });
+        }
+        const position = tank.body.translation();
+        assert.ok(
+          position.x * direction.x + position.z * direction.z < -0.7,
+          `${kind} must stop before the stump`,
+        );
+        assert.ok(position.y < 0.8, "the stump must not lift the tank over its footprint");
+        assert.equal(tree.body.isValid(), true);
+        assert.equal(tree.body.isFixed(), true);
+        assert.equal(s.nav.blocked[s.nav.index(tree)], 1, "bots must route around the stump");
+        assert.equal(s.nav.clearLine({ x: -4, z: 0 }, { x: 4, z: 0 }), false);
+        assert.equal(
+          s.world.castRay(
+            new RAPIER.Ray({ x: -4, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }),
+            8,
+            true,
+            undefined,
+            GROUP.coverQuery,
+          ),
+          null,
+          "shells must fly above the stump",
+        );
+        const ray = new RAPIER.Ray({ x: -4, y: 0.65, z: 0 }, { x: 1, y: 0, z: 0 });
+        assert.ok(
+          s.world.castRay(ray, 8, true, undefined, GROUP.steeringQuery, undefined, tank.body),
+          "local steering must detect the stump",
+        );
+        assert.ok(Math.abs(tree.collider.radius() - treeProportions(tree).stumpRadius) < 1e-6);
+        const destroyed = s.destroyed;
+        s.damageCover(tree, 1000, 999, 0);
+        assert.equal(s.destroyed, destroyed, "a stump cannot be destroyed twice");
+      } finally {
+        s.dispose();
+      }
+    }
+  }
+});
+
+test("destroyed trees leave a narrow stump rather than the original canopy-sized obstacle", () => {
+  const s = arena();
+  try {
+    const tree = cover(s, "tree");
+    assert.equal(s.nav.blocked[s.nav.index({ x: 2, z: 0 })], 1);
+    s.damageCover(tree, 1000, 999, 0);
+    for (const fragment of s.fragments) s.world.removeRigidBody(fragment.body);
+    s.fragments = [];
+    assert.equal(s.nav.blocked[s.nav.index({ x: 2, z: 0 })], 0);
+    const tank = s.addTank(0, true, "heavy");
+    tank.heading = 0;
+    park(tank.body, 2, 0.65, -5);
+    for (let i = 0; i < 120; i++) s.step({ ...idleCommand(), moveZ: 1 });
+    assert.ok(tank.body.translation().z > 2, "a tank can pass beside the solid stump");
+    s.reset();
+    assert.ok(
+      s.covers
+        .filter((c) => c.kind === "tree")
+        .every((c) => c.alive && c.collider.collisionGroups() === GROUP.cover),
+    );
+  } finally {
+    s.dispose();
+  }
+});
 
 test("blasts wake and tumble a wreck; edge, distant and airborne debris obey falloff without RNG draws", () => {
   const s = arena();
@@ -553,7 +639,8 @@ test("a scout pushes fallen logs, beams, panels and drum pieces while small chip
   ] as const) {
     const s = arena();
     try {
-      const c = cover(s, kind);
+      // Destroy the source away from the push lane; rooted stumps stay solid.
+      const c = cover(s, kind, 20, 20);
       s.damageCover(c, 999, 999, 0);
       const f = s.fragments.find((fragment) => fragment.shape === shape)!;
       for (const other of s.fragments) park(other.body, 30, 1);
