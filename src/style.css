@@ -877,6 +877,7 @@ h2 {
 }
 .start-heading h1 {
   font-size: clamp(32px, 4.5vw, 60px);
+  letter-spacing: 1px;
 }
 .start-heading #start {
   flex: 0 0 auto;

@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import { createServer } from "vite";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import { packTankPreviews } from "./pack-tank-previews.mjs";
 
 const server = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 await server.listen();
@@ -11,12 +12,7 @@ try {
   await page.waitForFunction(() => !!window.tankPreviewAssets);
   const assets = await page.evaluate(() => window.tankPreviewAssets);
   await mkdir("public/previews", { recursive: true });
-  for (const [name, data] of Object.entries(assets)) {
-    const path = `public/previews/${name}.webp`;
-    const image = Buffer.from(data.split(",")[1], "base64");
-    await writeFile(path, image);
-    console.log(`${path}: ${image.length} bytes`);
-  }
+  await packTankPreviews(assets);
 } finally {
   await browser.close();
   await server.close();

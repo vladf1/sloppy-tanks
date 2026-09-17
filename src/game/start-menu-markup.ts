@@ -15,7 +15,7 @@ export function vehicleCards(simulation: GameOptions): string {
       return `
           <button class="vehicle ${simulation.humanKind === kind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${simulation.humanKind === kind}">
             <strong>${v.name}</strong><small>${v.tag}</small>
-            <img class="tank-preview" src="${tankPreview(kind, simulation.humanTeam)}" alt="${v.name} tank" draggable="false">
+            ${tankPreview(kind, simulation.humanTeam, `${v.name} tank`)}
             <div class="spec"><span>${v.health} HIT POINTS</span><span>${v.speedKmh} KM/H</span></div>
           </button>`;
     })
