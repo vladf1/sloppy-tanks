@@ -166,7 +166,7 @@ export interface Pickup extends Vec2 {
   /** Starting duration for the current cooldown, used by the refill indicator. */
   cooldownDuration?: number;
 }
-export type WreckPart = "hull" | "turret" | "turret-barrel" | "barrel";
+export type WreckPart = "intact" | "hull" | "turret" | "turret-barrel" | "barrel";
 export interface Fragment {
   id: number;
   body: RAPIER.RigidBody;
@@ -190,6 +190,8 @@ export interface Fragment {
   treeCoverId?: number;
   treeCenterY?: number;
   expiresAt?: number;
+  /** Simulation timestamp for the 2.5-second tank wreck darkening. */
+  createdAt?: number;
   wreck?: VehicleKind;
   part?: WreckPart;
   team?: Team;
@@ -200,6 +202,7 @@ export interface DamageSource {
   origin: Vec2;
 }
 export type SimEvent = {
+  deathStyle?: "burnout";
   material?: DebrisMaterial;
   force?: number;
   damageSource?: DamageSource;

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ExplosionEffects } from "./explosion-effects";
 import { updateInstances } from "./render-resources";
 import type { SimEvent } from "./types";
 
@@ -86,6 +87,7 @@ const PARTICLE_STYLES = {
 /** Cosmetic randomness is deliberately independent from the seeded simulation. */
 export class ParticleEffects {
   readonly particles: Particle[] = [];
+  readonly explosions = new ExplosionEffects();
   readonly mesh: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
   constructor() {
@@ -98,10 +100,12 @@ export class ParticleEffects {
     this.mesh.frustumCulled = false;
   }
   reset(): void {
+    this.explosions.reset();
     this.particles.length = 0;
     this.mesh.count = 0;
   }
   event(event: SimEvent): boolean {
+    this.explosions.event(event);
     const pickup = event.type === "pickup" || event.type === "promotion";
     const hurt = event.type === "hurt";
     const explosion =
@@ -126,7 +130,14 @@ export class ParticleEffects {
                   ? "hurt"
                   : "impact"
       ];
-    const count = event.type === "shot" ? 5 : style.count;
+    // The new fire/smoke handles blast volume. Keep only a few fast hot flecks.
+    const tankDeath = event.type === "death";
+    const burnout = tankDeath && event.deathStyle === "burnout";
+    const fiery = event.type === "explosion" || tankDeath;
+    if (explosion && !tree && !timber && !fiery) {
+      return false;
+    }
+    const count = burnout ? 3 : fiery ? 8 : event.type === "shot" ? 5 : style.count;
     const baseSpeed = style.speed * (explosion && !tree ? (event.size ?? 3) : 1);
     const colors = timber
       ? [0x805336, 0xb47a49, 0xc99a65, 0x947958]
@@ -142,7 +153,9 @@ export class ParticleEffects {
               ? [0xffffff, 0xffcb58, 0xffcb58]
               : [event.color ?? 0xffdf91];
     for (let i = 0; i < count && this.particles.length < MAX_PARTICLES; i++) {
-      const life = (style.life[0] + Math.random() * style.life[1]) * (tree ? 3 : timber ? 2 : 1);
+      const life = tankDeath
+        ? 0.8 + Math.random() * 0.4
+        : (style.life[0] + Math.random() * style.life[1]) * (tree ? 3 : timber ? 2 : 1);
       const speed = baseSpeed + (tree && !chipHit ? Math.random() * 4 : 0);
       this.particles.push({
         shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
@@ -155,17 +168,20 @@ export class ParticleEffects {
             : style.height + (tree ? Math.random() * (event.height ?? 5) * 0.85 : 0),
         z: event.z + (Math.random() - 0.5) * style.scatter,
         vx: (Math.random() - 0.5) * speed,
-        vy: style.lift + Math.random() * (tree ? 5 : speed),
+        vy: tankDeath
+          ? (burnout ? 1.5 : 3.5) + Math.random() * 2.8
+          : style.lift + Math.random() * (tree ? 5 : speed),
         vz: (Math.random() - 0.5) * speed,
         life,
         max: life,
-        size: style.size[0] + Math.random() * style.size[1],
-        color: new THREE.Color(colors[i % colors.length]),
+        size: fiery ? 0.05 + Math.random() * 0.06 : style.size[0] + Math.random() * style.size[1],
+        color: new THREE.Color(fiery ? (i % 2 ? 0xffa238 : 0xffde82) : colors[i % colors.length]),
       });
     }
-    return explosion && !tree;
+    return fiery && !burnout;
   }
   update(dt: number, time: number): void {
+    this.explosions.update(dt);
     let live = 0;
     for (const q of this.particles) {
       q.life -= dt;

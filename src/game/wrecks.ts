@@ -7,9 +7,61 @@ import { GRAVITY } from "./simulation-rules";
 import type { Tank, Vec2, WreckPart } from "./types";
 
 /** Hulls and turrets can be pushed by tanks; detached barrels remain nonblocking debris. */
-export function breakTank(simulation: Simulation, tank: Tank): void {
+export function breakTank(simulation: Simulation, tank: Tank, burnout = false): void {
   const origin = { ...tank.body.translation() };
   const scale = VEHICLES[tank.kind].scale;
+  if (burnout) {
+    const velocity = tank.body.linvel();
+    // A roughly one-metre hop and damped rocking, using the existing wreck body.
+    const hopHeight = 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
+    const rock = (tank.id + tank.deaths) % 2 ? 0.85 : -0.85;
+    simulation.world.removeRigidBody(tank.body);
+    simulation.reserveFragments(1);
+    const body = simulation.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(origin.x, origin.y - 0.4 + 0.55 * scale, origin.z)
+        .setLinvel(velocity.x * 0.2, Math.sqrt(2 * GRAVITY * hopHeight), velocity.z * 0.2)
+        .setAngvel({
+          x: Math.cos(tank.heading) * rock,
+          y: rock * 0.15,
+          z: -Math.sin(tank.heading) * rock,
+        })
+        .setAngularDamping(3.5)
+        .setCcdEnabled(true),
+    );
+    body.setRotation(
+      { x: 0, y: Math.sin(tank.heading / 2), z: 0, w: Math.cos(tank.heading / 2) },
+      true,
+    );
+    const collider = simulation.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(
+        1.22 * scale,
+        0.75 * scale,
+        (tank.kind === "scout" ? 2.2 : 2.7) * scale,
+      )
+        .setCollisionGroups(GROUP.wreck)
+        .setMass(1.7)
+        .setFriction(0.95)
+        .setRestitution(0.05),
+      body,
+    );
+    const id = simulation.nextId++;
+    trackDebrisContacts(body, collider, id, "metal");
+    simulation.fragments.push({
+      id,
+      body,
+      life: 5 + DEBRIS_CLEANUP_SECONDS,
+      expiresAt: simulation.elapsed + 18,
+      createdAt: simulation.elapsed,
+      material: "metal",
+      size: 1,
+      color: 0x46534c,
+      wreck: tank.kind,
+      team: tank.team,
+      part: "intact",
+    });
+    return;
+  }
   const detached = simulation.rng.next() < 0.4;
   const pieces: WreckPart[] = detached ? ["hull", "turret", "barrel"] : ["hull", "turret-barrel"];
   // Explosion travel is in world units, independent of visual model scale.
@@ -123,6 +175,7 @@ export function breakTank(simulation: Simulation, tank: Tank): void {
       body,
       life: flight + 2.7 + DEBRIS_CLEANUP_SECONDS,
       expiresAt: simulation.elapsed + 18,
+      createdAt: simulation.elapsed,
       material: "metal",
       size: 1,
       color: 0x46534c,

@@ -3,7 +3,7 @@ import { batch } from "./batching";
 import { isMesh } from "./render-resources";
 import { tankModel } from "./tank-model";
 import type { Team, VehicleKind, WreckPart } from "./types";
-// At most 3 chassis × 2 teams × 4 assemblies. Shared geometry lives across rounds.
+// At most 3 chassis × 2 teams × 5 assemblies. Shared geometry lives across rounds.
 const wreckTemplates = new Map<string, THREE.Group>();
 /** Extract, center and batch once; instances share geometry but own their transforms. */
 export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
@@ -15,7 +15,9 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
   const source = tankModel(kind, team, false, part === "hull");
   const result = new THREE.Group();
   const { hull, turret, barrel } = source.userData;
-  if (part === "hull") {
+  if (part === "intact") {
+    result.add(hull, turret);
+  } else if (part === "hull") {
     result.add(hull);
   } else if (part === "barrel") {
     result.add(barrel);
@@ -25,7 +27,10 @@ export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {
     }
     result.add(turret);
   }
-  const center = new THREE.Box3().setFromObject(result).getCenter(new THREE.Vector3());
+  const center =
+    part === "intact"
+      ? new THREE.Vector3(0, 0.55, 0)
+      : new THREE.Box3().setFromObject(result).getCenter(new THREE.Vector3());
   for (const child of result.children) {
     child.position.sub(center);
   }

@@ -38,6 +38,7 @@ import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
 import type { Cover, Fragment, SimEvent } from "./types";
+import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK } from "./view-settings";
 interface PickupModel extends THREE.Group {
@@ -215,7 +216,7 @@ export class Presentation {
     );
     this.spawnPulse.rotation.x = -Math.PI / 2;
     this.scene.add(this.spawnPulse);
-    this.scene.add(this.particleEffects.mesh);
+    this.scene.add(this.particleEffects.mesh, this.particleEffects.explosions.group);
     const reticle = createReticle();
     this.crosshair = reticle.crosshair;
     this.reticleInk = reticle.ink;
@@ -807,6 +808,9 @@ export class Presentation {
         const materials = Array.isArray(o.material) ? o.material : [o.material];
         for (const material of materials) {
           material.opacity = remaining;
+          if (f.wreck) {
+            ageWreckMaterial(material, simulation.elapsed - (f.createdAt ?? simulation.elapsed));
+          }
         }
         o.castShadow = remaining === 1;
       });

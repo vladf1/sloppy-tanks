@@ -12,6 +12,7 @@ import { SIMULATION_RULES, SOLO } from "./simulation-rules";
 import { TOWER_BASE } from "./tower-layout";
 import type { Cover, DamageCause, DamageSource, Tank, Team, Vec2 } from "./types";
 import { earnExperience, KILL_XP } from "./veterancy";
+import { tankBurnout } from "./tank-destruction";
 import { breakTank } from "./wrecks";
 export function damageTank(
   simulation: Simulation,
@@ -79,17 +80,21 @@ export function damageTank(
     awardKill(simulation.match, tank.team, team, owner === tank.id, !simulation.endlessMatch);
   }
   simulation.checkSoloResult();
-  blastDebris(simulation, position, 3, 60);
-  breakTank(simulation, tank);
+  const burnout = tankBurnout(simulation.seed, tank.id, tank.deaths);
+  if (!burnout) {
+    blastDebris(simulation, position, 3, 60);
+  }
+  breakTank(simulation, tank, burnout);
   simulation.events.push({
     type: "death",
+    deathStyle: burnout ? "burnout" : undefined,
     damageSource: source,
     x: position.x,
     z: position.z,
     id: tank.id,
     owner,
     team: tank.team,
-    size: 3,
+    size: tank.kind === "scout" ? 2.6 : tank.kind === "heavy" ? 3.6 : 3,
     label: `${killer?.human ? "YOU" : (killer?.name ?? "YARD")}  ▸  ${tank.human ? "YOU" : tank.name}`,
   });
 }
@@ -184,7 +189,12 @@ export function explode(
   ownerLife?: number,
   cause: DamageCause = "explosion",
 ): void {
-  simulation.events.push({ type: "explosion", ...position, size: radius });
+  simulation.events.push({
+    type: "explosion",
+    ...position,
+    size: radius,
+    coverKind: cause === "drum" ? "drum" : undefined,
+  });
   blastDebris(simulation, position, radius, damage);
   // Blast-triggered mines retain the initiator of this chain, like drums.
   const chained = simulation.mines.filter((m) => distance(position, m) < radius);
