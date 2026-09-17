@@ -75,6 +75,7 @@
     </aside>
     <script type="module">
       import RAPIER from "@dimforge/rapier3d-compat";
+      import { Vector3 } from "three";
       import { Simulation } from "../src/game/simulation";
       import { Presentation } from "../src/game/presentation";
       import { idleCommand } from "../src/game/types";
@@ -157,6 +158,13 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
       }
       function pose() {
         const model = view.tankMeshes.get(sim.human.id);
+        const { hull, turret } = model.userData;
+        const hullUp = new Vector3(0, 1, 0).applyQuaternion(hull.quaternion);
+        const turretUp = new Vector3(0, 1, 0).applyQuaternion(turret.quaternion);
+        const relativeForward = new Vector3(0, 0, 1)
+          .applyQuaternion(turret.quaternion)
+          .applyQuaternion(hull.quaternion.clone().invert());
+        const aim = sim.human.aim - sim.human.heading;
         let meshes = 0;
         model.traverse((object) => {
           if (object.isMesh) meshes++;
@@ -165,7 +173,8 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
           meshes,
           pitch: model.userData.hull.rotation.x,
           roll: model.userData.hull.rotation.z,
-          turret: model.userData.turret.rotation.toArray().slice(0, 3),
+          turretTiltError: hullUp.distanceTo(turretUp),
+          turretAimError: relativeForward.distanceTo(new Vector3(Math.sin(aim), 0, Math.cos(aim))),
           body: sim.human.body.rotation(),
           draws: view.renderer.info.render.calls,
         };
@@ -248,19 +257,26 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
         const assert = (value, message) => {
           if (!value) throw new Error(message);
         };
+        const checkTurret = (kind) => {
+          for (const aim of [0, Math.PI / 2, Math.PI, -1.2]) {
+            sim.human.aim = aim;
+            view.render(sim, 1, 0);
+            const state = pose();
+            assert(state.turretTiltError < 1e-8, `${kind}: turret follows hull tilt at aim ${aim}`);
+            assert(state.turretAimError < 1e-8, `${kind}: independent turret aim ${aim}`);
+          }
+        };
         for (const kind of ["scout", "balanced", "heavy"]) {
           reset(kind);
           const meshes = pose().meshes;
           const accelerating = advance(7, 0, 1);
           assert(accelerating.pitch < -0.001, `${kind}: acceleration tilt`);
+          checkTurret(kind);
           advance(30, 0, 1);
           const braking = advance(7);
           assert(braking.pitch > 0.001, `${kind}: braking tilt`);
           assert(braking.meshes === meshes, `${kind}: no added meshes`);
-          assert(
-            braking.turret.every((v) => v === 0),
-            `${kind}: turret remains level and aimed`,
-          );
+          checkTurret(kind);
           assert(
             Math.abs(braking.body.x) + Math.abs(braking.body.z) < 1e-8,
             `${kind}: physics remains level`,
@@ -268,6 +284,7 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
           advance(30, 0, 1);
           const turning = advance(12, 1, 0);
           assert(Math.abs(turning.roll) > 0.001, `${kind}: turning lean`);
+          checkTurret(kind);
           const settled = advance(120);
           assert(Math.abs(settled.pitch) + Math.abs(settled.roll) < 1e-6, `${kind}: settles flat`);
           reset(kind);
@@ -278,7 +295,7 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
         advance(7, 0, 1);
         output.textContent =
           results.join("\n") +
-          "\nPASS: driving, braking, turning, settling, reset, level aim/physics, unchanged mesh count.";
+          "\nPASS: driving, braking, turning, settling, reset, attached turret with independent aim, level physics, unchanged mesh count.";
       };
       playSequence(demo, true);
       requestAnimationFrame(animate);

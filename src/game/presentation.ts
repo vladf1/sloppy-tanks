@@ -621,14 +621,16 @@ export class Presentation {
         simulation.elapsed,
         simulation.match.phase === "playing" ? dt : 0,
       );
-      // Hull-local tilt leaves the independently aimed turret and physics pose untouched.
+      // The turret rides the hull's tilted ring, then rotates to its independent aim.
+      // Keep suspension visual-only; the barrel inherits tilt and retains its recoil.
       group.userData.hull.rotation.set(
         suspension.pitch.angle,
         tank.heading,
         suspension.roll.angle,
         "YXZ",
       );
-      group.userData.turret.rotation.y = tank.aim;
+      group.userData.turret.quaternion.copy(group.userData.hull.quaternion);
+      group.userData.turret.rotateY(tank.aim - tank.heading);
       group.userData.barrel.position.z = -tank.recoil * 0.2;
       group.userData.trackGroup.position.z =
         (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
