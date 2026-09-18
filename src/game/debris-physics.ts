@@ -40,7 +40,7 @@ export function blastDebris(sim: Simulation, origin: Vec2, radius: number, power
             Math.max(fragment.dimensions.x, fragment.dimensions.y, fragment.dimensions.z) * 0.2,
           )
         : fragment.size * 0.25;
-    if (blastBody(fragment.body, origin, radius, power, false, lever)) {
+    if (blastBody(fragment.body, origin, radius, power, false, lever, fragment.wreck ? 8 : 14)) {
       // Let a second launch finish, but never extend life beyond the original deadline.
       if (fragment.expiresAt !== undefined) {
         fragment.life = Math.min(Math.max(fragment.life, 5), fragment.expiresAt - sim.elapsed);
@@ -49,7 +49,15 @@ export function blastDebris(sim: Simulation, origin: Vec2, radius: number, power
   }
   for (const cover of sim.movableCovers) {
     if (cover.alive) {
-      blastBody(cover.body, origin, radius, power, cover.kind !== "drum", 0.35);
+      blastBody(
+        cover.body,
+        origin,
+        radius,
+        power,
+        cover.kind !== "drum",
+        0.35,
+        cover.kind === "drum" ? 14 : 4,
+      );
     }
   }
 }
@@ -61,6 +69,7 @@ function blastBody(
   power: number,
   heavy: boolean,
   lever: number,
+  maxVelocity = 4,
 ): boolean {
   if (radius <= 0 || power <= 0) {
     return false;
@@ -79,8 +88,8 @@ function blastBody(
   const nz = horizontal > 0.001 ? dz / horizontal : 0;
   const falloff = (1 - distance / radius) ** 2;
   const strength = Math.min(1.8, power / 60) * falloff;
-  // Cap per-blast velocity change for tiny chips; heavy barriers respond to force/mass.
-  const impulse = heavy ? 100 * strength : body.mass() * 22 * strength;
+  // Apply bounded force instead of cancelling mass: heavier pieces resist the same blast.
+  const impulse = Math.min(body.mass() * maxVelocity, heavy ? 24 : 12) * strength;
   body.applyImpulseAtPoint(
     { x: nx * impulse, y: impulse * (heavy ? 0.65 : 0.85), z: nz * impulse },
     // Pressure catches a facing edge above the centre, producing real pitch and roll.
@@ -95,18 +104,17 @@ function blastBody(
 }
 
 export function hitMovableCover(cover: Cover, shot: Shot): void {
-  if (cover.kind !== "teeth" || !cover.motion) {
+  if ((cover.kind !== "teeth" && cover.kind !== "hedgehog") || !cover.motion) {
     return;
   }
   const speed = Math.hypot(shot.vx, shot.vz);
   if (speed === 0) {
     return;
   }
-  const impulse = shot.weapon === "rocket" ? 40 : shot.weapon === "piercing" ? 32 : 24;
+  const impulse = shot.weapon === "rocket" ? 10 : shot.weapon === "piercing" ? 8.4 : 6;
   cover.body.applyImpulseAtPoint(
     { x: (shot.vx / speed) * impulse, y: 0, z: (shot.vz / speed) * impulse },
-    // Projectile collision queries run at y=1, independently of the rendered muzzle.
-    { x: shot.x, y: 1, z: shot.z },
+    { x: shot.x, y: shot.y ?? 1, z: shot.z },
     true,
   );
 }
@@ -118,12 +126,12 @@ export function hitProjectileDebris(
   point: { x: number; y: number; z: number },
 ): void {
   const speed = Math.hypot(shot.vx, shot.vz);
-  if ((!fragment.wreck && !fragment.timberPart) || speed === 0) {
+  if ((!fragment.wreck && !fragment.dimensions) || speed === 0) {
     return;
   }
   const impulse = shot.weapon === "rocket" ? 10 : shot.weapon === "piercing" ? 7 : 5;
-  // Light posts need a mass-scaled shove rather than the full tank-husk impulse.
-  const strength = fragment.timberPart ? Math.min(impulse, fragment.body.mass() * 5) : impulse;
+  // The same impulse moves light wood more than heavy wreckage; cap tiny-piece launches.
+  const strength = Math.min(impulse, fragment.body.mass() * 5);
   fragment.body.applyImpulseAtPoint(
     { x: (shot.vx / speed) * strength, y: 0, z: (shot.vz / speed) * strength },
     point,

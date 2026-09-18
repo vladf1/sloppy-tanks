@@ -47,7 +47,7 @@ export function tankContactCollider(kind: VehicleKind) {
 
 /** Sweep a shell against the hull, accounting for this tick's tank translation. */
 export function tankHitTime(
-  shot: Pick<Shot, "x" | "z" | "vx" | "vz" | "owner">,
+  shot: Pick<Shot, "x" | "y" | "z" | "vx" | "vz" | "owner">,
   tank: Tank,
   limit: number,
   elapsed = 0,
@@ -70,7 +70,10 @@ export function tankHitTime(
     z: end.z - vz * (frameDelta - elapsed) - center.x * sin + center.z * cos,
   };
   const time = shape.castRay(
-    new RAPIER.Ray({ x: shot.x, y: 1, z: shot.z }, { x: shot.vx - vx, y: 0, z: shot.vz - vz }),
+    new RAPIER.Ray(
+      { x: shot.x, y: shot.y ?? 1, z: shot.z },
+      { x: shot.vx - vx, y: 0, z: shot.vz - vz },
+    ),
     position,
     rotation,
     limit,

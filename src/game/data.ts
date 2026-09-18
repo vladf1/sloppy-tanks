@@ -172,12 +172,11 @@ export const PICKUPS: Record<
 export const TEAM_COLORS = [0x008cff, 0xff303e];
 export const TEAM_NAMES = ["BLUE", "RED"];
 // All substantial debris shares membership 0x100 and the same contact filter.
-// Membership 0x8 retains terrain/cover contacts; extra bits only identify shell targets.
+// Membership 0x8 retains terrain/cover contacts; 0x100 also identifies shell targets.
 const SOLID_DEBRIS = 0x01080107;
 export const GROUP = {
   coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
-  wreckQuery: 0xffff0040, // Projectiles only: substantial tank wrecks.
-  timberQuery: 0xffff0080, // Projectiles only: intact fallen beams and posts.
+  debrisQuery: 0xffff0100, // All substantial debris, tested at the shell's flight height.
   steeringQuery: 0xffff0032, // Cover and tank-contact hulls, excluding cosmetic debris.
   tank: 0x0001002e, // Hull touches cover, ground, anti-tank footprints and large debris.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
@@ -188,6 +187,6 @@ export const GROUP = {
   ground: 0x0004000b, // Accept movable cover as well as tanks and debris.
   fragment: 0x00080006,
   pushableDebris: SOLID_DEBRIS,
-  timberDebris: SOLID_DEBRIS | 0x00800000,
-  wreck: SOLID_DEBRIS | 0x00400000,
+  timberDebris: SOLID_DEBRIS,
+  wreck: SOLID_DEBRIS,
 };

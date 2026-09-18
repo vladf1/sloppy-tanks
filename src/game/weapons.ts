@@ -22,11 +22,12 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
   const weapon = equippedWeapon(tank);
   const w = WEAPONS[weapon];
   const muzzle = tankMuzzle(tank.kind);
+  const muzzleHeight = position.y - 0.4 + muzzle.y;
   const direction = { x: Math.sin(tank.aim), y: 0, z: Math.cos(tank.aim) };
   // Trace to the muzzle so a barrel poking into cover or a tank cannot shoot through it.
   let spawnDistance = muzzle.z;
   const coverHit = simulation.world.castRay(
-    new RAPIER.Ray({ x: position.x, y: 1, z: position.z }, direction),
+    new RAPIER.Ray({ x: position.x, y: muzzleHeight, z: position.z }, direction),
     spawnDistance,
     true,
     undefined,
@@ -39,6 +40,7 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
     id: 0,
     x: position.x,
     z: position.z,
+    y: muzzleHeight,
     vx: direction.x,
     vz: direction.z,
     owner: tank.id,
@@ -64,7 +66,7 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       id: simulation.nextId++,
       x: position.x + direction.x * spawnDistance,
       z: position.z + direction.z * spawnDistance,
-      y: position.y - 0.4 + muzzle.y,
+      y: muzzleHeight,
       vx: Math.sin(angle) * w.speed,
       vz: Math.cos(angle) * w.speed,
       damage: w.damage * rankStats(tank).damage,

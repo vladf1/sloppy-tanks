@@ -50,6 +50,8 @@ canvas#game {
   outline: 2px solid #ffd45a;
 }
 #nerd-stats.expanded {
+  width: calc(32ch + 24px);
+  max-width: calc(100vw - 16px);
   padding: 7px;
   border-radius: 6px;
   background: rgba(10, 16, 20, 0.78);

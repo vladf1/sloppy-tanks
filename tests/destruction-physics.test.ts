@@ -1,7 +1,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { blastDebris } from "../src/game/debris-physics";
+import { blastDebris, hitMovableCover, hitProjectileDebris } from "../src/game/debris-physics";
 import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";
 import { GROUP, Random, STEP } from "../src/game/data";
 import { Simulation } from "../src/game/simulation";
@@ -10,6 +10,7 @@ import type { CoverKind, Shot } from "../src/game/types";
 import { idleCommand } from "../src/game/types";
 import { treeProportions } from "../src/game/tree-proportions";
 import { tankBurnout } from "../src/game/tank-destruction";
+import { Navigation } from "../src/game/navigation";
 
 before(async () => {
   await RAPIER.init();
@@ -173,7 +174,7 @@ test("blasts wake and tumble a wreck; edge, distant and airborne debris obey fal
     park(f.body, 1, 0.5);
     blastDebris(s, { x: 0, z: 0 }, 5, 60);
     const near = f.body.linvel().y;
-    assert.ok(near > 8);
+    assert.ok(near > 3 && near < 8, "wrecks lift without the old weightless launch");
     assert.ok(Math.hypot(...Object.values(f.body.angvel())) > 0.1);
     assert.equal(f.body.isSleeping(), false);
     park(f.body, 4.8, 0.5);
@@ -251,11 +252,14 @@ test("repeated impacts displace concrete, update old/new navigation footprints a
     const initialVersion = s.nav.version;
     s.explode({ x: -1, z: 0 }, 6, 100, 999, 0);
     tick(s, 8);
-    assert.ok(c.x > 3, `displacement ${c.x}`);
+    // Heavy cover now needs repeated blasts to clear its old navigation footprint.
+    s.explode({ x: c.x - 1, z: c.z }, 6, 100, 999, 0);
+    tick(s, 8);
+    assert.ok(c.x > 1 && c.x < 6, `heavy concrete displacement ${c.x}`);
     assert.equal(s.nav.blocked[s.nav.index({ x: 0, z: 0 })], 0);
     assert.equal(s.nav.blocked[s.nav.index(c)], 1);
     assert.ok(s.nav.version > initialVersion);
-    assert.ok(s.nav.version - initialVersion <= 32, "no per-frame rebuilds");
+    assert.ok(s.nav.version - initialVersion <= 64, "no per-frame rebuilds");
     assert.ok(c.body.isSleeping(), "settled heavy concrete should sleep");
     assert.ok(c.body.translation().y > 0, "concrete collides with ground");
     const version = s.nav.version;
@@ -320,7 +324,7 @@ test("authored scenery emits a few material-specific pieces with matching dimens
   }
 });
 
-test("physical pieces stay within the shared body budget, cannot intercept shells, and reset cleanly", () => {
+test("physical pieces stay within the shared body budget, stay out of cover queries, and reset cleanly", () => {
   const s = arena();
   try {
     const initial = s.world.bodies.len();
@@ -448,11 +452,19 @@ test("steel hedgehogs keep open compound geometry and move, settle and update na
     assert.ok(c.body.linvel().x > 3);
     assert.ok(Math.hypot(...Object.values(c.body.angvel())) > 1);
     tick(s, 10);
-    assert.ok(c.x > 3);
+    s.explode({ x: c.x - 1, z: c.z }, 5, 80, 999, 0);
+    tick(s, 10);
+    assert.ok(c.x > 1 && c.x < 6, `heavy steel displacement ${c.x}`);
     assert.ok(c.body.translation().y > 0);
     assert.ok(c.body.isSleeping());
     assert.equal(s.nav.blocked[s.nav.index(c)], 1);
-    assert.equal(s.nav.blocked[s.nav.index({ x: 0, z: 0 })], 0);
+    const expectedNav = new Navigation();
+    expectedNav.rebuild(s.covers);
+    assert.deepEqual(
+      s.nav.blocked,
+      expectedNav.blocked,
+      "navigation follows the displaced steel footprint",
+    );
     assert.ok(s.events.some((e) => e.type === "debris-impact" && e.material === "metal"));
   } finally {
     s.dispose();
@@ -552,7 +564,7 @@ test("only large wrecks accept tank contact and projectile hits; steering still 
   const allows = (a: number, b: number) =>
     ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
   assert.equal(allows(GROUP.wreck, GROUP.tank), true);
-  assert.equal(allows(GROUP.wreck, GROUP.wreckQuery), true);
+  assert.equal(allows(GROUP.wreck, GROUP.debrisQuery), true);
   assert.equal(allows(GROUP.wreck, GROUP.wreck), true);
   for (const group of [GROUP.fragment, GROUP.coverQuery, GROUP.steeringQuery]) {
     assert.equal(allows(GROUP.wreck, group), false);
@@ -629,7 +641,7 @@ test("shells shove indestructible wrecks, rockets detonate on them, and high rou
   }
 });
 
-test("shells wake and shove fallen timber and standing posts; rockets detonate on both", () => {
+test("shells wake and shove timber at flight height; rockets detonate on it", () => {
   for (const kind of ["beam", "post"] as const) {
     for (const weapon of ["standard", "piercing", "rocket"] as const) {
       const s = arena();
@@ -639,7 +651,7 @@ test("shells wake and shove fallen timber and standing posts; rockets detonate o
         const f = s.fragments.find((fragment) => fragment.timberPart?.kind === kind)!;
         for (const other of s.fragments) park(other.body, 30, 1);
         f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-        park(f.body, 0, f.timberPart!.h / 2, -0.1);
+        park(f.body, 0, kind === "beam" ? 1.3 : f.timberPart!.h / 2, -0.1);
         s.world.step();
         const count = s.fragments.length;
         s.events = [];
@@ -839,6 +851,89 @@ test("all substantial debris shares contacts, stacks across categories, and excl
       assert.ok(Math.abs(bodies[i].translation().y - (0.5 + i)) < 0.06);
       assert.equal(bodies[i].isSleeping(), true);
     }
+  } finally {
+    s.dispose();
+  }
+});
+
+test("shells clear low debris to hit a tank, but upright debris intercepts the same trajectory", () => {
+  for (const group of [GROUP.pushableDebris, GROUP.timberDebris, GROUP.wreck]) {
+    for (const upright of [false, true]) {
+      const s = arena();
+      try {
+        const target = s.addTank(1, false, "balanced", 0);
+        target.protection = 0;
+        park(target.body, 2, 0.65);
+        const body = s.world.createRigidBody(
+          RAPIER.RigidBodyDesc.dynamic().setTranslation(-1, upright ? 1 : 0.125, 0),
+        );
+        s.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(0.5, upright ? 1 : 0.125, 0.5)
+            .setCollisionGroups(group)
+            .setMass(0.3),
+          body,
+        );
+        s.fragments.push({
+          id: s.nextId++,
+          body,
+          life: 8,
+          size: 1,
+          color: 0x805336,
+          dimensions: { x: 1, y: upright ? 2 : 0.25, z: 1 },
+          material: "wood",
+        });
+        body.sleep();
+        s.world.step();
+        const hp = target.hp;
+        shot(s, "standard", 1);
+        assert.equal(s.shots.length, 0);
+        assert.equal(target.hp, upright ? hp : hp - 40);
+        assert.equal(body.linvel().x > 0, upright, "only an actual debris hit pushes it");
+      } finally {
+        s.dispose();
+      }
+    }
+  }
+});
+
+test("identical hits and blasts move wood more than hulls, and hulls more than concrete", () => {
+  const s = arena();
+  try {
+    const wall = cover(s, "timber", 20, 20);
+    s.damageCover(wall, 999, 999, 0);
+    const wood = s.fragments.find((f) => f.timberPart?.kind === "beam")!;
+    wreck(s);
+    const hull = s.fragments.find((f) => f.part === "hull")!;
+    const concrete = cover(s, "teeth", 20, 20);
+    const round: Shot = {
+      id: 0,
+      owner: 999,
+      team: 0,
+      x: 1,
+      z: 0,
+      y: 0.5,
+      vx: 25,
+      vz: 0,
+      damage: 40,
+      life: 2,
+      bounces: 0,
+      piercing: 0,
+      weapon: "standard",
+    };
+    for (const f of [wood, hull]) {
+      park(f.body, 1, 0.5);
+      hitProjectileDebris(f, round, { x: 1, y: 0.5, z: 0 });
+    }
+    park(concrete.body, 1, 0.5);
+    hitMovableCover(concrete, round);
+    assert.ok(wood.body.linvel().x > hull.body.linvel().x);
+    assert.ok(hull.body.linvel().x > concrete.body.linvel().x);
+    for (const body of [wood.body, hull.body, concrete.body]) park(body, 1, 0.5);
+    blastDebris(s, { x: 0, z: 0 }, 5, 60);
+    assert.ok(wood.body.linvel().x > hull.body.linvel().x);
+    assert.ok(hull.body.linvel().x > concrete.body.linvel().x);
+    assert.ok(hull.body.mass() > wood.body.mass());
+    assert.ok(concrete.body.mass() > hull.body.mass());
   } finally {
     s.dispose();
   }

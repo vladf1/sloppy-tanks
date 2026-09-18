@@ -10,6 +10,7 @@ import type { Tank, Vec2, WreckPart } from "./types";
 export function breakTank(simulation: Simulation, tank: Tank, burnout = false): void {
   const origin = { ...tank.body.translation() };
   const scale = VEHICLES[tank.kind].scale;
+  const mass = VEHICLES[tank.kind].mass * 1.6;
   if (burnout) {
     const velocity = tank.body.linvel();
     // A roughly one-metre hop and damped rocking, using the existing wreck body.
@@ -41,7 +42,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         (tank.kind === "scout" ? 2.2 : 2.7) * scale,
       )
         .setCollisionGroups(GROUP.wreck)
-        .setMass(1.7)
+        .setMass(mass)
         .setFriction(0.95)
         .setRestitution(0.05),
       body,
@@ -168,9 +169,9 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
         .setCollisionGroups(GROUP.wreck)
-        .setMass(part === "hull" ? 1.2 : 0.5)
+        .setMass(mass * (part === "hull" ? 0.7 : part === "barrel" ? 0.07 : detached ? 0.23 : 0.3))
         .setFriction(0.95)
-        .setRestitution(0.12),
+        .setRestitution(0.05),
       body,
     );
     const id = simulation.nextId++;

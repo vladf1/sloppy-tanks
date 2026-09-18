@@ -17,9 +17,6 @@ import type { Simulation } from "./simulation";
 import type { Fragment, Mine, Shot, Tank } from "./types";
 
 const shellShape = new RAPIER.Ball(SHELL_HIT_RADIUS);
-// Horizontal aiming must still reach fallen timber below the muzzle. Keep this
-// narrow vertical sweep exclusive to timber; wrecks retain true shell-height hits.
-const timberShotShape = new RAPIER.Capsule(0, SHELL_HIT_RADIUS);
 /** Continuous relative-motion contact, including shots that cross between ticks. */
 export function interceptionTime(a: Shot, b: Shot, limit: number): number | null {
   if (a.team === b.team || a.piercedShot === b.id || b.piercedShot === a.id) {
@@ -167,7 +164,6 @@ function findNextContact(
 ): { next: Contact | null; time: number } {
   let next: Contact | null = null;
   let time = limit;
-  const hasTimber = simulation.fragments.some((fragment) => fragment.timberPart);
   for (const shot of simulation.shots) {
     if (shot.life <= time) {
       time = shot.life;
@@ -178,7 +174,7 @@ function findNextContact(
       speed > 0
         ? simulation.world.castRayAndGetNormal(
             new RAPIER.Ray(
-              { x: shot.x, y: 1, z: shot.z },
+              { x: shot.x, y: shot.y ?? 1, z: shot.z },
               { x: shot.vx / speed, y: 0, z: shot.vz / speed },
             ),
             speed * time,
@@ -191,7 +187,7 @@ function findNextContact(
       time = hit.timeOfImpact / speed;
       next = { kind: "world", shot: shot, hit };
     }
-    const wreckHit =
+    const debrisHit =
       speed > 0
         ? simulation.world.castShape(
             { x: shot.x, y: shot.y ?? 1, z: shot.z },
@@ -202,40 +198,16 @@ function findNextContact(
             time,
             true,
             undefined,
-            GROUP.wreckQuery,
+            GROUP.debrisQuery,
           )
         : null;
-    if (wreckHit && wreckHit.time_of_impact <= time) {
-      const wreck = simulation.fragments.find(
-        (fragment) =>
-          fragment.wreck && fragment.body.collider(0).handle === wreckHit.collider.handle,
+    if (debrisHit && debrisHit.time_of_impact <= time) {
+      const fragment = simulation.fragments.find(
+        (fragment) => fragment.body.collider(0).handle === debrisHit.collider.handle,
       );
-      if (wreck) {
-        time = wreckHit.time_of_impact;
-        next = { kind: "debris", shot, fragment: wreck };
-      }
-    }
-    if (speed > 0 && hasTimber) {
-      timberShotShape.halfHeight = Math.max(0, ((shot.y ?? 1) - SHELL_HIT_RADIUS) / 2);
-      const timberHit = simulation.world.castShape(
-        { x: shot.x, y: timberShotShape.halfHeight + SHELL_HIT_RADIUS, z: shot.z },
-        { x: 0, y: 0, z: 0, w: 1 },
-        { x: shot.vx, y: 0, z: shot.vz },
-        timberShotShape,
-        0,
-        time,
-        true,
-        undefined,
-        GROUP.timberQuery,
-      );
-      if (timberHit && (timberHit.time_of_impact < time || !next)) {
-        const fragment = simulation.fragments.find(
-          (f) => f.timberPart && f.body.collider(0).handle === timberHit.collider.handle,
-        );
-        if (fragment) {
-          time = timberHit.time_of_impact;
-          next = { kind: "debris", shot, fragment };
-        }
+      if (fragment) {
+        time = debrisHit.time_of_impact;
+        next = { kind: "debris", shot, fragment };
       }
     }
     for (const tank of simulation.tanks) {
@@ -367,9 +339,8 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
   } else if (next.kind === "debris") {
     const timber = !!next.fragment.timberPart;
     const shellPoint = { x: shot.x, y: shot.y ?? 1, z: shot.z };
-    const point = timber
-      ? (next.fragment.body.collider(0).projectPoint(shellPoint, true)?.point ?? shellPoint)
-      : shellPoint;
+    const point =
+      next.fragment.body.collider(0).projectPoint(shellPoint, true)?.point ?? shellPoint;
     if (shot.weapon === "rocket") {
       simulation.explode(
         shot,
@@ -444,7 +415,7 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
     } else if (cover) {
       simulation.damageCover(cover, shot.damage, shot.owner, shot.team, shot.ownerLife, {
         x: shot.x,
-        y: 1,
+        y: shot.y ?? 1,
         z: shot.z,
       });
       if (cover.alive && shot.bounces > 0) {
