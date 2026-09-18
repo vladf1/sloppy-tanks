@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { blastDebris, hitMovableCover, hitWreck } from "./debris-physics";
+import { blastDebris, hitMovableCover, hitProjectileDebris } from "./debris-physics";
 import { COMBAT, MINE } from "./combat-rules";
 import {
   distance,
@@ -17,6 +17,9 @@ import type { Simulation } from "./simulation";
 import type { Fragment, Mine, Shot, Tank } from "./types";
 
 const shellShape = new RAPIER.Ball(SHELL_HIT_RADIUS);
+// Horizontal aiming must still reach fallen timber below the muzzle. Keep this
+// narrow vertical sweep exclusive to timber; wrecks retain true shell-height hits.
+const timberShotShape = new RAPIER.Capsule(0, SHELL_HIT_RADIUS);
 /** Continuous relative-motion contact, including shots that cross between ticks. */
 export function interceptionTime(a: Shot, b: Shot, limit: number): number | null {
   if (a.team === b.team || a.piercedShot === b.id || b.piercedShot === a.id) {
@@ -147,7 +150,7 @@ function wColor(weapon: keyof typeof WEAPONS): number {
 
 type Contact =
   | { kind: "world"; shot: Shot; hit: RAPIER.RayColliderIntersection }
-  | { kind: "wreck"; shot: Shot; wreck: Fragment }
+  | { kind: "debris"; shot: Shot; fragment: Fragment }
   | { kind: "tank"; shot: Shot; tank: Tank }
   | { kind: "mine"; shot: Shot; mine: Mine }
   | { kind: "pair"; shot: Shot; other: Shot }
@@ -164,6 +167,7 @@ function findNextContact(
 ): { next: Contact | null; time: number } {
   let next: Contact | null = null;
   let time = limit;
+  const hasTimber = simulation.fragments.some((fragment) => fragment.timberPart);
   for (const shot of simulation.shots) {
     if (shot.life <= time) {
       time = shot.life;
@@ -208,7 +212,30 @@ function findNextContact(
       );
       if (wreck) {
         time = wreckHit.time_of_impact;
-        next = { kind: "wreck", shot, wreck };
+        next = { kind: "debris", shot, fragment: wreck };
+      }
+    }
+    if (speed > 0 && hasTimber) {
+      timberShotShape.halfHeight = Math.max(0, ((shot.y ?? 1) - SHELL_HIT_RADIUS) / 2);
+      const timberHit = simulation.world.castShape(
+        { x: shot.x, y: timberShotShape.halfHeight + SHELL_HIT_RADIUS, z: shot.z },
+        { x: 0, y: 0, z: 0, w: 1 },
+        { x: shot.vx, y: 0, z: shot.vz },
+        timberShotShape,
+        0,
+        time,
+        true,
+        undefined,
+        GROUP.timberQuery,
+      );
+      if (timberHit && (timberHit.time_of_impact < time || !next)) {
+        const fragment = simulation.fragments.find(
+          (f) => f.timberPart && f.body.collider(0).handle === timberHit.collider.handle,
+        );
+        if (fragment) {
+          time = timberHit.time_of_impact;
+          next = { kind: "debris", shot, fragment };
+        }
       }
     }
     for (const tank of simulation.tanks) {
@@ -337,7 +364,12 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
       shot.ownerLife,
       "mine",
     );
-  } else if (next.kind === "wreck") {
+  } else if (next.kind === "debris") {
+    const timber = !!next.fragment.timberPart;
+    const shellPoint = { x: shot.x, y: shot.y ?? 1, z: shot.z };
+    const point = timber
+      ? (next.fragment.body.collider(0).projectPoint(shellPoint, true)?.point ?? shellPoint)
+      : shellPoint;
     if (shot.weapon === "rocket") {
       simulation.explode(
         shot,
@@ -349,15 +381,16 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
         "rocket",
       );
     } else {
-      hitWreck(next.wreck, shot);
+      hitProjectileDebris(next.fragment, shot, point);
     }
     simulation.events.push({
       type: "impact",
-      x: shot.x,
-      z: shot.z,
-      height: shot.y ?? 1,
+      x: point.x,
+      z: point.z,
+      height: point.y,
       size: 0.6,
-      color: wColor(shot.weapon),
+      color: timber ? next.fragment.color : wColor(shot.weapon),
+      coverKind: timber ? "timber" : undefined,
     });
   } else if (next.kind === "tank") {
     if (shot.weapon === "rocket") {
@@ -390,6 +423,12 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
     const hit = next.hit;
     const cover = simulation.coverByCollider.get(hit.collider.handle);
     if (cover) {
+      if (cover.kind === "timber") {
+        const speed = Math.hypot(shot.vx, shot.vz);
+        if (speed > 0) {
+          cover.timberKick = { x: shot.vx / speed, z: shot.vz / speed };
+        }
+      }
       hitMovableCover(cover, shot);
     }
     if (shot.weapon === "rocket") {
@@ -403,7 +442,11 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
         "rocket",
       );
     } else if (cover) {
-      simulation.damageCover(cover, shot.damage, shot.owner, shot.team, shot.ownerLife);
+      simulation.damageCover(cover, shot.damage, shot.owner, shot.team, shot.ownerLife, {
+        x: shot.x,
+        y: 1,
+        z: shot.z,
+      });
       if (cover.alive && shot.bounces > 0) {
         const dot = shot.vx * hit.normal.x + shot.vz * hit.normal.z;
         shot.vx -= 2 * dot * hit.normal.x;

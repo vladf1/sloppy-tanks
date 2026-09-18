@@ -27,7 +27,7 @@ canvas#game {
   outline: none;
   cursor: crosshair;
 }
-#fps {
+#nerd-stats {
   position: fixed;
   right: 8px;
   bottom: 5px;
@@ -39,6 +39,29 @@ canvas#game {
     monospace;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 3px #000;
+}
+#nerd-stats button {
+  all: unset;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 5px;
+}
+#nerd-stats button:focus-visible {
+  outline: 2px solid #ffd45a;
+}
+#nerd-stats.expanded {
+  padding: 7px;
+  border-radius: 6px;
+  background: rgba(10, 16, 20, 0.78);
+  color: #eee;
+  font-size: 11px;
+  line-height: 1.6;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+#nerd-stats pre {
+  margin: 4px 5px;
+  font: inherit;
 }
 #hud {
   position: absolute;
@@ -370,7 +393,7 @@ canvas#game {
   font-size: 16px;
 }
 .menu-ready #game,
-.menu-ready #fps {
+.menu-ready #nerd-stats {
   visibility: hidden;
 }
 #startup-status {

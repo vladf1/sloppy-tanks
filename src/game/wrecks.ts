@@ -6,7 +6,7 @@ import type { Simulation } from "./simulation";
 import { GRAVITY } from "./simulation-rules";
 import type { Tank, Vec2, WreckPart } from "./types";
 
-/** Hulls and turrets can be pushed by tanks; detached barrels remain nonblocking debris. */
+/** All substantial tank pieces, including detached guns, remain solid and pushable. */
 export function breakTank(simulation: Simulation, tank: Tank, burnout = false): void {
   const origin = { ...tank.body.translation() };
   const scale = VEHICLES[tank.kind].scale;
@@ -29,6 +29,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         .setAngularDamping(3.5)
         .setCcdEnabled(true),
     );
+    body.setAdditionalSolverIterations(2);
     body.setRotation(
       { x: 0, y: Math.sin(tank.heading / 2), z: 0, w: Math.cos(tank.heading / 2) },
       true,
@@ -124,7 +125,12 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         z: clamp(landing.z + simulation.rng.range(-3, 3), minZ, maxZ),
       };
     }
-    const y = origin.y + (part === "hull" ? 0 : 0.75 * scale);
+    // Start the turret clear of the hull collider now that the two can collide.
+    const y = origin.y + (part === "hull" ? 0 : 0.95 * scale);
+    // A detached gun starts beyond the turret, rather than inside its collider.
+    const gunOffset = part === "barrel" ? 2.1 * scale : 0;
+    const x = origin.x + Math.sin(tank.aim) * gunOffset;
+    const z = origin.z + Math.cos(tank.aim) * gunOffset;
     const peak =
       high && part !== "hull" ? simulation.rng.range(20, 30) : simulation.rng.range(4.5, 8);
     const vy = Math.sqrt(2 * GRAVITY * peak);
@@ -137,8 +143,8 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
     const spin = simulation.rng.range(7, 14);
     const body = simulation.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(origin.x, y, origin.z)
-        .setLinvel((landing.x - origin.x) / flight, vy, (landing.z - origin.z) / flight)
+        .setTranslation(x, y, z)
+        .setLinvel((landing.x - x) / flight, vy, (landing.z - z) / flight)
         .setAngvel({
           x: radius * Math.cos(azimuth) * spin,
           y: axisY * spin,
@@ -147,6 +153,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         .setCcdEnabled(true),
     );
     const yaw = part === "hull" ? tank.heading : tank.aim;
+    body.setAdditionalSolverIterations(2);
     body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
     const size =
       part === "hull"
@@ -160,7 +167,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         size[1] * scale,
         size[2] * scale * (part === "hull" && tank.kind === "heavy" ? 1.18 : 1),
       )
-        .setCollisionGroups(part === "barrel" ? GROUP.fragment : GROUP.wreck)
+        .setCollisionGroups(GROUP.wreck)
         .setMass(part === "hull" ? 1.2 : 0.5)
         .setFriction(0.95)
         .setRestitution(0.12),

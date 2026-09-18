@@ -1,3 +1,4 @@
+import { timberPartModel } from "./timber-model";
 import * as THREE from "three";
 import { barrelScrapGeometry } from "./barrel-debris";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
@@ -657,7 +658,13 @@ export class Presentation {
       let group = this.coverMeshes.get(cover.id);
       const stump = cover.kind === "tree" && !cover.alive;
       const damageStage = coverDamageStage(cover);
-      if (!group || (cover.alive && (group.userData.damageStage ?? 0) !== damageStage)) {
+      if (
+        !group ||
+        (cover.alive &&
+          ((group.userData.damageStage ?? 0) !== damageStage ||
+            (cover.kind === "timber" &&
+              (group.userData.timberHitCount ?? 0) !== (cover.timberHits?.length ?? 0))))
+      ) {
         if (group) {
           disposeOwned(group);
           this.worldGroup.remove(group);
@@ -716,7 +723,7 @@ export class Presentation {
       const pos = f.body.translation();
       const q = f.body.rotation();
       const cleanup = debrisCleanupProgress(f.life);
-      if (!f.wreck && f.treeCoverId === undefined) {
+      if (!f.wreck && !f.timberPart && f.treeCoverId === undefined) {
         const mesh = this.debrisMeshes.get(f.shape ?? "shard")!;
         if (mesh.count >= MAX_FRAGMENTS) {
           continue;
@@ -750,7 +757,9 @@ export class Presentation {
       }
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
-        if (f.treeCoverId !== undefined) {
+        if (f.timberPart) {
+          g = timberPartModel(f.timberPart);
+        } else if (f.treeCoverId !== undefined) {
           const source = this.coverMeshes.get(f.treeCoverId)?.userData.crown as
             THREE.Group | undefined;
           if (!source) {

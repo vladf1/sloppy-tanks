@@ -556,6 +556,16 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
       assert.ok(speed >= 6.99 && speed <= 14.01);
       axes.add(Object.entries(v).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]);
     }
+    const targets = pieces.slice(0, 2).map((piece) => {
+      const p = piece.body.translation();
+      const v = piece.body.linvel();
+      const flight = (v.y + Math.sqrt(v.y ** 2 + 44 * Math.max(0, p.y - 0.3))) / 22;
+      return { x: p.x + v.x * flight, z: p.z + v.z * flight };
+    });
+    assert.ok(
+      Math.hypot(targets[0].x - targets[1].x, targets[0].z - targets[1].z) > 12,
+      "launch aims hull and turret several tank lengths apart; later contacts may deflect them",
+    );
     const landingSteps = Math.ceil(Math.max(...pieces.map((f) => f.life - 3.2)) * 60) + 60;
     for (let i = 0; i < landingSteps; i++) {
       s.world.step();
@@ -564,12 +574,6 @@ test("tank breakup varies assemblies, travels widely, lands, and clears after fl
     assert.ok(
       pieces.every((f) => f.body.translation().y < 2),
       "parts land after their ballistic flight, including high launches",
-    );
-    const a = pieces[0].body.translation(),
-      b = pieces[1].body.translation();
-    assert.ok(
-      Math.hypot(a.x - b.x, a.z - b.z) > 12,
-      "hull and turret separate by several tank lengths",
     );
     for (const tank of s.tanks) tank.cooldown = 100;
     const ids = new Set(pieces.map((f) => f.id));

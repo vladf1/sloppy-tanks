@@ -106,12 +106,25 @@ export function damageCover(
   owner: number,
   team: Team,
   ownerLife?: number,
+  impact?: { x: number; y: number; z: number },
 ): void {
   if (!cover.alive || !cover.destructible) {
     return;
   }
+  const previousHp = cover.hp;
   cover.hp -= amount;
   if (cover.hp > 0) {
+    if (cover.kind === "timber" && amount > 0) {
+      const marks = (cover.timberHits ??= []);
+      if (marks.length < 6) {
+        marks.push({
+          x: impact ? impact.x - cover.x : 0,
+          y: impact?.y ?? Math.min(1, cover.h * 0.5),
+          z: impact ? impact.z - cover.z : -cover.d / 2,
+          size: marks.length === 0 ? 1 : Math.min(1.8, 1.5 + (marks.length - 1) * 0.15),
+        });
+      }
+    }
     return;
   }
   const pose = cover.motion
@@ -146,7 +159,7 @@ export function damageCover(
     size: cover.kind === "tower" ? 7 : 2,
     color: cover.color,
   });
-  if (!breakScenery(simulation, cover, pose)) {
+  if (!breakScenery(simulation, cover, pose, previousHp)) {
     for (let i = 0; i < 3; i++) {
       simulation.fragment(
         cover.x + simulation.rng.range(-cover.w / 2, cover.w / 2),
@@ -252,7 +265,17 @@ export function explode(
       cover.destructible &&
       distance(position, cover) < radius + Math.max(cover.w, cover.d) * COMBAT.coverBlastAllowance
     ) {
-      damageCover(simulation, cover, damage, owner, team, ownerLife);
+      if (cover.kind === "timber") {
+        const dx = cover.x - position.x;
+        const dz = cover.z - position.z;
+        const distance = Math.hypot(dx, dz);
+        cover.timberKick = distance > 0.001 ? { x: dx / distance, z: dz / distance } : undefined;
+      }
+      damageCover(simulation, cover, damage, owner, team, ownerLife, {
+        x: position.x,
+        y: 1,
+        z: position.z,
+      });
     }
   }
 }

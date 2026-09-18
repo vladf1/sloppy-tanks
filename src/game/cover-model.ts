@@ -1,3 +1,5 @@
+import { timberDamageStage, timberParts } from "./timber-layout";
+import { addTimberParts } from "./timber-model";
 import * as THREE from "three";
 import { explosiveBarrel } from "./barrel-surfaces";
 import { concreteWall } from "./concrete-surfaces";
@@ -31,10 +33,13 @@ export function coverDamageStage(c: Pick<Cover, "kind" | "hp" | "maxHp">): numbe
   if (c.kind === "cargo") {
     return c.hp >= c.maxHp ? 0 : c.hp > c.maxHp * 0.35 ? 1 : 2;
   }
-  return c.kind === "timber" ? Math.min(2, Math.floor(((c.maxHp - c.hp) * 3) / c.maxHp)) : 0;
+  return c.kind === "timber" ? timberDamageStage(c.hp, c.maxHp) : 0;
 }
 export function coverModel(
-  c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h" | "color" | "debrisSeed">,
+  c: Pick<
+    Cover,
+    "kind" | "x" | "z" | "w" | "d" | "h" | "color" | "debrisSeed" | "timberHits" | "timberJoin"
+  >,
   detail: "full" | "background" = "full",
   damageStage = 0,
 ) {
@@ -152,46 +157,8 @@ export function coverModel(
     cottageDetails(group, c);
   } else if (c.kind === "timber") {
     group.userData.damageStage = damageStage;
-    const along = c.w > c.d;
-    const length = Math.max(c.w, c.d);
-    const colors = [c.color, 0x94613e, 0xa66f46];
-    // Closely stacked beams stay opaque at shell height, even when chipped.
-    for (let row = 0; row < 7; row++) {
-      const chipped = damageStage > 0 && row >= 7 - damageStage * 2;
-      const span = length - (chipped ? 0.35 + (row % 2) * 0.4 : 0.04);
-      const beam = box(
-        along ? span : 0.64,
-        0.38,
-        along ? 0.64 : span,
-        damageStage === 2 ? 0x795035 : colors[row % 3],
-        0,
-      );
-      put(
-        group,
-        beam,
-        along && chipped ? (row % 2 ? -0.16 : 0.16) : 0,
-        0.2 + row * 0.39,
-        !along && chipped ? (row % 2 ? -0.16 : 0.16) : 0,
-      );
-    }
-    for (const offset of [-length / 2 + 0.22, length / 2 - 0.22]) {
-      put(
-        group,
-        box(along ? 0.3 : 0.9, c.h, along ? 0.9 : 0.3, 0x805336, 0),
-        along ? offset : 0,
-        c.h / 2,
-        along ? 0 : offset,
-      );
-      for (const y of [0.6, 2.15]) {
-        put(
-          group,
-          box(along ? 0.32 : 0.92, 0.09, along ? 0.92 : 0.32, 0x49423a, 0),
-          along ? offset : 0,
-          y,
-          along ? 0 : offset,
-        );
-      }
-    }
+    group.userData.timberHitCount = c.timberHits?.length ?? 0;
+    addTimberParts(group, timberParts(c, damageStage));
   } else if (c.kind === "drum") {
     put(group, explosiveBarrel(), 0, 0.8, 0);
     for (const y of [0.22, 1.35]) {

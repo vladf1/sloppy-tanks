@@ -11,10 +11,10 @@ import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
 import { UI } from "./game/ui";
 import { CAMERA } from "./game/view-settings";
+import { NerdStats } from "./game/nerd-stats";
 const MAX_FRAME_DELTA_SECONDS = 0.1;
 const MAX_CATCH_UP_STEPS = 5;
 const HUD_UPDATE_EVERY_FRAMES = 4;
-const FPS_UPDATE_INTERVAL_MS = 500;
 const MILLISECONDS_PER_SECOND = 1000;
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
@@ -28,14 +28,7 @@ export async function prepareGame(
   root.hidden = true;
   app.append(root);
   root.innerHTML =
-    '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas><div id="fps" aria-label="Frames per second">— FPS</div>';
-  const fpsDisplay = root.querySelector<HTMLElement>("#fps")!;
-  let fpsStart = 0;
-  let fpsFrames = 0;
-  document.addEventListener("visibilitychange", () => {
-    fpsStart = 0;
-    fpsFrames = 0;
-  });
+    '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
   const sim = new Simulation(seed);
   const preparedOptions = { ...getOptions() };
@@ -55,6 +48,12 @@ export async function prepareGame(
   // Compile shaders while the menu is visible, without drawing a background scene.
   await view.renderer.compileAsync(view.scene, view.camera);
   let active = false;
+  const stats = new NerdStats(
+    root,
+    sim,
+    view,
+    () => active && !root.classList.contains("menu-ready"),
+  );
   const playback = {
     autoplay: new URLSearchParams(location.search).has("autoplay"),
     overview: false,
@@ -207,16 +206,7 @@ export async function prepareGame(
         document.querySelector("#loading")?.remove();
       }
       const renderCost = performance.now() - renderStart;
-      if (fpsStart === 0) {
-        fpsStart = now;
-      } else {
-        fpsFrames++;
-        if (now - fpsStart >= FPS_UPDATE_INTERVAL_MS) {
-          fpsDisplay.textContent = `${Math.round((fpsFrames * MILLISECONDS_PER_SECOND) / (now - fpsStart))} FPS`;
-          fpsStart = now;
-          fpsFrames = 0;
-        }
-      }
+      stats.frame(now, simCost, renderCost);
       if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
         ui.update(dt * HUD_UPDATE_EVERY_FRAMES);
       }

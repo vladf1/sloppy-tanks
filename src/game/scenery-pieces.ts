@@ -1,5 +1,6 @@
+import { timberDamageStage, timberParts } from "./timber-layout";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { Quaternion, Vector3 } from "three";
+import { Euler, Quaternion, Vector3 } from "three";
 import { GROUP, Random } from "./data";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { DEBRIS_MATERIALS, trackDebrisContacts, type DebrisMaterial } from "./debris-physics";
@@ -14,6 +15,7 @@ export function breakScenery(
   sim: Simulation,
   cover: Cover,
   pose?: { position: RAPIER.Vector; rotation: RAPIER.Rotation },
+  previousHp = cover.hp,
 ): boolean {
   // Navigation bounds expand as a barrel tips; fragments keep its original dimensions.
   if (cover.motion) {
@@ -110,17 +112,26 @@ export function breakScenery(
     piece("panel", 0, cover.h, 0, cover.w, 0.12, cover.d);
     piece("beam", -cover.w * 0.34, 0.2, 0, 0.25, 0.22, cover.d, 0x805336);
   } else if (cover.kind === "timber") {
-    const along = cover.w > cover.d;
-    for (const row of [0, 3, 6]) {
-      piece(
-        "beam",
-        0,
-        0.2 + row * 0.39,
-        0,
-        along ? cover.w - 0.04 : 0.64,
-        0.38,
-        along ? 0.64 : cover.d - 0.04,
-        row === 3 ? 0x94613e : cover.color,
+    for (const part of timberParts(cover, timberDamageStage(previousHp, cover.maxHp))) {
+      const fragment = piece("beam", part.x, part.y, part.z, part.w, part.h, part.d, part.color);
+      fragment.timberPart = part;
+      fragment.body.collider(0).setCollisionGroups(GROUP.timberDebris);
+      fragment.body.enableCcd(true);
+      fragment.body.setAdditionalSolverIterations(2);
+      if (cover.timberKick) {
+        const velocity = fragment.body.linvel();
+        fragment.body.setLinvel(
+          {
+            x: velocity.x * 0.45 + cover.timberKick.x * 3,
+            y: velocity.y * 0.65,
+            z: velocity.z * 0.45 + cover.timberKick.z * 3,
+          },
+          true,
+        );
+      }
+      fragment.body.setRotation(
+        new Quaternion().setFromEuler(new Euler(0, part.yaw, part.lean)),
+        true,
       );
     }
   } else if (cover.kind === "tree") {

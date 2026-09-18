@@ -9,6 +9,7 @@ import { stepProjectiles } from "../src/game/projectiles";
 import type { CoverKind, Shot } from "../src/game/types";
 import { idleCommand } from "../src/game/types";
 import { treeProportions } from "../src/game/tree-proportions";
+import { tankBurnout } from "../src/game/tank-destruction";
 
 before(async () => {
   await RAPIER.init();
@@ -64,6 +65,8 @@ function tick(s: Simulation, seconds: number) {
 }
 function wreck(s: Simulation) {
   const tank = s.addTank(1, false, "balanced", 0);
+  // These tests require separated hull/turret pieces, regardless of map-assigned IDs.
+  while (tankBurnout(s.seed, tank.id, tank.deaths + 1)) tank.deaths++;
   tank.protection = 0;
   tank.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
   s.damageTank(tank, 1000, 999, 0);
@@ -269,7 +272,7 @@ test("repeated impacts displace concrete, update old/new navigation footprints a
 test("authored scenery emits a few material-specific pieces with matching dimensions and contact telemetry", () => {
   for (const [kind, shapes] of [
     ["cargo", ["panel", "panel", "panel", "beam"]],
-    ["timber", ["beam", "beam", "beam"]],
+    ["timber", ["beam", "beam", "beam", "beam", "beam", "beam"]],
     ["tree", ["log", "beam"]],
     ["drum", ["drum-shell", "drum-shell", "drum-shell", "drum-lid"]],
     ["tower", ["panel", "beam", "panel", "beam"]],
@@ -294,8 +297,11 @@ test("authored scenery emits a few material-specific pieces with matching dimens
         assert.equal(f.sourceKind, kind);
         assert.ok(f.dimensions);
         assert.ok(f.body.isDynamic());
-        assert.equal(f.body.collider(0).collisionGroups(), GROUP.pushableDebris);
-        assert.equal(f.body.isCcdEnabled(), false);
+        assert.equal(
+          f.body.collider(0).collisionGroups(),
+          kind === "timber" ? GROUP.timberDebris : GROUP.pushableDebris,
+        );
+        assert.equal(f.body.isCcdEnabled(), kind === "timber");
       }
       if (kind === "tree") {
         const trunk = s.fragments.find((f) => f.shape === "log")!;
@@ -547,12 +553,8 @@ test("only large wrecks accept tank contact and projectile hits; steering still 
     ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
   assert.equal(allows(GROUP.wreck, GROUP.tank), true);
   assert.equal(allows(GROUP.wreck, GROUP.wreckQuery), true);
-  for (const group of [
-    GROUP.fragment,
-    GROUP.pushableDebris,
-    GROUP.coverQuery,
-    GROUP.steeringQuery,
-  ]) {
+  assert.equal(allows(GROUP.wreck, GROUP.wreck), true);
+  for (const group of [GROUP.fragment, GROUP.coverQuery, GROUP.steeringQuery]) {
     assert.equal(allows(GROUP.wreck, group), false);
   }
   assert.equal(allows(GROUP.fragment, GROUP.tank), false);
@@ -562,10 +564,7 @@ test("only large wrecks accept tank contact and projectile hits; steering still 
   try {
     wreck(s);
     for (const f of s.fragments) {
-      assert.equal(
-        f.body.collider(0).collisionGroups(),
-        f.part === "barrel" ? GROUP.fragment : GROUP.wreck,
-      );
+      assert.equal(f.body.collider(0).collisionGroups(), GROUP.wreck);
       park(f.body, 0, 1);
     }
     s.world.step();
@@ -630,6 +629,73 @@ test("shells shove indestructible wrecks, rockets detonate on them, and high rou
   }
 });
 
+test("shells wake and shove fallen timber and standing posts; rockets detonate on both", () => {
+  for (const kind of ["beam", "post"] as const) {
+    for (const weapon of ["standard", "piercing", "rocket"] as const) {
+      const s = arena();
+      try {
+        const wall = cover(s, "timber", 20, 20);
+        s.damageCover(wall, 999, 999, 0);
+        const f = s.fragments.find((fragment) => fragment.timberPart?.kind === kind)!;
+        for (const other of s.fragments) park(other.body, 30, 1);
+        f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+        park(f.body, 0, f.timberPart!.h / 2, -0.1);
+        s.world.step();
+        const count = s.fragments.length;
+        s.events = [];
+        shot(s, weapon, 1.3);
+        assert.equal(s.shots.length, 0, `${weapon} hits ${kind}`);
+        assert.equal(f.body.isSleeping(), false);
+        assert.ok(f.body.linvel().x > 0, `${kind} moves along the shot direction`);
+        assert.equal(s.fragments.length, count, "hit does not multiply physical debris");
+        assert.equal(
+          s.events.some((e) => e.type === "explosion"),
+          weapon === "rocket",
+        );
+        assert.ok(s.events.some((e) => e.type === "impact" && e.coverKind === "timber"));
+        if (weapon !== "rocket") {
+          assert.ok(Math.abs(f.body.angvel().y) > 0.01, "off-center shots turn the wood");
+          assert.ok(f.body.linvel().x <= 5.01, "light wood receives a bounded shove");
+        }
+      } finally {
+        s.dispose();
+      }
+    }
+  }
+});
+
+test("timber shots respect nearer cover, gaps, and debris cleanup", () => {
+  const s = arena();
+  try {
+    const wall = cover(s, "timber", 20, 20);
+    s.damageCover(wall, 999, 999, 0);
+    const f = s.fragments.find((fragment) => fragment.timberPart?.kind === "beam")!;
+    for (const other of s.fragments) park(other.body, 30, 1);
+    f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    park(f.body, 0, f.timberPart!.h / 2);
+    const blocker = cover(s, "concrete", -2);
+    blocker.hp = Infinity;
+    shot(s);
+    assert.equal(s.shots.length, 0);
+    assert.equal(f.body.linvel().x, 0, "nearer cover protects the beam");
+    s.world.removeRigidBody(blocker.body);
+    s.covers = [];
+    s.coverByCollider.clear();
+    park(f.body, 0, f.timberPart!.h / 2, 2);
+    s.world.step();
+    shot(s);
+    assert.equal(s.shots.length, 1, "shot beside the beam misses");
+    s.shots = [];
+    park(f.body, 0, f.timberPart!.h / 2);
+    f.body.collider(0).setCollisionGroups(GROUP.fragment);
+    s.world.step();
+    shot(s);
+    assert.equal(s.shots.length, 1, "sinking timber no longer intercepts shells");
+  } finally {
+    s.dispose();
+  }
+});
+
 test("a scout pushes fallen logs, beams, panels and drum pieces while small chips stay nonblocking", () => {
   for (const [kind, shape] of [
     ["tree", "log"],
@@ -667,6 +733,7 @@ test("a scout pushes fallen logs, beams, panels and drum pieces while small chip
       s.fragment(0, 0, 0x999999, 0.4);
       assert.equal(s.fragments.at(-1)!.body.collider(0).collisionGroups(), GROUP.fragment);
       f.life = DEBRIS_CLEANUP_SECONDS + STEP / 2;
+      f.expiresAt = s.elapsed + DEBRIS_CLEANUP_SECONDS;
       s.step();
       assert.equal(
         f.body.collider(0).collisionGroups(),
@@ -705,6 +772,73 @@ test("barrels rupture radially and a centered blast adds no sideways bias", () =
     assert.equal(lid.body.linvel().x, 0);
     assert.equal(lid.body.linvel().z, 0);
     assert.ok(lid.body.linvel().y > 0);
+  } finally {
+    s.dispose();
+  }
+});
+
+test("large wreck pieces land on each other and settle instead of interpenetrating", () => {
+  const s = arena();
+  try {
+    s.rng.next = () => 0.1; // Exercise a separated gun as well as the hull and turret.
+    const turret = wreck(s);
+    const hull = s.fragments.find((f) => f.part === "hull")!;
+    const gun = s.fragments.find((f) => f.part === "barrel")!;
+    const initialHull = hull.body.translation();
+    const initialTurret = turret.body.translation();
+    const halfHull = hull.body.collider(0).halfExtents()!.y;
+    const halfTurret = turret.body.collider(0).halfExtents()!.y;
+    assert.ok(initialTurret.y - initialHull.y > halfHull + halfTurret, "spawn poses start clear");
+    for (const f of s.fragments) {
+      f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      park(f.body, 30, 1);
+    }
+    park(hull.body, 0, halfHull + 0.02);
+    park(turret.body, 0, 3);
+    park(gun.body, 0, 5);
+    gun.body.wakeUp();
+    turret.body.wakeUp();
+    for (let i = 0; i < 480; i++) s.world.step();
+    const bottom = hull.body.translation();
+    const top = turret.body.translation();
+    assert.ok(top.y - bottom.y > halfHull + halfTurret - 0.04, "turret rests above hull");
+    assert.ok(Math.abs(top.x - bottom.x) < 0.2 && Math.abs(top.z - bottom.z) < 0.2);
+    assert.equal(hull.body.isSleeping(), true);
+    assert.equal(turret.body.isSleeping(), true);
+    assert.ok(gun.body.translation().y > top.y + halfTurret, "gun rests on the turret");
+    assert.equal(gun.body.isSleeping(), true);
+  } finally {
+    s.dispose();
+  }
+});
+
+test("all substantial debris shares contacts, stacks across categories, and excludes small scraps", () => {
+  const groups = [GROUP.pushableDebris, GROUP.timberDebris, GROUP.wreck];
+  const allows = (a: number, b: number) =>
+    ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
+  for (const a of groups) {
+    for (const b of groups) assert.ok(allows(a, b));
+    assert.equal(allows(a, GROUP.fragment), false);
+    for (const b of [GROUP.ground, GROUP.cover, GROUP.movableCover, GROUP.tank])
+      assert.ok(allows(a, b));
+  }
+  const s = arena();
+  try {
+    const bodies = groups.map((group, i) => {
+      const body = s.world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 0.52 + i * 2, 0),
+      );
+      s.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(1, 0.5, 1).setCollisionGroups(group).setFriction(0.8),
+        body,
+      );
+      return body;
+    });
+    for (let i = 0; i < 480; i++) s.world.step();
+    for (let i = 0; i < bodies.length; i++) {
+      assert.ok(Math.abs(bodies[i].translation().y - (0.5 + i)) < 0.06);
+      assert.equal(bodies[i].isSleeping(), true);
+    }
   } finally {
     s.dispose();
   }

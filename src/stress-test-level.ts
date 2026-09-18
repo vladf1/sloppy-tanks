@@ -4,6 +4,7 @@ import type { ArenaMap } from "./game/maps";
 import type { Simulation } from "./game/simulation";
 import type { CoverKind } from "./game/types";
 import type { VehicleKind } from "./game/types";
+import { TIMBER_HEALTH } from "./game/timber-layout";
 
 export const STRESS_TANK_COUNT = 30;
 export const STRESS_PLAYER_HEALTH_MULTIPLIER = 10_000;
@@ -49,7 +50,7 @@ function stressTestLayout(): CoverDef[] {
       } else if (pattern === 0) {
         add("cargo", x, z, 2.8, 2.8, 2.4, 80, 0xb47a49);
       } else if (pattern === 1) {
-        add("timber", x, z, xi % 2 ? 3.7 : 0.9, xi % 2 ? 0.9 : 3.7, 2.8, 120, 0xa66f46);
+        add("timber", x, z, xi % 2 ? 3.7 : 0.9, xi % 2 ? 0.9 : 3.7, 2.8, TIMBER_HEALTH, 0xa66f46);
       } else if (pattern === 2) {
         add("tree", x, z, 2.6, 2.6, 5.8, 80, 0x169f65);
       } else if (pattern === 3) {
@@ -67,8 +68,8 @@ function stressTestLayout(): CoverDef[] {
   // Breakable barricades create four temporary gates around the open centre.
   for (const side of [-1, 1]) {
     for (const offset of [-12, -6, 0, 6, 12]) {
-      add("timber", offset, side * 22, 4.2, 0.9, 2.8, 120, 0xb47a49);
-      add("timber", side * 22, offset, 0.9, 4.2, 2.8, 120, 0xb47a49);
+      add("timber", offset, side * 22, 4.2, 0.9, 2.8, TIMBER_HEALTH, 0xb47a49);
+      add("timber", side * 22, offset, 0.9, 4.2, 2.8, TIMBER_HEALTH, 0xb47a49);
     }
   }
 

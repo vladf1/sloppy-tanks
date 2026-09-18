@@ -112,23 +112,26 @@ export class ParticleEffects {
       event.type === "explosion" || event.type === "death" || event.type === "destroy";
     const coverEffect = event.type === "destroy" || event.type === "impact";
     const timber = coverEffect && (event.coverKind === "timber" || event.coverKind === "cargo");
+    const timberWall = coverEffect && event.coverKind === "timber";
     const tree = coverEffect && event.coverKind === "tree";
     const chipHit = event.type === "impact" && (tree || timber);
     const style =
       PARTICLE_STYLES[
-        chipHit
-          ? tree
-            ? "treeHit"
-            : "woodHit"
-          : tree
-            ? "tree"
-            : pickup
-              ? "pickup"
-              : explosion
-                ? "explosion"
-                : hurt
-                  ? "hurt"
-                  : "impact"
+        timberWall
+          ? "woodHit"
+          : chipHit
+            ? tree
+              ? "treeHit"
+              : "woodHit"
+            : tree
+              ? "tree"
+              : pickup
+                ? "pickup"
+                : explosion
+                  ? "explosion"
+                  : hurt
+                    ? "hurt"
+                    : "impact"
       ];
     // The new fire/smoke handles blast volume. Keep only a few fast hot flecks.
     const tankDeath = event.type === "death";
@@ -137,8 +140,17 @@ export class ParticleEffects {
     if (explosion && !tree && !timber && !fiery) {
       return false;
     }
-    const count = burnout ? 3 : fiery ? 8 : event.type === "shot" ? 5 : style.count;
-    const baseSpeed = style.speed * (explosion && !tree ? (event.size ?? 3) : 1);
+    // The real beams carry the collapse. Add only a hit-sized handful of small chips.
+    const count = timberWall
+      ? style.count - 2 + Math.floor(Math.random() * 5) + (explosion ? 2 : 0)
+      : burnout
+        ? 3
+        : fiery
+          ? 8
+          : event.type === "shot"
+            ? 5
+            : style.count;
+    const baseSpeed = style.speed * (explosion && !tree && !timberWall ? (event.size ?? 3) : 1);
     const colors = timber
       ? [0x805336, 0xb47a49, 0xc99a65, 0x947958]
       : tree

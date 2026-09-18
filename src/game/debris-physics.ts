@@ -111,16 +111,22 @@ export function hitMovableCover(cover: Cover, shot: Shot): void {
   );
 }
 
-/** Wreck hulls and turrets absorb the round and take only physical impulse. */
-export function hitWreck(wreck: Fragment, shot: Shot): void {
+/** Substantial debris absorbs the round and takes only physical impulse. */
+export function hitProjectileDebris(
+  fragment: Fragment,
+  shot: Shot,
+  point: { x: number; y: number; z: number },
+): void {
   const speed = Math.hypot(shot.vx, shot.vz);
-  if (!wreck.wreck || speed === 0) {
+  if ((!fragment.wreck && !fragment.timberPart) || speed === 0) {
     return;
   }
   const impulse = shot.weapon === "rocket" ? 10 : shot.weapon === "piercing" ? 7 : 5;
-  wreck.body.applyImpulseAtPoint(
-    { x: (shot.vx / speed) * impulse, y: 0, z: (shot.vz / speed) * impulse },
-    { x: shot.x, y: shot.y ?? 1, z: shot.z },
+  // Light posts need a mass-scaled shove rather than the full tank-husk impulse.
+  const strength = fragment.timberPart ? Math.min(impulse, fragment.body.mass() * 5) : impulse;
+  fragment.body.applyImpulseAtPoint(
+    { x: (shot.vx / speed) * strength, y: 0, z: (shot.vz / speed) * strength },
+    point,
     true,
   );
 }

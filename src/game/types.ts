@@ -1,3 +1,4 @@
+import type { TimberHit, TimberJoin, TimberPart } from "./timber-layout";
 import type RAPIER from "@dimforge/rapier3d-compat";
 import type { DebrisMaterial } from "./debris-physics";
 import type { BotPersonality } from "./bot-personalities";
@@ -115,6 +116,10 @@ export interface Cover extends Vec2 {
   color: number;
   /** Chosen at collapse so rubble stays stable when its model is rebuilt. */
   debrisSeed?: number;
+  /** Bounded, persistent impact marks in local wall coordinates. */
+  timberHits?: TimberHit[];
+  timberJoin?: TimberJoin;
+  timberKick?: Vec2;
   /** Original dimensions and last navigation footprint for movable cover. */
   motion?: {
     originX: number;
@@ -187,6 +192,7 @@ export interface Fragment {
   dimensions?: { x: number; y: number; z: number };
   material?: DebrisMaterial;
   sourceKind?: CoverKind;
+  timberPart?: TimberPart;
   treeCoverId?: number;
   treeCenterY?: number;
   expiresAt?: number;

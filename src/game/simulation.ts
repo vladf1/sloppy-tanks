@@ -20,7 +20,12 @@ import type { Difficulty } from "./difficulty";
 import { DEBRIS_MATERIALS, drainDebrisContacts, trackDebrisContacts } from "./debris-physics";
 import { updateMovableCover } from "./movable-cover";
 import { createFragment } from "./fragments";
-import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
+import {
+  cleanupCandidate,
+  debrisMoving,
+  DEBRIS_CLEANUP_SECONDS,
+  prepareDebrisCleanup,
+} from "./debris-cleanup";
 import { newMatch, tickMatch } from "./match";
 import { MAPS, type ArenaMap } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
@@ -211,6 +216,7 @@ export class Simulation {
     hp: number;
     color: number;
     debrisSeed?: number;
+    timberJoin?: Cover["timberJoin"];
   }): Cover {
     const drum = c.kind === "drum";
     const movable = drum || c.kind === "teeth" || c.kind === "hedgehog";
@@ -393,9 +399,19 @@ export class Simulation {
         }
       }
     }
+    prepareDebrisCleanup(this);
     for (let i = this.fragments.length - 1; i >= 0; i--) {
       const f = this.fragments[i];
-      f.life -= STEP;
+      // Keep substantial debris solid while it is still moving, with a hard age limit.
+      const hold =
+        f.life > DEBRIS_CLEANUP_SECONDS &&
+        f.life - STEP <= DEBRIS_CLEANUP_SECONDS &&
+        f.expiresAt !== undefined &&
+        this.elapsed < f.expiresAt - DEBRIS_CLEANUP_SECONDS &&
+        debrisMoving(f);
+      if (!hold) {
+        f.life -= STEP;
+      }
       if (f.life <= DEBRIS_CLEANUP_SECONDS) {
         const collider = f.body.collider(0);
         if (collider.collisionGroups() !== GROUP.fragment) {
@@ -486,7 +502,8 @@ export class Simulation {
   }
   reserveFragments(count: number): void {
     while (this.fragments.length + count > this.maxFragments) {
-      const old = this.fragments.shift()!;
+      const old = cleanupCandidate(this)!;
+      this.fragments.splice(this.fragments.indexOf(old), 1);
       this.world.removeRigidBody(old.body);
     }
   }
@@ -508,8 +525,14 @@ export class Simulation {
     ownerLife?: number,
     source?: DamageSource,
   ) => damageTank(this, tank, amount, owner, team, ownerLife, source);
-  damageCover = (cover: Cover, amount: number, owner: number, team: Team, ownerLife?: number) =>
-    damageCover(this, cover, amount, owner, team, ownerLife);
+  damageCover = (
+    cover: Cover,
+    amount: number,
+    owner: number,
+    team: Team,
+    ownerLife?: number,
+    impact?: { x: number; y: number; z: number },
+  ) => damageCover(this, cover, amount, owner, team, ownerLife, impact);
   explode = (
     position: Vec2,
     radius: number,
