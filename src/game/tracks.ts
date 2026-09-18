@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { VEHICLES, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
 
-// Thirty boosted scouts can leave about 52,000 marks during the 18-second fade.
+// Thirty boosted scouts can leave about 70,000 marks during the 24-second fade.
 // Reserve that lifetime budget so busy scenes do not stop drawing new trails.
-export const TRACK_CAPACITY = 65536;
-export const TRACK_LIFETIME = 18;
+export const TRACK_CAPACITY = 81920;
+export const TRACK_LIFETIME = 24;
 const SPACING = 0.42;
 interface Pose {
   x: number;

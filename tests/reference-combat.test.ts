@@ -6,7 +6,7 @@ import { Simulation } from "../src/game/simulation";
 import { spawnPositions } from "../src/game/arena";
 import { collectPickup, fireWeapon, interceptionTime, stepProjectiles } from "../src/game/weapons";
 import { STEP, VEHICLES, WEAPONS, MOVE_ACCELERATION } from "../src/game/data";
-import { TrackTrails, TRACK_CAPACITY } from "../src/game/tracks";
+import { TrackTrails, TRACK_CAPACITY, TRACK_LIFETIME } from "../src/game/tracks";
 import { idleCommand, type Shot, type Team, type PickupKind } from "../src/game/types";
 before(async () => {
   await RAPIER.init();
@@ -285,7 +285,7 @@ test("thirty boosted scouts keep laying fresh tracks through multiple buffer wra
   }
   assert.ok(tracks.mesh.count > 50000 && tracks.mesh.count < TRACK_CAPACITY);
   for (let i = 0; i < tracks.mesh.count; i++) {
-    assert.ok(s.elapsed - birth.getX(i) < 18, "expired marks must not be submitted");
+    assert.ok(s.elapsed - birth.getX(i) < TRACK_LIFETIME, "expired marks must not be submitted");
   }
   tracks.dispose();
   s.dispose();
