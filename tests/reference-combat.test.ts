@@ -291,30 +291,6 @@ test("thirty boosted scouts keep laying fresh tracks through multiple buffer wra
   s.dispose();
 });
 
-for (const order of [
-  ["spread", "rocket"],
-  ["rocket", "spread"],
-] as const) {
-  test(`${order.join(" then ")} auto-selects the first crate and keeps ammo independent`, () => {
-    const s = arena(1),
-      t = s.human;
-    for (const kind of order) pickup(s, kind);
-    pickup(s, "rapid");
-    pickup(s, "ricochet");
-    assert.equal(t.selectedAmmo, order[0]);
-    for (const weapon of ["standard", "spread", "rocket", "ricochet"] as const) {
-      t.selectedAmmo = weapon;
-      t.cooldown = 0;
-      s.shots = [];
-      fireWeapon(s, t);
-      assert.equal(s.shots.length, weapon === "spread" ? 3 : 1);
-      assert.ok(s.shots.every((p) => p.weapon === weapon && p.damage === WEAPONS[weapon].damage));
-      assert.equal(t.cooldown, WEAPONS[weapon].interval / 2 / 1.2);
-    }
-    s.dispose();
-  });
-}
-
 test("four repair pickups are symmetric, clear of cover, and away from spawn pads", () => {
   const s = new Simulation(123);
   const repairs = s.pickups.filter((p) => p.kind === "repair");

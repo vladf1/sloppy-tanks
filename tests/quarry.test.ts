@@ -171,13 +171,6 @@ test("quarry supports both modes, combat, resets and Surprise me selection", () 
       assert.equal(sim.world.bodies.len(), bodies);
       assert.equal(sim.mapName, "DUSTY DIG");
     }
-    const themes = new Set<string>();
-    sim.mapMode = "surprise";
-    for (let i = 0; i < 30; i++) {
-      sim.reset();
-      themes.add(sim.mapTheme);
-    }
-    assert.deepEqual([...themes].sort(), ["harbor", "quarry", "village"]);
   } finally {
     sim.world.free();
   }

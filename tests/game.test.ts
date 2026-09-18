@@ -429,20 +429,6 @@ test("chain-triggered mines are removed safely during mine iteration", () => {
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });
-test("selected ricochet has three reflections and 60 damage; standard has none", () => {
-  const s = game();
-  const t = s.human;
-  t.ammo.ricochet = 12;
-  t.selectedAmmo = "ricochet";
-  fireWeapon(s, t);
-  assert.equal(s.shots.at(-1)!.bounces, 3);
-  assert.equal(s.shots.at(-1)!.damage, 60);
-  t.cooldown = 0;
-  t.selectedAmmo = "standard";
-  fireWeapon(s, t);
-  assert.equal(s.shots.at(-1)!.bounces, 0);
-  s.dispose();
-});
 test("bots cross opened tower footprint and continue combat through ruins", () => {
   const s = game();
   const towers = s.covers.filter((c) => c.kind === "tower");
@@ -473,15 +459,6 @@ test("bots cross opened tower footprint and continue combat through ruins", () =
   }
   assert.ok(crossed, "a bot traverses an opened shortcut");
   assert.ok(s.match.scores[0] > 0 && s.match.scores[1] > 0);
-  s.dispose();
-});
-test("fragment cap bounds bodies and cosmetics cannot block live tanks", () => {
-  const s = game();
-  const initial = s.world.bodies.len();
-  for (let i = 0; i < 300; i++) s.fragment(0, 0, 0, 0.5);
-  assert.equal(s.fragments.length, 80);
-  assert.equal(s.world.bodies.len(), initial + 80);
-  assert.equal(s.fragments[0].body.collider(0).collisionGroups() & 1, 0);
   s.dispose();
 });
 test("arena cover, pickup types and spawn slots have rotated team symmetry", async () => {

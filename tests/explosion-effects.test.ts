@@ -4,6 +4,7 @@ import {
   EXPLOSION_LIFETIME,
   ExplosionEffects,
   MAX_EXPLOSIONS,
+  TANK_EXPLOSION_LIFETIME,
 } from "../src/game/explosion-effects";
 import { ParticleEffects } from "../src/game/particle-effects";
 
@@ -56,7 +57,8 @@ test("barrel destruction is not counted twice, and wood collapse has no fireball
   assert.ok(particles.particles.every((p) => p.shape === "splinter"));
 });
 
-test("tank deaths have taller, darker, longer smoke and upward embers", () => {
+test("tank deaths have taller, darker, longer smoke and upward embers", (context) => {
+  context.mock.method(Math, "random", () => 0.5);
   const tank = new ExplosionEffects();
   const shell = new ExplosionEffects();
   tank.event({ type: "death", x: 0, z: 0, size: 3 });
@@ -70,11 +72,12 @@ test("tank deaths have taller, darker, longer smoke and upward embers", () => {
     tank.puffs.geometry.getAttribute("puffColor").getX(0) <
       shell.puffs.geometry.getAttribute("puffColor").getX(0),
   );
-  tank.update(0.5);
-  shell.update(0.5);
+  const shellCleanup = EXPLOSION_LIFETIME - 0.75 + 0.01;
+  tank.update(shellCleanup);
+  shell.update(shellCleanup);
   assert.equal(shell.puffs.count, 0);
   assert.equal(tank.puffs.count, 5);
-  tank.update(1);
+  tank.update(TANK_EXPLOSION_LIFETIME);
   assert.equal(tank.puffs.count, 0);
   const particles = new ParticleEffects();
   particles.event({ type: "death", x: 0, z: 0, size: 3 });
