@@ -108,8 +108,13 @@ export function timberPartModel(p: TimberPart): THREE.Group {
 }
 
 export function addTimberParts(group: THREE.Group, parts: TimberPart[]): void {
+  const wallHeight = Math.max(...parts.map((part) => part.h));
+  // Hide the debris clearance inside the uprights while the fence is standing.
+  const endOverlap = 0.04 + wallHeight * 0.02 + 0.01;
   for (const part of parts) {
-    const assembly = timberPartModel(part);
+    const assembly = timberPartModel(
+      part.kind === "beam" ? { ...part, w: part.w + endOverlap * 2 } : part,
+    );
     assembly.position.set(part.x, part.y, part.z);
     assembly.rotation.set(0, part.yaw, part.lean);
     assembly.updateMatrix();
