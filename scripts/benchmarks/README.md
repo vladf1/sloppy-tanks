@@ -12,6 +12,8 @@ node scripts/benchmarks/host-download-benchmark.mjs
 
 Each run writes a dated raw JSON artifact to [`results/`](results/).
 
+This is a manual benchmark. It is intentionally excluded from the repository-wide CI lint and format checks and is not invoked by any GitHub build workflow.
+
 ## Scope and method
 
 - 13 alternating rounds per deployment.

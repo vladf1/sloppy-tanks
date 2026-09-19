@@ -5,3 +5,4 @@ artifacts/
 public/
 package-lock.json
 assets/texture-sources/
+scripts/benchmarks/
