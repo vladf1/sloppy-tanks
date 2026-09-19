@@ -77,7 +77,7 @@ export class UI {
     };
     document.addEventListener("fullscreenchange", syncFullscreen);
     syncFullscreen();
-    fullscreen.addEventListener("click", async () => {
+    const toggleFullscreen = async () => {
       try {
         if (document.fullscreenElement) {
           await document.exitFullscreen();
@@ -90,6 +90,9 @@ export class UI {
         this.toast.classList.add("visible");
       }
       fullscreen.blur();
+    };
+    fullscreen.addEventListener("click", () => {
+      void toggleFullscreen();
     });
   }
   show(): void {
