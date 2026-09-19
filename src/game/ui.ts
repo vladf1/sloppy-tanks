@@ -65,6 +65,32 @@ export class UI {
         this.lastPhase = "";
       }
     });
+    const fullscreen = root.querySelector<HTMLButtonElement>("#fullscreen")!;
+    fullscreen.hidden = !document.fullscreenEnabled;
+    const syncFullscreen = () => {
+      const active = document.fullscreenElement !== null;
+      const label = active ? "Exit fullscreen" : "Enter fullscreen";
+      fullscreen.textContent = active ? "↘↙\n↗↖" : "⛶";
+      fullscreen.setAttribute("aria-pressed", String(active));
+      fullscreen.setAttribute("aria-label", label);
+      fullscreen.title = label;
+    };
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    syncFullscreen();
+    fullscreen.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch {
+        this.toast.textContent = "Fullscreen unavailable. Try again in a browser tab.";
+        this.toastTime = 3;
+        this.toast.classList.add("visible");
+      }
+      fullscreen.blur();
+    });
   }
   show(): void {
     const simulation = this.simulation;

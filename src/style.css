@@ -151,10 +151,14 @@ canvas#game {
   letter-spacing: 1.6px;
   font-weight: 800;
 }
-.quiet {
+.hud-actions {
   position: absolute;
   right: 14px;
   top: 14px;
+  display: flex;
+  gap: 8px;
+}
+.quiet {
   border: 1px solid #f0e9ce66;
   border-radius: 6px;
   background: #16314d99;
@@ -163,6 +167,18 @@ canvas#game {
   letter-spacing: 2px;
   font-weight: 700;
   font-size: 12px;
+}
+#fullscreen {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 0;
+  padding: 8px 12px;
+}
+#fullscreen[aria-pressed="true"] {
+  font-family: monospace;
+  font-size: 14px;
+  line-height: 11px;
+  white-space: pre;
 }
 .bottom {
   position: absolute;
@@ -637,7 +653,7 @@ h2 {
   .scoreboard {
     top: 8px;
   }
-  .quiet {
+  .hud-actions {
     right: 10px;
     top: 10px;
   }
