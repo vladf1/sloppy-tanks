@@ -4,7 +4,7 @@ export const CAMERA = {
   near: 0.1,
   far: 320,
   defaultZoom: 34,
-  minZoom: 23,
+  minZoom: 17,
   maxZoom: 52,
   maxPixelRatio: 1.5,
 } as const;
