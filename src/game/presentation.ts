@@ -295,7 +295,11 @@ export class Presentation {
       quarry ? 345 : harbor ? 260 : 380,
     );
     this.lighting.sun.color.setHex(quarry ? 0xffcf9c : harbor ? 0xffbf85 : 0xffd59b);
-    this.lighting.sun.position.set(-45, quarry ? 46 : harbor ? 55 : 68, 25);
+    this.lighting.sun.position.set(
+      quarry ? -50 : -45,
+      quarry ? 43 : harbor ? 55 : 68,
+      quarry ? 28 : 25,
+    );
     this.lighting.sun.intensity = quarry ? 3.0 : 2.8;
     this.lighting.fill.intensity = quarry ? 1.1 : 1.65;
     this.lighting.fill.color.setHex(quarry ? 0xb9cff2 : harbor ? 0xafcfee : 0xbdd5f5);

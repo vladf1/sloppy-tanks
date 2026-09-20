@@ -30,14 +30,14 @@ export function dragonTooth(
     const p = geometry.getAttribute("position");
     const uv = geometry.getAttribute("uv");
     const colors: number[] = [];
-    const concrete = new THREE.Color(0xc6c6bf).multiplyScalar(0.93 + variant * 0.025);
+    const concrete = new THREE.Color(0xd2d2c9).multiplyScalar(0.97 + variant * 0.02);
     const soil = new THREE.Color(0x8b816c);
     for (let i = 0; i < p.count; i++) {
       const y = p.getY(i);
       const point = dragonToothPoint(p.getX(i), y, p.getZ(i), w, h, d, variant);
       p.setXYZ(i, point[0], point[1], point[2]);
       uv.setXY(i, (uv.getX(i) * w) / 1.4 + variant * 0.23, (uv.getY(i) * h) / 1.4);
-      const tint = concrete.clone().lerp(soil, Math.max(0, 1 - (y + 0.5) * 5) * 0.65);
+      const tint = concrete.clone().lerp(soil, Math.max(0, 1 - (y + 0.5) * 5) * 0.5);
       colors.push(tint.r, tint.g, tint.b);
     }
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));

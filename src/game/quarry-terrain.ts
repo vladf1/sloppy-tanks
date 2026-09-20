@@ -106,11 +106,13 @@ export function quarryTerrain(renderer: THREE.WebGLRenderer): THREE.Mesh {
       const macro = noise(x * 0.065, z * 0.065);
       const grit = noise(x * 0.75, z * 0.75);
       // Broad irregular sheets: pale windblown sand where the macro field runs
-      // high, exposed rocky soil where it runs low. A sine warp breaks any hint
-      // of cellular repetition without adding another noise octave to the bake.
+      // high, exposed rocky soil where it runs low. A sine warp plus two fixed
+      // diagonal drift bands break any hint of cellular repetition without
+      // adding another noise octave to the bake.
       const warp = Math.sin(x * 0.021 + 1.7) * Math.sin(z * 0.023 - 0.6);
-      const sand = smooth(macro + warp * 0.18, 0.52, 0.78);
-      const rocky = 1 - smooth(macro - warp * 0.15, 0.22, 0.48);
+      const bands = Math.sin(x * 0.045 + z * 0.031 + 1.2) * Math.sin(z * 0.052 - x * 0.013 + 0.4);
+      const sand = smooth(macro + warp * 0.18 + bands * 0.1, 0.5, 0.74);
+      const rocky = 1 - smooth(macro - warp * 0.15, 0.24, 0.5);
       // Rounded outer haul loop and a gently wandering east/west crossing.
       const qx = Math.abs(x) - 39;
       const qz = Math.abs(z) - 39;
@@ -120,28 +122,38 @@ export function quarryTerrain(renderer: THREE.WebGLRenderer): THREE.Mesh {
       const crossing = Math.abs(z - Math.sin(x * 0.055) * 1.6);
       const distance = Math.min(loop, crossing);
       const edge = (noise(x * 0.42, z * 0.42) - 0.5) * 1.6;
-      const road = 1 - smooth(distance + edge, 3.2, 7.8);
+      const road = 1 - smooth(distance + edge, 3.4, 8.0);
       const rut = Math.exp(-Math.pow((distance - 2.25) / 0.38, 2)) * road;
+      // Trampled work floor: one broad central apron plus two midfield patches
+      // between the rock shoulders. Fixed smooth shapes, no extra noise.
+      const wear = Math.max(
+        1 - smooth(Math.hypot(x / 30, z / 23), 0.55, 1),
+        1 - smooth(Math.hypot((Math.abs(x) - 25) / 13, z / 16), 0.5, 1),
+      );
       const fine = rng.range(-5, 5);
       const aggregate = rng.next() > 0.975 ? rng.range(-22, 17) : 0;
       // sRGB bytes: mid soil -> pale sand -> rocky soil -> dark compacted road.
-      let r = 181;
-      let g = 157;
-      let b = 122;
-      r += (221 - r) * sand;
-      g += (200 - g) * sand;
-      b += (162 - b) * sand;
+      let r = 178;
+      let g = 150;
+      let b = 114;
+      const wornSand = sand * (1 - wear * 0.55);
+      r += (230 - r) * wornSand;
+      g += (208 - g) * wornSand;
+      b += (168 - b) * wornSand;
       const offRoad = 1 - road;
-      r += (160 - r) * rocky * offRoad;
-      g += (130 - g) * rocky * offRoad;
-      b += (99 - b) * rocky * offRoad;
-      r += (146 - r) * road * 0.9;
-      g += (122 - g) * road * 0.9;
-      b += (94 - b) * road * 0.9;
-      const shade = (macro - 0.5) * 8 + (grit - 0.5) * 15 + fine + aggregate - rut * 10;
+      r += (169 - r) * rocky * offRoad;
+      g += (122 - g) * rocky * offRoad;
+      b += (83 - b) * rocky * offRoad;
+      r += (129 - r) * road;
+      g += (104 - g) * road;
+      b += (79 - b) * road;
+      r += (152 - r) * wear * 0.5 * offRoad;
+      g += (124 - g) * wear * 0.5 * offRoad;
+      b += (96 - b) * wear * 0.5 * offRoad;
+      const shade = (macro - 0.5) * 8 + (grit - 0.5) * 15 + fine + aggregate - rut * 13;
       // Drifted sand against cover bases and along the quiet outer shoulders.
       const shoulder = smooth(Math.max(Math.abs(x), Math.abs(z)), 48, 58) * offRoad;
-      const drift = Math.min(0.55, sampleAccum(accum, x, z) * 0.55 + shoulder * 0.4);
+      const drift = Math.min(0.5, sampleAccum(accum, x, z) * 0.55 + shoulder * 0.3);
       r += (226 - r) * drift;
       g += (209 - g) * drift;
       b += (176 - b) * drift;

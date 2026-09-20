@@ -14,11 +14,13 @@ interface Wisp {
   max: number;
   size: number;
   phase: number;
+  alpha: number;
 }
 
-/** Sparse windblown wisps along the quarry apron: one bounded instanced draw,
- * no textures, lights, physics bodies or per-frame allocations. Cosmetic
- * randomness is deliberately independent from the seeded simulation. */
+/** Sparse windblown wisps along the quarry apron, plus rare faint sheets high
+ * over the combat floor: one bounded instanced draw, no textures, lights,
+ * physics bodies or per-frame allocations. Cosmetic randomness is deliberately
+ * independent from the seeded simulation. */
 export class QuarryDust {
   readonly mesh: THREE.InstancedMesh;
   private opacity = new THREE.InstancedBufferAttribute(new Float32Array(QUARRY_DUST_CAPACITY), 1);
@@ -32,6 +34,7 @@ export class QuarryDust {
     max: 0,
     size: 0,
     phase: 0,
+    alpha: 1,
   }));
   private timer = 0;
   private dummy = new THREE.Object3D();
@@ -88,6 +91,20 @@ export class QuarryDust {
     if (!wisp) {
       return;
     }
+    // One spawn in five drifts high over the combat floor instead: larger,
+    // fainter and well above the tanks so readability never suffers.
+    if (Math.random() < 0.2) {
+      wisp.x = -50 + Math.random() * 100;
+      wisp.z = -50 + Math.random() * 100;
+      wisp.y = 2.4 + Math.random() * 2.4;
+      wisp.vx = 1.5 + Math.random() * 1.5;
+      wisp.life = wisp.max = 6 + Math.random() * 3;
+      wisp.size = 5 + Math.random() * 3.5;
+      wisp.phase = Math.random() * Math.PI * 2;
+      wisp.alpha = 0.45;
+      this.wisps.push(wisp);
+      return;
+    }
     const side = Math.random() < 0.5 ? -1 : 1;
     const z = side * (63 + Math.random() * 8);
     // Rest on the dipped apron outside the wall, the same grade the terrain bakes.
@@ -99,6 +116,7 @@ export class QuarryDust {
     wisp.life = wisp.max = 5 + Math.random() * 3;
     wisp.size = 2.5 + Math.random() * 2;
     wisp.phase = Math.random() * Math.PI * 2;
+    wisp.alpha = 1;
     this.wisps.push(wisp);
   }
 
@@ -141,7 +159,7 @@ export class QuarryDust {
       this.dummy.scale.set(size, size * 0.55, 1);
       this.dummy.updateMatrix();
       this.mesh.setMatrixAt(i, this.dummy.matrix);
-      this.opacity.setX(i, Math.sin(age * Math.PI) * QUARRY_DUST_MAX_OPACITY);
+      this.opacity.setX(i, Math.sin(age * Math.PI) * QUARRY_DUST_MAX_OPACITY * wisp.alpha);
     }
     updateInstances(this.mesh);
     if (this.mesh.count) {

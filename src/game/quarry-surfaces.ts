@@ -17,13 +17,14 @@ export function sandstoneMaterial(): THREE.MeshStandardMaterial {
     stone = new THREE.MeshStandardMaterial({
       map: texture,
       bumpMap: texture,
-      bumpScale: 0.16,
+      bumpScale: 0.05,
       roughness: 0.97,
       vertexColors: true,
-      color: 0xd8cbb4,
+      color: 0xd4b28c,
     });
     // Blend projections across rounded shoulders instead of exposing UV seams on
-    // individual triangles. Coordinates are baked with the static geometry.
+    // individual triangles. World-space sampling decorrelates reused rock
+    // geometry so identical boulders never show the same patch of grain.
     stone.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
         .replace(
@@ -36,8 +37,8 @@ export function sandstoneMaterial(): THREE.MeshStandardMaterial {
         .replace(
           "#include <begin_vertex>",
           `#include <begin_vertex>
-        vStonePosition = position;
-        vStoneNormal = normal;
+        vStonePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vStoneNormal = mat3(modelMatrix) * normal;
       `,
         );
       shader.fragmentShader = shader.fragmentShader
@@ -53,15 +54,15 @@ export function sandstoneMaterial(): THREE.MeshStandardMaterial {
           `
         vec3 blend = pow(abs(normalize(vStoneNormal)), vec3(6.0));
         blend /= max(blend.x + blend.y + blend.z, 0.0001);
-        vec3 stonePoint = vStonePosition / 3.0;
-        vec4 stoneColor = texture2D(map, stonePoint.zy) * blend.x
-          + texture2D(map, stonePoint.xz) * blend.y
-          + texture2D(map, stonePoint.xy) * blend.z;
+        vec3 stonePoint = vStonePosition / 5.5;
+        vec4 stoneColor = texture2D(map, stonePoint.zy + vec2(0.31, 0.11)) * blend.x
+          + texture2D(map, stonePoint.xz + vec2(0.57, 0.43)) * blend.y
+          + texture2D(map, stonePoint.xy + vec2(0.13, 0.79)) * blend.z;
         diffuseColor *= stoneColor;
       `,
         );
     };
-    stone.customProgramCacheKey = () => "quarry-triplanar-v1";
+    stone.customProgramCacheKey = () => "quarry-triplanar-v2";
   }
   return stone;
 }
@@ -79,20 +80,21 @@ export function sandstoneRock(w: number, h: number, d: number, variant = 0): THR
     const positions: number[] = [];
     const uvs: number[] = [];
     const colors: number[] = [];
-    const triangle = (a: number, b: number, c: number, shade: number) => {
+    const triangle = (a: number, b: number, c: number, shade: number, warm: number) => {
       const normal = new THREE.Vector3()
         .subVectors(vertices[b], vertices[a])
         .cross(new THREE.Vector3().subVectors(vertices[c], vertices[a]))
         .normalize();
       // Dominant-axis projection prevents diagonal faces collapsing into streaks.
+      // These UVs feed only the bump map; albedo uses world-space triplanar.
       const top = Math.abs(normal.y) > 0.65;
       const alongZ = Math.abs(normal.x) > Math.abs(normal.z);
       for (const index of [a, b, c]) {
         const p = vertices[index];
         positions.push(p.x, p.y, p.z);
-        uvs.push((alongZ && !top ? p.z : p.x) / 3, (top ? p.z : p.y) / 3);
+        uvs.push((alongZ && !top ? p.z : p.x) / 5.5, (top ? p.z : p.y) / 5.5);
         const dust = top ? 1.07 : 0.88 + 0.12 * Math.min(1, p.y / h);
-        colors.push(shade * dust, shade * dust, shade * dust);
+        colors.push(shade * dust * (1 + warm), shade * dust, shade * dust * (1 - warm));
       }
     };
     for (let i = 0; i < shape.indices.length; i += 3) {
@@ -100,7 +102,8 @@ export function sandstoneRock(w: number, h: number, d: number, variant = 0): THR
         shape.indices[i],
         shape.indices[i + 1],
         shape.indices[i + 2],
-        rng.range(0.95, 1.025),
+        rng.range(0.9, 1.07),
+        rng.range(-0.02, 0.035),
       );
     }
     geometry = new THREE.BufferGeometry();

@@ -24,10 +24,10 @@ export function quarryBench(
     const x = (i / segments - 0.5) * length;
     const fracture = Math.sin(x * 0.13 + seed) * 0.5 + rng.range(-0.18, 0.18);
     const crown =
-      0.78 +
-      0.16 * Math.sin(x * 0.05 + seed * 1.7) +
-      0.08 * Math.sin(x * 0.13 + seed) +
-      rng.range(-0.06, 0.06);
+      0.74 +
+      0.2 * Math.sin(x * 0.05 + seed * 1.7) +
+      0.1 * Math.sin(x * 0.13 + seed) +
+      rng.range(-0.08, 0.08);
     const shelfInset = -0.18 + 0.1 * Math.sin(x * 0.07 + seed * 0.9);
     for (let ring = 0; ring < rows.length; ring++) {
       const t = rows[ring];
@@ -37,8 +37,8 @@ export function quarryBench(
       positions.push(x, y, z);
       uvs.push(x / 5, ring === 8 ? z / 5 : y / 5);
       // Warm sedimentary banding runs with height; shelves sit in shade.
-      const band = 1 + 0.045 * Math.sin(y * 1.15 + seed * 2.0);
-      const shade = (ring === 2 || ring === 4 ? 0.65 : 0.87) + rng.range(-0.05, 0.09);
+      const band = 1 + 0.05 * Math.sin(y * 1.15 + seed * 2.0);
+      const shade = (ring === 2 || ring === 4 ? 0.74 : 0.95) + rng.range(-0.04, 0.06);
       colors.push(shade * band, shade * (1 + (band - 1) * 0.6), shade * (1 + (band - 1) * 0.2));
       if (i < segments && ring < rows.length - 1) {
         const a = i * rows.length + ring;
@@ -80,6 +80,7 @@ export function quarryScreeSpots(): ScreeSpot[] {
     { x: -6, z: -70, rotY: Math.PI, length: 24, height: 3.4, depth: 6, seed: 37 },
     { x: 36, z: -70, rotY: Math.PI, length: 18, height: 3.0, depth: 5, seed: 49 },
     { x: -70, z: 6, rotY: -Math.PI / 2, length: 22, height: 3.3, depth: 5.5, seed: 61 },
+    { x: 70, z: -12, rotY: Math.PI / 2, length: 20, height: 3.2, depth: 5.5, seed: 73 },
   ];
 }
 
@@ -137,9 +138,11 @@ export interface ButteSpot {
   rotY: number;
 }
 
-/** A lone layered sentinel in the north-west apron, clear of the boundary. */
+/** A lone layered sentinel on the north apron, clear of the boundary, the
+ * conveyor, the excavator swing and both northern scree collapses. Centered so
+ * the whole northern play band sees it, not just the north-west corner. */
 export function quarryButteSpot(): ButteSpot {
-  return { x: -70, z: -63, baseY: -1.8, scale: 0.85, rotY: 0.9 };
+  return { x: 16, z: -68, baseY: -1.8, scale: 1, rotY: 0.15 };
 }
 
 // w, h, d, dx, dy, dz per stacked slab.
@@ -149,6 +152,7 @@ const BUTTE_SLABS: [number, number, number, number, number, number][] = [
   [10, 2.6, 8, -0.7, 7.3, 0.6],
   [7.6, 2.4, 6.2, 0.5, 9.9, -0.4],
   [5, 2.2, 4.4, -0.4, 12.2, 0.3],
+  [3.4, 1.8, 3, 0.3, 14, -0.2],
 ];
 
 /** World-space footprint corners of the stacked slabs, for placement checks. */

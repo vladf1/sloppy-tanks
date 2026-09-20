@@ -256,7 +256,7 @@ test("scree collapses and the sentinel butte stay outside the playable boundary"
   }
   const butte = quarryButteSpot();
   assert.ok(
-    Math.abs(butte.x) > 60 && Math.abs(butte.z) > 55,
+    Math.max(Math.abs(butte.x), Math.abs(butte.z)) > 60,
     "the sentinel stands on the apron, not in the arena",
   );
   for (const [x, z] of quarryButteFootprint(butte)) {

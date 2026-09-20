@@ -122,23 +122,39 @@ export class QuarryScenery extends THREE.Group {
     const equipment = new THREE.Group();
     const rng = new Random(9182);
     // Long, connected cuts replace the repeated perimeter boulders. Offset benches
-    // expose broad shelves and a broken skyline above the machinery apron.
+    // expose broad shelves and a broken skyline above the machinery apron. Each
+    // side digs to its own depth so the excavation never reads as a rectangle.
     for (const side of [-1, 1]) {
-      for (const [distance, height, base, depth] of [
-        [77, 6.5, -1.8, 22],
-        [94, 8, 2.5, 26],
-        [115, 11, 7.8, 70],
-      ]) {
+      const faces =
+        side < 0
+          ? [
+              [77, 7.5, -1.8, 22],
+              [95, 9, 2.5, 26],
+              [115, 12, 7.8, 70],
+            ]
+          : [
+              [78, 5.5, -1.8, 22],
+              [93, 7.5, 2.5, 26],
+              [114, 10, 7.8, 70],
+            ];
+      for (const [distance, height, base, depth] of faces) {
         const face = quarryBench(280, height, depth, distance + side * 17);
         if (side < 0) {
           face.rotation.y = Math.PI;
         }
         put(geology, face, 0, base, side * distance);
       }
-      for (const [distance, height, base] of [
-        [78, 6, -1.8],
-        [97, 10, 2.2],
-      ]) {
+      const flanks =
+        side < 0
+          ? [
+              [80, 5.5, -1.8],
+              [96, 8.5, 2.2],
+            ]
+          : [
+              [78, 6.5, -1.8],
+              [97, 9, 2.2],
+            ];
+      for (const [distance, height, base] of flanks) {
         const face = quarryBench(155, height, 50, distance + side * 37);
         face.rotation.y = (side * Math.PI) / 2;
         put(geology, face, side * distance, base, 0);
@@ -154,10 +170,36 @@ export class QuarryScenery extends THREE.Group {
       const y = 0.008 - Math.min(1.8, (Math.abs(z) - 60) * 0.3);
       put(geology, rock, x, y, z);
     }
+    // Half-buried flank boulders break the east/west aprons. A separate stream
+    // keeps the north/south rubble exactly where it was. Each candidate clears
+    // the parked truck, the scree runouts and the playable boundary.
+    const flankRng = new Random(1379);
+    const flankBlocks: [number, number, number, number][] = [
+      [64, 76, 10, 26], // haul truck bay
+      [69, 76.5, -23, -1], // east scree runout
+      [-76.5, -69, -6, 18], // west scree runout
+    ];
+    let flankPlaced = 0;
+    for (let i = 0; i < 40 && flankPlaced < 22; i++) {
+      const side = i % 2 ? -1 : 1;
+      const x = side * flankRng.range(64.5, 71);
+      const z = flankRng.range(-50, 50);
+      if (
+        flankBlocks.some(([x0, x1, z0, z1]) => x > x0 - 2 && x < x1 + 2 && z > z0 - 2 && z < z1 + 2)
+      ) {
+        continue;
+      }
+      const w = flankRng.range(1.4, 2.8);
+      const rock = sandstoneRock(w, flankRng.range(0.9, 1.8), flankRng.range(1.2, 2.4), i % 5);
+      rock.rotation.y = flankRng.range(-Math.PI, Math.PI);
+      const y = 0.008 - Math.min(1.8, (Math.abs(x) - 60) * 0.3) - 0.14;
+      put(geology, rock, x, y, z);
+      flankPlaced++;
+    }
 
     // Collapsed runouts interrupt the first terrace; the stacked sentinel gives
-    // the north-west apron one recognizable landmark. All footprints stay
-    // outside the playable boundary on the machinery apron.
+    // the north apron one recognizable landmark. All footprints stay outside
+    // the playable boundary on the machinery apron.
     for (const spot of quarryScreeSpots()) {
       const scree = quarryScree(spot.length, spot.height, spot.depth, spot.seed);
       scree.rotation.y = spot.rotY;
@@ -171,18 +213,28 @@ export class QuarryScenery extends THREE.Group {
     const excavator = quarryExcavator();
     excavator.rotation.y = -0.3;
     put(this, excavator, -24, -1.75, -68);
+    // The south apron sits behind the gameplay camera, so the haul truck parks
+    // on the east apron where the eastern spawn band sees it past the teeth.
     const truck = quarryDumpTruck();
-    truck.rotation.y = -0.45;
-    put(this, truck, 36, -1.75, 68);
+    truck.rotation.y = Math.PI / 2 + 0.18;
+    put(this, truck, 69, -1.75, 18);
     // Load the truck with a few large chunks instead of dozens of individual stones.
     for (let i = 0; i < 5; i++) {
       put(truck, sandstoneRock(2.6, 1.25, 2.2, i % 4), -0.6 + (i % 3) * 1.8, 3.8, i % 2 ? -1 : 1);
     }
     for (const side of [-1, 1]) {
       // Survey stakes and boundary hazard paint frame the arena without fencing in views.
+      // A few missing stakes and a slight lean keep the line from reading as a fence.
       for (let x = -56; x <= 56; x += 8) {
-        put(equipment, box(0.13, 1.8, 0.13, 0xb6aea0, 0), x, 0.8, side * 61.2);
-        put(equipment, box(0.17, 0.32, 0.17, 0xa55e3f, 0), x, 1.45, side * 61.2);
+        const index = (x + 56) / 8 + (side < 0 ? 2 : 0);
+        if (index % 7 === 3) {
+          continue;
+        }
+        const lean = 0.05 * Math.sin(x * 2.3 + side);
+        const stake = box(0.13, 1.8, 0.13, 0xb6aea0, 0);
+        stake.rotation.z = lean;
+        put(equipment, stake, x, 0.8, side * 61.2);
+        put(equipment, box(0.17, 0.32, 0.17, 0xa55e3f, 0), x - lean * 0.65, 1.45, side * 61.2);
       }
       for (let z = -55; z <= 55; z += 10) {
         put(equipment, harborBox(0.05, 0.3, 1.8, 0x383a35), side * 59.97, 0.72, z);
