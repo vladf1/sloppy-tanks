@@ -105,17 +105,22 @@ export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group):
   grassGeometry.computeVertexNormals();
   equipment.add(new THREE.Mesh(grassGeometry, grassMaterial));
 
-  // Idle screening conveyor: dark belt, rollers, truss and a small feed hopper.
+  // Idle screening conveyor: rust-red chords, dusty truss and a faded feed hopper.
   for (const z of [-71.4, -68.6]) {
-    beam(equipment, [-62, 0.3, z], [-42, 6.3, z], 0.24, 0x74817a);
-    beam(equipment, [-62, 1.6, z], [-42, 7.6, z], 0.14, 0xa69b76);
+    beam(equipment, [-62, 0.3, z], [-42, 6.3, z], 0.24, 0x8a5136);
+    beam(equipment, [-62, 1.6, z], [-42, 7.6, z], 0.14, 0xb08d46);
     for (let i = 0; i < 8; i++) {
       const x = -62 + i * 2.5;
       const y = 0.3 + i * 0.75;
-      beam(equipment, [x, y, z], [x + 2.5, y + 2.05, z], 0.09, 0x56635c);
-      beam(equipment, [x, y, z], [x, y + 1.3, z], 0.085, 0x56635c);
+      beam(equipment, [x, y, z], [x + 2.5, y + 2.05, z], 0.09, 0x6b5a48);
+      beam(equipment, [x, y, z], [x, y + 1.3, z], 0.085, 0x6b5a48);
     }
   }
+  // Muted teal drive motor and rust head drum mark the working head end.
+  put(equipment, harborBox(1.2, 1.0, 1.1, 0x4e7d7c), -41.6, 6.9, -70);
+  const drum = cylinder(0.5, 2.9, 0x8a4f2e, 12);
+  drum.rotation.x = Math.PI / 2;
+  put(equipment, drum, -42.1, 6.35, -70);
   const belt = box(21, 0.14, 2.5, 0x3d413b, 0);
   belt.rotation.z = Math.atan2(6, 20);
   put(equipment, belt, -52, 3.45, -70);
@@ -128,7 +133,7 @@ export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group):
     beam(equipment, [-46, -1.7, z], [-46, 5.4, z], 0.22, 0x68766e);
     beam(equipment, [-53, -1.7, z], [-46, 5.4, z], 0.17, 0x68766e);
   }
-  put(equipment, harborBox(4.2, 2.1, 3.7, 0x8e8e6f), -63, 0.2, -70);
+  put(equipment, harborBox(4.2, 2.1, 3.7, 0xb08d46), -63, 0.2, -70);
   put(equipment, box(3.7, 0.07, 3.2, 0x42483c, 0), -63, 1.29, -70);
   for (let i = 0; i < 9; i++) {
     put(
@@ -150,7 +155,19 @@ export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group):
   }
   put(equipment, cylinder(1.55, 3.8, 0xa8aaa0, 20), 27, 0.1, -70);
   for (const y of [-1.2, 1.35]) {
-    put(equipment, cylinder(1.6, 0.13, 0x61695e, 20), 27, y, -70);
+    put(equipment, cylinder(1.6, 0.13, 0x7e4a2c, 20), 27, y, -70);
+  }
+  // Rust-skirted office, faded generator and a tight teal/rust drum cluster.
+  put(equipment, harborBox(11.2, 0.5, 5.2, 0x7e4a2c), 37, -1.55, -70);
+  put(equipment, harborBox(2.2, 1.4, 1.2, 0xb08d46), 30.5, -1.1, -66.6);
+  put(equipment, harborBox(2.3, 0.18, 1.3, 0x4a4238), 30.5, -0.32, -66.6);
+  const drums: [number, number, number][] = [
+    [44.2, -65.2, 0x4e7d7c],
+    [45.35, -66.5, 0x4e7d7c],
+    [44.75, -65.75, 0x8a4f2e],
+  ];
+  for (const [x, z, color] of drums) {
+    put(equipment, cylinder(0.55, 1.3, color, 12), x, -1.15, z);
   }
   for (let i = 0; i < 8; i++) {
     put(

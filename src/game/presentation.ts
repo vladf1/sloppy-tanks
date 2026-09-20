@@ -9,6 +9,7 @@ import { addDebrisFade } from "./debris-fade";
 import { ARENA, LASER_DEFENSE, MINE_RADIUS, PICKUPS, TEAM_COLORS, VEHICLES } from "./data";
 import { healthBarState } from "./health-bar";
 import { HarborScenery } from "./harbor-scenery";
+import { QuarryDust } from "./quarry-dust";
 import { QuarryScenery } from "./quarry-scenery";
 import { Flags } from "./flags";
 import { sidingBox } from "./house-surfaces";
@@ -121,6 +122,7 @@ export class Presentation {
   pickupGlowGeometry = new THREE.SphereGeometry(1, 16, 10);
   tracks = new TrackTrails();
   trackDust = new TrackDust();
+  quarryDust = new QuarryDust();
   dummy = new THREE.Object3D();
   follow = new THREE.Vector3();
   zoom: number = CAMERA.defaultZoom;
@@ -149,6 +151,7 @@ export class Presentation {
     this.scene.add(this.worldGroup);
     this.scene.add(this.tracks.mesh);
     this.scene.add(this.trackDust.mesh, this.trackDust.gravel.mesh);
+    this.scene.add(this.quarryDust.mesh);
     this.scene.add(this.flags.group);
     const woodFragment = sidingBox(1.5, 0.18, 0.45, 0xffffff);
     const woodPiece = sidingBox(1, 1, 1, 0xffffff);
@@ -281,19 +284,22 @@ export class Presentation {
     if (this.quarryScenery) {
       this.quarryScenery.visible = quarry;
     }
-    const sky = quarry ? 0xc4d1d4 : harbor ? 0xa7bdc5 : 0xaacbc2;
+    // Dusty Dig bakes low and warm: a raking sun, cool shade fill and a pale
+    // dusty horizon. Every branch is reassigned on reset so switching maps
+    // restores the other themes exactly.
+    const sky = quarry ? 0xd3c6ae : harbor ? 0xa7bdc5 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
     this.scene.fog = new THREE.Fog(
       sky,
-      quarry ? 155 : harbor ? 150 : 210,
-      quarry ? 330 : harbor ? 260 : 380,
+      quarry ? 150 : harbor ? 150 : 210,
+      quarry ? 345 : harbor ? 260 : 380,
     );
-    this.lighting.sun.color.setHex(quarry ? 0xffdfb5 : harbor ? 0xffbf85 : 0xffd59b);
-    this.lighting.sun.position.set(-45, quarry ? 57 : harbor ? 55 : 68, 25);
-    this.lighting.sun.intensity = quarry ? 3.1 : 2.8;
-    this.lighting.fill.intensity = quarry ? 1.15 : 1.65;
-    this.lighting.fill.color.setHex(quarry ? 0xc8dafa : harbor ? 0xafcfee : 0xbdd5f5);
-    this.lighting.fill.groundColor.setHex(quarry ? 0x7c8799 : harbor ? 0x63778e : 0x75859b);
+    this.lighting.sun.color.setHex(quarry ? 0xffcf9c : harbor ? 0xffbf85 : 0xffd59b);
+    this.lighting.sun.position.set(-45, quarry ? 46 : harbor ? 55 : 68, 25);
+    this.lighting.sun.intensity = quarry ? 3.0 : 2.8;
+    this.lighting.fill.intensity = quarry ? 1.1 : 1.65;
+    this.lighting.fill.color.setHex(quarry ? 0xb9cff2 : harbor ? 0xafcfee : 0xbdd5f5);
+    this.lighting.fill.groundColor.setHex(quarry ? 0x6f7d92 : harbor ? 0x63778e : 0x75859b);
     disposeOwned(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
@@ -316,6 +322,8 @@ export class Presentation {
     this.pickupEffects = [];
     this.tracks.reset();
     this.trackDust.reset();
+    this.quarryDust.reset();
+    this.quarryDust.mesh.visible = quarry;
     for (const mesh of this.debrisMeshes.values()) {
       mesh.count = 0;
     }
@@ -864,6 +872,9 @@ export class Presentation {
     this.updatePickupEffects(simulation, alpha, dt);
     this.tracks.update(simulation, alpha);
     this.trackDust.update(simulation);
+    if (this.quarryScenery?.visible) {
+      this.quarryDust.update(simulation, dt);
+    }
     this.updateCamera(simulation, alpha, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
     this.updateTanks(simulation, alpha, dt);

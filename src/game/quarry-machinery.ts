@@ -1,12 +1,23 @@
 import * as THREE from "three";
 import { batch } from "./batching";
 import { harborBox } from "./harbor-surfaces";
-import { box, cylinder, put } from "./model-primitives";
+import { box, cylinder, material, put } from "./model-primitives";
 
-const PAINT = 0xb69a51;
-const STEEL = 0x51504a;
+// Sun-faded industrial yellow, dusty steel, rusty red and one muted teal accent.
+const PAINT = 0xc69a4b;
+const STEEL = 0x5a564c;
 const RUBBER = 0x343431;
 const GLASS = 0x526c72;
+const RUST = 0x8a4f2e;
+const TEAL = 0x4e7d7c;
+const DUST = 0xc9b78d;
+
+/** Shared weathered accent: rust eats light, dust film kills reflections. */
+function accent(w: number, h: number, d: number, color: number, metal: number, rough: number) {
+  const mesh = box(w, h, d, color, 0);
+  mesh.material = material(color, metal, rough);
+  return mesh;
+}
 
 // Reuse the existing scratched panel atlas, with its own material cache so
 // excavator paint can weather independently of harbor props and the haul truck.
@@ -98,7 +109,16 @@ export function quarryExcavator(): THREE.Group {
   for (let z = -1.2; z <= 1.2; z += 0.3) {
     put(group, box(0.09, 0.83, 0.05, STEEL, 0), -4.12, 3.75, z);
   }
-  put(group, cylinder(0.13, 1.3, RUBBER, 8), -2.9, 4.65, 1.45);
+  // Rusty exhaust stack, counterweight wear stripe and dust-caked track frames.
+  const stack = cylinder(0.13, 1.3, RUST, 8);
+  stack.material = material(RUST, 0.3, 0.9);
+  put(group, stack, -2.9, 4.65, 1.45);
+  put(group, accent(0.08, 0.5, 3.6, RUST, 0.3, 0.9), -4.16, 2.9, 0);
+  for (const z of [-2.25, 2.25]) {
+    put(group, accent(7.6, 0.14, 1.5, DUST, 0, 1), 0, 1.62, z);
+  }
+  // A muted teal toolbox breaks the yellow without shouting.
+  put(group, accent(1.3, 0.8, 0.6, TEAL, 0.3, 0.7), 1.8, 2.05, 2.3);
   put(group, harborBox(2.55, 2.65, 2.25, PAINT), 0.65, 4.55, -1.05);
   put(group, box(2.18, 1.85, 0.04, GLASS, 0), 0.65, 4.78, -2.19);
   put(group, box(0.04, 1.9, 1.88, GLASS, 0), 1.94, 4.78, -1.05);
@@ -171,6 +191,13 @@ export function quarryDumpTruck(): THREE.Group {
   put(group, harborBox(0.25, 3.2, 5.3, PAINT), -2.3, 4.5, 0);
   put(group, harborBox(3.5, 0.2, 5.3, PAINT), -3.95, 6, 0);
   put(group, harborBox(0.25, 0.6, 5.1, STEEL), -5.7, 2.25, 0);
+  // Dusty bed floor, rust-eaten rim and teal mudflaps behind the rear wheels.
+  put(group, accent(7.5, 0.12, 5.0, 0x4a4238, 0.1, 1), 1.45, 2.98, 0);
+  for (const side of [-1, 1]) {
+    put(group, accent(7.7, 0.28, 0.14, RUST, 0.3, 0.9), 1.45, 5.45, side * 2.62);
+    put(group, accent(0.08, 0.8, 0.6, TEAL, 0.2, 0.8), 4.62, 0.8, side * 2.6);
+  }
+  put(group, accent(3.3, 0.08, 4.3, DUST, 0, 1), -3.9, 5.42, 0);
   batch(group);
   return group;
 }

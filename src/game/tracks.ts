@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { spawnPositions } from "./arena";
 import { VEHICLES, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
 
@@ -57,6 +58,20 @@ export class TrackTrails {
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 1;
+  }
+
+  /** Quarry pads stand proud of the dirt, so prints on them ride on top. */
+  private markHeight(simulation: Simulation, x: number, z: number): number {
+    if (simulation.mapTheme === "quarry") {
+      for (const team of [0, 1] as const) {
+        for (const p of spawnPositions(team)) {
+          if (Math.hypot(x - p.x, z - p.z) < 2.75) {
+            return 0.16;
+          }
+        }
+      }
+    }
+    return 0.075;
   }
 
   reset(): void {
@@ -126,7 +141,9 @@ export class TrackTrails {
             continue;
           }
           for (const side of [-1, 1]) {
-            this.dummy.position.set(cx + cos * side * scale, 0.075, cz - sin * side * scale);
+            const mx = cx + cos * side * scale;
+            const mz = cz - sin * side * scale;
+            this.dummy.position.set(mx, this.markHeight(simulation, mx, mz), mz);
             this.dummy.rotation.set(0, angle, 0);
             this.dummy.scale.set(0.48 * scale, 1, 0.16 * scale);
             this.dummy.updateMatrix();

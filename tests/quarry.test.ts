@@ -2,6 +2,12 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pickupLayout, spawnPositions } from "../src/game/arena";
+import {
+  quarryButteFootprint,
+  quarryButteSpot,
+  quarryScreeSpots,
+} from "../src/game/quarry-benches";
+import { quarrySpawnPadPieces, type SpawnPadPiece } from "../src/game/quarry-scenery";
 import { quarryLayout } from "../src/game/quarry-layout";
 import { GROUP } from "../src/game/data";
 import { Simulation } from "../src/game/simulation";
@@ -217,4 +223,109 @@ test("quarry defenses form mirrored belts and supply bays use individual crates"
       );
     }
   }
+});
+
+test("scree collapses and the sentinel butte stay outside the playable boundary", () => {
+  const spots = quarryScreeSpots();
+  assert.ok(spots.length >= 4, "collapses interrupt several terraces");
+  assert.ok(
+    new Set(spots.map((s) => s.seed)).size === spots.length,
+    "each collapse has its own relief",
+  );
+  for (const spot of spots) {
+    // Local wedge corners: toe at z=0 rising to z=depth toward the cut.
+    const corners = [
+      [-spot.length / 2, 0],
+      [spot.length / 2, 0],
+      [-spot.length / 2, spot.depth],
+      [spot.length / 2, spot.depth],
+    ].map(([lx, lz]) => [
+      spot.x + lx * Math.cos(spot.rotY) + lz * Math.sin(spot.rotY),
+      spot.z - lx * Math.sin(spot.rotY) + lz * Math.cos(spot.rotY),
+    ]);
+    for (const [x, z] of corners) {
+      assert.ok(
+        Math.max(Math.abs(x), Math.abs(z)) > 60,
+        `scree corner inside the arena: ${x.toFixed(1)},${z.toFixed(1)}`,
+      );
+      assert.ok(
+        Math.max(Math.abs(x), Math.abs(z)) < 80,
+        `scree corner adrift from its terrace: ${x.toFixed(1)},${z.toFixed(1)}`,
+      );
+    }
+  }
+  const butte = quarryButteSpot();
+  assert.ok(
+    Math.abs(butte.x) > 60 && Math.abs(butte.z) > 55,
+    "the sentinel stands on the apron, not in the arena",
+  );
+  for (const [x, z] of quarryButteFootprint(butte)) {
+    assert.ok(
+      Math.max(Math.abs(x), Math.abs(z)) > 60.5,
+      `butte slab inside the boundary wall: ${x.toFixed(1)},${z.toFixed(1)}`,
+    );
+  }
+});
+
+test("spawn pads stay flat, compact and mirrored between teams", () => {
+  const pads = [quarrySpawnPadPieces(0), quarrySpawnPadPieces(1)];
+  for (const pieces of pads) {
+    assert.ok(pieces.length > 10, "pads have graded detail, not a bare disc");
+    for (const piece of pieces) {
+      assert.ok(
+        piece.y + piece.h / 2 <= 1.1,
+        `${piece.shape} rises above paint height and could read as cover`,
+      );
+      assert.ok(
+        Math.hypot(piece.dx, piece.dz) + Math.max(piece.w, piece.d) / 2 <= 3.1,
+        `${piece.shape} sprawls past its pad into the combat lanes`,
+      );
+    }
+  }
+  for (const pieces of pads) {
+    const chevrons = pieces.filter((p) => p.shape === "chevron");
+    assert.equal(chevrons.length, 2);
+    for (const c of chevrons) {
+      assert.ok(c.w >= 2.0, "chevron arms read at gameplay distance");
+    }
+    // The arms share one apex; the wedge centroid sits on the spawn point.
+    const ends = chevrons.map((c) => {
+      const ex = (Math.cos(c.rotY) * c.w) / 2;
+      const ez = (-Math.sin(c.rotY) * c.w) / 2;
+      return [
+        [c.dx + ex, c.dz + ez],
+        [c.dx - ex, c.dz - ez],
+      ];
+    });
+    let best = Infinity;
+    let apex = ends[0][0];
+    let far: number[][] = [ends[0][1], ends[1][0]];
+    for (const a of ends[0]) {
+      for (const b of ends[1]) {
+        const gap = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        if (gap < best) {
+          best = gap;
+          apex = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          far = [
+            a === ends[0][0] ? ends[0][1] : ends[0][0],
+            b === ends[1][0] ? ends[1][1] : ends[1][0],
+          ];
+        }
+      }
+    }
+    assert.ok(best <= 0.05, "chevron arms meet at a shared apex");
+    const centroid = [(apex[0] + far[0][0] + far[1][0]) / 3, (apex[1] + far[0][1] + far[1][1]) / 3];
+    assert.ok(Math.hypot(centroid[0], centroid[1]) <= 0.05, "wedge centers on the pad");
+  }
+  // Point symmetry through the arena center keeps deployment fair. A half turn
+  // maps orientations to themselves plus pi, which the box arms share. Rounding
+  // absorbs float dust and signed zeroes from the trig coordinates.
+  const num = (v: number) => {
+    const q = Math.round(v * 1000) / 1000;
+    return (q === 0 ? 0 : q).toFixed(3);
+  };
+  const turn = (r: number) => num(((r % Math.PI) + Math.PI) % Math.PI);
+  const key = (p: SpawnPadPiece) => [p.shape, num(p.dx), num(p.dz), turn(p.rotY)].join("|");
+  const mirror = (p: SpawnPadPiece): string => key({ ...p, dx: -p.dx, dz: -p.dz });
+  assert.deepEqual(pads[1].map(key).sort(), pads[0].map(mirror).sort());
 });

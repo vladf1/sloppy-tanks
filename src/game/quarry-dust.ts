@@ -1,0 +1,153 @@
+import * as THREE from "three";
+import { updateInstances } from "./render-resources";
+import type { Simulation } from "./simulation";
+
+export const QUARRY_DUST_CAPACITY = 48;
+export const QUARRY_DUST_MAX_OPACITY = 0.1;
+
+interface Wisp {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  life: number;
+  max: number;
+  size: number;
+  phase: number;
+}
+
+/** Sparse windblown wisps along the quarry apron: one bounded instanced draw,
+ * no textures, lights, physics bodies or per-frame allocations. Cosmetic
+ * randomness is deliberately independent from the seeded simulation. */
+export class QuarryDust {
+  readonly mesh: THREE.InstancedMesh;
+  private opacity = new THREE.InstancedBufferAttribute(new Float32Array(QUARRY_DUST_CAPACITY), 1);
+  private wisps: Wisp[] = [];
+  private free: Wisp[] = Array.from({ length: QUARRY_DUST_CAPACITY }, () => ({
+    x: 0,
+    y: 0,
+    z: 0,
+    vx: 0,
+    life: 0,
+    max: 0,
+    size: 0,
+    phase: 0,
+  }));
+  private timer = 0;
+  private dummy = new THREE.Object3D();
+
+  constructor() {
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    geometry.setAttribute("wispOpacity", this.opacity);
+    const material = new THREE.ShaderMaterial({
+      uniforms: { dustColor: { value: new THREE.Color(0xe3cfa5) } },
+      transparent: true,
+      depthWrite: false,
+      vertexShader: `
+        attribute float wispOpacity;
+        varying vec2 dustUv;
+        varying float dustOpacity;
+        void main() {
+          dustUv = uv;
+          dustOpacity = wispOpacity;
+          vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          center.xy += position.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+          gl_Position = projectionMatrix * center;
+        }`,
+      fragmentShader: `
+        uniform vec3 dustColor;
+        varying vec2 dustUv;
+        varying float dustOpacity;
+        void main() {
+          float radius = length(dustUv * 2.0 - 1.0);
+          float alpha = (1.0 - smoothstep(0.1, 1.0, radius)) * dustOpacity;
+          gl_FragColor = vec4(dustColor, alpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+    });
+    this.mesh = new THREE.InstancedMesh(geometry, material, QUARRY_DUST_CAPACITY);
+    this.mesh.name = "quarry-wind-dust";
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.opacity.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.visible = false;
+  }
+
+  reset(): void {
+    this.free.push(...this.wisps);
+    this.wisps.length = 0;
+    this.timer = 0;
+    this.mesh.count = 0;
+    this.mesh.visible = false;
+  }
+
+  private spawn(): void {
+    const wisp = this.free.pop();
+    if (!wisp) {
+      return;
+    }
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const z = side * (63 + Math.random() * 8);
+    // Rest on the dipped apron outside the wall, the same grade the terrain bakes.
+    const ground = -Math.min(1.8, (Math.abs(z) - 60) * 0.3);
+    wisp.x = -70 + Math.random() * 140;
+    wisp.z = z;
+    wisp.y = ground + 0.5 + Math.random() * 0.9;
+    wisp.vx = 1.2 + Math.random() * 1.2;
+    wisp.life = wisp.max = 5 + Math.random() * 3;
+    wisp.size = 2.5 + Math.random() * 2;
+    wisp.phase = Math.random() * Math.PI * 2;
+    this.wisps.push(wisp);
+  }
+
+  update(simulation: Simulation, dt: number): void {
+    if (simulation.mapTheme !== "quarry") {
+      if (this.mesh.count > 0 || this.mesh.visible) {
+        this.reset();
+      }
+      return;
+    }
+    this.mesh.visible = true;
+    // Frozen while paused or between rounds, like the track dust pool.
+    if (simulation.match.phase !== "playing") {
+      return;
+    }
+    const step = Math.min(dt, 0.1);
+    this.timer -= step;
+    if (this.timer <= 0) {
+      this.timer = 0.35 + Math.random() * 0.6;
+      this.spawn();
+    }
+    let live = 0;
+    for (const wisp of this.wisps) {
+      wisp.life -= step;
+      if (wisp.life <= 0) {
+        this.free.push(wisp);
+        continue;
+      }
+      wisp.x += wisp.vx * step;
+      wisp.z += Math.sin(simulation.elapsed * 0.6 + wisp.phase) * 0.5 * step;
+      this.wisps[live++] = wisp;
+    }
+    this.wisps.length = live;
+    this.mesh.count = live;
+    for (let i = 0; i < live; i++) {
+      const wisp = this.wisps[i];
+      const age = 1 - wisp.life / wisp.max;
+      const size = wisp.size * (0.8 + age * 1.2);
+      this.dummy.position.set(wisp.x, wisp.y, wisp.z);
+      this.dummy.scale.set(size, size * 0.55, 1);
+      this.dummy.updateMatrix();
+      this.mesh.setMatrixAt(i, this.dummy.matrix);
+      this.opacity.setX(i, Math.sin(age * Math.PI) * QUARRY_DUST_MAX_OPACITY);
+    }
+    updateInstances(this.mesh);
+    if (this.mesh.count) {
+      this.opacity.clearUpdateRanges();
+      this.opacity.addUpdateRange(0, this.mesh.count);
+      this.opacity.needsUpdate = true;
+    }
+  }
+}
