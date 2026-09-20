@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Controls } from "../src/game/controls";
-function fixture(pauseOnFocusLoss = true) {
+function fixture(pauseWhenHidden = true) {
   const win = new EventTarget(),
     doc = new EventTarget(),
     canvas = new EventTarget();
@@ -26,7 +26,7 @@ function fixture(pauseOnFocusLoss = true) {
     () => pauses++,
     (n) => zooms.push(n),
     () => true,
-    pauseOnFocusLoss,
+    pauseWhenHidden,
   );
   const emit = (target: EventTarget, name: string, props: Record<string, unknown>) => {
     const event = new Event(name, { cancelable: true });
@@ -96,13 +96,28 @@ test("inactive play rejects wheel selection and pause, blur, visibility and clea
   }
   f.dispose();
 });
-test("focus loss clears held movement, fire, and queued mines and requests pause", () => {
+test("focus loss clears held movement, fire, and queued mines without pausing", () => {
   const f = fixture();
   f.emit(f.win, "keydown", { code: "KeyD" });
   f.emit(f.canvas, "pointerdown", { button: 0 });
   f.emit(f.canvas, "pointerdown", { button: 2 });
   assert.equal(f.controls.fire, true);
   f.emit(f.win, "blur", {});
+  const command = f.controls.command(1);
+  assert.equal(command.moveX, 0);
+  assert.equal(command.fire, false);
+  assert.equal(command.mine, false);
+  assert.equal(f.pauses, 0);
+  f.dispose();
+});
+
+test("hidden visibility clears input and requests pause", () => {
+  const f = fixture();
+  f.emit(f.win, "keydown", { code: "KeyD" });
+  f.emit(f.canvas, "pointerdown", { button: 0 });
+  f.emit(f.canvas, "pointerdown", { button: 2 });
+  Object.assign(f.doc, { hidden: true });
+  f.emit(f.doc, "visibilitychange", {});
   const command = f.controls.command(1);
   assert.equal(command.moveX, 0);
   assert.equal(command.fire, false);

@@ -35,7 +35,7 @@ Map links accept `?map=village`, `?map=harbor`, `?map=quarry` or `?map=surprise`
 | Shift + scroll     | Zoom                                                     |
 | Escape / Pause     | Pause                                                    |
 
-Losing focus clears input and pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
+Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
 ## Development
 

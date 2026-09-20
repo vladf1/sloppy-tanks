@@ -26,7 +26,7 @@ export class Controls {
     public pause: () => void,
     zoom: (amount: number) => void,
     public active: () => boolean = () => true,
-    pauseOnFocusLoss = true,
+    pauseWhenHidden = true,
   ) {
     window.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
@@ -117,15 +117,14 @@ export class Controls {
       { passive: false },
     );
     window.addEventListener("blur", () => {
+      // Blur also fires when the user clicks browser chrome or another visible
+      // window. Release held input, but keep the round running in those cases.
       this.clear();
-      if (pauseOnFocusLoss) {
-        pause();
-      }
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         this.clear();
-        if (pauseOnFocusLoss) {
+        if (pauseWhenHidden) {
           pause();
         }
       }
