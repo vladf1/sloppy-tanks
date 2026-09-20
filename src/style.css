@@ -45,6 +45,9 @@ canvas#game {
   pointer-events: auto;
   cursor: pointer;
   padding: 5px;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
 }
 #nerd-stats button:focus-visible {
   outline: 2px solid #ffd45a;
@@ -61,9 +64,23 @@ canvas#game {
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
 }
+#nerd-stats summary {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+}
+#nerd-stats details + details {
+  margin-top: 6px;
+}
 #nerd-stats pre {
-  margin: 4px 5px;
-  font: inherit;
+  margin: 0 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  pointer-events: auto;
 }
 #hud {
   position: absolute;
