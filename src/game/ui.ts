@@ -1,3 +1,4 @@
+import { endBattle } from "./match";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
 import { bindGameOptions, syncGameOptions } from "./game-options";
@@ -138,7 +139,12 @@ export class UI {
       death.textContent = this.deathCause;
     }
     this.overlay.querySelector("#start")?.addEventListener("click", this.start);
+    this.overlay.querySelector("#play-again")?.addEventListener("click", this.start);
     this.overlay.querySelector("#resume")?.addEventListener("click", this.resume);
+    this.overlay.querySelector("#end-battle")?.addEventListener("click", () => {
+      endBattle(simulation.match);
+      this.update(0);
+    });
     this.overlay.querySelector("#restart")?.addEventListener("click", this.restart);
     for (const key of ["volume", "tank-speed", "bullet-speed"]) {
       this.overlay.querySelector<HTMLInputElement>("#" + key)?.addEventListener("input", (e) => {

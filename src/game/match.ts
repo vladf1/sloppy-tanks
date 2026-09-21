@@ -42,3 +42,13 @@ function finish(match: Match, team: Team): void {
   match.winner = team;
   match.phase = "results";
 }
+
+/** Finish the current round for its recap without declaring an unearned winner. */
+export function endBattle(match: Match): void {
+  if (match.phase !== "paused" && match.phase !== "playing") {
+    return;
+  }
+  match.endedEarly = true;
+  match.winner = null;
+  match.phase = "results";
+}

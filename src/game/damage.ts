@@ -1,3 +1,4 @@
+import { recordDeath, recordKill } from "./combat-record";
 import { blastDebris } from "./debris-physics";
 import { movedCoverRegion } from "./movable-cover";
 import { breakScenery } from "./scenery-pieces";
@@ -39,6 +40,9 @@ export function damageTank(
   if (tank.shield > 0 && tank.shieldPoints > 0) {
     const absorbed = Math.min(amount, tank.shieldPoints);
     tank.shieldPoints -= absorbed;
+    if (tank.human) {
+      simulation.combatRecord.shieldAbsorbed += absorbed;
+    }
     amount -= absorbed;
     if (tank.shieldPoints === 0) {
       tank.shield = 0;
@@ -46,8 +50,12 @@ export function damageTank(
   }
   const hullDamage = Math.min(tank.hp, Math.max(0, amount));
   tank.hp -= amount;
+  if (tank.human) {
+    simulation.combatRecord.damageTaken += hullDamage;
+  }
   const attacker = simulation.tanks.find((candidate) => candidate.id === owner);
   if (attacker && attacker.team === team && attacker.team !== tank.team && hullDamage > 0) {
+    attacker.damageDealt += hullDamage;
     earnExperience(simulation, attacker, hullDamage + (tank.hp <= 0 ? KILL_XP : 0), ownerLife);
   }
   const position = tank.body.translation();
@@ -67,6 +75,7 @@ export function damageTank(
     return;
   }
   tank.hp = 0;
+  recordDeath(simulation, tank, owner);
   tank.alive = false;
   tank.laser = 0;
   clearAmmo(tank);
@@ -76,6 +85,12 @@ export function damageTank(
   const killer = simulation.tanks.find((candidate) => candidate.id === owner);
   if (killer && killer !== tank && killer.team !== tank.team) {
     killer.kills++;
+    recordKill(simulation, killer, tank, ownerLife, source);
+    // Old ordnance counts toward the round, never toward a replacement life.
+    if (killer.alive && (ownerLife === undefined || ownerLife === killer.deaths)) {
+      killer.lifeKills++;
+      killer.bestLifeKills = Math.max(killer.bestLifeKills, killer.lifeKills);
+    }
   }
   if (simulation.gameMode === "team") {
     awardKill(simulation.match, tank.team, team, owner === tank.id, !simulation.endlessMatch);
@@ -136,6 +151,9 @@ export function damageCover(
   }
   cover.alive = false;
   simulation.destroyed++;
+  if (simulation.tanks.some((tank) => tank.human && tank.id === owner && tank.team === team)) {
+    simulation.combatRecord.coverDestroyed++;
+  }
   for (let i = 0; i < cover.body.numColliders(); i++) {
     simulation.coverByCollider.delete(cover.body.collider(i).handle);
   }

@@ -3,14 +3,9 @@ import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { TEAM_COLORS } from "./data";
 import { quarryTerrain } from "./quarry-terrain";
-import {
-  quarryBench,
-  quarryButte,
-  quarryButteSpot,
-  quarryScree,
-  quarryScreeSpots,
-} from "./quarry-benches";
+import { quarryBench, quarryButte, quarryButteSpot, quarryScreeSpots } from "./quarry-benches";
 import { quarrySiteDetails } from "./quarry-site-details";
+import { quarryScree } from "./quarry-scree";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
@@ -116,7 +111,8 @@ export class QuarryScenery extends THREE.Group {
   constructor(renderer: THREE.WebGLRenderer) {
     super();
     this.name = "dusty-dig-scenery";
-    this.add(quarryTerrain(renderer));
+    const terrain = quarryTerrain(renderer);
+    this.add(terrain);
 
     const geology = new THREE.Group();
     const equipment = new THREE.Group();
@@ -201,10 +197,7 @@ export class QuarryScenery extends THREE.Group {
     // the north apron one recognizable landmark. All footprints stay outside
     // the playable boundary on the machinery apron.
     for (const spot of quarryScreeSpots()) {
-      const scree = quarryScree(spot.length, spot.height, spot.depth, spot.seed);
-      scree.rotation.y = spot.rotY;
-      const dip = Math.min(1.8, (Math.max(Math.abs(spot.x), Math.abs(spot.z)) - 60) * 0.3);
-      put(geology, scree, spot.x, 0.008 - dip, spot.z);
+      geology.add(...quarryScree(spot, terrain.material));
     }
     const butteSpot = quarryButteSpot();
     const butte = quarryButte(butteSpot.scale, butteSpot.rotY);

@@ -100,6 +100,9 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       weapon,
     });
     simulation.shotsFired++;
+    if (tank.human) {
+      simulation.combatRecord.shots++;
+    }
   }
   consumeAmmo(tank, weapon);
   if (tank.kind === "humvee" && !tank.human) {

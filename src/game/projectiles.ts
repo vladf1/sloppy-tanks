@@ -401,6 +401,15 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
       coverKind: timber ? "timber" : undefined,
     });
   } else if (next.kind === "tank") {
+    if (
+      !shot.recapHit &&
+      simulation.tanks.some((tank) => tank.human && tank.id === shot.owner) &&
+      next.tank.team !== shot.team &&
+      next.tank.protection <= 0
+    ) {
+      shot.recapHit = true;
+      simulation.combatRecord.directHits++;
+    }
     if (shot.weapon === "rocket") {
       simulation.explode(
         shot,

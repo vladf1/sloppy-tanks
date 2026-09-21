@@ -57,6 +57,10 @@ export interface Tank {
   previous: Vec2;
   recoil: number;
   kills: number;
+  damageDealt: number;
+  lifeKills: number;
+  bestLifeKills: number;
+  highestRank: number;
   deaths: number;
   xp: number;
   lastCombat: number;
@@ -138,6 +142,7 @@ export interface Cover extends Vec2 {
 /** Planar projectile state. vx/vz are metres per second; life is remaining seconds. */
 export interface Shot extends Vec2 {
   y?: number; // Combat height at the muzzle; hit detection remains on the arena plane.
+  recapHit?: boolean;
   visualY?: number; // Render height at the muzzle; may differ from the combat lane.
   /** Target selected when a bot-fired TOW is launched; guidance is render-independent. */
   targetId?: number;
@@ -250,6 +255,7 @@ export interface Match {
   time: number;
   scores: [number, number];
   overtime: boolean;
+  endedEarly?: boolean;
   winner: Team | null;
   round: number;
 }

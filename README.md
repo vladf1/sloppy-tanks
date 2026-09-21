@@ -39,6 +39,8 @@ Losing focus clears held input, while a hidden page pauses the round. Standard a
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
+Choose **END BATTLE** from the pause menu to finish early and see your current stats without declaring a winner. The game-over screen is a battle report: eliminations, busiest rolling minute, longest life, best killing spree, damage dealt, highest rank, average kills per minute, direct projectile hit rate, five-second multikills, low-hull kills, revenge, previous-life ordnance kills, mine kills, demolition, pickups, hull damage taken, and shield damage absorbed. Earned callouts celebrate feats such as ONE-TANK ARMY and DEAD BUT DANGEROUS. Survival time excludes pauses; direct hit rate excludes splash-only hits and counts spread pellets individually. Personal bests are saved in this browser separately for each mode, map, and difficulty. PLAY AGAIN immediately starts another round with your current settings; BATTLE SETUP returns to the menu.
+
 ## Development
 
 ```sh

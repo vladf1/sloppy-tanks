@@ -966,3 +966,185 @@ h2 {
     padding: 13px 20px;
   }
 }
+
+.menu.results {
+  max-width: 880px;
+  padding: 18px 30px;
+  text-align: center;
+}
+.results .eyebrow {
+  margin-bottom: 6px;
+}
+.results h2 {
+  font-size: clamp(30px, 6vw, 38px);
+  margin: 4px 0 6px;
+}
+.results .result-score {
+  font-size: 36px;
+  margin: 4px 0;
+}
+.recap-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  text-align: left;
+}
+.recap-stat {
+  background: #091d32a8;
+  border: 1px solid #a6dfff24;
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+.recap-stat.is-record {
+  border-color: #ffda7880;
+  background: #ffda780c;
+}
+.recap-stat dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #b4d3e7;
+}
+.recap-stat dd {
+  margin: 4px 0;
+  font-size: clamp(23px, 4vw, 32px);
+  font-weight: 800;
+  color: #fff5d9;
+}
+.recap-stat dd small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+}
+.recap-stat > span {
+  font-size: 11px;
+  color: #a6dfff;
+}
+.recap-stat.is-record > span {
+  color: #ffda78;
+}
+.results .recap-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #b4d3e7;
+}
+.recap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.recap-actions button {
+  flex: 1 1 160px;
+}
+@media (max-width: 480px) {
+  .menu.results {
+    padding: 16px;
+  }
+  .recap-stat {
+    padding: 10px;
+  }
+}
+
+#overlay:has(.results) {
+  align-items: safe center;
+}
+.results > p {
+  margin: 6px 0;
+}
+.results > p:empty {
+  display: none;
+}
+.recap-feats {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0 10px;
+  justify-content: center;
+}
+.recap-feats > div {
+  flex: 1;
+  max-width: 400px;
+}
+.recap-feats b {
+  display: block;
+  color: #ffda78;
+  font-size: 12px;
+  letter-spacing: 0.8px;
+}
+.recap-feats span {
+  display: block;
+  margin-top: 5px;
+  color: #c6d9e6;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.recap-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: #b4d3e7;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  margin: 4px 0 8px;
+}
+.recap-heading span {
+  color: #ffda78;
+}
+.recap-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  text-align: left;
+  margin: 8px 0;
+}
+.recap-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #a6dfff20;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #e2ecf5;
+}
+.recap-detail dd {
+  text-align: right;
+  margin: 0;
+  font-weight: 800;
+  font-size: 17px;
+  white-space: nowrap;
+}
+.recap-detail small {
+  display: block;
+  color: #a9c6d9;
+  font-size: 9px;
+  font-weight: 400;
+  margin-top: 3px;
+  line-height: 1.3;
+}
+.recap-detail.is-record dd small {
+  color: #ffda78;
+}
+.results .recap-actions button {
+  margin-top: 0;
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.5px;
+  padding: 14px 20px;
+}
+@media (max-width: 600px) {
+  .recap-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .recap-details {
+    grid-template-columns: 1fr;
+  }
+  .recap-feats {
+    flex-direction: column;
+    align-items: center;
+  }
+}

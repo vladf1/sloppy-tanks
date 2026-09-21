@@ -98,6 +98,10 @@ export function spawnTank(
     previous: { ...position },
     recoil: 0,
     kills: 0,
+    damageDealt: 0,
+    lifeKills: 0,
+    bestLifeKills: 0,
+    highestRank: 0,
     deaths: 0,
     xp: 0,
     lastCombat: 0,
@@ -146,6 +150,10 @@ export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2)
     )!;
   Object.assign(tank, createTankBody(simulation.world, kind, p));
   tank.xp = 0;
+  tank.lifeKills = 0;
+  if (tank.human) {
+    simulation.combatRecord.lifeStarted = simulation.elapsed;
+  }
   tank.lastCombat = simulation.elapsed;
   tank.hp = simulation.maxHealth(tank);
   tank.alive = true;

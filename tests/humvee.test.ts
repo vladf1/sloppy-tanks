@@ -1,4 +1,5 @@
-import { tankBurnout } from "../src/game/tank-destruction";
+import { breakTank } from "../src/game/wrecks";
+import { tankBurnout, humveeTumble } from "../src/game/tank-destruction";
 import {
   updateHumveeGoal,
   steadyHumveeShot,
@@ -487,11 +488,45 @@ test("Humvee deaths alternate between quiet burnouts and bounded whole-vehicle t
       assert.equal(pieces[0].part, "intact");
       const lift = pieces[0].body.linvel().y;
       const spin = Math.hypot(...Object.values(pieces[0].body.angvel()));
-      assert.ok(quiet ? lift > 6 && lift < 7.1 : lift > 8);
-      assert.ok(quiet ? spin < 1 : spin > 4);
+      assert.ok(quiet ? lift > 6 && lift < 7.1 : lift > 4 && lift < 11);
+      assert.ok(quiet ? spin < 1 : spin > 3 && spin < 7);
       assert.equal(simulation.world.bodies.len(), bodies);
     } finally {
       simulation.dispose();
     }
   }
+});
+
+test("Humvee low rolls settle on a side at either heading without consuming combat RNG", () => {
+  for (const heading of [0, Math.PI / 2]) {
+    const simulation = new Simulation(2);
+    const control = new Simulation(2);
+    try {
+      const hunter = simulation.tanks.find((tank) => tank.kind === "humvee")!;
+      for (const cover of simulation.covers) simulation.world.removeRigidBody(cover.body);
+      for (const tank of simulation.tanks)
+        if (tank !== hunter) simulation.world.removeRigidBody(tank.body);
+      hunter.heading = heading;
+      hunter.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+      hunter.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      breakTank(simulation, hunter);
+      assert.equal(simulation.rng.next(), control.rng.next());
+      const wreck = simulation.fragments.find((fragment) => fragment.wreck === "humvee")!;
+      for (let i = 0; i < 300; i++) simulation.world.step();
+      const q = wreck.body.rotation();
+      const sideUp = 2 * (q.x * q.y + q.w * q.z);
+      assert.ok(Math.abs(sideUp) > 0.95, `expected side landing, got ${sideUp}`);
+    } finally {
+      simulation.dispose();
+      control.dispose();
+    }
+  }
+});
+
+test("Humvee tumble selection varies axes and direction reproducibly", () => {
+  const motions = Array.from({ length: 64 }, (_, seed) => humveeTumble(seed, 9, 1));
+  assert.equal(new Set(motions.map((motion) => motion.height)).size, 4);
+  assert.ok(motions.some((motion) => motion.roll > 0));
+  assert.ok(motions.some((motion) => motion.roll < 0));
+  assert.deepEqual(humveeTumble(12, 9, 1), humveeTumble(12, 9, 1));
 });

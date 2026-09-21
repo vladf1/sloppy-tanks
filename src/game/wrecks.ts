@@ -1,4 +1,5 @@
 import { HUMVEE_BODY_LENGTH_SCALE } from "./humvee-model";
+import { humveeTumble } from "./tank-destruction";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { trackDebrisContacts } from "./debris-physics";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
@@ -17,8 +18,10 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
     const velocity = tank.body.linvel();
     // Exploding Humvees tumble whole; quiet burnouts only hop and rock.
     const tumble = humvee && !burnout;
-    const hopHeight = tumble ? 3.2 : 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
-    const rock = ((tank.id + tank.deaths) % 2 ? 1 : -1) * (tumble ? 5 : 0.85);
+    const motion = humveeTumble(simulation.seed, tank.id, tank.deaths);
+    const hopHeight = tumble ? motion.height : 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
+    const pitch = tumble ? motion.pitch : ((tank.id + tank.deaths) % 2 ? 1 : -1) * 0.85;
+    const roll = tumble ? motion.roll : 0;
     simulation.world.removeRigidBody(tank.body);
     simulation.reserveFragments(1);
     const body = simulation.world.createRigidBody(
@@ -26,11 +29,11 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
         .setTranslation(origin.x, origin.y - 0.4 + 0.55 * scale, origin.z)
         .setLinvel(velocity.x * 0.2, Math.sqrt(2 * GRAVITY * hopHeight), velocity.z * 0.2)
         .setAngvel({
-          x: Math.cos(tank.heading) * rock,
-          y: rock * 0.15,
-          z: -Math.sin(tank.heading) * rock,
+          x: Math.cos(tank.heading) * pitch + Math.sin(tank.heading) * roll,
+          y: tumble ? motion.yaw : pitch * 0.15,
+          z: -Math.sin(tank.heading) * pitch + Math.cos(tank.heading) * roll,
         })
-        .setAngularDamping(tumble ? 0.35 : 3.5)
+        .setAngularDamping(tumble ? motion.damping : 3.5)
         .setCcdEnabled(true),
     );
     body.setAdditionalSolverIterations(2);

@@ -1,3 +1,4 @@
+import { recapMarkup } from "./round-recap";
 import { AMMO_HELP, AMMO_ORDER } from "./ammunition";
 import { SCORE_LIMIT, TEAM_NAMES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
@@ -40,28 +41,21 @@ export function menuMarkup(simulation: Simulation, controlHelp: string): string 
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
         ${speedSliders()}
         <button id="resume" class="primary">RESUME</button>
-        <button id="restart" class="secondary">New Battle</button>
-        </section>`;
-  } else if (phase === "results" && simulation.gameMode === "solo") {
-    return `
-      <section class="menu compact">
-        <div class="eyebrow">SOLO ASSAULT / ${simulation.mapName}</div>
-        <h2>${simulation.match.winner === simulation.humanTeam ? "SURVIVED" : "TANK DESTROYED"}</h2>
-        <div class="result-score">${simulation.human.kills}</div>
-        <p>Enemy kills.<br>${!simulation.human.alive ? "Your run is over." : "You survived the full ten minutes."}</p>
-        <p id="death-cause" role="status"></p>
-        <button id="restart" class="primary">ANOTHER ROUND</button>
+        <button id="end-battle" class="secondary">END BATTLE</button>
         </section>`;
   } else if (phase === "results") {
-    return `
-      <section class="menu compact">
-        <div class="eyebrow">ROUND COMPLETE / ${simulation.mapName}</div>
-        <h2>${simulation.match.winner === simulation.humanTeam ? "VICTORY" : "DEFEAT"}</h2>
-        <div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div>
-        <p>${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}.<br>You scored ${simulation.human.kills} eliminations · ${simulation.human.deaths} wrecks<br>${simulation.destroyed} pieces of cover demolished.</p>
-        <p id="death-cause" role="status"></p>
-        <button id="restart" class="primary">ANOTHER ROUND</button>
-        </section>`;
+    const solo = simulation.gameMode === "solo";
+    const endedEarly = simulation.match.endedEarly;
+    const won = simulation.match.winner === simulation.humanTeam;
+    return `<section class="menu compact results">
+      <div class="eyebrow">${solo ? "SOLO ASSAULT" : "ROUND COMPLETE"} / ${simulation.mapName}</div>
+      <h2>${endedEarly ? "BATTLE ENDED" : solo ? (won ? "SURVIVED" : "TANK DESTROYED") : won ? "VICTORY" : "DEFEAT"}</h2>
+      ${solo ? `<p>${endedEarly ? "Run ended early. Here’s how you did." : won ? "Ten minutes. One tank. Still standing." : "One more run. One more personal best?"}</p>` : `<div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div><p>${endedEarly ? "Ended early" : `${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}`} · ${simulation.human.deaths} personal wrecks</p>`}
+      ${recapMarkup(simulation)}
+      <p id="death-cause" role="status"></p>
+      <div class="recap-actions"><button id="play-again" class="primary">PLAY AGAIN</button>
+      <button id="restart" class="secondary">BATTLE SETUP</button></div>
+    </section>`;
   } else if (!simulation.human.alive) {
     return `
       <section class="menu respawn">

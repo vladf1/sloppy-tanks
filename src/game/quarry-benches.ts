@@ -75,59 +75,13 @@ export interface ScreeSpot {
  * the machinery apron, clear of the playable boundary and the haul loop. */
 export function quarryScreeSpots(): ScreeSpot[] {
   return [
-    { x: -32, z: 70, rotY: 0, length: 26, height: 3.6, depth: 6, seed: 11 },
-    { x: 16, z: 70, rotY: 0, length: 20, height: 3.1, depth: 5.5, seed: 23 },
-    { x: -6, z: -70, rotY: Math.PI, length: 24, height: 3.4, depth: 6, seed: 37 },
-    { x: 36, z: -70, rotY: Math.PI, length: 18, height: 3.0, depth: 5, seed: 49 },
-    { x: -70, z: 6, rotY: -Math.PI / 2, length: 22, height: 3.3, depth: 5.5, seed: 61 },
-    { x: 70, z: -12, rotY: Math.PI / 2, length: 20, height: 3.2, depth: 5.5, seed: 73 },
+    { x: -32, z: 70, rotY: 0, length: 26, height: 3.6, depth: 12, seed: 11 },
+    { x: 16, z: 70, rotY: 0, length: 20, height: 3.1, depth: 12, seed: 23 },
+    { x: -6, z: -70, rotY: Math.PI, length: 24, height: 3.4, depth: 11, seed: 37 },
+    { x: 36, z: -70, rotY: Math.PI, length: 18, height: 3.0, depth: 11, seed: 49 },
+    { x: -70, z: 6, rotY: -Math.PI / 2, length: 22, height: 3.3, depth: 14, seed: 61 },
+    { x: 70, z: -12, rotY: Math.PI / 2, length: 20, height: 3.2, depth: 12, seed: 73 },
   ];
-}
-
-/** A collapsed wedge leaning against the cut: smooth ~30-degree runout with a
- * sandy toe grading into fractured rock at the face. */
-export function quarryScree(
-  length: number,
-  height: number,
-  depth: number,
-  seed: number,
-): THREE.Mesh {
-  const rng = new Random(seed * 131 + 7);
-  const across = Math.max(4, Math.round(length / 2));
-  const rows = [0, 0.35, 0.7, 1];
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  for (let r = 0; r < rows.length; r++) {
-    const t = rows[r];
-    for (let i = 0; i <= across; i++) {
-      const x = (i / across - 0.5) * length + rng.range(-0.4, 0.4) * t;
-      const crest = 0.85 + 0.2 * (0.5 + 0.5 * Math.sin((i / across) * 5.1 + seed));
-      const px = x;
-      const py = t * height * crest;
-      const pz = t * depth + rng.range(-0.3, 0.3) * t;
-      positions.push(px, py, pz);
-      uvs.push(px / 5, (py + pz) / 5);
-      // Pale runout sand gives way to darker fractured caprock at the face.
-      const shade = 1.02 - t * 0.24 + rng.range(-0.04, 0.04);
-      colors.push(shade, shade * 0.985, shade * 0.95);
-      if (r < rows.length - 1 && i < across) {
-        const a = r * (across + 1) + i;
-        const b = a + across + 1;
-        indices.push(a, b, a + 1, b, b + 1, a + 1);
-      }
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  const mesh = new THREE.Mesh(geometry, sandstoneMaterial());
-  mesh.castShadow = mesh.receiveShadow = true;
-  return mesh;
 }
 
 export interface ButteSpot {

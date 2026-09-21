@@ -37,6 +37,7 @@ export function earnExperience(
   const oldMax = simulation.maxHealth(tank);
   tank.xp = Math.min(RANKS.at(-1)!.xp, tank.xp + amount);
   const after = rankIndex(tank);
+  tank.highestRank = Math.max(tank.highestRank, after);
   if (after === before) {
     return;
   }

@@ -1,3 +1,4 @@
+import { newCombatRecord } from "./combat-record";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { barrelCollider } from "./barrel-physics";
 import { botCommand } from "./ai";
@@ -73,6 +74,7 @@ export class Simulation {
   match = newMatch();
   nextId = 1;
   elapsed = 0;
+  combatRecord = newCombatRecord();
   seed: number;
   humanTeam: Team;
   humanKind: VehicleKind = "balanced";
@@ -148,6 +150,7 @@ export class Simulation {
     this.fragments = [];
     this.events = [];
     this.elapsed = 0;
+    this.combatRecord = newCombatRecord();
     this.reinforcementDelay = 0;
     this.wreckView = undefined;
     this.destroyed = 0;

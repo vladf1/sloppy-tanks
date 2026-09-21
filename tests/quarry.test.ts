@@ -233,7 +233,7 @@ test("scree collapses and the sentinel butte stay outside the playable boundary"
     "each collapse has its own relief",
   );
   for (const spot of spots) {
-    // Local wedge corners: toe at z=0 rising to z=depth toward the cut.
+    // The rear of each solid pile is buried inside the first quarry cut.
     const corners = [
       [-spot.length / 2, 0],
       [spot.length / 2, 0],
@@ -249,7 +249,7 @@ test("scree collapses and the sentinel butte stay outside the playable boundary"
         `scree corner inside the arena: ${x.toFixed(1)},${z.toFixed(1)}`,
       );
       assert.ok(
-        Math.max(Math.abs(x), Math.abs(z)) < 80,
+        Math.max(Math.abs(x), Math.abs(z)) < 85,
         `scree corner adrift from its terrace: ${x.toFixed(1)},${z.toFixed(1)}`,
       );
     }

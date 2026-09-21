@@ -21,7 +21,8 @@ function noise(x: number, z: number): number {
   );
 }
 
-const EXTENT = 210;
+export const QUARRY_TERRAIN_EXTENT = 210;
+const EXTENT = QUARRY_TERRAIN_EXTENT;
 const ACCUM_CELLS = 105;
 
 /** Windblown sand piled against cover: splatted once per layout, sampled per pixel. */
@@ -89,7 +90,7 @@ function sampleAccum(grid: Float32Array, x: number, z: number): number {
 /** A baked, metre-scaled work yard: pale sand sheets, dark compacted haul routes,
  * exposed rocky soil, wheel ruts and aggregate. Generated once for the retained
  * scenery, never during round reset or rendering. */
-export function quarryTerrain(renderer: THREE.WebGLRenderer): THREE.Mesh {
+export function quarryTerrain(renderer: THREE.WebGLRenderer) {
   const size = 2048;
   const extent = EXTENT;
   const canvas = document.createElement("canvas");
