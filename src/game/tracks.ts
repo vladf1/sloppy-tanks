@@ -8,6 +8,7 @@ import type { Simulation } from "./simulation";
 export const TRACK_CAPACITY = 81920;
 export const TRACK_LIFETIME = 24;
 const SPACING = 0.42;
+export const HUMVEE_TRACK_STRENGTH = 0.18;
 interface Pose {
   x: number;
   z: number;
@@ -15,10 +16,11 @@ interface Pose {
   pending: number;
 }
 
-/** Cosmetic, distance-spaced twin treads in one bounded draw call. */
+/** Cosmetic, distance-spaced twin vehicle trails in one bounded draw call. */
 export class TrackTrails {
   mesh: THREE.InstancedMesh;
   private birth = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_CAPACITY), 1);
+  private strength = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_CAPACITY), 1);
   private clock = { value: 0 };
   private poses = new Map<number, Pose>();
   // Expiry order is a ring; render slots stay dense so mesh.count excludes dead marks.
@@ -30,6 +32,7 @@ export class TrackTrails {
   constructor() {
     const geometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     geometry.setAttribute("trackBirth", this.birth);
+    geometry.setAttribute("trackStrength", this.strength);
     const material = new THREE.MeshBasicMaterial({
       color: 0x283222,
       transparent: true,
@@ -42,19 +45,21 @@ export class TrackTrails {
     material.onBeforeCompile = (shader) => {
       shader.uniforms.trackTime = this.clock;
       shader.vertexShader =
-        `attribute float trackBirth;\nvarying float treadAge;\nuniform float trackTime;\n${shader.vertexShader}`.replace(
+        `attribute float trackBirth;\nattribute float trackStrength;\nvarying float treadAge;\nvarying float treadStrength;\nuniform float trackTime;\n${shader.vertexShader}`.replace(
           "#include <begin_vertex>",
-          "#include <begin_vertex>\ntreadAge = trackTime - trackBirth;",
+          "#include <begin_vertex>\ntreadAge = trackTime - trackBirth;\ntreadStrength = trackStrength;",
         );
-      shader.fragmentShader = `varying float treadAge;\n${shader.fragmentShader}`.replace(
-        "#include <color_fragment>",
-        `#include <color_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(4.0, ${TRACK_LIFETIME.toFixed(1)}, treadAge);`,
-      );
+      shader.fragmentShader =
+        `varying float treadAge;\nvarying float treadStrength;\n${shader.fragmentShader}`.replace(
+          "#include <color_fragment>",
+          `#include <color_fragment>\ndiffuseColor.a *= treadStrength;\ndiffuseColor.a *= 1.0 - smoothstep(4.0, ${TRACK_LIFETIME.toFixed(1)}, treadAge);`,
+        );
     };
-    material.customProgramCacheKey = () => "tank-tread-fade-v1";
+    material.customProgramCacheKey = () => "tank-tread-fade-strength-v1";
     this.mesh = new THREE.InstancedMesh(geometry, material, TRACK_CAPACITY);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.birth.setUsage(THREE.DynamicDrawUsage);
+    this.strength.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 1;
@@ -80,6 +85,7 @@ export class TrackTrails {
     this.poses.clear();
     this.mesh.instanceMatrix.clearUpdateRanges();
     this.birth.clearUpdateRanges();
+    this.strength.clearUpdateRanges();
     this.clock.value = 0;
   }
 
@@ -97,11 +103,13 @@ export class TrackTrails {
       if (slot !== last) {
         this.mesh.instanceMatrix.array.copyWithin(slot * 16, last * 16, (last + 1) * 16);
         this.birth.setX(slot, this.birth.getX(last));
+        this.strength.setX(slot, this.strength.getX(last));
         const queueIndex = this.queueIndices[last];
         this.queueIndices[slot] = queueIndex;
         this.slots[queueIndex] = slot;
         this.mesh.instanceMatrix.addUpdateRange(slot * 16, 16);
         this.birth.addUpdateRange(slot, 1);
+        this.strength.addUpdateRange(slot, 1);
         changed = true;
       }
       this.oldest = (this.oldest + 1) % TRACK_CAPACITY;
@@ -123,7 +131,10 @@ export class TrackTrails {
       const distance = Math.hypot(x - previous.x, z - previous.z);
       const turn = angleDelta(previous.heading, tank.heading);
       const scale = VEHICLES[tank.kind].scale;
-      const spacing = SPACING * scale;
+      const humvee = tank.kind === "humvee";
+      // HMMWV wheels leave overlapping narrow lines; tracked vehicles retain
+      // the separated tread-pad rhythm used by the rest of the fleet.
+      const spacing = (humvee ? 0.16 : SPACING) * scale;
       const length = distance + Math.abs(turn) * 1.5 * scale;
       if (distance > 5 || Math.abs(turn) > 0.8 || position.y > 1.25) {
         previous.pending = 0;
@@ -145,7 +156,7 @@ export class TrackTrails {
             const mz = cz - sin * side * scale;
             this.dummy.position.set(mx, this.markHeight(simulation, mx, mz), mz);
             this.dummy.rotation.set(0, angle, 0);
-            this.dummy.scale.set(0.48 * scale, 1, 0.16 * scale);
+            this.dummy.scale.set((humvee ? 0.18 : 0.48) * scale, 1, (humvee ? 0.3 : 0.16) * scale);
             this.dummy.updateMatrix();
             const slot = this.mesh.count++;
             const queueIndex = (this.oldest + slot) % TRACK_CAPACITY;
@@ -153,6 +164,7 @@ export class TrackTrails {
             this.queueIndices[slot] = queueIndex;
             this.mesh.setMatrixAt(slot, this.dummy.matrix);
             this.birth.setX(slot, simulation.elapsed);
+            this.strength.setX(slot, humvee ? HUMVEE_TRACK_STRENGTH : 1);
           }
         }
         previous.pending = (previous.pending + length) % spacing;
@@ -165,11 +177,13 @@ export class TrackTrails {
     if (written) {
       this.mesh.instanceMatrix.addUpdateRange(first * 16, written * 16);
       this.birth.addUpdateRange(first, written);
+      this.strength.addUpdateRange(first, written);
       changed = true;
     }
     if (changed) {
       this.mesh.instanceMatrix.needsUpdate = true;
       this.birth.needsUpdate = true;
+      this.strength.needsUpdate = true;
     }
   }
 

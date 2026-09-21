@@ -13,8 +13,13 @@ export function driveTank(tank: Tank, command: VehicleCommand, dt: number): void
   if (inputMagnitude > DRIVE_DEADZONE) {
     const desired = Math.atan2(command.moveX, command.moveZ);
     // Choose the nearer end of the hull; perpendicular input favors forward.
-    const reverse =
+    const reverseRequested =
       Math.abs(angleDelta(tank.heading, desired)) > Math.PI / 2 + REVERSE_ANGLE_EPSILON;
+    // HMMWVs are hunters: rotate and drive forward to retreat instead of
+    // backing into danger. Only a committed stuck-position recovery may use
+    // reverse gear.
+    const reverse =
+      reverseRequested && (tank.kind !== "humvee" || tank.human || tank.brain.recovery > 0);
     const target = desired + (reverse ? Math.PI : 0);
     const turn = angleDelta(tank.heading, target);
     tank.heading += Math.max(-HULL_TURN_SPEED * dt, Math.min(HULL_TURN_SPEED * dt, turn));

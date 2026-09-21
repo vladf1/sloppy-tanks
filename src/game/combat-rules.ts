@@ -5,6 +5,9 @@ export const COMBAT = {
   rocketBlastRadius: 5.3,
   rocketTopSpeedMultiplier: 2.5,
   rocketAccelerationSeconds: 1,
+  // TOWs can correct toward their marked target, but their turn radius stays
+  // readable and they never snap around like a guided rocket.
+  towTurnRate: 1.35,
   rapidReloadMultiplier: 0.5,
   // Leave a gap after a ray contact so the next query does not hit the same face at time zero.
   muzzleClearance: 0.001,

@@ -1,3 +1,4 @@
+import { updateHumveeGoal } from "./humvee-tactics";
 import { enemyDifficulty } from "./difficulty";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { canCollectAmmo, isSpecialAmmo } from "./ammunition";
@@ -49,7 +50,14 @@ export function updateBotGoal(
     threats,
     (candidate) =>
       -distance(position, candidate.body.translation()) *
-      (candidate.id === brain.target ? TARGET_STICKINESS : 1),
+        (candidate.id === brain.target ? TARGET_STICKINESS : 1) -
+      (tank.kind === "humvee"
+        ? threats.filter(
+            (other) =>
+              other !== candidate &&
+              distance(other.body.translation(), candidate.body.translation()) < 14,
+          ).length * 12
+        : 0),
   );
   if (target) {
     if (target.id !== brain.target) {
@@ -62,11 +70,13 @@ export function updateBotGoal(
     }
     brain.target = target.id;
     brain.memory = aggressive ? 3 : 1.5;
-    brain.goal = {
+    brain.lastSeen = {
       x: target.body.translation().x,
       z: target.body.translation().z,
     };
-    brain.lastSeen = { ...brain.goal };
+    if (tank.kind !== "humvee") {
+      brain.goal = { ...brain.lastSeen };
+    }
     brain.mode = "fight";
   } else if (brain.memory <= 0) {
     brain.target = 0;
@@ -76,6 +86,9 @@ export function updateBotGoal(
     simulation.rng.range(-profile.aimError, profile.aimError) +
     (easy ? simulation.rng.range(-0.2, 0.2) : 0);
   brain.aimError *= enemyDifficulty(simulation, tank).aimError;
+  if (tank.kind === "humvee" && updateHumveeGoal(simulation, tank)) {
+    return;
+  }
   const useful = simulation.pickups.filter(
     (pickup) =>
       pickup.available &&
@@ -133,7 +146,13 @@ export function updateBotGoal(
           : flank;
     }
   }
-  if (!easy && !target && brain.mode === "advance" && brain.personality === "support") {
+  if (
+    !easy &&
+    !target &&
+    brain.mode === "advance" &&
+    brain.personality === "support" &&
+    tank.kind !== "humvee"
+  ) {
     const allies = simulation.tanks.filter(
       (candidate) =>
         candidate.alive &&

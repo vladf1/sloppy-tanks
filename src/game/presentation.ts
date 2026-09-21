@@ -651,7 +651,7 @@ export class Presentation {
       group.userData.turret.rotateY(tank.aim - tank.heading);
       group.userData.barrel.position.z = -tank.recoil * 0.2;
       group.userData.trackGroup.position.z =
-        (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
+        tank.kind === "humvee" ? 0 : (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
       group.scale.setScalar(VEHICLES[tank.kind].scale);
       bar.position.set(group.position.x, tank.human ? 2.85 : 2.15, group.position.z);
       bar.quaternion.copy(this.camera.quaternion);

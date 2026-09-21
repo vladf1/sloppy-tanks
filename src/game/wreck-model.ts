@@ -3,7 +3,7 @@ import { batch } from "./batching";
 import { isMesh } from "./render-resources";
 import { tankModel } from "./tank-model";
 import type { Team, VehicleKind, WreckPart } from "./types";
-// At most 3 chassis × 2 teams × 5 assemblies. Shared geometry lives across rounds.
+// Bounded by chassis × teams × assemblies. Shared geometry lives across rounds.
 const wreckTemplates = new Map<string, THREE.Group>();
 /** Extract, center and batch once; instances share geometry but own their transforms. */
 export function wreckModel(kind: VehicleKind, team: Team, part: WreckPart) {

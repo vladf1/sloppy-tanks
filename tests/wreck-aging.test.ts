@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { ageWreckMaterial } from "../src/game/wreck-aging";
 
-test("wreck paint and emissive darken 70 percent over 2.5 seconds without compounding", () => {
+test("wreck paint starts dimmed and fades to 20 percent brightness without compounding", () => {
   const live = new THREE.MeshStandardMaterial({ color: 0xdb3838, emissive: 0x331010 });
   const wreck = live.clone();
   const color = live.color.clone();
   const emissive = live.emissive.clone();
   for (const [age, multiplier] of [
-    [0, 1],
-    [1.25, 0.65],
-    [2.5, 0.3],
-    [20, 0.3],
-    [20, 0.3],
+    [0, 0.8],
+    [1.25, 0.5],
+    [2.5, 0.2],
+    [20, 0.2],
+    [20, 0.2],
   ]) {
     ageWreckMaterial(wreck, age);
     for (const channel of ["r", "g", "b"] as const) {

@@ -1,3 +1,4 @@
+import { humveeCanFire, steadyHumveeShot, humveeHoldingPosition } from "./humvee-tactics";
 import { COMBAT } from "./combat-rules";
 import { tankHitTime } from "./hitboxes";
 import { enemyDifficulty } from "./difficulty";
@@ -64,6 +65,7 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
   }
   let firingRange = BREACH_RANGE;
   let breaching = false;
+  let humveeLane = false;
   const command = idleCommand();
   command.ammoSelection = "standard";
   let { x: mx, z: mz } = routeDirection(simulation, tank);
@@ -71,8 +73,9 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
   if (target && brain.memory > 0) {
     const actual = target.body.translation();
     const seen = simulation.visible(position, actual);
+    humveeLane = tank.kind === "humvee" && seen && humveeCanFire(tank);
     if (seen) {
-      command.ammoSelection = weapon;
+      command.ammoSelection = weapon === "tow" ? undefined : weapon;
     }
     if (seen || aggressive) {
       brain.lastSeen = { x: actual.x, z: actual.z };
@@ -89,10 +92,11 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     command.aim = turn(desired);
     command.fire =
       seen &&
+      (tank.kind !== "humvee" || humveeCanFire(tank)) &&
       d <= profile.sight &&
       brain.reaction <= 0 &&
       Math.abs(angleDelta(command.aim, desired)) < (profile.stationary ? 0.13 : 0.2);
-    if (brain.mode === "fight" && seen && brain.recovery <= 0) {
+    if (tank.kind !== "humvee" && brain.mode === "fight" && seen && brain.recovery <= 0) {
       const movement = combatMovement(tank, q.x - position.x, q.z - position.z, role % 2 ? 1 : -1);
       mx = movement.x;
       mz = movement.z;
@@ -102,7 +106,8 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     command.aim = turn(Math.atan2(mx, mz));
   }
   // Deliberately clear nearby weak timber and towers that obstruct a useful route.
-  if (!command.fire) {
+  // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
+  if (!command.fire && tank.kind !== "humvee") {
     const weak = simulation.covers.find(
       (o) =>
         o.alive &&
@@ -125,11 +130,17 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
       breaching = true;
     }
   }
+  const firingWeapon = breaching ? "standard" : weapon;
   if (
     command.fire &&
-    friendlyBlocksShot(simulation, tank, command.aim, command.ammoSelection, firingRange)
+    friendlyBlocksShot(simulation, tank, command.aim, firingWeapon, firingRange)
   ) {
     command.fire = false;
+    humveeLane = false;
+  }
+  if (tank.kind === "humvee") {
+    const steady = steadyHumveeShot(tank, humveeLane, dt);
+    command.fire = command.fire && steady;
   }
   // Personality cadence also applies when breaching; human weapon cadence is separate.
   if (brain.fireDelay > 0) {
@@ -140,8 +151,13 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     }
     brain.fireDelay = easy
       ? simulation.rng.range(2, 3)
-      : botReload(tank, simulation.rng.range(0.1, 0.25), command.ammoSelection);
+      : botReload(tank, simulation.rng.range(0.1, 0.25), firingWeapon);
     brain.fireDelay *= enemyDifficulty(simulation, tank).reload;
+  }
+  if (tank.kind === "humvee" && humveeHoldingPosition(simulation, tank)) {
+    command.moveX = command.moveZ = 0;
+    brain.stuck = 0;
+    return command;
   }
   recoverBot(simulation, tank, { x: mx, z: mz }, dt);
   if (brain.recovery > 0) {

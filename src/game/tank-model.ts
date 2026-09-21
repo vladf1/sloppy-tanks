@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { TEAM_COLORS, VEHICLES } from "./data";
 import { box, cylinder, material, put } from "./model-primitives";
+import { humveeModel } from "./humvee-model";
 import { applyTankSurface } from "./tank-surfaces";
 import type { Team, VehicleKind } from "./types";
 // Shared geometry keeps the more detailed silhouette inexpensive to instance/batch.
@@ -125,6 +126,9 @@ export function tankModel(
   wreck = false,
   openTurretRing = false,
 ): TankModel {
+  if (kind === "humvee") {
+    return humveeModel(team, wreck);
+  }
   const root = new THREE.Group() as TankModel;
   const hull = new THREE.Group();
   const turret = new THREE.Group();

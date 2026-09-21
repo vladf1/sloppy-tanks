@@ -5,6 +5,7 @@ const AUDIO = {
   hitIntervalMs: 80,
   botShotIntervalMs: 35,
   explosionIntervalMs: 70,
+  destructionIntervalMs: 80,
   laserIntervalMs: 50,
   audibleDistance: 38,
   fadeDistance: 40,
@@ -22,9 +23,20 @@ const shotSounds = {
   standard: "shot",
   spread: "shot-spread",
   rocket: "shot-rocket",
+  tow: "shot-rocket",
   ricochet: "shot-ricochet",
   piercing: "shot-piercing",
 } as const satisfies Record<Weapon, string>;
+
+/** Drums emit a separate blast event; do not play a second sound for their shell. */
+export function destructionSound(event: SimEvent): "wood-break" | "rubble-break" | null {
+  if (event.type !== "destroy" || event.coverKind === "drum") {
+    return null;
+  }
+  return event.coverKind === "tree" || event.coverKind === "timber" || event.coverKind === "cargo"
+    ? "wood-break"
+    : "rubble-break";
+}
 
 export class AudioSystem {
   sounds = {
@@ -34,6 +46,8 @@ export class AudioSystem {
     "shot-ricochet": sound("shot-ricochet", 16),
     "shot-piercing": sound("shot-piercing", 16),
     explosion: sound("explosion"),
+    "wood-break": sound("wood-break"),
+    "rubble-break": sound("rubble-break"),
     impact: sound("impact"),
     pickup: sound("pickup"),
     hit: sound("hit"),
@@ -42,6 +56,7 @@ export class AudioSystem {
   };
   enabled = false;
   lastExplosion = -Infinity;
+  lastDestruction = -Infinity;
   lastShot = -Infinity;
   lastHit = -Infinity;
   lastLaser = -Infinity;
@@ -69,29 +84,35 @@ export class AudioSystem {
       return;
     }
     const shot = event.type === "shot";
-    const explosion = ["explosion", "death", "destroy"].includes(event.type);
+    const explosion = event.type === "explosion" || event.type === "death";
+    const destruction = destructionSound(event);
     if (shot && !playerEvent && now - this.lastShot < AUDIO.botShotIntervalMs) {
       return;
     }
     if (explosion && now - this.lastExplosion < AUDIO.explosionIntervalMs) {
       return;
     }
+    if (destruction && now - this.lastDestruction < AUDIO.destructionIntervalMs) {
+      return;
+    }
     if (event.type === "laser" && now - this.lastLaser < AUDIO.laserIntervalMs) {
       return;
     }
-    const key = shot
-      ? shotSounds[event.weapon ?? "standard"]
-      : explosion
-        ? "explosion"
-        : event.type === "pickup"
-          ? "pickup"
-          : event.type === "promotion" && playerEvent
-            ? "promotion"
-            : event.type === "laser"
-              ? "laser"
-              : event.type === "impact" || event.type === "ricochet"
-                ? "impact"
-                : null;
+    const key =
+      destruction ??
+      (shot
+        ? shotSounds[event.weapon ?? "standard"]
+        : explosion
+          ? "explosion"
+          : event.type === "pickup"
+            ? "pickup"
+            : event.type === "promotion" && playerEvent
+              ? "promotion"
+              : event.type === "laser"
+                ? "laser"
+                : event.type === "impact" || event.type === "ricochet"
+                  ? "impact"
+                  : null);
     if (!key) {
       return;
     }
@@ -104,10 +125,13 @@ export class AudioSystem {
     if (event.type === "laser") {
       this.lastLaser = now;
     }
+    if (destruction) {
+      this.lastDestruction = now;
+    }
     const effect = this.sounds[key];
     const id = effect.play();
     effect.volume(
-      (explosion ? 0.45 : shot ? 0.25 : event.type === "laser" ? 0.12 : 0.18) *
+      (explosion ? 0.45 : destruction ? 0.24 : shot ? 0.25 : event.type === "laser" ? 0.12 : 0.18) *
         Math.max(0.05, 1 - d / AUDIO.fadeDistance),
       id,
     );

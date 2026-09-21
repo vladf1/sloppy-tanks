@@ -1,8 +1,9 @@
+import { withdrawHumvee } from "./humvee-tactics";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { consumeAmmo, equippedWeapon } from "./ammunition";
 import { COMBAT } from "./combat-rules";
 import { GROUP, PLAYER_FIRE_RATE_MULTIPLIER, TEAM_COLORS, WEAPONS } from "./data";
-import { tankHitTime, tankMuzzle } from "./hitboxes";
+import { tankHitTime, tankMuzzle, tankVisualMuzzle } from "./hitboxes";
 import type { Simulation } from "./simulation";
 import type { Shot, Tank } from "./types";
 import { rankStats } from "./veterancy";
@@ -14,15 +15,31 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
   if (!tank.alive || tank.cooldown > 0) {
     return;
   }
-  tank.protection = 0;
-  tank.lastCombat = simulation.elapsed;
-  tank.cooldown = weaponInterval(tank);
-  tank.recoil = 1;
   const position = tank.body.translation();
   const weapon = equippedWeapon(tank);
   const w = WEAPONS[weapon];
   const muzzle = tankMuzzle(tank.kind);
+  const visualMuzzle = tankVisualMuzzle(tank.kind);
   const muzzleHeight = position.y - 0.4 + muzzle.y;
+  const visualMuzzleHeight = position.y - 0.4 + visualMuzzle.y;
+  const towTarget =
+    weapon === "tow"
+      ? simulation.tanks.find(
+          (candidate) =>
+            candidate.id === tank.brain.target && candidate.alive && candidate.team !== tank.team,
+        )
+      : undefined;
+  // Only launch at a visible enemy; rejected requests must not consume a reload.
+  if (
+    weapon === "tow" &&
+    (!towTarget || !simulation.visible(position, towTarget.body.translation()))
+  ) {
+    return;
+  }
+  tank.protection = 0;
+  tank.lastCombat = simulation.elapsed;
+  tank.cooldown = weaponInterval(tank);
+  tank.recoil = 1;
   const direction = { x: Math.sin(tank.aim), y: 0, z: Math.cos(tank.aim) };
   // Trace to the muzzle so a barrel poking into cover or a tank cannot shoot through it.
   let spawnDistance = muzzle.z;
@@ -67,6 +84,9 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       x: position.x + direction.x * spawnDistance,
       z: position.z + direction.z * spawnDistance,
       y: muzzleHeight,
+      visualY: visualMuzzleHeight,
+      targetId: towTarget?.id,
+      targetLife: towTarget?.deaths,
       vx: Math.sin(angle) * w.speed,
       vz: Math.cos(angle) * w.speed,
       damage: w.damage * rankStats(tank).damage,
@@ -82,6 +102,9 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
     simulation.shotsFired++;
   }
   consumeAmmo(tank, weapon);
+  if (tank.kind === "humvee" && !tank.human) {
+    withdrawHumvee(simulation, tank);
+  }
   if (tank.human && weapon !== "standard" && tank.selectedAmmo === "standard") {
     simulation.events.push({
       type: "notice",

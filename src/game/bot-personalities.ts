@@ -135,6 +135,9 @@ export const BOT_AMMO: Record<BotPersonality, Weapon> = {
   support: "ricochet",
 };
 export function preferredAmmo(tank: Tank): Weapon {
+  if (tank.kind === "humvee") {
+    return "tow";
+  }
   const preferred = BOT_AMMO[tank.brain.personality];
   return hasAmmo(tank, preferred)
     ? preferred

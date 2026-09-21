@@ -1,11 +1,12 @@
+import type { HumveeTactics } from "./humvee-tactics";
 import type { TimberHit, TimberJoin, TimberPart } from "./timber-layout";
 import type RAPIER from "@dimforge/rapier3d-compat";
 import type { DebrisMaterial } from "./debris-physics";
 import type { BotPersonality } from "./bot-personalities";
 export type Team = 0 | 1;
-export type VehicleKind = "scout" | "balanced" | "heavy";
-export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing";
-export type SpecialAmmo = Exclude<Weapon, "standard">;
+export type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
+export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing" | "tow";
+export type SpecialAmmo = Exclude<Weapon, "standard" | "tow">;
 export type AmmoInventory = Record<SpecialAmmo, number>;
 export type AmmoSelection = Weapon | -1 | 1;
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
@@ -64,6 +65,7 @@ export interface Tank {
 }
 /** Bot memory survives between decisions; steering and recovery update every fixed tick. */
 interface Brain {
+  humvee?: HumveeTactics;
   personality: BotPersonality;
   ultraAggressive: boolean;
   lastSeen: Vec2;
@@ -135,7 +137,11 @@ export interface Cover extends Vec2 {
 }
 /** Planar projectile state. vx/vz are metres per second; life is remaining seconds. */
 export interface Shot extends Vec2 {
-  y?: number; // Render height at the muzzle; combat remains on the arena plane.
+  y?: number; // Combat height at the muzzle; hit detection remains on the arena plane.
+  visualY?: number; // Render height at the muzzle; may differ from the combat lane.
+  /** Target selected when a bot-fired TOW is launched; guidance is render-independent. */
+  targetId?: number;
+  targetLife?: number;
   id: number;
   owner: number;
   /** Owner's death count when fired, to keep XP attached to that life. */

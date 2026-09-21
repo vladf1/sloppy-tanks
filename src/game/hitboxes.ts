@@ -14,24 +14,40 @@ const shapes = Object.fromEntries(
     const bounds = new Box3().setFromObject(model.userData.hull);
     const size = bounds.getSize(new Vector3());
     const center = bounds.getCenter(new Vector3());
+    const visualMuzzle = model.userData.muzzle.getWorldPosition(new Vector3());
+    const muzzle = visualMuzzle.clone();
+    if (kind === "humvee") {
+      // Keep the visual roof launcher high, but put its combat lane inside the
+      // planar tank hit volume used by the rest of the simulation.
+      muzzle.y = 1.15;
+    }
     return [
       kind,
       {
         shape: new RAPIER.Cuboid(
           size.x / 2 + SHELL_HIT_RADIUS,
-          0.9, // Combat is planar: shells travel at a fixed height.
+          0.9, // Combat is planar; visual launcher height does not enlarge the target.
           size.z / 2 + SHELL_HIT_RADIUS,
         ),
         center,
         size,
-        muzzle: model.userData.muzzle.getWorldPosition(new Vector3()),
+        muzzle,
+        visualMuzzle,
       },
     ];
   }),
-) as Record<VehicleKind, { shape: RAPIER.Cuboid; center: Vector3; size: Vector3; muzzle: Vector3 }>;
+) as Record<
+  VehicleKind,
+  { shape: RAPIER.Cuboid; center: Vector3; size: Vector3; muzzle: Vector3; visualMuzzle: Vector3 }
+>;
 
 export function tankMuzzle(kind: VehicleKind) {
   return shapes[kind].muzzle;
+}
+
+/** Render-only launch point; unlike tankMuzzle, this is not used for collision queries. */
+export function tankVisualMuzzle(kind: VehicleKind) {
+  return shapes[kind].visualMuzzle;
 }
 
 /** Full visible footprint for tank contact, without the shell-radius allowance. */

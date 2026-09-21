@@ -709,3 +709,31 @@ test("bot spread checks side pellets and ignores dead allies", () => {
   assert.equal(friendlyBlocksShot(s, bot, 0, "spread", 35), false);
   s.dispose();
 });
+
+test("breaching checks the standard shell lane even when spread ammo is preferred", () => {
+  const s = game();
+  try {
+    clear(s);
+    const bot = place(s, 2, 0, 0);
+    place(s, 0, 2.6, 10);
+    place(s, 1, 40, 40);
+    bot.aim = 0;
+    bot.ammo.spread = 5;
+    bot.brain.personality = "scout";
+    Object.assign(bot.brain, {
+      target: 0,
+      memory: 0,
+      decision: 10,
+      fireDelay: 0,
+      goal: { x: 0, z: 13 },
+    });
+    s.addCover({ kind: "timber", x: 0, z: 13, w: 2, d: 1, h: 2, hp: 80, color: 0 });
+    assert.equal(friendlyBlocksShot(s, bot, 0, "standard", 13), false);
+    assert.equal(friendlyBlocksShot(s, bot, 0, "spread", 13), true);
+    const command = botCommand(s, bot, STEP);
+    assert.equal(command.ammoSelection, "standard");
+    assert.equal(command.fire, true);
+  } finally {
+    s.dispose();
+  }
+});

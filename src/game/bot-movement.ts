@@ -19,6 +19,7 @@ const STEERING = {
   minimumClearance: 0.2,
   commitmentSeconds: 0.55,
 } as const;
+const HUMVEE_LOOKAHEAD = 2.4;
 const RECOVERY = {
   progressDistance: 0.8,
   movementDeadzone: 0.1,
@@ -62,6 +63,8 @@ function clearance(simulation: Simulation, tank: Tank, direction: Vec2, length: 
   const position = tank.collider.translation();
   const angle = Math.atan2(direction.x, direction.z);
   let clear = length;
+  const query =
+    tank.kind === "humvee" ? (GROUP.steeringQuery | GROUP.debrisQuery) >>> 0 : GROUP.steeringQuery;
   // Check both the current hull and the orientation it is turning toward.
   for (const yaw of [tank.heading, tank.heading + angleDelta(tank.heading, angle)]) {
     const hit = simulation.world.castShape(
@@ -73,7 +76,7 @@ function clearance(simulation: Simulation, tank: Tank, direction: Vec2, length: 
       clear,
       false,
       undefined,
-      GROUP.steeringQuery,
+      query,
       undefined,
       tank.body,
     );
@@ -94,7 +97,7 @@ export function steerBot(simulation: Simulation, tank: Tank, desired: Vec2, dt: 
     return { x: 0, z: 0 };
   }
   const direction = { x: desired.x / magnitude, z: desired.z / magnitude };
-  const lookahead = STEERING.lookaheadDistance;
+  const lookahead = tank.kind === "humvee" ? HUMVEE_LOOKAHEAD : STEERING.lookaheadDistance;
   if (
     brain.avoidanceTime > 0 &&
     clearance(simulation, tank, brain.avoidance, lookahead) >= lookahead * STEERING.clearFraction

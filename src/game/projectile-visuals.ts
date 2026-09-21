@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { AMMO_ORDER } from "./ammunition";
+import { PROJECTILE_ORDER } from "./ammunition";
 import { TEAM_COLORS, WEAPONS } from "./data";
 import type { Shot, Weapon } from "./types";
 
@@ -12,6 +12,7 @@ const MODEL_SCALE: Record<Weapon, number> = {
   rocket: 0.65,
   ricochet: 0.65,
   piercing: 0.8,
+  tow: 0.74,
 };
 type Part = [THREE.BufferGeometry, number];
 type Batch = {
@@ -115,6 +116,23 @@ function model(weapon: Weapon): {
         exhaust: rocketExhaust(),
       };
     }
+    case "tow": {
+      const fin = rocketFins();
+      const parts: Part[] = [
+        [tube(0.14, 0.74, -0.06), 0x56645d],
+        [point(0.14, 0.36, 0.49), accent],
+        [tube(0.15, 0.08, -0.46), dark],
+      ];
+      for (let i = 0; i < 4; i++) {
+        parts.push([fin.clone().rotateZ((i * Math.PI) / 2), dark]);
+      }
+      fin.dispose();
+      return {
+        body: painted(parts),
+        team: tube(0.145, 0.3, -0.08),
+        exhaust: rocketExhaust(),
+      };
+    }
     case "ricochet":
       return {
         body: painted([
@@ -163,7 +181,7 @@ export class ProjectileVisuals {
       this.group.add(mesh);
       return mesh;
     };
-    for (const weapon of AMMO_ORDER) {
+    for (const weapon of PROJECTILE_ORDER) {
       const geometry = model(weapon);
       const size = MODEL_SCALE[weapon];
       for (const part of [geometry.body, geometry.team, geometry.exhaust]) {
@@ -188,7 +206,7 @@ export class ProjectileVisuals {
       const shot = shots[i];
       const batch = this.batches[shot.weapon];
       const index = batch.body.count++;
-      pose.position.set(shot.x, shot.y ?? 1, shot.z);
+      pose.position.set(shot.x, shot.visualY ?? shot.y ?? 1, shot.z);
       pose.rotation.set(
         0,
         Math.atan2(shot.vx, shot.vz) + (shot.weapon === "ricochet" ? time * 12 + shot.id : 0),

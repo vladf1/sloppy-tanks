@@ -52,12 +52,16 @@ function wave(
   return new Uint8Array(buffer);
 }
 
+// Optional names regenerate only the requested assets.
+const selected = new Set(process.argv.slice(2));
 const output = new URL("../public/audio/", import.meta.url);
 await mkdir(output, { recursive: true });
 for (const [name, frequency, duration, noise, seed] of [
   ["shot", 150, 0.14, 0.35, 150],
   ["explosion", 65, 0.7, 0.75, 65],
   ["impact", 600, 0.08, 0.55, 600],
+  ["wood-break", 340, 0.28, 0.82, 341],
+  ["rubble-break", 190, 0.4, 0.94, 191],
   ["pickup", 700, 0.3, 0.05, 700],
   // Distinct pitch, envelope and noise give each munition its own attack.
   ["shot-spread", 310, 0.11, 0.8, 310],
@@ -68,6 +72,7 @@ for (const [name, frequency, duration, noise, seed] of [
   ["laser", 1600, 0.075, 0.05, 1600],
   ["promotion", [660, 830, 990], 0.48, 0, 660],
 ] as const) {
+  if (selected.size && !selected.has(name)) continue;
   const data = wave(frequency, duration, noise, seed);
   const target = new URL(`${name}.mp3`, output);
   const result = spawnSync(

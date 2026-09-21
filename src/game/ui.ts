@@ -10,6 +10,7 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
   standard: "Standard shell",
   spread: "Spread shot",
   rocket: "Rocket blast",
+  tow: "TOW missile",
   ricochet: "Ricochet shell",
   piercing: "Piercing shell",
   mine: "Mine explosion",

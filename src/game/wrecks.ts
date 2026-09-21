@@ -1,3 +1,4 @@
+import { HUMVEE_BODY_LENGTH_SCALE } from "./humvee-model";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { trackDebrisContacts } from "./debris-physics";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
@@ -11,11 +12,13 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
   const origin = { ...tank.body.translation() };
   const scale = VEHICLES[tank.kind].scale;
   const mass = VEHICLES[tank.kind].mass * 1.6;
-  if (burnout) {
+  const humvee = tank.kind === "humvee";
+  if (burnout || humvee) {
     const velocity = tank.body.linvel();
-    // A roughly one-metre hop and damped rocking, using the existing wreck body.
-    const hopHeight = 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
-    const rock = (tank.id + tank.deaths) % 2 ? 0.85 : -0.85;
+    // Exploding Humvees tumble whole; quiet burnouts only hop and rock.
+    const tumble = humvee && !burnout;
+    const hopHeight = tumble ? 3.2 : 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
+    const rock = ((tank.id + tank.deaths) % 2 ? 1 : -1) * (tumble ? 5 : 0.85);
     simulation.world.removeRigidBody(tank.body);
     simulation.reserveFragments(1);
     const body = simulation.world.createRigidBody(
@@ -27,7 +30,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
           y: rock * 0.15,
           z: -Math.sin(tank.heading) * rock,
         })
-        .setAngularDamping(3.5)
+        .setAngularDamping(tumble ? 0.35 : 3.5)
         .setCcdEnabled(true),
     );
     body.setAdditionalSolverIterations(2);
@@ -37,9 +40,9 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
     );
     const collider = simulation.world.createCollider(
       RAPIER.ColliderDesc.cuboid(
-        1.22 * scale,
-        0.75 * scale,
-        (tank.kind === "scout" ? 2.2 : 2.7) * scale,
+        (humvee ? 1.16 : 1.22) * scale,
+        (humvee ? 0.9 : 0.75) * scale,
+        (humvee ? 2.18 * HUMVEE_BODY_LENGTH_SCALE : tank.kind === "scout" ? 2.2 : 2.7) * scale,
       )
         .setCollisionGroups(GROUP.wreck)
         .setMass(mass)

@@ -43,6 +43,7 @@ export const VEHICLES: Record<
     speedKmh: number;
     mass: number;
     scale: number;
+    weapon: Weapon;
   }
 > = {
   scout: {
@@ -53,6 +54,7 @@ export const VEHICLES: Record<
     mass: 1,
     // Comparable game sizes; Bruiser anchors the fleet at 1.95 units wide.
     scale: (3.59 / 2.3) * (1.95 / 3.66),
+    weapon: "standard",
   },
   balanced: {
     name: "BRUISER",
@@ -61,6 +63,7 @@ export const VEHICLES: Record<
     ...referenceSpeed(1),
     mass: 1.45,
     scale: 1.95 / 2.42,
+    weapon: "standard",
   },
   heavy: {
     name: "BIG RIG",
@@ -69,6 +72,16 @@ export const VEHICLES: Record<
     ...referenceSpeed(0.76),
     mass: 2.5,
     scale: (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
+    weapon: "standard",
+  },
+  humvee: {
+    name: "HUNTER",
+    tag: "TOW Humvee",
+    health: 35,
+    ...referenceSpeed(1.52),
+    mass: 0.72,
+    scale: 0.9,
+    weapon: "tow",
   },
 };
 export const WEAPONS: Record<
@@ -145,6 +158,18 @@ export const WEAPONS: Record<
     speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
     bounces: 0,
     color: 0x54e6dc,
+  },
+  tow: {
+    name: "TOW missiles",
+    label: "TOW",
+    unit: "TOW MISSILES",
+    interval: 2.35,
+    damage: 75,
+    speed: 22.5,
+    bounces: 0,
+    color: 0xffb84d,
+    perCrate: 0,
+    carryLimit: Infinity,
   },
 };
 export const LASER_DEFENSE = {

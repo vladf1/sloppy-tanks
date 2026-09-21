@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { blastDebris, hitMovableCover, hitProjectileDebris } from "./debris-physics";
 import { COMBAT, MINE } from "./combat-rules";
 import {
+  angleDelta,
   distance,
   GROUP,
   INTERCEPTION_BLAST_RADIUS,
@@ -17,6 +18,39 @@ import type { Simulation } from "./simulation";
 import type { Fragment, Mine, Shot, Tank } from "./types";
 
 const shellShape = new RAPIER.Ball(SHELL_HIT_RADIUS);
+function guideTowMissile(simulation: Simulation, shot: Shot, dt: number): void {
+  if (shot.weapon !== "tow" || shot.targetId === undefined) {
+    return;
+  }
+  const target = simulation.tanks.find(
+    (tank) =>
+      tank.id === shot.targetId &&
+      tank.deaths === shot.targetLife &&
+      tank.alive &&
+      tank.team !== shot.team,
+  );
+  if (!target) {
+    // A lost target or a new life cannot inherit the launch lock.
+    shot.targetId = undefined;
+    shot.targetLife = undefined;
+    return;
+  }
+  const speed = Math.hypot(shot.vx, shot.vz);
+  if (speed <= 0) {
+    return;
+  }
+  const position = target.body.translation();
+  const desired = Math.atan2(position.x - shot.x, position.z - shot.z);
+  const current = Math.atan2(shot.vx, shot.vz);
+  const turn = Math.max(
+    -COMBAT.towTurnRate * dt,
+    Math.min(COMBAT.towTurnRate * dt, angleDelta(current, desired)),
+  );
+  const heading = current + turn;
+  shot.vx = Math.sin(heading) * speed;
+  shot.vz = Math.cos(heading) * speed;
+}
+
 /** Continuous relative-motion contact, including shots that cross between ticks. */
 export function interceptionTime(a: Shot, b: Shot, limit: number): number | null {
   if (a.team === b.team || a.piercedShot === b.id || b.piercedShot === a.id) {
@@ -94,6 +128,9 @@ export function stepProjectiles(simulation: Simulation, dt: number, sweepTankMot
   simulation.shots = simulation.shots.filter((shot) => shot.life > 0);
   // Accelerate once per fixed tick, before all continuous collision sweeps.
   // Contact retries within this tick must not apply thrust again.
+  for (const shot of simulation.shots) {
+    guideTowMissile(simulation, shot, Math.min(dt, shot.life));
+  }
   const rocketTopSpeed = WEAPONS.rocket.speed * COMBAT.rocketTopSpeedMultiplier;
   const rocketAcceleration =
     (rocketTopSpeed - WEAPONS.rocket.speed) / COMBAT.rocketAccelerationSeconds;

@@ -60,7 +60,12 @@ export function spawnTank(
   const ordinal = simulation.tanks.filter((tank) => !tank.human).length;
   const assignment = botAssignment(slot, team, ordinal);
   if (!human) {
-    kind = BOT_PROFILES[assignment.personality].chassis;
+    // Team support slots carry the fragile, fast HMMWV hunter. Solo mode keeps
+    // its original six-enemy roster and does not introduce the team-only unit.
+    kind =
+      simulation.gameMode === "team" && assignment.personality === "support"
+        ? "humvee"
+        : BOT_PROFILES[assignment.personality].chassis;
   }
   const desc = VEHICLES[kind];
   const { body, collider } = createTankBody(simulation.world, kind, position);
@@ -154,6 +159,7 @@ export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2)
   tank.cooldown = 0;
   tank.mineCooldown = 0;
   tank.previous = { ...p };
+  tank.brain.humvee = undefined;
   tank.brain.path = [];
   tank.brain.decision = 0;
   tank.brain.fireDelay = 0;

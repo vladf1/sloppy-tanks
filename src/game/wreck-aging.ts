@@ -15,7 +15,7 @@ export function ageWreckMaterial(material: THREE.Material, secondsSinceDeath: nu
     base = { color: material.color.clone(), emissive: material.emissive.clone() };
     original.set(material, base);
   }
-  const brightness = 1 - 0.7 * THREE.MathUtils.clamp(secondsSinceDeath / 2.5, 0, 1);
+  const brightness = 0.8 - 0.6 * THREE.MathUtils.clamp(secondsSinceDeath / 2.5, 0, 1);
   material.color.copy(base.color).multiplyScalar(brightness);
   material.emissive.copy(base.emissive).multiplyScalar(brightness);
 }
