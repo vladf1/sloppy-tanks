@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { debrisCleanupProgress } from "./debris-cleanup";
-import { isMesh } from "./render-resources";
+import { isMesh, restoreBatchedLayers } from "./render-resources";
 
 const MAX_BRANCHES = 32;
 const LIFETIME = 6;
@@ -26,6 +26,7 @@ export class TreeDebris {
       this.remove(this.branches.shift()!);
     }
     const model = source.clone(true);
+    restoreBatchedLayers(model);
     source.updateWorldMatrix(true, false);
     source.matrixWorld.decompose(model.position, model.quaternion, model.scale);
     model.matrixAutoUpdate = true;

@@ -1,7 +1,7 @@
 import type { CoverDef } from "./game/arena";
 import { ARENA } from "./game/data";
 import type { ArenaMap } from "./game/maps";
-import type { Simulation } from "./game/simulation";
+import type { Simulation, SimulationSetup } from "./game/simulation";
 import type { CoverKind } from "./game/types";
 import type { VehicleKind } from "./game/types";
 import { TIMBER_HEALTH } from "./game/timber-layout";
@@ -131,13 +131,17 @@ export const STRESS_TEST_MAP: ArenaMap = {
 };
 
 export function configureStressTest(simulation: Simulation): void {
-  simulation.customMap = STRESS_TEST_MAP;
-  simulation.gameMode = "team";
-  simulation.endlessMatch = true;
-  simulation.humanKind = STRESS_PLAYER_KIND;
-  simulation.roundCount = STRESS_TANK_COUNT;
-  simulation.humanHealthMultiplier = STRESS_PLAYER_HEALTH_MULTIPLIER;
-  simulation.powerUpDurationMultiplier = STRESS_POWER_UP_MULTIPLIER;
-  simulation.ammoCrateMultiplier = STRESS_AMMO_CRATE_MULTIPLIER;
+  Object.assign(simulation, STRESS_TEST_SETUP);
   simulation.reset(STRESS_TANK_COUNT);
 }
+
+export const STRESS_TEST_SETUP = {
+  customMap: STRESS_TEST_MAP,
+  gameMode: "team",
+  endlessMatch: true,
+  humanKind: STRESS_PLAYER_KIND,
+  roundCount: STRESS_TANK_COUNT,
+  humanHealthMultiplier: STRESS_PLAYER_HEALTH_MULTIPLIER,
+  powerUpDurationMultiplier: STRESS_POWER_UP_MULTIPLIER,
+  ammoCrateMultiplier: STRESS_AMMO_CRATE_MULTIPLIER,
+} satisfies SimulationSetup;

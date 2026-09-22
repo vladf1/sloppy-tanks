@@ -24,7 +24,7 @@ function surfaceMaterial(kind: "siding" | "shingles", color: number) {
     texture.minFilter = THREE.LinearMipmapLinearFilter;
     texture.generateMipmaps = true;
     texture.anisotropy = 4;
-    texture.needsUpdate = true;
+    // TextureLoader marks the texture ready after its image arrives.
     textures.set(kind, texture);
   }
   const mat = new THREE.MeshStandardMaterial({

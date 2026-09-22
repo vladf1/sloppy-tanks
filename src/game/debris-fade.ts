@@ -1,36 +1,27 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+import { attribute, hash, positionWorld } from "three/tsl";
 
 /** Per-piece opacity keeps debris batched while it sinks and fades smoothly. */
 export function addDebrisFade(mesh: THREE.InstancedMesh): void {
   mesh.geometry = mesh.geometry.clone();
   mesh.geometry.computeBoundingBox();
   const fade = new THREE.InstancedBufferAttribute(new Float32Array(mesh.instanceMatrix.count), 1);
-  fade.setUsage(THREE.DynamicDrawUsage);
+
   mesh.geometry.setAttribute("debrisOpacity", fade);
-  const configure = (material: THREE.Material, shadow = false) => {
-    material.alphaHash = shadow;
-    material.transparent = !shadow;
-    material.depthWrite = shadow;
-    material.onBeforeCompile = (shader) => {
-      shader.vertexShader =
-        `attribute float debrisOpacity;\nvarying float vDebrisOpacity;\n${shader.vertexShader}`.replace(
-          "#include <begin_vertex>",
-          "#include <begin_vertex>\nvDebrisOpacity = debrisOpacity;",
-        );
-      shader.fragmentShader = `varying float vDebrisOpacity;\n${shader.fragmentShader}`.replace(
-        "#include <alphahash_fragment>",
-        "diffuseColor.a *= vDebrisOpacity;\n#include <alphahash_fragment>",
-      );
-    };
-    material.customProgramCacheKey = () => "debris-fade-v1";
+  const configure = (source: THREE.Material) => {
+    const material = new THREE.MeshStandardNodeMaterial();
+    // The fragments use standard surface materials; retain maps, roughness and tint.
+    Object.assign(material, source.clone());
+    material.transparent = true;
+    material.depthWrite = false;
+    material.opacityNode = attribute("debrisOpacity", "float" as const);
+    // A stable spatial mask fades the shadow without an extra translucent-shadow pass.
+    material.maskShadowNode = attribute("debrisOpacity", "float" as const).greaterThan(
+      hash(positionWorld.mul(100).dot(positionWorld)),
+    );
     return material;
   };
   mesh.material = Array.isArray(mesh.material)
-    ? mesh.material.map((material) => configure(material.clone()))
-    : configure(mesh.material.clone());
-  // Shadows use the same fade, so a vanished piece cannot leave a solid silhouette.
-  mesh.customDepthMaterial = configure(
-    new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }),
-    true,
-  );
+    ? mesh.material.map(configure)
+    : configure(mesh.material);
 }

@@ -1,5 +1,9 @@
+import { GameRenderer } from "./renderer";
+import { exposeWarmupObjects } from "./prepare-scene";
+import { waitForAssets } from "./loading-assets";
+import { PartBatches } from "./part-batches";
 import { timberPartModel } from "./timber-model";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { barrelScrapGeometry } from "./barrel-debris";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
 import { batch, freezeStatic } from "./batching";
@@ -27,7 +31,13 @@ import {
 import { ParticleEffects, type Particle } from "./particle-effects";
 import { pickupCube } from "./pickup-visuals";
 import { ProjectileVisuals } from "./projectile-visuals";
-import { disposeOwned, isMesh, updateInstances } from "./render-resources";
+import {
+  disposeOwned,
+  isMesh,
+  restoreBatchedLayers,
+  updateInstances,
+  storageInstances,
+} from "./render-resources";
 import { createReticle } from "./reticle";
 import { createArenaFloor, createLighting, createSpawnPads } from "./scenery";
 import { VillageScenery } from "./village-scenery";
@@ -77,7 +87,7 @@ function physicalCoverModel(cover: Cover): THREE.Group {
   return group;
 }
 export class Presentation {
-  renderer: THREE.WebGLRenderer;
+  renderer: GameRenderer;
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(CAMERA.fieldOfView, 1, CAMERA.near, CAMERA.far);
   raycaster = new THREE.Raycaster();
@@ -87,6 +97,8 @@ export class Presentation {
   private aimPoint = new THREE.Vector3();
   private corners = Array.from({ length: 4 }, () => new THREE.Vector3());
   worldGroup = new THREE.Group();
+  private partBatches = new PartBatches((attribute) => this.renderer.releaseStorage(attribute));
+  private partsDirty = true;
   tankMeshes = new Map<number, TankModel>();
   private suspensions = new Map<number, TankSuspension>();
   coverMeshes = new Map<number, THREE.Group>();
@@ -132,12 +144,26 @@ export class Presentation {
   reticleInk: THREE.MeshBasicMaterial;
   reticleCenter: THREE.MeshBasicMaterial;
   hitConfirmUntil = 0;
-  constructor(public canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({
+  static async create(canvas: HTMLCanvasElement): Promise<Presentation> {
+    const renderer = new GameRenderer({
       canvas,
       antialias: true,
       powerPreference: "high-performance",
     });
+    try {
+      await renderer.init();
+      return new Presentation(canvas, renderer);
+    } catch (error) {
+      renderer.dispose();
+      throw error;
+    }
+  }
+
+  private constructor(
+    public canvas: HTMLCanvasElement,
+    renderer: GameRenderer,
+  ) {
+    this.renderer = renderer;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -149,6 +175,7 @@ export class Presentation {
     this.lighting = createLighting(this.scene);
     this.scene.add(this.flash);
     this.scene.add(this.worldGroup);
+    this.scene.add(this.partBatches.group);
     this.scene.add(this.tracks.mesh);
     this.scene.add(this.trackDust.mesh, this.trackDust.gravel.mesh);
     this.scene.add(this.quarryDust.mesh);
@@ -181,7 +208,9 @@ export class Presentation {
         MAX_FRAGMENTS,
       );
       addDebrisFade(mesh);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      storageInstances(mesh);
+      // Allocate the color attribute before warm-up, not on the first explosion.
+      mesh.setColorAt(0, this.debrisColor.setHex(0xffffff));
       mesh.frustumCulled = false;
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.count = 0;
@@ -304,7 +333,9 @@ export class Presentation {
     this.lighting.fill.intensity = quarry ? 1.1 : 1.65;
     this.lighting.fill.color.setHex(quarry ? 0xb9cff2 : harbor ? 0xafcfee : 0xbdd5f5);
     this.lighting.fill.groundColor.setHex(quarry ? 0x6f7d92 : harbor ? 0x63778e : 0x75859b);
-    disposeOwned(this.worldGroup);
+    this.partBatches.dispose();
+    this.partsDirty = true;
+    this.disposeModels(this.worldGroup);
     this.worldGroup.clear();
     this.tankMeshes.clear();
     this.suspensions.clear();
@@ -321,7 +352,7 @@ export class Presentation {
     this.treeDebris.reset();
     for (const effect of this.pickupEffects) {
       this.scene.remove(effect.group);
-      disposeOwned(effect.group);
+      this.disposeModels(effect.group);
     }
     this.pickupEffects = [];
     this.tracks.reset();
@@ -385,11 +416,35 @@ export class Presentation {
     this.follow.set(position.x, 0, position.z);
     // Startup no longer renders a preview frame to establish the aiming camera.
     this.updateCamera(simulation, 1, false);
+    // Prepare the actual draw materials before the menu's compileAsync warm-up.
+    this.updatePartBatches(simulation);
   }
   makeBar(id: number, team: number): void {
     const bar = createTankBar(team);
     this.bars.set(id, bar);
     this.worldGroup.add(bar);
+  }
+
+  async prepare(simulation: Simulation): Promise<void> {
+    await waitForAssets();
+    const restore = exposeWarmupObjects(this.scene);
+    try {
+      await this.renderer.compileAsync(this.scene, this.camera);
+      // Exercise the actual shadow/reflection passes while the canvas is hidden.
+      this.scene.updateMatrixWorld();
+      this.partBatches.update();
+      this.renderer.render(this.scene, this.camera);
+      await this.renderer.waitForPipelineCompilation();
+    } finally {
+      restore();
+    }
+    // Record complete bundles and the actual first frame before enabling combat.
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      this.render(simulation, 1, 0);
+      await this.renderer.waitForPipelineCompilation();
+    }
+    this.renderer.info.reset();
   }
   resize(width = innerWidth, height = innerHeight, exact = false): void {
     this.renderer.setPixelRatio(exact ? 1 : Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
@@ -457,7 +512,7 @@ export class Presentation {
       if (this.pickupEffects.length >= FEEDBACK.maxPickupEffects) {
         const oldest = this.pickupEffects.shift()!;
         this.scene.remove(oldest.group);
-        disposeOwned(oldest.group);
+        this.disposeModels(oldest.group);
       }
       const group = new THREE.Group();
       const ringMaterial = new THREE.MeshBasicMaterial({
@@ -493,7 +548,7 @@ export class Presentation {
       const progress = effect.age / FEEDBACK.pickupSeconds;
       if (progress >= 1) {
         this.scene.remove(effect.group);
-        disposeOwned(effect.group);
+        this.disposeModels(effect.group);
         this.pickupEffects.splice(i, 1);
         continue;
       }
@@ -599,13 +654,14 @@ export class Presentation {
       if (!group || group.userData.kind !== tank.kind) {
         this.suspensions.delete(tank.id);
         if (group) {
-          disposeOwned(group);
+          this.disposeModels(group);
           this.worldGroup.remove(group);
         }
         group = tankModel(tank.kind, tank.team);
         batchTank(group);
         this.tankMeshes.set(tank.id, group);
         this.worldGroup.add(group);
+        this.partsDirty = true;
       }
       group.visible = tank.alive;
       if (!this.bars.has(tank.id)) {
@@ -688,12 +744,15 @@ export class Presentation {
               (group.userData.timberHitCount ?? 0) !== (cover.timberHits?.length ?? 0))))
       ) {
         if (group) {
-          disposeOwned(group);
+          this.disposeModels(group);
           this.worldGroup.remove(group);
         }
         group = physicalCoverModel(cover);
         this.coverMeshes.set(cover.id, group);
         this.worldGroup.add(group);
+        if (cover.kind !== "timber" && cover.kind !== "cargo" && cover.kind !== "rubble") {
+          this.partsDirty = true;
+        }
       }
       // Destruction removes a movable cover's Rapier body immediately. Never read a transform
       // from that invalid handle; doing so traps inside WASM and stops the entire render loop.
@@ -733,7 +792,7 @@ export class Presentation {
     const fragIds = new Set(simulation.fragments.map((f) => f.id));
     for (const [id, g] of this.fragmentMeshes) {
       if (!fragIds.has(id)) {
-        disposeOwned(g);
+        this.disposeModels(g);
         this.worldGroup.remove(g);
         this.fragmentMeshes.delete(id);
       }
@@ -788,6 +847,7 @@ export class Presentation {
             continue;
           }
           const crown = source.clone(true);
+          restoreBatchedLayers(crown);
           crown.visible = true;
           crown.position.set(0, -(f.treeCenterY ?? 0), 0);
           crown.traverse((object) => {
@@ -856,6 +916,7 @@ export class Presentation {
     const mineIds = new Set(simulation.mines.map((m) => m.id));
     for (const [id, g] of this.mineMeshes) {
       if (!mineIds.has(id)) {
+        this.disposeModels(g);
         this.worldGroup.remove(g);
         this.mineMeshes.delete(id);
       }
@@ -901,7 +962,38 @@ export class Presentation {
     this.laserVisuals.update(simulation, alpha, dt);
     this.particleEffects.update(dt, this.time);
     this.crosshair.visible = simulation.match.phase === "playing";
+    this.updatePartBatches(simulation);
     this.renderer.info.reset();
-    this.renderer.render(this.scene, this.camera);
+    // Poses are unchanged across the main, shadow and reflection passes. Update
+    // them once, then let every pass consume the same world matrices and buffers.
+    this.scene.updateMatrixWorld();
+    this.partBatches.update();
+    this.scene.matrixWorldAutoUpdate = false;
+    try {
+      this.renderer.render(this.scene, this.camera);
+    } finally {
+      this.scene.matrixWorldAutoUpdate = true;
+    }
+  }
+
+  private updatePartBatches(simulation: Simulation): void {
+    if (this.partsDirty) {
+      // Timber/cargo change geometry; rubble appears when towers collapse.
+      // These small draws must not invalidate every tank/tree shader mid-round.
+      this.partBatches.rebuild([
+        ...this.tankMeshes.values(),
+        ...simulation.covers
+          .filter(
+            (cover) => cover.kind !== "timber" && cover.kind !== "cargo" && cover.kind !== "rubble",
+          )
+          .map((cover) => this.coverMeshes.get(cover.id)!),
+      ]);
+      this.partsDirty = false;
+    }
+  }
+
+  private disposeModels(group: THREE.Object3D): void {
+    disposeOwned(group);
+    this.renderer.releaseObjects(group);
   }
 }

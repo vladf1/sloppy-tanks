@@ -3,6 +3,13 @@
     <h1>BATTLE SETUP</h1>
     <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
   </div>
+  <div class="startup-progress">
+    <div class="startup-progress-copy">
+      <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
+      <span class="startup-hint">Pick your loadout while we get ready.</span>
+    </div>
+    <div class="startup-track" aria-hidden="true"><span></span></div>
+  </div>
   <div class="mode-options">
     <fieldset>
       <legend>BATTLE</legend>
@@ -101,7 +108,6 @@
     </div>
   </fieldset>
   <div class="menu-footer">
-    <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
     <div class="menu-help">
       WASD / Arrows: steer toward direction · Opposite direction: reverse · Mouse: aim · Hold left
       click: fire · Right click: mine · Esc: pause<br />Q / E / scroll: cycle ammo · 1–5: select ·

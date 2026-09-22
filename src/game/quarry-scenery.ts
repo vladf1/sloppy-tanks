@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { TEAM_COLORS } from "./data";
@@ -108,7 +108,7 @@ function quarrySpawnPad(group: THREE.Group, team: 0 | 1, x: number, z: number): 
 
 /** Retained static scene: no per-frame animation, particles, lights or physics bodies. */
 export class QuarryScenery extends THREE.Group {
-  constructor(renderer: THREE.WebGLRenderer) {
+  constructor(renderer: THREE.WebGPURenderer) {
     super();
     this.name = "dusty-dig-scenery";
     const terrain = quarryTerrain(renderer);

@@ -1,11 +1,12 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+import { attribute, uniform, positionLocal, sin, cos, vec3 } from "three/tsl";
 import { Random } from "./math";
 import { creekDistance, valleyHeight } from "./village-landscape";
 
 /** Low meadow detail stays below shell height; shared instances sway entirely on the GPU. */
 export class VillageVegetation {
   readonly group = new THREE.Group();
-  private wind = { value: 0 };
+  private wind = uniform(0);
   constructor() {
     this.group.name = "village-meadow";
     const vertices: number[] = [];
@@ -28,23 +29,25 @@ export class VillageVegetation {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
     geometry.computeVertexNormals();
-    const grass = new THREE.MeshStandardMaterial({
+    const grass = new THREE.MeshStandardNodeMaterial({
       color: 0xffffff,
       roughness: 1,
       side: THREE.DoubleSide,
     });
-    grass.onBeforeCompile = (shader) => {
-      shader.uniforms.villageWind = this.wind;
-      shader.vertexShader = "uniform float villageWind;\n" + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-        #ifdef USE_INSTANCING
-          transformed.x += sin(villageWind*1.2+instanceMatrix[3].x*.7+instanceMatrix[3].z*.4)*position.y*.2;
-          transformed.z += cos(villageWind*.8+instanceMatrix[3].z*.5)*position.y*.12;
-        #endif`,
-      );
-    };
+    const origins = new THREE.InstancedBufferAttribute(new Float32Array(3600 * 2), 2);
+    geometry.setAttribute("windOrigin", origins);
+    const origin = attribute("windOrigin", "vec2" as const);
+    grass.positionNode = positionLocal.add(
+      vec3(
+        sin(this.wind.mul(1.2).add(origin.x.mul(0.7)).add(origin.y.mul(0.4)))
+          .mul(positionLocal.y)
+          .mul(0.2),
+        0,
+        cos(this.wind.mul(0.8).add(origin.y.mul(0.5)))
+          .mul(positionLocal.y)
+          .mul(0.12),
+      ),
+    );
     const tufts = new THREE.InstancedMesh(geometry, grass, 3600);
     const flowers = new THREE.InstancedMesh(
       new THREE.OctahedronGeometry(1),
@@ -83,6 +86,7 @@ export class VillageVegetation {
       dummy.scale.set(size * 0.8, size, size * 0.8);
       dummy.updateMatrix();
       tufts.setMatrixAt(count, dummy.matrix);
+      origins.setXY(count, x, z);
       tufts.setColorAt(count++, new THREE.Color([0x598245, 0x7b9d51, 0x9eaf6b, 0x477650][i % 4]));
       if (!reed && i % 3 === 0 && blooms < 1500) {
         dummy.position.y += size * 0.85;

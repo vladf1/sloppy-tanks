@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { Random } from "./math";
 import { quarryLayout } from "./quarry-layout";
 
@@ -90,7 +90,7 @@ function sampleAccum(grid: Float32Array, x: number, z: number): number {
 /** A baked, metre-scaled work yard: pale sand sheets, dark compacted haul routes,
  * exposed rocky soil, wheel ruts and aggregate. Generated once for the retained
  * scenery, never during round reset or rendering. */
-export function quarryTerrain(renderer: THREE.WebGLRenderer) {
+export function quarryTerrain(renderer: THREE.WebGPURenderer) {
   const size = 2048;
   const extent = EXTENT;
   const canvas = document.createElement("canvas");
@@ -168,7 +168,7 @@ export function quarryTerrain(renderer: THREE.WebGLRenderer) {
   ctx.putImageData(pixels, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  texture.anisotropy = Math.min(8, renderer.getMaxAnisotropy());
   const material = new THREE.MeshStandardMaterial({
     map: texture,
     bumpMap: texture,

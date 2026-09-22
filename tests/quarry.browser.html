@@ -63,7 +63,7 @@
       const sim = new Simulation(417);
       sim.mapMode = "quarry";
       sim.reset();
-      const view = new Presentation(document.querySelector("canvas"));
+      const view = await Presentation.create(document.querySelector("canvas"));
       view.reset(sim);
       let pose;
       let checking = false;
@@ -162,7 +162,7 @@
             draw();
             if (i >= 60) {
               costs.push(performance.now() - start);
-              calls += view.renderer.info.render.calls;
+              calls += view.renderer.info.render.drawCalls;
               triangles += view.renderer.info.render.triangles;
             }
           }

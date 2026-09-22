@@ -20,7 +20,9 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
     let frame, now;
+    const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (cb) => {
+      if (cb.name !== "loop") return requestFrame(cb);
       frame = cb;
       return 1;
     };
@@ -31,6 +33,7 @@ try {
   });
   await page.goto(url);
   await page.waitForFunction(() => !!window.sloppy);
+  await page.locator("#start").click();
   await page.evaluate(() => {
     const d = window.sloppy;
     d.start();
@@ -320,7 +323,21 @@ try {
     }
     return result;
   });
-  assert.equal(Object.keys(durations).length, 11);
+  assert.deepEqual(Object.keys(durations).sort(), [
+    "explosion",
+    "hit",
+    "impact",
+    "laser",
+    "pickup",
+    "promotion",
+    "rubble-break",
+    "shot",
+    "shot-piercing",
+    "shot-ricochet",
+    "shot-rocket",
+    "shot-spread",
+    "wood-break",
+  ]);
   const geometries = await page.evaluate(() => {
     const d = window.sloppy,
       counts = [];
@@ -333,7 +350,7 @@ try {
   });
   assert.equal(new Set(geometries).size, 1);
   checks.push(
-    "All ten saved MP3s decode/play to completion; ten rendered resets have stable geometry counts",
+    "All 13 saved MP3s decode/play to completion; ten rendered resets have stable geometry counts",
   );
   await page.close();
   const perf = await context.newPage();

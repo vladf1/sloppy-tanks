@@ -40,7 +40,7 @@
       import { loadTankSurface } from "../src/game/tank-surfaces";
       import { renderTankPreviews } from "../scripts/render-tank-previews";
       await loadTankSurface();
-      const previews = renderTankPreviews();
+      const previews = await renderTankPreviews();
       for (const team of [0, 1])
         for (const kind of ["scout", "balanced", "heavy"]) {
           const card = document.createElement("article");

@@ -150,7 +150,7 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 20);
+    assert.equal(bodies.length, 21);
     for (const body of bodies) {
       assert.ok(body.title.length > 0, `row missing tooltip: ${body.textContent}`);
     }

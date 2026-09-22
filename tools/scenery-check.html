@@ -23,10 +23,12 @@
   <body>
     <p>Pine · Fir · Broadleaf · Explosive barrel</p>
     <script type="module">
-      import * as THREE from "three";
+      import * as THREE from "three/webgpu";
+      import { GameRenderer } from "../src/game/renderer";
       import { coverModel } from "../src/game/models";
       import { batch } from "../src/game/batching";
-      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      const renderer = new GameRenderer({ antialias: true });
+      await renderer.init();
       renderer.setSize(innerWidth, innerHeight);
       renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
       document.body.append(renderer.domElement);

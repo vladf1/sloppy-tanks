@@ -1,5 +1,7 @@
-import * as THREE from "three";
-import { updateInstances } from "./render-resources";
+import * as THREE from "three/webgpu";
+import { attribute, uv, vec3, smoothstep, atan, sin } from "three/tsl";
+import { billboardVertex } from "./effect-materials";
+import { updateInstances, storageInstances } from "./render-resources";
 import type { SimEvent } from "./types";
 
 export const MAX_EXPLOSIONS = 24;
@@ -168,77 +170,47 @@ export class ExplosionEffects {
   constructor() {
     const geometry = new THREE.PlaneGeometry(2, 2);
     geometry.setAttribute("puffColor", this.puffColor);
-    this.puffs = new THREE.InstancedMesh(
-      geometry,
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        vertexShader: `
-          attribute vec4 puffColor;
-          varying vec4 tint;
-          varying vec2 puffUv;
-          void main() {
-            tint = puffColor;
-            puffUv = uv * 2.0 - 1.0;
-            vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-            center.xy += position.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
-            gl_Position = projectionMatrix * center;
-          }`,
-        fragmentShader: `
-          varying vec4 tint;
-          varying vec2 puffUv;
-          void main() {
-            float radius = length(puffUv);
-            float edge = 1.0 - smoothstep(.35, 1.0, radius);
-            float light = .76 + .24 * clamp(1.0 - radius + puffUv.y * .3, 0.0, 1.0);
-            gl_FragColor = vec4(tint.rgb * light, tint.a * edge);
-            #include <tonemapping_fragment>
-            #include <colorspace_fragment>
-          }`,
-      }),
-      MAX_EXPLOSIONS * PUFFS_PER_BLAST,
+    const point = uv().mul(2).sub(1);
+    const radius = point.length();
+    const tint = attribute("puffColor", "vec4" as const);
+    const puffMaterial = new THREE.MeshBasicNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+    });
+    puffMaterial.colorNode = tint.rgb.mul(
+      radius.oneMinus().add(point.y.mul(0.3)).clamp().mul(0.24).add(0.76),
     );
+    puffMaterial.opacityNode = tint.a.mul(smoothstep(0.35, 1, radius).oneMinus());
+    this.puffs = new THREE.InstancedMesh(geometry, puffMaterial, MAX_EXPLOSIONS * PUFFS_PER_BLAST);
+    puffMaterial.vertexNode = billboardVertex(this.puffs);
     const plane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     plane.setAttribute("ringAge", this.ringAge);
-    this.rings = new THREE.InstancedMesh(
-      plane,
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-        vertexShader: `
-        attribute vec2 ringAge;
-        varying vec2 point;
-        varying vec2 age;
-        void main() {
-          point = uv * 2.0 - 1.0; age = ringAge;
-          gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-        }`,
-        fragmentShader: `
-        varying vec2 point;
-        varying vec2 age;
-        void main() {
-          float angle = atan(point.y, point.x);
-          float breakup = .8 + .12 * sin(angle * 7.0 + age.y) + .08 * sin(angle * 13.0 - age.y);
-          float radius = length(point);
-          float band = smoothstep(.43, .65, radius) * (1.0 - smoothstep(.72, .98, radius));
-          float fade = smoothstep(0.0, .07, age.x) * (1.0 - smoothstep(.12, .55, age.x));
-          gl_FragColor = vec4(.48, .35, .21, band * breakup * fade * .34);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
-      }),
-      MAX_EXPLOSIONS,
-    );
+    const age = attribute("ringAge", "vec2" as const);
+    const angle = atan(point.y, point.x);
+    const breakup = sin(angle.mul(7).add(age.y))
+      .mul(0.12)
+      .add(sin(angle.mul(13).sub(age.y)).mul(0.08))
+      .add(0.8);
+    const band = smoothstep(0.43, 0.65, radius).mul(smoothstep(0.72, 0.98, radius).oneMinus());
+    const fade = smoothstep(0, 0.07, age.x).mul(smoothstep(0.12, 0.55, age.x).oneMinus());
+    const ringMaterial = new THREE.MeshBasicNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    ringMaterial.colorNode = vec3(0.48, 0.35, 0.21);
+    ringMaterial.opacityNode = band.mul(breakup).mul(fade).mul(0.34);
+    this.rings = new THREE.InstancedMesh(plane, ringMaterial, MAX_EXPLOSIONS);
     for (const mesh of [this.puffs, this.rings]) {
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      storageInstances(mesh);
       mesh.frustumCulled = false;
       mesh.count = 0;
     }
-    this.puffColor.setUsage(THREE.DynamicDrawUsage);
-    this.ringAge.setUsage(THREE.DynamicDrawUsage);
+
     this.group.name = "expressive-explosions";
     this.group.add(this.rings, this.puffs);
   }

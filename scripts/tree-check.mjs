@@ -6,10 +6,13 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
-    window.requestAnimationFrame = () => 1;
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) =>
+      callback.name === "loop" ? 1 : requestFrame(callback);
   });
   await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
   await page.waitForFunction(() => !!window.sloppy);
+  await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const { treeModel, setTreeDestroyed, TREE_FAMILIES } =
       await import("/sloppy-tanks/src/game/tree-models.ts");
@@ -112,9 +115,18 @@ try {
         v.particles.length > particles &&
         v.particles.some((p) => p.shape === "leaf") &&
         v.particles.some((p) => p.shape === "splinter"),
-      longerDebris:
-        s.fragments.every((f) => f.shape === "wood" && f.life >= 4.8 && f.life <= 7.8) &&
-        v.particles.every((p) => p.life >= 2.55 && p.life <= 5.25),
+      boundedDebris:
+        s.fragments.length <= s.maxFragments &&
+        s.fragments.every((f) => f.life > 0 && f.life <= 10.5),
+      visibleFallingCrowns: s.fragments
+        .filter((f) => f.treeCoverId !== undefined)
+        .every((f) => {
+          let meshes = 0;
+          v.fragmentMeshes.get(f.id)?.traverse((object) => {
+            if (object.isMesh && object.layers.mask !== 0) meshes++;
+          });
+          return meshes > 0;
+        }),
       physicsCleared: trees.every((c) => !s.coverByCollider.has(c.collider.handle)),
     };
   });

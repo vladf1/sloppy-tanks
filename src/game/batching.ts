@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { interleaveAttributes, mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { isMesh } from "./render-resources";
 
 const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
@@ -80,6 +80,18 @@ export function batch(group: THREE.Group): void {
   for (const [mat, geos] of byMat) {
     const geo = mergeGeometries(geos);
     if (geo) {
+      // These baked vertices never change. One interleaved buffer avoids rebinding
+      // separate position/normal/UV/color buffers for each WebGPU draw.
+      const entries = Object.entries(geo.attributes).filter(
+        (entry): entry is [string, THREE.BufferAttribute] =>
+          entry[1] instanceof THREE.BufferAttribute,
+      );
+      // r185's declaration omits the array in this utility's return type.
+      const packed = interleaveAttributes(entries.map(([, attribute]) => attribute)) as unknown as
+        THREE.InterleavedBufferAttribute[] | null;
+      if (packed) {
+        entries.forEach(([name], i) => geo.setAttribute(name, packed[i]));
+      }
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = mesh.receiveShadow = true;
       // Its vertices already contain the local transform; parent assemblies move.

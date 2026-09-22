@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { isSpecialAmmo } from "./ammunition";
 import type { PickupKind } from "./types";
+import { PICKUP_ATLAS_PATH, pickupAtlasUV } from "./pickup-atlas";
 
 const cubeGeometry = new THREE.BoxGeometry(1.25, 1.25, 1.25);
 const crateGeometry = new THREE.BoxGeometry(1.8, 1.05, 1.2);
@@ -19,16 +20,14 @@ const hardwareMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.55,
   metalness: 0.5,
 });
-const faceMaterials = new Map<PickupKind, THREE.MeshStandardMaterial>();
+let sharedFaceMaterial: THREE.MeshStandardMaterial | undefined;
+const faceGeometries = new Map<PickupKind, THREE.BufferGeometry>();
 /** Original high-contrast pictograms, shared across every face and pickup of a type. */
-function faceMaterial(kind: PickupKind) {
-  const cached = faceMaterials.get(kind);
-  if (cached) {
-    return cached;
+function faceMaterial() {
+  if (sharedFaceMaterial) {
+    return sharedFaceMaterial;
   }
-  const texture = new THREE.TextureLoader().load(
-    `${import.meta.env.BASE_URL}textures/pickups/${kind}.webp`,
-  );
+  const texture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${PICKUP_ATLAS_PATH}`);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   const material = new THREE.MeshStandardMaterial({
@@ -40,20 +39,33 @@ function faceMaterial(kind: PickupKind) {
     emissiveIntensity: 0.3,
     toneMapped: false,
   });
-  faceMaterials.set(kind, material);
+  sharedFaceMaterial = material;
   return material;
+}
+
+function faceGeometry(kind: PickupKind) {
+  let geometry = faceGeometries.get(kind);
+  if (!geometry) {
+    geometry = (isSpecialAmmo(kind) ? crateGeometry : cubeGeometry).clone();
+    const uv = geometry.getAttribute("uv");
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(i, ...pickupAtlasUV(kind, uv.getX(i), uv.getY(i)));
+    }
+    faceGeometries.set(kind, geometry);
+  }
+  return geometry;
 }
 
 export function pickupCube(kind: PickupKind) {
   if (isSpecialAmmo(kind)) {
     const crate = new THREE.Group();
-    const body = new THREE.Mesh(crateGeometry, faceMaterial(kind));
+    const body = new THREE.Mesh(faceGeometry(kind), faceMaterial());
     const hardware = new THREE.Mesh(hardwareGeometry, hardwareMaterial);
     body.castShadow = hardware.castShadow = true;
     crate.add(body, hardware);
     return crate;
   }
-  const cube = new THREE.Mesh(cubeGeometry, faceMaterial(kind));
+  const cube = new THREE.Mesh(faceGeometry(kind), faceMaterial());
   cube.castShadow = true;
   return cube;
 }

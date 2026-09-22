@@ -1,4 +1,22 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+
+/** Persistent effect pools upload just their changed instances, once per version.
+ * Ordinary r185 instance matrices below 64 KiB become full-array uniform uploads. */
+export function storageInstances(mesh: THREE.InstancedMesh): void {
+  if (!(mesh.instanceMatrix instanceof THREE.StorageInstancedBufferAttribute)) {
+    mesh.instanceMatrix = new THREE.StorageInstancedBufferAttribute(mesh.instanceMatrix.array, 16);
+  }
+}
+
+/** Detached tree pieces become independent draws, even if their source was batched. */
+export function restoreBatchedLayers(group: THREE.Object3D): void {
+  group.traverse((object) => {
+    if (typeof object.userData.batchedLayers === "number") {
+      object.layers.mask = object.userData.batchedLayers;
+      delete object.userData.batchedLayers;
+    }
+  });
+}
 /** Upload only live instance ranges and dispose only resources marked as locally owned. */
 export function updateInstances(mesh: THREE.InstancedMesh): void {
   if (!mesh.count) {

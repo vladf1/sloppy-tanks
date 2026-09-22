@@ -1,3 +1,4 @@
+import { storageInstances } from "./render-resources";
 import * as THREE from "three";
 import { PICKUPS } from "./data";
 import { tankMuzzle } from "./hitboxes";
@@ -24,7 +25,7 @@ export class LaserVisuals {
       }),
       CAPACITY,
     );
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    storageInstances(mesh);
     mesh.frustumCulled = false;
     mesh.count = 0;
     this.group.add(mesh);

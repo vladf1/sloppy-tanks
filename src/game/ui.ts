@@ -49,9 +49,17 @@ export class UI {
     this.battleSetup = document
       .querySelector<HTMLElement>("#startup-overlay .start")!
       .cloneNode(true) as HTMLElement;
-    this.battleSetup.querySelector("#startup-status")?.remove();
+    const status = this.battleSetup.querySelector("#startup-status");
+    if (status) {
+      status.textContent = "Ready when you are";
+    }
+    const hint = this.battleSetup.querySelector(".startup-hint");
+    if (hint) {
+      hint.textContent = "Choose your next battlefield.";
+    }
     const startButton = this.battleSetup.querySelector<HTMLButtonElement>("#start")!;
     startButton.disabled = false;
+    startButton.removeAttribute("aria-busy");
     startButton.textContent = "GO!";
     root.insertAdjacentHTML("beforeend", hudMarkup());
     this.overlay = root.querySelector("#overlay")!;
@@ -135,6 +143,7 @@ export class UI {
     syncGameOptions(this.overlay, simulation);
     bindGameOptions(this.overlay, simulation);
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
+    this.overlay.dataset.state = "ready";
     const death = this.overlay.querySelector("#death-cause");
     if (death) {
       death.textContent = this.deathCause;

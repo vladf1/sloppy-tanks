@@ -1,12 +1,13 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+import { texture as sampleTexture, normalWorld, positionWorld, vec2, color } from "three/tsl";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { Random } from "./math";
 import { quarryRockShape } from "./quarry-rock-shape";
 
-let stone: THREE.MeshStandardMaterial | undefined;
+let stone: THREE.MeshStandardNodeMaterial | undefined;
 const geometries = new Map<string, THREE.BufferGeometry>();
 
-export function sandstoneMaterial(): THREE.MeshStandardMaterial {
+export function sandstoneMaterial(): THREE.MeshStandardNodeMaterial {
   if (!stone) {
     const texture = new THREE.TextureLoader().load(
       `${import.meta.env?.BASE_URL ?? "/"}textures/quarry/sandstone.webp`,
@@ -14,7 +15,7 @@ export function sandstoneMaterial(): THREE.MeshStandardMaterial {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = texture.wrapT = THREE.MirroredRepeatWrapping;
     texture.anisotropy = 4;
-    stone = new THREE.MeshStandardMaterial({
+    stone = new THREE.MeshStandardNodeMaterial({
       map: texture,
       bumpMap: texture,
       bumpScale: 0.05,
@@ -25,44 +26,14 @@ export function sandstoneMaterial(): THREE.MeshStandardMaterial {
     // Blend projections across rounded shoulders instead of exposing UV seams on
     // individual triangles. World-space sampling decorrelates reused rock
     // geometry so identical boulders never show the same patch of grain.
-    stone.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          "#include <common>",
-          `#include <common>
-        varying vec3 vStonePosition;
-        varying vec3 vStoneNormal;
-      `,
-        )
-        .replace(
-          "#include <begin_vertex>",
-          `#include <begin_vertex>
-        vStonePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        vStoneNormal = mat3(modelMatrix) * normal;
-      `,
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          "#include <common>",
-          `#include <common>
-        varying vec3 vStonePosition;
-        varying vec3 vStoneNormal;
-      `,
-        )
-        .replace(
-          "#include <map_fragment>",
-          `
-        vec3 blend = pow(abs(normalize(vStoneNormal)), vec3(6.0));
-        blend /= max(blend.x + blend.y + blend.z, 0.0001);
-        vec3 stonePoint = vStonePosition / 5.5;
-        vec4 stoneColor = texture2D(map, stonePoint.zy + vec2(0.31, 0.11)) * blend.x
-          + texture2D(map, stonePoint.xz + vec2(0.57, 0.43)) * blend.y
-          + texture2D(map, stonePoint.xy + vec2(0.13, 0.79)) * blend.z;
-        diffuseColor *= stoneColor;
-      `,
-        );
-    };
-    stone.customProgramCacheKey = () => "quarry-triplanar-v2";
+    const weights = normalWorld.abs().pow(6);
+    const blend = weights.div(weights.x.add(weights.y).add(weights.z).max(0.0001));
+    const point = positionWorld.div(5.5);
+    stone.colorNode = sampleTexture(texture, point.zy.add(vec2(0.31, 0.11)))
+      .mul(blend.x)
+      .add(sampleTexture(texture, point.xz.add(vec2(0.57, 0.43))).mul(blend.y))
+      .add(sampleTexture(texture, point.xy.add(vec2(0.13, 0.79))).mul(blend.z))
+      .mul(color(0xd4b28c));
   }
   return stone;
 }

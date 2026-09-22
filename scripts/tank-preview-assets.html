@@ -9,7 +9,7 @@
       import { loadTankSurface } from "../src/game/tank-surfaces";
       import { renderTankPreviews } from "./render-tank-previews";
       await loadTankSurface();
-      Object.assign(window, { tankPreviewAssets: renderTankPreviews() });
+      Object.assign(window, { tankPreviewAssets: await renderTankPreviews() });
     </script>
   </body>
 </html>

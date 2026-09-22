@@ -98,7 +98,7 @@
       }
       simulation.match.phase = "paused";
 
-      const view = new Presentation(document.querySelector("canvas"));
+      const view = await Presentation.create(document.querySelector("canvas"));
       view.reset(simulation);
       view.render(simulation, 1, 0, false);
       for (const bar of view.bars.values()) bar.visible = false;

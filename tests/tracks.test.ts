@@ -74,3 +74,25 @@ test("other maps keep every print on the dirt", () => {
     f.sim.dispose();
   }
 });
+
+test("track upload ranges stay bounded through multiple trail lifetimes", () => {
+  const f = fixture("village");
+  try {
+    for (let i = 0; i < 3000; i++) {
+      f.sim.elapsed = i / 60;
+      f.tank.body.setTranslation({ x: (i % 300) * 0.1 - 15, y: 0.65, z: -23 }, true);
+      f.tracks.update(f.sim, 1);
+      // One tank can append one span and relocate at most two expired marks.
+      // Do not emulate WebGL consuming these lists: WebGPU retains the originals.
+      assert.ok(f.tracks.mesh.instanceMatrix.updateRanges.length <= 3);
+      for (const name of ["trackBirth", "trackStrength"]) {
+        const attribute = f.tracks.mesh.geometry.getAttribute(name);
+        assert.ok("updateRanges" in attribute && attribute.updateRanges.length <= 3);
+      }
+    }
+    assert.ok(f.tracks.mesh.count > 0);
+  } finally {
+    f.tracks.dispose();
+    f.sim.dispose();
+  }
+});

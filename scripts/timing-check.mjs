@@ -17,7 +17,7 @@ try {
   const page = await context.newPage(),
     errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://127.0.0.1:5173/?autoplay", {
+  await page.goto(`${process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/"}?autoplay`, {
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });
@@ -27,10 +27,23 @@ try {
     window.sloppy.autoRounds();
     window.sloppy.record();
   });
-  const gpu = await page.evaluate(() => {
-    const g = window.sloppy.view.renderer.getContext(),
-      e = g.getExtension("WEBGL_debug_renderer_info");
-    return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : "Unavailable";
+  const gpu = await page.evaluate(async () => {
+    const backend = window.sloppy.view.renderer.backend;
+    if (backend.isWebGPUBackend) {
+      const adapter = await navigator.gpu.requestAdapter();
+      return {
+        backend: "WebGPU",
+        vendor: adapter?.info.vendor,
+        architecture: adapter?.info.architecture,
+        description: adapter?.info.description,
+      };
+    }
+    const gl = backend.gl;
+    const extension = gl.getExtension("WEBGL_debug_renderer_info");
+    return {
+      backend: "WebGL 2",
+      renderer: extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : "Unavailable",
+    };
   });
   const result = JSON.parse(readFileSync("artifacts/benchmark-results.json", "utf8"));
   result.timingHistory ??= [];

@@ -53,7 +53,7 @@
       await RAPIER.init();
       await loadTankSurface();
       const sim = new Simulation(731);
-      const view = new Presentation(document.querySelector("canvas"));
+      const view = await Presentation.create(document.querySelector("canvas"));
       const output = document.querySelector("output");
       let tooth, turret, hedgehog;
       function add(kind, x, z, w, h, d, color = 0x92734e) {
