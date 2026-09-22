@@ -7,12 +7,14 @@ import {
 } from "three/webgpu";
 import { RenderResources, trackInterleavedBuffers, type DrawResources } from "./renderer-resources";
 import {
+  compileRuntimePipelinesAsync,
   preserveRenderBundleScope,
   submitRenderBundlesInOrder,
   trackRenderBundles,
   type BundleBackend,
   type BundleExecutionBackend,
   type BundleRenderer,
+  type RuntimePipelines,
 } from "./bundle-stats";
 import { WebGPUUnavailableError } from "./startup-error";
 
@@ -59,6 +61,7 @@ export class GameRenderer extends Renderer {
   readonly isWebGPURenderer = true;
   private shadows = new ShadowMaterials();
   private resources?: RenderResources;
+  private pendingPipelinesReady: () => Promise<void> = async () => {};
 
   constructor(parameters: Omit<WebGPURendererParameters, "forceWebGL" | "getFallback"> = {}) {
     super(new WebGPUBackend(parameters), parameters);
@@ -82,12 +85,26 @@ export class GameRenderer extends Renderer {
     preserveRenderBundleScope(this as unknown as BundleRenderer);
     submitRenderBundlesInOrder(this.backend as unknown as BundleExecutionBackend);
     trackRenderBundles(this.backend as unknown as BundleBackend, this.info);
+    this.pendingPipelinesReady = compileRuntimePipelinesAsync(
+      (this as unknown as { _pipelines: RuntimePipelines })._pipelines,
+    );
     const update = caches._geometries.updateForRender.bind(caches._geometries);
     caches._geometries.updateForRender = (draw) => {
       update(draw);
       resources.track(draw);
     };
     return this;
+  }
+
+  async waitForPipelineCompilation(): Promise<void> {
+    await this.pendingPipelinesReady();
+  }
+
+  override async compileAsync(...args: Parameters<Renderer["compileAsync"]>): Promise<void> {
+    // Node building stays sequential (Three shares builder state), but GPU
+    // compilation overlaps subsequent builds instead of awaiting each pipeline.
+    await super.compileAsync(...args);
+    await this.waitForPipelineCompilation();
   }
 
   releaseObjects(root: Object3D): void {

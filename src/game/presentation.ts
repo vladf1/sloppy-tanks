@@ -1,4 +1,6 @@
 import { GameRenderer } from "./renderer";
+import { exposeWarmupObjects } from "./prepare-scene";
+import { waitForAssets } from "./loading-assets";
 import { PartBatches } from "./part-batches";
 import { timberPartModel } from "./timber-model";
 import * as THREE from "three/webgpu";
@@ -207,6 +209,8 @@ export class Presentation {
       );
       addDebrisFade(mesh);
       storageInstances(mesh);
+      // Allocate the color attribute before warm-up, not on the first explosion.
+      mesh.setColorAt(0, this.debrisColor.setHex(0xffffff));
       mesh.frustumCulled = false;
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.count = 0;
@@ -419,6 +423,28 @@ export class Presentation {
     const bar = createTankBar(team);
     this.bars.set(id, bar);
     this.worldGroup.add(bar);
+  }
+
+  async prepare(simulation: Simulation): Promise<void> {
+    await waitForAssets();
+    const restore = exposeWarmupObjects(this.scene);
+    try {
+      await this.renderer.compileAsync(this.scene, this.camera);
+      // Exercise the actual shadow/reflection passes while the canvas is hidden.
+      this.scene.updateMatrixWorld();
+      this.partBatches.update();
+      this.renderer.render(this.scene, this.camera);
+      await this.renderer.waitForPipelineCompilation();
+    } finally {
+      restore();
+    }
+    // Record complete bundles and the actual first frame before enabling combat.
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      this.render(simulation, 1, 0);
+      await this.renderer.waitForPipelineCompilation();
+    }
+    this.renderer.info.reset();
   }
   resize(width = innerWidth, height = innerHeight, exact = false): void {
     this.renderer.setPixelRatio(exact ? 1 : Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
@@ -724,7 +750,7 @@ export class Presentation {
         group = physicalCoverModel(cover);
         this.coverMeshes.set(cover.id, group);
         this.worldGroup.add(group);
-        if (cover.kind !== "timber" && cover.kind !== "cargo") {
+        if (cover.kind !== "timber" && cover.kind !== "cargo" && cover.kind !== "rubble") {
           this.partsDirty = true;
         }
       }
@@ -952,12 +978,14 @@ export class Presentation {
 
   private updatePartBatches(simulation: Simulation): void {
     if (this.partsDirty) {
-      // Timber and cargo replace geometry as damage progresses. Leave those
-      // small assemblies outside the persistent pose batches.
+      // Timber/cargo change geometry; rubble appears when towers collapse.
+      // These small draws must not invalidate every tank/tree shader mid-round.
       this.partBatches.rebuild([
         ...this.tankMeshes.values(),
         ...simulation.covers
-          .filter((cover) => cover.kind !== "timber" && cover.kind !== "cargo")
+          .filter(
+            (cover) => cover.kind !== "timber" && cover.kind !== "cargo" && cover.kind !== "rubble",
+          )
           .map((cover) => this.coverMeshes.get(cover.id)!),
       ]);
       this.partsDirty = false;

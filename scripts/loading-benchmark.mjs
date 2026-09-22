@@ -88,7 +88,7 @@ try {
     await page.addInitScript(() => {
       Math.random = () => 0.424242;
       performance.setResourceTimingBufferSize(10000);
-      window.loadingAudit = { tasks: [], menu: 0, firstFrame: 0, menuClear: 0 };
+      window.loadingAudit = { tasks: [], menu: 0, firstFrame: 0, menuClear: 0, readyAt: 0 };
       const checkMenu = () => {
         const loading = document.querySelector("#loading");
         if (
@@ -107,6 +107,12 @@ try {
         );
       }).observe({ type: "longtask", buffered: true });
       new MutationObserver(() => {
+        if (
+          !window.loadingAudit.readyAt &&
+          document.querySelector("#startup-overlay")?.dataset.state === "ready"
+        ) {
+          window.loadingAudit.readyAt = performance.now();
+        }
         if (!window.loadingAudit.menu && document.querySelector("#start")) {
           window.loadingAudit.menu = performance.now();
           requestAnimationFrame(() =>
@@ -115,7 +121,12 @@ try {
             }),
           );
         }
-      }).observe(document, { childList: true, subtree: true });
+      }).observe(document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-state"],
+      });
     });
     await page.goto(url, { waitUntil: "load" });
     await page.waitForFunction(() => window.loadingAudit.firstFrame > 0);
@@ -126,7 +137,13 @@ try {
     });
     await page
       .locator(".tank-preview")
-      .evaluateAll((images) => Promise.all(images.map((image) => image.decode())));
+      .evaluateAll((images) =>
+        Promise.all(
+          images
+            .filter((image) => image instanceof HTMLImageElement)
+            .map((image) => image.decode()),
+        ),
+      );
     const deadline = Date.now() + 20000;
     while (pending.size && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
@@ -180,7 +197,7 @@ try {
     );
     runs.push(result);
     console.log(
-      `${label} ${i + 1}/${repeats}: ${(result.download / 1e6).toFixed(3)} MB; content ${Math.round(result.firstPaint)} ms; menu ${Math.round(result.firstFrame)} ms; clear ${Math.round(result.menuClear)} ms; GO ${Math.round(result.startDelay)} ms; blocking ${result.blocking} ms`,
+      `${label} ${i + 1}/${repeats}: ${(result.download / 1e6).toFixed(3)} MB; content ${Math.round(result.firstPaint)} ms; menu ${Math.round(result.firstFrame)} ms; ready ${Math.round(result.readyAt)} ms; GO ${Math.round(result.startDelay)} ms; blocking ${result.blocking} ms`,
     );
     await context.close();
   }
@@ -210,6 +227,7 @@ const report = {
       "menu",
       "firstFrame",
       "menuClear",
+      "readyAt",
       "startDelay",
       "lastResource",
       "blocking",

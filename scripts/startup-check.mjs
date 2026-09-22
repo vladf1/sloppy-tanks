@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await chromium.launch({ channel: "chrome", headless: false });
 const results = {};
 const errors = [];
 async function fresh(viewport = { width: 1440, height: 1000 }) {
@@ -42,8 +42,14 @@ try {
   await delayed.page.locator('[data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
-  await delayed.page.locator("#start").click();
+  const startBox = await delayed.page.locator("#start").boundingBox();
+  assert.ok(startBox);
+  await delayed.page.mouse.click(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2);
   assert.equal(await delayed.page.locator("#start").isDisabled(), true);
+  assert.match(
+    await delayed.page.locator("#startup-status").textContent(),
+    /round|Downloading|Building|Preparing/,
+  );
   // A last-minute choice during the queued start must reach the actual round.
   await delayed.page.locator('input[value="quarry"]').check();
   assert.equal(await delayed.page.locator("canvas").count(), 0);
@@ -66,6 +72,40 @@ try {
     canvases: 1,
   });
   await delayed.context.close();
+
+  // Hold GPU compilation too: GO and late choices must survive this separate
+  // preparation stage, and the simulation must not start behind the menu.
+  const graphics = await fresh();
+  await graphics.page.addInitScript(() => {
+    const compile = GPUDevice.prototype.createRenderPipelineAsync;
+    const gate = new Promise((resolve) => {
+      window.releaseGraphics = resolve;
+    });
+    GPUDevice.prototype.createRenderPipelineAsync = async function (...args) {
+      const pipeline = await compile.apply(this, args);
+      await gate;
+      return pipeline;
+    };
+  });
+  await graphics.page.goto(url, { waitUntil: "domcontentloaded" });
+  await graphics.page.waitForFunction(() =>
+    document.querySelector("#startup-status")?.textContent.includes("Preparing graphics"),
+  );
+  const graphicsBox = await graphics.page.locator("#start").boundingBox();
+  assert.ok(graphicsBox);
+  await graphics.page.mouse.click(
+    graphicsBox.x + graphicsBox.width / 2,
+    graphicsBox.y + graphicsBox.height / 2,
+  );
+  assert.equal(await graphics.page.locator("#start").isDisabled(), true);
+  assert.equal(await graphics.page.locator("#game").isVisible(), false);
+  await graphics.page.locator('input[value="harbor"]').check();
+  await graphics.page.screenshot({ path: `${output}/loading-queued-desktop.png` });
+  await graphics.page.evaluate(() => window.releaseGraphics());
+  await playing(graphics.page);
+  assert.equal(await graphics.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
+  results.delayedGraphics = "early GO and changed map passed";
+  await graphics.context.close();
 
   const warm = await fresh();
   await warm.page.goto(url);

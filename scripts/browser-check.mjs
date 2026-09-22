@@ -93,11 +93,30 @@ try {
   await page.mouse.wheel(0, 100);
   await page.keyboard.up("Shift");
   await page.waitForFunction((value) => window.sloppy.view.zoom !== value, zoom);
-  await page.evaluate(() => {
+  const beforeCollapseBatches = await page.evaluate(() => {
+    const batches = window.sloppy.view.partBatches.batches.map((batch) => batch.mesh.uuid);
     window.sloppy.overview();
     window.sloppy.collapse();
+    return batches;
   });
   await page.waitForTimeout(650);
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.sloppy.view.partBatches.batches.map((batch) => batch.mesh.uuid),
+    ),
+    beforeCollapseBatches,
+    "tower rubble must not rebuild the warmed tank/tree batches",
+  );
+  assert.ok(
+    await page.evaluate(() => {
+      const d = window.sloppy;
+      const rubble = d.sim.covers.filter((cover) => cover.kind === "rubble");
+      return (
+        rubble.length > 0 && rubble.every((cover) => d.view.coverMeshes.get(cover.id)?.visible)
+      );
+    }),
+    "new rubble still receives visible models",
+  );
   await page.screenshot({ path: "artifacts/collapse.png" });
   await page.waitForTimeout(5000);
   await page.screenshot({ path: "artifacts/ruined.png" });

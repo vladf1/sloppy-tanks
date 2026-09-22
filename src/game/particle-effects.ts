@@ -97,6 +97,9 @@ export class ParticleEffects {
       MAX_PARTICLES,
     );
     storageInstances(this.mesh);
+    // setColorAt would otherwise add this attribute on the first hit and
+    // trigger a new WebGPU pipeline while the round is running.
+    this.mesh.setColorAt(0, new THREE.Color(0xffffff));
     this.mesh.frustumCulled = false;
   }
   reset(): void {

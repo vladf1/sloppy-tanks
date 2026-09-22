@@ -69,7 +69,10 @@ try {
             for (let i = 0; i < 3; i++) {
               await window.nextFrame();
               d.view.render(d.sim, 1, 0, overview);
+              await d.view.renderer.waitForPipelineCompilation();
             }
+            await window.nextFrame();
+            d.view.render(d.sim, 1, 0, overview);
           },
           { cached, overview },
         );

@@ -24,7 +24,9 @@ export default defineConfig({
         order: "post",
         handler(_html, context) {
           const binary = Object.keys(context.bundle ?? {}).find((name) => name.endsWith(".wasm"));
-          return binary && context.filename.endsWith("stresstest.html")
+          return binary &&
+            (context.filename.endsWith("index.html") ||
+              context.filename.endsWith("stresstest.html"))
             ? [
                 {
                   tag: "link",

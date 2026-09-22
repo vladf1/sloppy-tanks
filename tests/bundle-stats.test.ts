@@ -1,13 +1,69 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import {
+  compileRuntimePipelinesAsync,
   preserveRenderBundleScope,
   submitRenderBundlesInOrder,
   trackRenderBundles,
   type BundleBackend,
   type BundleExecutionBackend,
   type BundleRenderer,
+  type RuntimePipelines,
 } from "../src/game/bundle-stats";
+
+test("new runtime pipelines compile without blocking and refresh their bundle", async () => {
+  let resolve!: () => void;
+  const ready = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const bundle = { needsUpdate: false };
+  const draw = { bundle };
+  const pipelines: RuntimePipelines = {
+    updateForRender: () => {
+      throw new Error("synchronous pipeline path was used");
+    },
+    getForRender: (_draw, pending) => {
+      pending!.push(ready);
+    },
+  };
+  const waitForReady = compileRuntimePipelinesAsync(pipelines);
+  pipelines.updateForRender(draw);
+  assert.equal(bundle.needsUpdate, false);
+  resolve();
+  await waitForReady();
+  assert.equal(bundle.needsUpdate, true);
+});
+
+test("shared pending pipelines refresh every dependent bundle without serializing compilation", async () => {
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const pipeline = {};
+  let created = false;
+  const pipelines: RuntimePipelines = {
+    updateForRender: () => {},
+    getForRender: (_draw, promises) => {
+      if (!created) {
+        created = true;
+        promises!.push(pending);
+      }
+      return pipeline;
+    },
+  };
+  const wait = compileRuntimePipelinesAsync(pipelines);
+  const first = { needsUpdate: false },
+    second = { needsUpdate: false };
+  const serialWaits: Promise<unknown>[] = [];
+  pipelines.getForRender({ bundle: first }, serialWaits);
+  pipelines.updateForRender({ bundle: second });
+  assert.equal(serialWaits.length, 0, "compileAsync schedules GPU work in parallel");
+  assert.equal(first.needsUpdate, false);
+  finish();
+  await wait();
+  assert.equal(first.needsUpdate, true);
+  assert.equal(second.needsUpdate, true);
+});
 
 test("nested shadow bundles retain the parent's remaining camera-update records", () => {
   const main = {},

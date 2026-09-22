@@ -177,6 +177,10 @@ export class ProjectileVisuals {
     const layer = (geometry: THREE.BufferGeometry, material: THREE.Material) => {
       const mesh = new THREE.InstancedMesh(geometry, material, CAPACITY);
       storageInstances(mesh);
+      if (material === teamMaterial) {
+        // Keep the shader layout stable before the first colored projectile.
+        mesh.setColorAt(0, this.colors[0]);
+      }
       mesh.frustumCulled = false;
       mesh.count = 0;
       this.group.add(mesh);

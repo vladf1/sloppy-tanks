@@ -428,7 +428,7 @@ canvas#game {
 #startup-overlay {
   z-index: 30;
 }
-#startup-overlay[data-state="error"] #start {
+:is(#startup-overlay, #overlay)[data-state="error"] #start {
   font-size: 16px;
 }
 .menu-ready #game,
@@ -436,7 +436,6 @@ canvas#game {
   visibility: hidden;
 }
 #startup-status {
-  flex: 0 0 120px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -444,6 +443,65 @@ canvas#game {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
+}
+.startup-progress {
+  padding: 12px 15px;
+  margin: 0 0 18px;
+  border: 1px solid #8bb9dc29;
+  border-radius: 8px;
+  background: #0d223b;
+}
+.startup-progress-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+.startup-hint {
+  color: #a8bfd1;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.startup-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 3px;
+  margin-top: 10px;
+  background: #88b9dc18;
+}
+.startup-track span {
+  display: block;
+  height: 100%;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, #ffcf38, #ffe79b);
+  border-radius: inherit;
+  animation: startup-sweep 1.4s ease-in-out infinite;
+}
+@keyframes startup-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(365%);
+  }
+}
+:is(#startup-overlay, #overlay)[data-state="ready"] .startup-track span {
+  width: 100%;
+  animation: none;
+  background: #8cdda0;
+}
+:is(#startup-overlay, #overlay)[data-state="error"] .startup-track span {
+  width: 100%;
+  animation: none;
+  background: #ffb2a7;
+}
+@media (prefers-reduced-motion: reduce) {
+  .startup-track span {
+    animation: none;
+    width: 100%;
+    opacity: 0.65;
+  }
 }
 #startup-status::before {
   content: "";
@@ -453,16 +511,16 @@ canvas#game {
   background: currentColor;
   box-shadow: 0 0 0 3px #ffcf3820;
 }
-#startup-overlay[data-state="ready"] #startup-status {
+:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status {
   color: #a2e6b0;
 }
-#startup-overlay[data-state="ready"] #startup-status::before {
+:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status::before {
   box-shadow: 0 0 0 3px #a2e6b020;
 }
-#startup-overlay[data-state="error"] #startup-status {
+:is(#startup-overlay, #overlay)[data-state="error"] #startup-status {
   color: #ffb2a7;
 }
-#startup-overlay[data-state="error"] #startup-status::before {
+:is(#startup-overlay, #overlay)[data-state="error"] #startup-status::before {
   box-shadow: 0 0 0 3px #ffb2a720;
 }
 #start:disabled {
@@ -949,6 +1007,7 @@ h2 {
 }
 .start-heading #start {
   flex: 0 0 auto;
+  min-width: 132px;
   font-size: 30px;
   padding: 15px 32px;
 }
@@ -962,6 +1021,7 @@ h2 {
     gap: 12px;
   }
   .start-heading #start {
+    min-width: 96px;
     font-size: 24px;
     padding: 13px 20px;
   }

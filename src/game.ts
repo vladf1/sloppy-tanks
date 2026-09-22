@@ -23,14 +23,39 @@ export async function prepareGame(
   app: HTMLElement,
   seed: number,
   getOptions: () => GameOptions,
+  onStage: (stage: string) => void = () => {},
 ): Promise<StartGame> {
-  await Promise.all([RAPIER.init(), loadTankSurface()]);
+  onStage("Building the arena…");
   const root = document.createElement("div");
   root.hidden = true;
   app.append(root);
   root.innerHTML =
     '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
+  let view: Presentation;
+  try {
+    // Device setup and image decoding do not depend on the physics world.
+    const results = await Promise.allSettled([
+      Presentation.create(canvas),
+      RAPIER.init(),
+      loadTankSurface(),
+    ]);
+    const presentation = results[0];
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      if (presentation.status === "fulfilled") {
+        presentation.value.renderer.dispose();
+      }
+      throw failure.reason;
+    }
+    if (presentation.status !== "fulfilled") {
+      throw new Error("Graphics initialization failed");
+    }
+    view = presentation.value;
+  } catch (error) {
+    root.remove();
+    throw error;
+  }
   const sim = new Simulation(seed);
   const preparedOptions = { ...getOptions() };
   Object.assign(sim, preparedOptions);
@@ -42,19 +67,12 @@ export async function prepareGame(
     sim.reset();
   }
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  let view: Presentation;
-  try {
-    view = await Presentation.create(canvas);
-  } catch (error) {
-    sim.dispose();
-    root.remove();
-    throw error;
-  }
   const audio = new AudioSystem();
   view.reset(sim);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  onStage("Preparing graphics…");
   // Compile shaders while the menu is visible, without drawing a background scene.
-  await view.renderer.compileAsync(view.scene, view.camera);
+  await view.prepare(sim);
   let active = false;
   const stats = new NerdStats(
     root,
@@ -106,6 +124,55 @@ export async function prepareGame(
     view.reset(sim);
     beginRound();
   }
+  let roundStarting = false;
+  async function startFromMenu(): Promise<void> {
+    if (roundStarting) {
+      return;
+    }
+    roundStarting = true;
+    active = false;
+    controls.clear();
+    root.classList.add("menu-ready");
+    const button = ui.overlay.querySelector<HTMLButtonElement>("#start, #play-again");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "WAIT";
+    }
+    ui.overlay.dataset.state = "starting";
+    const status = ui.overlay.querySelector("#startup-status");
+    if (status) {
+      status.textContent = "Preparing your arena…";
+    }
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      let selection: GameOptions;
+      do {
+        selection = {
+          humanKind: sim.humanKind,
+          humanTeam: sim.humanTeam,
+          gameMode: sim.gameMode,
+          mapMode: sim.mapMode,
+          difficulty: sim.difficulty,
+        };
+        sim.reset();
+        view.reset(sim);
+        await view.prepare(sim);
+      } while (!sameGameOptions(selection, sim));
+      beginRound();
+    } catch (error) {
+      console.error("Round preparation failed", error);
+      ui.overlay.dataset.state = "error";
+      if (status) {
+        status.textContent = "The arena could not load. Please try again.";
+      }
+      if (button) {
+        button.disabled = false;
+        button.textContent = "TRY AGAIN";
+      }
+    } finally {
+      roundStarting = false;
+    }
+  }
   function beginRound(): void {
     active = true;
     root.hidden = false;
@@ -127,7 +194,9 @@ export async function prepareGame(
   const ui = new UI(
     root,
     sim,
-    start,
+    () => {
+      void startFromMenu();
+    },
     () => {
       controls.clear();
       sim.start();
@@ -257,12 +326,19 @@ export async function prepareGame(
     }
   }
 
-  return (options) => {
+  return async (options) => {
     if (!stressTest && !sameGameOptions(preparedOptions, options)) {
-      Object.assign(sim, options);
-      start();
-    } else {
-      beginRound();
+      // Choices can change while the earlier arena is preparing. Keep the menu
+      // visible until the most recent selection, including its shaders, is ready.
+      do {
+        Object.assign(preparedOptions, options);
+        Object.assign(sim, preparedOptions);
+        sim.reset();
+        view.reset(sim);
+        onStage("Preparing your arena…");
+        await view.prepare(sim);
+      } while (!sameGameOptions(preparedOptions, options));
     }
+    beginRound();
   };
 }

@@ -2,6 +2,60 @@ import type { Renderer } from "three/webgpu";
 
 type Counts = Pick<Renderer["info"]["render"], "drawCalls" | "triangles" | "points" | "lines">;
 type Stats = { render: Counts };
+
+interface AsyncDraw {
+  bundle?: { needsUpdate: boolean };
+}
+
+export interface RuntimePipelines {
+  updateForRender(draw: AsyncDraw): void;
+  getForRender(draw: AsyncDraw, promises?: Promise<unknown>[] | null): unknown;
+}
+
+/** r185 creates uncached WebGPU pipelines synchronously during render. Request
+ * its async path instead; Renderer.isReady skips that draw until it completes.
+ * A bundle recorded without the draw must be rebuilt when it is ready. */
+export function compileRuntimePipelinesAsync(pipelines: RuntimePipelines): () => Promise<void> {
+  const inFlight = new Map<
+    unknown,
+    { ready: Promise<void>; bundles: Set<NonNullable<AsyncDraw["bundle"]>> }
+  >();
+  const get = pipelines.getForRender.bind(pipelines);
+  pipelines.getForRender = (draw) => {
+    const pending: Promise<unknown>[] = [];
+    const pipeline = get(draw, pending);
+    if (pending.length) {
+      const bundles = new Set<NonNullable<AsyncDraw["bundle"]>>();
+      const completion = Promise.all(pending).then(
+        () => {
+          for (const bundle of bundles) {
+            bundle.needsUpdate = true;
+          }
+        },
+        (error: unknown) => {
+          console.error("WebGPU pipeline compilation failed", error);
+          for (const bundle of bundles) {
+            bundle.needsUpdate = true;
+          }
+        },
+      );
+      inFlight.set(pipeline, { ready: completion, bundles });
+      void completion.then(() => inFlight.delete(pipeline));
+    }
+    if (draw.bundle) {
+      inFlight.get(pipeline)?.bundles.add(draw.bundle);
+    }
+    return pipeline;
+  };
+  pipelines.updateForRender = (draw) => {
+    pipelines.getForRender(draw);
+  };
+  return async () => {
+    while (inFlight.size) {
+      await Promise.all([...inFlight.values()].map(({ ready }) => ready));
+    }
+  };
+}
 export interface BundleRenderer {
   _currentRenderBundle: object | null;
   _renderScene(scene: object, camera: object, useFrameBufferTarget?: boolean): unknown;

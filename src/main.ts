@@ -13,9 +13,26 @@ const options = initialGameOptions(
 const autoStart =
   document.documentElement.dataset.scenario === "stress-test" ||
   new URLSearchParams(location.search).has("autoplay");
-const load = async () => {
+// Start the few critical image downloads alongside the engine/WASM request.
+// Image preloads share TextureLoader's browser cache; no second fetch/decode path.
+for (const path of [
+  "tanks/armor-wear",
+  "ground/packed-dirt",
+  ...(options.mapMode === "village"
+    ? ["ground/dry-grass", "trees/conifer-spray", "water/normals"]
+    : []),
+]) {
+  const link = document.createElement("link");
+  link.rel = "preload";
+  link.as = "image";
+  link.crossOrigin = "anonymous";
+  link.href = `${import.meta.env.BASE_URL}textures/${path}.webp`;
+  document.head.append(link);
+}
+const load = async (onStage: (stage: string) => void = () => {}) => {
+  onStage("Downloading game files…");
   const { prepareGame } = await import("./game");
-  return prepareGame(root, seed, () => options);
+  return prepareGame(root, seed, () => options, onStage);
 };
 
 if (autoStart) {
@@ -24,8 +41,8 @@ if (autoStart) {
     setup.style.display = "none";
   }
   void load()
-    .then((start) => {
-      start(options);
+    .then(async (start) => {
+      await start(options);
       setup?.remove();
     })
     .catch((error: unknown) => {
