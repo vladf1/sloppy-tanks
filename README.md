@@ -106,3 +106,16 @@ wrangler pages deploy dist-cloudflare --project-name sloppy-tanks --branch main
 The Namecheap CNAME `sloppy-tanks` points to `sloppy-tanks.pages.dev`; the apex, `www`, and existing GitHub Pages configuration remain separate. To stop the experiment, disable the Cloudflare workflow and remove only that subdomain's CNAME and Pages custom-domain association.
 
 The build separates the interactive menu from gameplay, graphics, physics and audio dependencies. A blue HTML loading screen fades into the menu, which stays usable while the engine, textures, audio and a hidden arena prepare. Shader compilation runs without drawing a 3D menu background. GO reuses the prepared arena when its choices still match, or builds the newly selected round; an early GO waits in the menu. Rapier's WASM is emitted as a separate hashed file and preloaded from HTML. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
+
+### Local dev deployment
+
+`npm run deploy:dev` runs the normal checks, builds the current local checkout
+(including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
+Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first.
+No Git commit or push is required. `npm run build:dev` builds without publishing.
+
+The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
+browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
+The provider URL is <https://sloppy-tanks-dev.pages.dev/>. The `/build-info.json`
+endpoint records the UTC build time, commit, and whether local changes were present.
+The build goes to `dist-dev/`; production builds and deployments stay separate.

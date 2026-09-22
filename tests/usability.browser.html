@@ -95,6 +95,8 @@
         },
         (event) => view.damageAngle(event),
       );
+      // Match game startup: UI has cloned the template, so remove the hidden copy.
+      document.querySelector("#startup-overlay").parentElement.remove();
       const d = { start, controls };
       const result = document.querySelector("#result");
       const advance = (n = 5) => {
@@ -316,6 +318,7 @@
             "Pause has no difficulty control",
           );
           check(document.querySelector("#ammo-standard").disabled, "Ammo disabled while paused");
+          click("#end-battle");
           click("#restart");
           click('input[name="difficulty"][value="hard"]');
           check(
@@ -339,6 +342,7 @@
             s.difficulty === "hard" && !document.querySelector('input[name="difficulty"]'),
             "Round difficulty stays fixed while paused",
           );
+          click("#end-battle");
           click("#restart");
           check(
             document.querySelector('input[name="difficulty"]:checked').value === "hard",

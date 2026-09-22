@@ -38,8 +38,9 @@
     <main></main>
     <script type="module">
       import { loadTankSurface } from "../src/game/tank-surfaces";
-      import { tankPreview } from "../src/game/tank-previews";
+      import { renderTankPreviews } from "../scripts/render-tank-previews";
       await loadTankSurface();
+      const previews = renderTankPreviews();
       for (const team of [0, 1])
         for (const kind of ["scout", "balanced", "heavy"]) {
           const card = document.createElement("article");
@@ -49,7 +50,7 @@
           for (const size of ["large", "small"]) {
             const img = new Image();
             img.className = size;
-            img.src = tankPreview(kind, team);
+            img.src = previews[`${team}-${kind}`];
             card.append(img);
           }
           document.querySelector("main").append(card);

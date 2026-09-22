@@ -154,6 +154,36 @@ be weakened to make a normal match look healthy.
   results as evidence from a particular environment and time. Re-measure live
   state before making current host or performance claims.
 
+## Local dev publishing
+
+- `npm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
+  to the dedicated Cloudflare Pages project `sloppy-tanks-dev`. It publishes
+  current local files, including uncommitted changes; no push is required.
+  Use this when asked to publish the dev site. Do not substitute the production
+  project `sloppy-tanks` or change either production deployment workflow.
+- Requires the Wrangler CLI and an authenticated `wrangler login` session
+  (or a Pages:Edit API token). The publisher fixes the account, project, and
+  `main` deployment branch explicitly, independent of the local Git branch.
+- `npm run build:dev` only builds. It uses `/` as the asset base and leaves
+  `dist/` and `dist-cloudflare/` untouched. Keep `dist-dev/` excluded from Git,
+  formatting, and lint discovery. Never upload the repository directory.
+- The game stays at `/`; `/test-pages.html` lists compiled browser fixtures.
+  `scripts/dev-site.ts` is the explicit page allowlist. Add suitable HTML entries
+  there and smoke-test their deployed assets and behavior. Do not blindly include
+  every HTML file: old profiling/concrete fixtures depend on obsolete startup
+  behavior, and asset generators are automation tools rather than test pages.
+- Keep dev pages free of build footers and navigation overlays. UTC build time,
+  commit, and local-change state are available in `/build-info.json` only.
+  The timestamp distinguishes successive dirty builds.
+  The performance notebook contains historical reports, not results of publishing.
+- Custom domain: `sloppy-tanks-dev.fridman.me`; provider URL:
+  `https://sloppy-tanks-dev.pages.dev/`. Cloudflare must associate the custom
+  domain before Namecheap points the `sloppy-tanks-dev` CNAME to
+  `sloppy-tanks-dev.pages.dev`. Preserve all other DNS records.
+- After publishing, check the game, test directory, representative fixtures,
+  and build metadata through the public URL. A successful upload is not a browser
+  check. Dev responses request `noindex`; this is a public site, not access control.
+
 ## Temporary Cloudflare test links
 
 Create a Cloudflare tunnel **only when the user explicitly requests one**.

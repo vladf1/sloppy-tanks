@@ -6,3 +6,4 @@ public/
 package-lock.json
 assets/texture-sources/
 scripts/benchmarks/
+dist-dev/

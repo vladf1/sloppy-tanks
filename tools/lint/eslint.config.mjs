@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       "dist-cloudflare/**",
+      "dist-dev/**",
       "artifacts/**",
       "node_modules/**",
       "public/**",

@@ -21,7 +21,9 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run format:check && npm run build && npm test",
-    "postinstall": "npm ci --prefix tools/lint"
+    "postinstall": "npm ci --prefix tools/lint",
+    "build:dev": "tsc --noEmit && DEPLOY_BASE=/ vite build --config vite.dev.config.ts && node scripts/copy-artifacts.mjs dist-dev",
+    "deploy:dev": "npm run check && npm run build:dev && node scripts/deploy-dev.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d": "0.20.0",

@@ -5,3 +5,4 @@ dist-cloudflare/
 .DS_Store
 artifacts/*.png
 artifacts/performance/
+dist-dev/
