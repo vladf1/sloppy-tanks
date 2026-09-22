@@ -6,6 +6,13 @@ import { quarryTerrain } from "./quarry-terrain";
 import { quarryBench, quarryButte, quarryButteSpot, quarryScreeSpots } from "./quarry-benches";
 import { quarrySiteDetails } from "./quarry-site-details";
 import { quarryScree } from "./quarry-scree";
+import {
+  QUARRY_RAMP,
+  quarryRampBoulders,
+  quarryRampGeometry,
+  quarryRampHeight,
+  quarryRampSpoil,
+} from "./quarry-ramp";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
@@ -174,6 +181,7 @@ export class QuarryScenery extends THREE.Group {
       [64, 76, 10, 26], // haul truck bay
       [69, 76.5, -23, -1], // east scree runout
       [-76.5, -69, -6, 18], // west scree runout
+      [QUARRY_RAMP.x0, QUARRY_RAMP.x1, QUARRY_RAMP.z0, QUARRY_RAMP.z1], // east haul ramp
     ];
     let flankPlaced = 0;
     for (let i = 0; i < 40 && flankPlaced < 22; i++) {
@@ -198,6 +206,20 @@ export class QuarryScenery extends THREE.Group {
     // the playable boundary on the machinery apron.
     for (const spot of quarryScreeSpots()) {
       geology.add(...quarryScree(spot, terrain.material));
+    }
+    // The haul ramp gives the parked machinery a believable way out of the pit.
+    const rampSoil = terrain.material.clone();
+    rampSoil.vertexColors = true;
+    geology.add(new THREE.Mesh(quarryRampGeometry(), rampSoil));
+    for (const [i, boulder] of quarryRampBoulders().entries()) {
+      const rock = sandstoneRock(boulder.size, boulder.size * 0.6, boulder.size * 0.85, i % 5);
+      rock.rotation.y = boulder.rotY;
+      put(geology, rock, boulder.x, quarryRampHeight(boulder.x, boulder.z) - 0.2, boulder.z);
+    }
+    for (const [i, chip] of quarryRampSpoil().entries()) {
+      const rock = sandstoneRock(chip.size, chip.size * 0.45, chip.size * 0.8, i % 7);
+      rock.rotation.y = chip.rotY;
+      put(geology, rock, chip.x, quarryRampHeight(chip.x, chip.z) - 0.08, chip.z);
     }
     const butteSpot = quarryButteSpot();
     const butte = quarryButte(butteSpot.scale, butteSpot.rotY);

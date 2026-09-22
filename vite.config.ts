@@ -7,6 +7,8 @@ const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
 
 export default defineConfig({
   base,
+  // Preview launchers assign a free port through PORT; Vite does not read it itself.
+  server: { port: Number(process.env.PORT) || undefined },
   resolve: {
     alias: [
       {
