@@ -1,10 +1,10 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { ROAD_SHOULDER } from "./village-roads";
 
 export type GroundKind = "dry-grass" | "packed-dirt";
 
 /** Shared static albedo maps; mipmaps keep distant ground stable and cheap. */
-export function groundMaterial(renderer: THREE.WebGLRenderer, kind: GroundKind) {
+export function groundMaterial(renderer: THREE.WebGPURenderer, kind: GroundKind) {
   const material = new THREE.MeshStandardMaterial({
     // Set the final tint before batching, which bakes it into road vertices.
     color: kind === "dry-grass" ? 0xe2e8d5 : 0xe5dbcc,
@@ -22,7 +22,7 @@ export function groundMaterial(renderer: THREE.WebGLRenderer, kind: GroundKind) 
   texture.wrapS = texture.wrapT = THREE.MirroredRepeatWrapping;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  texture.anisotropy = Math.min(4, renderer.getMaxAnisotropy());
   // Mark it textured before static batching, even while the image is loading.
   material.map = texture;
   return material;

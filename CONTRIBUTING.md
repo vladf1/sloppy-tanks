@@ -50,11 +50,21 @@ Gameplay uses the seeded `Random` stream. Reordering its draws changes a match e
 
 Rendering interpolates poses without moving physics bodies. New or respawned entities need their models and health bars before drawing. `Presentation` delegates visual work to named stages; static scene creation belongs in scenery/model builders.
 
+Create presentation with `await Presentation.create(canvas)` so the native WebGPU backend initializes before scene resources are built. Custom materials use Three.js TSL. `GameRenderer` constructs the native backend directly; there is no WebGL fallback. Use it in rendering fixtures and preview tools too. Avoid `ShaderMaterial`, `onBeforeCompile`, and direct WebGL context access. Inspect shader errors as well as screenshots. `renderer.info.render.drawCalls` counts draws; `calls` counts renderer invocations. Browser scripts that control the game clock must leave Three.js's own animation callbacks running.
+
+Opaque tank and cover parts share one native storage buffer of GPU poses and cached render bundles. Their original hierarchy still owns transforms and visibility; presentation uploads those poses once before all render passes. Rebuild batches and invalidate the bundle when models or their geometry/materials change. Source meshes have their draw layers suppressed while batched, so detached clones must call `restoreBatchedLayers`. Batch cleanup owns only the merged geometry, copied materials, and shared pose buffer, never the original model resources.
+
+`GameRenderer` contains compatibility fixes for Three r185's shadow cache, per-object binding cleanup, interleaved-buffer accounting, and cached-bundle draw statistics. Bundles execute before subsequent transparent draws; r185's deferred execution otherwise draws opaque tanks over health bars and effects. Executing a bundle also invalidates the pass binding cache. Nested shadow/reflection recording must restore the parent bundle so all its draws retain camera-update records. Validate moving cameras as well as still views when changing this path. Failed initialization releases the native backend directly: r185's renderer disposal would otherwise retry initialization. When removing models, release their renderer bindings as well as disposing owned resources. Recheck these hooks when upgrading Three. The general browser check measures actual WebGPU buffer allocations across destructive resets; stable geometry counts alone do not establish stable GPU memory.
+
+Persistent effect pools use `storageInstances` and mark changed ranges with `needsUpdate`. Keep these buffers version-gated: r185's `DynamicDrawUsage` forces another upload for every consuming material/pass, even when the version is unchanged. Empty pools are skipped before shader processing; populate them before rendering, not from an `onBeforeRender` callback. Flag positions and their original triangle-averaged normals are calculated in the vertex shader, with fixed conservative bounds.
+
 Cached geometry and materials outlive round resets. Only per-instance resources marked `userData.owned` are disposed by round cleanup. `isMesh` retains concrete Three.js field types after an `instanceof` check. Keep bounded capacities for particles, physics fragments, track marks and diagnostics.
 
 ## Browser and performance checks
 
 Use the URL printed by the running Vite server for `SLOPPY_URL`. Browser scripts use installed Google Chrome with isolated profiles. Select checks relevant to the change:
+
+`node scripts/render-bundles-check.mjs` compares cached draws against ordinary draws after moving and switching cameras on all three maps. It also checks that every bundled draw keeps an update record across nested shadow/reflection passes. Screenshots and pixel differences go to `artifacts/performance/bundle-rendering/` (or `SLOPPY_ARTIFACT_DIR`). Run it when changing render bundles, camera uniforms, or render-pass ordering.
 
 | Area                                         | Script or local browser page                                                |
 | -------------------------------------------- | --------------------------------------------------------------------------- |

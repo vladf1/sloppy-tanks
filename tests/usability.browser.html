@@ -62,7 +62,7 @@
       const root = document.querySelector("#app");
       root.innerHTML = '<canvas id="game" tabindex="0"></canvas>';
       const canvas = document.querySelector("#game");
-      const view = new Presentation(canvas);
+      const view = await Presentation.create(canvas);
       const pause = () => {
         s.match.phase = "paused";
         controls.clear();

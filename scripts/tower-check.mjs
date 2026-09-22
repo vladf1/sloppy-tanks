@@ -7,7 +7,9 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
-    window.requestAnimationFrame = () => 1;
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) =>
+      callback.name === "loop" ? 1 : requestFrame(callback);
   });
   await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
   await page.waitForFunction(() => !!window.sloppy);

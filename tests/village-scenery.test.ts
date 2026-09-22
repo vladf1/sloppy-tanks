@@ -48,14 +48,14 @@ test("chimney smoke follows permanent cottages and reuses buffers across map res
     .filter((c) => c.kind === "house")
     .map((c) => ({ ...c, destructible: Number.isFinite(c.hp) })) as Cover[];
   const geometry = smoke.mesh.geometry,
-    positions = geometry.getAttribute("position");
+    positions = geometry.getAttribute("smokeOrigin");
   smoke.setCovers(covers);
-  assert.equal(geometry.drawRange.count, (covers.filter((c) => !c.destructible).length + 1) * 8);
+  assert.equal(geometry.instanceCount, (covers.filter((c) => !c.destructible).length + 1) * 8);
   smoke.setCovers([]);
-  assert.equal(geometry.drawRange.count, 8, "only the mill remains without village cottages");
+  assert.equal(geometry.instanceCount, 8, "only the mill remains without village cottages");
   smoke.setCovers(covers);
   assert.equal(
-    geometry.getAttribute("position"),
+    geometry.getAttribute("smokeOrigin"),
     positions,
     "reset must reuse the particle buffer",
   );

@@ -1,3 +1,4 @@
+import { storageInstances } from "./render-resources";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { PROJECTILE_ORDER } from "./ammunition";
@@ -175,7 +176,7 @@ export class ProjectileVisuals {
     const flameMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
     const layer = (geometry: THREE.BufferGeometry, material: THREE.Material) => {
       const mesh = new THREE.InstancedMesh(geometry, material, CAPACITY);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      storageInstances(mesh);
       mesh.frustumCulled = false;
       mesh.count = 0;
       this.group.add(mesh);

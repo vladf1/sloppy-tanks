@@ -20,6 +20,7 @@ try {
     let frame, now;
     const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (callback) => {
+      if (callback.name !== "loop") return requestFrame(callback);
       frame = callback;
       if (!window.sloppy) return requestFrame(callback);
       return 1;
@@ -103,6 +104,22 @@ try {
   const resets = await page.evaluate(() => {
     const d = window.sloppy,
       memory = [];
+    const device = d.view.renderer.backend.device;
+    const buffers = new Map();
+    // Count actual live allocations as well as the renderer's resource counters.
+    if (device) {
+      const createBuffer = device.createBuffer.bind(device);
+      device.createBuffer = (descriptor) => {
+        const buffer = createBuffer(descriptor);
+        buffers.set(buffer, descriptor.size);
+        const destroy = buffer.destroy.bind(buffer);
+        buffer.destroy = () => {
+          buffers.delete(buffer);
+          destroy();
+        };
+        return buffer;
+      };
+    }
     for (let i = 0; i < 10; i++) {
       d.sim.seed = 207;
       d.start();
@@ -113,16 +130,51 @@ try {
       d.view.render(d.sim, 1, 0);
       d.start();
       d.view.render(d.sim, 1, 0);
-      memory.push({ ...d.view.renderer.info.memory });
+      memory.push({
+        ...d.view.renderer.info.memory,
+        gpuBuffers: buffers.size,
+        gpuBufferBytes: [...buffers.values()].reduce((sum, size) => sum + size, 0),
+      });
     }
     return memory;
   });
-  for (const memory of resets.slice(1)) assert.deepEqual(memory, resets[0]);
+  const stableMemory = ({ programsSize, total, ...memory }) => ({
+    ...memory,
+    // Generated shader identifiers grow with node IDs. Shader count must stay
+    // fixed; compare actual buffer/texture bytes independently of source length.
+    resourceBytes: total - programsSize,
+  });
+  for (const memory of resets.slice(1)) {
+    assert.deepEqual(stableMemory(memory), stableMemory(resets[0]));
+  }
+  const mineResources = await page.evaluate(() => {
+    const { sim, view } = window.sloppy;
+    const memory = [];
+    for (let i = 0; i < 30; i++) {
+      sim.mines.push({
+        id: sim.nextId++,
+        owner: sim.human.id,
+        team: sim.humanTeam,
+        x: sim.human.previous.x,
+        z: sim.human.previous.z,
+        arm: 0,
+        life: 20,
+      });
+      view.render(sim, 1, 0);
+      sim.mines.length = 0;
+      view.render(sim, 1, 0);
+      memory.push({ ...view.renderer.info.memory });
+    }
+    return memory;
+  });
+  for (const memory of mineResources.slice(1)) {
+    assert.deepEqual(stableMemory(memory), stableMemory(mineResources[0]));
+  }
   assert.deepEqual(errors, []);
   mkdirSync("artifacts/performance", { recursive: true });
   writeFileSync(
     "artifacts/performance/browser-controls.json",
-    JSON.stringify({ input, before, after, paused, resets, errors }, null, 2),
+    JSON.stringify({ input, before, after, paused, resets, mineResources, errors }, null, 2),
   );
   console.log(
     JSON.stringify({
@@ -131,6 +183,7 @@ try {
       paused,
       input,
       resets: resets.at(-1),
+      mineResources: mineResources.at(-1),
       errors,
     }),
   );

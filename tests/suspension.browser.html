@@ -83,7 +83,7 @@
       await RAPIER.init();
       await loadTankSurface();
       const sim = new Simulation(123);
-      const view = new Presentation(document.querySelector("canvas"));
+      const view = await Presentation.create(document.querySelector("canvas"));
       const output = document.querySelector("output");
       const chassis = document.querySelector("#chassis");
       const speed = document.querySelector("#speed");
@@ -176,7 +176,7 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
           turretTiltError: hullUp.distanceTo(turretUp),
           turretAimError: relativeForward.distanceTo(new Vector3(Math.sin(aim), 0, Math.cos(aim))),
           body: sim.human.body.rotation(),
-          draws: view.renderer.info.render.calls,
+          draws: view.renderer.info.render.drawCalls,
         };
       }
       function advance(n, moveX = 0, moveZ = 0) {

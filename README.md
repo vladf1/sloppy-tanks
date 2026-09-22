@@ -13,6 +13,8 @@ npm run dev
 
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`.
 
+Rendering requires WebGPU, HTTPS or localhost, and a browser/GPU that supports it. There is no WebGL fallback. **Stats for nerds** shows rendering diagnostics.
+
 ## Play
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:

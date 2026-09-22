@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { ExplosionEffects } from "./explosion-effects";
-import { updateInstances } from "./render-resources";
+import { updateInstances, storageInstances } from "./render-resources";
 import type { SimEvent } from "./types";
 
 const MAX_PARTICLES = 1200;
@@ -96,7 +96,7 @@ export class ParticleEffects {
       new THREE.MeshBasicMaterial({ color: 0xffffff }),
       MAX_PARTICLES,
     );
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    storageInstances(this.mesh);
     this.mesh.frustumCulled = false;
   }
   reset(): void {

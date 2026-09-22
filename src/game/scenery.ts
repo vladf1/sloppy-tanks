@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { ARENA, TEAM_COLORS } from "./data";
@@ -7,7 +7,7 @@ import type { GroundKind } from "./ground-surfaces";
 import { box, cylinder, material, put } from "./model-primitives";
 import { VILLAGE_ROADS } from "./village-roads";
 /** Static village dressing; collidable objects are created separately from the arena layout. */
-function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGLRenderer): void {
+function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGPURenderer): void {
   const details = new THREE.Group();
   const roads = new THREE.Group();
   const roadMaterial = groundMaterial(renderer, "packed-dirt");
@@ -131,7 +131,7 @@ export function createLighting(scene: THREE.Scene) {
 }
 
 export function createArenaFloor(
-  renderer: THREE.WebGLRenderer,
+  renderer: THREE.WebGPURenderer,
   kind: GroundKind,
   extent = ARENA * 2,
 ): THREE.Mesh {
@@ -162,7 +162,7 @@ export function createArenaFloor(
 
 export function createTerrain(
   scene: THREE.Scene,
-  renderer: THREE.WebGLRenderer,
+  renderer: THREE.WebGPURenderer,
 ): THREE.MeshStandardMaterial {
   const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
   put(scene, board, 0, -0.8, 0);

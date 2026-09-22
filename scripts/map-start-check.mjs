@@ -19,6 +19,7 @@ try {
         let frame;
         const requestFrame = window.requestAnimationFrame.bind(window);
         window.requestAnimationFrame = (callback) => {
+          if (callback.name !== "loop") return requestFrame(callback);
           frame = callback;
           return window.sloppy ? 1 : requestFrame(callback);
         };

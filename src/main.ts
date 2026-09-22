@@ -1,5 +1,6 @@
 import { initialGameOptions } from "./game/game-options";
 import { StartMenu } from "./game/start-menu";
+import { startupErrorMessage } from "./game/startup-error";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -30,10 +31,14 @@ if (autoStart) {
     .catch((error: unknown) => {
       console.error("Game startup failed", error);
       const loading = document.querySelector("#loading p");
+      const message = startupErrorMessage(
+        error,
+        "The arena could not load. Please reload to try again.",
+      );
       if (loading) {
-        loading.textContent = "The arena could not load. Please reload to try again.";
+        loading.textContent = message;
       } else {
-        root.textContent = "The arena could not load. Please reload to try again.";
+        root.textContent = message;
       }
     });
 } else {

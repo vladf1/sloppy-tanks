@@ -1,4 +1,6 @@
-import * as THREE from "three";
+import { storageInstances } from "./render-resources";
+import * as THREE from "three/webgpu";
+import { attribute, uniform, smoothstep } from "three/tsl";
 import { spawnPositions } from "./arena";
 import { VEHICLES, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
@@ -21,7 +23,7 @@ export class TrackTrails {
   mesh: THREE.InstancedMesh;
   private birth = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_CAPACITY), 1);
   private strength = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_CAPACITY), 1);
-  private clock = { value: 0 };
+  private clock = uniform(0);
   private poses = new Map<number, Pose>();
   // Expiry order is a ring; render slots stay dense so mesh.count excludes dead marks.
   private oldest = 0;
@@ -33,7 +35,7 @@ export class TrackTrails {
     const geometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     geometry.setAttribute("trackBirth", this.birth);
     geometry.setAttribute("trackStrength", this.strength);
-    const material = new THREE.MeshBasicMaterial({
+    const material = new THREE.MeshBasicNodeMaterial({
       color: 0x283222,
       transparent: true,
       opacity: 0.38,
@@ -42,24 +44,18 @@ export class TrackTrails {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms.trackTime = this.clock;
-      shader.vertexShader =
-        `attribute float trackBirth;\nattribute float trackStrength;\nvarying float treadAge;\nvarying float treadStrength;\nuniform float trackTime;\n${shader.vertexShader}`.replace(
-          "#include <begin_vertex>",
-          "#include <begin_vertex>\ntreadAge = trackTime - trackBirth;\ntreadStrength = trackStrength;",
-        );
-      shader.fragmentShader =
-        `varying float treadAge;\nvarying float treadStrength;\n${shader.fragmentShader}`.replace(
-          "#include <color_fragment>",
-          `#include <color_fragment>\ndiffuseColor.a *= treadStrength;\ndiffuseColor.a *= 1.0 - smoothstep(4.0, ${TRACK_LIFETIME.toFixed(1)}, treadAge);`,
-        );
-    };
-    material.customProgramCacheKey = () => "tank-tread-fade-strength-v1";
+    material.opacityNode = attribute("trackStrength", "float" as const)
+      .mul(
+        smoothstep(
+          4,
+          TRACK_LIFETIME,
+          this.clock.sub(attribute("trackBirth", "float" as const)),
+        ).oneMinus(),
+      )
+      .mul(0.38);
     this.mesh = new THREE.InstancedMesh(geometry, material, TRACK_CAPACITY);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.birth.setUsage(THREE.DynamicDrawUsage);
-    this.strength.setUsage(THREE.DynamicDrawUsage);
+    storageInstances(this.mesh);
+
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 1;
@@ -90,6 +86,11 @@ export class TrackTrails {
   }
 
   update(simulation: Simulation, alpha: number): void {
+    // Start a fresh upload list, including when no renderer consumed the previous
+    // ranges (for example during a paused/offscreen check).
+    this.mesh.instanceMatrix.clearUpdateRanges();
+    this.birth.clearUpdateRanges();
+    this.strength.clearUpdateRanges();
     this.clock.value = simulation.elapsed;
     let changed = false;
     // Retire only expired entries, not a scan of every live mark each frame.

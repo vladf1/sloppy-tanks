@@ -55,11 +55,13 @@
       const sim = new Simulation(417);
       sim.mapMode = "harbor";
       sim.reset();
-      const view = new Presentation(document.querySelector("canvas"));
+      const view = await Presentation.create(document.querySelector("canvas"));
       view.reset(sim);
       let overview = true;
+      let checkingWater = false;
       let crateExamples = [];
-      document.querySelector("#water-checks").onclick = () => {
+      document.querySelector("#water-checks").onclick = async () => {
+        checkingWater = true;
         const results = [];
         try {
           for (const mode of ["harbor", "village"]) {
@@ -67,11 +69,13 @@
             sim.reset();
             view.reset(sim);
             view.render(sim, 1, 0, true);
-            results.push(checkWater(view, sim));
+            results.push(await checkWater(view, sim));
           }
         } catch (error) {
+          console.error(error);
           results.push(`FAIL: ${error.message}`);
         } finally {
+          checkingWater = false;
           sim.mapMode = "harbor";
           sim.reset();
           view.reset(sim);
@@ -178,7 +182,7 @@
       };
       let last = performance.now();
       function render(now) {
-        view.render(sim, 1, Math.min((now - last) / 1000, 0.1), overview);
+        if (!checkingWater) view.render(sim, 1, Math.min((now - last) / 1000, 0.1), overview);
         last = now;
         requestAnimationFrame(render);
       }

@@ -1,4 +1,5 @@
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
+import { startupErrorMessage } from "./startup-error";
 
 export type StartGame = (options: GameOptions) => void;
 
@@ -68,7 +69,10 @@ export class StartMenu {
     console.error("Game startup failed", error);
     this.failed = true;
     this.overlay.dataset.state = "error";
-    this.status.textContent = "The arena could not load. Please try again.";
+    this.status.textContent = startupErrorMessage(
+      error,
+      "The arena could not load. Please try again.",
+    );
     this.button.disabled = false;
     this.button.textContent = "TRY AGAIN";
     this.button.setAttribute("aria-label", "Try loading the arena again");

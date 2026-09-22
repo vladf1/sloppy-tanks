@@ -14,7 +14,9 @@ try {
   // Real keyboard events and the application loop, with deterministic frame timing.
   await page.addInitScript(() => {
     let frame, now;
+    const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (callback) => {
+      if (callback.name !== "loop") return requestFrame(callback);
       frame = callback;
       return 1;
     };

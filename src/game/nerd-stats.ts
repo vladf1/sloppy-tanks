@@ -163,7 +163,8 @@ export class NerdStats {
       [
         "Render",
         [
-          ["Draw calls / frame", info.calls, "GPU draw calls issued per rendered frame."],
+          ["Backend", "WebGPU", "Native WebGPU graphics backend."],
+          ["Draw calls / frame", info.drawCalls, "GPU draw calls issued per rendered frame."],
           [
             "Triangles / frame",
             info.triangles.toLocaleString(),

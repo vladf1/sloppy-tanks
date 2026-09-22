@@ -22,7 +22,9 @@ try {
   // between fixed simulation ticks, including fast displays and catch-up frames.
   await page.addInitScript(() => {
     let frame, now;
+    const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (cb) => {
+      if (cb.name !== "loop") return requestFrame(cb);
       frame = cb;
       return 1;
     };

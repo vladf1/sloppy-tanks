@@ -42,7 +42,14 @@ export async function prepareGame(
     sim.reset();
   }
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  const view = new Presentation(canvas);
+  let view: Presentation;
+  try {
+    view = await Presentation.create(canvas);
+  } catch (error) {
+    sim.dispose();
+    root.remove();
+    throw error;
+  }
   const audio = new AudioSystem();
   view.reset(sim);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -223,7 +230,7 @@ export async function prepareGame(
           frame: raw * MILLISECONDS_PER_SECOND,
           sim: simCost,
           render: renderCost,
-          calls: view.renderer.info.render.calls,
+          calls: view.renderer.info.render.drawCalls,
           triangles: view.renderer.info.render.triangles,
           bodies: sim.world.bodies.len(),
           shots: sim.shots.length,

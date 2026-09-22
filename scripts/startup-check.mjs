@@ -76,7 +76,7 @@ try {
     return {
       time: window.sloppy.view.time,
       elapsed: window.sloppy.sim.elapsed,
-      draws: window.sloppy.view.renderer.info.render.calls,
+      draws: window.sloppy.view.renderer.info.render.drawCalls,
     };
   });
   assert.deepEqual(results.prepared, { time: 0, elapsed: 0, draws: 0 });
@@ -101,6 +101,7 @@ try {
   await warm.page.locator("#resume").click();
   await playing(warm.page);
   await warm.page.keyboard.press("Escape");
+  await warm.page.locator("#end-battle").click();
   await warm.page.locator("#restart").click();
   await warm.page.locator("#start").waitFor();
   const frozen = await warm.page.evaluate(() => window.sloppy.view.time);
@@ -174,17 +175,17 @@ try {
     { width: 390, height: 844 },
   ]) {
     const layout = await fresh(viewport);
-    let releaseCss;
-    const css = new Promise((resolve) => {
-      releaseCss = resolve;
+    let releaseEngine;
+    const engine = new Promise((resolve) => {
+      releaseEngine = resolve;
     });
-    await layout.page.route(/\/src\/style\.css(?:\?|$)/, async (route) => {
-      await css;
+    await layout.page.route(/\/src\/game\.ts(?:\?|$)/, async (route) => {
+      await engine;
       await route.continue();
     });
     await layout.page.addInitScript(() => {
-      window.loaderStyles = () =>
-        [...document.querySelectorAll("#loading, #loading h1, #loading p")].map((element) => {
+      window.menuStyles = () =>
+        [...document.querySelectorAll("#startup-overlay, #startup-overlay h1")].map((element) => {
           const style = getComputedStyle(element);
           const rect = element.getBoundingClientRect();
           return {
@@ -198,19 +199,16 @@ try {
             y: rect.y,
           };
         });
-      new MutationObserver(() => {
-        if (document.querySelector("#loading.leaving") && !window.styledLoader)
-          window.styledLoader = window.loaderStyles();
-      }).observe(document, { attributes: true, subtree: true });
     });
-    await layout.page.goto(url, { waitUntil: "commit" });
-    await layout.page.locator("#loading h1").waitFor();
-    const before = await layout.page.evaluate(() => window.loaderStyles());
-    await layout.page.screenshot({ path: `${output}/loader-${viewport.width}.png` });
-    releaseCss();
-    await layout.page.waitForFunction(() => !!window.styledLoader);
-    assert.deepEqual(await layout.page.evaluate(() => window.styledLoader), before);
+    await layout.page.goto(url, { waitUntil: "domcontentloaded" });
+    await layout.page.locator("#startup-overlay h1").waitFor();
+    await layout.page.evaluate(() => document.fonts.ready);
+    const before = await layout.page.evaluate(() => window.menuStyles());
+    assert.equal(before.length, 2, "authored menu is visible before the engine loads");
+    await layout.page.screenshot({ path: `${output}/loading-menu-${viewport.width}.png` });
+    releaseEngine();
     await ready(layout.page);
+    assert.deepEqual(await layout.page.evaluate(() => window.menuStyles()), before);
     await layout.page.screenshot({ path: `${output}/menu-${viewport.width}.png` });
     assert.equal(
       await layout.page.evaluate(
@@ -219,12 +217,19 @@ try {
       true,
     );
     assert.equal(
-      await layout.page
-        .locator(".vehicle strong")
-        .evaluateAll((titles) => titles.every((title) => title.scrollWidth <= title.clientWidth)),
+      await layout.page.locator(".vehicle strong").evaluateAll((titles) =>
+        titles.every((title) => {
+          const range = document.createRange();
+          range.selectNodeContents(title);
+          const text = range.getBoundingClientRect();
+          const card = title.closest(".vehicle").getBoundingClientRect();
+          return text.left >= card.left + 1 && text.right <= card.right - 1;
+        }),
+      ),
       true,
+      "vehicle titles fit within their cards without clipping",
     );
-    results[`layout${viewport.width}`] = "stable loader; no horizontal overflow";
+    results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
     await layout.context.close();
   }
   assert.deepEqual(errors, []);

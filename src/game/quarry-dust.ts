@@ -1,5 +1,7 @@
-import * as THREE from "three";
-import { updateInstances } from "./render-resources";
+import * as THREE from "three/webgpu";
+import { uniform } from "three/tsl";
+import { dustMaterial, billboardVertex } from "./effect-materials";
+import { updateInstances, storageInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
 
 export const QUARRY_DUST_CAPACITY = 48;
@@ -42,37 +44,12 @@ export class QuarryDust {
   constructor() {
     const geometry = new THREE.PlaneGeometry(1, 1);
     geometry.setAttribute("wispOpacity", this.opacity);
-    const material = new THREE.ShaderMaterial({
-      uniforms: { dustColor: { value: new THREE.Color(0xe3cfa5) } },
-      transparent: true,
-      depthWrite: false,
-      vertexShader: `
-        attribute float wispOpacity;
-        varying vec2 dustUv;
-        varying float dustOpacity;
-        void main() {
-          dustUv = uv;
-          dustOpacity = wispOpacity;
-          vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          center.xy += position.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
-          gl_Position = projectionMatrix * center;
-        }`,
-      fragmentShader: `
-        uniform vec3 dustColor;
-        varying vec2 dustUv;
-        varying float dustOpacity;
-        void main() {
-          float radius = length(dustUv * 2.0 - 1.0);
-          float alpha = (1.0 - smoothstep(0.1, 1.0, radius)) * dustOpacity;
-          gl_FragColor = vec4(dustColor, alpha);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
-    });
+    const material = dustMaterial("wispOpacity", uniform(new THREE.Color(0xe3cfa5)));
     this.mesh = new THREE.InstancedMesh(geometry, material, QUARRY_DUST_CAPACITY);
+    material.vertexNode = billboardVertex(this.mesh);
     this.mesh.name = "quarry-wind-dust";
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.opacity.setUsage(THREE.DynamicDrawUsage);
+    storageInstances(this.mesh);
+
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;

@@ -1,6 +1,8 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { angleDelta, VEHICLES } from "./data";
-import { updateInstances } from "./render-resources";
+import { uniform } from "three/tsl";
+import { dustMaterial, billboardVertex } from "./effect-materials";
+import { updateInstances, storageInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
 import { TrackGravel } from "./track-gravel";
 import { isVillageDirt } from "./village-roads";
@@ -22,7 +24,7 @@ export class TrackDust {
   readonly mesh: THREE.InstancedMesh;
   readonly gravel = new TrackGravel();
   private opacity = new THREE.InstancedBufferAttribute(new Float32Array(TRACK_DUST_CAPACITY), 1);
-  private color = { value: new THREE.Color(0xc3ad85) };
+  private color = uniform(new THREE.Color(0xc3ad85));
   private puffs: Puff[] = [];
   private free: Puff[] = Array.from({ length: TRACK_DUST_CAPACITY }, () => ({
     x: 0,
@@ -44,36 +46,11 @@ export class TrackDust {
   constructor() {
     const geometry = new THREE.PlaneGeometry(1, 1);
     geometry.setAttribute("puffOpacity", this.opacity);
-    const material = new THREE.ShaderMaterial({
-      uniforms: { dustColor: this.color },
-      transparent: true,
-      depthWrite: false,
-      vertexShader: `
-        attribute float puffOpacity;
-        varying vec2 dustUv;
-        varying float dustOpacity;
-        void main() {
-          dustUv = uv;
-          dustOpacity = puffOpacity;
-          vec4 center = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          center.xy += position.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
-          gl_Position = projectionMatrix * center;
-        }`,
-      fragmentShader: `
-        uniform vec3 dustColor;
-        varying vec2 dustUv;
-        varying float dustOpacity;
-        void main() {
-          float radius = length(dustUv * 2.0 - 1.0);
-          float alpha = (1.0 - smoothstep(0.1, 1.0, radius)) * dustOpacity;
-          gl_FragColor = vec4(dustColor, alpha);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
-    });
+    const material = dustMaterial("puffOpacity", this.color);
     this.mesh = new THREE.InstancedMesh(geometry, material, TRACK_DUST_CAPACITY);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.opacity.setUsage(THREE.DynamicDrawUsage);
+    material.vertexNode = billboardVertex(this.mesh);
+    storageInstances(this.mesh);
+
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
   }

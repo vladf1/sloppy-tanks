@@ -1,4 +1,5 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+import { GameRenderer } from "../src/game/renderer";
 import { VEHICLES } from "../src/game/data";
 import { tankModel } from "../src/game/models";
 import type { Team, VehicleKind } from "../src/game/types";
@@ -6,9 +7,10 @@ import type { Team, VehicleKind } from "../src/game/types";
 const previews = new Map<string, string>();
 
 /** Render the same models used in play once, then reuse lightweight card images. */
-export function renderTankPreviews(): Record<string, string> {
+export async function renderTankPreviews(): Promise<Record<string, string>> {
   if (!previews.size) {
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    const renderer = new GameRenderer({ alpha: true, antialias: true });
+    await renderer.init();
     renderer.setSize(640, 400);
     renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -36,7 +38,6 @@ export function renderTankPreviews(): Record<string, string> {
     } finally {
       // Model geometry/materials belong to the shared game cache.
       renderer.dispose();
-      renderer.forceContextLoss();
     }
   }
   return Object.fromEntries(previews);

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { updateInstances } from "./render-resources";
+import { updateInstances, storageInstances } from "./render-resources";
 
 export const TRACK_GRAVEL_CAPACITY = 192;
 interface Pebble {
@@ -39,7 +39,7 @@ export class TrackGravel {
 
   constructor() {
     this.mesh.name = "quarry-track-gravel";
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    storageInstances(this.mesh);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
   }

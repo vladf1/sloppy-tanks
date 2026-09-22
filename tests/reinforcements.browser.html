@@ -24,7 +24,7 @@
         s.mapMode = "surprise";
         s.reset();
         s.start();
-        view = new Presentation(document.querySelector("#game"));
+        view = await Presentation.create(document.querySelector("#game"));
         view.reset(s);
         view.render(s, 1, 1 / 60);
         let replacements = 0;

@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { batch, freezeStatic } from "./batching";
 import { box, put } from "./model-primitives";
 import { createTerrain } from "./scenery";
@@ -14,7 +14,7 @@ export class VillageScenery extends THREE.Scene {
   private vegetation = new VillageVegetation();
   private wheel: THREE.Group;
   private atmosphere = new VillageAtmosphere();
-  constructor(renderer: THREE.WebGLRenderer) {
+  constructor(renderer: THREE.WebGPURenderer) {
     super();
     this.name = "pine-village-scenery";
     const grass = createTerrain(this, renderer);
