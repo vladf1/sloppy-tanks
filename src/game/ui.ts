@@ -1,3 +1,4 @@
+import { bindPress } from "./button-input";
 import { endBattle } from "./match";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
@@ -59,9 +60,9 @@ export class UI {
     this.feed = root.querySelector("#feed")!;
     for (const weapon of AMMO_ORDER) {
       const button = root.querySelector<HTMLButtonElement>(`#ammo-${weapon}`)!;
-      button.addEventListener("click", () => this.selectAmmo(weapon));
+      bindPress(button, () => this.selectAmmo(weapon));
     }
-    root.querySelector("#pause")!.addEventListener("click", () => {
+    bindPress(root.querySelector("#pause")!, () => {
       if (simulation.match.phase === "playing") {
         this.pause();
         this.lastPhase = "";

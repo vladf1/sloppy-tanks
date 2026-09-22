@@ -1148,3 +1148,22 @@ h2 {
     align-items: center;
   }
 }
+
+.touch-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.touch-setting select {
+  min-height: 44px;
+  padding: 8px;
+  color: #f5faff;
+  background: #18344f;
+  border: 1px solid #94b9d3;
+  border-radius: 6px;
+  font: inherit;
+}
+.touch-help {
+  display: none;
+}

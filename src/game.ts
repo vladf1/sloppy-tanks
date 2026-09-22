@@ -3,6 +3,7 @@ import type { StartGame } from "./game/start-menu";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
+import { TouchModeController } from "./game/touch-mode";
 import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
@@ -69,10 +70,13 @@ export async function prepareGame(
       accumulator = 0;
     }
   };
+  const zoom = (n: number) => {
+    view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + n));
+  };
   const controls = new Controls(
     canvas,
     pause,
-    (n) => (view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + n))),
+    zoom,
     () => sim.match.phase === "playing" && sim.human.alive,
     !stressTest,
   );
@@ -132,6 +136,7 @@ export async function prepareGame(
     },
     (event) => view.damageAngle(event),
   );
+  const touchControls = new TouchModeController(root, controls, sim, zoom);
   window.addEventListener("resize", () => view.resize());
   const recorder = new FrameRecorder(sim, canvas);
   let frameRequest = 0;
@@ -162,8 +167,10 @@ export async function prepareGame(
       if (sim.match.phase === "playing") {
         // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.
         accumulator = Math.min(accumulator + dt, STEP * MAX_CATCH_UP_STEPS);
-        const aim = view.aim(controls.nx, controls.ny);
         const position = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
+        const aim = controls.touch.aiming
+          ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
+          : view.aim(controls.nx, controls.ny);
         const angle = Math.atan2(aim.x - position.x, aim.z - position.z);
         let steps = 0;
         while (accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
@@ -209,6 +216,7 @@ export async function prepareGame(
       stats.frame(now, simCost, renderCost);
       if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
         ui.update(dt * HUD_UPDATE_EVERY_FRAMES);
+        touchControls.update();
       }
       if (recorder.recording) {
         recorder.capture({

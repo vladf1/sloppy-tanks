@@ -397,6 +397,16 @@ export class Presentation {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
+  private readonly touchOrigin = new THREE.Vector3();
+  touchAim(position: { x: number; z: number }, dx: number, dy: number) {
+    // Project relative to the tank so aiming follows the screen direction at any zoom.
+    const origin = this.touchOrigin.set(position.x, 0, position.z).project(this.camera);
+    const canvas = this.renderer.domElement;
+    return this.aim(
+      origin.x + (dx * 180) / canvas.clientWidth,
+      origin.y - (dy * 180) / canvas.clientHeight,
+    );
+  }
   aim(nx: number, ny: number) {
     this.raycaster.setFromCamera(this.pointer.set(nx, ny), this.camera);
     const position = this.aimPoint;

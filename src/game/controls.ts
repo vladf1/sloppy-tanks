@@ -1,3 +1,4 @@
+import { TouchInput } from "./touch-input";
 import { AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS } from "./ammunition";
 import type { AmmoSelection, VehicleCommand } from "./types";
 const PRIMARY_BUTTON = 0;
@@ -13,6 +14,7 @@ AMMO_ORDER.forEach((weapon, i) => {
   ammoKeys.set(`Numpad${i + 1}`, weapon);
 });
 export class Controls {
+  readonly touch = new TouchInput();
   keys = new Set<string>();
   fire = false;
   mine = false;
@@ -76,11 +78,19 @@ export class Controls {
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     canvas.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "touch") {
+        return;
+      }
+      this.touch.aiming = false;
       const r = canvas.getBoundingClientRect();
       this.nx = ((e.clientX - r.left) / r.width) * 2 - 1;
       this.ny = 1 - ((e.clientY - r.top) / r.height) * 2;
     });
     canvas.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch" || !this.active()) {
+        return;
+      }
+      this.touch.aiming = false;
       if (e.button === PRIMARY_BUTTON) {
         this.fire = true;
       }
@@ -90,6 +100,9 @@ export class Controls {
       canvas.focus();
     });
     window.addEventListener("pointerup", (e) => {
+      if (e.pointerType === "touch") {
+        return;
+      }
       if (e.button === PRIMARY_BUTTON) {
         this.fire = false;
       }
@@ -131,6 +144,7 @@ export class Controls {
     });
   }
   clear(): void {
+    this.touch.clear();
     this.keys.clear();
     this.fire = false;
     this.mine = false;
@@ -146,12 +160,12 @@ export class Controls {
     return {
       moveX:
         Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) -
-        Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft")),
+          Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft")) || this.touch.moveX,
       moveZ:
         Number(this.keys.has("KeyS") || this.keys.has("ArrowDown")) -
-        Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")),
+          Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) || this.touch.moveZ,
       aim,
-      fire: this.fire,
+      fire: this.fire || this.touch.fire,
       mine,
       ammoSelection,
     };

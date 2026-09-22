@@ -38,6 +38,8 @@ export function menuMarkup(simulation: Simulation, controlHelp: string): string 
       <section class="menu compact">
         <h2>PAUSED</h2>
         <p>${controlHelp}</p>
+        <label class="touch-setting">Touch controls <select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
+        <p class="touch-help">Left stick drives. Right stick aims; push past the ring to fire. Tap ✹ for a mine or an ammo slot to select it.</p>
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
         ${speedSliders()}
         <button id="resume" class="primary">RESUME</button>

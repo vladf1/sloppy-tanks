@@ -1,0 +1,232 @@
+/* Touch controls live outside the HUD's non-interactive container. */
+.touch-controls[hidden] {
+  display: none;
+}
+.touch-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.touch-stick {
+  position: absolute;
+  bottom: max(28px, env(safe-area-inset-bottom));
+  width: 176px;
+  height: 176px;
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-drive {
+  left: max(24px, env(safe-area-inset-left));
+}
+.touch-aim {
+  right: max(24px, env(safe-area-inset-right));
+}
+.stick-base {
+  position: absolute;
+  inset: 18px;
+  border: 2px solid #e6f4ff77;
+  border-radius: 50%;
+  background: #102b4666;
+  box-shadow: 0 3px 18px #07182733;
+}
+.stick-knob {
+  position: absolute;
+  top: calc(50% - 24px);
+  left: calc(50% - 24px);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #edf8ffbb;
+  background: #b9def480;
+  pointer-events: none;
+}
+.fire-ring {
+  position: absolute;
+  width: var(--fire-diameter);
+  height: var(--fire-diameter);
+  left: calc(50% - var(--fire-diameter) / 2);
+  top: calc(50% - var(--fire-diameter) / 2);
+  border: 2px dashed #ffd773aa;
+  border-radius: 50%;
+}
+.touch-stick > span {
+  position: absolute;
+  bottom: -7px;
+  width: 100%;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-shadow: 0 1px 4px #071827;
+}
+.touch-stick.held .stick-base {
+  background: #102b4699;
+  border-color: #e6f4ffcc;
+}
+.touch-stick.firing .fire-ring {
+  border-style: solid;
+  border-color: #ffcf54;
+  box-shadow: 0 0 14px #ffcf5477;
+}
+.touch-stick.firing .stick-knob {
+  background: #ffce54cc;
+}
+.touch-mine {
+  position: absolute;
+  right: max(190px, calc(env(safe-area-inset-right) + 166px));
+  bottom: max(176px, calc(env(safe-area-inset-bottom) + 148px));
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  border: 2px solid #e6f4ff77;
+  color: #fff3c4;
+  background: conic-gradient(#a0cce4 var(--mine-ready, 100%), #28425b 0);
+  box-shadow: inset 0 0 0 5px #142d49;
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-mine span,
+.touch-mine small {
+  display: block;
+  background: #142d49;
+}
+.touch-mine span {
+  border-radius: 50% 50% 0 0;
+  font-size: 25px;
+  line-height: 28px;
+}
+.touch-mine small {
+  border-radius: 0 0 50% 50%;
+  font-size: 10px;
+  padding-bottom: 4px;
+}
+.touch-mine:disabled {
+  color: #a1b4c6;
+}
+.touch-zoom {
+  display: none;
+}
+.touch-enabled .touch-zoom {
+  display: block;
+  font-size: 20px;
+  padding: 8px 12px;
+}
+.touch-enabled #game {
+  touch-action: none;
+}
+.touch-enabled .hud-actions {
+  right: max(14px, env(safe-area-inset-right));
+  top: max(14px, env(safe-area-inset-top));
+}
+.touch-enabled .hud-actions button {
+  min-width: 48px;
+  min-height: 48px;
+  touch-action: manipulation;
+}
+.touch-enabled .bottom {
+  left: 50%;
+  right: auto;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - 430px));
+}
+.touch-enabled .combat-status {
+  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.touch-enabled .status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.touch-enabled .status > div {
+  flex: 1;
+}
+.touch-enabled .ammo-slot {
+  min-width: 48px;
+  min-height: 58px;
+  touch-action: manipulation;
+  grid-template-columns: 1fr;
+}
+.touch-enabled .ammo-slot kbd,
+.touch-enabled #mine {
+  display: none;
+}
+.touch-enabled .combat-notices {
+  max-width: 100%;
+}
+.touch-enabled #overlay {
+  z-index: 3;
+}
+.touch-enabled .touch-help {
+  display: block;
+}
+@media (max-width: 850px) {
+  .touch-enabled .brand {
+    display: none;
+  }
+  .touch-enabled .scoreboard {
+    left: 14px;
+    transform: none;
+  }
+  .touch-enabled .bottom {
+    width: min(390px, calc(100% - 32px));
+    bottom: max(245px, calc(env(safe-area-inset-bottom) + 220px));
+  }
+  .touch-enabled .touch-mine {
+    right: 28px;
+    bottom: max(212px, calc(env(safe-area-inset-bottom) + 190px));
+  }
+}
+@media (max-width: 850px) and (max-height: 600px) {
+  .touch-enabled .bottom {
+    width: calc(100% - 390px);
+    bottom: 22px;
+  }
+  .touch-enabled .combat-status {
+    padding: 5px;
+  }
+  .touch-enabled .tank-label {
+    display: none;
+  }
+  .touch-enabled .ammo-strip {
+    gap: 2px;
+  }
+  .touch-enabled .ammo-slot {
+    min-width: 0;
+    min-height: 48px;
+  }
+}
+
+@media (orientation: portrait) and (min-width: 700px) {
+  .touch-enabled .bottom {
+    width: min(440px, calc(100% - 416px));
+    bottom: max(28px, env(safe-area-inset-bottom));
+  }
+  .touch-enabled .combat-status {
+    padding: 6px;
+    gap: 4px;
+  }
+  .touch-enabled .weapon {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .touch-enabled .ammo-strip {
+    gap: 3px;
+  }
+  .touch-enabled .ammo-slot {
+    min-height: 48px;
+    padding: 3px 1px;
+  }
+  .touch-enabled .ammo-slot small {
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+  .touch-enabled .ammo-slot b {
+    font-size: 18px;
+  }
+}

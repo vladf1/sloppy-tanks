@@ -61,6 +61,8 @@ Use the URL printed by the running Vite server for `SLOPPY_URL`. Browser scripts
 | General keyboard/mouse play                  | `scripts/browser-check.mjs`                                                 |
 | Early menu, background preparation and retry | `scripts/startup-check.mjs`                                                 |
 | Ammunition input and crate/HUD visuals       | `scripts/ammunition-check.mjs` (`--visual-only` skips its performance pass) |
+| Touch controls and simultaneous fingers      | `scripts/touch-controls-check.mjs`                                          |
+| Deferred touch loading and desktop overhead  | `scripts/touch-loading-check.mjs` (use a locally served production build)   |
 | Driving controls                             | `scripts/driving-check.mjs`                                                 |
 | Bot retreat and head-on movement             | `scripts/bot-movement-browser.mjs`                                          |
 | Reload, hit and repair feedback              | `scripts/combat-feedback-check.mjs`                                         |

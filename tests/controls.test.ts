@@ -187,3 +187,55 @@ test("stress controls clear input on focus loss without pausing; Escape still pa
   assert.equal(f.pauses, 1);
   f.dispose();
 });
+
+test("touch does not use mouse firing or aiming, and unrelated touch release cannot stop mouse fire", () => {
+  const f = fixture();
+  f.emit(f.canvas, "pointerdown", { button: 0, pointerType: "touch" });
+  f.emit(f.canvas, "pointermove", { clientX: 95, clientY: 95, pointerType: "touch" });
+  assert.equal(f.controls.command(0).fire, false);
+  assert.equal(f.controls.nx, 0);
+  f.emit(f.canvas, "pointerdown", { button: 0, pointerType: "mouse" });
+  f.emit(f.win, "pointerup", { button: 0, pointerType: "touch" });
+  assert.equal(f.controls.command(0).fire, true);
+  f.dispose();
+});
+
+test("touch joins the shared command and all held touch input clears on interruption", () => {
+  const f = fixture();
+  f.controls.touch.begin("drive", 1);
+  f.controls.touch.begin("aim", 2);
+  f.controls.touch.move("drive", 1, 0.56, 0);
+  f.controls.touch.move("aim", 2, 1, 0);
+  f.controls.mine = true;
+  f.controls.ammoSelection = "rocket";
+  const first = f.controls.command(0.7);
+  assert.ok(Math.abs(first.moveX - 0.5) < 1e-8);
+  assert.equal(first.fire, true);
+  assert.equal(first.mine, true);
+  assert.equal(first.ammoSelection, "rocket");
+  const second = f.controls.command(0.7);
+  assert.equal(second.fire, true);
+  assert.equal(second.mine, false);
+  assert.equal(second.ammoSelection, undefined);
+  f.emit(f.win, "blur", {});
+  assert.equal(f.controls.command(0).fire, false);
+  assert.equal(f.controls.command(0).moveX, 0);
+  f.dispose();
+});
+
+test("hidden visibility clears both touch sticks and pending touch actions", () => {
+  const f = fixture();
+  f.controls.touch.begin("drive", 1);
+  f.controls.touch.begin("aim", 2);
+  f.controls.touch.move("drive", 1, 1, 0);
+  f.controls.touch.move("aim", 2, 1, 0);
+  f.controls.mine = true;
+  Object.assign(f.doc, { hidden: true });
+  f.emit(f.doc, "visibilitychange", {});
+  const command = f.controls.command(0);
+  assert.equal(command.moveX, 0);
+  assert.equal(command.fire, false);
+  assert.equal(command.mine, false);
+  assert.equal(f.pauses, 1);
+  f.dispose();
+});
