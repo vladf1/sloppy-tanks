@@ -56,16 +56,12 @@ export async function prepareGame(
     root.remove();
     throw error;
   }
-  const sim = new Simulation(seed);
-  const preparedOptions = { ...getOptions() };
-  Object.assign(sim, preparedOptions);
   const stressTest = document.documentElement.dataset.scenario === "stress-test";
-  if (stressTest) {
-    const { configureStressTest } = await import("./stress-test-level");
-    configureStressTest(sim);
-  } else {
-    sim.reset();
-  }
+  const stressSetup = stressTest ? (await import("./stress-test-level")).STRESS_TEST_SETUP : {};
+  const preparedOptions = { ...getOptions() };
+  // Browser startup previously constructed round 2, then immediately discarded
+  // it for round 3. Keep the round/Surprise-me seed, build only the chosen world.
+  const sim = new Simulation(seed, { ...preparedOptions, ...stressSetup, round: 3 });
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   const audio = new AudioSystem();
   view.reset(sim);

@@ -57,6 +57,24 @@ import {
 } from "./types";
 import { rankIndex, rankStats, repairVeteran } from "./veterancy";
 import { collectPickup, fireWeapon, placeMine, stepMines, stepProjectiles } from "./weapons";
+
+export type SimulationSetup = Partial<
+  Pick<
+    Simulation,
+    | "humanKind"
+    | "humanTeam"
+    | "difficulty"
+    | "gameMode"
+    | "mapMode"
+    | "customMap"
+    | "endlessMatch"
+    | "roundCount"
+    | "humanHealthMultiplier"
+    | "powerUpDurationMultiplier"
+    | "ammoCrateMultiplier"
+  >
+> & { round?: number };
+
 export class Simulation {
   world!: RAPIER.World;
   contactEvents!: RAPIER.EventQueue;
@@ -126,10 +144,15 @@ export class Simulation {
   botReroutes = 0;
   roundCount: number = SIMULATION_RULES.defaultTankCount;
   private botNames: string[] = [];
-  constructor(seed: number = SIMULATION_RULES.defaultSeed) {
+  constructor(seed: number = SIMULATION_RULES.defaultSeed, setup: SimulationSetup = {}) {
     this.seed = seed;
     this.rng = new Random(seed);
     this.humanTeam = this.rng.next() < 0.5 ? 0 : 1;
+    const { round = 2, ...options } = setup;
+    Object.assign(this, options);
+    // reset advances the round; callers can preserve its existing seeded map
+    // selection without constructing and discarding an earlier physics world.
+    this.match = newMatch(round - 1);
     this.reset();
   }
   reset(count = this.roundCount): void {
