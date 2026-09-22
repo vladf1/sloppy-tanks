@@ -80,7 +80,7 @@ export class FrameRecorder {
 export function createDebug(
   sim: Simulation,
   view: Presentation,
-  audio: AudioSystem,
+  audio: () => AudioSystem,
   controls: Controls,
   start: () => void,
   restart: () => void,
@@ -90,7 +90,9 @@ export function createDebug(
   return {
     sim,
     view,
-    audio,
+    get audio() {
+      return audio();
+    },
     controls,
     start,
     restart,

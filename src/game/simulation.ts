@@ -75,6 +75,25 @@ export type SimulationSetup = Partial<
   >
 > & { round?: number };
 
+const roundSeed = (seed: number, round: number) =>
+  (seed + round * SIMULATION_RULES.roundSeedStride) >>> 0;
+
+/** The map a round uses. Surprise me draws from a round-derived stream, never
+ * the combat RNG, so the renderer may ask before any physics world exists. */
+export function roundMap(
+  seed: number,
+  round: number,
+  mapMode: Simulation["mapMode"],
+  customMap?: ArenaMap,
+): ArenaMap {
+  return (
+    customMap ??
+    (mapMode === "surprise"
+      ? MAPS[Math.floor(new Random(roundSeed(seed, round)).next() * MAPS.length)]
+      : MAPS.find((map) => map.id === mapMode)!)
+  );
+}
+
 export class Simulation {
   world!: RAPIER.World;
   contactEvents!: RAPIER.EventQueue;
@@ -185,14 +204,9 @@ export class Simulation {
     if (this.gameMode === "solo") {
       this.match.time = SOLO_TIME;
     }
-    const roundSeed = (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0;
-    this.botNames = shuffledBotNames(roundSeed);
+    this.botNames = shuffledBotNames(roundSeed(this.seed, this.match.round));
     // Pick once per reset without consuming the combat RNG stream.
-    this.currentMap =
-      this.customMap ??
-      (this.mapMode === "surprise"
-        ? MAPS[Math.floor(new Random(roundSeed).next() * MAPS.length)]
-        : MAPS.find((map) => map.id === this.mapMode)!);
+    this.currentMap = roundMap(this.seed, this.match.round, this.mapMode, this.customMap);
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
     );

@@ -19,24 +19,37 @@ const creek = new THREE.CatmullRomCurve3(
   ].map(([x, z]) => new THREE.Vector3(x, -2.65, z)),
 );
 const creekPoints = creek.getPoints(160);
-export function creekDistance(x: number, z: number): number {
-  let distance = Infinity;
-  for (let i = 1; i < creekPoints.length; i++) {
-    const a = creekPoints[i - 1];
-    const b = creekPoints[i];
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const t = THREE.MathUtils.clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz), 0, 1);
-    distance = Math.min(distance, Math.hypot(x - a.x - dx * t, z - a.z - dz * t));
-  }
-  return distance;
+// Terrain, rocks and vegetation query this polyline tens of thousands of times
+// while the arena loads. Keep segment data flat and compare squared distances.
+const creekSegments = new Float64Array((creekPoints.length - 1) * 5);
+for (let i = 1; i < creekPoints.length; i++) {
+  const a = creekPoints[i - 1];
+  const b = creekPoints[i];
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  creekSegments.set([a.x, a.z, dx, dz, 1 / (dx * dx + dz * dz)], (i - 1) * 5);
 }
-export function valleyHeight(x: number, z: number): number {
+
+export function creekDistance(x: number, z: number): number {
+  let nearest = Infinity;
+  for (let i = 0; i < creekSegments.length; i += 5) {
+    const ax = x - creekSegments[i];
+    const az = z - creekSegments[i + 1];
+    const dx = creekSegments[i + 2];
+    const dz = creekSegments[i + 3];
+    const t = Math.min(1, Math.max(0, (ax * dx + az * dz) * creekSegments[i + 4]));
+    const ex = ax - dx * t;
+    const ez = az - dz * t;
+    nearest = Math.min(nearest, ex * ex + ez * ez);
+  }
+  return Math.sqrt(nearest);
+}
+export function valleyHeight(x: number, z: number, river = creekDistance(x, z)): number {
   const edge = Math.max(Math.abs(x), Math.abs(z));
   const hill =
     THREE.MathUtils.smoothstep(edge, 66, 145) *
     (4 + 3 * Math.sin(x * 0.047 + z * 0.028) + 2 * Math.sin(z * 0.069 - x * 0.021));
-  const bank = THREE.MathUtils.smoothstep(creekDistance(x, z), 4.9, 9);
+  const bank = THREE.MathUtils.smoothstep(river, 4.9, 9);
   return THREE.MathUtils.lerp(-4.2, -0.85 + hill, bank);
 }
 
@@ -105,7 +118,7 @@ export class VillageLandscape {
       const x = p.getX(i);
       const z = p.getZ(i);
       const river = creekDistance(x, z);
-      p.setY(i, valleyHeight(x, z));
+      p.setY(i, valleyHeight(x, z, river));
       const patch =
         0.5 + 0.25 * Math.sin(x * 0.064 + z * 0.03) + 0.25 * Math.sin(z * 0.1 - x * 0.05);
       const color = new THREE.Color().setRGB(

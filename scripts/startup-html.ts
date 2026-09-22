@@ -73,8 +73,22 @@ export function startupHtml(base: string): Plugin {
         // The existing stylesheet is only a few KB compressed. Inlining it also
         // keeps the first menu and subsequent game UI on exactly the same styles.
         const style = `<style>${String(css.source).replace(/<\/style/gi, "<\\/style")}</style>`;
+        // The startup script imports the game only after the menu paints, and the
+        // game's own imports would be discovered only after it downloads. Fetch
+        // the whole static graph now, in parallel with the physics binary.
+        const preloads = new Set<string>();
+        const collect = (fileName: string) => {
+          const chunk = context.bundle?.[fileName];
+          if (chunk?.type !== "chunk" || preloads.has(fileName)) return;
+          preloads.add(fileName);
+          chunk.imports.forEach(collect);
+        };
+        if (gameChunk) collect(gameChunk.fileName);
+        const links = [...preloads]
+          .map((file) => `<link rel="modulepreload" crossorigin href="${base}${file}">`)
+          .join("");
         return html
-          .replace("</head>", `${style}</head>`)
+          .replace("</head>", `${links}${style}</head>`)
           .replace(
             "<!-- startup-script -->",
             `<script type="module">${code.replace(/(["'`])sloppy:game\1/g, JSON.stringify(gameUrl)).replace(/<\/script/gi, "<\\/script")}</script>`,
