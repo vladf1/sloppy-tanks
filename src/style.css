@@ -435,10 +435,11 @@ canvas#game {
 .menu-ready #nerd-stats {
   visibility: hidden;
 }
+/* Plain text with a hanging dot, not a nested flex row: WebKit leaves the
+   dot out of such a row's intrinsic width and wraps the last word. */
 #startup-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  padding-left: 15px;
   color: #ffcf38;
   font-size: 12px;
   font-weight: 600;
@@ -505,7 +506,11 @@ canvas#game {
 }
 #startup-status::before {
   content: "";
-  flex: 0 0 7px;
+  position: absolute;
+  left: 0;
+  /* Centered on the first line (line-height 1.4). */
+  top: calc(0.7em - 3.5px);
+  width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
