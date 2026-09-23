@@ -48,7 +48,10 @@ try {
           const m = JSON.parse(String(payload));
           if (m.type === "lobby") client.lobby = m;
           if (m.type === "control") client.control = m;
-          if (m.type === "full") client.mirror.applyFull(m, client.lobby);
+          if (m.type === "full") {
+            client.mirror.applyFull(m, client.lobby);
+            client.fullEpoch = client.control?.controlEpoch;
+          }
           if (m.type === "snapshot") {
             client.snapshots++;
             for (const s of m.snapshots) assert.ok(client.mirror.applySnapshot(s));
@@ -60,7 +63,10 @@ try {
       });
       socket.on("framesent", ({ payload }) => {
         const m = JSON.parse(String(payload));
-        if (m.type === "input") client.inputs++;
+        if (m.type === "input") {
+          client.inputs++;
+          client.ready = client.fullEpoch >= 2 && m.controlEpoch === client.fullEpoch;
+        }
       });
     });
     await page.goto(invite);
@@ -84,19 +90,31 @@ try {
       ),
     ),
   );
-  const before = clients.map((c) => c.mirror.render(c.control.tankId).viewer.position);
-  await clients[0].page.keyboard.down("d");
-  await clients[1].page.keyboard.down("a");
-  await first.waitForTimeout(1000);
-  await clients[0].page.keyboard.up("d");
-  await clients[1].page.keyboard.up("a");
+  // Connection RTT can appear before arena preparation and its resume baseline finish.
+  const readyDeadline = Date.now() + 60000;
+  while (!clients.every((c) => c.ready) && Date.now() < readyDeadline)
+    await first.waitForTimeout(50);
+  assert.ok(
+    clients.every((c) => c.ready),
+    "Both arenas are ready for input after resume",
+  );
   for (const [index, c] of clients.entries()) {
+    // Focus loss clears held controls; drive each visible player independently.
+    await c.page.bringToFront();
+    const before = { ...c.mirror.render(c.control.tankId).viewer.position };
+    const inputStart = c.inputs;
+    const key = index ? "a" : "d";
+    await c.page.keyboard.down(key);
+    await c.page.waitForTimeout(800);
+    await c.page.keyboard.up(key);
+    await c.page.waitForTimeout(150);
     const after = c.mirror.render(c.control.tankId).viewer.position;
+    assert.ok(Math.hypot(after.x - before.x, after.z - before.z) > 0.4, "Public player movement");
     assert.ok(
-      Math.hypot(after.x - before[index].x, after.z - before[index].z) > 0.4,
-      "Public player movement",
+      c.inputs - inputStart >= 8,
+      `Held movement retains active input cadence (${c.inputs - inputStart} packets)`,
     );
-    assert.ok(c.inputs > 5 && c.snapshots > 5);
+    assert.ok(c.snapshots > 5);
     assert.equal(
       await c.page.evaluate(() => "sloppyMultiplayer" in window),
       false,
@@ -138,6 +156,28 @@ try {
     "Public dev site: entry/share/join, two real players, movement, results, leave, test directory, fixture and build metadata passed.",
   );
 } finally {
+  for (const { page } of clients) {
+    if (
+      await page
+        .locator("#pause")
+        .isVisible()
+        .catch(() => false)
+    )
+      await page
+        .locator("#pause")
+        .click()
+        .catch(() => {});
+    if (
+      await page
+        .locator("#leave-room")
+        .isVisible()
+        .catch(() => false)
+    )
+      await page
+        .locator("#leave-room")
+        .click()
+        .catch(() => {});
+  }
   await writeFile(
     `${output}/result.json`,
     JSON.stringify(
