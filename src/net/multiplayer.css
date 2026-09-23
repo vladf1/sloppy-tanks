@@ -23,16 +23,6 @@
   text-align: left;
   margin: 0;
 }
-.multiplayer .network-choices input,
-.multiplayer .network-choices select {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #718477;
-  border-radius: 4px;
-  background: #13272b;
-  color: #fff0d2;
-  font: inherit;
-}
 .network-actions {
   display: flex;
   gap: 10px;
@@ -227,8 +217,10 @@
   width: 80px;
   flex: 0 0 80px;
 }
+.multiplayer .network-choices input:not([type="checkbox"]),
 .room-browser input:not([type="checkbox"], [type="radio"]),
-.room-browser select {
+.multiplayer .network-menu select {
+  -webkit-appearance: none;
   appearance: none;
   display: block;
   width: 100%;
@@ -243,16 +235,20 @@
     500 14px Arial,
     sans-serif;
 }
-.room-browser select {
+.multiplayer .network-menu select {
   padding-right: 32px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m2 2 4 4 4-4' fill='none' stroke='%23b6cedf' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
-.room-browser :is(input, select, button):focus-visible,
+.multiplayer .network-menu :is(input, select, button):focus-visible,
 .room-row:has(input:focus-visible) {
   outline: 2px solid #ffcf38;
   outline-offset: 3px;
+}
+.multiplayer .network-menu :is(input, select):disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .room-browser-columns {
   display: grid;
