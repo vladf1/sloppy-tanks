@@ -21,7 +21,10 @@ export default defineConfig({
     lazyRapierWasm(),
     startupHtml(base),
     {
-      name: "preload-physics",
+      // Safari never hands a <link rel=preload as=fetch> response to a later
+      // fetch(), so it downloaded the physics binary twice. Start the one real
+      // request in <head>; physics-browser.ts takes it over in init().
+      name: "physics-download",
       transformIndexHtml: {
         order: "post",
         handler(_html, context) {
@@ -31,14 +34,8 @@ export default defineConfig({
               context.filename.endsWith("stresstest.html"))
             ? [
                 {
-                  tag: "link",
-                  attrs: {
-                    rel: "preload",
-                    as: "fetch",
-                    type: "application/wasm",
-                    crossorigin: "anonymous",
-                    href: `${base}${binary}`,
-                  },
+                  tag: "script",
+                  children: `window.sloppyPhysicsBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyPhysicsBinary.catch(()=>{});`,
                   injectTo: "head",
                 },
               ]

@@ -17,6 +17,7 @@ import {
   type RuntimePipelines,
 } from "./bundle-stats";
 import { WebGPUUnavailableError } from "./startup-error";
+import { withTaskYield } from "./task-yield";
 
 interface RendererCaches {
   _attributes: { delete(attribute: BufferAttribute | InterleavedBufferAttribute): unknown };
@@ -103,7 +104,8 @@ export class GameRenderer extends Renderer {
   override async compileAsync(...args: Parameters<Renderer["compileAsync"]>): Promise<void> {
     // Node building stays sequential (Three shares builder state), but GPU
     // compilation overlaps subsequent builds instead of awaiting each pipeline.
-    await super.compileAsync(...args);
+    // Its yields between stages must not wait a frame each; see task-yield.ts.
+    await withTaskYield(() => super.compileAsync(...args));
     await this.waitForPipelineCompilation();
   }
 

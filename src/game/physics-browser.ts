@@ -4,13 +4,27 @@ import binaryUrl from "@dimforge/rapier3d/rapier_wasm3d_bg.wasm?url";
 
 export * from "@dimforge/rapier3d";
 
+declare global {
+  interface Window {
+    /** Started by an inline <head> script; see the physics-download plugin in vite.config.ts. */
+    sloppyPhysicsBinary?: Promise<Response>;
+  }
+}
+
 let ready: Promise<void> | undefined;
 
-/** Instantiate the binary that index.html preloads. Game code, the renderer and
- * scenery load meanwhile; nothing may call into physics before this resolves. */
+/** Use the page's early download once; a retry after a failure fetches again. */
+function download(): Promise<Response> {
+  const early = window.sloppyPhysicsBinary;
+  delete window.sloppyPhysicsBinary;
+  return early ?? fetch(binaryUrl);
+}
+
+/** Instantiate the binary that the page began downloading. Game code, the renderer
+ * and scenery load meanwhile; nothing may call into physics before this resolves. */
 export function init(): Promise<void> {
   ready ??= (async () => {
-    const response = await fetch(binaryUrl);
+    const response = await download();
     if (!response.ok) {
       throw new Error(`Physics download failed: HTTP ${response.status}`);
     }
