@@ -32,5 +32,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: b49a59dfb5edf913223ad13eeab8d740
-          wranglerVersion: "3.90.0"
+          wranglerVersion: "4.136.3"
           command: pages deploy dist-cloudflare --project-name sloppy-tanks --branch main
