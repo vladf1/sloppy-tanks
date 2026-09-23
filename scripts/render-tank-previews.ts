@@ -30,7 +30,13 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
         for (const vehicle of Object.keys(VEHICLES) as VehicleKind[]) {
           const tank = tankModel(vehicle, color);
           scene.add(tank);
+          // Pipelines compile asynchronously and draws are skipped until they
+          // are ready, so the first frame of each tank (and of the output pass)
+          // is empty. Warm them, then capture a complete frame.
           renderer.render(scene, camera);
+          await renderer.waitForPipelineCompilation();
+          renderer.render(scene, camera);
+          // The WebGPU canvas is cleared once presented: read it before yielding.
           previews.set(`${color}-${vehicle}`, renderer.domElement.toDataURL("image/webp", 0.88));
           scene.remove(tank);
         }
