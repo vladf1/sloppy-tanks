@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5179/sloppy-tanks/";
+const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const out = "artifacts/performance/bot-movement";
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
@@ -130,7 +130,7 @@ try {
   assert.deepEqual(errors, []);
   await page.screenshot({ path: `${out}/harbor-match.png` });
   writeFileSync(
-    "artifacts/bot-movement-browser.json",
+    `${out}/results.json`,
     JSON.stringify(
       {
         date: new Date().toISOString(),

@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -11,8 +12,8 @@ try {
     window.requestAnimationFrame = (callback) =>
       callback.name === "loop" ? 1 : requestFrame(callback);
   });
-  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
-  await page.waitForFunction(() => !!window.sloppy);
+  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
+  await startRound(page);
   await page.evaluate(() => {
     const { sim: s, view: v } = window.sloppy;
     s.mapMode = "village";
@@ -55,7 +56,7 @@ try {
       return {
         towerVisible: v.coverMeshes.get(tower.id).visible,
         centerOpen: !s.nav.blocked[s.nav.index(tower)],
-        woodFragments: s.fragments.filter((f) => f.shape === "wood").length,
+        towerPieces: s.fragments.filter((f) => f.sourceKind === "tower").map((f) => f.shape),
         distinctPiles: rubble.length === 2 && layout(rubble[0]) !== layout(rubble[1]),
         stablePiles: rubble.every((c) => layout(c) === layout(c)),
         rubble: rubble.map((c) => ({
@@ -79,7 +80,8 @@ try {
     if (destroyed) {
       assert.equal(result.centerOpen, true);
       assert.equal(result.rubble.length, 2);
-      assert.equal(result.woodFragments, 10);
+      // A split deck and two structural posts; the foundations become rubble.
+      assert.deepEqual(result.towerPieces, ["panel", "beam", "panel", "beam"]);
       assert.equal(result.distinctPiles, true);
       assert.equal(result.stablePiles, true);
       assert.ok(result.rubble.every((c) => c.textured && c.colorMatches));

@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
@@ -34,7 +35,7 @@ try {
     };
   });
   await page.goto(url);
-  await page.waitForFunction(() => !!window.sloppy);
+  await startRound(page);
   await page.evaluate(() => {
     const d = window.sloppy;
     d.start();
@@ -83,9 +84,10 @@ try {
   await page.keyboard.up("Shift");
   await page.waitForFunction((n) => window.sloppy.view.zoom !== n, zoom);
   assert.equal(await selected(), "piercing");
+  // Shift-wheel zoom clamps at CAMERA.maxZoom (52) and CAMERA.minZoom (17).
   for (const [at, delta, expected] of [
     [51, 80, 52],
-    [24, -80, 23],
+    [18, -80, 17],
   ]) {
     await page.evaluate((n) => {
       window.sloppy.view.zoom = n;
@@ -172,7 +174,7 @@ try {
   assert.equal(await page.locator(".ammo-slot").count(), 5);
   assert.equal(
     await page.locator("#ammo-rocket").getAttribute("aria-label"),
-    "ROCKET: 12, selected",
+    "3: ROCKET, 12 remaining, selected",
   );
   assert.match(await page.locator("#ammo-ricochet").getAttribute("class"), /empty/);
   await page.screenshot({ path: `${out}/hud-crates.png` });
@@ -243,7 +245,7 @@ try {
     }
   assert.deepEqual(errors, []);
   writeFileSync(
-    "artifacts/ammunition-results.json",
+    `${out}/results.json`,
     JSON.stringify(
       {
         date: new Date().toISOString(),

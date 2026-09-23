@@ -10,7 +10,7 @@ try {
     window.requestAnimationFrame = (callback) =>
       callback.name === "loop" ? 1 : requestFrame(callback);
   });
-  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
+  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
   await page.waitForFunction(() => !!window.sloppy);
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {

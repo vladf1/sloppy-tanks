@@ -1,7 +1,8 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5179/sloppy-tanks/";
+const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const out = "artifacts/performance/veterancy";
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
@@ -32,7 +33,7 @@ try {
     };
   });
   await page.goto(url);
-  await page.waitForFunction(() => !!window.sloppy);
+  await startRound(page);
   await page.evaluate(() => {
     const d = window.sloppy;
     d.start();
@@ -230,7 +231,7 @@ try {
   assert.ok(report.snapshot.elapsed > 23);
   assert.deepEqual(errors, []);
   writeFileSync(
-    "artifacts/veterancy-results.json",
+    `${out}/results.json`,
     JSON.stringify(
       {
         date: new Date().toISOString(),

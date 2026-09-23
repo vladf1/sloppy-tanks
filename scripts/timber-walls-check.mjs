@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
@@ -10,8 +11,8 @@ try {
     window.requestAnimationFrame = (callback) =>
       callback.name === "loop" ? 1 : requestFrame(callback);
   });
-  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
-  await page.waitForFunction(() => !!window.sloppy);
+  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
+  await startRound(page);
   const result = await page.evaluate(() => {
     const { sim: s, view: v } = window.sloppy;
     s.mapMode = "village";
@@ -25,10 +26,11 @@ try {
     const neighbor = s.covers.find((c) => c.kind === "timber" && c.x === 2 && c.z === 13);
 
     const stages = [];
-    for (let i = 0; i < 3; i++) {
+    // 80 → 60 → 40 → 15 → 0 shows every damage stage before the breach.
+    for (const damage of [20, 20, 25, 15]) {
       v.render(s, 1, 0);
       stages.push(v.coverMeshes.get(wall.id).userData.damageStage ?? 0);
-      s.damageCover(wall, 40, s.human.id, s.humanTeam);
+      s.damageCover(wall, damage, s.human.id, s.humanTeam);
     }
     for (const e of s.events) v.event(e);
     v.render(s, 1, 0);
@@ -38,7 +40,7 @@ try {
       neighbor: v.coverMeshes.get(neighbor.id).visible,
     };
   });
-  assert.deepEqual(result, { stages: [0, 1, 2], visible: false, neighbor: true });
+  assert.deepEqual(result, { stages: [0, 1, 2, 3], visible: false, neighbor: true });
   await page.screenshot({ path: "artifacts/timber-breach.png" });
   await page.evaluate(() => {
     const { sim: s, view: v } = window.sloppy;

@@ -1,15 +1,28 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const base = "http://127.0.0.1:5179/sloppy-tanks/";
+const base = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const browser = await chromium.launch({ channel: "chrome", headless: false });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   page.on("pageerror", (e) => errors.push(e.message));
+  // The battle report's headline stat; its <dd> also holds a hint after the value.
+  const recapKills = () =>
+    page.evaluate(() => {
+      const stat = [...document.querySelectorAll(".recap-stat")].find(
+        (element) => element.querySelector("dt").textContent === "Eliminations",
+      );
+      return stat?.querySelector("dd").firstChild.textContent.trim();
+    });
   await page.goto(`${base}tests/reinforcements.browser.html`);
-  await page.waitForFunction(() => /PASS|FAIL/.test(document.querySelector("#result").textContent));
-  const lifecycle = await page.locator("#result").innerText();
+  // Read the verdict inside the wait, so a dev-server reload cannot swap the page in between.
+  const verdict = await page.waitForFunction(() => {
+    const text = document.querySelector("#result")?.textContent ?? "";
+    return /PASS|FAIL/.test(text) && text;
+  });
+  const lifecycle = await verdict.jsonValue();
   assert.match(lifecycle, /^PASS/);
   await page.goto(base);
   await page.waitForFunction(() => !!window.sloppy);
@@ -19,7 +32,7 @@ try {
     /10 minutes/,
   );
   await page.locator('[data-kind="balanced"]').click();
-  await page.locator("#start").click();
+  await startRound(page);
   await page.waitForFunction(() => document.querySelector("#label0").textContent === "KILLS");
   assert.match(await page.locator("#time").innerText(), /10:00|9:59/);
   assert.equal(await page.locator("#score0").innerText(), "0");
@@ -50,11 +63,11 @@ try {
   await page.waitForFunction(
     () => document.querySelector("#overlay h2")?.textContent === "SURVIVED",
   );
-  assert.equal(await page.locator(".result-score").innerText(), "55");
+  assert.equal(await recapKills(), "55");
   await page.screenshot({ path: "artifacts/performance/solo-survival/results.png" });
   await page.locator("#restart").click();
   await page.locator('[data-kind="balanced"]').click();
-  await page.locator("#start").click();
+  await startRound(page);
   await page.evaluate(() => {
     const s = window.sloppy.sim;
     s.human.protection = 0;
@@ -63,7 +76,7 @@ try {
   await page.waitForFunction(
     () => document.querySelector("#overlay h2")?.textContent === "TANK DESTROYED",
   );
-  assert.equal(await page.locator(".result-score").innerText(), "0");
+  assert.equal(await recapKills(), "0");
   assert.deepEqual(errors, []);
   const result = {
     lifecycle,
@@ -78,7 +91,10 @@ try {
     ],
     errors,
   };
-  writeFileSync("artifacts/solo-survival-results.json", JSON.stringify(result, null, 2));
+  writeFileSync(
+    "artifacts/performance/solo-survival/results.json",
+    JSON.stringify(result, null, 2),
+  );
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await browser.close();

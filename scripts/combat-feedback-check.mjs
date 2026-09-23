@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5179/sloppy-tanks/";
+const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const out = "artifacts/performance/combat-feedback";
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
@@ -371,7 +371,7 @@ try {
   assert.ok(report.snapshot.elapsed > 18);
   assert.deepEqual(errors, []);
   writeFileSync(
-    "artifacts/combat-feedback-results.json",
+    `${out}/results.json`,
     JSON.stringify(
       {
         date: new Date().toISOString(),

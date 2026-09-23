@@ -9,6 +9,7 @@
     "build:cloudflare": "tsc --noEmit && DEPLOY_BASE=/ vite build --outDir dist-cloudflare && node scripts/copy-artifacts.mjs dist-cloudflare",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
+    "check:browser": "node scripts/browser-checks.mjs",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs && npm run generate:pickup-atlas",
     "optimize:textures": "node scripts/optimize-textures.mjs",
     "generate:previews": "node scripts/generate-previews.mjs",

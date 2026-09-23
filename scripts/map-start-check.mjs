@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/startup";
@@ -54,8 +55,11 @@ try {
           });
         };
       });
-      await page.locator("#start").click();
+      // Other maps rebuild the arena after GO; replay the stale frames only once
+      // the round is live, or the loop ignores them and nothing is checked.
+      await startRound(page);
       const result = await page.evaluate(() => {
+        window.startFrames.length = 0; // Discard the preparation renders.
         // Emulate callbacks queued before a slow arena rebuild, including a second
         // old timestamp: neither may undo the reset clock or advance gameplay.
         window.advanceFrame(window.beforeStart - 1000);
@@ -69,6 +73,7 @@ try {
         };
       });
       results.push(result);
+      assert.equal(result.frames.length, 32, `${map}: every replayed frame must render`);
       for (const frame of result.frames.slice(0, 2)) {
         assert.equal(frame.dt, 0, `${map}: stale frame must not reverse animation time`);
         assert.equal(frame.elapsed, 0, `${map}: stale frame must not advance simulation`);

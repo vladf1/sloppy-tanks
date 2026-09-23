@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -14,8 +15,8 @@ try {
     window.requestAnimationFrame = (callback) =>
       callback.name === "loop" ? 1 : requestFrame(callback);
   });
-  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5174/sloppy-tanks/");
-  await page.waitForFunction(() => !!window.sloppy, undefined, { polling: 100 });
+  await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
+  await startRound(page);
   await page.evaluate(async () => {
     const { sim, view } = window.sloppy;
     const THREE = await import("/sloppy-tanks/node_modules/three/build/three.module.js");
@@ -127,7 +128,8 @@ try {
   await page.screenshot({ path: "artifacts/debris-sinking.png" });
   const gone = await page.evaluate(() => window.debrisCheck.draw(0));
   await page.screenshot({ path: "artifacts/debris-gone.png" });
-  assert.ok(full.matrices.length >= 10 && full.wrecks.length >= 2);
+  // Timber members fall as separate pieces, so instanced debris is cargo, splinters and drums.
+  assert.ok(full.matrices.length >= 9 && full.wrecks.length >= 2);
   for (let i = 0; i < full.matrices.length; i++) {
     assert.deepEqual(full.matrices[i].scale, half.matrices[i].scale);
     assert.ok(half.matrices[i].y < full.matrices[i].y);

@@ -1,7 +1,8 @@
 import { chromium } from "playwright";
+import { startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5179/sloppy-tanks/";
+const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const out = "artifacts/performance/projectiles";
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
@@ -31,7 +32,7 @@ try {
     };
   });
   await page.goto(url);
-  await page.waitForFunction(() => !!window.sloppy);
+  await startRound(page);
   const shapes = await page.evaluate(() => {
     const d = window.sloppy;
     d.start();
@@ -102,7 +103,9 @@ try {
     d.view.projectiles.update(s.shots, 2);
     if (JSON.stringify(s.shots) !== original)
       throw new Error("visual update mutated simulation shots");
-    return Object.entries(d.view.projectiles.batches).map(([weapon, b]) => {
+    // Player munitions only; the Humvee TOW batch stays empty in this fixture.
+    return weapons.map((weapon) => {
+      const b = d.view.projectiles.batches[weapon];
       b.body.geometry.computeBoundingBox();
       const bounds = b.body.geometry.boundingBox;
       return {
@@ -203,7 +206,7 @@ try {
   assert.deepEqual(errors, []);
   await live.screenshot({ path: `${out}/live-combat.png` });
   writeFileSync(
-    "artifacts/projectile-visual-results.json",
+    `${out}/results.json`,
     JSON.stringify(
       {
         date: new Date().toISOString(),
