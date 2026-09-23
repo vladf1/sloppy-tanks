@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { Random } from "./math";
 import type { ScreeSpot } from "./quarry-benches";
-import { sandstoneMaterial } from "./quarry-surfaces";
+import { roughenStone, sandstoneMaterial } from "./quarry-surfaces";
+
+const stoneCorner = new THREE.Vector3();
 import { QUARRY_TERRAIN_EXTENT } from "./quarry-terrain";
 
 /** A fan of sediment, with scalloped toes and sides buried below the apron.
@@ -74,6 +76,11 @@ export function quarryScreeRubble(spot: ScreeSpot): THREE.BufferGeometry {
     const size = rng.range(0.14, 0.48) * (0.65 + t * 1.1);
     const large = i % 11 === 0 ? 1.8 : 1;
     const geometry = template.clone();
+    const corners = geometry.getAttribute("position");
+    for (let v = 0; v < corners.count; v++) {
+      roughenStone(stoneCorner.fromBufferAttribute(corners, v), i + spot.seed * 1000);
+      corners.setXYZ(v, stoneCorner.x, stoneCorner.y, stoneCorner.z);
+    }
     geometry.scale(
       size * large,
       size * rng.range(0.45, 0.85),
@@ -86,7 +93,7 @@ export function quarryScreeRubble(spot: ScreeSpot): THREE.BufferGeometry {
     // Flat fracture faces and varied dust deposits break up the bedrock grain.
     geometry.computeVertexNormals();
     const colors = new Float32Array(geometry.getAttribute("position").count * 3);
-    const shade = rng.range(0.82, 1.25);
+    const shade = rng.range(0.74, 1.08);
     for (let c = 0; c < colors.length; c += 3) {
       colors[c] = shade;
       colors[c + 1] = shade;

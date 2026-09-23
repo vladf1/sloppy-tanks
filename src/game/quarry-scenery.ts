@@ -3,7 +3,18 @@ import { spawnPositions } from "./arena";
 import { batch, freezeStatic } from "./batching";
 import { TEAM_COLORS } from "./data";
 import { quarryTerrain } from "./quarry-terrain";
-import { quarryBench, quarryButte, quarryButteSpot, quarryScreeSpots } from "./quarry-benches";
+import {
+  quarryBench,
+  quarryButte,
+  quarryButteSpot,
+  quarryScreeSpots,
+  quarryStockpileGeometry,
+  quarryStockpileReach,
+  quarryStockpileSpot,
+  quarryTalusGeometry,
+  quarryTalusPoint,
+  quarryTalusStrips,
+} from "./quarry-benches";
 import { quarrySiteDetails } from "./quarry-site-details";
 import { quarryScree } from "./quarry-scree";
 import {
@@ -13,11 +24,38 @@ import {
   quarryRampHeight,
   quarryRampSpoil,
 } from "./quarry-ramp";
+import { concreteWall } from "./concrete-surfaces";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
 import { quarryDumpTruck, quarryExcavator } from "./quarry-machinery";
-import { sandstoneRock } from "./quarry-surfaces";
+import { type RubbleStone, sandstoneRock, sandstoneRubble } from "./quarry-surfaces";
+import { QUARRY_TERRAIN_EXTENT } from "./quarry-soil";
+
+/** The machinery apron floor, where the lowest cuts and their talus stand. */
+const APRON = -1.8;
+
+/** Map world x/z onto the soil bake and warm the spoil toward the rock above.
+ * Fresh crushed stone is paler still. */
+function spoilSurface(geometry: THREE.BufferGeometry, fresh = 0): THREE.BufferGeometry {
+  const positions = geometry.getAttribute("position");
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i);
+    const z = positions.getZ(i);
+    uvs.push(x / QUARRY_TERRAIN_EXTENT + 0.5, 0.5 - z / QUARRY_TERRAIN_EXTENT);
+    const lift = THREE.MathUtils.smoothstep(positions.getY(i) - APRON, 0.2, 2.6);
+    colors.push(
+      1 + 0.16 * lift + 0.2 * fresh,
+      1 + 0.14 * lift + 0.17 * fresh,
+      1 + 0.1 * lift + 0.12 * fresh,
+    );
+  }
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
 
 export interface SpawnPadPiece {
   /** Offset from the spawn point, in metres. */
@@ -115,10 +153,10 @@ function quarrySpawnPad(group: THREE.Group, team: 0 | 1, x: number, z: number): 
 
 /** Retained static scene: no per-frame animation, particles, lights or physics bodies. */
 export class QuarryScenery extends THREE.Group {
-  constructor(renderer: THREE.WebGPURenderer) {
+  constructor() {
     super();
     this.name = "dusty-dig-scenery";
-    const terrain = quarryTerrain(renderer);
+    const terrain = quarryTerrain();
     this.add(terrain);
 
     const geology = new THREE.Group();
@@ -163,6 +201,62 @@ export class QuarryScenery extends THREE.Group {
         put(geology, face, side * distance, base, 0);
       }
     }
+    // Talus heaps along every lowest wall toe, strewn with fragments that coarsen
+    // downslope like sorted scree. The haul ramp shares the same spoil soil, and
+    // every fragment lands in one merged rubble mesh.
+    const spoil = terrain.material.clone();
+    spoil.vertexColors = true;
+    const talusRng = new Random(2741);
+    const talusStones: RubbleStone[] = [];
+    for (const strip of quarryTalusStrips()) {
+      const talus = quarryTalusGeometry(strip.x0, strip.x1, strip.seed);
+      talus.rotateY(strip.rotY);
+      talus.translate(strip.x, APRON, strip.z);
+      geology.add(new THREE.Mesh(spoilSurface(talus), spoil));
+      const cos = Math.cos(strip.rotY);
+      const sin = Math.sin(strip.rotY);
+      const count = Math.round((strip.x1 - strip.x0) * 3.4);
+      for (let i = 0; i < count; i++) {
+        const t = talusRng.range(0.03, 0.95);
+        const p = quarryTalusPoint(talusRng.range(strip.x0, strip.x1), t, strip.seed);
+        const boulder = t < 0.35 && talusRng.next() < 0.08;
+        const size = boulder
+          ? talusRng.range(0.65, 1.3)
+          : talusRng.range(0.15, 0.55) * (1.3 - t * 0.6);
+        talusStones.push({
+          x: strip.x + p.x * cos + p.z * sin,
+          y: APRON + p.y + size * 0.1,
+          z: strip.z - p.x * sin + p.z * cos,
+          w: size,
+          h: size * talusRng.range(0.45, 0.8),
+          d: size * talusRng.range(0.7, 1.2),
+          rotY: talusRng.range(-Math.PI, Math.PI),
+          shade: talusRng.range(0.74, 1.02),
+        });
+      }
+    }
+    // Crushed stone heaped under the conveyor head; coarse pieces roll to its toe.
+    const pile = quarryStockpileSpot();
+    const stockpile = quarryStockpileGeometry(pile);
+    stockpile.translate(pile.x, APRON, pile.z);
+    geology.add(new THREE.Mesh(spoilSurface(stockpile, 1), spoil));
+    for (let i = 0; i < 70; i++) {
+      const angle = talusRng.range(0, Math.PI * 2);
+      const t = talusRng.range(0.78, 1.02);
+      const size = talusRng.range(0.18, 0.5);
+      const reach = quarryStockpileReach(pile, angle) * t;
+      talusStones.push({
+        x: pile.x + Math.cos(angle) * reach,
+        y: APRON + Math.max(0, pile.height * (1 - t ** 1.08)) + size * 0.1,
+        z: pile.z + Math.sin(angle) * reach,
+        w: size,
+        h: size * talusRng.range(0.5, 0.8),
+        d: size * talusRng.range(0.7, 1.2),
+        rotY: talusRng.range(-Math.PI, Math.PI),
+        shade: talusRng.range(0.9, 1.15),
+      });
+    }
+    geology.add(sandstoneRubble(talusStones));
     // Local rubble stays outside the boundary; it never advertises nonexistent cover.
     for (let i = 0; i < 65; i++) {
       const side = i % 2 ? -1 : 1;
@@ -208,9 +302,7 @@ export class QuarryScenery extends THREE.Group {
       geology.add(...quarryScree(spot, terrain.material));
     }
     // The haul ramp gives the parked machinery a believable way out of the pit.
-    const rampSoil = terrain.material.clone();
-    rampSoil.vertexColors = true;
-    geology.add(new THREE.Mesh(quarryRampGeometry(), rampSoil));
+    geology.add(new THREE.Mesh(quarryRampGeometry(), spoil));
     for (const [i, boulder] of quarryRampBoulders().entries()) {
       const rock = sandstoneRock(boulder.size, boulder.size * 0.6, boulder.size * 0.85, i % 5);
       rock.rotation.y = boulder.rotY;
@@ -251,9 +343,22 @@ export class QuarryScenery extends THREE.Group {
         put(equipment, stake, x, 0.8, side * 61.2);
         put(equipment, box(0.17, 0.32, 0.17, 0xa55e3f, 0), x - lean * 0.65, 1.45, side * 61.2);
       }
+      // Short yellow/black hazard bands: a lone dark panel on the shaded face read
+      // as a slot through the wall.
       for (let z = -55; z <= 55; z += 10) {
-        put(equipment, harborBox(0.05, 0.3, 1.8, 0x383a35), side * 59.97, 0.72, z);
-        put(equipment, harborBox(0.05, 0.3, 0.65, 0xc1aa64), side * 59.94, 0.72, z);
+        for (let k = -2; k <= 2; k++) {
+          const paint = box(0.04, 0.26, 0.36, k % 2 ? 0x3f3f3a : 0xd0b35a, 0);
+          put(equipment, paint, side * 59.98, 0.74, z + k * 0.36);
+        }
+      }
+      // A buried concrete footing closes the gap where the apron starts falling
+      // away under the wall's outer half.
+      put(equipment, concreteWall(1.4, 0.55, 122.8), side * 60.7, -0.27, 0);
+      put(equipment, concreteWall(122.8, 0.55, 1.4), 0, -0.27, side * 60.7);
+      // Precast segment joints score both faces of the boundary wall every four metres.
+      for (let t = -58; t <= 58; t += 4) {
+        put(equipment, box(0.05, 1.16, 1.02, 0x8c877d, 0), side * 60.5, 0.58, t);
+        put(equipment, box(1.02, 1.16, 0.05, 0x8c877d, 0), t, 0.58, side * 60.5);
       }
     }
     for (const team of [0, 1] as const) {
@@ -270,10 +375,16 @@ export class QuarryScenery extends THREE.Group {
     for (const z of [-2, 2]) {
       put(geology, sandstoneRock(5, 2.2, 3.5), -48, -1.79, 68 + z);
     }
-    quarrySiteDetails(equipment, geology);
+    // Gravel a few centimetres high: shadows would only cost a pass, never read.
+    const gravel = new THREE.Group();
+    quarrySiteDetails(equipment, gravel);
     batch(geology);
     batch(equipment);
-    this.add(geology, equipment);
+    batch(gravel);
+    for (const mesh of gravel.children) {
+      mesh.castShadow = false;
+    }
+    this.add(geology, equipment, gravel);
     freezeStatic(this);
   }
 }

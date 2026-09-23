@@ -12,7 +12,7 @@ import { TOWER_BASE } from "./tower-layout";
 import { treeModel } from "./tree-models";
 import type { Cover } from "./types";
 import { quarryRockVariant } from "./quarry-rock-shape";
-import { sandstoneFooting, sandstoneRock } from "./quarry-surfaces";
+import { sandstoneFooting, sandstoneRock, sandstoneRubble } from "./quarry-surfaces";
 import { dragonTooth, steelHedgehog } from "./quarry-barriers";
 function towerFoundation(group: THREE.Group, x: number): void {
   put(
@@ -59,12 +59,23 @@ export function coverModel(
     put(group, sandstoneFooting(c.w, c.d, variant));
     // Flat spalls at the foot read as fallen chips, not additional tank obstacles.
     const rubble = new Random(variant + 902);
-    for (let i = 0; i < 7; i++) {
+    const chips = Array.from({ length: 12 }, () => {
       const angle = rubble.range(0, Math.PI * 2);
-      const chip = sandstoneRock(rubble.range(0.25, 0.65), 0.09, rubble.range(0.2, 0.5), i);
-      chip.rotation.y = angle;
-      put(group, chip, Math.cos(angle) * c.w * 0.5, 0.01, Math.sin(angle) * c.d * 0.5);
-    }
+      const reach = rubble.range(0.56, 0.72);
+      const size = rubble.range(0.14, 0.5);
+      // Rest on the drift bank rather than under it.
+      return {
+        x: Math.cos(angle) * c.w * reach,
+        y: 0.07,
+        z: Math.sin(angle) * c.d * reach,
+        w: size,
+        h: rubble.range(0.06, 0.12),
+        d: size * rubble.range(0.6, 1),
+        rotY: angle,
+        shade: rubble.range(0.6, 0.88),
+      };
+    });
+    put(group, sandstoneRubble(chips));
   } else if (c.kind === "container") {
     shippingContainer(group, c);
   } else if (c.kind === "cargo") {

@@ -6,7 +6,12 @@ import {
   quarryButteFootprint,
   quarryButteSpot,
   quarryScreeSpots,
+  quarryStockpileGeometry,
+  quarryStockpileSpot,
+  quarryTalusGeometry,
+  quarryTalusStrips,
 } from "../src/game/quarry-benches";
+import { QUARRY_RAMP } from "../src/game/quarry-ramp";
 import { quarrySpawnPadPieces, type SpawnPadPiece } from "../src/game/quarry-scenery";
 import { quarryLayout } from "../src/game/quarry-layout";
 import { GROUP } from "../src/game/data";
@@ -264,6 +269,46 @@ test("scree collapses and the sentinel butte stay outside the playable boundary"
       Math.max(Math.abs(x), Math.abs(z)) > 60.5,
       `butte slab inside the boundary wall: ${x.toFixed(1)},${z.toFixed(1)}`,
     );
+  }
+});
+
+test("wall talus and the conveyor stockpile stay on the apron, clear of the haul ramp", () => {
+  const strips = quarryTalusStrips();
+  assert.equal(strips.length, 4, "every lowest cut has a talus toe");
+  for (const strip of strips) {
+    const talus = quarryTalusGeometry(strip.x0, strip.x1, strip.seed);
+    try {
+      talus.rotateY(strip.rotY);
+      talus.translate(strip.x, 0, strip.z);
+      const positions = talus.getAttribute("position");
+      let outermost = 0;
+      for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i);
+        const z = positions.getZ(i);
+        const extent = Math.max(Math.abs(x), Math.abs(z));
+        assert.ok(extent > 70, `talus spills toward the arena: ${x.toFixed(1)},${z.toFixed(1)}`);
+        assert.ok(
+          !(x > QUARRY_RAMP.x0 && x < QUARRY_RAMP.x1 && z > QUARRY_RAMP.z0 && z < QUARRY_RAMP.z1),
+          `talus buries the haul ramp: ${x.toFixed(1)},${z.toFixed(1)}`,
+        );
+        outermost = Math.max(outermost, extent);
+      }
+      assert.ok(outermost > 77.5, "the talus tucks into its wall instead of ending short");
+    } finally {
+      talus.dispose();
+    }
+  }
+  const pile = quarryStockpileSpot();
+  const stockpile = quarryStockpileGeometry(pile);
+  try {
+    stockpile.translate(pile.x, 0, pile.z);
+    const positions = stockpile.getAttribute("position");
+    for (let i = 0; i < positions.count; i++) {
+      const extent = Math.max(Math.abs(positions.getX(i)), Math.abs(positions.getZ(i)));
+      assert.ok(extent > 62, "the stockpile toe stays behind the boundary wall");
+    }
+  } finally {
+    stockpile.dispose();
   }
 });
 

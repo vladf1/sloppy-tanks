@@ -39,7 +39,13 @@ import {
   storageInstances,
 } from "./render-resources";
 import { createReticle } from "./reticle";
-import { createArenaFloor, createLighting, createSpawnPads } from "./scenery";
+import {
+  createArenaFloor,
+  createLighting,
+  createSpawnPads,
+  defaultSunShadow,
+  fitSunShadow,
+} from "./scenery";
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { MAX_FRAGMENTS } from "./simulation-rules";
@@ -306,26 +312,33 @@ export class Presentation {
     if (this.quarryScenery) {
       this.quarryScenery.visible = quarry;
     }
-    // Dusty Dig bakes low and warm: a raking sun, cool shade fill and a pale
-    // dusty horizon. Every branch is reassigned on reset so switching maps
-    // restores the other themes exactly.
-    const sky = quarry ? 0xd3c6ae : harbor ? 0xa7bdc5 : 0xaacbc2;
+    // Dusty Dig bakes low and warm: a raking sun, cool sky fill with warm sand
+    // bounce from below, and a pale dusty haze that softens the far cuts. Every
+    // branch is reassigned on reset so switching maps restores the other themes.
+    const sky = quarry ? 0xd6c9b0 : harbor ? 0xa7bdc5 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
     this.scene.fog = new THREE.Fog(
       sky,
-      quarry ? 150 : harbor ? 150 : 210,
-      quarry ? 345 : harbor ? 260 : 380,
+      quarry ? 110 : harbor ? 150 : 210,
+      quarry ? 380 : harbor ? 260 : 380,
     );
-    this.lighting.sun.color.setHex(quarry ? 0xffcf9c : harbor ? 0xffbf85 : 0xffd59b);
+    this.lighting.sun.color.setHex(quarry ? 0xffd6ab : harbor ? 0xffbf85 : 0xffd59b);
     this.lighting.sun.position.set(
       quarry ? -50 : -45,
       quarry ? 43 : harbor ? 55 : 68,
       quarry ? 28 : 25,
     );
+    // The quarry's low diagonal sun needs a box fitted to the arena and the
+    // apron props beside its wall; the other themes keep the original square.
+    if (quarry) {
+      fitSunShadow(this.lighting.sun, 68, -2, 9);
+    } else {
+      defaultSunShadow(this.lighting.sun);
+    }
     this.lighting.sun.intensity = quarry ? 3.0 : 2.8;
     this.lighting.fill.intensity = quarry ? 1.1 : 1.65;
     this.lighting.fill.color.setHex(quarry ? 0xb9cff2 : harbor ? 0xafcfee : 0xbdd5f5);
-    this.lighting.fill.groundColor.setHex(quarry ? 0x6f7d92 : harbor ? 0x63778e : 0x75859b);
+    this.lighting.fill.groundColor.setHex(quarry ? 0x8a7b68 : harbor ? 0x63778e : 0x75859b);
     this.partBatches.dispose();
     this.partsDirty = true;
     this.disposeModels(this.worldGroup);
@@ -426,7 +439,7 @@ export class Presentation {
       this.scene.add(this.harborScenery.group);
     }
     if (theme === "quarry" && !this.quarryScenery) {
-      this.quarryScenery = new QuarryScenery(this.renderer);
+      this.quarryScenery = new QuarryScenery();
       this.quarryScenery.visible = false;
       this.scene.add(this.quarryScenery);
     }

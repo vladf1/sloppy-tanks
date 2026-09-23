@@ -19,6 +19,9 @@ export function concreteWall(w: number, h: number, d: number) {
       bumpScale: 0.035,
       roughness: 0.95,
       metalness: 0,
+      // Cast from the sun-facing side: the default back-face depth let the
+      // bias light a sliver of ground along the shaded foot of every wall.
+      shadowSide: THREE.FrontSide,
     });
   }
   const key = `${w}/${h}/${d}`;

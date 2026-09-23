@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { harborBox } from "./harbor-surfaces";
 import { Random } from "./math";
 import { box, cylinder, put } from "./model-primitives";
-import { sandstoneRock } from "./quarry-surfaces";
+import { spawnPositions } from "./arena";
+import { type RubbleStone, sandstoneRubble } from "./quarry-surfaces";
 
 function beam(group: THREE.Group, a: number[], b: number[], width: number, color: number) {
   const start = new THREE.Vector3(...a);
@@ -53,57 +54,148 @@ function siteSign(group: THREE.Group) {
   }
 }
 
-/** All tall dressing is outside the playable wall; in-arena chips are only 3–7cm high. */
-export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group): void {
+/** Machinery, stockpiles and haul lanes on the apron that scrub never grows on. */
+const SCRUB_KEEP_OUT: [number, number, number, number][] = [
+  [-31, -16, -76, -60], // excavator
+  [-66, -38, -74, -65], // screening conveyor and hopper
+  [5, 27, -78, -59], // sentinel butte
+  [23, 54, -76, -62], // site office, water tank, drums and sign
+  [-55, -36, 63, 74], // cut stone stacks
+  [62, 77, 8, 28], // haul truck bay
+  [63, 86, 24, 70], // east haul ramp
+];
+
+/** All tall dressing is outside the playable wall; in-arena gravel is only 2–4cm high. */
+export function quarrySiteDetails(equipment: THREE.Group, gravel: THREE.Group): void {
   const rng = new Random(62541);
-  // Scree gathers against the cut, with occasional flat spalls across the work floor.
-  for (let i = 0; i < 700; i++) {
-    const outer = i < 500;
-    const side = i % 2 ? -1 : 1;
-    const x = outer ? rng.range(-74, 74) : rng.range(-57, 57);
-    const z = outer ? side * rng.range(71, 77) : rng.range(-57, 57);
-    const scale = [0.23, 0.4, 0.65, 1.1][i % 4];
-    const rock = sandstoneRock(
-      scale,
-      outer ? scale * 0.42 : 0.03 + (i % 3) * 0.02,
-      scale * 0.8,
-      i % 7,
-    );
-    rock.rotation.y = rng.range(-Math.PI, Math.PI);
-    put(geology, rock, x, outer ? -1.75 : 0.008, z);
-  }
-  // Low scrub occupies undisturbed shoulders, away from the traffic and combat lanes.
-  const grassMaterial = new THREE.MeshStandardMaterial({
-    color: 0x797b50,
-    roughness: 1,
-    side: THREE.DoubleSide,
-  });
-  const blades: number[] = [];
-  for (let i = 0; i < 140; i++) {
-    const x = rng.range(-72, 72);
-    const z = (i % 2 ? -1 : 1) * rng.range(63.5, 75);
-    const y = -Math.min(1.8, (Math.abs(z) - 60) * 0.3) + 0.02;
-    for (let j = 0; j < 6; j++) {
+  // Spilled haul loads leave tight clusters of flat gravel across the work floor,
+  // with a scatter of strays between them. Spawn pads stay clean.
+  const pads = [...spawnPositions(0), ...spawnPositions(1)];
+  const stones: RubbleStone[] = [];
+  const stone = (x: number, z: number, size: number) => {
+    if (
+      Math.max(Math.abs(x), Math.abs(z)) > 58.5 ||
+      pads.some((p) => Math.hypot(x - p.x, z - p.z) < 3.4)
+    ) {
+      return;
+    }
+    stones.push({
+      x,
+      y: 0.008,
+      z,
+      w: size,
+      h: rng.range(0.04, 0.07),
+      d: size * rng.range(0.6, 1.1),
+      rotY: rng.range(-Math.PI, Math.PI),
+      shade: rng.range(0.55, 0.95),
+    });
+  };
+  for (let cluster = 0; cluster < 40; cluster++) {
+    const cx = rng.range(-56, 56);
+    const cz = rng.range(-56, 56);
+    const spread = rng.range(0.8, 2.6);
+    const count = 10 + Math.floor(rng.range(0, 16));
+    for (let i = 0; i < count; i++) {
       const angle = rng.range(0, Math.PI * 2);
-      const dx = Math.cos(angle) * 0.28;
-      const dz = Math.sin(angle) * 0.28;
-      blades.push(
-        x - dx,
+      const r = spread * Math.sqrt(rng.next());
+      stone(cx + Math.cos(angle) * r, cz + Math.sin(angle) * r, rng.range(0.1, 0.3));
+    }
+  }
+  for (let i = 0; i < 240; i++) {
+    stone(rng.range(-57, 57), rng.range(-57, 57), rng.range(0.12, 0.42));
+  }
+  // A few flat spalls knocked off the rock islands by earlier shelling.
+  for (let i = 0; i < 30; i++) {
+    stone(rng.range(-57, 57), rng.range(-57, 57), rng.range(0.45, 0.8));
+  }
+  gravel.add(sandstoneRubble(stones));
+  // Dry scrub holds the undisturbed shoulders, clear of traffic, machinery and
+  // the combat lanes: straw and sage grass tufts plus low rounded saltbush.
+  const scrub: number[] = [];
+  const tints: number[] = [];
+  const sage = new THREE.Color(0x87866a);
+  const straw = new THREE.Color(0xa99571);
+  const tint = new THREE.Color();
+  const vertex = new THREE.Vector3();
+  for (let i = 0; i < 190; i++) {
+    const side = i % 2 ? -1 : 1;
+    const along = rng.range(-72, 72);
+    const out = side * rng.range(64, 72.5);
+    const [x, z] = i % 4 < 2 ? [along, out] : [out, along * 0.75];
+    const y = -Math.min(1.8, (Math.max(Math.abs(x), Math.abs(z)) - 60) * 0.3) + 0.01;
+    const blocked = SCRUB_KEEP_OUT.some(([x0, x1, z0, z1]) => x > x0 && x < x1 && z > z0 && z < z1);
+    tint.lerpColors(sage, straw, rng.range(0, 1)).multiplyScalar(rng.range(0.8, 1.05));
+    if (blocked) {
+      continue;
+    }
+    if (i % 5 === 0) {
+      // Saltbush: a squat, lumpy faceted clump, darker toward its underside.
+      const radius = rng.range(0.35, 0.65);
+      const bush = new THREE.IcosahedronGeometry(radius, 0);
+      bush.rotateY(rng.range(0, Math.PI));
+      const points = bush.getAttribute("position");
+      // Shared corners move together so the clump stays closed.
+      const lumps = Array.from({ length: 12 }, () => rng.range(0.78, 1.18));
+      const corners: THREE.Vector3[] = [];
+      for (let v = 0; v < points.count; v++) {
+        vertex.fromBufferAttribute(points, v);
+        let corner = corners.findIndex((c) => c.distanceToSquared(vertex) < 1e-6);
+        if (corner < 0) {
+          corner = corners.push(vertex.clone()) - 1;
+        }
+        vertex.multiplyScalar(lumps[corner % lumps.length]);
+        const shade = 0.66 + 0.34 * Math.max(0, vertex.y / radius + 0.2);
+        scrub.push(x + vertex.x, y + radius * 0.3 + vertex.y * 0.62, z + vertex.z);
+        tints.push(tint.r * shade * 0.92, tint.g * shade, tint.b * shade * 0.94);
+      }
+      bush.dispose();
+      continue;
+    }
+    for (let j = 0; j < 7; j++) {
+      const angle = rng.range(0, Math.PI * 2);
+      const dx = Math.cos(angle) * 0.05;
+      const dz = Math.sin(angle) * 0.05;
+      const lean = rng.range(0.15, 0.4);
+      const tip = rng.range(0.22, 0.6);
+      scrub.push(
+        x - dz,
         y,
-        z - dz,
-        x + dx,
+        z + dx,
+        x + dz,
         y,
-        z + dz,
-        x + dx * 1.5,
-        y + rng.range(0.25, 0.7),
-        z + dz * 1.5,
+        z - dx,
+        x + Math.cos(angle) * lean,
+        y + tip,
+        z + Math.sin(angle) * lean,
+      );
+      // Blades fade from shaded base to sunlit, straw-bleached tips.
+      tints.push(
+        tint.r * 0.6,
+        tint.g * 0.6,
+        tint.b * 0.6,
+        tint.r * 0.6,
+        tint.g * 0.6,
+        tint.b * 0.6,
+        tint.r * 1.15,
+        tint.g * 1.1,
+        tint.b,
       );
     }
   }
-  const grassGeometry = new THREE.BufferGeometry();
-  grassGeometry.setAttribute("position", new THREE.Float32BufferAttribute(blades, 3));
-  grassGeometry.computeVertexNormals();
-  equipment.add(new THREE.Mesh(grassGeometry, grassMaterial));
+  const scrubGeometry = new THREE.BufferGeometry();
+  scrubGeometry.setAttribute("position", new THREE.Float32BufferAttribute(scrub, 3));
+  scrubGeometry.setAttribute("color", new THREE.Float32BufferAttribute(tints, 3));
+  scrubGeometry.computeVertexNormals();
+  equipment.add(
+    new THREE.Mesh(
+      scrubGeometry,
+      new THREE.MeshStandardMaterial({
+        roughness: 1,
+        side: THREE.DoubleSide,
+        vertexColors: true,
+      }),
+    ),
+  );
 
   // Idle screening conveyor: rust-red chords, dusty truss and a faded feed hopper.
   for (const z of [-71.4, -68.6]) {
@@ -135,15 +227,6 @@ export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group):
   }
   put(equipment, harborBox(4.2, 2.1, 3.7, 0xb08d46), -63, 0.2, -70);
   put(equipment, box(3.7, 0.07, 3.2, 0x42483c, 0), -63, 1.29, -70);
-  for (let i = 0; i < 9; i++) {
-    put(
-      geology,
-      sandstoneRock(3.5, 1.4 + (i % 3) * 0.4, 3, i),
-      -42 + (i % 3) * 1.8,
-      -1.75 + Math.floor(i / 3) * 0.3,
-      -67 - Math.floor(i / 3) * 1.3,
-    );
-  }
   // Office access, air conditioner, water tank and stacked sawn blocks.
   put(equipment, harborBox(1.5, 2.7, 0.12, 0x515f59), 41.2, -0.3, -67.4);
   for (let i = 0; i < 3; i++) {
@@ -179,4 +262,39 @@ export function quarrySiteDetails(equipment: THREE.Group, geology: THREE.Group):
     );
   }
   siteSign(equipment);
+  // Mobile lighting plants stand by for night shifts, giving the apron some height.
+  lightTower(equipment, 57, -67.5, -0.4);
+  lightTower(equipment, -67, 58, 2.2);
+}
+
+/** Towed mast light: trailer, outriggers, a tall mast and a lamp bar. */
+function lightTower(group: THREE.Group, x: number, z: number, yaw: number) {
+  const tower = new THREE.Group();
+  put(tower, harborBox(2.6, 1.05, 1.35, 0xc69a4b), 0, 0.95, 0);
+  put(tower, harborBox(2.7, 0.12, 1.45, 0x4a4238), 0, 0.42, 0);
+  for (const side of [-1, 1]) {
+    const wheel = cylinder(0.36, 0.26, 0x343431, 10);
+    wheel.rotation.x = Math.PI / 2;
+    put(tower, wheel, -0.3, 0.36, side * 0.8);
+    beam(tower, [side * 1.2, 0.5, -0.6], [side * 1.55, 0, -1.1], 0.08, 0x5a564c);
+    beam(tower, [side * 1.2, 0.5, 0.6], [side * 1.55, 0, 1.1], 0.08, 0x5a564c);
+  }
+  beam(tower, [1.3, 0.45, 0], [2.3, 0.35, 0], 0.1, 0x5a564c);
+  put(tower, harborBox(0.2, 7.4, 0.2, 0x9a9a92), -0.9, 5.1, 0);
+  put(tower, harborBox(0.12, 0.12, 2.1, 0x5a564c), -0.9, 8.8, 0);
+  for (const dz of [-0.78, -0.26, 0.26, 0.78]) {
+    const lamp = harborBox(0.34, 0.3, 0.42, 0x353e3c);
+    lamp.rotation.z = -0.35;
+    put(tower, lamp, -0.76, 8.62, dz);
+    const lens = box(0.02, 0.24, 0.34, 0xe8e2c8, 0);
+    lens.rotation.z = -0.35;
+    put(tower, lens, -0.57, 8.55, dz);
+  }
+  tower.rotation.y = yaw;
+  tower.position.set(x, -1.79, z);
+  tower.updateMatrixWorld(true);
+  for (const mesh of [...tower.children]) {
+    mesh.applyMatrix4(tower.matrix);
+    group.add(mesh);
+  }
 }

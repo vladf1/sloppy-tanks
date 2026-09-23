@@ -109,6 +109,55 @@ export function createSpawnPads(): THREE.Group {
   return details;
 }
 
+const SHADOW_DEPTH = 219.5;
+
+/** The original square sun shadow box shared by the village and harbor. */
+export function defaultSunShadow(sun: THREE.DirectionalLight): void {
+  const camera = sun.shadow.camera;
+  camera.left = camera.bottom = -(ARENA + 10);
+  camera.right = camera.top = ARENA + 10;
+  camera.near = 0.5;
+  camera.far = 0.5 + SHADOW_DEPTH;
+  camera.updateProjectionMatrix();
+}
+
+/** Fit the sun's orthographic shadow box around a ground square for the sun's
+ * current direction. A square box aimed at a low, diagonal sun lands on the
+ * ground as a tilted strip that misses two arena corners; this one covers the
+ * whole square. The depth range keeps its default span so the tuned bias holds. */
+export function fitSunShadow(
+  sun: THREE.DirectionalLight,
+  half: number,
+  low: number,
+  high: number,
+): void {
+  const probe = new THREE.OrthographicCamera();
+  probe.position.copy(sun.position);
+  probe.lookAt(sun.target.position);
+  probe.updateMatrixWorld();
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  const corner = new THREE.Vector3();
+  for (const x of [-half, half]) {
+    for (const y of [low, high]) {
+      for (const z of [-half, half]) {
+        corner.set(x, y, z).applyMatrix4(probe.matrixWorldInverse);
+        min.min(corner);
+        max.max(corner);
+      }
+    }
+  }
+  const camera = sun.shadow.camera;
+  camera.left = min.x;
+  camera.right = max.x;
+  camera.bottom = min.y;
+  camera.top = max.y;
+  // The camera looks down -z; orthographic near may sit behind the light.
+  camera.near = -max.z - 2;
+  camera.far = camera.near + SHADOW_DEPTH;
+  camera.updateProjectionMatrix();
+}
+
 export function createLighting(scene: THREE.Scene) {
   scene.background = new THREE.Color(0x59bbed);
   scene.fog = new THREE.Fog(0x59bbed, 150, 260);
@@ -119,11 +168,7 @@ export function createLighting(scene: THREE.Scene) {
   sun.position.set(-45, 85, 25);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -(ARENA + 10);
-  sun.shadow.camera.right = ARENA + 10;
-  sun.shadow.camera.top = ARENA + 10;
-  sun.shadow.camera.bottom = -(ARENA + 10);
-  sun.shadow.camera.far = 220;
+  defaultSunShadow(sun);
   sun.shadow.normalBias = 0.05;
   sun.shadow.bias = -0.0002;
   scene.add(sun);

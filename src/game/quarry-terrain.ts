@@ -1,5 +1,7 @@
 import * as THREE from "three/webgpu";
+import { float, mix, positionWorld, texture as sampleTexture, uv, vec2, vec4 } from "three/tsl";
 import { Random } from "./math";
+import { quarryGrit } from "./quarry-grit";
 import { quarryLayout } from "./quarry-layout";
 import {
   ACCUM_CELLS,
@@ -106,24 +108,54 @@ function bakeSoil(canvas: HTMLCanvasElement, accum: Float32Array, texture: THREE
     .finally(() => manager.itemEnd(BAKE_KEY));
 }
 
-/** A baked, metre-scaled work yard: pale sand sheets, dark compacted haul routes,
- * exposed rocky soil, wheel ruts and aggregate. Generated once for the retained
+let soil: THREE.Texture | undefined;
+/** The baked work-yard soil, created and baked once for every surface that must
+ * match the ground: the floor itself, spoil heaps, rock feet and drift. */
+function quarrySoilTexture(): THREE.Texture {
+  if (!soil) {
+    if (typeof document === "undefined") {
+      // Headless geometry tests build rock materials with no DOM and no bake.
+      soil = new THREE.Texture();
+    } else {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = QUARRY_SOIL_SIZE;
+      soil = new THREE.CanvasTexture(canvas);
+      bakeSoil(canvas, sandAccum(), soil);
+    }
+    soil.colorSpace = THREE.SRGBColorSpace;
+    // WebGPU clamps sampler anisotropy to what the adapter supports.
+    soil.anisotropy = 8;
+  }
+  return soil;
+}
+
+/** The baked soil lying under a world position, as the terrain renders it. */
+export function quarrySoilAt(position = positionWorld) {
+  return sampleTexture(
+    quarrySoilTexture(),
+    vec2(position.x.div(EXTENT).add(0.5), float(0.5).sub(position.z.div(EXTENT))),
+  );
+}
+
+/** Baked work-yard soil plus world-space grit. The bake's alpha says how stony
+ * each spot is: sand sheets stay smooth, gravel and spill get coarse relief.
+ * Meshes using it carry UVs that map world x/z onto the bake. */
+function soilMaterial(): THREE.MeshStandardNodeMaterial {
+  const material = new THREE.MeshStandardNodeMaterial({ roughness: 1 });
+  const baked = sampleTexture(quarrySoilTexture(), uv());
+  const stony = baked.a.sub(0.5).mul(2);
+  const grit = quarryGrit(mix(0.55, 1.5, stony), mix(0.35, 1.6, stony));
+  material.colorNode = vec4(baked.rgb.mul(grit.color), 1);
+  material.normalNode = grit.normal;
+  return material;
+}
+
+/** A baked, metre-scaled work yard: pale sand sheets, compacted haul routes,
+ * exposed stony soil, wheel ruts and aggregate. Generated once for the retained
  * scenery, never during round reset or rendering. */
-export function quarryTerrain(renderer: THREE.WebGPURenderer) {
-  const size = QUARRY_SOIL_SIZE;
+export function quarryTerrain() {
   const extent = EXTENT;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = Math.min(8, renderer.getMaxAnisotropy());
-  bakeSoil(canvas, sandAccum(), texture);
-  const material = new THREE.MeshStandardMaterial({
-    map: texture,
-    bumpMap: texture,
-    bumpScale: 0.065,
-    roughness: 1,
-  });
+  const material = soilMaterial();
   const geometry = new THREE.PlaneGeometry(extent, extent, 140, 140).rotateX(-Math.PI / 2);
   const positions = geometry.getAttribute("position");
   for (let i = 0; i < positions.count; i++) {

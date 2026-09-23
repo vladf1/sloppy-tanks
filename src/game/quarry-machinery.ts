@@ -19,11 +19,11 @@ function accent(w: number, h: number, d: number, color: number, metal: number, r
   return mesh;
 }
 
-// Reuse the existing scratched panel atlas, with its own material cache so
-// excavator paint can weather independently of harbor props and the haul truck.
-const excavatorPaint = new Map<number, THREE.MeshStandardMaterial>();
+// Reuse the existing scratched panel atlas, with its own material cache so the
+// fleet's paint can weather independently of harbor props.
+const fleetPaint = new Map<number, THREE.MeshStandardMaterial>();
 let paintWear: THREE.Texture | undefined;
-function weatherExcavator(group: THREE.Group) {
+function weatherPaint(group: THREE.Group) {
   group.traverse((child) => {
     if (!(child instanceof THREE.Mesh) || !(child.material instanceof THREE.MeshStandardMaterial)) {
       return;
@@ -32,7 +32,7 @@ function weatherExcavator(group: THREE.Group) {
     if (color !== PAINT && color !== 0xd2c6a2) {
       return;
     }
-    let material = excavatorPaint.get(color);
+    let material = fleetPaint.get(color);
     if (!material) {
       if (!paintWear) {
         paintWear = new THREE.TextureLoader().load(
@@ -50,7 +50,7 @@ function weatherExcavator(group: THREE.Group) {
         roughness: 0.84,
         metalness: 0.18,
       });
-      excavatorPaint.set(color, material);
+      fleetPaint.set(color, material);
     }
     child.material = material;
   });
@@ -156,7 +156,7 @@ export function quarryExcavator(): THREE.Group {
   }
   bucket.rotation.z = -0.22;
   put(group, bucket, 11.5, 0.6, 0.9);
-  weatherExcavator(group);
+  weatherPaint(group);
   batch(bucket);
   batch(group);
   return group;
@@ -198,6 +198,8 @@ export function quarryDumpTruck(): THREE.Group {
     put(group, accent(0.08, 0.8, 0.6, TEAL, 0.2, 0.8), 4.62, 0.8, side * 2.6);
   }
   put(group, accent(3.3, 0.08, 4.3, DUST, 0, 1), -3.9, 5.42, 0);
+  // Same sun-faded fleet yellow as the excavator, not steel-tinted brown.
+  weatherPaint(group);
   batch(group);
   return group;
 }
