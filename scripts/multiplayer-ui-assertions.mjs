@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 
-/** Check the shipped CSS and reachable controls, including narrow phone layouts. */
+/** Check the shipped CSS and reachable controls, at supported desktop sizes. */
 export async function checkMultiplayerMenu(page) {
   const viewport = page.viewportSize();
   try {
     for (const [width, height] of [
       [1200, 800],
-      [390, 844],
-      [320, 568],
-      [844, 390],
+      [1440, 900],
     ]) {
       await page.setViewportSize({ width, height });
       const layout = await page.evaluate(() => {

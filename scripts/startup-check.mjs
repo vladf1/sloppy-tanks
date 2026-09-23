@@ -219,10 +219,7 @@ try {
   results.automaticStarts = "passed";
   console.log("Autoplay and stress-test startup passed.");
 
-  for (const viewport of [
-    { width: 1440, height: 1000 },
-    { width: 390, height: 844 },
-  ]) {
+  for (const viewport of [{ width: 1440, height: 1000 }]) {
     const layout = await fresh(viewport);
     let releaseEngine;
     const engine = new Promise((resolve) => {

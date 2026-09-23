@@ -93,9 +93,7 @@ try {
   const row = bob.page.locator(".room-row").filter({ has: bob.page.locator(roomSelector) });
   assert.match(await row.innerText(), /Harbor Havoc · 1\/8 players/);
   assert.match(await row.innerText(), /Humans only/);
-  await bob.page.setViewportSize({ width: 390, height: 844 });
-  await bob.page.screenshot({ path: `${output}/phone-list.png` });
-  await bob.page.setViewportSize({ width: 1200, height: 900 });
+  await bob.page.screenshot({ path: `${output}/room-list.png` });
   await bob.page.locator("#player-name").fill("Room browser Bob");
   await click(bob.page, roomSelector);
   await click(bob.page, "#join-room");

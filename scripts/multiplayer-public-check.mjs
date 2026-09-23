@@ -74,9 +74,6 @@ try {
     assert.equal(await page.locator("#network-end").isVisible(), false);
   }
   await first.screenshot({ path: `${output}/lobby.png` });
-  await first.setViewportSize({ width: 390, height: 844 });
-  await first.screenshot({ path: `${output}/phone-lobby.png` });
-  await first.setViewportSize({ width: 1200, height: 800 });
   await first.locator("#start-match").click();
   await Promise.all(
     clients.map((c) =>

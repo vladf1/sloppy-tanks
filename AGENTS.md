@@ -71,6 +71,10 @@ the reported bug is a real pointer interaction, verify it with a physical
 coordinate click in the visible Chrome window; a locator or accessibility
 activation can bypass pointer-event and coordinate-routing bugs.
 
+Mobile phone support is out of scope. Do not add phone-specific layouts or run
+phone viewport checks unless explicitly requested. Focus browser validation on
+desktop; retain existing tablet/iPad touch support and its input checks.
+
 Profiling and benchmarks (`profile.mjs`, the loading and host-download
 benchmarks) are manual evidence, not normal CI. Do not add these
 workloads to `npm run check` or deployment workflows. Keep HTTP delivery,

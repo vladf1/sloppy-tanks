@@ -111,17 +111,16 @@ try {
   await open();
   await finish("team", 19);
   assert.match(await page.locator(".recap-stat").first().innerText(), /BEST 21/);
-  await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const top = await page.locator(".results").boundingBox();
   assert.ok(top.y >= 0, "scrollable report must not clip its heading above the viewport");
-  await page.screenshot({ path: `${output}/battle-report-mobile.png` });
-  const mobile = await page
+  await page.screenshot({ path: `${output}/battle-report-scroll.png` });
+  const layout = await page
     .locator("#overlay")
     .evaluate((element) => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }));
-  assert.equal(mobile.scrollWidth, mobile.width, "report must fit inside the scroll container");
+  assert.equal(layout.scrollWidth, layout.width, "report must fit inside the scroll container");
   await page.locator("#restart").scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${output}/battle-report-mobile-bottom.png` });
+  await page.screenshot({ path: `${output}/battle-report-bottom.png` });
   await click("#restart");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "ready");
   await page.setViewportSize({ width: 1440, height: 1100 });
@@ -143,7 +142,7 @@ try {
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: 18 stats, earned feats, record persistence, team/solo outcomes, mobile scrolling, coordinate-click replay/setup, no browser errors",
+    "PASS: 18 stats, earned feats, record persistence, team/solo outcomes, report scrolling, coordinate-click replay/setup, no browser errors",
   );
 } finally {
   await browser.close();
