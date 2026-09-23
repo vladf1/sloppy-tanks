@@ -47,6 +47,7 @@ import {
   type Fragment,
   type Mine,
   type Pickup,
+  type PlayerAssignment,
   type Shot,
   type SimEvent,
   type Tank,
@@ -61,6 +62,8 @@ import { collectPickup, fireWeapon, placeMine, stepMines, stepProjectiles } from
 export type SimulationSetup = Partial<
   Pick<
     Simulation,
+    | "players"
+    | "humansOnly"
     | "humanKind"
     | "humanTeam"
     | "difficulty"
@@ -102,6 +105,17 @@ export class Simulation {
   seed: number;
   humanTeam: Team;
   humanKind: VehicleKind = "balanced";
+  players?: readonly PlayerAssignment[];
+  humansOnly = false;
+  readonly speedTuning = { "tank-speed": 1, "bullet-speed": 1 };
+  /** Optional server presentation trace; observing a sweep never changes combat. */
+  onProjectileMove?: (shot: Shot, seconds: number, offset: number) => void;
+  get multiplayer(): boolean {
+    return this.players !== undefined;
+  }
+  records(tank: Tank): boolean {
+    return !this.multiplayer && tank.human;
+  }
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
   endlessMatch = false;
@@ -221,12 +235,19 @@ export class Simulation {
     } else {
       for (let i = 0; i < count; i++) {
         const team = (i % 2) as Team;
+        const player = this.players?.find(
+          (player) => player.team === team && player.slot === Math.floor(i / 2),
+        );
+        if (this.multiplayer && this.humansOnly && !player) {
+          continue;
+        }
         this.addTank(
           team,
-          i === this.humanTeam,
-          i === this.humanTeam
-            ? this.humanKind
-            : (["scout", "balanced", "heavy"] as VehicleKind[])[Math.floor(i / 2) % 3],
+          this.multiplayer ? !!player : i === this.humanTeam,
+          player?.kind ??
+            (i === this.humanTeam
+              ? this.humanKind
+              : (["scout", "balanced", "heavy"] as VehicleKind[])[Math.floor(i / 2) % 3]),
           Math.floor(i / 2),
         );
       }
@@ -338,6 +359,20 @@ export class Simulation {
     this.match.phase = "playing";
   }
   step(command: VehicleCommand = idleCommand(), autoplay = false): void {
+    if (this.multiplayer) {
+      throw new Error("Multiplayer requires per-tank commands through stepWith");
+    }
+    this.advance(command, autoplay);
+  }
+  /** Commands last one tick. Missing human input is idle; only explicit bot drivers use AI. */
+  stepWith(commands: ReadonlyMap<number, VehicleCommand>): void {
+    this.advance(undefined, false, commands);
+  }
+  private advance(
+    command: VehicleCommand | undefined,
+    autoplay: boolean,
+    commands?: ReadonlyMap<number, VehicleCommand>,
+  ): void {
     if (this.match.phase !== "playing") {
       return;
     }
@@ -378,7 +413,15 @@ export class Simulation {
       tank.speed = Math.max(0, tank.speed - STEP);
       tank.laser = Math.max(0, tank.laser - STEP);
       tank.recoil = Math.max(0, tank.recoil - STEP * SIMULATION_RULES.recoilRecoveryPerSecond);
-      const c = tank.human && !autoplay ? command : botCommand(this, tank, STEP);
+      const c = commands
+        ? tank.driver === "bot"
+          ? botCommand(this, tank, STEP)
+          : tank.driver === "human"
+            ? (commands.get(tank.id) ?? { ...idleCommand(), aim: tank.aim })
+            : { ...idleCommand(), aim: tank.aim }
+        : tank.human && !autoplay
+          ? command!
+          : botCommand(this, tank, STEP);
       tank.command = c;
       if (tank.human && typeof c.ammoSelection === "string" && !hasAmmo(tank, c.ammoSelection)) {
         this.events.push({
@@ -391,7 +434,7 @@ export class Simulation {
       }
       selectAmmo(tank, c.ammoSelection);
       tank.aim = c.aim;
-      driveTank(tank, c, STEP);
+      driveTank(tank, c, STEP, this.speedTuning["tank-speed"]);
       if (c.fire) {
         fireWeapon(this, tank);
       }

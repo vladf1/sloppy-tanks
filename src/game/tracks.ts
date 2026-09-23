@@ -4,6 +4,7 @@ import { attribute, uniform, smoothstep } from "three/tsl";
 import { spawnPositions } from "./arena";
 import { VEHICLES, angleDelta } from "./data";
 import type { Simulation } from "./simulation";
+import { renderState, type RenderState } from "./render-state";
 
 // Thirty boosted scouts can leave about 70,000 marks during the 24-second fade.
 // Reserve that lifetime budget so busy scenes do not stop drawing new trails.
@@ -62,7 +63,7 @@ export class TrackTrails {
   }
 
   /** Quarry pads stand proud of the dirt, so prints on them ride on top. */
-  private markHeight(simulation: Simulation, x: number, z: number): number {
+  private markHeight(simulation: RenderState, x: number, z: number): number {
     if (simulation.mapTheme === "quarry") {
       for (const team of [0, 1] as const) {
         for (const p of spawnPositions(team)) {
@@ -85,7 +86,8 @@ export class TrackTrails {
     this.clock.value = 0;
   }
 
-  update(simulation: Simulation, alpha: number): void {
+  update(source: Simulation | RenderState, alpha: number): void {
+    const simulation = renderState(source);
     // Start a fresh upload list, including when no renderer consumed the previous
     // ranges (for example during a paused/offscreen check).
     this.mesh.instanceMatrix.clearUpdateRanges();
@@ -121,7 +123,7 @@ export class TrackTrails {
         this.poses.delete(tank.id);
         continue;
       }
-      const position = tank.body.translation();
+      const position = tank.position;
       const x = THREE.MathUtils.lerp(tank.previous.x, position.x, alpha);
       const z = THREE.MathUtils.lerp(tank.previous.z, position.z, alpha);
       const previous = this.poses.get(tank.id);

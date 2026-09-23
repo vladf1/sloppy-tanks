@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve, extname } from "node:path";
 import { gzipSync } from "node:zlib";
+import { seedGame } from "./browser-helpers.mjs";
 
 // Production files over gzip; every sample has an empty HTTP cache and storage.
 const label = process.argv[2] ?? "combined";
@@ -59,6 +60,7 @@ try {
       deviceScaleFactor: 1,
     });
     const page = await context.newPage();
+    await seedGame(page, 424242);
     const cdp = await context.newCDPSession(page);
     await cdp.send("Network.enable");
     await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
@@ -86,7 +88,6 @@ try {
     });
     page.on("pageerror", (e) => errors.push(e.message));
     await page.addInitScript(() => {
-      Math.random = () => 0.424242;
       performance.setResourceTimingBufferSize(10000);
       window.loadingAudit = { tasks: [], menu: 0, firstFrame: 0, menuClear: 0, readyAt: 0 };
       const checkMenu = () => {

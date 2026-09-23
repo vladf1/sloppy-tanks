@@ -21,7 +21,7 @@ export function collectPickup(simulation: Simulation, tank: Tank, pickup: Pickup
     return false;
   }
   pickup.available = false;
-  if (tank.human) {
+  if (simulation.records(tank)) {
     simulation.combatRecord.pickups++;
   }
   pickup.cooldown = kind === "laser" ? LASER_DEFENSE.respawn : AMMO_RESPAWN_SECONDS;

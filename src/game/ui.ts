@@ -5,6 +5,7 @@ import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
 import { bindGameOptions, syncGameOptions } from "./game-options";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
+import type { RenderState } from "./render-state";
 import type { DamageCause, SimEvent, Weapon } from "./types";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { rankIndex, RANKS, REPAIR_DELAY } from "./veterancy";
@@ -21,6 +22,7 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
   explosion: "Explosion",
 };
 export class UI {
+  displayState?: RenderState;
   overlay: HTMLElement;
   hud: HTMLElement;
   toast: HTMLElement;
@@ -109,7 +111,10 @@ export class UI {
   show(): void {
     const simulation = this.simulation;
     const phase = simulation.match.phase;
-    this.overlay.style.display = phase === "playing" && simulation.human.alive ? "none" : "grid";
+    this.overlay.style.display =
+      phase === "playing" && (this.displayState?.viewer.alive ?? simulation.human.alive)
+        ? "none"
+        : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     if (phase === "ready") {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
@@ -135,6 +140,7 @@ export class UI {
       this.overlay.innerHTML = menuMarkup(
         simulation,
         this.battleSetup.querySelector(".menu-help")!.innerHTML,
+        this.displayState?.viewer,
       );
       this.overlay
         .querySelector(".respawn")
@@ -223,27 +229,38 @@ export class UI {
       this.toastTime = event.type === "pickup" ? 1.5 : 2;
       this.toast.classList.add("visible");
     }
-    if (event.type === "death" && event.label) {
-      this.feedRows.unshift({ text: event.label, time: 5 });
+    if (event.type === "death") {
+      const state = this.displayState;
+      const viewerId = state?.viewerId ?? this.simulation.human.id;
+      const tanks = state?.tanks ?? this.simulation.tanks;
+      const name = (id: number | undefined) =>
+        id === viewerId ? "YOU" : (tanks.find((tank) => tank.id === id)?.name ?? "YARD");
+      this.feedRows.unshift({ text: `${name(event.owner)}  ▸  ${name(event.id)}`, time: 5 });
     }
   }
   update(dt: number): void {
     const simulation = this.simulation;
-    const tank = simulation.human;
+    const tank = this.displayState?.viewer ?? simulation.human;
+    const maxHp = this.displayState?.viewer.maxHp ?? simulation.maxHealth(simulation.human);
+    const match =
+      this.displayState && simulation.match.phase === "playing"
+        ? this.displayState.match
+        : simulation.match;
+    const elapsed = this.displayState?.elapsed ?? simulation.elapsed;
     const dead = !tank.alive;
     this.syncRound();
-    if (simulation.match.phase === "playing") {
+    if (match.phase === "playing") {
       this.damageTime = Math.max(0, this.damageTime - dt);
       this.ammoNoticeTime = Math.max(0, this.ammoNoticeTime - dt);
     }
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
-    indicator.hidden = this.damageTime <= 0 || simulation.match.phase !== "playing";
+    indicator.hidden = this.damageTime <= 0 || match.phase !== "playing";
     indicator.style.opacity = String(Math.min(1, this.damageTime * 2));
     if (this.ammoNoticeTime <= 0) {
       this.hud.querySelector("#ammo-notice")!.textContent = "";
     }
-    if (this.lastPhase !== simulation.match.phase || dead !== this.lastDead) {
-      this.lastPhase = simulation.match.phase;
+    if (this.lastPhase !== match.phase || dead !== this.lastDead) {
+      this.lastPhase = match.phase;
       this.lastDead = dead;
       this.show();
     }
@@ -264,23 +281,21 @@ export class UI {
           ? "ENDLESS STRESS"
           : `FIRST TO ${SCORE_LIMIT}`,
     );
-    set("score0", String(solo ? tank.kills : simulation.match.scores[0]));
+    set("score0", String(solo ? tank.kills : match.scores[0]));
     set(
       "score1",
       String(
         solo
           ? simulation.tanks.filter((tank) => !tank.human && tank.alive).length
-          : simulation.match.scores[1],
+          : match.scores[1],
       ),
     );
-    const sec = simulation.endlessMatch
-      ? Math.floor(simulation.elapsed)
-      : Math.ceil(simulation.match.time);
+    const sec = simulation.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
     set(
       "time",
       simulation.endlessMatch
         ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
-        : simulation.match.overtime
+        : match.overtime
           ? "NEXT KILL"
           : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`,
     );
@@ -300,7 +315,7 @@ export class UI {
       const count = weapon === "standard" ? "∞" : String(tank.ammo[weapon]);
       set(`ammo-count-${weapon}`, count);
       const slot = document.getElementById(`ammo-${weapon}`)! as HTMLButtonElement;
-      slot.disabled = dead || simulation.match.phase !== "playing";
+      slot.disabled = dead || match.phase !== "playing";
       slot.setAttribute("aria-pressed", String(selected === weapon));
       slot.classList.toggle("selected", selected === weapon);
       slot.classList.toggle("empty", !hasAmmo(tank, weapon));
@@ -323,10 +338,7 @@ export class UI {
         tank.rapid > 0 ? `» RAPID ${Math.ceil(tank.rapid)}s` : null,
         tank.speed > 0 ? `ϟ BOOST ${Math.ceil(tank.speed)}s` : null,
         tank.laser > 0 ? `✧ LASER DEFENSE ${Math.ceil(tank.laser)}s` : null,
-        tank.alive &&
-        stats.repair &&
-        tank.hp < simulation.maxHealth(tank) &&
-        simulation.elapsed - tank.lastCombat >= REPAIR_DELAY
+        tank.alive && stats.repair && tank.hp < maxHp && elapsed - tank.lastCombat >= REPAIR_DELAY
           ? "SELF-REPAIR"
           : null,
       ]
@@ -334,11 +346,11 @@ export class UI {
         .join("  "),
     );
     set("respawn-count", String(Math.ceil(tank.respawn)));
-    const health = healthBarState(tank.hp, simulation.maxHealth(tank), tank.team);
+    const health = healthBarState(tank.hp, maxHp, tank.team);
     this.hud
       .querySelector(".status")!
       .classList.toggle("critical-health", tank.alive && health.ratio < 0.25);
-    this.hud.classList.toggle("paused", simulation.match.phase !== "playing");
+    this.hud.classList.toggle("paused", match.phase !== "playing");
     const hpbar = document.getElementById("hpbar")!;
     hpbar.style.width = `${health.ratio * 100}%`;
     hpbar.style.backgroundColor = `#${health.color.toString(16).padStart(6, "0")}`;
@@ -350,9 +362,18 @@ export class UI {
       row.time -= dt;
     }
     this.feedRows = this.feedRows.filter((r) => r.time > 0).slice(0, 4);
-    const feed = this.feedRows.map((r) => `<div>${r.text}</div>`).join("");
-    if (this.feed.innerHTML !== feed) {
-      this.feed.innerHTML = feed;
+    while (this.feed.childElementCount > this.feedRows.length) {
+      this.feed.lastElementChild!.remove();
+    }
+    for (let i = 0; i < this.feedRows.length; i++) {
+      let row = this.feed.children[i];
+      if (!row) {
+        row = document.createElement("div");
+        this.feed.append(row);
+      }
+      if (row.textContent !== this.feedRows[i].text) {
+        row.textContent = this.feedRows[i].text;
+      }
     }
   }
 }

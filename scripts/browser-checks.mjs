@@ -25,6 +25,7 @@ const checks = [
   ["tower-check.mjs"],
   ["timber-walls-check.mjs"],
   ["debris-cleanup-check.mjs"],
+  ["multiplayer-simulation-check.mjs"],
 ];
 
 const failed = [];

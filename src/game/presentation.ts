@@ -48,6 +48,7 @@ import {
 } from "./scenery";
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
+import { renderState, type RenderState, type RenderCover, type WreckView } from "./render-state";
 import { MAX_FRAGMENTS } from "./simulation-rules";
 import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
@@ -55,7 +56,7 @@ import { TrackDust } from "./track-dust";
 import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
-import type { Cover, Fragment, SimEvent, VehicleKind, WreckPart } from "./types";
+import type { Fragment, SimEvent, VehicleKind, WreckPart } from "./types";
 import { timberParts } from "./timber-layout";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
@@ -75,7 +76,7 @@ function batchTank(model: TankModel): void {
   batch(d.barrel);
 }
 /** Move only the cover root; batched children keep their cached local matrices. */
-function physicalCoverModel(cover: Cover): THREE.Group {
+function physicalCoverModel(cover: RenderCover): THREE.Group {
   const m = cover.motion;
   const group = coverModel(
     m ? { ...cover, x: m.originX, z: m.originZ, w: m.w, d: m.d } : cover,
@@ -267,7 +268,9 @@ export class Presentation {
     this.scene.add(this.crosshair);
     this.resize();
   }
-  reset(simulation: Simulation): void {
+  readonly wreckView: WreckView = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
+  reset(source: Simulation | RenderState): void {
+    const simulation = renderState(source, this.wreckView);
     const stress = simulation.customMap?.id === "stress-test";
     if (stress && !this.stressSpawnPads) {
       this.stressSpawnPads = createSpawnPads();
@@ -418,7 +421,7 @@ export class Presentation {
       this.worldGroup.add(group);
       this.pickupMeshes.set(pickup.id, group);
     }
-    const position = simulation.human.body.translation();
+    const position = simulation.viewer.position;
     this.follow.set(position.x, 0, position.z);
     // Startup no longer renders a preview frame to establish the aiming camera.
     this.updateCamera(simulation, 1, false);
@@ -427,7 +430,7 @@ export class Presentation {
   }
   /** Build a theme's cached scenery. It needs no physics world, so startup can
    * do this while the physics binary is still downloading; reset() reuses it. */
-  buildScenery(theme: Simulation["mapTheme"]): void {
+  buildScenery(theme: RenderState["mapTheme"]): void {
     if (theme === "village" && !this.villageScenery) {
       this.villageScenery = new VillageScenery(this.renderer);
       this.villageScenery.visible = false;
@@ -450,7 +453,8 @@ export class Presentation {
     this.worldGroup.add(bar);
   }
 
-  async prepare(simulation: Simulation): Promise<void> {
+  async prepare(source: Simulation | RenderState): Promise<void> {
+    const simulation = renderState(source, this.wreckView);
     await waitForAssets();
     if (this.warmSamples) {
       this.scene.remove(this.warmSamples);
@@ -494,7 +498,7 @@ export class Presentation {
    * ring. prepare() draws them in the main, shadow and reflection passes, then
    * keeps them hidden so their pipelines stay cached for the real effects.
    * Otherwise Safari compiled these mid-fight, stalling a frame for ~650 ms. */
-  private effectSamples(simulation: Simulation): THREE.Group {
+  private effectSamples(simulation: RenderState): THREE.Group {
     const samples = new THREE.Group();
     const seen = new Set<string>();
     const look = (root: THREE.Object3D) => {
@@ -659,7 +663,7 @@ export class Presentation {
     group.add(ring, new THREE.Mesh(this.pickupGlowGeometry, glowMaterial));
     return group;
   }
-  private updatePickupEffects(simulation: Simulation, alpha: number, dt: number): void {
+  private updatePickupEffects(simulation: RenderState, alpha: number, dt: number): void {
     for (let i = this.pickupEffects.length - 1; i >= 0; i--) {
       const effect = this.pickupEffects[i];
       effect.age += dt;
@@ -679,7 +683,7 @@ export class Presentation {
       const tank = simulation.tanks.find((tank) => tank.id === effect.tankId && tank.alive);
       glow.visible = !!tank;
       if (tank) {
-        const pos = tank.body.translation();
+        const pos = tank.position;
         glow.position.set(
           THREE.MathUtils.lerp(tank.previous.x, pos.x, alpha) - effect.group.position.x,
           1.1,
@@ -692,15 +696,15 @@ export class Presentation {
       }
     }
   }
-  private updateCamera(simulation: Simulation, alpha: number, overview: boolean): void {
-    const position = simulation.human.alive
-      ? simulation.human.body.translation()
-      : simulation.human.previous;
+  private updateCamera(simulation: RenderState, alpha: number, overview: boolean): void {
+    const position = simulation.viewer.alive
+      ? simulation.viewer.position
+      : simulation.viewer.previous;
     // Follow the same interpolated pose as the tank, with no edge clamp or trailing lag.
     this.follow.set(
-      overview ? 0 : THREE.MathUtils.lerp(simulation.human.previous.x, position.x, alpha),
+      overview ? 0 : THREE.MathUtils.lerp(simulation.viewer.previous.x, position.x, alpha),
       overview ? 0 : 0.7,
-      overview ? 0 : THREE.MathUtils.lerp(simulation.human.previous.z, position.z, alpha),
+      overview ? 0 : THREE.MathUtils.lerp(simulation.viewer.previous.z, position.z, alpha),
     );
     const zoom = overview ? ARENA * 1.8 : this.zoom;
     this.camera.position.set(
@@ -718,41 +722,41 @@ export class Presentation {
       );
       this.raycaster.ray.intersectPlane(this.floorPlane, corners[i]);
     }
-    const bounds = (simulation.wreckView ??= { minX: 0, maxX: 0, minZ: 0, maxZ: 0 });
+    const bounds = this.wreckView;
     bounds.minX = Math.max(corners[0].x, corners[2].x);
     bounds.maxX = Math.min(corners[1].x, corners[3].x);
     bounds.minZ = corners[2].z;
     bounds.maxZ = corners[0].z;
   }
   private updatePlayerIndicators(
-    simulation: Simulation,
+    simulation: RenderState,
     alpha: number,
     dt: number,
     overview: boolean,
   ): void {
-    const position = simulation.human.alive
-      ? simulation.human.body.translation()
-      : simulation.human.previous;
+    const position = simulation.viewer.alive
+      ? simulation.viewer.position
+      : simulation.viewer.previous;
     this.flash.intensity *= Math.exp(-dt * FEEDBACK.flashDecay);
     const confirmed = this.hitConfirmUntil > this.time;
-    const ready = simulation.human.cooldown <= 0;
+    const ready = simulation.viewer.cooldown <= 0;
     this.reticleInk.opacity = confirmed || ready ? 1 : 0.3;
     this.reticleCenter.opacity = confirmed || ready ? 1 : 0.3;
     this.reticleInk.color.setHex(confirmed ? 0xffffff : 0xfff9da);
     this.reticleCenter.color.setHex(confirmed ? 0xffffff : 0xffdf38);
     this.crosshair.scale.setScalar(confirmed ? 1.2 : 1);
-    if (simulation.human.alive && !this.playerWasAlive) {
+    if (simulation.viewer.alive && !this.playerWasAlive) {
       this.spawnCue = FEEDBACK.spawnCueSeconds;
     }
-    this.playerWasAlive = simulation.human.alive;
+    this.playerWasAlive = simulation.viewer.alive;
     this.spawnCue = Math.max(0, this.spawnCue - dt);
-    this.playerRing.visible = simulation.human.alive && !overview;
+    this.playerRing.visible = simulation.viewer.alive && !overview;
     this.playerRing.position.set(
-      THREE.MathUtils.lerp(simulation.human.previous.x, position.x, alpha),
+      THREE.MathUtils.lerp(simulation.viewer.previous.x, position.x, alpha),
       0,
-      THREE.MathUtils.lerp(simulation.human.previous.z, position.z, alpha),
+      THREE.MathUtils.lerp(simulation.viewer.previous.z, position.z, alpha),
     );
-    this.playerRing.scale.setScalar(VEHICLES[simulation.human.kind].scale);
+    this.playerRing.scale.setScalar(VEHICLES[simulation.viewer.kind].scale);
     this.spawnPulse.visible = this.playerRing.visible && this.spawnCue > 0;
     this.spawnPulse.position.copy(this.playerRing.position);
     this.spawnPulse.position.y = 0.14;
@@ -765,7 +769,7 @@ export class Presentation {
         ((FEEDBACK.spawnCueSeconds - this.spawnCue) % FEEDBACK.spawnPulseSeconds) /
           FEEDBACK.spawnPulseSeconds);
   }
-  private updateTanks(simulation: Simulation, alpha: number, dt: number): void {
+  private updateTanks(simulation: RenderState, alpha: number, dt: number): void {
     for (const tank of simulation.tanks) {
       let group = this.tankMeshes.get(tank.id);
       // Reinforcements arrive after reset, so create their visuals on first render.
@@ -793,7 +797,7 @@ export class Presentation {
         this.suspensions.delete(tank.id);
         continue;
       }
-      const pos = tank.body.translation();
+      const pos = tank.position;
       group.position.set(
         THREE.MathUtils.lerp(tank.previous.x, pos.x, alpha),
         pos.y - 0.4,
@@ -810,7 +814,7 @@ export class Presentation {
       if (hitRemaining === 0) {
         this.hitUntil.delete(tank.id);
       }
-      const velocity = tank.body.linvel();
+      const velocity = tank.velocity;
       let suspension = this.suspensions.get(tank.id);
       if (!suspension) {
         suspension = new TankSuspension();
@@ -837,9 +841,13 @@ export class Presentation {
       group.userData.trackGroup.position.z =
         tank.kind === "humvee" ? 0 : (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
       group.scale.setScalar(VEHICLES[tank.kind].scale);
-      bar.position.set(group.position.x, tank.human ? 2.85 : 2.15, group.position.z);
+      bar.position.set(
+        group.position.x,
+        tank.id === simulation.viewerId ? 2.85 : 2.15,
+        group.position.z,
+      );
       bar.quaternion.copy(this.camera.quaternion);
-      const health = healthBarState(tank.hp, simulation.maxHealth(tank), tank.team);
+      const health = healthBarState(tank.hp, tank.maxHp, tank.team);
       bar.userData.fg.scale.x = health.ratio;
       bar.userData.fg.visible = health.ratio > 0;
       bar.userData.fg.material.color.setHex(health.color);
@@ -849,7 +857,7 @@ export class Presentation {
       });
     }
   }
-  private updateCover(simulation: Simulation): void {
+  private updateCover(simulation: RenderState): void {
     for (const cover of simulation.covers) {
       let group = this.coverMeshes.get(cover.id);
       const stump = cover.kind === "tree" && !cover.alive;
@@ -875,8 +883,8 @@ export class Presentation {
       // Destruction removes a movable cover's Rapier body immediately. Never read a transform
       // from that invalid handle; doing so traps inside WASM and stops the entire render loop.
       if (cover.motion && cover.alive) {
-        const p = cover.body.translation();
-        const q = cover.body.rotation();
+        const p = cover.position;
+        const q = cover.rotation;
         group.position.set(p.x, p.y, p.z);
         group.quaternion.set(q.x, q.y, q.z, q.w);
       }
@@ -889,7 +897,7 @@ export class Presentation {
       group.visible = cover.alive || stump;
     }
   }
-  private updatePickups(simulation: Simulation, dt: number): void {
+  private updatePickups(simulation: RenderState, dt: number): void {
     for (const pickup of simulation.pickups) {
       const group = this.pickupMeshes.get(pickup.id)!;
       const { refill, ring } = group.userData;
@@ -906,7 +914,7 @@ export class Presentation {
       group.userData.gem.position.y = 1.2 + Math.sin(this.time * 2 + pickup.id) * 0.18;
     }
   }
-  private updateFragments(simulation: Simulation): void {
+  private updateFragments(simulation: RenderState): void {
     const fragIds = new Set(simulation.fragments.map((f) => f.id));
     for (const [id, g] of this.fragmentMeshes) {
       if (!fragIds.has(id)) {
@@ -919,8 +927,8 @@ export class Presentation {
       mesh.count = 0;
     }
     for (const f of simulation.fragments) {
-      const pos = f.body.translation();
-      const q = f.body.rotation();
+      const pos = f.position;
+      const q = f.rotation;
       const cleanup = debrisCleanupProgress(f.life);
       if (!f.wreck && !f.timberPart && f.treeCoverId === undefined) {
         const mesh = this.debrisMeshes.get(f.shape ?? "shard")!;
@@ -1041,7 +1049,7 @@ export class Presentation {
     });
     return g;
   }
-  private updateMines(simulation: Simulation): void {
+  private updateMines(simulation: RenderState): void {
     const mineIds = new Set(simulation.mines.map((m) => m.id));
     for (const [id, g] of this.mineMeshes) {
       if (!mineIds.has(id)) {
@@ -1064,7 +1072,8 @@ export class Presentation {
     }
   }
   /** Synchronize entity visuals before drawing; alpha blends the previous and current physics poses. */
-  render(simulation: Simulation, alpha: number, dt: number, overview = false): void {
+  render(source: Simulation | RenderState, alpha: number, dt: number, overview = false): void {
+    const simulation = renderState(source, this.wreckView);
     this.time += dt;
     this.flags.update(this.time);
     if (this.harborScenery?.group.visible) {
@@ -1105,7 +1114,7 @@ export class Presentation {
     }
   }
 
-  private updatePartBatches(simulation: Simulation): void {
+  private updatePartBatches(simulation: RenderState): void {
     if (this.partsDirty) {
       // Timber/cargo change geometry; rubble appears when towers collapse.
       // These small draws must not invalidate every tank/tree shader mid-round.

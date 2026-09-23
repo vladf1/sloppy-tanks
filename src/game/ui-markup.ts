@@ -2,7 +2,7 @@ import { recapMarkup } from "./round-recap";
 import { AMMO_HELP, AMMO_ORDER } from "./ammunition";
 import { SCORE_LIMIT, TEAM_NAMES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
-import { speedTuning } from "./speed-tuning";
+import type { Tank } from "./types";
 
 export function hudMarkup(): string {
   return `<div id="hud">
@@ -22,7 +22,7 @@ export function hudMarkup(): string {
         <div id="overlay"></div>`;
 }
 
-function speedSliders(): string {
+function speedSliders(speedTuning: Simulation["speedTuning"]): string {
   return `<div class="speed-tuning">${(["tank-speed", "bullet-speed"] as const)
     .map(
       (key) =>
@@ -31,7 +31,11 @@ function speedSliders(): string {
     .join("")}<small>50–200% · 100% = default speed · Saved automatically</small></div>`;
 }
 
-export function menuMarkup(simulation: Simulation, controlHelp: string): string {
+export function menuMarkup(
+  simulation: Simulation,
+  controlHelp: string,
+  viewer: Pick<Tank, "alive" | "deaths"> = simulation.human,
+): string {
   const phase = simulation.match.phase;
   if (phase === "paused") {
     return `
@@ -41,7 +45,7 @@ export function menuMarkup(simulation: Simulation, controlHelp: string): string 
         <label class="touch-setting">Touch controls <select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
         <p class="touch-help">Left stick drives. Right stick aims; push past the ring to fire. Tap ✹ for a mine or an ammo slot to select it.</p>
         <label>Sound <input id="volume" type="range" min="0" max="1" step=".05" value="${localStorage.getItem("sloppy-volume") ?? ".6"}"></label>
-        ${speedSliders()}
+        ${speedSliders(simulation.speedTuning)}
         <button id="resume" class="primary">RESUME</button>
         <button id="end-battle" class="secondary">END BATTLE</button>
         </section>`;
@@ -52,13 +56,13 @@ export function menuMarkup(simulation: Simulation, controlHelp: string): string 
     return `<section class="menu compact results">
       <div class="eyebrow">${solo ? "SOLO ASSAULT" : "ROUND COMPLETE"} / ${simulation.mapName}</div>
       <h2>${endedEarly ? "BATTLE ENDED" : solo ? (won ? "SURVIVED" : "TANK DESTROYED") : won ? "VICTORY" : "DEFEAT"}</h2>
-      ${solo ? `<p>${endedEarly ? "Run ended early. Here’s how you did." : won ? "Ten minutes. One tank. Still standing." : "One more run. One more personal best?"}</p>` : `<div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div><p>${endedEarly ? "Ended early" : `${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}`} · ${simulation.human.deaths} personal wrecks</p>`}
+      ${solo ? `<p>${endedEarly ? "Run ended early. Here’s how you did." : won ? "Ten minutes. One tank. Still standing." : "One more run. One more personal best?"}</p>` : `<div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div><p>${endedEarly ? "Ended early" : `${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}`} · ${viewer.deaths} personal wrecks</p>`}
       ${recapMarkup(simulation)}
       <p id="death-cause" role="status"></p>
       <div class="recap-actions"><button id="play-again" class="primary">PLAY AGAIN</button>
       <button id="restart" class="secondary">BATTLE SETUP</button></div>
     </section>`;
-  } else if (!simulation.human.alive) {
+  } else if (!viewer.alive) {
     return `
       <section class="menu respawn">
         <h2>Respawn in <span id="respawn-count">3</span></h2>

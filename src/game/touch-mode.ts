@@ -1,7 +1,11 @@
 import type { Controls } from "./controls";
-import type { Simulation } from "./simulation";
+import type { Match, Tank } from "./types";
 import type { TouchControls } from "./touch-controls";
 import type { TouchMode } from "./touch-input";
+export interface TouchState {
+  readonly human: Pick<Tank, "mineCooldown">;
+  readonly match: Pick<Match, "phase">;
+}
 
 /** Desktop retains only detection/settings; joystick code and CSS load on first enable. */
 export class TouchModeController {
@@ -15,7 +19,7 @@ export class TouchModeController {
   constructor(
     private readonly root: HTMLElement,
     private readonly controls: Controls,
-    private readonly simulation: Simulation,
+    private readonly simulation: TouchState,
     private readonly zoom: (amount: number) => void,
   ) {
     let saved: string | null = null;

@@ -67,7 +67,7 @@ function tick(s: Simulation, seconds: number) {
 function wreck(s: Simulation) {
   const tank = s.addTank(1, false, "balanced", 0);
   // These tests require separated hull/turret pieces, regardless of map-assigned IDs.
-  while (tankBurnout(s.seed, tank.id, tank.deaths + 1)) tank.deaths++;
+  while (tankBurnout(s.seed, tank.id, tank.life + 1)) tank.life++;
   tank.protection = 0;
   tank.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
   s.damageTank(tank, 1000, 999, 0);

@@ -67,7 +67,7 @@ export class VillageScenery extends THREE.Scene {
     this.vegetation.update(time);
     this.atmosphere.update(time);
   }
-  setCovers(covers: readonly Cover[]) {
+  setCovers(covers: readonly Pick<Cover, "kind" | "destructible" | "x" | "z" | "w" | "h" | "d">[]) {
     this.atmosphere.setCovers(covers);
   }
 }

@@ -4,6 +4,7 @@ import { uniform } from "three/tsl";
 import { dustMaterial, billboardVertex } from "./effect-materials";
 import { updateInstances, storageInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
+import { renderState, type RenderState } from "./render-state";
 import { TrackGravel } from "./track-gravel";
 import { isVillageDirt } from "./village-roads";
 
@@ -64,7 +65,8 @@ export class TrackDust {
     this.mesh.count = 0;
   }
 
-  update(simulation: Simulation): void {
+  update(source: Simulation | RenderState): void {
+    const simulation = renderState(source);
     const elapsed = simulation.elapsed - (this.previousTime ?? simulation.elapsed);
     this.previousTime = simulation.elapsed;
     if (elapsed < 0) {
@@ -104,14 +106,14 @@ export class TrackDust {
       if (!tank.alive) {
         continue;
       }
-      const p = tank.body.translation();
+      const p = tank.position;
       let previous = this.poses.get(tank.id);
       if (!previous) {
         previous = { x: p.x, z: p.z, heading: tank.heading, pending: 0, gravelCooldown: 0 };
         this.poses.set(tank.id, previous);
       }
       const distance = Math.hypot(p.x - previous.x, p.z - previous.z);
-      const velocity = tank.body.linvel();
+      const velocity = tank.velocity;
       const speed = Math.hypot(velocity.x, velocity.z);
       const scale = VEHICLES[tank.kind].scale;
       const turn = angleDelta(previous.heading, tank.heading);

@@ -72,6 +72,25 @@ npm run check:browser  # browser checks against a running dev server (set SLOPPY
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
+Multiplayer is available on the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer).
+Choose **Play with friends**, enter a name, choose a team and tank, then share
+**COPY ROOM LINK**. The host chooses the map and difficulty and starts the round.
+Up to eight people can join; by default bots fill the remaining six-versus-six seats.
+In that mode, opening the menu or hiding your tab gives your tank to a bot while everyone else
+keeps playing. Reconnect within 30 seconds to reclaim the same seat. The host can
+end a round, and results show a player scoreboard. Accounts and saved matches are
+not required; a server restart ends the current room.
+
+The host can check **Humans only (no bots)** before a round. Empty seats stay
+empty, and paused or disconnected players remain idle and vulnerable instead of
+handing control to a bot. Leaving or an expired reconnect reservation removes
+that player's tank. Uncheck it between rounds to restore bot-filled teams.
+
+Single-player downloads no multiplayer code and opens no game-server connection.
+Multiplayer loads its client and UI only on entry and does not run browser physics.
+The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
+[server guide](server/README.md) describes local development and deployment.
+
 ## Assets
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:

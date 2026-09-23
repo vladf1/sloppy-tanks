@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { PICKUPS } from "./data";
 import { tankMuzzle } from "./hitboxes";
 import type { Simulation } from "./simulation";
+import { renderState, type RenderState } from "./render-state";
 import type { SimEvent } from "./types";
 
 const CAPACITY = 64;
@@ -54,7 +55,8 @@ export class LaserVisuals {
       life: FLASH_SECONDS,
     });
   }
-  update(simulation: Simulation, alpha: number, dt: number): void {
+  update(source: Simulation | RenderState, alpha: number, dt: number): void {
+    const simulation = renderState(source);
     const pose = this.pose;
     this.halo.count = this.core.count = this.mount.count = this.lens.count = 0;
     let live = 0;
@@ -83,7 +85,7 @@ export class LaserVisuals {
       if (!tank.alive || tank.laser <= 0 || this.lens.count === CAPACITY) {
         continue;
       }
-      const position = tank.body.translation();
+      const position = tank.position;
       pose.position.set(
         THREE.MathUtils.lerp(tank.previous.x, position.x, alpha),
         position.y - 0.4 + tankMuzzle(tank.kind).y + 0.3,

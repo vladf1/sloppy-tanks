@@ -2,11 +2,13 @@ import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { lazyRapierWasm } from "./scripts/lazy-rapier-wasm.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
+import { contentVersion } from "./scripts/content-version.mjs";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
 
 export default defineConfig({
   base,
+  define: { __MULTIPLAYER_CONTENT_VERSION__: JSON.stringify(await contentVersion()) },
   // Preview launchers assign a free port through PORT; Vite does not read it itself.
   server: { port: Number(process.env.PORT) || undefined },
   resolve: {
@@ -35,7 +37,7 @@ export default defineConfig({
             ? [
                 {
                   tag: "script",
-                  children: `window.sloppyPhysicsBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyPhysicsBinary.catch(()=>{});`,
+                  children: `if(!new URLSearchParams(location.search).has("room")&&!new URLSearchParams(location.search).has("multiplayer")){window.sloppyPhysicsBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyPhysicsBinary.catch(()=>{});}`,
                   injectTo: "head",
                 },
               ]

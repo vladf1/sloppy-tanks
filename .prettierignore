@@ -8,3 +8,6 @@ assets/texture-sources/
 scripts/benchmarks/
 dist-dev/
 .claude/
+server/dist/
+server/.wrangler/
+server/.dev.vars

@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
+import { startRound } from "./browser-helpers.mjs";
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
   const page = await browser.newPage();
@@ -11,7 +12,7 @@ try {
       callback.name === "loop" ? 1 : requestFrame(callback);
   });
   await page.goto(process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/");
-  await page.waitForFunction(() => !!window.sloppy);
+  await startRound(page);
   const results = await page.evaluate(async () => {
     const { stepProjectiles } = await import("/sloppy-tanks/src/game/weapons.ts");
     const { sim: s, view: v } = window.sloppy;
@@ -43,7 +44,14 @@ try {
           weapon: "standard",
         });
         stepProjectiles(s, 0.05);
-        for (const e of s.events) v.event(e);
+        // Only cosmetic counts need a fixed random source; preserve combat RNG.
+        const random = Math.random;
+        try {
+          Math.random = () => 0.5;
+          for (const e of s.events) v.event(e);
+        } finally {
+          Math.random = random;
+        }
         return {
           alive: c.alive,
           hp: c.hp,
@@ -51,6 +59,8 @@ try {
           destroys: s.events.filter((e) => e.type === "destroy").length,
           leaves: v.particles.filter((p) => p.shape === "leaf").length,
           chips: v.particles.filter((p) => p.shape === "splinter").length,
+          fragments: s.fragments.length,
+          treeParts: s.fragments.filter((piece) => piece.treeCoverId === c.id).length,
         };
       }
       const hp = c.hp,
@@ -70,7 +80,13 @@ try {
     assert.equal(destroyed.alive, false);
     assert.equal(destroyed.destroys, 1);
     assert.equal(destroyed.impacts, 0, "fatal impacts must not double the destruction burst");
-    assert.ok(destroyed.leaves + destroyed.chips > hit.leaves + hit.chips);
+    assert.ok(destroyed.fragments > hit.fragments, "destruction creates physical debris");
+    if (kind === "tree") {
+      assert.equal(destroyed.leaves + destroyed.chips, 0, "falling tree parts replace the burst");
+      assert.ok(destroyed.treeParts > 0);
+    } else {
+      assert.ok(destroyed.chips > hit.chips);
+    }
   }
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ results, errors }));

@@ -5,6 +5,14 @@ import type { DebrisMaterial } from "./debris-physics";
 import type { BotPersonality } from "./bot-personalities";
 export type Team = 0 | 1;
 export type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
+export type PlayerVehicleKind = Exclude<VehicleKind, "humvee">;
+export interface PlayerAssignment {
+  playerId: string;
+  name: string;
+  team: Team;
+  slot: number;
+  kind: PlayerVehicleKind;
+}
 export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing" | "tow";
 export type SpecialAmmo = Exclude<Weapon, "standard" | "tow">;
 export type AmmoInventory = Record<SpecialAmmo, number>;
@@ -36,6 +44,10 @@ export interface Tank {
   name: string;
   team: Team;
   human: boolean;
+  playerId?: string;
+  driver: "human" | "bot" | "idle";
+  /** Changes on death or reassignment, independently of the scoreboard. */
+  life: number;
   kind: VehicleKind;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
@@ -149,7 +161,7 @@ export interface Shot extends Vec2 {
   targetLife?: number;
   id: number;
   owner: number;
-  /** Owner's death count when fired, to keep XP attached to that life. */
+  /** Owner's life generation when fired, to keep XP attached to that life. */
   ownerLife?: number;
   team: Team;
   vx: number;
@@ -219,6 +231,7 @@ export interface DamageSource {
   origin: Vec2;
 }
 export type SimEvent = {
+  ownerLife?: number;
   deathStyle?: "burnout";
   material?: DebrisMaterial;
   force?: number;

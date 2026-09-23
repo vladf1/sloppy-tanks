@@ -30,7 +30,7 @@ export function earnExperience(
   ownerLife?: number,
 ): void {
   // A mine/shell from a destroyed tank must not promote its replacement.
-  if (!tank.alive || amount <= 0 || (ownerLife !== undefined && ownerLife !== tank.deaths)) {
+  if (!tank.alive || amount <= 0 || (ownerLife !== undefined && ownerLife !== tank.life)) {
     return;
   }
   const before = rankIndex(tank);

@@ -34,6 +34,8 @@ export function parseDifficulty(value: string | null): Difficulty {
 /** Allies retain the original behavior; mode-specific Solo tuning still applies. */
 export function enemyDifficulty(simulation: Simulation, tank: Tank) {
   return DIFFICULTIES[
-    !tank.human && tank.team !== simulation.humanTeam ? simulation.difficulty : "normal"
+    !tank.human && (simulation.multiplayer || tank.team !== simulation.humanTeam)
+      ? simulation.difficulty
+      : "normal"
   ];
 }

@@ -86,12 +86,12 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       y: muzzleHeight,
       visualY: visualMuzzleHeight,
       targetId: towTarget?.id,
-      targetLife: towTarget?.deaths,
-      vx: Math.sin(angle) * w.speed,
-      vz: Math.cos(angle) * w.speed,
+      targetLife: towTarget?.life,
+      vx: Math.sin(angle) * w.speed * simulation.speedTuning["bullet-speed"],
+      vz: Math.cos(angle) * w.speed * simulation.speedTuning["bullet-speed"],
       damage: w.damage * rankStats(tank).damage,
       owner: tank.id,
-      ownerLife: tank.deaths,
+      ownerLife: tank.life,
       team: tank.team,
       bounces: w.bounces,
       piercing: weapon === "piercing" ? 1 : 0,
@@ -100,7 +100,7 @@ export function fireWeapon(simulation: Simulation, tank: Tank): void {
       weapon,
     });
     simulation.shotsFired++;
-    if (tank.human) {
+    if (simulation.records(tank)) {
       simulation.combatRecord.shots++;
     }
   }

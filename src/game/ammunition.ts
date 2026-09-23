@@ -23,7 +23,7 @@ export const emptyAmmo = (): AmmoInventory => ({ spread: 0, rocket: 0, ricochet:
 export function isSpecialAmmo(kind: string): kind is SpecialAmmo {
   return kind !== "standard" && AMMO_ORDER.includes(kind as (typeof AMMO_ORDER)[number]);
 }
-export function hasAmmo(tank: Tank, weapon: Weapon): boolean {
+export function hasAmmo(tank: Pick<Tank, "kind" | "ammo">, weapon: Weapon): boolean {
   return weapon === "tow"
     ? VEHICLES[tank.kind].weapon === "tow"
     : VEHICLES[tank.kind].weapon === "standard" && (weapon === "standard" || tank.ammo[weapon] > 0);
@@ -37,7 +37,7 @@ export function canCollectAmmo(tank: Tank, kind: SpecialAmmo, multiplier = 1): b
     tank.ammo[kind] < WEAPONS[kind].carryLimit * multiplier
   );
 }
-export function equippedWeapon(tank: Tank): Weapon {
+export function equippedWeapon(tank: Pick<Tank, "kind" | "ammo" | "selectedAmmo">): Weapon {
   const primary = VEHICLES[tank.kind].weapon;
   if (primary !== "standard") {
     return primary;

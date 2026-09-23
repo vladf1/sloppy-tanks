@@ -11,7 +11,7 @@ export function placeMine(simulation: Simulation, tank: Tank): void {
   simulation.mines.push({
     id: simulation.nextId++,
     owner: tank.id,
-    ownerLife: tank.deaths,
+    ownerLife: tank.life,
     damage: MINE.damage * rankStats(tank).damage,
     team: tank.team,
     x: position.x,

@@ -18,9 +18,9 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
     const velocity = tank.body.linvel();
     // Exploding Humvees tumble whole; quiet burnouts only hop and rock.
     const tumble = humvee && !burnout;
-    const motion = humveeTumble(simulation.seed, tank.id, tank.deaths);
-    const hopHeight = tumble ? motion.height : 0.9 + ((tank.id + tank.deaths) % 3) * 0.1;
-    const pitch = tumble ? motion.pitch : ((tank.id + tank.deaths) % 2 ? 1 : -1) * 0.85;
+    const motion = humveeTumble(simulation.seed, tank.id, tank.life);
+    const hopHeight = tumble ? motion.height : 0.9 + ((tank.id + tank.life) % 3) * 0.1;
+    const pitch = tumble ? motion.pitch : ((tank.id + tank.life) % 2 ? 1 : -1) * 0.85;
     const roll = tumble ? motion.roll : 0;
     simulation.world.removeRigidBody(tank.body);
     simulation.reserveFragments(1);
@@ -76,7 +76,7 @@ export function breakTank(simulation: Simulation, tank: Tank, burnout = false): 
   const halfSeparation = simulation.rng.range(7, 14);
   const angle = simulation.rng.range(-0.45, 0.45);
   const high = simulation.rng.next() < 0.25;
-  const view = simulation.wreckView;
+  const view = simulation.multiplayer ? undefined : simulation.wreckView;
   // Only on-screen explosions use view bounds; off-screen combat stays local.
   const onScreen =
     view &&

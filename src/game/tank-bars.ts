@@ -57,7 +57,10 @@ function protectionMeter(color: number, segmented: boolean): ProtectionMeter {
 }
 
 /** Read live protection state so absorption, expiry, firing and respawn update immediately. */
-export function updateTankProtection(bar: TankBar, tank: Tank): void {
+export function updateTankProtection(
+  bar: TankBar,
+  tank: Pick<Tank, "alive" | "shield" | "shieldPoints" | "protection">,
+): void {
   const { shield, spawn } = bar.userData;
   shield.group.visible = tank.alive && tank.shield > 0 && tank.shieldPoints > 0;
   shield.fill.scale.x = THREE.MathUtils.clamp(tank.shieldPoints / SHIELD_CAPACITY, 0, 1);

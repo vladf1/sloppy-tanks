@@ -23,7 +23,7 @@ export function newCombatRecord() {
 }
 
 export function recordDeath(simulation: Simulation, victim: Tank, owner: number): void {
-  if (!victim.human) {
+  if (!simulation.records(victim)) {
     return;
   }
   const stats = simulation.combatRecord;
@@ -39,7 +39,7 @@ export function recordKill(
   ownerLife?: number,
   source?: DamageSource,
 ): void {
-  if (!killer.human) {
+  if (!simulation.records(killer)) {
     return;
   }
   const stats = simulation.combatRecord;
@@ -54,7 +54,7 @@ export function recordKill(
     stats.multikill,
     stats.recentKills.filter((time) => simulation.elapsed - time < 5).length,
   );
-  const currentLife = killer.alive && (ownerLife === undefined || ownerLife === killer.deaths);
+  const currentLife = killer.alive && (ownerLife === undefined || ownerLife === killer.life);
   if (!currentLife) {
     stats.posthumousKills++;
   } else if (killer.hp <= simulation.maxHealth(killer) * 0.25) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { startRound } from "./browser-helpers.mjs";
+import { seedGame, startRound } from "./browser-helpers.mjs";
 
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/startup";
@@ -10,12 +10,15 @@ const browser = await chromium.launch({ channel: "chrome", headless: true });
 const results = [];
 const errors = [];
 try {
-  for (const random of [0.424242, 0.5]) {
+  for (const seed of [424242, 500000]) {
     for (const map of ["village", "harbor", "quarry"]) {
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.addInitScript((random) => {
-        Math.random = () => random;
+      page.on("console", (message) => {
+        if (message.type() === "error") errors.push(message.text());
+      });
+      await seedGame(page, seed);
+      await page.addInitScript(() => {
         // Prepare normally, then control the real game loop's RAF timestamps.
         let frame;
         const requestFrame = window.requestAnimationFrame.bind(window);
@@ -25,7 +28,7 @@ try {
           return window.sloppy ? 1 : requestFrame(callback);
         };
         window.advanceFrame = (timestamp) => frame(timestamp);
-      }, random);
+      });
       await page.goto(url);
       await page.waitForFunction(
         () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
@@ -37,12 +40,14 @@ try {
         const render = window.sloppy.view.render.bind(window.sloppy.view);
         window.sloppy.view.render = (sim, alpha, dt, overview) => {
           render(sim, alpha, dt, overview);
+          // Warm-up passes the read-only view; compare against actual physics in both paths.
+          const authority = window.sloppy.sim;
           window.startFrames.push({
             alpha,
             dt,
-            elapsed: sim.elapsed,
+            elapsed: authority.elapsed,
             tracks: window.sloppy.view.tracks.mesh.count,
-            tanks: sim.tanks.map((tank) => {
+            tanks: authority.tanks.map((tank) => {
               const body = tank.body.translation();
               const model = window.sloppy.view.tankMeshes.get(tank.id).position;
               return {
@@ -58,6 +63,7 @@ try {
       // Other maps rebuild the arena after GO; replay the stale frames only once
       // the round is live, or the loop ignores them and nothing is checked.
       await startRound(page);
+      assert.equal(await page.evaluate(() => window.sloppy.sim.seed), seed);
       const result = await page.evaluate(() => {
         window.startFrames.length = 0; // Discard the preparation renders.
         // Emulate callbacks queued before a slow arena rebuild, including a second

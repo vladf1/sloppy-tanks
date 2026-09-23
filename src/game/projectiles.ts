@@ -25,7 +25,7 @@ function guideTowMissile(simulation: Simulation, shot: Shot, dt: number): void {
   const target = simulation.tanks.find(
     (tank) =>
       tank.id === shot.targetId &&
-      tank.deaths === shot.targetLife &&
+      tank.life === shot.targetLife &&
       tank.alive &&
       tank.team !== shot.team,
   );
@@ -131,9 +131,9 @@ export function stepProjectiles(simulation: Simulation, dt: number, sweepTankMot
   for (const shot of simulation.shots) {
     guideTowMissile(simulation, shot, Math.min(dt, shot.life));
   }
-  const rocketTopSpeed = WEAPONS.rocket.speed * COMBAT.rocketTopSpeedMultiplier;
-  const rocketAcceleration =
-    (rocketTopSpeed - WEAPONS.rocket.speed) / COMBAT.rocketAccelerationSeconds;
+  const rocketBaseSpeed = WEAPONS.rocket.speed * simulation.speedTuning["bullet-speed"];
+  const rocketTopSpeed = rocketBaseSpeed * COMBAT.rocketTopSpeedMultiplier;
+  const rocketAcceleration = (rocketTopSpeed - rocketBaseSpeed) / COMBAT.rocketAccelerationSeconds;
   for (const shot of simulation.shots) {
     if (shot.weapon !== "rocket") {
       continue;
@@ -167,6 +167,7 @@ export function stepProjectiles(simulation: Simulation, dt: number, sweepTankMot
       shot.x += shot.vx * time;
       shot.z += shot.vz * time;
       shot.life -= time;
+      simulation.onProjectileMove?.(shot, time, dt - remaining);
     }
     remaining -= time;
     if (!next) {
@@ -403,7 +404,7 @@ function resolveContact(simulation: Simulation, next: Contact, fraction: number)
   } else if (next.kind === "tank") {
     if (
       !shot.recapHit &&
-      simulation.tanks.some((tank) => tank.human && tank.id === shot.owner) &&
+      simulation.tanks.some((tank) => simulation.records(tank) && tank.id === shot.owner) &&
       next.tank.team !== shot.team &&
       next.tank.protection <= 0
     ) {

@@ -339,7 +339,7 @@ test("TOW guidance cannot transfer to a new life of the marked target", () => {
     fireWeapon(simulation, hunter);
     const shot = simulation.shots[0];
     assert.ok(shot);
-    target.deaths++;
+    target.life++;
     target.body.setTranslation({ x: 12, y: 0.65, z: 24 }, true);
     stepProjectiles(simulation, STEP);
     assert.equal(shot.vx, 0);
@@ -474,8 +474,7 @@ test("Humvee deaths alternate between quiet burnouts and bounded whole-vehicle t
       const hunter = simulation.tanks.find((tank) => tank.kind === "humvee")!;
       const attacker = simulation.tanks.find((tank) => tank.team !== hunter.team)!;
       hunter.protection = 0;
-      while (tankBurnout(simulation.seed, hunter.id, hunter.deaths + 1) !== quiet)
-        simulation.seed++;
+      while (tankBurnout(simulation.seed, hunter.id, hunter.life + 1) !== quiet) simulation.seed++;
       const bodies = simulation.world.bodies.len();
       simulation.damageTank(hunter, 1000, attacker.id, attacker.team);
       const death = simulation.events.find(

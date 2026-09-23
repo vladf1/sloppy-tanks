@@ -10,7 +10,12 @@ import type { Tank, Team, Vec2, VehicleKind } from "./types";
 import { idleCommand } from "./types";
 
 // The body and contact hull are recreated for each life; identity and score survive respawn.
-function createTankBody(world: RAPIER.World, kind: VehicleKind, position: Vec2) {
+function createTankBody(
+  world: RAPIER.World,
+  kind: VehicleKind,
+  position: Vec2,
+  speedScale: number,
+) {
   const stats = VEHICLES[kind];
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
@@ -19,7 +24,7 @@ function createTankBody(world: RAPIER.World, kind: VehicleKind, position: Vec2) 
       .setLinearDamping(SIMULATION_RULES.tankLinearDamping)
       .setAngularDamping(SIMULATION_RULES.tankAngularDamping)
       .setCcdEnabled(true)
-      .setSoftCcdPrediction(stats.speed * 1.5 * STEP * 2),
+      .setSoftCcdPrediction(stats.speed * speedScale * 1.5 * STEP * 2),
   );
   const collider = world.createCollider(
     tankContactCollider(kind)
@@ -68,15 +73,24 @@ export function spawnTank(
         : BOT_PROFILES[assignment.personality].chassis;
   }
   const desc = VEHICLES[kind];
-  const { body, collider } = createTankBody(simulation.world, kind, position);
+  const { body, collider } = createTankBody(
+    simulation.world,
+    kind,
+    position,
+    simulation.speedTuning["tank-speed"],
+  );
+  const player = simulation.players?.find((player) => player.team === team && player.slot === slot);
   const tank: Tank = {
     id: simulation.nextId++,
     name: human
-      ? "YOU"
+      ? (player?.name ?? "YOU")
       : botNames[ordinal % botNames.length] +
         (ordinal >= botNames.length ? ` ${Math.floor(ordinal / botNames.length) + 1}` : ""),
     team,
     human,
+    playerId: player?.playerId,
+    driver: human ? "human" : "bot",
+    life: 0,
     kind,
     body,
     collider,
@@ -137,7 +151,7 @@ export function spawnTank(
   return tank;
 }
 export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2): void {
-  const kind = tank.human ? simulation.humanKind : tank.kind;
+  const kind = tank.human && !simulation.multiplayer ? simulation.humanKind : tank.kind;
   tank.kind = kind;
   const enemies = simulation.tanks.filter((enemy) => enemy.alive && enemy.team !== tank.team);
   const friends = simulation.tanks.filter(
@@ -148,10 +162,13 @@ export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2)
     bestBy(spawnPositions(tank.team), (position) =>
       simulation.spawnScore(position, enemies, friends),
     )!;
-  Object.assign(tank, createTankBody(simulation.world, kind, p));
+  Object.assign(
+    tank,
+    createTankBody(simulation.world, kind, p, simulation.speedTuning["tank-speed"]),
+  );
   tank.xp = 0;
   tank.lifeKills = 0;
-  if (tank.human) {
+  if (simulation.records(tank)) {
     simulation.combatRecord.lifeStarted = simulation.elapsed;
   }
   tank.lastCombat = simulation.elapsed;
@@ -167,6 +184,7 @@ export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2)
   tank.cooldown = 0;
   tank.mineCooldown = 0;
   tank.previous = { ...p };
+  tank.command = idleCommand();
   tank.brain.humvee = undefined;
   tank.brain.path = [];
   tank.brain.decision = 0;

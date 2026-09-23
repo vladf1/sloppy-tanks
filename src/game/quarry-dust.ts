@@ -3,6 +3,7 @@ import { uniform } from "three/tsl";
 import { dustMaterial, billboardVertex } from "./effect-materials";
 import { updateInstances, storageInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
+import { renderState, type RenderState } from "./render-state";
 
 export const QUARRY_DUST_CAPACITY = 48;
 export const QUARRY_DUST_MAX_OPACITY = 0.1;
@@ -97,7 +98,8 @@ export class QuarryDust {
     this.wisps.push(wisp);
   }
 
-  update(simulation: Simulation, dt: number): void {
+  update(source: Simulation | RenderState, dt: number): void {
+    const simulation = renderState(source);
     if (simulation.mapTheme !== "quarry") {
       if (this.mesh.count > 0 || this.mesh.visible) {
         this.reset();

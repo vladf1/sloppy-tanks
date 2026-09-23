@@ -1,0 +1,114 @@
+.multiplayer .network-menu {
+  max-width: 640px;
+  min-width: 0;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.multiplayer .network-menu h1 {
+  font-size: clamp(24px, 4vw, 36px);
+  margin: 10px 0;
+}
+.network-choices {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+.network-choices label {
+  flex: 1;
+  min-width: 120px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+.network-choices input,
+.network-choices select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #718477;
+  border-radius: 4px;
+  background: #13272b;
+  color: #fff0d2;
+  font: inherit;
+}
+.network-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.network-choices .network-toggle {
+  display: flex;
+  flex-basis: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+}
+.network-toggle input[type="checkbox"] {
+  width: auto;
+}
+.network-actions button {
+  flex: 1 1 180px;
+}
+#network-roster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  text-align: left;
+  line-height: 1.7;
+}
+#network-roster b {
+  color: #79c5ef;
+}
+#network-roster > div:nth-child(2) b {
+  color: #ff8a79;
+}
+#network-roster small,
+.network-help {
+  opacity: 0.75;
+  font-size: 12px;
+}
+#network-scoreboard p {
+  margin: 5px 0;
+}
+#network-status {
+  position: fixed;
+  bottom: 8px;
+  left: 12px;
+  color: #eee5cc;
+  font: 12px monospace;
+  pointer-events: none;
+  z-index: 20;
+  text-shadow: 0 1px 3px black;
+}
+#network-respawn {
+  position: fixed;
+  inset: 40% 0 auto;
+  text-align: center;
+  color: #fff0d2;
+  font: bold 28px sans-serif;
+  pointer-events: none;
+  text-shadow: 0 2px 5px black;
+}
+.network-local {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+.multiplayer [hidden] {
+  display: none !important;
+}
+.multiplayer #overlay {
+  z-index: 15;
+}
+@media (max-width: 520px) {
+  .multiplayer .network-menu {
+    padding: 18px;
+  }
+  .network-choices {
+    gap: 8px;
+  }
+  .network-actions button {
+    flex-basis: 130px;
+  }
+}

@@ -71,7 +71,7 @@ export class VillageAtmosphere {
     this.mesh.frustumCulled = false;
     this.geometry.instanceCount = 0;
   }
-  setCovers(covers: readonly Cover[]) {
+  setCovers(covers: readonly Pick<Cover, "kind" | "destructible" | "x" | "z" | "w" | "h" | "d">[]) {
     const sources = [
       { x: -32, y: 11.5, z: -71 },
       ...covers

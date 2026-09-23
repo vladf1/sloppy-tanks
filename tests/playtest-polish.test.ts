@@ -76,13 +76,13 @@ test("speed sliders scale from defaults without compounding and update active sh
     fireWeapon(s, t);
     tuneSpeed(s, "tank-speed", 1.5);
     tuneSpeed(s, "tank-speed", 1.5);
-    assert.equal(VEHICLES.balanced.speed, tankBase * 1.5);
-    assert.ok(
-      Math.abs(t.body.softCcdPrediction() - VEHICLES.balanced.speed * 1.5 * STEP * 2) < 1e-6,
-    );
+    assert.equal(VEHICLES.balanced.speed, tankBase);
+    assert.equal(s.speedTuning["tank-speed"], 1.5);
+    assert.ok(Math.abs(t.body.softCcdPrediction() - tankBase * 1.5 * 1.5 * STEP * 2) < 1e-6);
     tuneSpeed(s, "bullet-speed", 0.5);
     tuneSpeed(s, "bullet-speed", 0.5);
-    assert.equal(WEAPONS.standard.speed, shellBase * 0.5);
+    assert.equal(WEAPONS.standard.speed, shellBase);
+    assert.equal(s.speedTuning["bullet-speed"], 0.5);
     assert.equal(s.shots[0].vz, shellBase * 0.5);
     assert.equal(tuneSpeed(s, "tank-speed", NaN), 1);
   } finally {

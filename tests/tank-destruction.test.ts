@@ -24,7 +24,7 @@ test("quiet kills keep one grounded wreck; dramatic kills retain launched pieces
     try {
       const tank = sim.human;
       tank.protection = 0;
-      while (tankBurnout(sim.seed, tank.id, tank.deaths + 1) !== quiet) sim.seed++;
+      while (tankBurnout(sim.seed, tank.id, tank.life + 1) !== quiet) sim.seed++;
       const origin = tank.body.translation();
       sim.damageTank(tank, 9999, 999, tank.team === 0 ? 1 : 0);
       const death = sim.events.find((e) => e.type === "death")!;

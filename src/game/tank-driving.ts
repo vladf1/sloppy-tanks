@@ -6,9 +6,10 @@ import { angleDelta } from "./math";
 import type { Tank, VehicleCommand } from "./types";
 
 /** Apply track steering as bounded impulses; collisions and knockback retain momentum. */
-export function driveTank(tank: Tank, command: VehicleCommand, dt: number): void {
+export function driveTank(tank: Tank, command: VehicleCommand, dt: number, speedScale = 1): void {
   const inputMagnitude = Math.hypot(command.moveX, command.moveZ);
-  const speed = VEHICLES[tank.kind].speed * (tank.speed > 0 ? SPEED_BOOST_MULTIPLIER : 1);
+  const speed =
+    VEHICLES[tank.kind].speed * speedScale * (tank.speed > 0 ? SPEED_BOOST_MULTIPLIER : 1);
   let drive = 0;
   if (inputMagnitude > DRIVE_DEADZONE) {
     const desired = Math.atan2(command.moveX, command.moveZ);

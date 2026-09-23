@@ -86,8 +86,14 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     firingRange = d;
     const desired =
       Math.atan2(
-        q.x + (velocity.x * d * (easy ? 0.1 : 0.65)) / WEAPONS[weapon].speed - position.x,
-        q.z + (velocity.z * d * (easy ? 0.1 : 0.65)) / WEAPONS[weapon].speed - position.z,
+        q.x +
+          (velocity.x * d * (easy ? 0.1 : 0.65)) /
+            (WEAPONS[weapon].speed * simulation.speedTuning["bullet-speed"]) -
+          position.x,
+        q.z +
+          (velocity.z * d * (easy ? 0.1 : 0.65)) /
+            (WEAPONS[weapon].speed * simulation.speedTuning["bullet-speed"]) -
+          position.z,
       ) + brain.aimError;
     command.aim = turn(desired);
     command.fire =

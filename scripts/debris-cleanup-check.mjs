@@ -19,6 +19,7 @@ try {
   await startRound(page);
   await page.evaluate(async () => {
     const { sim, view } = window.sloppy;
+    const { renderState } = await import("/sloppy-tanks/src/game/render-state.ts");
     const THREE = await import("/sloppy-tanks/node_modules/three/build/three.module.js");
     window.sloppy.start();
     for (const cover of sim.covers) sim.world.removeRigidBody(cover.body);
@@ -93,7 +94,7 @@ try {
       THREE,
       draw(life) {
         for (const piece of sim.fragments) piece.life = life;
-        view.updateFragments(sim);
+        view.updateFragments(renderState(sim));
         for (const group of view.fragmentMeshes.values()) scene.add(group);
         view.renderer.render(scene, camera);
         const matrices = [];

@@ -1,7 +1,7 @@
 import "../touch-controls.css";
 import { bindPress } from "./button-input";
 import type { Controls } from "./controls";
-import type { Simulation } from "./simulation";
+import type { TouchState } from "./touch-mode";
 import { MINE } from "./combat-rules";
 import { FIRE_START, type StickKind } from "./touch-input";
 
@@ -19,7 +19,7 @@ export class TouchControls {
   constructor(
     private readonly root: HTMLElement,
     private readonly controls: Controls,
-    private readonly simulation: Simulation,
+    private readonly simulation: TouchState,
     zoom: (amount: number) => void,
   ) {
     root.insertAdjacentHTML(

@@ -28,7 +28,15 @@ export function damageTank(
   if (!tank.alive || tank.protection > 0 || (tank.team === team && tank.id !== owner)) {
     return;
   }
-  if (team !== simulation.humanTeam && tank.team === simulation.humanTeam) {
+  const attacker = simulation.tanks.find((candidate) => candidate.id === owner);
+  if (simulation.multiplayer && attacker && !attacker.human && attacker.team === team) {
+    amount *= DIFFICULTIES[simulation.difficulty].damage;
+  }
+  if (
+    !simulation.multiplayer &&
+    team !== simulation.humanTeam &&
+    tank.team === simulation.humanTeam
+  ) {
     amount *= DIFFICULTIES[simulation.difficulty].damage;
   }
   if (simulation.gameMode === "solo" && team !== simulation.humanTeam) {
@@ -40,7 +48,7 @@ export function damageTank(
   if (tank.shield > 0 && tank.shieldPoints > 0) {
     const absorbed = Math.min(amount, tank.shieldPoints);
     tank.shieldPoints -= absorbed;
-    if (tank.human) {
+    if (simulation.records(tank)) {
       simulation.combatRecord.shieldAbsorbed += absorbed;
     }
     amount -= absorbed;
@@ -50,10 +58,9 @@ export function damageTank(
   }
   const hullDamage = Math.min(tank.hp, Math.max(0, amount));
   tank.hp -= amount;
-  if (tank.human) {
+  if (simulation.records(tank)) {
     simulation.combatRecord.damageTaken += hullDamage;
   }
-  const attacker = simulation.tanks.find((candidate) => candidate.id === owner);
   if (attacker && attacker.team === team && attacker.team !== tank.team && hullDamage > 0) {
     attacker.damageDealt += hullDamage;
     earnExperience(simulation, attacker, hullDamage + (tank.hp <= 0 ? KILL_XP : 0), ownerLife);
@@ -80,6 +87,7 @@ export function damageTank(
   tank.laser = 0;
   clearAmmo(tank);
   tank.deaths++;
+  tank.life++;
   tank.respawn = SIMULATION_RULES.respawnSeconds;
   tank.previous = { x: position.x, z: position.z };
   const killer = simulation.tanks.find((candidate) => candidate.id === owner);
@@ -87,7 +95,7 @@ export function damageTank(
     killer.kills++;
     recordKill(simulation, killer, tank, ownerLife, source);
     // Old ordnance counts toward the round, never toward a replacement life.
-    if (killer.alive && (ownerLife === undefined || ownerLife === killer.deaths)) {
+    if (killer.alive && (ownerLife === undefined || ownerLife === killer.life)) {
       killer.lifeKills++;
       killer.bestLifeKills = Math.max(killer.bestLifeKills, killer.lifeKills);
     }
@@ -96,7 +104,7 @@ export function damageTank(
     awardKill(simulation.match, tank.team, team, owner === tank.id, !simulation.endlessMatch);
   }
   simulation.checkSoloResult();
-  const burnout = tankBurnout(simulation.seed, tank.id, tank.deaths);
+  const burnout = tankBurnout(simulation.seed, tank.id, tank.life);
   if (!burnout) {
     blastDebris(simulation, position, 3, 60);
   }
@@ -109,9 +117,9 @@ export function damageTank(
     z: position.z,
     id: tank.id,
     owner,
+    ownerLife,
     team: tank.team,
     size: tank.kind === "scout" ? 2.6 : tank.kind === "heavy" ? 3.6 : 3,
-    label: `${killer?.human ? "YOU" : (killer?.name ?? "YARD")}  ▸  ${tank.human ? "YOU" : tank.name}`,
   });
 }
 export function damageCover(
@@ -151,7 +159,11 @@ export function damageCover(
   }
   cover.alive = false;
   simulation.destroyed++;
-  if (simulation.tanks.some((tank) => tank.human && tank.id === owner && tank.team === team)) {
+  if (
+    simulation.tanks.some(
+      (tank) => simulation.records(tank) && tank.id === owner && tank.team === team,
+    )
+  ) {
     simulation.combatRecord.coverDestroyed++;
   }
   for (let i = 0; i < cover.body.numColliders(); i++) {
@@ -230,7 +242,8 @@ export function explode(
 ): void {
   simulation.events.push({
     type: "explosion",
-    ...position,
+    x: position.x,
+    z: position.z,
     size: radius,
     coverKind: cause === "drum" ? "drum" : undefined,
   });
