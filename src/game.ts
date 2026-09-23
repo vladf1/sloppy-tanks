@@ -7,7 +7,7 @@ import { TouchModeController } from "./game/touch-mode";
 import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
-import { roundMap, Simulation, type SimulationSetup } from "./game/simulation";
+import { selectedMap, Simulation, type SimulationSetup } from "./game/simulation";
 import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
 import { UI } from "./game/ui";
@@ -17,8 +17,6 @@ const MAX_FRAME_DELTA_SECONDS = 0.1;
 const MAX_CATCH_UP_STEPS = 5;
 const HUD_UPDATE_EVERY_FRAMES = 4;
 const MILLISECONDS_PER_SECOND = 1000;
-// Round 2 would be constructed and immediately discarded; see prepareGame.
-const STARTUP_ROUND = 3;
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -51,7 +49,7 @@ export async function prepareGame(
   let stressSetup: SimulationSetup;
   try {
     stressSetup = stressTest ? (await import("./stress-test-level")).STRESS_TEST_SETUP : {};
-    const map = roundMap(seed, STARTUP_ROUND, preparedOptions.mapMode, stressSetup.customMap);
+    const map = selectedMap(preparedOptions.mapMode, stressSetup.customMap);
     view.buildScenery(map.theme ?? map.id);
     await physics;
   } catch (error) {
@@ -60,8 +58,8 @@ export async function prepareGame(
     throw error;
   }
   // Browser startup previously constructed round 2, then immediately discarded
-  // it for round 3. Keep the round/Surprise-me seed, build only the chosen world.
-  const sim = new Simulation(seed, { ...preparedOptions, ...stressSetup, round: STARTUP_ROUND });
+  // it for round 3. Keep the round (it seeds bot names), build only that world.
+  const sim = new Simulation(seed, { ...preparedOptions, ...stressSetup, round: 3 });
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   view.reset(sim);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));

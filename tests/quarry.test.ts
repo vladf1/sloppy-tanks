@@ -154,7 +154,7 @@ test("barrier collision follows tapered concrete and open steel rather than invi
   }
 });
 
-test("quarry supports both modes, combat, resets and Surprise me selection", () => {
+test("quarry supports both modes, combat and resets", () => {
   const sim = quarry();
   try {
     for (const mode of ["team", "solo"] as const) {

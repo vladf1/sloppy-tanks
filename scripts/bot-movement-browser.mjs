@@ -119,7 +119,7 @@ try {
     const d = window.sloppy;
     d.sim.seed = 12345;
     d.sim.roundCount = 24;
-    d.sim.mapMode = "surprise";
+    d.sim.mapMode = "harbor";
     d.start();
     d.autoplay();
     d.record();
@@ -128,7 +128,7 @@ try {
   const report = await page.evaluate(() => window.sloppy.stop());
   assert.ok(report.snapshot.elapsed > 18);
   assert.deepEqual(errors, []);
-  await page.screenshot({ path: `${out}/surprise-match.png` });
+  await page.screenshot({ path: `${out}/harbor-match.png` });
   writeFileSync(
     "artifacts/bot-movement-browser.json",
     JSON.stringify(

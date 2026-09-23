@@ -21,7 +21,7 @@
         await RAPIER.init();
         s = new Simulation(123);
         s.gameMode = "solo";
-        s.mapMode = "surprise";
+        s.mapMode = "harbor";
         s.reset();
         s.start();
         view = await Presentation.create(document.querySelector("#game"));

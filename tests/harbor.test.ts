@@ -116,12 +116,6 @@ test("Harbor Havoc supports both modes and round/map resets restore their own co
       sim.reset();
       assert.ok(sim.covers.some((c) => c.kind === "tree"));
       assert.ok(!sim.covers.some((c) => c.kind === "container"));
-      sim.mapMode = "surprise";
-      sim.reset();
-      assert.equal(
-        sim.covers.some((c) => c.kind === "container"),
-        sim.mapTheme === "harbor",
-      );
       sim.mapMode = "harbor";
       sim.reset();
       assert.equal(sim.world.bodies.len(), initial);

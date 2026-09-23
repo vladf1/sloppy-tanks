@@ -34,8 +34,8 @@ test("direct setup builds one world and preserves legacy seeded rounds and subse
     { mapMode: "village", humanTeam: 1, humanKind: "heavy" },
     { mapMode: "harbor", humanTeam: 0, humanKind: "scout" },
     { mapMode: "quarry", gameMode: "solo", difficulty: "hard" },
-    { mapMode: "surprise", gameMode: "solo", difficulty: "easy" },
-    { mapMode: "surprise", humanTeam: 1 },
+    { mapMode: "village", gameMode: "solo", difficulty: "easy" },
+    { mapMode: "harbor", humanTeam: 1 },
   ];
   for (const options of cases) {
     const reset = mock.method(Simulation.prototype, "reset");
