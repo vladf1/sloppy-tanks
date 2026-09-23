@@ -7,7 +7,7 @@ import { TouchModeController } from "./game/touch-mode";
 import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
-import { Simulation } from "./game/simulation";
+import { selectedMap, Simulation, type SimulationSetup } from "./game/simulation";
 import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
 import { UI } from "./game/ui";
@@ -32,38 +32,35 @@ export async function prepareGame(
   root.innerHTML =
     '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
+  const stressTest = document.documentElement.dataset.scenario === "stress-test";
+  // The physics binary is the largest download. Device setup, image decoding and
+  // map scenery do not need it, so they proceed while it arrives and compiles.
+  const physics = RAPIER.init();
+  // Graphics setup may fail first; the await below still reports physics errors.
+  physics.catch(() => {});
+  const preparedOptions = { ...getOptions() };
   let view: Presentation;
   try {
-    // Device setup and image decoding do not depend on the physics world.
-    const results = await Promise.allSettled([
-      Presentation.create(canvas),
-      RAPIER.init(),
-      loadTankSurface(),
-    ]);
-    const presentation = results[0];
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure?.status === "rejected") {
-      if (presentation.status === "fulfilled") {
-        presentation.value.renderer.dispose();
-      }
-      throw failure.reason;
-    }
-    if (presentation.status !== "fulfilled") {
-      throw new Error("Graphics initialization failed");
-    }
-    view = presentation.value;
+    [view] = await Promise.all([Presentation.create(canvas), loadTankSurface()]);
   } catch (error) {
     root.remove();
     throw error;
   }
-  const stressTest = document.documentElement.dataset.scenario === "stress-test";
-  const stressSetup = stressTest ? (await import("./stress-test-level")).STRESS_TEST_SETUP : {};
-  const preparedOptions = { ...getOptions() };
+  let stressSetup: SimulationSetup;
+  try {
+    stressSetup = stressTest ? (await import("./stress-test-level")).STRESS_TEST_SETUP : {};
+    const map = selectedMap(preparedOptions.mapMode, stressSetup.customMap);
+    view.buildScenery(map.theme ?? map.id);
+    await physics;
+  } catch (error) {
+    view.renderer.dispose();
+    root.remove();
+    throw error;
+  }
   // Browser startup previously constructed round 2, then immediately discarded
-  // it for round 3. Keep the round/Surprise-me seed, build only the chosen world.
+  // it for round 3. Keep the round (it seeds bot names), build only that world.
   const sim = new Simulation(seed, { ...preparedOptions, ...stressSetup, round: 3 });
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  const audio = new AudioSystem();
   view.reset(sim);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   onStage("Preparing graphics…");
@@ -101,13 +98,25 @@ export async function prepareGame(
     () => sim.match.phase === "playing" && sim.human.alive,
     !stressTest,
   );
+  // Creating the AudioContext can block the main thread for over 150 ms. Sounds
+  // are first needed when a round begins, so this waits until the menu is ready.
+  let audioSystem: AudioSystem | undefined;
+  let volume = 0;
+  const audio = () => {
+    if (!audioSystem) {
+      audioSystem = new AudioSystem();
+      audioSystem.volume(volume);
+    }
+    return audioSystem;
+  };
   const settings = (key: string, value: number) => {
     if (key === "tank-speed" || key === "bullet-speed") {
       value = tuneSpeed(sim, key, value);
     }
     localStorage.setItem("sloppy-" + key, String(value));
     if (key === "volume") {
-      audio.volume(value);
+      volume = value;
+      audioSystem?.volume(value);
     }
   };
   settings("volume", Number(localStorage.getItem("sloppy-volume") ?? ".6"));
@@ -174,7 +183,7 @@ export async function prepareGame(
     root.hidden = false;
     root.classList.remove("menu-ready");
     sim.start();
-    audio.start();
+    audio().start();
     canvas.focus();
     accumulator = 0;
     last = performance.now();
@@ -264,7 +273,7 @@ export async function prepareGame(
           event.owner === sim.human.id &&
           event.team !== sim.human.team;
         view.event(event, playerHit);
-        audio.event(
+        audio().event(
           event,
           sim.human.alive ? sim.human.body.translation() : sim.human.previous,
           playerHit,
@@ -322,6 +331,8 @@ export async function prepareGame(
     }
   }
 
+  // Let the ready menu paint first; GO still creates audio if it arrives sooner.
+  requestAnimationFrame(() => setTimeout(audio, 0));
   return async (options) => {
     if (!stressTest && !sameGameOptions(preparedOptions, options)) {
       // Choices can change while the earlier arena is preparing. Keep the menu

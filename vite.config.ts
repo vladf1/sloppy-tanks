@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
-import wasm from "vite-plugin-wasm";
+import { lazyRapierWasm } from "./scripts/lazy-rapier-wasm.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
@@ -18,7 +18,7 @@ export default defineConfig({
     ],
   },
   plugins: [
-    wasm(),
+    lazyRapierWasm(),
     startupHtml(base),
     {
       name: "preload-physics",

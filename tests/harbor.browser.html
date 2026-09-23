@@ -39,7 +39,6 @@
       <button id="cargo">Cargo close-up</button>
       <button id="crate-stages">Crate damage stages</button>
       <button id="crate-hit">Hit middle crate</button>
-      <button id="surprise">Surprise me</button>
       <button id="checks">Check map switches and resets</button>
       <button id="water-checks">Check both water reflections</button>
       <output id="result">Harbor scene ready</output>
@@ -141,20 +140,12 @@
         location(22, 21);
         view.zoom = 27;
       };
-      document.querySelector("#surprise").onclick = () => {
-        crateExamples = [];
-        sim.mapMode = "surprise";
-        sim.reset();
-        view.reset(sim);
-        overview = true;
-        document.querySelector("#result").textContent = `Surprise me · ${sim.mapName}`;
-      };
       document.querySelector("#checks").onclick = async () => {
         crateExamples = [];
         const failures = [];
         let baseline;
         for (let round = 0; round < 4; round++) {
-          for (const mode of ["village", "quarry", "surprise", "harbor"]) {
+          for (const mode of ["village", "quarry", "harbor"]) {
             sim.mapMode = mode;
             sim.reset();
             view.reset(sim);

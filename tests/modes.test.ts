@@ -52,7 +52,7 @@ test("every spawn row starts interpolation and bot history at its actual body po
 function solo(seed = 123) {
   const s = new Simulation(seed);
   s.gameMode = "solo";
-  s.mapMode = "surprise";
+  s.mapMode = "harbor";
   s.reset();
   s.start();
   for (const t of s.tanks) t.protection = 0;
@@ -178,46 +178,34 @@ test("solo reinforcements replenish six active enemies and reset the kill counte
   }
 });
 
-test("Surprise me picks complete authored maps in both modes and keeps the choice for the match", () => {
+test("each authored map builds completely in both modes and keeps it for the match", () => {
   const signature = (covers: CoverDef[]) =>
     covers.map(({ kind, x, z, w, d, h, hp, color }) => [kind, x, z, w, d, h, hp, color]);
   for (const gameMode of ["team", "solo"] as const) {
     const sim = new Simulation(912);
-    const replay = new Simulation(912);
     try {
-      sim.gameMode = replay.gameMode = gameMode;
-      sim.mapMode = replay.mapMode = "surprise";
-      const selected = new Set<string>();
-      for (let round = 0; round < 20; round++) {
-        sim.reset();
-        replay.reset();
-        const map = MAPS.find((map) => map.id === sim.mapTheme)!;
-        selected.add(map.id);
-        assert.equal(sim.mapMode, "surprise", "selection survives a new round");
-        assert.equal(sim.mapTheme, replay.mapTheme, "seeded matches remain reproducible");
-        assert.equal(sim.mapName, map.name.toUpperCase(), "show the actual battlefield name");
-        assert.deepEqual(
-          signature(sim.covers),
-          signature(map.layout()),
-          "use the entire authored layout",
-        );
-        assert.equal(sim.tanks.length, gameMode === "solo" ? 7 : 12);
-        sim.start();
-        sim.step();
-        sim.match.phase = "paused";
-        sim.step();
-        assert.equal(sim.mapTheme, map.id, "playing and pausing never reroll the map");
-      }
-      assert.deepEqual(selected, new Set(MAPS.map((map) => map.id)));
+      sim.gameMode = gameMode;
       for (const map of MAPS) {
         sim.mapMode = map.id;
-        sim.reset();
-        assert.equal(sim.mapTheme, map.id, "manual selection overrides Surprise me");
-        assert.deepEqual(signature(sim.covers), signature(map.layout()));
+        for (let round = 0; round < 2; round++) {
+          sim.reset();
+          assert.equal(sim.mapTheme, map.id, "selection survives a new round");
+          assert.equal(sim.mapName, map.name.toUpperCase(), "show the actual battlefield name");
+          assert.deepEqual(
+            signature(sim.covers),
+            signature(map.layout()),
+            "use the entire authored layout",
+          );
+          assert.equal(sim.tanks.length, gameMode === "solo" ? 7 : 12);
+          sim.start();
+          sim.step();
+          sim.match.phase = "paused";
+          sim.step();
+          assert.equal(sim.mapTheme, map.id, "playing and pausing never change the map");
+        }
       }
     } finally {
       sim.world.free();
-      replay.world.free();
     }
   }
 });

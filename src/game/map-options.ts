@@ -1,4 +1,4 @@
-/** The menu and Surprise me draw from the same authored maps. */
+/** The authored maps offered by the menu and `?map=` links. */
 export const MAP_OPTIONS = [
   {
     id: "village",

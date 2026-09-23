@@ -21,10 +21,10 @@ Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
 - **Team Battle:** six versus six, with respawns. First to 100 kills or the highest score after five minutes wins; a timed tie enters next-kill overtime.
 - **Solo Assault:** survive ten minutes on one life against up to six enemies at once, with unlimited replacements.
-- **Maps:** Pine Village, Harbor Havoc and Dusty Dig. **Surprise me** chooses among all three authored maps.
+- **Maps:** Pine Village, Harbor Havoc and Dusty Dig.
 - **Difficulty:** Easy, Normal or Hard; fixed for the round and saved locally.
 
-Map links accept `?map=village`, `?map=harbor`, `?map=quarry` or `?map=surprise`.
+Map links accept `?map=village`, `?map=harbor` or `?map=quarry`.
 
 | Control            | Action                                                   |
 | ------------------ | -------------------------------------------------------- |

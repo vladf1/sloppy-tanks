@@ -92,8 +92,8 @@ that discarded a slow run.
   Use `simulation.rng` for gameplay randomness. Cosmetic variation may use
   `Math.random`, but it must never influence combat, navigation, spawning, or
   seeded validation.
-- Map selection on `Surprise me` deliberately uses a separate round-derived
-  stream so it does not consume combat RNG. Keep that separation.
+- Bot names deliberately use a separate round-derived stream so they do not
+  consume combat RNG. Keep that separation.
 - Projectile contacts are continuous and resolved earliest-first across all
   shells; after a bounce, interception, or destruction, the next contact is
   queried again. Do not replace this with array order or one ray per shot per

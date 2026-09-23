@@ -184,7 +184,7 @@ try {
     const d = window.sloppy;
     d.sim.seed = 12345;
     d.sim.roundCount = 24;
-    d.sim.mapMode = "surprise";
+    d.sim.mapMode = "harbor";
     d.start();
     d.autoplay();
     const step = d.sim.step.bind(d.sim);

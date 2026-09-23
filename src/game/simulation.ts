@@ -75,6 +75,12 @@ export type SimulationSetup = Partial<
   >
 > & { round?: number };
 
+/** The authored map for a menu choice, or the stress fixture's custom map. It
+ * needs no physics world, so the renderer can build scenery before one exists. */
+export function selectedMap(mapMode: Simulation["mapMode"], customMap?: ArenaMap): ArenaMap {
+  return customMap ?? MAPS.find((map) => map.id === mapMode)!;
+}
+
 export class Simulation {
   world!: RAPIER.World;
   contactEvents!: RAPIER.EventQueue;
@@ -99,7 +105,7 @@ export class Simulation {
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
   endlessMatch = false;
-  mapMode: (typeof MAPS)[number]["id"] | "surprise" = "village";
+  mapMode: (typeof MAPS)[number]["id"] = "village";
   customMap?: ArenaMap;
   humanHealthMultiplier = 1;
   powerUpDurationMultiplier = 1;
@@ -187,12 +193,7 @@ export class Simulation {
     }
     const roundSeed = (this.seed + this.match.round * SIMULATION_RULES.roundSeedStride) >>> 0;
     this.botNames = shuffledBotNames(roundSeed);
-    // Pick once per reset without consuming the combat RNG stream.
-    this.currentMap =
-      this.customMap ??
-      (this.mapMode === "surprise"
-        ? MAPS[Math.floor(new Random(roundSeed).next() * MAPS.length)]
-        : MAPS.find((map) => map.id === this.mapMode)!);
+    this.currentMap = selectedMap(this.mapMode, this.customMap);
     const ground = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0),
     );

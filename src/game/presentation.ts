@@ -289,14 +289,7 @@ export class Presentation {
     if (this.customFloor) {
       this.customFloor.visible = Boolean(simulation.mapFloor);
     }
-    if (village && !this.villageScenery) {
-      this.villageScenery = new VillageScenery(this.renderer);
-      this.scene.add(this.villageScenery);
-    }
-    if (harbor && !this.harborScenery) {
-      this.harborScenery = new HarborScenery();
-      this.scene.add(this.harborScenery.group);
-    }
+    this.buildScenery(simulation.mapTheme);
     if (this.villageScenery) {
       this.villageScenery.visible = village;
     }
@@ -305,10 +298,6 @@ export class Presentation {
     }
     if (this.harborScenery) {
       this.harborScenery.group.visible = harbor;
-    }
-    if (quarry && !this.quarryScenery) {
-      this.quarryScenery = new QuarryScenery(this.renderer);
-      this.scene.add(this.quarryScenery);
     }
     if (this.quarryScenery) {
       this.quarryScenery.visible = quarry;
@@ -418,6 +407,25 @@ export class Presentation {
     this.updateCamera(simulation, 1, false);
     // Prepare the actual draw materials before the menu's compileAsync warm-up.
     this.updatePartBatches(simulation);
+  }
+  /** Build a theme's cached scenery. It needs no physics world, so startup can
+   * do this while the physics binary is still downloading; reset() reuses it. */
+  buildScenery(theme: Simulation["mapTheme"]): void {
+    if (theme === "village" && !this.villageScenery) {
+      this.villageScenery = new VillageScenery(this.renderer);
+      this.villageScenery.visible = false;
+      this.scene.add(this.villageScenery);
+    }
+    if (theme === "harbor" && !this.harborScenery) {
+      this.harborScenery = new HarborScenery();
+      this.harborScenery.group.visible = false;
+      this.scene.add(this.harborScenery.group);
+    }
+    if (theme === "quarry" && !this.quarryScenery) {
+      this.quarryScenery = new QuarryScenery(this.renderer);
+      this.quarryScenery.visible = false;
+      this.scene.add(this.quarryScenery);
+    }
   }
   makeBar(id: number, team: number): void {
     const bar = createTankBar(team);

@@ -1,8 +1,9 @@
 import { test, mock, after } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { batch, freezeStatic } from "../src/game/batching";
+import { batch, batchParts, freezeStatic, mergeParts, packParts } from "../src/game/batching";
 import { arenaLayout } from "../src/game/arena";
+import { MAPS } from "../src/game/maps";
 import { coverModel, tankModel, wreckModel } from "../src/game/models";
 
 // Geometry tests do not decode external images; retain real textured materials.
@@ -214,4 +215,42 @@ test("tree detail stays within scenery budgets", () => {
   assert.ok(count <= 9_000, `trees: ${count} triangles exceeds 9000`);
   const tree = arenaLayout().find((c) => c.kind === "tree")!;
   assert.ok(triangles(coverModel(tree, "background")) <= 200);
+});
+
+test("single-pass packing matches the general merge for every map cover and tank", () => {
+  const groups: THREE.Group[] = [];
+  for (const map of MAPS)
+    for (const [i, cover] of map.layout().entries()) {
+      // Cycle damage stages across covers to reach every damage detail cheaply.
+      const model = coverModel(cover, "full", i % 3);
+      groups.push(model);
+      model.traverse((object) => {
+        if (object instanceof THREE.Group && object !== model) groups.push(object);
+      });
+    }
+  for (const kind of ["scout", "balanced", "heavy", "humvee"] as const)
+    for (const team of [0, 1] as const) {
+      const d = tankModel(kind, team).userData;
+      groups.push(d.trackGroup, d.hull, d.turret, d.barrel);
+    }
+  let batches = 0;
+  for (const group of groups)
+    for (const parts of batchParts(group).values()) {
+      const packed = packParts(parts);
+      const merged = mergeParts(parts)!;
+      assert.ok(packed, "model layouts use the single-pass packer");
+      assert.deepEqual(Object.keys(packed.attributes), Object.keys(merged.attributes));
+      for (const [name, attribute] of Object.entries(merged.attributes)) {
+        const actual = packed.getAttribute(name) as THREE.InterleavedBufferAttribute;
+        const expected = attribute as THREE.InterleavedBufferAttribute;
+        assert.equal(actual.itemSize, expected.itemSize, name);
+        assert.equal(actual.offset, expected.offset, name);
+        assert.equal(actual.data.stride, expected.data.stride, name);
+      }
+      const actual = (packed.getAttribute("position") as THREE.InterleavedBufferAttribute).data;
+      const expected = (merged.getAttribute("position") as THREE.InterleavedBufferAttribute).data;
+      assert.deepEqual(actual.array, expected.array, "vertices must be bit-identical");
+      batches++;
+    }
+  assert.ok(batches > 300, `only ${batches} batches compared`);
 });

@@ -19,9 +19,7 @@ export function initialGameOptions(
     humanKind: "balanced",
     humanTeam: new Random(seed).next() < 0.5 ? 0 : 1,
     gameMode: "team",
-    mapMode:
-      MAP_OPTIONS.find((map) => map.id === requestedMap)?.id ??
-      (requestedMap === "random" || requestedMap === "surprise" ? "surprise" : "village"),
+    mapMode: MAP_OPTIONS.find((map) => map.id === requestedMap)?.id ?? "village",
     difficulty: parseDifficulty(difficulty),
   };
 }

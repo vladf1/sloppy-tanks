@@ -78,7 +78,7 @@ export class VillageVegetation {
       if (Math.sin(x * 0.24) * Math.cos(z * 0.18) + rng.next() < 0.1) {
         continue;
       }
-      const height = inside ? 0 : valleyHeight(x, z);
+      const height = inside ? 0 : valleyHeight(x, z, river);
       const reed = !inside && river < 11;
       const size = reed ? rng.range(0.6, 1.05) : rng.range(0.24, 0.48);
       dummy.position.set(x, height + 0.025, z);
