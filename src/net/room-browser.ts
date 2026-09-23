@@ -11,8 +11,36 @@ export function browseRooms(
   address: URL,
 ): Promise<{ room: string; choice: JoinChoice }> {
   root.classList.add("multiplayer");
-  root.innerHTML =
-    '<div id="overlay"><section class="menu compact network-menu room-browser" role="dialog" aria-modal="true" aria-labelledby="rooms-title"><div class="eyebrow">PLAY WITH FRIENDS</div><h1 id="rooms-title">FIND A BATTLE</h1><div class="network-choices"><label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" /></label><label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div class="room-list-heading"><h2>OPEN ROOMS</h2><button id="refresh-rooms" class="quiet" type="button">REFRESH</button></div><p id="rooms-message" role="status">Looking for rooms…</p><div id="room-list" role="radiogroup" aria-label="Choose a room"></div><button id="join-room" class="primary" disabled>JOIN SELECTED ROOM</button><div class="room-create"><h2>START YOUR OWN</h2><div class="network-choices"><label>Level<select id="create-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label class="network-toggle"><input id="create-humans-only" type="checkbox" checked />Humans only (no bots)</label></div><p class="network-help">Start playing immediately. Friends can join while you play.</p><button id="create-room" class="secondary">CREATE ROOM</button></div><button id="back-single-player" class="quiet">BACK TO SINGLE-PLAYER</button></section></div>';
+  root.innerHTML = `
+    <div id="overlay">
+      <section class="menu network-menu room-browser" role="dialog" aria-modal="true" aria-labelledby="rooms-title">
+        <header class="room-browser-header">
+          <div><div class="eyebrow">PLAY WITH FRIENDS</div><h1 id="rooms-title">FIND A BATTLE</h1></div>
+          <button id="back-single-player" class="room-text-button" type="button">← Single-player</button>
+        </header>
+        <div class="room-player-fields">
+          <label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" /></label>
+          <label>Team<select id="player-team" title="Auto picks the team with fewer human players"><option value="auto">Auto</option><option value="0">Blue</option><option value="1">Red</option></select></label>
+          <label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label>
+        </div>
+        <div class="room-browser-columns">
+          <section class="room-browse" aria-labelledby="open-rooms-title">
+            <div class="room-list-heading"><h2 id="open-rooms-title">Open rooms <span id="room-count">0</span></h2><button id="refresh-rooms" class="room-text-button" type="button">↻ Refresh</button></div>
+            <div class="room-list-body"><p id="rooms-message" role="status">Looking for rooms…</p><div id="room-list" role="radiogroup" aria-label="Choose a room"></div></div>
+            <div class="room-join-footer"><span>Up to 8 players per room</span><button id="join-room" class="primary" type="button" disabled>Join room</button></div>
+          </section>
+          <section class="room-create" aria-labelledby="create-room-title">
+            <h2 id="create-room-title">Start your own</h2>
+            <p class="room-description">Pick a map and jump straight in.</p>
+            <label class="room-map-field">Level<select id="create-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label>
+            <label class="room-bots-choice"><input id="create-humans-only" type="checkbox" checked /><span>Humans only<small>No bots in this battle</small></span></label>
+            <button id="create-room" class="primary" type="button">Create room</button>
+            <p class="room-create-note">Friends can join while you play.</p>
+          </section>
+        </div>
+      </section>
+    </div>`;
+
   const field = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>("#" + id)!;
   const name = field("player-name");
   name.value = preferredPlayerName();
@@ -33,6 +61,7 @@ export function browseRooms(
   const render = () => {
     const focused = (document.activeElement as HTMLInputElement | null)?.name === "room-choice";
     list.replaceChildren();
+    root.querySelector("#room-count")!.textContent = String(rooms.length);
     if (!rooms.some((room) => room.room === selected && available(room))) {
       selected = "";
     }
@@ -100,7 +129,7 @@ export function browseRooms(
         render();
         message.textContent = rooms.length
           ? "Choose a room to join the battle."
-          : "No rooms yet. Create one and invite your friends.";
+          : "No rooms yet.\nStart a battle and invite your friends.";
       } catch (error) {
         if (!finished) {
           rooms = [];
