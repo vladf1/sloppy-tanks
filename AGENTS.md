@@ -1,9 +1,9 @@
-# Sloppy Tanks agent guide
+# Sloppy Tanks development guide
 
 This file records the project rules that are easy to violate and expensive to
-rediscover. Use `README.md` for player-facing behavior and `CONTRIBUTING.md`
-for the fuller style and browser-check catalog; do not turn this file into a
-second directory listing.
+rediscover. Use `README.md` for player-facing behavior, setup and deployment,
+and `scripts/README.md` for the browser-check and measurement catalog; do not
+turn this file into a second directory listing.
 
 ## Before changing code
 
@@ -18,6 +18,30 @@ second directory listing.
   mocks, and an in-memory clock over real sleeps or deleting meaningful
   coverage because a visual effect is flaky.
 
+## Code style
+
+- Code should be easy to trace from a player action to its simulation result
+  and visible feedback. Prefer descriptive domain names (`tank`, `simulation`,
+  `command`, `brain`), small single-purpose functions, and explicit data over
+  inheritance or abstractions that merely forward calls. Short coordinates,
+  loop indices and conventional math names are fine inside small calculations.
+- Name balance values, timeouts, capacities and tolerances. Shared combat rules
+  live in `combat-rules.ts`, physics/lifecycle settings in `simulation-rules.ts`,
+  camera and feedback timing in `view-settings.ts`; settings used by one
+  algorithm stay beside it. Geometry, palettes, authored map placements and test
+  expectations are data: keep them in their model, layout or fixture.
+- Units are metres, seconds and radians unless a name says otherwise; DOM and
+  performance timers use milliseconds. X/Z is the playable plane and Y is up.
+  `alpha` is the interpolation fraction between previous and current poses.
+- Comments explain intent and invariants (why a query is ordered, why a
+  resource is shared), not what an assignment does.
+- Use plain functions for stateless calculations and factories, and classes for
+  systems that own persistent state (simulation, rendering, input, effects).
+  Let TypeScript infer obvious locals; annotate contracts and boundaries, and
+  narrow third-party values instead of spreading `any`.
+- The game compiles with TypeScript 7; lint uses a separate TypeScript 6
+  toolchain (see `tools/lint/README.md`). Prettier owns formatting.
+
 ## Normal development and validation
 
 Use Node.js 24 or newer. After dependency changes, run `npm ci`; the root
@@ -28,6 +52,7 @@ npm run check                         # CI gate: lint, format, build and tests
 node --import tsx --test tests/foo.test.ts  # focused test file
 npm run validate                      # seeded headless matches and reset checks
 npm run dev                           # browser work; use the printed URL
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ npm run check:browser
 ```
 
 `npm run validate` is not a passive read: it rewrites the tracked
@@ -36,32 +61,23 @@ the validation output is intentionally part of the change. `npm run build`
 creates `dist/` and copies JSON reports from `artifacts/`; these are build
 outputs, not a place to edit source behavior.
 
-For a browser regression, set the exact Vite URL explicitly when needed:
+A successful TypeScript/build/test gate does not prove controls, menu
+transitions, rendering, or cleanup. Run `npm run check:browser` against the
+dev server for startup, menu, input or rendering changes, or the focused check
+from `scripts/README.md` while iterating. Keep those checks passing: fix or
+delete a check that no longer matches the game rather than leaving it broken,
+and start rounds through `startRound()` in `scripts/browser-helpers.mjs`. If
+the reported bug is a real pointer interaction, verify it with a physical
+coordinate click in the visible Chrome window; a locator or accessibility
+activation can bypass pointer-event and coordinate-routing bugs.
 
-```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/browser-check.mjs
-```
-
-Use the focused script that matches the changed path (driving, startup,
-ammunition, combat feedback, bot movement, destruction, or map checks). A
-successful TypeScript/build/test gate does not prove controls, menu
-transitions, rendering, or cleanup. If the reported bug is a real pointer
-interaction, verify it with a physical coordinate click in the visible Chrome
-window; a locator or accessibility activation can bypass pointer-event and
-coordinate-routing bugs.
-
-Long-running profiling and benchmarks are manual evidence, not normal CI:
-
-- `scripts/benchmark.mjs` includes stress, reset, and a long longevity run.
-- `scripts/profile.mjs before|after` is for matched runtime comparisons.
-- `scripts/benchmarks/host-download-benchmark.mjs` measures HTTP resource
-  delivery only and writes dated results under `scripts/benchmarks/results/`.
-
-Do not add these workloads to `npm run check` or deployment workflows. Keep
-HTTP delivery, browser cold-load, and in-game rendering/gameplay conclusions
-separate; a result from one category does not prove the others. Preserve
-outliers and disclose sample counts instead of reporting a clean percentile
-that discarded a slow run.
+Profiling and benchmarks (`profile.mjs`, the loading and host-download
+benchmarks) are manual evidence, not normal CI. Do not add these
+workloads to `npm run check` or deployment workflows. Keep HTTP delivery,
+browser cold-load, and in-game rendering/gameplay conclusions separate; a
+result from one category does not prove the others. Preserve outliers and
+disclose sample counts instead of reporting a clean percentile that discarded
+a slow run.
 
 ## Simulation contracts
 
@@ -127,6 +143,18 @@ that discarded a slow run.
   tracks, and diagnostics. If a change adds a new per-frame allocation or
   persistent listener, measure reset and long-run behavior rather than assuming
   the browser will collect it.
+- Rendering is WebGPU-only; there is no WebGL fallback. Create presentation
+  with `await Presentation.create(canvas)`, write custom materials in Three.js
+  TSL, and avoid `ShaderMaterial`, `onBeforeCompile`, and direct WebGL context
+  access, including in fixtures and preview tools. `Presentation` delegates
+  visual work to named stages; static scene creation belongs in scenery and
+  model builders.
+- Workarounds for the pinned Three.js release are commented with `r185`
+  (renderer, render bundles, batching, effect pools). Review each one when
+  upgrading Three, and inspect shader errors as well as screenshots. Validate
+  moving cameras, first-use effects, and mid-round destruction when changing
+  batching, bundles, or startup warm-up. `renderer.info.render.drawCalls`
+  counts draws; `calls` counts renderer invocations.
 
 ## Maps, stress mode, and authored data
 
@@ -153,72 +181,32 @@ be weakened to make a normal match look healthy.
 - Treat historical artifacts, frame rates, CDN measurements, and deployment
   results as evidence from a particular environment and time. Re-measure live
   state before making current host or performance claims.
+- Keep one-off screenshots, profiles and reports under the ignored
+  `artifacts/performance/`. Update enduring documentation only for current
+  behavior, workflows, invariants or asset provenance; historical measurements
+  belong in local artifacts or the commit description.
 
 ## Local dev publishing
 
 - `npm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
-  to the dedicated Cloudflare Pages project `sloppy-tanks-dev`. It publishes
-  current local files, including uncommitted changes; no push is required.
-  Use this when asked to publish the dev site. Do not substitute the production
-  project `sloppy-tanks` or change either production deployment workflow.
-- Requires the Wrangler CLI and an authenticated `wrangler login` session
-  (or a Pages:Edit API token). The publisher fixes the account, project, and
-  `main` deployment branch explicitly, independent of the local Git branch.
-- `npm run build:dev` only builds. It uses `/` as the asset base and leaves
-  `dist/` and `dist-cloudflare/` untouched. Keep `dist-dev/` excluded from Git,
-  formatting, and lint discovery. Never upload the repository directory.
-- The game stays at `/`; `/test-pages.html` lists compiled browser fixtures.
-  `scripts/dev-site.ts` is the explicit page allowlist. Add suitable HTML entries
-  there and smoke-test their deployed assets and behavior. Do not blindly include
-  every HTML file: old profiling/concrete fixtures depend on obsolete startup
-  behavior, and asset generators are automation tools rather than test pages.
-- Keep dev pages free of build footers and navigation overlays. UTC build time,
-  commit, and local-change state are available in `/build-info.json` only.
-  The timestamp distinguishes successive dirty builds.
-  The performance notebook contains historical reports, not results of publishing.
-- Custom domain: `sloppy-tanks-dev.fridman.me`; provider URL:
-  `https://sloppy-tanks-dev.pages.dev/`. Cloudflare must associate the custom
-  domain before Namecheap points the `sloppy-tanks-dev` CNAME to
-  `sloppy-tanks-dev.pages.dev`. Preserve all other DNS records.
+  to the dedicated Cloudflare Pages project `sloppy-tanks-dev` (setup and URLs
+  in `README.md`). It publishes current local files, including uncommitted
+  changes. Use this when asked to publish the dev site. Do not substitute the
+  production project `sloppy-tanks` or change either production deployment
+  workflow, and never upload the repository directory.
+- Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
+- `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
+  suitable HTML entries there and smoke-test their deployed assets and
+  behavior; asset generators are automation tools, not test pages.
+- Keep dev pages free of build footers and navigation overlays; build time,
+  commit, and local-change state belong in `/build-info.json` only.
 - After publishing, check the game, test directory, representative fixtures,
-  and build metadata through the public URL. A successful upload is not a browser
-  check. Dev responses request `noindex`; this is a public site, not access control.
+  and build metadata through the public URL. A successful upload is not a
+  browser check. Dev responses request `noindex`; this is a public site, not
+  access control.
 
 ## Temporary Cloudflare test links
 
-Create a Cloudflare tunnel **only when the user explicitly requests one**.
-Do not create public links automatically for development or browser checks.
-
-- Use a fresh production build and expose only `dist/`, not the repository or
-  a development server. Preserve the default `/sloppy-tanks/` asset base by
-  serving a temporary directory containing a `sloppy-tanks` symlink to `dist`.
-- Check `command -v cloudflared` and select an unused local port. For example,
-  run the static server and tunnel as separate long-running processes:
-
-  ```sh
-  npm run build
-  tunnel_root=$(mktemp -d /tmp/sloppy-tunnel-XXXXXX)
-  ln -s "$PWD/dist" "$tunnel_root/sloppy-tanks"
-  python3 -m http.server 4179 --bind 127.0.0.1 --directory "$tunnel_root"
-  ```
-
-  ```sh
-  cloudflared tunnel --url http://127.0.0.1:4179 --no-autoupdate
-  ```
-
-- For an agent-managed link, launch both processes detached (for example,
-  Python `subprocess.Popen` with `start_new_session=True` and stdin set to
-  `DEVNULL`), redirect output to temporary logs, and record their PIDs. Reuse
-  an existing verified server when appropriate. If sandbox restrictions block
-  local binding or external DNS/network access, request narrow execution
-  escalation; do not treat that failure as a broken application.
-- Read the assigned `https://….trycloudflare.com` hostname from the tunnel log
-  and append `/sloppy-tanks/`. Verify the public page and assets, then start a
-  game through that URL in a browser before reporting success. For touch work,
-  verify that touch controls appear and pause/resume works with touch input.
-- Keep the server and tunnel running for the requested testing session. Tell
-  the user the link is temporary and requires this Mac to remain awake and
-  connected. Rebuild after source changes; the static server serves `dist/`.
-  When asked to stop, terminate only the recorded processes belonging to this
-  tunnel. Do not change the existing Pages deployments or save temporary
-  hostnames as permanent project URLs.
+Create a Cloudflare tunnel **only when the user explicitly requests one**, and
+follow `docs/cloudflare-tunnel.md`. Do not create public links automatically
+for development or browser checks, and never change the Pages deployments.

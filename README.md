@@ -48,13 +48,16 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-npm run check      # lint, formatting, TypeScript, production build and tests
-npm test           # simulation and behavior regression tests
-npm run validate   # ten seeded full matches and reset checks
-npm run build      # production output in dist/
+npm run check          # lint, formatting, TypeScript, production build and tests
+npm test               # simulation and behavior regression tests
+npm run validate       # ten seeded full matches and reset checks
+npm run build          # production output in dist/
+npm run lint:fix       # safe ESLint fixes
+npm run format         # Prettier for source, tests, scripts, styles and docs
+npm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, browser checks and performance measurements. The performance notebook is available at `/sloppy-tanks/benchmark.html`.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The performance notebook is available at `/sloppy-tanks/benchmark.html`.
 
 | Area                           | Starting points                                                                                    |
 | ------------------------------ | -------------------------------------------------------------------------------------------------- |
@@ -73,13 +76,14 @@ The development build exposes `window.sloppy` for diagnostics; `?tweak` opens th
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
 
-| Command                     | Output / requirements                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `npm run generate:textures` | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp` |
-| `npm run optimize:textures` | Six optimized runtime textures from preserved sources; requires `cwebp`                                |
-| `npm run generate:ammo`     | The four special-ammunition pictograms; requires `cwebp`                                               |
-| `npm run generate:previews` | Tank selection WebPs rendered from the actual models; requires Google Chrome                           |
-| `npm run generate:audio`    | Eleven MP3 effects; requires FFmpeg                                                                    |
+| Command                         | Output / requirements                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `npm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp` |
+| `npm run optimize:textures`     | Six optimized runtime textures from preserved sources; requires `cwebp`                                |
+| `npm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                               |
+| `npm run generate:pickup-atlas` | The shared pickup atlas from the individual icons; also run by `generate:textures` and `generate:ammo` |
+| `npm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                           |
+| `npm run generate:audio`        | Eleven MP3 effects; requires FFmpeg                                                                    |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
@@ -113,11 +117,16 @@ The build separates the interactive menu from gameplay, graphics, physics and au
 
 `npm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
-Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first.
-No Git commit or push is required. `npm run build:dev` builds without publishing.
+Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first
+(or provide a Pages:Edit API token). The publisher sets the account, project and
+`main` deployment branch itself, independent of the local Git branch. No Git
+commit or push is required. `npm run build:dev` builds without publishing.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
 The provider URL is <https://sloppy-tanks-dev.pages.dev/>. The `/build-info.json`
 endpoint records the UTC build time, commit, and whether local changes were present.
-The build goes to `dist-dev/`; production builds and deployments stay separate.
+The build goes to `dist-dev/` with the `/` base; production builds and deployments
+stay separate. The Namecheap CNAME `sloppy-tanks-dev` points to
+`sloppy-tanks-dev.pages.dev`; Cloudflare must associate a custom domain before its
+CNAME changes, and all other DNS records stay as they are.

@@ -215,6 +215,8 @@ export class PartBatches {
     }
   }
 
+  /** Release only what batching created: merged geometry, copied materials and the
+   * shared pose buffer. Source models keep their resources and regain their layers. */
   dispose(): void {
     this.group.needsUpdate = true;
     for (const batch of this.batches) {
