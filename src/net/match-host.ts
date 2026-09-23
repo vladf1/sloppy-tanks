@@ -27,6 +27,7 @@ import {
   type Control,
 } from "./protocol";
 import { id, number, record } from "./schema";
+import type { RoomListing } from "./room-list";
 
 const MAX_MESSAGES_PER_SECOND = 60;
 const CLIENT_TIMEOUT_MS = 65_000;
@@ -54,6 +55,7 @@ interface Client {
 export interface HostTransport {
   send(connection: string, message: string): void;
   close(connection: string, code: number, reason: string): void;
+  changed?(): void;
 }
 export interface HostOptions {
   roomEpoch: string;
@@ -172,7 +174,7 @@ export class MatchHost {
             throw new Error("Choices are locked during a round");
           }
           const choice = playerKind.read(message.kind);
-          const side = team.read(message.team);
+          const side = message.team === undefined ? this.autoTeam(seat) : team.read(message.team);
           const slot = this.freeSlot(side, seat);
           if (slot < 0) {
             this.error(connection, "team-full", "That team has six reserved seats.");
@@ -225,6 +227,9 @@ export class MatchHost {
           this.release(seat);
           this.broadcastLobby();
           this.transport.close(connection, 1000, "Left room");
+          if (!this.seats.length) {
+            this.dispose("empty");
+          }
           break;
         default:
           throw new Error("Unknown message");
@@ -251,6 +256,11 @@ export class MatchHost {
     }
     return -1;
   }
+  private autoTeam(except?: Seat): 0 | 1 {
+    const count = (side: 0 | 1) =>
+      this.seats.filter((seat) => seat !== except && seat.player.team === side).length;
+    return count(0) <= count(1) ? 0 : 1;
+  }
   private join(connection: string, message: Record<string, unknown>, nowMs: number): void {
     const request = joinReader.read(message);
     if (request.version !== PROTOCOL_VERSION || request.contentVersion !== this.contentVersion) {
@@ -268,6 +278,20 @@ export class MatchHost {
     let seat = request.token
       ? this.seats.find((candidate) => candidate.token === request.token)
       : undefined;
+    const create = request.create && !seat && !request.roomEpoch;
+    if (create && this.seats.length) {
+      this.error(
+        connection,
+        "room-exists",
+        "That room code is already in use. Create another room.",
+        true,
+      );
+      return;
+    }
+    if (request.existingRoom && !seat && !this.seats.length) {
+      this.error(connection, "room-gone", "This room has ended. Go back to the room list.", true);
+      return;
+    }
     if (request.token && request.roomEpoch === this.options.roomEpoch && !seat) {
       this.error(
         connection,
@@ -292,10 +316,7 @@ export class MatchHost {
         );
         return;
       }
-      const preferred =
-        request.team ??
-        this.seats.find((candidate) => candidate.player.playerId === this.hostId)?.player.team ??
-        0;
+      const preferred = request.team ?? this.autoTeam();
       const side =
         request.team === undefined && this.freeSlot(preferred) < 0
           ? ((1 - preferred) as 0 | 1)
@@ -366,6 +387,23 @@ export class MatchHost {
     this.broadcastLobby();
     this.sendControl(seat);
     this.sendFull(connection);
+    if (create) {
+      this.settings = request.create!;
+      this.start(nowMs);
+    }
+  }
+  directoryEntry(room: string): RoomListing {
+    return {
+      room,
+      contentVersion: this.contentVersion,
+      ...this.settings,
+      players: this.clients.size,
+      reserved: this.seats.length,
+      phase: this.phase,
+      roundId: this.roundId,
+      time: Math.max(0, Math.ceil(this.simulation?.match.time ?? 300)),
+      scores: this.simulation ? [...this.simulation.match.scores] : [0, 0],
+    };
   }
   private rememberOwner(tank: Tank): void {
     if (tank.playerId) {
@@ -632,6 +670,7 @@ export class MatchHost {
     for (const connection of this.clients.keys()) {
       this.transport.send(connection, body);
     }
+    this.transport.changed?.();
   }
   disconnect(connection: string, nowMs: number): void {
     const client = this.clients.get(connection);
@@ -679,5 +718,6 @@ export class MatchHost {
     this.simulation = undefined;
     this.clock = undefined;
     this.stream = undefined;
+    this.transport.changed?.();
   }
 }

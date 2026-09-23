@@ -35,10 +35,22 @@ engine versions. After editing those sources, **restart Vite and rebuild the
 Worker together**; mismatched clients are rejected with a reload message. No
 client URL override is accepted in production builds.
 
-Rooms admit eight people, at most six per team, with a 30-second empty-room/seat
-grace, five-minute idle lobby/results expiry and 30-minute absolute lifetime.
+Rooms admit eight people, at most six per team. Explicitly leaving the last seat
+disposes the match immediately; dropped connections retain a 30-second room/seat
+grace. Idle lobbies/results expire after five minutes; absolute lifetime is 30 minutes.
 Menu/hidden clients stop receiving snapshots until they resume with a full
 baseline. Seat tokens stay in session storage, never in shared room links.
+
+`GET /rooms` reads a separate `RoomDirectory` Durable Object containing only
+public room metadata, never names or seat tokens. Player rooms publish on lobby
+changes and every 20 seconds while active; disconnected-empty rooms are removed
+immediately and stale entries expire after 45 seconds. The directory persists
+at most 256 entries, evicting the least recently refreshed entry at capacity.
+The client refreshes every five seconds while the visible browser dialog is open,
+and stops on joining, creating or leaving the page. Ordinary single-player never
+loads or polls it. Listings have the same exact-origin check and a separate
+120 requests/minute/IP limit. Directory reads and metadata writes add hosting
+usage; they are not included in the earlier gameplay-only quota estimates.
 
 The Worker checks exact allowed origins, 8-character room codes, protocol/content
 versions, message sizes and rates before accepting authority. The edge rate

@@ -4,8 +4,10 @@ import { idleCommand } from "../src/game/types";
 import { FixedStepClock, HOST_INTERVAL_MS } from "../src/net/fixed-step-clock";
 import { experimentEvent, experimentState, ExperimentStream } from "../src/net/experiment-state";
 import type { PlayerRoom } from "./player-room";
+import type { RoomDirectory } from "./room-directory";
 import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
 export { PlayerRoom } from "./player-room";
+export { RoomDirectory } from "./room-directory";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -14,6 +16,8 @@ interface Env {
   MULTIPLAYER_ENABLED: string;
   ALLOWED_ORIGINS: string;
   MATCH: DurableObjectNamespace<PlayerRoom>;
+  DIRECTORY: DurableObjectNamespace<RoomDirectory>;
+  DIRECTORY_RATE: RateLimit;
   CONNECTION_RATE: RateLimit;
   ENTRY_RATE: RateLimit;
 }
@@ -49,6 +53,32 @@ export default {
       });
     }
     const room = /^\/room\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (url.pathname === "/rooms") {
+      const origin = request.headers.get("Origin") ?? "";
+      if (!(env.ALLOWED_ORIGINS ?? "").split(",").includes(origin))
+        return new Response("Origin not allowed", { status: 403 });
+      const headers = {
+        "Access-Control-Allow-Origin": origin,
+        "Cache-Control": "no-store",
+        Vary: "Origin",
+      };
+      if (request.method !== "GET") return new Response(null, { status: 405, headers });
+      if (env.MULTIPLAYER_ENABLED !== "true")
+        return new Response("Multiplayer unavailable", { status: 503, headers });
+      if (
+        !(
+          await env.DIRECTORY_RATE.limit({
+            key: request.headers.get("CF-Connecting-IP") ?? "local",
+          })
+        ).success
+      )
+        return new Response("Too many refreshes; try again shortly", { status: 429, headers });
+      const response = await env.DIRECTORY.getByName("rooms").fetch("https://directory/rooms");
+      return new Response(response.body, {
+        status: response.status,
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
     if (room && ROOM_CODE.test(room)) {
       if (env.MULTIPLAYER_ENABLED !== "true")
         return new Response("Multiplayer unavailable", { status: 503 });

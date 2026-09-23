@@ -6,7 +6,12 @@ import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
 const output = "artifacts/performance/multiplayer/humans-only";
 await mkdir(output, { recursive: true });
 const url = new URL(process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/");
-url.searchParams.set("multiplayer", "");
+url.searchParams.set(
+  "room",
+  [...crypto.getRandomValues(new Uint8Array(8))]
+    .map((n) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[n & 31])
+    .join(""),
+);
 if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
 const browser = await chromium.launch({
   channel: "chrome",
@@ -82,7 +87,7 @@ try {
   await Promise.all([playing(alice, 3), playing(bob, 3), playing(carol, 3)]);
   await carol.locator("#pause").click();
   await carol.locator("#leave-room").click();
-  await carol.locator("#start").waitFor();
+  await carol.locator("#room-list").waitFor();
   await Promise.all([playing(alice, 2), playing(bob, 2)]);
   await alice.screenshot({ path: `${output}/game.png` });
   await alice.locator("#pause").click();

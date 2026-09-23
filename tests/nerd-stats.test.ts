@@ -102,7 +102,7 @@ function fixture(network = false) {
   const view = {
     renderer: {
       info: {
-        render: { calls: 42, triangles: 123456 },
+        render: { drawCalls: 42, triangles: 123456 },
         memory: { geometries: 9, textures: 11 },
       },
       getPixelRatio: () => 2,
@@ -189,7 +189,14 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 21);
+    assert.equal(bodies.length, 20);
+    const renderRows = sections
+      .find((section) => section.querySelector("summary")?.textContent === "Render")!
+      .querySelectorAll("pre")
+      .map((row) => row.textContent);
+    assert.ok(renderRows.some((row) => row.startsWith("GPU geometries")));
+    assert.ok(renderRows.some((row) => row.startsWith("GPU textures")));
+    assert.ok(!bodies.some((row) => row.textContent.startsWith("Backend")));
     for (const body of bodies) {
       assert.ok(body.title.length > 0, `row missing tooltip: ${body.textContent}`);
     }

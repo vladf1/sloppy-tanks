@@ -13,6 +13,8 @@ export interface JoinChoice {
   name: string;
   kind: PlayerVehicleKind;
   team?: Team;
+  create?: RoomSettings;
+  existingRoom?: boolean;
 }
 export interface ConnectionEvents {
   message(value: Record<string, unknown>): void;

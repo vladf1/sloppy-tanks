@@ -15,15 +15,16 @@
   flex-wrap: wrap;
   margin: 14px 0;
 }
-.network-choices label {
+.multiplayer .network-choices label {
   flex: 1;
   min-width: 120px;
   display: grid;
   gap: 6px;
   text-align: left;
+  margin: 0;
 }
-.network-choices input,
-.network-choices select {
+.multiplayer .network-choices input,
+.multiplayer .network-choices select {
   width: 100%;
   padding: 10px;
   border: 1px solid #718477;
@@ -38,13 +39,13 @@
   flex-wrap: wrap;
   margin-top: 18px;
 }
-.network-choices .network-toggle {
+.multiplayer .network-choices .network-toggle {
   display: flex;
   flex-basis: 100%;
   justify-content: flex-start;
   gap: 10px;
 }
-.network-toggle input[type="checkbox"] {
+.multiplayer .network-toggle input[type="checkbox"] {
   width: auto;
 }
 .network-actions button {
@@ -100,6 +101,88 @@
 }
 .multiplayer #overlay {
   z-index: 15;
+}
+.room-browser h2 {
+  font-size: 14px;
+  letter-spacing: 1px;
+  margin: 8px 0;
+}
+.room-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.multiplayer .room-list-heading button {
+  width: auto;
+  padding: 8px 12px;
+  margin: 0;
+}
+.room-list-heading h2 {
+  white-space: nowrap;
+}
+.multiplayer .network-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#rooms-message {
+  font-size: 12px;
+  text-align: left;
+  opacity: 0.8;
+}
+#room-list {
+  display: grid;
+  gap: 8px;
+  max-height: 230px;
+  overflow: auto;
+  margin: 12px 0;
+}
+.room-browser .room-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin: 0;
+  border: 1px solid #718477;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.room-row:has(input:checked) {
+  border-color: #ffc16b;
+  background: #314338;
+}
+.room-row:has(input:focus-visible) {
+  outline: 2px solid #ffc16b;
+  outline-offset: -3px;
+}
+.room-row:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+.multiplayer .room-row input {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: #ffc16b;
+}
+.room-row strong,
+.room-row small {
+  display: block;
+}
+.room-row small {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+.room-create {
+  border-top: 1px solid #718477;
+  margin-top: 20px;
+  padding: 14px 0 8px;
+}
+.room-browser > button,
+.room-create > button {
+  width: 100%;
 }
 @media (max-width: 520px) {
   .multiplayer .network-menu {

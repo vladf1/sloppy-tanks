@@ -43,7 +43,25 @@ The wire sends one shared JSON batch per 50 ms callback. It includes a frame at 
 
 Production UI checks must verify applied styles and visible controls, not just successful room messages. The inline startup build imports game entries outside Vite's normal dynamic-import graph, so it explicitly loads the selected entry's extracted CSS before starting it. Multiplayer styles remain absent from single-player requests. Browser checks cover lobby/results at desktop, portrait-phone and landscape-phone sizes, including maximum-length unbroken names and hidden actions.
 
-The host can select **Humans only (no bots)** in the lobby or between rounds. It defaults off. In that mode only assigned players spawn; empty seats have no tank or collider. Paused, silent and disconnected seats use an idle driver instead of AI, retaining normal vulnerability and reconnect grace. Explicit departures and expired reservations remove the tank without a fake death or replacement bot. Late joins create a fresh tank identity. The server validates the setting and prevents changes during a match; player/team limits and single-player behavior are unchanged.
+The host can select **Humans only (no bots)** in the lobby or between rounds. The create dialog defaults it on; the retained direct-link lobby defaults it off. In that mode only assigned players spawn; empty seats have no tank or collider. Paused, silent and disconnected seats use an idle driver instead of AI, retaining normal vulnerability and reconnect grace. Explicit departures and expired reservations remove the tank without a fake death or replacement bot. Late joins create a fresh tank identity. The server validates the setting and prevents changes during a match; player/team limits and single-player behavior are unchanged.
+
+The room browser uses a separate `RoomDirectory` Durable Object. `GET /rooms`
+returns public metadata only, validates exact origins and permits 120 list
+requests/minute/IP. Active rooms publish on membership/settings changes and every
+20 seconds; empty entries are removed, stale entries expire after 45 seconds,
+and the directory is bounded at 256 rooms. List polling runs every five seconds
+only while the visible dialog is open and stops before entering a match.
+Directory requests and metadata storage add cost beyond the earlier gameplay
+quota estimate. Create requests atomically claim an empty code and start the
+selected map; joining a stale listing fails instead of silently creating a room.
+The last explicit departure disposes the simulation immediately; unplanned
+connection loss retains the established reconnect grace.
+
+Multiplayer Stats for Nerds exposes received update count/rate and age, RTT,
+server tick, input sent/acknowledged sequence numbers and render diagnostics.
+Updates count full-state messages and snapshot batches, not individual entities
+or local inputs. Local hull heading uses shortest-arc smoothing between packets,
+including angle wrap and a reset on respawn; this changes presentation only.
 
 Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame for the seeded map/destruction fixtures, with a provisional 512 KB/s per-client sustained budget for the manual player load check. These are JSON budget ceilings with headroom, not measured throughput guarantees or billing limits. Swept projectile segments remain verbose; if playtests show bandwidth pressure, compact that representation before increasing player count. Keep byte measurements and all outliers in ignored artifacts.
 
@@ -148,7 +166,7 @@ Initial defaults below become named constants and use the server's clock; adjust
 ### Room and seat lifetime
 
 - A disconnected seat is reserved for 30 s while its tank is bot-driven. Reconnect reclaims it with a fresh control epoch. After expiry, release the seat and token; a subsequent join is a new player assignment. An explicit leave releases it immediately.
-- If the last socket closes, keep the room and its timer alive for a bounded 30 s grace period, with bots driving. Reconnect within that period receives current full state, even if the round has ended. If nobody returns, stop timers, release tokens and `dispose()` the simulation. Test this period with no incoming messages in M1.
+- If the last socket closes, keep the room and its timer alive for a bounded 30 s grace period, with bots driving only when bot fill is enabled (otherwise idle). Hide empty rooms from discovery immediately. Reconnect within that period receives current full state, even if the round has ended. If nobody returns, stop timers, release tokens and `dispose()` the simulation. Test this period with no incoming messages in M1.
 - Pass host authority to the next connected player when the host disconnects or leaves; a returning former host does not reclaim it automatically. Never grant two sockets authority for one seat.
 - A deployment or runtime restart can discard the whole in-memory match. A changed room epoch or expired room returns the client to a fresh lobby with a visible explanation. Persisted recovery is out of scope; protocol-version equality alone does not imply the old match survived.
 
@@ -259,7 +277,7 @@ Measure actual UTF-8 serialized bytes per client per second, steady/burst snapsh
 ### M4: Complete Durable Object server (M)
 
 - Wrap `MatchHost` in the M1 server and route `/room/CODE` to it. Keep M1's validated 50 ms timer, fixed-step accumulator, catch-up bounds and overload behavior. Serialize each snapshot body once for all clients.
-- Implement seat/room grace periods, token invalidation, host transfer, explicit restart messages and disposal. An empty room stops only after its grace period; idle lobbies/results also need bounded lifetime and timer cleanup.
+- Implement seat/room grace periods, token invalidation, host transfer, explicit restart messages and disposal. An explicit final departure stops immediately; a disconnected-empty room stops after its grace period; idle lobbies/results also need bounded lifetime and timer cleanup.
 - Use exact permitted production/dev/Pages origins plus explicit localhost development origins, not a blanket `*.pages.dev` allowlist. Enforce eight-player/six-per-team limits, room-code format, allowed phase transitions, protocol/content versions, and bounded message/connection/room-creation rates. Origin checking is not seat authorization.
 - Repeat M1's load and quiet-room tests with the completed protocol and actual serializer, including late-join/full-state bursts and slow readers. Verify both Free/selected-plan limits and observable bandwidth; update the evidence and budgets if the prototype estimates were low.
 - **Done when:** two Node clients complete rounds through `wrangler dev` and the deployed server, the 4-client run and 8-client spot check pass, disconnect/reconnect and deliberate restart tests have the specified outcomes, and normal workloads do not cause unexpected room loss.
@@ -276,7 +294,7 @@ Measure actual UTF-8 serialized bytes per client per second, steady/burst snapsh
 
 **PR B — lobby and results:**
 
-- "Play with friends" creates a room with a copy-link button, or joins `?room=CODE`. Show loading, full/team-full, incompatible-build, reconnecting and room-reset states.
+- "Play with friends" opens a room browser with saved/random name, Auto/manual team and tank choices. Listings show players, map, bot mode, time and score. Select and Join an existing room; Create starts the selected map immediately, alone if humans-only is enabled. Share `?room=CODE` from the game menu. Show loading, full/team-full, incompatible-build, reconnecting and room-reset states.
 - Players choose team/kind in the lobby; the host picks map/difficulty and starts. Store display names locally. Enforce the same choices and limits on the server, including the bot-only HMMWV restriction.
 - Show kills/deaths per participant for the current round, keeping a departed participant's row separate if someone else takes that tank slot. Do not credit a new player with the previous player's counters. Multiplayer does not write single-player personal-best records. Host can start another round from the lobby.
 
@@ -330,11 +348,11 @@ Choose from the playtest results:
 
 ## Gameplay defaults and decisions still requiring evidence
 
-- **Players per room:** up to eight humans in a fixed 12-tank roster, six slots per team. Bots fill unoccupied slots. A reconnect reservation counts against both room and team capacity.
-- **Teams:** prefer the host's team until its six seats are occupied, then offer the other team. By default friends therefore play together against bots; choosing the other team gives player-versus-player. Players may choose any team with room in the lobby; no mid-round switching. Eight humans cannot all play on the same six-seat team.
+- **Players per room:** up to eight humans, six slots per team. New rooms default to humans-only; optional bots fill a 12-tank roster. A reconnect reservation counts against both room and team capacity.
+- **Teams:** Auto selects the side with fewer human seats, including reconnect reservations; ties choose Blue. Explicit team choices are honored subject to capacity. Players may change teams between rounds, with no mid-round switching. Eight humans cannot all play on the same six-seat team.
 - **Player bonus:** every human seat keeps the single-player 1.2× fire rate (`PLAYER_FIRE_RATE_MULTIPLIER`) in v1. In player-versus-player with uneven human counts the bonus compounds the larger human side's advantage. Collect team-balance feedback in M6 before changing it.
 - **Kinds:** players choose scout, balanced or heavy. HMMWV/TOW remains bot-only. A late join claiming a bot slot starts the chosen kind at a fresh respawn with normal protection; invalidate the previous life so its ordnance cannot earn XP for the newcomer. Reconnect to a reserved seat keeps its ongoing life and kind.
-- **Late join:** allowed if a non-reserved bot slot is available. Keep player scoreboard identity separate from tank-slot identity, so a newcomer does not inherit a departed player's kills/deaths. Team scores already earned stay intact.
+- **Late join:** allowed if a non-reserved human seat is available. Keep player scoreboard identity separate from tank-slot identity, so a newcomer does not inherit a departed player's kills/deaths. Team scores already earned stay intact.
 - **Host leaves:** pass authority to the next connected player in join order; reconnect does not preempt the new host. If nobody remains connected, select a host on the first valid return within the grace period.
 - **Difficulty:** in multiplayer, all fill-bot tanks use the chosen difficulty on either team. A bot temporarily driving a reserved player seat retains that seat's player balance. Single-player keeps its existing enemy-team difficulty rule and Solo tuning.
 - **Speed tuning:** multiplayer v1 uses the checked-in defaults; localStorage tuning stays single-player-only and per simulation. Exposing host speed controls is deferred.

@@ -169,7 +169,7 @@ export function combatMovement(tank: Tank, dx: number, dz: number, strafe: numbe
   return { x: (dz / d) * strafe, z: (-dx / d) * strafe };
 }
 
-const BOT_NAMES = [
+export const BOT_NAMES = [
   "IRON JACK",
   "SIDEWINDER",
   "NITRO",

@@ -196,12 +196,21 @@ export class NerdStats {
       [
         "Render",
         [
-          ["Backend", "WebGPU", "Native WebGPU graphics backend."],
           ["Draw calls / frame", info.drawCalls, "GPU draw calls issued per rendered frame."],
           [
             "Triangles / frame",
             info.triangles.toLocaleString(),
             "Triangles submitted per rendered frame.",
+          ],
+          [
+            "GPU geometries",
+            memory.geometries,
+            "Distinct geometry buffers currently uploaded to the GPU. Changes on map load, not per frame.",
+          ],
+          [
+            "GPU textures",
+            memory.textures,
+            "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
           ],
         ],
       ],
@@ -242,16 +251,6 @@ export class NerdStats {
             "Pixel ratio",
             view.renderer.getPixelRatio(),
             "Renderer resolution multiplier, capped from the display pixel ratio.",
-          ],
-          [
-            "GPU geometries",
-            memory.geometries,
-            "Distinct geometry buffers currently uploaded to the GPU. Changes on map load, not per frame.",
-          ],
-          [
-            "GPU textures",
-            memory.textures,
-            "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
           ],
         ],
       ],

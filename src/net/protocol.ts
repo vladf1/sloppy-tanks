@@ -71,6 +71,8 @@ export const joinReader = object({
   team: optional(team),
   token: optional(string(128, 16)),
   roomEpoch: optional(string(128, 1)),
+  create: optional(settingsReader),
+  existingRoom: optional(boolean),
 });
 export const playerReader = object<Player>({
   playerId: string(128, 1),

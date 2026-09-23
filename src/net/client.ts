@@ -22,20 +22,14 @@ import {
   type Control,
 } from "./protocol";
 import { record } from "./schema";
+import { browseRooms } from "./room-browser";
+import type { JoinChoice } from "./connection";
 
 const INPUT_INTERVAL_MS = 50;
 const MAX_ACTIONS = 8;
-export function startMultiplayer(root: HTMLElement): void {
+export async function startMultiplayer(root: HTMLElement): Promise<void> {
   const params = new URLSearchParams(location.search);
   let room = params.get("room")?.toUpperCase();
-  if (!room || !ROOM_CODE.test(room)) {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    room = [...crypto.getRandomValues(new Uint8Array(8))].map((n) => alphabet[n & 31]).join("");
-    const url = new URL(location.href);
-    url.searchParams.delete("multiplayer");
-    url.searchParams.set("room", room);
-    history.replaceState(null, "", url);
-  }
   const local = ["localhost", "127.0.0.1"].includes(location.hostname);
   const configured: unknown = import.meta.env.VITE_MULTIPLAYER_URL;
   const endpoint =
@@ -58,14 +52,24 @@ export function startMultiplayer(root: HTMLElement): void {
   ) {
     throw new Error("Invalid multiplayer server configuration");
   }
+  let selectedChoice: JoinChoice | undefined;
+  if (!room || !ROOM_CODE.test(room)) {
+    const selection = await browseRooms(root, address);
+    room = selection.room;
+    selectedChoice = selection.choice;
+    const url = new URL(location.href);
+    url.searchParams.delete("multiplayer");
+    url.searchParams.set("room", room);
+    history.replaceState(null, "", url);
+  }
   const mirror = new StateMirror();
   const timeline = new NetworkTimeline();
   let view: Presentation | undefined;
   let stats: NerdStats | undefined;
   let lastSnapshotMs = 0;
-  let snapshotBatches = 0;
+  let receivedUpdates = 0;
   let statsSampleMs = 0;
-  let statsSampleBatches = 0;
+  let statsSampleUpdates = 0;
   let appliedInput = 0;
   let audio: AudioSystem | undefined;
   let control: Control | undefined;
@@ -121,13 +125,19 @@ export function startMultiplayer(root: HTMLElement): void {
     lastResumeMs = performance.now();
     connection.send("resume");
   };
+  const join = (choice: JoinChoice) => {
+    audio ??= new AudioSystem();
+    audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
+    audio.start();
+    // Manual retries keep the original create/join intent after a connection error.
+    void connection.connect({
+      ...choice,
+      create: selectedChoice?.create,
+      existingRoom: selectedChoice?.existingRoom,
+    });
+  };
   const ui = new NetworkUI(root, room, {
-    join(choice) {
-      audio ??= new AudioSystem();
-      audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
-      audio.start();
-      void connection.connect(choice);
-    },
+    join,
     choose(choice) {
       connection.send("choose", { team: choice.team, kind: choice.kind });
     },
@@ -147,9 +157,10 @@ export function startMultiplayer(root: HTMLElement): void {
     leave() {
       connection.leave();
       const url = new URL(location.href);
-      for (const key of ["room", "multiplayer", "latency", "jitter", "server"]) {
+      for (const key of ["room", "latency", "jitter"]) {
         url.searchParams.delete(key);
       }
+      url.searchParams.set("multiplayer", "");
       location.assign(url);
     },
     ammo(weapon) {
@@ -216,10 +227,10 @@ export function startMultiplayer(root: HTMLElement): void {
             }
             const now = performance.now();
             const rate = statsSampleMs
-              ? ((snapshotBatches - statsSampleBatches) * 1000) / (now - statsSampleMs)
+              ? ((receivedUpdates - statsSampleUpdates) * 1000) / (now - statsSampleMs)
               : 0;
             statsSampleMs = now;
-            statsSampleBatches = snapshotBatches;
+            statsSampleUpdates = receivedUpdates;
             return {
               state: display,
               rows: [
@@ -229,9 +240,14 @@ export function startMultiplayer(root: HTMLElement): void {
                   "Measured round-trip time to the game server.",
                 ],
                 [
-                  "Snapshot rate",
+                  "Updates received",
+                  receivedUpdates,
+                  "Full-state messages and snapshot batches received during this page session. A batch can contain several simulation snapshots.",
+                ],
+                [
+                  "Update rate",
                   `${rate.toFixed(1)} /s`,
-                  "Received network batches per second, not rendered FPS.",
+                  "Full-state messages and snapshot batches received per second, not rendered FPS.",
                 ],
                 [
                   "Snapshot age",
@@ -240,9 +256,9 @@ export function startMultiplayer(root: HTMLElement): void {
                 ],
                 ["Server tick", mirror.tick, "Latest authoritative simulation tick received."],
                 [
-                  "Input sent / applied",
+                  "Input seq sent / ack",
                   `${seq} / ${appliedInput}`,
-                  "Latest local input sequence sent and the last sequence acknowledged by the server.",
+                  "Latest input sequence sent and latest input sequence the server confirms processing. These are sequence numbers, not received state updates.",
                 ],
                 [
                   "Connection",
@@ -350,6 +366,7 @@ export function startMultiplayer(root: HTMLElement): void {
         lastSnapshotMs = performance.now();
         appliedInput = 0;
         mirror.applyFull(message, { roomEpoch: connection.roomEpoch, roundId: connection.roundId });
+        receivedUpdates++;
         connection.observedTick = mirror.tick;
         requestedFull = false;
         clearInput();
@@ -364,10 +381,10 @@ export function startMultiplayer(root: HTMLElement): void {
       } else if (message.type === "snapshot") {
         appliedInput = ackReader.read(message.ack).inputSeq;
         lastSnapshotMs = performance.now();
-        snapshotBatches++;
         if (!Array.isArray(message.snapshots) || message.snapshots.length > 8) {
           throw new Error("Invalid frame batch");
         }
+        receivedUpdates++;
         for (const raw of message.snapshots) {
           const snapshot = record(raw);
           if (
@@ -507,6 +524,9 @@ export function startMultiplayer(root: HTMLElement): void {
   });
   window.addEventListener("pagehide", () => connection.stop(), { once: true });
   requestAnimationFrame(loop);
+  if (selectedChoice) {
+    join(selectedChoice);
+  }
   if (import.meta.env.DEV) {
     Object.assign(window, {
       sloppyMultiplayer: {

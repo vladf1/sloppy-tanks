@@ -2,9 +2,14 @@ import { DurableObject } from "cloudflare:workers";
 import { MatchHost } from "../src/net/match-host";
 import { HOST_INTERVAL_MS } from "../src/net/fixed-step-clock";
 import { MAX_CLIENT_MESSAGE_BYTES } from "../src/net/protocol";
+import type { RoomDirectory } from "./room-directory";
 
 const MAX_PENDING_CONNECTIONS = 16;
 const JOIN_TIMEOUT_MS = 5000;
+const DIRECTORY_HEARTBEAT_MS = 20_000;
+interface Env {
+  DIRECTORY: DurableObjectNamespace<RoomDirectory>;
+}
 interface SocketInfo {
   id: string;
   openedMs: number;
@@ -12,12 +17,16 @@ interface SocketInfo {
   windowMs: number;
   messages: number;
 }
-export class PlayerRoom extends DurableObject<Record<string, unknown>> {
+export class PlayerRoom extends DurableObject<Env> {
   private host?: MatchHost;
   private sockets = new Map<WebSocket, SocketInfo>();
   private byId = new Map<string, WebSocket>();
   private timer?: ReturnType<typeof setTimeout>;
-  constructor(ctx: DurableObjectState, env: Record<string, unknown>) {
+  private room = "";
+  private lastListedMs = 0;
+  private directoryDirty = false;
+  private directoryPublishing = false;
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     for (const socket of ctx.getWebSockets()) {
       try {
@@ -34,7 +43,8 @@ export class PlayerRoom extends DurableObject<Record<string, unknown>> {
       }
     }
   }
-  override fetch(): Response {
+  override fetch(request: Request): Response {
+    this.room = new URL(request.url).pathname.split("/").at(-1)!;
     if (this.sockets.size >= MAX_PENDING_CONNECTIONS)
       return new Response("Room connection limit", { status: 429 });
     if (!this.host || this.host.disposed) {
@@ -60,6 +70,7 @@ export class PlayerRoom extends DurableObject<Record<string, unknown>> {
             const socket = this.byId.get(connection);
             if (socket) this.drop(socket, code, reason);
           },
+          changed: () => this.publishDirectory(true),
         },
       );
     }
@@ -72,6 +83,38 @@ export class PlayerRoom extends DurableObject<Record<string, unknown>> {
     this.byId.set(id, socket);
     if (this.timer === undefined) this.schedule();
     return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  private publishDirectory(force = false): void {
+    if (!this.room || !this.host || !this.env.DIRECTORY) return;
+    const now = Date.now();
+    if (!force && now - this.lastListedMs < DIRECTORY_HEARTBEAT_MS) return;
+    this.lastListedMs = now;
+    this.directoryDirty = true;
+    if (this.directoryPublishing) return;
+    this.directoryPublishing = true;
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          // Coalesce lobby churn instead of appending a queue of stale listings.
+          while (this.directoryDirty && this.host) {
+            this.directoryDirty = false;
+            const entry = this.host.directoryEntry(this.room);
+            const response = await this.env.DIRECTORY.getByName("rooms").fetch(
+              "https://directory/rooms",
+              {
+                method: "PUT",
+                body: JSON.stringify(entry),
+              },
+            );
+            if (!response.ok) throw new Error("Room directory update failed");
+          }
+        } catch (error) {
+          console.error("Room listing unavailable", error);
+        } finally {
+          this.directoryPublishing = false;
+        }
+      })(),
+    );
   }
   override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
     const info = this.sockets.get(socket);
@@ -128,13 +171,13 @@ export class PlayerRoom extends DurableObject<Record<string, unknown>> {
           this.drop(socket, 1008, "Join timed out");
       try {
         this.host?.advance(now);
+        this.publishDirectory();
       } catch (error) {
         console.error("Room simulation failed", error);
         this.host?.dispose("simulation-error");
       }
       if (this.host && !this.host.disposed) this.schedule();
       else {
-        this.host = undefined;
         this.sockets.clear();
         this.byId.clear();
       }

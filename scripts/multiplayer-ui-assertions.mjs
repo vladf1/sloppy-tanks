@@ -15,7 +15,8 @@ export async function checkMultiplayerMenu(page) {
         const menu = document.querySelector(".network-menu");
         const bounds = menu.getBoundingClientRect();
         return {
-          rosterDisplay: getComputedStyle(document.querySelector("#network-roster")).display,
+          rosterDisplay: getComputedStyle(document.querySelector("#network-roster, #room-list"))
+            .display,
           hiddenControlsVisible: [...menu.querySelectorAll("[hidden]")].some(
             (node) => getComputedStyle(node).display !== "none",
           ),

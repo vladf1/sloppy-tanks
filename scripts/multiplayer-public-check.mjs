@@ -22,7 +22,15 @@ try {
   await first.goto(base);
   await first.locator("#multiplayer-entry").click();
   await first.locator("#join-room").waitFor();
-  const invite = first.url();
+  const inviteURL = new URL(first.url());
+  inviteURL.searchParams.delete("multiplayer");
+  inviteURL.searchParams.set(
+    "room",
+    [...crypto.getRandomValues(new Uint8Array(8))]
+      .map((n) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[n & 31])
+      .join(""),
+  );
+  const invite = inviteURL.href;
   for (const [index, page] of [
     first,
     await browser.newPage({ viewport: { width: 1200, height: 800 } }),
@@ -98,6 +106,11 @@ try {
       "Production diagnostics absent",
     );
     await c.page.screenshot({ path: `${output}/player-${index}.png` });
+    await c.page.locator("#nerd-stats button").click();
+    assert.match(await c.page.locator("#nerd-stats-details").innerText(), /Network/);
+    assert.match(await c.page.locator("#nerd-stats-details").innerText(), /RTT/);
+    await c.page.keyboard.press("n");
+    assert.equal(await c.page.locator("#nerd-stats-details").isVisible(), false);
   }
   await first.locator("#pause").click();
   await first.locator("#network-end").click();
@@ -107,7 +120,7 @@ try {
   assert.equal(await first.locator("#network-end").isVisible(), false);
   await first.screenshot({ path: `${output}/results.png` });
   await first.locator("#leave-room").click();
-  await first.locator("#start").waitFor();
+  await first.locator("#room-list").waitFor();
   const directory = await first.goto(new URL("test-pages.html", base).href);
   assert.ok(directory.ok());
   assert.ok((await first.locator('a[href*="tests/"]').count()) > 3);

@@ -77,6 +77,13 @@ Use `SLOPPY_URL` and `SLOPPY_SERVER` as for `check:multiplayer`.
 Set `SLOPPY_BASELINE_BUILD` to a saved pre-change build for emitted and actually
 requested raw/gzip asset comparisons. It serves its own build; no dev server needed.
 
+`node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
+names, responsive room listings, immediate creation on the selected map, Auto
+teams, late join, received-update stats, polling cleanup and empty-room removal.
+Use `SLOPPY_URL` for either the local Vite URL or the public dev site, and
+`SLOPPY_CHECK_LABEL=public` to keep separate evidence. Buttons and room selection
+use physical coordinate clicks in visible Chrome.
+
 `multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
 seats and viewer isolation. `npm run check:multiplayer` instead drives **two Chrome
 contexts through real WebSockets**: lobby, independent movement, fire, menus,

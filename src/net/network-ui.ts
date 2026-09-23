@@ -9,6 +9,7 @@ import type { Lobby } from "./protocol";
 import type { JoinChoice } from "./connection";
 import { playerKind, team } from "./scene-codec";
 import "./multiplayer.css";
+import { preferredPlayerName, rememberPlayerName } from "./player-name";
 
 export interface NetworkActions {
   join(choice: JoinChoice): void;
@@ -45,15 +46,9 @@ export class NetworkUI {
     this.canvas = root.querySelector("canvas")!;
     this.panel = root.querySelector("#overlay")!;
     this.panel.innerHTML =
-      '<section class="menu compact network-menu"><div class="eyebrow">PLAY WITH FRIENDS</div><h1>ROOM <span id="room-code"></span></h1><p id="network-message">Up to eight friends. Bots fill both teams.</p><div class="network-choices"><label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" placeholder="Tank driver" /></label><label>Team<select id="player-team"><option value="auto">Join host</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div id="host-settings" class="network-choices" hidden><label>Map<select id="room-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label>Bots<select id="room-difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label class="network-toggle"><input id="room-humans-only" type="checkbox" />Humans only (no bots)</label></div><div id="network-roster"></div><div id="network-scoreboard"></div><div class="network-actions"><button id="join-room" class="primary">JOIN ROOM</button><button id="start-match" class="primary" hidden>START BATTLE</button><button id="network-resume" class="primary" hidden>RESUME</button><button id="network-end" class="secondary" hidden>END BATTLE</button><button id="copy-room" class="secondary">COPY ROOM LINK</button><button id="leave-room" class="quiet">BACK TO SINGLE-PLAYER</button></div><label class="network-local" hidden>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label><label class="network-local" hidden>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label><p id="network-help" class="network-help">WASD / arrows to drive · Mouse to aim and fire · Right click for mines<br />Opening this menu lets a bot drive your tank. The match keeps going.</p></section>';
+      '<section class="menu compact network-menu"><div class="eyebrow">PLAY WITH FRIENDS</div><h1>ROOM <span id="room-code"></span></h1><p id="network-message">Up to eight friends. Bots fill both teams.</p><div class="network-choices"><label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" placeholder="Tank driver" /></label><label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div id="host-settings" class="network-choices" hidden><label>Map<select id="room-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label>Bots<select id="room-difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label class="network-toggle"><input id="room-humans-only" type="checkbox" />Humans only (no bots)</label></div><div id="network-roster"></div><div id="network-scoreboard"></div><div class="network-actions"><button id="join-room" class="primary">JOIN ROOM</button><button id="start-match" class="primary" hidden>START BATTLE</button><button id="network-resume" class="primary" hidden>RESUME</button><button id="network-end" class="secondary" hidden>END BATTLE</button><button id="copy-room" class="secondary">COPY ROOM LINK</button><button id="leave-room" class="quiet">BROWSE ROOMS</button></div><label class="network-local" hidden>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label><label class="network-local" hidden>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label><p id="network-help" class="network-help">WASD / arrows to drive · Mouse to aim and fire · Right click for mines<br />Opening this menu lets a bot drive your tank. The match keeps going.</p></section>';
     this.set("room-code", room);
-    let name = "";
-    try {
-      name = localStorage.getItem("sloppy-player-name") ?? "";
-    } catch {
-      /* Optional preference. */
-    }
-    this.input("player-name").value = name;
+    this.input("player-name").value = preferredPlayerName();
     this.input("network-volume").value = localStorage.getItem("sloppy-volume") ?? "0.6";
     this.on("join-room", () => {
       const choice = this.choice();
@@ -64,11 +59,7 @@ export class NetworkUI {
       }
       this.actions.join(choice);
       this.button("join-room").disabled = true;
-      try {
-        localStorage.setItem("sloppy-player-name", choice.name);
-      } catch {
-        /* Optional preference. */
-      }
+      rememberPlayerName(choice.name);
     });
     this.on("start-match", () => this.actions.start());
     this.on("network-end", () => this.actions.end());

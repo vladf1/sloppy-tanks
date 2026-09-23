@@ -73,18 +73,30 @@ npm run check:browser  # browser checks against a running dev server (set SLOPPY
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
 Multiplayer is available on the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer).
-Choose **Play with friends**, enter a name, choose a team and tank, then share
-**COPY ROOM LINK**. The host chooses the map and difficulty and starts the round.
-Up to eight people can join; by default bots fill the remaining six-versus-six seats.
-In that mode, opening the menu or hiding your tab gives your tank to a bot while everyone else
-keeps playing. Reconnect within 30 seconds to reclaim the same seat. The host can
-end a round, and results show a player scoreboard. Accounts and saved matches are
-not required; a server restart ends the current room.
+Choose **Play with friends** to browse open rooms. Your saved name is prefilled;
+first-time players get a random bot name they can edit. **Auto** picks the team
+with fewer human seats (including reconnect reservations). Choose a room and
+**Join**, or pick a level and **Create room** to start playing immediately.
+Friends can join later through the list or **COPY ROOM LINK** in the menu.
+Listings show human player counts, map, bot mode, round time and score.
 
-The host can check **Humans only (no bots)** before a round. Empty seats stay
-empty, and paused or disconnected players remain idle and vulnerable instead of
-handing control to a bot. Leaving or an expired reconnect reservation removes
-that player's tank. Uncheck it between rounds to restore bot-filled teams.
+New rooms default to **Humans only (no bots)**. Empty seats stay empty, and
+paused or disconnected players remain idle and vulnerable. Uncheck it when
+creating or between rounds to fill the six-versus-six teams with bots; bots
+also drive absent humans in that mode. Up to eight people can join, with six
+human seats per team. Reconnect within 30 seconds to reclaim the same seat.
+
+The last explicit departure removes the room and frees its simulation. An
+accidental disconnect hides an empty room from the list while retaining the
+30-second reconnect grace. The host can end a round or choose settings for the
+next round. Accounts and saved matches are not required; a server restart ends
+the current match.
+
+**Stats for nerds** is available during multiplayer battles: click the bottom-right
+button or press **N**. Network rows show RTT, received update count/rate, update
+age, server tick and input sequence sent/acknowledged. A received update is one
+full-state message or snapshot batch; an input acknowledgement confirms the
+server processed an input sequence. Render includes GPU geometries and textures.
 
 Single-player downloads no multiplayer code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.

@@ -552,3 +552,86 @@ test("resync skips events already included in its baseline and repeated rounds r
     h.host.dispose();
   }
 });
+
+test("Auto team balances human seats, honors explicit teams and excludes the player changing teams", () => {
+  const h = harness();
+  try {
+    h.join("alice", { team: 1 });
+    h.join("bob");
+    h.join("carol");
+    let players = h.latest("alice", "lobby").players;
+    assert.deepEqual(
+      players.map((player) => player.team),
+      [1, 0, 0],
+    );
+    h.action("carol", "choose", { kind: "balanced", team: 1 });
+    h.join("dave");
+    players = h.latest("alice", "lobby").players;
+    assert.deepEqual(
+      players.map((player) => player.team),
+      [1, 0, 1, 0],
+    );
+    h.action("alice", "choose", { kind: "balanced" });
+    assert.equal(h.latest("alice", "lobby").players[0].team, 1);
+  } finally {
+    h.host.dispose();
+  }
+});
+test("create starts a selected humans-only map immediately and subsequent players join the running battle", () => {
+  const h = harness();
+  try {
+    const create = { mapMode: "quarry", difficulty: "normal", humansOnly: true };
+    h.join("alice", { create });
+    assert.equal(h.host.phase, "playing");
+    assert.equal(h.host.settings.mapMode, "quarry");
+    assert.equal(h.host.simulation!.tanks.length, 1);
+    assert.equal(h.latest("alice", "full").roundId, 1);
+    h.join("collision", { create });
+    assert.equal(h.latest("collision", "error").code, "room-exists");
+    h.join("bob", { existingRoom: true });
+    assert.equal(h.host.simulation!.tanks.length, 2);
+    assert.equal(h.latest("bob", "full").roundId, 1);
+    assert.deepEqual(
+      h.host.simulation!.tanks.map((tank) => tank.team),
+      [0, 1],
+    );
+    assert.deepEqual(h.host.directoryEntry("ABCDEFGH"), {
+      room: "ABCDEFGH",
+      contentVersion: CONTENT_VERSION,
+      ...create,
+      players: 2,
+      reserved: 2,
+      phase: "playing",
+      roundId: 1,
+      time: 300,
+      scores: [0, 0],
+    });
+    h.action("alice", "leave");
+    assert.equal(h.host.disposed, false);
+    h.action("bob", "leave");
+    assert.equal(h.host.disposed, true);
+    assert.equal(h.host.simulation, undefined);
+    assert.equal(h.host.directoryEntry("ABCDEFGH").players, 0);
+  } finally {
+    h.host.dispose();
+  }
+});
+test("a stale directory selection cannot recreate an empty room; a dropped connection retains its grace period", () => {
+  const h = harness();
+  try {
+    h.join("stale", { existingRoom: true });
+    assert.equal(h.latest("stale", "error").code, "room-gone");
+    assert.equal(h.host.connections, 0);
+    h.join("alice", { create: { mapMode: "harbor", difficulty: "easy", humansOnly: true } });
+    const token = h.latest("alice", "welcome").token;
+    h.host.disconnect("alice", 0);
+    assert.equal(h.host.disposed, false);
+    assert.equal(h.host.directoryEntry("ABCDEFGH").players, 0);
+    assert.equal(h.host.directoryEntry("ABCDEFGH").reserved, 1);
+    h.join("back", { token, roomEpoch: "test-room", existingRoom: true });
+    assert.equal(h.host.connections, 1);
+    assert.equal(h.host.roundId, 1);
+  } finally {
+    h.host.dispose();
+  }
+});

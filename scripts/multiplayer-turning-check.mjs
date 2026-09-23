@@ -11,7 +11,12 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const url = new URL(process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/");
-  url.searchParams.set("multiplayer", "");
+  url.searchParams.set(
+    "room",
+    [...crypto.getRandomValues(new Uint8Array(8))]
+      .map((n) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[n & 31])
+      .join(""),
+  );
   if (process.env.SLOPPY_LATENCY) url.searchParams.set("latency", process.env.SLOPPY_LATENCY);
   await page.goto(url.href);
   await page.locator("#player-name").fill("Turning check");
