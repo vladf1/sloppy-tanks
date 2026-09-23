@@ -6,9 +6,10 @@ import {
   type RenderCover,
   type RenderFragment,
   type RenderRotation,
+  type RenderShot,
 } from "../game/render-state";
 import type { Simulation } from "../game/simulation";
-import type { SimEvent, Shot } from "../game/types";
+import type { SimEvent } from "../game/types";
 
 export type HullPolicy = "latest" | "smooth" | "extrapolate";
 export interface RenderSample {
@@ -60,11 +61,11 @@ export class RenderTimeline {
   private tankCache = new Map<number, Mutable<RenderTank>>();
   private coverCache = new Map<number, Mutable<RenderCover>>();
   private fragmentCache = new Map<number, Mutable<RenderFragment>>();
-  private shotCache = new Map<number, Shot>();
+  private shotCache = new Map<number, RenderShot>();
   private tanks: RenderTank[] = [];
   private covers: RenderCover[] = [];
   private fragments: RenderFragment[] = [];
-  private shots: Shot[] = [];
+  private shots: RenderShot[] = [];
   private displayedEventTime = -Infinity;
   private local?: Mutable<RenderTank>;
   private output?: RenderState;

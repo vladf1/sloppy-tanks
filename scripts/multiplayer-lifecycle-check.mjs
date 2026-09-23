@@ -27,7 +27,6 @@ async function connect(name, previous, code = room) {
         ws.send(
           JSON.stringify({
             type,
-            roomEpoch: client.welcome?.roomEpoch,
             roundId: client.lobby?.roundId,
             ...fields,
           }),

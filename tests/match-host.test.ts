@@ -51,7 +51,7 @@ function harness() {
       ...extra,
     });
   const action = (connection: string, type: string, extra: object = {}) =>
-    send(connection, { type, roomEpoch: host.options.roomEpoch, roundId: host.roundId, ...extra });
+    send(connection, { type, roundId: host.roundId, ...extra });
   const latest = <T extends ServerMessage["type"]>(connection: string, type: T) =>
     messages
       .get(connection)!
@@ -212,7 +212,7 @@ for (const mapMode of ["village", "harbor", "quarry"] as const) {
             Buffer.byteLength(JSON.stringify(snap)) < 128_000,
             "Burst snapshot wire budget",
           );
-          removed ||= snap.removed.length > 0;
+          removed ||= !!snap.removed;
           assert.ok(mirror.applySnapshot(JSON.parse(JSON.stringify(snap))));
           assert.deepEqual(mirror.state, scene);
           assert.deepEqual(mirror.render(sim.human.id), projectScene(scene, sim.human.id));
@@ -231,6 +231,78 @@ for (const mapMode of ["village", "harbor", "quarry"] as const) {
     },
   );
 }
+test("frames omit identity and unchanged data, and scenes carry only presentation fields", () => {
+  const sim = createMultiplayerSimulation(
+    4242,
+    [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
+    { mapMode: "village" },
+  );
+  try {
+    sim.start();
+    sim.stepWith(new Map([[sim.human.id, { ...idleCommand(), fire: true }]]));
+    const scene = captureScene(sim);
+    const stream = new StateStream({ roomEpoch: "room", roundId: 1 });
+    stream.full(scene, 0, 0);
+    assert.deepEqual(Object.keys(stream.snapshot(scene, 1, [], [])), ["seq", "tick", "elapsed"]);
+    const { entities } = scene;
+    assert.ok(entities.shots.length && entities.covers.some((cover) => cover.motion));
+    for (const shot of entities.shots)
+      assert.deepEqual(
+        Object.keys(shot).filter(
+          (field) =>
+            !["id", "x", "z", "y", "visualY", "vx", "vz", "weapon", "team"].includes(field),
+        ),
+        [],
+      );
+    for (const cover of entities.covers)
+      if (cover.motion)
+        assert.deepEqual(Object.keys(cover.motion), ["originX", "originZ", "w", "d"]);
+    assert.ok(entities.tanks.every((tank) => !("previous" in tank)));
+    const viewer = projectScene(scene, sim.human.id).viewer;
+    assert.deepEqual(viewer.previous, { x: viewer.position.x, z: viewer.position.z });
+  } finally {
+    sim.dispose();
+  }
+});
+test("a shell in straight flight is one trace segment per frame", () => {
+  const h = harness();
+  try {
+    h.join("alice");
+    h.action("alice", "start");
+    const sim = h.host.simulation!;
+    for (const cover of sim.covers) if (cover.body.isValid()) sim.world.removeRigidBody(cover.body);
+    sim.covers = [];
+    sim.movableCovers = [];
+    sim.coverByCollider.clear();
+    sim.nav.rebuild([]);
+    sim.human.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+    h.action("alice", "input", {
+      controlEpoch: h.latest("alice", "control").controlEpoch,
+      seq: 1,
+      observedTick: h.host.tick,
+      moveX: 0,
+      moveZ: 0,
+      aim: { angle: 0 },
+      fire: true,
+    });
+    h.advance();
+    h.advance();
+    const traces = h.latest("alice", "snapshot").snapshots.flatMap((snap) => snap.traces ?? []);
+    const flying = sim.shots.filter((shot) => shot.owner === sim.human.id);
+    assert.ok(flying.length);
+    for (const shot of flying) {
+      const segments = traces.filter((trace) => trace.shot.id === shot.id);
+      assert.equal(segments.length, 1);
+      assert.equal(segments[0].endTick - segments[0].tick, 3);
+      assert.deepEqual(segments[0].end, {
+        x: Math.round(shot.x * 1000) / 1000,
+        z: Math.round(shot.z * 1000) / 1000,
+      });
+    }
+  } finally {
+    h.host.dispose();
+  }
+});
 test("mirror rejects corrupt or skipped deltas atomically and a full baseline repairs it", () => {
   const sim = createMultiplayerSimulation(4242, []);
   try {
@@ -243,7 +315,7 @@ test("mirror rejects corrupt or skipped deltas atomically and a full baseline re
     const before = JSON.stringify(mirror.state),
       bad: Snapshot = {
         ...stream.snapshot(state, 3, [], []),
-        updates: [{ kind: "tanks", id: sim.tanks[0].id, set: { hp: "bad" } }],
+        updates: { tanks: { [sim.tanks[0].id]: { hp: "bad" } } },
       };
     assert.equal(mirror.applySnapshot(bad), undefined);
     assert.equal(JSON.stringify(mirror.state), before);
@@ -479,13 +551,15 @@ test("real host messages apply to mirrors and projectile traces survive an impac
     assert.deepEqual(mirror.state, captureScene(sim));
     assert.ok(
       snaps
-        .flatMap((snap) => snap.traces)
+        .flatMap((snap) => snap.traces ?? [])
         .some(
           (trace) =>
-            trace.shot.owner === tank.id && !sim.shots.some((shot) => shot.id === trace.shot.id),
+            trace.shot.team === tank.team && !sim.shots.some((shot) => shot.id === trace.shot.id),
         ),
     );
-    assert.ok(snaps.flatMap((snap) => snap.events).some((event) => event.event.type === "impact"));
+    assert.ok(
+      snaps.flatMap((snap) => snap.events ?? []).some((event) => event.event.type === "impact"),
+    );
   } finally {
     h.host.dispose();
   }

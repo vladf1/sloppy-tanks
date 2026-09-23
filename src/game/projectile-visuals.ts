@@ -3,7 +3,8 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { PROJECTILE_ORDER } from "./ammunition";
 import { TEAM_COLORS, WEAPONS } from "./data";
-import type { Shot, Weapon } from "./types";
+import type { Weapon } from "./types";
+import type { RenderShot } from "./render-state";
 
 const CAPACITY = 600;
 // Preserve the original shell scale: rocket body is ~0.94 m, standard ~0.70 m.
@@ -204,7 +205,7 @@ export class ProjectileVisuals {
       mesh.count = 0;
     }
   }
-  update(shots: readonly Shot[], time: number): void {
+  update(shots: readonly RenderShot[], time: number): void {
     this.reset();
     const pose = this.pose;
     for (let i = 0; i < Math.min(shots.length, CAPACITY); i++) {

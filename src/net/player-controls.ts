@@ -1,5 +1,6 @@
 import { idleCommand, type Tank, type VehicleCommand, type Weapon } from "../game/types";
 import { setDriver } from "./multiplayer-simulation";
+import { PRECISION } from "./scene-codec";
 
 export const INPUT_LEASE_MS = 250;
 export const BOT_TAKEOVER_MS = 5000;
@@ -26,10 +27,38 @@ function object(value: unknown): value is Record<string, unknown> {
 function finite(value: unknown, bound: number): value is number {
   return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= bound;
 }
-function validInput(value: unknown): value is ControlInput {
-  if (!object(value) || !object(value.aim) || !Array.isArray(value.actions)) {
+function rounded(value: number, scale: number): number {
+  return Math.round(value * scale) / scale || 0;
+}
+/** Wire form of one input: rounded like snapshots, with idle defaults omitted. */
+export function encodeInput(input: ControlInput): Record<string, unknown> {
+  const { aim, fire, actions, ...rest } = input;
+  const wire: Record<string, unknown> = {
+    ...rest,
+    moveX: rounded(input.moveX, PRECISION.value),
+    moveZ: rounded(input.moveZ, PRECISION.value),
+    aim:
+      "angle" in aim
+        ? {
+            angle: Math.max(-Math.PI, Math.min(Math.PI, rounded(aim.angle, PRECISION.rotation))),
+          }
+        : { x: rounded(aim.x, PRECISION.position), z: rounded(aim.z, PRECISION.position) },
+  };
+  if (fire) {
+    wire.fire = true;
+  }
+  if (actions.length) {
+    wire.actions = actions;
+  }
+  return wire;
+}
+/** Omitted fire/actions mean "not firing" and "no one-shot actions". */
+type WireInput = Omit<ControlInput, "fire" | "actions"> & { fire?: boolean; actions?: Action[] };
+function validInput(value: unknown): value is WireInput {
+  if (!object(value) || !object(value.aim)) {
     return false;
   }
+  const actions = value.actions ?? [];
   const aim = value.aim;
   return (
     Number.isSafeInteger(value.controlEpoch) &&
@@ -37,13 +66,14 @@ function validInput(value: unknown): value is ControlInput {
     Number.isSafeInteger(value.observedTick) &&
     finite(value.moveX, 1) &&
     finite(value.moveZ, 1) &&
-    typeof value.fire === "boolean" &&
+    typeof (value.fire ?? false) === "boolean" &&
     ((Object.keys(aim).length === 1 && finite(aim.angle, Math.PI)) ||
       (Object.keys(aim).length === 2 &&
         finite(aim.x, MAX_AIM_COORDINATE) &&
         finite(aim.z, MAX_AIM_COORDINATE))) &&
-    value.actions.length <= MAX_QUEUED_ACTIONS &&
-    value.actions.every(
+    Array.isArray(actions) &&
+    actions.length <= MAX_QUEUED_ACTIONS &&
+    actions.every(
       (action) =>
         object(action) &&
         ((action.type === "mine" && Object.keys(action).length === 1) ||
@@ -93,22 +123,23 @@ export class PlayerControls {
       return false;
     }
     this.expireActions(nowMs);
+    if (!validInput(value)) {
+      return false;
+    }
+    const actions = value.actions ?? [];
     if (
-      !validInput(value) ||
       value.controlEpoch !== this.controlEpoch ||
       value.seq <= this.lastSeq ||
       value.observedTick < 0 ||
       value.observedTick > serverTick ||
       serverTick - value.observedTick > MAX_INPUT_LAG_TICKS ||
-      this.actions.length + value.actions.length > MAX_QUEUED_ACTIONS
+      this.actions.length + actions.length > MAX_QUEUED_ACTIONS
     ) {
       return false;
     }
     // Do not retain caller-owned mutable message objects.
-    this.input = { ...value, aim: { ...value.aim }, actions: [] };
-    this.actions.push(
-      ...value.actions.map((action) => ({ action: { ...action }, receivedMs: nowMs })),
-    );
+    this.input = { ...value, aim: { ...value.aim }, fire: value.fire ?? false, actions: [] };
+    this.actions.push(...actions.map((action) => ({ action: { ...action }, receivedMs: nowMs })));
     this.lastSeq = value.seq;
     this.lastReceivedMs = nowMs;
     return true;

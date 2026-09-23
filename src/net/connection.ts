@@ -161,7 +161,7 @@ export class Connection {
         return;
       }
       if (this.connected) {
-        this.send("ping", { t: now, observedTick: this.observedTick });
+        this.send("ping", { t: Math.round(now), observedTick: this.observedTick });
       }
     }, 1000);
   }
@@ -225,7 +225,7 @@ export class Connection {
     }
   }
   send(type: string, fields: object = {}): boolean {
-    return this.raw({ type, roomEpoch: this.roomEpoch, roundId: this.roundId, ...fields });
+    return this.raw({ type, roundId: this.roundId, ...fields });
   }
   settings(value: RoomSettings): void {
     this.send("settings", value);

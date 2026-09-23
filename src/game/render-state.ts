@@ -88,10 +88,17 @@ export type RenderTank = Readonly<
   }
 >;
 export type RenderCover = Readonly<
-  Pick<Cover, (typeof COVER_FIELDS)[number]> & {
+  Pick<Cover, Exclude<(typeof COVER_FIELDS)[number], "motion">> & {
+    /** Original footprint of movable cover; its navigation bookkeeping stays in the simulation. */
+    motion?: Pick<NonNullable<Cover["motion"]>, "originX" | "originZ" | "w" | "d">;
     position: RenderPosition;
     rotation: RenderRotation;
   }
+>;
+/** What presentation draws; ownership, damage and contact bookkeeping stay authoritative. */
+export type RenderShot = Pick<
+  Shot,
+  "id" | "x" | "z" | "y" | "visualY" | "vx" | "vz" | "weapon" | "team"
 >;
 export type RenderFragment = Readonly<
   Pick<Fragment, (typeof FRAGMENT_FIELDS)[number]> & {
@@ -107,7 +114,7 @@ export interface RenderState {
   readonly tanks: readonly RenderTank[];
   readonly covers: readonly RenderCover[];
   readonly fragments: readonly RenderFragment[];
-  readonly shots: readonly Shot[];
+  readonly shots: readonly RenderShot[];
   readonly mines: readonly Mine[];
   readonly pickups: readonly Pickup[];
   readonly elapsed: number;

@@ -88,10 +88,11 @@ class Player {
           this.snapshotBytes.push(raw.length);
           for (const snap of m.snapshots) {
             assert.ok(this.mirror.applySnapshot(snap), "Contiguous valid snapshots");
-            this.traces += snap.traces.length;
-            this.events += snap.events.length;
-            this.deaths += snap.events.filter((e) => e.event.type === "death").length;
-            this.respawns += snap.events.filter((e) => e.event.type === "respawn").length;
+            const events = snap.events ?? [];
+            this.traces += snap.traces?.length ?? 0;
+            this.events += events.length;
+            this.deaths += events.filter((e) => e.event.type === "death").length;
+            this.respawns += events.filter((e) => e.event.type === "respawn").length;
           }
         }
         if (m.type === "pong") this.rtts.push(Date.now() - m.t);
@@ -150,7 +151,6 @@ class Player {
       this.socket.send(
         JSON.stringify({
           type,
-          roomEpoch: this.welcome?.roomEpoch,
           roundId: this.lobby?.roundId,
           ...fields,
         }),

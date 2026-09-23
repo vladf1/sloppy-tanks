@@ -32,7 +32,7 @@ page.on("websocket", (socket) => {
     if (message.type === "control") control = message;
     if (message.type === "full") mirror.applyFull(message, lobby);
     if (message.type === "snapshot") {
-      ack = message.ack.inputSeq;
+      ack = message.ack;
       for (const snapshot of message.snapshots) mirror.applySnapshot(snapshot);
     }
     if (message.type === "error") errors.push(message.message);
@@ -104,7 +104,7 @@ try {
     inputs.slice(aimStart).filter((input) => input.fire).length >= 5,
     "Held fire is renewed before its lease expires",
   );
-  assert.equal(inputs.at(-1).fire, false, "Fire release reaches the server");
+  assert.ok(!inputs.at(-1).fire, "Fire release reaches the server");
 
   const actionStart = inputs.length;
   await page.mouse.click(400, 300, { button: "right" });
@@ -112,7 +112,7 @@ try {
   assert.equal(
     inputs
       .slice(actionStart)
-      .flatMap((input) => input.actions)
+      .flatMap((input) => input.actions ?? [])
       .filter((action) => action.type === "mine").length,
     1,
     "An idle mine click is sent once",

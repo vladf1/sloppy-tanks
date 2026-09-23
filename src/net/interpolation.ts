@@ -1,5 +1,5 @@
-import type { RenderState } from "../game/render-state";
-import type { SimEvent, Shot } from "../game/types";
+import type { RenderShot, RenderState } from "../game/render-state";
+import type { SimEvent } from "../game/types";
 import type { TimedEvent, ShotTrace } from "./replication";
 import { RenderTimeline } from "./render-timeline";
 const DISPLAY_DELAY_SECONDS = 0.1;
@@ -50,7 +50,7 @@ export class NetworkTimeline {
     while (this.events.length && this.events[0].tick <= this.displayTick) {
       events.push(this.events.shift()!.event);
     }
-    const shots = new Map<number, Shot>();
+    const shots = new Map<number, RenderShot>();
     const traced = new Set(this.traces.map((trace) => trace.shot.id));
     for (const shot of result.state.shots) {
       if (!traced.has(shot.id) || this.displayTick === this.newestTick) {

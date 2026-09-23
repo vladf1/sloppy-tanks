@@ -150,8 +150,9 @@ export class MatchHost {
       if (++client.count > MAX_MESSAGES_PER_SECOND) {
         throw new Error("Message rate exceeded");
       }
+      // A connection only ever belongs to this room instance, so messages name just the round.
       if (message.type === "ping") {
-        if (message.roomEpoch !== this.options.roomEpoch || message.roundId !== this.roundId) {
+        if (message.roundId !== this.roundId) {
           return;
         }
         const tick = id.read(message.observedTick);
@@ -164,7 +165,7 @@ export class MatchHost {
         this.send(connection, { type: "pong", t, tick: this.tick });
         return;
       }
-      if (message.roomEpoch !== this.options.roomEpoch || message.roundId !== this.roundId) {
+      if (message.roundId !== this.roundId) {
         return;
       }
       client.lastSeenMs = nowMs;
@@ -439,19 +440,36 @@ export class MatchHost {
       if (seconds <= 0) {
         return;
       }
-      const endTick = this.tick - 1 + (offset + seconds) / STEP;
-      this.traces.push(
-        rounded({
-          tick: this.tick - 1 + offset / STEP,
-          endTick,
-          shot: shotReader.read({
-            ...shot,
-            x: shot.x - shot.vx * seconds,
-            z: shot.z - shot.vz * seconds,
-          }),
-          end: { x: shot.x, z: shot.z },
+      const trace = rounded({
+        tick: this.tick - 1 + offset / STEP,
+        endTick: this.tick - 1 + (offset + seconds) / STEP,
+        shot: shotReader.read({
+          ...shot,
+          x: shot.x - shot.vx * seconds,
+          z: shot.z - shot.vz * seconds,
         }),
-      );
+        end: { x: shot.x, z: shot.z },
+      });
+      // Straight flight is linear, so consecutive ticks share one segment until a bounce,
+      // steering or height change starts a new one.
+      let previous: ShotTrace | undefined;
+      for (let i = this.traces.length - 1; i >= 0 && !previous; i--) {
+        if (this.traces[i].shot.id === shot.id) {
+          previous = this.traces[i];
+        }
+      }
+      if (
+        previous?.endTick === trace.tick &&
+        previous.shot.vx === trace.shot.vx &&
+        previous.shot.vz === trace.shot.vz &&
+        previous.shot.y === trace.shot.y &&
+        previous.shot.visualY === trace.shot.visualY
+      ) {
+        previous.endTick = trace.endTick;
+        previous.end = trace.end;
+        return;
+      }
+      this.traces.push(trace);
     };
     for (const seat of this.seats) {
       const tank = this.simulation.tanks.find((tank) => tank.playerId === seat.player.playerId)!;
@@ -585,17 +603,14 @@ export class MatchHost {
     }
     const body = JSON.stringify(this.frames);
     this.frames = [];
+    const head = '{"type":"snapshot","roundId":' + this.roundId + ',"ack":';
     for (const [connection, client] of this.clients) {
       // Hidden/menu clients receive a fresh baseline on resume, not an accumulating stream.
       if (client.seat.suspended) {
         continue;
       }
-      const controls = client.seat.controls;
-      const ack = { controlEpoch: controls?.controlEpoch ?? 0, ...controls?.ack };
-      this.transport.send(
-        connection,
-        '{"type":"snapshot","ack":' + JSON.stringify(ack) + ',"snapshots":' + body + "}",
-      );
+      const ack = client.seat.controls?.ack.inputSeq ?? 0;
+      this.transport.send(connection, head + ack + ',"snapshots":' + body + "}");
     }
   }
   private captureFrame(): void {

@@ -8,21 +8,14 @@ import { AMMO_ORDER, hasAmmo } from "../game/ammunition";
 import { CAMERA } from "../game/view-settings";
 import type { RenderState } from "../game/render-state";
 import type { Weapon } from "../game/types";
-import type { ControlInput } from "./player-controls";
+import { encodeInput, type ControlInput } from "./player-controls";
 import { InputCadence } from "./input-cadence";
 import { Connection } from "./connection";
 import { StateMirror } from "./replication";
 import { NetworkTimeline } from "./interpolation";
 import { NetworkUI } from "./network-ui";
-import {
-  ROOM_CODE,
-  lobbyReader,
-  controlReader,
-  ackReader,
-  settingsReader,
-  type Control,
-} from "./protocol";
-import { record } from "./schema";
+import { ROOM_CODE, lobbyReader, controlReader, settingsReader, type Control } from "./protocol";
+import { id } from "./schema";
 import { browseRooms } from "./room-browser";
 import type { JoinChoice } from "./connection";
 
@@ -379,20 +372,16 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
           ui.canvas.focus();
         }
       } else if (message.type === "snapshot") {
-        appliedInput = ackReader.read(message.ack).inputSeq;
+        appliedInput = id.read(message.ack);
         lastSnapshotMs = performance.now();
         if (!Array.isArray(message.snapshots) || message.snapshots.length > 8) {
           throw new Error("Invalid frame batch");
         }
         receivedUpdates++;
-        for (const raw of message.snapshots) {
-          const snapshot = record(raw);
-          if (
-            snapshot.roomEpoch !== connection.roomEpoch ||
-            snapshot.roundId !== connection.roundId
-          ) {
-            continue;
-          }
+        if (message.roundId !== connection.roundId) {
+          return;
+        }
+        for (const snapshot of message.snapshots) {
           const result = mirror.applySnapshot(snapshot);
           if (!result) {
             requestFull();
@@ -474,11 +463,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
       return;
     }
     if (
-      connection.send("input", {
-        ...input,
-        seq: seq + 1,
-        observedTick: mirror.tick,
-      })
+      connection.send("input", encodeInput({ ...input, seq: seq + 1, observedTick: mirror.tick }))
     ) {
       seq++;
       inputCadence.sent(input, now);

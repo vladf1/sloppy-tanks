@@ -49,11 +49,6 @@ export interface Control extends Identity {
   controlEpoch: number;
   driver: "human" | "bot" | "idle";
 }
-export interface Ack {
-  controlEpoch: number;
-  inputSeq: number;
-  appliedTick: number;
-}
 export type ServerMessage =
   | {
       type: "welcome";
@@ -68,11 +63,13 @@ export type ServerMessage =
   | Lobby
   | Control
   | FullState
-  | { type: "snapshot"; ack: Ack; snapshots: Snapshot[] }
+  /** ack is the latest input sequence the server applied for this seat. */
+  | { type: "snapshot"; roundId: number; ack: number; snapshots: Snapshot[] }
   | { type: "pong"; t: number; tick: number }
   | { type: "error"; code: string; message: string; fatal?: boolean }
   | { type: "room-reset"; roomEpoch: string; reason: string };
-export type InputMessage = ControlInput & Identity & { type: "input" };
+/** Client messages name only the round; the socket already belongs to one room instance. */
+export type InputMessage = ControlInput & { type: "input"; roundId: number };
 export const joinReader = object({
   version: id,
   contentVersion: string(128, 1),
@@ -114,4 +111,3 @@ export const controlReader = object<Control>({
   controlEpoch: id,
   driver: enumeration("human", "bot", "idle"),
 });
-export const ackReader = object<Ack>({ controlEpoch: id, inputSeq: id, appliedTick: id });

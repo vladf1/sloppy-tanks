@@ -4,9 +4,10 @@ import {
   type RenderTank,
   type RenderCover,
   type RenderFragment,
+  type RenderShot,
 } from "../game/render-state";
 import type { Simulation } from "../game/simulation";
-import type { Match, Shot, Mine, Pickup, SimEvent } from "../game/types";
+import type { Match, Mine, Pickup, SimEvent } from "../game/types";
 import {
   array,
   boolean,
@@ -22,15 +23,17 @@ import {
 
 export const ENTITY_TYPES = ["tanks", "covers", "fragments", "shots", "mines", "pickups"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
+/** Clients interpolate between snapshots, so the server's previous physics pose stays local. */
+export type WireTank = Omit<RenderTank, "previous">;
 export type WireCover = Omit<RenderCover, "hp" | "maxHp"> & {
   hp: number | null;
   maxHp: number | null;
 };
 export interface Entities {
-  tanks: RenderTank[];
+  tanks: WireTank[];
   covers: WireCover[];
   fragments: RenderFragment[];
-  shots: Shot[];
+  shots: RenderShot[];
   mines: Mine[];
   pickups: Pickup[];
 }
@@ -94,7 +97,7 @@ const part = object({
   damageSeed: number(-2147483648, 4294967295, true),
   marks: array(mark, 32),
 });
-export const tankReader = object<RenderTank>({
+export const tankReader = object<WireTank>({
   id,
   life: id,
   name: string(64),
@@ -102,7 +105,6 @@ export const tankReader = object<RenderTank>({
   team,
   human: boolean,
   alive: boolean,
-  previous: point,
   position: pos,
   velocity: pos,
   heading: n,
@@ -146,9 +148,7 @@ export const coverReader = object<WireCover>({
   timberJoin: optional(
     object({ openMin: optional(boolean), openMax: optional(boolean), post: optional(boolean) }),
   ),
-  motion: optional(
-    object({ originX: n, originZ: n, w: n, d: n, x: n, z: n, navW: n, navD: n, checkAt: n }),
-  ),
+  motion: optional(object({ originX: n, originZ: n, w: n, d: n })),
 });
 export const fragmentReader = object<RenderFragment>({
   id,
@@ -183,27 +183,16 @@ export const fragmentReader = object<RenderFragment>({
   part: optional(enumeration("intact", "hull", "turret", "turret-barrel", "barrel")),
   team: optional(team),
 });
-export const shotReader = object<Shot>({
+export const shotReader = object<RenderShot>({
   id,
   x: n,
   z: n,
   y: optional(n),
   visualY: optional(n),
-  owner: id,
-  ownerLife: optional(id),
   team,
   vx: n,
   vz: n,
-  damage: n,
-  bounces: id,
-  life: n,
   weapon,
-  piercing: id,
-  targetId: optional(id),
-  targetLife: optional(id),
-  recapHit: optional(boolean),
-  piercedShot: optional(id),
-  laserCheckedBy: optional(array(id, 12)),
 });
 export const mineReader = object<Mine>({
   id,
@@ -412,7 +401,11 @@ export function captureScene(simulation: Simulation): Scene {
   );
 }
 export function projectScene(scene: Scene, viewerId: number): RenderState {
-  const viewer = scene.entities.tanks.find((tank) => tank.id === viewerId);
+  const tanks = scene.entities.tanks.map((tank) => ({
+    ...tank,
+    previous: { x: tank.position.x, z: tank.position.z },
+  }));
+  const viewer = tanks.find((tank) => tank.id === viewerId);
   if (!viewer) {
     throw new Error("Missing viewer");
   }
@@ -431,6 +424,7 @@ export function projectScene(scene: Scene, viewerId: number): RenderState {
   };
   return {
     ...scene.entities,
+    tanks,
     covers: scene.entities.covers.map((cover) =>
       normalized({ ...cover, hp: cover.hp ?? Infinity, maxHp: cover.maxHp ?? Infinity }),
     ),

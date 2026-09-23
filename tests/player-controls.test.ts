@@ -2,7 +2,7 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
-import { PlayerControls, type ControlInput } from "../src/net/player-controls";
+import { PlayerControls, encodeInput, type ControlInput } from "../src/net/player-controls";
 before(async () => {
   await RAPIER.init();
 });
@@ -232,6 +232,30 @@ test("human-only suspension and input timeout never enable AI, and resume clears
     assert.equal(controls.command(1, 100)?.mine, false);
     controls.command(300, 5100);
     assert.equal(tank.driver, "idle", "silent human-only seats never hand control to AI");
+  } finally {
+    sim.dispose();
+  }
+});
+test("wire input is rounded, omits idle defaults, and is accepted as the same command", () => {
+  const { sim, controls, input } = setup();
+  try {
+    const idle = encodeInput(
+      input(1, { moveX: 0, fire: false, aim: { x: 30.000_400_1, z: -40.123_456_7 } }),
+    );
+    assert.equal("fire" in idle, false);
+    assert.equal("actions" in idle, false);
+    assert.deepEqual(idle.aim, { x: 30, z: -40.123 });
+    assert.equal(controls.accept(JSON.parse(JSON.stringify(idle)), 0, 0), true);
+    assert.equal(controls.command(1, 0)?.fire, false);
+    const edge = encodeInput(
+      input(2, { moveX: -0.123_456, aim: { angle: Math.PI - 1e-6 }, actions: [{ type: "mine" }] }),
+    );
+    assert.equal(edge.moveX, -0.12);
+    assert.deepEqual(edge.aim, { angle: Math.PI }, "rounding cannot push an angle past pi");
+    assert.equal(controls.accept(JSON.parse(JSON.stringify(edge)), 1, 1), true);
+    const command = controls.command(2, 1);
+    assert.equal(command?.fire, true);
+    assert.equal(command?.mine, true);
   } finally {
     sim.dispose();
   }
