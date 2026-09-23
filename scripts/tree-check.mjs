@@ -110,11 +110,8 @@ try {
       onlyStumps: before.every(
         (g) => g.visible && !g.userData.crown.visible && g.userData.cutSurface.visible,
       ),
-      hasBurst:
-        s.fragments.length > fragments &&
-        v.particles.length > particles &&
-        v.particles.some((p) => p.shape === "leaf") &&
-        v.particles.some((p) => p.shape === "splinter"),
+      // The trunk and crown fall as debris; felling adds no leaf burst.
+      fallsWithoutLeafBurst: s.fragments.length > fragments && v.particles.length === particles,
       boundedDebris:
         s.fragments.length <= s.maxFragments &&
         s.fragments.every((f) => f.life > 0 && f.life <= 10.5),

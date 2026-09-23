@@ -38,15 +38,6 @@ const PARTICLE_STYLES = {
     height: 0.8,
     lift: 1.5,
   },
-  tree: {
-    count: 96,
-    life: [0.85, 0.9],
-    size: [0.18, 0.25],
-    speed: 7,
-    scatter: 1.5,
-    height: 0.6,
-    lift: 1,
-  },
   pickup: {
     count: 24,
     life: [0.5, 0.3],
@@ -118,6 +109,10 @@ export class ParticleEffects {
     const timberWall = coverEffect && event.coverKind === "timber";
     const tree = coverEffect && event.coverKind === "tree";
     const chipHit = event.type === "impact" && (tree || timber);
+    // A felled tree's falling trunk and crown carry the moment; no leaf burst.
+    if (tree && !chipHit) {
+      return false;
+    }
     const style =
       PARTICLE_STYLES[
         timberWall
@@ -126,15 +121,13 @@ export class ParticleEffects {
             ? tree
               ? "treeHit"
               : "woodHit"
-            : tree
-              ? "tree"
-              : pickup
-                ? "pickup"
-                : explosion
-                  ? "explosion"
-                  : hurt
-                    ? "hurt"
-                    : "impact"
+            : pickup
+              ? "pickup"
+              : explosion
+                ? "explosion"
+                : hurt
+                  ? "hurt"
+                  : "impact"
       ];
     // The new fire/smoke handles blast volume. Keep only a few fast hot flecks.
     const tankDeath = event.type === "death";
@@ -153,7 +146,7 @@ export class ParticleEffects {
           : event.type === "shot"
             ? 5
             : style.count;
-    const baseSpeed = style.speed * (explosion && !tree && !timberWall ? (event.size ?? 3) : 1);
+    const speed = style.speed * (explosion && !tree && !timberWall ? (event.size ?? 3) : 1);
     const colors = timber
       ? [0x805336, 0xb47a49, 0xc99a65, 0x947958]
       : tree
@@ -171,7 +164,6 @@ export class ParticleEffects {
       const life = tankDeath
         ? 0.8 + Math.random() * 0.4
         : (style.life[0] + Math.random() * style.life[1]) * (tree ? 3 : timber ? 2 : 1);
-      const speed = baseSpeed + (tree && !chipHit ? Math.random() * 4 : 0);
       this.particles.push({
         shape: timber ? "splinter" : tree ? (i % 4 === 0 ? "splinter" : "leaf") : undefined,
         x: event.x + (Math.random() - 0.5) * style.scatter,
@@ -180,7 +172,7 @@ export class ParticleEffects {
             ? i % 4 === 0
               ? 0.7 + Math.random() * 0.4
               : (event.height ?? 5) * (0.45 + Math.random() * 0.35)
-            : style.height + (tree ? Math.random() * (event.height ?? 5) * 0.85 : 0),
+            : style.height,
         z: event.z + (Math.random() - 0.5) * style.scatter,
         vx: (Math.random() - 0.5) * speed,
         vy: tankDeath

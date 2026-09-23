@@ -25,6 +25,24 @@ export class TreeDebris {
     if (this.branches.length === MAX_BRANCHES) {
       this.remove(this.branches.shift()!);
     }
+    const { model, materials } = this.branchModel(source);
+    source.parent!.getWorldPosition(this.center);
+    const outward = model.position.clone().sub(this.center).setY(0).normalize();
+    this.group.add(model);
+    this.branches.push({
+      model,
+      velocity: outward.multiplyScalar(1.2 + Math.random()).setY(-0.5),
+      spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5),
+      scale: model.scale.clone(),
+      life: LIFETIME,
+      landed: false,
+      restingY: 0,
+      materials,
+    });
+  };
+
+  /** A detached, fade-ready copy of a bough; also built by the shader warm-up. */
+  branchModel(source: THREE.Group): { model: THREE.Group; materials: THREE.Material[] } {
     const model = source.clone(true);
     restoreBatchedLayers(model);
     source.updateWorldMatrix(true, false);
@@ -47,20 +65,8 @@ export class TreeDebris {
       }
     });
     model.visible = true;
-    source.parent!.getWorldPosition(this.center);
-    const outward = model.position.clone().sub(this.center).setY(0).normalize();
-    this.group.add(model);
-    this.branches.push({
-      model,
-      velocity: outward.multiplyScalar(1.2 + Math.random()).setY(-0.5),
-      spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5),
-      scale: model.scale.clone(),
-      life: LIFETIME,
-      landed: false,
-      restingY: 0,
-      materials,
-    });
-  };
+    return { model, materials };
+  }
 
   update(dt: number): void {
     for (let i = this.branches.length - 1; i >= 0; i--) {

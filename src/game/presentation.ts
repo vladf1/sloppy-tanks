@@ -49,7 +49,8 @@ import { TrackDust } from "./track-dust";
 import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
-import type { Cover, Fragment, SimEvent } from "./types";
+import type { Cover, Fragment, SimEvent, VehicleKind, WreckPart } from "./types";
+import { timberParts } from "./timber-layout";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK } from "./view-settings";
@@ -86,6 +87,8 @@ function physicalCoverModel(cover: Cover): THREE.Group {
   }
   return group;
 }
+const WRECK_PARTS: WreckPart[] = ["intact", "hull", "turret", "turret-barrel", "barrel"];
+
 export class Presentation {
   renderer: GameRenderer;
   scene = new THREE.Scene();
@@ -99,6 +102,7 @@ export class Presentation {
   worldGroup = new THREE.Group();
   private partBatches = new PartBatches((attribute) => this.renderer.releaseStorage(attribute));
   private partsDirty = true;
+  private warmSamples?: THREE.Group;
   tankMeshes = new Map<number, TankModel>();
   private suspensions = new Map<number, TankSuspension>();
   coverMeshes = new Map<number, THREE.Group>();
@@ -435,16 +439,34 @@ export class Presentation {
 
   async prepare(simulation: Simulation): Promise<void> {
     await waitForAssets();
+    if (this.warmSamples) {
+      this.scene.remove(this.warmSamples);
+      this.disposeSamples(this.warmSamples);
+    }
     const restore = exposeWarmupObjects(this.scene);
+    const samples = this.effectSamples(simulation);
+    const restoreSamples = exposeWarmupObjects(samples);
     try {
       await this.renderer.compileAsync(this.scene, this.camera);
+      // Effect samples join only for the draws below. Real effects are never
+      // precompiled, and r185 derives a different double-sided transparent
+      // shader when compileAsync sees a material first.
+      this.scene.add(samples);
       // Exercise the actual shadow/reflection passes while the canvas is hidden.
       this.scene.updateMatrixWorld();
       this.partBatches.update();
       this.renderer.render(this.scene, this.camera);
       await this.renderer.waitForPipelineCompilation();
+      // A draw whose pipeline was still compiling was skipped; draw once more.
+      this.renderer.render(this.scene, this.camera);
+      await this.renderer.waitForPipelineCompilation();
     } finally {
       restore();
+      restoreSamples();
+      // Kept hidden, the samples also keep r185's node state for these looks, so
+      // a real effect neither compiles nor rebuilds its shader graph.
+      samples.visible = false;
+      this.warmSamples = samples;
     }
     // Record complete bundles and the actual first frame before enabling combat.
     for (let i = 0; i < 2; i++) {
@@ -453,6 +475,76 @@ export class Presentation {
       await this.renderer.waitForPipelineCompilation();
     }
     this.renderer.info.reset();
+  }
+  /** One model per first-use effect look this round can show: falling crowns and
+   * shed boughs of each tree look, timber beams, every wreck part, and the pickup
+   * ring. prepare() draws them in the main, shadow and reflection passes, then
+   * keeps them hidden so their pipelines stay cached for the real effects.
+   * Otherwise Safari compiled these mid-fight, stalling a frame for ~650 ms. */
+  private effectSamples(simulation: Simulation): THREE.Group {
+    const samples = new THREE.Group();
+    const seen = new Set<string>();
+    const look = (root: THREE.Object3D) => {
+      const keys: string[] = [];
+      root.traverse((object) => {
+        if (isMesh(object)) {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          keys.push(...materials.map((material) => material.uuid));
+          keys.push(Object.keys(object.geometry.attributes).join());
+        }
+      });
+      return keys.join("/");
+    };
+    const once = (key: string, build: () => THREE.Object3D | undefined) => {
+      if (!seen.has(key)) {
+        seen.add(key);
+        const model = build();
+        if (model) {
+          samples.add(model);
+        }
+      }
+    };
+    for (const cover of simulation.covers) {
+      const model = this.coverMeshes.get(cover.id);
+      if (cover.kind === "tree" && model?.userData.crown) {
+        once(`crown:${look(model.userData.crown as THREE.Group)}`, () =>
+          this.fragmentModel({ treeCoverId: cover.id }),
+        );
+        for (const branch of (model.userData.branches ?? []) as THREE.Group[]) {
+          once(`bough:${look(branch)}`, () => this.treeDebris.branchModel(branch).model);
+        }
+      }
+      if (cover.kind === "timber") {
+        for (const part of timberParts(cover, 0)) {
+          once(`timber:${part.kind}`, () => this.fragmentModel({ timberPart: part }));
+        }
+      }
+    }
+    for (const wreck of Object.keys(VEHICLES) as VehicleKind[]) {
+      for (const team of [0, 1] as const) {
+        for (const part of WRECK_PARTS) {
+          once(`wreck:${wreck}/${team}/${part}`, () => this.fragmentModel({ wreck, team, part }));
+        }
+      }
+    }
+    samples.add(this.pickupEffect(0xffffff));
+    return samples;
+  }
+  /** Every sample material is a copy; geometry is shared unless marked owned. */
+  private disposeSamples(samples: THREE.Group): void {
+    samples.traverse((object) => {
+      if (isMesh(object)) {
+        for (const material of Array.isArray(object.material)
+          ? object.material
+          : [object.material]) {
+          material.dispose();
+        }
+        if (object.geometry.userData.owned) {
+          object.geometry.dispose();
+        }
+      }
+    });
+    this.renderer.releaseObjects(samples);
   }
   resize(width = innerWidth, height = innerHeight, exact = false): void {
     this.renderer.setPixelRatio(exact ? 1 : Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
@@ -522,24 +614,7 @@ export class Presentation {
         this.scene.remove(oldest.group);
         this.disposeModels(oldest.group);
       }
-      const group = new THREE.Group();
-      const ringMaterial = new THREE.MeshBasicMaterial({
-        color: event.color ?? 0xffffff,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-      });
-      ringMaterial.userData.owned = true;
-      const glowMaterial = ringMaterial.clone();
-      glowMaterial.opacity = 0.2;
-      glowMaterial.side = THREE.BackSide;
-      glowMaterial.userData.owned = true;
-      const ring = new THREE.Mesh(this.pickupRingGeometry, ringMaterial);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.08;
-      group.add(ring, new THREE.Mesh(this.pickupGlowGeometry, glowMaterial));
+      const group = this.pickupEffect(event.color ?? 0xffffff);
       group.position.set(event.x, 0, event.z);
       this.scene.add(group);
       this.pickupEffects.push({ group, age: 0, tankId: event.id });
@@ -548,6 +623,28 @@ export class Presentation {
       this.flash.position.set(event.x, 3, event.z);
       this.flash.intensity = 45;
     }
+  }
+  /** A pickup ring and tank glow; the shader warm-up builds one too. */
+  private pickupEffect(color: number): THREE.Group {
+    const group = new THREE.Group();
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    ringMaterial.userData.owned = true;
+    const glowMaterial = ringMaterial.clone();
+    glowMaterial.opacity = 0.2;
+    glowMaterial.side = THREE.BackSide;
+    glowMaterial.userData.owned = true;
+    const ring = new THREE.Mesh(this.pickupRingGeometry, ringMaterial);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.08;
+    group.add(ring, new THREE.Mesh(this.pickupGlowGeometry, glowMaterial));
+    return group;
   }
   private updatePickupEffects(simulation: Simulation, alpha: number, dt: number): void {
     for (let i = this.pickupEffects.length - 1; i >= 0; i--) {
@@ -846,46 +943,10 @@ export class Presentation {
       }
       let g = this.fragmentMeshes.get(f.id);
       if (!g) {
-        if (f.timberPart) {
-          g = timberPartModel(f.timberPart);
-        } else if (f.treeCoverId !== undefined) {
-          const source = this.coverMeshes.get(f.treeCoverId)?.userData.crown as
-            THREE.Group | undefined;
-          if (!source) {
-            continue;
-          }
-          const crown = source.clone(true);
-          restoreBatchedLayers(crown);
-          crown.visible = true;
-          crown.position.set(0, -(f.treeCenterY ?? 0), 0);
-          crown.traverse((object) => {
-            object.matrixWorldAutoUpdate = true;
-            object.matrixAutoUpdate = true;
-            if (isMesh(object) && object.geometry.userData.owned) {
-              object.geometry = object.geometry.clone();
-            }
-          });
-          g = new THREE.Group();
-          g.add(crown);
-        } else {
-          g = wreckModel(f.wreck!, f.team ?? 0, f.part ?? "hull");
+        g = this.fragmentModel(f);
+        if (!g) {
+          continue;
         }
-        g.traverse((o) => {
-          if (!isMesh(o)) {
-            return;
-          }
-          const clone = (material: THREE.Material) => {
-            const copy = material.clone();
-            // Keep wreck surfaces and ground decals correctly occluded, including
-            // during cleanup. Alpha hashing fades without transparent mesh sorting.
-            copy.transparent = false;
-            copy.depthWrite = true;
-            copy.alphaHash = true;
-            copy.userData.owned = true;
-            return copy;
-          };
-          o.material = Array.isArray(o.material) ? o.material.map(clone) : clone(o.material);
-        });
         this.fragmentMeshes.set(f.id, g);
         this.worldGroup.add(g);
       }
@@ -919,6 +980,53 @@ export class Presentation {
         true;
       updateInstances(mesh);
     }
+  }
+  /** A physical debris model with fade-ready material copies. The shader warm-up
+   * builds samples through this same path. */
+  private fragmentModel(
+    f: Pick<Fragment, "timberPart" | "treeCoverId" | "treeCenterY" | "wreck" | "team" | "part">,
+  ): THREE.Group | undefined {
+    let g: THREE.Group;
+    if (f.timberPart) {
+      g = timberPartModel(f.timberPart);
+    } else if (f.treeCoverId !== undefined) {
+      const source = this.coverMeshes.get(f.treeCoverId)?.userData.crown as THREE.Group | undefined;
+      if (!source) {
+        return undefined;
+      }
+      const crown = source.clone(true);
+      restoreBatchedLayers(crown);
+      crown.visible = true;
+      crown.position.set(0, -(f.treeCenterY ?? 0), 0);
+      crown.traverse((object) => {
+        object.matrixWorldAutoUpdate = true;
+        object.matrixAutoUpdate = true;
+        if (isMesh(object) && object.geometry.userData.owned) {
+          object.geometry = object.geometry.clone();
+        }
+      });
+      g = new THREE.Group();
+      g.add(crown);
+    } else {
+      g = wreckModel(f.wreck!, f.team ?? 0, f.part ?? "hull");
+    }
+    g.traverse((o) => {
+      if (!isMesh(o)) {
+        return;
+      }
+      const clone = (material: THREE.Material) => {
+        const copy = material.clone();
+        // Keep wreck surfaces and ground decals correctly occluded, including
+        // during cleanup. Alpha hashing fades without transparent mesh sorting.
+        copy.transparent = false;
+        copy.depthWrite = true;
+        copy.alphaHash = true;
+        copy.userData.owned = true;
+        return copy;
+      };
+      o.material = Array.isArray(o.material) ? o.material.map(clone) : clone(o.material);
+    });
+    return g;
   }
   private updateMines(simulation: Simulation): void {
     const mineIds = new Set(simulation.mines.map((m) => m.id));
