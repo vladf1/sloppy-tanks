@@ -120,6 +120,15 @@ try {
     };
   });
   assert.deepEqual(results.prepared, { time: 0, elapsed: 0, draws: 0 });
+  // Each vehicle card clips the shared preview sheet: 3 kinds × 2 team rows of 640×400.
+  results.previews = await warm.page.evaluate(async () => {
+    const tiles = [...document.querySelectorAll(".tank-preview image")];
+    const sheet = new Image();
+    sheet.src = tiles[0].href.baseVal;
+    await sheet.decode();
+    return { cards: tiles.length, sheet: [sheet.naturalWidth, sheet.naturalHeight] };
+  });
+  assert.deepEqual(results.previews, { cards: 3, sheet: [1920, 800] });
   assert.equal(await warm.page.locator("#game").isVisible(), false);
   await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
   await warm.page.locator("#start").click();

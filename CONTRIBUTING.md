@@ -96,6 +96,4 @@ For runtime comparisons, run `node scripts/profile.mjs before` on the baseline a
 
 `node scripts/benchmark.mjs` runs normal/stress workloads, ten rendered resets and a twenty-minute active-play longevity check, writing `artifacts/benchmark-results.json`. Focus pauses extend elapsed time. `npm run validate` writes accelerated simulation results to `artifacts/simulation-results.json`; those are not browser FPS measurements. The notebook at `/sloppy-tanks/benchmark.html` displays saved results.
 
-For manual CPU profiling, open `/sloppy-tanks/tools/profile.html` in an isolated Chrome instance with remote debugging on port 9227, then run `node scripts/capture-cpu-profile.mjs LABEL 20`. The helper captures the CPU profile; use the browser UI for navigation and input.
-
 Keep one-off reports, screenshots and raw profiles under ignored `artifacts/performance/`. Update enduring documentation only for current behavior, workflows, invariants or asset provenance; historical measurements belong in local artifacts or the commit description. CPU submission times are not GPU timings, and local frame rates are not guarantees for other devices.
