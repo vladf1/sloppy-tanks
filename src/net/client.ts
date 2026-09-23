@@ -1,4 +1,5 @@
 import { Presentation } from "../game/presentation";
+import { NerdStats } from "../game/nerd-stats";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
@@ -60,6 +61,12 @@ export function startMultiplayer(root: HTMLElement): void {
   const mirror = new StateMirror();
   const timeline = new NetworkTimeline();
   let view: Presentation | undefined;
+  let stats: NerdStats | undefined;
+  let lastSnapshotMs = 0;
+  let snapshotBatches = 0;
+  let statsSampleMs = 0;
+  let statsSampleBatches = 0;
+  let appliedInput = 0;
   let audio: AudioSystem | undefined;
   let control: Control | undefined;
   let display: RenderState | undefined;
@@ -201,6 +208,53 @@ export function startMultiplayer(root: HTMLElement): void {
     try {
       if (!view) {
         [view] = await Promise.all([Presentation.create(ui.canvas), loadTankSurface()]);
+        stats = new NerdStats(
+          root,
+          () => {
+            if (!display) {
+              return undefined;
+            }
+            const now = performance.now();
+            const rate = statsSampleMs
+              ? ((snapshotBatches - statsSampleBatches) * 1000) / (now - statsSampleMs)
+              : 0;
+            statsSampleMs = now;
+            statsSampleBatches = snapshotBatches;
+            return {
+              state: display,
+              rows: [
+                [
+                  "RTT",
+                  `${Math.round(connection.rtt)} ms`,
+                  "Measured round-trip time to the game server.",
+                ],
+                [
+                  "Snapshot rate",
+                  `${rate.toFixed(1)} /s`,
+                  "Received network batches per second, not rendered FPS.",
+                ],
+                [
+                  "Snapshot age",
+                  `${Math.round(now - lastSnapshotMs)} ms`,
+                  "Time since the last full state or snapshot arrived.",
+                ],
+                ["Server tick", mirror.tick, "Latest authoritative simulation tick received."],
+                [
+                  "Input sent / applied",
+                  `${seq} / ${appliedInput}`,
+                  "Latest local input sequence sent and the last sequence acknowledged by the server.",
+                ],
+                [
+                  "Connection",
+                  connection.connected ? "Connected" : "Reconnecting",
+                  "Current game-server connection state.",
+                ],
+              ],
+            };
+          },
+          view,
+          () => active && !ui.menu && phase === "playing",
+        );
       }
       if (!mirror.state || !control) {
         return;
@@ -293,6 +347,8 @@ export function startMultiplayer(root: HTMLElement): void {
           connection.send("resume");
         }
       } else if (message.type === "full") {
+        lastSnapshotMs = performance.now();
+        appliedInput = 0;
         mirror.applyFull(message, { roomEpoch: connection.roomEpoch, roundId: connection.roundId });
         connection.observedTick = mirror.tick;
         requestedFull = false;
@@ -306,7 +362,9 @@ export function startMultiplayer(root: HTMLElement): void {
           ui.canvas.focus();
         }
       } else if (message.type === "snapshot") {
-        ackReader.read(message.ack);
+        appliedInput = ackReader.read(message.ack).inputSeq;
+        lastSnapshotMs = performance.now();
+        snapshotBatches++;
         if (!Array.isArray(message.snapshots) || message.snapshots.length > 8) {
           throw new Error("Invalid frame batch");
         }
@@ -411,6 +469,7 @@ export function startMultiplayer(root: HTMLElement): void {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     if (active && view && control && mirror.state && !document.hidden) {
+      const updateStart = performance.now();
       if (!ui.menu) {
         const sample = timeline.read(now, connection.rtt, dt);
         display = sample.state;
@@ -426,8 +485,11 @@ export function startMultiplayer(root: HTMLElement): void {
       }
       if (display) {
         collect(now);
+        const renderStart = performance.now();
         view.render(display, 1, dt);
+        const renderCost = performance.now() - renderStart;
         ui.update(display, dt, connection.rtt, connection.connected);
+        stats?.frame(now, renderStart - updateStart, renderCost);
       }
     }
     touch.update();

@@ -50,6 +50,10 @@ try {
   await page.locator("#start").click({ timeout: 60000 });
   await page.locator("#startup-overlay").waitFor({ state: "detached" });
   await page.waitForFunction(() => document.querySelector("#hud")?.style.opacity === "1");
+  await page.locator("#nerd-stats button").click();
+  assert.match(await page.locator("#nerd-stats-details").innerText(), /Physics/);
+  await page.keyboard.press("n");
+  assert.equal(await page.locator("#nerd-stats-details").isVisible(), false);
   await page.keyboard.down("w");
   await page.waitForTimeout(500);
   await page.keyboard.up("w");

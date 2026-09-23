@@ -76,7 +76,7 @@ export class Connection {
       return;
     }
     this.events.status(
-      this.attempt ? "Reconnecting… Your tank is bot-driven." : "Connecting to room…",
+      this.attempt ? "Reconnecting… Your seat is reserved." : "Connecting to room…",
       false,
     );
     const socket = new WebSocket(this.url.replace(/\/$/, "") + "/room/" + this.room);

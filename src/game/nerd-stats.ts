@@ -1,6 +1,19 @@
 import type { Presentation } from "./presentation";
 import type { Simulation } from "./simulation";
 
+export type StatsRow = [label: string, value: string | number, tip: string];
+export interface NetworkStatsSample {
+  state: {
+    tanks: readonly { alive: boolean }[];
+    pickups: readonly { available: boolean }[];
+    mines: readonly unknown[];
+    shots: readonly unknown[];
+    fragments: readonly unknown[];
+    elapsed: number;
+  };
+  rows: StatsRow[];
+}
+
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
   private readonly element: HTMLElement;
@@ -18,7 +31,7 @@ export class NerdStats {
 
   constructor(
     root: HTMLElement,
-    private sim: Simulation,
+    private source: Simulation | (() => NetworkStatsSample | undefined),
     private view: Presentation,
     active: () => boolean,
   ) {
@@ -30,7 +43,13 @@ export class NerdStats {
     root.append(this.element);
     this.button = this.element.querySelector("button")!;
     this.details = this.element.querySelector("#nerd-stats-details")!;
-    for (const title of ["Performance", "Physics", "Render", "Battle", "Configuration"]) {
+    for (const title of [
+      "Performance",
+      typeof source === "function" ? "Network" : "Physics",
+      "Render",
+      "Battle",
+      "Configuration",
+    ]) {
       const section = document.createElement("details");
       section.open = title !== "Configuration";
       const heading = document.createElement("summary");
@@ -102,11 +121,17 @@ export class NerdStats {
   }
 
   private refresh(frameMs?: number): void {
-    const { sim, view } = this;
+    const { source, view } = this;
+    const sim = typeof source === "function" ? undefined : source;
+    const network = typeof source === "function" ? source() : undefined;
+    const state = sim ?? network?.state;
+    if (!state) {
+      return;
+    }
     let fixed = 0;
     let dynamic = 0;
     let sleeping = 0;
-    sim.world.bodies.forEach((body) => {
+    sim?.world.bodies.forEach((body) => {
       if (body.isFixed()) {
         fixed++;
       }
@@ -119,9 +144,9 @@ export class NerdStats {
     });
     const info = view.renderer.info.render;
     const memory = view.renderer.info.memory;
-    const alive = sim.tanks.filter((tank) => tank.alive).length;
-    const pickupsReady = sim.pickups.filter((pickup) => pickup.available).length;
-    const sections: [string, [string, string | number, string][]][] = [
+    const alive = state.tanks.filter((tank) => tank.alive).length;
+    const pickupsReady = state.pickups.filter((pickup) => pickup.available).length;
+    const sections: [string, StatsRow[]][] = [
       [
         "Performance",
         [
@@ -136,9 +161,11 @@ export class NerdStats {
             "Average wall-clock time per frame over the sampling window.",
           ],
           [
-            "Sim CPU / frame",
+            sim ? "Sim CPU / frame" : "Update CPU / frame",
             this.frames ? `${(this.simTotal / this.frames).toFixed(2)} ms` : "—",
-            "Average CPU time spent stepping the simulation per frame. Excludes GPU work.",
+            sim
+              ? "Average CPU time spent stepping the simulation per frame. Excludes GPU work."
+              : "Client interpolation, input and effect update CPU time per frame. Excludes message decoding and server physics.",
           ],
           [
             "Render CPU / frame",
@@ -147,19 +174,25 @@ export class NerdStats {
           ],
         ],
       ],
-      [
-        "Physics",
-        [
-          ["Bodies", sim.world.bodies.len(), "Rigid bodies in the physics world."],
-          ["Fixed / dynamic", `${fixed} / ${dynamic}`, "Static bodies versus simulated bodies."],
-          [
-            "Awake / sleeping",
-            `${dynamic - sleeping} / ${sleeping}`,
-            "Simulated bodies awake versus sleeping. Dynamic bodies only.",
+      network
+        ? ["Network", network.rows]
+        : [
+            "Physics",
+            [
+              ["Bodies", sim!.world.bodies.len(), "Rigid bodies in the physics world."],
+              [
+                "Fixed / dynamic",
+                `${fixed} / ${dynamic}`,
+                "Static bodies versus simulated bodies.",
+              ],
+              [
+                "Awake / sleeping",
+                `${dynamic - sleeping} / ${sleeping}`,
+                "Simulated bodies awake versus sleeping. Dynamic bodies only.",
+              ],
+              ["Colliders", sim!.world.colliders.len(), "Collision shapes in the physics world."],
+            ],
           ],
-          ["Colliders", sim.world.colliders.len(), "Collision shapes in the physics world."],
-        ],
-      ],
       [
         "Render",
         [
@@ -175,14 +208,14 @@ export class NerdStats {
       [
         "Battle",
         [
-          ["Tanks", `${alive} / ${sim.tanks.length}`, "Tanks alive out of total spawned."],
-          ["Mines", sim.mines.length, "Live mines on the field."],
+          ["Tanks", `${alive} / ${state.tanks.length}`, "Tanks alive out of total spawned."],
+          ["Mines", state.mines.length, "Live mines on the field."],
           [
             "Pickups ready",
-            `${pickupsReady} / ${sim.pickups.length}`,
+            `${pickupsReady} / ${state.pickups.length}`,
             "Pickups available now out of total placed.",
           ],
-          ["Projectiles", sim.shots.length, "Shots currently flying."],
+          ["Projectiles", state.shots.length, "Shots currently flying."],
           [
             "Visual particles",
             view.particles.length,
@@ -190,12 +223,14 @@ export class NerdStats {
           ],
           [
             "Debris bodies",
-            `${sim.fragments.length} / ${sim.maxFragments}`,
-            "Physics debris pieces alive out of the pool cap.",
+            sim ? `${sim.fragments.length} / ${sim.maxFragments}` : state.fragments.length,
+            sim
+              ? "Physics debris pieces alive out of the pool cap."
+              : "Debris pieces in the received scene; server physics allocation is not measured here.",
           ],
           [
             "Sim time",
-            `${sim.elapsed.toFixed(1)}s`,
+            `${state.elapsed.toFixed(1)}s`,
             "Elapsed simulation time since the round started.",
           ],
         ],

@@ -213,12 +213,18 @@ export class RenderTimeline {
       target.z += authoritative.velocity.z * ahead;
     }
     const blend = policy === "latest" || !continuous ? 1 : 1 - Math.exp(-CORRECTION_RATE * dt);
+    // Local translation and hull rotation need the same frame-rate smoothing.
+    // Copying heading from authority here made only our own tank turn at packet Hz.
+    const heading =
+      continuous && this.local
+        ? this.local.heading + angleDelta(this.local.heading, authoritative.heading) * blend
+        : authoritative.heading;
     if (previousPosition && continuous) {
       target.x = previousPosition.x + (target.x - previousPosition.x) * blend;
       target.z = previousPosition.z + (target.z - previousPosition.z) * blend;
     }
     this.local ??= { ...authoritative };
-    Object.assign(this.local, authoritative, { position: target, previous: target });
+    Object.assign(this.local, authoritative, { position: target, previous: target, heading });
     const viewerIndex = this.tanks.findIndex((tank) => tank.id === authoritative.id);
     if (viewerIndex >= 0) {
       this.tanks[viewerIndex] = this.local;

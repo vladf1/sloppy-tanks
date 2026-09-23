@@ -69,7 +69,7 @@ type ViewParam = ConstructorParameters<typeof NerdStats>[2];
 
 const SECTION_TITLES = ["Performance", "Physics", "Render", "Battle", "Configuration"];
 
-function fixture() {
+function fixture(network = false) {
   const created: StubElement[] = [];
   const win = { addEventListener(_type: string, _listener: Listener): void {} };
   const doc = {
@@ -110,9 +110,15 @@ function fixture() {
     particles: [{}, {}, {}],
   };
   const root = new StubElement("DIV");
+  let reads = 0;
   const stats = new NerdStats(
     root as unknown as HTMLElement,
-    sim as unknown as SimParam,
+    network
+      ? () => {
+          reads++;
+          return { state: sim, rows: [["RTT", "42 ms", "Round-trip time to the server."]] };
+        }
+      : (sim as unknown as SimParam),
     view as unknown as ViewParam,
     () => true,
   );
@@ -128,12 +134,45 @@ function fixture() {
     panel,
     button,
     container,
+    stats,
+    get reads() {
+      return reads;
+    },
     dispose() {
       Reflect.deleteProperty(globalThis, "window");
       Reflect.deleteProperty(globalThis, "document");
     },
   };
 }
+
+test("network stats use received scene counts and never require a client physics world", () => {
+  const f = fixture(true);
+  try {
+    assert.equal(f.reads, 0, "closed diagnostics do not sample the source");
+    f.button.click();
+    assert.equal(f.reads, 1);
+    const titles = f.container
+      .querySelectorAll("details")
+      .map((section) => section.querySelector("summary")?.textContent);
+    assert.ok(titles.includes("Network"));
+    assert.ok(!titles.includes("Physics"));
+    const text = f.container
+      .querySelectorAll("pre")
+      .map((row) => row.textContent)
+      .join("\n");
+    assert.ok(text.includes("RTT") && text.includes("42 ms"));
+    assert.ok(text.includes("Update CPU / frame"));
+    assert.ok(!text.includes("Sim CPU / frame"));
+    f.stats.frame(1, 1, 2);
+    f.stats.frame(501, 1, 2);
+    assert.equal(f.reads, 2);
+    f.button.click();
+    f.stats.frame(1001, 1, 2);
+    assert.equal(f.reads, 2);
+  } finally {
+    f.dispose();
+  }
+});
 
 test("panel has one open section per group with the expected rows", () => {
   const f = fixture();

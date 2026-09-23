@@ -9,6 +9,38 @@ before(async () => {
   await RAPIER.init();
 });
 
+test("local hull heading advances between packets through the short arc and resets on a new life", () => {
+  const sim = createMultiplayerSimulation(4242, []);
+  try {
+    const source = captureRenderState(sim, sim.tanks[0].id);
+    const pose = (heading: number, elapsed: number, life = 0) => {
+      const viewer = { ...source.viewer, heading, life };
+      return {
+        ...source,
+        viewer,
+        elapsed,
+        tanks: source.tanks.map((tank) => (tank.id === viewer.id ? viewer : tank)),
+      };
+    };
+    const first = pose(3.1, 0),
+      next = pose(-3.1, 0.05);
+    const timeline = new RenderTimeline();
+    timeline.reset({ state: first, events: [], ack: 0 });
+    timeline.read(0, 0, 1 / 60, "extrapolate");
+    timeline.push({ state: next, events: [], ack: 1 });
+    const a = timeline.read(0.05, 0.05, 1 / 60, "extrapolate").state.viewer.heading;
+    assert.ok(a > 3.1 && a < Math.PI * 2 - 3.1, "new packet must not snap local heading");
+    const b = timeline.read(0.05, 0.0667, 1 / 60, "extrapolate").state.viewer.heading;
+    assert.ok(b > a, "heading keeps moving while waiting for the next packet");
+    assert.equal(next.viewer.heading, -3.1, "render smoothing must not mutate authority");
+    const respawn = pose(-1, 0.1, 1);
+    timeline.push({ state: respawn, events: [], ack: 2 });
+    assert.equal(timeline.read(0.1, 0.1, 1 / 60, "extrapolate").state.viewer.heading, -1);
+  } finally {
+    sim.dispose();
+  }
+});
+
 test("coalesced death and respawn preserve each life and emit effects on the display clock once", () => {
   const sim = createMultiplayerSimulation(4242, []);
   try {
