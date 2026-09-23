@@ -79,10 +79,17 @@ requested raw/gzip asset comparisons. It serves its own build; no dev server nee
 
 `node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
 names, responsive room listings, immediate creation on the selected map, Auto
-teams, late join, received-update stats, polling cleanup and empty-room removal.
+teams, live player kills, join notifications, configurable match duration, late join,
+received-update stats, polling cleanup and empty-room removal.
 Use `SLOPPY_URL` for either the local Vite URL or the public dev site, and
 `SLOPPY_CHECK_LABEL=public` to keep separate evidence. Buttons and room selection
 use physical coordinate clicks in visible Chrome.
+
+`node --import tsx scripts/multiplayer-idle-input-check.mjs` measures unchanged
+idle input over 6.5 seconds, verifies the seat stays human, and checks movement,
+aim, fire, mine and resume delivery. It uses visible desktop Chrome and real
+WebSocket frames. Set `SLOPPY_URL` and optionally `SLOPPY_SERVER`; use
+`SLOPPY_CHECK_LABEL` to keep local/public evidence separate.
 
 `multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
 seats and viewer isolation. `npm run check:multiplayer` instead drives **two Chrome

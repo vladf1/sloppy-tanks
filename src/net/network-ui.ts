@@ -5,7 +5,7 @@ import { healthBarState } from "../game/health-bar";
 import { rankIndex, RANKS } from "../game/veterancy";
 import type { RenderState } from "../game/render-state";
 import type { SimEvent, Weapon } from "../game/types";
-import type { Lobby } from "./protocol";
+import { DEFAULT_ROUND_MINUTES, type Lobby } from "./protocol";
 import type { JoinChoice } from "./connection";
 import { playerKind, team } from "./scene-codec";
 import "./multiplayer.css";
@@ -14,7 +14,7 @@ import { preferredPlayerName, rememberPlayerName } from "./player-name";
 export interface NetworkActions {
   join(choice: JoinChoice): void;
   choose(choice: JoinChoice): void;
-  settings(map: string, difficulty: string, humansOnly: boolean): void;
+  settings(map: string, difficulty: string, humansOnly: boolean, roundMinutes: number): void;
   start(): void;
   pause(): void;
   resume(): void;
@@ -27,6 +27,7 @@ export class NetworkUI {
   readonly canvas: HTMLCanvasElement;
   readonly panel: HTMLElement;
   private lastLobby?: Lobby;
+  private playerRows = new Map<number, HTMLElement>();
   private feed: { text: string; time: number }[] = [];
   private toastTime = 0;
   private hurtTime = 0;
@@ -46,8 +47,15 @@ export class NetworkUI {
     this.canvas = root.querySelector("canvas")!;
     this.panel = root.querySelector("#overlay")!;
     this.panel.innerHTML =
-      '<section class="menu compact network-menu"><div class="eyebrow">PLAY WITH FRIENDS</div><h1>ROOM <span id="room-code"></span></h1><p id="network-message">Up to eight friends. Bots fill both teams.</p><div class="network-choices"><label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" placeholder="Tank driver" /></label><label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div id="host-settings" class="network-choices" hidden><label>Map<select id="room-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label>Bots<select id="room-difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label class="network-toggle"><input id="room-humans-only" type="checkbox" />Humans only (no bots)</label></div><div id="network-roster"></div><div id="network-scoreboard"></div><div class="network-actions"><button id="join-room" class="primary">JOIN ROOM</button><button id="start-match" class="primary" hidden>START BATTLE</button><button id="network-resume" class="primary" hidden>RESUME</button><button id="network-end" class="secondary" hidden>END BATTLE</button><button id="copy-room" class="secondary">COPY ROOM LINK</button><button id="leave-room" class="quiet">BROWSE ROOMS</button></div><label class="network-local" hidden>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label><label class="network-local" hidden>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label><p id="network-help" class="network-help">WASD / arrows to drive · Mouse to aim and fire · Right click for mines<br />Opening this menu lets a bot drive your tank. The match keeps going.</p></section>';
+      '<section class="menu compact network-menu"><div class="eyebrow">PLAY WITH FRIENDS</div><h1>ROOM <span id="room-code"></span></h1><p id="network-message">Up to eight friends. Bots fill both teams.</p><div class="network-choices"><label>Your name<input id="player-name" maxlength="24" autocomplete="nickname" placeholder="Tank driver" /></label><label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div id="host-settings" class="network-choices" hidden><label>Map<select id="room-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label>Bots<select id="room-difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label>Match length (minutes)<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label><label class="network-toggle"><input id="room-humans-only" type="checkbox" />Humans only (no bots)</label></div><div id="network-roster"></div><div id="network-scoreboard"></div><div class="network-actions"><button id="join-room" class="primary">JOIN ROOM</button><button id="start-match" class="primary" hidden>START BATTLE</button><button id="network-resume" class="primary" hidden>RESUME</button><button id="network-end" class="secondary" hidden>END BATTLE</button><button id="copy-room" class="secondary">COPY ROOM LINK</button><button id="leave-room" class="quiet">BROWSE ROOMS</button></div><label class="network-local" hidden>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label><label class="network-local" hidden>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label><p id="network-help" class="network-help">WASD / arrows to drive · Mouse to aim and fire · Right click for mines<br />Opening this menu lets a bot drive your tank. The match keeps going.</p></section>';
     this.set("room-code", room);
+    this.input("room-round-minutes").value = String(DEFAULT_ROUND_MINUTES);
+    const players = document.createElement("aside");
+    players.id = "network-players";
+    players.hidden = true;
+    players.setAttribute("aria-label", "Players and kills");
+    this.root.querySelector("#hud")!.append(players);
+    this.root.querySelector("#feed")!.setAttribute("aria-live", "polite");
     this.input("player-name").value = preferredPlayerName();
     this.input("network-volume").value = localStorage.getItem("sloppy-volume") ?? "0.6";
     this.on("join-room", () => {
@@ -83,16 +91,19 @@ export class NetworkUI {
         }
       });
     }
-    for (const field of ["room-map", "room-difficulty", "room-humans-only"]) {
-      this.root
-        .querySelector("#" + field)!
-        .addEventListener("change", () =>
-          this.actions.settings(
-            this.input("room-map").value,
-            this.input("room-difficulty").value,
-            this.root.querySelector<HTMLInputElement>("#room-humans-only")!.checked,
-          ),
+    for (const field of ["room-map", "room-difficulty", "room-humans-only", "room-round-minutes"]) {
+      this.root.querySelector("#" + field)!.addEventListener("change", () => {
+        const length = this.input("room-round-minutes") as HTMLInputElement;
+        if (!length.reportValidity()) {
+          return;
+        }
+        this.actions.settings(
+          this.input("room-map").value,
+          this.input("room-difficulty").value,
+          this.root.querySelector<HTMLInputElement>("#room-humans-only")!.checked,
+          Number(length.value),
         );
+      });
     }
     this.input("network-volume").addEventListener("input", () =>
       this.actions.volume(Number(this.input("network-volume").value)),
@@ -139,6 +150,19 @@ export class NetworkUI {
     }
   }
   lobby(lobby: Lobby, playerId: string): void {
+    if (this.lastLobby?.roomEpoch === lobby.roomEpoch) {
+      for (const player of lobby.players) {
+        const previous = this.lastLobby.players.find((item) => item.playerId === player.playerId);
+        if (player.playerId !== playerId && player.connected && !previous?.connected) {
+          this.addFeed(
+            player.name +
+              (previous
+                ? " reconnected"
+                : " joined " + (player.team === 0 ? "Blue" : "Red") + " team"),
+          );
+        }
+      }
+    }
     this.lastLobby = lobby;
     this.playerId = playerId;
     this.isJoined = true;
@@ -163,6 +187,8 @@ export class NetworkUI {
     }
     this.input("room-map").value = lobby.settings.mapMode;
     this.input("room-difficulty").value = lobby.settings.difficulty;
+    this.input("room-round-minutes").value = String(lobby.settings.roundMinutes);
+    this.input("room-round-minutes").disabled = !host || playing;
     this.input("room-map").disabled = this.input("room-difficulty").disabled = !host || playing;
     const humansOnly = this.root.querySelector<HTMLInputElement>("#room-humans-only")!;
     humansOnly.checked = lobby.settings.humansOnly;
@@ -179,6 +205,35 @@ export class NetworkUI {
     this.root
       .querySelectorAll<HTMLElement>(".network-local")
       .forEach((node) => (node.hidden = !playing));
+    const players = this.root.querySelector<HTMLElement>("#network-players")!;
+    players.hidden = !playing || this.menu;
+    players.replaceChildren();
+    this.playerRows.clear();
+    const header = document.createElement("div");
+    header.className = "network-player-heading";
+    const title = document.createElement("strong");
+    const kills = document.createElement("span");
+    title.textContent = "PLAYERS · " + lobby.players.length;
+    kills.textContent = "KILLS";
+    header.append(title, kills);
+    players.append(header);
+    for (const player of [...lobby.players].sort((a, b) => a.team - b.team || a.slot - b.slot)) {
+      const row = document.createElement("div");
+      const name = document.createElement("span");
+      const score = document.createElement("b");
+      row.className = "network-player";
+      row.dataset.team = String(player.team);
+      row.dataset.playerId = player.playerId;
+      name.textContent = player.name + (player.playerId === playerId ? " (you)" : "");
+      name.title = player.name + (!player.connected ? " · Reconnecting" : "");
+      row.classList.toggle("reconnecting", !player.connected);
+      score.textContent = String(player.kills);
+      row.append(name, score);
+      players.append(row);
+      if (player.tankId !== undefined) {
+        this.playerRows.set(player.tankId, score);
+      }
+    }
     const roster = this.root.querySelector("#network-roster")!;
     roster.replaceChildren();
     for (const side of [0, 1]) {
@@ -190,6 +245,9 @@ export class NetworkUI {
         const row = document.createElement("div");
         row.textContent =
           player.name +
+          " · " +
+          player.kills +
+          " kills" +
           (player.playerId === lobby.hostId ? " · Host" : "") +
           (!player.connected ? " · Reconnecting" : "");
         column.append(row);
@@ -240,14 +298,17 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
+  private addFeed(text: string): void {
+    this.feed.unshift({ text, time: 5 });
+    this.feed.length = Math.min(4, this.feed.length);
+  }
   event(event: SimEvent, state: RenderState, damageAngle: number | null): void {
     if (event.type === "death") {
       const name = (id: number | undefined) =>
         id === state.viewerId
           ? "YOU"
           : (state.tanks.find((tank) => tank.id === id)?.name ?? "YARD");
-      this.feed.unshift({ text: name(event.owner) + "  ▸  " + name(event.id), time: 5 });
-      this.feed.length = Math.min(4, this.feed.length);
+      this.addFeed(name(event.owner) + "  ▸  " + name(event.id));
     }
     if (event.id === state.viewerId) {
       if (event.label) {
@@ -265,6 +326,12 @@ export class NetworkUI {
     }
   }
   update(state: RenderState, dt: number, rtt: number, connected: boolean): void {
+    for (const tank of state.tanks) {
+      const score = this.playerRows.get(tank.id);
+      if (score && score.textContent !== String(tank.kills)) {
+        score.textContent = String(tank.kills);
+      }
+    }
     const tank = state.viewer;
     const match = state.match;
     const health = healthBarState(tank.hp, tank.maxHp, tank.team);

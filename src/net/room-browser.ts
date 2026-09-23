@@ -1,4 +1,4 @@
-import { CONTENT_VERSION } from "./protocol";
+import { CONTENT_VERSION, DEFAULT_ROUND_MINUTES, roundMinutesReader } from "./protocol";
 import { roomListReader, type RoomListing } from "./room-list";
 import { mapMode, playerKind, team } from "./scene-codec";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
@@ -33,6 +33,7 @@ export function browseRooms(
             <h2 id="create-room-title">Start your own</h2>
             <p class="room-description">Pick a map and jump straight in.</p>
             <label class="room-map-field">Level<select id="create-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label>
+            <label class="room-map-field room-length-field">Match length <span><input id="create-round-minutes" type="number" min="1" max="20" step="1" required value="${DEFAULT_ROUND_MINUTES}" /> minutes</span></label>
             <label class="room-bots-choice"><input id="create-humans-only" type="checkbox" checked /><span>Humans only<small>No bots in this battle</small></span></label>
             <button id="create-room" class="primary" type="button">Create room</button>
             <p class="room-create-note">Friends can join while you play.</p>
@@ -90,7 +91,7 @@ export function browseRooms(
             ? "In lobby"
             : "Between rounds";
       info.textContent =
-        `${room.room} · ${room.humansOnly ? "Humans only" : "Bots: " + room.difficulty} · ${phase}` +
+        `${room.room} · ${room.humansOnly ? "Humans only" : "Bots: " + room.difficulty} · ${room.roundMinutes} min · ${phase}` +
         (room.reserved > room.players ? ` · ${room.reserved - room.players} reconnecting` : "") +
         (room.contentVersion !== CONTENT_VERSION
           ? " · Reload for updated game"
@@ -195,6 +196,11 @@ export function browseRooms(
       if (!choice || finished) {
         return;
       }
+      const length = field("create-round-minutes") as HTMLInputElement;
+      if (!length.value || !length.reportValidity()) {
+        length.focus();
+        return;
+      }
       const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
       const room = [...crypto.getRandomValues(new Uint8Array(8))]
         .map((n) => alphabet[n & 31])
@@ -203,6 +209,7 @@ export function browseRooms(
         mapMode: mapMode.read(field("create-map").value),
         difficulty: "normal" as const,
         humansOnly: root.querySelector<HTMLInputElement>("#create-humans-only")!.checked,
+        roundMinutes: roundMinutesReader.read(Number(length.value)),
       };
       stop();
       resolve({ room, choice: { ...choice, create } });

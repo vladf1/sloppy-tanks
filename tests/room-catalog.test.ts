@@ -13,6 +13,7 @@ const entry: RoomListing = {
   mapMode: "harbor",
   difficulty: "normal",
   humansOnly: true,
+  roundMinutes: 10,
   players: 1,
   reserved: 1,
   phase: "playing",

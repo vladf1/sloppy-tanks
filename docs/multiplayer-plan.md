@@ -43,6 +43,10 @@ The wire sends one shared JSON batch per 50 ms callback. It includes a frame at 
 
 Production UI checks must verify applied styles and visible controls, not just successful room messages. The inline startup build imports game entries outside Vite's normal dynamic-import graph, so it explicitly loads the selected entry's extracted CSS before starting it. Multiplayer styles remain absent from single-player requests. Browser checks cover lobby/results at desktop sizes, including maximum-length unbroken names and hidden actions. Phone support and phone viewport checks are out of scope; existing tablet touch controls remain supported.
 
+Rooms default to **10-minute rounds**. The creator chooses 1–20 minutes in the room browser; only the host can change the next round's length in the lobby or results. The server validates and applies the duration, and room listings show it. Existing first-to-100 and tied-score overtime rules remain in effect. Single-player's round timer is unchanged.
+
+During a battle, a compact team-colored player list shows every reserved human seat and its live authoritative kill count. Disconnected seats are dimmed during reconnect grace. The existing bounded activity feed announces new arrivals and reconnections; initial rosters, repeated lobby updates and opening the menu do not replay join messages. The list reuses snapshots, so it adds no polling or network messages.
+
 The host can select **Humans only (no bots)** in the lobby or between rounds. The create dialog defaults it on; the retained direct-link lobby defaults it off. In that mode only assigned players spawn; empty seats have no tank or collider. Paused, silent and disconnected seats use an idle driver instead of AI, retaining normal vulnerability and reconnect grace. Explicit departures and expired reservations remove the tank without a fake death or replacement bot. Late joins create a fresh tank identity. The server validates the setting and prevents changes during a match; player/team limits and single-player behavior are unchanged.
 
 The room browser uses a separate `RoomDirectory` Durable Object. `GET /rooms`
@@ -58,7 +62,7 @@ The last explicit departure disposes the simulation immediately; unplanned
 connection loss retains the established reconnect grace.
 
 Multiplayer Stats for Nerds exposes received update count/rate and age, RTT,
-server tick, input sent/acknowledged sequence numbers and render diagnostics.
+server tick, input sent/acknowledged sequence numbers and render diagnostics. Idle input sequence numbers advance once per second rather than at the active 20 Hz rate.
 Updates count full-state messages and snapshot batches, not individual entities
 or local inputs. Local hull heading uses shortest-arc smoothing between packets,
 including angle wrap and a reset on respawn; this changes presentation only.
@@ -127,7 +131,7 @@ Round wire numbers in the serializer; unrounded floats print up to 17 digits, an
 ### Client → server
 
 - `join { version, contentVersion, name, kind, team, token?, roomEpoch? }`. Tokens are unguessable seat credentials, scoped to this room and kept out of shared room links. On reconnect the server preserves the seat's existing team and kind. Lobby-only `choose { team, kind }` updates an existing player's choices subject to the same capacity and kind validation.
-- `input { roomEpoch, roundId, controlEpoch, seq, observedTick, moveX, moveZ, aim, fire, actions }`, initially 20/s even when stationary, matching the snapshot rate and the quota estimate. M1b compares 20 and 30 Hz sampling. `seq` increases within the control epoch; `observedTick` is the latest server tick seen by the client, used to reject excessively delayed input. `actions` lists, in order, the one-shot actions since the previous message; each is `mine` or `ammo { weapon }`.
+- `input { roomEpoch, roundId, controlEpoch, seq, observedTick, moveX, moveZ, aim, fire, actions }`, up to 20/s while moving, firing, aiming or delivering an action. Unchanged neutral input refreshes once per second to retain the seat; releases use the active cadence and the server still expires held movement/fire after 250 ms. Aim comparisons ignore sub-centimetre/0.001-radian render noise. The quota estimate remains the active-play upper bound. M1b compares 20 and 30 Hz sampling. `seq` increases within the control epoch; `observedTick` is the latest server tick seen by the client, used to reject excessively delayed input. `actions` lists, in order, the one-shot actions since the previous message; each is `mine` or `ammo { weapon }`.
 - `aim` is `{ x, z }`, the pointer's ground point, or `{ angle }` for touch-stick aim. Today `game.ts` computes the angle from the hull position; a network client's displayed hull lags the server's by about one round trip, so sending that angle makes shots miss sideways by the hull's drift. The server converts a point to an angle from the tank's current authoritative position every tick. `VehicleCommand.aim` remains an angle.
 - `suspend` releases control when hidden or entering the local menu; `resume` requests a fresh baseline and control epoch. Both identify the room and round. They do not pause the shared match.
 - `resync` requests a replacement full baseline. `leave` releases the seat immediately.

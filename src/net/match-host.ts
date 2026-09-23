@@ -19,6 +19,7 @@ import {
   EMPTY_GRACE_MS,
   MAX_ROOM_MS,
   ROOM_IDLE_MS,
+  DEFAULT_ROUND_MINUTES,
   joinReader,
   settingsReader,
   type Player,
@@ -68,7 +69,12 @@ export interface HostOptions {
 /** Owns simulation and room policy. Call advance from a runtime's 50 ms timer; no platform APIs here. */
 export class MatchHost {
   simulation?: Simulation;
-  settings: RoomSettings = { mapMode: "village", difficulty: "normal", humansOnly: false };
+  settings: RoomSettings = {
+    mapMode: "village",
+    difficulty: "normal",
+    humansOnly: false,
+    roundMinutes: DEFAULT_ROUND_MINUTES,
+  };
   phase: Lobby["phase"] = "lobby";
   roundId = 0;
   hostId = "";
@@ -401,7 +407,7 @@ export class MatchHost {
       reserved: this.seats.length,
       phase: this.phase,
       roundId: this.roundId,
-      time: Math.max(0, Math.ceil(this.simulation?.match.time ?? 300)),
+      time: Math.max(0, Math.ceil(this.simulation?.match.time ?? this.settings.roundMinutes * 60)),
       scores: this.simulation ? [...this.simulation.match.scores] : [0, 0],
     };
   }
@@ -423,6 +429,7 @@ export class MatchHost {
       this.seats.map((seat) => seat.player),
       { ...this.settings, round: this.roundId },
     );
+    this.simulation.match.time = this.settings.roundMinutes * 60;
     this.clock = new FixedStepClock(nowMs);
     this.stream = new StateStream(this.identity());
     for (const client of this.clients.values()) {

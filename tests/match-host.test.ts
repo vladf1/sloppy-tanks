@@ -8,6 +8,7 @@ import {
   PROTOCOL_VERSION,
   type ServerMessage,
   type Control,
+  settingsReader,
 } from "../src/net/protocol";
 import { captureScene, projectScene } from "../src/net/scene-codec";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
@@ -599,11 +600,12 @@ test("create starts a selected humans-only map immediately and subsequent player
       room: "ABCDEFGH",
       contentVersion: CONTENT_VERSION,
       ...create,
+      roundMinutes: 10,
       players: 2,
       reserved: 2,
       phase: "playing",
       roundId: 1,
-      time: 300,
+      time: 600,
       scores: [0, 0],
     });
     h.action("alice", "leave");
@@ -631,6 +633,72 @@ test("a stale directory selection cannot recreate an empty room; a dropped conne
     h.join("back", { token, roomEpoch: "test-room", existingRoom: true });
     assert.equal(h.host.connections, 1);
     assert.equal(h.host.roundId, 1);
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("round length defaults to ten minutes, validates bounds and is controlled by the host between rounds", () => {
+  const settings = { mapMode: "village", difficulty: "normal", humansOnly: true };
+  assert.equal(settingsReader.read(settings).roundMinutes, 10);
+  for (const roundMinutes of [0, 21, 1.5, null, "10", Infinity, NaN]) {
+    assert.throws(() => settingsReader.read({ ...settings, roundMinutes }));
+  }
+  const h = harness();
+  try {
+    h.join("alice", { create: settings });
+    h.join("bob");
+    assert.equal(h.host.simulation!.match.time, 600);
+    assert.equal(h.latest("bob", "lobby").settings.roundMinutes, 10);
+    h.action("alice", "end");
+    h.action("bob", "settings", { ...settings, roundMinutes: 1 });
+    assert.equal(h.host.settings.roundMinutes, 10, "Guest cannot change the next round");
+    h.join("bob", { token: h.latest("bob", "welcome").token, roomEpoch: "test-room" });
+    h.action("alice", "settings", { ...settings, roundMinutes: 1 });
+    h.action("alice", "start");
+    assert.equal(h.host.simulation!.match.time, 60);
+    assert.equal(h.latest("bob", "lobby").settings.roundMinutes, 1);
+    h.host.simulation!.match.scores = [1, 0];
+    for (let i = 0; i < 1201; i++) h.advance();
+    assert.equal(h.host.phase, "results");
+    assert.equal(h.host.simulation!.match.winner, 0);
+    assert.equal(h.host.simulation!.match.time, 0);
+    h.action("alice", "start");
+    h.action("alice", "settings", { ...settings, roundMinutes: 20 });
+    assert.equal(h.host.settings.roundMinutes, 1, "Cannot change a running match");
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("live snapshots carry each player's authoritative kills and preserve them through respawn", () => {
+  const h = harness();
+  try {
+    h.join("alice", {
+      team: 0,
+      create: { mapMode: "village", difficulty: "normal", humansOnly: true },
+    });
+    h.join("bob", { team: 1 });
+    const sim = h.host.simulation!,
+      alice = sim.tanks[0],
+      bob = sim.tanks[1];
+    const mirror = new StateMirror();
+    mirror.applyFull(h.latest("alice", "full"), { roomEpoch: "test-room", roundId: 1 });
+    bob.protection = 0;
+    sim.damageTank(bob, 10000, alice.id, alice.team, alice.life);
+    h.advance();
+    for (const snapshot of h.latest("alice", "snapshot").snapshots) mirror.applySnapshot(snapshot);
+    assert.equal(mirror.render(alice.id).viewer.kills, 1);
+    assert.equal(mirror.render(bob.id).viewer.deaths, 1);
+    sim.respawn(alice);
+    h.advance();
+    for (const snapshot of h.latest("alice", "snapshot").snapshots) mirror.applySnapshot(snapshot);
+    assert.equal(mirror.render(alice.id).viewer.kills, 1);
+    h.join("carol");
+    assert.equal(
+      h.latest("carol", "lobby").players.find((player) => player.name === "alice")!.kills,
+      1,
+    );
   } finally {
     h.host.dispose();
   }

@@ -72,9 +72,11 @@ try {
   assert.ok(BOT_NAMES.includes(await alice.page.locator("#player-name").inputValue()));
   assert.equal(await alice.page.locator("#player-team").inputValue(), "auto");
   assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
+  assert.equal(await alice.page.locator("#create-round-minutes").inputValue(), "10");
   await checkMultiplayerMenu(alice.page);
   await alice.page.locator("#player-name").fill("Room browser Alice");
   await alice.page.locator("#create-map").selectOption("harbor");
+  await alice.page.locator("#create-round-minutes").fill("3");
   await alice.page.screenshot({ path: `${output}/create.png` });
   await click(alice.page, "#create-room");
   await until(
@@ -82,6 +84,11 @@ try {
     "Create starts battle and prepares input",
   );
   assert.equal(alice.lobby.settings.mapMode, "harbor");
+  assert.equal(alice.lobby.settings.roundMinutes, 3);
+  assert.ok(alice.mirror.state.match.time <= 180 && alice.mirror.state.match.time > 160);
+  await alice.page.locator("#network-players").waitFor({ state: "visible" });
+  assert.equal(await alice.page.locator(".network-player").count(), 1);
+  assert.equal(await alice.page.locator(".network-player b").innerText(), "0");
   assert.equal(alice.mirror.state.entities.tanks.length, 1);
   const room = new URL(alice.page.url()).searchParams.get("room");
   const directoryURL = new URL(base);
@@ -93,8 +100,9 @@ try {
   const row = bob.page.locator(".room-row").filter({ has: bob.page.locator(roomSelector) });
   assert.match(await row.innerText(), /Harbor Havoc · 1\/8 players/);
   assert.match(await row.innerText(), /Humans only/);
+  assert.match(await row.innerText(), /3 min/);
   await bob.page.screenshot({ path: `${output}/room-list.png` });
-  await bob.page.locator("#player-name").fill("Room browser Bob");
+  await bob.page.locator("#player-name").fill("Bob <b>literal</b>");
   await click(bob.page, roomSelector);
   await click(bob.page, "#join-room");
   await until(
@@ -106,6 +114,46 @@ try {
     [0, 1],
   );
   assert.equal(bob.mirror.state.entities.tanks.length, 2);
+  await alice.page.waitForFunction(() =>
+    document.querySelector("#feed")?.textContent.includes("Bob <b>literal</b> joined Red team"),
+  );
+  for (const client of clients) {
+    assert.equal(await client.page.locator(".network-player").count(), 2);
+    assert.match(await client.page.locator("#network-players").innerText(), /Bob <b>literal<\/b>/);
+    assert.equal(
+      await client.page.locator(".network-player span b").count(),
+      0,
+      "Names remain literal text",
+    );
+    assert.deepEqual(await client.page.locator(".network-player b").allTextContents(), ["0", "0"]);
+    assert.equal(await client.page.locator("#room-round-minutes").inputValue(), "3");
+    assert.equal(await client.page.locator("#room-round-minutes").isDisabled(), true);
+  }
+  await alice.page.screenshot({ path: `${output}/players-and-join.png` });
+  if (new URL(base).hostname === "127.0.0.1") {
+    const score = await alice.page.evaluate(() => {
+      const game = window.sloppyMultiplayer,
+        original = game.display;
+      game.ui.update(
+        {
+          ...original,
+          tanks: original.tanks.map((tank) => ({
+            ...tank,
+            kills: tank.id === original.viewerId ? 4 : tank.kills,
+          })),
+        },
+        0,
+        0,
+        true,
+      );
+      const text = document.querySelector(
+        `[data-player-id="${game.connection.playerId}"] b`,
+      ).textContent;
+      game.ui.update(original, 0, 0, true);
+      return text;
+    });
+    assert.equal(score, "4", "The live list renders kill updates from authoritative render state");
+  }
   const polls = clients.map((client) => client.listRequests);
   await until(() => clients.every((client) => client.updates > 10), "Clients receive updates");
   await click(alice.page, "#nerd-stats button");
@@ -135,6 +183,11 @@ try {
   await alice.page.keyboard.press("n");
   assert.equal(await alice.page.locator("#nerd-stats-details").isVisible(), false);
   await alice.page.waitForTimeout(5100);
+  assert.doesNotMatch(
+    await alice.page.locator("#feed").innerText(),
+    /joined Red team/,
+    "Join notice expires",
+  );
   assert.deepEqual(
     clients.map((client) => client.listRequests),
     polls,
@@ -146,7 +199,7 @@ try {
     await client.page.locator(".room-browser").waitFor();
     assert.equal(
       await client.page.locator("#player-name").inputValue(),
-      client === alice ? "Room browser Alice" : "Room browser Bob",
+      client === alice ? "Room browser Alice" : "Bob <b>literal</b>",
     );
   }
   await alice.page.locator(roomSelector).waitFor({ state: "detached", timeout: 15000 });
@@ -154,7 +207,7 @@ try {
   await bob.page.locator(roomSelector).waitFor({ state: "detached", timeout: 15000 });
   assert.deepEqual(errors, []);
   console.log(
-    "Room browser: random/saved names, responsive UI, create/start selected map, listing, Auto teams, late join, stats counters, no in-game polling and empty-room removal passed.",
+    "Room browser: random/saved names, responsive UI, create/start selected map, listing, Auto teams, live player kills, join notifications, match length, late join, stats counters, no in-game polling and empty-room removal passed.",
   );
 } finally {
   await writeFile(

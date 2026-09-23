@@ -9,6 +9,7 @@ import { CAMERA } from "../game/view-settings";
 import type { RenderState } from "../game/render-state";
 import type { Weapon } from "../game/types";
 import type { ControlInput } from "./player-controls";
+import { InputCadence } from "./input-cadence";
 import { Connection } from "./connection";
 import { StateMirror } from "./replication";
 import { NetworkTimeline } from "./interpolation";
@@ -25,7 +26,6 @@ import { record } from "./schema";
 import { browseRooms } from "./room-browser";
 import type { JoinChoice } from "./connection";
 
-const INPUT_INTERVAL_MS = 50;
 const MAX_ACTIONS = 8;
 export async function startMultiplayer(root: HTMLElement): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -81,7 +81,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
   let pending: ControlInput["actions"] = [];
   let pendingWeapon: Weapon | undefined;
   let last = performance.now();
-  let nextInputMs = 0;
+  const inputCadence = new InputCadence();
   let requestedFull = false;
   let lastResumeMs = -Infinity;
   let phase = "lobby";
@@ -141,8 +141,8 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
     choose(choice) {
       connection.send("choose", { team: choice.team, kind: choice.kind });
     },
-    settings(mapMode, difficulty, humansOnly) {
-      connection.settings(settingsReader.read({ mapMode, difficulty, humansOnly }));
+    settings(mapMode, difficulty, humansOnly, roundMinutes) {
+      connection.settings(settingsReader.read({ mapMode, difficulty, humansOnly, roundMinutes }));
     },
     start() {
       clearInput();
@@ -258,7 +258,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
                 [
                   "Input seq sent / ack",
                   `${seq} / ${appliedInput}`,
-                  "Latest input sequence sent and latest input sequence the server confirms processing. These are sequence numbers, not received state updates.",
+                  "Latest input sequence sent and acknowledged by the server. Active input sends up to 20/s; unchanged idle input refreshes once/s to retain your seat. These are not received state updates.",
                 ],
                 [
                   "Connection",
@@ -462,22 +462,26 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
     if (pending.length > MAX_ACTIONS) {
       pending = pending.slice(-MAX_ACTIONS);
     }
-    if (now < nextInputMs) {
+    const input = {
+      controlEpoch: control.controlEpoch,
+      moveX: command.moveX,
+      moveZ: command.moveZ,
+      aim: controls.touch.aiming ? { angle } : { x: target.x, z: target.z },
+      fire: command.fire,
+      actions: pending,
+    };
+    if (!inputCadence.due(input, now)) {
       return;
     }
-    nextInputMs = now + INPUT_INTERVAL_MS;
     if (
       connection.send("input", {
-        controlEpoch: control.controlEpoch,
-        seq: ++seq,
+        ...input,
+        seq: seq + 1,
         observedTick: mirror.tick,
-        moveX: command.moveX,
-        moveZ: command.moveZ,
-        aim: controls.touch.aiming ? { angle } : { x: target.x, z: target.z },
-        fire: command.fire,
-        actions: pending,
       })
     ) {
+      seq++;
+      inputCadence.sent(input, now);
       pending = [];
       pendingWeapon = undefined;
     }

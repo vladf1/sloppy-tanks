@@ -72,6 +72,51 @@
 #network-scoreboard p {
   margin: 5px 0;
 }
+#network-players {
+  position: absolute;
+  top: 88px;
+  left: 16px;
+  width: 224px;
+  padding: 12px;
+  border: 1px solid #b7d7ed30;
+  border-radius: 8px;
+  background: #102a43db;
+  color: #f5faff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.network-player-heading,
+.network-player {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.network-player-heading {
+  margin-bottom: 8px;
+  color: #b6cedf;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.network-player {
+  padding: 6px 0 6px 8px;
+  border-left: 2px solid #79c5ef;
+}
+.network-player[data-team="1"] {
+  border-color: #ff8a79;
+}
+.network-player span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-player b {
+  min-width: 2ch;
+  text-align: right;
+}
+.network-player.reconnecting {
+  opacity: 0.55;
+}
 #network-status {
   position: fixed;
   bottom: 8px;
@@ -168,6 +213,19 @@
   color: #b6cedf;
   font-size: 12px;
   font-weight: 600;
+}
+.room-length-field {
+  margin-top: 14px;
+}
+.room-length-field > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.room-browser .room-length-field input[type="number"] {
+  width: 80px;
+  flex: 0 0 80px;
 }
 .room-browser input:not([type="checkbox"], [type="radio"]),
 .room-browser select {

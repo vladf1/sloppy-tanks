@@ -1,7 +1,7 @@
 import type { PlayerAssignment } from "../game/types";
 import type { ControlInput } from "./player-controls";
 import type { FullState, Identity, Snapshot } from "./replication";
-import { array, boolean, id, object, optional, string, enumeration } from "./schema";
+import { array, boolean, id, object, optional, string, enumeration, number } from "./schema";
 import { team, playerKind, mapMode, difficulty } from "./scene-codec";
 
 declare const __MULTIPLAYER_CONTENT_VERSION__: string;
@@ -16,7 +16,17 @@ export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 export const EMPTY_GRACE_MS = 30_000;
 export const MAX_ROOM_MS = 30 * 60_000;
 export const ROOM_IDLE_MS = 5 * 60_000;
-export const settingsReader = object({ mapMode, difficulty, humansOnly: boolean });
+export const DEFAULT_ROUND_MINUTES = 10;
+export const roundMinutesReader = number(1, 20, true);
+export const settingsReader = object({
+  mapMode,
+  difficulty,
+  humansOnly: boolean,
+  roundMinutes: {
+    read: (value: unknown) =>
+      roundMinutesReader.read(value === undefined ? DEFAULT_ROUND_MINUTES : value),
+  },
+});
 export type RoomSettings = ReturnType<typeof settingsReader.read>;
 export interface Player extends PlayerAssignment {
   connected: boolean;
