@@ -98,19 +98,31 @@ try {
     }
   });
   await finish("team", 17);
-  assert.match(await page.locator(".recap-note").innerText(), /First records/);
+  assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
   assert.equal(await page.locator(".recap-stat").count(), 6);
-  assert.equal(await page.locator(".recap-detail").count(), 12);
+  assert.equal(await page.locator(".recap-detail").count(), 11);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const fits = await page.evaluate(() => {
+    const actions = document.querySelector(".recap-actions").getBoundingClientRect();
+    return (
+      actions.bottom <= innerHeight &&
+      document.querySelector("#overlay").scrollHeight <= innerHeight
+    );
+  });
+  assert.ok(fits, "a full report must fit without scrolling to its buttons");
+  await page.screenshot({ path: `${output}/battle-report-720p.png` });
+  await page.setViewportSize({ width: 1440, height: 1100 });
   await click("#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.equal(await page.evaluate(() => window.sloppy.sim.combatRecord.busiestMinute), 0);
   await finish("team", 21);
-  assert.match(await page.locator(".recap-heading").innerText(), /NEW PERSONAL BEST/);
+  assert.match(await page.locator(".recap-note").innerText(), /NEW PERSONAL BEST/);
   await page.screenshot({ path: `${output}/battle-report.png` });
   await open();
   await finish("team", 19);
   assert.match(await page.locator(".recap-stat").first().innerText(), /BEST 21/);
+  await page.setViewportSize({ width: 1024, height: 640 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const top = await page.locator(".results").boundingBox();
   assert.ok(top.y >= 0, "scrollable report must not clip its heading above the viewport");
@@ -136,13 +148,13 @@ try {
   await page.locator(".recap-stats").waitFor();
   assert.match(await page.locator(".results h2").innerText(), /TANK DESTROYED/);
   assert.match(await page.locator(".recap-stat").nth(2).innerText(), /0:42/);
-  assert.match(await page.locator(".recap-feats").innerText(), /GLORIOUS PILE OF SCRAP/);
+  assert.equal(await page.locator(".recap-feats").count(), 0, "no filler when nothing was earned");
   await page.screenshot({ path: `${output}/battle-report-solo.png` });
   await click("#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: 18 stats, earned feats, record persistence, team/solo outcomes, report scrolling, coordinate-click replay/setup, no browser errors",
+    "PASS: compact report fits, earned feats, record persistence, team/solo outcomes, report scrolling, coordinate-click replay/setup, no browser errors",
   );
 } finally {
   await browser.close();

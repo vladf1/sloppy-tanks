@@ -55,10 +55,9 @@ export function menuMarkup(
     const won = simulation.match.winner === simulation.humanTeam;
     return `<section class="menu compact results">
       <div class="eyebrow">${solo ? "SOLO ASSAULT" : "ROUND COMPLETE"} / ${simulation.mapName}</div>
-      <h2>${endedEarly ? "BATTLE ENDED" : solo ? (won ? "SURVIVED" : "TANK DESTROYED") : won ? "VICTORY" : "DEFEAT"}</h2>
-      ${solo ? `<p>${endedEarly ? "Run ended early. Here’s how you did." : won ? "Ten minutes. One tank. Still standing." : "One more run. One more personal best?"}</p>` : `<div class="result-score"><span>${simulation.match.scores[0]}</span> : <span>${simulation.match.scores[1]}</span></div><p>${endedEarly ? "Ended early" : `${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}`} · ${viewer.deaths} personal wrecks</p>`}
+      <div class="results-head"><h2>${endedEarly ? "BATTLE ENDED" : solo ? (won ? "SURVIVED" : "TANK DESTROYED") : won ? "VICTORY" : "DEFEAT"}</h2>${solo ? "" : `<div class="result-score"><span>${simulation.match.scores[0]}</span>:<span>${simulation.match.scores[1]}</span></div>`}</div>
+      ${solo ? `<p>${endedEarly ? "Run ended early." : won ? "Ten minutes. One tank. Still standing." : "One more run. One more personal best?"}</p>` : `<p>${endedEarly ? "Ended early" : `${TEAM_NAMES[simulation.match.winner ?? 0]} wins${simulation.match.overtime ? " in overtime" : ""}`} · ${viewer.deaths} personal wrecks</p>`}
       ${recapMarkup(simulation)}
-      <p id="death-cause" role="status"></p>
       <div class="recap-actions"><button id="play-again" class="primary">PLAY AGAIN</button>
       <button id="restart" class="secondary">BATTLE SETUP</button></div>
     </section>`;

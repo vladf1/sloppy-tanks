@@ -352,11 +352,8 @@
           prepare();
           hurt(-1, 0, 999, "rocket");
           check(
-            s.match.phase === "results" &&
-              document
-                .querySelector("#death-cause")
-                .textContent.includes("killed you with a rocket blast."),
-            "Solo results retain cause",
+            s.match.phase === "results" && !document.querySelector("#death-cause"),
+            "Solo results leave the death cause to its toast",
           );
           click("#restart");
           check(document.querySelector("#ammo-notice").textContent === "", "Reset clears notices");

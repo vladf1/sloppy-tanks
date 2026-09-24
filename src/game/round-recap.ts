@@ -18,14 +18,7 @@ const metrics = [
   "coverDestroyed",
   "pickups",
 ] as const;
-const featuredMetrics = [
-  "kills",
-  "busiestMinute",
-  "longestLife",
-  "bestLife",
-  "damage",
-  "rank",
-] as const;
+const featuredMetrics = ["kills", "damage", "longestLife", "bestLife", "rank"] as const;
 type Metric = (typeof metrics)[number];
 export type RecapStats = Record<Metric, number>;
 type StorageAccess = Pick<Storage, "getItem" | "setItem">;
@@ -156,34 +149,35 @@ export function recapMarkup(simulation: Simulation): string {
   };
   const records = savePersonalBests(storage, key, stats);
   const labels: Record<Metric, string> = {
-    kills: "Eliminations",
-    damage: "Hull damage dealt",
-    bestLife: "Best killing spree",
-    rank: "Highest rank",
+    kills: "Kills",
+    damage: "Damage dealt",
+    bestLife: "Best spree",
+    rank: "Top rank",
     busiestMinute: "Busiest minute",
     longestLife: "Longest life",
-    multikill: "Biggest multikill",
+    multikill: "Multikill",
     clutchKills: "Clutch kills",
     revengeKills: "Revenge kills",
-    posthumousKills: "Beyond the grave",
+    posthumousKills: "From the grave",
     mineKills: "Mine kills",
-    coverDestroyed: "Cover demolished",
-    pickups: "Pickups grabbed",
+    coverDestroyed: "Cover wrecked",
+    pickups: "Pickups",
   };
+  // Explanations stay available on hover so the report itself reads at a glance.
   const hints: Record<Metric, string> = {
-    kills: "enemy tanks wrecked",
-    damage: "enemy hull only · no overkill",
-    bestLife: "kills while alive in one life",
-    rank: "your peak across all lives",
-    busiestMinute: "most kills in any rolling 60s",
-    longestLife: "alive time · pauses excluded",
-    multikill: "most kills in any rolling 5s",
-    clutchKills: "kills at 25% hull or less",
-    revengeKills: "taking out your last killer",
-    posthumousKills: "kills by a previous life's ordnance",
-    mineKills: "kills from mine explosions",
-    coverDestroyed: "destructible objects you finished",
-    pickups: "ammo and power-ups collected",
+    kills: "Enemy tanks wrecked",
+    damage: "Enemy hull damage, no overkill",
+    bestLife: "Most kills in a single life",
+    rank: "Peak rank across all lives",
+    busiestMinute: "Most kills in any rolling 60s",
+    longestLife: "Longest time alive, pauses excluded",
+    multikill: "Most kills in any rolling 5s",
+    clutchKills: "Kills at 25% hull or less",
+    revengeKills: "Kills on your last killer",
+    posthumousKills: "Kills by a previous life's ordnance",
+    mineKills: "Kills from mine explosions",
+    coverDestroyed: "Destructible objects you finished",
+    pickups: "Ammo and power-ups collected",
   };
   const format = (metric: Metric, value: number) =>
     metric === "rank"
@@ -191,33 +185,77 @@ export function recapMarkup(simulation: Simulation): string {
       : metric === "longestLife"
         ? duration(value)
         : value.toLocaleString("en-US");
-  const record = (metric: Metric) =>
-    `${records.improved.has(metric) ? "★ NEW BEST" : "BEST"} ${format(metric, records.best[metric])}`;
+  const tile = (label: string, value: string, hint: string, footer = "", improved = false) =>
+    `<div class="recap-stat${improved ? " is-record" : ""}" title="${hint}"><dt>${label}</dt><dd>${value}</dd>${footer ? `<span>${footer}</span>` : ""}</div>`;
+  // A tile only mentions its record when it was beaten or is still out of reach.
+  const recordFooter = (metric: Metric) =>
+    records.improved.has(metric)
+      ? "★ NEW BEST"
+      : records.best[metric] > stats[metric]
+        ? `BEST ${format(metric, records.best[metric])}`
+        : "";
+  const hitRate = combat.shots ? `${Math.round((combat.directHits / combat.shots) * 100)}%` : "—";
+  const extras: { label: string; value: string; hint: string; improved?: boolean }[] = [
+    ...metrics
+      .filter(
+        (metric) => !featuredMetrics.some((featured) => featured === metric) && stats[metric] > 0,
+      )
+      .map((metric) => ({
+        label: labels[metric],
+        value: format(metric, stats[metric]),
+        hint: hints[metric],
+        improved: records.improved.has(metric),
+      })),
+    ...(combat.damageTaken >= 1
+      ? [
+          {
+            label: "Damage taken",
+            value: Math.round(combat.damageTaken).toLocaleString("en-US"),
+            hint: "Hull lost across all lives",
+          },
+        ]
+      : []),
+    ...(combat.shieldAbsorbed >= 1
+      ? [
+          {
+            label: "Shield absorbed",
+            value: Math.round(combat.shieldAbsorbed).toLocaleString("en-US"),
+            hint: "Damage your shields soaked up",
+          },
+        ]
+      : []),
+    { label: "Time played", value: duration(simulation.elapsed), hint: "Pauses excluded" },
+  ];
   const feats = combatFeats(stats, combat.shots, combat.directHits);
-  const detailMetrics = metrics.filter(
-    (metric) => !featuredMetrics.some((featured) => featured === metric),
-  );
-  const detail = (label: string, value: string, hint: string, best = "", improved = false) =>
-    `<div class="recap-detail${improved ? " is-record" : ""}" title="${hint}"><dt>${label}<small>${hint}</small></dt><dd>${value}${best ? `<small>${best}</small>` : ""}</dd></div>`;
-  const markup = `<div class="recap-feats">${feats.length ? feats.map((feat) => `<div><b>★ ${feat.title}</b><span>${feat.detail}</span></div>`).join("") : `<div><b>${stats.kills ? "TRACKS DOWN. CHIN UP." : "A GLORIOUS PILE OF SCRAP"}</b><span>${stats.kills ? "Every wreck has a story. Here's yours." : "The next battle is your comeback story."}</span></div>`}</div>
-    <div class="recap-heading">YOUR BATTLE REPORT<span>${records.improved.size ? `★ ${records.improved.size} NEW PERSONAL BEST${records.improved.size === 1 ? "" : "S"}` : ""}</span></div>
+  const bests = records.improved.size;
+  // Records are kept per mode, map and difficulty; only mention them when something happened.
+  const difficulty = simulation.difficulty[0].toUpperCase() + simulation.difficulty.slice(1);
+  const note = !records.persisted
+    ? "Personal bests couldn't be saved in this browser"
+    : bests
+      ? `<b>★ ${bests} NEW PERSONAL BEST${bests === 1 ? "" : "S"}</b> on ${simulation.mapName} · ${difficulty}`
+      : "";
+  const markup = `${feats.length ? `<div class="recap-feats">${feats.map((feat) => `<div title="${feat.detail}"><b>★ ${feat.title}</b> ${feat.detail}</div>`).join("")}</div>` : ""}
     <dl class="recap-stats">${featuredMetrics
+      .map((metric) =>
+        tile(
+          labels[metric],
+          format(metric, stats[metric]),
+          hints[metric],
+          recordFooter(metric),
+          records.improved.has(metric),
+        ),
+      )
+      .join(
+        "",
+      )}${tile("Accuracy", hitRate, "Direct hits / projectiles fired, splash excluded", `${combat.directHits} / ${combat.shots} HITS`)}</dl>
+    <dl class="recap-details">${extras
       .map(
-        (metric) => `<div class="recap-stat${records.improved.has(metric) ? " is-record" : ""}">
-      <dt>${labels[metric]}</dt><dd>${format(metric, stats[metric])}<small>${hints[metric]}</small></dd>
-      <span>${record(metric)}</span>
-    </div>`,
+        (extra) =>
+          `<div class="recap-detail${extra.improved ? " is-record" : ""}" title="${extra.hint}${extra.improved ? " · new personal best" : ""}"><dt>${extra.label}</dt><dd>${extra.improved ? "★ " : ""}${extra.value}</dd></div>`,
       )
       .join("")}</dl>
-    <dl class="recap-details">
-      ${detail("Kills / minute", simulation.elapsed > 0 ? ((stats.kills * 60) / simulation.elapsed).toFixed(1) : "—", "round average · includes respawn time")}
-      ${detail("Direct hit rate", combat.shots ? `${Math.round((combat.directHits / combat.shots) * 100)}%` : "—", `${combat.directHits} / ${combat.shots} projectiles · excludes splash hits`)}
-      ${detailMetrics.map((metric) => detail(labels[metric], format(metric, stats[metric]), hints[metric], record(metric), records.improved.has(metric))).join("")}
-      ${detail("Hull damage taken", Math.round(combat.damageTaken).toLocaleString("en-US"), "actual hull lost across all lives")}
-      ${detail("Shield saved you", Math.round(combat.shieldAbsorbed).toLocaleString("en-US"), "damage absorbed by your shields")}
-      ${detail("Time in the mayhem", duration(simulation.elapsed), `${simulation.human.deaths} wrecks · pauses excluded`)}
-    </dl>
-    <p class="recap-note">${simulation.difficulty.toUpperCase()} · Records for this mode &amp; map · ${records.persisted ? (records.established ? "Saved on this browser" : "First records set. Beat them next round!") : "Records could not be saved"}</p>`;
+    <p class="recap-note">${note}</p>`;
   finishedRecaps.set(simulation.match, markup);
   return markup;
 }

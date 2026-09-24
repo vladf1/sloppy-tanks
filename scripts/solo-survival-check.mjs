@@ -8,13 +8,13 @@ const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   page.on("pageerror", (e) => errors.push(e.message));
-  // The battle report's headline stat; its <dd> also holds a hint after the value.
+  // The battle report's headline stat.
   const recapKills = () =>
     page.evaluate(() => {
       const stat = [...document.querySelectorAll(".recap-stat")].find(
-        (element) => element.querySelector("dt").textContent === "Eliminations",
+        (element) => element.querySelector("dt").textContent === "Kills",
       );
-      return stat?.querySelector("dd").firstChild.textContent.trim();
+      return stat?.querySelector("dd").textContent.trim();
     });
   await page.goto(`${base}tests/reinforcements.browser.html`);
   // Read the verdict inside the wait, so a dev-server reload cannot swap the page in between.

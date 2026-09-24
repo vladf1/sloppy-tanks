@@ -35,7 +35,7 @@ game's own `loop` callback and must leave Three.js's animation callbacks running
 | `laser-defense-check.mjs`          | Laser pickup timings and collection, HUD, rocket interception, pause and expiry                          |
 | `projectile-visual-check.mjs`      | Every player munition model for both teams, size limits and capacity cap                                 |
 | `touch-controls-check.mjs`         | Thumb sticks and simultaneous fingers; desktop keeps keyboard and mouse                                  |
-| `round-recap-check.mjs`            | Battle report after END BATTLE, personal records across reloads, report scrolling, BATTLE SETUP          |
+| `round-recap-check.mjs`            | Battle report after END BATTLE, records across reloads, fits without scrolling, BATTLE SETUP             |
 | `solo-survival-check.mjs`          | Reinforcements fixture, then solo scoreboard, pause, time limit and death                                |
 | `bot-movement-browser.mjs`         | Bot retreat and head-on movement                                                                         |
 | `render-bundles-check.mjs`         | Cached draws match ordinary draws on all maps with moving and switched cameras                           |
