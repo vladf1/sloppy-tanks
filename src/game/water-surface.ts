@@ -15,6 +15,7 @@ import {
   smoothstep,
   sin,
 } from "three/tsl";
+import { HUD_LAYER } from "./view-settings";
 
 let normals: THREE.Texture | undefined;
 function waterNormals(): THREE.Texture {
@@ -93,6 +94,8 @@ export class WaterSurface extends THREE.Mesh<THREE.BufferGeometry, THREE.MeshBas
         this.reflectionEnabled &&
         this.waterInView(frame.camera)
       ) {
+        // The mirror camera clones the main camera's layers; keep the HUD out.
+        mirror.reflector.getVirtualCamera(frame.camera).layers.disable(HUD_LAYER);
         return renderReflection(frame);
       }
       return false;

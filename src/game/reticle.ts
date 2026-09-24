@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { put } from "./model-primitives";
+import { HUD_LAYER } from "./view-settings";
 /** Geometry lies on the aiming plane; materials remain accessible for reload/hit feedback. */
 export function createReticle() {
   const crosshair = new THREE.Group();
@@ -45,6 +46,7 @@ export function createReticle() {
   center.rotation.x = -Math.PI / 2;
   center.renderOrder = 52;
   crosshair.add(center);
+  crosshair.traverse((object) => object.layers.set(HUD_LAYER));
   crosshair.position.y = 1.05;
   return { crosshair, ink, center: center.material };
 }

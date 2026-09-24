@@ -3,6 +3,7 @@ import { PICKUPS, SHIELD_CAPACITY, TEAM_COLORS } from "./data";
 import { isMesh } from "./render-resources";
 import { SIMULATION_RULES } from "./simulation-rules";
 import type { Tank } from "./types";
+import { HUD_LAYER } from "./view-settings";
 type HudMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
 type ProtectionMeter = { group: THREE.Group; fill: HudMesh };
 export interface TankBar extends THREE.Group {
@@ -127,6 +128,7 @@ export function createTankBar(team: number): TankBar {
     return chevron;
   });
   g.traverse((o) => {
+    o.layers.set(HUD_LAYER);
     if (isMesh(o)) {
       // Transparent terrain is drawn after opaque meshes regardless of their
       // renderOrder. Keep all world-space HUD layers in the later pass too.

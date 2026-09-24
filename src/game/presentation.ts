@@ -61,7 +61,7 @@ import type { Fragment, SimEvent, Team, VehicleKind, WreckPart } from "./types";
 import { timberParts } from "./timber-layout";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
-import { CAMERA, FEEDBACK } from "./view-settings";
+import { CAMERA, FEEDBACK, HUD_LAYER } from "./view-settings";
 interface PickupModel extends THREE.Group {
   userData: {
     gem: THREE.Object3D;
@@ -176,6 +176,7 @@ export class Presentation {
     renderer: GameRenderer,
   ) {
     this.renderer = renderer;
+    this.camera.layers.enable(HUD_LAYER);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;

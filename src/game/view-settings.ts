@@ -17,3 +17,6 @@ export const FEEDBACK = {
   maxPickupEffects: 24,
   flashDecay: 12,
 } as const;
+/** World-space HUD (reticle, tank bars) draws only for the main camera; water
+ * reflections disable this layer on their mirror camera so they never show it. */
+export const HUD_LAYER = 1;
