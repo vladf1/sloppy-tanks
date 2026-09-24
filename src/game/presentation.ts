@@ -455,7 +455,10 @@ export class Presentation {
 
   async prepare(source: Simulation | RenderState): Promise<void> {
     const simulation = renderState(source, this.wreckView);
-    await waitForAssets();
+    // Shaders depend on materials and texture types, not on pixels still
+    // downloading or baking (Dusty Dig's soil), so compile meanwhile. The draws
+    // below upload textures and record bundles, so they wait for the pixels.
+    const assets = waitForAssets();
     if (this.warmSamples) {
       this.scene.remove(this.warmSamples);
       this.disposeSamples(this.warmSamples);
@@ -465,6 +468,7 @@ export class Presentation {
     const restoreSamples = exposeWarmupObjects(samples);
     try {
       await this.renderer.compileAsync(this.scene, this.camera);
+      await assets;
       // Effect samples join only for the draws below. Real effects are never
       // precompiled, and r185 derives a different double-sided transparent
       // shader when compileAsync sees a material first.
