@@ -5,7 +5,9 @@ import { isMesh } from "./render-resources";
 const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
 /** Bake opaque paint colors into vertices; identical color/bump maps can share
- * a batch while retaining their UVs and distinct lighting responses. */
+ * a batch while retaining their UVs and distinct lighting responses. Every
+ * painted mesh then draws with one vertex-color shader per surface type, rather
+ * than a variant with and one without vertex colors. */
 function vertexMaterial(source: THREE.Material) {
   if (
     !(source instanceof THREE.MeshStandardMaterial) ||
@@ -22,8 +24,7 @@ function vertexMaterial(source: THREE.Material) {
     source.opacity !== 1 ||
     source.alphaTest ||
     source.vertexColors ||
-    source.wireframe ||
-    source.emissive.getHex() !== 0
+    source.wireframe
   ) {
     return source;
   }
@@ -31,6 +32,9 @@ function vertexMaterial(source: THREE.Material) {
     source.metalness,
     source.roughness,
     source.toneMapped,
+    // Team paint glows; its emissive stays a material uniform.
+    source.emissive.getHex(),
+    source.emissiveIntensity,
     source.side,
     source.flatShading,
     source.depthTest,
@@ -224,6 +228,30 @@ export function batchParts(group: THREE.Group): Map<THREE.Material, BatchPart[]>
     byMat.set(mat, list);
   }
   return byMat;
+}
+
+/** Paint one standalone mesh like a batched part, so it shares their shader. */
+export function paintMesh(mesh: THREE.Mesh): void {
+  const source = mesh.material;
+  if (Array.isArray(source)) {
+    return;
+  }
+  const painted = vertexMaterial(source);
+  if (painted === source) {
+    return;
+  }
+  const { r, g, b } = (source as THREE.MeshStandardMaterial).color;
+  const geometry = mesh.geometry.clone();
+  const colors = new Float32Array(geometry.getAttribute("position").count * 3);
+  for (let i = 0; i < colors.length; i += 3) {
+    colors[i] = r;
+    colors[i + 1] = g;
+    colors[i + 2] = b;
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.userData.owned = true;
+  mesh.geometry = geometry;
+  mesh.material = painted;
 }
 
 /** Batch only direct mesh children, preserving movable assembly groups. */

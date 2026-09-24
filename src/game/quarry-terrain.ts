@@ -147,7 +147,16 @@ function soilMaterial(): THREE.MeshStandardNodeMaterial {
   const grit = quarryGrit(mix(0.55, 1.5, stony), mix(0.35, 1.6, stony));
   material.colorNode = vec4(baked.rgb.mul(grit.color), 1);
   material.normalNode = grit.normal;
+  material.vertexColors = true;
   return material;
+}
+
+/** Soil meshes all carry vertex colors, so plain soil shares its shader with the
+ * tinted spoil and ramp; white leaves the baked soil unchanged. */
+export function plainSoilColors(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const colors = new Float32Array(geometry.getAttribute("position").count * 3).fill(1);
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return geometry;
 }
 
 /** A baked, metre-scaled work yard: pale sand sheets, compacted haul routes,
@@ -163,7 +172,7 @@ export function quarryTerrain() {
     positions.setY(i, outside > 0 ? -Math.min(1.8, outside * 0.3) : 0);
   }
   geometry.computeVertexNormals();
-  const floor = new THREE.Mesh(geometry, material);
+  const floor = new THREE.Mesh(plainSoilColors(geometry), material);
   floor.name = "quarry-compacted-haul-roads";
   floor.position.y = 0.008;
   floor.receiveShadow = true;

@@ -1,7 +1,14 @@
 import { test, mock, after } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { batch, batchParts, freezeStatic, mergeParts, packParts } from "../src/game/batching";
+import {
+  batch,
+  batchParts,
+  freezeStatic,
+  mergeParts,
+  packParts,
+  paintMesh,
+} from "../src/game/batching";
 import { arenaLayout } from "../src/game/arena";
 import { MAPS } from "../src/game/maps";
 import { coverModel, tankModel, wreckModel } from "../src/game/models";
@@ -151,9 +158,47 @@ test("batching keeps metallic, emissive and tone-mapping responses separate", ()
   for (const mat of materials) group.add(new THREE.Mesh(new THREE.BoxGeometry(), mat));
   batch(group);
   assert.equal(group.children.length, 4);
-  assert.equal((group.children[2] as THREE.Mesh).material, materials[2]);
+  const glowing = (
+    group.children[2] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
+  ).material;
+  assert.ok(glowing.vertexColors, "team paint shares the vertex-color shader");
+  assert.equal(glowing.color.getHex(), 0xffffff);
+  assert.equal(glowing.emissive.getHex(), 0x0000ff);
   assert.equal(materials[0].color.getHex(), 0xff0000);
   assert.equal(materials[0].vertexColors, false);
+});
+
+test("painted standalone meshes draw with the batched parts' vertex-color material", () => {
+  const primitive = new THREE.CylinderGeometry(1, 1, 0.2, 12);
+  const standalone = new THREE.Mesh(
+    primitive,
+    new THREE.MeshStandardMaterial({ color: 0x25435f, metalness: 0.2 }),
+  );
+  paintMesh(standalone);
+  const group = new THREE.Group();
+  group.add(
+    new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshStandardMaterial({ color: 0x384f47, metalness: 0.2 }),
+    ),
+  );
+  batch(group);
+  assert.equal(standalone.material, (group.children[0] as THREE.Mesh).material);
+  assert.notEqual(standalone.geometry, primitive, "cached primitives stay unpainted");
+  assert.ok(standalone.geometry.userData.owned);
+  const colors = standalone.geometry.getAttribute("color");
+  const paint = new THREE.Color(0x25435f);
+  assert.equal(colors.count, primitive.getAttribute("position").count);
+  for (let i = 0; i < colors.count; i++) {
+    assert.ok(Math.abs(colors.getX(i) - paint.r) < 1e-7);
+    assert.ok(Math.abs(colors.getY(i) - paint.g) < 1e-7);
+    assert.ok(Math.abs(colors.getZ(i) - paint.b) < 1e-7);
+  }
+  const glass = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 });
+  const pane = new THREE.Mesh(primitive, glass);
+  paintMesh(pane);
+  assert.equal(pane.material, glass, "translucent materials keep their own shader");
+  assert.equal(pane.geometry, primitive);
 });
 
 test("batched tank assemblies still follow their moving parents and static cover keeps its pose", () => {

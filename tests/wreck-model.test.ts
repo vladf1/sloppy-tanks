@@ -39,6 +39,12 @@ test("detached hulls expose a recessed turret socket while live hull decks stay 
         new THREE.Vector3(1, 0, 0),
       ).intersectObject(wreck)[0];
       assert.ok(wall && Math.abs(wall.distance - radius) < 1e-5, "socket has inward-facing walls");
+      const socket = wall.object as THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+      assert.equal(socket.material.side, THREE.FrontSide, "the wall shares front-side paint");
+      assert.ok(
+        wall.face!.normal.x < 0 && socket.geometry.getAttribute("normal").getX(wall.face!.a) < 0,
+        "its triangles and normals face into the socket",
+      );
     }
   }
 });

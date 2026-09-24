@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { withTaskYield } from "../src/game/task-yield";
+import { nextTask, withTaskYield } from "../src/game/task-yield";
 
 type Host = { scheduler?: { yield?: () => Promise<void> } };
 const host = globalThis as Host;
@@ -33,4 +33,13 @@ test("shader warm-up yields by task where scheduler.yield is missing, then clean
     if (original) host.scheduler = original;
     else delete host.scheduler;
   }
+});
+
+test("nextTask resolves in a later task, after pending promise work", async () => {
+  const order: string[] = [];
+  const next = nextTask().then(() => order.push("task"));
+  await Promise.resolve();
+  order.push("microtask");
+  await next;
+  assert.deepEqual(order, ["microtask", "task"]);
 });

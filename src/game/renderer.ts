@@ -1,11 +1,22 @@
-import type { BufferAttribute, InterleavedBufferAttribute, Material, Object3D } from "three/webgpu";
+import type {
+  BufferAttribute,
+  Camera,
+  InterleavedBufferAttribute,
+  Light,
+  Material,
+  Object3D,
+} from "three/webgpu";
 import {
+  BoxGeometry,
+  Mesh,
+  MeshLambertNodeMaterial,
   Renderer,
   StandardNodeLibrary,
   WebGPUBackend,
   WGSLNodeBuilder,
   type WebGPURendererParameters,
 } from "three/webgpu";
+import { lights } from "three/tsl";
 import { RenderResources, trackInterleavedBuffers, type DrawResources } from "./renderer-resources";
 import {
   compileRuntimePipelinesAsync,
@@ -62,6 +73,80 @@ function nameBufferUniformsByOrder(): void {
   };
 }
 nameBufferUniformsByOrder();
+
+/** Rename `nodeUniformN` identifiers in the order the code first mentions them. */
+export function numberUniformsInOrder(code: string): string {
+  const numbers = new Map<string, number>();
+  return code.replace(/\bnodeUniform(\d+)/g, (_, index: string) => {
+    let number = numbers.get(index);
+    if (number === undefined) {
+      number = numbers.size;
+      numbers.set(index, number);
+    }
+    return `nodeUniform${number}`;
+  });
+}
+
+interface ThrowawayBuilder {
+  context: { material?: Material };
+  build(): void;
+}
+
+interface StageCode {
+  vertexShader: string | null;
+  fragmentShader: string | null;
+  buildCode: (this: StageCode) => void;
+}
+
+/** r185 numbers uniforms across both stages of a build, so a vertex-only uniform
+ * (a part batch's matrices, an instance buffer) renames every fragment uniform.
+ * Lit fragment shaders that are otherwise identical then compile as separate
+ * programs, and Safari compiles each one from scratch (about 0.5 s) on a first
+ * visit. Number each stage's uniforms in its own code order instead; WebGPU
+ * binds them by group and binding index, never by name. */
+function numberUniformsPerStage(): void {
+  const builder = WGSLNodeBuilder.prototype as unknown as StageCode;
+  const buildCode = builder.buildCode;
+  builder.buildCode = function () {
+    buildCode.call(this);
+    if (this.vertexShader !== null && this.fragmentShader !== null) {
+      this.vertexShader = numberUniformsInOrder(this.vertexShader);
+      this.fragmentShader = numberUniformsInOrder(this.fragmentShader);
+    }
+  };
+}
+numberUniformsPerStage();
+
+interface ShadowNodes {
+  colorNode: unknown;
+  depthNode: unknown;
+  positionNode: unknown;
+}
+interface ShadowNodeSource {
+  _getShadowNodes(material: Material): ShadowNodes;
+}
+
+/** r185 derives each material's shadow nodes on first use, and a node's cache key
+ * is its id. Every fading copy of a textured material (falling boughs and crowns,
+ * wreck and timber parts) then builds a shadow shader mid-round. A plain material's
+ * shadow reads only its map's alpha, so copies with the same map share nodes. */
+export function shareTexturedShadowNodes(renderer: ShadowNodeSource): void {
+  const derive = renderer._getShadowNodes.bind(renderer);
+  const shared = new Map<string, ShadowNodes>();
+  renderer._getShadowNodes = (material) => {
+    const map = (material as Material & { map?: { id: number } | null }).map;
+    if (!map || "isNodeMaterial" in material) {
+      return derive(material);
+    }
+    const key = `${material.type}/${map.id}`;
+    let nodes = shared.get(key);
+    if (!nodes) {
+      nodes = derive(material);
+      shared.set(key, nodes);
+    }
+    return nodes;
+  };
+}
 
 /** r185 shares one shadow material across cutout foliage and solid meshes. Each
  * alpha-test toggle increments its version, invalidating every caster's cache.
@@ -125,6 +210,7 @@ export class GameRenderer extends Renderer {
     preserveRenderBundleScope(this as unknown as BundleRenderer);
     submitRenderBundlesInOrder(this.backend as unknown as BundleExecutionBackend);
     trackRenderBundles(this.backend as unknown as BundleBackend, this.info);
+    shareTexturedShadowNodes(this as unknown as ShadowNodeSource);
     this.pendingPipelinesReady = compileRuntimePipelinesAsync(
       (this as unknown as { _pipelines: RuntimePipelines })._pipelines,
     );
@@ -141,11 +227,48 @@ export class GameRenderer extends Renderer {
   }
 
   override async compileAsync(...args: Parameters<Renderer["compileAsync"]>): Promise<void> {
+    this.primeLitBuild(args[2] ?? args[0], args[1]);
     // Node building stays sequential (Three shares builder state), but GPU
     // compilation overlaps subsequent builds instead of awaiting each pipeline.
     // Its yields between stages must not wait a frame each; see task-yield.ts.
     await withTaskYield(() => super.compileAsync(...args));
     await this.waitForPipelineCompilation();
+  }
+
+  private primedFog?: unknown;
+  /** r185 creates a shadowed light's filter uniforms during every lit build, but
+   * the scene fog's uniforms and the light's shadow graph only in the first build
+   * that needs them. That first build therefore orders its code differently, and
+   * its program never matches the same material built again, for example in the
+   * water reflection; Safari compiles one more lit shader on a first visit. Create
+   * both in a throwaway node build first, again whenever a round brings a new fog.
+   * It never reaches the GPU. */
+  private primeLitBuild(scene: Object3D, camera: Camera): void {
+    const nodes = (this as unknown as { _nodes: { getFogNode(scene: Object3D): unknown } })._nodes;
+    const fogNode = nodes.getFogNode(scene);
+    if (this.primedFog !== undefined && this.primedFog === fogNode) {
+      return;
+    }
+    this.primedFog = fogNode;
+    const sceneLights: Light[] = [];
+    scene.traverseVisible((object) => {
+      if ("isLight" in object) {
+        sceneLights.push(object as Light);
+      }
+    });
+    // The cheapest lit material that receives shadows; the graphs are shared.
+    const material = new MeshLambertNodeMaterial();
+    const mesh = new Mesh(new BoxGeometry(), material);
+    mesh.receiveShadow = true;
+    const backend = this.backend as unknown as {
+      createNodeBuilder(object: Object3D, renderer: Renderer): ThrowawayBuilder;
+    };
+    const builder = backend.createNodeBuilder(mesh, this);
+    Object.assign(builder, { scene, camera, material, fogNode, lightsNode: lights(sceneLights) });
+    builder.context.material = material;
+    builder.build();
+    mesh.geometry.dispose();
+    material.dispose();
   }
 
   releaseObjects(root: Object3D): void {

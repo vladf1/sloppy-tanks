@@ -49,3 +49,16 @@ export async function withTaskYield<T>(work: () => Promise<T>): Promise<T> {
     }
   }
 }
+
+/** Resolve in a new message task, so the browser can paint first. Unlike a
+ * timer, a message task is not throttled while the tab is in the background. */
+export function nextTask(): Promise<void> {
+  const { port1, port2 } = new MessageChannel();
+  return new Promise((resolve) => {
+    port1.onmessage = () => {
+      port1.close();
+      resolve();
+    };
+    port2.postMessage(null);
+  });
+}

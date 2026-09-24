@@ -181,6 +181,7 @@ export class HarborScenery {
       }
     }
     batch(details);
+    batch(this.beacons);
     this.group.add(details, this.beacons);
     freezeStatic(details);
     // Painted edge stripes sit on the actual 1.2m perimeter wall.

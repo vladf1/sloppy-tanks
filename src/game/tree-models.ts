@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { batch } from "./batching";
+import { batch, paintMesh } from "./batching";
 import { Random } from "./data";
 import type { Cover } from "./types";
 import { treeProportions } from "./tree-proportions";
@@ -225,6 +225,7 @@ export function treeModel(c: TreeDef, detail: "full" | "background" = "full") {
     );
     cut.rotation.y = twist;
     cut.name = "exposed-wood";
+    paintMesh(cut);
     cut.visible = false;
     group.add(stump, crown);
     group.userData.cutSurface = cut;

@@ -1,12 +1,13 @@
 import { GameRenderer } from "./renderer";
 import { exposeWarmupObjects } from "./prepare-scene";
 import { waitForAssets } from "./loading-assets";
+import { nextTask } from "./task-yield";
 import { PartBatches } from "./part-batches";
 import { timberPartModel } from "./timber-model";
 import * as THREE from "three/webgpu";
 import { barrelScrapGeometry } from "./barrel-debris";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
-import { batch, freezeStatic } from "./batching";
+import { batch, freezeStatic, paintMesh } from "./batching";
 import { coverDamageStage } from "./cover-model";
 import { debrisCleanupProgress } from "./debris-cleanup";
 import { addDebrisFade } from "./debris-fade";
@@ -56,7 +57,7 @@ import { TrackDust } from "./track-dust";
 import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
-import type { Fragment, SimEvent, VehicleKind, WreckPart } from "./types";
+import type { Fragment, SimEvent, Team, VehicleKind, WreckPart } from "./types";
 import { timberParts } from "./timber-layout";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
@@ -387,7 +388,9 @@ export class Presentation {
     for (const pickup of simulation.pickups) {
       const group = new THREE.Group() as PickupModel;
       const def = PICKUPS[pickup.kind];
-      put(group, cylinder(1.05, 0.12, 0x25435f, 24), 0, 0.08, 0);
+      const base = cylinder(1.05, 0.12, 0x25435f, 24);
+      paintMesh(base);
+      put(group, base, 0, 0.08, 0);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.94, 0.045, 5, 24), material(def.color));
       ring.geometry.userData.owned = true;
       ring.material = ring.material.clone();
@@ -455,6 +458,9 @@ export class Presentation {
 
   async prepare(source: Simulation | RenderState): Promise<void> {
     const simulation = renderState(source, this.wreckView);
+    // The round reset just ran synchronously; let the loading screen paint
+    // before queueing shaders, which blocks the page again.
+    await nextTask();
     // Shaders depend on materials and texture types, not on pixels still
     // downloading or baking (Dusty Dig's soil), so compile meanwhile. The draws
     // below upload textures and record bundles, so they wait for the pixels.
@@ -498,8 +504,9 @@ export class Presentation {
     this.renderer.info.reset();
   }
   /** One model per first-use effect look this round can show: falling crowns and
-   * shed boughs of each tree look, timber beams, every wreck part, and the pickup
-   * ring. prepare() draws them in the main, shadow and reflection passes, then
+   * shed boughs of each tree look, timber beams, every wreck part, damaged cargo
+   * and timber walls, mines, and the pickup ring. prepare() draws them in the main,
+   * shadow and reflection passes, then
    * keeps them hidden so their pipelines stay cached for the real effects.
    * Otherwise Safari compiled these mid-fight, stalling a frame for ~650 ms. */
   private effectSamples(simulation: RenderState): THREE.Group {
@@ -515,6 +522,13 @@ export class Presentation {
         }
       });
       return keys.join("/");
+    };
+    // These use the scene's own cached materials, which disposal must keep.
+    const sharing = (model: THREE.Object3D) => {
+      model.traverse((object) => {
+        object.userData.sharedMaterials = true;
+      });
+      return model;
     };
     const once = (key: string, build: () => THREE.Object3D | undefined) => {
       if (!seen.has(key)) {
@@ -540,6 +554,15 @@ export class Presentation {
           once(`timber:${part.kind}`, () => this.fragmentModel({ timberPart: part }));
         }
       }
+      // Damage rebuilds cargo and timber with splinters and dents in materials of
+      // their own.
+      for (const health of [0.6, 0.3, 0.1]) {
+        const damaged = { ...cover, hp: cover.maxHp * health };
+        const stage = coverDamageStage(damaged);
+        if (stage > 0) {
+          once(`damage:${cover.kind}/${stage}`, () => sharing(physicalCoverModel(damaged)));
+        }
+      }
     }
     for (const wreck of Object.keys(VEHICLES) as VehicleKind[]) {
       for (const team of [0, 1] as const) {
@@ -548,17 +571,23 @@ export class Presentation {
         }
       }
     }
+    for (const team of [0, 1] as const) {
+      samples.add(sharing(this.mineModel(team)));
+    }
     samples.add(this.pickupEffect(0xffffff));
     return samples;
   }
-  /** Every sample material is a copy; geometry is shared unless marked owned. */
+  /** Effect sample materials are copies, but damaged covers share the scene's;
+   * geometry is shared unless marked owned. */
   private disposeSamples(samples: THREE.Group): void {
     samples.traverse((object) => {
       if (isMesh(object)) {
         for (const material of Array.isArray(object.material)
           ? object.material
           : [object.material]) {
-          material.dispose();
+          if (!object.userData.sharedMaterials) {
+            material.dispose();
+          }
         }
         if (object.geometry.userData.owned) {
           object.geometry.dispose();
@@ -1053,6 +1082,16 @@ export class Presentation {
     });
     return g;
   }
+  /** A mine painted like the pickups' bases; the shader warm-up builds one per team. */
+  private mineModel(team: Team): THREE.Group {
+    const group = new THREE.Group();
+    put(group, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
+    put(group, cylinder(0.17, 0.07, TEAM_COLORS[team]), 0, 0.24, 0);
+    for (const part of group.children as THREE.Mesh[]) {
+      paintMesh(part);
+    }
+    return group;
+  }
   private updateMines(simulation: RenderState): void {
     const mineIds = new Set(simulation.mines.map((m) => m.id));
     for (const [id, g] of this.mineMeshes) {
@@ -1065,9 +1104,7 @@ export class Presentation {
     for (const m of simulation.mines) {
       let group = this.mineMeshes.get(m.id);
       if (!group) {
-        group = new THREE.Group();
-        put(group, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
-        put(group, cylinder(0.17, 0.07, TEAM_COLORS[m.team]), 0, 0.24, 0);
+        group = this.mineModel(m.team);
         group.position.set(m.x, 0, m.z);
         this.mineMeshes.set(m.id, group);
         this.worldGroup.add(group);
