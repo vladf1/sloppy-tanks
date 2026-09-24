@@ -72,11 +72,16 @@ export class WaterSurface extends THREE.Mesh<THREE.BufferGeometry, THREE.MeshBas
     const distortion = normal.xz
       .mul(float(0.001).add(float(1).div(worldToEye.length())))
       .mul(this.distortionScale);
-    const mirror = reflector();
+    const mirror = reflector({ samples: 4 });
     // Match the original Water renderer's fixed 512 × 512 reflection target.
     // r185 exposes only viewport-relative sizing; isolate its sizing hook here.
+    // The target also matches the main view's 4× MSAA linear frame buffer, so
+    // reflected meshes reuse its pipelines instead of compiling a second set.
     Object.assign(mirror.reflector, {
-      _updateResolution: (target: THREE.RenderTarget) => target.setSize(512, 512),
+      _updateResolution: (target: THREE.RenderTarget) => {
+        target.texture.colorSpace = THREE.LinearSRGBColorSpace;
+        target.setSize(512, 512);
+      },
     });
     mirror.uvNode = mirror.uvNode!.add(distortion);
     this.add(mirror.target);

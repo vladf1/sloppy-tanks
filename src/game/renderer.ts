@@ -3,6 +3,7 @@ import {
   Renderer,
   StandardNodeLibrary,
   WebGPUBackend,
+  WGSLNodeBuilder,
   type WebGPURendererParameters,
 } from "three/webgpu";
 import { RenderResources, trackInterleavedBuffers, type DrawResources } from "./renderer-resources";
@@ -23,6 +24,44 @@ interface RendererCaches {
   _attributes: { delete(attribute: BufferAttribute | InterleavedBufferAttribute): unknown };
   _geometries: { updateForRender(draw: DrawResources): void };
 }
+
+interface UniformBuilder {
+  globalCache: unknown;
+  stableBufferCount?: number;
+  getDataFromNode(node: unknown, shaderStage: unknown, cache: unknown): { uniformGPU?: unknown };
+  getUniformFromNode: (
+    this: UniformBuilder,
+    node: unknown,
+    type: string,
+    shaderStage: unknown,
+    name?: string | null,
+  ) => { name: string };
+}
+const BUFFER_UNIFORMS = new Set(["buffer", "storageBuffer", "indirectStorageBuffer"]);
+
+/** r185 names each unnamed WGSL buffer uniform after a global node id, so every
+ * build of an instanced or storage-buffer mesh emits unique shader code. The main
+ * view, shadow and reflection passes then compile separate copies of one shader,
+ * and meshes with identical shaders never share a program or pipeline; Safari
+ * compiles each copy from scratch on a first visit. Number them in declaration
+ * order instead, as Three already does for every other uniform. */
+function nameBufferUniformsByOrder(): void {
+  const builder = WGSLNodeBuilder.prototype as unknown as UniformBuilder;
+  const getUniform = builder.getUniformFromNode;
+  builder.getUniformFromNode = function (node, type, shaderStage, name) {
+    const unnamedBuffer =
+      !name &&
+      BUFFER_UNIFORMS.has(type) &&
+      this.getDataFromNode(node, shaderStage, this.globalCache).uniformGPU === undefined;
+    const uniform = getUniform.call(this, node, type, shaderStage, name);
+    if (unnamedBuffer) {
+      this.stableBufferCount = (this.stableBufferCount ?? 0) + 1;
+      uniform.name = `NodeBuffer_${this.stableBufferCount}`;
+    }
+    return uniform;
+  };
+}
+nameBufferUniformsByOrder();
 
 /** r185 shares one shadow material across cutout foliage and solid meshes. Each
  * alpha-test toggle increments its version, invalidating every caster's cache.

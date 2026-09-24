@@ -33,6 +33,7 @@ function startSinglePlayer(): void {
     seed,
     location.search,
     localStorage.getItem("sloppy-difficulty"),
+    localStorage.getItem("sloppy-map"),
   );
   const autoStart =
     document.documentElement.dataset.scenario === "stress-test" ||
