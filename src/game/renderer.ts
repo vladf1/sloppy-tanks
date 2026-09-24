@@ -14,6 +14,7 @@ import {
   FrontSide,
   Mesh,
   MeshLambertNodeMaterial,
+  MeshStandardMaterial,
   Renderer,
   StandardNodeLibrary,
   WebGPUBackend,
@@ -303,14 +304,15 @@ export class GameRenderer extends Renderer {
     }
     // r185 draws a double-sided transparent material as a back pass and a front
     // pass, but compileAsync() builds the back pass after restoring the double
-    // side, deriving a third shader that no later draw shares. Set these aside;
-    // compileAsync() then compiles them with each pass's side.
+    // side, deriving a third shader that no later draw shares. Set lit ones aside
+    // (unlit shaders ignore the side); compileAsync() compiles them per side.
     const material = args[4];
     if (
       this.queueingCompile &&
       material.transparent &&
       material.side === DoubleSide &&
-      !material.forceSinglePass
+      !material.forceSinglePass &&
+      (material instanceof MeshStandardMaterial || (material as { lights?: boolean }).lights)
     ) {
       this.twoPassObjects.set(object, material);
       return;
