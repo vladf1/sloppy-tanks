@@ -5,16 +5,11 @@ import type {
   Light,
   Material,
   Object3D,
-  Scene,
 } from "three/webgpu";
 import {
-  BackSide,
   BoxGeometry,
-  DoubleSide,
-  FrontSide,
   Mesh,
   MeshLambertNodeMaterial,
-  MeshStandardMaterial,
   Renderer,
   StandardNodeLibrary,
   WebGPUBackend,
@@ -122,6 +117,37 @@ function numberUniformsPerStage(): void {
 }
 numberUniformsPerStage();
 
+interface ShadowNodes {
+  colorNode: unknown;
+  depthNode: unknown;
+  positionNode: unknown;
+}
+interface ShadowNodeSource {
+  _getShadowNodes(material: Material): ShadowNodes;
+}
+
+/** r185 derives each material's shadow nodes on first use, and a node's cache key
+ * is its id. Every fading copy of a textured material (falling boughs and crowns,
+ * wreck and timber parts) then builds a shadow shader mid-round. A plain material's
+ * shadow reads only its map's alpha, so copies with the same map share nodes. */
+export function shareTexturedShadowNodes(renderer: ShadowNodeSource): void {
+  const derive = renderer._getShadowNodes.bind(renderer);
+  const shared = new Map<string, ShadowNodes>();
+  renderer._getShadowNodes = (material) => {
+    const map = (material as Material & { map?: { id: number } | null }).map;
+    if (!map || "isNodeMaterial" in material) {
+      return derive(material);
+    }
+    const key = `${material.type}/${map.id}`;
+    let nodes = shared.get(key);
+    if (!nodes) {
+      nodes = derive(material);
+      shared.set(key, nodes);
+    }
+    return nodes;
+  };
+}
+
 /** r185 shares one shadow material across cutout foliage and solid meshes. Each
  * alpha-test toggle increments its version, invalidating every caster's cache.
  * Keep a stable variant per cutoff; all shadow nodes and draw behavior stay in Three. */
@@ -184,6 +210,7 @@ export class GameRenderer extends Renderer {
     preserveRenderBundleScope(this as unknown as BundleRenderer);
     submitRenderBundlesInOrder(this.backend as unknown as BundleExecutionBackend);
     trackRenderBundles(this.backend as unknown as BundleBackend, this.info);
+    shareTexturedShadowNodes(this as unknown as ShadowNodeSource);
     this.pendingPipelinesReady = compileRuntimePipelinesAsync(
       (this as unknown as { _pipelines: RuntimePipelines })._pipelines,
     );
@@ -200,47 +227,22 @@ export class GameRenderer extends Renderer {
   }
 
   override async compileAsync(...args: Parameters<Renderer["compileAsync"]>): Promise<void> {
-    const [scene, camera, targetScene] = args;
-    this.primeLitBuild(targetScene ?? scene, camera);
+    this.primeLitBuild(args[2] ?? args[0], args[1]);
     // Node building stays sequential (Three shares builder state), but GPU
     // compilation overlaps subsequent builds instead of awaiting each pipeline.
     // Its yields between stages must not wait a frame each; see task-yield.ts.
-    // r185 queues every draw before its first await; see renderObject().
-    this.queueingCompile = true;
-    let compiled: Promise<void>;
-    try {
-      compiled = withTaskYield(() => super.compileAsync(...args));
-    } finally {
-      this.queueingCompile = false;
-    }
-    await compiled;
-    // Compile each two-pass object once per side, as the passes of a frame draw
-    // it; the frame then finds both shaders built instead of building them itself.
-    const twoPass = [...this.twoPassObjects];
-    this.twoPassObjects.clear();
-    const frameScene = targetScene ?? ("isScene" in scene ? (scene as Scene) : null);
-    for (const side of [BackSide, FrontSide]) {
-      for (const [object, material] of twoPass) {
-        material.side = side;
-        try {
-          await withTaskYield(() => super.compileAsync(object, camera, frameScene));
-        } finally {
-          material.side = DoubleSide;
-        }
-      }
-    }
+    await withTaskYield(() => super.compileAsync(...args));
     await this.waitForPipelineCompilation();
   }
 
-  private queueingCompile = false;
-  private twoPassObjects = new Map<Object3D, Material>();
   private primedFog?: unknown;
   /** r185 creates a shadowed light's filter uniforms during every lit build, but
    * the scene fog's uniforms and the light's shadow graph only in the first build
    * that needs them. That first build therefore orders its code differently, and
    * its program never matches the same material built again, for example in the
    * water reflection; Safari compiles one more lit shader on a first visit. Create
-   * both in a throwaway node build first. It never reaches the GPU. */
+   * both in a throwaway node build first, again whenever a round brings a new fog.
+   * It never reaches the GPU. */
   private primeLitBuild(scene: Object3D, camera: Camera): void {
     const nodes = (this as unknown as { _nodes: { getFogNode(scene: Object3D): unknown } })._nodes;
     const fogNode = nodes.getFogNode(scene);
@@ -300,21 +302,6 @@ export class GameRenderer extends Renderer {
       geometry.drawRange.count === 0 ||
       geometry.index?.count === 0
     ) {
-      return;
-    }
-    // r185 draws a double-sided transparent material as a back pass and a front
-    // pass, but compileAsync() builds the back pass after restoring the double
-    // side, deriving a third shader that no later draw shares. Set lit ones aside
-    // (unlit shaders ignore the side); compileAsync() compiles them per side.
-    const material = args[4];
-    if (
-      this.queueingCompile &&
-      material.transparent &&
-      material.side === DoubleSide &&
-      !material.forceSinglePass &&
-      (material instanceof MeshStandardMaterial || (material as { lights?: boolean }).lights)
-    ) {
-      this.twoPassObjects.set(object, material);
       return;
     }
     const scene = args[1];

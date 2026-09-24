@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NodeMaterial, BackSide } from "three/webgpu";
+import { NodeMaterial, BackSide, MeshStandardMaterial, Texture } from "three/webgpu";
 import { vec4 } from "three/tsl";
-import { GameRenderer, ShadowMaterials, numberUniformsInOrder } from "../src/game/renderer";
+import {
+  GameRenderer,
+  ShadowMaterials,
+  numberUniformsInOrder,
+  shareTexturedShadowNodes,
+} from "../src/game/renderer";
 
 test("failed renderer startup releases the backend without restarting initialization", () => {
   const renderer = Object.create(GameRenderer.prototype) as GameRenderer;
@@ -78,4 +83,26 @@ test("shadow variants are isolated per light template and disposed with their ow
   assert.equal(disposed, 2, "owner cleanup is idempotent");
   second.dispose();
   assert.equal(disposed, 3);
+});
+
+test("fading copies of a textured material share its shadow nodes", () => {
+  let derived = 0;
+  const renderer: Parameters<typeof shareTexturedShadowNodes>[0] = {
+    _getShadowNodes: () => ({ colorNode: ++derived, depthNode: null, positionNode: null }),
+  };
+  shareTexturedShadowNodes(renderer);
+  const bark = new Texture();
+  const source = new MeshStandardMaterial({ map: bark });
+  const nodes = renderer._getShadowNodes(source);
+  assert.equal(renderer._getShadowNodes(source.clone()), nodes, "a copy reuses the nodes");
+  assert.equal(renderer._getShadowNodes(source.clone()), nodes);
+  const other = new MeshStandardMaterial({ map: new Texture() });
+  assert.notEqual(renderer._getShadowNodes(other), nodes, "another map needs its own alpha");
+  const plain = new MeshStandardMaterial();
+  renderer._getShadowNodes(plain);
+  renderer._getShadowNodes(plain.clone());
+  const custom = new NodeMaterial();
+  renderer._getShadowNodes(custom);
+  renderer._getShadowNodes(custom);
+  assert.equal(derived, 6, "untextured and node materials keep Three's own derivation");
 });

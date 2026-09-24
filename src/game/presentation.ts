@@ -57,7 +57,7 @@ import { TrackDust } from "./track-dust";
 import { TankSuspension } from "./tank-suspension";
 import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
-import type { Fragment, SimEvent, VehicleKind, WreckPart } from "./types";
+import type { Fragment, SimEvent, Team, VehicleKind, WreckPart } from "./types";
 import { timberParts } from "./timber-layout";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
@@ -321,12 +321,11 @@ export class Presentation {
     // branch is reassigned on reset so switching maps restores the other themes.
     const sky = quarry ? 0xd6c9b0 : harbor ? 0xa7bdc5 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
-    // Keep one fog: a new one gives every material a new fog node, and r185
-    // builds the first shader after that in a different order (see renderer.ts).
-    const fog = this.scene.fog as THREE.Fog;
-    fog.color.setHex(sky);
-    fog.near = quarry ? 110 : harbor ? 150 : 210;
-    fog.far = quarry ? 380 : harbor ? 260 : 380;
+    this.scene.fog = new THREE.Fog(
+      sky,
+      quarry ? 110 : harbor ? 150 : 210,
+      quarry ? 380 : harbor ? 260 : 380,
+    );
     this.lighting.sun.color.setHex(quarry ? 0xffd6ab : harbor ? 0xffbf85 : 0xffd59b);
     this.lighting.sun.position.set(
       quarry ? -50 : -45,
@@ -505,8 +504,9 @@ export class Presentation {
     this.renderer.info.reset();
   }
   /** One model per first-use effect look this round can show: falling crowns and
-   * shed boughs of each tree look, timber beams, every wreck part, and the pickup
-   * ring. prepare() draws them in the main, shadow and reflection passes, then
+   * shed boughs of each tree look, timber beams, every wreck part, damaged cargo
+   * and timber walls, mines, and the pickup ring. prepare() draws them in the main,
+   * shadow and reflection passes, then
    * keeps them hidden so their pipelines stay cached for the real effects.
    * Otherwise Safari compiled these mid-fight, stalling a frame for ~650 ms. */
   private effectSamples(simulation: RenderState): THREE.Group {
@@ -522,6 +522,13 @@ export class Presentation {
         }
       });
       return keys.join("/");
+    };
+    // These use the scene's own cached materials, which disposal must keep.
+    const sharing = (model: THREE.Object3D) => {
+      model.traverse((object) => {
+        object.userData.sharedMaterials = true;
+      });
+      return model;
     };
     const once = (key: string, build: () => THREE.Object3D | undefined) => {
       if (!seen.has(key)) {
@@ -547,6 +554,15 @@ export class Presentation {
           once(`timber:${part.kind}`, () => this.fragmentModel({ timberPart: part }));
         }
       }
+      // Damage rebuilds cargo and timber with splinters and dents in materials of
+      // their own.
+      for (const health of [0.6, 0.3, 0.1]) {
+        const damaged = { ...cover, hp: cover.maxHp * health };
+        const stage = coverDamageStage(damaged);
+        if (stage > 0) {
+          once(`damage:${cover.kind}/${stage}`, () => sharing(physicalCoverModel(damaged)));
+        }
+      }
     }
     for (const wreck of Object.keys(VEHICLES) as VehicleKind[]) {
       for (const team of [0, 1] as const) {
@@ -555,17 +571,23 @@ export class Presentation {
         }
       }
     }
+    for (const team of [0, 1] as const) {
+      samples.add(sharing(this.mineModel(team)));
+    }
     samples.add(this.pickupEffect(0xffffff));
     return samples;
   }
-  /** Every sample material is a copy; geometry is shared unless marked owned. */
+  /** Effect sample materials are copies, but damaged covers share the scene's;
+   * geometry is shared unless marked owned. */
   private disposeSamples(samples: THREE.Group): void {
     samples.traverse((object) => {
       if (isMesh(object)) {
         for (const material of Array.isArray(object.material)
           ? object.material
           : [object.material]) {
-          material.dispose();
+          if (!object.userData.sharedMaterials) {
+            material.dispose();
+          }
         }
         if (object.geometry.userData.owned) {
           object.geometry.dispose();
@@ -1060,6 +1082,16 @@ export class Presentation {
     });
     return g;
   }
+  /** A mine painted like the pickups' bases; the shader warm-up builds one per team. */
+  private mineModel(team: Team): THREE.Group {
+    const group = new THREE.Group();
+    put(group, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
+    put(group, cylinder(0.17, 0.07, TEAM_COLORS[team]), 0, 0.24, 0);
+    for (const part of group.children as THREE.Mesh[]) {
+      paintMesh(part);
+    }
+    return group;
+  }
   private updateMines(simulation: RenderState): void {
     const mineIds = new Set(simulation.mines.map((m) => m.id));
     for (const [id, g] of this.mineMeshes) {
@@ -1072,13 +1104,7 @@ export class Presentation {
     for (const m of simulation.mines) {
       let group = this.mineMeshes.get(m.id);
       if (!group) {
-        group = new THREE.Group();
-        put(group, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
-        put(group, cylinder(0.17, 0.07, TEAM_COLORS[m.team]), 0, 0.24, 0);
-        // Painted like the pickups' bases, so a first mine compiles no shader.
-        for (const part of group.children as THREE.Mesh[]) {
-          paintMesh(part);
-        }
+        group = this.mineModel(m.team);
         group.position.set(m.x, 0, m.z);
         this.mineMeshes.set(m.id, group);
         this.worldGroup.add(group);
