@@ -1,30 +1,64 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { contentVersion } from "./content-version.mjs";
+import { DEV_MULTIPLAYER_URL } from "./dev-multiplayer.mjs";
+
+const repo = new URL("..", import.meta.url);
+const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };
+const HEALTH_TIMEOUT_MS = 60000;
+
+function run(command, args) {
+  const result = spawnSync(command, args, { cwd: repo, stdio: "inherit", env });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
 
 // Fixed destination: never infer a Pages project or branch from the checkout.
 const info = JSON.parse(
   readFileSync(new URL("../dist-dev/build-info.json", import.meta.url), "utf8"),
 );
+// The dev site must always offer multiplayer. The link is compiled into the
+// inline startup script only when the build has a multiplayer server URL.
+const index = readFileSync(new URL("../dist-dev/index.html", import.meta.url), "utf8");
+const assets = new URL("../dist-dev/assets/", import.meta.url);
+const clientHasServer = readdirSync(assets).some(
+  (name) =>
+    /^client-.*\.js$/.test(name) &&
+    readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL),
+);
+if (!index.includes("Play with friends") || !clientHasServer) {
+  throw new Error(
+    "dist-dev has no multiplayer entry or dev server URL; rebuild with npm run build:dev",
+  );
+}
+
+// Clients and the Worker reject each other unless both were built from the same
+// game/network sources, so publish the dev Worker from this checkout first.
+const version = await contentVersion();
+console.log(`Deploying dev multiplayer Worker (content ${version})`);
+run("npm", ["run", "server:deploy", "--", "--var", "MULTIPLAYER_ENABLED:true"]);
+const health = new URL("/health", DEV_MULTIPLAYER_URL.replace(/^ws/, "http"));
+const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+for (;;) {
+  const status = await fetch(health, { cache: "no-store" })
+    .then((response) => response.json())
+    .catch(() => ({}));
+  if (status.contentVersion === version && status.multiplayerEnabled) break;
+  if (Date.now() > deadline)
+    throw new Error(`Dev Worker reports ${JSON.stringify(status)}; expected content ${version}`);
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+}
+
 console.log(
   `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,
 );
-const result = spawnSync(
-  "wrangler",
-  [
-    "pages",
-    "deploy",
-    "dist-dev",
-    "--project-name",
-    "sloppy-tanks-dev",
-    "--branch",
-    "main",
-    "--commit-dirty=true",
-  ],
-  {
-    cwd: new URL("..", import.meta.url),
-    stdio: "inherit",
-    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" },
-  },
-);
-if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
+run("wrangler", [
+  "pages",
+  "deploy",
+  "dist-dev",
+  "--project-name",
+  "sloppy-tanks-dev",
+  "--branch",
+  "main",
+  "--commit-dirty=true",
+]);

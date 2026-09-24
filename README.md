@@ -152,6 +152,9 @@ Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` firs
 (or provide a Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `npm run build:dev` builds without publishing.
+The dev build always connects **Play with friends** to the dev multiplayer
+Worker, and `deploy:dev` redeploys that Worker from the same checkout first so
+client and server versions match.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

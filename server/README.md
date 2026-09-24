@@ -18,12 +18,14 @@ Use `SLOPPY_SERVER_URL=wss://sloppy-tanks-server-dev.vova145.workers.dev` to tes
 the deployed Worker. `npm run check:multiplayer` drives two Chrome contexts;
 `SLOPPY_SERVER` selects a remote server for that browser check.
 
-The checked-in Worker config defaults both protocols to disabled. Enable the
-player server explicitly when deploying the dedicated dev Worker:
+The checked-in Worker config defaults both protocols to disabled.
+`npm run deploy:dev` deploys this dedicated dev Worker with the player server
+enabled, waits until `/health` reports the checkout's content version, then
+uploads the dev site. It refuses to upload a build without the multiplayer
+entry. To deploy only the Worker:
 
 ```sh
 npm run server:deploy -- --var MULTIPLAYER_ENABLED:true
-VITE_MULTIPLAYER_URL=wss://sloppy-tanks-server-dev.vova145.workers.dev npm run deploy:dev
 ```
 
 `npm run server:deploy` without an override disables new connections. Deployments
