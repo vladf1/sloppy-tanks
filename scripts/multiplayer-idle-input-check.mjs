@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
 
 const url = new URL(process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/");
@@ -8,7 +9,7 @@ url.searchParams.set("multiplayer", "");
 if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
 const output = `artifacts/performance/multiplayer/idle-input-${process.env.SLOPPY_CHECK_LABEL ?? "local"}`;
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
 const mirror = new StateMirror(),
   inputs = [],

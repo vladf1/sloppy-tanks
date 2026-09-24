@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
-import { seedGame, startRound } from "./browser-helpers.mjs";
+import { seedGame, startRound, headless } from "./browser-helpers.mjs";
 
 const directory = "artifacts/performance/multiplayer";
 await mkdir(directory, { recursive: true });
 const base = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const cases = [];
 const errors = [];
 try {

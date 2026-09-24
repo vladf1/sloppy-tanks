@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { build, preview } from "vite";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -39,7 +40,7 @@ await build({
   ],
 });
 const server = await preview({ build: { outDir }, preview: { host: "127.0.0.1", port: 4179 } });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const result = { requests: [], sockets: [], errors: [], chunks: Object.fromEntries(chunks) };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

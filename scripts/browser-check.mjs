@@ -1,10 +1,11 @@
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: ["--window-size=1600,1000"],
 });
 try {

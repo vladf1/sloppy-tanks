@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
 
 const output = "artifacts/performance/multiplayer/humans-only";
@@ -15,7 +16,7 @@ url.searchParams.set(
 if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: [
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",

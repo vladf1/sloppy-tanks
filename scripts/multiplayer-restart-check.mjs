@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
 await mkdir(output, { recursive: true });
@@ -50,7 +51,7 @@ async function stopServer() {
     child.kill("SIGTERM");
   });
 }
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   await startServer();
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });

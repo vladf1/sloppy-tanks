@@ -1,4 +1,11 @@
 /**
+ * Browser checks run in headless Chrome so they never pop a window over the desktop;
+ * WebGPU and Playwright's coordinate mouse/touch input work the same there. Set
+ * SLOPPY_HEADED=1 to watch a check in a visible window.
+ */
+export const headless = !process.env.SLOPPY_HEADED;
+
+/**
  * Start a round through the real Battle Setup menu, as a player does. Until GO
  * completes, the startup overlay covers the canvas and swallows pointer and wheel
  * input; `window.sloppy.start()` alone restarts the simulation but leaves the menu up.

@@ -68,8 +68,10 @@ from `scripts/README.md` while iterating. Keep those checks passing: fix or
 delete a check that no longer matches the game rather than leaving it broken,
 and start rounds through `startRound()` in `scripts/browser-helpers.mjs`. If
 the reported bug is a real pointer interaction, verify it with a physical
-coordinate click in the visible Chrome window; a locator or accessibility
-activation can bypass pointer-event and coordinate-routing bugs.
+coordinate click (`page.mouse`); a locator or accessibility activation can
+bypass pointer-event and coordinate-routing bugs. Checks launch headless Chrome
+through the shared `headless` flag so they never pop windows over the user's
+desktop; only `SLOPPY_HEADED=1` opens a visible window.
 
 Mobile phone support is out of scope. Do not add phone-specific layouts or run
 phone viewport checks unless explicitly requested. Focus browser validation on

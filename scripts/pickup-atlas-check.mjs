@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/pickup-atlas";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const errors = [];
 const requests = [];
 try {

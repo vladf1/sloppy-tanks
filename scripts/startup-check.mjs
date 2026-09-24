@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const results = {};
 const errors = [];
 async function fresh(viewport = { width: 1440, height: 1000 }) {

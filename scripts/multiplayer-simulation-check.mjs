@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
-import { seedGame, startRound } from "./browser-helpers.mjs";
+import { seedGame, startRound, headless } from "./browser-helpers.mjs";
 
 const out = "artifacts/performance/multiplayer/seats";
 await mkdir(out, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

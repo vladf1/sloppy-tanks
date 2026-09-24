@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/browser";
 await mkdir(output, { recursive: true });
@@ -13,7 +14,7 @@ if (process.env.SLOPPY_LATENCY) url.searchParams.set("latency", process.env.SLOP
 if (process.env.SLOPPY_JITTER) url.searchParams.set("jitter", process.env.SLOPPY_JITTER);
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: [
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",

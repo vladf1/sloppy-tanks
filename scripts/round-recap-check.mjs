@@ -1,10 +1,11 @@
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 
 const output = "artifacts/performance/recap";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   const errors = [];

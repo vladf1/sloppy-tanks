@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import fs from "node:fs";
 import assert from "node:assert/strict";
@@ -6,7 +7,7 @@ const root = process.env.SLOPPY_ARTIFACT_DIR ?? "artifacts/performance/bundle-re
   results = [];
 fs.mkdirSync(root, { recursive: true });
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   for (const map of ["village", "harbor", "quarry"]) {
     const page = await browser.newPage({

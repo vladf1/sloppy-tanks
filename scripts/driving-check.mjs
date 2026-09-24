@@ -1,11 +1,12 @@
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const out = "artifacts/performance/driving";
 mkdirSync(out, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const errors = [],
   checks = [];
 try {

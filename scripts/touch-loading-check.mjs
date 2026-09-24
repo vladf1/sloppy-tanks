@@ -1,9 +1,10 @@
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 
 // Use a production build: verify that Vite actually separates JS and CSS downloads.
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:4179/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const isTouchAsset = (url) => /\/touch-controls[^/]*\.(js|css)(?:\?|$)/.test(url);
 try {
   const context = await browser.newContext({

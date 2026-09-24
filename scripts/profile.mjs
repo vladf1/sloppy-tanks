@@ -1,5 +1,6 @@
 // @ts-check
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const label = process.argv[2] ?? "before";
@@ -12,7 +13,7 @@ const out = `artifacts/performance/${label}`;
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: [
     `--window-size=${width},${height + 100}`,
     "--disable-backgrounding-occluded-windows",

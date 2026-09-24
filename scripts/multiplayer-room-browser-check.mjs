@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
 import { BOT_NAMES } from "../src/game/bot-personalities.ts";
 import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
@@ -12,7 +13,7 @@ const output = `artifacts/performance/multiplayer/rooms-${label}`;
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: [
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",

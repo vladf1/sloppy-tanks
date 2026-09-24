@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
 import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
 const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
@@ -8,7 +9,7 @@ const output = "artifacts/performance/multiplayer/public";
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
   channel: "chrome",
-  headless: false,
+  headless,
   args: [
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",

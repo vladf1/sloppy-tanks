@@ -8,8 +8,9 @@ matching browser check when changing those paths.
 ## Browser checks
 
 Start `npm run dev` and pass the URL it prints. Every check drives installed
-Google Chrome with an isolated profile, exits non-zero on failure, and writes
-screenshots and results to the ignored `artifacts/performance/`.
+Google Chrome headless with an isolated profile, so no window takes focus; set
+`SLOPPY_HEADED=1` to watch a check in a visible window. Each check exits non-zero
+on failure and writes screenshots and results to the ignored `artifacts/performance/`.
 
 ```sh
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ npm run check:browser
@@ -83,11 +84,11 @@ teams, live player kills, join notifications, configurable match duration, late 
 received-update stats, polling cleanup and empty-room removal.
 Use `SLOPPY_URL` for either the local Vite URL or the public dev site, and
 `SLOPPY_CHECK_LABEL=public` to keep separate evidence. Buttons and room selection
-use physical coordinate clicks in visible Chrome.
+use physical coordinate clicks.
 
 `node --import tsx scripts/multiplayer-idle-input-check.mjs` measures unchanged
 idle input over 6.5 seconds, verifies the seat stays human, and checks movement,
-aim, fire, mine and resume delivery. It uses visible desktop Chrome and real
+aim, fire, mine and resume delivery. It uses desktop Chrome and real
 WebSocket frames. Set `SLOPPY_URL` and optionally `SLOPPY_SERVER`; use
 `SLOPPY_CHECK_LABEL` to keep local/public evidence separate.
 

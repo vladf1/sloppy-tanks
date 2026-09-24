@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { headless } from "./browser-helpers.mjs";
 const output = "artifacts/performance/multiplayer/turning";
 await mkdir(output, { recursive: true });
 const label = process.env.SLOPPY_TURNING_LABEL ?? "current";
 assert.match(label, /^[a-z0-9-]+$/);
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   const errors = [];

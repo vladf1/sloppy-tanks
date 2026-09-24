@@ -1,9 +1,9 @@
 import { chromium } from "playwright";
-import { startRound } from "./browser-helpers.mjs";
+import { startRound, headless } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 const base = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless: false });
+const browser = await chromium.launch({ channel: "chrome", headless });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
