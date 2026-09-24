@@ -188,6 +188,11 @@ try {
     ),
     true,
   );
+  // The chosen map is remembered and prepared behind the next visit's menu.
+  await changed.page.reload();
+  await ready(changed.page);
+  assert.equal(await changed.page.locator('input[value="harbor"]').isChecked(), true);
+  assert.equal(await changed.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   await changed.context.close();
 
   console.log("Delayed loading, prepared arena reuse, gameplay, and new rounds passed.");
