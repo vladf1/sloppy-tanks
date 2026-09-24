@@ -325,7 +325,7 @@ export class NetworkUI {
       }
     }
   }
-  update(state: RenderState, dt: number, rtt: number, connected: boolean): void {
+  update(state: RenderState, dt: number, connected: boolean): void {
     for (const tank of state.tanks) {
       const score = this.playerRows.get(tank.id);
       if (score && score.textContent !== String(tank.kills)) {
@@ -398,8 +398,9 @@ export class NetworkUI {
         node.textContent = row.text;
       }
     });
+    // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {
-      this.set("network-status", Math.round(rtt) + " ms" + (rtt > 120 ? " · High latency" : ""));
+      this.set("network-status", "");
     }
   }
 }

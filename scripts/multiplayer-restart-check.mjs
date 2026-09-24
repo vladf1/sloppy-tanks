@@ -64,7 +64,7 @@ try {
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "harbor" &&
-      /^\d+ ms/.test(document.querySelector("#network-status").textContent),
+      document.querySelector("#network-status").textContent === "",
   );
   const before = await page.evaluate(() => ({
     epoch: window.sloppyMultiplayer.connection.roomEpoch,
@@ -83,7 +83,7 @@ try {
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "village" &&
-      /^\d+ ms/.test(document.querySelector("#network-status").textContent),
+      document.querySelector("#network-status").textContent === "",
   );
   const after = await page.evaluate(() => ({
     epoch: window.sloppyMultiplayer.connection.roomEpoch,

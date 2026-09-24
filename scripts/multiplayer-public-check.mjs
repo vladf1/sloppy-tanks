@@ -85,13 +85,13 @@ try {
   await Promise.all(
     clients.map((c) =>
       c.page.waitForFunction(
-        () => /^\d+ ms/.test(document.querySelector("#network-status").textContent),
+        () => document.querySelector("#network-status").textContent === "",
         null,
         { timeout: 60000 },
       ),
     ),
   );
-  // Connection RTT can appear before arena preparation and its resume baseline finish.
+  // The live HUD can appear before arena preparation and its resume baseline finish.
   const readyDeadline = Date.now() + 60000;
   while (!clients.every((c) => c.ready) && Date.now() < readyDeadline)
     await first.waitForTimeout(50);

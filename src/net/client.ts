@@ -494,7 +494,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
         const renderStart = performance.now();
         view.render(display, 1, dt);
         const renderCost = performance.now() - renderStart;
-        ui.update(display, dt, connection.rtt, connection.connected);
+        ui.update(display, dt, connection.connected);
         stats?.frame(now, renderStart - updateStart, renderCost);
       }
     }

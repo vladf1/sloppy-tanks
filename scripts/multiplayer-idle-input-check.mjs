@@ -51,7 +51,7 @@ try {
   assert.equal(await page.locator("#create-humans-only").isChecked(), true);
   await click("#create-room");
   await page.waitForFunction(
-    () => /^\d+ ms/.test(document.querySelector("#network-status")?.textContent ?? ""),
+    () => document.querySelector("#network-status")?.textContent === "",
     null,
     { timeout: 60000 },
   );
