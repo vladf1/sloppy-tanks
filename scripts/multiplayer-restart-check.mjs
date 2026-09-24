@@ -56,15 +56,26 @@ try {
   await startServer();
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   page.on("pageerror", (error) => errors.push(error.message));
+  // Physical clicks exercise the same pointer routing a player uses.
+  const click = async (selector) => {
+    const button = page.locator(selector);
+    await button.waitFor();
+    assert.ok(await button.isEnabled(), selector + " is enabled");
+    const bounds = await button.boundingBox();
+    assert.ok(bounds, selector);
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  };
   await page.goto(url.href);
+  await page.locator("#create-room").waitFor();
   await page.locator("#player-name").fill("Restart tester");
-  await page.locator("#join-room").click();
-  await page.locator("#room-map").selectOption("harbor");
-  await page.locator("#start-match").click();
+  await page.locator("#create-map").selectOption("harbor");
+  await click("#create-room");
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "harbor" &&
       document.querySelector("#network-status").textContent === "",
+    null,
+    { timeout: 60000 },
   );
   const before = await page.evaluate(() => ({
     epoch: window.sloppyMultiplayer.connection.roomEpoch,
@@ -79,11 +90,17 @@ try {
     before.epoch,
     { timeout: 30000 },
   );
-  await page.locator("#start-match").click();
+  // The restarted Worker has no seats, so the reconnect becomes host of a fresh lobby
+  // with default settings rather than resuming the harbor round.
+  await page.locator("#start-match").waitFor();
+  assert.equal(await page.locator("#room-map").inputValue(), "village");
+  await click("#start-match");
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "village" &&
       document.querySelector("#network-status").textContent === "",
+    null,
+    { timeout: 60000 },
   );
   const after = await page.evaluate(() => ({
     epoch: window.sloppyMultiplayer.connection.roomEpoch,
