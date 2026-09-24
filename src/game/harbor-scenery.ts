@@ -82,12 +82,9 @@ export class HarborScenery {
         put(details, box(1.5, 0.025, 0.65, 0x303e42, 0), x + 1.5, 1.215, side * 60.5);
       }
       for (const x of [-48, -24, 0, 24, 48]) {
-        // Quay bollards, fenders and coiled mooring line are beyond the wall.
+        // Quay bollards and fenders are beyond the wall.
         put(details, cylinder(0.42, 0.7, 0x253e45), x, 0.05, side * 62);
         put(details, box(1.4, 0.25, 0.5, 0x253e45), x, 0.45, side * 62);
-        const rope = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.07, 4, 16), material(0xb89e70));
-        rope.rotation.x = Math.PI / 2;
-        put(details, rope, x + 1.4, -0.02, side * 62);
         const fender = cylinder(0.65, 1.4, 0x25363d, 12);
         fender.rotation.x = Math.PI / 2;
         put(details, fender, x, -1.1, side * 62.2);
