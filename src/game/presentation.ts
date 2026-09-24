@@ -1,12 +1,13 @@
 import { GameRenderer } from "./renderer";
 import { exposeWarmupObjects } from "./prepare-scene";
 import { waitForAssets } from "./loading-assets";
+import { nextTask } from "./task-yield";
 import { PartBatches } from "./part-batches";
 import { timberPartModel } from "./timber-model";
 import * as THREE from "three/webgpu";
 import { barrelScrapGeometry } from "./barrel-debris";
 import { AMMO_RESPAWN_SECONDS } from "./ammunition";
-import { batch, freezeStatic } from "./batching";
+import { batch, freezeStatic, paintMesh } from "./batching";
 import { coverDamageStage } from "./cover-model";
 import { debrisCleanupProgress } from "./debris-cleanup";
 import { addDebrisFade } from "./debris-fade";
@@ -320,11 +321,12 @@ export class Presentation {
     // branch is reassigned on reset so switching maps restores the other themes.
     const sky = quarry ? 0xd6c9b0 : harbor ? 0xa7bdc5 : 0xaacbc2;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = new THREE.Fog(
-      sky,
-      quarry ? 110 : harbor ? 150 : 210,
-      quarry ? 380 : harbor ? 260 : 380,
-    );
+    // Keep one fog: a new one gives every material a new fog node, and r185
+    // builds the first shader after that in a different order (see renderer.ts).
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.setHex(sky);
+    fog.near = quarry ? 110 : harbor ? 150 : 210;
+    fog.far = quarry ? 380 : harbor ? 260 : 380;
     this.lighting.sun.color.setHex(quarry ? 0xffd6ab : harbor ? 0xffbf85 : 0xffd59b);
     this.lighting.sun.position.set(
       quarry ? -50 : -45,
@@ -387,7 +389,9 @@ export class Presentation {
     for (const pickup of simulation.pickups) {
       const group = new THREE.Group() as PickupModel;
       const def = PICKUPS[pickup.kind];
-      put(group, cylinder(1.05, 0.12, 0x25435f, 24), 0, 0.08, 0);
+      const base = cylinder(1.05, 0.12, 0x25435f, 24);
+      paintMesh(base);
+      put(group, base, 0, 0.08, 0);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.94, 0.045, 5, 24), material(def.color));
       ring.geometry.userData.owned = true;
       ring.material = ring.material.clone();
@@ -455,6 +459,9 @@ export class Presentation {
 
   async prepare(source: Simulation | RenderState): Promise<void> {
     const simulation = renderState(source, this.wreckView);
+    // The round reset just ran synchronously; let the loading screen paint
+    // before queueing shaders, which blocks the page again.
+    await nextTask();
     // Shaders depend on materials and texture types, not on pixels still
     // downloading or baking (Dusty Dig's soil), so compile meanwhile. The draws
     // below upload textures and record bundles, so they wait for the pixels.
@@ -1068,6 +1075,10 @@ export class Presentation {
         group = new THREE.Group();
         put(group, cylinder(MINE_RADIUS, 0.17, 0x384f47), 0, 0.12, 0);
         put(group, cylinder(0.17, 0.07, TEAM_COLORS[m.team]), 0, 0.24, 0);
+        // Painted like the pickups' bases, so a first mine compiles no shader.
+        for (const part of group.children as THREE.Mesh[]) {
+          paintMesh(part);
+        }
         group.position.set(m.x, 0, m.z);
         this.mineMeshes.set(m.id, group);
         this.worldGroup.add(group);

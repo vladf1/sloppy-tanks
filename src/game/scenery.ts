@@ -1,6 +1,6 @@
 import * as THREE from "three/webgpu";
 import { spawnPositions } from "./arena";
-import { batch, freezeStatic } from "./batching";
+import { batch, freezeStatic, paintMesh } from "./batching";
 import { ARENA, TEAM_COLORS } from "./data";
 import { groundMaterial, groundUVs, roadGeometry } from "./ground-surfaces";
 import type { GroundKind } from "./ground-surfaces";
@@ -210,6 +210,7 @@ export function createTerrain(
   renderer: THREE.WebGPURenderer,
 ): THREE.MeshStandardMaterial {
   const board = box(ARENA * 2 + 6, 1.2, ARENA * 2 + 6, 0x947c4d, 0.4);
+  paintMesh(board);
   put(scene, board, 0, -0.8, 0);
   const floor = createArenaFloor(renderer, "dry-grass");
   put(scene, floor, 0, 0.008, 0);

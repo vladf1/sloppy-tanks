@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NodeMaterial, BackSide } from "three/webgpu";
 import { vec4 } from "three/tsl";
-import { GameRenderer, ShadowMaterials } from "../src/game/renderer";
+import { GameRenderer, ShadowMaterials, numberUniformsInOrder } from "../src/game/renderer";
 
 test("failed renderer startup releases the backend without restarting initialization", () => {
   const renderer = Object.create(GameRenderer.prototype) as GameRenderer;
@@ -14,6 +14,29 @@ test("failed renderer startup releases the backend without restarting initializa
   };
   renderer.dispose();
   assert.equal(releases, 1);
+});
+
+test("equivalent shaders get equal uniform names whatever the other stage declared", () => {
+  // A part batch's vertex-stage matrices take the first number, shifting every
+  // fragment uniform by one compared with the same material on a single mesh.
+  const batched = [
+    "@binding( 1 ) @group( 1 ) var nodeUniform14_sampler : sampler;",
+    "@binding( 2 ) @group( 1 ) var nodeUniform14 : texture_2d<f32>;",
+    "struct objectStruct { nodeUniform1 : vec3<f32>, nodeUniform10 : f32 };",
+    "DiffuseColor = vec4<f32>( object.nodeUniform1, object.nodeUniform10 );",
+    "Output = textureSample( nodeUniform14, nodeUniform14_sampler, uv ) * DiffuseColor;",
+  ].join("\n");
+  const single = batched.replace(/nodeUniform(\d+)/g, (_, n: string) => `nodeUniform${+n - 1}`);
+  assert.notEqual(single, batched);
+  const renamed = numberUniformsInOrder(batched);
+  assert.equal(renamed, numberUniformsInOrder(single));
+  assert.match(renamed, /var nodeUniform0_sampler : sampler;\n.*var nodeUniform0 : texture_2d/);
+  assert.match(renamed, /object\.nodeUniform1, object\.nodeUniform2 \)/);
+  assert.equal(
+    numberUniformsInOrder("nodeUniform3 nodeUniform30 nodeUniform0 nodeUniform3"),
+    "nodeUniform0 nodeUniform1 nodeUniform2 nodeUniform0",
+    "distinct uniforms keep distinct names",
+  );
 });
 
 test("alternating solid and cutout shadows keeps both shader versions stable", () => {

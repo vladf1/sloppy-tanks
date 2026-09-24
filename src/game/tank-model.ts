@@ -169,12 +169,20 @@ export function tankModel(
     );
     rim.castShadow = rim.receiveShadow = true;
     put(hull, rim, 0, roofY, -0.12);
-    const wallMaterial = material(0x3b454a, 0.15, 0.9).clone();
-    wallMaterial.side = THREE.BackSide;
-    const wall = new THREE.Mesh(
-      new THREE.CylinderGeometry(opening, opening, roofY - floorY, 24, 1, true),
-      wallMaterial,
-    );
+    // Reversed triangles and normals face the wall inward, so it draws with the
+    // ordinary front-side paint instead of a back-side shader of its own.
+    const wallGeometry = new THREE.CylinderGeometry(opening, opening, roofY - floorY, 24, 1, true);
+    const index = wallGeometry.index!;
+    for (let i = 0; i < index.count; i += 3) {
+      const b = index.getX(i + 1);
+      index.setX(i + 1, index.getX(i + 2));
+      index.setX(i + 2, b);
+    }
+    const normals = wallGeometry.getAttribute("normal");
+    for (let i = 0; i < normals.count; i++) {
+      normals.setXYZ(i, -normals.getX(i), -normals.getY(i), -normals.getZ(i));
+    }
+    const wall = new THREE.Mesh(wallGeometry, material(0x3b454a, 0.15, 0.9));
     wall.receiveShadow = true;
     put(hull, wall, 0, (roofY + floorY) / 2, -0.12);
     put(hull, cylinder(opening, 0.02, 0x293238, 24), 0, floorY - 0.01, -0.12);

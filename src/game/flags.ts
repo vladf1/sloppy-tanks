@@ -16,7 +16,7 @@ import {
   vec3,
 } from "three/tsl";
 import { spawnPositions } from "./arena";
-import { freezeStatic } from "./batching";
+import { freezeStatic, paintMesh } from "./batching";
 import { TEAM_COLORS } from "./data";
 import { cylinder } from "./model-primitives";
 
@@ -36,6 +36,7 @@ export class Flags {
 
   constructor() {
     const pole = cylinder(0.055, 4.8, 0x59656a, 8);
+    paintMesh(pole);
     const spawns = [spawnPositions(0), spawnPositions(1)];
     const poles = new THREE.InstancedMesh(
       pole.geometry,

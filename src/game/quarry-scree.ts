@@ -5,7 +5,7 @@ import type { ScreeSpot } from "./quarry-benches";
 import { roughenStone, sandstoneMaterial } from "./quarry-surfaces";
 
 const stoneCorner = new THREE.Vector3();
-import { QUARRY_TERRAIN_EXTENT } from "./quarry-terrain";
+import { QUARRY_TERRAIN_EXTENT, plainSoilColors } from "./quarry-terrain";
 
 /** A fan of sediment, with scalloped toes and sides buried below the apron.
  * The high back extends into the quarry cut so it cannot expose a thin lip. */
@@ -129,5 +129,8 @@ export function quarryScree(spot: ScreeSpot, soil: THREE.Material): THREE.Mesh[]
     );
   }
   mound.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  return [new THREE.Mesh(mound, soil), new THREE.Mesh(rubble, sandstoneMaterial())];
+  return [
+    new THREE.Mesh(plainSoilColors(mound), soil),
+    new THREE.Mesh(rubble, sandstoneMaterial()),
+  ];
 }

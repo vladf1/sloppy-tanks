@@ -1,11 +1,26 @@
-import type { BufferAttribute, InterleavedBufferAttribute, Material, Object3D } from "three/webgpu";
+import type {
+  BufferAttribute,
+  Camera,
+  InterleavedBufferAttribute,
+  Light,
+  Material,
+  Object3D,
+  Scene,
+} from "three/webgpu";
 import {
+  BackSide,
+  BoxGeometry,
+  DoubleSide,
+  FrontSide,
+  Mesh,
+  MeshLambertNodeMaterial,
   Renderer,
   StandardNodeLibrary,
   WebGPUBackend,
   WGSLNodeBuilder,
   type WebGPURendererParameters,
 } from "three/webgpu";
+import { lights } from "three/tsl";
 import { RenderResources, trackInterleavedBuffers, type DrawResources } from "./renderer-resources";
 import {
   compileRuntimePipelinesAsync,
@@ -62,6 +77,49 @@ function nameBufferUniformsByOrder(): void {
   };
 }
 nameBufferUniformsByOrder();
+
+/** Rename `nodeUniformN` identifiers in the order the code first mentions them. */
+export function numberUniformsInOrder(code: string): string {
+  const numbers = new Map<string, number>();
+  return code.replace(/\bnodeUniform(\d+)/g, (_, index: string) => {
+    let number = numbers.get(index);
+    if (number === undefined) {
+      number = numbers.size;
+      numbers.set(index, number);
+    }
+    return `nodeUniform${number}`;
+  });
+}
+
+interface ThrowawayBuilder {
+  context: { material?: Material };
+  build(): void;
+}
+
+interface StageCode {
+  vertexShader: string | null;
+  fragmentShader: string | null;
+  buildCode: (this: StageCode) => void;
+}
+
+/** r185 numbers uniforms across both stages of a build, so a vertex-only uniform
+ * (a part batch's matrices, an instance buffer) renames every fragment uniform.
+ * Lit fragment shaders that are otherwise identical then compile as separate
+ * programs, and Safari compiles each one from scratch (about 0.5 s) on a first
+ * visit. Number each stage's uniforms in its own code order instead; WebGPU
+ * binds them by group and binding index, never by name. */
+function numberUniformsPerStage(): void {
+  const builder = WGSLNodeBuilder.prototype as unknown as StageCode;
+  const buildCode = builder.buildCode;
+  builder.buildCode = function () {
+    buildCode.call(this);
+    if (this.vertexShader !== null && this.fragmentShader !== null) {
+      this.vertexShader = numberUniformsInOrder(this.vertexShader);
+      this.fragmentShader = numberUniformsInOrder(this.fragmentShader);
+    }
+  };
+}
+numberUniformsPerStage();
 
 /** r185 shares one shadow material across cutout foliage and solid meshes. Each
  * alpha-test toggle increments its version, invalidating every caster's cache.
@@ -141,11 +199,73 @@ export class GameRenderer extends Renderer {
   }
 
   override async compileAsync(...args: Parameters<Renderer["compileAsync"]>): Promise<void> {
+    const [scene, camera, targetScene] = args;
+    this.primeLitBuild(targetScene ?? scene, camera);
     // Node building stays sequential (Three shares builder state), but GPU
     // compilation overlaps subsequent builds instead of awaiting each pipeline.
     // Its yields between stages must not wait a frame each; see task-yield.ts.
-    await withTaskYield(() => super.compileAsync(...args));
+    // r185 queues every draw before its first await; see renderObject().
+    this.queueingCompile = true;
+    let compiled: Promise<void>;
+    try {
+      compiled = withTaskYield(() => super.compileAsync(...args));
+    } finally {
+      this.queueingCompile = false;
+    }
+    await compiled;
+    // Compile each two-pass object once per side, as the passes of a frame draw
+    // it; the frame then finds both shaders built instead of building them itself.
+    const twoPass = [...this.twoPassObjects];
+    this.twoPassObjects.clear();
+    const frameScene = targetScene ?? ("isScene" in scene ? (scene as Scene) : null);
+    for (const side of [BackSide, FrontSide]) {
+      for (const [object, material] of twoPass) {
+        material.side = side;
+        try {
+          await withTaskYield(() => super.compileAsync(object, camera, frameScene));
+        } finally {
+          material.side = DoubleSide;
+        }
+      }
+    }
     await this.waitForPipelineCompilation();
+  }
+
+  private queueingCompile = false;
+  private twoPassObjects = new Map<Object3D, Material>();
+  private primedFog?: unknown;
+  /** r185 creates a shadowed light's filter uniforms during every lit build, but
+   * the scene fog's uniforms and the light's shadow graph only in the first build
+   * that needs them. That first build therefore orders its code differently, and
+   * its program never matches the same material built again, for example in the
+   * water reflection; Safari compiles one more lit shader on a first visit. Create
+   * both in a throwaway node build first. It never reaches the GPU. */
+  private primeLitBuild(scene: Object3D, camera: Camera): void {
+    const nodes = (this as unknown as { _nodes: { getFogNode(scene: Object3D): unknown } })._nodes;
+    const fogNode = nodes.getFogNode(scene);
+    if (this.primedFog !== undefined && this.primedFog === fogNode) {
+      return;
+    }
+    this.primedFog = fogNode;
+    const sceneLights: Light[] = [];
+    scene.traverseVisible((object) => {
+      if ("isLight" in object) {
+        sceneLights.push(object as Light);
+      }
+    });
+    // The cheapest lit material that receives shadows; the graphs are shared.
+    const material = new MeshLambertNodeMaterial();
+    const mesh = new Mesh(new BoxGeometry(), material);
+    mesh.receiveShadow = true;
+    const backend = this.backend as unknown as {
+      createNodeBuilder(object: Object3D, renderer: Renderer): ThrowawayBuilder;
+    };
+    const builder = backend.createNodeBuilder(mesh, this);
+    Object.assign(builder, { scene, camera, material, fogNode, lightsNode: lights(sceneLights) });
+    builder.context.material = material;
+    builder.build();
+    mesh.geometry.dispose();
+    material.dispose();
   }
 
   releaseObjects(root: Object3D): void {
@@ -179,6 +299,20 @@ export class GameRenderer extends Renderer {
       geometry.drawRange.count === 0 ||
       geometry.index?.count === 0
     ) {
+      return;
+    }
+    // r185 draws a double-sided transparent material as a back pass and a front
+    // pass, but compileAsync() builds the back pass after restoring the double
+    // side, deriving a third shader that no later draw shares. Set these aside;
+    // compileAsync() then compiles them with each pass's side.
+    const material = args[4];
+    if (
+      this.queueingCompile &&
+      material.transparent &&
+      material.side === DoubleSide &&
+      !material.forceSinglePass
+    ) {
+      this.twoPassObjects.set(object, material);
       return;
     }
     const scene = args[1];

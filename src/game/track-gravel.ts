@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { paintMesh } from "./batching";
 import { updateInstances, storageInstances } from "./render-resources";
 
 export const TRACK_GRAVEL_CAPACITY = 192;
@@ -39,6 +40,7 @@ export class TrackGravel {
 
   constructor() {
     this.mesh.name = "quarry-track-gravel";
+    paintMesh(this.mesh);
     storageInstances(this.mesh);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
