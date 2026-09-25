@@ -44,6 +44,8 @@ export class PlayerRoom extends DurableObject<Env> {
     }
   }
   override fetch(request: Request): Response {
+    // Edge probes must not create a match or replace the listed room code.
+    if (new URL(request.url).pathname === "/ping") return new Response(null, { status: 204 });
     this.room = new URL(request.url).pathname.split("/").at(-1)!;
     if (this.sockets.size >= MAX_PENDING_CONNECTIONS)
       return new Response("Room connection limit", { status: 429 });

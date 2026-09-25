@@ -4,11 +4,12 @@ import {
   MAX_SERVER_MESSAGE_BYTES,
   type RoomSettings,
 } from "./protocol";
-import { id, record, string } from "./schema";
+import { id, number, record, string } from "./schema";
 import type { PlayerVehicleKind, Team } from "../game/types";
 
 const RECONNECT_WINDOW_MS = 30_000;
 const MAX_BUFFERED_BYTES = 16_384;
+const EDGE_PROBE_INTERVAL_MS = 1000;
 export interface JoinChoice {
   name: string;
   kind: PlayerVehicleKind;
@@ -27,6 +28,9 @@ export class Connection {
   playerId = "";
   observedTick = 0;
   rtt = 0;
+  /** Browser-to-Worker and Worker-to-room round trips; sampled only while stats are shown. */
+  edgeRtt?: number;
+  edgeToRoomRtt?: number;
   connected = false;
   private socket?: WebSocket;
   private token?: string;
@@ -37,6 +41,7 @@ export class Connection {
   private retryStarted = 0;
   private attempt = 0;
   private lastMessageAt = 0;
+  private edgeProbeAt = -Infinity;
   private choice?: JoinChoice;
   private readonly storageKey: string;
   private delay?: {
@@ -223,6 +228,22 @@ export class Connection {
       console.error("Multiplayer protocol error", error);
       this.fail("Game state was incompatible. Reload before joining again.");
     }
+  }
+  /** The Worker times its request to the room; the rest of the fetch is the edge round trip. */
+  probeEdge(): void {
+    const started = performance.now();
+    if (started - this.edgeProbeAt < EDGE_PROBE_INTERVAL_MS) {
+      return;
+    }
+    this.edgeProbeAt = started;
+    fetch(this.url.replace(/^ws/, "http") + "/room/" + this.room + "/ping", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((value: unknown) => {
+        const roomMs = number(0, 60_000).read(record(value).roomMs);
+        this.edgeToRoomRtt = roomMs;
+        this.edgeRtt = Math.max(0, performance.now() - started - roomMs);
+      })
+      .catch(() => {});
   }
   send(type: string, fields: object = {}): boolean {
     return this.raw({ type, roundId: this.roundId, ...fields });
