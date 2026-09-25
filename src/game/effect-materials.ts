@@ -33,7 +33,11 @@ export function billboardVertex(mesh: THREE.InstancedMesh) {
   })();
 }
 
-export function dustMaterial(opacityAttribute: string, tint: UniformNode<"color", THREE.Color>) {
+/** One attribute name for every dust pool: WGSL names vertex inputs after it,
+ * so pools with different names would compile separate shaders. */
+export const DUST_OPACITY = "dustOpacity";
+
+export function dustMaterial(tint: UniformNode<"color", THREE.Color>) {
   const material = new THREE.MeshBasicNodeMaterial({
     transparent: true,
     depthWrite: false,
@@ -42,6 +46,6 @@ export function dustMaterial(opacityAttribute: string, tint: UniformNode<"color"
   material.colorNode = tint;
   material.opacityNode = smoothstep(0.1, 1, uv().mul(2).sub(1).length())
     .oneMinus()
-    .mul(attribute(opacityAttribute, "float"));
+    .mul(attribute(DUST_OPACITY, "float"));
   return material;
 }

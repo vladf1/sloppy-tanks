@@ -1,7 +1,7 @@
 import * as THREE from "three/webgpu";
 import { angleDelta, VEHICLES } from "./data";
 import { uniform } from "three/tsl";
-import { dustMaterial, billboardVertex } from "./effect-materials";
+import { DUST_OPACITY, dustMaterial, billboardVertex } from "./effect-materials";
 import { updateInstances, storageInstances } from "./render-resources";
 import type { Simulation } from "./simulation";
 import { renderState, type RenderState } from "./render-state";
@@ -46,8 +46,8 @@ export class TrackDust {
 
   constructor() {
     const geometry = new THREE.PlaneGeometry(1, 1);
-    geometry.setAttribute("puffOpacity", this.opacity);
-    const material = dustMaterial("puffOpacity", this.color);
+    geometry.setAttribute(DUST_OPACITY, this.opacity);
+    const material = dustMaterial(this.color);
     this.mesh = new THREE.InstancedMesh(geometry, material, TRACK_DUST_CAPACITY);
     material.vertexNode = billboardVertex(this.mesh);
     storageInstances(this.mesh);

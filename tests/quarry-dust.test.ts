@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { QUARRY_DUST_CAPACITY, QUARRY_DUST_MAX_OPACITY, QuarryDust } from "../src/game/quarry-dust";
+import { DUST_OPACITY } from "../src/game/effect-materials";
 
 before(async () => {
   await RAPIER.init();
@@ -27,7 +28,7 @@ test("wind wisps stay within the fixed pool, opacity cap and finite poses", () =
     for (let i = 0; i < 2000; i++) step(1 / 30);
     assert.ok(dust.mesh.count > 0, "sparse wisps accumulate while playing");
     assert.ok(dust.mesh.count <= QUARRY_DUST_CAPACITY);
-    const opacity = dust.mesh.geometry.getAttribute("wispOpacity");
+    const opacity = dust.mesh.geometry.getAttribute(DUST_OPACITY);
     const matrices = dust.mesh.instanceMatrix.array;
     for (let i = 0; i < dust.mesh.count; i++) {
       assert.ok(opacity.getX(i) <= QUARRY_DUST_MAX_OPACITY + 1e-6);
