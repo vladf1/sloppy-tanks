@@ -6,6 +6,7 @@ import { experimentEvent, experimentState, ExperimentStream } from "../src/net/e
 import type { PlayerRoom } from "./player-room";
 import type { RoomDirectory } from "./room-directory";
 import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
+import { executionColo } from "./diagnostics";
 export { PlayerRoom } from "./player-room";
 export { RoomDirectory } from "./room-directory";
 
@@ -79,28 +80,9 @@ export default {
         headers: { ...headers, "Content-Type": "application/json" },
       });
     }
-    // Stats probe: the Worker times its own request to the room, so the edge-to-room leg is
-    // measured on the edge clock without relaying gameplay traffic.
-    const probed = /^\/room\/([^/]+)\/ping$/.exec(url.pathname)?.[1];
-    if (probed && ROOM_CODE.test(probed)) {
-      const origin = request.headers.get("Origin") ?? "";
-      if (
-        env.MULTIPLAYER_ENABLED !== "true" ||
-        !(env.ALLOWED_ORIGINS ?? "").split(",").includes(origin)
-      )
-        return new Response("Probe unavailable", { status: 403 });
-      const headers = {
-        "Access-Control-Allow-Origin": origin,
-        "Cache-Control": "no-store",
-        Vary: "Origin",
-      };
-      const ip = request.headers.get("CF-Connecting-IP") ?? "local";
-      if (!(await env.DIRECTORY_RATE.limit({ key: "ping:" + ip })).success)
-        return new Response(null, { status: 429, headers });
-      const started = performance.now();
-      await env.MATCH.get(env.MATCH.idFromName(probed)).fetch("https://room/ping");
-      return Response.json({ roomMs: performance.now() - started }, { headers });
-    }
+    if (url.pathname === "/diag") return diagnostics(request, url, env);
+    const statsRoom = /^\/room\/([^/]+)\/stats$/.exec(url.pathname)?.[1];
+    if (statsRoom && ROOM_CODE.test(statsRoom)) return statsSocket(request, env, statsRoom);
     if (room && ROOM_CODE.test(room)) {
       if (env.MULTIPLAYER_ENABLED !== "true")
         return new Response("Multiplayer unavailable", { status: 503 });
@@ -143,6 +125,154 @@ export default {
     return env.ROOM.get(env.ROOM.idFromName(code)).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
+
+/** Sequential Worker-to-room round trips; the first includes locating the object. */
+const DIAG_ROOM_SAMPLES = 3;
+/** Rooms probed in parallel per `/diag` read; keeps one read within the subrequest limit. */
+const MAX_DIAG_ROOMS = 10;
+/** The stats client pings once a second; anything much faster is not the panel. */
+const MAX_STATS_MESSAGES_PER_SECOND = 5;
+const MAX_STATS_MESSAGE_BYTES = 256;
+
+/**
+ * Stats-only socket, opened while Stats for nerds is visible. The Worker answers `ping`
+ * itself (the browser-to-edge leg) and times an echo over its own socket to the room (the
+ * edge-to-room leg), so neither sample waits for a per-request Worker start or room lookup.
+ * The game socket is never relayed; the client compares the reported entry colo with its
+ * game socket's to know whether the two legs describe its game path.
+ */
+async function statsSocket(request: Request, env: Env, code: string): Promise<Response> {
+  if (env.MULTIPLAYER_ENABLED !== "true")
+    return new Response("Multiplayer unavailable", { status: 503 });
+  if (!(env.ALLOWED_ORIGINS ?? "").split(",").includes(request.headers.get("Origin") ?? ""))
+    return new Response("Origin not allowed", { status: 403 });
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+    return new Response("WebSocket required", { status: 426 });
+  const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+  if (!(await env.CONNECTION_RATE.limit({ key: ip })).success)
+    return new Response("Too many connections; try again shortly", { status: 429 });
+  const upstream = (
+    await env.MATCH.get(env.MATCH.idFromName(code)).fetch("https://room/probe", {
+      headers: { Upgrade: "websocket" },
+    })
+  ).webSocket;
+  if (!upstream) return new Response("Room probe unavailable", { status: 502 });
+  const pair = new WebSocketPair(),
+    client = pair[1];
+  upstream.accept();
+  client.accept();
+  const close = () => {
+    for (const socket of [client, upstream])
+      try {
+        socket.close(1000, "Stats closed");
+      } catch {
+        /* Already closed. */
+      }
+  };
+  let roomPingAt: number | undefined;
+  let windowMs = 0,
+    messages = 0;
+  client.addEventListener("message", (event) => {
+    const now = Date.now();
+    if (now - windowMs >= 1000) {
+      windowMs = now;
+      messages = 0;
+    }
+    if (
+      ++messages > MAX_STATS_MESSAGES_PER_SECOND ||
+      typeof event.data !== "string" ||
+      event.data.length > MAX_STATS_MESSAGE_BYTES
+    ) {
+      close();
+      return;
+    }
+    let t: unknown;
+    try {
+      const message: unknown = JSON.parse(event.data);
+      if (typeof message === "object" && message && "type" in message && message.type === "ping")
+        t = "t" in message ? message.t : undefined;
+    } catch {
+      /* Rejected below. */
+    }
+    if (typeof t !== "number" || !Number.isFinite(t)) {
+      close();
+      return;
+    }
+    client.send(JSON.stringify({ type: "pong", t }));
+    // One room echo in flight at a time, so a slow room cannot pile up samples.
+    if (roomPingAt === undefined) {
+      roomPingAt = performance.now();
+      upstream.send("ping");
+    }
+  });
+  upstream.addEventListener("message", () => {
+    if (roomPingAt === undefined) return;
+    const ms = performance.now() - roomPingAt;
+    roomPingAt = undefined;
+    client.send(JSON.stringify({ type: "room", ms }));
+  });
+  for (const socket of [client, upstream]) {
+    socket.addEventListener("close", close);
+    socket.addEventListener("error", close);
+  }
+  client.send(JSON.stringify({ type: "edge", colo: request.cf?.colo ?? "unknown" }));
+  return new Response(null, { status: 101, webSocket: pair[0] });
+}
+
+/**
+ * Public latency diagnostics: where this request entered Cloudflare and where the Worker
+ * runs, plus timed round trips to each room and its own report. `?room=CODE` probes one
+ * room; otherwise every listed room is probed, up to `MAX_DIAG_ROOMS`.
+ */
+async function diagnostics(request: Request, url: URL, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin") ?? "";
+  const headers: Record<string, string> = { "Cache-Control": "no-store" };
+  if ((env.ALLOWED_ORIGINS ?? "").split(",").includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers.Vary = "Origin";
+  }
+  const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+  if (!(await env.DIRECTORY_RATE.limit({ key: "diag:" + ip })).success)
+    return new Response(null, { status: 429, headers });
+  const cf = request.cf;
+  const worker = {
+    entryColo: cf?.colo,
+    colo: await executionColo(),
+    clientTcpRttMs: cf?.clientTcpRtt,
+    httpProtocol: cf?.httpProtocol,
+    country: cf?.country,
+    asn: cf?.asn,
+  };
+  if (env.MULTIPLAYER_ENABLED !== "true") return Response.json({ worker, rooms: [] }, { headers });
+  const requested = url.searchParams.get("room");
+  const listed = requested ? [{ room: requested }] : await listedRooms(env);
+  const probed = listed.filter((entry) => ROOM_CODE.test(entry.room)).slice(0, MAX_DIAG_ROOMS);
+  const rooms = await Promise.all(
+    probed.map(async (listing) => ({ listing, ...(await roomDiagnostics(env, listing.room)) })),
+  );
+  return Response.json({ worker, listed: listed.length, rooms }, { headers });
+}
+async function roomDiagnostics(env: Env, code: string) {
+  const stub = env.MATCH.get(env.MATCH.idFromName(code));
+  const roundTripsMs: number[] = [];
+  for (let i = 0; i < DIAG_ROOM_SAMPLES; i++) {
+    const started = performance.now();
+    await stub.fetch("https://room/ping");
+    roundTripsMs.push(Math.round(performance.now() - started));
+  }
+  const report: unknown = await (await stub.fetch("https://room/diag")).json();
+  return { roundTripsMs, report };
+}
+async function listedRooms(env: Env): Promise<{ room: string }[]> {
+  const response = await env.DIRECTORY.getByName("rooms").fetch("https://directory/rooms");
+  if (!response.ok) return [];
+  const listing: { rooms?: unknown } = await response.json();
+  if (!Array.isArray(listing.rooms)) return [];
+  return listing.rooms.filter(
+    (entry): entry is { room: string } =>
+      typeof entry === "object" && entry !== null && typeof entry.room === "string",
+  );
+}
 
 /** Bot-only M1 host. Public player sessions are a later protocol, not this lab API. */
 export class Room extends DurableObject<Env> {
