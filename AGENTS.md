@@ -202,6 +202,10 @@ be weakened to make a normal match look healthy.
   workflow, and never upload the repository directory.
 - `deploy:dev` first deploys the Node multiplayer server to the Vultr VPS
   (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms.
+  Production Pages sites use the same server. When a branch changes
+  `src/game/` or `src/net/`, `deploy:dev` breaks production multiplayer until
+  `main` is redeployed; say so before running it. After such changes reach
+  `main`, run `npm run vps:deploy` from `main`.
   Change the VPS only through `deploy/vps/` and the `vps:*` scripts described
   in `server/README.md`. The traffic bots in `bots/` remain a Cloudflare Worker
   that targets the VPS; `npm run bots:deploy` publishes them separately.

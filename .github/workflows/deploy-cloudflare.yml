@@ -15,6 +15,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    env:
+      # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need a
+      # matching `npm run vps:deploy`, or players are told to reload.
+      VITE_MULTIPLAYER_URL: wss://45-63-56-58.sslip.io
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
