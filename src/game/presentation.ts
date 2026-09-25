@@ -457,7 +457,22 @@ export class Presentation {
     this.worldGroup.add(bar);
   }
 
-  async prepare(source: Simulation | RenderState): Promise<void> {
+  /** `onShaders` reports how many pipelines this preparation has compiled. The
+   * total is unknown: Three finds them while building materials and passes. */
+  async prepare(
+    source: Simulation | RenderState,
+    onShaders?: (stage: string) => void,
+  ): Promise<void> {
+    const progress = this.renderer.pipelineProgress;
+    const { ready } = progress;
+    progress.changed = onShaders && (() => onShaders(`Shaders loaded: ${progress.ready - ready}`));
+    try {
+      await this.prepareScene(source);
+    } finally {
+      progress.changed = undefined;
+    }
+  }
+  private async prepareScene(source: Simulation | RenderState): Promise<void> {
     const simulation = renderState(source, this.wreckView);
     // The round reset just ran synchronously; let the loading screen paint
     // before queueing shaders, which blocks the page again.

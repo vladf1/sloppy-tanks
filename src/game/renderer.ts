@@ -26,6 +26,7 @@ import {
   type BundleBackend,
   type BundleExecutionBackend,
   type BundleRenderer,
+  type PipelineProgress,
   type RuntimePipelines,
 } from "./bundle-stats";
 import { WebGPUUnavailableError } from "./startup-error";
@@ -181,12 +182,28 @@ export class ShadowMaterials {
   }
 }
 
+interface ReleasingPipelines {
+  _releasePipeline(pipeline: unknown): void;
+  _releaseProgram(program: unknown): void;
+}
+
+/** r185 deletes a pipeline and its shader programs once its last draw is disposed.
+ * A round reset disposes the per-round materials before the next round builds
+ * identical ones, so every reset, and every map or option change in the menu,
+ * compiled the same shaders again. The game's variants are bounded (about 110
+ * pipelines across every map), so keep them for the page's lifetime. */
+function keepReleasedPipelines(renderer: { _pipelines: ReleasingPipelines }): void {
+  renderer._pipelines._releasePipeline = () => {};
+  renderer._pipelines._releaseProgram = () => {};
+}
+
 export class GameRenderer extends Renderer {
   override library = new StandardNodeLibrary();
   readonly isWebGPURenderer = true;
   private shadows = new ShadowMaterials();
   private resources?: RenderResources;
   private pendingPipelinesReady: () => Promise<void> = async () => {};
+  readonly pipelineProgress: PipelineProgress = { ready: 0 };
 
   constructor(parameters: Omit<WebGPURendererParameters, "forceWebGL" | "getFallback"> = {}) {
     super(new WebGPUBackend(parameters), parameters);
@@ -211,8 +228,10 @@ export class GameRenderer extends Renderer {
     submitRenderBundlesInOrder(this.backend as unknown as BundleExecutionBackend);
     trackRenderBundles(this.backend as unknown as BundleBackend, this.info);
     shareTexturedShadowNodes(this as unknown as ShadowNodeSource);
+    keepReleasedPipelines(this as unknown as { _pipelines: ReleasingPipelines });
     this.pendingPipelinesReady = compileRuntimePipelinesAsync(
       (this as unknown as { _pipelines: RuntimePipelines })._pipelines,
+      this.pipelineProgress,
     );
     const update = caches._geometries.updateForRender.bind(caches._geometries);
     caches._geometries.updateForRender = (draw) => {

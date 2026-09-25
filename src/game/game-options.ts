@@ -28,6 +28,12 @@ export function initialGameOptions(
   };
 }
 
+/** Only the menu choices, for copying from a simulation that carries them. */
+export function gameChoices(source: GameOptions): GameOptions {
+  const { humanKind, humanTeam, gameMode, mapMode, difficulty } = source;
+  return { humanKind, humanTeam, gameMode, mapMode, difficulty };
+}
+
 export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
   return (
     a.humanKind === b.humanKind &&

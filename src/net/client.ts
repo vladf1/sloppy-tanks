@@ -270,7 +270,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
       }
       const state = mirror.render(control.tankId);
       view.reset(state);
-      await view.prepare(state);
+      await view.prepare(state, (stage) => ui.status(stage, true));
       if (round !== connection.roundId || epoch !== connection.roomEpoch) {
         return;
       }

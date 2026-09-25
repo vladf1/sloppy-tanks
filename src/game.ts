@@ -1,5 +1,5 @@
-import { sameGameOptions, type GameOptions } from "./game/game-options";
-import type { StartGame } from "./game/start-menu";
+import { gameChoices, sameGameOptions, type GameOptions } from "./game/game-options";
+import type { PreparedGame } from "./game/start-menu";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
@@ -10,7 +10,7 @@ import { Presentation } from "./game/presentation";
 import { selectedMap, Simulation, type SimulationSetup } from "./game/simulation";
 import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
-import { UI } from "./game/ui";
+import { MENU_READY_STATUS, UI } from "./game/ui";
 import { CAMERA } from "./game/view-settings";
 import { NerdStats } from "./game/nerd-stats";
 const MAX_FRAME_DELTA_SECONDS = 0.1;
@@ -24,7 +24,7 @@ export async function prepareGame(
   seed: number,
   getOptions: () => GameOptions,
   onStage: (stage: string) => void = () => {},
-): Promise<StartGame> {
+): Promise<PreparedGame> {
   onStage("Building the arena…");
   const root = document.createElement("div");
   root.hidden = true;
@@ -65,7 +65,46 @@ export async function prepareGame(
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   onStage("Preparing graphics…");
   // Compile shaders while the menu is visible, without drawing a background scene.
-  await view.prepare(sim);
+  await view.prepare(sim, onStage);
+  // The hidden arena GO starts. "reset" still needs its shaders and first frame;
+  // "stale" has played a round and needs a new world first.
+  let arena: "prepared" | "reset" | "stale" = "prepared";
+  let wantedOptions: GameOptions = preparedOptions;
+  let reportShaders = onStage;
+  let arenaPreparation: Promise<void> | undefined;
+  /** Bring the hidden arena to `options` while the player is still choosing.
+   * One preparation runs at a time; choices changed meanwhile are picked up by
+   * its loop, and choices that already match cost nothing. */
+  function prepareArena(options: GameOptions, report: (stage: string) => void): Promise<void> {
+    wantedOptions = options;
+    reportShaders = report;
+    if (!arenaPreparation) {
+      // Cleared only after assignment: a run with nothing to do settles at once.
+      const preparation = updateArena();
+      const clear = () => {
+        if (arenaPreparation === preparation) {
+          arenaPreparation = undefined;
+        }
+      };
+      arenaPreparation = preparation;
+      preparation.then(clear, clear);
+    }
+    return arenaPreparation;
+  }
+  async function updateArena(): Promise<void> {
+    while (arena !== "prepared" || !sameGameOptions(preparedOptions, wantedOptions)) {
+      if (arena === "stale" || !sameGameOptions(preparedOptions, wantedOptions)) {
+        arena = "stale";
+        Object.assign(preparedOptions, gameChoices(wantedOptions));
+        Object.assign(sim, preparedOptions);
+        sim.reset();
+        view.reset(sim);
+        arena = "reset";
+      }
+      await view.prepare(sim, (stage) => reportShaders(stage));
+      arena = "prepared";
+    }
+  }
   let active = false;
   const stats = new NerdStats(
     root,
@@ -149,20 +188,15 @@ export async function prepareGame(
       status.textContent = "Preparing your arena…";
     }
     try {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      let selection: GameOptions;
-      do {
-        selection = {
-          humanKind: sim.humanKind,
-          humanTeam: sim.humanTeam,
-          gameMode: sim.gameMode,
-          mapMode: sim.mapMode,
-          difficulty: sim.difficulty,
-        };
-        sim.reset();
-        view.reset(sim);
-        await view.prepare(sim);
-      } while (!sameGameOptions(selection, sim));
+      if (arena !== "prepared" || !sameGameOptions(preparedOptions, sim)) {
+        // Let WAIT paint before the synchronous world rebuild.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      await prepareArena(sim, (stage) => {
+        if (status) {
+          status.textContent = stage;
+        }
+      });
       beginRound();
     } catch (error) {
       console.error("Round preparation failed", error);
@@ -178,7 +212,33 @@ export async function prepareGame(
       roundStarting = false;
     }
   }
+  /** The in-game battle setup edits the simulation's choices directly. */
+  async function preloadFromMenu(): Promise<void> {
+    if (stressTest || roundStarting || sim.match.phase !== "ready") {
+      return;
+    }
+    try {
+      await prepareArena(sim, (stage) => {
+        delete ui.overlay.dataset.state;
+        const status = ui.overlay.querySelector("#startup-status");
+        if (status) {
+          status.textContent = stage;
+        }
+      });
+    } catch (error) {
+      // GO prepares again and reports the failure.
+      console.error("Arena preparation failed", error);
+    }
+    if (!roundStarting && sim.match.phase === "ready" && ui.overlay.dataset.state !== "ready") {
+      ui.overlay.dataset.state = "ready";
+      const status = ui.overlay.querySelector("#startup-status");
+      if (status) {
+        status.textContent = MENU_READY_STATUS;
+      }
+    }
+  }
   function beginRound(): void {
+    arena = "stale";
     active = true;
     root.hidden = false;
     root.classList.remove("menu-ready");
@@ -194,6 +254,8 @@ export async function prepareGame(
     controls.clear();
     sim.reset();
     view.reset(sim);
+    Object.assign(preparedOptions, gameChoices(sim));
+    arena = "reset";
     ui.lastPhase = "";
     accumulator = 0;
   }
@@ -208,7 +270,10 @@ export async function prepareGame(
       sim.start();
       accumulator = 0;
     },
-    restart,
+    () => {
+      restart();
+      void preloadFromMenu();
+    },
     settings,
     pause,
     (weapon) => {
@@ -218,6 +283,12 @@ export async function prepareGame(
     },
     (event) => view.damageAngle(event),
   );
+  ui.overlay.addEventListener("change", () => void preloadFromMenu());
+  ui.overlay.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-kind]")) {
+      void preloadFromMenu();
+    }
+  });
   const touchControls = new TouchModeController(root, controls, sim, zoom);
   const latency =
     import.meta.env.DEV && new URLSearchParams(location.search).has("latency")
@@ -354,19 +425,16 @@ export async function prepareGame(
 
   // Let the ready menu paint first; GO still creates audio if it arrives sooner.
   requestAnimationFrame(() => setTimeout(audio, 0));
-  return async (options) => {
-    if (!stressTest && !sameGameOptions(preparedOptions, options)) {
-      // Choices can change while the earlier arena is preparing. Keep the menu
-      // visible until the most recent selection, including its shaders, is ready.
-      do {
-        Object.assign(preparedOptions, options);
-        Object.assign(sim, preparedOptions);
-        sim.reset();
-        view.reset(sim);
-        onStage("Preparing your arena…");
-        await view.prepare(sim);
-      } while (!sameGameOptions(preparedOptions, options));
-    }
-    beginRound();
+  // The stress level ignores menu choices, so its first arena is the only one.
+  return {
+    prepare: (options, onShaders) =>
+      stressTest ? Promise.resolve() : prepareArena(options, onShaders),
+    async start(options) {
+      if (!stressTest) {
+        // Usually already prepared while the player chose; then this is instant.
+        await prepareArena(options, onStage);
+      }
+      beginRound();
+    },
   };
 }

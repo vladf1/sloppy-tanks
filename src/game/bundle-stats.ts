@@ -12,10 +12,19 @@ export interface RuntimePipelines {
   getForRender(draw: AsyncDraw, promises?: Promise<unknown>[] | null): unknown;
 }
 
+/** Pipelines compiled over the renderer's lifetime, for loading text. */
+export interface PipelineProgress {
+  ready: number;
+  changed?: () => void;
+}
+
 /** r185 creates uncached WebGPU pipelines synchronously during render. Request
  * its async path instead; Renderer.isReady skips that draw until it completes.
  * A bundle recorded without the draw must be rebuilt when it is ready. */
-export function compileRuntimePipelinesAsync(pipelines: RuntimePipelines): () => Promise<void> {
+export function compileRuntimePipelinesAsync(
+  pipelines: RuntimePipelines,
+  progress: PipelineProgress = { ready: 0 },
+): () => Promise<void> {
   const inFlight = new Map<
     unknown,
     { ready: Promise<void>; bundles: Set<NonNullable<AsyncDraw["bundle"]>> }
@@ -40,7 +49,11 @@ export function compileRuntimePipelinesAsync(pipelines: RuntimePipelines): () =>
         },
       );
       inFlight.set(pipeline, { ready: completion, bundles });
-      void completion.then(() => inFlight.delete(pipeline));
+      void completion.then(() => {
+        inFlight.delete(pipeline);
+        progress.ready++;
+        progress.changed?.();
+      });
     }
     if (draw.bundle) {
       inFlight.get(pipeline)?.bundles.add(draw.bundle);

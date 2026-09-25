@@ -21,6 +21,9 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
   interception: "Shell collision blast",
   explosion: "Explosion",
 };
+/** The in-game battle setup's status once its arena is prepared. */
+export const MENU_READY_STATUS = "Ready when you are";
+
 export class UI {
   displayState?: RenderState;
   overlay: HTMLElement;
@@ -53,7 +56,7 @@ export class UI {
       .cloneNode(true) as HTMLElement;
     const status = this.battleSetup.querySelector("#startup-status");
     if (status) {
-      status.textContent = "Ready when you are";
+      status.textContent = MENU_READY_STATUS;
     }
     const hint = this.battleSetup.querySelector(".startup-hint");
     if (hint) {

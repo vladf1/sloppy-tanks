@@ -1,20 +1,26 @@
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { startupErrorMessage } from "./startup-error";
 
-export type StartGame = (options: GameOptions) => void | Promise<void>;
+export interface PreparedGame {
+  /** Rebuild the hidden arena for these choices ahead of GO; `onShaders` reports
+   * compilation only when the choices need shaders that are not ready yet. */
+  prepare(options: GameOptions, onShaders: (stage: string) => void): Promise<void>;
+  start(options: GameOptions): Promise<void>;
+}
 
 export class StartMenu {
   readonly overlay: HTMLDivElement;
   private readonly button: HTMLButtonElement;
   private readonly status: HTMLElement;
-  private preparation?: Promise<StartGame>;
+  private preparation?: Promise<PreparedGame>;
+  private game?: PreparedGame;
   private starting = false;
   private failed = false;
 
   constructor(
     root: HTMLElement,
     readonly options: GameOptions,
-    private readonly load: (onStage: (stage: string) => void) => Promise<StartGame>,
+    private readonly load: (onStage: (stage: string) => void) => Promise<PreparedGame>,
   ) {
     this.overlay = root.querySelector<HTMLDivElement>("#startup-overlay")!;
     this.button = this.overlay.querySelector<HTMLButtonElement>("#start")!;
@@ -24,21 +30,31 @@ export class StartMenu {
     this.button.addEventListener("click", () => {
       void this.start();
     });
+    // bindGameOptions updates the choices first; its listeners are on the controls.
+    this.overlay.addEventListener("change", () => void this.preload());
+    this.overlay.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("[data-kind]")) {
+        void this.preload();
+      }
+    });
   }
 
-  prepare(): Promise<StartGame> {
+  prepare(): Promise<PreparedGame> {
     this.preparation ??= this.load((stage) => {
       this.status.textContent = stage;
     })
-      .then((start) => {
-        this.overlay.dataset.state = this.starting ? "starting" : "ready";
-        this.status.textContent = this.starting ? "Starting your round…" : "Ready to play";
-        this.hint(
-          this.starting
-            ? "Your round will start automatically."
-            : "All set. Hit GO when you’re ready.",
-        );
-        return start;
+      .then((game) => {
+        this.game = game;
+        if (this.starting) {
+          this.overlay.dataset.state = "starting";
+          this.status.textContent = "Starting your round…";
+          this.hint("Your round will start automatically.");
+        } else {
+          this.showReady();
+          // Catch up with choices made while the first arena was loading.
+          void this.preload();
+        }
+        return game;
       })
       .catch((error: unknown) => {
         this.showFailure(error);
@@ -63,8 +79,8 @@ export class StartMenu {
     this.status.textContent = "Preparing your round…";
     this.hint("GO received. Your round will start automatically.");
     try {
-      const start = await this.prepare();
-      await start(this.options);
+      const game = await this.prepare();
+      await game.start(this.options);
       this.overlay.remove();
     } catch (error) {
       if (!this.failed) {
@@ -72,6 +88,33 @@ export class StartMenu {
       }
       this.starting = false;
     }
+  }
+
+  /** Prepare the chosen arena while the player is still choosing, so GO is instant. */
+  private async preload(): Promise<void> {
+    if (!this.game || this.starting || this.failed) {
+      return;
+    }
+    try {
+      await this.game.prepare(this.options, (stage) => {
+        if (!this.starting) {
+          delete this.overlay.dataset.state;
+          this.status.textContent = stage;
+        }
+      });
+    } catch (error) {
+      this.showFailure(error);
+      return;
+    }
+    if (!this.starting && !this.failed && this.overlay.dataset.state !== "ready") {
+      this.showReady();
+    }
+  }
+
+  private showReady(): void {
+    this.overlay.dataset.state = "ready";
+    this.status.textContent = "Ready to play";
+    this.hint("All set. Hit GO when you’re ready.");
   }
 
   private showFailure(error: unknown): void {

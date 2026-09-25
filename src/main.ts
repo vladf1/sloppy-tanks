@@ -82,8 +82,8 @@ function startSinglePlayer(): void {
       setup.style.display = "none";
     }
     void load()
-      .then(async (start) => {
-        await start(options);
+      .then(async (game) => {
+        await game.start(options);
         setup?.remove();
       })
       .catch((error: unknown) => {
