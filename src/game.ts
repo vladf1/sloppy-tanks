@@ -72,6 +72,8 @@ export async function prepareGame(
   let wantedOptions: GameOptions = preparedOptions;
   let reportShaders = onStage;
   let arenaPreparation: Promise<void> | undefined;
+  // Bumped when a round begins or resets the world outside a preparation.
+  let arenaRevision = 0;
   /** Bring the hidden arena to `options` while the player is still choosing.
    * One preparation runs at a time; choices changed meanwhile are picked up by
    * its loop, and choices that already match cost nothing. */
@@ -101,7 +103,13 @@ export async function prepareGame(
         view.reset(sim);
         arena = "reset";
       }
+      const revision = arenaRevision;
       await view.prepare(sim, (stage) => reportShaders(stage));
+      if (revision !== arenaRevision) {
+        // A round began or reset the world meanwhile; never rebuild a world in
+        // use. Its arena state already says what the next preparation needs.
+        return;
+      }
       arena = "prepared";
     }
   }
@@ -239,6 +247,7 @@ export async function prepareGame(
   }
   function beginRound(): void {
     arena = "stale";
+    arenaRevision++;
     active = true;
     root.hidden = false;
     root.classList.remove("menu-ready");
@@ -256,6 +265,7 @@ export async function prepareGame(
     view.reset(sim);
     Object.assign(preparedOptions, gameChoices(sim));
     arena = "reset";
+    arenaRevision++;
     ui.lastPhase = "";
     accumulator = 0;
   }

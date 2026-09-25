@@ -57,6 +57,18 @@ try {
     );
     await page.locator(".recap-stats").waitFor();
   }
+  /** The canvas follows the window on its resize event, which can land a frame
+   * after Playwright resizes the viewport; measure layout only after it. */
+  async function resize(width, height) {
+    await page.setViewportSize({ width, height });
+    await page.waitForFunction(
+      ({ width, height }) => {
+        const canvas = document.querySelector("#game").getBoundingClientRect();
+        return canvas.width === width && canvas.height === height;
+      },
+      { width, height },
+    );
+  }
   async function click(selector) {
     const locator = page.locator(selector);
     await locator.scrollIntoViewIfNeeded();
@@ -103,7 +115,7 @@ try {
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
   assert.equal(await page.locator(".recap-stat").count(), 6);
   assert.equal(await page.locator(".recap-detail").count(), 11);
-  await page.setViewportSize({ width: 1280, height: 720 });
+  await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".recap-actions").getBoundingClientRect();
     return (
@@ -113,7 +125,7 @@ try {
   });
   assert.ok(fits, "a full report must fit without scrolling to its buttons");
   await page.screenshot({ path: `${output}/battle-report-720p.png` });
-  await page.setViewportSize({ width: 1440, height: 1100 });
+  await resize(1440, 1100);
   await click("#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.equal(await page.evaluate(() => window.sloppy.sim.combatRecord.busiestMinute), 0);
@@ -123,7 +135,7 @@ try {
   await open();
   await finish("team", 19);
   assert.match(await page.locator(".recap-stat").first().innerText(), /BEST 21/);
-  await page.setViewportSize({ width: 1024, height: 640 });
+  await resize(1024, 640);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const top = await page.locator(".results").boundingBox();
   assert.ok(top.y >= 0, "scrollable report must not clip its heading above the viewport");
@@ -136,7 +148,7 @@ try {
   await page.screenshot({ path: `${output}/battle-report-bottom.png` });
   await click("#restart");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "ready");
-  await page.setViewportSize({ width: 1440, height: 1100 });
+  await resize(1440, 1100);
   await page.evaluate(() => {
     const d = window.sloppy;
     d.sim.gameMode = "solo";
