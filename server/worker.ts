@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { relayRoomSocket } from "./ping-relay";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand } from "../src/game/types";
 import { FixedStepClock, HOST_INTERVAL_MS } from "../src/net/fixed-step-clock";
@@ -31,6 +32,19 @@ const MAX_ROOM_MS = 20 * 60_000;
 const MAX_UNACKNOWLEDGED_TICKS = 180;
 const MAPS = ["village", "harbor", "quarry"] as const;
 type MapMode = (typeof MAPS)[number];
+/** Worker-clock time for one Durable Object request, visible in browser network timing. */
+const durableObjectTiming = (started: number) =>
+  `durable-object;dur=${(performance.now() - started).toFixed(1)}`;
+function withTiming(response: Response, timing: string, webSocket = response.webSocket): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Server-Timing", timing);
+  return new Response(webSocket ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+    webSocket,
+  });
+}
 interface Client {
   lastSeenMs: number;
   observedTick: number;
@@ -73,10 +87,15 @@ export default {
         ).success
       )
         return new Response("Too many refreshes; try again shortly", { status: 429, headers });
+      const started = performance.now();
       const response = await env.DIRECTORY.getByName("rooms").fetch("https://directory/rooms");
       return new Response(response.body, {
         status: response.status,
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+          "Server-Timing": durableObjectTiming(started),
+        },
       });
     }
     if (room && ROOM_CODE.test(room)) {
@@ -92,7 +111,15 @@ export default {
         !(await env.ENTRY_RATE.limit({ key: "rooms" })).success
       )
         return new Response("Too many room connections; try again shortly", { status: 429 });
-      return env.MATCH.get(env.MATCH.idFromName(room)).fetch(request);
+      const started = performance.now();
+      const response = await env.MATCH.get(env.MATCH.idFromName(room)).fetch(request);
+      const timing = durableObjectTiming(started);
+      if (!response.webSocket) return withTiming(response, timing);
+      const pair = new WebSocketPair();
+      relayRoomSocket(pair[1], response.webSocket);
+      pair[1].accept();
+      response.webSocket.accept();
+      return withTiming(response, timing, pair[0]);
     }
     if (env.EXPERIMENT_ENABLED !== "true") {
       return new Response("Experiment disabled", { status: 503 });
@@ -118,7 +145,9 @@ export default {
     ) {
       return new Response("Invalid map or seed", { status: 400 });
     }
-    return env.ROOM.get(env.ROOM.idFromName(code)).fetch(request);
+    const started = performance.now();
+    const response = await env.ROOM.get(env.ROOM.idFromName(code)).fetch(request);
+    return withTiming(response, durableObjectTiming(started));
   },
 } satisfies ExportedHandler<Env>;
 

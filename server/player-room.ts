@@ -99,6 +99,7 @@ export class PlayerRoom extends DurableObject<Env> {
           while (this.directoryDirty && this.host) {
             this.directoryDirty = false;
             const entry = this.host.directoryEntry(this.room);
+            const started = performance.now();
             const response = await this.env.DIRECTORY.getByName("rooms").fetch(
               "https://directory/rooms",
               {
@@ -107,6 +108,12 @@ export class PlayerRoom extends DurableObject<Env> {
               },
             );
             if (!response.ok) throw new Error("Room directory update failed");
+            console.log(
+              JSON.stringify({
+                type: "directory-update",
+                durableObjectMs: performance.now() - started,
+              }),
+            );
           }
         } catch (error) {
           console.error("Room listing unavailable", error);

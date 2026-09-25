@@ -65,7 +65,7 @@ export type ServerMessage =
   | FullState
   /** ack is the latest input sequence the server applied for this seat. */
   | { type: "snapshot"; roundId: number; ack: number; snapshots: Snapshot[] }
-  | { type: "pong"; t: number; tick: number }
+  | { type: "pong"; t: number; tick: number; workerToRoomMs?: number }
   | { type: "error"; code: string; message: string; fatal?: boolean }
   | { type: "room-reset"; roomEpoch: string; reason: string };
 /** Client messages name only the round; the socket already belongs to one room instance. */

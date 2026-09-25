@@ -63,6 +63,24 @@ usage and peak isolate memory still need owner-visible dashboard verification.
 `wrangler tail --config server/wrangler.jsonc --format json` records runtime
 outcomes during manual load tests; keep reports under ignored artifacts.
 
+## Durable Object timing
+
+Every Worker request to a Durable Object reports its Worker-clock duration as
+`Server-Timing: durable-object;dur=MS`: the room list, the room join (WebSocket
+upgrade) and the credential-protected experiment room. The room's own directory
+updates log `{"type":"directory-update","durableObjectMs":MS}`.
+
+On this measurement branch the front Worker also relays each gameplay WebSocket
+and adds `workerToRoomMs` to each matched `pong`: from the Worker receiving a
+ping to it receiving the room's pong. It covers internal routing and Durable
+Object handling, not browser-to-Worker travel; the browser RTT still measures
+the full trip. Only messages that start with the ping or pong prefix are parsed;
+all other traffic passes through unchanged, and validation stays in the room.
+The relay keeps the Worker in the path for the whole connection, so it adds
+Worker CPU per message and describes the instrumented path, not the original
+pass-through path. Measuring Cloudflare's internal network requires a deployed
+Worker.
+
 ## Retained M1 experiment
 
 The retained M1 **bot-only, credential-protected experiment** uses a separate protocol. It runs the existing 12-tank Team Battle in workerd, projects explicit
