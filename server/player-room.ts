@@ -169,11 +169,12 @@ export class PlayerRoom extends DurableObject<Env> {
     // Fixed deadlines keep snapshot batches at 20 Hz; chaining a full interval after each
     // callback would add simulation time and timer slop to every gap clients must buffer.
     const now = Date.now();
-    // A late room re-anchors instead of firing a burst; FixedStepClock still owes the ticks.
-    this.nextTickMs = Math.min(
-      Math.max(this.nextTickMs + HOST_INTERVAL_MS, now),
-      now + HOST_INTERVAL_MS,
-    );
+    // A missed deadline re-anchors one full interval out: an immediate callback would only
+    // resend the snapshot just broadcast. FixedStepClock still owes the late ticks.
+    this.nextTickMs += HOST_INTERVAL_MS;
+    if (this.nextTickMs <= now || this.nextTickMs > now + HOST_INTERVAL_MS) {
+      this.nextTickMs = now + HOST_INTERVAL_MS;
+    }
     this.timer = setTimeout(() => {
       this.timer = undefined;
       const now = Date.now();
