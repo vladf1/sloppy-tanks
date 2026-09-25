@@ -64,33 +64,39 @@ test("coalesced death and respawn preserve each life and emit effects on the dis
       2,
       [{ eventId: 1, tick: 2, event: { type: "death", id: deadTank.id, x: 0, z: 0 } }],
       [],
-      0,
     );
     timeline.push(
       respawn,
       4,
       [{ eventId: 2, tick: 4, event: { type: "respawn", id: nextLife.id, x: 30, z: 0 } }],
       [],
-      0,
     );
-    timeline.push(respawn, 6, [], [], 0);
-    assert.equal(timeline.read(17, 0, 1 / 60).state.viewer.alive, true);
-    const death = timeline.read(34, 0, 1 / 60);
-    assert.equal(death.state.viewer.alive, false);
+    timeline.push(respawn, 6, [], []);
+    timeline.arrive(50);
+    const frames = [];
+    for (let nowMs = 50; nowMs < 400; nowMs++) {
+      const { state, events } = timeline.read(nowMs, 0, 0.001);
+      frames.push({
+        alive: state.viewer.alive,
+        life: state.viewer.life,
+        x: state.viewer.position.x,
+        events: events.map((e) => e.type),
+      });
+    }
+    assert.equal(frames[0].alive, true);
+    const deathFrame = frames.findIndex((frame) => !frame.alive);
+    const respawnFrame = frames.findIndex((frame) => frame.life === 1);
+    assert.ok(deathFrame > 0 && respawnFrame > deathFrame, "each life is displayed in order");
+    assert.deepEqual(frames[deathFrame].events, ["death"], "death effect lands with the wreck");
+    assert.deepEqual(frames[respawnFrame].events, ["respawn"]);
+    assert.equal(frames[respawnFrame].x, 30, "no interpolation from the wreck to the respawn");
     assert.deepEqual(
-      death.events.map((e) => e.type),
-      ["death"],
+      frames.flatMap((frame) => frame.events),
+      ["death", "respawn"],
+      "effects play once",
     );
-    const alive = timeline.read(67, 0, 1 / 60);
-    assert.equal(alive.state.viewer.life, 1);
-    assert.equal(alive.state.viewer.position.x, 30);
-    assert.deepEqual(
-      alive.events.map((e) => e.type),
-      ["respawn"],
-    );
-    assert.deepEqual(timeline.read(68, 0, 1 / 60).events, []);
-    timeline.reset(respawn, 6, 70);
-    assert.deepEqual(timeline.read(80, 0, 1 / 60).events, []);
+    timeline.reset(respawn, 6, 400);
+    assert.deepEqual(timeline.read(410, 0, 1 / 60).events, []);
   } finally {
     sim.dispose();
   }
@@ -122,16 +128,27 @@ test("a projectile born and destroyed between snapshots follows its swept segmen
       6,
       [{ eventId: 1, tick: 1.5, event: { type: "impact", x: 1, z: 0 } }],
       [{ tick: 1, endTick: 1.5, shot, end: { x: 1, z: 0 } }],
-      0,
     );
-    assert.equal(timeline.read(10, 0, 1 / 60).state.shots.length, 0);
-    const flight = timeline.read(20.8333333333, 0, 1 / 60);
-    assert.ok(Math.abs(flight.state.shots[0].x - 0.5) < 1e-8);
-    assert.deepEqual(flight.events, []);
-    const impact = timeline.read(26, 0, 1 / 60);
-    assert.equal(impact.state.shots.length, 0);
-    assert.equal(impact.events[0].type, "impact");
-    assert.equal(timeline.read(40, 0, 1 / 60).state.shots.length, 0);
+    timeline.arrive(50);
+    let flights = 0;
+    const impacts = [];
+    for (let nowMs = 50; nowMs < 300; nowMs += 0.5) {
+      const { state: shown, events } = timeline.read(nowMs, 0, 1 / 60);
+      const tick = (timeline.clock.displayMs * 60) / 1000;
+      if (tick >= 1 && tick < 1.5) {
+        flights++;
+        assert.ok(Math.abs(shown.shots[0].x - (tick - 1) * 2) < 1e-8, "shot follows its segment");
+        assert.deepEqual(events, []);
+      } else {
+        assert.equal(shown.shots.length, 0, "shot is visible only between launch and impact");
+      }
+      if (events.length) {
+        assert.ok(tick >= 1.5);
+        impacts.push(...events.map((event) => event.type));
+      }
+    }
+    assert.ok(flights > 0);
+    assert.deepEqual(impacts, ["impact"]);
   } finally {
     sim.dispose();
   }

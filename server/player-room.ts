@@ -22,6 +22,7 @@ export class PlayerRoom extends DurableObject<Env> {
   private sockets = new Map<WebSocket, SocketInfo>();
   private byId = new Map<string, WebSocket>();
   private timer?: ReturnType<typeof setTimeout>;
+  private nextTickMs = 0;
   private room = "";
   private lastListedMs = 0;
   private directoryDirty = false;
@@ -165,6 +166,14 @@ export class PlayerRoom extends DurableObject<Env> {
     }
   }
   private schedule(): void {
+    // Fixed deadlines keep snapshot batches at 20 Hz; chaining a full interval after each
+    // callback would add simulation time and timer slop to every gap clients must buffer.
+    const now = Date.now();
+    // A late room re-anchors instead of firing a burst; FixedStepClock still owes the ticks.
+    this.nextTickMs = Math.min(
+      Math.max(this.nextTickMs + HOST_INTERVAL_MS, now),
+      now + HOST_INTERVAL_MS,
+    );
     this.timer = setTimeout(() => {
       this.timer = undefined;
       const now = Date.now();
@@ -183,6 +192,6 @@ export class PlayerRoom extends DurableObject<Env> {
         this.sockets.clear();
         this.byId.clear();
       }
-    }, HOST_INTERVAL_MS);
+    }, this.nextTickMs - now);
   }
 }
