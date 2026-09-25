@@ -99,8 +99,10 @@ hidden-tab takeover, reconnect, results and another map. Run Vite and the local
 Worker first, or set `SLOPPY_SERVER=wss://sloppy-tanks-server-dev.vova145.workers.dev`.
 Use `SLOPPY_URL` for the Vite URL and `SLOPPY_LATENCY=50` (also 100/150) for added
 round-trip delay. It also measures button-to-visible movement/shot feedback and
-checks automatic reconnect and physical multi-touch driving/fire/mines. The client additionally accepts `?jitter=30`; delayed channels
-preserve message order. Browser diagnostics exist only in dev builds.
+checks automatic reconnect and physical multi-touch driving/fire/mines. The client additionally accepts `?jitter=30` and
+`?stall=200`, which holds about one message in fifty and queues later ones behind it,
+like TCP head-of-line blocking; delayed channels preserve message order. Stats for nerds
+shows the adaptive playout buffer and the share of frames that ran past the newest snapshot. Browser diagnostics exist only in dev builds.
 
 `npm run server:check:players` runs 4 real player sockets for 15 seconds per map,
 including combat, reconnect and results. Set `SLOPPY_SERVER_URL` for a deployed

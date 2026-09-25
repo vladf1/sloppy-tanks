@@ -18,7 +18,8 @@ export interface RenderSample {
   ack: number;
 }
 const MAX_SAMPLES = 32;
-const MAX_EXTRAPOLATION_SECONDS = 0.1;
+/** Longest a hull is carried past its newest authoritative pose, local or remote. */
+export const MAX_EXTRAPOLATION_SECONDS = 0.1;
 const CORRECTION_RATE = 20;
 
 function interpolateRotation(a: RenderRotation, b: RenderRotation, alpha: number): RenderRotation {
@@ -94,6 +95,8 @@ export class RenderTimeline {
     coherentLifecycle = false,
   ): { state: RenderState; events: SimEvent[] } {
     const newest = this.samples.at(-1)!;
+    // A late packet carries remote hulls along their velocity briefly instead of freezing them.
+    const overrun = Math.max(0, Math.min(MAX_EXTRAPOLATION_SECONDS, time - newest.state.elapsed));
     time = Math.min(time, newest.state.elapsed);
     let index = 0;
     while (index + 1 < this.samples.length && this.samples[index + 1].state.elapsed <= time) {
@@ -144,6 +147,10 @@ export class RenderTimeline {
       out.heading =
         tank.heading + angleDelta(tank.heading, next?.heading ?? tank.heading) * fraction;
       out.aim = tank.aim + angleDelta(tank.aim, next?.aim ?? tank.aim) * fraction;
+      if (overrun && tank.alive) {
+        out.position.x += tank.velocity.x * overrun;
+        out.position.z += tank.velocity.z * overrun;
+      }
       out.previous = out.position;
       this.tanks.push(out);
     }
@@ -185,7 +192,7 @@ export class RenderTimeline {
         this.shotCache.set(shot.id, out);
       }
       Object.assign(out, shot);
-      const ahead = Math.max(0, Math.min(0.05, time - before.elapsed));
+      const ahead = Math.max(0, Math.min(0.05, time + overrun - before.elapsed));
       out.x = next ? shot.x + (next.x - shot.x) * fraction : shot.x + shot.vx * ahead;
       out.z = next ? shot.z + (next.z - shot.z) * fraction : shot.z + shot.vz * ahead;
       this.shots.push(out);

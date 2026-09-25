@@ -259,6 +259,21 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
                   `${Math.round(now - lastSnapshotMs)} ms`,
                   "Time since the last full state or snapshot arrived.",
                 ],
+                [
+                  "Playout buffer",
+                  `${Math.round(timeline.clock.bufferMs)} ms`,
+                  "How far other tanks are drawn behind the fastest recent snapshot arrival. It grows when snapshots arrive late and shrinks slowly afterwards.",
+                ],
+                [
+                  "Buffered ahead",
+                  `${Math.round(timeline.marginMs)} ms`,
+                  "Received simulation not yet displayed. Negative means snapshots are late and other tanks are briefly extrapolated.",
+                ],
+                [
+                  "Underrun",
+                  `${(timeline.clock.underrun * 100).toFixed(1)} %`,
+                  "Share of recent frames drawn past the newest snapshot. Sustained values mean visible stutter.",
+                ],
                 ["Server tick", mirror.tick, "Latest authoritative simulation tick received."],
                 [
                   "Input seq sent / ack",
@@ -393,6 +408,7 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
         if (message.roundId !== connection.roundId) {
           return;
         }
+        let pushed = false;
         for (const snapshot of message.snapshots) {
           const result = mirror.applySnapshot(snapshot);
           if (!result) {
@@ -407,13 +423,16 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
                 mirror.tick,
                 result.events,
                 result.traces,
-                performance.now(),
               );
+              pushed = true;
             } catch {
               requestFull();
               break;
             }
           }
+        }
+        if (pushed) {
+          timeline.arrive(lastSnapshotMs);
         }
       }
     },
