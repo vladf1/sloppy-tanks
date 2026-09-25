@@ -224,8 +224,11 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
               : 0;
             statsSampleMs = now;
             statsSampleUpdates = receivedUpdates;
-            connection.probeEdge();
-            const { edgeRtt, edgeToRoomRtt } = connection;
+            connection.measureEdge();
+            const { edgeRtt, edgeToRoomRtt, gameEdgeColo, statsEdgeColo } = connection;
+            const edgeMatches = !statsEdgeColo || !gameEdgeColo || statsEdgeColo === gameEdgeColo;
+            const edgeLeg = (ms: number | undefined) =>
+              ms === undefined ? "—" : `${Math.round(ms)} ms${edgeMatches ? "" : " ⚠"}`;
             return {
               state: display,
               rows: [
@@ -235,14 +238,24 @@ export async function startMultiplayer(root: HTMLElement): Promise<void> {
                   "Measured round-trip time to the game server.",
                 ],
                 [
+                  "Game edge",
+                  gameEdgeColo ?? "—",
+                  "Cloudflare location the game connection entered through.",
+                ],
+                [
+                  "Stats edge",
+                  statsEdgeColo === undefined ? "—" : `${statsEdgeColo}${edgeMatches ? "" : " ⚠"}`,
+                  "Cloudflare location of the separate stats connection that measures the edge legs while this panel is open. ⚠ means it differs from the game edge, so the edge legs do not describe the game path.",
+                ],
+                [
                   "Edge RTT",
-                  edgeRtt === undefined ? "—" : `${Math.round(edgeRtt)} ms`,
-                  "HTTP round trip to the nearest server Worker, excluding its request to the room. Sampled once a second only while this panel is open.",
+                  edgeLeg(edgeRtt),
+                  "Round trip to the Cloudflare edge over the stats connection, answered by the Worker without contacting the room. Sampled once a second only while this panel is open.",
                 ],
                 [
                   "Edge → room",
-                  edgeToRoomRtt === undefined ? "—" : `${Math.round(edgeToRoomRtt)} ms`,
-                  "Round trip from the Cloudflare edge to the room's Durable Object, timed by the Worker, including room handling. Sampled with Edge RTT.",
+                  edgeLeg(edgeToRoomRtt),
+                  "Round trip from the Cloudflare edge to the room over an open connection, timed by the Worker, including the room's reply time. Sampled with Edge RTT.",
                 ],
                 [
                   "Updates received",

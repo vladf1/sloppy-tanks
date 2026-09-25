@@ -9,7 +9,10 @@ import type { PlayerVehicleKind, Team } from "../game/types";
 
 const RECONNECT_WINDOW_MS = 30_000;
 const MAX_BUFFERED_BYTES = 16_384;
-const EDGE_PROBE_INTERVAL_MS = 1000;
+const EDGE_PING_INTERVAL_MS = 1000;
+/** Stats stop asking for samples when the panel closes; close the stats socket soon after. */
+const STATS_SOCKET_IDLE_MS = 3000;
+const STATS_SOCKET_RETRY_MS = 5000;
 export interface JoinChoice {
   name: string;
   kind: PlayerVehicleKind;
@@ -28,9 +31,12 @@ export class Connection {
   playerId = "";
   observedTick = 0;
   rtt = 0;
-  /** Browser-to-Worker and Worker-to-room round trips; sampled only while stats are shown. */
+  /** Browser-to-edge and edge-to-room round trips over the stats socket, while stats are shown. */
   edgeRtt?: number;
   edgeToRoomRtt?: number;
+  /** Where the game socket and the stats socket entered Cloudflare. */
+  gameEdgeColo?: string;
+  statsEdgeColo?: string;
   connected = false;
   private socket?: WebSocket;
   private token?: string;
@@ -41,7 +47,10 @@ export class Connection {
   private retryStarted = 0;
   private attempt = 0;
   private lastMessageAt = 0;
-  private edgeProbeAt = -Infinity;
+  private stats?: WebSocket;
+  private statsWantedAt = -Infinity;
+  private statsRetryAt = -Infinity;
+  private edgePingAt = -Infinity;
   private choice?: JoinChoice;
   private readonly storageKey: string;
   private delay?: {
@@ -168,12 +177,19 @@ export class Connection {
       if (this.connected) {
         this.send("ping", { t: Math.round(now), observedTick: this.observedTick });
       }
+      if (this.stats && now - this.statsWantedAt > STATS_SOCKET_IDLE_MS) {
+        this.closeStats();
+      }
     }, 1000);
   }
   private receive(text: string): void {
     try {
       const message = record(JSON.parse(text));
       this.lastMessageAt = performance.now();
+      if (message.type === "edge") {
+        this.gameEdgeColo = string(16).read(message.colo);
+        return;
+      }
       if (message.type === "welcome") {
         if (message.version !== PROTOCOL_VERSION || message.contentVersion !== CONTENT_VERSION) {
           this.fail("Game updated. Reload this page.");
@@ -229,21 +245,74 @@ export class Connection {
       this.fail("Game state was incompatible. Reload before joining again.");
     }
   }
-  /** The Worker times its request to the room; the rest of the fetch is the edge round trip. */
-  probeEdge(): void {
-    const started = performance.now();
-    if (started - this.edgeProbeAt < EDGE_PROBE_INTERVAL_MS) {
+  /**
+   * Call while Stats for nerds is visible. A separate stats socket measures both edge legs:
+   * the Worker answers pings itself and times its own echo to the room. The game socket is
+   * never relayed, so the legs describe the game path only when both sockets share a colo.
+   */
+  measureEdge(): void {
+    const now = performance.now();
+    this.statsWantedAt = now;
+    const stats = this.stats;
+    if (!stats) {
+      if (this.connected && now >= this.statsRetryAt) {
+        this.openStats();
+      }
       return;
     }
-    this.edgeProbeAt = started;
-    fetch(this.url.replace(/^ws/, "http") + "/room/" + this.room + "/ping", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((value: unknown) => {
-        const roomMs = number(0, 60_000).read(record(value).roomMs);
-        this.edgeToRoomRtt = roomMs;
-        this.edgeRtt = Math.max(0, performance.now() - started - roomMs);
-      })
-      .catch(() => {});
+    if (stats.readyState === WebSocket.OPEN && now - this.edgePingAt >= EDGE_PING_INTERVAL_MS) {
+      this.edgePingAt = now;
+      const text = JSON.stringify({ type: "ping", t: now });
+      // The stats socket shares the simulated link so its legs still add up to RTT.
+      if (this.delay) {
+        this.delay.send(text, (text) => this.stats === stats && stats.send(text));
+      } else {
+        stats.send(text);
+      }
+    }
+  }
+  private openStats(): void {
+    const stats = new WebSocket(this.url.replace(/\/$/, "") + "/room/" + this.room + "/stats");
+    this.stats = stats;
+    stats.onmessage = (event) => {
+      if (typeof event.data !== "string" || event.data.length > 256) {
+        return;
+      }
+      const receive = (text: string) => {
+        if (this.stats !== stats) {
+          return;
+        }
+        try {
+          const message = record(JSON.parse(text));
+          if (message.type === "edge") {
+            this.statsEdgeColo = string(16).read(message.colo);
+          } else if (message.type === "pong") {
+            this.edgeRtt = Math.max(0, performance.now() - number(0, Infinity).read(message.t));
+          } else if (message.type === "room") {
+            this.edgeToRoomRtt = number(0, 60_000).read(message.ms);
+          }
+        } catch {
+          /* Stats are best-effort; the game socket owns protocol errors. */
+        }
+      };
+      if (this.delay) {
+        this.delay.receive(event.data, receive);
+      } else {
+        receive(event.data);
+      }
+    };
+    stats.onclose = () => {
+      if (this.stats === stats) {
+        this.closeStats();
+        this.statsRetryAt = performance.now() + STATS_SOCKET_RETRY_MS;
+      }
+    };
+  }
+  private closeStats(): void {
+    this.stats?.close();
+    this.stats = undefined;
+    this.edgeRtt = this.edgeToRoomRtt = this.statsEdgeColo = undefined;
+    this.edgePingAt = -Infinity;
   }
   send(type: string, fields: object = {}): boolean {
     return this.raw({ type, roundId: this.roundId, ...fields });
@@ -295,6 +364,7 @@ export class Connection {
     this.events.clearInput();
     this.socket?.close();
     this.socket = undefined;
+    this.closeStats();
   }
   leave(): void {
     this.send("leave");

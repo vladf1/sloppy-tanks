@@ -3,10 +3,16 @@ import { MatchHost } from "../src/net/match-host";
 import { HOST_INTERVAL_MS } from "../src/net/fixed-step-clock";
 import { MAX_CLIENT_MESSAGE_BYTES } from "../src/net/protocol";
 import type { RoomDirectory } from "./room-directory";
+import { executionColo, SampleWindow } from "./diagnostics";
 
 const MAX_PENDING_CONNECTIONS = 16;
 const JOIN_TIMEOUT_MS = 5000;
 const DIRECTORY_HEARTBEAT_MS = 20_000;
+/** Five seconds of 20 Hz timer deadlines. */
+const TIMER_LATENESS_SAMPLES = 100;
+/** Stats sockets are one per open Stats for nerds panel; they never hold a seat. */
+const MAX_PROBE_SOCKETS = 16;
+const MAX_PROBE_MESSAGE_BYTES = 16;
 interface Env {
   DIRECTORY: DurableObjectNamespace<RoomDirectory>;
 }
@@ -16,6 +22,9 @@ interface SocketInfo {
   joined: boolean;
   windowMs: number;
   messages: number;
+  /** Where the socket entered Cloudflare, and that colo's TCP round trip to the player. */
+  edgeColo?: string;
+  clientTcpRttMs?: number;
 }
 export class PlayerRoom extends DurableObject<Env> {
   private host?: MatchHost;
@@ -27,6 +36,8 @@ export class PlayerRoom extends DurableObject<Env> {
   private lastListedMs = 0;
   private directoryDirty = false;
   private directoryPublishing = false;
+  private timerLateness = new SampleWindow(TIMER_LATENESS_SAMPLES);
+  private probes = 0;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     for (const socket of ctx.getWebSockets()) {
@@ -44,9 +55,12 @@ export class PlayerRoom extends DurableObject<Env> {
       }
     }
   }
-  override fetch(request: Request): Response {
-    // Edge probes must not create a match or replace the listed room code.
-    if (new URL(request.url).pathname === "/ping") return new Response(null, { status: 204 });
+  override fetch(request: Request): Response | Promise<Response> {
+    // Diagnostics and stats probes must not create a match or replace the listed room code.
+    const path = new URL(request.url).pathname;
+    if (path === "/ping") return new Response(null, { status: 204 });
+    if (path === "/diag") return this.diagnostics();
+    if (path === "/probe") return this.probe(request);
     this.room = new URL(request.url).pathname.split("/").at(-1)!;
     if (this.sockets.size >= MAX_PENDING_CONNECTIONS)
       return new Response("Room connection limit", { status: 429 });
@@ -82,10 +96,67 @@ export class PlayerRoom extends DurableObject<Env> {
       now = Date.now(),
       id = crypto.randomUUID();
     this.ctx.acceptWebSocket(socket);
-    this.sockets.set(socket, { id, openedMs: now, joined: false, windowMs: now, messages: 0 });
+    this.sockets.set(socket, {
+      id,
+      openedMs: now,
+      joined: false,
+      windowMs: now,
+      messages: 0,
+      edgeColo: request.cf?.colo as string | undefined,
+      clientTcpRttMs: request.cf?.clientTcpRtt as number | undefined,
+    });
     this.byId.set(id, socket);
+    // The stats panel compares this with its stats socket's colo before trusting the edge legs.
+    socket.send(JSON.stringify({ type: "edge", colo: request.cf?.colo ?? "unknown" }));
     if (this.timer === undefined) this.schedule();
     return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  /**
+   * Echo socket for the Worker's stats relay. Replies go through the same event loop as game
+   * pongs, so a busy room shows up in the edge-to-room time as it does in game RTT.
+   */
+  private probe(request: Request): Response {
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+      return new Response("WebSocket required", { status: 426 });
+    if (this.probes >= MAX_PROBE_SOCKETS) return new Response("Too many probes", { status: 429 });
+    const pair = new WebSocketPair(),
+      socket = pair[1];
+    socket.accept();
+    this.probes++;
+    let open = true;
+    const close = () => {
+      if (!open) return;
+      open = false;
+      this.probes--;
+      try {
+        socket.close(1000, "Probe closed");
+      } catch {
+        /* Already closed. */
+      }
+    };
+    socket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string" || event.data.length > MAX_PROBE_MESSAGE_BYTES) close();
+      else socket.send(event.data);
+    });
+    socket.addEventListener("close", close);
+    socket.addEventListener("error", close);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  /** Where this object runs, where its sockets entered Cloudflare, and how late its ticks fire. */
+  private async diagnostics(): Promise<Response> {
+    const now = Date.now();
+    return Response.json({
+      colo: await executionColo(),
+      match: this.host !== undefined && !this.host.disposed,
+      probes: this.probes,
+      sockets: [...this.sockets.values()].map((info) => ({
+        edgeColo: info.edgeColo ?? "unknown",
+        clientTcpRttMs: info.clientTcpRttMs,
+        joined: info.joined,
+        ageSeconds: Math.round((now - info.openedMs) / 1000),
+      })),
+      timerLateMs: this.timerLateness.summary(),
+    });
   }
   private publishDirectory(force = false): void {
     if (!this.room || !this.host || !this.env.DIRECTORY) return;
@@ -175,9 +246,12 @@ export class PlayerRoom extends DurableObject<Env> {
     if (this.nextTickMs <= now || this.nextTickMs > now + HOST_INTERVAL_MS) {
       this.nextTickMs = now + HOST_INTERVAL_MS;
     }
+    const deadline = this.nextTickMs;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       const now = Date.now();
+      // A late timer means the event loop was busy, which also delays pongs and probes.
+      this.timerLateness.add(now - deadline);
       for (const [socket, info] of this.sockets)
         if (!info.joined && now - info.openedMs >= JOIN_TIMEOUT_MS)
           this.drop(socket, 1008, "Join timed out");
