@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ServerMonitor } from "../server/node/monitor";
+import { ServerMonitor } from "../server/monitor";
 import type { RoomSample } from "../server/room-session";
 
 const room: RoomSample = {

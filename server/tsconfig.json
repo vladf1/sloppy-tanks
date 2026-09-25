@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.json",
-  "compilerOptions": { "types": ["@cloudflare/workers-types", "vite/client"], "allowJs": false },
+  "compilerOptions": { "allowJs": false },
   "include": ["*.ts"]
 }

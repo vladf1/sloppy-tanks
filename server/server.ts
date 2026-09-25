@@ -6,9 +6,9 @@ import {
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
-import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../../src/net/protocol";
-import { RoomCatalog } from "../room-catalog";
-import { RoomSession, type RoomSocket } from "../room-session";
+import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
+import { RoomCatalog } from "./room-catalog";
+import { RoomSession, type RoomSocket } from "./room-session";
 import { ServerMonitor } from "./monitor";
 import { RateLimit } from "./rate-limit";
 
@@ -34,7 +34,7 @@ export interface MultiplayerServer {
   readonly monitor: ServerMonitor;
 }
 
-/** Stand-alone host for the /health, /rooms and /room/CODE routes of worker.ts, plus local /stats. */
+/** Multiplayer host: /health, /rooms, the /room/CODE WebSocket, and loopback-only /stats. */
 export function createServer(options: ServerOptions): MultiplayerServer {
   const rooms = new Map<string, RoomSession<NodeSocket>>(),
     catalog = new RoomCatalog(),

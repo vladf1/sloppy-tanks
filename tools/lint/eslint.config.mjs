@@ -11,8 +11,6 @@ export default tseslint.config(
       "dist-cloudflare/**",
       "dist-dev/**",
       "server/dist/**",
-      "server/dist-node/**",
-      "server/.wrangler/**",
       "bots/.wrangler/**",
       ".claude/**",
       "artifacts/**",

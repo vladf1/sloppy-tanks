@@ -30,15 +30,15 @@ if (process.argv.includes("--provision")) {
 
 const version = await contentVersion();
 console.log(`Deploying Node multiplayer server (content ${version}) to ${VPS_SSH}`);
-run("npm", ["run", "server:node:build"]);
+run("npm", ["run", "server:build"]);
 run("scp", [
   ...SSH_OPTIONS,
-  "server/dist-node/server.mjs",
+  "server/dist/server.mjs",
   `${VPS_SSH}:/opt/sloppy-tanks/server.mjs.new`,
 ]);
 run("scp", [
   ...SSH_OPTIONS,
-  "server/dist-node/server.mjs.map",
+  "server/dist/server.mjs.map",
   `${VPS_SSH}:/opt/sloppy-tanks/server.mjs.map.new`,
 ]);
 // Rename in place so a crash-restart never loads a partially copied bundle. The restart

@@ -1,7 +1,7 @@
 /** Keys kept before expired windows are swept, so hostile IP churn cannot grow memory unbounded. */
 const SWEEP_AT_KEYS = 10_000;
 
-/** Fixed-window counter matching the Workers rate-limit bindings' `{limit, period}` budgets. */
+/** Fixed-window counter: at most `limit` calls per key in each `periodMs` window. */
 export class RateLimit {
   private windows = new Map<string, { startMs: number; count: number }>();
   constructor(
