@@ -1,11 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { contentVersion } from "./content-version.mjs";
 import { DEV_MULTIPLAYER_URL } from "./dev-multiplayer.mjs";
 
 const repo = new URL("..", import.meta.url);
 const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };
-const HEALTH_TIMEOUT_MS = 60000;
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: repo, stdio: "inherit", env });
@@ -32,22 +30,10 @@ if (!index.includes("Play with friends") || !clientHasServer) {
   );
 }
 
-// Clients and the Worker reject each other unless both were built from the same
-// game/network sources, so publish the dev Worker from this checkout first.
-const version = await contentVersion();
-console.log(`Deploying dev multiplayer Worker (content ${version})`);
-run("npm", ["run", "server:deploy", "--", "--var", "MULTIPLAYER_ENABLED:true"]);
-const health = new URL("/health", DEV_MULTIPLAYER_URL.replace(/^ws/, "http"));
-const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-for (;;) {
-  const status = await fetch(health, { cache: "no-store" })
-    .then((response) => response.json())
-    .catch(() => ({}));
-  if (status.contentVersion === version && status.multiplayerEnabled) break;
-  if (Date.now() > deadline)
-    throw new Error(`Dev Worker reports ${JSON.stringify(status)}; expected content ${version}`);
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-}
+// Clients and the server reject each other unless both were built from the same
+// game/network sources, so publish the VPS server from this checkout first. The
+// deploy waits until the VPS reports this checkout's content version.
+run("node", ["scripts/deploy-vps.mjs"]);
 
 console.log(
   `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,

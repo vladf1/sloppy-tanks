@@ -96,7 +96,7 @@ WebSocket frames. Set `SLOPPY_URL` and optionally `SLOPPY_SERVER`; use
 seats and viewer isolation. `npm run check:multiplayer` instead drives **two Chrome
 contexts through real WebSockets**: lobby, independent movement, fire, menus,
 hidden-tab takeover, reconnect, results and another map. Run Vite and the local
-Worker first, or set `SLOPPY_SERVER=wss://sloppy-tanks-server-dev.vova145.workers.dev`.
+server first (`npm run server:node:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`.
 Use `SLOPPY_URL` for the Vite URL and `SLOPPY_LATENCY=50` (also 100/150) for added
 round-trip delay. It also measures button-to-visible movement/shot feedback and
 checks automatic reconnect and physical multi-touch driving/fire/mines. The client additionally accepts `?jitter=30` and
@@ -106,7 +106,7 @@ shows the adaptive playout buffer and the share of frames that ran past the newe
 
 `npm run server:check:players` runs 4 real player sockets for 15 seconds per map,
 including combat, reconnect and results. Set `SLOPPY_SERVER_URL` for a deployed
-Worker, `SLOPPY_PLAYER_CLIENTS=8` for the capacity check, or
+server (with a listed `SLOPPY_ORIGIN`), `SLOPPY_PLAYER_CLIENTS=8` for the capacity check, or
 `SLOPPY_PLAYER_SECONDS=900 SLOPPY_PLAYER_MAPS=village` for the long run.
 `npm run server:check:lifecycle` verifies quiet rooms, simultaneous reconnect,
 host transfer, socket revocation, slow readers, suspension and empty-room expiry.
