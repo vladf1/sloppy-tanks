@@ -1,0 +1,7 @@
+# sslip.io resolves this name to 45.63.56.58, so Let's Encrypt can issue a certificate
+# without a registered domain. Caddy forwards WebSocket upgrades as-is.
+45-63-56-58.sslip.io {
+	# Operator stats list every room code; read them over SSH (npm run vps:stats).
+	respond /stats 404
+	reverse_proxy 127.0.0.1:8787
+}

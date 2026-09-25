@@ -79,6 +79,8 @@ export class MatchHost {
   roundId = 0;
   hostId = "";
   disposed = false;
+  /** Why the room ended (empty, expired, overload...), for server logs. */
+  disposeReason?: string;
   private seats: Seat[] = [];
   private clients = new Map<string, Client>();
   private participants = new Map<string, Player>();
@@ -725,6 +727,7 @@ export class MatchHost {
       return;
     }
     this.disposed = true;
+    this.disposeReason = reason;
     for (const connection of this.clients.keys()) {
       this.send(connection, { type: "room-reset", roomEpoch: this.options.roomEpoch, reason });
       this.transport.close(connection, 1012, reason);

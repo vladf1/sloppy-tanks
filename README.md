@@ -101,7 +101,9 @@ server processed an input sequence. Render includes GPU geometries and textures.
 Single-player downloads no multiplayer code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
-[server guide](server/README.md) describes local development and deployment.
+[server guide](server/README.md) describes local development and deployment. The dev
+site's multiplayer runs on a stand-alone Node server on a VPS, with rooms held in
+memory; a Cloudflare Worker version of the same server is kept alongside it.
 
 ## Assets
 

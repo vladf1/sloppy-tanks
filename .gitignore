@@ -7,6 +7,7 @@ artifacts/*.png
 artifacts/performance/
 dist-dev/
 server/dist/
+server/dist-node/
 server/.wrangler/
 server/.dev.vars
 bots/.wrangler/

@@ -1,30 +1,92 @@
-# Cloudflare multiplayer server
+# Multiplayer server
 
-The player server is deployed at
-`wss://sloppy-tanks-server-dev.vova145.workers.dev`. `/room/ABCDEFGH` routes to one
-`PlayerRoom` Durable Object; `MatchHost` owns its simulation, seats and protocol.
-The old `Room` class is retained only for the disabled M1 hosting experiment.
+Two hosts serve the same routes (`/health`, `/rooms` and the `/room/CODE` WebSocket) and share `room-session.ts`, which applies the socket
+limits, join timeout and 50 ms timer around `MatchHost`. `MatchHost` owns each
+room's simulation, seats and protocol.
+
+- **Node server (`node/`)** is what the dev site uses, at `wss://45-63-56-58.sslip.io`
+  on a Vultr VPS. Rooms and the room list live in one process's memory.
+- **Cloudflare Worker (`worker.ts`)** routes `/room/ABCDEFGH` to one `PlayerRoom`
+  Durable Object. It stays buildable and deployable by hand. The old `Room` class
+  is retained only for the disabled M1 hosting experiment.
 
 ```sh
-npm run server:setup
-npm run server:dev
+npm run server:node:dev   # or: npm run server:setup && npm run server:dev (Worker)
 npm run dev
 ```
 
 Open `?multiplayer` on the printed Vite URL. The client uses `ws://127.0.0.1:8787`
 locally. In another terminal, `npm run server:check:players` runs real player
 sockets on all maps; `npm run server:check:lifecycle` checks reconnect and expiry.
-Use `SLOPPY_SERVER_URL=wss://sloppy-tanks-server-dev.vova145.workers.dev` to test
-the deployed Worker. `npm run check:multiplayer` drives two Chrome contexts;
-`SLOPPY_SERVER` selects a remote server for that browser check.
-For sustained traffic from other regions, the separately deployed traffic bots
-join open rooms on the dev server; see `bots/README.md`.
+Use `SLOPPY_SERVER_URL=wss://45-63-56-58.sslip.io` with a listed
+`SLOPPY_ORIGIN` such as `https://sloppy-tanks-dev.pages.dev` to test the VPS.
+`npm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects a
+remote server for that browser check. The separately deployed traffic bots
+still target the dev Worker; see `bots/README.md`.
+
+## Node server on the VPS
+
+`server/node/build.mjs` bundles `node/main.ts`, `ws`, three.js and the compat Rapier
+package (which inlines its WASM) into one `server/dist-node/server.mjs`. It stamps the
+same content version into the bundle as the Worker build, so the VPS needs only Node 24.
+Settings come from the environment:
+
+| Variable              | Default              | Meaning                                                   |
+| --------------------- | -------------------- | --------------------------------------------------------- |
+| `HOST` / `PORT`       | `127.0.0.1` / `8787` | Listener; on the VPS only Caddy is public                 |
+| `ALLOWED_ORIGINS`     | local Vite origins   | Exact comma-separated origin allowlist                    |
+| `MULTIPLAYER_ENABLED` | `true`               | `false` refuses rooms and listings                        |
+| `TRUST_PROXY`         | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy |
+
+The in-process rate limits have the same budgets as the Worker bindings: 60 room
+connections/minute/IP, 120 room entries/minute overall, and 120 listing
+requests/minute/IP. A socket whose unsent output passes about 2 MB is closed with 4002.
+
+`deploy/vps/` holds the Ubuntu setup:
+
+- `provision.sh` installs Node 24 (NodeSource) and Caddy (official repo), creates
+  the `sloppy` service user, and allows only SSH, 80 and 443 through `ufw`.
+- The systemd unit and `/etc/sloppy-tanks.env` configure the service.
+- The `Caddyfile` sets up automatic Let's Encrypt TLS for the sslip.io name.
+
+The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH as root.
+
+```sh
+npm run vps:provision   # first time, or after editing deploy/vps/*; then deploys
+npm run vps:deploy      # npm run check, upload server.mjs, restart, wait for /health
+```
+
+A restart or deploy ends every live room. The graceful `SIGTERM` handler sends
+`room-reset` and close code 1012, so players see the room-ended message.
+
+### Monitoring
+
+```sh
+npm run vps:logs     # follow the journal: room lifecycle lines and minute summaries
+npm run vps:stats    # /stats JSON over SSH
+npm run vps:status   # systemctl status for the game server and Caddy
+```
+
+The log has one line per event: a room is created, a player joins, disconnects or
+leaves, the server closes a socket (with its close code and reason), or a room ends
+(with the reason and room age). While any room is active, a summary is logged each
+minute: rooms, players, sockets, traffic, CPU, memory, event-loop delay, and one
+line per room (map, phase, players, time, score, tick cost and debt, traffic). An
+idle server logs one final summary and then stays quiet.
+
+`GET /stats` returns the same figures as JSON, sampled every 10 seconds, plus totals
+since start. It lists every room code, including unlisted rooms, so it answers only
+direct loopback requests without `X-Forwarded-For`, and Caddy also refuses the path.
+Traffic figures count UTF-16 characters of JSON, which equals bytes for ASCII.
+`tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
+`debtMs` that keeps rising means the room is falling behind real time.
+
+## Cloudflare Worker
 
 The checked-in Worker config defaults both protocols to disabled.
-`npm run deploy:dev` deploys this dedicated dev Worker with the player server
-enabled, waits until `/health` reports the checkout's content version, then
-uploads the dev site. It refuses to upload a build without the multiplayer
-entry. To deploy only the Worker:
+`npm run deploy:dev` now deploys the VPS server (it waits until `/health` reports
+the checkout's content version), then uploads the dev site. It refuses to upload a
+build without the multiplayer entry. To deploy only the Worker:
 
 ```sh
 npm run server:deploy -- --var MULTIPLAYER_ENABLED:true
@@ -36,7 +98,7 @@ changes the account subscription or either production Pages site.
 
 Both builds compute the same content hash from game/network sources and pinned
 engine versions. After editing those sources, **restart Vite and rebuild the
-Worker together**; mismatched clients are rejected with a reload message. No
+server together**; mismatched clients are rejected with a reload message. No
 client URL override is accepted in production builds.
 
 Rooms admit eight people, at most six per team. Explicitly leaving the last seat

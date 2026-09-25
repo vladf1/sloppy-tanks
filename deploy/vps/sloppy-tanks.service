@@ -1,0 +1,29 @@
+[Unit]
+Description=Sloppy Tanks multiplayer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sloppy
+Group=sloppy
+EnvironmentFile=/etc/sloppy-tanks.env
+ExecStart=/usr/bin/node --enable-source-maps /opt/sloppy-tanks/server.mjs
+Restart=always
+RestartSec=2
+# SIGTERM resets rooms and waits up to a second for clients to finish closing.
+TimeoutStopSec=10
+MemoryMax=700M
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

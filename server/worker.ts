@@ -79,28 +79,6 @@ export default {
         headers: { ...headers, "Content-Type": "application/json" },
       });
     }
-    // Stats probe: the Worker times its own request to the room, so the edge-to-room leg is
-    // measured on the edge clock without relaying gameplay traffic.
-    const probed = /^\/room\/([^/]+)\/ping$/.exec(url.pathname)?.[1];
-    if (probed && ROOM_CODE.test(probed)) {
-      const origin = request.headers.get("Origin") ?? "";
-      if (
-        env.MULTIPLAYER_ENABLED !== "true" ||
-        !(env.ALLOWED_ORIGINS ?? "").split(",").includes(origin)
-      )
-        return new Response("Probe unavailable", { status: 403 });
-      const headers = {
-        "Access-Control-Allow-Origin": origin,
-        "Cache-Control": "no-store",
-        Vary: "Origin",
-      };
-      const ip = request.headers.get("CF-Connecting-IP") ?? "local";
-      if (!(await env.DIRECTORY_RATE.limit({ key: "ping:" + ip })).success)
-        return new Response(null, { status: 429, headers });
-      const started = performance.now();
-      await env.MATCH.get(env.MATCH.idFromName(probed)).fetch("https://room/ping");
-      return Response.json({ roomMs: performance.now() - started }, { headers });
-    }
     if (room && ROOM_CODE.test(room)) {
       if (env.MULTIPLAYER_ENABLED !== "true")
         return new Response("Multiplayer unavailable", { status: 503 });
