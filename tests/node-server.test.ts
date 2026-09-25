@@ -15,6 +15,8 @@ before(async () => {
     allowedOrigins: [ORIGIN],
     multiplayerEnabled: true,
     trustProxy: true,
+    // The rate-limit test opens sockets faster than their closes are counted.
+    maxSocketsPerIp: 1000,
     log: (line) => logged.push(line),
   });
   const address = await server.listen(0, "127.0.0.1");
@@ -134,6 +136,45 @@ test("node server rate-limits room connections per forwarded client IP", async (
   }
   assert.equal(statuses.filter((status) => status === 101).length, 60);
   assert.equal(statuses.at(-1), 429);
+});
+
+test("node server caps live rooms and open sockets per address", async () => {
+  const small = createServer({
+    allowedOrigins: [ORIGIN],
+    multiplayerEnabled: true,
+    trustProxy: true,
+    maxRooms: 1,
+    maxSocketsPerIp: 2,
+    log: () => {},
+  });
+  const { port } = await small.listen(0, "127.0.0.1");
+  const open = (room: string, ip: string) =>
+    new Promise<{ status: number; socket: WebSocket }>((resolve) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/room/${room}`, {
+        origin: ORIGIN,
+        headers: { "X-Forwarded-For": ip },
+      });
+      socket.on("error", () => {});
+      socket.once("open", () => resolve({ status: 101, socket }));
+      socket.once("unexpected-response", (_request, response) =>
+        resolve({ status: response.statusCode!, socket }),
+      );
+    });
+  try {
+    const first = await open("CAPROOM2", "192.0.2.1");
+    assert.equal(first.status, 101);
+    assert.equal((await open("CAPROOM3", "192.0.2.2")).status, 503, "a new room past the cap");
+    const second = await open("CAPROOM2", "192.0.2.1");
+    assert.equal(second.status, 101, "joining an existing room is still allowed");
+    assert.equal((await open("CAPROOM2", "192.0.2.1")).status, 429, "third socket from one IP");
+    second.socket.close();
+    await once(second.socket, "close");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const again = await open("CAPROOM2", "192.0.2.1");
+    assert.equal(again.status, 101, "a closed socket frees its address slot");
+  } finally {
+    await small.close();
+  }
 });
 
 test("node server shutdown resets live rooms", async () => {
