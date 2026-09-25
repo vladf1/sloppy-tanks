@@ -201,9 +201,10 @@ be weakened to make a normal match look healthy.
   production project `sloppy-tanks` or change either production deployment
   workflow, and never upload the repository directory.
 - `deploy:dev` first deploys the Node multiplayer server to the Vultr VPS
-  (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms. The
-  Cloudflare dev Worker is no longer part of it. Change the VPS only through
-  `deploy/vps/` and the `vps:*` scripts described in `server/README.md`.
+  (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms.
+  Change the VPS only through `deploy/vps/` and the `vps:*` scripts described
+  in `server/README.md`. The traffic bots in `bots/` remain a Cloudflare Worker
+  that targets the VPS; `npm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and

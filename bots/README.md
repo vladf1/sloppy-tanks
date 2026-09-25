@@ -6,8 +6,9 @@ directions, sweeps its turret, fires, and sometimes drops mines or switches
 ammunition. Bots are named `bot-<region>-<n>` and occupy real seats.
 
 The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`)
-targets `SERVER_URL` in `wrangler.jsonc` (the dev game server). It is separate from
-the game server and both Pages sites.
+targets `SERVER_URL` in `wrangler.jsonc`: the self-hosted game server on the VPS,
+`https://45-63-56-58.sslip.io`. It is separate from the game server and both Pages
+sites, and still runs on Cloudflare so bots can connect from many regions.
 
 ## How they live
 
@@ -50,12 +51,12 @@ overridden to a local server.
 Nothing runs between runs: no cron, and a stopped object has no alarm. While a
 region runs, its object stays awake and bills duration (128 MB x wall time)
 because its outbound sockets cannot hibernate. That's about 460 GB-s per region-hour.
-The larger cost falls on the game server: each driving bot sends 20 inputs a
-second, which is roughly 3,600 billed Durable Object requests per bot-hour at
-the 20:1 WebSocket message ratio. A human player costs the same. Check the
-account's plan allowances before long or wide runs. Current free and paid
-limits are on the
+Check the account's plan allowances before long or wide runs; current limits are
+on the
 [Durable Objects pricing page](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+On the game server, a bot costs the same as a human player: about 20 inputs a
+second in, and the room's full snapshot stream out (roughly 55–110 KB/s per bot,
+which counts against the VPS's monthly transfer).
 
 `/api/status` queries all nine region objects, and the control page polls it
 every 10 seconds while visible. Close the page when you are not watching.

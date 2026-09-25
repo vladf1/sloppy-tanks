@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { CONTENT_VERSION } from "../../src/net/protocol";
+import { CONTENT_VERSION } from "../src/net/protocol";
 import { createServer } from "./server";
 
 /** Local Vite and preview origins; deployments list their public sites in ALLOWED_ORIGINS. */

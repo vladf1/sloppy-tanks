@@ -96,7 +96,7 @@ WebSocket frames. Set `SLOPPY_URL` and optionally `SLOPPY_SERVER`; use
 seats and viewer isolation. `npm run check:multiplayer` instead drives **two Chrome
 contexts through real WebSockets**: lobby, independent movement, fire, menus,
 hidden-tab takeover, reconnect, results and another map. Run Vite and the local
-server first (`npm run server:node:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`.
+server first (`npm run server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`.
 Use `SLOPPY_URL` for the Vite URL and `SLOPPY_LATENCY=50` (also 100/150) for added
 round-trip delay. It also measures button-to-visible movement/shot feedback and
 checks automatic reconnect and physical multi-touch driving/fire/mines. The client additionally accepts `?jitter=30` and
@@ -114,17 +114,14 @@ Set `SLOPPY_PLAYER_RECOVER=1` to exercise recovery after transport loss: each
 closure is retained in the report and room/seat continuity is mandatory. The
 default run fails on any unexpected closure. These host tests are manual,
 require a running server, and are outside CI.
-Do not deploy or rebuild a watched local Worker during a run: that resets rooms.
+Do not deploy or restart a watched server during a run: that resets rooms.
 
-`node scripts/multiplayer-restart-check.mjs` starts an isolated local Worker on
-port 8790, kills/restarts it during a round and checks that the browser returns
-to a fresh lobby and prepares another map. Build the Worker first and run Vite.
+`node scripts/multiplayer-restart-check.mjs` starts an isolated local server on
+port 8790, kills and restarts it during a round (a crash, not a graceful stop) and
+checks that the browser returns to a fresh lobby and prepares another map. Run
+`npm run server:build` first and run Vite.
 `node --import tsx scripts/multiplayer-public-check.mjs` verifies the published dev
 client with two players plus its test directory, fixture and build metadata.
-
-The older M1 bot-only experiment remains credential-protected and disabled on the
-hosted Worker. `npm run server:check` targets that separate protocol; see the
-[server guide](../server/README.md). It does not prove human input behavior.
 
 `npm run check:latency` retains the original local 0/50/100/150 ms experiment,
 three hull policies, jitter, 20/30 Hz input and overload checks. Its full-snapshot

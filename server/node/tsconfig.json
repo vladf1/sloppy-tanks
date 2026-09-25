@@ -1,5 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": { "allowJs": false },
-  "include": ["*.ts", "../room-session.ts", "../room-catalog.ts"]
-}

@@ -1,5 +1,5 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import type { RoomActivity, RoomSample } from "../room-session";
+import type { RoomActivity, RoomSample } from "./room-session";
 
 /** How often room and process load is sampled for /stats. */
 export const SAMPLE_INTERVAL_MS = 10_000;

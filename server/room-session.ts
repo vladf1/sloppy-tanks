@@ -8,7 +8,7 @@ export const JOIN_TIMEOUT_MS = 5000;
 export const DIRECTORY_HEARTBEAT_MS = 20_000;
 export const MAX_SOCKET_MESSAGES_PER_SECOND = 65;
 
-/** The part of a runtime's WebSocket that a room needs; both workerd and `ws` sockets fit. */
+/** The part of a WebSocket that a room needs. */
 export interface RoomSocket {
   send(text: string): void;
   close(code: number, reason: string): void;
@@ -53,8 +53,8 @@ interface SocketInfo {
 }
 
 /**
- * Runtime-neutral socket policy and 50 ms timer around one MatchHost. Durable Objects
- * and the Node server adapt their WebSocket APIs to this so both enforce the same limits.
+ * Socket policy and the 50 ms timer around one MatchHost, independent of the WebSocket
+ * library so tests can drive a room with fake sockets and mocked timers.
  */
 export class RoomSession<Socket extends RoomSocket = RoomSocket> {
   private host?: MatchHost;

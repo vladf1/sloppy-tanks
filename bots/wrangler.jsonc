@@ -2,13 +2,14 @@
   "name": "sloppy-tanks-bots",
   "main": "worker.ts",
   "compatibility_date": "2026-09-23",
-  // Lets the bots reach the game server's workers.dev URL over the public path like a browser.
+  // Bots reach the game server over the public internet, like a browser.
   "compatibility_flags": ["global_fetch_strictly_public"],
   "durable_objects": { "bindings": [{ "name": "SWARM", "class_name": "BotSwarm" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BotSwarm"] }],
   "observability": { "enabled": true },
   "vars": {
-    "SERVER_URL": "https://sloppy-tanks-server-dev.vova145.workers.dev",
+    // The self-hosted game server on the VPS (scripts/vps-host.mjs).
+    "SERVER_URL": "https://45-63-56-58.sslip.io",
     "BOT_ORIGIN": "https://sloppy-tanks-dev.pages.dev",
   },
 }

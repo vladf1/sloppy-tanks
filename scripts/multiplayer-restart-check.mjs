@@ -14,22 +14,10 @@ let server,
   logs = "";
 const errors = [];
 async function startServer() {
-  server = spawn(
-    process.execPath,
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "dev",
-      "--config",
-      "server/wrangler.jsonc",
-      "--port",
-      "8790",
-      "--inspector-port",
-      "9231",
-      "--persist-to",
-      `${output}/state`,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
+  server = spawn(process.execPath, ["--enable-source-maps", "server/dist/server.mjs"], {
+    env: { ...process.env, PORT: "8790" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   server.stdout.on("data", (data) => (logs += data));
   server.stderr.on("data", (data) => (logs += data));
   const deadline = Date.now() + 20000;
@@ -39,16 +27,20 @@ async function startServer() {
     } catch {
       // The child has not bound its HTTP port yet.
     }
-    assert.ok(Date.now() < deadline, "local Worker starts");
+    assert.ok(Date.now() < deadline, "local server starts");
     await wait(100);
   }
 }
-async function stopServer() {
-  if (!server || server.exitCode !== null) return;
+/**
+ * SIGKILL models a crash: sockets drop without the graceful room-reset notice, so the
+ * client must reconnect on its own. A deploy (SIGTERM) instead tells players the room ended.
+ */
+async function stopServer(signal = "SIGKILL") {
+  if (!server || server.exitCode !== null || server.signalCode !== null) return;
   const child = server;
   await new Promise((resolve) => {
     child.once("exit", resolve);
-    child.kill("SIGTERM");
+    child.kill(signal);
   });
 }
 const browser = await chromium.launch({ channel: "chrome", headless });
@@ -90,7 +82,7 @@ try {
     before.epoch,
     { timeout: 30000 },
   );
-  // The restarted Worker has no seats, so the reconnect becomes host of a fresh lobby
+  // The restarted server has no seats, so the reconnect becomes host of a fresh lobby
   // with default settings rather than resuming the harbor round.
   await page.locator("#start-match").waitFor();
   assert.equal(await page.locator("#room-map").inputValue(), "village");
@@ -114,10 +106,10 @@ try {
   await page.screenshot({ path: `${output}/fresh-room.png` });
   assert.deepEqual(errors, []);
   console.log(
-    "Actual Worker restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback.",
+    "Server crash and restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback.",
   );
 } finally {
   await browser.close();
-  await stopServer();
-  await writeFile(`${output}/worker.log`, logs);
+  await stopServer("SIGTERM");
+  await writeFile(`${output}/server.log`, logs);
 }

@@ -1,6 +1,6 @@
 # Multiplayer v1 plan
 
-Status: the real Durable Object player server and browser client are implemented, 2026-09-23. The dev client and Durable Object server are published. Automated gameplay, lifecycle and sustained hosted tests pass; the remaining gates require account-capacity evidence and human feedback from different networks.
+Status: the player server and browser client are implemented and published on the dev site. On 2026-09-25 hosting moved from Cloudflare Durable Objects to a stand-alone Node server on a Vultr VPS (rooms in memory; see the [server guide](../server/README.md)), and the Worker and Durable Object code was removed. Milestone text below that mentions Durable Objects or workerd records how the work was done at the time. The remaining gate is human feedback from different networks.
 
 ## Goal
 
@@ -10,15 +10,15 @@ Single-player must pay minimal cost for multiplayer support. Load the multiplaye
 
 ## Decisions
 
-| Decision           | Choice                                                                                                                                                | Why                                                                                                                                                                                              |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Who runs the match | The server, one Cloudflare Durable Object per room                                                                                                    | `Simulation` already runs without rendering and ran unmodified in workerd. No host-tab problems; players can't fake damage.                                                                      |
-| Transport          | WebSockets, JSON messages with rounded numbers in v1                                                                                                  | Simple to inspect and supported by Durable Objects. Delivery is reliable and ordered, so the protocol adds no retransmission. Measure the actual JSON protocol before setting bandwidth budgets. |
-| Server address     | `wss://sloppy-tanks-server-dev.vova145.workers.dev`                                                                                                   | No DNS change; fridman.me stays at Namecheap.                                                                                                                                                    |
-| Game mode          | Team Battle; up to 8 players, at most 6 per team; bots fill the 12 seats                                                                              | Preserves the existing six-versus-six roster. Players choose a team with room and a player-legal tank.                                                                                           |
-| Latency handling   | Remote entities interpolated behind an adaptive 70–250 ms playout buffer; local aim immediate; local hull extrapolated at most 100 ms with correction | No movement prediction initially. If that test fails, bring prediction into v1 before building the client.                                                                                       |
-| Portability        | Room logic in plain TypeScript, separate from the Durable Object API                                                                                  | Makes a later Node host easier. Replacing the custom replication protocol with Colyseus would still be a separate project.                                                                       |
-| Cost               | Test Workers Free first; evaluate Paid only if deployed measurements require it                                                                       | Provisional Free estimate: ~28 player-hours/day of 20 Hz input and ~29 room-hours/day of duration. Paid starts at $5/month plus usage. CPU limits need verification; see Hosting assumptions.    |
+| Decision           | Choice                                                                                                                                                | Why                                                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who runs the match | The server: one Node process on a VPS, every room in memory                                                                                           | `Simulation` already runs without rendering. No host-tab problems; players can't fake damage. Originally one Cloudflare Durable Object per room.                |
+| Transport          | WebSockets, JSON messages with rounded numbers in v1                                                                                                  | Simple to inspect. Delivery is reliable and ordered, so the protocol adds no retransmission. Measure the actual JSON protocol before setting bandwidth budgets. |
+| Server address     | `wss://45-63-56-58.sslip.io`                                                                                                                          | sslip.io resolves to the VPS IP, so Let's Encrypt works with no DNS change; fridman.me stays at Namecheap.                                                      |
+| Game mode          | Team Battle; up to 8 players, at most 6 per team; bots fill the 12 seats                                                                              | Preserves the existing six-versus-six roster. Players choose a team with room and a player-legal tank.                                                          |
+| Latency handling   | Remote entities interpolated behind an adaptive 70–250 ms playout buffer; local aim immediate; local hull extrapolated at most 100 ms with correction | No movement prediction initially. If that test fails, bring prediction into v1 before building the client.                                                      |
+| Portability        | Room logic in plain TypeScript, separate from any transport                                                                                           | Made the move from Durable Objects to Node a small wrapper change. Replacing the custom replication protocol with Colyseus would still be a separate project.   |
+| Cost               | A small VPS at a flat monthly price                                                                                                                   | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `npm run vps:stats`.                |
 
 Not planned for v1: WebTransport, accounts or public matchmaking, co-op Solo Assault, the full per-player battle report (v1 shows a scoreboard), persisted live-match recovery, and production rollout. Own-tank movement prediction is deferred only if M1b demonstrates acceptable controls at the tested latencies.
 
@@ -31,7 +31,7 @@ Considered and set aside:
 
 ## Implementation status
 
-The [real player server](../server/README.md) uses `PlayerRoom`, a Durable Object per room, around a platform-independent `MatchHost`. The credential-protected M1 bot host remains available locally and disabled on the deployed Worker. The client enters through a dynamic import, with its own connection, mirror, timeline and lobby. Normal single-player requests no networking modules, opens no socket, and allocates no network scene copies. Multiplayer does not download or initialize client Rapier physics.
+The [real player server](../server/README.md) is a Node process that wraps a platform-independent `MatchHost` per room in `RoomSession`. The client enters through a dynamic import, with its own connection, mirror, timeline and lobby. Normal single-player requests no networking modules, opens no socket, and allocates no network scene copies. Multiplayer does not download or initialize client Rapier physics.
 
 - **M2 implemented:** independently driven seats, life/ownership separation, per-world tuning, bot takeover, explicit viewer presentation/audio/HUD/touch integration and no multiplayer battle recorder. The fresh seeded single-player validation still matches the captured pre-refactor baseline apart from wall time.
 - **M3/M3a implemented:** versioned room/round/control identities, session-only seat tokens, input leases and acknowledgements, field deltas, atomic full baselines, resync, literal names, late joins, departed-player score attribution, host transfer and round transitions. Deterministic tests cover all maps, destruction, short-lived projectile paths, coalesced death/respawn effects, quaternion interpolation, slow readers, overload, suspension and repeated rounds.
@@ -49,14 +49,13 @@ During a battle, a compact team-colored player list shows every reserved human s
 
 The host can select **Humans only (no bots)** in the lobby or between rounds. The create dialog defaults it on; the retained direct-link lobby defaults it off. In that mode only assigned players spawn; empty seats have no tank or collider. Paused, silent and disconnected seats use an idle driver instead of AI, retaining normal vulnerability and reconnect grace. Explicit departures and expired reservations remove the tank without a fake death or replacement bot. Late joins create a fresh tank identity. The server validates the setting and prevents changes during a match; player/team limits and single-player behavior are unchanged.
 
-The room browser uses a separate `RoomDirectory` Durable Object. `GET /rooms`
+The room browser reads an in-memory room catalog. `GET /rooms`
 returns public metadata only, validates exact origins and permits 120 list
 requests/minute/IP. Active rooms publish on membership/settings changes and every
 20 seconds; empty entries are removed, stale entries expire after 45 seconds,
 and the directory is bounded at 256 rooms. List polling runs every five seconds
 only while the visible dialog is open and stops before entering a match.
-Directory requests and metadata storage add cost beyond the earlier gameplay
-quota estimate. Create requests atomically claim an empty code and start the
+Create requests atomically claim an empty code and start the
 selected map; joining a stale listing fails instead of silently creating a room.
 The last explicit departure disposes the simulation immediately; unplanned
 connection loss retains the established reconnect grace.
@@ -69,29 +68,24 @@ including angle wrap and a reset on respawn; this changes presentation only.
 
 Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame for the seeded map/destruction fixtures, with a provisional 512 KB/s per-client sustained budget for the manual player load check. These are JSON budget ceilings with headroom, not measured throughput guarantees or billing limits. Swept projectile segments remain verbose; if playtests show bandwidth pressure, compact that representation before increasing player count. Keep byte measurements and all outliers in ignored artifacts.
 
-Edge rate limits run before Durable Object lookup: 60 connection attempts/minute/IP and 120/minute/Cloudflare location. These approximate regional limits reduce accidental room creation; they are not a hard global spending cap. Rooms also enforce 8 players, 6 per team, message/action limits, a 30-second empty-room grace, 5-minute idle lobby/results expiry and 30-minute absolute lifetime. Hidden/menu clients receive no snapshot backlog and resume from a fresh full baseline.
+Rate limits run before a room is created or joined: 60 connection attempts/minute/IP and 120/minute overall. They reduce accidental room creation. Rooms also enforce 8 players, 6 per team, message/action limits, a 30-second empty-room grace, 5-minute idle lobby/results expiry and 30-minute absolute lifetime. Hidden/menu clients receive no snapshot backlog and resume from a fresh full baseline.
 
-Run `npm run check`, `npm run check:browser`, `npm run check:multiplayer-loading`, `npm run check:multiplayer`, and the [player/lifecycle harnesses](../server/README.md). The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`; `SLOPPY_BASELINE_BUILD` supplies the production asset comparison. Long hosted runs and measurements remain outside CI. Never upgrade the account plan automatically or conflate tail CPU samples with account-wide quota evidence.
+Run `npm run check`, `npm run check:browser`, `npm run check:multiplayer-loading`, `npm run check:multiplayer`, and the [player/lifecycle harnesses](../server/README.md). The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`; `SLOPPY_BASELINE_BUILD` supplies the production asset comparison. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 
-Checked against Cloudflare documentation on 2026-09-23; verify again when M1 is run.
-
-- **CPU:** the [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) describe a default 30-second invocation budget, replenished by incoming HTTP requests or WebSocket messages. The generic [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) list 10 ms for Free HTTP requests. Confirm the applicable Free Durable Object enforcement instead of assuming a 10 ms budget per simulation tick or per message. Test initialization, timer work between messages, and quiet rooms on the deployed plan.
-- **Quotas:** [Durable Object pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) lists 100,000 requests and 13,000 GB-s per day on Free. Duration accrues while an object cannot hibernate, including an active simulation timer, and is charged for the allocated memory. The documented incoming-WebSocket billing ratio is 20:1; outgoing messages are not charged. These allowances are shared across the account. Provisional arithmetic, to be confirmed against deployed usage in M1:
-  - Requests are the likely binding limit. Input at 20 messages/s bills 1 request/s per player, so 100,000 requests last ~28 player-hours/day: ~7 hours for 4 friends, ~3.5 hours for 8. At 30 messages/s the figures fall to ~18.5 player-hours, ~4.6 and ~2.3 hours. Pings and connection upgrades add little.
-  - Duration at the 128 MB allocation allows 13,000 ÷ 0.125 ≈ 104,000 s, ~29 room-hours/day.
-- **Paid fallback:** [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) starts at $5/month, with usage charges beyond included allowances. Choosing Paid is not a successful test: repeat the same workload on the chosen plan and record actual consumption.
-- **Encoding:** binary can reduce bytes and serialization work. It does not reduce request counts at the same message frequency. Any later input-rate reduction must retain heartbeats, input leases, and action delivery.
-- **Placement:** a Durable Object is normally created near its first request, so friends in other regions pay that distance in RTT. A `locationHint` is best effort and applies only on first placement; it cannot relocate an existing room. Compare regions using newly created objects/rooms. Record per-player RTT in M6.
+- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `npm run vps:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
+- **Bandwidth:** each client receives about 55–110 KB/s of JSON snapshots, uncompressed. That counts against the VPS plan's monthly transfer; binary encoding or compression would cut it.
+- **Placement:** every room runs where the VPS is, so friends far from it pay that distance in RTT. Record per-player RTT in M6.
+- **Restarts:** rooms are not persisted. A deploy or restart ends every live match with a room-reset notice; a crash leaves clients to reconnect into a fresh lobby.
 
 ## Architecture
 
 ```
-Browser (Pages site)                              Cloudflare
+Browser (Pages site)                              VPS (Caddy → Node)
 ┌──────────────────────────────┐   wss   ┌──────────────────────────────────────┐
-│ Controls → input, 20/s       │ ──────► │ Worker: /room/CODE → Durable Object  │
-│ Render-state mirror          │ ◄────── │ Durable Object "CODE"                │
+│ Controls → input, 20/s       │ ──────► │ /room/CODE → RoomSession "CODE"      │
+│ Render-state mirror          │ ◄────── │   (one per room, all in memory)      │
 │ ← snapshots, 20/s            │         │   MatchHost → Simulation at 60 Hz    │
 │ Presentation, audio, UI      │         │   seats, inputs, snapshots, events   │
 └──────────────────────────────┘         └──────────────────────────────────────┘
@@ -99,17 +93,17 @@ Browser (Pages site)                              Cloudflare
 
 New modules:
 
-| Path                                | Role                                                                                                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/net/protocol.ts`               | Message types and protocol version, shared by client and server                                                                                              |
-| `src/game/render-state.ts`          | Read-only presentation data: poses, entity appearance, HUD state and viewer identity; no Rapier body methods or simulation mutation                          |
-| `src/net/match-host.ts`             | Room logic without any transport: seats, host controls, applying inputs, building snapshots and full state. Runs in Node tests and inside the Durable Object |
-| `src/net/multiplayer-simulation.ts` | Validates player assignments, creates the team roster and changes a reserved seat's driver                                                                   |
-| `src/net/player-controls.ts`        | Per-seat input validation, leases, ordered actions and control epochs; no socket or timer ownership                                                          |
-| `src/net/replication.ts`            | Client: applies validated full state and deltas to plain entity data, then supplies render state                                                             |
-| `src/net/interpolation.ts`          | Client: snapshot buffer, server-clock estimate, per-entity interpolation                                                                                     |
-| `src/net/connection.ts`             | Client: WebSocket, reconnect with a seat token, ping, and the dev-only delay harness                                                                         |
-| `server/`                           | Worker entry, Durable Object wrapper, workerd physics entry and Rapier WASM loader, build script, `wrangler.jsonc`, and a `tsconfig.json` with Workers types |
+| Path                                | Role                                                                                                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/net/protocol.ts`               | Message types and protocol version, shared by client and server                                                                                          |
+| `src/game/render-state.ts`          | Read-only presentation data: poses, entity appearance, HUD state and viewer identity; no Rapier body methods or simulation mutation                      |
+| `src/net/match-host.ts`             | Room logic without any transport: seats, host controls, applying inputs, building snapshots and full state. Runs in Node tests and on the server         |
+| `src/net/multiplayer-simulation.ts` | Validates player assignments, creates the team roster and changes a reserved seat's driver                                                               |
+| `src/net/player-controls.ts`        | Per-seat input validation, leases, ordered actions and control epochs; no socket or timer ownership                                                      |
+| `src/net/replication.ts`            | Client: applies validated full state and deltas to plain entity data, then supplies render state                                                         |
+| `src/net/interpolation.ts`          | Client: snapshot buffer, server-clock estimate, per-entity interpolation                                                                                 |
+| `src/net/connection.ts`             | Client: WebSocket, reconnect with a seat token, ping, and the dev-only delay harness                                                                     |
+| `server/`                           | Node HTTP/WebSocket server, room sessions, room catalog, rate limits, monitoring, esbuild bundle and `tsconfig.json`; `deploy/vps/` holds the host setup |
 
 Local single-player adapts its `Simulation` to the same read-only presentation boundary. The network mirror does not construct or step a gameplay simulation, mutate physics bodies for interpolation, or cast stand-in objects to `RAPIER.RigidBody`. Keep menu actions and simulation-specific diagnostics outside that read-only contract. Reuse persistent entity views or bounded buffers to avoid introducing a full scene allocation on every frame.
 
@@ -184,7 +178,7 @@ Order: M1 hosting experiment and M1b local latency spike → M2 simulation/view 
 
 ### M1: Server skeleton and hosting gate (M)
 
-- Create `server/` with the workerd physics entry and Rapier loader from Appendix A and a Durable Object running a bot-driven Team Battle at 60 Hz. Prototype a 20 Hz JSON stream with rounded numbers containing tanks, projectiles, moving cover/debris and events, plus representative full-state bursts. Position-only traffic is insufficient evidence for the final workload.
+- Create `server/` with a workerd physics entry and Rapier loader and a Durable Object running a bot-driven Team Battle at 60 Hz. Prototype a 20 Hz JSON stream with rounded numbers containing tanks, projectiles, moving cover/debris and events, plus representative full-state bursts. Position-only traffic is insufficient evidence for the final workload.
 - Add `wrangler`, `esbuild` as a direct dependency, and `@cloudflare/workers-types` as dev dependencies, then run `npm ci`. Add `server:dev`, `server:build` and `server:deploy`; ensure the latter two build the current source before use.
 - Add `server/tsconfig.json` and include it in `npm run typecheck`. Replace the inline `tsc --noEmit` in `build` with that combined type check, and add `server:build` to `npm run check`. Thus the gate checks both targets once through `build` and also verifies the Workers bundle; extending an otherwise unused `typecheck` script would not suffice. Lint server source; exclude `server/dist/` and Wrangler outputs from Git, Prettier and ESLint.
 - Use the same bounded scheduling policy intended for M4. Drive the room from one 50 ms timer: each callback runs the fixed 1/60 s steps owed by elapsed time (normally three) and then sends one snapshot. That gives a third of the wakeups of a 60 Hz timer with the same visible latency, and every snapshot lines up with a step batch. Allow at most six steps in a callback and a 250 ms maximum accumulated debt. Retain debt between callbacks; if it exceeds that bound, terminate the round with an overload reason rather than silently skipping physics or entering an unbounded catch-up loop. Verify the runtime clock advances correctly during timer-driven and quiet periods.
@@ -322,33 +316,33 @@ Measure actual UTF-8 serialized bytes per client per second, steady/burst snapsh
 Choose from the playtest results:
 
 - **Own-tank movement prediction, if M1b allowed it to remain deferred:** use a separate local prediction world with the authoritative movement rules and an appropriate collision-state mirror. Reconcile against the input-sequence acks already carried by snapshots and replay unconfirmed movement. Keep gameplay outcomes authoritative and feed predicted poses through render state; the render mirror itself does not become a simulation. Validate collisions, moving cover, knockback and respawn rather than assuming `driveTank` alone is sufficient.
-- **Binary snapshots,** if measured JSON bytes or serialization cost justify them. Reduce input message frequency separately if request quotas are the concern, retaining liveness and one-shot guarantees.
+- **Binary snapshots,** if measured JSON bytes or serialization cost justify them. Reduce input message frequency separately if server load is the concern, retaining liveness and one-shot guarantees.
 - **Per-player battle report,** reusing the existing single-player recap.
 - **Co-op Solo Assault.**
 - **Production rollout:**
   - point both Pages builds at the server;
-  - add a GitHub Actions deploy for the server with a Workers-scoped token.
+  - add a GitHub Actions deploy for the VPS server with a deploy-only SSH key.
 - **Colyseus,** only if hand-written network code becomes the bottleneck.
 - **WebTransport,** only on a host with an open UDP port.
 
 ## Risks
 
-| Risk                                                                      | Mitigation                                                                                                                                                        |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actual Free CPU/timer limits do not support a continuous match            | Confirm applicability and run M1 on the deployed plan, including quiet periods; repeat on any chosen fallback                                                     |
-| Driving or camera motion feels delayed or steps at snapshot frequency     | M1b local latency spike before the refactor; prediction moves into v1 if it fails; two-browser recheck in M5                                                      |
-| Missing removals, sleeping poses or old-life state leave the client wrong | Explicit lifecycle deltas, life ids, atomic full baselines, sequence checks and M3 failure tests                                                                  |
-| A field rendering reads is never replicated, now or in a later feature    | M3 round-trip test comparing mirror and authoritative render-state every snapshot                                                                                 |
-| Spatial effects appear before their delayed targets reach an impact       | Tick-stamped events and a shared remote display timeline, verified visually                                                                                       |
-| Shots miss because aim was computed from a lagging displayed hull         | Send the pointer's ground aim point; the server computes the angle from the authoritative hull                                                                    |
-| Stale input keeps firing or applies actions after respawn                 | Input leases, control epochs, and bounded, expiring action queues                                                                                                 |
-| A brief connection hiccup hands a connected player's tank to a bot        | Silence idles the tank first; the bot drives only after 5 s, on suspend or on socket close                                                                        |
-| Everyone briefly disconnects and loses the match                          | Bounded 30 s empty-room grace period with bot control; full state on return                                                                                       |
-| A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                                                                      |
-| The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests                                                              |
-| JSON traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                                                                       |
-| Account-wide quotas expire or Paid usage exceeds the base fee             | 20 Hz input (~28 player-hours/day provisional); track actual usage and room lifetime; reduce message frequency only with input guarantees, or reconsider the plan |
-| Friends far from the room's Durable Object get high RTT                   | Record per-player RTT; compare new rooms with creation-time location hints, which cannot relocate an existing room                                                |
+| Risk                                                                      | Mitigation                                                                                                    |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Actual Free CPU/timer limits do not support a continuous match            | Confirm applicability and run M1 on the deployed plan, including quiet periods; repeat on any chosen fallback |
+| Driving or camera motion feels delayed or steps at snapshot frequency     | M1b local latency spike before the refactor; prediction moves into v1 if it fails; two-browser recheck in M5  |
+| Missing removals, sleeping poses or old-life state leave the client wrong | Explicit lifecycle deltas, life ids, atomic full baselines, sequence checks and M3 failure tests              |
+| A field rendering reads is never replicated, now or in a later feature    | M3 round-trip test comparing mirror and authoritative render-state every snapshot                             |
+| Spatial effects appear before their delayed targets reach an impact       | Tick-stamped events and a shared remote display timeline, verified visually                                   |
+| Shots miss because aim was computed from a lagging displayed hull         | Send the pointer's ground aim point; the server computes the angle from the authoritative hull                |
+| Stale input keeps firing or applies actions after respawn                 | Input leases, control epochs, and bounded, expiring action queues                                             |
+| A brief connection hiccup hands a connected player's tank to a bot        | Silence idles the tank first; the bot drives only after 5 s, on suspend or on socket close                    |
+| Everyone briefly disconnects and loses the match                          | Bounded 30 s empty-room grace period with bot control; full state on return                                   |
+| A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                  |
+| The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests          |
+| JSON traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                   |
+| The VPS runs out of CPU, memory or monthly transfer                       | Watch `npm run vps:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan   |
+| Friends far from the VPS get high RTT                                     | Record per-player RTT; pick the VPS region for the expected players, or add hosts in other regions            |
 
 ## Gameplay defaults and decisions still requiring evidence
 
@@ -361,69 +355,3 @@ Choose from the playtest results:
 - **Difficulty:** in multiplayer, all fill-bot tanks use the chosen difficulty on either team. A bot temporarily driving a reserved player seat retains that seat's player balance. Single-player keeps its existing enemy-team difficulty rule and Solo tuning.
 - **Speed tuning:** multiplayer v1 uses the checked-in defaults; localStorage tuning stays single-player-only and per simulation. Exposing host speed controls is deferred.
 - **Evidence gates:** the hosting plan and exact local-hull smoothing/prediction policy remain conditional on M1/M1b. Record the chosen policy, acceptable latency envelope and actual JSON budgets before declaring the relevant milestone complete.
-
-## Appendix A: Rapier in a Durable Object
-
-Rapier's `@dimforge/rapier3d` loads its WASM with `import * as wasm from "./rapier_wasm3d_bg.wasm"`, which Workers do not support. Workers can import a `.wasm` file as a compiled `WebAssembly.Module` through the `CompiledWasm` rule, so the build swaps the loader for a manual instantiation. The game code imports `@dimforge/rapier3d-compat`, so the build also points that import at a workerd physics entry. Vite points the same import at `src/game/physics-browser.ts`, but the server cannot reuse that file. It imports the WASM through Vite's `?url` suffix, which esbuild does not resolve, and its `init()` reads `window.sloppyPhysicsBinary`, which workerd lacks. The browser loader gained both on 2026-09-22 (0772b23 and 4587e25), so the experiment's alias may predate them.
-
-```ts
-// server/physics-workerd.ts
-import * as RAPIER from "@dimforge/rapier3d";
-
-export * from "@dimforge/rapier3d";
-
-// The build's loader swap instantiates the WASM when this module is imported,
-// so init() has nothing left to do; it keeps the compat package's API shape.
-export default { ...RAPIER, init: async (): Promise<void> => {} };
-```
-
-```js
-// server/build.mjs (excerpt)
-import { fileURLToPath } from "node:url";
-
-const repo = (path) => fileURLToPath(new URL(`../${path}`, import.meta.url));
-
-const rapierWorkerd = {
-  name: "rapier-workerd",
-  setup(context) {
-    context.onResolve({ filter: /^@dimforge\/rapier3d-compat$/ }, () => ({
-      path: repo("server/physics-workerd.ts"),
-    }));
-    // Leave the WASM import for wrangler's CompiledWasm rule.
-    context.onResolve({ filter: /^\.\/rapier\.wasm$/ }, () => ({
-      path: "./rapier.wasm",
-      external: true,
-    }));
-    context.onLoad({ filter: /rapier3d[\\/]rapier_wasm3d\.js$/ }, () => ({
-      loader: "js",
-      resolveDir: repo("node_modules/@dimforge/rapier3d"),
-      contents: `
-        import wasmModule from "./rapier.wasm";
-        import * as bg from "./rapier_wasm3d_bg.js";
-        const instance = new WebAssembly.Instance(wasmModule, { "./rapier_wasm3d_bg.js": bg });
-        bg.__wbg_set_wasm(instance.exports);
-        export * from "./rapier_wasm3d_bg.js";
-      `,
-    }));
-  },
-};
-```
-
-Bundle with `format: "esm"`, `platform: "neutral"`, `mainFields: ["module", "main"]` and `external: ["cloudflare:workers"]`. Then copy `node_modules/@dimforge/rapier3d/rapier_wasm3d_bg.wasm` to `server/dist/rapier.wasm`.
-
-The replacement loader depends on wasm-bindgen internals (`__wbg_set_wasm` and the `./rapier_wasm3d_bg.js` import namespace) of `@dimforge/rapier3d` 0.20.0. Comment it with that version, as the `r185` Three.js workarounds are, and review it on every Rapier upgrade. Keep `@dimforge/rapier3d` and `@dimforge/rapier3d-compat` at the same version so the server, browser and Node tests run the same physics.
-
-```jsonc
-// server/wrangler.jsonc
-{
-  "name": "sloppy-tanks-server",
-  "main": "dist/worker.js",
-  "no_bundle": true,
-  "compatibility_date": "2026-01-01",
-  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"] }],
-  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "Room" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
-}
-```
-
-The reported experimental bundle was 1.75 MB of JavaScript plus a 2 MB WASM file, about 1.1 MB gzipped. Current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) specify a 64 MiB uncompressed bundle limit and a separate startup-time limit; M1 must check the actual bundle and initialization. The simulation pulls in three.js through three imports: `ai → hitboxes`, `damage → scenery-pieces` and `damage → wrecks → humvee-model`. Separating the required data from model construction can be considered if measured startup or bundle cost warrants it.

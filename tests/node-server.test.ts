@@ -4,7 +4,7 @@ import { once } from "node:events";
 import RAPIER from "@dimforge/rapier3d-compat";
 import WebSocket from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION } from "../src/net/protocol";
-import { createServer, type MultiplayerServer } from "../server/node/server";
+import { createServer, type MultiplayerServer } from "../server/server";
 
 const ORIGIN = "http://127.0.0.1:5173";
 let server: MultiplayerServer, base: string;
