@@ -72,8 +72,10 @@ npm run check:browser  # browser checks against a running dev server (set SLOPPY
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
-Multiplayer is available on the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer).
-Choose **Play with friends** to browse open rooms. Your saved name is prefilled;
+Multiplayer is available on the [GitHub Pages site](https://fridman.me/sloppy-tanks/?multiplayer),
+the [Cloudflare site](https://sloppy-tanks.fridman.me/?multiplayer) and the
+[dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); all three use the same
+game server. Choose **Play with friends** to browse open rooms. Your saved name is prefilled;
 first-time players get a random bot name they can edit. **Auto** picks the team
 with fewer human seats (including reconnect reservations). Choose a room and
 **Join**, or pick a level and **Create room** to start playing immediately.
@@ -132,6 +134,14 @@ Two independent workflows publish on pushes to `main`, after `npm run check` pas
 
 - **GitHub Pages:** `npm run build` produces `dist/` with the default `/sloppy-tanks/` base for <https://fridman.me/sloppy-tanks/>.
 - **Cloudflare Pages:** `npm run build:cloudflare` produces `dist-cloudflare/` with the `/` base for <https://sloppy-tanks.fridman.me/>. The Pages project is `sloppy-tanks`, with <https://sloppy-tanks.pages.dev/> as its provider URL.
+
+Both workflows set `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
+also uses. The workflows do not deploy that server. A client only plays on a server
+built from the same game and network sources, so after merging changes to
+`src/game/` or `src/net/`, run `npm run vps:deploy` from `main`; until then, players
+on the production sites are asked to reload and cannot join. Likewise,
+`npm run deploy:dev` from a branch with such changes replaces the shared server and
+breaks production multiplayer until `main` is deployed again.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the physics preload. The Cloudflare build uses its own output directory and leaves `dist/` intact. Its workflow requires the GitHub Actions secret `CLOUDFLARE_API_TOKEN`, scoped to Cloudflare Pages:Edit on the deployment account. Never commit the token.
 
