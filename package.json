@@ -21,7 +21,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit && tsc --project server/tsconfig.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project server/tsconfig.json --noEmit && tsc --project bots/tsconfig.json --noEmit",
     "check": "npm run lint && npm run format:check && npm run build && npm run server:build && npm test",
     "postinstall": "npm ci --prefix tools/lint",
     "build:dev": "tsc --noEmit && DEPLOY_BASE=/ vite build --config vite.dev.config.ts && node scripts/copy-artifacts.mjs dist-dev",
@@ -35,7 +35,9 @@
     "check:latency": "node scripts/multiplayer-latency-check.mjs",
     "check:multiplayer": "node scripts/multiplayer-check.mjs",
     "server:check:players": "node --import tsx scripts/multiplayer-player-check.mjs",
-    "server:check:lifecycle": "node scripts/multiplayer-lifecycle-check.mjs"
+    "server:check:lifecycle": "node scripts/multiplayer-lifecycle-check.mjs",
+    "bots": "node scripts/bots.mjs",
+    "bots:deploy": "wrangler deploy --config bots/wrangler.jsonc"
   },
   "dependencies": {
     "@dimforge/rapier3d": "0.20.0",

@@ -12,6 +12,7 @@ export default tseslint.config(
       "dist-dev/**",
       "server/dist/**",
       "server/.wrangler/**",
+      "bots/.wrangler/**",
       ".claude/**",
       "artifacts/**",
       "node_modules/**",

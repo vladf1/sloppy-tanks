@@ -17,6 +17,8 @@ sockets on all maps; `npm run server:check:lifecycle` checks reconnect and expir
 Use `SLOPPY_SERVER_URL=wss://sloppy-tanks-server-dev.vova145.workers.dev` to test
 the deployed Worker. `npm run check:multiplayer` drives two Chrome contexts;
 `SLOPPY_SERVER` selects a remote server for that browser check.
+For sustained traffic from other regions, the separately deployed traffic bots
+join open rooms on the dev server; see `bots/README.md`.
 
 The checked-in Worker config defaults both protocols to disabled.
 `npm run deploy:dev` deploys this dedicated dev Worker with the player server
