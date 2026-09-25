@@ -18,12 +18,23 @@ const MAX_FRAME_BYTES = 8192;
 const MAX_BUFFERED_BYTES = 2_000_000;
 /** Time given to clients to finish closing handshakes when the server stops. */
 const SHUTDOWN_GRACE_MS = 1000;
+/**
+ * Live rooms per process. A busy room measured about 3–4 ms of each 50 ms tick on the
+ * one-vCPU VPS, so ten busy rooms use roughly two thirds of it, leaving headroom for
+ * garbage collection and bursts. Raise it with MAX_ROOMS on a larger host. Joining an
+ * existing room is never refused by this cap.
+ */
+export const DEFAULT_MAX_ROOMS = 10;
+/** Concurrent sockets from one IP; covers a 32-bot traffic swarm sharing an egress address. */
+export const DEFAULT_MAX_SOCKETS_PER_IP = 32;
 
 export interface ServerOptions {
   allowedOrigins: string[];
   multiplayerEnabled: boolean;
   /** Take the client IP from the last X-Forwarded-For hop (the local reverse proxy). */
   trustProxy: boolean;
+  maxRooms?: number;
+  maxSocketsPerIp?: number;
   /** Room lifecycle and summary lines; defaults to console.log (the systemd journal). */
   log?: (line: string) => void;
 }
@@ -37,6 +48,9 @@ export interface MultiplayerServer {
 /** Multiplayer host: /health, /rooms, the /room/CODE WebSocket, and loopback-only /stats. */
 export function createServer(options: ServerOptions): MultiplayerServer {
   const rooms = new Map<string, RoomSession<NodeSocket>>(),
+    maxRooms = options.maxRooms ?? DEFAULT_MAX_ROOMS,
+    maxSocketsPerIp = options.maxSocketsPerIp ?? DEFAULT_MAX_SOCKETS_PER_IP,
+    socketsByIp = new Map<string, number>(),
     catalog = new RoomCatalog(),
     connectionRate = new RateLimit(60),
     entryRate = new RateLimit(120),
@@ -125,15 +139,25 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     if (!code || !ROOM_CODE.test(code)) return refuse(404, "Not Found");
     if (!options.multiplayerEnabled) return refuse(503, "Multiplayer unavailable");
     if (!allowed(request)) return refuse(403, "Origin not allowed");
-    const now = Date.now();
-    if (!connectionRate.allow(clientIp(request), now) || !entryRate.allow("rooms", now))
+    const now = Date.now(),
+      ip = clientIp(request);
+    if (!connectionRate.allow(ip, now) || !entryRate.allow("rooms", now))
       return refuse(429, "Too many room connections; try again shortly");
-    if (rooms.get(code)?.full) return refuse(429, "Room connection limit");
-    sockets.handleUpgrade(request, stream, head, (socket) => admit(code, socket));
+    if ((socketsByIp.get(ip) ?? 0) >= maxSocketsPerIp)
+      return refuse(429, "Too many open connections from this address");
+    const existing = rooms.get(code);
+    if (existing?.full) return refuse(429, "Room connection limit");
+    if (!existing && rooms.size >= maxRooms) return refuse(503, "Server is full; try again later");
+    sockets.handleUpgrade(request, stream, head, (socket) => admit(code, ip, socket));
   });
 
-  function admit(code: string, socket: WebSocket): void {
+  function admit(code: string, ip: string, socket: WebSocket): void {
     let session = rooms.get(code);
+    // Handshakes finish asynchronously, so a burst can pass the upgrade check together.
+    if (!session && rooms.size >= maxRooms) {
+      socket.close(1013, "Server is full");
+      return;
+    }
     if (!session) {
       const created = new RoomSession<NodeSocket>(code, {
         listing: (entry) => catalog.update(entry, Date.now()),
@@ -152,10 +176,16 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       return;
     }
     const owner = session;
+    socketsByIp.set(ip, (socketsByIp.get(ip) ?? 0) + 1);
     socket.on("message", (data: Buffer, binary: boolean) =>
       owner.message(adapter, binary ? new ArrayBuffer(0) : data.toString("utf8")),
     );
-    socket.on("close", (closeCode: number) => owner.closed(adapter, closeCode));
+    socket.on("close", (closeCode: number) => {
+      const open = (socketsByIp.get(ip) ?? 1) - 1;
+      if (open > 0) socketsByIp.set(ip, open);
+      else socketsByIp.delete(ip);
+      owner.closed(adapter, closeCode);
+    });
     socket.on("error", () => owner.failed(adapter));
   }
 

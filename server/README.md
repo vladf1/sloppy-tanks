@@ -38,6 +38,7 @@ Settings come from the environment:
 | `HOST` / `PORT`       | `127.0.0.1` / `8787` | Listener; on the VPS only Caddy is public                 |
 | `ALLOWED_ORIGINS`     | local Vite origins   | Exact comma-separated origin allowlist                    |
 | `MULTIPLAYER_ENABLED` | `true`               | `false` refuses rooms and listings                        |
+| `MAX_ROOMS`           | `10`                 | Live rooms; new room codes beyond it get 503              |
 | `TRUST_PROXY`         | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy |
 
 ## Rooms and limits
@@ -59,8 +60,11 @@ polls it.
 The server checks exact allowed origins, 8-character room codes, protocol/content
 versions, message sizes (4096 bytes) and rates (65 messages/second/socket) before
 accepting authority. Per process it allows 60 room connections/minute/IP, 120 room
-entries/minute overall, 120 listing requests/minute/IP, and 16 open sockets per
-room. A socket whose unsent output passes about 2 MB is closed with 4002.
+entries/minute overall, 120 listing requests/minute/IP, 16 open sockets per room
+and 32 per IP, and `MAX_ROOMS` live rooms; joining an existing room is never refused
+by the room cap. Each limiter tracks at most 10,000 IPs and refuses new ones while all
+are inside their minute. A socket whose unsent output passes about 2 MB is closed
+with 4002.
 
 ## VPS deployment
 

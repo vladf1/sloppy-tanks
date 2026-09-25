@@ -14,12 +14,21 @@ const host = process.env.HOST ?? "127.0.0.1",
 const origins = process.env.ALLOWED_ORIGINS?.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+/** A typo must stop startup, not silently turn a capacity limit off (NaN compares false). */
+function positiveInteger(name: string): number | undefined {
+  const text = process.env[name];
+  if (text === undefined || text === "") return undefined;
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
 
 // Simulation needs the WASM module before the first room creates a Rapier world.
 await RAPIER.init();
 const server = createServer({
   allowedOrigins: origins?.length ? origins : LOCAL_ORIGINS,
   multiplayerEnabled: process.env.MULTIPLAYER_ENABLED !== "false",
+  maxRooms: positiveInteger("MAX_ROOMS"),
   // Only a loopback listener can be sure its X-Forwarded-For came from the local proxy.
   trustProxy: (process.env.TRUST_PROXY ?? String(loopback)) === "true",
 });
