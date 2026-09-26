@@ -1,37 +1,30 @@
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+// Cached render bundles must draw exactly what ordinary draws do, on every map, with
+// a moving camera and in overview. Autoplay starts each round without Battle Setup;
+// the check steps the simulation and renders itself.
+import { freezeLoop, gameUrl as url, launchGame } from "./browser-helpers.mjs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import fs from "node:fs";
 import assert from "node:assert/strict";
 const root = process.env.SLOPPY_ARTIFACT_DIR ?? "artifacts/performance/bundle-rendering",
   results = [];
 fs.mkdirSync(root, { recursive: true });
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless });
+const { browser, context, errors } = await launchGame({
+  viewport: { width: 1440, height: 900 },
+  consoleErrors: true,
+});
 try {
   for (const map of ["village", "harbor", "quarry"]) {
-    const page = await browser.newPage({
-        viewport: { width: 1440, height: 900 },
-        deviceScaleFactor: 1,
-      }),
-      errors = [];
-    page.on("pageerror", (e) => errors.push(e.stack));
-    page.on("console", (m) => {
-      if (m.type() === "error") errors.push(m.text());
-    });
+    const page = await context.newPage();
     await page.addInitScript(() => {
+      // Both passes of the comparison must build the same scenery.
       let seed = 7654321;
       Math.random = () => {
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
         return seed / 4294967296;
       };
-      const raf = requestAnimationFrame.bind(window);
-      window.nextFrame = () => new Promise(raf);
-      window.requestAnimationFrame = (cb) =>
-        raf((t) => {
-          if (cb.name !== "loop" || !window.sloppy) cb(t);
-        });
+      window.nextFrame = () => new Promise(requestAnimationFrame);
     });
+    await freezeLoop(page);
     await page.goto(`${url}?autoplay&map=${map}`);
     await page.waitForFunction(() => !!window.sloppy);
     const recording = await page.evaluate(async () => {

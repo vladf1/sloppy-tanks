@@ -1,88 +1,40 @@
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
-const browser = await chromium.launch({
-  channel: "chrome",
-  headless,
-  args: ["--window-size=1600,1000"],
-});
+const output = "artifacts/performance/browser-controls";
+mkdirSync(output, { recursive: true });
+const { browser, page, errors } = await launchGame();
 try {
-  const context = await browser.newContext({
-    viewport: { width: 1600, height: 900 },
-    deviceScaleFactor: 1,
-  });
-  const errors = [];
-  const inputPage = await context.newPage();
-  inputPage.on("pageerror", (e) => errors.push(e.message));
-  // Drive the actual application loop between physics ticks, independent of display Hz.
-  await inputPage.addInitScript(() => {
-    let frame, now;
-    const requestFrame = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (callback) => {
-      if (callback.name !== "loop") return requestFrame(callback);
-      frame = callback;
-      if (!window.sloppy) return requestFrame(callback);
-      return 1;
-    };
-    window.advanceFrame = (ms) => {
-      now = (now ?? performance.now()) + ms;
-      frame(now);
-    };
-  });
-  await inputPage.goto(url);
-  await inputPage.waitForFunction(() => !!window.sloppy);
-  const input = await inputPage.evaluate(() => {
-    const d = window.sloppy;
-    d.start();
-    window.advanceFrame(100);
-    const commands = [],
-      step = d.sim.step.bind(d.sim);
-    d.sim.step = (command, autoplay) => {
-      commands.push(command.mine);
-      step(command, autoplay);
-    };
-    document.querySelector("#game").dispatchEvent(new PointerEvent("pointerdown", { button: 2 }));
-    window.advanceFrame(4);
-    const betweenSteps = {
-      pending: d.controls.mine,
-      steps: commands.length,
-      mines: d.sim.mines.length,
-    };
-    window.advanceFrame(16);
-    window.advanceFrame(40);
-    return { betweenSteps, commands, mines: d.sim.mines.length };
-  });
-  assert.deepEqual(input.betweenSteps, { pending: true, steps: 0, mines: 0 });
-  assert.equal(input.commands.filter(Boolean).length, 1);
-  assert.equal(input.commands[0], true);
-  assert.ok(input.commands.length >= 3, "exercise multiple catch-up steps");
-  assert.equal(input.mines, 1);
-  await inputPage.close();
-  const page = await context.newPage();
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(url, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000,
-  });
+  await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
-  await page.screenshot({ path: "artifacts/start.png" });
+  await page.screenshot({ path: `${output}/start.png` });
   await page.locator('[data-kind="balanced"]').click();
-  await page.locator("#start").click();
+  await startRound(page);
   const before = await page.evaluate(() => window.sloppy.sim.snapshot());
+  const pose = () =>
+    page.evaluate(() => {
+      const tank = window.sloppy.sim.human;
+      return { ...tank.body.translation(), heading: tank.heading };
+    });
+  const start = await pose();
   await page.mouse.move(1100, 440);
   await page.keyboard.down("d");
   await page.mouse.down();
   await page.waitForTimeout(1400);
   await page.keyboard.up("d");
+  const right = await pose();
+  // D is screen-right (+X): the hull turns onto the X axis, or reverses if it faced -X.
+  assert.ok(right.x - start.x > 2, `D must drive right: ${JSON.stringify({ start, right })}`);
+  assert.ok(Math.abs(Math.sin(right.heading)) > 0.9, "D aligns the hull with the X axis");
   await page.keyboard.down("s");
   await page.waitForTimeout(1200);
   await page.keyboard.up("s");
   await page.mouse.up();
+  const down = await pose();
+  assert.ok(down.z - right.z > 1, `S must drive toward the camera: ${JSON.stringify(down)}`);
   await page.mouse.click(800, 460, { button: "right" });
   const after = await page.evaluate(() => window.sloppy.sim.snapshot());
-  await page.screenshot({ path: "artifacts/driving.png" });
+  await page.screenshot({ path: `${output}/driving.png` });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
   const paused = await page.evaluate(() => window.sloppy.sim.match.phase);
@@ -118,9 +70,9 @@ try {
     }),
     "new rubble still receives visible models",
   );
-  await page.screenshot({ path: "artifacts/collapse.png" });
+  await page.screenshot({ path: `${output}/collapse.png` });
   await page.waitForTimeout(5000);
-  await page.screenshot({ path: "artifacts/ruined.png" });
+  await page.screenshot({ path: `${output}/ruined.png` });
   const resets = await page.evaluate(() => {
     const d = window.sloppy,
       memory = [];
@@ -191,17 +143,15 @@ try {
     assert.deepEqual(stableMemory(memory), stableMemory(mineResources[0]));
   }
   assert.deepEqual(errors, []);
-  mkdirSync("artifacts/performance", { recursive: true });
   writeFileSync(
-    "artifacts/performance/browser-controls.json",
-    JSON.stringify({ input, before, after, paused, resets, mineResources, errors }, null, 2),
+    `${output}/results.json`,
+    JSON.stringify({ before, after, paused, resets, mineResources, errors }, null, 2),
   );
   console.log(
     JSON.stringify({
       before: before.tanks.find((t) => t.personality === "player"),
       after: after.counts,
       paused,
-      input,
       resets: resets.at(-1),
       mineResources: mineResources.at(-1),
       errors,

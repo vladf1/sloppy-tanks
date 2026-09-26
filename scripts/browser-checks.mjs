@@ -5,33 +5,22 @@
 import { spawnSync } from "node:child_process";
 
 const checks = [
-  ["browser-check.mjs"],
-  ["startup-check.mjs"],
-  ["map-start-check.mjs"],
-  ["driving-check.mjs"],
-  ["ammunition-check.mjs", "--visual-only"],
-  ["combat-feedback-check.mjs"],
-  ["veterancy-check.mjs"],
-  ["laser-defense-check.mjs"],
-  ["projectile-visual-check.mjs"],
-  ["touch-controls-check.mjs"],
-  ["round-recap-check.mjs"],
-  ["solo-survival-check.mjs"],
-  ["bot-movement-browser.mjs"],
-  ["render-bundles-check.mjs"],
-  ["pickup-atlas-check.mjs"],
-  ["cover-hit-check.mjs"],
-  ["tree-check.mjs"],
-  ["tower-check.mjs"],
-  ["timber-walls-check.mjs"],
-  ["debris-cleanup-check.mjs"],
-  ["multiplayer-simulation-check.mjs"],
+  "browser-check.mjs",
+  "startup-check.mjs",
+  "map-start-check.mjs",
+  "hud-feedback-check.mjs",
+  "touch-controls-check.mjs",
+  "round-recap-check.mjs",
+  "render-bundles-check.mjs",
+  "destruction-check.mjs",
+  "fixtures-check.mjs",
+  "multiplayer-simulation-check.mjs",
 ];
 
 const failed = [];
-for (const [script, ...args] of checks) {
-  console.log(`\n=== ${script} ${args.join(" ")}`);
-  const run = spawnSync(process.execPath, [`scripts/${script}`, ...args], { stdio: "inherit" });
+for (const script of checks) {
+  console.log(`\n=== ${script}`);
+  const run = spawnSync(process.execPath, [`scripts/${script}`], { stdio: "inherit" });
   if (run.status !== 0) {
     failed.push(script);
   }

@@ -1,24 +1,19 @@
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+// Tablet touch play: thumb sticks and simultaneous fingers through real CDP touch
+// events. Desktop keyboard and mouse play is browser-check.mjs.
+import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/touch-controls";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless });
+const { browser, context, page, errors } = await launchGame({
+  viewport: { width: 1024, height: 768 },
+  hasTouch: true,
+});
 try {
-  const context = await browser.newContext({
-    viewport: { width: 1024, height: 768 },
-    hasTouch: true,
-    deviceScaleFactor: 1,
-  });
-  const page = await context.newPage();
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url);
   await page.waitForFunction(() => !!window.sloppy);
-  await page.locator("#start").tap();
+  await startRound(page, { touch: true });
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   const session = await context.newCDPSession(page);
   const fingers = new Map();
@@ -153,30 +148,6 @@ try {
   console.log(
     "Touch controls: multi-touch driving/aim/fire, third-finger mine/ammo, zoom, pause, preference, rotation and portrait hit-testing passed.",
   );
-  await context.close();
-
-  const desktop = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    hasTouch: false,
-  });
-  const desktopPage = await desktop.newPage();
-  await desktopPage.goto(url);
-  await desktopPage.waitForFunction(() => !!window.sloppy);
-  await desktopPage.locator("#start").click();
-  assert.equal(await desktopPage.locator(".touch-controls").isVisible(), false);
-  await desktopPage.keyboard.down("d");
-  await desktopPage.mouse.move(600, 400);
-  await desktopPage.mouse.down();
-  assert.equal(
-    await desktopPage.evaluate(() => {
-      const command = window.sloppy.controls.command(0);
-      return command.moveX === 1 && command.fire;
-    }),
-    true,
-  );
-  await desktopPage.keyboard.up("d");
-  await desktopPage.mouse.up();
-  console.log("Desktop: touch overlay hidden, keyboard movement and mouse fire preserved.");
 } finally {
   await browser.close();
 }

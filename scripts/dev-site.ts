@@ -10,21 +10,16 @@ export const devPages = [
     title: "Tank surfaces",
     detail: "Vehicle textures and materials",
   },
-  {
-    path: "tools/scenery-check.html",
-    title: "Scenery",
-    detail: "Trees and explosive barrel; add ?house for a house",
-  },
-  ...["humvee", "suspension", "quarry", "harbor", "destruction", "usability", "reinforcements"].map(
-    (name) => ({
-      path: `tests/${name}.browser.html`,
-      title: `${name[0].toUpperCase()}${name.slice(1)} check`,
-      detail:
-        name === "reinforcements"
-          ? "Automatic rendering regression with a pass/fail result"
+  ...["humvee", "suspension", "maps", "destruction", "reinforcements"].map((name) => ({
+    path: `tests/${name}.browser.html`,
+    title: `${name[0].toUpperCase()}${name.slice(1)} check`,
+    detail:
+      name === "reinforcements"
+        ? "Automatic rendering regression with a pass/fail result"
+        : name === "maps" || name === "suspension"
+          ? "Interactive inspection with pass/fail checks (run by fixtures-check.mjs)"
           : "Interactive browser inspection and regression fixture",
-    }),
-  ),
+  })),
 ];
 
 export function devSite(): Plugin {

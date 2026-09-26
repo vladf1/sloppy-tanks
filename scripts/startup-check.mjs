@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless });
+const viewport = { width: 1440, height: 1000 };
+const first = await launchGame({ viewport });
+const { browser, errors } = first;
 const results = {};
-const errors = [];
-async function fresh(viewport = { width: 1440, height: 1000 }) {
-  const context = await browser.newContext({ viewport });
+async function fresh(size = viewport) {
+  const context = await browser.newContext({ viewport: size });
   const page = await context.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
   return { context, page };
@@ -27,7 +26,7 @@ async function playing(page) {
 }
 try {
   // The menu must remain interactive with the entire physics download held back.
-  const delayed = await fresh();
+  const delayed = { context: first.context, page: first.page };
   let releasePhysics;
   const physics = new Promise((resolve) => {
     releasePhysics = resolve;
@@ -112,8 +111,15 @@ try {
   await graphics.context.close();
 
   const warm = await fresh();
+  const pickupTextures = [];
+  warm.page.on("request", (request) => {
+    if (request.url().includes("/textures/pickups/")) pickupTextures.push(request.url());
+  });
   await warm.page.goto(url);
   await ready(warm.page);
+  // Startup fetches the pickup atlas early and TextureLoader reuses that download.
+  assert.equal(pickupTextures.length, 1, "one pickup texture download");
+  assert.ok(pickupTextures[0].endsWith("/textures/pickups/atlas.webp"));
   results.prepared = await warm.page.evaluate(() => {
     window.preparedWorld = window.sloppy.sim.world;
     window.preparedRenderer = window.sloppy.view.renderer;
@@ -135,7 +141,7 @@ try {
   assert.deepEqual(results.previews, { cards: 3, sheet: [1920, 800] });
   assert.equal(await warm.page.locator("#game").isVisible(), false);
   await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
-  await warm.page.locator("#start").click();
+  await startRound(warm.page);
   await playing(warm.page);
   assert.equal(
     await warm.page.evaluate(() => window.preparedWorld === window.sloppy.sim.world),
@@ -163,7 +169,7 @@ try {
   assert.equal(await warm.page.locator("#game").isVisible(), false);
   await warm.page.locator('input[name="mapMode"][value="harbor"]').check();
   await warm.page.locator('[data-kind="scout"]').click();
-  await warm.page.locator("#start").click();
+  await startRound(warm.page);
   await playing(warm.page);
   results.newRound = await warm.page.evaluate(() => ({
     map: window.sloppy.sim.mapMode,
@@ -181,7 +187,7 @@ try {
   await changed.page.locator('input[value="solo"]').check();
   await changed.page.locator('input[name="mapMode"][value="harbor"]').check();
   await changed.page.locator('[data-kind="heavy"]').click();
-  await changed.page.locator("#start").click();
+  await startRound(changed.page);
   await playing(changed.page);
   assert.equal(
     await changed.page.evaluate(
