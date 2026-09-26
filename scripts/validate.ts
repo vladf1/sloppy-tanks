@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand } from "../src/game/types";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 await RAPIER.init();
 const rounds = [];
 let maxBodies = 0,
@@ -51,4 +51,5 @@ const result = {
   maxBodies,
   maxFragments,
 };
-writeFileSync("artifacts/simulation-results.json", JSON.stringify(result, null, 2));
+mkdirSync("artifacts/performance", { recursive: true });
+writeFileSync("artifacts/performance/simulation-results.json", JSON.stringify(result, null, 2));

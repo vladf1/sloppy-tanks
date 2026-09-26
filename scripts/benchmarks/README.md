@@ -10,14 +10,14 @@ From the repository root:
 node scripts/benchmarks/host-download-benchmark.mjs
 ```
 
-Each run writes a dated raw JSON artifact to [`results/`](results/).
+Each run writes a dated raw JSON artifact to the ignored `artifacts/performance/host-download/`.
 
 This is a manual benchmark. It is intentionally excluded from the repository-wide CI lint and format checks and is not invoked by any GitHub build workflow.
 
 ## Scope and method
 
 - 13 alternating rounds per deployment.
-- 37 resources per round: the HTML entry, favicon, tank preview atlas, hashed game chunk, 22 default Pine Village textures, and 11 audio files.
+- 31 resources per round: the HTML entry, favicon, tank preview atlas, hashed game chunk, 14 default Pine Village textures (including the pickup atlas), and 13 audio files.
 - Optional Harbor/Quarry-only assets and unused public files are not part of the default `/` startup graph.
 - Each resource is fetched concurrently using a fresh curl process with HTTP/2, IPv4, no local cache, and `Accept-Encoding: br, gzip`.
 - Response bodies are consumed as raw encoded data so wire-byte totals include the encoding negotiated by each host.
@@ -25,7 +25,7 @@ This is a manual benchmark. It is intentionally excluded from the repository-wid
 
 ## Reported metrics
 
-- `batchWallMs`: wall time until the complete 37-resource batch finishes.
+- `batchWallMs`: wall time until the complete 31-resource batch finishes.
 - `encodedBytes`: response body bytes transferred on the wire.
 - `identityBytes`: response bytes without content encoding.
 - `time_starttransfer`: per-resource time to first byte, including DNS/TCP/TLS and server wait.

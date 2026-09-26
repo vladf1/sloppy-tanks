@@ -58,7 +58,7 @@ c.font = "900 25px sans-serif";
 c.textAlign = "center";
 c.fillStyle = accent;
 c.fillText("LASER", 128, 218);
-const output = new URL("../public/textures/pickups/laser.webp", import.meta.url);
+const output = new URL("../assets/texture-sources/pickups/laser.webp", import.meta.url);
 await mkdir(new URL(".", output), { recursive: true });
 await writeFile(output, encodeWebp(canvas));
 console.log("Saved laser-defense pickup pictogram.");

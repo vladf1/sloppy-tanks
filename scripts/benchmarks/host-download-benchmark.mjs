@@ -30,15 +30,7 @@ const texturePaths = [
   "textures/ground/packed-dirt.webp",
   "textures/houses/shingles.webp",
   "textures/houses/siding.webp",
-  "textures/pickups/laser.webp",
-  "textures/pickups/piercing.webp",
-  "textures/pickups/rapid.webp",
-  "textures/pickups/repair.webp",
-  "textures/pickups/ricochet.webp",
-  "textures/pickups/rocket.webp",
-  "textures/pickups/shield.webp",
-  "textures/pickups/speed.webp",
-  "textures/pickups/spread.webp",
+  "textures/pickups/atlas.webp",
   "textures/tanks/armor-wear.webp",
   "textures/trees/bark.webp",
   "textures/trees/birch.webp",
@@ -55,11 +47,13 @@ const audioPaths = [
   "audio/laser.mp3",
   "audio/pickup.mp3",
   "audio/promotion.mp3",
+  "audio/rubble-break.mp3",
   "audio/shot-piercing.mp3",
   "audio/shot-ricochet.mp3",
   "audio/shot-rocket.mp3",
   "audio/shot-spread.mp3",
   "audio/shot.mp3",
+  "audio/wood-break.mp3",
 ];
 
 function curlText(url) {
@@ -312,8 +306,9 @@ async function main() {
     deployments: results,
   };
   const resultDate = new Date().toISOString().slice(0, 10);
-  const outputPath = `scripts/benchmarks/results/host-download-benchmark-${resultDate}.json`;
-  await mkdir("scripts/benchmarks/results", { recursive: true });
+  const outputDirectory = "artifacts/performance/host-download";
+  const outputPath = `${outputDirectory}/host-download-benchmark-${resultDate}.json`;
+  await mkdir(outputDirectory, { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(JSON.stringify({ outputPath, startedAt, finishedAt: artifact.finishedAt, summaries: Object.fromEntries(Object.entries(results).map(([id, result]) => [id, result.summary])) }, null, 2));
 }
