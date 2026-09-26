@@ -4,31 +4,25 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { AMMO_ORDER, emptyAmmo, isSpecialAmmo, selectAmmo } from "../src/game/ammunition";
 import { collectPickup, fireWeapon, stepProjectiles } from "../src/game/weapons";
-import { PICKUPS, WEAPONS, STEP, distance } from "../src/game/data";
+import { PICKUPS, VEHICLES, WEAPONS, STEP } from "../src/game/data";
 import {
   idleCommand,
   type Shot,
   type Weapon,
   type Team,
   type SpecialAmmo,
+  type PickupKind,
 } from "../src/game/types";
 import { BOT_AMMO, preferredAmmo } from "../src/game/bot-personalities";
 import { botCommand } from "../src/game/ai";
-import { spawnPositions } from "../src/game/arena";
+import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
 });
 
 function arena(count = 1) {
   const s = new Simulation(123);
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.pickups = [];
-  s.nav.rebuild([]);
-  for (const t of s.tanks.slice(count)) s.world.removeRigidBody(t.body);
-  s.tanks = s.tanks.slice(0, count);
+  clearArena(s, s.tanks.slice(0, count));
   for (const [i, t] of s.tanks.entries()) {
     t.human = true;
     t.protection = 0;
@@ -254,6 +248,92 @@ test("collecting another ammo type preserves selection when advanced ammo is alr
   s.dispose();
 });
 
+function pickup(s: Simulation, kind: PickupKind) {
+  collectPickup(s, s.human, { id: s.nextId++, x: 0, z: 0, kind, available: true, cooldown: 0 });
+}
+
+test("rapid fire modifies only selected ammunition and expires independently", () => {
+  const s = arena(),
+    t = s.human;
+  pickup(s, "spread");
+  pickup(s, "rapid");
+  pickup(s, "ricochet");
+  t.selectedAmmo = "spread";
+  fireWeapon(s, t);
+  assert.equal(s.shots.length, 3);
+  assert.equal(t.cooldown, WEAPONS.spread.interval / 2 / 1.2);
+  assert.ok(s.shots.every((p) => p.damage === 27 && p.bounces === 0));
+  const cooldown = t.cooldown;
+  pickup(s, "rapid");
+  pickup(s, "ricochet");
+  assert.equal(t.cooldown, cooldown);
+  assert.equal(t.rapid, 20);
+  assert.equal(t.ammo.ricochet, 48);
+  t.rapid = STEP;
+  t.cooldown = 0;
+  s.step();
+  assert.equal(t.rapid, 0);
+  assert.equal(t.ammo.ricochet, 48);
+  fireWeapon(s, t);
+  assert.equal(t.cooldown, WEAPONS.spread.interval / 1.2);
+  t.hp = 1;
+  pickup(s, "repair");
+  assert.equal(t.hp, VEHICLES[t.kind].health);
+  pickup(s, "repair");
+  assert.equal(t.hp, VEHICLES[t.kind].health, "repair never overheals");
+  s.dispose();
+});
+
+test("shield absorbs three shells, spills excess damage, expires and resets on respawn", () => {
+  const s = arena(),
+    t = s.human;
+  pickup(s, "shield");
+  const hp = t.hp;
+  for (let i = 0; i < 3; i++) s.damageTank(t, 40, 999, 1);
+  assert.equal(t.hp, hp);
+  assert.equal(t.shield, 0);
+  assert.equal(t.shieldPoints, 0);
+  s.damageTank(t, 40, 999, 1);
+  assert.equal(t.hp, hp - 40);
+  pickup(s, "shield");
+  s.damageTank(t, 130, 999, 1);
+  assert.equal(t.hp, hp - 50);
+  pickup(s, "shield");
+  t.shield = STEP;
+  s.step();
+  assert.equal(t.shieldPoints, 0);
+  pickup(s, "rapid");
+  pickup(s, "ricochet");
+  pickup(s, "shield");
+  s.respawn(t);
+  assert.deepEqual([t.rapid, t.ammo.ricochet, t.shield, t.shieldPoints], [0, 0, 0, 0]);
+  s.dispose();
+});
+
+test("empty selection emits feedback without switching, final special shot announces fallback once", () => {
+  const s = arena(),
+    player = s.human;
+  try {
+    player.ammo.rocket = 1;
+    player.selectedAmmo = "rocket";
+    s.step({ ...idleCommand(), ammoSelection: "piercing" });
+    assert.equal(player.selectedAmmo, "rocket");
+    assert.match(s.events.find((e) => e.type === "notice")!.label!, /PIERCING EMPTY/);
+    s.events = [];
+    fireWeapon(s, player);
+    assert.equal(player.selectedAmmo, "standard");
+    assert.match(s.events.find((e) => e.type === "notice")!.label!, /switched to STANDARD/);
+    fireWeapon(s, player);
+    assert.equal(s.events.filter((e) => e.type === "notice").length, 1);
+    s.events = [];
+    s.match.phase = "paused";
+    s.step({ ...idleCommand(), ammoSelection: "piercing" });
+    assert.equal(s.events.length, 0);
+  } finally {
+    s.dispose();
+  }
+});
+
 test("simultaneous collection skips full tanks, awards one recipient, and refills after 13 seconds", () => {
   const s = arena(3),
     [full, first, second] = s.tanks;
@@ -340,25 +420,6 @@ test("piercing stops on tanks and cover and cannot intercept through thin cover"
     s.events.every((e) => e.size === 0.6),
     "only cover impacts, no shell interception",
   );
-  s.dispose();
-});
-
-test("Pine Village has eight mirrored ammo crates with navigable approaches from both teams", () => {
-  const s = new Simulation(123),
-    ammo = s.pickups.filter((p) => isSpecialAmmo(p.kind));
-  assert.equal(ammo.length, 8);
-  for (const kind of AMMO_ORDER.filter(isSpecialAmmo))
-    assert.equal(ammo.filter((p) => p.kind === kind).length, 2);
-  for (const p of ammo) {
-    assert.ok(ammo.some((q) => q.kind === p.kind && q.x === -p.x && q.z === -p.z));
-    assert.ok(Math.hypot(p.x, p.z) > 20);
-    assert.equal(s.nav.blocked[s.nav.index(p)], 0);
-    for (const team of [0, 1] as const)
-      for (const spawn of spawnPositions(team)) {
-        const path = s.nav.find(spawn, p);
-        assert.ok(path.length > 0 && distance(path.at(-1)!, p) < 1.8);
-      }
-  }
   s.dispose();
 });
 

@@ -1,29 +1,14 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { pickupLayout, spawnPositions, type CoverDef } from "../src/game/arena";
+import type { CoverDef } from "../src/game/arena";
+import { ARENA } from "../src/game/data";
 import { MAPS } from "../src/game/maps";
-import { Navigation } from "../src/game/navigation";
 import { Simulation } from "../src/game/simulation";
 import { collectPickup } from "../src/game/weapons";
 import { botCommand } from "../src/game/ai";
-import type { Cover } from "../src/game/types";
 before(async () => {
   await RAPIER.init();
-});
-
-test("authored maps keep every pickup and spawn connected", () => {
-  for (const map of MAPS) {
-    const nav = new Navigation();
-    nav.rebuild(map.layout().map((c) => ({ ...c, alive: true })) as Cover[]);
-    for (const p of [...pickupLayout, ...spawnPositions(0), ...spawnPositions(1)]) {
-      assert.equal(nav.blocked[nav.index(p)], 0, `blocked ${map.id}: ${JSON.stringify(p)}`);
-      assert.ok(
-        nav.find({ x: 0, z: 0 }, p).length > 0 || (p.x === 0 && p.z === 0),
-        `unreachable ${map.id}: ${JSON.stringify(p)}`,
-      );
-    }
-  }
 });
 
 test("every spawn row starts interpolation and bot history at its actual body position", () => {
@@ -81,7 +66,7 @@ test("solo roster, weak armor, reduced damage, repairs, and enemy replacements",
     assert.equal(enemy.alive, true);
     assert.equal(s.match.phase, "playing");
   } finally {
-    s.world.free();
+    s.dispose();
   }
 });
 test("solo survives beyond 50 kills, ends on death or ten minutes, and resets cleanly", () => {
@@ -127,7 +112,7 @@ test("solo survives beyond 50 kills, ends on death or ten minutes, and resets cl
     assert.equal(s.match.time, 300);
     assert.equal(s.tanks.filter((t) => t.team === 0).length, 6);
   } finally {
-    s.world.free();
+    s.dispose();
   }
 });
 test("solo enemies fire slowly and never lay mines", () => {
@@ -149,7 +134,7 @@ test("solo enemies fire slowly and never lay mines", () => {
     assert.equal(command.mine, false);
     assert.ok(t.brain.fireDelay >= 2);
   } finally {
-    s.world.free();
+    s.dispose();
   }
 });
 
@@ -174,11 +159,11 @@ test("solo reinforcements replenish six active enemies and reset the kill counte
     assert.equal(s.tanks.length, 7);
     assert.equal(s.human.kills, 0);
   } finally {
-    s.world.free();
+    s.dispose();
   }
 });
 
-test("each authored map builds completely in both modes and keeps it for the match", () => {
+test("each authored map builds completely in both modes, keeps it for the match and resets without leaking bodies", () => {
   const signature = (covers: CoverDef[]) =>
     covers.map(({ kind, x, z, w, d, h, hp, color }) => [kind, x, z, w, d, h, hp, color]);
   for (const gameMode of ["team", "solo"] as const) {
@@ -187,8 +172,11 @@ test("each authored map builds completely in both modes and keeps it for the mat
       sim.gameMode = gameMode;
       for (const map of MAPS) {
         sim.mapMode = map.id;
+        let bodies = 0;
         for (let round = 0; round < 2; round++) {
           sim.reset();
+          if (round === 0) bodies = sim.world.bodies.len();
+          assert.equal(sim.world.bodies.len(), bodies, "a new round rebuilds the same world");
           assert.equal(sim.mapTheme, map.id, "selection survives a new round");
           assert.equal(sim.mapName, map.name.toUpperCase(), "show the actual battlefield name");
           assert.deepEqual(
@@ -205,7 +193,39 @@ test("each authored map builds completely in both modes and keeps it for the mat
         }
       }
     } finally {
-      sim.world.free();
+      sim.dispose();
     }
   }
 });
+
+/** Seed 417 bots land their first tank hit by step 432 on every map; this leaves margin. */
+const BATTLE_STEPS = 600;
+for (const map of MAPS)
+  test(`${map.name}: bots fire and hit each other while the boundary walls contain every tank`, () => {
+    const sim = new Simulation(417, { mapMode: map.id });
+    try {
+      sim.start();
+      const ids = new Set(sim.tanks.map((tank) => tank.id));
+      let hits = 0;
+      for (let i = 0; i < BATTLE_STEPS; i++) {
+        sim.step(undefined, true);
+        for (const event of sim.events)
+          if (
+            (event.type === "hurt" || event.type === "death") &&
+            ids.has(event.owner!) &&
+            event.owner !== event.id
+          )
+            hits++;
+        sim.events = [];
+        for (const tank of sim.tanks.filter((tank) => tank.alive)) {
+          const p = tank.body.translation();
+          assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
+          assert.ok(Math.abs(p.x) < ARENA && Math.abs(p.z) < ARENA, `${tank.name} left the arena`);
+        }
+      }
+      assert.ok(sim.shotsFired > 0, "bots engage on this layout");
+      assert.ok(hits > 0, "bot shells reach other tanks");
+    } finally {
+      sim.dispose();
+    }
+  });

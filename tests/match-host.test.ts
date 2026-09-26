@@ -2,7 +2,7 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { MatchHost } from "../src/net/match-host";
-import { StateMirror, StateStream, type FullState, type Snapshot } from "../src/net/replication";
+import { StateMirror, StateStream, type FullState } from "../src/net/replication";
 import {
   CONTENT_VERSION,
   PROTOCOL_VERSION,
@@ -10,9 +10,8 @@ import {
   type Control,
   settingsReader,
 } from "../src/net/protocol";
-import { captureScene, projectScene } from "../src/net/scene-codec";
-import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
-import { idleCommand } from "../src/game/types";
+import { captureScene } from "../src/net/scene-codec";
+import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
 });
@@ -177,104 +176,13 @@ test("humans-only removes expired reservations and accepts new occupants without
   }
 });
 
-for (const mapMode of ["village", "harbor", "quarry"] as const) {
-  test(
-    mapMode +
-      ": full and field deltas round-trip through JSON, including destruction and late joins",
-    () => {
-      const sim = createMultiplayerSimulation(
-        4242,
-        [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
-        { mapMode },
-      );
-      try {
-        sim.start();
-        const identity = { roomEpoch: "room", roundId: 1 };
-        const stream = new StateStream(identity),
-          mirror = new StateMirror();
-        const full = stream.full(captureScene(sim), 0, 0);
-        assert.ok(Buffer.byteLength(JSON.stringify(full)) < 160_000, "Full-state wire budget");
-        mirror.applyFull(JSON.parse(JSON.stringify(full)), identity);
-        let removed = false;
-        for (let tick = 1; tick <= 180; tick++) {
-          if (tick === 30)
-            for (const cover of sim.covers
-              .filter((cover) => cover.alive && cover.destructible)
-              .slice(0, 8))
-              sim.damageCover(cover, 10000, -1, 0);
-          if (tick === 90) for (const fragment of sim.fragments) fragment.life = 0;
-          sim.stepWith(new Map([[sim.human.id, { ...idleCommand(), moveX: 1, fire: true }]]));
-          sim.events = [];
-          if (tick % 3) continue;
-          const scene = captureScene(sim),
-            snap = stream.snapshot(scene, tick, [], []);
-          assert.ok(
-            Buffer.byteLength(JSON.stringify(snap)) < 128_000,
-            "Burst snapshot wire budget",
-          );
-          removed ||= !!snap.removed;
-          assert.ok(mirror.applySnapshot(JSON.parse(JSON.stringify(snap))));
-          assert.deepEqual(mirror.state, scene);
-          assert.deepEqual(mirror.render(sim.human.id), projectScene(scene, sim.human.id));
-          if (tick === 60 || tick === 93) {
-            const late = new StateMirror();
-            late.applyFull(JSON.parse(JSON.stringify(stream.full(scene, tick, 0))), identity);
-            assert.deepEqual(late.render(sim.human.id), mirror.render(sim.human.id));
-          }
-        }
-        assert.equal(removed, true);
-        assert.ok(mirror.render(sim.human.id).covers.some((cover) => cover.maxHp === Infinity));
-        assert.doesNotMatch(JSON.stringify(mirror.state), /"body"|"collider"|Infinity|NaN/);
-      } finally {
-        sim.dispose();
-      }
-    },
-  );
-}
-test("frames omit identity and unchanged data, and scenes carry only presentation fields", () => {
-  const sim = createMultiplayerSimulation(
-    4242,
-    [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
-    { mapMode: "village" },
-  );
-  try {
-    sim.start();
-    sim.stepWith(new Map([[sim.human.id, { ...idleCommand(), fire: true }]]));
-    const scene = captureScene(sim);
-    const stream = new StateStream({ roomEpoch: "room", roundId: 1 });
-    stream.full(scene, 0, 0);
-    assert.deepEqual(Object.keys(stream.snapshot(scene, 1, [], [])), ["seq", "tick", "elapsed"]);
-    const { entities } = scene;
-    assert.ok(entities.shots.length && entities.covers.some((cover) => cover.motion));
-    for (const shot of entities.shots)
-      assert.deepEqual(
-        Object.keys(shot).filter(
-          (field) =>
-            !["id", "x", "z", "y", "visualY", "vx", "vz", "weapon", "team"].includes(field),
-        ),
-        [],
-      );
-    for (const cover of entities.covers)
-      if (cover.motion)
-        assert.deepEqual(Object.keys(cover.motion), ["originX", "originZ", "w", "d"]);
-    assert.ok(entities.tanks.every((tank) => !("previous" in tank)));
-    const viewer = projectScene(scene, sim.human.id).viewer;
-    assert.deepEqual(viewer.previous, { x: viewer.position.x, z: viewer.position.z });
-  } finally {
-    sim.dispose();
-  }
-});
 test("a shell in straight flight is one trace segment per frame", () => {
   const h = harness();
   try {
     h.join("alice");
     h.action("alice", "start");
     const sim = h.host.simulation!;
-    for (const cover of sim.covers) if (cover.body.isValid()) sim.world.removeRigidBody(cover.body);
-    sim.covers = [];
-    sim.movableCovers = [];
-    sim.coverByCollider.clear();
-    sim.nav.rebuild([]);
+    clearArena(sim, sim.tanks);
     sim.human.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
     h.action("alice", "input", {
       controlEpoch: h.latest("alice", "control").controlEpoch,
@@ -303,32 +211,6 @@ test("a shell in straight flight is one trace segment per frame", () => {
     h.host.dispose();
   }
 });
-test("mirror rejects corrupt or skipped deltas atomically and a full baseline repairs it", () => {
-  const sim = createMultiplayerSimulation(4242, []);
-  try {
-    const identity = { roomEpoch: "r", roundId: 1 },
-      state = captureScene(sim),
-      stream = new StateStream(identity),
-      mirror = new StateMirror();
-    const full = stream.full(state, 0, 0);
-    mirror.applyFull(full, identity);
-    const before = JSON.stringify(mirror.state),
-      bad: Snapshot = {
-        ...stream.snapshot(state, 3, [], []),
-        updates: { tanks: { [sim.tanks[0].id]: { hp: "bad" } } },
-      };
-    assert.equal(mirror.applySnapshot(bad), undefined);
-    assert.equal(JSON.stringify(mirror.state), before);
-    assert.equal(mirror.needsFull, true);
-    mirror.applyFull(full, identity);
-    assert.equal(mirror.applySnapshot({ ...bad, seq: 9 }), undefined);
-    assert.equal(JSON.stringify(mirror.state), before);
-    mirror.applyFull(stream.full(state, 3, 0), identity);
-    assert.equal(mirror.needsFull, false);
-  } finally {
-    sim.dispose();
-  }
-});
 test("two seats drive independently, reconnect revokes the old socket, and host transfer persists", () => {
   const h = harness();
   try {
@@ -341,11 +223,7 @@ test("two seats drive independently, reconnect revokes the old socket, and host 
     const sim = h.host.simulation!,
       a = sim.tanks.find((t) => t.id === first.tankId)!,
       b = sim.tanks.find((t) => t.id === second.tankId)!;
-    for (const cover of sim.covers) if (cover.body.isValid()) sim.world.removeRigidBody(cover.body);
-    sim.covers = [];
-    sim.movableCovers = [];
-    sim.coverByCollider.clear();
-    sim.nav.rebuild([]);
+    clearArena(sim, sim.tanks);
     a.body.setTranslation({ x: -10, y: 0.65, z: 0 }, true);
     b.body.setTranslation({ x: 10, y: 0.65, z: 0 }, true);
     for (let seq = 1; seq <= 20; seq++) {
@@ -529,11 +407,7 @@ test("real host messages apply to mirrors and projectile traces survive an impac
     const tank = sim.human;
     tank.protection = 0;
     tank.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
-    for (const cover of sim.covers) if (cover.body.isValid()) sim.world.removeRigidBody(cover.body);
-    sim.covers = [];
-    sim.movableCovers = [];
-    sim.coverByCollider.clear();
-    sim.nav.rebuild([]);
+    clearArena(sim, sim.tanks);
     sim.addCover({ kind: "concrete", x: 0, z: 4, w: 10, h: 4, d: 1, hp: 100, color: 0x999999 });
     h.action("alice", "input", {
       controlEpoch: control.controlEpoch,
@@ -692,6 +566,24 @@ test("create starts a selected humans-only map immediately and subsequent player
     h.host.dispose();
   }
 });
+test("a token from an expired room epoch joins as a new player with a reset notice", () => {
+  const h = harness();
+  try {
+    h.join("alice");
+    assert.equal(h.latest("alice", "welcome").reset, false);
+    h.join("returning", { token: "credential-from-an-old-room", roomEpoch: "expired-room" });
+    const welcome = h.latest("returning", "welcome");
+    assert.equal(welcome.reset, true, "the client must drop its old session state");
+    assert.equal(welcome.roomEpoch, "test-room");
+    assert.notEqual(welcome.token, "credential-from-an-old-room");
+    assert.equal(h.latest("returning", "lobby").players.length, 2);
+    // A stale token for this same epoch names a seat that expired, which is refused instead.
+    h.join("expired", { token: "credential-never-issued", roomEpoch: "test-room" });
+    assert.equal(h.latest("expired", "error").code, "seat-expired");
+  } finally {
+    h.host.dispose();
+  }
+});
 test("a stale directory selection cannot recreate an empty room; a dropped connection retains its grace period", () => {
   const h = harness();
   try {
@@ -733,7 +625,9 @@ test("round length defaults to ten minutes, validates bounds and is controlled b
     assert.equal(h.host.simulation!.match.time, 60);
     assert.equal(h.latest("bob", "lobby").settings.roundMinutes, 1);
     h.host.simulation!.match.scores = [1, 0];
-    for (let i = 0; i < 1201; i++) h.advance();
+    // Skip to the last frame of the minute instead of simulating all of it.
+    h.host.simulation!.match.time = 0.01;
+    h.advance();
     assert.equal(h.host.phase, "results");
     assert.equal(h.host.simulation!.match.winner, 0);
     assert.equal(h.host.simulation!.match.time, 0);

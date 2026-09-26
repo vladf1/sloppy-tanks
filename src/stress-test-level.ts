@@ -1,7 +1,7 @@
 import type { CoverDef } from "./game/arena";
 import { ARENA } from "./game/data";
 import type { ArenaMap } from "./game/maps";
-import type { Simulation, SimulationSetup } from "./game/simulation";
+import type { SimulationSetup } from "./game/simulation";
 import type { CoverKind } from "./game/types";
 import type { VehicleKind } from "./game/types";
 import { TIMBER_HEALTH } from "./game/timber-layout";
@@ -129,11 +129,6 @@ export const STRESS_TEST_MAP: ArenaMap = {
   outerFloorExtent: ARENA * 2 + 20,
   layout: stressTestLayout,
 };
-
-export function configureStressTest(simulation: Simulation): void {
-  Object.assign(simulation, STRESS_TEST_SETUP);
-  simulation.reset(STRESS_TANK_COUNT);
-}
 
 export const STRESS_TEST_SETUP = {
   customMap: STRESS_TEST_MAP,

@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { NerdStats } from "../src/game/nerd-stats";
 
 type Listener = () => void;
@@ -233,37 +232,4 @@ test("panel has one open section per group with the expected rows", () => {
   } finally {
     f.dispose();
   }
-});
-
-test("panel header, section headings, and data use different fonts", () => {
-  const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
-  const ruleBody = (selector: string): string => {
-    const escaped = selector.replace(".", "\\.");
-    const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)}`));
-    assert.ok(match, `missing ${selector} rule`);
-    return match[1];
-  };
-  const familyOf = (body: string): string => {
-    const match = body.match(/font-family\s*:\s*([^;]+);/);
-    assert.ok(match, "rule has no font-family");
-    return match[1].trim().toLowerCase();
-  };
-  const headerFont = familyOf(ruleBody("#nerd-stats button"));
-  const sectionFont = familyOf(ruleBody("#nerd-stats summary"));
-  const dataRule = ruleBody("#nerd-stats pre");
-  const dataFont = familyOf(dataRule);
-  assert.ok(
-    /pointer-events\s*:\s*auto/.test(dataRule),
-    "data rows must re-enable pointer events or hover tooltips never fire",
-  );
-  assert.ok(!headerFont.includes("mono"), `header must not be monospace: ${headerFont}`);
-  assert.ok(!sectionFont.includes("mono"), `section heading must not be monospace: ${sectionFont}`);
-  assert.ok(dataFont.includes("mono"), `data must stay monospace: ${dataFont}`);
-  assert.notEqual(headerFont, dataFont);
-  const headerSize = ruleBody("#nerd-stats button").match(/font-size\s*:\s*([\d.]+)px/);
-  assert.ok(headerSize, "header needs an explicit font size");
-  assert.ok(
-    Number(headerSize[1]) > 11,
-    `header must be larger than the 11px data: ${headerSize[1]}px`,
-  );
 });

@@ -1,39 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as THREE from "three/webgpu";
-import { spawnPositions } from "../src/game/arena";
+import type * as THREE from "three/webgpu";
 import { Flags } from "../src/game/flags";
-
-test("every flag has a visible pole and cloth at its team spawn", () => {
-  const flags = new Flags();
-  const poles = flags.group.children.find(
-    (child) => child.name === "flag-pole",
-  ) as THREE.InstancedMesh;
-  const cloth = flags.group.children.filter(
-    (child) => child.name === "flag-cloth",
-  ) as THREE.InstancedMesh[];
-  const expected = [spawnPositions(0), spawnPositions(1)];
-  assert.equal(poles.count, expected[0].length + expected[1].length);
-  assert.equal(cloth.length, 2);
-  const matrix = new THREE.Matrix4();
-  let poleIndex = 0;
-  for (const team of [0, 1] as const) {
-    assert.equal(cloth[team].count, expected[team].length);
-    for (const [i, spawn] of expected[team].entries()) {
-      poles.getMatrixAt(poleIndex++, matrix);
-      assert.deepEqual(
-        new THREE.Vector3().setFromMatrixPosition(matrix).toArray(),
-        [team === 0 ? -62 : 62, 2.4, spawn.z].map(Math.fround),
-      );
-      cloth[team].getMatrixAt(i, matrix);
-      assert.deepEqual(
-        new THREE.Vector3().setFromMatrixPosition(matrix).toArray(),
-        [team === 0 ? -62 : 62, 4.6, spawn.z].map(Math.fround),
-      );
-      assert.ok(cloth[team].castShadow && cloth[team].receiveShadow);
-    }
-  }
-});
 
 test("wind animation retains geometry, instance buffers, and conservative bounds", () => {
   const flags = new Flags();

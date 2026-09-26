@@ -2,21 +2,30 @@ import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
-import { stepProjectiles } from "../src/game/weapons";
+import { placeMine, stepMines, stepProjectiles } from "../src/game/weapons";
+import { clearArena, placeTank } from "./fixtures";
 import { STEP } from "../src/game/data";
 before(async () => {
   await RAPIER.init();
 });
 function arena() {
-  const s = new Simulation(123);
-  for (const t of s.tanks) s.world.removeRigidBody(t.body);
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  s.tanks = [];
-  s.covers = [];
-  s.movableCovers = [];
+  const s = clearArena(new Simulation(123));
   s.mines = [];
   s.events = [];
   return s;
+}
+/** A team-0 layer and a team-1 victim `gap` metres east of it. */
+function duel(layerX: number, gap: number) {
+  const s = new Simulation(123);
+  const layer = s.tanks.find((t) => t.team === 0)!;
+  const victim = s.tanks.find((t) => t.team === 1)!;
+  clearArena(s, [layer, victim]);
+  s.start();
+  for (const t of s.tanks) t.protection = 0;
+  placeTank(layer, layerX, 0);
+  placeTank(victim, layerX + gap, 0);
+  s.world.step();
+  return { s, layer, victim };
 }
 function shell(s: Simulation, x = 0) {
   s.shots.push({
@@ -75,6 +84,31 @@ test("shooting a mine chains nearby mines once and credits the shooter", () => {
   assert.equal(s.mines.length, 0);
   assert.equal(s.events.filter((e) => e.type === "explosion").length, 2);
   assert.equal(target.alive, false);
+  assert.equal(s.match.scores[0], 1);
+  s.dispose();
+});
+
+test("mines arm after delay, ignore allies, preserve original owner", () => {
+  const { s, layer, victim } = duel(0, 1);
+  victim.hp = 40;
+  placeMine(s, layer);
+  assert.equal(s.mines.length, 1);
+  stepMines(s, 0.5);
+  assert.ok(victim.alive);
+  assert.equal(s.mines.length, 1);
+  stepMines(s, 0.4);
+  assert.equal(s.mines.length, 0);
+  assert.equal(victim.alive, false);
+  assert.equal(s.match.scores[0], 1);
+  s.dispose();
+});
+test("chain-triggered mines are removed safely during mine iteration", () => {
+  const { s, layer, victim } = duel(-20, 21);
+  victim.hp = 20;
+  for (const x of [0, 1, 2, 3])
+    s.mines.push({ id: s.nextId++, x, z: 0, owner: layer.id, team: layer.team, arm: 0, life: 25 });
+  stepMines(s, STEP);
+  assert.equal(s.mines.length, 0);
   assert.equal(s.match.scores[0], 1);
   s.dispose();
 });

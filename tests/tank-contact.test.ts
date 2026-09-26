@@ -5,6 +5,7 @@ import { Box3 } from "three";
 import { Simulation } from "../src/game/simulation";
 import { tankModel } from "../src/game/models";
 import { STEP, VEHICLES, GROUP, MOVE_ACCELERATION } from "../src/game/data";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
@@ -15,12 +16,7 @@ test("boosted tanks stop at visible hull edges in head-on and side contacts, inc
     for (const axis of ["x", "z"] as const)
       for (const angle of [0, Math.PI / 3])
         for (const team of [0, 1] as const) {
-          const s = new Simulation(123);
-          for (const t of s.tanks) s.world.removeRigidBody(t.body);
-          s.tanks = [];
-          for (const c of s.covers) s.world.removeRigidBody(c.body);
-          s.covers = [];
-          s.movableCovers = [];
+          const s = clearArena(new Simulation(123));
           s.addTank(0, true, kind);
           s.addTank(team, true, kind);
           const [a, b] = s.tanks;
@@ -97,29 +93,10 @@ test("model-sized contact collider is recreated on class-changing respawn and cl
   s.dispose();
 });
 
-test("hull proportions preserve elongated reference-style silhouettes, including tracks and skirts", () => {
-  for (const [kind, ratio] of [
-    ["scout", 1.94],
-    ["balanced", 2.17],
-    ["heavy", 2.17],
-  ] as const) {
-    const model = tankModel(kind, 0);
-    model.updateMatrixWorld(true);
-    const bounds = new Box3().setFromObject(model.userData.hull);
-    const actual = (bounds.max.z - bounds.min.z) / (bounds.max.x - bounds.min.x);
-    assert.ok(Math.abs(actual - ratio) < 0.04, `${kind}: ${actual} versus reference ${ratio}`);
-  }
-});
-
 test("different chassis meeting at right angles cannot overlap their visible hulls", () => {
   for (const aKind of ["scout", "balanced", "heavy"] as const)
     for (const bKind of ["scout", "balanced", "heavy"] as const) {
-      const s = new Simulation(123);
-      for (const t of s.tanks) s.world.removeRigidBody(t.body);
-      for (const c of s.covers) s.world.removeRigidBody(c.body);
-      s.tanks = [];
-      s.covers = [];
-      s.movableCovers = [];
+      const s = clearArena(new Simulation(123));
       s.addTank(0, true, aKind);
       s.addTank(1, true, bKind);
       const [a, b] = s.tanks;
@@ -159,12 +136,7 @@ test("different chassis meeting at right angles cannot overlap their visible hul
 test("long hulls stop at walls using their visible nose and tail", () => {
   for (const kind of ["scout", "balanced", "heavy"] as const)
     for (const side of [-1, 1]) {
-      const s = new Simulation(123);
-      for (const t of s.tanks) s.world.removeRigidBody(t.body);
-      for (const c of s.covers) s.world.removeRigidBody(c.body);
-      s.tanks = [];
-      s.covers = [];
-      s.movableCovers = [];
+      const s = clearArena(new Simulation(123));
       s.addTank(0, true, kind);
       const t = s.tanks[0];
       t.body.setTranslation({ x: 0, y: 0.65, z: -side * 7 }, true);

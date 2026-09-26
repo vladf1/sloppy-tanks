@@ -9,6 +9,7 @@ import { longestLife, recordKill } from "../src/game/combat-record";
 import { idleCommand } from "../src/game/types";
 import { fireWeapon, stepProjectiles, collectPickup } from "../src/game/weapons";
 import { respawnTank } from "../src/game/tank-lifecycle";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
@@ -218,12 +219,7 @@ test("direct hit rate counts emitted projectiles and enemy contacts, excluding p
     s.start();
     const p = s.human;
     const enemy = s.tanks.find((t) => t.team !== p.team)!;
-    for (const cover of s.covers) {
-      s.world.removeRigidBody(cover.body);
-    }
-    s.covers = [];
-    s.movableCovers = [];
-    s.coverByCollider.clear();
+    clearArena(s, s.tanks);
     for (const tank of s.tanks) {
       tank.body.setTranslation(
         { x: tank === p || tank === enemy ? 0 : 35, y: 0.65, z: tank === enemy ? 8 : 0 },

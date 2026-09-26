@@ -5,6 +5,7 @@ import { Simulation } from "../src/game/simulation";
 import { collectPickup, stepProjectiles } from "../src/game/weapons";
 import { LASER_DEFENSE, Random, STEP } from "../src/game/data";
 import { botCommand } from "../src/game/ai";
+import { clearArena } from "./fixtures";
 import { idleCommand, type Shot, type Weapon, type Pickup } from "../src/game/types";
 before(async () => {
   await RAPIER.init();
@@ -12,14 +13,7 @@ before(async () => {
 function fixture() {
   const s = new Simulation(123),
     t = s.human;
-  for (const bot of s.tanks) if (bot !== t) s.world.removeRigidBody(bot.body);
-  s.tanks = [t];
-  for (const cover of s.covers) s.world.removeRigidBody(cover.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.nav.rebuild([]);
-  s.pickups = [];
+  clearArena(s, [t]);
   t.team = s.humanTeam = 0;
   t.protection = 0;
   t.laser = LASER_DEFENSE.duration;
@@ -231,7 +225,9 @@ test("laser refreshes to twenty seconds, pauses, expires, and clears on death/re
   for (let i = 0; i < 60; i++) s.step();
   assert.equal(t.laser, 20);
   s.start();
-  for (let i = 0; i < 1201; i++) s.step(idleCommand());
+  // Fast-forward to the final tick of the 20-second timer.
+  t.laser = STEP;
+  s.step(idleCommand());
   assert.equal(t.laser, 0);
   collectPickup(s, t, pickup(s));
   s.damageTank(t, 999, t.id, t.team);
@@ -261,9 +257,12 @@ test("one central rare pickup starts delayed and refills much slower than ordina
   collectPickup(arena, t, p);
   t.body.setTranslation({ x: 15, y: 0.65, z: 0 }, true);
   t.previous = { x: 15, z: 0 };
-  for (let i = 0; i < 44 * 60; i++) arena.step();
+  assert.equal(p.cooldown, LASER_DEFENSE.respawn);
+  // Fast-forward 44 of the 45 seconds, then let the pickup system count down the rest.
+  p.cooldown -= 44;
+  for (let i = 0; i < 59; i++) arena.step();
   assert.equal(p.available, false);
-  for (let i = 0; i < 61; i++) arena.step();
+  for (let i = 0; i < 2; i++) arena.step();
   assert.equal(p.available, true);
   arena.dispose();
 });

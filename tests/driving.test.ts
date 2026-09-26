@@ -3,20 +3,15 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand, type VehicleKind } from "../src/game/types";
-import { angleDelta, VEHICLES } from "../src/game/data";
+import { angleDelta, MOVE_ACCELERATION, STEP, VEHICLES } from "../src/game/data";
+import { collectPickup } from "../src/game/weapons";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
 });
 function arena(kind: VehicleKind = "balanced", heading = 0) {
-  const s = new Simulation(123);
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  for (const t of s.tanks) s.world.removeRigidBody(t.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.tanks = [];
-  s.pickups = [];
+  const s = clearArena(new Simulation(123));
   const t = s.addTank(0, true, kind);
   t.heading = heading;
   t.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
@@ -137,4 +132,37 @@ test("release brakes promptly and stops turning; external knockback is not erase
   } finally {
     s.dispose();
   }
+});
+
+test("diagonal input is normalized, release brakes to rest, and a speed boost reaches 1.5x", () => {
+  const distances: number[] = [];
+  for (const diagonal of [false, true]) {
+    const s = arena("balanced", diagonal ? Math.PI / 4 : 0), // Compare travel after alignment.
+      t = s.human;
+    try {
+      const input = { ...idleCommand(), moveX: diagonal ? 1 : 0, moveZ: 1 };
+      for (let i = 0; i < 60; i++) s.step(input);
+      const p = t.body.translation();
+      distances.push(Math.hypot(p.x, p.z));
+      assert.ok(Math.hypot(t.body.linvel().x, t.body.linvel().z) > VEHICLES[t.kind].speed * 0.98);
+      const brakingSteps = Math.ceil(VEHICLES[t.kind].speed / (MOVE_ACCELERATION * STEP));
+      for (let i = 0; i < brakingSteps; i++) s.step();
+      assert.ok(Math.hypot(t.body.linvel().x, t.body.linvel().z) < 0.01);
+      collectPickup(s, t, {
+        id: s.nextId++,
+        x: 0,
+        z: 0,
+        kind: "speed",
+        available: true,
+        cooldown: 0,
+      });
+      const boostSteps = Math.ceil((VEHICLES[t.kind].speed * 1.5) / (MOVE_ACCELERATION * STEP)) + 2;
+      for (let i = 0; i < boostSteps; i++) s.step(input);
+      const speed = Math.hypot(t.body.linvel().x, t.body.linvel().z);
+      assert.ok(Math.abs(speed / VEHICLES[t.kind].speed - 1.5) < 0.03);
+    } finally {
+      s.dispose();
+    }
+  }
+  assert.ok(Math.abs(distances[0] - distances[1]) < 0.02);
 });

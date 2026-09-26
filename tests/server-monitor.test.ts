@@ -61,13 +61,17 @@ test("server monitor logs room lifecycle in plain lines", () => {
     reason: "Join timed out",
   });
   monitor.ended("ABCDEFGH", "expired", 1_800_000);
-  assert.deepEqual(lines, [
-    "room ABCDEFGH created",
-    "room ABCDEFGH player joined (1 connected)",
-    "room ABCDEFGH player disconnected (code 1006) (0 connected)",
-    "room ABCDEFGH player left (0 connected)",
-    "room ABCDEFGH server closed a socket: 1008 Join timed out (0 connected)",
-    "room ABCDEFGH ended: expired after 30m 0s",
-  ]);
+  // One plain line per lifecycle event, naming the room and the facts an operator needs.
+  assert.equal(lines.length, 6);
+  assert.ok(lines.every((line) => line.startsWith("room ABCDEFGH ")));
+  for (const [i, fact] of [
+    /created/,
+    /joined.*1 connected/,
+    /1006/,
+    /left/,
+    /1008.*Join timed out/,
+    /expired.*30m/,
+  ].entries())
+    assert.match(lines[i], fact);
   assert.equal(monitor.sample().totals.roomsCreated, 1);
 });

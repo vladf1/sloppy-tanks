@@ -6,20 +6,13 @@ import { idleCommand } from "../src/game/types";
 import { blastDebris } from "../src/game/debris-physics";
 import { stepProjectiles } from "../src/game/projectiles";
 import { GROUP, STEP } from "../src/game/data";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
 });
 function arena() {
-  const sim = new Simulation(123);
-  for (const c of sim.covers) sim.world.removeRigidBody(c.body);
-  for (const t of sim.tanks) sim.world.removeRigidBody(t.body);
-  sim.covers = [];
-  sim.movableCovers = [];
-  sim.coverByCollider.clear();
-  sim.tanks = [];
-  sim.pickups = [];
-  sim.nav.rebuild([]);
+  const sim = clearArena(new Simulation(123));
   sim.start();
   return sim;
 }
