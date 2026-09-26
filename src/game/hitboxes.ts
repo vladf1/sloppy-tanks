@@ -1,58 +1,26 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { Box3, Vector3 } from "three";
 import { GROUP, VEHICLES } from "./data";
-import { tankModel } from "./models";
+import { tankHull } from "./tank-dimensions";
 import type { Shot, Tank, VehicleKind } from "./types";
 
 export const SHELL_HIT_RADIUS = 0.18;
-// Measure each chassis once using the same geometry and transforms as rendering.
-// The hull includes tracks; the independently rotating gun is not a hull target.
 const shapes = Object.fromEntries(
   (Object.keys(VEHICLES) as VehicleKind[]).map((kind) => {
-    const model = tankModel(kind, 0);
-    model.updateMatrixWorld(true);
-    const bounds = new Box3().setFromObject(model.userData.hull);
-    const size = bounds.getSize(new Vector3());
-    const center = bounds.getCenter(new Vector3());
-    const visualMuzzle = model.userData.muzzle.getWorldPosition(new Vector3());
-    const muzzle = visualMuzzle.clone();
-    if (kind === "humvee") {
-      // Keep the visual roof launcher high, but put its combat lane inside the
-      // planar tank hit volume used by the rest of the simulation.
-      muzzle.y = 1.15;
-    }
+    const { size } = tankHull(kind);
     return [
       kind,
-      {
-        shape: new RAPIER.Cuboid(
-          size.x / 2 + SHELL_HIT_RADIUS,
-          0.9, // Combat is planar; visual launcher height does not enlarge the target.
-          size.z / 2 + SHELL_HIT_RADIUS,
-        ),
-        center,
-        size,
-        muzzle,
-        visualMuzzle,
-      },
+      new RAPIER.Cuboid(
+        size.x / 2 + SHELL_HIT_RADIUS,
+        0.9, // Combat is planar; visual launcher height does not enlarge the target.
+        size.z / 2 + SHELL_HIT_RADIUS,
+      ),
     ];
   }),
-) as Record<
-  VehicleKind,
-  { shape: RAPIER.Cuboid; center: Vector3; size: Vector3; muzzle: Vector3; visualMuzzle: Vector3 }
->;
-
-export function tankMuzzle(kind: VehicleKind) {
-  return shapes[kind].muzzle;
-}
-
-/** Render-only launch point; unlike tankMuzzle, this is not used for collision queries. */
-export function tankVisualMuzzle(kind: VehicleKind) {
-  return shapes[kind].visualMuzzle;
-}
+) as Record<VehicleKind, RAPIER.Cuboid>;
 
 /** Full visible footprint for tank contact, without the shell-radius allowance. */
 export function tankContactCollider(kind: VehicleKind) {
-  const { size, center } = shapes[kind];
+  const { size, center } = tankHull(kind);
   return RAPIER.ColliderDesc.cuboid(size.x / 2, 0.6, size.z / 2)
     .setTranslation(center.x, 0, center.z)
     .setCollisionGroups(GROUP.tankContact)
@@ -75,7 +43,8 @@ export function tankHitTime(
   const end = tank.body.translation();
   const vx = frameDelta > 0 ? (end.x - tank.previous.x) / frameDelta : 0;
   const vz = frameDelta > 0 ? (end.z - tank.previous.z) / frameDelta : 0;
-  const { shape, center } = shapes[tank.kind];
+  const shape = shapes[tank.kind];
+  const { center } = tankHull(tank.kind);
   const rotation = tank.body.rotation();
   // Live tanks rotate only around the vertical axis.
   const cos = 1 - 2 * rotation.y * rotation.y;

@@ -30,11 +30,7 @@ import {
 import { newMatch, tickMatch } from "./match";
 import { MAPS, type ArenaMap } from "./maps";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
-import {
-  DRAGON_TOOTH_MASS,
-  dragonToothVariant,
-  quarryBarrierColliders,
-} from "./quarry-barrier-shapes";
+import { DRAGON_TOOTH_MASS, dragonToothVariant, quarryBarrierHulls } from "./quarry-barrier-shapes";
 import { Navigation } from "./navigation";
 import { GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING } from "./simulation-rules";
 import { driveTank } from "./tank-driving";
@@ -281,7 +277,9 @@ export class Simulation {
     );
     let shapes =
       c.kind === "teeth" || c.kind === "hedgehog"
-        ? quarryBarrierColliders(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z))
+        ? quarryBarrierHulls(c.kind, c.w, c.h, c.d, dragonToothVariant(c.x, c.z)).map((points) =>
+            RAPIER.ColliderDesc.convexHull(points)!,
+          )
         : drum
           ? [barrelCollider(c.w, c.h, c.d)]
           : [RAPIER.ColliderDesc.cuboid(c.w / 2, c.h / 2, c.d / 2)];

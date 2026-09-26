@@ -159,14 +159,18 @@ try {
   for (const url of networkRequests) {
     assert.ok(!url.endsWith(".wasm"), "Multiplayer must not download client physics");
     const path = new URL(url).pathname;
-    const chunk = [...chunks].find(([file]) => path.endsWith(`/${file}`));
+    const modules = [...chunks].find(([file]) => path.endsWith(`/${file}`))?.[1].modules ?? [];
     assert.ok(
-      !chunk?.[1].modules.some((id) => /\/src\/game\/simulation\.ts$/.test(id)),
+      !modules.some((id) => /\/src\/game\/simulation\.ts$/.test(id)),
       "Multiplayer must not download a client simulation",
+    );
+    assert.ok(
+      !modules.some((id) => /\/@dimforge\//.test(id)),
+      `Multiplayer must not download Rapier JS: ${path}`,
     );
   }
   result.networkRequests = networkRequests;
-  console.log("Multiplayer: no client simulation or Rapier WASM requests.");
+  console.log("Multiplayer: no client simulation, Rapier JS or Rapier WASM requests.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.httpServer.close(resolve));

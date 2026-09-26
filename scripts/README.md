@@ -67,7 +67,9 @@ The dev server also serves interactive fixtures, listed on the dev site's
 
 `npm run check:multiplayer-loading` builds and plays a production copy. It rejects
 multiplayer requests, sockets or UI in single-player, server dependencies in any
-browser chunk, and client simulation/WASM downloads when opening multiplayer.
+browser chunk, and client simulation or Rapier JS/WASM downloads when opening
+multiplayer. `tests/multiplayer-client-imports.test.ts` guards the same import
+boundary in `npm test` and prints the offending import chain.
 It also checks that multiplayer's extracted stylesheet loads only in multiplayer,
 inactive menu actions stay hidden, and the menu fits desktop viewports.
 

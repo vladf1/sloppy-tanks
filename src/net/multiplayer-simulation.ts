@@ -1,5 +1,5 @@
 import { Simulation, type SimulationSetup } from "../game/simulation";
-import { idleCommand, type PlayerAssignment, type Tank } from "../game/types";
+import type { PlayerAssignment, Tank } from "../game/types";
 
 export const MAX_PLAYERS = 8;
 export const TEAM_SLOTS = 6;
@@ -41,16 +41,6 @@ export function createMultiplayerSimulation(
     roundCount: TEAM_SLOTS * 2,
     players: players.map((player) => Object.freeze({ ...player, name: player.name.trim() })),
   });
-}
-
-/** Bot takeover changes the driver, never the player's tank, balance, score or life. */
-export function setDriver(tank: Tank, driver: Tank["driver"]): void {
-  if (driver === "human" && !tank.human) {
-    throw new Error("A fill bot has no player seat");
-  }
-  tank.driver = driver;
-  tank.command = { ...idleCommand(), aim: tank.aim };
-  tank.brain.decision = 0;
 }
 
 /** Reusing a slot starts a fresh life and score without manufacturing a team kill. */

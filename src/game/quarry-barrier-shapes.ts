@@ -1,5 +1,3 @@
-import RAPIER from "@dimforge/rapier3d-compat";
-
 export const DRAGON_TOOTH_SCALE = 0.9;
 export const DRAGON_TOOTH_MASS = 9.6 * DRAGON_TOOTH_SCALE ** 3;
 
@@ -42,9 +40,10 @@ export const HEDGEHOG_BEAMS = [
   { length: 3.1, rx: Math.PI / 2, rz: 0 },
 ] as const;
 
-/** Match sloping concrete and open steel shapes, so shots pass through visible gaps.
- * Each steel flange/web is convex, preserving the open gaps on a dynamic body. */
-export function quarryBarrierColliders(
+/** Convex hull points matching sloping concrete and open steel shapes, so shots pass
+ * through visible gaps. Each steel flange/web is convex, preserving the open gaps on a
+ * dynamic body. Plain points keep the physics engine out of rendering's imports. */
+export function quarryBarrierHulls(
   kind: "teeth" | "hedgehog",
   w: number,
   h: number,
@@ -60,9 +59,9 @@ export function quarryBarrierColliders(
         }
       }
     }
-    return [RAPIER.ColliderDesc.convexHull(new Float32Array(points))!];
+    return [new Float32Array(points)];
   }
-  const shapes: RAPIER.ColliderDesc[] = [];
+  const hulls: Float32Array[] = [];
   for (const beam of HEDGEHOG_BEAMS) {
     for (const [offset, width, depth] of [
       [0, 0.12, 0.44],
@@ -84,8 +83,8 @@ export function quarryBarrierColliders(
           }
         }
       }
-      shapes.push(RAPIER.ColliderDesc.convexHull(new Float32Array(vertices))!);
+      hulls.push(new Float32Array(vertices));
     }
   }
-  return shapes;
+  return hulls;
 }

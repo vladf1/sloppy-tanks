@@ -1,5 +1,4 @@
 import { idleCommand, type Tank, type VehicleCommand, type Weapon } from "../game/types";
-import { setDriver } from "./multiplayer-simulation";
 import { PRECISION } from "./scene-codec";
 
 export const INPUT_LEASE_MS = 250;
@@ -82,6 +81,16 @@ function validInput(value: unknown): value is WireInput {
             PLAYER_WEAPONS.some((weapon) => weapon === action.weapon))),
     )
   );
+}
+
+/** Bot takeover changes the driver, never the player's tank, balance, score or life. */
+export function setDriver(tank: Tank, driver: Tank["driver"]): void {
+  if (driver === "human" && !tank.human) {
+    throw new Error("A fill bot has no player seat");
+  }
+  tank.driver = driver;
+  tank.command = { ...idleCommand(), aim: tank.aim };
+  tank.brain.decision = 0;
 }
 
 /** One assigned seat, independent of sockets and wall-clock APIs. Room ownership is checked by the host. */

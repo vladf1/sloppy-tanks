@@ -1,7 +1,7 @@
 import { storageInstances } from "./render-resources";
 import * as THREE from "three";
 import { PICKUPS } from "./data";
-import { tankMuzzle } from "./hitboxes";
+import { tankMuzzle } from "./tank-dimensions";
 import type { Simulation } from "./simulation";
 import { renderState, type RenderState } from "./render-state";
 import type { SimEvent } from "./types";

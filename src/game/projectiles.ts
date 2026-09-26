@@ -12,7 +12,8 @@ import {
   PICKUPS,
   WEAPONS,
 } from "./data";
-import { SHELL_HIT_RADIUS, tankHitTime, tankMuzzle } from "./hitboxes";
+import { SHELL_HIT_RADIUS, tankHitTime } from "./hitboxes";
+import { tankMuzzle } from "./tank-dimensions";
 import { laserContactTime } from "./laser-defense";
 import type { Simulation } from "./simulation";
 import type { Fragment, Mine, Shot, Tank } from "./types";
