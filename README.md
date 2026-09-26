@@ -75,10 +75,14 @@ The development build exposes `window.sloppy` for diagnostics; `?tweak` opens th
 Multiplayer is available on the [GitHub Pages site](https://fridman.me/sloppy-tanks/?multiplayer),
 the [Cloudflare site](https://sloppy-tanks.fridman.me/?multiplayer) and the
 [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); all three use the same
-game server. Choose **Play with friends** to browse open rooms. Your saved name is prefilled;
-first-time players get a random bot name they can edit. **Auto** picks the team
-with fewer human seats (including reconnect reservations). Choose a room and
-**Join**, or pick a level and **Create room** to start playing immediately.
+game server. Battle Setup has two tabs: **Single player** and **Multiplayer**.
+Both share the tank cards, so the tank you pick is the one you drive online.
+The Multiplayer tab lists open rooms (it polls only while shown). Your saved name
+is prefilled; first-time players get a random bot name they can edit. **Auto**
+picks the team with fewer human seats (including reconnect reservations); choosing
+Blue or Red repaints the tank previews. Choose a room and **Join room**, or pick a
+map under **New room** and **Create room** to start playing immediately. A page
+that has already built a single-player arena reloads into the room.
 Friends can join later through the list or **COPY ROOM LINK** in the menu.
 Listings show human player counts, map, bot mode, round time and score.
 
@@ -164,7 +168,7 @@ Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` firs
 (or provide a Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `npm run build:dev` builds without publishing.
-The dev build always connects **Play with friends** to the multiplayer server
+The dev build always connects the **Multiplayer** tab to the multiplayer server
 on the VPS, and `deploy:dev` redeploys that server from the same checkout first
 (over SSH) so client and server versions match.
 

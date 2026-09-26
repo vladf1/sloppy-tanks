@@ -39,7 +39,10 @@ try {
   await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
   await delayed.page.locator("#loading").waitFor({ state: "detached" });
   assert.equal(await delayed.page.locator("canvas").count(), 0);
-  assert.equal(await delayed.page.locator('input[value="harbor"]').isChecked(), true);
+  assert.equal(
+    await delayed.page.locator('input[name="mapMode"][value="harbor"]').isChecked(),
+    true,
+  );
   await delayed.page.locator('[data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
@@ -52,7 +55,7 @@ try {
     /round|Downloading|Building|Preparing/,
   );
   // A last-minute choice during the queued start must reach the actual round.
-  await delayed.page.locator('input[value="quarry"]').check();
+  await delayed.page.locator('input[name="mapMode"][value="quarry"]').check();
   assert.equal(await delayed.page.locator("canvas").count(), 0);
   releasePhysics();
   await playing(delayed.page);
@@ -100,7 +103,7 @@ try {
   );
   assert.equal(await graphics.page.locator("#start").isDisabled(), true);
   assert.equal(await graphics.page.locator("#game").isVisible(), false);
-  await graphics.page.locator('input[value="harbor"]').check();
+  await graphics.page.locator('input[name="mapMode"][value="harbor"]').check();
   await graphics.page.screenshot({ path: `${output}/loading-queued-desktop.png` });
   await graphics.page.evaluate(() => window.releaseGraphics());
   await playing(graphics.page);
@@ -158,7 +161,7 @@ try {
   await warm.page.waitForTimeout(150);
   assert.equal(await warm.page.evaluate(() => window.sloppy.view.time), frozen);
   assert.equal(await warm.page.locator("#game").isVisible(), false);
-  await warm.page.locator('input[value="harbor"]').check();
+  await warm.page.locator('input[name="mapMode"][value="harbor"]').check();
   await warm.page.locator('[data-kind="scout"]').click();
   await warm.page.locator("#start").click();
   await playing(warm.page);
@@ -176,7 +179,7 @@ try {
   await changed.page.goto(url);
   await ready(changed.page);
   await changed.page.locator('input[value="solo"]').check();
-  await changed.page.locator('input[value="harbor"]').check();
+  await changed.page.locator('input[name="mapMode"][value="harbor"]').check();
   await changed.page.locator('[data-kind="heavy"]').click();
   await changed.page.locator("#start").click();
   await playing(changed.page);
@@ -192,7 +195,10 @@ try {
   // The chosen map is remembered and prepared behind the next visit's menu.
   await changed.page.reload();
   await ready(changed.page);
-  assert.equal(await changed.page.locator('input[value="harbor"]').isChecked(), true);
+  assert.equal(
+    await changed.page.locator('input[name="mapMode"][value="harbor"]').isChecked(),
+    true,
+  );
   assert.equal(await changed.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   await changed.context.close();
 

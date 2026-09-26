@@ -1,10 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { build, minify, type Plugin } from "vite";
 
 const entry = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const game = fileURLToPath(new URL("../src/game.ts", import.meta.url));
 const multiplayer = fileURLToPath(new URL("../src/net/client.ts", import.meta.url));
+const roomBrowser = fileURLToPath(new URL("../src/net/room-browser.ts", import.meta.url));
 
 /** Deliver the authored HTML, CSS and small controller in a single response. */
 export function startupHtml(base: string): Plugin {
@@ -18,6 +20,7 @@ export function startupHtml(base: string): Plugin {
       if (!building) return;
       this.emitFile({ type: "chunk", id: game, preserveSignature: "strict" });
       this.emitFile({ type: "chunk", id: multiplayer, preserveSignature: "strict" });
+      this.emitFile({ type: "chunk", id: roomBrowser, preserveSignature: "strict" });
     },
     transformIndexHtml: {
       order: "post",
@@ -43,6 +46,11 @@ export function startupHtml(base: string): Plugin {
         );
         if (context.bundle && !multiplayerChunk) throw new Error("Missing multiplayer entry chunk");
         const multiplayerUrl = `${base}${multiplayerChunk?.fileName ?? "src/net/client.ts"}`;
+        const roomBrowserChunk = Object.values(context.bundle ?? {}).find(
+          (chunk) => chunk.type === "chunk" && chunk.facadeModuleId === roomBrowser,
+        );
+        if (context.bundle && !roomBrowserChunk) throw new Error("Missing room browser chunk");
+        const roomBrowserUrl = `${base}${roomBrowserChunk?.fileName ?? "src/net/room-browser.ts"}`;
         // These entries are external to the inline build, so Vite cannot attach
         // its usual dynamic-import CSS loader. Load each entry's static CSS
         // graph before starting it, and only when that mode is selected.
@@ -77,9 +85,13 @@ export function startupHtml(base: string): Plugin {
             {
               name: "external-game",
               enforce: "pre",
-              resolveId(id) {
-                if (id === "./game") return { id: "sloppy:game", external: true };
-                if (id === "./net/client") return { id: "sloppy:multiplayer", external: true };
+              resolveId(id, importer) {
+                const target = importer && id.startsWith(".") ? resolve(dirname(importer), id) : id;
+                if (`${target}.ts` === game) return { id: "sloppy:game", external: true };
+                if (`${target}.ts` === multiplayer) {
+                  return { id: "sloppy:multiplayer", external: true };
+                }
+                if (`${target}.ts` === roomBrowser) return { id: "sloppy:rooms", external: true };
                 return null;
               },
             },
@@ -125,6 +137,10 @@ export function startupHtml(base: string): Plugin {
             .replace(
               /import\((["'`])sloppy:multiplayer\1\)/g,
               entryImport(multiplayerUrl, multiplayerChunk?.fileName),
+            )
+            .replace(
+              /import\((["'`])sloppy:rooms\1\)/g,
+              entryImport(roomBrowserUrl, roomBrowserChunk?.fileName),
             )
             .replace(/<\/script/gi, "<\\/script")}</script>`,
         );

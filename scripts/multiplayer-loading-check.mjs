@@ -3,7 +3,7 @@ import { build, preview } from "vite";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
+import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-ui-assertions.mjs";
 
 const directory = "artifacts/performance/multiplayer";
 const outDir = `${directory}/loading-build`;
@@ -78,13 +78,27 @@ try {
   const networkRequests = [];
   const networkPage = await browser.newPage();
   networkPage.on("request", (request) => networkRequests.push(request.url()));
+  // The multiplayer tab loads only the room list; its styles are inline with the menu.
   await networkPage.goto(server.resolvedUrls.local[0] + "?multiplayer");
+  await waitForRoomBrowser(networkPage);
+  await checkMultiplayerMenu(networkPage);
+  const listingRequests = networkRequests.length;
+  for (const file of networkStyles) {
+    assert.ok(
+      !networkRequests.some((url) => new URL(url).pathname.endsWith(`/${file}`)),
+      `The room list does not load in-room styles: ${file}`,
+    );
+  }
+  // A room page loads the multiplayer client and its extracted stylesheet.
+  await networkPage.goto(server.resolvedUrls.local[0] + "?room=ABCD2345");
   await networkPage.locator("#join-room").waitFor();
   await checkMultiplayerMenu(networkPage);
   assert.ok(networkStyles.size > 0, "Build exposes multiplayer's extracted CSS");
   for (const file of networkStyles) {
     assert.ok(
-      networkRequests.some((url) => new URL(url).pathname.endsWith(`/${file}`)),
+      networkRequests
+        .slice(listingRequests)
+        .some((url) => new URL(url).pathname.endsWith(`/${file}`)),
       `Multiplayer loads ${file}`,
     );
   }

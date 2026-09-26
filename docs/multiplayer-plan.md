@@ -292,7 +292,7 @@ Measure actual UTF-8 serialized bytes per client per second, steady/burst snapsh
 
 **PR B — lobby and results:**
 
-- "Play with friends" opens a room browser with saved/random name, Auto/manual team and tank choices. Listings show players, map, bot mode, time and score. Select and Join an existing room; Create starts the selected map immediately, alone if humans-only is enabled. Share `?room=CODE` from the game menu. Show loading, full/team-full, incompatible-build, reconnecting and room-reset states.
+- Battle Setup's Multiplayer tab lists rooms with saved/random name, Auto/manual team and the shared tank cards. Listings show players, map, bot mode, time and score. Select and Join an existing room; Create starts the selected map immediately, alone if humans-only is enabled. Share `?room=CODE` from the game menu. Show loading, full/team-full, incompatible-build, reconnecting and room-reset states.
 - Players choose team/kind in the lobby; the host picks map/difficulty and starts. Store display names locally. Enforce the same choices and limits on the server, including the bot-only HMMWV restriction.
 - Show kills/deaths per participant for the current round, keeping a departed participant's row separate if someone else takes that tank slot. Do not credit a new player with the previous player's counters. Multiplayer does not write single-player personal-best records. Host can start another round from the lobby.
 

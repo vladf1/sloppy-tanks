@@ -60,8 +60,13 @@ export function syncGameOptions(overlay: HTMLElement, options: GameOptions): voi
   if (help) {
     help.textContent = DIFFICULTIES[options.difficulty].description;
   }
+  showTankTeam(overlay, options.humanTeam);
+}
+
+/** Tank previews are one sprite sheet with a row per team colour. */
+export function showTankTeam(overlay: HTMLElement, team: GameOptions["humanTeam"]): void {
   overlay.querySelectorAll(".tank-preview image").forEach((image) => {
-    image.setAttribute("y", String(-options.humanTeam * 400));
+    image.setAttribute("y", String(-team * 400));
   });
 }
 

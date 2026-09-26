@@ -3,6 +3,7 @@ import { endBattle } from "./match";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
 import { bindGameOptions, syncGameOptions } from "./game-options";
+import { bindPlayModes, initialPlayMode, removeMultiplayerTab } from "./play-modes";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
 import type { RenderState } from "./render-state";
@@ -38,6 +39,7 @@ export class UI {
   deathCause = "";
   lastRound = 0;
   private readonly battleSetup: HTMLElement;
+  private playModes?: { close(): void };
   feedRows: { text: string; time: number }[] = [];
   constructor(
     root: HTMLElement,
@@ -119,14 +121,17 @@ export class UI {
         ? "none"
         : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
+    this.playModes?.close();
+    this.playModes = undefined;
     if (phase === "ready") {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
       if (simulation.customMap) {
+        removeMultiplayerTab(this.overlay);
         const details = [
           ["30-Tank Stress Battle", "15 vs 15 · Endless respawns and scoring · No victory"],
           [simulation.customMap.name, simulation.customMap.description],
         ];
-        this.overlay.querySelectorAll(".mode-options fieldset").forEach((fieldset, index) => {
+        this.overlay.querySelectorAll(".battle-choice, .map-choice").forEach((fieldset, index) => {
           const choices = fieldset.querySelectorAll(".mode-option");
           choices.forEach((choice, i) => {
             if (i > 0) {
@@ -151,6 +156,15 @@ export class UI {
     }
     syncGameOptions(this.overlay, simulation);
     bindGameOptions(this.overlay, simulation);
+    const setup = this.overlay.querySelector<HTMLElement>(".start");
+    if (setup) {
+      // This page already runs a single-player arena, so a chosen room opens in a fresh page.
+      this.playModes = bindPlayModes(setup, initialPlayMode(location.search), {
+        choices: () => simulation,
+        single: () => {},
+        enterRoom: (_selection, reload) => reload(),
+      });
+    }
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     this.overlay.dataset.state = "ready";
     const death = this.overlay.querySelector("#death-cause");

@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
+import { waitForRoomBrowser } from "./multiplayer-ui-assertions.mjs";
 
 const url = new URL(process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/");
 url.searchParams.set("multiplayer", "");
@@ -46,7 +47,7 @@ const click = async (selector) => {
 };
 try {
   await page.goto(url.href);
-  await page.locator("#create-room").waitFor();
+  await waitForRoomBrowser(page);
   await page.locator("#player-name").fill("Idle input check");
   assert.equal(await page.locator("#create-humans-only").isChecked(), true);
   await click("#create-room");

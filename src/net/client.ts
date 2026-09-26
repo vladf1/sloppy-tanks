@@ -10,51 +10,36 @@ import type { RenderState } from "../game/render-state";
 import type { Weapon } from "../game/types";
 import { encodeInput, type ControlInput } from "./player-controls";
 import { InputCadence } from "./input-cadence";
-import { Connection } from "./connection";
+import { Connection, type JoinChoice } from "./connection";
 import { StateMirror } from "./replication";
 import { NetworkTimeline } from "./interpolation";
 import { NetworkUI } from "./network-ui";
 import { ROOM_CODE, lobbyReader, controlReader, settingsReader, type Control } from "./protocol";
 import { id } from "./schema";
-import { browseRooms } from "./room-browser";
-import type { JoinChoice } from "./connection";
+import { serverAddress } from "./server-address";
+import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
 
 const MAX_ACTIONS = 8;
-export async function startMultiplayer(root: HTMLElement): Promise<void> {
-  const params = new URLSearchParams(location.search);
-  let room = params.get("room")?.toUpperCase();
-  const local = ["localhost", "127.0.0.1"].includes(location.hostname);
-  const configured: unknown = import.meta.env.VITE_MULTIPLAYER_URL;
-  const endpoint =
-    (import.meta.env.DEV ? params.get("server") : null) ||
-    (typeof configured === "string" ? configured : "") ||
-    (local ? "ws://127.0.0.1:8787" : "");
-  if (!endpoint) {
+export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): void {
+  const room = selection?.room ?? new URLSearchParams(location.search).get("room")?.toUpperCase();
+  if (!room || !ROOM_CODE.test(room)) {
+    // Battle Setup's multiplayer tab lists the rooms that exist.
+    const url = new URL(location.href);
+    url.searchParams.delete("room");
+    url.searchParams.set("multiplayer", "");
+    location.replace(url);
+    return;
+  }
+  const address = serverAddress();
+  if (!address) {
     root.textContent =
       "Multiplayer isn't enabled on this site yet. Open the development site to play with friends.";
     return;
   }
-  const address = new URL(endpoint);
-  if (
-    !["ws:", "wss:"].includes(address.protocol) ||
-    address.username ||
-    address.password ||
-    address.search ||
-    address.hash ||
-    (!local && address.protocol !== "wss:")
-  ) {
-    throw new Error("Invalid multiplayer server configuration");
+  if (selection) {
+    history.replaceState(null, "", roomAddress(room));
   }
-  let selectedChoice: JoinChoice | undefined;
-  if (!room || !ROOM_CODE.test(room)) {
-    const selection = await browseRooms(root, address);
-    room = selection.room;
-    selectedChoice = selection.choice;
-    const url = new URL(location.href);
-    url.searchParams.delete("multiplayer");
-    url.searchParams.set("room", room);
-    history.replaceState(null, "", url);
-  }
+  const selectedChoice = selection?.choice ?? takePendingJoin(room);
   const mirror = new StateMirror();
   const timeline = new NetworkTimeline();
   let view: Presentation | undefined;

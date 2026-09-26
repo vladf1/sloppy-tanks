@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
+import { chooseRoomMap, waitForRoomBrowser } from "./multiplayer-ui-assertions.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
 await mkdir(output, { recursive: true });
@@ -58,9 +59,9 @@ try {
     await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   };
   await page.goto(url.href);
-  await page.locator("#create-room").waitFor();
+  await waitForRoomBrowser(page);
   await page.locator("#player-name").fill("Restart tester");
-  await page.locator("#create-map").selectOption("harbor");
+  await chooseRoomMap(page, "harbor");
   await click("#create-room");
   await page.waitForFunction(
     () =>

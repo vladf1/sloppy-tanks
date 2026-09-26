@@ -4,7 +4,12 @@ import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
 import { BOT_NAMES } from "../src/game/bot-personalities.ts";
-import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
+import {
+  checkMultiplayerMenu,
+  chooseRoomMap,
+  openMultiplayerTab,
+  waitForRoomBrowser,
+} from "./multiplayer-ui-assertions.mjs";
 
 const base = process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/";
 const label = process.env.SLOPPY_CHECK_LABEL ?? "local";
@@ -68,23 +73,36 @@ try {
   }
   const [alice, bob] = clients;
   await alice.page.goto(base);
-  await click(alice.page, "#multiplayer-entry");
-  await alice.page.locator(".room-browser").waitFor();
+  await openMultiplayerTab(alice.page);
+  assert.ok(new URL(alice.page.url()).searchParams.has("multiplayer"), "The tab is kept on reload");
+  assert.equal(await alice.page.locator("#tab-single").getAttribute("aria-selected"), "false");
+  assert.equal(await alice.page.locator("#start").isVisible(), false, "GO is single-player only");
   assert.ok(BOT_NAMES.includes(await alice.page.locator("#player-name").inputValue()));
-  assert.equal(await alice.page.locator("#player-team").inputValue(), "auto");
+  assert.equal(await alice.page.locator('input[name="playerTeam"]:checked').inputValue(), "auto");
   assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
   assert.equal(await alice.page.locator("#create-round-minutes").inputValue(), "10");
   await checkMultiplayerMenu(alice.page);
   await alice.page.locator("#player-name").fill("Room browser Alice");
-  await alice.page.locator("#create-map").selectOption("harbor");
+  // The tank cards are shared by both tabs and choose the multiplayer tank too.
+  await click(alice.page, '[data-kind="heavy"]');
+  await chooseRoomMap(alice.page, "harbor");
   await alice.page.locator("#create-round-minutes").fill("3");
   await alice.page.screenshot({ path: `${output}/create.png` });
+  // This page began building a single-player arena, so the room opens in a fresh page.
   await click(alice.page, "#create-room");
   await until(
     () => alice.control?.controlEpoch >= 2 && alice.lobby?.phase === "playing",
     "Create starts battle and prepares input",
   );
   assert.equal(alice.lobby.settings.mapMode, "harbor");
+  assert.equal(alice.lobby.players[0].kind, "heavy");
+  assert.equal(alice.lobby.players[0].name, "Room browser Alice");
+  assert.equal(new URL(alice.page.url()).searchParams.has("multiplayer"), false);
+  assert.equal(
+    await alice.page.evaluate(() => sessionStorage.getItem("sloppy-pending-join")),
+    null,
+    "The room page consumes the pending join once",
+  );
   assert.equal(alice.lobby.settings.roundMinutes, 3);
   assert.ok(alice.mirror.state.match.time <= 180 && alice.mirror.state.match.time > 160);
   await alice.page.locator("#network-players").waitFor({ state: "visible" });
@@ -95,6 +113,7 @@ try {
   const directoryURL = new URL(base);
   directoryURL.searchParams.set("multiplayer", "");
   await bob.page.goto(directoryURL.href);
+  assert.equal(await bob.page.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
   const roomSelector = `input[name="room-choice"][value="${room}"]`;
   await bob.page.locator(roomSelector).waitFor();
   await checkMultiplayerMenu(bob.page);
@@ -104,7 +123,10 @@ try {
   assert.match(await row.innerText(), /3 min/);
   await bob.page.screenshot({ path: `${output}/room-list.png` });
   await bob.page.locator("#player-name").fill("Bob <b>literal</b>");
+  await click(bob.page, '[data-kind="scout"]');
   await click(bob.page, roomSelector);
+  // No single-player arena was built on a ?multiplayer page, so Join stays in this page.
+  const bobDocument = await bob.page.evaluate(() => performance.timeOrigin);
   await click(bob.page, "#join-room");
   await until(
     () => bob.control?.controlEpoch >= 2 && alice.lobby?.players.length === 2,
@@ -114,6 +136,8 @@ try {
     alice.lobby.players.map((player) => player.team),
     [0, 1],
   );
+  assert.equal(alice.lobby.players[1].kind, "scout");
+  assert.equal(await bob.page.evaluate(() => performance.timeOrigin), bobDocument);
   assert.equal(bob.mirror.state.entities.tanks.length, 2);
   await alice.page.waitForFunction(() =>
     document.querySelector("#feed")?.textContent.includes("Bob <b>literal</b> joined Red team"),
@@ -197,7 +221,8 @@ try {
   for (const client of clients) {
     await click(client.page, "#pause");
     await click(client.page, "#leave-room");
-    await client.page.locator(".room-browser").waitFor();
+    await client.page.locator("#multiplayer-panel:not([hidden])").waitFor();
+    await waitForRoomBrowser(client.page);
     assert.equal(
       await client.page.locator("#player-name").inputValue(),
       client === alice ? "Room browser Alice" : "Bob <b>literal</b>",
@@ -206,9 +231,24 @@ try {
   await alice.page.locator(roomSelector).waitFor({ state: "detached", timeout: 15000 });
   await click(bob.page, "#refresh-rooms");
   await bob.page.locator(roomSelector).waitFor({ state: "detached", timeout: 15000 });
+  // Arrow keys move between tabs; the single-player tab stops room polling.
+  await bob.page.locator("#tab-multiplayer").focus();
+  await bob.page.keyboard.press("ArrowLeft");
+  await bob.page.locator("#single-panel:not([hidden])").waitFor();
+  assert.equal(
+    await bob.page.locator("#tab-single").evaluate((tab) => tab === document.activeElement),
+    true,
+  );
+  assert.equal(new URL(bob.page.url()).searchParams.has("multiplayer"), false);
+  const pausedPolls = bob.listRequests;
+  await bob.page.waitForTimeout(6000);
+  assert.equal(bob.listRequests, pausedPolls, "The single-player tab does not poll rooms");
+  await bob.page.keyboard.press("ArrowRight");
+  await bob.page.locator("#multiplayer-panel:not([hidden])").waitFor();
+  await until(() => bob.listRequests > pausedPolls, "The multiplayer tab polls again");
   assert.deepEqual(errors, []);
   console.log(
-    "Room browser: random/saved names, responsive UI, create/start selected map, listing, Auto teams, live player kills, join notifications, match length, late join, stats counters, no in-game polling and empty-room removal passed.",
+    "Room browser: tabs, shared tank cards, random/saved names, responsive UI, create/start selected map after a reload, in-page join, listing, Auto teams, live player kills, join notifications, match length, late join, stats counters, no in-game or single-player polling and empty-room removal passed.",
   );
 } finally {
   await writeFile(

@@ -1,58 +1,42 @@
-<section class="menu start">
-  <div class="start-heading">
-    <h1>BATTLE SETUP</h1>
-    <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
-  </div>
-  <div class="startup-progress">
-    <div class="startup-progress-copy">
-      <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
-      <span class="startup-hint">Pick your loadout while we get ready.</span>
+<section class="menu start" data-play="single" aria-labelledby="setup-title">
+  <header class="setup-header">
+    <h1 id="setup-title">BATTLE SETUP</h1>
+    <div class="play-tabs" role="tablist" aria-label="How to play">
+      <button
+        id="tab-single"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="single-panel"
+        data-play="single"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+        </svg>
+        <span><b>Single player</b><small>You versus the bots</small></span>
+      </button>
+      <button
+        id="tab-multiplayer"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="multiplayer-panel"
+        data-play="multiplayer"
+        tabindex="-1"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="9" cy="8" r="3.5" />
+          <path d="M2 20c0-3.9 3.1-6.2 7-6.2s7 2.3 7 6.2" />
+          <circle cx="17" cy="7" r="3" />
+          <path d="M16.5 12.6c3.2.2 5.5 2.3 5.5 5.9" />
+        </svg>
+        <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
+      </button>
     </div>
-    <div class="startup-track" aria-hidden="true"><span></span></div>
-  </div>
-  <div class="mode-options">
-    <fieldset>
-      <legend>BATTLE</legend>
-      <label class="mode-option"
-        ><input type="radio" name="gameMode" value="team" checked /><span
-          ><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span
-        ></label
-      ><label class="mode-option"
-        ><input type="radio" name="gameMode" value="solo" /><span
-          ><b>Solo Assault</b><small>Endless enemies · 10 minutes · One life</small></span
-        ></label
-      >
-    </fieldset>
-    <fieldset>
-      <legend>MAP</legend>
-      <label class="mode-option"
-        ><input type="radio" name="mapMode" value="village" checked /><span
-          ><b>Pine Village</b><small>A quiet little village. Bring the noise.</small></span
-        ></label
-      ><label class="mode-option"
-        ><input type="radio" name="mapMode" value="harbor" /><span
-          ><b>Harbor Havoc</b><small>Salt air. Hot steel. Dockside mayhem.</small></span
-        ></label
-      ><label class="mode-option"
-        ><input type="radio" name="mapMode" value="quarry" /><span
-          ><b>Dusty Dig</b><small>Open ground. Weathered stone. Dig your own shortcut.</small></span
-        ></label
-      >
-    </fieldset>
-  </div>
-  <fieldset class="difficulty-setting" aria-describedby="difficulty-help">
-    <legend>DIFFICULTY</legend>
-    <div class="difficulty-options">
-      <label class="difficulty-option"
-        ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
-      ><label class="difficulty-option"
-        ><input type="radio" name="difficulty" value="normal" checked /><span>Normal</span></label
-      ><label class="difficulty-option"
-        ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
-      >
-    </div>
-    <small id="difficulty-help">The original combat balance</small>
-  </fieldset>
+  </header>
   <fieldset class="tank-setting">
     <legend>TANK</legend>
     <!-- Frame each sprite around its visible bounds, not its transparent canvas. -->
@@ -107,6 +91,149 @@
       </button>
     </div>
   </fieldset>
+  <!-- Both panels share one grid cell, so switching tabs never moves the tabs or tanks. -->
+  <div class="setup-panels">
+    <div id="single-panel" class="setup-panel" role="tabpanel" aria-labelledby="tab-single">
+      <div class="single-options">
+        <fieldset class="battle-choice">
+          <legend>BATTLE</legend>
+          <label class="mode-option"
+            ><input type="radio" name="gameMode" value="team" checked /><span
+              ><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span
+            ></label
+          ><label class="mode-option"
+            ><input type="radio" name="gameMode" value="solo" /><span
+              ><b>Solo Assault</b><small>Endless enemies · 10 minutes · One life</small></span
+            ></label
+          >
+        </fieldset>
+        <fieldset class="map-choice">
+          <legend>MAP</legend>
+          <label class="mode-option"
+            ><input type="radio" name="mapMode" value="village" checked /><span
+              ><b>Pine Village</b><small>A quiet little village. Bring the noise.</small></span
+            ></label
+          ><label class="mode-option"
+            ><input type="radio" name="mapMode" value="harbor" /><span
+              ><b>Harbor Havoc</b><small>Salt air. Hot steel. Dockside mayhem.</small></span
+            ></label
+          ><label class="mode-option"
+            ><input type="radio" name="mapMode" value="quarry" /><span
+              ><b>Dusty Dig</b
+              ><small>Open ground. Weathered stone. Dig your own shortcut.</small></span
+            ></label
+          >
+        </fieldset>
+        <fieldset class="difficulty-setting" aria-describedby="difficulty-help">
+          <legend>DIFFICULTY</legend>
+          <div class="segmented">
+            <label class="segment"
+              ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
+            ><label class="segment"
+              ><input type="radio" name="difficulty" value="normal" checked /><span
+                >Normal</span
+              ></label
+            ><label class="segment"
+              ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
+            >
+          </div>
+          <small id="difficulty-help">The original combat balance</small>
+        </fieldset>
+      </div>
+      <div class="launch-bar">
+        <div class="startup-progress">
+          <div class="startup-progress-copy">
+            <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
+            <span class="startup-hint">Pick your loadout while we get ready.</span>
+          </div>
+          <div class="startup-track" aria-hidden="true"><span></span></div>
+        </div>
+        <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
+      </div>
+    </div>
+    <div
+      id="multiplayer-panel"
+      class="setup-panel"
+      role="tabpanel"
+      aria-labelledby="tab-multiplayer"
+      hidden
+    >
+      <div class="driver-fields">
+        <fieldset class="driver-name">
+          <legend><label for="player-name">YOUR NAME</label></legend>
+          <input
+            id="player-name"
+            maxlength="24"
+            autocomplete="nickname"
+            spellcheck="false"
+            placeholder="Tank driver"
+          />
+        </fieldset>
+        <fieldset class="team-choice">
+          <legend>TEAM</legend>
+          <div class="segmented" title="Auto picks the team with fewer human players">
+            <label class="segment"
+              ><input type="radio" name="playerTeam" value="auto" checked /><span>Auto</span></label
+            ><label class="segment team-blue"
+              ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
+            ><label class="segment team-red"
+              ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+            >
+          </div>
+        </fieldset>
+      </div>
+      <div class="room-columns">
+        <fieldset class="room-browse">
+          <legend>OPEN ROOMS <span id="room-count">0</span></legend>
+          <button id="refresh-rooms" class="text-button" type="button">↻ Refresh</button>
+          <div class="room-list-body">
+            <p id="rooms-message" role="status">Looking for rooms…</p>
+            <div id="room-list" role="radiogroup" aria-label="Choose a room"></div>
+          </div>
+          <div class="room-actions">
+            <span>Up to 8 players per room</span
+            ><button id="join-room" class="primary" type="button" disabled>JOIN ROOM</button>
+          </div>
+        </fieldset>
+        <fieldset class="room-create">
+          <legend>NEW ROOM</legend>
+          <div class="segmented room-map" role="radiogroup" aria-label="Map">
+            <label class="segment"
+              ><input type="radio" name="roomMap" value="village" checked /><span
+                >Pine Village</span
+              ></label
+            ><label class="segment"
+              ><input type="radio" name="roomMap" value="harbor" /><span>Harbor Havoc</span></label
+            ><label class="segment"
+              ><input type="radio" name="roomMap" value="quarry" /><span>Dusty Dig</span></label
+            >
+          </div>
+          <div class="room-rules">
+            <label class="room-length"
+              >Match length<span
+                ><input
+                  id="create-round-minutes"
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  required
+                  value="10"
+                />
+                min</span
+              ></label
+            >
+            <label class="room-bots-choice"
+              ><input id="create-humans-only" type="checkbox" checked /><span
+                >Humans only<small>No bots fill the teams</small></span
+              ></label
+            >
+          </div>
+          <button id="create-room" class="primary" type="button" disabled>CREATE ROOM</button>
+        </fieldset>
+      </div>
+    </div>
+  </div>
   <div class="menu-footer">
     <div class="menu-help">
       WASD / Arrows: steer toward direction · Opposite direction: reverse · Mouse: aim · Hold left

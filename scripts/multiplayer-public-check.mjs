@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
-import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
+import { checkMultiplayerMenu, openMultiplayerTab } from "./multiplayer-ui-assertions.mjs";
 const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
 const output = "artifacts/performance/multiplayer/public";
 await mkdir(output, { recursive: true });
@@ -21,7 +21,7 @@ const errors = [],
 try {
   const first = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   await first.goto(base);
-  await first.locator("#multiplayer-entry").click();
+  await openMultiplayerTab(first);
   await first.locator("#join-room").waitFor();
   const inviteURL = new URL(first.url());
   inviteURL.searchParams.delete("multiplayer");
