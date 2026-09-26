@@ -93,6 +93,7 @@ test("node server rejects foreign origins, plain HTTP rooms and invalid codes", 
 
 test("node server hosts a room, lists it and forgets it after the last leave", async () => {
   const player = await connect("TESTROOM");
+  assert.match(player.socket.extensions, /permessage-deflate/, "room traffic is compressed");
   player.socket.send(join("player"));
   await player.next("welcome");
   assert.equal(server.rooms.has("TESTROOM"), true);

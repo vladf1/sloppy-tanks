@@ -16,6 +16,13 @@ import { RateLimit } from "./rate-limit";
 const MAX_FRAME_BYTES = 8192;
 /** Queued output after which a reader is too slow to follow 20 Hz snapshots. */
 const MAX_BUFFERED_BYTES = 2_000_000;
+/**
+ * Snapshots are repetitive JSON, so permessage-deflate sends about a quarter of the bytes
+ * (a standard room measured 85 → 23 KB/s per client). The fastest zlib level keeps about
+ * 90% of the default level's saving for 40% of its CPU, which the one-vCPU host needs more.
+ * Browsers negotiate it natively; messages under ws's 1 KB threshold stay uncompressed.
+ */
+const SNAPSHOT_DEFLATE = { zlibDeflateOptions: { level: 1 } };
 /** Time given to clients to finish closing handshakes when the server stops. */
 const SHUTDOWN_GRACE_MS = 1000;
 /**
@@ -57,7 +64,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     sockets = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_FRAME_BYTES,
-      perMessageDeflate: false,
+      perMessageDeflate: SNAPSHOT_DEFLATE,
     }),
     http = createHttpServer((request, response) => handle(request, response)),
     monitor = new ServerMonitor(
