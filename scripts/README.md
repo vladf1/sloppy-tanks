@@ -77,8 +77,6 @@ inactive menu actions stay hidden, and the menu fits desktop viewports.
 real pointer input, synced guest settings, two-player rounds without fill bots,
 idle menu behavior, late joins, departure cleanup and restoring bots next round.
 Use `SLOPPY_URL` and `SLOPPY_SERVER` as for `check:multiplayer`.
-Set `SLOPPY_BASELINE_BUILD` to a saved pre-change build for emitted and actually
-requested raw/gzip asset comparisons. It serves its own build; no dev server needed.
 
 `node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
 names, responsive room listings, immediate creation on the selected map, Auto

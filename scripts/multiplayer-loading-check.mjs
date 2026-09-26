@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { build, preview } from "vite";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { resolve } from "node:path";
-import { gzipSync } from "node:zlib";
+import { mkdir, writeFile } from "node:fs/promises";
 import { checkMultiplayerMenu } from "./multiplayer-ui-assertions.mjs";
 
 const directory = "artifacts/performance/multiplayer";
@@ -76,71 +73,6 @@ try {
   assert.deepEqual(result.sockets, [], "Single-player must open no sockets");
   assert.deepEqual(result.errors, []);
   assert.equal(await page.locator("#network-status, .network-menu").count(), 0);
-  const hashes = async (path) => {
-    const files = (await readdir(resolve(path, "assets"))).filter((file) =>
-      /\.(js|css|wasm)$/.test(file),
-    );
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const bytes = await readFile(resolve(path, "assets", file));
-        return [
-          file,
-          {
-            bytes: bytes.length,
-            gzipBytes: gzipSync(bytes).length,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
-          },
-        ];
-      }),
-    );
-    return Object.fromEntries(entries);
-  };
-  result.assets = await hashes(outDir);
-  const requestedAssets = [
-    ...new Set(
-      result.requests
-        .map((url) => new URL(url).pathname.split("/assets/")[1])
-        .filter((file) => file && result.assets[file]),
-    ),
-  ];
-  result.requestedAssets = requestedAssets;
-  if (process.env.SLOPPY_BASELINE_BUILD) {
-    result.baselineAssets = await hashes(process.env.SLOPPY_BASELINE_BUILD);
-    result.identicalToBaseline =
-      JSON.stringify(result.assets) === JSON.stringify(result.baselineAssets);
-    console.log("Browser assets identical to baseline:", result.identicalToBaseline);
-    const total = (assets, key) =>
-      Object.values(assets).reduce((sum, asset) => sum + asset[key], 0);
-    result.assetChange = {
-      bytes: total(result.assets, "bytes") - total(result.baselineAssets, "bytes"),
-      gzipBytes: total(result.assets, "gzipBytes") - total(result.baselineAssets, "gzipBytes"),
-    };
-    console.log("All emitted JS/CSS/WASM asset change:", result.assetChange);
-    const baselineHtml = await readFile(
-      resolve(process.env.SLOPPY_BASELINE_BUILD, "index.html"),
-      "utf8",
-    );
-    const baselineRequests = [
-      ...new Set(
-        [...baselineHtml.matchAll(/assets\/([^\s"'<>`]+\.(?:js|wasm|css))/g)].map(
-          (match) => match[1],
-        ),
-      ),
-    ];
-    const sum = (assets, files, key) => files.reduce((value, file) => value + assets[file][key], 0);
-    result.singlePlayerRequestedChange = {
-      bytes:
-        sum(result.assets, requestedAssets, "bytes") -
-        sum(result.baselineAssets, baselineRequests, "bytes"),
-      gzipBytes:
-        sum(result.assets, requestedAssets, "gzipBytes") -
-        sum(result.baselineAssets, baselineRequests, "gzipBytes"),
-      htmlBytes:
-        Buffer.byteLength(await readFile(resolve(outDir, "index.html"))) -
-        Buffer.byteLength(baselineHtml),
-    };
-    console.log("Single-player requested JS/CSS/WASM change:", result.singlePlayerRequestedChange);
-  }
   await page.screenshot({ path: `${directory}/single-player-loading.png` });
   console.log("Single-player: zero multiplayer chunk requests, zero sockets, no browser errors.");
   const networkRequests = [];

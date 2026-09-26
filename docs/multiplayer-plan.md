@@ -70,7 +70,7 @@ Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame
 
 Rate limits run before a room is created or joined: 60 connection attempts/minute/IP and 120/minute overall. They reduce accidental room creation. Rooms also enforce 8 players, 6 per team, message/action limits, a 30-second empty-room grace, 5-minute idle lobby/results expiry and 30-minute absolute lifetime. Hidden/menu clients receive no snapshot backlog and resume from a fresh full baseline.
 
-Run `npm run check`, `npm run check:browser`, `npm run check:multiplayer-loading`, `npm run check:multiplayer`, and the [player/lifecycle harnesses](../server/README.md). The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`; `SLOPPY_BASELINE_BUILD` supplies the production asset comparison. Long hosted runs and measurements remain outside CI.
+Run `npm run check`, `npm run check:browser`, `npm run check:multiplayer-loading`, `npm run check:multiplayer`, and the [player/lifecycle harnesses](../server/README.md). The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 
