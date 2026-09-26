@@ -9,6 +9,8 @@ import type { PlayerVehicleKind, Team } from "../game/types";
 
 const RECONNECT_WINDOW_MS = 30_000;
 const MAX_BUFFERED_BYTES = 16_384;
+/** Dev-only URL parameters that add transport delay (see transport-delay.ts). */
+export const TRANSPORT_DELAY_PARAMS = ["latency", "jitter", "stall"];
 export interface JoinChoice {
   name: string;
   kind: PlayerVehicleKind;
@@ -67,9 +69,10 @@ export class Connection {
     this.stopped = false;
     this.retryStarted = 0;
     this.attempt = 0;
-    if (import.meta.env.DEV && new URLSearchParams(location.search).has("latency")) {
+    const params = new URLSearchParams(location.search);
+    if (import.meta.env.DEV && TRANSPORT_DELAY_PARAMS.some((key) => params.has(key))) {
       const { transportDelay } = await import("./transport-delay");
-      this.delay = transportDelay(new URLSearchParams(location.search));
+      this.delay = transportDelay(params);
     }
     this.open();
   }

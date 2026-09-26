@@ -20,7 +20,7 @@ export class NetworkTimeline {
     this.displayTick = this.clock.displayMs / SIMULATION_STEP_MS;
     this.events = [];
     this.traces = [];
-    this.poses.reset({ state: { ...state, elapsed: tick / 60 }, events: [], ack: 0 });
+    this.poses.reset({ ...state, elapsed: tick / 60 });
   }
   /** Records one message's arrival after its frames have been pushed. */
   arrive(nowMs: number): void {
@@ -28,7 +28,7 @@ export class NetworkTimeline {
   }
   push(state: RenderState, tick: number, events: TimedEvent[], traces: ShotTrace[]): void {
     this.newestTick = tick;
-    this.poses.push({ state: { ...state, elapsed: tick / 60 }, events: [], ack: 0 });
+    this.poses.push({ ...state, elapsed: tick / 60 });
     this.events.push(...events);
     this.traces.push(...traces);
     if (this.events.length > MAX_HISTORY_ITEMS || this.traces.length > MAX_HISTORY_ITEMS) {
@@ -47,14 +47,14 @@ export class NetworkTimeline {
       (Math.min(newestMs + MAX_LOCAL_LEAD_MS, this.clock.pathServerMs(nowMs)) +
         Math.min(MAX_LOCAL_LEAD_MS, rttMs / 2)) /
       1000;
-    const result = this.poses.read(this.displayTick / 60, localTime, dt, "extrapolate", true);
+    const poses = this.poses.read(this.displayTick / 60, localTime, dt);
     const events: SimEvent[] = [];
     while (this.events.length && this.events[0].tick <= this.displayTick) {
       events.push(this.events.shift()!.event);
     }
     const shots = new Map<number, RenderShot>();
     const traced = new Set(this.traces.map((trace) => trace.shot.id));
-    for (const shot of result.state.shots) {
+    for (const shot of poses.shots) {
       if (!traced.has(shot.id) || this.displayTick >= this.newestTick) {
         shots.set(shot.id, shot);
       }
@@ -70,6 +70,6 @@ export class NetworkTimeline {
       }
     }
     this.traces = this.traces.filter((trace) => trace.endTick >= this.displayTick - 12);
-    return { state: { ...result.state, shots: [...shots.values()] }, events };
+    return { state: { ...poses, shots: [...shots.values()] }, events };
   }
 }

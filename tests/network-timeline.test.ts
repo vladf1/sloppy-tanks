@@ -1,6 +1,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
+import { Simulation } from "../src/game/simulation";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
 import { captureRenderState, RenderTimeline } from "../src/net/render-timeline";
 import { NetworkTimeline } from "../src/net/interpolation";
@@ -25,17 +26,17 @@ test("local hull heading advances between packets through the short arc and rese
     const first = pose(3.1, 0),
       next = pose(-3.1, 0.05);
     const timeline = new RenderTimeline();
-    timeline.reset({ state: first, events: [], ack: 0 });
-    timeline.read(0, 0, 1 / 60, "extrapolate");
-    timeline.push({ state: next, events: [], ack: 1 });
-    const a = timeline.read(0.05, 0.05, 1 / 60, "extrapolate").state.viewer.heading;
+    timeline.reset(first);
+    timeline.read(0, 0, 1 / 60);
+    timeline.push(next);
+    const a = timeline.read(0.05, 0.05, 1 / 60).viewer.heading;
     assert.ok(a > 3.1 && a < Math.PI * 2 - 3.1, "new packet must not snap local heading");
-    const b = timeline.read(0.05, 0.0667, 1 / 60, "extrapolate").state.viewer.heading;
+    const b = timeline.read(0.05, 0.0667, 1 / 60).viewer.heading;
     assert.ok(b > a, "heading keeps moving while waiting for the next packet");
     assert.equal(next.viewer.heading, -3.1, "render smoothing must not mutate authority");
     const respawn = pose(-1, 0.1, 1);
-    timeline.push({ state: respawn, events: [], ack: 2 });
-    assert.equal(timeline.read(0.1, 0.1, 1 / 60, "extrapolate").state.viewer.heading, -1);
+    timeline.push(respawn);
+    assert.equal(timeline.read(0.1, 0.1, 1 / 60).viewer.heading, -1);
   } finally {
     sim.dispose();
   }
@@ -172,13 +173,54 @@ test("moving debris rotations interpolate through the short quaternion arc witho
       ),
     };
     const timeline = new RenderTimeline();
-    timeline.reset({ state: first, events: [], ack: 0 });
-    timeline.push({ state: last, events: [], ack: 1 });
-    const rotation = timeline.read(0.025, 0.05, 1 / 60, "latest").state.covers[0].rotation;
+    timeline.reset(first);
+    timeline.push(last);
+    const rotation = timeline.read(0.025, 0.05, 1 / 60).covers[0].rotation;
     assert.ok(Math.abs(rotation.y - Math.SQRT1_2) < 1e-10);
     assert.ok(Math.abs(rotation.w - Math.SQRT1_2) < 1e-10);
     assert.equal(first.covers[0].rotation.y, 0);
   } finally {
     sim.dispose();
+  }
+});
+test("delayed display keeps a remote tank alive until the display clock reaches its death", () => {
+  const simulation = new Simulation(4242);
+  try {
+    simulation.start();
+    const first = captureRenderState(simulation);
+    const victim = simulation.tanks.find((tank) => !tank.human)!;
+    const atStart = first.tanks.find((tank) => tank.id === victim.id)!;
+    victim.protection = 0;
+    simulation.damageTank(victim, 10000, simulation.human.id, simulation.human.team);
+    simulation.elapsed = 0.05;
+    const timeline = new RenderTimeline();
+    timeline.reset(first);
+    timeline.push(captureRenderState(simulation));
+    const beforeDeath = timeline.read(0.025, 0.05, 1 / 60);
+    assert.equal(beforeDeath.tanks.find((tank) => tank.id === victim.id)!.alive, true);
+    const afterDeath = timeline.read(0.05, 0.05, 1 / 60);
+    assert.equal(afterDeath.tanks.find((tank) => tank.id === victim.id)!.alive, false);
+    assert.equal(atStart.alive, true, "render interpolation must never mutate history");
+  } finally {
+    simulation.dispose();
+  }
+});
+test("local extrapolation is bounded and resets across tank lives", () => {
+  const simulation = new Simulation(4242);
+  try {
+    simulation.human.body.setLinvel({ x: 10, y: 0, z: 0 }, true);
+    const first = captureRenderState(simulation);
+    const timeline = new RenderTimeline();
+    timeline.reset(first);
+    const ahead = timeline.read(0, 5, 1 / 60).viewer.position.x - first.viewer.position.x;
+    assert.ok(Math.abs(ahead - 1) < 1e-6, "0.1 s of extrapolation at 10 m/s");
+    simulation.human.life++;
+    simulation.human.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
+    simulation.human.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    simulation.elapsed = 0.05;
+    timeline.push(captureRenderState(simulation));
+    assert.equal(timeline.read(0.05, 0.05, 1 / 60).viewer.position.x, 0);
+  } finally {
+    simulation.dispose();
   }
 });

@@ -256,7 +256,6 @@ export async function prepareGame(
     canvas.focus();
     accumulator = 0;
     last = performance.now();
-    latency?.reset(last);
     ui.update(0);
   }
   function restart(): void {
@@ -300,14 +299,6 @@ export async function prepareGame(
     }
   });
   const touchControls = new TouchModeController(root, controls, sim, zoom);
-  const latency =
-    import.meta.env.DEV && new URLSearchParams(location.search).has("latency")
-      ? new (await import("./net/latency-experiment")).LatencyExperiment(
-          sim,
-          root,
-          new URLSearchParams(location.search),
-        )
-      : undefined;
   window.addEventListener("resize", () => view.resize());
   const recorder = new FrameRecorder(sim, canvas);
   let frameRequest = 0;
@@ -344,27 +335,19 @@ export async function prepareGame(
           : view.aim(controls.nx, controls.ny);
         const angle = Math.atan2(aim.x - position.x, aim.z - position.z);
         let steps = 0;
-        if (latency) {
-          latency.advance(now, controls.command(angle), aim, playback.autoplay);
-          accumulator = 0;
-        }
-        while (!latency && accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
+        while (accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
           sim.step(controls.command(angle), playback.autoplay);
           accumulator -= STEP;
           steps++;
         }
       } else {
-        latency?.pause();
         accumulator = 0;
       }
       if (sim.match.phase !== "playing" || !sim.human.alive) {
         controls.clear();
       }
       const simCost = performance.now() - startSim;
-      if (latency) {
-        ui.displayState = latency.state;
-      }
-      const events = latency ? latency.events() : sim.events.splice(0);
+      const events = sim.events.splice(0);
       for (const event of events) {
         const playerHit =
           (event.type === "hurt" || event.type === "death") &&
@@ -373,8 +356,7 @@ export async function prepareGame(
         view.event(event, playerHit);
         audio().event(
           event,
-          latency?.state.viewer.position ??
-            (sim.human.alive ? sim.human.body.translation() : sim.human.previous),
+          sim.human.alive ? sim.human.body.translation() : sim.human.previous,
           playerHit,
           event.id === sim.human.id,
         );
@@ -383,8 +365,8 @@ export async function prepareGame(
       const renderStart = performance.now();
       if (sim.match.phase !== "ready") {
         view.render(
-          latency?.state ?? sim,
-          !latency && sim.match.phase === "playing" ? accumulator / STEP : 1,
+          sim,
+          sim.match.phase === "playing" ? accumulator / STEP : 1,
           dt,
           playback.overview,
         );
@@ -421,10 +403,7 @@ export async function prepareGame(
   frameRequest = requestAnimationFrame(loop);
   if (import.meta.env.DEV) {
     Object.assign(window, {
-      sloppy: Object.assign(
-        createDebug(sim, view, audio, controls, start, restart, recorder, playback),
-        { latency },
-      ),
+      sloppy: createDebug(sim, view, audio, controls, start, restart, recorder, playback),
     });
     if (new URLSearchParams(location.search).has("tweak")) {
       const { Pane } = await import("tweakpane");

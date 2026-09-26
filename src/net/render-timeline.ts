@@ -9,14 +9,7 @@ import {
   type RenderShot,
 } from "../game/render-state";
 import type { Simulation } from "../game/simulation";
-import type { SimEvent } from "../game/types";
 
-export type HullPolicy = "latest" | "smooth" | "extrapolate";
-export interface RenderSample {
-  state: RenderState;
-  events: SimEvent[];
-  ack: number;
-}
 const MAX_SAMPLES = 32;
 /** Longest a hull is carried past its newest authoritative pose, local or remote. */
 export const MAX_EXTRAPOLATION_SECONDS = 0.1;
@@ -32,7 +25,7 @@ function interpolateRotation(a: RenderRotation, b: RenderRotation, alpha: number
   return { x: x / length, y: y / length, z: z / length, w: w / length };
 }
 
-/** Used only by the dev latency experiment; normal single-player never captures scene copies. */
+/** A detached copy of one viewer's scene for tests and fixtures; live rendering never copies. */
 export function captureRenderState(simulation: Simulation, viewerId?: number): RenderState {
   const source = renderState(simulation, undefined, viewerId);
   const tanks = source.tanks.map((tank) => structuredClone({ ...tank }));
@@ -56,9 +49,13 @@ export function captureRenderState(simulation: Simulation, viewerId?: number): R
 }
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-/** Membership comes from the older sample, so removals wait for the display clock. */
+/**
+ * Interpolates received scene samples at a delayed display time. Membership comes from the
+ * older sample, so removals wait for the display clock. The local hull instead follows the
+ * newest authority, extrapolated toward the present and smoothed at frame rate.
+ */
 export class RenderTimeline {
-  private samples: RenderSample[] = [];
+  private samples: RenderState[] = [];
   private tankCache = new Map<number, Mutable<RenderTank>>();
   private coverCache = new Map<number, Mutable<RenderCover>>();
   private fragmentCache = new Map<number, Mutable<RenderFragment>>();
@@ -67,54 +64,37 @@ export class RenderTimeline {
   private covers: RenderCover[] = [];
   private fragments: RenderFragment[] = [];
   private shots: RenderShot[] = [];
-  private displayedEventTime = -Infinity;
   private local?: Mutable<RenderTank>;
-  private output?: RenderState;
-  latestAck = 0;
-  reset(sample: RenderSample): void {
-    this.samples = [sample];
+  reset(state: RenderState): void {
+    this.samples = [state];
     this.tankCache.clear();
     this.coverCache.clear();
     this.fragmentCache.clear();
     this.shotCache.clear();
     this.local = undefined;
-    this.displayedEventTime = sample.state.elapsed;
-    this.output = undefined;
   }
-  push(sample: RenderSample): void {
-    this.samples.push(sample);
+  push(state: RenderState): void {
+    this.samples.push(state);
     if (this.samples.length > MAX_SAMPLES) {
       this.samples.shift();
     }
   }
-  read(
-    time: number,
-    localTime: number,
-    dt: number,
-    policy: HullPolicy,
-    coherentLifecycle = false,
-  ): { state: RenderState; events: SimEvent[] } {
+  /** `time` is the delayed display time; `localTime` is where the local hull aims. */
+  read(time: number, localTime: number, dt: number): RenderState {
     const newest = this.samples.at(-1)!;
     // A late packet carries remote hulls along their velocity briefly instead of freezing them.
-    const overrun = Math.max(0, Math.min(MAX_EXTRAPOLATION_SECONDS, time - newest.state.elapsed));
-    time = Math.min(time, newest.state.elapsed);
+    const overrun = Math.max(0, Math.min(MAX_EXTRAPOLATION_SECONDS, time - newest.elapsed));
+    time = Math.min(time, newest.elapsed);
     let index = 0;
-    while (index + 1 < this.samples.length && this.samples[index + 1].state.elapsed <= time) {
+    while (index + 1 < this.samples.length && this.samples[index + 1].elapsed <= time) {
       index++;
     }
-    const before = this.samples[index].state;
-    const after = this.samples[index + 1]?.state ?? before;
+    const before = this.samples[index];
+    const after = this.samples[index + 1] ?? before;
     const fraction =
       after.elapsed > before.elapsed
         ? Math.max(0, Math.min(1, (time - before.elapsed) / (after.elapsed - before.elapsed)))
         : 0;
-    const events: SimEvent[] = [];
-    for (const sample of this.samples) {
-      if (sample.state.elapsed > this.displayedEventTime && sample.state.elapsed <= time) {
-        events.push(...sample.events);
-      }
-    }
-    this.displayedEventTime = Math.max(this.displayedEventTime, time);
     const pose = <T extends { id: number; position: { x: number; y: number; z: number } }>(
       a: T,
       b: T | undefined,
@@ -202,25 +182,21 @@ export class RenderTimeline {
         this.shotCache.delete(id);
       }
     }
+    // A death or respawn waits for the display clock, so the wreck and its effects agree.
     const authoritative =
-      coherentLifecycle &&
-      (before.viewer.life !== newest.state.viewer.life ||
-        before.viewer.alive !== newest.state.viewer.alive)
+      before.viewer.life !== newest.viewer.life || before.viewer.alive !== newest.viewer.alive
         ? before.viewer
-        : newest.state.viewer;
+        : newest.viewer;
     const previousPosition = this.local?.position;
     const continuous =
       this.local?.life === authoritative.life && this.local.alive === authoritative.alive;
     const target = { ...authoritative.position };
-    if (policy === "extrapolate" && authoritative.alive) {
-      const ahead = Math.max(
-        0,
-        Math.min(MAX_EXTRAPOLATION_SECONDS, localTime - newest.state.elapsed),
-      );
+    if (authoritative.alive) {
+      const ahead = Math.max(0, Math.min(MAX_EXTRAPOLATION_SECONDS, localTime - newest.elapsed));
       target.x += authoritative.velocity.x * ahead;
       target.z += authoritative.velocity.z * ahead;
     }
-    const blend = policy === "latest" || !continuous ? 1 : 1 - Math.exp(-CORRECTION_RATE * dt);
+    const blend = continuous ? 1 - Math.exp(-CORRECTION_RATE * dt) : 1;
     // Local translation and hull rotation need the same frame-rate smoothing.
     // Copying heading from authority here made only our own tank turn at packet Hz.
     const heading =
@@ -237,8 +213,7 @@ export class RenderTimeline {
     if (viewerIndex >= 0) {
       this.tanks[viewerIndex] = this.local;
     }
-    this.latestAck = newest.ack;
-    this.output = {
+    const output = {
       ...before,
       elapsed: Math.max(before.elapsed, time),
       viewer: this.local,
@@ -251,6 +226,6 @@ export class RenderTimeline {
     if (index > 0) {
       this.samples.splice(0, index);
     }
-    return { state: this.output, events };
+    return output;
   }
 }

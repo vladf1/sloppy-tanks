@@ -2,21 +2,27 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
-import { chooseRoomMap, waitForRoomBrowser } from "./multiplayer-ui-assertions.mjs";
+import {
+  DEFAULT_GAME_URL,
+  chooseRoomMap,
+  click,
+  launchChrome,
+  waitForRoomBrowser,
+} from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
 await mkdir(output, { recursive: true });
-const url = new URL(process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/");
+const url = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+const PORT = 8790;
 url.searchParams.set("multiplayer", "");
-url.searchParams.set("server", "ws://127.0.0.1:8790");
+url.searchParams.set("server", `ws://127.0.0.1:${PORT}`);
 let server,
   logs = "";
 const errors = [];
 async function startServer() {
   server = spawn(process.execPath, ["--enable-source-maps", "server/dist/server.mjs"], {
-    env: { ...process.env, PORT: "8790" },
+    // Admit whichever Vite origin the check was given, not only the default local ports.
+    env: { ...process.env, PORT: String(PORT), ALLOWED_ORIGINS: url.origin },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (data) => (logs += data));
@@ -24,7 +30,7 @@ async function startServer() {
   const deadline = Date.now() + 20000;
   while (true) {
     try {
-      if ((await fetch("http://127.0.0.1:8790/health")).ok) return;
+      if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return;
     } catch {
       // The child has not bound its HTTP port yet.
     }
@@ -44,25 +50,16 @@ async function stopServer(signal = "SIGKILL") {
     child.kill(signal);
   });
 }
-const browser = await chromium.launch({ channel: "chrome", headless });
+const browser = await launchChrome();
 try {
   await startServer();
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   page.on("pageerror", (error) => errors.push(error.message));
-  // Physical clicks exercise the same pointer routing a player uses.
-  const click = async (selector) => {
-    const button = page.locator(selector);
-    await button.waitFor();
-    assert.ok(await button.isEnabled(), selector + " is enabled");
-    const bounds = await button.boundingBox();
-    assert.ok(bounds, selector);
-    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-  };
   await page.goto(url.href);
   await waitForRoomBrowser(page);
   await page.locator("#player-name").fill("Restart tester");
   await chooseRoomMap(page, "harbor");
-  await click("#create-room");
+  await click(page, "#create-room");
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "harbor" &&
@@ -87,7 +84,7 @@ try {
   // with default settings rather than resuming the harbor round.
   await page.locator("#start-match").waitFor();
   assert.equal(await page.locator("#room-map").inputValue(), "village");
-  await click("#start-match");
+  await click(page, "#start-match");
   await page.waitForFunction(
     () =>
       window.sloppyMultiplayer?.display?.mapTheme === "village" &&

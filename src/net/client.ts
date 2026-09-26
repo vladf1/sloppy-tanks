@@ -10,7 +10,7 @@ import type { RenderState } from "../game/render-state";
 import type { Weapon } from "../game/types";
 import { encodeInput, type ControlInput } from "./player-controls";
 import { InputCadence } from "./input-cadence";
-import { Connection, type JoinChoice } from "./connection";
+import { Connection, TRANSPORT_DELAY_PARAMS, type JoinChoice } from "./connection";
 import { StateMirror } from "./replication";
 import { NetworkTimeline } from "./interpolation";
 import { NetworkUI } from "./network-ui";
@@ -135,7 +135,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
     leave() {
       connection.leave();
       const url = new URL(location.href);
-      for (const key of ["room", "latency", "jitter"]) {
+      for (const key of ["room", ...TRANSPORT_DELAY_PARAMS]) {
         url.searchParams.delete(key);
       }
       url.searchParams.set("multiplayer", "");
