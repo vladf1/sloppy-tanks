@@ -17,7 +17,7 @@ const context = canvas.getContext("2d");
 context.imageSmoothingEnabled = false;
 for (const [kind, [column, row]] of Object.entries(PICKUP_ATLAS_TILES)) {
   const image = await loadImage(
-    new URL(`../public/textures/pickups/${kind}.webp`, import.meta.url),
+    new URL(`../assets/texture-sources/pickups/${kind}.webp`, import.meta.url),
   );
   if (image.width !== PICKUP_ICON_SIZE || image.height !== PICKUP_ICON_SIZE) {
     throw new Error(`Unexpected pickup icon dimensions: ${kind}`);

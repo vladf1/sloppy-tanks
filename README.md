@@ -57,7 +57,7 @@ npm run format         # Prettier for source, tests, scripts, styles and docs
 npm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
-[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The performance notebook is available at `/sloppy-tanks/benchmark.html`.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements.
 
 | Area                           | Starting points                                                                                    |
 | ------------------------------ | -------------------------------------------------------------------------------------------------- |
@@ -115,14 +115,14 @@ memory.
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
 
-| Command                         | Output / requirements                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `npm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp` |
-| `npm run optimize:textures`     | Six optimized runtime textures from preserved sources; requires `cwebp`                                |
-| `npm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                               |
-| `npm run generate:pickup-atlas` | The shared pickup atlas from the individual icons; also run by `generate:textures` and `generate:ammo` |
-| `npm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                           |
-| `npm run generate:audio`        | Eleven MP3 effects; requires FFmpeg                                                                    |
+| Command                         | Output / requirements                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
+| `npm run optimize:textures`     | Six optimized runtime textures from preserved sources; requires `cwebp`                                                          |
+| `npm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
+| `npm run generate:pickup-atlas` | The shared pickup atlas from the icons in `assets/texture-sources/pickups/`; also run by `generate:textures` and `generate:ammo` |
+| `npm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
+| `npm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 

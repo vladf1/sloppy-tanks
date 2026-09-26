@@ -5,7 +5,7 @@ import { AMMO_ORDER, isSpecialAmmo } from "../src/game/ammunition";
 import { WEAPONS } from "../src/game/data";
 
 // Original vector pictograms rasterized offline; the game only loads these WebP images.
-const output = new URL("../public/textures/pickups/", import.meta.url);
+const output = new URL("../assets/texture-sources/pickups/", import.meta.url);
 await mkdir(output, { recursive: true });
 for (const kind of AMMO_ORDER.filter(isSpecialAmmo)) {
   const canvas = createCanvas(256, 256),

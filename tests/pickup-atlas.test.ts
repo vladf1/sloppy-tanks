@@ -22,7 +22,7 @@ test("pickup atlas preserves all icon pixels, UV orientation and extruded gutter
   packed.drawImage(atlas, 0, 0);
   for (const kind of Object.keys(PICKUP_ATLAS_TILES) as PickupKind[]) {
     const source = await loadImage(
-      new URL(`../public/textures/pickups/${kind}.webp`, import.meta.url),
+      new URL(`../assets/texture-sources/pickups/${kind}.webp`, import.meta.url),
     );
     const original = createCanvas(source.width, source.height).getContext("2d");
     original.drawImage(source, 0, 0);

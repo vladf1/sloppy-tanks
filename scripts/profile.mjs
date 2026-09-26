@@ -1,7 +1,7 @@
 // @ts-check
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const label = process.argv[2] ?? "before";
 const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
@@ -170,31 +170,4 @@ try {
 } finally {
   save();
   await browser.close();
-}
-// Keep the notebook data compact; full snapshots, screenshots and importable
-// DevTools profiles remain in the local, ignored performance directory.
-const paths = ["before", "after"].map((name) => `artifacts/performance/${name}/results.json`);
-if (label === "after" && paths.every((path) => existsSync(path))) {
-  const reports = paths.map((path) => JSON.parse(readFileSync(path, "utf8")));
-  if (
-    reports.every(
-      (report) =>
-        report.complete &&
-        !report.errors.length &&
-        report.runs.length === 6 &&
-        Object.keys(report.profiles).length === 2,
-    )
-  ) {
-    /** @param {typeof results} report */
-    const summarize = (report) => ({
-      ...report,
-      runs: report.runs.map(
-        ({ snapshot: _snapshot, userAgent: _userAgent, memory: _memory, ...metrics }) => metrics,
-      ),
-    });
-    writeFileSync(
-      "artifacts/performance-results.json",
-      JSON.stringify({ before: summarize(reports[0]), after: summarize(reports[1]) }, null, 2),
-    );
-  }
 }

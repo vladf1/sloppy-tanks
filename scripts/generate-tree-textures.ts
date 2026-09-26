@@ -6,7 +6,7 @@ import { Random } from "../src/game/data";
 // Small, deterministic surface patterns. Runtime loads only these saved 256px WebP images.
 const output = new URL("../public/textures/trees/", import.meta.url);
 await mkdir(output, { recursive: true });
-for (const kind of ["birch", "rings", "leaves", "needles"]) {
+for (const kind of ["birch", "rings", "leaves"]) {
   const rng = new Random(1729),
     canvas = createCanvas(256, 256),
     c = canvas.getContext("2d");

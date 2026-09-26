@@ -9,8 +9,10 @@ import "./generate-laser-pickup";
 
 // Offline only: checked-in WebP images are loaded by the game, never this generator.
 const output = new URL("../public/textures/", import.meta.url);
-async function save(path: string, canvas: Canvas) {
-  const target = new URL(path, output);
+// Pickup icons are atlas sources; the game loads only the packed atlas.
+const pickupSources = new URL("../assets/texture-sources/", import.meta.url);
+async function save(path: string, canvas: Canvas, root = output) {
+  const target = new URL(path, root);
   await mkdir(new URL(".", target), { recursive: true });
   await writeFile(target, encodeWebp(canvas));
   console.log(fileURLToPath(target));
@@ -90,7 +92,7 @@ for (const kind of Object.keys(names) as (keyof typeof names)[]) {
   c.font = "900 25px sans-serif";
   c.textAlign = "center";
   c.fillText(names[kind], 128, 218);
-  await save(`pickups/${kind}.webp`, canvas);
+  await save(`pickups/${kind}.webp`, canvas, pickupSources);
 }
 
 for (const kind of ["siding", "shingles"] as const) {

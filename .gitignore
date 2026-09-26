@@ -3,8 +3,7 @@ dist/
 dist-cloudflare/
 .wrangler/
 .DS_Store
-artifacts/*.png
-artifacts/performance/
+artifacts/
 dist-dev/
 server/dist/
 bots/.wrangler/

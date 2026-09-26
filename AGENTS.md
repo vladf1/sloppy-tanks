@@ -55,11 +55,9 @@ npm run dev                           # browser work; use the printed URL
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ npm run check:browser
 ```
 
-`npm run validate` is not a passive read: it rewrites the tracked
-`artifacts/simulation-results.json`. Inspect that diff and keep it only when
-the validation output is intentionally part of the change. `npm run build`
-creates `dist/` and copies JSON reports from `artifacts/`; these are build
-outputs, not a place to edit source behavior.
+`npm run validate` writes its results to the ignored
+`artifacts/performance/simulation-results.json`. `npm run build` creates
+`dist/`; it is a build output, not a place to edit source behavior.
 
 A successful TypeScript/build/test gate does not prove controls, menu
 transitions, rendering, or cleanup. Run `npm run check:browser` against the

@@ -24,7 +24,7 @@ const clientHasServer = readdirSync(assets).some(
     /^client-.*\.js$/.test(name) &&
     readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL),
 );
-if (!index.includes("Play with friends") || !clientHasServer) {
+if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
   throw new Error(
     "dist-dev has no multiplayer entry or dev server URL; rebuild with npm run build:dev",
   );

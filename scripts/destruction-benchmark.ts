@@ -89,6 +89,6 @@ for (let run = 0; run < 5; run++) {
   });
   sim.dispose();
 }
-const output = process.argv[2] ?? "artifacts/destruction-benchmark.json";
+const output = process.argv[2] ?? "artifacts/performance/destruction-benchmark.json";
 writeFileSync(output, JSON.stringify({ seed: 731, stepsPerRun: 600, runs }, null, 2));
 console.log(JSON.stringify(runs, null, 2));
