@@ -3,7 +3,7 @@ import { build, preview } from "vite";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-ui-assertions.mjs";
+import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const directory = "artifacts/performance/multiplayer";
 const outDir = `${directory}/loading-build`;
@@ -22,8 +22,11 @@ await build({
           if (modules.some((id) => /\/src\/net\//.test(id))) {
             item.viteMetadata?.importedCss.forEach((file) => networkStyles.add(file));
           }
+          // The Node room server, its authority and the traffic bots never ship to browsers.
           assert.ok(
-            !modules.some((id) => /\/(server|node_modules\/(wrangler|workerd|esbuild))\//.test(id)),
+            !modules.some((id) =>
+              /\/(server|bots|node_modules\/(ws|esbuild))\/|\/src\/net\/match-host\.ts$/.test(id),
+            ),
             `Server code leaked into ${item.fileName}`,
           );
           chunks.set(item.fileName, {

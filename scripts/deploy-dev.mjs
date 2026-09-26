@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { DEV_MULTIPLAYER_URL } from "./dev-multiplayer.mjs";
+import { VPS_MULTIPLAYER_URL as DEV_MULTIPLAYER_URL } from "./vps-host.mjs";
 
 const repo = new URL("..", import.meta.url);
 const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };

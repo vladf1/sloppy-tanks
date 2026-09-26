@@ -1,38 +1,28 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
 import { BOT_NAMES } from "../src/game/bot-personalities.ts";
 import {
+  DEFAULT_GAME_URL,
   checkMultiplayerMenu,
   chooseRoomMap,
+  click,
+  launchChrome,
   openMultiplayerTab,
+  recordRoomFrames,
   waitForRoomBrowser,
-} from "./multiplayer-ui-assertions.mjs";
+} from "./multiplayer-helpers.mjs";
 
-const base = process.env.SLOPPY_URL ?? "http://127.0.0.1:5175/sloppy-tanks/";
+const baseURL = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+if (process.env.SLOPPY_SERVER) baseURL.searchParams.set("server", process.env.SLOPPY_SERVER);
+const base = baseURL.href;
 const label = process.env.SLOPPY_CHECK_LABEL ?? "local";
 assert.match(label, /^[a-z0-9-]+$/);
 const output = `artifacts/performance/multiplayer/rooms-${label}`;
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({
-  channel: "chrome",
-  headless,
-  args: [
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--disable-backgrounding-occluded-windows",
-  ],
-});
+const browser = await launchChrome();
 const errors = [],
   clients = [];
-const click = async (page, selector) => {
-  await page.locator(selector).scrollIntoViewIfNeeded();
-  const bounds = await page.locator(selector).boundingBox();
-  assert.ok(bounds);
-  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-};
 const until = async (condition, message) => {
   const deadline = Date.now() + 60000;
   while (!condition() && Date.now() < deadline)
@@ -43,32 +33,12 @@ try {
   for (let i = 0; i < 2; i++) {
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.addInitScript(() => Object.defineProperty(document, "hidden", { get: () => false }));
-    const client = { page, mirror: new StateMirror(), updates: 0, listRequests: 0 };
+    const client = recordRoomFrames(page, errors, { mirror: new StateMirror() });
+    Object.assign(client, { page, listRequests: 0 });
     clients.push(client);
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/rooms") client.listRequests++;
-    });
-    page.on("websocket", (socket) => {
-      socket.on("framereceived", ({ payload }) => {
-        try {
-          const message = JSON.parse(String(payload));
-          if (message.type === "lobby") client.lobby = message;
-          if (message.type === "control") client.control = message;
-          if (message.type === "full") {
-            client.mirror.applyFull(message, client.lobby);
-            client.updates++;
-          }
-          if (message.type === "snapshot") {
-            client.updates++;
-            for (const snapshot of message.snapshots)
-              assert.ok(client.mirror.applySnapshot(snapshot));
-          }
-          if (message.type === "error" || message.type === "room-reset") errors.push(message);
-        } catch (error) {
-          errors.push(error.message);
-        }
-      });
     });
   }
   const [alice, bob] = clients;

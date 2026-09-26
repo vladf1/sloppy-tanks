@@ -6,7 +6,6 @@ import { bindGameOptions, syncGameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode, removeMultiplayerTab } from "./play-modes";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
-import type { RenderState } from "./render-state";
 import type { DamageCause, SimEvent, Weapon } from "./types";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { rankIndex, RANKS, REPAIR_DELAY } from "./veterancy";
@@ -26,7 +25,6 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
 export const MENU_READY_STATUS = "Ready when you are";
 
 export class UI {
-  displayState?: RenderState;
   overlay: HTMLElement;
   hud: HTMLElement;
   toast: HTMLElement;
@@ -116,10 +114,7 @@ export class UI {
   show(): void {
     const simulation = this.simulation;
     const phase = simulation.match.phase;
-    this.overlay.style.display =
-      phase === "playing" && (this.displayState?.viewer.alive ?? simulation.human.alive)
-        ? "none"
-        : "grid";
+    this.overlay.style.display = phase === "playing" && simulation.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     this.playModes?.close();
     this.playModes = undefined;
@@ -149,7 +144,6 @@ export class UI {
       this.overlay.innerHTML = menuMarkup(
         simulation,
         this.battleSetup.querySelector(".menu-help")!.innerHTML,
-        this.displayState?.viewer,
       );
       this.overlay
         .querySelector(".respawn")
@@ -248,23 +242,17 @@ export class UI {
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      const state = this.displayState;
-      const viewerId = state?.viewerId ?? this.simulation.human.id;
-      const tanks = state?.tanks ?? this.simulation.tanks;
+      const { human, tanks } = this.simulation;
       const name = (id: number | undefined) =>
-        id === viewerId ? "YOU" : (tanks.find((tank) => tank.id === id)?.name ?? "YARD");
+        id === human.id ? "YOU" : (tanks.find((tank) => tank.id === id)?.name ?? "YARD");
       this.feedRows.unshift({ text: `${name(event.owner)}  ▸  ${name(event.id)}`, time: 5 });
     }
   }
   update(dt: number): void {
     const simulation = this.simulation;
-    const tank = this.displayState?.viewer ?? simulation.human;
-    const maxHp = this.displayState?.viewer.maxHp ?? simulation.maxHealth(simulation.human);
-    const match =
-      this.displayState && simulation.match.phase === "playing"
-        ? this.displayState.match
-        : simulation.match;
-    const elapsed = this.displayState?.elapsed ?? simulation.elapsed;
+    const tank = simulation.human;
+    const maxHp = simulation.maxHealth(tank);
+    const { match, elapsed } = simulation;
     const dead = !tank.alive;
     this.syncRound();
     if (match.phase === "playing") {

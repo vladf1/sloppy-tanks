@@ -13,7 +13,8 @@ npm run dev
 
 Open `?multiplayer` on the printed Vite URL. The client uses `ws://127.0.0.1:8787`
 locally. In another terminal, `npm run server:check:players` runs real player
-sockets on all maps; `npm run server:check:lifecycle` checks reconnect and expiry.
+sockets on all maps. Reconnect, host transfer and expiry are covered by
+`tests/match-host.test.ts` and `tests/room-session.test.ts` in `npm test`.
 Use `SLOPPY_SERVER_URL=wss://45-63-56-58.sslip.io` with a listed
 `SLOPPY_ORIGIN` such as `https://sloppy-tanks-dev.pages.dev` to test the VPS.
 `npm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects a

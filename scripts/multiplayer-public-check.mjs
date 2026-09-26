@@ -1,21 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
 import { StateMirror } from "../src/net/replication.ts";
-import { checkMultiplayerMenu, openMultiplayerTab } from "./multiplayer-ui-assertions.mjs";
+import {
+  checkMultiplayerMenu,
+  launchChrome,
+  openMultiplayerTab,
+  randomRoomCode,
+  recordRoomFrames,
+} from "./multiplayer-helpers.mjs";
 const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
 const output = "artifacts/performance/multiplayer/public";
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({
-  channel: "chrome",
-  headless,
-  args: [
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--disable-backgrounding-occluded-windows",
-  ],
-});
+const browser = await launchChrome();
 const errors = [],
   clients = [];
 try {
@@ -25,50 +21,19 @@ try {
   await first.locator("#join-room").waitFor();
   const inviteURL = new URL(first.url());
   inviteURL.searchParams.delete("multiplayer");
-  inviteURL.searchParams.set(
-    "room",
-    [...crypto.getRandomValues(new Uint8Array(8))]
-      .map((n) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[n & 31])
-      .join(""),
-  );
+  inviteURL.searchParams.set("room", randomRoomCode());
   const invite = inviteURL.href;
   for (const [index, page] of [
     first,
     await browser.newPage({ viewport: { width: 1200, height: 800 } }),
   ].entries()) {
-    const client = { page, mirror: new StateMirror(), inputs: 0, snapshots: 0 };
+    const client = recordRoomFrames(page, errors, { mirror: new StateMirror() });
+    client.page = page;
     clients.push(client);
     await page.addInitScript(() => Object.defineProperty(document, "hidden", { get: () => false }));
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
-    });
-    page.on("websocket", (socket) => {
-      socket.on("framereceived", ({ payload }) => {
-        try {
-          const m = JSON.parse(String(payload));
-          if (m.type === "lobby") client.lobby = m;
-          if (m.type === "control") client.control = m;
-          if (m.type === "full") {
-            client.mirror.applyFull(m, client.lobby);
-            client.fullEpoch = client.control?.controlEpoch;
-          }
-          if (m.type === "snapshot") {
-            client.snapshots++;
-            for (const s of m.snapshots) assert.ok(client.mirror.applySnapshot(s));
-          }
-          if (m.type === "error" || m.type === "room-reset") errors.push(m);
-        } catch (error) {
-          errors.push(error.message);
-        }
-      });
-      socket.on("framesent", ({ payload }) => {
-        const m = JSON.parse(String(payload));
-        if (m.type === "input") {
-          client.inputs++;
-          client.ready = client.fullEpoch >= 2 && m.controlEpoch === client.fullEpoch;
-        }
-      });
     });
     await page.goto(invite);
     await page.locator("#player-name").fill(index ? "Public Bob" : "W".repeat(24));
@@ -92,18 +57,15 @@ try {
     ),
   );
   // The live HUD can appear before arena preparation and its resume baseline finish.
+  const ready = (c) => c.fullEpoch >= 2 && c.inputs.at(-1)?.controlEpoch === c.fullEpoch;
   const readyDeadline = Date.now() + 60000;
-  while (!clients.every((c) => c.ready) && Date.now() < readyDeadline)
-    await first.waitForTimeout(50);
-  assert.ok(
-    clients.every((c) => c.ready),
-    "Both arenas are ready for input after resume",
-  );
+  while (!clients.every(ready) && Date.now() < readyDeadline) await first.waitForTimeout(50);
+  assert.ok(clients.every(ready), "Both arenas are ready for input after resume");
   for (const [index, c] of clients.entries()) {
     // Focus loss clears held controls; drive each visible player independently.
     await c.page.bringToFront();
     const before = { ...c.mirror.render(c.control.tankId).viewer.position };
-    const inputStart = c.inputs;
+    const inputStart = c.inputs.length;
     const key = index ? "a" : "d";
     await c.page.keyboard.down(key);
     await c.page.waitForTimeout(800);
@@ -112,8 +74,8 @@ try {
     const after = c.mirror.render(c.control.tankId).viewer.position;
     assert.ok(Math.hypot(after.x - before.x, after.z - before.z) > 0.4, "Public player movement");
     assert.ok(
-      c.inputs - inputStart >= 8,
-      `Held movement retains active input cadence (${c.inputs - inputStart} packets)`,
+      c.inputs.length - inputStart >= 8,
+      `Held movement retains active input cadence (${c.inputs.length - inputStart} packets)`,
     );
     assert.ok(c.snapshots > 5);
     assert.equal(
@@ -186,7 +148,7 @@ try {
         base,
         errors,
         clients: clients.map((c) => ({
-          inputs: c.inputs,
+          inputs: c.inputs.length,
           snapshots: c.snapshots,
           tick: c.mirror.tick,
         })),

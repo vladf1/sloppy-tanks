@@ -2,7 +2,6 @@ import { recapMarkup } from "./round-recap";
 import { AMMO_HELP, AMMO_ORDER } from "./ammunition";
 import { SCORE_LIMIT, TEAM_NAMES, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
-import type { Tank } from "./types";
 
 export function hudMarkup(): string {
   return `<div id="hud">
@@ -31,11 +30,8 @@ function speedSliders(speedTuning: Simulation["speedTuning"]): string {
     .join("")}<small>50–200% · 100% = default speed · Saved automatically</small></div>`;
 }
 
-export function menuMarkup(
-  simulation: Simulation,
-  controlHelp: string,
-  viewer: Pick<Tank, "alive" | "deaths"> = simulation.human,
-): string {
+export function menuMarkup(simulation: Simulation, controlHelp: string): string {
+  const viewer = simulation.human;
   const phase = simulation.match.phase;
   if (phase === "paused") {
     return `
