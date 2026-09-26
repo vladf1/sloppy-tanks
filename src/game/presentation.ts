@@ -516,7 +516,12 @@ export class Presentation {
       samples.visible = false;
       this.warmSamples = samples;
     }
-    // Record complete bundles and the actual first frame before enabling combat.
+    await this.drawFirstFrames(simulation);
+  }
+  /** Record complete bundles and the actual first frame before enabling combat.
+   * reset() builds new models, so a reset view needs this before it is shown too. */
+  async drawFirstFrames(source: Simulation | RenderState): Promise<void> {
+    const simulation = renderState(source, this.wreckView);
     for (let i = 0; i < 2; i++) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       this.render(simulation, 1, 0);

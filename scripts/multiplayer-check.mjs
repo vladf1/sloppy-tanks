@@ -5,14 +5,13 @@ import {
   checkMultiplayerMenu,
   click,
   launchChrome,
-  randomRoomCode,
+  openMultiplayerTab,
   recordRoomFrames,
 } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/browser";
 await mkdir(output, { recursive: true });
 const url = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
-url.searchParams.set("room", randomRoomCode());
 if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
 for (const [env, key] of [
   ["SLOPPY_LATENCY", "latency"],
@@ -46,7 +45,9 @@ const state = (page) =>
       })),
     };
   });
-async function join(name, team) {
+/** The room link the host shares once Battle Setup has created the room. */
+let roomLink = "";
+async function openPlayer() {
   const context = await browser.newContext({ viewport: { width: 1100, height: 780 } });
   const page = await context.newPage();
   pages.push(page);
@@ -62,11 +63,39 @@ async function join(name, team) {
     if (message.type() === "error") errors.push(message.text());
   });
   frames.set(page, recordRoomFrames(page, errors));
-  await page.goto(url.href);
+  return page;
+}
+/** Name and team on Battle Setup, then a physical click on `action`. */
+async function enter(page, name, team, action) {
   await page.locator("#player-name").fill(name);
-  await page.locator("#player-team").selectOption(String(team));
-  await page.locator("#join-room").click();
+  await page.locator(`input[name="playerTeam"][value="${team}"]`).check();
+  await click(page, action);
   await page.waitForFunction(() => window.sloppyMultiplayer?.connection.connected);
+}
+/** The host creates a humans-only room on Battle Setup; its battle starts at once. */
+async function create(name, team) {
+  const page = await openPlayer();
+  // Opening on the multiplayer tab builds no single-player arena, so the room loads in place.
+  const setup = new URL(url);
+  setup.searchParams.set("multiplayer", "");
+  await page.goto(setup.href);
+  await openMultiplayerTab(page);
+  await enter(page, name, team, "#create-room");
+  roomLink = page.url();
+  assert.match(roomLink, /[?&]room=/, "The room page carries its shareable link");
+  return page;
+}
+/** Friends open the room link: Battle Setup selects the room, then they join. */
+async function join(name, team) {
+  const page = await openPlayer();
+  await page.goto(roomLink);
+  await page.locator("#join-room:enabled").waitFor();
+  assert.equal(
+    await page.locator('input[name="room-choice"]:checked').inputValue(),
+    new URL(roomLink).searchParams.get("room"),
+    "The room link selects its room",
+  );
+  await enter(page, name, team, "#join-room");
   return page;
 }
 /** Waits until the page drives its own tank in a round with `tanks` tanks. */
@@ -90,23 +119,19 @@ function playing(page, tanks, round = 1) {
 const driver = (page, value) =>
   page.waitForFunction((value) => window.sloppyMultiplayer.control.driver === value, value);
 try {
-  const alice = await join("Alice <b>literal</b>", 0);
+  const alice = await create("Alice <b>literal</b>", 0);
+  await playing(alice, 1);
   const bob = await join("Bob", 1);
+  await Promise.all(pages.map((page) => playing(page, 2)));
   const aliceFrames = frames.get(alice);
   assert.equal(await alice.locator("#network-roster b").count(), 2, "Names are literal text");
 
   // Humans-only is the host's setting; guests see it synced and read-only.
   const humansOnly = "#room-humans-only";
-  assert.equal(await alice.locator(humansOnly).isChecked(), false);
+  assert.equal(await alice.locator(humansOnly).isChecked(), true);
+  assert.equal(await bob.locator(humansOnly).isChecked(), true);
   assert.equal(await bob.locator(humansOnly).isDisabled(), true);
-  await click(alice, humansOnly);
-  await bob.waitForFunction(() => document.querySelector("#room-humans-only").checked);
-  await alice.waitForFunction(() => document.querySelector("#room-difficulty").disabled);
   assert.match(await bob.locator("#network-roster").innerText(), /open seats/);
-  await checkMultiplayerMenu(alice);
-  await alice.screenshot({ path: `${output}/lobby.png` });
-  await alice.locator("#start-match").click();
-  await Promise.all(pages.map((page) => playing(page, 2)));
 
   // Unchanged input is refreshed slowly and never mistaken for an absent player.
   await alice.waitForTimeout(2000);
@@ -233,6 +258,8 @@ try {
   const epochBeforeMenu = aliceFrames.control.controlEpoch;
   await click(alice, "#pause");
   await driver(alice, "idle");
+  await checkMultiplayerMenu(alice);
+  await alice.screenshot({ path: `${output}/menu.png` });
   assert.match(await alice.locator("#network-help").innerText(), /idle and vulnerable/);
   assert.equal(await alice.locator(humansOnly).isDisabled(), true, "Settings lock during play");
   const pausedTick = (await state(alice)).tick;
@@ -252,8 +279,10 @@ try {
   });
   await driver(bob, "human");
   const old = await state(bob);
+  // A reload opens Battle Setup with the room selected; joining again keeps the seat.
   await bob.reload();
-  await bob.locator("#join-room").click();
+  await bob.locator("#join-room:enabled").waitFor();
+  await click(bob, "#join-room");
   await playing(bob, 2);
   observations.reconnected = await state(bob);
   assert.equal(observations.reconnected.player, old.player);
@@ -335,7 +364,7 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ idle: observations.idle, response: observations.response }));
   console.log(
-    "Two-browser multiplayer: join, humans-only sync, idle input, movement, fire, mine, idle menu and hidden tab, reload, late join and leave, results, restored bots on another map, automatic reconnect and real multi-touch passed.",
+    "Two-browser multiplayer: create on Battle Setup, join by room link, humans-only sync, idle input, movement, fire, mine, idle menu and hidden tab, reload, late join and leave, results, restored bots on another map, automatic reconnect and real multi-touch passed.",
   );
 } finally {
   for (const [i, page] of pages.entries()) {

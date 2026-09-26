@@ -116,6 +116,53 @@ export async function checkMultiplayerMenu(page) {
   }
 }
 
+/** Sample what every rendered frame shows, from the page's first frame until the arena
+ * has shown for two frames, so a check can prove a join from Battle Setup never flashes
+ * the room menu or a blank page. Install before navigating; each load samples anew. */
+export async function recordJoinFrames(page) {
+  await page.addInitScript(() => {
+    const frames = (window.sloppyJoinFrames = []);
+    const shown = (node) =>
+      !!node && !node.closest("[hidden]") && getComputedStyle(node).display !== "none";
+    const sample = () => {
+      const setup = document.querySelector(".menu.start");
+      frames.push({
+        setup: shown(setup),
+        joining: !!setup && "joining" in setup.dataset,
+        play: setup?.dataset.play,
+        kind: setup?.querySelector("[data-kind].selected")?.dataset.kind,
+        roomMenu: shown(document.querySelector(".network-menu")?.closest("#overlay")),
+        game: shown(document.querySelector(".multiplayer canvas#game")),
+      });
+      if (frames.filter((frame) => frame.game).length < 2) {
+        requestAnimationFrame(sample);
+      }
+    };
+    requestAnimationFrame(sample);
+  });
+}
+
+/** This page load's frames, once the arena has shown. */
+export async function joinFrames(page) {
+  await page.waitForFunction(
+    () => window.sloppyJoinFrames.filter((frame) => frame.game).length >= 2,
+  );
+  return page.evaluate(() => window.sloppyJoinFrames);
+}
+
+/** A room joined from Battle Setup loads behind the setup and replaces it only when
+ * the arena is ready: no room menu, no blank frame, no setup left over the arena. */
+export function assertJoinedBehindSetup(frames, label) {
+  assert.ok(
+    frames.every((frame) => !frame.roomMenu),
+    `${label}: the room menu never shows while joining`,
+  );
+  assert.ok(
+    frames.every((frame) => frame.setup !== frame.game),
+    `${label}: every frame shows either Battle Setup or the arena`,
+  );
+}
+
 /** Battle Setup's multiplayer tab, opened with a real pointer click. */
 export async function openMultiplayerTab(page) {
   await click(page, "#tab-multiplayer");

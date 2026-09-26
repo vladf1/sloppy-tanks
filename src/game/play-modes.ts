@@ -1,6 +1,7 @@
 import { showTankTeam, type GameOptions } from "./game-options";
 import type { RoomBrowser } from "../net/room-browser";
 import type { RoomSelection } from "../net/pending-join";
+import type { RoomLink } from "../net/room-browser";
 
 /** Battle Setup's two tabs. This module runs in the inline startup script, so all
  * multiplayer code stays behind the dynamic import below. */
@@ -23,21 +24,23 @@ export function multiplayerAvailable(): boolean {
   );
 }
 
-/** A `?multiplayer` link or reload opens the multiplayer tab. */
+/** A `?multiplayer` link or reload, or a room link, opens the multiplayer tab. */
 export function initialPlayMode(search: string): PlayMode {
-  return multiplayerAvailable() && new URLSearchParams(search).has("multiplayer")
+  const params = new URLSearchParams(search);
+  return multiplayerAvailable() && (params.has("multiplayer") || params.has("room"))
     ? "multiplayer"
     : "single";
 }
 
-/** Keep a reload on the chosen tab. The flag also tells the page's head scripts not to
- * download single-player physics, so it must match the tab the page opens on. */
+/** Keep a reload on the chosen tab. The flags also tell the page's head scripts not to
+ * download single-player physics, so they must match the tab the page opens on. */
 function rememberPlayMode(mode: PlayMode): void {
   const url = new URL(location.href);
   if (mode === "multiplayer") {
     url.searchParams.set("multiplayer", "");
   } else {
     url.searchParams.delete("multiplayer");
+    url.searchParams.delete("room");
   }
   history.replaceState(history.state, "", url);
 }
@@ -48,29 +51,31 @@ export function removeMultiplayerTab(setup: HTMLElement): void {
   setup.querySelector("#multiplayer-panel")?.remove();
 }
 
-/** Show one panel and follow the WAI-ARIA tabs pattern; `change` runs after a switch. */
+/** Show one tab's panel, following the WAI-ARIA tabs pattern. */
+export function showPlayMode(setup: HTMLElement, mode: PlayMode): void {
+  setup.dataset.play = mode;
+  for (const tab of setup.querySelectorAll<HTMLButtonElement>('[role="tab"][data-play]')) {
+    const selected = tab.dataset.play === mode;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    const panel = setup.querySelector<HTMLElement>(`#${tab.getAttribute("aria-controls")}`);
+    if (panel) {
+      panel.hidden = !selected;
+    }
+  }
+}
+
+/** Switch panels from the tabs by pointer or keyboard; `change` runs after a switch. */
 function bindTabs(setup: HTMLElement, initial: PlayMode, change: (mode: PlayMode) => void): void {
   const tabs = [...setup.querySelectorAll<HTMLButtonElement>('[role="tab"][data-play]')];
-  const select = (mode: PlayMode) => {
-    setup.dataset.play = mode;
-    for (const tab of tabs) {
-      const selected = tab.dataset.play === mode;
-      tab.setAttribute("aria-selected", String(selected));
-      tab.tabIndex = selected ? 0 : -1;
-      const panel = setup.querySelector<HTMLElement>(`#${tab.getAttribute("aria-controls")}`);
-      if (panel) {
-        panel.hidden = !selected;
-      }
-    }
-  };
   const open = (tab: HTMLButtonElement) => {
     const mode = tab.dataset.play === "multiplayer" ? "multiplayer" : "single";
     if (setup.dataset.play !== mode) {
-      select(mode);
+      showPlayMode(setup, mode);
       change(mode);
     }
   };
-  select(initial);
+  showPlayMode(setup, initial);
   for (const tab of tabs) {
     tab.addEventListener("click", () => open(tab));
     tab.addEventListener("keydown", (event) => {
@@ -92,11 +97,13 @@ function bindTabs(setup: HTMLElement, initial: PlayMode, change: (mode: PlayMode
 }
 
 /** Switch Battle Setup between its tabs. The room list loads on the first visit to
- * the multiplayer tab and polls only while that tab is shown; `close` stops it. */
+ * the multiplayer tab and polls only while that tab is shown; `close` stops it. A room
+ * `link` is selected once the list shows it. */
 export function bindPlayModes(
   setup: HTMLElement,
   initial: PlayMode,
   handlers: PlayModeHandlers,
+  link?: RoomLink,
 ): { close(): void } {
   if (!multiplayerAvailable()) {
     removeMultiplayerTab(setup);
@@ -124,6 +131,7 @@ export function bindPlayModes(
         address,
         () => handlers.choices().humanKind,
         (selection) => handlers.enterRoom(selection, () => lobby.joinAfterReload(selection)),
+        link,
       );
     });
     rooms

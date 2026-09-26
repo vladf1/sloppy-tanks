@@ -1,3 +1,4 @@
+import { roomAddress } from "../game/join-screen";
 import type { JoinChoice } from "./connection";
 import { settingsReader } from "./protocol";
 import { boolean, object, optional, record, string } from "./schema";
@@ -18,12 +19,7 @@ export interface RoomSelection {
   choice: JoinChoice;
 }
 
-export function roomAddress(room: string): URL {
-  const url = new URL(location.href);
-  url.searchParams.delete("multiplayer");
-  url.searchParams.set("room", room);
-  return url;
-}
+export { roomAddress };
 
 /** A page that already built a single-player arena reloads into the room instead of
  * running two renderers; the room page joins with the same choices. */
@@ -31,12 +27,12 @@ export function joinAfterReload(selection: RoomSelection): void {
   try {
     sessionStorage.setItem(PENDING_JOIN_KEY, JSON.stringify(selection));
   } catch {
-    /* Without storage the room page asks for the choices again. */
+    /* Without storage the room page opens Battle Setup with the room selected. */
   }
   location.assign(roomAddress(selection.room));
 }
 
-/** Read the choices once, so a later reload of the room page asks before joining. */
+/** Read the choices once, so a later reload of the room page opens Battle Setup. */
 export function takePendingJoin(room: string): JoinChoice | undefined {
   try {
     const saved = sessionStorage.getItem(PENDING_JOIN_KEY);

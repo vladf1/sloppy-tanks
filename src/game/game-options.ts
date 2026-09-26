@@ -46,11 +46,7 @@ export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
 
 /** Apply per-visit choices to the build-time menu without replacing its DOM. */
 export function syncGameOptions(overlay: HTMLElement, options: GameOptions): void {
-  overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((button) => {
-    const selected = button.dataset.kind === options.humanKind;
-    button.classList.toggle("selected", selected);
-    button.setAttribute("aria-pressed", String(selected));
-  });
+  showTank(overlay, options.humanKind);
   for (const key of ["gameMode", "mapMode", "difficulty"] as const) {
     overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) => {
       input.checked = input.value === options[key];
@@ -65,6 +61,15 @@ export function syncGameOptions(overlay: HTMLElement, options: GameOptions): voi
   showTankTeam(overlay, options.humanTeam);
 }
 
+/** Mark one tank card as the player's choice. */
+export function showTank(overlay: HTMLElement, kind: string): void {
+  overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((card) => {
+    const selected = card.dataset.kind === kind;
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
+}
+
 /** Tank previews are one sprite sheet with a row per team colour. */
 export function showTankTeam(overlay: HTMLElement, team: GameOptions["humanTeam"]): void {
   overlay.querySelectorAll(".tank-preview image").forEach((image) => {
@@ -72,16 +77,17 @@ export function showTankTeam(overlay: HTMLElement, team: GameOptions["humanTeam"
   });
 }
 
+/** The team colour the tank previews currently show. */
+export function shownTankTeam(overlay: HTMLElement): GameOptions["humanTeam"] {
+  return overlay.querySelector(".tank-preview image")?.getAttribute("y") === "-400" ? 1 : 0;
+}
+
 /** Both the lightweight startup menu and later rounds edit the same choices. */
 export function bindGameOptions(overlay: HTMLElement, options: GameOptions): void {
   overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((button) => {
     button.addEventListener("click", () => {
       options.humanKind = button.dataset.kind as VehicleKind;
-      overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((card) => {
-        const selected = card === button;
-        card.classList.toggle("selected", selected);
-        card.setAttribute("aria-pressed", String(selected));
-      });
+      showTank(overlay, options.humanKind);
     });
   });
   for (const key of ["gameMode", "mapMode", "difficulty"] as const) {

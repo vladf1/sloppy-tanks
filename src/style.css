@@ -1309,6 +1309,26 @@ h2 {
 .start:has(input[name="room-choice"]:checked) #create-room:not(:disabled):hover {
   background: #ffcf381a;
 }
+/* A chosen room loads behind Battle Setup: the room list reports progress and
+   the pressed button stays lit until the arena can draw. */
+.room-joining {
+  display: none;
+}
+.start[data-joining] .room-joining {
+  display: block;
+  position: absolute;
+  top: calc(50% + 30px);
+  left: 30%;
+  right: 30%;
+  margin: 0;
+}
+.start[data-joining] #rooms-message {
+  color: #ffcf38;
+  font-weight: 600;
+}
+.start[data-joining] #room-count {
+  visibility: hidden;
+}
 .room-create {
   gap: 10px;
 }

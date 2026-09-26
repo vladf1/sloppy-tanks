@@ -3,7 +3,7 @@ import { build, preview } from "vite";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
+import { checkMultiplayerMenu, click, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const directory = "artifacts/performance/multiplayer";
 const outDir = `${directory}/loading-build`;
@@ -85,6 +85,15 @@ try {
   await networkPage.goto(server.resolvedUrls.local[0] + "?multiplayer");
   await waitForRoomBrowser(networkPage);
   await checkMultiplayerMenu(networkPage);
+  // A room link opens the same Battle Setup tab, not a room page.
+  await networkPage.goto(server.resolvedUrls.local[0] + "?room=ABCD2345");
+  await waitForRoomBrowser(networkPage);
+  assert.equal(await networkPage.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
+  assert.equal(
+    await networkPage.locator(".network-menu").count(),
+    0,
+    "No room menu before joining",
+  );
   const listingRequests = networkRequests.length;
   for (const file of networkStyles) {
     assert.ok(
@@ -92,10 +101,10 @@ try {
       `The room list does not load in-room styles: ${file}`,
     );
   }
-  // A room page loads the multiplayer client and its extracted stylesheet.
-  await networkPage.goto(server.resolvedUrls.local[0] + "?room=ABCD2345");
-  await networkPage.locator("#join-room").waitFor();
-  await checkMultiplayerMenu(networkPage);
+  // Entering a room loads the multiplayer client and its extracted stylesheet. It needs
+  // no game server: the room page builds behind Battle Setup while it connects.
+  await click(networkPage, "#create-room");
+  await networkPage.locator(".multiplayer .network-menu").waitFor({ state: "attached" });
   assert.ok(networkStyles.size > 0, "Build exposes multiplayer's extracted CSS");
   for (const file of networkStyles) {
     assert.ok(

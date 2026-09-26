@@ -72,19 +72,22 @@ multiplayer requests, sockets or UI in single-player, server or traffic-bot code
 any browser chunk, and client simulation or Rapier JS/WASM downloads when opening
 multiplayer. `tests/multiplayer-client-imports.test.ts` guards the same import
 boundary in `npm test` and prints the offending import chain.
-It also checks that multiplayer's extracted stylesheet loads only in multiplayer,
-inactive menu actions stay hidden, and the menu fits desktop viewports.
+It also checks that a room link opens Battle Setup rather than a room page, that
+multiplayer's extracted stylesheet loads only once a room is entered, that inactive
+menu actions stay hidden, and that the menu fits desktop viewports.
 
 `npm run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
 plus a third for a late join. Run Vite and the local server first (`npm run
-server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`. It covers literal
-names, the host's humans-only checkbox through real pointer input with synced,
-read-only guest settings, and two-player rounds without fill bots. From the sent
-frames it checks that unchanged idle input goes out about once a second without
-losing the seat, and that movement, aim, held fire and a single mine keep the active
-cadence. It also measures button-to-visible movement and shot feedback, then covers
-the idle menu and hidden tab, reload, late join and leave, results, restored bots on
-another map, automatic reconnect and physical multi-touch driving, fire and mines.
+server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`. The host creates a
+humans-only room on Battle Setup and the others open its room link, which selects
+the room there. It covers literal names, synced read-only guest settings, the host's
+humans-only checkbox through real pointer input, and two-player rounds without fill
+bots. From the sent frames it checks that unchanged idle input goes out about once a
+second without losing the seat, and that movement, aim, held fire and a single mine
+keep the active cadence. It also measures button-to-visible movement and shot
+feedback, then covers the idle menu and hidden tab, a reload that rejoins the same
+seat from Battle Setup, late join and leave, results, restored bots on another map,
+automatic reconnect and physical multi-touch driving, fire and mines.
 `SLOPPY_LATENCY=50` (also 100/150) adds round-trip delay, `SLOPPY_JITTER=30` adds up
 to 30 ms of variable delay, and `SLOPPY_STALL=200` holds about one message in fifty
 and queues later ones behind it, like TCP head-of-line blocking. They set the dev
@@ -99,7 +102,10 @@ seats and viewer isolation without a server.
 `node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
 names, responsive room listings, immediate creation on the selected map, Auto
 teams, live player kills, join notifications, configurable match duration, late join,
-received-update stats, polling cleanup and empty-room removal.
+received-update stats, polling cleanup and empty-room removal. For both the reload
+and in-page joins it samples every frame: Battle Setup (restored after the reload)
+stays until the arena replaces it, and the room menu never shows. A link to a room
+that isn't open opens Battle Setup, says so and selects nothing.
 Use `SLOPPY_URL` for either the local Vite URL or the public dev site,
 `SLOPPY_SERVER` as for `check:multiplayer`, and `SLOPPY_CHECK_LABEL=public` to keep
 separate evidence. Buttons and room selection

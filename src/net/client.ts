@@ -7,10 +7,11 @@ import { loadTankSurface } from "../game/tank-surfaces";
 import { AMMO_ORDER, hasAmmo } from "../game/ammunition";
 import { CAMERA } from "../game/view-settings";
 import type { RenderState } from "../game/render-state";
+import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import type { Weapon } from "../game/types";
 import { encodeInput, type ControlInput } from "./player-controls";
 import { InputCadence } from "./input-cadence";
-import { Connection, TRANSPORT_DELAY_PARAMS, type JoinChoice } from "./connection";
+import { Connection, TRANSPORT_DELAY_PARAMS } from "./connection";
 import { StateMirror } from "./replication";
 import { NetworkTimeline } from "./interpolation";
 import { NetworkUI } from "./network-ui";
@@ -20,7 +21,15 @@ import { serverAddress } from "./server-address";
 import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
 
 const MAX_ACTIONS = 8;
-export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): void {
+/** Join the room chosen on Battle Setup. The room page builds out of sight and replaces
+ * `setup` only once its arena can draw, so the arena's first stalled frames never show;
+ * a join or room that gives up returns to Battle Setup instead. Without `selection`, the
+ * choices come from the page that reloaded into the room. */
+export function startMultiplayer(
+  app: HTMLElement,
+  setup: JoinScreen,
+  selection?: RoomSelection,
+): void {
   const room = selection?.room ?? new URLSearchParams(location.search).get("room")?.toUpperCase();
   if (!room || !ROOM_CODE.test(room)) {
     // Battle Setup's multiplayer tab lists the rooms that exist.
@@ -32,7 +41,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
   }
   const address = serverAddress();
   if (!address) {
-    root.textContent =
+    app.textContent =
       "Multiplayer isn't enabled on this site yet. Open the development site to play with friends.";
     return;
   }
@@ -40,6 +49,24 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
     history.replaceState(null, "", roomAddress(room));
   }
   const selectedChoice = selection?.choice ?? takePendingJoin(room);
+  if (!selectedChoice) {
+    setup.fail("Choose your tank and join the room again.");
+    return;
+  }
+  let joining: JoinScreen | undefined = setup;
+  const root = app.appendChild(document.createElement("div"));
+  root.hidden = true;
+  const reveal = () => {
+    if (joining) {
+      joining.done();
+      joining = undefined;
+      root.hidden = false;
+    }
+  };
+  const showStatus = (text: string, connected: boolean) => {
+    ui.status(text, connected);
+    joining?.status(text);
+  };
   const mirror = new StateMirror();
   const timeline = new NetworkTimeline();
   let view: Presentation | undefined;
@@ -49,7 +76,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
   let statsSampleMs = 0;
   let statsSampleUpdates = 0;
   let appliedInput = 0;
-  let audio: AudioSystem | undefined;
+  const audio = new AudioSystem();
   let control: Control | undefined;
   let display: RenderState | undefined;
   let readyRound = 0;
@@ -86,7 +113,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
     }
   };
   const pause = () => {
-    if (phase !== "playing" || ui.menu) {
+    if (phase !== "playing" || ui.menu || joining) {
       return;
     }
     ui.setMenu(true);
@@ -103,19 +130,22 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
     lastResumeMs = performance.now();
     connection.send("resume");
   };
-  const join = (choice: JoinChoice) => {
-    audio ??= new AudioSystem();
-    audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
-    audio.start();
-    // Manual retries keep the original create/join intent after a connection error.
-    void connection.connect({
-      ...choice,
-      create: selectedChoice?.create,
-      existingRoom: selectedChoice?.existingRoom,
-    });
+  /** Battle Setup, with this room selected, is where to join again. */
+  const backToSetup = (notice: string) => {
+    if (joining) {
+      joining.fail(notice);
+    } else {
+      returnToSetup({
+        room,
+        joining: false,
+        notice,
+        name: selectedChoice.name,
+        kind: selectedChoice.kind,
+        team: selectedChoice.team === undefined ? "auto" : String(selectedChoice.team),
+      });
+    }
   };
   const ui = new NetworkUI(root, room, {
-    join,
     choose(choice) {
       connection.send("choose", { team: choice.team, kind: choice.kind });
     },
@@ -147,7 +177,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
       }
     },
     volume(value) {
-      audio?.volume(value);
+      audio.volume(value);
       try {
         localStorage.setItem("sloppy-volume", String(value));
       } catch {
@@ -191,7 +221,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
     preparing = true;
     active = false;
     connection.send("suspend");
-    ui.status("Preparing the arena…", true);
+    showStatus("Preparing the arena…", true);
     const round = connection.roundId;
     const epoch = connection.roomEpoch;
     try {
@@ -270,21 +300,18 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
       }
       const state = mirror.render(control.tankId);
       view.reset(state);
-      await view.prepare(state, (stage) => ui.status(stage, true));
+      await view.prepare(state, (stage) => showStatus(stage, true));
       if (round !== connection.roundId || epoch !== connection.roomEpoch) {
         return;
       }
       readyRound = round;
       resetDisplay();
-      active = true;
-      ui.canvas.focus();
-      ui.status("Connected", true);
+      showStatus("Connected", true);
       lastResumeMs = performance.now();
+      // Resuming sends a fresh full state; showBaseline starts the arena from it.
       connection.send("resume");
     } catch (error) {
-      console.error("Multiplayer graphics failed", error);
-      ui.status("The arena could not load. Reload to try again.", false);
-      connection.send("suspend");
+      graphicsFailed(error);
     } finally {
       preparing = false;
       // The host may start a new round while GPU compilation for the old one is pending.
@@ -298,6 +325,33 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
       }
     }
   };
+  const graphicsFailed = (error: unknown) => {
+    console.error("Multiplayer graphics failed", error);
+    backToSetup("The arena could not load. Try again, or play single player.");
+  };
+  let baselines = 0;
+  /** A full state makes reset() build every model again, and drawing new models the
+   * first time stalls for hundreds of milliseconds. Draw them before the arena takes
+   * input, and keep a room page that is still joining hidden until then. */
+  const showBaseline = async (arena: Presentation, state: RenderState) => {
+    const baseline = ++baselines;
+    active = false;
+    arena.reset(state);
+    try {
+      await arena.drawFirstFrames(state);
+    } catch (error) {
+      graphicsFailed(error);
+      return;
+    }
+    if (baseline !== baselines || readyRound !== connection.roundId || !control) {
+      return;
+    }
+    // Snapshots kept arriving while the frames were drawn.
+    resetDisplay();
+    active = true;
+    reveal();
+    ui.canvas.focus();
+  };
   const connection = new Connection(address.href.replace(/\/$/, ""), room, {
     clearInput,
     status(text, connected) {
@@ -305,7 +359,10 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
         active = false;
         clearInput();
       }
-      ui.status(text, connected);
+      showStatus(text, connected);
+      if (connection.stopped) {
+        backToSetup(text);
+      }
     },
     message(message) {
       if (message.type === "welcome") {
@@ -335,6 +392,11 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
         ui.lobby(lobby, connection.playerId);
         if (phase !== "playing") {
           clearInput();
+          // A room between battles needs its menu now. A new room starts its battle
+          // right after this first lobby, so it keeps loading behind Battle Setup.
+          if (phase === "results" || !selectedChoice.create) {
+            reveal();
+          }
         }
       } else if (message.type === "control") {
         const next = controlReader.read(message);
@@ -367,9 +429,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
         if (readyRound !== connection.roundId) {
           void prepare();
         } else if (view && display) {
-          view.reset(display);
-          active = true;
-          ui.canvas.focus();
+          void showBaseline(view, display);
         }
       } else if (message.type === "snapshot") {
         appliedInput = id.read(message.ack);
@@ -489,7 +549,7 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
             event.owner === display.viewerId &&
             event.team !== display.viewer.team;
           view.event(event, playerHit);
-          audio?.event(event, display.viewer.position, playerHit, event.id === display.viewerId);
+          audio.event(event, display.viewer.position, playerHit, event.id === display.viewerId);
           ui.event(event, display, view.damageAngle(event));
         }
       }
@@ -517,9 +577,9 @@ export function startMultiplayer(root: HTMLElement, selection?: RoomSelection): 
   });
   window.addEventListener("pagehide", () => connection.stop(), { once: true });
   requestAnimationFrame(loop);
-  if (selectedChoice) {
-    join(selectedChoice);
-  }
+  audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
+  audio.start();
+  void connection.connect(selectedChoice);
   if (import.meta.env.DEV) {
     Object.assign(window, {
       sloppyMultiplayer: {

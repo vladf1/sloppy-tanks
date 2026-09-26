@@ -30,9 +30,10 @@ export class Connection {
   observedTick = 0;
   rtt = 0;
   connected = false;
+  /** Set once the connection gives up or leaves; until then it retries on its own. */
+  stopped = false;
   private socket?: WebSocket;
   private token?: string;
-  private stopped = false;
   private retry?: ReturnType<typeof setTimeout>;
   private heartbeat?: ReturnType<typeof setInterval>;
   private openedAt = 0;
@@ -132,7 +133,7 @@ export class Connection {
         return;
       }
       if (event.code === 1008) {
-        this.fail("The server rejected the connection. Reload to join again.");
+        this.fail("The server rejected the connection.");
         return;
       }
       const now = performance.now();
@@ -216,9 +217,7 @@ export class Connection {
         this.events.status(text, this.connected);
       } else if (message.type === "room-reset") {
         this.forgetSeat();
-        this.fail(
-          "Room ended (" + string(80).read(message.reason) + "). Join again for a fresh lobby.",
-        );
+        this.fail("Room ended (" + string(80).read(message.reason) + ").");
         return;
       }
       this.events.message(message);

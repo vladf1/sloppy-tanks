@@ -298,7 +298,7 @@ export class MatchHost {
       return;
     }
     if (request.existingRoom && !seat && !this.seats.length) {
-      this.error(connection, "room-gone", "This room has ended. Go back to the room list.", true);
+      this.error(connection, "room-gone", "This room has ended.", true);
       return;
     }
     if (request.token && request.roomEpoch === this.options.roomEpoch && !seat) {

@@ -26,6 +26,12 @@ function newRoomCode(): string {
     .join("");
 }
 
+/** A room link's room, and why the page came back to Battle Setup from it, if it did. */
+export interface RoomLink {
+  room: string;
+  notice?: string;
+}
+
 /** Battle Setup's multiplayer tab. It polls the open-room list only while shown and
  * hands the chosen room to `enter` once. */
 export class RoomBrowser {
@@ -37,6 +43,8 @@ export class RoomBrowser {
   private readonly endpoint: URL;
   private rooms: RoomListing[] = [];
   private selected = "";
+  /** Shown instead of the usual prompt until the player picks a room. */
+  private notice = "";
   private shown = false;
   private loading = false;
   private finished = false;
@@ -49,6 +57,7 @@ export class RoomBrowser {
     address: URL,
     private readonly tank: () => VehicleKind,
     private readonly enter: (selection: RoomSelection) => void,
+    private link?: RoomLink,
   ) {
     this.list = this.element("#room-list");
     this.message = this.element("#rooms-message");
@@ -120,6 +129,8 @@ export class RoomBrowser {
       radio.addEventListener("change", () => {
         this.selected = room.room;
         this.join.disabled = false;
+        this.notice = "";
+        this.message.textContent = "Choose a room to join the battle.";
       });
       const details = document.createElement("span");
       const title = document.createElement("strong");
@@ -175,10 +186,18 @@ export class RoomBrowser {
           throw new Error("Rooms unavailable. Try Refresh in a moment.");
         }
         this.rooms = roomListReader.read(await response.json()).rooms;
+        const linked = this.link && this.followLink(this.link);
         this.render();
-        this.message.textContent = this.rooms.length
-          ? "Choose a room to join the battle."
-          : "No rooms yet.\nStart a new room and invite your friends.";
+        if (linked) {
+          this.list
+            .querySelector(".room-row:has(input:checked)")
+            ?.scrollIntoView({ block: "nearest" });
+        }
+        this.message.textContent =
+          this.notice ||
+          (this.rooms.length
+            ? "Choose a room to join the battle."
+            : "No rooms yet.\nStart a new room and invite your friends.");
       } catch (error) {
         if (controller.signal.aborted && !timedOut) {
           // Hidden mid-request; if the tab is back already, ask again at once.
@@ -201,6 +220,27 @@ export class RoomBrowser {
     if (this.shown) {
       this.timer = setTimeout(() => void this.poll(), delay);
     }
+  }
+
+  /** Select the linked room if it can take a player; otherwise say why not. */
+  private followLink(link: RoomLink): boolean {
+    this.link = undefined;
+    const listing = this.rooms.find((room) => room.room === link.room);
+    const open = !!listing && this.available(listing);
+    if (open) {
+      this.selected = link.room;
+    }
+    this.notice = [
+      link.notice,
+      !listing
+        ? `Room ${link.room} isn't open. Choose another room or create one.`
+        : !open
+          ? `Room ${link.room} can't take another player right now.`
+          : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return open;
   }
 
   private choice(): JoinChoice | undefined {

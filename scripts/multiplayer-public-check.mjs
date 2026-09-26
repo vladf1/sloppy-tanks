@@ -3,9 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { StateMirror } from "../src/net/replication.ts";
 import {
   checkMultiplayerMenu,
+  click,
   launchChrome,
   openMultiplayerTab,
-  randomRoomCode,
   recordRoomFrames,
 } from "./multiplayer-helpers.mjs";
 const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
@@ -16,17 +16,8 @@ const errors = [],
   clients = [];
 try {
   const first = await browser.newPage({ viewport: { width: 1200, height: 800 } });
-  await first.goto(base);
-  await openMultiplayerTab(first);
-  await first.locator("#join-room").waitFor();
-  const inviteURL = new URL(first.url());
-  inviteURL.searchParams.delete("multiplayer");
-  inviteURL.searchParams.set("room", randomRoomCode());
-  const invite = inviteURL.href;
-  for (const [index, page] of [
-    first,
-    await browser.newPage({ viewport: { width: 1200, height: 800 } }),
-  ].entries()) {
+  const second = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  for (const page of [first, second]) {
     const client = recordRoomFrames(page, errors, { mirror: new StateMirror() });
     client.page = page;
     clients.push(client);
@@ -35,25 +26,25 @@ try {
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
     });
-    await page.goto(invite);
-    await page.locator("#player-name").fill(index ? "Public Bob" : "W".repeat(24));
-    await page.locator("#player-team").selectOption(String(index));
-    await page.locator("#join-room").click();
-    await page.locator("#host-settings").waitFor({ state: "visible" });
-    await checkMultiplayerMenu(page);
-    assert.equal(await page.locator("#join-room").isVisible(), false);
-    assert.equal(await page.locator("#network-resume").isVisible(), false);
-    assert.equal(await page.locator("#network-end").isVisible(), false);
   }
-  await first.screenshot({ path: `${output}/lobby.png` });
-  await first.locator("#start-match").click();
+  // The host creates a room on Battle Setup; its link opens Battle Setup for the guest
+  // with the room selected.
+  await first.goto(base);
+  await openMultiplayerTab(first);
+  await first.locator("#player-name").fill("W".repeat(24));
+  await first.locator('input[name="playerTeam"][value="0"]').check();
+  await click(first, "#create-room");
+  await first.waitForURL(/[?&]room=/);
+  await second.goto(first.url());
+  await second.locator("#join-room:enabled").waitFor();
+  await second.locator("#player-name").fill("Public Bob");
+  await second.locator('input[name="playerTeam"][value="1"]').check();
+  await click(second, "#join-room");
   await Promise.all(
     clients.map((c) =>
-      c.page.waitForFunction(
-        () => document.querySelector("#network-status").textContent === "",
-        null,
-        { timeout: 60000 },
-      ),
+      c.page.waitForFunction(() => document.querySelector("#hud")?.style.opacity === "1", null, {
+        timeout: 60000,
+      }),
     ),
   );
   // The live HUD can appear before arena preparation and its resume baseline finish.
@@ -116,7 +107,7 @@ try {
   await first.screenshot({ path: `${output}/fixture.png` });
   assert.deepEqual(errors, []);
   console.log(
-    "Public dev site: entry/share/join, two real players, movement, results, leave, test directory, fixture and build metadata passed.",
+    "Public dev site: create, room link and join, two real players, movement, results, leave, test directory, fixture and build metadata passed.",
   );
 } finally {
   for (const { page } of clients) {

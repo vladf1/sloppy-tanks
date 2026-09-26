@@ -81,9 +81,14 @@ The Multiplayer tab lists open rooms (it polls only while shown). Your saved nam
 is prefilled; first-time players get a random bot name they can edit. **Auto**
 picks the team with fewer human seats (including reconnect reservations); choosing
 Blue or Red repaints the tank previews. Choose a room and **Join room**, or pick a
-map under **New room** and **Create room** to start playing immediately. A page
-that has already built a single-player arena reloads into the room.
-Friends can join later through the list or **COPY ROOM LINK** in the menu.
+map under **New room** and **Create room** to start playing immediately. Battle
+Setup stays up with the room's progress while the arena loads and draws its first
+frames, then the battle replaces it; a page that has already built a single-player
+arena reloads into the room behind the same setup.
+Friends can join later through the list or a link from **COPY ROOM LINK** in the
+in-game menu: a room link opens Battle Setup with that room selected. Reloading a
+room page, or a join or connection that gives up, returns there too, with the
+reason shown in the room list; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
 
 New rooms default to **Humans only (no bots)**. Empty seats stay empty, and

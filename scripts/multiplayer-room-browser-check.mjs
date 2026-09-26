@@ -4,11 +4,15 @@ import { StateMirror } from "../src/net/replication.ts";
 import { BOT_NAMES } from "../src/game/bot-personalities.ts";
 import {
   DEFAULT_GAME_URL,
+  assertJoinedBehindSetup,
   checkMultiplayerMenu,
   chooseRoomMap,
   click,
+  joinFrames,
   launchChrome,
   openMultiplayerTab,
+  randomRoomCode,
+  recordJoinFrames,
   recordRoomFrames,
   waitForRoomBrowser,
 } from "./multiplayer-helpers.mjs";
@@ -33,6 +37,7 @@ try {
   for (let i = 0; i < 2; i++) {
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     await page.addInitScript(() => Object.defineProperty(document, "hidden", { get: () => false }));
+    await recordJoinFrames(page);
     const client = recordRoomFrames(page, errors, { mirror: new StateMirror() });
     Object.assign(client, { page, listRequests: 0 });
     clients.push(client);
@@ -74,12 +79,28 @@ try {
     "The room page consumes the pending join once",
   );
   assert.equal(alice.lobby.settings.roundMinutes, 3);
+  // The reloaded page shows the setup the room was created from until its arena is ready.
+  const aliceFrames = await joinFrames(alice.page);
+  assertJoinedBehindSetup(aliceFrames, "Create after a reload");
+  const restored = aliceFrames.find((frame) => frame.joining);
+  assert.equal(restored?.play, "multiplayer", "The reloaded setup stays on the multiplayer tab");
+  assert.equal(restored.kind, "heavy", "The reloaded setup keeps the chosen tank");
   assert.ok(alice.mirror.state.match.time <= 180 && alice.mirror.state.match.time > 160);
   await alice.page.locator("#network-players").waitFor({ state: "visible" });
   assert.equal(await alice.page.locator(".network-player").count(), 1);
   assert.equal(await alice.page.locator(".network-player b").innerText(), "0");
   assert.equal(alice.mirror.state.entities.tanks.length, 1);
   const room = new URL(alice.page.url()).searchParams.get("room");
+  // A link to a room that isn't open still opens Battle Setup, and says so.
+  const missingURL = new URL(base);
+  missingURL.searchParams.set("room", randomRoomCode());
+  await bob.page.goto(missingURL.href);
+  await bob.page.waitForFunction(() =>
+    document.querySelector("#rooms-message")?.textContent.includes("isn't open"),
+  );
+  assert.equal(await bob.page.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
+  assert.equal(await bob.page.locator('input[name="room-choice"]:checked').count(), 0);
+  assert.equal(await bob.page.locator("#join-room").isDisabled(), true);
   const directoryURL = new URL(base);
   directoryURL.searchParams.set("multiplayer", "");
   await bob.page.goto(directoryURL.href);
@@ -108,6 +129,7 @@ try {
   );
   assert.equal(alice.lobby.players[1].kind, "scout");
   assert.equal(await bob.page.evaluate(() => performance.timeOrigin), bobDocument);
+  assertJoinedBehindSetup(await joinFrames(bob.page), "In-page join");
   assert.equal(bob.mirror.state.entities.tanks.length, 2);
   await alice.page.waitForFunction(() =>
     document.querySelector("#feed")?.textContent.includes("Bob <b>literal</b> joined Red team"),

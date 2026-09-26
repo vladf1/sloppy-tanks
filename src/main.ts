@@ -1,22 +1,33 @@
 import { initialGameOptions, type GameOptions } from "./game/game-options";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
+import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
 import { PICKUP_ATLAS_PATH } from "./game/pickup-atlas";
 import type { RoomSelection } from "./net/pending-join";
+import type { PlayerVehicleKind } from "./game/types";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-const networkParams = new URLSearchParams(location.search);
-if (networkParams.has("room")) {
-  startMultiplayer();
+const PLAYER_KINDS: readonly string[] = [
+  "scout",
+  "balanced",
+  "heavy",
+] satisfies PlayerVehicleKind[];
+// A room link opens Battle Setup with that room selected. When Battle Setup reloads
+// into a room it chose, it stays up while the room loads, until the arena can draw.
+const linkedRoom = new URLSearchParams(location.search).get("room")?.toUpperCase();
+const setupView = linkedRoom ? takeSetupView(linkedRoom) : undefined;
+const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
+if (linkedRoom && setupView?.joining && joiningSetup) {
+  startMultiplayer(JoinScreen.resume(joiningSetup, { ...setupView, room: linkedRoom }));
 } else {
-  startBattleSetup();
+  startBattleSetup(linkedRoom, setupView);
 }
 
-function startMultiplayer(selection?: RoomSelection): void {
+function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void {
   void import("./net/client")
-    .then(({ startMultiplayer }) => startMultiplayer(root, selection))
+    .then(({ startMultiplayer }) => startMultiplayer(root, joining, selection))
     .catch((error: unknown) => {
       console.error("Multiplayer startup failed", error);
       root.textContent = "Multiplayer could not load. Reload to try again.";
@@ -58,7 +69,9 @@ function preloadImages(options: GameOptions): void {
   }
 }
 
-function startBattleSetup(): void {
+/** `linkedRoom` comes from a room link; `view` holds the choices of a player who left
+ * that room or could not join it, and why. */
+function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void {
   const seed = Math.floor(Math.random() * 1000000);
   const options = initialGameOptions(
     seed,
@@ -66,6 +79,9 @@ function startBattleSetup(): void {
     localStorage.getItem("sloppy-difficulty"),
     localStorage.getItem("sloppy-map"),
   );
+  if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
+    options.humanKind = view.kind as PlayerVehicleKind;
+  }
   const autoStart =
     document.documentElement.dataset.scenario !== undefined ||
     new URLSearchParams(location.search).has("autoplay");
@@ -102,6 +118,10 @@ function startBattleSetup(): void {
     return;
   }
   const menu = new StartMenu(root, options, load);
+  const setup = menu.overlay.querySelector<HTMLElement>(".start")!;
+  if (view) {
+    restoreChoices(setup, view);
+  }
   // Single player builds its arena behind the menu; a page that has one reloads
   // into a multiplayer room rather than running a second renderer.
   let arenaStarted = false;
@@ -118,15 +138,26 @@ function startBattleSetup(): void {
       });
     });
   };
-  bindPlayModes(menu.overlay.querySelector(".start")!, initialPlayMode(location.search), {
-    choices: () => options,
-    single: prepareArena,
-    enterRoom(selection, reload) {
-      if (arenaStarted) {
-        reload();
-      } else {
-        startMultiplayer(selection);
-      }
+  bindPlayModes(
+    setup,
+    initialPlayMode(location.search),
+    {
+      choices: () => options,
+      single: prepareArena,
+      enterRoom(selection, reload) {
+        const joining = JoinScreen.start(
+          setup,
+          selection.room,
+          !!selection.choice.create,
+          arenaStarted,
+        );
+        if (arenaStarted) {
+          reload();
+        } else {
+          startMultiplayer(joining, selection);
+        }
+      },
     },
-  });
+    linkedRoom ? { room: linkedRoom, notice: view?.notice } : undefined,
+  );
 }
