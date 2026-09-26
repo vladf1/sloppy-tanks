@@ -18,6 +18,13 @@ const PLAYER_KINDS: readonly string[] = [
 // into a room it chose, it stays up while the room loads, until the arena can draw.
 const linkedRoom = new URLSearchParams(location.search).get("room")?.toUpperCase();
 const setupView = linkedRoom ? takeSetupView(linkedRoom) : undefined;
+// A stress page covers its single-player startup with a loading screen. Opened for
+// multiplayer, it shows Battle Setup instead, listing only that page's rooms.
+const scenarioPage = document.documentElement.dataset.scenario !== undefined;
+const scenarioOnline = scenarioPage && initialPlayMode(location.search) === "multiplayer";
+if (scenarioOnline) {
+  document.querySelector("#loading")?.remove();
+}
 const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
 if (linkedRoom && setupView?.joining && joiningSetup) {
   startMultiplayer(JoinScreen.resume(joiningSetup, { ...setupView, room: linkedRoom }));
@@ -83,8 +90,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     options.humanKind = view.kind as PlayerVehicleKind;
   }
   const autoStart =
-    document.documentElement.dataset.scenario !== undefined ||
-    new URLSearchParams(location.search).has("autoplay");
+    (scenarioPage && !scenarioOnline) || new URLSearchParams(location.search).has("autoplay");
   const load = async (onStage: (stage: string) => void = () => {}) => {
     onStage("Downloading game files…");
     const { prepareGame } = await import("./game");
@@ -119,6 +125,10 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   }
   const menu = new StartMenu(root, options, load);
   const setup = menu.overlay.querySelector<HTMLElement>(".start")!;
+  if (scenarioPage) {
+    // A stress arena is for its crowd of bots; a remembered choice below still wins.
+    setup.querySelector<HTMLInputElement>("#create-humans-only")!.checked = false;
+  }
   if (view) {
     restoreChoices(setup, view);
   }
@@ -143,7 +153,8 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     initialPlayMode(location.search),
     {
       choices: () => options,
-      single: prepareArena,
+      // A stress page's single player is its own fixed arena, which starts on load.
+      single: scenarioPage ? () => location.replace(location.pathname) : prepareArena,
       enterRoom(selection, reload) {
         const joining = JoinScreen.start(
           setup,

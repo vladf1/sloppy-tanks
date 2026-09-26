@@ -7,7 +7,7 @@ import type { RenderState } from "../game/render-state";
 import type { SimEvent, Weapon } from "../game/types";
 import { DEFAULT_ROUND_MINUTES, type Lobby } from "./protocol";
 import type { JoinChoice } from "./connection";
-import { playerKind, team } from "./scene-codec";
+import { playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
 import "./multiplayer.css";
 
 /** The in-room menu. Players choose their name, and first team and tank, on Battle Setup. */
@@ -167,6 +167,8 @@ export class NetworkUI {
       this.input("player-kind").value = mine.kind;
     }
     this.input("room-map").value = lobby.settings.mapMode;
+    // A scenario room brings its own arena.
+    this.input("room-map").closest("label")!.hidden = lobby.scenario !== undefined;
     this.input("room-difficulty").value = lobby.settings.difficulty;
     this.input("room-round-minutes").value = String(lobby.settings.roundMinutes);
     this.input("room-round-minutes").disabled = !host || playing;
@@ -234,8 +236,10 @@ export class NetworkUI {
         column.append(row);
       }
       const bots = document.createElement("small");
+      const teamTanks =
+        lobby.scenario && !lobby.settings.humansOnly ? SCENARIO_ROOMS[lobby.scenario].teamTanks : 6;
       bots.textContent =
-        6 -
+        teamTanks -
         lobby.players.filter((player) => player.team === side).length +
         (lobby.settings.humansOnly ? " open seats" : " bots");
       column.append(bots);
@@ -260,7 +264,9 @@ export class NetworkUI {
       this.set(
         "network-message",
         host
-          ? "Invite friends, choose the map, then start when ready."
+          ? lobby.scenario
+            ? "Invite friends with the room link, then start when ready."
+            : "Invite friends, choose the map, then start when ready."
           : "Waiting for the host to start the battle.",
       );
     }

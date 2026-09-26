@@ -180,6 +180,15 @@ through `Simulation.afterStep`, `restoreCover` and the map's `scale`; keep
 level behaviour there rather than branching on it in shared code. Author its
 placements in standard-arena coordinates so the scale stays one knob.
 
+Online, the yard is a scenario room. `superstress.html?multiplayer` (its PLAY
+ONLINE button) and its room links open the standard Battle Setup multiplayer
+tab, which lists and creates only Scrap Yard rooms via `/rooms?scenario=`; the
+plain `/rooms` list, and so the standard page and traffic bots, never shows
+them. Joins send the page's `scenario`, the room's first player fixes it, and
+`createMultiplayerSimulation` builds every round from `SUPERSTRESS_LEVEL` with
+normal player health and round rules. Clients learn the yard from the
+replicated scene (`map.theme`, `map.scale`) and must not import level code.
+
 ## Assets, deployment, and evidence
 
 - Runtime assets live in `public/`; source artwork and generator notes live

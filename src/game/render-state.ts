@@ -123,6 +123,7 @@ export interface RenderState {
   readonly mapFloor: Simulation["mapFloor"];
   readonly mapOuterFloor: Simulation["mapOuterFloor"];
   readonly mapOuterFloorExtent: Simulation["mapOuterFloorExtent"];
+  readonly mapScale: Simulation["mapScale"];
   readonly customMap?: Simulation["customMap"];
 }
 
@@ -252,6 +253,9 @@ class LocalRenderState implements RenderState {
   }
   get mapOuterFloorExtent() {
     return this.simulation.mapOuterFloorExtent;
+  }
+  get mapScale() {
+    return this.simulation.mapScale;
   }
   get customMap() {
     return this.simulation.customMap;

@@ -5,6 +5,7 @@ import { StateMirror, StateStream, type Snapshot } from "../src/net/replication"
 import { captureScene, projectScene } from "../src/net/scene-codec";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
 import { idleCommand } from "../src/game/types";
+import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";
 
 before(async () => {
   await RAPIER.init();
@@ -97,6 +98,31 @@ test("frames omit identity and unchanged data, and scenes carry only presentatio
     sim.dispose();
   }
 });
+test("debris life reaches clients only once its final fade begins", () => {
+  const sim = createMultiplayerSimulation(
+    4242,
+    [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
+    { mapMode: "village" },
+  );
+  try {
+    sim.fragment(0, 0, 0xffffff);
+    const piece = sim.fragments[0];
+    const lifeUpdate = (snapshot: Snapshot) => snapshot.updates?.fragments?.[piece.id]?.life;
+    piece.life = 5;
+    const stream = new StateStream({ roomEpoch: "room", roundId: 1 });
+    stream.full(captureScene(sim), 0, 0);
+    piece.life = 4;
+    assert.equal(lifeUpdate(stream.snapshot(captureScene(sim), 1, [], [])), undefined);
+    piece.life = DEBRIS_CLEANUP_SECONDS / 2;
+    assert.equal(
+      lifeUpdate(stream.snapshot(captureScene(sim), 2, [], [])),
+      DEBRIS_CLEANUP_SECONDS / 2,
+    );
+  } finally {
+    sim.dispose();
+  }
+});
+
 test("mirror rejects corrupt or skipped deltas atomically and a full baseline repairs it", () => {
   const sim = createMultiplayerSimulation(4242, []);
   try {

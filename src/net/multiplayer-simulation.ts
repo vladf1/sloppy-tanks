@@ -1,14 +1,19 @@
 import { Simulation, type SimulationSetup } from "../game/simulation";
 import type { PlayerAssignment, Tank } from "../game/types";
+import { SUPERSTRESS_LEVEL } from "../superstress-level";
+import type { Scenario } from "./scene-codec";
 
 export const MAX_PLAYERS = 8;
 export const TEAM_SLOTS = 6;
 export const MAX_PLAYER_NAME_LENGTH = 24;
+/** A scenario brings its own arena, rules and bot roster; human seats stay the same. */
+const SCENARIO_LEVELS: Record<Scenario, SimulationSetup> = { superstress: SUPERSTRESS_LEVEL };
 /** The multiplayer roster is optional, so local play never imports seat validation. */
 export function createMultiplayerSimulation(
   seed: number,
   players: readonly PlayerAssignment[],
   options: Pick<SimulationSetup, "mapMode" | "difficulty" | "round" | "humansOnly"> = {},
+  scenario?: Scenario,
 ): Simulation {
   if (players.length > MAX_PLAYERS) {
     throw new Error("Room has at most eight players");
@@ -39,6 +44,7 @@ export function createMultiplayerSimulation(
     ...options,
     gameMode: "team",
     roundCount: TEAM_SLOTS * 2,
+    ...(scenario && SCENARIO_LEVELS[scenario]),
     players: players.map((player) => Object.freeze({ ...player, name: player.name.trim() })),
   });
 }

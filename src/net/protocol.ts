@@ -2,7 +2,7 @@ import type { PlayerAssignment } from "../game/types";
 import type { ControlInput } from "./player-controls";
 import type { FullState, Identity, Snapshot } from "./replication";
 import { array, boolean, id, object, optional, string, enumeration, number } from "./schema";
-import { team, playerKind, mapMode, difficulty } from "./scene-codec";
+import { team, playerKind, mapMode, difficulty, scenario, type Scenario } from "./scene-codec";
 
 declare const __MULTIPLAYER_CONTENT_VERSION__: string;
 export const PROTOCOL_VERSION = 1;
@@ -41,6 +41,8 @@ export interface Lobby extends Identity {
   players: Player[];
   scoreboard: Player[];
   settings: RoomSettings;
+  /** A scenario room ignores the map setting and is never listed in the room browser. */
+  scenario?: Scenario;
 }
 export interface Control extends Identity {
   type: "control";
@@ -80,6 +82,8 @@ export const joinReader = object({
   roomEpoch: optional(string(128, 1)),
   create: optional(settingsReader),
   existingRoom: optional(boolean),
+  /** The page's scenario; only a room's first player decides it. */
+  scenario: optional(scenario),
 });
 export const playerReader = object<Player>({
   playerId: string(128, 1),
@@ -101,6 +105,7 @@ export const lobbyReader = object<Lobby>({
   players: array(playerReader, 8),
   scoreboard: array(playerReader, 128),
   settings: settingsReader,
+  scenario: optional(scenario),
 });
 export const controlReader = object<Control>({
   type: enumeration("control"),
