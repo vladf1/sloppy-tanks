@@ -67,7 +67,7 @@ function startBattleSetup(): void {
     localStorage.getItem("sloppy-map"),
   );
   const autoStart =
-    document.documentElement.dataset.scenario === "stress-test" ||
+    document.documentElement.dataset.scenario !== undefined ||
     new URLSearchParams(location.search).has("autoplay");
   const load = async (onStage: (stage: string) => void = () => {}) => {
     onStage("Downloading game files…");

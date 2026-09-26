@@ -6,6 +6,11 @@ import type { Plugin } from "vite";
 export const devPages = [
   { path: "stresstest.html", title: "Stress test", detail: "30 tanks and continuous combat" },
   {
+    path: "superstress.html",
+    title: "Super stress test",
+    detail: "30 tanks in a compact yard of rebuilding cover",
+  },
+  {
     path: "tools/tank-surface-check.html",
     title: "Tank surfaces",
     detail: "Vehicle textures and materials",

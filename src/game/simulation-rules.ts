@@ -1,6 +1,8 @@
 /** Physics and lifecycle tuning, in metres and seconds. Positive gravity points down. */
 export const GRAVITY = 22;
 export const MAX_FRAGMENTS = 80;
+/** The largest fragment budget a custom level may set; debris instancing is sized for it. */
+export const FRAGMENT_CAPACITY = 256;
 export const SIMULATION_RULES = {
   defaultSeed: 12345,
   defaultTankCount: 12,

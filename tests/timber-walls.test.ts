@@ -10,6 +10,7 @@ import { disposeOwned } from "../src/game/render-resources";
 import { GROUP, STEP } from "../src/game/data";
 import { MAPS } from "../src/game/maps";
 import { STRESS_TEST_MAP } from "../src/stress-test-level";
+import { SUPERSTRESS_MAP } from "../src/superstress-level";
 import { clearArena } from "./fixtures";
 
 before(async () => {
@@ -17,7 +18,7 @@ before(async () => {
 });
 
 test("timber barriers meet without overlapping across every map and damaged corner pose", () => {
-  for (const map of [...MAPS, STRESS_TEST_MAP]) {
+  for (const map of [...MAPS, STRESS_TEST_MAP, SUPERSTRESS_MAP]) {
     const walls = map.layout().filter((c) => c.kind === "timber");
     assert.ok(
       walls.every((wall) => wall.hp === 80),

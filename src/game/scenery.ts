@@ -40,7 +40,7 @@ function createYardDetails(scene: THREE.Scene, renderer: THREE.WebGPURenderer): 
   freezeStatic(details);
 }
 
-export function createSpawnPads(): THREE.Group {
+export function createSpawnPads(scale = 1): THREE.Group {
   const details = new THREE.Group();
   details.name = "spawn-pads";
   const spawnRimGeometry = new THREE.RingGeometry(
@@ -63,7 +63,7 @@ export function createSpawnPads(): THREE.Group {
   for (const team of [0, 1] as const) {
     const side = team === 0 ? -1 : 1;
     const color = TEAM_COLORS[team];
-    for (const position of spawnPositions(team)) {
+    for (const position of spawnPositions(team, scale)) {
       // Low octagonal deployment plinth with a recessed deck and segmented team lights.
       put(details, cylinder(2.75, 0.1, 0x283c4e, 8), position.x, 0.08, position.z);
       put(details, cylinder(2.52, 0.045, 0x718898, 8), position.x, 0.135, position.z);

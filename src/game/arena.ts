@@ -147,8 +147,8 @@ export const pickupLayout: { kind: PickupKind; x: number; z: number }[] = [
   { kind: "speed", x: -29, z: -46 },
   { kind: "speed", x: 29, z: 46 },
 ];
-export const spawnPositions = (team: Team): Vec2[] =>
+export const spawnPositions = (team: Team, scale = 1): Vec2[] =>
   [-46, -23, 0, 23, 46].map((z) => ({
-    x: team === 0 ? -53 : 53,
-    z: team === 0 ? z : -z,
+    x: (team === 0 ? -53 : 53) * scale,
+    z: (team === 0 ? z : -z) * scale,
   }));

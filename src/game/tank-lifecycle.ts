@@ -54,7 +54,7 @@ export function spawnTank(
             ((slot % simulation.activeEnemyLimit) * (SOLO.spawnHalfSpanZ * 2)) /
               (simulation.activeEnemyLimit - 1),
         }
-      : spawnPositions(team)[slot % 5];
+      : spawnPositions(team, simulation.mapScale)[slot % 5];
   const offset = simulation.gameMode === "solo" ? 0 : Math.floor(slot / 5) * 3;
   // Later rows share a spawn lane, but interpolation and AI history must start
   // at their offset body positions, not at the first tank in that lane.
@@ -159,7 +159,7 @@ export function respawnTank(simulation: Simulation, tank: Tank, position?: Vec2)
   );
   const p =
     position ??
-    bestBy(spawnPositions(tank.team), (position) =>
+    bestBy(spawnPositions(tank.team, simulation.mapScale), (position) =>
       simulation.spawnScore(position, enemies, friends),
     )!;
   Object.assign(

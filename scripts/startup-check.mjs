@@ -224,13 +224,18 @@ try {
   results.retry = "passed";
   console.log("Failed-download retry passed.");
 
-  for (const path of ["?autoplay", "stresstest.html"]) {
+  for (const path of ["?autoplay", "stresstest.html", "superstress.html"]) {
     const automatic = await fresh();
     await automatic.page.goto(url + path);
     await playing(automatic.page);
     assert.equal(await automatic.page.locator("#startup-overlay").count(), 0);
-    if (path === "stresstest.html") {
-      assert.equal(await automatic.page.evaluate(() => window.sloppy.sim.tanks.length), 30);
+    if (path !== "?autoplay") {
+      const { tanks, map } = await automatic.page.evaluate(() => ({
+        tanks: window.sloppy.sim.tanks.length,
+        map: window.sloppy.sim.mapName,
+      }));
+      assert.equal(tanks, 30);
+      assert.equal(map, path === "superstress.html" ? "SCRAP YARD" : "STRESS GRID");
     }
     await automatic.context.close();
   }

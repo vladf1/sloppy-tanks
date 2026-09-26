@@ -71,6 +71,8 @@ export type SimulationSetup = Partial<
     | "humanHealthMultiplier"
     | "powerUpDurationMultiplier"
     | "ammoCrateMultiplier"
+    | "maxFragments"
+    | "afterStep"
   >
 > & { round?: number };
 
@@ -79,6 +81,11 @@ export type SimulationSetup = Partial<
 export function selectedMap(mapMode: Simulation["mapMode"], customMap?: ArenaMap): ArenaMap {
   return customMap ?? MAPS.find((map) => map.id === mapMode)!;
 }
+
+const movableCover = (cover: Pick<Cover, "kind">) =>
+  cover.kind === "drum" || cover.kind === "teeth" || cover.kind === "hedgehog";
+const coverSurface = (cover: Pick<Cover, "kind">) =>
+  cover.kind === "drum" || cover.kind === "hedgehog" ? "metal" : "concrete";
 
 export class Simulation {
   world!: RAPIER.World;
@@ -104,6 +111,8 @@ export class Simulation {
   players?: readonly PlayerAssignment[];
   humansOnly = false;
   readonly speedTuning = { "tank-speed": 1, "bullet-speed": 1 };
+  /** Optional level rules, run at the end of every playing tick with the same fixed step. */
+  afterStep?: (simulation: Simulation) => void;
   /** Optional server presentation trace; observing a sweep never changes combat. */
   onProjectileMove?: (shot: Shot, seconds: number, offset: number) => void;
   get multiplayer(): boolean {
@@ -151,6 +160,10 @@ export class Simulation {
   }
   get mapName() {
     return this.currentMap.name.toUpperCase();
+  }
+  /** Compact maps shrink the shared spawn lanes, pickups and patrol routes about the centre. */
+  get mapScale() {
+    return this.currentMap.scale ?? 1;
   }
   maxFragments: number = MAX_FRAGMENTS;
   wreckView?: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -216,6 +229,8 @@ export class Simulation {
     }
     this.pickups = pickupLayout.map((p) => ({
       ...p,
+      x: p.x * this.mapScale,
+      z: p.z * this.mapScale,
       id: this.nextId++,
       available: p.kind !== "laser",
       cooldown: p.kind === "laser" ? LASER_DEFENSE.initialDelay : 0,
@@ -262,8 +277,52 @@ export class Simulation {
     debrisSeed?: number;
     timberJoin?: Cover["timberJoin"];
   }): Cover {
+    const { body, colliders } = this.coverBody(c);
+    const cover: Cover = {
+      ...c,
+      id: this.nextId++,
+      maxHp: c.hp,
+      destructible: Number.isFinite(c.hp),
+      alive: true,
+      body,
+      collider: colliders[0],
+    };
+    if (movableCover(cover)) {
+      this.movableCovers.push(cover);
+    }
+    this.covers.push(cover);
+    this.registerCover(cover, colliders);
+    return cover;
+  }
+  /** Rebuild a destroyed cover at its authored place. Like a tank respawn, the body is
+   * new but the identity is kept, so render views and replication update one record. */
+  restoreCover(cover: Cover): void {
+    if (cover.alive) {
+      return;
+    }
+    // A felled tree keeps its body as the stump footprint.
+    if (cover.body.isValid()) {
+      this.world.removeRigidBody(cover.body);
+    }
+    if (cover.motion) {
+      cover.x = cover.motion.originX;
+      cover.z = cover.motion.originZ;
+      cover.w = cover.motion.w;
+      cover.d = cover.motion.d;
+    }
+    cover.hp = cover.maxHp;
+    cover.alive = true;
+    delete cover.timberHits;
+    delete cover.timberKick;
+    const { body, colliders } = this.coverBody(cover);
+    cover.body = body;
+    cover.collider = colliders[0];
+    this.registerCover(cover, colliders);
+    this.nav.rebuild(this.covers, cover);
+  }
+  private coverBody(c: Pick<Cover, "kind" | "x" | "z" | "w" | "d" | "h">) {
     const drum = c.kind === "drum";
-    const movable = drum || c.kind === "teeth" || c.kind === "hedgehog";
+    const movable = movableCover(c);
     const body = this.world.createRigidBody(
       (movable
         ? RAPIER.RigidBodyDesc.dynamic()
@@ -290,7 +349,7 @@ export class Simulation {
       }
       shapes = [RAPIER.ColliderDesc.trimesh(rock.positions, rock.indices)];
     }
-    const surface = drum || c.kind === "hedgehog" ? "metal" : "concrete";
+    const surface = coverSurface(c);
     const colliders = shapes.map((shape) =>
       this.world.createCollider(
         movable
@@ -303,7 +362,6 @@ export class Simulation {
         body,
       ),
     );
-    const collider = colliders[0];
     if (c.kind === "teeth") {
       // Tanks use the navigation footprint so the slope cannot lift their planar hulls.
       // Shells still hit only the visible pyramid, including its open upper shoulders.
@@ -315,37 +373,28 @@ export class Simulation {
         body,
       );
     }
-    const cover: Cover = {
-      ...c,
-      id: this.nextId++,
-      maxHp: c.hp,
-      destructible: Number.isFinite(c.hp),
-      alive: true,
-      body,
-      collider,
-    };
-    if (movable) {
+    return { body, colliders };
+  }
+  private registerCover(cover: Cover, colliders: RAPIER.Collider[]): void {
+    if (movableCover(cover)) {
       cover.motion = {
-        originX: c.x,
-        originZ: c.z,
-        w: c.w,
-        d: c.d,
-        x: c.x,
-        z: c.z,
-        navW: c.w,
-        navD: c.d,
+        originX: cover.x,
+        originZ: cover.z,
+        w: cover.w,
+        d: cover.d,
+        x: cover.x,
+        z: cover.z,
+        navW: cover.w,
+        navD: cover.d,
         checkAt: 0,
       };
-      this.movableCovers.push(cover);
       for (const part of colliders) {
-        trackDebrisContacts(body, part, cover.id, surface);
+        trackDebrisContacts(cover.body, part, cover.id, coverSurface(cover));
       }
     }
-    this.covers.push(cover);
     for (const part of colliders) {
       this.coverByCollider.set(part.handle, cover);
     }
-    return cover;
   }
   addTank(team: Team, human: boolean, kind: VehicleKind, slot = 0): Tank {
     return spawnTank(this, this.botNames, team, human, kind, slot);
@@ -491,6 +540,7 @@ export class Simulation {
         this.fragments.splice(i, 1);
       }
     }
+    this.afterStep?.(this);
     // Consumers drain every rendered frame; headless sessions remain bounded too.
     if (this.events.length > SIMULATION_RULES.maxPendingEvents) {
       this.events.splice(0, this.events.length - SIMULATION_RULES.maxPendingEvents);

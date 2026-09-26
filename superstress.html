@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-scenario="superstress">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#192a28" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="preload" as="image" crossorigin="anonymous" href="/textures/tanks/armor-wear.webp" />
+    <title>Sloppy Tanks · Super Stress Test</title>
+    <style>
+      #loading,
+      #loading * {
+        box-sizing: border-box;
+        font-synthesis: none;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 12px;
+        background: #192a28;
+        color: #f5faff;
+        font:
+          16px system-ui,
+          sans-serif;
+      }
+      #loading h1 {
+        margin: 0;
+        font:
+          700 36px/normal system-ui,
+          sans-serif;
+        letter-spacing: 3px;
+      }
+      #loading p {
+        margin: 0;
+        color: #becfca;
+        font:
+          400 16px/normal system-ui,
+          sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"><!-- battle-setup --></div>
+    <div id="loading" role="status" aria-live="polite">
+      <h1>SUPER STRESS</h1>
+      <p>Cramming 30 tanks into a yard that rebuilds itself…</p>
+      <noscript>This game needs JavaScript enabled to load the arena.</noscript>
+    </div>
+    <!-- startup-script -->
+  </body>
+</html>

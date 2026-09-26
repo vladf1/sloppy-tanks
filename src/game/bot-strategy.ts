@@ -136,13 +136,14 @@ export function updateBotGoal(
       brain.navVersion === 0 ||
       distance(position, brain.goal) < 2
     ) {
+      const scale = simulation.mapScale;
       const flank = {
-        x: tank.team === 0 ? 20 : -20,
-        z: [-38, 0, 38][role % 3] * (tank.team === 0 ? 1 : -1),
+        x: (tank.team === 0 ? 20 : -20) * scale,
+        z: [-38, 0, 38][role % 3] * (tank.team === 0 ? 1 : -1) * scale,
       };
       brain.goal =
         distance(position, flank) < 4
-          ? { x: tank.team === 0 ? 46 : -46, z: simulation.rng.range(-44, 44) }
+          ? { x: (tank.team === 0 ? 46 : -46) * scale, z: simulation.rng.range(-44, 44) * scale }
           : flank;
     }
   }

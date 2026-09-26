@@ -32,7 +32,9 @@ export async function prepareGame(
   root.innerHTML =
     '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
-  const stressTest = document.documentElement.dataset.scenario === "stress-test";
+  // Stress pages name a fixed scenario that replaces the menu and keeps running when hidden.
+  const scenario = document.documentElement.dataset.scenario;
+  const stressTest = scenario !== undefined;
   // The physics binary is the largest download. Device setup, image decoding and
   // map scenery do not need it, so they proceed while it arrives and compiles.
   const physics = RAPIER.init();
@@ -48,7 +50,12 @@ export async function prepareGame(
   }
   let stressSetup: SimulationSetup;
   try {
-    stressSetup = stressTest ? (await import("./stress-test-level")).STRESS_TEST_SETUP : {};
+    stressSetup =
+      scenario === "superstress"
+        ? (await import("./superstress-level")).SUPERSTRESS_SETUP
+        : stressTest
+          ? (await import("./stress-test-level")).STRESS_TEST_SETUP
+          : {};
     const map = selectedMap(preparedOptions.mapMode, stressSetup.customMap);
     view.buildScenery(map.theme ?? map.id);
     await physics;

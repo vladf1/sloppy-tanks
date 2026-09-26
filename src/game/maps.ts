@@ -13,6 +13,8 @@ export interface ArenaMap {
   floor?: GroundKind;
   outerFloor?: GroundKind;
   outerFloorExtent?: number;
+  /** A compact yard's size relative to the standard arena; see Simulation.mapScale. */
+  scale?: number;
   layout: () => CoverDef[];
 }
 

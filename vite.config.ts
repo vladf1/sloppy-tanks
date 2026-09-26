@@ -32,8 +32,9 @@ export default defineConfig({
         handler(_html, context) {
           const binary = Object.keys(context.bundle ?? {}).find((name) => name.endsWith(".wasm"));
           return binary &&
-            (context.filename.endsWith("index.html") ||
-              context.filename.endsWith("stresstest.html"))
+            ["index.html", "stresstest.html", "superstress.html"].some((page) =>
+              context.filename.endsWith(page),
+            )
             ? [
                 {
                   tag: "script",
@@ -52,6 +53,7 @@ export default defineConfig({
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         stresstest: fileURLToPath(new URL("./stresstest.html", import.meta.url)),
+        superstress: fileURLToPath(new URL("./superstress.html", import.meta.url)),
       },
       output: {
         codeSplitting: {

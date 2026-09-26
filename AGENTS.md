@@ -172,6 +172,14 @@ objects, endless scoring, and an 80-fragment cap). It should remain useful for
 finding body, navigation, destruction, and resource-growth regressions, not
 be weakened to make a normal match look healthy.
 
+`superstress.html` packs the same 30 tanks into a yard at `SUPERSTRESS_SCALE`
+of the standard arena, with over 100 destructibles, a 240-fragment budget,
+cover that rebuilds in place and debris that lingers until the budget needs
+room. Its rules live in `src/superstress-level.ts` and reach the game only
+through `Simulation.afterStep`, `restoreCover` and the map's `scale`; keep
+level behaviour there rather than branching on it in shared code. Author its
+placements in standard-arena coordinates so the scale stays one knob.
+
 ## Assets, deployment, and evidence
 
 - Runtime assets live in `public/`; source artwork and generator notes live

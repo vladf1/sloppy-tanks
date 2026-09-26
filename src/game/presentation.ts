@@ -50,7 +50,7 @@ import {
 import { VillageScenery } from "./village-scenery";
 import type { Simulation } from "./simulation";
 import { renderState, type RenderState, type RenderCover, type WreckView } from "./render-state";
-import { MAX_FRAGMENTS } from "./simulation-rules";
+import { FRAGMENT_CAPACITY } from "./simulation-rules";
 import { createTankBar, updateTankProtection, type TankBar } from "./tank-bars";
 import { TrackTrails } from "./tracks";
 import { TrackDust } from "./track-dust";
@@ -125,7 +125,7 @@ export class Presentation {
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
   private quarryScenery?: QuarryScenery;
-  private stressSpawnPads?: THREE.Group;
+  private customSpawnPads?: THREE.Group;
   private customFloor?: THREE.Mesh;
   private customOuterFloor?: THREE.Mesh;
   private lighting: ReturnType<typeof createLighting>;
@@ -218,7 +218,7 @@ export class Presentation {
             : shape === "log"
               ? trunk.material
               : material(0xffffff),
-        MAX_FRAGMENTS,
+        FRAGMENT_CAPACITY,
       );
       addDebrisFade(mesh);
       storageInstances(mesh);
@@ -273,13 +273,14 @@ export class Presentation {
   readonly wreckView: WreckView = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   reset(source: Simulation | RenderState): void {
     const simulation = renderState(source, this.wreckView);
-    const stress = simulation.customMap?.id === "stress-test";
-    if (stress && !this.stressSpawnPads) {
-      this.stressSpawnPads = createSpawnPads();
-      this.scene.add(this.stressSpawnPads);
+    // A page offers one custom map, so its pads are built once at that map's scale.
+    const custom = simulation.customMap !== undefined;
+    if (custom && !this.customSpawnPads) {
+      this.customSpawnPads = createSpawnPads(simulation.customMap?.scale);
+      this.scene.add(this.customSpawnPads);
     }
-    if (this.stressSpawnPads) {
-      this.stressSpawnPads.visible = stress;
+    if (this.customSpawnPads) {
+      this.customSpawnPads.visible = custom;
     }
     const harbor = simulation.mapTheme === "harbor";
     const quarry = simulation.mapTheme === "quarry";
@@ -297,7 +298,11 @@ export class Presentation {
       this.customOuterFloor.visible = Boolean(simulation.mapOuterFloor);
     }
     if (simulation.mapFloor && !this.customFloor) {
-      this.customFloor = createArenaFloor(this.renderer, simulation.mapFloor);
+      this.customFloor = createArenaFloor(
+        this.renderer,
+        simulation.mapFloor,
+        ARENA * 2 * (simulation.customMap?.scale ?? 1),
+      );
       this.customFloor.position.y = 0.008;
       this.scene.add(this.customFloor);
     }
@@ -981,7 +986,7 @@ export class Presentation {
       const cleanup = debrisCleanupProgress(f.life);
       if (!f.wreck && !f.timberPart && f.treeCoverId === undefined) {
         const mesh = this.debrisMeshes.get(f.shape ?? "shard")!;
-        if (mesh.count >= MAX_FRAGMENTS) {
+        if (mesh.count >= FRAGMENT_CAPACITY) {
           continue;
         }
         this.dummy.position.set(pos.x, pos.y, pos.z);
