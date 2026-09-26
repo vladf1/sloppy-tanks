@@ -62,6 +62,18 @@ test("node server reports health with the build's content version", async () => 
   assert.equal(health.multiplayerEnabled, true);
 });
 
+test("node server root returns the same pretty-printed body as /health", async () => {
+  const [root, health] = await Promise.all([
+    fetch(`http://${base}/`),
+    fetch(`http://${base}/health`),
+  ]);
+  assert.equal(root.status, 200);
+  assert.equal(root.headers.get("content-type"), "application/json");
+  const body = await root.text();
+  assert.equal(body, await health.text());
+  assert.equal(body, JSON.stringify(JSON.parse(body), null, 2) + "\n");
+});
+
 test("node server rejects foreign origins, plain HTTP rooms and invalid codes", async () => {
   assert.equal((await rooms({ Origin: "https://evil.example" })).status, 403);
   const plain = await fetch(`http://${base}/room/ABCDEFGH`, { headers: { Origin: ORIGIN } });

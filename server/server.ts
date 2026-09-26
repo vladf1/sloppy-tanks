@@ -89,8 +89,9 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       });
       response.end(body === undefined ? undefined : json ? JSON.stringify(body) : body);
     };
-    if (path === "/health") {
-      reply(200, {
+    if (path === "/" || path === "/health") {
+      // Pretty-printed because operators read it in a browser; /rooms stays compact.
+      const health = {
         protocol: "multiplayer-hosting-experiment-v1",
         version: PROTOCOL_VERSION,
         contentVersion: CONTENT_VERSION,
@@ -98,7 +99,9 @@ export function createServer(options: ServerOptions): MultiplayerServer {
         experimental: true,
         enabled: false,
         host: "node",
-      });
+      };
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(health, null, 2) + "\n");
       return;
     }
     if (path === "/stats") {
