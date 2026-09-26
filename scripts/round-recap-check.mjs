@@ -1,22 +1,26 @@
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+// Battle reports after END BATTLE, team/solo outcomes and records across reloads, plus
+// Solo Assault from Battle Setup: live kill scoreboard, pause, time limit and death.
+import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 
 const output = "artifacts/performance/recap";
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless });
+const { browser, page, errors } = await launchGame({ viewport: { width: 1440, height: 1100 } });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
   async function open() {
     await page.goto(url);
     await page.waitForFunction(() => !!window.sloppy);
-    await page.locator("#startup-overlay #start").click();
-    await page.locator("#startup-overlay").waitFor({ state: "hidden" });
+    await startRound(page);
   }
+  /** The battle report's headline Kills stat. */
+  const recapKills = () =>
+    page.evaluate(() => {
+      const stat = [...document.querySelectorAll(".recap-stat")].find(
+        (element) => element.querySelector("dt").textContent === "Kills",
+      );
+      return stat?.querySelector("dd").textContent.trim();
+    });
   async function finish(mode, kills) {
     await page.evaluate(
       ({ mode, kills }) => {
@@ -149,10 +153,49 @@ try {
   await click("#restart");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "ready");
   await resize(1440, 1100);
+  // Solo Assault through Battle Setup: endless reinforcements keep the round going.
+  await page.locator('input[value="solo"]').check();
+  assert.match(
+    await page.locator(".choice-card:has(input[value='solo'])").innerText(),
+    /endless enemies/,
+  );
+  await page.locator('[data-kind="balanced"]').click();
+  await startRound(page);
+  await page.waitForFunction(() => document.querySelector("#label0").textContent === "KILLS");
+  assert.match(await page.locator("#time").innerText(), /10:00|9:59/);
+  assert.equal(await page.locator("#score0").innerText(), "0");
+  await page.evaluate(() => {
+    const s = window.sloppy.sim;
+    s.human.protection = 999;
+    for (let i = 0; i < 55; i++) {
+      const t = s.tanks.find((t) => !t.human && t.alive);
+      t.protection = 0;
+      s.damageTank(t, 9999, s.human.id, s.humanTeam);
+      s.reinforcementDelay = 0;
+      s.reinforceSolo();
+    }
+  });
+  await page.waitForFunction(() => document.querySelector("#score0").textContent === "55");
+  assert.equal(await page.evaluate(() => window.sloppy.sim.match.phase), "playing");
+  assert.equal(await page.locator("#score1").innerText(), "6", "six active enemies");
+  await page.screenshot({ path: `${output}/solo-scoreboard.png` });
+  await page.keyboard.press("Escape");
+  const frozen = await page.evaluate(() => window.sloppy.sim.match.time);
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.sloppy.sim.match.time), frozen, "pause freezes");
+  await page.evaluate(() => {
+    window.sloppy.sim.match.time = 0.001;
+  });
+  await click("#resume");
+  await page.waitForFunction(
+    () => document.querySelector("#overlay h2")?.textContent === "SURVIVED",
+  );
+  assert.equal(await recapKills(), "55", "the time limit keeps the final kills");
+  await page.screenshot({ path: `${output}/solo-survived.png` });
+  await click("#restart");
+  await startRound(page);
   await page.evaluate(() => {
     const d = window.sloppy;
-    d.sim.gameMode = "solo";
-    d.start();
     d.sim.elapsed = 42;
     const enemy = d.sim.tanks.find((t) => t.team !== d.sim.human.team);
     d.sim.human.protection = 0;
@@ -161,13 +204,14 @@ try {
   await page.locator(".recap-stats").waitFor();
   assert.match(await page.locator(".results h2").innerText(), /TANK DESTROYED/);
   assert.match(await page.locator(".recap-stat").nth(2).innerText(), /0:42/);
+  assert.equal(await recapKills(), "0", "a new round starts without kills");
   assert.equal(await page.locator(".recap-feats").count(), 0, "no filler when nothing was earned");
   await page.screenshot({ path: `${output}/battle-report-solo.png` });
   await click("#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: compact report fits, earned feats, record persistence, team/solo outcomes, report scrolling, coordinate-click replay/setup, no browser errors",
+    "PASS: compact report fits, earned feats, record persistence, team/solo outcomes, report scrolling, coordinate-click replay/setup, Solo Assault scoreboard, pause, time limit and death, no browser errors",
   );
 } finally {
   await browser.close();

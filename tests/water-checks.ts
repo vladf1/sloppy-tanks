@@ -48,8 +48,15 @@ export async function checkWater(view: Presentation, sim: Simulation): Promise<s
         1,
       );
     };
-    const red = await sample(0xff0000);
-    const green = await sample(0x00ff00);
+    // A freshly reset map finishes its pipelines asynchronously, and the reflection
+    // pass omits the new probe at first; allow a few frames before it must track it.
+    let red: ArrayLike<number> = [];
+    let green: ArrayLike<number> = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      red = await sample(0xff0000);
+      green = await sample(0x00ff00);
+      if (red[0] - green[0] >= 15 && green[1] - red[1] >= 15) break;
+    }
     if (red[0] - green[0] < 15 || green[1] - red[1] < 15) {
       throw new Error(`${name}: reflected probe did not change color (${red} / ${green})`);
     }
@@ -63,15 +70,24 @@ export async function checkWater(view: Presentation, sim: Simulation): Promise<s
     camera.quaternion.copy(rotation);
     water.distortionScale.value = distortion;
   }
-  await new Promise(requestAnimationFrame);
-  view.render(sim, 1, 0, true);
-  const reflected = renderer.info.render.drawCalls;
+  // Objects that newly come into view are drawn once their pipelines compile, so
+  // compare draw counts only after they stop changing.
+  const settledDrawCalls = async (overview: boolean) => {
+    let previous = -1;
+    for (let frame = 0; frame < 10; frame++) {
+      await new Promise(requestAnimationFrame);
+      view.render(sim, 1, 0, overview);
+      const calls = renderer.info.render.drawCalls;
+      if (calls === previous) break;
+      previous = calls;
+    }
+    return previous;
+  };
+  const reflected = await settledDrawCalls(true);
   let cached: number;
   try {
     water.reflectionEnabled = false;
-    await new Promise(requestAnimationFrame);
-    view.render(sim, 1, 0, true);
-    cached = renderer.info.render.drawCalls;
+    cached = await settledDrawCalls(true);
     if (reflected <= cached) throw new Error(`${name}: no reflection render pass`);
   } finally {
     water.reflectionEnabled = reflect;
@@ -82,13 +98,12 @@ export async function checkWater(view: Presentation, sim: Simulation): Promise<s
   sim.human.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
   view.zoom = 23;
   try {
-    await new Promise(requestAnimationFrame);
-    view.render(sim, 1, 0);
-    const dry = renderer.info.render.drawCalls;
+    const dry = await settledDrawCalls(false);
     water.reflectionEnabled = false;
-    await new Promise(requestAnimationFrame);
-    view.render(sim, 1, 0);
-    if (dry !== renderer.info.render.drawCalls) throw new Error(`${name}: dry view still reflects`);
+    const unreflected = await settledDrawCalls(false);
+    if (dry !== unreflected) {
+      throw new Error(`${name}: dry view still reflects (${dry} vs ${unreflected} draw calls)`);
+    }
   } finally {
     water.reflectionEnabled = reflect;
     view.zoom = zoom;

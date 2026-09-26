@@ -71,7 +71,7 @@
       <button id="turn">Turn</button>
       <button id="settle">Settle</button>
       <br /><button id="checks">Run checks</button>
-      <output>Loading…</output>
+      <output id="result">Loading…</output>
     </aside>
     <script type="module">
       import RAPIER from "@dimforge/rapier3d-compat";
@@ -248,24 +248,32 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
         }
         requestAnimationFrame(animate);
       }
+      function assert(value, message) {
+        if (!value) throw new Error(message);
+      }
+      function checkTurret(kind) {
+        for (const aim of [0, Math.PI / 2, Math.PI, -1.2]) {
+          sim.human.aim = aim;
+          view.render(sim, 1, 0);
+          const state = pose();
+          assert(state.turretTiltError < 1e-8, `${kind}: turret follows hull tilt at aim ${aim}`);
+          assert(state.turretAimError < 1e-8, `${kind}: independent turret aim ${aim}`);
+        }
+      }
       document.querySelector("#checks").onclick = () => {
         playing = false;
         completed = true;
         accumulator = 0;
         pause.textContent = "Replay";
+        try {
+          runChecks();
+        } catch (error) {
+          console.error(error);
+          output.textContent = `FAIL: ${error.message}`;
+        }
+      };
+      function runChecks() {
         const results = [];
-        const assert = (value, message) => {
-          if (!value) throw new Error(message);
-        };
-        const checkTurret = (kind) => {
-          for (const aim of [0, Math.PI / 2, Math.PI, -1.2]) {
-            sim.human.aim = aim;
-            view.render(sim, 1, 0);
-            const state = pose();
-            assert(state.turretTiltError < 1e-8, `${kind}: turret follows hull tilt at aim ${aim}`);
-            assert(state.turretAimError < 1e-8, `${kind}: independent turret aim ${aim}`);
-          }
-        };
         for (const kind of ["scout", "balanced", "heavy"]) {
           reset(kind);
           const meshes = pose().meshes;
@@ -294,9 +302,9 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
         reset();
         advance(7, 0, 1);
         output.textContent =
-          results.join("\n") +
-          "\nPASS: driving, braking, turning, settling, reset, attached turret with independent aim, level physics, unchanged mesh count.";
-      };
+          "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, level physics, unchanged mesh count.\n" +
+          results.join("\n");
+      }
       playSequence(demo, true);
       requestAnimationFrame(animate);
     </script>

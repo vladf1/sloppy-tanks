@@ -1,25 +1,24 @@
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+// Touch UI code and styles load only when touch controls are enabled. Only a
+// production build splits them into separate files, so build and serve one here.
 import assert from "node:assert/strict";
+import { build, preview } from "vite";
+import { launchGame, startRound } from "./browser-helpers.mjs";
 
-// Use a production build: verify that Vite actually separates JS and CSS downloads.
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:4179/sloppy-tanks/";
-const browser = await chromium.launch({ channel: "chrome", headless });
+const outDir = "artifacts/performance/touch-loading/build";
+await build({ logLevel: "warn", build: { outDir } });
+const server = await preview({ build: { outDir }, preview: { host: "127.0.0.1", port: 4180 } });
+const url = server.resolvedUrls.local[0];
+const { browser, context, page, errors } = await launchGame({
+  viewport: { width: 1280, height: 800 },
+});
 const isTouchAsset = (url) => /\/touch-controls[^/]*\.(js|css)(?:\?|$)/.test(url);
 try {
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    hasTouch: false,
-  });
-  const page = await context.newPage();
   const downloads = [];
-  const errors = [];
   page.on("request", (request) => {
     if (isTouchAsset(request.url())) downloads.push(request.url());
   });
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url);
-  await page.locator("#start").click({ timeout: 60000 });
+  await startRound(page);
   await page.locator("#game").waitFor({ state: "visible" });
   const initial = await page.evaluate(async () => {
     let touchMutations = 0;
@@ -124,7 +123,7 @@ try {
     await route.continue();
   });
   await delayedPage.goto(url);
-  await delayedPage.locator("#start").click({ timeout: 60000 });
+  await startRound(delayedPage);
   await delayedPage.locator("#game").waitFor({ state: "visible" });
   await delayedPage.locator("#pause").click();
   await delayedPage.locator("#touch-mode").selectOption("on");
@@ -155,13 +154,15 @@ try {
       query === "(pointer: coarse)" ? original("not all") : original(query);
   });
   await hybridPage.goto(url);
-  await hybridPage.locator("#start").click({ timeout: 60000 });
+  await startRound(hybridPage);
   await hybridPage.locator("#game").waitFor({ state: "visible" });
   assert.equal(await hybridPage.locator(".touch-controls").count(), 0);
   await hybridPage.touchscreen.tap(400, 300);
   await hybridPage.locator(".touch-controls").waitFor({ state: "visible" });
   console.log("Auto: first real touch activates the deferred UI on a hybrid device.");
   await hybrid.close();
+  assert.deepEqual(errors, []);
 } finally {
   await browser.close();
+  await new Promise((resolve) => server.httpServer.close(resolve));
 }

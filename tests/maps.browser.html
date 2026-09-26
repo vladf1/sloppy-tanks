@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Map scene checks</title>
+    <style>
+      body {
+        margin: 0;
+        background: #142e39;
+      }
+      canvas {
+        display: block;
+      }
+      aside {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        max-width: 850px;
+        padding: 12px;
+        background: #132936eb;
+        color: #fff;
+        font: 13px sans-serif;
+      }
+      button {
+        margin: 3px;
+        padding: 8px;
+      }
+      output {
+        display: block;
+        margin-top: 8px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <aside>
+      <div>
+        Harbor Havoc:
+        <button id="overview">Overview</button>
+        <button id="dock">Dock close-up</button>
+        <button id="berth">Side berth & water</button>
+        <button id="cargo">Cargo close-up</button>
+        <button id="crate-stages">Crate damage stages</button>
+        <button id="crate-hit">Hit middle crate</button>
+      </div>
+      <div>
+        Dusty Dig:
+        <button id="quarry">Overview</button>
+        <button id="rocks">Sandstone & crates</button>
+        <button id="barriers">Dragon’s teeth</button>
+        <button id="steel">Steel barrier</button>
+        <button id="excavator">Excavator</button>
+        <button id="truck">Haul truck</button>
+        <button id="break">Break shortcut crates</button>
+      </div>
+      <div>
+        Checks:
+        <button id="checks">Map switches and resets</button>
+        <button id="water-checks">Both water reflections</button>
+      </div>
+      <output id="result">Harbor scene ready</output>
+    </aside>
+    <script type="module">
+      import RAPIER from "@dimforge/rapier3d-compat";
+      import { Simulation } from "../src/game/simulation";
+      import { Presentation } from "../src/game/presentation";
+      import { loadTankSurface } from "../src/game/tank-surfaces";
+      import { checkWater } from "./water-checks";
+      await RAPIER.init();
+      await loadTankSurface();
+      const sim = new Simulation(417);
+      sim.mapMode = "harbor";
+      sim.reset();
+      const view = await Presentation.create(document.querySelector("canvas"));
+      view.reset(sim);
+      const result = document.querySelector("#result");
+      let overview = true;
+      // A fixed [camera position, look-at] pose drawn over the overview frame.
+      let pose;
+      let checking = false;
+      let crateExamples = [];
+      function loadMap(mode) {
+        sim.mapMode = mode;
+        sim.reset();
+        view.reset(sim);
+      }
+      function useMap(mode) {
+        if (sim.mapMode !== mode) loadMap(mode);
+      }
+      function location(x, z, zoom) {
+        useMap("harbor");
+        overview = false;
+        pose = undefined;
+        sim.human.previous = { x, z };
+        sim.human.body.setTranslation({ x, y: 0.65, z }, true);
+        view.zoom = zoom;
+      }
+      function draw(dt) {
+        view.render(sim, 1, dt, overview || !!pose);
+        if (pose) {
+          view.camera.position.set(...pose[0]);
+          view.camera.lookAt(...pose[1]);
+          view.renderer.render(view.scene, view.camera);
+        }
+      }
+
+      document.querySelector("#overview").onclick = () => {
+        useMap("harbor");
+        overview = true;
+        pose = undefined;
+      };
+      document.querySelector("#dock").onclick = () => location(0, -53, 52);
+      document.querySelector("#berth").onclick = () => location(-54, 2, 34);
+      document.querySelector("#cargo").onclick = () => location(22, 21, 27);
+      function crateStatus() {
+        view.render(sim, 1, 1 / 60, false);
+        const names = ["Intact", "Split wood", "Broken lid"];
+        result.textContent = crateExamples
+          .map(
+            (crate, i) =>
+              `${["Left", "Middle", "Right"][i]}: ${crate.alive ? names[view.coverMeshes.get(crate.id).userData.damageStage] : "Destroyed"} (${Math.max(0, crate.hp)}/${crate.maxHp})`,
+          )
+          .join(" · ");
+      }
+      document.querySelector("#crate-stages").onclick = () => {
+        loadMap("harbor");
+        crateExamples = [-5, 0, 5].map((x, i) => {
+          const crate = sim.addCover({
+            kind: "cargo",
+            x,
+            z: 44,
+            w: 3.1,
+            d: 3,
+            h: 2.6,
+            hp: 90,
+            color: 0xb88b53,
+          });
+          sim.damageCover(crate, i * 40, sim.human.id, sim.humanTeam);
+          return crate;
+        });
+        sim.nav.rebuild(sim.covers);
+        view.reset(sim);
+        location(0, 48, 24);
+        crateStatus();
+      };
+      document.querySelector("#crate-hit").onclick = () => {
+        if (!crateExamples[1]) return;
+        sim.damageCover(crateExamples[1], 40, sim.human.id, sim.humanTeam);
+        crateStatus();
+      };
+
+      const quarryPoses = {
+        rocks: [
+          [43, 20, 59],
+          [31, 1, 37],
+        ],
+        barriers: [
+          [52, 11, 4],
+          [43.5, 0.8, -10],
+        ],
+        steel: [
+          [34, 15, 41],
+          [19, 0, 22],
+        ],
+        excavator: [
+          [-7, 12, -45],
+          [-20, 2, -68],
+        ],
+        truck: [
+          [50, 12, 36],
+          [69, 2, 18],
+        ],
+      };
+      document.querySelector("#quarry").onclick = () => {
+        useMap("quarry");
+        overview = true;
+        pose = undefined;
+      };
+      for (const [name, position] of Object.entries(quarryPoses)) {
+        document.querySelector(`#${name}`).onclick = () => {
+          useMap("quarry");
+          pose = position;
+        };
+      }
+      document.querySelector("#break").onclick = () => {
+        useMap("quarry");
+        for (const c of sim.covers.filter((c) => c.kind === "cargo" && c.x > 30 && c.z > 30))
+          sim.damageCover(c, 100, sim.human.id, sim.humanTeam);
+        pose = quarryPoses.rocks;
+        result.textContent = "Shortcut crates destroyed; collider and navigation removed";
+      };
+
+      document.querySelector("#checks").onclick = async () => {
+        checking = true;
+        result.textContent = "Running…";
+        crateExamples = [];
+        pose = undefined;
+        const failures = [];
+        let baseline;
+        for (let round = 0; round < 4; round++) {
+          for (const mode of ["village", "quarry", "harbor"]) {
+            loadMap(mode);
+            view.render(sim, 1, 1 / 60, true);
+            // Warm every map explicitly and let pending texture uploads complete.
+            await new Promise(requestAnimationFrame);
+            const expected = sim.mapTheme === "harbor";
+            const visibleHarbor = view.scene.children.some(
+              (child) => child.visible && child === view.harborScenery?.group,
+            );
+            if (expected !== visibleHarbor) failures.push(`Wrong scenery: ${mode}`);
+            if (view.coverMeshes.size !== sim.covers.length)
+              failures.push(`Missing cover: ${mode}`);
+          }
+          const memory = view.renderer.info.memory;
+          const current = `${memory.geometries}/${memory.textures}`;
+          if (round === 1) baseline = current;
+          if (round > 1 && current !== baseline)
+            failures.push(`Resources grew: ${baseline} -> ${current}`);
+        }
+        overview = true;
+        checking = false;
+        result.textContent = failures.length
+          ? `FAIL: ${failures.join("; ")}`
+          : `PASS: 12 map switches, cover models match, stable GPU resources (${baseline})`;
+      };
+      document.querySelector("#water-checks").onclick = async () => {
+        checking = true;
+        result.textContent = "Running…";
+        const passes = [];
+        const failures = [];
+        for (const mode of ["harbor", "village"]) {
+          try {
+            loadMap(mode);
+            view.render(sim, 1, 0, true);
+            passes.push(await checkWater(view, sim));
+          } catch (error) {
+            console.error(error);
+            failures.push(error.message);
+          }
+        }
+        loadMap("harbor");
+        overview = true;
+        pose = undefined;
+        checking = false;
+        result.textContent = failures.length
+          ? `FAIL: ${failures.join(" | ")}`
+          : `PASS: ${passes.join(" | ")}`;
+      };
+
+      let last = performance.now();
+      function render(now) {
+        if (!checking) draw(Math.min((now - last) / 1000, 0.1));
+        last = now;
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+      addEventListener("resize", () => view.resize());
+    </script>
+  </body>
+</html>
