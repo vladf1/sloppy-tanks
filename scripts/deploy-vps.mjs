@@ -53,7 +53,7 @@ for (;;) {
   const status = await fetch(health, { cache: "no-store" })
     .then((response) => response.json())
     .catch(() => ({}));
-  if (status.contentVersion === version && status.multiplayerEnabled) break;
+  if (status.contentVersion === version) break;
   if (Date.now() > deadline)
     throw new Error(`VPS server reports ${JSON.stringify(status)}; expected content ${version}`);
   await new Promise((resolve) => setTimeout(resolve, 2000));

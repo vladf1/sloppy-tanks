@@ -353,9 +353,6 @@ export class BotSwarm extends DurableObject<Env> {
   private async health(): Promise<ServerInfo> {
     const response = await fetch(this.env.SERVER_URL + "/health");
     const health = (await response.json()) as Record<string, unknown>;
-    if (health.multiplayerEnabled !== true) {
-      throw new Error("Game server has multiplayer disabled");
-    }
     return { version: Number(health.version), contentVersion: String(health.contentVersion) };
   }
 

@@ -30,7 +30,6 @@ export const DEFAULT_MAX_SOCKETS_PER_IP = 32;
 
 export interface ServerOptions {
   allowedOrigins: string[];
-  multiplayerEnabled: boolean;
   /** Take the client IP from the last X-Forwarded-For hop (the local reverse proxy). */
   trustProxy: boolean;
   maxRooms?: number;
@@ -91,15 +90,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     };
     if (path === "/" || path === "/health") {
       // Pretty-printed because operators read it in a browser; /rooms stays compact.
-      const health = {
-        protocol: "multiplayer-hosting-experiment-v1",
-        version: PROTOCOL_VERSION,
-        contentVersion: CONTENT_VERSION,
-        multiplayerEnabled: options.multiplayerEnabled,
-        experimental: true,
-        enabled: false,
-        host: "node",
-      };
+      const health = { version: PROTOCOL_VERSION, contentVersion: CONTENT_VERSION };
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(health, null, 2) + "\n");
       return;
@@ -116,14 +107,12 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     if (path === "/rooms") {
       if (!allowed(request)) return reply(403, "Origin not allowed");
       if (request.method !== "GET") return reply(405, undefined, cors);
-      if (!options.multiplayerEnabled) return reply(503, "Multiplayer unavailable", cors);
       if (!directoryRate.allow(clientIp(request), Date.now()))
         return reply(429, "Too many refreshes; try again shortly", cors);
       return reply(200, { rooms: catalog.list(Date.now()) }, cors);
     }
     const room = /^\/room\/([^/]+)$/.exec(path)?.[1];
     if (room && ROOM_CODE.test(room)) {
-      if (!options.multiplayerEnabled) return reply(503, "Multiplayer unavailable");
       if (!allowed(request)) return reply(403, "Origin not allowed");
       return reply(426, "WebSocket required");
     }
@@ -140,7 +129,6 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     const path = new URL(request.url ?? "/", "http://host").pathname,
       code = /^\/room\/([^/]+)$/.exec(path)?.[1];
     if (!code || !ROOM_CODE.test(code)) return refuse(404, "Not Found");
-    if (!options.multiplayerEnabled) return refuse(503, "Multiplayer unavailable");
     if (!allowed(request)) return refuse(403, "Origin not allowed");
     const now = Date.now(),
       ip = clientIp(request);

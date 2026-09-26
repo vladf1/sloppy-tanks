@@ -33,13 +33,12 @@ message. No client URL override is accepted in production builds. Keep
 
 Settings come from the environment:
 
-| Variable              | Default              | Meaning                                                   |
-| --------------------- | -------------------- | --------------------------------------------------------- |
-| `HOST` / `PORT`       | `127.0.0.1` / `8787` | Listener; on the VPS only Caddy is public                 |
-| `ALLOWED_ORIGINS`     | local Vite origins   | Exact comma-separated origin allowlist                    |
-| `MULTIPLAYER_ENABLED` | `true`               | `false` refuses rooms and listings                        |
-| `MAX_ROOMS`           | `10`                 | Live rooms; new room codes beyond it get 503              |
-| `TRUST_PROXY`         | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy |
+| Variable          | Default              | Meaning                                                   |
+| ----------------- | -------------------- | --------------------------------------------------------- |
+| `HOST` / `PORT`   | `127.0.0.1` / `8787` | Listener; on the VPS only Caddy is public                 |
+| `ALLOWED_ORIGINS` | local Vite origins   | Exact comma-separated origin allowlist                    |
+| `MAX_ROOMS`       | `10`                 | Live rooms; new room codes beyond it get 503              |
+| `TRUST_PROXY`     | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy |
 
 ## Rooms and limits
 

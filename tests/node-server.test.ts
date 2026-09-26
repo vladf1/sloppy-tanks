@@ -13,7 +13,6 @@ before(async () => {
   await RAPIER.init();
   server = createServer({
     allowedOrigins: [ORIGIN],
-    multiplayerEnabled: true,
     trustProxy: true,
     // The rate-limit test opens sockets faster than their closes are counted.
     maxSocketsPerIp: 1000,
@@ -59,7 +58,7 @@ test("node server reports health with the build's content version", async () => 
   const health = (await (await fetch(`http://${base}/health`)).json()) as Record<string, unknown>;
   assert.equal(health.contentVersion, CONTENT_VERSION);
   assert.equal(health.version, PROTOCOL_VERSION);
-  assert.equal(health.multiplayerEnabled, true);
+  assert.deepEqual(Object.keys(health).sort(), ["contentVersion", "version"]);
 });
 
 test("node server root returns the same pretty-printed body as /health", async () => {
@@ -153,7 +152,6 @@ test("node server rate-limits room connections per forwarded client IP", async (
 test("node server caps live rooms and open sockets per address", async () => {
   const small = createServer({
     allowedOrigins: [ORIGIN],
-    multiplayerEnabled: true,
     trustProxy: true,
     maxRooms: 1,
     maxSocketsPerIp: 2,

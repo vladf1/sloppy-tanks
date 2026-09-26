@@ -27,7 +27,6 @@ function positiveInteger(name: string): number | undefined {
 await RAPIER.init();
 const server = createServer({
   allowedOrigins: origins?.length ? origins : LOCAL_ORIGINS,
-  multiplayerEnabled: process.env.MULTIPLAYER_ENABLED !== "false",
   maxRooms: positiveInteger("MAX_ROOMS"),
   // Only a loopback listener can be sure its X-Forwarded-For came from the local proxy.
   trustProxy: (process.env.TRUST_PROXY ?? String(loopback)) === "true",
