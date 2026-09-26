@@ -1,4 +1,20 @@
 <section class="menu start" data-play="single" aria-labelledby="setup-title">
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="icon-team" viewBox="0 0 24 24"><path d="M6 21V4h11l-2.5 4 2.5 4H6" /></symbol>
+    <symbol id="icon-solo" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7" />
+      <path d="M12 2v5M12 17v5M2 12h5M17 12h5" />
+    </symbol>
+    <symbol id="icon-village" viewBox="0 0 24 24">
+      <path d="M12 3 7 10h3l-4 6h12l-4-6h3z" />
+      <path d="M12 16v5" />
+    </symbol>
+    <symbol id="icon-harbor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v14M8 11h8M5 14a7 7 0 0 0 14 0" />
+    </symbol>
+    <symbol id="icon-quarry" viewBox="0 0 24 24"><path d="M2 20 9 8l4 6 3-4 6 10z" /></symbol>
+  </svg>
   <header class="setup-header">
     <h1 id="setup-title">BATTLE SETUP</h1>
     <div class="play-tabs" role="tablist" aria-label="How to play">
@@ -37,8 +53,10 @@
       </button>
     </div>
   </header>
-  <fieldset class="tank-setting">
-    <legend>TANK</legend>
+  <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
+    <div class="setup-label">
+      <span id="tank-label">TANK</span><small>Yours in single player and multiplayer</small>
+    </div>
     <!-- Frame each sprite around its visible bounds, not its transparent canvas. -->
     <div class="vehicles">
       <button class="vehicle" data-kind="scout" aria-pressed="false">
@@ -90,66 +108,90 @@
         <div class="spec"><span>140 HIT POINTS</span><span>24 KM/H</span></div>
       </button>
     </div>
-  </fieldset>
+  </div>
   <!-- Both panels share one grid cell, so switching tabs never moves the tabs or tanks. -->
   <div class="setup-panels">
     <div id="single-panel" class="setup-panel" role="tabpanel" aria-labelledby="tab-single">
-      <div class="single-options">
-        <fieldset class="battle-choice">
-          <legend>BATTLE</legend>
-          <label class="mode-option"
-            ><input type="radio" name="gameMode" value="team" checked /><span
-              ><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span
-            ></label
-          ><label class="mode-option"
-            ><input type="radio" name="gameMode" value="solo" /><span
-              ><b>Solo Assault</b><small>Endless enemies · 10 minutes · One life</small></span
-            ></label
+      <div class="setup-section battle-choice" role="radiogroup" aria-labelledby="battle-label">
+        <div class="setup-label"><span id="battle-label">BATTLE</span></div>
+        <div class="choice-cards">
+          <label class="choice-card"
+            ><input type="radio" name="gameMode" value="team" checked /><svg
+              class="choice-icon"
+              style="--tint: #3b67a0"
+            >
+              <use href="#icon-team" /></svg
+            ><span><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span></label
+          ><label class="choice-card"
+            ><input type="radio" name="gameMode" value="solo" /><svg
+              class="choice-icon"
+              style="--tint: #9a4d3c"
+            >
+              <use href="#icon-solo" /></svg
+            ><span><b>Solo Assault</b><small>Survive endless enemies</small></span></label
           >
-        </fieldset>
-        <fieldset class="map-choice">
-          <legend>MAP</legend>
-          <label class="mode-option"
-            ><input type="radio" name="mapMode" value="village" checked /><span
+        </div>
+      </div>
+      <div
+        class="setup-section difficulty-setting"
+        role="radiogroup"
+        aria-labelledby="difficulty-label"
+      >
+        <div class="setup-label"><span id="difficulty-label">DIFFICULTY</span></div>
+        <div class="segmented">
+          <label class="segment"
+            ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
+          ><label class="segment"
+            ><input type="radio" name="difficulty" value="normal" checked /><span
+              >Normal</span
+            ></label
+          ><label class="segment"
+            ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
+          >
+        </div>
+      </div>
+      <div class="setup-section map-choice" role="radiogroup" aria-labelledby="map-label">
+        <div class="setup-label"><span id="map-label">MAP</span></div>
+        <div class="choice-cards">
+          <label class="choice-card"
+            ><input type="radio" name="mapMode" value="village" checked /><svg
+              class="choice-icon"
+              style="--tint: #2f7d4f"
+            >
+              <use href="#icon-village" /></svg
+            ><span
               ><b>Pine Village</b><small>A quiet little village. Bring the noise.</small></span
             ></label
-          ><label class="mode-option"
-            ><input type="radio" name="mapMode" value="harbor" /><span
+          ><label class="choice-card"
+            ><input type="radio" name="mapMode" value="harbor" /><svg
+              class="choice-icon"
+              style="--tint: #2c6fa8"
+            >
+              <use href="#icon-harbor" /></svg
+            ><span
               ><b>Harbor Havoc</b><small>Salt air. Hot steel. Dockside mayhem.</small></span
             ></label
-          ><label class="mode-option"
-            ><input type="radio" name="mapMode" value="quarry" /><span
+          ><label class="choice-card"
+            ><input type="radio" name="mapMode" value="quarry" /><svg
+              class="choice-icon"
+              style="--tint: #a8733a"
+            >
+              <use href="#icon-quarry" /></svg
+            ><span
               ><b>Dusty Dig</b
               ><small>Open ground. Weathered stone. Dig your own shortcut.</small></span
             ></label
           >
-        </fieldset>
-        <fieldset class="difficulty-setting" aria-describedby="difficulty-help">
-          <legend>DIFFICULTY</legend>
-          <div class="segmented">
-            <label class="segment"
-              ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
-            ><label class="segment"
-              ><input type="radio" name="difficulty" value="normal" checked /><span
-                >Normal</span
-              ></label
-            ><label class="segment"
-              ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
-            >
-          </div>
-          <small id="difficulty-help">The original combat balance</small>
-        </fieldset>
-      </div>
-      <div class="launch-bar">
-        <div class="startup-progress">
-          <div class="startup-progress-copy">
-            <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
-            <span class="startup-hint">Pick your loadout while we get ready.</span>
-          </div>
-          <div class="startup-track" aria-hidden="true"><span></span></div>
         </div>
-        <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
       </div>
+      <div class="startup-progress">
+        <div class="startup-progress-copy">
+          <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
+          <span class="startup-hint">Pick your loadout while we get ready.</span>
+        </div>
+        <div class="startup-track" aria-hidden="true"><span></span></div>
+      </div>
+      <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
     </div>
     <div
       id="multiplayer-panel"
@@ -158,79 +200,95 @@
       aria-labelledby="tab-multiplayer"
       hidden
     >
-      <div class="driver-fields">
-        <fieldset class="driver-name">
-          <legend><label for="player-name">YOUR NAME</label></legend>
-          <input
-            id="player-name"
-            maxlength="24"
-            autocomplete="nickname"
-            spellcheck="false"
-            placeholder="Tank driver"
-          />
-        </fieldset>
-        <fieldset class="team-choice">
-          <legend>TEAM</legend>
-          <div class="segmented" title="Auto picks the team with fewer human players">
-            <label class="segment"
-              ><input type="radio" name="playerTeam" value="auto" checked /><span>Auto</span></label
-            ><label class="segment team-blue"
-              ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
-            ><label class="segment team-red"
-              ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
-            >
-          </div>
-        </fieldset>
+      <div class="setup-section driver-name">
+        <div class="setup-label"><label for="player-name">YOUR NAME</label></div>
+        <input
+          id="player-name"
+          maxlength="24"
+          autocomplete="nickname"
+          spellcheck="false"
+          placeholder="Tank driver"
+        />
       </div>
-      <div class="room-columns">
-        <fieldset class="room-browse">
-          <legend>OPEN ROOMS <span id="room-count">0</span></legend>
-          <button id="refresh-rooms" class="text-button" type="button">↻ Refresh</button>
-          <div class="room-list-body">
-            <p id="rooms-message" role="status">Looking for rooms…</p>
-            <div id="room-list" role="radiogroup" aria-label="Choose a room"></div>
-          </div>
-          <div class="room-actions">
-            <span>Up to 8 players per room</span
-            ><button id="join-room" class="primary" type="button" disabled>JOIN ROOM</button>
-          </div>
-        </fieldset>
-        <fieldset class="room-create">
-          <legend>NEW ROOM</legend>
-          <div class="segmented room-map" role="radiogroup" aria-label="Map">
-            <label class="segment"
-              ><input type="radio" name="roomMap" value="village" checked /><span
-                >Pine Village</span
-              ></label
-            ><label class="segment"
-              ><input type="radio" name="roomMap" value="harbor" /><span>Harbor Havoc</span></label
-            ><label class="segment"
-              ><input type="radio" name="roomMap" value="quarry" /><span>Dusty Dig</span></label
+      <div
+        class="setup-section team-choice"
+        role="radiogroup"
+        aria-labelledby="team-label"
+        title="Auto picks the team with fewer human players"
+      >
+        <div class="setup-label"><span id="team-label">TEAM</span></div>
+        <div class="segmented">
+          <label class="segment"
+            ><input type="radio" name="playerTeam" value="auto" checked /><span>Auto</span></label
+          ><label class="segment team-blue"
+            ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
+          ><label class="segment team-red"
+            ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+          >
+        </div>
+      </div>
+      <div class="setup-section room-browse">
+        <div class="setup-label">
+          <span id="rooms-label">OPEN ROOMS <span id="room-count">0</span></span
+          ><button id="refresh-rooms" class="text-button" type="button">↻ Refresh</button>
+        </div>
+        <div class="room-list-body">
+          <p id="rooms-message" role="status">Looking for rooms…</p>
+          <div id="room-list" role="radiogroup" aria-labelledby="rooms-label"></div>
+        </div>
+        <div class="room-actions">
+          <span>Up to 8 players per room</span
+          ><button id="join-room" class="primary" type="button" disabled>JOIN ROOM</button>
+        </div>
+      </div>
+      <div class="setup-section room-create">
+        <div class="setup-label"><span id="new-room-label">NEW ROOM</span></div>
+        <div class="room-maps" role="radiogroup" aria-labelledby="new-room-label">
+          <label class="room-map"
+            ><input type="radio" name="roomMap" value="village" checked /><svg
+              class="choice-icon"
+              style="--tint: #2f7d4f"
             >
-          </div>
-          <div class="room-rules">
-            <label class="room-length"
-              >Match length<span
-                ><input
-                  id="create-round-minutes"
-                  type="number"
-                  min="1"
-                  max="20"
-                  step="1"
-                  required
-                  value="10"
-                />
-                min</span
-              ></label
+              <use href="#icon-village" /></svg
+            ><span>Pine Village</span></label
+          ><label class="room-map"
+            ><input type="radio" name="roomMap" value="harbor" /><svg
+              class="choice-icon"
+              style="--tint: #2c6fa8"
             >
-            <label class="room-bots-choice"
-              ><input id="create-humans-only" type="checkbox" checked /><span
-                >Humans only<small>No bots fill the teams</small></span
-              ></label
+              <use href="#icon-harbor" /></svg
+            ><span>Harbor Havoc</span></label
+          ><label class="room-map"
+            ><input type="radio" name="roomMap" value="quarry" /><svg
+              class="choice-icon"
+              style="--tint: #a8733a"
             >
-          </div>
-          <button id="create-room" class="primary" type="button" disabled>CREATE ROOM</button>
-        </fieldset>
+              <use href="#icon-quarry" /></svg
+            ><span>Dusty Dig</span></label
+          >
+        </div>
+        <div class="room-rules">
+          <label class="room-length"
+            >Match length<span
+              ><input
+                id="create-round-minutes"
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                required
+                value="10"
+              />
+              min</span
+            ></label
+          >
+          <label class="room-bots-choice" data-tip="No bots fill the teams; empty seats stay empty"
+            ><input id="create-humans-only" type="checkbox" checked /><span
+              >Humans only</span
+            ></label
+          >
+        </div>
+        <button id="create-room" class="primary" type="button" disabled>CREATE ROOM</button>
       </div>
     </div>
   </div>

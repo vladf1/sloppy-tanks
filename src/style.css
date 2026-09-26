@@ -577,7 +577,6 @@ h2 {
 }
 .vehicle:hover {
   background: #2b6189;
-  transform: translateY(-2px);
 }
 .vehicle.selected {
   border: 2px solid #ffcf38;
@@ -611,10 +610,6 @@ h2 {
   object-fit: contain;
   margin: 6px 0;
   filter: drop-shadow(0 12px 8px #06182766);
-  transition: transform 150ms ease;
-}
-.vehicle:hover .tank-preview {
-  transform: translateY(-3px);
 }
 .respawn .tank-preview {
   height: 110px;
@@ -854,12 +849,28 @@ h2 {
   filter: drop-shadow(0 2px 2px #000);
 }
 
-/* Battle setup: one dialog for single player and multiplayer, sharing the tank picker. */
+/* Battle setup: one dialog for single player and multiplayer. Sections are labelled
+   rows on a three-column grid that the tank cards define; selectable choices are
+   cards like the tanks, and only lists and status use a recessed well. */
 .menu.start {
+  --card: #21486c;
+  --card-hover: #2b6189;
+  --card-selected: #28618a;
+  --card-border: #71826977;
+  --well: #0c2239;
+  --accent: #ffcf38;
+  --label: #a6dfff;
+  --muted: #9fbcd2;
   display: grid;
-  gap: 16px;
+  gap: 18px;
   max-width: 1000px;
   padding: 24px 28px 20px;
+}
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
 }
 .setup-header {
   display: flex;
@@ -877,9 +888,8 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  border: 1px solid #8bb9dc29;
   border-radius: 12px;
-  background: #0b1c2f;
+  background: var(--well);
 }
 .play-tab {
   display: flex;
@@ -925,132 +935,134 @@ h2 {
   color: #f0f8ff;
 }
 .play-tab[aria-selected="true"] {
-  background: #28618a;
+  background: var(--card-selected);
   color: #fff;
-  box-shadow: inset 0 0 0 2px #ffcf38;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .play-tab[aria-selected="true"] svg {
-  stroke: #ffcf38;
+  stroke: var(--accent);
 }
 .play-tab[aria-selected="true"] small {
   color: #d3e7f5;
 }
-.start fieldset {
+.setup-section {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  margin: 0;
-  padding: 8px;
-  border: 1px solid #71826977;
-  border-radius: 8px;
 }
-.start legend {
-  padding: 0 6px;
-  color: #a6dfff;
+.setup-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 16px;
+  margin-bottom: 8px;
+  color: var(--label);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 2px;
 }
-.start .tank-setting {
-  padding: 6px 12px 12px;
+.setup-label small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: right;
 }
 .start .vehicle {
-  padding: 14px 16px 11px;
+  padding: 12px 16px 10px;
 }
 .start .vehicle.selected {
-  padding: 13px 15px 10px;
+  padding: 11px 15px 9px;
+}
+/* Name and role share the top line, leaving the card's height to the tank. */
+.start .vehicle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+}
+.start .vehicle strong {
+  font-size: 24px;
+}
+.start .vehicle small {
+  text-align: right;
+}
+.start .vehicle :is(.tank-preview, .spec) {
+  grid-column: 1 / -1;
 }
 .start .tank-preview {
-  height: 116px;
-  margin: 2px 0 4px;
+  height: 84px;
+  margin: 0 0 2px;
 }
 .setup-panels {
   display: grid;
 }
-/* Stack the panels so the taller one sizes both; the hidden one keeps its space. */
+/* Both tabs sit on the tank cards' three columns and share one cell, so the taller
+   panel sizes both; the hidden one keeps its space rather than collapsing. */
 .setup-panel {
   grid-area: 1 / 1;
   display: grid;
-  align-content: space-between;
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 12px;
   min-width: 0;
 }
 .setup-panel[hidden] {
   display: grid;
   visibility: hidden;
 }
-#single-panel,
-#multiplayer-panel {
-  align-content: stretch;
-}
 #single-panel {
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto auto 1fr;
 }
 #multiplayer-panel {
   grid-template-rows: auto 1fr;
 }
-.single-options,
-.room-columns,
-.driver-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
+.battle-choice,
+.driver-name,
+.room-browse {
+  grid-column: span 2;
 }
 .map-choice {
-  grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-column: 1 / -1;
 }
-.mode-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 9px;
-  border-radius: 5px;
-  cursor: pointer;
-}
-.mode-option:hover {
-  background: #1d4466;
-}
-.mode-option:has(input:checked),
-.mode-option.fixed {
-  background: #315d81;
-}
-.mode-option.fixed {
-  cursor: default;
-}
-.mode-option input {
-  accent-color: #ffcf38;
-}
-.mode-option b {
-  display: block;
-  font-size: 15px;
-}
-.mode-option small {
-  display: block;
-  margin-top: 3px;
-  color: #c4dfef;
-  font-size: 12px;
-}
-/* A row of radio buttons drawn as one control; the inputs stay focusable. */
-.segmented {
+.choice-cards {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 6px;
+  gap: 12px;
 }
+.choice-card,
+.room-map,
 .segment {
   position: relative;
-  display: grid;
-  place-items: center;
-  min-height: 40px;
-  padding: 6px;
-  border: 1px solid #87bad955;
-  border-radius: 6px;
-  background: #183c5b;
-  font-size: 14px;
-  font-weight: 700;
-  text-align: center;
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  background: var(--card);
   cursor: pointer;
+  transition: background 0.15s;
 }
-/* The transparent input covers its segment, so a click lands on the radio itself. */
+.choice-card:hover,
+.room-map:hover,
+.segment:hover {
+  background: var(--card-hover);
+}
+.choice-card:has(input:checked),
+.choice-card.fixed,
+.room-map:has(input:checked),
+.segment:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--card-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.choice-card:has(input:focus-visible),
+.room-map:has(input:focus-visible),
+.segment:has(input:focus-visible) {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+/* The transparent input covers its card, so a click lands on the radio itself. */
+.choice-card input,
+.room-map input,
 .segment input {
   position: absolute;
   inset: 0;
@@ -1060,17 +1072,57 @@ h2 {
   opacity: 0;
   cursor: pointer;
 }
-.segment:hover {
-  background: #294e70;
+.choice-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 12px;
 }
-.segment:has(input:checked) {
-  border-color: #ffcf38;
-  background: #315d81;
-  box-shadow: inset 0 0 0 1px #ffcf38;
+.choice-card.fixed {
+  cursor: default;
 }
-.segment:has(input:focus-visible) {
-  outline: 2px solid #ffcf38;
-  outline-offset: 2px;
+.choice-icon {
+  flex: 0 0 36px;
+  height: 36px;
+  padding: 7px;
+  border-radius: 8px;
+  background: var(--tint);
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.choice-card b {
+  display: block;
+  font-size: 15px;
+}
+.choice-card small {
+  display: block;
+  margin-top: 3px;
+  color: #c4dfef;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+}
+.segment {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  padding: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+/* Difficulty fills its row, so its buttons match the Battle cards beside it. */
+.difficulty-setting .segmented {
+  flex: 1;
 }
 .team-blue span::before,
 .team-red span::before {
@@ -1081,33 +1133,25 @@ h2 {
   margin-right: 7px;
   border-radius: 50%;
   background: #4ea3ff;
-  vertical-align: 0;
 }
 .team-red span::before {
   background: #ff6f5e;
 }
-.difficulty-setting small {
-  display: block;
-  margin: 8px 2px 2px;
-  color: #c4dfef;
-  font-size: 12px;
-}
-.launch-bar {
-  display: flex;
-  align-items: stretch;
-  gap: 14px;
-}
-.launch-bar .startup-progress {
-  flex: 1;
+.start .startup-progress {
+  grid-column: span 2;
+  align-self: end;
   display: grid;
   align-content: center;
   min-width: 0;
+  min-height: 58px;
   margin: 0;
+  border: 0;
+  background: var(--well);
 }
-.launch-bar #start {
-  flex: 0 0 auto;
-  min-width: 170px;
-  padding: 12px 34px;
+.start #start {
+  align-self: end;
+  min-height: 58px;
+  padding: 10px 24px;
   font-size: 30px;
 }
 .vehicle:focus-visible,
@@ -1119,26 +1163,22 @@ h2 {
 .start input:is([type="text"], [type="number"], :not([type])) {
   width: 100%;
   min-width: 0;
-  height: 40px;
+  height: 42px;
   padding: 0 12px;
-  border: 1px solid #92b4cf45;
-  border-radius: 6px;
-  background: #0c2239;
+  border: 1px solid #92b4cf30;
+  border-radius: 7px;
+  background: var(--well);
   color: #f5faff;
   font:
     600 15px Arial,
     sans-serif;
 }
 .start input:is([type="text"], [type="number"], :not([type])):focus-visible {
-  outline: 2px solid #ffcf38;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.room-browse,
-.room-create {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.setup-label label {
+  cursor: pointer;
 }
 #room-count {
   display: inline-block;
@@ -1152,34 +1192,28 @@ h2 {
   letter-spacing: 0;
 }
 .text-button {
+  padding: 0;
   border: 0;
   background: transparent;
   color: #b6cedf;
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0;
 }
 .text-button:hover:not(:disabled) {
   color: #fff0c1;
-}
-#refresh-rooms {
-  position: absolute;
-  top: -16px;
-  right: 10px;
-  padding: 3px 6px;
-  background: #142e4d;
 }
 .room-list-body {
   position: relative;
   flex: 1;
   min-height: 124px;
-  border: 1px solid #92b4cf30;
-  border-radius: 6px;
-  background: #0c22396b;
+  border-radius: 8px;
+  background: var(--well);
 }
 #rooms-message {
   margin: 0;
   padding: 10px 12px 0;
-  color: #9ab8ce;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-line;
@@ -1205,30 +1239,30 @@ h2 {
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border: 1px solid #92b4cf30;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--card);
   cursor: pointer;
 }
 .room-row:hover:not(:has(input:disabled, input:checked)) {
-  border-color: #92b4cf70;
-  background: #b7d7ed0c;
+  background: var(--card-hover);
 }
 .room-row:has(input:checked) {
-  border-color: #ffcf38;
-  background: #315d81;
+  border-color: var(--accent);
+  background: var(--card-selected);
 }
 .room-row:has(input:disabled) {
   opacity: 0.5;
   cursor: default;
 }
 .room-row:has(input:focus-visible) {
-  outline: 2px solid #ffcf38;
+  outline: 3px solid #fff;
   outline-offset: 2px;
 }
 .room-row input {
   flex: 0 0 auto;
   margin: 0;
-  accent-color: #ffcf38;
+  accent-color: var(--accent);
 }
 .room-row strong,
 .room-row small {
@@ -1248,39 +1282,75 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: #9ab8ce;
+  margin-top: 10px;
+  color: var(--muted);
   font-size: 11px;
 }
 .room-browse .primary,
 .room-create .primary {
-  min-height: 42px;
+  min-height: 44px;
   padding: 10px 22px;
   box-shadow: 0 3px #bc9e60;
   white-space: nowrap;
 }
 .room-browse .primary:disabled,
 .room-create .primary:disabled {
-  border: 1px solid #92b4cf30;
-  background: #b7d7ed0c;
+  background: #b7d7ed14;
   box-shadow: none;
   color: #7795ab;
   cursor: default;
 }
-.room-map .segment {
-  font-size: 13px;
+/* One yellow action at a time: a selected room makes Join the main choice. */
+.start:has(input[name="room-choice"]:checked) #create-room:not(:disabled) {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  color: var(--accent);
+}
+.start:has(input[name="room-choice"]:checked) #create-room:not(:disabled):hover {
+  background: #ffcf381a;
+}
+.room-create {
+  gap: 10px;
+}
+.room-create .setup-label {
+  margin-bottom: -2px;
+}
+.room-create .primary {
+  margin-top: auto;
+}
+.room-maps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.room-map {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 8px 4px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+.room-map .choice-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
 }
 .room-rules {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  flex: 1;
+  gap: 8px 12px;
 }
 .room-length,
 .room-bots-choice {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -1288,41 +1358,78 @@ h2 {
 .room-length > span {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: #b6cedf;
   font-weight: 600;
 }
 .start .room-length input {
-  width: 64px;
+  width: 52px;
+  height: 36px;
+  padding: 0 8px;
 }
 .room-bots-choice input {
   width: 17px;
   height: 17px;
   margin: 0;
-  accent-color: #ffcf38;
+  accent-color: var(--accent);
 }
-.room-bots-choice small {
-  display: block;
-  margin-top: 3px;
-  color: #9ab8ce;
-  font-size: 11px;
-  font-weight: 400;
+/* Short explanations appear on hover or keyboard focus instead of reflowing the menu. */
+[data-tip] {
+  position: relative;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 2;
+  width: max-content;
+  max-width: 220px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #06101b;
+  box-shadow: 0 8px 20px #0009;
+  color: #e8f3fb;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.12s;
+}
+/* Edge tips align with their control so they never widen the page. */
+.segment:first-child[data-tip]::after {
+  left: 0;
+  transform: none;
+}
+.segment:last-child[data-tip]::after,
+.room-bots-choice[data-tip]::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+[data-tip]:hover::after,
+[data-tip]:has(input:focus-visible)::after {
+  opacity: 1;
 }
 .start .menu-footer {
   padding-top: 12px;
   border-top: 1px solid #8bb9dc1f;
 }
+.start .menu-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
-@media (max-height: 860px) {
+@media (max-height: 770px) {
   .start .menu-footer {
     display: none;
   }
-}
-.start .menu-help {
-  margin: 0;
-  color: #9fbcd2;
-  font-size: 11.5px;
-  line-height: 1.65;
 }
 @media (max-width: 860px) {
   .setup-header {
@@ -1333,32 +1440,28 @@ h2 {
   .play-tabs {
     flex-basis: auto;
   }
-  .room-map .segment {
-    font-size: 12px;
+  .choice-icon {
+    display: none;
   }
-  .room-rules {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
+  .room-map .choice-icon {
+    display: block;
   }
 }
 @media (max-width: 600px) {
-  .single-options,
-  .room-columns,
-  .driver-fields {
+  .setup-panel {
     grid-template-columns: minmax(0, 1fr);
   }
-  .map-choice {
+  .setup-panel > * {
     grid-column: auto;
-    grid-row: auto;
+  }
+  .choice-cards {
+    grid-auto-flow: row;
   }
   .play-tab small,
   .play-tab svg {
     display: none;
   }
-  .launch-bar #start {
-    min-width: 96px;
-    padding: 12px 20px;
+  .start #start {
     font-size: 24px;
   }
   .vehicles {

@@ -131,8 +131,8 @@ export class UI {
           ["30-Tank Stress Battle", "15 vs 15 · Endless respawns and scoring · No victory"],
           [simulation.customMap.name, simulation.customMap.description],
         ];
-        this.overlay.querySelectorAll(".battle-choice, .map-choice").forEach((fieldset, index) => {
-          const choices = fieldset.querySelectorAll(".mode-option");
+        this.overlay.querySelectorAll(".battle-choice, .map-choice").forEach((section, index) => {
+          const choices = section.querySelectorAll(".choice-card");
           choices.forEach((choice, i) => {
             if (i > 0) {
               choice.remove();
@@ -140,6 +140,7 @@ export class UI {
           });
           choices[0].classList.add("fixed");
           choices[0].querySelector("input")?.remove();
+          choices[0].querySelector(".choice-icon")?.remove();
           choices[0].querySelector("b")!.textContent = details[index][0];
           choices[0].querySelector("small")!.textContent = details[index][1];
         });

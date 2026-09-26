@@ -56,10 +56,12 @@ export function syncGameOptions(overlay: HTMLElement, options: GameOptions): voi
       input.checked = input.value === options[key];
     });
   }
-  const help = overlay.querySelector("#difficulty-help");
-  if (help) {
-    help.textContent = DIFFICULTIES[options.difficulty].description;
-  }
+  // Each difficulty explains itself in a tooltip, so choosing one never reflows the menu.
+  overlay.querySelectorAll<HTMLInputElement>('input[name="difficulty"]').forEach((input) => {
+    const description = DIFFICULTIES[parseDifficulty(input.value)].description;
+    input.closest<HTMLElement>(".segment")?.setAttribute("data-tip", description);
+    input.setAttribute("aria-description", description);
+  });
   showTankTeam(overlay, options.humanTeam);
 }
 
@@ -88,8 +90,6 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
         if (key === "difficulty") {
           options.difficulty = parseDifficulty(input.value);
           localStorage.setItem("sloppy-difficulty", options.difficulty);
-          overlay.querySelector("#difficulty-help")!.textContent =
-            DIFFICULTIES[options.difficulty].description;
         } else if (key === "gameMode") {
           options.gameMode = input.value as GameOptions["gameMode"];
         } else {

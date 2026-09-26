@@ -28,7 +28,7 @@ try {
   await page.waitForFunction(() => !!window.sloppy);
   await page.locator('input[value="solo"]').check();
   assert.match(
-    await page.locator(".mode-option:has(input[value='solo'])").innerText(),
+    await page.locator(".choice-card:has(input[value='solo'])").innerText(),
     /10 minutes/,
   );
   await page.locator('[data-kind="balanced"]').click();
