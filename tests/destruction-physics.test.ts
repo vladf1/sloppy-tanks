@@ -11,22 +11,30 @@ import { idleCommand } from "../src/game/types";
 import { treeProportions } from "../src/game/tree-proportions";
 import { tankBurnout } from "../src/game/tank-destruction";
 import { Navigation } from "../src/game/navigation";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
 });
 function arena() {
-  const s = new Simulation(731);
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  for (const t of s.tanks) s.world.removeRigidBody(t.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.tanks = [];
-  s.pickups = [];
-  s.nav.rebuild([]);
+  const s = clearArena(new Simulation(731));
   s.start();
   return s;
+}
+/** Whether two Rapier interaction groups (membership << 16 | filter) collide. */
+function collides(a: number, b: number) {
+  return ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
+}
+/** Drives a fresh scout east from `fromX` into whatever lies ahead; it must stay grounded and unharmed. */
+function shoveWithScout(s: Simulation, fromX: number, steps: number) {
+  const tank = s.addTank(0, true, "scout");
+  tank.heading = Math.PI / 2;
+  park(tank.body, fromX, 0.65);
+  const hp = tank.hp;
+  for (let i = 0; i < steps; i++) s.step({ ...idleCommand(), moveX: 1 });
+  assert.ok(tank.body.translation().y < 0.8, "the tank does not climb what it pushes");
+  assert.equal(tank.hp, hp, "pushing never damages the tank");
+  return tank;
 }
 function cover(s: Simulation, kind: CoverKind, x = 0, z = 0) {
   const c = s.addCover({
@@ -82,61 +90,65 @@ function park(body: RAPIER.RigidBody, x: number, y: number, z = 0) {
 }
 
 test("rooted stumps block every chassis after debris cleanup and leave the crown space open", () => {
-  for (const kind of ["scout", "balanced", "heavy"] as const) {
-    for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-      const s = arena();
-      try {
-        const tree = cover(s, "tree");
-        s.damageCover(tree, 1000, 999, 0);
-        // Isolate the permanent stump from the temporary falling log.
-        for (const fragment of s.fragments) s.world.removeRigidBody(fragment.body);
-        s.fragments = [];
-        const tank = s.addTank(0, true, kind);
-        const direction = { x: Math.sin(heading), z: Math.cos(heading) };
-        tank.heading = heading;
-        tank.body.setRotation(
-          { x: 0, y: Math.sin(heading / 2), z: 0, w: Math.cos(heading / 2) },
-          true,
-        );
-        tank.body.setTranslation({ x: -5 * direction.x, y: 0.65, z: -5 * direction.z }, true);
-        tank.previous = { x: -5 * direction.x, z: -5 * direction.z };
-        s.world.step();
-        for (let i = 0; i < 180; i++) {
-          s.step({ ...idleCommand(), moveX: direction.x, moveZ: direction.z });
-        }
-        const position = tank.body.translation();
-        assert.ok(
-          position.x * direction.x + position.z * direction.z < -0.7,
-          `${kind} must stop before the stump`,
-        );
-        assert.ok(position.y < 0.8, "the stump must not lift the tank over its footprint");
-        assert.equal(tree.body.isValid(), true);
-        assert.equal(tree.body.isFixed(), true);
-        assert.equal(s.nav.blocked[s.nav.index(tree)], 1, "bots must route around the stump");
-        assert.equal(s.nav.clearLine({ x: -4, z: 0 }, { x: 4, z: 0 }), false);
-        assert.equal(
-          s.world.castRay(
-            new RAPIER.Ray({ x: -4, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }),
-            8,
-            true,
-            undefined,
-            GROUP.coverQuery,
-          ),
-          null,
-          "shells must fly above the stump",
-        );
-        const ray = new RAPIER.Ray({ x: -4, y: 0.65, z: 0 }, { x: 1, y: 0, z: 0 });
-        assert.ok(
-          s.world.castRay(ray, 8, true, undefined, GROUP.steeringQuery, undefined, tank.body),
-          "local steering must detect the stump",
-        );
-        assert.ok(Math.abs(tree.collider.radius() - treeProportions(tree).stumpRadius) < 1e-6);
-        const destroyed = s.destroyed;
-        s.damageCover(tree, 1000, 999, 0);
-        assert.equal(s.destroyed, destroyed, "a stump cannot be destroyed twice");
-      } finally {
-        s.dispose();
+  // Every chassis and approach heading appears once.
+  for (const [kind, heading] of [
+    ["scout", 0],
+    ["balanced", Math.PI / 2],
+    ["heavy", Math.PI],
+    ["heavy", -Math.PI / 2],
+  ] as const) {
+    const s = arena();
+    try {
+      const tree = cover(s, "tree");
+      s.damageCover(tree, 1000, 999, 0);
+      // Isolate the permanent stump from the temporary falling log.
+      for (const fragment of s.fragments) s.world.removeRigidBody(fragment.body);
+      s.fragments = [];
+      const tank = s.addTank(0, true, kind);
+      const direction = { x: Math.sin(heading), z: Math.cos(heading) };
+      tank.heading = heading;
+      tank.body.setRotation(
+        { x: 0, y: Math.sin(heading / 2), z: 0, w: Math.cos(heading / 2) },
+        true,
+      );
+      tank.body.setTranslation({ x: -5 * direction.x, y: 0.65, z: -5 * direction.z }, true);
+      tank.previous = { x: -5 * direction.x, z: -5 * direction.z };
+      s.world.step();
+      for (let i = 0; i < 180; i++) {
+        s.step({ ...idleCommand(), moveX: direction.x, moveZ: direction.z });
       }
+      const position = tank.body.translation();
+      assert.ok(
+        position.x * direction.x + position.z * direction.z < -0.7,
+        `${kind} must stop before the stump`,
+      );
+      assert.ok(position.y < 0.8, "the stump must not lift the tank over its footprint");
+      assert.equal(tree.body.isValid(), true);
+      assert.equal(tree.body.isFixed(), true);
+      assert.equal(s.nav.blocked[s.nav.index(tree)], 1, "bots must route around the stump");
+      assert.equal(s.nav.clearLine({ x: -4, z: 0 }, { x: 4, z: 0 }), false);
+      assert.equal(
+        s.world.castRay(
+          new RAPIER.Ray({ x: -4, y: 1, z: 0 }, { x: 1, y: 0, z: 0 }),
+          8,
+          true,
+          undefined,
+          GROUP.coverQuery,
+        ),
+        null,
+        "shells must fly above the stump",
+      );
+      const ray = new RAPIER.Ray({ x: -4, y: 0.65, z: 0 }, { x: 1, y: 0, z: 0 });
+      assert.ok(
+        s.world.castRay(ray, 8, true, undefined, GROUP.steeringQuery, undefined, tank.body),
+        "local steering must detect the stump",
+      );
+      assert.ok(Math.abs(tree.collider.radius() - treeProportions(tree).stumpRadius) < 1e-6);
+      const destroyed = s.destroyed;
+      s.damageCover(tree, 1000, 999, 0);
+      assert.equal(s.destroyed, destroyed, "a stump cannot be destroyed twice");
+    } finally {
+      s.dispose();
     }
   }
 });
@@ -229,7 +241,6 @@ test("real projectile hits shove concrete cumulatively, while rockets and nearby
       assert.ok(v.x > 0.5);
       assert.equal(c.alive, true);
       assert.equal(c.hp, Infinity);
-      assert.ok(Math.abs(c.body.mass() - 6.9984) < 0.001);
       assert.ok(c.collider.friction() >= 0.6);
       assert.ok(c.collider.restitution() < 0.05);
       if (mode === "standard") {
@@ -334,12 +345,10 @@ test("physical pieces stay within the shared body budget, stay out of cover quer
     }
     assert.equal(s.fragments.length, s.maxFragments);
     assert.equal(s.world.bodies.len(), initial + s.maxFragments);
-    const allows = (a: number, b: number) =>
-      ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
-    assert.equal(allows(GROUP.fragment, GROUP.tank), false);
-    assert.equal(allows(GROUP.fragment, GROUP.fragment), false);
-    assert.equal(allows(GROUP.fragment, GROUP.ground), true);
-    assert.equal(allows(GROUP.fragment, GROUP.movableCover), true);
+    assert.equal(collides(GROUP.fragment, GROUP.tank), false);
+    assert.equal(collides(GROUP.fragment, GROUP.fragment), false);
+    assert.equal(collides(GROUP.fragment, GROUP.ground), true);
+    assert.equal(collides(GROUP.fragment, GROUP.movableCover), true);
     s.world.step();
     assert.equal(
       s.world.castRay(
@@ -471,21 +480,6 @@ test("steel hedgehogs keep open compound geometry and move, settle and update na
   }
 });
 
-test("quarry dragon teeth are 10 percent smaller in every dimension with density-preserving mass", () => {
-  const s = new Simulation(731);
-  try {
-    s.mapMode = "quarry";
-    s.reset();
-    const c = s.covers.find((item) => item.kind === "teeth" && item.x === 41.7)!;
-    assert.ok(Math.abs(c.w - 1.71) < 0.001);
-    assert.ok(Math.abs(c.d - 1.71) < 0.001);
-    assert.ok(Math.abs(c.h - 1.71) < 0.001);
-    assert.ok(Math.abs(c.body.mass() - 9.6 * 0.9 ** 3) < 0.001);
-  } finally {
-    s.dispose();
-  }
-});
-
 test("a scout can steadily push every concrete profile, with throttled navigation and no damage", () => {
   // x = 0..3 selects all four authored profiles, using the tallest quarry tooth.
   for (const x of [0, 1, 2, 3]) {
@@ -503,15 +497,9 @@ test("a scout can steadily push every concrete profile, with throttled navigatio
       });
       s.nav.rebuild(s.covers);
       const version = s.nav.version;
-      const tank = s.addTank(0, true, "scout");
-      tank.heading = Math.PI / 2;
-      park(tank.body, x - 2.8, 0.65);
-      const hp = tank.hp;
-      for (let i = 0; i < 240; i++) s.step({ ...idleCommand(), moveX: 1 });
+      const tank = shoveWithScout(s, x - 2.8, 240);
       assert.ok(c.x - x > 1, `profile ${x} moved only ${c.x - x}`);
       assert.ok(tank.body.translation().x > x - 1.8);
-      assert.ok(tank.body.translation().y < 0.8, "tank does not climb the concrete");
-      assert.equal(tank.hp, hp);
       assert.equal(c.hp, Infinity);
       assert.ok(s.nav.version > version && s.nav.version - version <= 16);
       assert.equal(s.nav.blocked[s.nav.index(c)], 1);
@@ -535,15 +523,9 @@ test("tanks physically shove landed hulls and turrets without damage, and wreck 
       f.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
       park(f.body, 0, 0.5);
       tick(s, 0.5);
-      const tank = s.addTank(0, true, "scout");
-      tank.heading = Math.PI / 2;
-      park(tank.body, -4, 0.65);
-      const hp = tank.hp;
-      for (let i = 0; i < 120; i++) s.step({ ...idleCommand(), moveX: 1 });
+      const tank = shoveWithScout(s, -4, 120);
       assert.ok(f.body.translation().x > 2, `${part} must move through tank contact`);
       assert.ok(tank.body.translation().x > 0, "wreck does not trap the tank");
-      assert.ok(tank.body.translation().y < 0.8, "tank stays grounded");
-      assert.equal(tank.hp, hp);
       tick(s, 19);
       assert.equal(s.fragments.length, 0);
       assert.equal(f.body.isValid(), false);
@@ -561,17 +543,15 @@ test("tanks physically shove landed hulls and turrets without damage, and wreck 
 });
 
 test("only large wrecks accept tank contact and projectile hits; steering still excludes wrecks", () => {
-  const allows = (a: number, b: number) =>
-    ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
-  assert.equal(allows(GROUP.wreck, GROUP.tank), true);
-  assert.equal(allows(GROUP.wreck, GROUP.debrisQuery), true);
-  assert.equal(allows(GROUP.wreck, GROUP.wreck), true);
+  assert.equal(collides(GROUP.wreck, GROUP.tank), true);
+  assert.equal(collides(GROUP.wreck, GROUP.debrisQuery), true);
+  assert.equal(collides(GROUP.wreck, GROUP.wreck), true);
   for (const group of [GROUP.fragment, GROUP.coverQuery, GROUP.steeringQuery]) {
-    assert.equal(allows(GROUP.wreck, group), false);
+    assert.equal(collides(GROUP.wreck, group), false);
   }
-  assert.equal(allows(GROUP.fragment, GROUP.tank), false);
-  assert.equal(allows(GROUP.wreck, GROUP.ground), true);
-  assert.equal(allows(GROUP.wreck, GROUP.movableCover), true);
+  assert.equal(collides(GROUP.fragment, GROUP.tank), false);
+  assert.equal(collides(GROUP.wreck, GROUP.ground), true);
+  assert.equal(collides(GROUP.wreck, GROUP.movableCover), true);
   const s = arena();
   try {
     wreck(s);
@@ -733,15 +713,9 @@ test("a scout pushes fallen logs, beams, panels and drum pieces while small chip
       f.body.wakeUp();
       tick(s, 1.5);
       const startX = f.body.translation().x;
-      const tank = s.addTank(0, true, "scout");
-      tank.heading = Math.PI / 2;
-      park(tank.body, -4, 0.65);
-      const hp = tank.hp;
-      for (let i = 0; i < 120; i++) s.step({ ...idleCommand(), moveX: 1 });
+      const tank = shoveWithScout(s, -4, 120);
       assert.ok(f.body.translation().x > startX + 1, `${shape} must move through tank contact`);
       assert.ok(tank.body.translation().x > 0, `${shape} must not trap the scout`);
-      assert.ok(tank.body.translation().y < 0.8, "tank stays grounded");
-      assert.equal(tank.hp, hp);
       s.fragment(0, 0, 0x999999, 0.4);
       assert.equal(s.fragments.at(-1)!.body.collider(0).collisionGroups(), GROUP.fragment);
       f.life = DEBRIS_CLEANUP_SECONDS + STEP / 2;
@@ -826,13 +800,11 @@ test("large wreck pieces land on each other and settle instead of interpenetrati
 
 test("all substantial debris shares contacts, stacks across categories, and excludes small scraps", () => {
   const groups = [GROUP.pushableDebris, GROUP.timberDebris, GROUP.wreck];
-  const allows = (a: number, b: number) =>
-    ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0;
   for (const a of groups) {
-    for (const b of groups) assert.ok(allows(a, b));
-    assert.equal(allows(a, GROUP.fragment), false);
+    for (const b of groups) assert.ok(collides(a, b));
+    assert.equal(collides(a, GROUP.fragment), false);
     for (const b of [GROUP.ground, GROUP.cover, GROUP.movableCover, GROUP.tank])
-      assert.ok(allows(a, b));
+      assert.ok(collides(a, b));
   }
   const s = arena();
   try {

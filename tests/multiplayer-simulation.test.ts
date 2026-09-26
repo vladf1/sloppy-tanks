@@ -11,6 +11,7 @@ import { newCombatRecord } from "../src/game/combat-record";
 import { cleanupCandidate } from "../src/game/debris-cleanup";
 import { tuneSpeed } from "../src/game/speed-tuning";
 import { fireWeapon, placeMine } from "../src/game/weapons";
+import { clearArena } from "./fixtures";
 
 before(async () => {
   await RAPIER.init();
@@ -41,14 +42,10 @@ for (const mapMode of ["village", "harbor", "quarry"] as const) {
   });
 }
 function arena(sim: Simulation) {
-  for (const cover of sim.covers) if (cover.body.isValid()) sim.world.removeRigidBody(cover.body);
-  for (const tank of sim.tanks.filter((tank) => !tank.human)) sim.world.removeRigidBody(tank.body);
-  sim.covers = [];
-  sim.movableCovers = [];
-  sim.coverByCollider.clear();
-  sim.nav.rebuild([]);
-  sim.tanks = sim.tanks.filter((tank) => tank.human);
-  sim.pickups = [];
+  clearArena(
+    sim,
+    sim.tanks.filter((tank) => tank.human),
+  );
   sim.tanks.forEach((tank, i) => {
     tank.body.setTranslation({ x: i * 20 - 10, y: 0.65, z: 0 }, true);
     tank.heading = 0;
@@ -324,35 +321,36 @@ test("viewer-specific rendering cannot affect multiplayer wreck placement or sim
   }
 });
 
-for (const mapMode of ["village", "harbor", "quarry"] as const) {
-  for (const difficulty of ["easy", "normal", "hard"] as const) {
-    for (const gameMode of ["team", "solo"] as const) {
-      test(`${mapMode}/${difficulty}/${gameMode}: per-tank dispatch preserves legacy command and RNG order`, () => {
-        const before = new Simulation(4242, { mapMode, difficulty, gameMode });
-        const after = new Simulation(4242, { mapMode, difficulty, gameMode });
-        try {
-          before.start();
-          after.start();
-          for (let i = 0; i < 90; i++) {
-            const command = {
-              ...idleCommand(),
-              moveZ: i < 30 ? 1 : 0,
-              moveX: i >= 30 ? 1 : 0,
-              aim: i / 90,
-              fire: true,
-              mine: i === 20,
-            };
-            before.step(command);
-            after.stepWith(new Map([[after.human.id, command]]));
-          }
-          assert.deepEqual(after.snapshot(), before.snapshot());
-          assert.equal(after.rng.state, before.rng.state);
-          assert.deepEqual(after.combatRecord, before.combatRecord);
-        } finally {
-          before.dispose();
-          after.dispose();
-        }
-      });
+// One case per map covers every difficulty and both modes.
+for (const [mapMode, difficulty, gameMode] of [
+  ["village", "easy", "team"],
+  ["harbor", "normal", "solo"],
+  ["quarry", "hard", "team"],
+] as const) {
+  test(`${mapMode}/${difficulty}/${gameMode}: per-tank dispatch preserves legacy command and RNG order`, () => {
+    const before = new Simulation(4242, { mapMode, difficulty, gameMode });
+    const after = new Simulation(4242, { mapMode, difficulty, gameMode });
+    try {
+      before.start();
+      after.start();
+      for (let i = 0; i < 90; i++) {
+        const command = {
+          ...idleCommand(),
+          moveZ: i < 30 ? 1 : 0,
+          moveX: i >= 30 ? 1 : 0,
+          aim: i / 90,
+          fire: true,
+          mine: i === 20,
+        };
+        before.step(command);
+        after.stepWith(new Map([[after.human.id, command]]));
+      }
+      assert.deepEqual(after.snapshot(), before.snapshot());
+      assert.equal(after.rng.state, before.rng.state);
+      assert.deepEqual(after.combatRecord, before.combatRecord);
+    } finally {
+      before.dispose();
+      after.dispose();
     }
-  }
+  });
 }

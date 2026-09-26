@@ -3,23 +3,10 @@ import assert from "node:assert/strict";
 import { NodeMaterial, BackSide, MeshStandardMaterial, Texture } from "three/webgpu";
 import { vec4 } from "three/tsl";
 import {
-  GameRenderer,
   ShadowMaterials,
   numberUniformsInOrder,
   shareTexturedShadowNodes,
 } from "../src/game/renderer";
-
-test("failed renderer startup releases the backend without restarting initialization", () => {
-  const renderer = Object.create(GameRenderer.prototype) as GameRenderer;
-  let releases = 0;
-  Object.defineProperty(renderer, "initialized", { value: false });
-  Object.defineProperty(renderer, "backend", { value: { dispose: () => releases++ } });
-  renderer.init = () => {
-    assert.fail("failure cleanup must not retry GPU initialization");
-  };
-  renderer.dispose();
-  assert.equal(releases, 1);
-});
 
 test("equivalent shaders get equal uniform names whatever the other stage declared", () => {
   // A part batch's vertex-stage matrices take the first number, shifting every

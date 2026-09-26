@@ -15,6 +15,7 @@ import { botReload } from "../src/game/bot-personalities";
 import { AMMO_ORDER, refillAmmo } from "../src/game/ammunition";
 import { STEP, VEHICLES, WEAPONS } from "../src/game/data";
 import { idleCommand, type Tank, type VehicleKind } from "../src/game/types";
+import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
 });
@@ -29,14 +30,7 @@ function fixture() {
     player = s.human;
   const enemy = s.tanks.find((t) => t.team !== player.team)!;
   const ally = s.tanks.find((t) => !t.human && t.team === player.team)!;
-  for (const t of s.tanks) if (![player, enemy, ally].includes(t)) s.world.removeRigidBody(t.body);
-  s.tanks = [player, enemy, ally];
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.nav.rebuild([]);
-  s.pickups = [];
+  clearArena(s, [player, enemy, ally]);
   s.tanks.forEach((t, i) => {
     t.protection = 0;
     move(t, i * 20, 0);

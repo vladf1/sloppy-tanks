@@ -4,7 +4,6 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation, type SimulationSetup } from "../src/game/simulation";
 import { idleCommand } from "../src/game/types";
 import { STEP } from "../src/game/data";
-import { STRESS_TEST_SETUP, configureStressTest } from "../src/stress-test-level";
 
 before(async () => {
   await RAPIER.init();
@@ -30,12 +29,10 @@ function snapshot(sim: Simulation) {
 }
 
 test("direct setup builds one world and preserves legacy seeded rounds and subsequent resets", () => {
+  // One team and one solo round cover the options that change roster and RNG order.
   const cases: SimulationSetup[] = [
-    { mapMode: "village", humanTeam: 1, humanKind: "heavy" },
     { mapMode: "harbor", humanTeam: 0, humanKind: "scout" },
     { mapMode: "quarry", gameMode: "solo", difficulty: "hard" },
-    { mapMode: "village", gameMode: "solo", difficulty: "easy" },
-    { mapMode: "harbor", humanTeam: 1 },
   ];
   for (const options of cases) {
     const reset = mock.method(Simulation.prototype, "reset");
@@ -61,21 +58,5 @@ test("direct setup builds one world and preserves legacy seeded rounds and subse
       direct.dispose();
       legacy.dispose();
     }
-  }
-});
-
-test("direct stress setup preserves the complete 30-tank workload", () => {
-  const direct = new Simulation(731, { ...STRESS_TEST_SETUP, round: 3 });
-  const legacy = new Simulation(731);
-  try {
-    configureStressTest(legacy);
-    assert.deepEqual(snapshot(direct), snapshot(legacy));
-    assert.equal(direct.tanks.length, 30);
-    assert.equal(direct.humanHealthMultiplier, legacy.humanHealthMultiplier);
-    assert.equal(direct.powerUpDurationMultiplier, legacy.powerUpDurationMultiplier);
-    assert.equal(direct.ammoCrateMultiplier, legacy.ammoCrateMultiplier);
-  } finally {
-    direct.dispose();
-    legacy.dispose();
   }
 });

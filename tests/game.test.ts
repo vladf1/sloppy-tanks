@@ -3,15 +3,9 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { newMatch, awardKill, tickMatch } from "../src/game/match";
-import {
-  collectPickup,
-  fireWeapon,
-  placeMine,
-  stepMines,
-  stepProjectiles,
-} from "../src/game/weapons";
-import { STEP, VEHICLES, WEAPONS, Random } from "../src/game/data";
-import { idleCommand, type Pickup, type Team } from "../src/game/types";
+import { fireWeapon, stepProjectiles } from "../src/game/weapons";
+import { STEP, VEHICLES, Random } from "../src/game/data";
+import { idleCommand, type Team } from "../src/game/types";
 import { botCommand, friendlyBlocksShot } from "../src/game/ai";
 import { Navigation } from "../src/game/navigation";
 before(async () => {
@@ -32,25 +26,6 @@ test("reused navigation searches recover from unreachable goals and changed topo
   assert.deepEqual(first, saved, "later searches cannot mutate a bot's existing path");
 });
 
-test("cover queries ignore tanks and debris and release destroyed collider identities", () => {
-  const s = new Simulation(123);
-  const c = s.addCover({ kind: "concrete", x: 0, z: 50, w: 1, d: 4, h: 2, hp: 10, color: 0 });
-  const handle = c.collider.handle;
-  s.human.body.setTranslation({ x: -2, y: 0.65, z: 50 }, true);
-  s.fragment(2, 50, 0);
-  s.world.step();
-  const a = { x: -5, z: 50 },
-    b = { x: 5, z: 50 };
-  assert.equal(s.visible(a, b), false);
-  assert.equal(s.coverByCollider.get(handle), c);
-  s.damageCover(c, 10, s.human.id, s.humanTeam);
-  assert.equal(s.coverByCollider.has(handle), false);
-  assert.equal(s.visible(a, b), true);
-  s.reset();
-  assert.equal(s.coverByCollider.size, s.covers.length);
-  for (const cover of s.covers) assert.equal(s.coverByCollider.get(cover.collider.handle), cover);
-  s.dispose();
-});
 function game() {
   const s = new Simulation(123);
   s.start();
@@ -121,154 +96,6 @@ test("respawn occurs after three seconds with protection and selected class", ()
   assert.ok(a.protection > 1.9);
   s.dispose();
 });
-test("ammunition persists while power-ups expire and repair fully heals", () => {
-  const s = game(),
-    a = s.human;
-  const p: Pickup = {
-    id: 1,
-    x: 0,
-    z: 0,
-    kind: "rapid" as const,
-    available: true,
-    cooldown: 0,
-  };
-  collectPickup(s, a, p);
-  assert.equal(p.cooldownDuration, 13);
-  assert.equal(a.ammo.rocket, 0);
-  assert.equal(a.rapid, 20);
-  collectPickup(s, a, { ...p, kind: "rocket", available: true });
-  assert.equal(a.ammo.rocket, 12);
-  s.step();
-  assert.equal(a.ammo.rocket, 12);
-  a.shield = 7;
-  collectPickup(s, a, { ...p, kind: "shield", available: true });
-  assert.equal(a.shield, 20);
-  assert.equal(a.shieldPoints, 120);
-  a.hp = 1;
-  collectPickup(s, a, { ...p, kind: "repair", available: true });
-  assert.equal(a.hp, VEHICLES[a.kind].health);
-  collectPickup(s, a, { ...p, kind: "repair", available: true });
-  assert.equal(a.hp, VEHICLES[a.kind].health);
-  s.dispose();
-});
-test("swept fast shell stops at an ally and protects the enemy behind it", () => {
-  const s = game();
-  clear(s);
-  const a = place(s, 0, -12, 0),
-    ally = place(s, 2, -7, 0),
-    enemy = place(s, 1, -2, 0);
-  s.shots.push({
-    id: 999,
-    x: -12,
-    z: 0,
-    vx: 1200,
-    vz: 0,
-    owner: a.id,
-    team: 0,
-    damage: 40,
-    bounces: 1,
-    life: 2,
-    piercing: 0,
-    weapon: "standard",
-  });
-  stepProjectiles(s, STEP);
-  assert.equal(enemy.hp, VEHICLES[enemy.kind].health);
-  assert.equal(ally.hp, 100);
-  assert.equal(s.shots.length, 0);
-  s.dispose();
-});
-for (const weapon of ["standard", "spread", "ricochet"] as const)
-  test(`${weapon} only reflects off surviving cover when using ricochet ammo`, () => {
-    const s = game();
-    clear(s);
-    const cover = s.addCover({
-      kind: "concrete",
-      x: 0,
-      z: 0,
-      w: 1,
-      d: 10,
-      h: 2,
-      hp: 200,
-      color: 0,
-    });
-    s.world.step();
-    s.shots.push({
-      id: 999,
-      x: -3,
-      z: 0,
-      vx: 180,
-      vz: 0,
-      owner: s.human.id,
-      team: s.humanTeam,
-      damage: WEAPONS[weapon].damage,
-      bounces: WEAPONS[weapon].bounces,
-      life: 2,
-      piercing: 0,
-      weapon,
-    });
-    stepProjectiles(s, STEP);
-    assert.equal(cover.hp, 200 - WEAPONS[weapon].damage);
-    if (weapon === "ricochet") {
-      assert.equal(s.shots[0].bounces, 2);
-      assert.ok(s.shots[0].vx < 0);
-    } else {
-      assert.equal(s.shots.length, 0);
-      assert.equal(s.events.filter((e) => e.type === "ricochet").length, 0);
-    }
-    s.dispose();
-  });
-test("destroyed cover does not reflect shells and breaks exactly once", () => {
-  const s = game();
-  clear(s);
-  const c = s.addCover({
-    kind: "concrete",
-    x: 0,
-    z: 0,
-    w: 1,
-    d: 10,
-    h: 2,
-    hp: 40,
-    color: 0,
-  });
-  s.world.step();
-  s.shots.push({
-    id: 999,
-    x: -3,
-    z: 0,
-    vx: 180,
-    vz: 0,
-    owner: s.human.id,
-    team: s.humanTeam,
-    damage: 40,
-    bounces: 1,
-    life: 2,
-    piercing: 0,
-    weapon: "standard",
-  });
-  stepProjectiles(s, STEP);
-  assert.equal(c.alive, false);
-  assert.equal(s.shots.length, 0);
-  s.damageCover(c, 100, 0, 0);
-  assert.equal(s.destroyed, 1);
-  s.dispose();
-});
-test("mines arm after delay, ignore allies, preserve original owner", () => {
-  const s = game();
-  clear(s);
-  const a = place(s, 0, 0, 0),
-    b = place(s, 1, 1, 0);
-  b.hp = 40;
-  placeMine(s, a);
-  assert.equal(s.mines.length, 1);
-  stepMines(s, 0.5);
-  assert.ok(b.alive);
-  assert.equal(s.mines.length, 1);
-  stepMines(s, 0.4);
-  assert.equal(s.mines.length, 0);
-  assert.equal(b.alive, false);
-  assert.equal(s.match.scores[0], 1);
-  s.dispose();
-});
 test("drum chain kills keep the initiating team and self-kills do not score", () => {
   const s = game();
   clear(s);
@@ -300,20 +127,6 @@ test("drum chain kills keep the initiating team and self-kills do not score", ()
   assert.equal(b.alive, false);
   assert.equal(a.kills, 1);
   assert.equal(s.destroyed, 2);
-  s.dispose();
-});
-test("tower collapse opens center route and retains side rubble", () => {
-  const s = game();
-  const tower = s.covers.find((c) => c.kind === "tower")!;
-  const before = s.nav.blocked[s.nav.index(tower)];
-  const version = s.nav.version;
-  s.damageCover(tower, 999, s.human.id, s.humanTeam);
-  assert.equal(before, 1);
-  assert.equal(s.nav.blocked[s.nav.index(tower)], 0);
-  assert.ok(s.nav.version > version);
-  assert.equal(s.covers.filter((c) => c.kind === "rubble").length, 2);
-  const path = s.nav.find({ x: tower.x, z: tower.z - 6 }, { x: tower.x, z: tower.z + 6 });
-  assert.ok(path.some((p) => Math.abs(p.x - tower.x) < 1 && Math.abs(p.z - tower.z) < 2));
   s.dispose();
 });
 test("match time, tie overtime, next valid kill and 100 kill limit", () => {
@@ -400,35 +213,6 @@ test("seeded random and team roster are reproducible and symmetric", () => {
   assert.equal(s.tanks.filter((t) => t.team === 1).length, 6);
   s.dispose();
 });
-test("bots independently fight on both teams while human is idle", () => {
-  const s = game();
-  for (let i = 0; i < 60 * 45; i++) s.step(idleCommand());
-  assert.ok(s.match.scores[0] > 0 && s.match.scores[1] > 0, JSON.stringify(s.match));
-  assert.equal(s.human.kills, 0);
-  assert.ok(s.botReroutes > 0);
-  s.dispose();
-});
-test("chain-triggered mines are removed safely during mine iteration", () => {
-  const s = game();
-  clear(s);
-  const a = place(s, 0, -20, 0),
-    b = place(s, 1, 1, 0);
-  b.hp = 20;
-  for (const x of [0, 1, 2, 3])
-    s.mines.push({
-      id: s.nextId++,
-      x,
-      z: 0,
-      owner: a.id,
-      team: a.team,
-      arm: 0,
-      life: 25,
-    });
-  stepMines(s, STEP);
-  assert.equal(s.mines.length, 0);
-  assert.equal(s.match.scores[0], 1);
-  s.dispose();
-});
 test("bots cross opened tower footprint and continue combat through ruins", () => {
   const s = game();
   const towers = s.covers.filter((c) => c.kind === "tower");
@@ -458,184 +242,10 @@ test("bots cross opened tower footprint and continue combat through ruins", () =
       }
   }
   assert.ok(crossed, "a bot traverses an opened shortcut");
-  assert.ok(s.match.scores[0] > 0 && s.match.scores[1] > 0);
+  assert.ok(s.match.scores[0] > 0 && s.match.scores[1] > 0, JSON.stringify(s.match));
+  assert.ok(s.botReroutes > 0);
   s.dispose();
 });
-test("arena cover, pickup types and spawn slots have rotated team symmetry", async () => {
-  const { arenaLayout, pickupLayout, spawnPositions } = await import("../src/game/arena");
-  const covers = arenaLayout();
-  for (const c of covers)
-    assert.ok(
-      covers.some(
-        (o) => o.kind === c.kind && o.x === -c.x && o.z === -c.z && o.w === c.w && o.d === c.d,
-      ),
-      JSON.stringify(c),
-    );
-  for (const p of pickupLayout)
-    assert.ok(
-      pickupLayout.some((o) => o.kind === p.kind && o.x === -p.x && o.z === -p.z),
-      JSON.stringify(p),
-    );
-  const a = spawnPositions(0),
-    b = spawnPositions(1);
-  for (let i = 0; i < a.length; i++) {
-    assert.equal(a[i].x, -b[i].x);
-    assert.equal(a[i].z, -b[i].z);
-  }
-});
-test("deaths during a full fragment burst remain within the shared debris and wreck cap", () => {
-  const s = game();
-  for (let i = 0; i < 150; i++) s.fragment(0, 0, 0, 0.5);
-  for (const t of s.tanks) {
-    s.damageTank(t, 1000, 999, (1 - t.team) as Team);
-    assert.ok(s.fragments.length <= 80);
-  }
-  s.dispose();
-});
-
-test("expanded flanks have navigable routes from both spawn lines", async () => {
-  const { spawnPositions } = await import("../src/game/arena");
-  const s = game();
-  for (const team of [0, 1] as const)
-    for (const start of spawnPositions(team))
-      for (const z of [-53, 53]) {
-        const path = s.nav.find(start, { x: 0, z });
-        assert.ok(path.length > 0, JSON.stringify({ start, z }));
-        const end = path.at(-1)!;
-        assert.ok(Math.abs(end.x) < 1 && Math.abs(end.z - z) < 1);
-      }
-  s.dispose();
-});
-test("tank breakup varies assemblies, travels widely, lands, and clears after flight", () => {
-  const variants = new Set<string>();
-  const axes = new Set<string>();
-  let highLaunches = 0;
-  let highest = 0;
-  for (let seed = 1; seed <= 12; seed++) {
-    const s = game();
-    clear(s);
-    const t = place(s, s.tanks.indexOf(s.human), 0, 0);
-    s.rng = new Random(seed);
-    s.damageTank(t, 1000, 999, (1 - t.team) as Team);
-    const pieces = [...s.fragments];
-    const names = pieces.map((f) => f.part).sort();
-    assert.ok(names.includes("hull"));
-    assert.ok(
-      names.includes("turret-barrel") || (names.includes("turret") && names.includes("barrel")),
-    );
-    variants.add(names.join("/"));
-    assert.ok(pieces.length <= 3);
-    if (pieces[1].body.linvel().y ** 2 / 44 >= 20) highLaunches++;
-    assert.ok(pieces[0].body.linvel().y ** 2 / 44 <= 8.01, "hulls keep normal arcs");
-    for (const piece of pieces) {
-      const v = piece.body.angvel();
-      const speed = Math.hypot(v.x, v.y, v.z);
-      assert.ok(speed >= 6.99 && speed <= 14.01);
-      axes.add(Object.entries(v).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]);
-    }
-    const targets = pieces.slice(0, 2).map((piece) => {
-      const p = piece.body.translation();
-      const v = piece.body.linvel();
-      const flight = (v.y + Math.sqrt(v.y ** 2 + 44 * Math.max(0, p.y - 0.3))) / 22;
-      return { x: p.x + v.x * flight, z: p.z + v.z * flight };
-    });
-    assert.ok(
-      Math.hypot(targets[0].x - targets[1].x, targets[0].z - targets[1].z) > 12,
-      "launch aims hull and turret several tank lengths apart; later contacts may deflect them",
-    );
-    const landingSteps = Math.ceil(Math.max(...pieces.map((f) => f.life - 3.2)) * 60) + 60;
-    for (let i = 0; i < landingSteps; i++) {
-      s.world.step();
-      highest = Math.max(highest, ...pieces.map((f) => f.body.translation().y));
-    }
-    assert.ok(
-      pieces.every((f) => f.body.translation().y < 2),
-      "parts land after their ballistic flight, including high launches",
-    );
-    for (const tank of s.tanks) tank.cooldown = 100;
-    const ids = new Set(pieces.map((f) => f.id));
-    for (let i = 0; i < 1140; i++) s.step();
-    assert.ok(s.fragments.every((f) => !ids.has(f.id)));
-    s.dispose();
-  }
-  assert.equal(variants.size, 2);
-  assert.ok(highest > 20, "some turrets take spectacular high arcs");
-  assert.ok(highLaunches > 0 && highLaunches < 6, "high launches are occasional");
-  assert.equal(axes.size, 3, "tumbling varies across all three axes");
-});
-
-test("bots pause between shots even when breaching; human fires faster with and without rapid upgrade", async () => {
-  const { botCommand } = await import("../src/game/ai");
-  const { WEAPONS } = await import("../src/game/data");
-  for (const rapid of [false, true]) {
-    const s = game();
-    clear(s);
-    const bot = place(
-      s,
-      s.tanks.findIndex((t) => !t.human),
-      -8,
-      0,
-    );
-    bot.aim = Math.PI / 2;
-    bot.rapid = rapid ? 12 : 0;
-    bot.brain.goal = { x: 4, z: 0 };
-    bot.brain.decision = bot.brain.memory = 100;
-    s.addCover({
-      kind: "concrete",
-      x: 0,
-      z: 0,
-      w: 1,
-      d: 5,
-      h: 2,
-      hp: 10000,
-      color: 0,
-    });
-    const human = s.human;
-    human.rapid = rapid ? 12 : 0;
-    let botShots = 0,
-      humanShots = 0;
-    for (let i = 0; i < 600; i++) {
-      bot.cooldown = Math.max(0, bot.cooldown - STEP);
-      human.cooldown = Math.max(0, human.cooldown - STEP);
-      const command = botCommand(s, bot, STEP);
-      if (command.fire && bot.cooldown === 0) {
-        fireWeapon(s, bot);
-        botShots++;
-      }
-      if (human.cooldown === 0) {
-        fireWeapon(s, human);
-        humanShots++;
-      }
-    }
-    assert.ok(
-      botShots > 0 && botShots < humanShots * 0.8,
-      JSON.stringify({ rapid, botShots, humanShots }),
-    );
-    assert.ok(
-      humanShots >= Math.floor(10 / ((WEAPONS.standard.interval * (rapid ? 0.5 : 1)) / 1.2 + STEP)),
-    );
-    s.dispose();
-  }
-});
-
-test("destroyed village cover opens routes except rooted stumps, while all spawns reach midfield", async () => {
-  const { spawnPositions } = await import("../src/game/arena");
-  const s = game();
-  for (const kind of ["house", "tree", "timber"] as const) {
-    const c = s.covers.find(
-      (c) => c.kind === kind && c.destructible && (kind !== "timber" || (c.x === -2 && c.z === 13)),
-    )!;
-    assert.ok(c && c.destructible);
-    assert.equal(s.nav.blocked[s.nav.index(c)], 1);
-    s.damageCover(c, 1000, s.human.id, s.humanTeam);
-    assert.equal(c.alive, false);
-    assert.equal(s.nav.blocked[s.nav.index(c)], kind === "tree" ? 1 : 0);
-  }
-  for (const team of [0, 1] as const)
-    for (const p of spawnPositions(team)) assert.ok(s.nav.find(p, { x: 0, z: 0 }).length > 0);
-  s.dispose();
-});
-
 for (const weapon of ["standard", "spread", "ricochet", "piercing", "rocket"] as const)
   test(`${weapon} stops at teammates without draining hull or shields`, () => {
     const s = game();

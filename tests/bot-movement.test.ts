@@ -3,24 +3,17 @@ import assert from "node:assert/strict";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand, type Tank } from "../src/game/types";
-import { distance, STEP } from "../src/game/data";
+import { distance, STEP, VEHICLES, WEAPONS } from "../src/game/data";
 import { botCommand } from "../src/game/ai";
 import { routeDirection } from "../src/game/bot-movement";
 import { tuneSpeed } from "../src/game/speed-tuning";
+import { fireWeapon } from "../src/game/weapons";
+import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
 });
 function arena() {
-  const s = new Simulation(123);
-  for (const c of s.covers) s.world.removeRigidBody(c.body);
-  for (const t of s.tanks) s.world.removeRigidBody(t.body);
-  s.covers = [];
-  s.movableCovers = [];
-  s.coverByCollider.clear();
-  s.tanks = [];
-  s.pickups = [];
-  s.nav.rebuild([]);
-  return s;
+  return clearArena(new Simulation(123));
 }
 function place(t: Tank, x: number, z: number) {
   t.body.setTranslation({ x, y: 0.65, z }, true);
@@ -207,4 +200,31 @@ test("path lookahead cannot shortcut a wall and unreachable goals never become d
   const direction = routeDirection(s, bot);
   assert.ok(Math.abs(direction.x) > 0.8, "route around the wall rather than through it");
   s.dispose();
+});
+
+test("speed sliders scale from defaults without compounding and update active shells and collision prediction", () => {
+  const s = arena(),
+    t = s.addTank(0, true, "balanced");
+  place(t, 0, 0);
+  t.aim = 0;
+  const tankBase = VEHICLES.balanced.speed,
+    shellBase = WEAPONS.standard.speed;
+  try {
+    fireWeapon(s, t);
+    tuneSpeed(s, "tank-speed", 1.5);
+    tuneSpeed(s, "tank-speed", 1.5);
+    assert.equal(VEHICLES.balanced.speed, tankBase);
+    assert.equal(s.speedTuning["tank-speed"], 1.5);
+    assert.ok(Math.abs(t.body.softCcdPrediction() - tankBase * 1.5 * 1.5 * STEP * 2) < 1e-6);
+    tuneSpeed(s, "bullet-speed", 0.5);
+    tuneSpeed(s, "bullet-speed", 0.5);
+    assert.equal(WEAPONS.standard.speed, shellBase);
+    assert.equal(s.speedTuning["bullet-speed"], 0.5);
+    assert.equal(s.shots[0].vz, shellBase * 0.5);
+    assert.equal(tuneSpeed(s, "tank-speed", NaN), 1);
+  } finally {
+    tuneSpeed(s, "tank-speed", 1);
+    tuneSpeed(s, "bullet-speed", 1);
+    s.dispose();
+  }
 });

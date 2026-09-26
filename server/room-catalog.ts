@@ -1,15 +1,12 @@
 import { MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, type RoomListing } from "../src/net/room-list";
 
-export interface ListedRoom {
+interface ListedRoom {
   entry: RoomListing;
   updatedAt: number;
 }
 /** Discovery metadata only; room authority and seat credentials never live here. */
 export class RoomCatalog {
-  private rooms: Map<string, ListedRoom>;
-  constructor(saved: ListedRoom[] = []) {
-    this.rooms = new Map(saved.slice(-MAX_LISTED_ROOMS).map((room) => [room.entry.room, room]));
-  }
+  private rooms = new Map<string, ListedRoom>();
   update(entry: RoomListing, now: number): void {
     this.prune(now);
     this.rooms.delete(entry.room);
@@ -25,12 +22,9 @@ export class RoomCatalog {
       if (now - room.updatedAt >= ROOM_LIST_TTL_MS) this.rooms.delete(code);
     }
   }
-  saved(now: number): ListedRoom[] {
-    this.prune(now);
-    return [...this.rooms.values()];
-  }
   list(now: number): RoomListing[] {
-    return this.saved(now)
+    this.prune(now);
+    return [...this.rooms.values()]
       .map((room) => room.entry)
       .sort((a, b) => b.players - a.players || a.room.localeCompare(b.room));
   }

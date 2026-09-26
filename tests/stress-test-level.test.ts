@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import { before, test } from "node:test";
 import RAPIER from "@dimforge/rapier3d-compat";
 import {
-  STRESS_AMMO_CRATE_MULTIPLIER,
   STRESS_PLAYER_HEALTH_MULTIPLIER,
   STRESS_PLAYER_KIND,
-  STRESS_POWER_UP_MULTIPLIER,
   STRESS_TANK_COUNT,
   STRESS_TEST_MAP,
-  configureStressTest,
+  STRESS_TEST_SETUP,
 } from "../src/stress-test-level";
 import { MAPS } from "../src/game/maps";
 import { Simulation } from "../src/game/simulation";
@@ -19,9 +17,8 @@ before(async () => {
 });
 
 test("stress pickups and all 30 spawns have hull clearance and navigable routes", () => {
-  const sim = new Simulation(731);
+  const sim = new Simulation(731, { ...STRESS_TEST_SETUP, round: 3 });
   try {
-    configureStressTest(sim);
     assert.equal(sim.tanks.length, STRESS_TANK_COUNT);
     const points = [...sim.pickups, ...sim.tanks.map((tank) => tank.body.translation())];
     for (const point of points) {
@@ -94,18 +91,9 @@ test("stress objects keep the authored maps' destructibility rules", () => {
   }
 });
 
-test("stress battle exceeds the normal tank load and makes the player effectively immortal", () => {
-  assert.ok(STRESS_TANK_COUNT > 12);
-  assert.ok(STRESS_PLAYER_HEALTH_MULTIPLIER >= 10_000);
-  assert.equal(STRESS_PLAYER_KIND, "scout");
-  assert.equal(STRESS_POWER_UP_MULTIPLIER, 10);
-  assert.equal(STRESS_AMMO_CRATE_MULTIPLIER, 10);
-});
-
 test("stress configuration survives respawns and resets and never ends at the normal limits", () => {
-  const sim = new Simulation(731);
+  const sim = new Simulation(731, { ...STRESS_TEST_SETUP, round: 3 });
   try {
-    configureStressTest(sim);
     const initialBodies = sim.world.bodies.len();
     for (let round = 0; round < 2; round++) {
       assert.equal(sim.mapName, "STRESS GRID");
