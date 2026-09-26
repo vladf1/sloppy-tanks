@@ -10,6 +10,7 @@ import type { Simulation } from "../game/simulation";
 import { DEBRIS_CLEANUP_SECONDS } from "../game/debris-cleanup";
 import { FRAGMENT_CAPACITY } from "../game/simulation-rules";
 import type { Match, Mine, Pickup, SimEvent } from "../game/types";
+import { SCENARIOS, type Scenario } from "./scenarios";
 import {
   array,
   boolean,
@@ -77,10 +78,8 @@ const coverKind = enumeration(
 );
 const material = enumeration("wood", "metal", "concrete");
 export const mapMode = enumeration("village", "harbor", "quarry");
-/** Room modes with their own arena and rules, created and joined from their own page. */
-export const SCENARIOS = ["superstress"] as const;
+export { SCENARIOS, type Scenario };
 export const scenario = enumeration(...SCENARIOS);
-export type Scenario = (typeof SCENARIOS)[number];
 /** Room list names, and tanks per team (bots included) for lobby rosters; standard
  * rooms field six. */
 export const SCENARIO_ROOMS: Record<Scenario, { name: string; teamTanks: number }> = {

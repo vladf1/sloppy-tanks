@@ -19,7 +19,7 @@ import { ROOM_CODE, lobbyReader, controlReader, settingsReader, type Control } f
 import { id } from "./schema";
 import { serverAddress } from "./server-address";
 import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
-import { pageScenario } from "./page-scenario";
+import { pageScenario } from "./scenarios";
 
 const MAX_ACTIONS = 8;
 /** Join the room chosen on Battle Setup. The room page builds out of sight and replaces

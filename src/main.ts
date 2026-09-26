@@ -5,6 +5,7 @@ import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
 import { PICKUP_ATLAS_PATH } from "./game/pickup-atlas";
 import type { RoomSelection } from "./net/pending-join";
+import { pageScenario } from "./net/scenarios";
 import type { PlayerVehicleKind } from "./game/types";
 import "./style.css";
 
@@ -18,10 +19,12 @@ const PLAYER_KINDS: readonly string[] = [
 // into a room it chose, it stays up while the room loads, until the arena can draw.
 const linkedRoom = new URLSearchParams(location.search).get("room")?.toUpperCase();
 const setupView = linkedRoom ? takeSetupView(linkedRoom) : undefined;
-// A stress page covers its single-player startup with a loading screen. Opened for
-// multiplayer, it shows Battle Setup instead, listing only that page's rooms.
-const scenarioPage = document.documentElement.dataset.scenario !== undefined;
-const scenarioOnline = scenarioPage && initialPlayMode(location.search) === "multiplayer";
+// Stress pages cover their single-player startup with a loading screen. The Scrap Yard,
+// the one with rooms, opened for multiplayer shows Battle Setup instead, listing only its
+// own rooms; the offline stress test always runs its single-player workload.
+const stressPage = document.documentElement.dataset.scenario !== undefined;
+const onlineScenario = pageScenario() !== undefined;
+const scenarioOnline = onlineScenario && initialPlayMode(location.search) === "multiplayer";
 if (scenarioOnline) {
   document.querySelector("#loading")?.remove();
 }
@@ -90,7 +93,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     options.humanKind = view.kind as PlayerVehicleKind;
   }
   const autoStart =
-    (scenarioPage && !scenarioOnline) || new URLSearchParams(location.search).has("autoplay");
+    (stressPage && !scenarioOnline) || new URLSearchParams(location.search).has("autoplay");
   const load = async (onStage: (stage: string) => void = () => {}) => {
     onStage("Downloading game files…");
     const { prepareGame } = await import("./game");
@@ -125,7 +128,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   }
   const menu = new StartMenu(root, options, load);
   const setup = menu.overlay.querySelector<HTMLElement>(".start")!;
-  if (scenarioPage) {
+  if (onlineScenario) {
     // A stress arena is for its crowd of bots; a remembered choice below still wins.
     setup.querySelector<HTMLInputElement>("#create-humans-only")!.checked = false;
   }
@@ -154,7 +157,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     {
       choices: () => options,
       // A stress page's single player is its own fixed arena, which starts on load.
-      single: scenarioPage ? () => location.replace(location.pathname) : prepareArena,
+      single: onlineScenario ? () => location.replace(location.pathname) : prepareArena,
       enterRoom(selection, reload) {
         const joining = JoinScreen.start(
           setup,

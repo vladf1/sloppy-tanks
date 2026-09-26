@@ -1,7 +1,7 @@
 import { CONTENT_VERSION, roundMinutesReader } from "./protocol";
 import { roomListReader, type RoomListing } from "./room-list";
 import { mapMode, playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
-import { pageScenario } from "./page-scenario";
+import { pageScenario } from "./scenarios";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import type { JoinChoice } from "./connection";
 import type { RoomSelection } from "./pending-join";

@@ -224,7 +224,14 @@ try {
   results.retry = "passed";
   console.log("Failed-download retry passed.");
 
-  for (const path of ["?autoplay", "stresstest.html", "superstress.html"]) {
+  // The offline stress test has no rooms: ?multiplayer must not swap its workload for Battle
+  // Setup, as it does on the Scrap Yard.
+  for (const path of [
+    "?autoplay",
+    "stresstest.html",
+    "stresstest.html?multiplayer",
+    "superstress.html",
+  ]) {
     const automatic = await fresh();
     await automatic.page.goto(url + path);
     await playing(automatic.page);
