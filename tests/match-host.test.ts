@@ -10,7 +10,7 @@ import {
   type Control,
   settingsReader,
 } from "../src/net/protocol";
-import { captureScene } from "../src/net/scene-codec";
+import { captureScene, type Scene } from "../src/net/scene-codec";
 import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
@@ -434,6 +434,54 @@ test("real host messages apply to mirrors and projectile traces survive an impac
     assert.ok(
       snaps.flatMap((snap) => snap.events ?? []).some((event) => event.event.type === "impact"),
     );
+  } finally {
+    h.host.dispose();
+  }
+});
+test("membership and lifecycle changes between broadcasts keep a frame at their own tick", () => {
+  const h = harness();
+  try {
+    h.join("alice");
+    h.action("alice", "start");
+    const full = h.latest("alice", "full") as FullState,
+      mirror = new StateMirror(),
+      sim = h.host.simulation!;
+    mirror.applyFull(full, full);
+    const first = h.host.tick + 1;
+    const pickup = sim.pickups[0];
+    const cover = sim.covers.find((candidate) => candidate.alive && candidate.destructible)!;
+    let piece = 0;
+    // A pickup vanishes and returns inside one 50 ms batch; debris lands and is cleared.
+    sim.afterStep = () => {
+      if (h.host.tick === first) {
+        pickup.available = false;
+        sim.damageCover(cover, 10000, -1, 0);
+        sim.fragment(0, 0, 0xffffff);
+        piece = sim.fragments.at(-1)!.id;
+      } else if (h.host.tick === first + 1) {
+        pickup.available = true;
+        sim.fragments.at(-1)!.life = 0;
+      }
+    };
+    h.advance();
+    const frames = h.latest("alice", "snapshot").snapshots;
+    assert.deepEqual(
+      frames.map((frame) => frame.tick),
+      [first, first + 1, first + 2],
+    );
+    const states = frames.map((frame) => {
+      assert.ok(mirror.applySnapshot(frame));
+      return structuredClone(mirror.state!);
+    });
+    const available = (scene: Scene) =>
+      scene.entities.pickups.find((entry) => entry.id === pickup.id)!.available;
+    const hasPiece = (scene: Scene) =>
+      scene.entities.fragments.some((fragment) => fragment.id === piece);
+    assert.deepEqual(states.map(available), [false, true, true]);
+    assert.equal(states[0].entities.covers.find((entry) => entry.id === cover.id)!.alive, false);
+    assert.equal(hasPiece(states[0]), true);
+    assert.equal(hasPiece(states[2]), false);
+    assert.deepEqual(mirror.state, captureScene(sim));
   } finally {
     h.host.dispose();
   }

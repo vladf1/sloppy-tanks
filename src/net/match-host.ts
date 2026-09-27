@@ -74,6 +74,53 @@ export interface HostOptions {
   contentVersion?: string;
 }
 
+/**
+ * Records each entity's identity and lifecycle state in `seen`, in place, and reports whether
+ * anything differed from the previous call: a tank's life, death or occupant, cover
+ * destruction or rebuild, pickup availability, or any entity joining or leaving its list.
+ */
+function lifecycleChanged(simulation: Simulation, seen: unknown[]): boolean {
+  let index = 0;
+  let changed = false;
+  const note = (value: unknown) => {
+    if (seen[index] !== value) {
+      seen[index] = value;
+      changed = true;
+    }
+    index++;
+  };
+  note(simulation.tanks.length);
+  for (const tank of simulation.tanks) {
+    note(tank.id);
+    note(tank.life);
+    note(tank.alive);
+    note(tank.playerId);
+  }
+  note(simulation.covers.length);
+  for (const cover of simulation.covers) {
+    note(cover.id);
+    note(cover.alive);
+  }
+  note(simulation.fragments.length);
+  for (const fragment of simulation.fragments) {
+    note(fragment.id);
+  }
+  note(simulation.mines.length);
+  for (const mine of simulation.mines) {
+    note(mine.id);
+  }
+  note(simulation.pickups.length);
+  for (const pickup of simulation.pickups) {
+    note(pickup.id);
+    note(pickup.available);
+  }
+  if (seen.length !== index) {
+    seen.length = index;
+    changed = true;
+  }
+  return changed;
+}
+
 /** Owns simulation and room policy. Call advance from a runtime's 50 ms timer; no platform APIs here. */
 export class MatchHost {
   simulation?: Simulation;
@@ -100,7 +147,7 @@ export class MatchHost {
   private events: TimedEvent[] = [];
   private traces: ShotTrace[] = [];
   private cursor = 0;
-  private lifecycle = "";
+  private lifecycle: unknown[] = [];
   private frames: Snapshot[] = [];
   private emptySinceMs?: number;
   private activeMs: number;
@@ -502,7 +549,8 @@ export class MatchHost {
     this.simulation.start();
     this.phase = "playing";
     this.activeMs = nowMs;
-    this.lifecycle = this.lifecycleKey();
+    this.lifecycle = [];
+    lifecycleChanged(this.simulation, this.lifecycle);
     this.frames = [];
     this.broadcastLobby();
     for (const seat of this.seats) {
@@ -587,9 +635,8 @@ export class MatchHost {
           }
           simulation.stepWith(commands);
           this.drainEvents(tick);
-          const lifecycle = this.lifecycleKey();
-          if (lifecycle !== this.lifecycle) {
-            this.lifecycle = lifecycle;
+          // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
+          if (lifecycleChanged(simulation, this.lifecycle)) {
             this.captureFrame();
           }
         })
@@ -636,19 +683,6 @@ export class MatchHost {
     );
     this.events = [];
     this.traces = [];
-  }
-  private lifecycleKey(): string {
-    const sim = this.simulation!;
-    // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
-    return [
-      sim.tanks.map((t) => t.id + ":" + t.life + ":" + t.alive + ":" + t.playerId),
-      sim.covers.map((c) => c.id + ":" + c.alive),
-      sim.fragments.map((f) => f.id),
-      sim.mines.map((m) => m.id),
-      sim.pickups.map((p) => p.id + ":" + p.available),
-    ]
-      .map((list) => list.join(","))
-      .join("/");
   }
   private sendControl(seat: Seat): void {
     const controls = seat.controls;
