@@ -26,6 +26,7 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   EMPTY_GRACE_MS,
   MAX_ROOM_MS,
+  MAX_BATTLE_OVERRUN_MS,
   ROOM_IDLE_MS,
   DEFAULT_ROUND_MINUTES,
   joinReader,
@@ -597,7 +598,10 @@ export class MatchHost {
     }
     if (
       (this.emptySinceMs !== undefined && nowMs - this.emptySinceMs >= EMPTY_GRACE_MS) ||
-      nowMs - this.options.nowMs >= MAX_ROOM_MS ||
+      // Past its lifetime a room lets the battle under way finish, then closes
+      // instead of hosting another.
+      nowMs - this.options.nowMs >=
+        MAX_ROOM_MS + (this.phase === "playing" ? MAX_BATTLE_OVERRUN_MS : 0) ||
       (this.phase !== "playing" && nowMs - this.activeMs >= ROOM_IDLE_MS)
     ) {
       this.dispose("expired");

@@ -55,7 +55,7 @@ try {
   assert.ok(BOT_NAMES.includes(await alice.page.locator("#player-name").inputValue()));
   assert.equal(await alice.page.locator('input[name="playerTeam"]:checked').inputValue(), "auto");
   assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
-  assert.equal(await alice.page.locator("#create-round-minutes").inputValue(), "10");
+  assert.equal(await alice.page.locator("#create-round-minutes").inputValue(), "20");
   await checkMultiplayerMenu(alice.page);
   await alice.page.locator("#player-name").fill("Room browser Alice");
   // The tank cards are shared by both tabs and choose the multiplayer tank too.

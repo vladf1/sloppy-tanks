@@ -45,7 +45,9 @@ Settings come from the environment:
 
 Rooms admit eight people, at most six per team. Explicitly leaving the last seat
 disposes the match immediately; dropped connections retain a 30-second room/seat
-grace. Idle lobbies/results expire after five minutes; absolute lifetime is 30 minutes.
+grace. Idle lobbies/results expire after five minutes. After four hours a room hosts no
+new battle: one under way may finish (up to its 99-minute length plus overtime), then
+the room closes.
 Menu/hidden clients stop receiving snapshots until they resume with a full
 baseline. Seat tokens stay in session storage, never in shared room links.
 

@@ -5,6 +5,9 @@ import { MatchHost } from "../src/net/match-host";
 import { StateMirror, StateStream, type FullState } from "../src/net/replication";
 import {
   CONTENT_VERSION,
+  MAX_BATTLE_OVERRUN_MS,
+  MAX_ROOM_MS,
+  MAX_ROUND_MINUTES,
   PROTOCOL_VERSION,
   type ServerMessage,
   type Control,
@@ -15,7 +18,8 @@ import { clearArena } from "./fixtures";
 before(async () => {
   await RAPIER.init();
 });
-function harness() {
+/** `createdMs` backdates the room so lifetime rules apply without simulating hours. */
+function harness(createdMs = 0) {
   let now = 0,
     token = 0;
   const messages = new Map<string, ServerMessage[]>(),
@@ -23,7 +27,7 @@ function harness() {
   const host = new MatchHost(
     {
       roomEpoch: "test-room",
-      nowMs: 0,
+      nowMs: createdMs,
       token: () => "credential-" + String(++token).padStart(20, "0"),
       seed: 4242,
     },
@@ -596,12 +600,12 @@ test("create starts a selected humans-only map immediately and subsequent player
       room: "ABCDEFGH",
       contentVersion: CONTENT_VERSION,
       ...create,
-      roundMinutes: 10,
+      roundMinutes: 20,
       players: 2,
       reserved: 2,
       phase: "playing",
       roundId: 1,
-      time: 600,
+      time: 1200,
       scores: [0, 0],
     });
     h.action("alice", "leave");
@@ -652,21 +656,22 @@ test("a stale directory selection cannot recreate an empty room; a dropped conne
   }
 });
 
-test("round length defaults to ten minutes, validates bounds and is controlled by the host between rounds", () => {
+test("round length defaults to twenty minutes, validates bounds and is controlled by the host between rounds", () => {
   const settings = { mapMode: "village", difficulty: "normal", humansOnly: true };
-  assert.equal(settingsReader.read(settings).roundMinutes, 10);
-  for (const roundMinutes of [0, 21, 1.5, null, "10", Infinity, NaN]) {
+  assert.equal(settingsReader.read(settings).roundMinutes, 20);
+  assert.equal(settingsReader.read({ ...settings, roundMinutes: 99 }).roundMinutes, 99);
+  for (const roundMinutes of [0, 100, 1.5, null, "10", Infinity, NaN]) {
     assert.throws(() => settingsReader.read({ ...settings, roundMinutes }));
   }
   const h = harness();
   try {
     h.join("alice", { create: settings });
     h.join("bob");
-    assert.equal(h.host.simulation!.match.time, 600);
-    assert.equal(h.latest("bob", "lobby").settings.roundMinutes, 10);
+    assert.equal(h.host.simulation!.match.time, 1200);
+    assert.equal(h.latest("bob", "lobby").settings.roundMinutes, 20);
     h.action("alice", "end");
     h.action("bob", "settings", { ...settings, roundMinutes: 1 });
-    assert.equal(h.host.settings.roundMinutes, 10, "Guest cannot change the next round");
+    assert.equal(h.host.settings.roundMinutes, 20, "Guest cannot change the next round");
     h.join("bob", { token: h.latest("bob", "welcome").token, roomEpoch: "test-room" });
     h.action("alice", "settings", { ...settings, roundMinutes: 1 });
     h.action("alice", "start");
@@ -684,6 +689,42 @@ test("round length defaults to ten minutes, validates bounds and is controlled b
     assert.equal(h.host.settings.roundMinutes, 1, "Cannot change a running match");
   } finally {
     h.host.dispose();
+  }
+});
+
+test("a room past its lifetime lets the battle under way finish, then closes", () => {
+  const create = {
+    mapMode: "village",
+    difficulty: "normal",
+    humansOnly: true,
+    roundMinutes: MAX_ROUND_MINUTES,
+  };
+  // Created exactly one lifetime ago: the battle it starts now keeps running.
+  const h = harness(-MAX_ROOM_MS);
+  try {
+    h.join("alice", { create });
+    assert.equal(h.host.phase, "playing");
+    assert.equal(h.host.directoryEntry("ABCDEFGH").time, MAX_ROUND_MINUTES * 60);
+    h.advance();
+    assert.equal(h.host.disposed, false, "A battle under way is not cut short");
+    h.host.simulation!.match.scores = [1, 0];
+    h.host.simulation!.match.time = 0.01;
+    h.advance();
+    assert.equal(h.host.phase, "results");
+    h.advance();
+    assert.equal(h.host.disposed, true, "No new battle once the lifetime has passed");
+    assert.equal(h.latest("alice", "room-reset").reason, "expired");
+  } finally {
+    h.host.dispose();
+  }
+  // Even a battle stuck in overtime ends with the room at the hard limit.
+  const stuck = harness(-(MAX_ROOM_MS + MAX_BATTLE_OVERRUN_MS));
+  try {
+    stuck.join("alice", { create });
+    stuck.advance();
+    assert.equal(stuck.host.disposed, true);
+  } finally {
+    stuck.host.dispose();
   }
 });
 
