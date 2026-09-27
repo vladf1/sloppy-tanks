@@ -20,11 +20,47 @@ export interface JoinChoice {
   existingRoom?: boolean;
   scenario?: Scenario;
 }
+/** Why a connection stopped retrying. Each cause offers its own way back into a game. */
+export type EndCause =
+  /** The server stayed unreachable for the whole reconnect window. */
+  | "lost"
+  /** The room itself is gone: a server restart, a time limit or a server fault. */
+  | "room-ended"
+  /** The server let the seat go; joining again takes a new one. */
+  | "seat-expired"
+  /** The same seat connected from another tab, which now drives the tank. */
+  | "other-tab"
+  /** This page and the server run different game versions. */
+  | "outdated"
+  | "rejected";
+export interface ConnectionEnd {
+  cause: EndCause;
+  text: string;
+}
 export interface ConnectionEvents {
   message(value: Record<string, unknown>): void;
+  /** Progress while (re)connecting; `connected` once the seat is back. */
   status(text: string, connected: boolean): void;
+  /** A server answer to the player's last request, such as a full team. */
+  notice(text: string): void;
+  /** The connection gave up and will not retry on its own. */
+  ended(end: ConnectionEnd): void;
   clearInput(): void;
 }
+/** Server `room-reset` reasons, in words a player can act on. */
+const ROOM_END_REASONS = new Map([
+  ["server-restart", "The game server restarted, which closed every room."],
+  ["expired", "Rooms close after 30 minutes, or after 5 idle minutes between battles."],
+  ["overload", "The game server fell behind and had to close this room."],
+  ["simulation-error", "The battle hit a server error and the room closed."],
+]);
+/** Fatal server error codes that are not a plain rejection. */
+const FATAL_ERROR_CAUSES = new Map<unknown, EndCause>([
+  ["incompatible", "outdated"],
+  ["seat-expired", "seat-expired"],
+  ["expired", "room-ended"],
+  ["room-gone", "room-ended"],
+]);
 export class Connection {
   roomEpoch = "";
   roundId = 0;
@@ -84,7 +120,9 @@ export class Connection {
       return;
     }
     this.events.status(
-      this.attempt ? "Reconnecting… Your seat is reserved." : "Connecting to room…",
+      this.attempt
+        ? "Still trying to reach the game server. Your seat is held for 30 seconds."
+        : "Connecting to the room…",
       false,
     );
     const socket = new WebSocket(this.url.replace(/\/$/, "") + "/room/" + this.room);
@@ -108,7 +146,7 @@ export class Connection {
         return;
       }
       if (typeof event.data !== "string" || event.data.length > MAX_SERVER_MESSAGE_BYTES) {
-        this.fail("Server sent an invalid message.");
+        this.fail("rejected", "The server sent a message this page can't read.");
         return;
       }
       const receive = (text: string) => {
@@ -131,20 +169,23 @@ export class Connection {
       this.events.clearInput();
       clearInterval(this.heartbeat);
       if (event.code === 4001) {
-        this.fail("This seat was opened in another tab.");
+        this.fail("other-tab", "Your seat is now playing in another tab or window.");
         return;
       }
       if (event.code === 1008) {
-        this.fail("The server rejected the connection.");
+        this.fail("rejected", "The server closed the connection.");
         return;
       }
       const now = performance.now();
       this.retryStarted ||= now;
       if (now - this.retryStarted >= RECONNECT_WINDOW_MS) {
-        this.fail("Connection lost. Your seat may have expired; join again.");
+        this.fail(
+          "lost",
+          "The game server hasn't answered for 30 seconds, so your seat may be gone.",
+        );
         return;
       }
-      this.events.status("Reconnecting… Your tank is bot-driven.", false);
+      this.events.status("Reconnecting…", false);
       this.retry = setTimeout(
         () => {
           this.attempt++;
@@ -177,7 +218,7 @@ export class Connection {
       this.lastMessageAt = performance.now();
       if (message.type === "welcome") {
         if (message.version !== PROTOCOL_VERSION || message.contentVersion !== CONTENT_VERSION) {
-          this.fail("Game updated. Reload this page.");
+          this.fail("outdated", "Sloppy Tanks was updated. Reload to get the new version.");
           return;
         }
         this.roomEpoch = string(128, 1).read(message.roomEpoch);
@@ -196,10 +237,10 @@ export class Connection {
         } catch {
           /* Session can continue without storage. */
         }
-        this.events.status(
-          message.reset ? "Room restarted. A fresh lobby is ready." : "Connected",
-          true,
-        );
+        this.events.status("Connected", true);
+        if (message.reset) {
+          this.events.notice("The server restarted the room. This is a fresh lobby.");
+        }
       } else if (message.type === "pong") {
         const sent = typeof message.t === "number" ? message.t : NaN;
         if (!Number.isFinite(sent)) {
@@ -210,22 +251,27 @@ export class Connection {
       } else if (message.type === "error") {
         const text = string(200).read(message.message);
         if (message.fatal) {
-          if (message.code === "seat-expired") {
+          const cause = FATAL_ERROR_CAUSES.get(message.code) ?? "rejected";
+          if (cause === "seat-expired") {
             this.forgetSeat();
           }
-          this.fail(text);
+          this.fail(cause, text);
           return;
         }
-        this.events.status(text, this.connected);
+        this.events.notice(text);
       } else if (message.type === "room-reset") {
         this.forgetSeat();
-        this.fail("Room ended (" + string(80).read(message.reason) + ").");
+        const reason = string(80).read(message.reason);
+        this.fail("room-ended", ROOM_END_REASONS.get(reason) ?? "The room was closed.");
         return;
       }
       this.events.message(message);
     } catch (error) {
       console.error("Multiplayer protocol error", error);
-      this.fail("Game state was incompatible. Reload before joining again.");
+      this.fail(
+        "outdated",
+        "This page couldn't read the game state. Reload to get the latest version.",
+      );
     }
   }
   send(type: string, fields: object = {}): boolean {
@@ -265,9 +311,9 @@ export class Connection {
       /* Optional storage. */
     }
   }
-  private fail(message: string): void {
+  private fail(cause: EndCause, text: string): void {
     this.stop();
-    this.events.status(message, false);
+    this.events.ended({ cause, text });
   }
   stop(): void {
     this.stopped = true;

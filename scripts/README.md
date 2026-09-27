@@ -80,9 +80,8 @@ menu actions stay hidden, and that the menu fits desktop viewports.
 plus a third for a late join. Run Vite and the local server first (`npm run
 server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`. The host creates a
 humans-only room on Battle Setup and the others open its room link, which selects
-the room there. It covers literal names, synced read-only guest settings, the host's
-humans-only checkbox through real pointer input, and two-player rounds without fill
-bots. From the sent frames it checks that unchanged idle input goes out about once a
+the room there. It covers literal names, room rules shown as text to guests and during
+play, the host's bot setting, and two-player rounds without fill bots. From the sent frames it checks that unchanged idle input goes out about once a
 second without losing the seat, and that movement, aim, held fire and a single mine
 keep the active cadence. It also measures button-to-visible movement and shot
 feedback, then covers the idle menu and hidden tab, a reload that rejoins the same
@@ -113,8 +112,10 @@ use physical coordinate clicks.
 
 `node scripts/multiplayer-restart-check.mjs` starts an isolated local server on
 port 8790 that admits the `SLOPPY_URL` origin, kills and restarts it during a round
-(a crash, not a graceful stop) and checks that the browser returns to a fresh lobby
-and prepares another map. Run `npm run server:build` first and run Vite.
+(a crash, not a graceful stop) and checks that the connection dialog shows, that the
+browser returns to a fresh lobby and prepares another map, and that a graceful stop
+then shows the room-closed dialog with its way back to Battle Setup. Run
+`npm run server:build` first and run Vite.
 `node --import tsx scripts/multiplayer-public-check.mjs` verifies the published dev
 client (`SLOPPY_PUBLIC_URL`) with two players plus its test directory, fixture and
 build metadata.

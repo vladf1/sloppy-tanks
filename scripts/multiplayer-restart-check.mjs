@@ -72,6 +72,8 @@ try {
     round: window.sloppyMultiplayer.connection.roundId,
   }));
   await stopServer();
+  await page.locator(".network-connection").waitFor();
+  assert.equal(await page.locator("#connection-title").innerText(), "CONNECTION LOST");
   await startServer();
   await page.waitForFunction(
     (epoch) =>
@@ -83,6 +85,8 @@ try {
   // The restarted server has no seats, so the reconnect becomes host of a fresh lobby
   // with default settings rather than resuming the harbor round.
   await page.locator("#start-match").waitFor();
+  assert.equal(await page.locator(".network-connection").isVisible(), false);
+  assert.match(await page.locator("#network-message").innerText(), /fresh lobby/);
   assert.equal(await page.locator("#room-map").inputValue(), "village");
   await click(page, "#start-match");
   await page.waitForFunction(
@@ -102,9 +106,18 @@ try {
   assert.notEqual(before.epoch, after.epoch);
   assert.equal(after.feed, "");
   await page.screenshot({ path: `${output}/fresh-room.png` });
+  // A deploy ends the room: the dialog says why and offers Battle Setup, not a retry.
+  await stopServer("SIGTERM");
+  await page.locator(".network-connection").waitFor();
+  assert.equal(await page.locator("#connection-title").innerText(), "ROOM CLOSED");
+  assert.match(await page.locator("#connection-message").innerText(), /server restarted/);
+  assert.equal(await page.locator("#connection-retry").isVisible(), false);
+  await page.screenshot({ path: `${output}/room-closed.png` });
+  await click(page, "#connection-setup");
+  await page.locator("#room-list").waitFor();
   assert.deepEqual(errors, []);
   console.log(
-    "Server crash and restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback.",
+    "Server crash and restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback; a graceful restart shows the room-closed dialog and returns to Battle Setup.",
   );
 } finally {
   await browser.close();

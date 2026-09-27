@@ -124,13 +124,18 @@ try {
   const bob = await join("Bob", 1);
   await Promise.all(pages.map((page) => playing(page, 2)));
   const aliceFrames = frames.get(alice);
-  assert.equal(await alice.locator("#network-roster b").count(), 2, "Names are literal text");
+  assert.match(await alice.locator("#network-roster").innerText(), /Alice <b>literal<\/b>/);
+  assert.equal(
+    await alice.locator("#network-roster .roster-name b").count(),
+    0,
+    "Names are literal text",
+  );
 
-  // Humans-only is the host's setting; guests see it synced and read-only.
-  const humansOnly = "#room-humans-only";
-  assert.equal(await alice.locator(humansOnly).isChecked(), true);
-  assert.equal(await bob.locator(humansOnly).isChecked(), true);
-  assert.equal(await bob.locator(humansOnly).isDisabled(), true);
+  // Humans-only is the host's setting; during a battle everyone reads the rules as text.
+  for (const page of pages) {
+    assert.match(await page.locator("#network-summary").textContent(), /No bots/);
+    assert.equal(await page.locator("#host-settings").isVisible(), false);
+  }
   assert.match(await bob.locator("#network-roster").innerText(), /open seats/);
 
   // Unchanged input is refreshed slowly and never mistaken for an absent player.
@@ -260,8 +265,8 @@ try {
   await driver(alice, "idle");
   await checkMultiplayerMenu(alice);
   await alice.screenshot({ path: `${output}/menu.png` });
-  assert.match(await alice.locator("#network-help").innerText(), /idle and vulnerable/);
-  assert.equal(await alice.locator(humansOnly).isDisabled(), true, "Settings lock during play");
+  assert.match(await alice.locator("#network-hint").innerText(), /idle and vulnerable/);
+  assert.equal(await alice.locator("#room-bots").isVisible(), false, "Rules lock during play");
   const pausedTick = (await state(alice)).tick;
   await alice.waitForTimeout(350);
   assert.ok((await state(bob)).tick > pausedTick, "Other player's game continues during menu");
@@ -301,12 +306,16 @@ try {
 
   await alice.locator("#pause").click();
   await alice.locator("#network-end").click();
-  await Promise.all(pages.map((page) => page.locator("#network-scoreboard h2").waitFor()));
+  await Promise.all(
+    pages.map((page) => page.locator("#network-scoreboard tbody tr").first().waitFor()),
+  );
   await alice.screenshot({ path: `${output}/results.png` });
-  // Clearing humans-only restores the difficulty choice and fill bots next round.
-  await click(alice, humansOnly);
-  await bob.waitForFunction(() => !document.querySelector("#room-humans-only").checked);
-  await alice.waitForFunction(() => !document.querySelector("#room-difficulty").disabled);
+  // Choosing bots again restores fill bots next round; the guest reads the change as text.
+  assert.equal(await bob.locator("#host-settings").isVisible(), false);
+  await alice.locator("#room-bots").selectOption("normal");
+  await bob.waitForFunction(() =>
+    document.querySelector("#network-summary").textContent.includes("Normal bots"),
+  );
   await alice.locator("#room-map").selectOption("harbor");
   await alice.locator("#start-match").click();
   await Promise.all(pages.map((page) => playing(page, 12, 2)));
@@ -314,6 +323,10 @@ try {
   assert.ok(observations.nextRound.every((view) => view.tanks.length === 12));
   const beforeDrop = await state(bob);
   await bob.evaluate(() => window.sloppyMultiplayer.connection.socket.close());
+  // The drop replaces the room menu with a dialog that says what happened.
+  await bob.locator(".network-connection").waitFor();
+  assert.equal(await bob.locator("#connection-title").innerText(), "CONNECTION LOST");
+  assert.equal(await bob.locator(".network-menu").isVisible(), false);
   await bob.waitForFunction(
     (epoch) =>
       window.sloppyMultiplayer.connection.connected &&
@@ -322,6 +335,7 @@ try {
     beforeDrop.control.controlEpoch,
   );
   assert.equal((await state(bob)).player, beforeDrop.player, "Automatic reconnect retains seat");
+  assert.equal(await bob.locator(".network-connection").isVisible(), false);
   await bob.locator("#pause").click();
   await bob.locator("#touch-mode").selectOption("on");
   await bob.locator("#network-resume").click();

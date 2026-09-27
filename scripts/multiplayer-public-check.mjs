@@ -83,7 +83,9 @@ try {
   }
   await first.locator("#pause").click();
   await first.locator("#network-end").click();
-  await Promise.all(clients.map((c) => c.page.locator("#network-scoreboard h2").waitFor()));
+  await Promise.all(
+    clients.map((c) => c.page.locator("#network-scoreboard tbody tr").first().waitFor()),
+  );
   await checkMultiplayerMenu(first);
   assert.equal(await first.locator("#network-resume").isVisible(), false);
   assert.equal(await first.locator("#network-end").isVisible(), false);

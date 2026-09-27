@@ -85,15 +85,23 @@ map under **New room** and **Create room** to start playing immediately. Battle
 Setup stays up with the room's progress while the arena loads and draws its first
 frames, then the battle replaces it; a page that has already built a single-player
 arena reloads into the room behind the same setup.
-Friends can join later through the list or a link from **COPY ROOM LINK** in the
+Friends can join later through the list or a link from **Copy invite link** in the
 in-game menu: a room link opens Battle Setup with that room selected. Reloading a
-room page, or a join or connection that gives up, returns there too, with the
-reason shown in the room list; joining again keeps a seat that is still reserved.
+room page, or a join that gives up, returns there too, with the reason shown in the
+room list; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
+
+The in-game menu shows the room's rules as text during a battle and to guests;
+only the host changes them, between rounds. If the connection drops, a dialog
+replaces the menu while the game reconnects on its own. If it gives up, the
+dialog says why (lost connection, room closed, seat expired, seat opened in
+another tab, or a game update) and offers what still works: try again, play
+here, reload, or return to Battle Setup.
 
 New rooms default to **Humans only (no bots)**. Empty seats stay empty, and
 paused or disconnected players remain idle and vulnerable. Uncheck it when
-creating or between rounds to fill the six-versus-six teams with bots; bots
+creating, or pick a bot difficulty between rounds, to fill the six-versus-six
+teams with bots; bots
 also drive absent humans in that mode. Up to eight people can join, with six
 human seats per team. Reconnect within 30 seconds to reclaim the same seat.
 
