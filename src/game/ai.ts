@@ -114,18 +114,18 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
   // Deliberately clear nearby weak timber and towers that obstruct a useful route.
   // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
   if (!command.fire && tank.kind !== "humvee") {
+    const route = Math.atan2(brain.goal.x - position.x, brain.goal.z - position.z);
+    // A distance is never shorter than either axis offset; the box only skips far covers.
     const weak = simulation.covers.find(
       (o) =>
         o.alive &&
         o.destructible &&
         o.kind !== "drum" &&
+        Math.abs(o.x - position.x) < BREACH_RANGE &&
+        Math.abs(o.z - position.z) < BREACH_RANGE &&
         distance(position, o) < BREACH_RANGE &&
-        Math.abs(
-          angleDelta(
-            Math.atan2(brain.goal.x - position.x, brain.goal.z - position.z),
-            Math.atan2(o.x - position.x, o.z - position.z),
-          ),
-        ) < BREACH_ROUTE_ANGLE,
+        Math.abs(angleDelta(route, Math.atan2(o.x - position.x, o.z - position.z))) <
+          BREACH_ROUTE_ANGLE,
     );
     if (weak) {
       command.ammoSelection = "standard";

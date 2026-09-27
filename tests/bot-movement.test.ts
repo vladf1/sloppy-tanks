@@ -151,6 +151,29 @@ test("bots retain comparable visible targets but react to a substantially closer
   s.dispose();
 });
 
+test("bots skip a closer enemy behind cover for the nearest one in sight", () => {
+  const s = arena(),
+    bot = s.addTank(0, false, "balanced", 1);
+  const hidden = s.addTank(1, true, "balanced"),
+    farther = s.addTank(1, true, "balanced"),
+    farthest = s.addTank(1, true, "balanced");
+  place(bot, 0, 0);
+  place(hidden, 0, 10);
+  place(farther, 12, 12);
+  place(farthest, -14, 14);
+  s.addCover({ kind: "concrete", x: 0, z: 6, w: 3, d: 1, h: 3, hp: Infinity, color: 0 });
+  s.world.step();
+  bot.brain.decision = 0;
+  botCommand(s, bot, STEP);
+  assert.equal(bot.brain.target, farther.id);
+  // Hunters track through cover, so the closest enemy wins without a sight line.
+  bot.brain.ultraAggressive = true;
+  bot.brain.decision = 0;
+  botCommand(s, bot, STEP);
+  assert.equal(bot.brain.target, hidden.id);
+  s.dispose();
+});
+
 test("pickup and patrol destinations persist across decisions and unavailable crates are abandoned", () => {
   const s = arena(),
     bot = s.addTank(0, false, "balanced", 1);

@@ -47,18 +47,20 @@ export function tankContactCollider(kind: VehicleKind) {
     .setRestitution(0);
 }
 
-/** Sweep a shell against the hull, accounting for this tick's tank translation. */
+/** Sweep a shell against the hull, accounting for this tick's tank translation. Callers
+ * testing many shells may pass the live body's current translation read once. */
 export function tankHitTime(
   shot: Pick<Shot, "x" | "y" | "z" | "vx" | "vz" | "owner">,
   tank: Tank,
   limit: number,
   elapsed = 0,
   frameDelta = 0,
+  translation?: RAPIER.Vector,
 ): number | null {
   if (!tank.alive || tank.id === shot.owner) {
     return null;
   }
-  const end = tank.body.translation();
+  const end = translation ?? tank.body.translation();
   const vx = frameDelta > 0 ? (end.x - tank.previous.x) / frameDelta : 0;
   const vz = frameDelta > 0 ? (end.z - tank.previous.z) / frameDelta : 0;
   // Most lanes pass far from most hulls. If the ray's closest approach to the body within

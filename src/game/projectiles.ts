@@ -203,6 +203,10 @@ function findNextContact(
 ): { next: Contact | null; time: number } {
   let next: Contact | null = null;
   let time = limit;
+  // Nothing moves during the query, so each hull is read once rather than once per shell.
+  const tankPositions = simulation.tanks.map((tank) =>
+    tank.alive ? tank.body.translation() : undefined,
+  );
   for (const shot of simulation.shots) {
     if (shot.life <= time) {
       time = shot.life;
@@ -249,8 +253,9 @@ function findNextContact(
         next = { kind: "debris", shot, fragment };
       }
     }
-    for (const tank of simulation.tanks) {
-      const contact = tankHitTime(shot, tank, time, elapsed, tankFrameDelta);
+    for (let i = 0; i < simulation.tanks.length; i++) {
+      const tank = simulation.tanks[i];
+      const contact = tankHitTime(shot, tank, time, elapsed, tankFrameDelta, tankPositions[i]);
       if (contact !== null && (contact < time || !next)) {
         time = contact;
         next = { kind: "tank", shot: shot, tank };

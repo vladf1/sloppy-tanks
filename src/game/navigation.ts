@@ -4,6 +4,7 @@ import { treeProportions } from "./tree-proportions";
 const CELL_SIZE = 1.5;
 const HALF_ARENA = ARENA;
 const GRID_SIZE = Math.ceil((2 * HALF_ARENA) / CELL_SIZE);
+const CELLS = GRID_SIZE * GRID_SIZE;
 // Inflate obstacles by a hull margin so a point path leaves room for the actual tank.
 const HULL_CLEARANCE = 1.35;
 const REBUILD_PADDING = 2;
@@ -15,10 +16,14 @@ const DIRECTIONS = [
   [0, -1],
 ] as const;
 export class Navigation {
-  blocked = new Uint8Array(GRID_SIZE * GRID_SIZE);
-  private costs = new Float32Array(GRID_SIZE * GRID_SIZE);
-  private parent = new Int32Array(GRID_SIZE * GRID_SIZE);
-  private closed = new Uint8Array(GRID_SIZE * GRID_SIZE);
+  blocked = new Uint8Array(CELLS);
+  private costs = new Float32Array(CELLS);
+  private parent = new Int32Array(CELLS);
+  private closed = new Uint8Array(CELLS);
+  /** Discovery order of each cell in the current search, and the cell at each order. */
+  private order = new Int32Array(CELLS);
+  private discovered = new Int32Array(CELLS);
+  /** Min-heap of `estimate * CELLS + discovery order`; see find. */
   private open: number[] = [];
   version = 0;
   paths = 0;
@@ -72,11 +77,7 @@ export class Navigation {
     this.version++;
   }
   index(position: Vec2): number {
-    return (
-      Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((position.z + HALF_ARENA) / CELL_SIZE))) *
-        GRID_SIZE +
-      Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((position.x + HALF_ARENA) / CELL_SIZE)))
-    );
+    return cellAt(position.x, position.z);
   }
   point(i: number): Vec2 {
     return {
@@ -112,40 +113,45 @@ export class Navigation {
     const steps = Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) / (CELL_SIZE / 3));
     for (let i = 0; i <= steps; i++) {
       const f = steps ? i / steps : 0;
-      if (
-        this.blocked[
-          this.index({ x: from.x + (to.x - from.x) * f, z: from.z + (to.z - from.z) * f })
-        ]
-      ) {
+      if (this.blocked[cellAt(from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f)]) {
         return false;
       }
     }
     return true;
   }
-  /** Four-neighbor A*: Manhattan distance is admissible, and ties preserve insertion order. */
+  /**
+   * Four-neighbor A*: Manhattan distance is admissible. The open list is a heap ordered by
+   * estimate, then by the order cells were first reached, which is the order a linear scan
+   * of an append-only list picks among equal estimates; seeded routes depend on that order.
+   */
   find(from: Vec2, to: Vec2): Vec2[] {
     this.paths++;
     const start = this.nearest(this.index(from));
     const goal = this.nearest(this.index(to));
-    const { costs, parent, closed, open } = this;
+    const { costs, parent, closed, order, discovered, open } = this;
     costs.fill(Infinity);
     parent.fill(-1);
     closed.fill(0);
     open.length = 0;
-    open.push(start);
-    costs[start] = 0;
+    const goalX = goal % GRID_SIZE;
+    const goalZ = Math.floor(goal / GRID_SIZE);
     const heuristic = (i: number) =>
-      Math.abs((i % GRID_SIZE) - (goal % GRID_SIZE)) +
-      Math.abs(Math.floor(i / GRID_SIZE) - Math.floor(goal / GRID_SIZE));
+      Math.abs((i % GRID_SIZE) - goalX) + Math.abs(Math.floor(i / GRID_SIZE) - goalZ);
+    // A cheaper route to an open cell pushes a smaller estimate with the cell's original
+    // discovery order, so the outdated entry always pops after the cell has closed.
+    let discoveries = 0;
+    const reach = (cell: number, cost: number) => {
+      if (costs[cell] === Infinity) {
+        order[cell] = discoveries;
+        discovered[discoveries++] = cell;
+      }
+      costs[cell] = cost;
+      pushHeap(open, (cost + heuristic(cell)) * CELLS + order[cell]);
+    };
+    reach(start, 0);
     let reached = start;
     while (open.length) {
-      let best = 0;
-      for (let i = 1; i < open.length; i++) {
-        if (costs[open[i]] + heuristic(open[i]) < costs[open[best]] + heuristic(open[best])) {
-          best = i;
-        }
-      }
-      const current = open.splice(best, 1)[0];
+      const current = discovered[popHeap(open) % CELLS];
       if (closed[current]) {
         continue;
       }
@@ -168,9 +174,8 @@ export class Navigation {
         }
         const cost = costs[current] + 1;
         if (cost < costs[ni]) {
-          costs[ni] = cost;
           parent[ni] = current;
-          open.push(ni);
+          reach(ni, cost);
         }
       }
     }
@@ -184,4 +189,49 @@ export class Navigation {
     }
     return path.reverse();
   }
+}
+
+function cellAt(x: number, z: number): number {
+  return (
+    Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((z + HALF_ARENA) / CELL_SIZE))) * GRID_SIZE +
+    Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((x + HALF_ARENA) / CELL_SIZE)))
+  );
+}
+
+function pushHeap(heap: number[], key: number): void {
+  let i = heap.length;
+  heap.push(key);
+  while (i > 0) {
+    const up = (i - 1) >> 1;
+    if (heap[up] <= key) {
+      break;
+    }
+    heap[i] = heap[up];
+    i = up;
+  }
+  heap[i] = key;
+}
+
+function popHeap(heap: number[]): number {
+  const top = heap[0];
+  const last = heap.pop()!;
+  if (heap.length) {
+    let i = 0;
+    for (;;) {
+      let child = 2 * i + 1;
+      if (child >= heap.length) {
+        break;
+      }
+      if (child + 1 < heap.length && heap[child + 1] < heap[child]) {
+        child++;
+      }
+      if (heap[child] >= last) {
+        break;
+      }
+      heap[i] = heap[child];
+      i = child;
+    }
+    heap[i] = last;
+  }
+  return top;
 }

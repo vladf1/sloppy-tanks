@@ -278,15 +278,34 @@ export class Simulation {
     timberJoin?: Cover["timberJoin"];
   }): Cover {
     const { body, colliders } = this.coverBody(c);
-    const cover: Cover = {
-      ...c,
-      id: this.nextId++,
-      maxHp: c.hp,
-      destructible: Number.isFinite(c.hp),
-      alive: true,
-      body,
-      collider: colliders[0],
-    };
+    // Declare every field up front in one order, so V8 shares a hidden class across cover
+    // and the per-tick scans over all of it stay fast as optional fields are set later.
+    const cover: Cover = Object.assign(
+      {
+        kind: c.kind,
+        x: c.x,
+        z: c.z,
+        w: c.w,
+        d: c.d,
+        h: c.h,
+        hp: c.hp,
+        color: c.color,
+        debrisSeed: undefined,
+        timberHits: undefined,
+        timberJoin: undefined,
+        timberKick: undefined,
+        motion: undefined,
+      },
+      c,
+      {
+        id: this.nextId++,
+        maxHp: c.hp,
+        destructible: Number.isFinite(c.hp),
+        alive: true,
+        body,
+        collider: colliders[0],
+      },
+    );
     if (movableCover(cover)) {
       this.movableCovers.push(cover);
     }
@@ -312,8 +331,10 @@ export class Simulation {
     }
     cover.hp = cover.maxHp;
     cover.alive = true;
-    delete cover.timberHits;
-    delete cover.timberKick;
+    // Clear rather than delete: V8 moves an object with deleted fields to slow dictionary
+    // storage, and the yard restores cover constantly while every bot scans it each tick.
+    cover.timberHits = undefined;
+    cover.timberKick = undefined;
     const { body, colliders } = this.coverBody(cover);
     cover.body = body;
     cover.collider = colliders[0];
@@ -497,6 +518,10 @@ export class Simulation {
     for (const tank of this.tanks) {
       repairVeteran(this, tank, STEP);
     }
+    // Collecting changes stats, never positions, so each hull is read once for every crate.
+    const tankPositions = this.tanks.map((tank) =>
+      tank.alive ? tank.body.translation() : undefined,
+    );
     for (const pickup of this.pickups) {
       if (!pickup.available) {
         pickup.cooldown -= STEP;
@@ -505,12 +530,10 @@ export class Simulation {
         }
         continue;
       }
-      for (const tank of this.tanks) {
-        if (
-          tank.alive &&
-          distance(tank.body.translation(), pickup) < SIMULATION_RULES.pickupRadius
-        ) {
-          if (collectPickup(this, tank, pickup)) {
+      for (let i = 0; i < this.tanks.length; i++) {
+        const position = tankPositions[i];
+        if (position && distance(position, pickup) < SIMULATION_RULES.pickupRadius) {
+          if (collectPickup(this, this.tanks[i], pickup)) {
             break;
           }
         }
