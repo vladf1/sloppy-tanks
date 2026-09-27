@@ -96,6 +96,18 @@ test("server monitor keeps a bounded, numbered list of recent events", () => {
   assert.equal(monitor.totals().joins, RECENT_EVENTS + 5);
 });
 
+test("server monitor starts its event list with a startup line", () => {
+  const lines: string[] = [];
+  const monitor = new ServerMonitor(idle, (line) => lines.push(line));
+  monitor.start();
+  monitor.stop();
+  assert.deepEqual(
+    monitor.events.map(({ id, room, message }) => ({ id, room, message })),
+    [{ id: 1, room: "", message: "server started" }],
+  );
+  assert.deepEqual(lines, [], "main.ts already logs the listener");
+});
+
 test("server monitor summarizes each minute while active, then logs one idle summary", () => {
   const lines: string[] = [];
   let rooms = [room];

@@ -182,6 +182,8 @@ export class ServerMonitor {
       READING_INTERVAL_MS,
     );
     this.timer.unref();
+    // The dashboard log always has at least one line, even on a server nobody has joined.
+    this.addEvent("", "server started");
   }
   stop(): void {
     clearInterval(this.timer);
@@ -367,9 +369,12 @@ export class ServerMonitor {
   }
   private record(room: string, message: string): void {
     this.activeSinceSummary = true;
+    this.addEvent(room, message);
+    this.log(`room ${room} ${message}`);
+  }
+  private addEvent(room: string, message: string): void {
     this.events.push({ id: (this.events.at(-1)?.id ?? 0) + 1, atMs: Date.now(), room, message });
     if (this.events.length > RECENT_EVENTS) this.events.shift();
-    this.log(`room ${room} ${message}`);
   }
   private summarize(stats: ServerStats): void {
     this.log(

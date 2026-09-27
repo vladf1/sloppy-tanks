@@ -1069,8 +1069,11 @@
           state.history.push(point);
           const cutoff = reading.atMs - windowMs();
           while (state.history.length && state.history[0].atMs < cutoff) state.history.shift();
-          if (events.length) {
-            state.events.push(...events);
+          // An event from just before this stream opened comes in hello and again here.
+          const lastId = state.events.at(-1)?.id ?? 0;
+          const fresh = events.filter((event) => event.id > lastId);
+          if (fresh.length) {
+            state.events.push(...fresh);
             state.events.splice(0, Math.max(0, state.events.length - 100));
             renderEvents();
           }
