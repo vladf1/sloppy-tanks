@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ServerMonitor } from "../server/monitor";
+import { HISTORY_READINGS, RECENT_EVENTS, ServerMonitor } from "../server/monitor";
 import type { RoomSample } from "../server/room-session";
 
 const room: RoomSample = {
@@ -15,11 +15,56 @@ const room: RoomSample = {
   ageSeconds: 60,
   tick: 3600,
   debtMs: 0,
+  ticks: 20,
   tickAvgMs: 2.5,
   tickMaxMs: 9,
   sentBytes: 1024 * 100,
   receivedBytes: 1024,
 };
+
+test("server monitor reads every second and sums ten readings into each /stats sample", () => {
+  let second = 0;
+  // Alternate a light and a heavy second so the sample must weight and take the worst.
+  const monitor = new ServerMonitor(
+    {
+      samples: () => [{ ...room, tickAvgMs: second % 2 ? 4 : 2, tickMaxMs: second % 2 ? 12 : 3 }],
+      sockets: () => 3,
+    },
+    () => {},
+  );
+  const heard: number[] = [];
+  const unsubscribe = monitor.subscribe((reading) => heard.push(reading.tickMaxMs));
+  for (; second < 9; second++)
+    assert.equal(monitor.read().roomList[0].tickMaxMs, second % 2 ? 12 : 3);
+  const stats = monitor.sample();
+  assert.equal(stats.roomList[0].tickAvgMs, 3);
+  assert.equal(stats.roomList[0].tickMaxMs, 12);
+  assert.equal(stats.totals.sentMB, 1, "ten readings of 100 KB");
+  assert.equal(heard.length, 10, "a sample is also a reading");
+  assert.equal(monitor.history.length, 10);
+  assert.equal("roomList" in monitor.history[0], false, "history keeps totals only");
+
+  second = 10;
+  assert.equal(monitor.sample().roomList[0].tickMaxMs, 3, "each sample starts a new window");
+  unsubscribe();
+  for (let reading = 0; reading < HISTORY_READINGS; reading++) monitor.read();
+  assert.equal(heard.length, 11);
+  assert.equal(monitor.history.length, HISTORY_READINGS);
+});
+
+test("server monitor keeps a bounded, numbered list of recent events", () => {
+  const monitor = new ServerMonitor({ samples: () => [], sockets: () => 0 }, () => {});
+  for (let event = 0; event < RECENT_EVENTS + 5; event++)
+    monitor.activity("ABCDEFGH", { type: "joined", players: 1 });
+  assert.equal(monitor.events.length, RECENT_EVENTS);
+  assert.equal(monitor.events[0].id, 6);
+  assert.equal(monitor.events.at(-1)!.id, RECENT_EVENTS + 5);
+  assert.deepEqual(
+    { room: monitor.events[0].room, message: monitor.events[0].message },
+    { room: "ABCDEFGH", message: "player joined (1 connected)" },
+  );
+  assert.equal(monitor.totals().joins, RECENT_EVENTS + 5);
+});
 
 test("server monitor summarizes each minute while active, then logs one idle summary", () => {
   const lines: string[] = [];

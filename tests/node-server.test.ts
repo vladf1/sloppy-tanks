@@ -4,6 +4,7 @@ import { once } from "node:events";
 import RAPIER from "@dimforge/rapier3d-compat";
 import WebSocket from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION } from "../src/net/protocol";
+import { MAX_DASHBOARD_VIEWERS } from "../server/dashboard";
 import { createServer, type MultiplayerServer } from "../server/server";
 
 const ORIGIN = "http://127.0.0.1:5173";
@@ -150,6 +151,89 @@ test("node server serves /stats only to direct local requests", async () => {
     headers: { "X-Forwarded-For": "203.0.113.7" },
   });
   assert.equal(proxied.status, 404);
+});
+
+/** Opens /dashboard/stream and reads its Server-Sent Events one at a time. */
+async function openDashboard(ip: string) {
+  const controller = new AbortController();
+  const response = await fetch(`http://${base}/dashboard/stream`, {
+    headers: { "X-Forwarded-For": ip },
+    signal: controller.signal,
+  });
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffered = "";
+  const next = async () => {
+    while (!buffered.includes("\n\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("Dashboard stream ended");
+      buffered += value;
+    }
+    const end = buffered.indexOf("\n\n"),
+      text = buffered.slice(0, end);
+    buffered = buffered.slice(end + 2);
+    return {
+      text,
+      type: /^event: (.+)$/m.exec(text)?.[1],
+      data: JSON.parse(/^data: (.+)$/m.exec(text)![1]) as Record<string, unknown>,
+    };
+  };
+  return { status: response.status, next, close: () => controller.abort() };
+}
+
+test("node server streams the dashboard without revealing room codes", async () => {
+  const page = await fetch(`http://${base}/dashboard`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type")!, /^text\/html/);
+  assert.match(page.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
+  assert.match(await page.text(), /<title>Sloppy Tanks server<\/title>/);
+
+  const player = await connect("DASHROOM");
+  player.socket.send(join("player"));
+  await player.next("welcome");
+  const viewer = await openDashboard("198.51.100.20");
+  assert.equal(viewer.status, 200);
+  const hello = await viewer.next();
+  assert.equal(hello.type, "hello");
+  assert.equal((hello.data.server as { contentVersion: string }).contentVersion, CONTENT_VERSION);
+  assert.ok(Array.isArray(hello.data.history));
+  server.monitor.read();
+  const reading = await viewer.next();
+  assert.equal(reading.type, "reading");
+  assert.deepEqual(
+    (reading.data.roomList as { room: string; players: number }[]).map((room) => [
+      room.room,
+      room.players,
+    ]),
+    [["DAS•••••", 1]],
+  );
+  for (const { text } of [hello, reading]) assert.doesNotMatch(text, /DASHROOM/);
+  assert.match(hello.text + reading.text, /DAS•••••/, "events and rooms show the masked code");
+  viewer.close();
+  player.socket.send(JSON.stringify({ type: "leave", roundId: 0 }));
+  await player.closed;
+  while (server.rooms.has("DASHROOM")) await new Promise((resolve) => setTimeout(resolve, 10));
+});
+
+test("node server caps dashboard viewers and frees a slot when one leaves", async () => {
+  const ip = "198.51.100.21";
+  const viewers = [];
+  for (let viewer = 0; viewer < MAX_DASHBOARD_VIEWERS; viewer++) {
+    viewers.push(await openDashboard(ip));
+    assert.equal((await viewers.at(-1)!.next()).type, "hello");
+  }
+  const refused = await openDashboard(ip);
+  assert.equal(refused.status, 503);
+  refused.close();
+  viewers.pop()!.close();
+  let reopened = await openDashboard(ip);
+  // The server notices the closed stream a moment after the client aborts it.
+  for (let attempt = 0; reopened.status === 503 && attempt < 10; attempt++) {
+    reopened.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    reopened = await openDashboard(ip);
+  }
+  assert.equal(reopened.status, 200);
+  for (const viewer of [...viewers, reopened]) viewer.close();
 });
 
 test("node server rate-limits room connections per forwarded client IP", async () => {
