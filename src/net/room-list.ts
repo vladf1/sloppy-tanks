@@ -1,5 +1,10 @@
 import { array, boolean, enumeration, id, number, object, optional, string } from "./schema";
-import { ROOM_CODE, DEFAULT_ROUND_MINUTES, roundMinutesReader } from "./protocol";
+import {
+  ROOM_CODE,
+  DEFAULT_ROUND_MINUTES,
+  MAX_ROUND_MINUTES,
+  roundMinutesReader,
+} from "./protocol";
 import { difficulty, mapMode, scenario, type Scenario } from "./scene-codec";
 
 export const MAX_LISTED_ROOMS = 256;
@@ -26,7 +31,7 @@ export const roomListingReader = object({
   reserved: number(0, 8, true),
   phase: enumeration("lobby", "playing", "results"),
   roundId: id,
-  time: number(0, 3600),
+  time: number(0, MAX_ROUND_MINUTES * 60),
   scores: array(id, 2),
   /** Absent for standard rooms; `/rooms?scenario=` lists a scenario's own rooms. */
   scenario: optional(scenario),

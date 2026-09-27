@@ -6,7 +6,7 @@ import { MAP_OPTIONS } from "../game/map-options";
 import { rankIndex, RANKS } from "../game/veterancy";
 import type { RenderState } from "../game/render-state";
 import type { SimEvent, Weapon } from "../game/types";
-import { DEFAULT_ROUND_MINUTES, type Lobby, type Player } from "./protocol";
+import { DEFAULT_ROUND_MINUTES, MAX_ROUND_MINUTES, type Lobby, type Player } from "./protocol";
 import type { ConnectionEnd, EndCause, JoinChoice } from "./connection";
 import { playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
 import "./multiplayer.css";
@@ -68,7 +68,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     <div id="host-settings" class="network-fields" hidden>
       <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.map((map) => `<option value="${map.id}">${map.name}</option>`).join("")}</select></label>
       <label>Bots<select id="room-bots"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="none">None</option></select></label>
-      <label>Minutes<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label>
+      <label>Minutes<input id="room-round-minutes" type="number" min="1" max="${MAX_ROUND_MINUTES}" step="1" required /></label>
     </div>
     <div id="choice-line" class="network-line">
       <span>You: <b id="next-choice"></b></span>

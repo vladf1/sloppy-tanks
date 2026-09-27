@@ -2,6 +2,8 @@ import {
   CONTENT_VERSION,
   PROTOCOL_VERSION,
   MAX_SERVER_MESSAGE_BYTES,
+  MAX_ROOM_MS,
+  ROOM_IDLE_MS,
   type RoomSettings,
 } from "./protocol";
 import { id, record, string } from "./schema";
@@ -50,7 +52,10 @@ export interface ConnectionEvents {
 /** Server `room-reset` reasons, in words a player can act on. */
 const ROOM_END_REASONS = new Map([
   ["server-restart", "The game server restarted, which closed every room."],
-  ["expired", "Rooms close after 30 minutes, or after 5 idle minutes between battles."],
+  [
+    "expired",
+    `Rooms close after ${MAX_ROOM_MS / 3_600_000} hours, or after ${ROOM_IDLE_MS / 60_000} idle minutes between battles.`,
+  ],
   ["overload", "The game server fell behind and had to close this room."],
   ["simulation-error", "The battle hit a server error and the room closed."],
 ]);

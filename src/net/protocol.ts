@@ -14,10 +14,15 @@ export const MAX_CLIENT_MESSAGE_BYTES = 4096;
 export const MAX_SERVER_MESSAGE_BYTES = 1_000_000;
 export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 export const EMPTY_GRACE_MS = 30_000;
-export const MAX_ROOM_MS = 30 * 60_000;
 export const ROOM_IDLE_MS = 5 * 60_000;
-export const DEFAULT_ROUND_MINUTES = 10;
-export const roundMinutesReader = number(1, 20, true);
+export const DEFAULT_ROUND_MINUTES = 20;
+export const MAX_ROUND_MINUTES = 99;
+export const roundMinutesReader = number(1, MAX_ROUND_MINUTES, true);
+/** A room hosts no new battle after this long; one already under way may finish. */
+export const MAX_ROOM_MS = 4 * 60 * 60_000;
+/** How far a battle may run past MAX_ROOM_MS: its longest length plus overtime, so an
+ * endless next-kill overtime still cannot hold a room open forever. */
+export const MAX_BATTLE_OVERRUN_MS = (MAX_ROUND_MINUTES + 30) * 60_000;
 export const settingsReader = object({
   mapMode,
   difficulty,
