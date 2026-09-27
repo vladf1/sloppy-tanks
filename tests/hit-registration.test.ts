@@ -9,7 +9,9 @@ import { fireWeapon, interceptionTime, stepProjectiles } from "../src/game/weapo
 import { stepMines } from "../src/game/mines";
 import { MINE } from "../src/game/combat-rules";
 import { VEHICLES, WEAPONS, STEP } from "../src/game/data";
-import type { Shot, Team, VehicleKind, Weapon } from "../src/game/types";
+import type { Shot, Tank, Team, VehicleKind, Weapon } from "../src/game/types";
+import { tankHull } from "../src/game/tank-dimensions";
+import { Random } from "../src/game/math";
 import { clearArena, placeTank } from "./fixtures";
 
 before(async () => {
@@ -134,6 +136,102 @@ test("hit boundaries match rendered hull bounds plus shell radius on every side 
       assert.ok(Math.abs(physical.x - (bounds.max.x - bounds.min.x) / 2) < 1e-6);
       s.dispose();
     }
+  }
+});
+
+/** tankHitTime's Rapier query without its reach bound, as the reference the bound must match. */
+function unboundedHitTime(
+  shot: Pick<Shot, "x" | "y" | "z" | "vx" | "vz">,
+  tank: Tank,
+  limit: number,
+  elapsed: number,
+  frameDelta: number,
+): number | null {
+  const { size, center } = tankHull(tank.kind);
+  const box = new RAPIER.Cuboid(size.x / 2 + SHELL_HIT_RADIUS, 0.9, size.z / 2 + SHELL_HIT_RADIUS);
+  const end = tank.body.translation();
+  const vx = frameDelta > 0 ? (end.x - tank.previous.x) / frameDelta : 0;
+  const vz = frameDelta > 0 ? (end.z - tank.previous.z) / frameDelta : 0;
+  const rotation = tank.body.rotation();
+  const cos = 1 - 2 * rotation.y * rotation.y;
+  const sin = 2 * rotation.w * rotation.y;
+  const time = box.castRay(
+    new RAPIER.Ray(
+      { x: shot.x, y: shot.y ?? 1, z: shot.z },
+      { x: shot.vx - vx, y: 0, z: shot.vz - vz },
+    ),
+    {
+      x: end.x - vx * (frameDelta - elapsed) + center.x * cos + center.z * sin,
+      y: end.y,
+      z: end.z - vz * (frameDelta - elapsed) - center.x * sin + center.z * cos,
+    },
+    rotation,
+    limit,
+    true,
+  );
+  return time >= 0 && time <= limit ? time : null;
+}
+
+test("the hull reach bound skips only lanes that Rapier would also miss", () => {
+  const s = new Simulation(123);
+  try {
+    const random = new Random(7);
+    let hits = 0;
+    let misses = 0;
+    for (const kind of Object.keys(VEHICLES) as VehicleKind[]) {
+      const target = s.tanks.find((tank) => tank.kind === kind)!;
+      for (let sample = 0; sample < 400; sample++) {
+        placeTank(target, random.range(-20, 20), random.range(-20, 20), random.range(-4, 4));
+        // Half the samples move the hull during the step, as projectile sweeps see it.
+        const moving = sample % 2 === 1;
+        const frameDelta = moving ? STEP : 0;
+        const elapsed = moving ? random.range(0, STEP) : 0;
+        const position = target.body.translation();
+        if (moving) {
+          target.previous = {
+            x: position.x - random.range(-0.3, 0.3),
+            z: position.z - random.range(-0.3, 0.3),
+          };
+        }
+        const speed = sample % 4 < 2 ? 1 : WEAPONS.standard.speed;
+        const limit = speed === 1 ? random.range(0, 12) : random.range(0, 0.4);
+        let x: number;
+        let z: number;
+        let aim: number;
+        if (sample % 3 === 0 && !moving) {
+          // Graze just inside a corner, square to the body's radius: the farthest a hit can be.
+          const { size, center } = tankHull(kind);
+          const localX =
+            center.x + Math.sign(random.range(-1, 1)) * (size.x / 2 + SHELL_HIT_RADIUS);
+          const localZ =
+            center.z + Math.sign(random.range(-1, 1)) * (size.z / 2 + SHELL_HIT_RADIUS);
+          const heading = target.heading;
+          const cornerX =
+            position.x + 0.999 * (localX * Math.cos(heading) + localZ * Math.sin(heading));
+          const cornerZ =
+            position.z + 0.999 * (-localX * Math.sin(heading) + localZ * Math.cos(heading));
+          aim = Math.atan2(cornerX - position.x, cornerZ - position.z) + Math.PI / 2;
+          const lead = random.range(0.01, 0.99) * limit * speed;
+          x = cornerX - Math.sin(aim) * lead;
+          z = cornerZ - Math.cos(aim) * lead;
+        } else {
+          // Lanes start around the hull and aim near it, so many graze or narrowly miss.
+          const from = random.range(0, Math.PI * 2);
+          const distance = random.range(0, 9);
+          x = position.x + Math.sin(from) * distance;
+          z = position.z + Math.cos(from) * distance;
+          aim = Math.atan2(position.x - x, position.z - z) + random.range(-0.7, 0.7);
+        }
+        const shot = { x, z, vx: Math.sin(aim) * speed, vz: Math.cos(aim) * speed, owner: -1 };
+        const expected = unboundedHitTime(shot, target, limit, elapsed, frameDelta);
+        assert.equal(tankHitTime(shot, target, limit, elapsed, frameDelta), expected);
+        if (expected === null) misses++;
+        else hits++;
+      }
+    }
+    assert.ok(hits > 300 && misses > 300, `${hits} hits, ${misses} misses`);
+  } finally {
+    s.dispose();
   }
 });
 

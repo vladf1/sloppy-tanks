@@ -203,6 +203,7 @@ export const GROUP = {
   coverQuery: 0xffff0002, // Query all memberships, accepting cover only.
   debrisQuery: 0xffff0100, // All substantial debris, tested at the shell's flight height.
   steeringQuery: 0xffff0032, // Cover and tank-contact hulls, excluding cosmetic debris.
+  tankQuery: 0xffff0001, // Main tank hull colliders only.
   tank: 0x0001002e, // Hull touches cover, ground, anti-tank footprints and large debris.
   tankContact: 0x00100010, // Model-sized hulls touch other tank hulls only.
   toothContact: 0x00200001, // Planar tank blocking; excluded from projectile queries.

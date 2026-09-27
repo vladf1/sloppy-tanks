@@ -137,8 +137,11 @@ export function botCommand(simulation: Simulation, tank: Tank, dt: number) {
     }
   }
   const firingWeapon = breaching ? "standard" : weapon;
+  // Personality cadence below cancels any shot while fireDelay runs, so the lanes only need
+  // checking for a shot that can leave now or for a HMMWV steadying on a clear lane.
   if (
     command.fire &&
+    (brain.fireDelay <= 0 || humveeLane) &&
     friendlyBlocksShot(simulation, tank, command.aim, firingWeapon, firingRange)
   ) {
     command.fire = false;

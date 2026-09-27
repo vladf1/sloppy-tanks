@@ -3,7 +3,7 @@ import { enemyDifficulty } from "./difficulty";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { canCollectAmmo, isSpecialAmmo } from "./ammunition";
 import { BOT_AMMO, botProfile } from "./bot-personalities";
-import { bestBy, distance, WEAPONS } from "./data";
+import { bestBy, distance, GROUP, WEAPONS } from "./data";
 import type { Simulation } from "./simulation";
 import type { Tank, Weapon } from "./types";
 
@@ -31,6 +31,7 @@ export function updateBotGoal(
   brain.decision = simulation.rng.range(DECISION_MIN_SECONDS, DECISION_MAX_SECONDS);
   const threats: Tank[] = [];
   // Rapier broad phase gathers local actors; team and perception rules are controller-level filters.
+  // The group filter skips cover and debris without changing the order tanks are reported in.
   simulation.world.intersectionsWithShape(
     position,
     { x: 0, y: 0, z: 0, w: 1 },
@@ -45,6 +46,8 @@ export function updateBotGoal(
       }
       return true;
     },
+    undefined,
+    GROUP.tankQuery,
   );
   const target = bestBy(
     threats,

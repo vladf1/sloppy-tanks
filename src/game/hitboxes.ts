@@ -4,6 +4,9 @@ import { tankHull } from "./tank-dimensions";
 import type { Shot, Tank, VehicleKind } from "./types";
 
 export const SHELL_HIT_RADIUS = 0.18;
+const HIT_HALF_HEIGHT = 0.9; // Combat is planar; visual launcher height does not enlarge the target.
+/** Covers floating-point differences between the bound below and Rapier's own ray test. */
+const REACH_TOLERANCE = 0.01;
 const shapes = Object.fromEntries(
   (Object.keys(VEHICLES) as VehicleKind[]).map((kind) => {
     const { size } = tankHull(kind);
@@ -11,12 +14,27 @@ const shapes = Object.fromEntries(
       kind,
       new RAPIER.Cuboid(
         size.x / 2 + SHELL_HIT_RADIUS,
-        0.9, // Combat is planar; visual launcher height does not enlarge the target.
+        HIT_HALF_HEIGHT,
         size.z / 2 + SHELL_HIT_RADIUS,
       ),
     ];
   }),
 ) as Record<VehicleKind, RAPIER.Cuboid>;
+/**
+ * Farthest any point of a hit box can lie from its body's origin in plan view, in any
+ * orientation: the box's half-diagonal plus the hull's offset from the origin.
+ */
+const reach = Object.fromEntries(
+  (Object.keys(VEHICLES) as VehicleKind[]).map((kind) => {
+    const { size, center } = tankHull(kind);
+    const halfDiagonal = Math.hypot(
+      size.x / 2 + SHELL_HIT_RADIUS,
+      HIT_HALF_HEIGHT,
+      size.z / 2 + SHELL_HIT_RADIUS,
+    );
+    return [kind, halfDiagonal + Math.hypot(center.x, center.z) + REACH_TOLERANCE];
+  }),
+) as Record<VehicleKind, number>;
 
 /** Full visible footprint for tank contact, without the shell-radius allowance. */
 export function tankContactCollider(kind: VehicleKind) {
@@ -43,6 +61,18 @@ export function tankHitTime(
   const end = tank.body.translation();
   const vx = frameDelta > 0 ? (end.x - tank.previous.x) / frameDelta : 0;
   const vz = frameDelta > 0 ? (end.z - tank.previous.z) / frameDelta : 0;
+  // Most lanes pass far from most hulls. If the ray's closest approach to the body within
+  // the limit stays beyond the box's reach, Rapier could not report a hit either.
+  const dx = end.x - vx * (frameDelta - elapsed) - shot.x;
+  const dz = end.z - vz * (frameDelta - elapsed) - shot.z;
+  const rx = shot.vx - vx;
+  const rz = shot.vz - vz;
+  const speedSquared = rx * rx + rz * rz;
+  const closest =
+    speedSquared > 0 ? Math.max(0, Math.min(limit, (dx * rx + dz * rz) / speedSquared)) : 0;
+  if (Math.hypot(dx - rx * closest, dz - rz * closest) > reach[tank.kind]) {
+    return null;
+  }
   const shape = shapes[tank.kind];
   const { center } = tankHull(tank.kind);
   const rotation = tank.body.rotation();
