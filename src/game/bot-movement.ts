@@ -58,8 +58,15 @@ export function routeDirection(simulation: Simulation, tank: Tank): Vec2 {
   return { x: (dx / d) * speed, z: (dz / d) * speed };
 }
 
-/** Check the visible hull, including other tanks, before choosing a steering direction. */
-function clearance(simulation: Simulation, tank: Tank, direction: Vec2, length: number): number {
+/** Check the visible hull, including other tanks, before choosing a steering direction.
+ * Callers only compare the result with `needed`, so casting stops once it falls short. */
+function clearance(
+  simulation: Simulation,
+  tank: Tank,
+  direction: Vec2,
+  length: number,
+  needed: number,
+): number {
   const position = tank.collider.translation();
   const angle = Math.atan2(direction.x, direction.z);
   let clear = length;
@@ -83,6 +90,9 @@ function clearance(simulation: Simulation, tank: Tank, direction: Vec2, length: 
     if (hit) {
       clear = Math.min(clear, hit.time_of_impact);
     }
+    if (clear < needed) {
+      break;
+    }
   }
   return clear;
 }
@@ -98,13 +108,14 @@ export function steerBot(simulation: Simulation, tank: Tank, desired: Vec2, dt: 
   }
   const direction = { x: desired.x / magnitude, z: desired.z / magnitude };
   const lookahead = tank.kind === "humvee" ? HUMVEE_LOOKAHEAD : STEERING.lookaheadDistance;
+  const enough = lookahead * STEERING.clearFraction;
   if (
     brain.avoidanceTime > 0 &&
-    clearance(simulation, tank, brain.avoidance, lookahead) >= lookahead * STEERING.clearFraction
+    clearance(simulation, tank, brain.avoidance, lookahead, enough) >= enough
   ) {
     return { x: brain.avoidance.x * magnitude, z: brain.avoidance.z * magnitude };
   }
-  if (clearance(simulation, tank, direction, lookahead) >= lookahead * STEERING.clearFraction) {
+  if (clearance(simulation, tank, direction, lookahead, enough) >= enough) {
     return desired;
   }
   let best = { x: 0, z: 0 };
@@ -126,15 +137,19 @@ export function steerBot(simulation: Simulation, tank: Tank, desired: Vec2, dt: 
       x: direction.x * cos + direction.z * sin,
       z: direction.z * cos - direction.x * sin,
     };
-    const open = clearance(simulation, tank, candidate, lookahead);
     const continuity = candidate.x * brain.avoidance.x + candidate.z * brain.avoidance.z;
-    const score =
+    const score = (open: number) =>
       Math.min(1, open / lookahead) * STEERING.clearanceWeight +
       cos +
       continuity * STEERING.continuityWeight;
-    if (open > STEERING.minimumClearance && score > bestScore) {
+    // An obstruction only lowers the score, so a side that cannot win fully open needs no cast.
+    if (score(lookahead) <= bestScore) {
+      continue;
+    }
+    const open = clearance(simulation, tank, candidate, lookahead, STEERING.minimumClearance);
+    if (open > STEERING.minimumClearance && score(open) > bestScore) {
       best = candidate;
-      bestScore = score;
+      bestScore = score(open);
       bestClearance = open;
     }
   }

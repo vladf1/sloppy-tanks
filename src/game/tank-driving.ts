@@ -39,11 +39,12 @@ export function driveTank(tank: Tank, command: VehicleCommand, dt: number, speed
     (MOVE_ACCELERATION * dt) / (Math.hypot(velocityDeltaX, velocityDeltaZ) || 1),
   );
   // Bounded impulses preserve knockback; no per-frame velocity overwrite.
+  const mass = tank.body.mass();
   tank.body.applyImpulse(
     {
-      x: velocityDeltaX * accelerationFraction * tank.body.mass(),
+      x: velocityDeltaX * accelerationFraction * mass,
       y: 0,
-      z: velocityDeltaZ * accelerationFraction * tank.body.mass(),
+      z: velocityDeltaZ * accelerationFraction * mass,
     },
     true,
   );

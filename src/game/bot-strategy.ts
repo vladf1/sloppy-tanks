@@ -29,7 +29,7 @@ export function updateBotGoal(
   const profile = botProfile(tank);
   const previousMode = brain.mode;
   brain.decision = simulation.rng.range(DECISION_MIN_SECONDS, DECISION_MAX_SECONDS);
-  const threats: Tank[] = [];
+  const enemies: Tank[] = [];
   // Rapier broad phase gathers local actors; team and perception rules are controller-level filters.
   // The group filter skips cover and debris without changing the order tanks are reported in.
   simulation.world.intersectionsWithShape(
@@ -41,27 +41,44 @@ export function updateBotGoal(
         (candidate) =>
           candidate.alive && candidate.team !== tank.team && candidate.collider.handle === c.handle,
       );
-      if (enemy && (aggressive || simulation.visible(position, enemy.body.translation()))) {
-        threats.push(enemy);
+      if (enemy) {
+        enemies.push(enemy);
       }
       return true;
     },
     undefined,
     GROUP.tankQuery,
   );
-  const target = bestBy(
-    threats,
-    (candidate) =>
-      -distance(position, candidate.body.translation()) *
-        (candidate.id === brain.target ? TARGET_STICKINESS : 1) -
-      (tank.kind === "humvee"
-        ? threats.filter(
-            (other) =>
-              other !== candidate &&
-              distance(other.body.translation(), candidate.body.translation()) < 14,
-          ).length * 12
-        : 0),
-  );
+  const seen = (enemy: Tank) =>
+    aggressive || simulation.visible(position, enemy.body.translation());
+  const closeness = (candidate: Tank) =>
+    -distance(position, candidate.body.translation()) *
+    (candidate.id === brain.target ? TARGET_STICKINESS : 1);
+  let target: Tank | undefined;
+  if (tank.kind === "humvee") {
+    // A HMMWV avoids crowds, so each score counts the other visible threats nearby.
+    const threats = enemies.filter(seen);
+    target = bestBy(
+      threats,
+      (candidate) =>
+        closeness(candidate) -
+        threats.filter(
+          (other) =>
+            other !== candidate &&
+            distance(other.body.translation(), candidate.body.translation()) < 14,
+        ).length *
+          12,
+    );
+  } else {
+    // Other scores ignore the rest of the threats, so sight lines are tested from the best
+    // score down (ties in reported order, as bestBy keeps them). The first visible enemy is
+    // bestBy's choice, without a ray to every enemy in sight range.
+    const scores = enemies.map(closeness);
+    const ranked = enemies.map((_, index) => index);
+    ranked.sort((a, b) => scores[b] - scores[a] || a - b);
+    const best = ranked.find((index) => seen(enemies[index]));
+    target = best === undefined ? undefined : enemies[best];
+  }
   if (target) {
     if (target.id !== brain.target) {
       brain.reaction = easy
