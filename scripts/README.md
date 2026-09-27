@@ -1,23 +1,23 @@
 # Scripts
 
-Browser checks, measurements and asset tools. None of these run in CI: `npm run
+Browser checks, measurements and asset tools. None of these run in CI: `pnpm run
 check` covers lint, formatting, types, the build and `tests/*.test.ts`. A passing
 gate does not verify controls, menu transitions, rendering or cleanup, so run the
 matching browser check when changing those paths.
 
 ## Browser checks
 
-Start `npm run dev` and pass the URL it prints. Every check drives installed
+Start `pnpm run dev` and pass the URL it prints. Every check drives installed
 Google Chrome headless with an isolated profile, so no window takes focus; set
 `SLOPPY_HEADED=1` to watch a check in a visible window. Each check exits non-zero
 on failure and writes screenshots and results to the ignored `artifacts/performance/`.
 
 ```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ npm run check:browser
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.mjs
 ```
 
-`npm run check:browser` runs every check below except `touch-loading-check`, one
+`pnpm run check:browser` runs every check below except `touch-loading-check`, one
 after another, in about two minutes. Run it for startup, menu, input or rendering
 changes. Browser checks keep only what needs a browser (real pointer, wheel,
 keyboard and touch input, DOM and CSS, sounds, GPU rendering); rules that plain
@@ -67,17 +67,17 @@ WebSocket-frame recording are shared in `multiplayer-helpers.mjs`. Server rules
 `tests/player-controls.test.ts`; these checks cover what only a browser or a real
 socket shows.
 
-`npm run check:multiplayer-loading` builds and plays a production copy. It rejects
+`pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
 multiplayer requests, sockets or UI in single-player, server or traffic-bot code in
 any browser chunk, and client simulation or Rapier JS/WASM downloads when opening
 multiplayer. `tests/multiplayer-client-imports.test.ts` guards the same import
-boundary in `npm test` and prints the offending import chain.
+boundary in `pnpm test` and prints the offending import chain.
 It also checks that a room link opens Battle Setup rather than a room page, that
 multiplayer's extracted stylesheet loads only once a room is entered, that inactive
 menu actions stay hidden, and that the menu fits desktop viewports.
 
-`npm run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
-plus a third for a late join. Run Vite and the local server first (`npm run
+`pnpm run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
+plus a third for a late join. Run Vite and the local server first (`pnpm run
 server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`. The host creates a
 humans-only room on Battle Setup and the others open its room link, which selects
 the room there. It covers literal names, room rules shown as text to guests and during
@@ -115,12 +115,12 @@ port 8790 that admits the `SLOPPY_URL` origin, kills and restarts it during a ro
 (a crash, not a graceful stop) and checks that the connection dialog shows, that the
 browser returns to a fresh lobby and prepares another map, and that a graceful stop
 then shows the room-closed dialog with its way back to Battle Setup. Run
-`npm run server:build` first and run Vite.
+`pnpm run server:build` first and run Vite.
 `node --import tsx scripts/multiplayer-public-check.mjs` verifies the published dev
 client (`SLOPPY_PUBLIC_URL`) with two players plus its test directory, fixture and
 build metadata.
 
-`npm run server:check:players` runs 4 real player sockets for 15 seconds per map,
+`pnpm run server:check:players` runs 4 real player sockets for 15 seconds per map,
 including combat, reconnect and results. The traffic bots' `BotPlayer`
 (`bots/bot-player.ts`) drives each socket; the check mirrors every snapshot to prove
 the stream is contiguous and enforces full-state, snapshot-batch and sustained byte
@@ -141,7 +141,7 @@ comfort or account billing capacity; impact-to-feedback excludes projectile flig
 
 ## Measurements
 
-These are manual evidence, not regression gates. Keep them out of `npm run
+These are manual evidence, not regression gates. Keep them out of `pnpm run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
 
@@ -149,10 +149,10 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `node scripts/profile.mjs before` / `after`           | Matched runtime comparison with CPU profiles                                      |
 | `node scripts/frame-pacing-check.mjs`                 | First gameplay frame and seeded combat on every map, without discarding a warm-up |
-| `npm run benchmark:loading -- <label>`                | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
+| `pnpm run benchmark:loading -- <label>`               | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
 | `node --import tsx scripts/destruction-benchmark.ts`  | Headless destruction physics cost for a fixed wreck and blast scenario            |
 | `node --import tsx scripts/capture-benchmark.ts`      | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
-| `npm run validate`                                    | Ten seeded headless matches and reset checks                                      |
+| `pnpm run validate`                                   | Ten seeded headless matches and reset checks                                      |
 | `node scripts/benchmarks/host-download-benchmark.mjs` | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
@@ -170,7 +170,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
   idle player, warms up 1200 ticks, then times 400 intervals of three steps and
   a snapshot. It takes an output path (default
   `artifacts/performance/capture-benchmark.json`).
-- `npm run validate` writes `artifacts/performance/simulation-results.json`.
+- `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 
 CPU submission times are not GPU timings, and local frame rates are not
@@ -179,7 +179,7 @@ guarantees for other devices.
 ## Assets, build and deployment
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`,
-  `render-tank-previews.ts`) run through the npm
+  `render-tank-previews.ts`) run through the pnpm
   commands in the root README's Assets section. `encode-webp.ts` is their shared
   lossless encoder.
 - `startup-html.ts` inlines the Battle Setup menu into `index.html`, and

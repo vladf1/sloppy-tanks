@@ -3,7 +3,7 @@ dist/
 dist-cloudflare/
 artifacts/
 public/
-package-lock.json
+pnpm-lock.yaml
 assets/texture-sources/
 scripts/benchmarks/
 dist-dev/

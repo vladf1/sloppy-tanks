@@ -27,7 +27,7 @@ const clientHasServer =
   scripts.some((name) => readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL));
 if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
   throw new Error(
-    "dist-dev has no multiplayer entry or dev server URL; rebuild with npm run build:dev",
+    "dist-dev has no multiplayer entry or dev server URL; rebuild with pnpm run build:dev",
   );
 }
 

@@ -52,7 +52,7 @@ function print(status) {
 switch (command) {
   case "start": {
     const [region, bots] = rest;
-    if (!region) throw new Error("Usage: npm run bots -- start <region> [bots] [--minutes N]");
+    if (!region) throw new Error("Usage: pnpm run bots -- start <region> [bots] [--minutes N]");
     const result = await api("start", {
       region,
       bots: bots === undefined ? undefined : Number(bots),
@@ -73,8 +73,8 @@ switch (command) {
     break;
   default:
     console.log(`Usage:
-  npm run bots -- start <region> [bots=1]    [--minutes 30] [--host] [--room CODE] [--per-room 1]
-  npm run bots -- stop [region]              stop one region, or all
-  npm run bots -- status
+  pnpm run bots -- start <region> [bots=1]    [--minutes 30] [--host] [--room CODE] [--per-room 1]
+  pnpm run bots -- stop [region]              stop one region, or all
+  pnpm run bots -- status
 Regions: wnam enam sam weur eeur apac oc afr me`);
 }

@@ -44,23 +44,29 @@ turn this file into a second directory listing.
 
 ## Normal development and validation
 
-Use Node.js 24 or newer. After dependency changes, run `npm ci`; the root
-postinstall also installs the isolated lint toolchain in `tools/lint/`.
+Use Node.js 24 or newer and pnpm; `devEngines` in `package.json` pins the pnpm
+version and makes npm refuse to run. Run `pnpm install` in a new checkout or
+worktree and after dependency changes; the root postinstall also installs the
+isolated lint toolchain in `tools/lint/`. Packages come from pnpm's shared
+store, so a worktree install takes about a second and no extra disk. pnpm
+blocks dependency install scripts: a new dependency that needs one fails the
+install until `pnpm approve-builds <name>` records it under `allowBuilds` in
+`pnpm-workspace.yaml`.
 
 ```sh
-npm run check                         # CI gate: lint, format, build and tests
+pnpm run check                        # CI gate: lint, format, build and tests
 node --import tsx --test tests/foo.test.ts  # focused test file
-npm run validate                      # seeded headless matches and reset checks
-npm run dev                           # browser work; use the printed URL
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ npm run check:browser
+pnpm run validate                     # seeded headless matches and reset checks
+pnpm run dev                          # browser work; use the printed URL
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 ```
 
-`npm run validate` writes its results to the ignored
-`artifacts/performance/simulation-results.json`. `npm run build` creates
+`pnpm run validate` writes its results to the ignored
+`artifacts/performance/simulation-results.json`. `pnpm run build` creates
 `dist/`; it is a build output, not a place to edit source behavior.
 
 A successful TypeScript/build/test gate does not prove controls, menu
-transitions, rendering, or cleanup. Run `npm run check:browser` against the
+transitions, rendering, or cleanup. Run `pnpm run check:browser` against the
 dev server for startup, menu, input or rendering changes, or the focused check
 from `scripts/README.md` while iterating. Keep those checks passing: fix or
 delete a check that no longer matches the game rather than leaving it broken,
@@ -77,7 +83,7 @@ desktop; retain existing tablet/iPad touch support and its input checks.
 
 Profiling and benchmarks (`profile.mjs`, the loading and host-download
 benchmarks) are manual evidence, not normal CI. Do not add these
-workloads to `npm run check` or deployment workflows. Keep HTTP delivery,
+workloads to `pnpm run check` or deployment workflows. Keep HTTP delivery,
 browser cold-load, and in-game rendering/gameplay conclusions separate; a
 result from one category does not prove the others. Preserve outliers and
 disclose sample counts instead of reporting a clean percentile that discarded
@@ -200,7 +206,7 @@ code.
   encoders rather than hand-editing generated binaries.
 - The GitHub Pages build uses the default `/sloppy-tanks/` base; the Cloudflare
   build uses `DEPLOY_BASE=/` and `dist-cloudflare/`. Keep those bases and the
-  separate outputs intact. Both deployment workflows run `npm run check`, so a
+  separate outputs intact. Both deployment workflows run `pnpm run check`, so a
   shared lint/type/build failure can break both providers.
 - Treat historical artifacts, frame rates, CDN measurements, and deployment
   results as evidence from a particular environment and time. Re-measure live
@@ -212,7 +218,7 @@ code.
 
 ## Local dev publishing
 
-- `npm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
+- `pnpm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
   to the dedicated Cloudflare Pages project `sloppy-tanks-dev` (setup and URLs
   in `README.md`). It publishes current local files, including uncommitted
   changes. Use this when asked to publish the dev site. Do not substitute the
@@ -223,10 +229,10 @@ code.
   Production Pages sites use the same server. When a branch changes
   `src/game/` or `src/net/`, `deploy:dev` breaks production multiplayer until
   `main` is redeployed; say so before running it. After such changes reach
-  `main`, run `npm run vps:deploy` from `main`.
+  `main`, run `pnpm run vps:deploy` from `main`.
   Change the VPS only through `deploy/vps/` and the `vps:*` scripts described
   in `server/README.md`. The traffic bots in `bots/` remain a Cloudflare Worker
-  that targets the VPS; `npm run bots:deploy` publishes them separately.
+  that targets the VPS; `pnpm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and

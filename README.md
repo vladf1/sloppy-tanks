@@ -4,12 +4,14 @@ A browser tank game with destructible cover, team battles and solo survival. Bui
 
 ## Run
 
-Use Node.js 24 or newer:
+Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) (for example `brew install pnpm`):
 
 ```sh
-npm ci
-npm run dev
+pnpm install
+pnpm run dev
 ```
+
+`package.json` pins the pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
 
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`.
 
@@ -48,13 +50,13 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-npm run check          # lint, formatting, TypeScript, production build and tests
-npm test               # simulation and behavior regression tests
-npm run validate       # ten seeded full matches and reset checks
-npm run build          # production output in dist/
-npm run lint:fix       # safe ESLint fixes
-npm run format         # Prettier for source, tests, scripts, styles and docs
-npm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
+pnpm run check          # lint, formatting, TypeScript, production build and tests
+pnpm test               # simulation and behavior regression tests
+pnpm run validate       # ten seeded full matches and reset checks
+pnpm run build          # production output in dist/
+pnpm run lint:fix       # safe ESLint fixes
+pnpm run format         # Prettier for source, tests, scripts, styles and docs
+pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
 [AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements.
@@ -131,36 +133,36 @@ memory.
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
 
-| Command                         | Output / requirements                                                                                                            |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
-| `npm run optimize:textures`     | Six optimized runtime textures from preserved sources; requires `cwebp`                                                          |
-| `npm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
-| `npm run generate:pickup-atlas` | The shared pickup atlas from the icons in `assets/texture-sources/pickups/`; also run by `generate:textures` and `generate:ammo` |
-| `npm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
-| `npm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
+| Command                          | Output / requirements                                                                                                            |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
+| `pnpm run optimize:textures`     | Six optimized runtime textures from preserved sources; requires `cwebp`                                                          |
+| `pnpm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
+| `pnpm run generate:pickup-atlas` | The shared pickup atlas from the icons in `assets/texture-sources/pickups/`; also run by `generate:textures` and `generate:ammo` |
+| `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
+| `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `npm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`; the laser pictogram uses `node --import tsx scripts/generate-laser-pickup.ts`.
+For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`; the laser pictogram uses `node --import tsx scripts/generate-laser-pickup.ts`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 
 ## Deployment
 
-Two independent workflows publish on pushes to `main`, after `npm run check` passes:
+Two independent workflows publish on pushes to `main`, after `pnpm run check` passes:
 
-- **GitHub Pages:** `npm run build` produces `dist/` with the default `/sloppy-tanks/` base for <https://fridman.me/sloppy-tanks/>.
-- **Cloudflare Pages:** `npm run build:cloudflare` produces `dist-cloudflare/` with the `/` base for <https://sloppy-tanks.fridman.me/>. The Pages project is `sloppy-tanks`, with <https://sloppy-tanks.pages.dev/> as its provider URL.
+- **GitHub Pages:** `pnpm run build` produces `dist/` with the default `/sloppy-tanks/` base for <https://fridman.me/sloppy-tanks/>.
+- **Cloudflare Pages:** `pnpm run build:cloudflare` produces `dist-cloudflare/` with the `/` base for <https://sloppy-tanks.fridman.me/>. The Pages project is `sloppy-tanks`, with <https://sloppy-tanks.pages.dev/> as its provider URL.
 
 Both workflows set `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
 also uses. The workflows do not deploy that server. A client only plays on a server
 built from the same game and network sources, so after merging changes to
-`src/game/` or `src/net/`, run `npm run vps:deploy` from `main`; until then, players
+`src/game/` or `src/net/`, run `pnpm run vps:deploy` from `main`; until then, players
 on the production sites are asked to reload and cannot join. Likewise,
-`npm run deploy:dev` from a branch with such changes replaces the shared server and
+`pnpm run deploy:dev` from a branch with such changes replaces the shared server and
 breaks production multiplayer until `main` is deployed again.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the physics preload. The Cloudflare build uses its own output directory and leaves `dist/` intact. Its workflow requires the GitHub Actions secret `CLOUDFLARE_API_TOKEN`, scoped to Cloudflare Pages:Edit on the deployment account. Never commit the token.
@@ -168,7 +170,7 @@ breaks production multiplayer until `main` is deployed again.
 For a manual Cloudflare deployment with authenticated Wrangler:
 
 ```sh
-npm run build:cloudflare
+pnpm run build:cloudflare
 wrangler pages deploy dist-cloudflare --project-name sloppy-tanks --branch main
 ```
 
@@ -178,12 +180,12 @@ The build separates the interactive menu from gameplay, graphics, physics and au
 
 ### Local dev deployment
 
-`npm run deploy:dev` runs the normal checks, builds the current local checkout
+`pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
 Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first
 (or provide a Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
-commit or push is required. `npm run build:dev` builds without publishing.
+commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build always connects the **Multiplayer** tab to the multiplayer server
 on the VPS, and `deploy:dev` redeploys that server from the same checkout first
 (over SSH) so client and server versions match.

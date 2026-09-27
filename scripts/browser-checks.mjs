@@ -1,5 +1,5 @@
 // Run the functional browser checks one after another against a running dev server
-// (`npm run dev`; pass its URL in SLOPPY_URL). This is a manual gate for startup,
+// (`pnpm run dev`; pass its URL in SLOPPY_URL). This is a manual gate for startup,
 // menu, input and rendering changes, not CI: it needs Chrome and a GPU, and the
 // performance workloads in scripts/README.md stay separate.
 import { spawnSync } from "node:child_process";

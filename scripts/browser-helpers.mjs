@@ -7,7 +7,7 @@ import { chromium } from "playwright";
  */
 export const headless = !process.env.SLOPPY_HEADED;
 
-/** The Vite dev server under test; `npm run dev` prints it. */
+/** The Vite dev server under test; `pnpm run dev` prints it. */
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
 /**

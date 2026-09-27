@@ -7,17 +7,17 @@ simulation, seats and protocol. The dev site uses it at `wss://45-63-56-58.sslip
 on a Vultr VPS behind Caddy.
 
 ```sh
-npm run server:dev
-npm run dev
+pnpm run server:dev
+pnpm run dev
 ```
 
 Open `?multiplayer` on the printed Vite URL. The client uses `ws://127.0.0.1:8787`
-locally. In another terminal, `npm run server:check:players` runs real player
+locally. In another terminal, `pnpm run server:check:players` runs real player
 sockets on all maps. Reconnect, host transfer and expiry are covered by
-`tests/match-host.test.ts` and `tests/room-session.test.ts` in `npm test`.
+`tests/match-host.test.ts` and `tests/room-session.test.ts` in `pnpm test`.
 Use `SLOPPY_SERVER_URL=wss://45-63-56-58.sslip.io` with a listed
 `SLOPPY_ORIGIN` such as `https://sloppy-tanks-dev.pages.dev` to test the VPS.
-`npm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects a
+`pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects a
 remote server for that browser check. For sustained traffic from other regions,
 the traffic bots (a separate Cloudflare Worker) join open rooms on the VPS; see
 `bots/README.md`.
@@ -94,11 +94,11 @@ with 4002.
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH as root.
 
 ```sh
-npm run vps:provision   # first time, or after editing deploy/vps/*; then deploys
-npm run vps:deploy      # npm run check, upload server.mjs, restart, wait for /health
+pnpm run vps:provision   # first time, or after editing deploy/vps/*; then deploys
+pnpm run vps:deploy      # pnpm run check, upload server.mjs, restart, wait for /health
 ```
 
-`npm run deploy:dev` also deploys the server first, waits until `/health` reports
+`pnpm run deploy:dev` also deploys the server first, waits until `/health` reports
 the checkout's content version, then uploads the dev site. It refuses to upload a
 build without the multiplayer entry.
 
@@ -110,9 +110,9 @@ before deploying.
 ## Monitoring
 
 ```sh
-npm run vps:logs     # follow the journal: room lifecycle lines and minute summaries
-npm run vps:stats    # /stats JSON over SSH
-npm run vps:status   # systemctl status for the game server and Caddy
+pnpm run vps:logs     # follow the journal: room lifecycle lines and minute summaries
+pnpm run vps:stats    # /stats JSON over SSH
+pnpm run vps:status   # systemctl status for the game server and Caddy
 ```
 
 The log has one line per event: a room is created, a player joins, disconnects or
