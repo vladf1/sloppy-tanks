@@ -4,7 +4,7 @@ A browser tank game with destructible cover, team battles and solo survival. Bui
 
 ## Run
 
-Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) (for example `brew install pnpm`):
+Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) 11 or newer (for example `brew install pnpm`):
 
 ```sh
 pnpm install
