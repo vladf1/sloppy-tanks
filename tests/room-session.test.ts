@@ -8,6 +8,7 @@ import {
   MAX_PENDING_CONNECTIONS,
   MAX_SOCKET_MESSAGES_PER_SECOND,
   RoomSession,
+  messageType,
   type RoomSocket,
 } from "../server/room-session";
 
@@ -42,6 +43,25 @@ function session() {
   });
   return { room, listings, ended: () => ended };
 }
+
+test("room session counts messages by type without trusting client type names", () => {
+  // Server messages lead with the room identity; nested objects come after the type.
+  const lobby = '{"roomEpoch":"e","roundId":2,"type":"lobby","players":[{"type":"x"}]}';
+  assert.equal(messageType(lobby), "lobby");
+  assert.equal(messageType('{"type":"snapshot","roundId":1}'), "snapshot");
+  assert.equal(messageType('{"type":"made-up"}'), "other");
+  assert.equal(messageType("not json"), "other");
+  const { room } = session();
+  const socket = new FakeSocket();
+  room.accept(socket);
+  room.message(socket, join("player"));
+  room.message(socket, JSON.stringify({ type: "made-up", roundId: 0 }));
+  const sample = room.sample()!;
+  assert.deepEqual(sample.receivedMessages, { join: 1, other: 1 });
+  assert.equal(sample.sentMessages.welcome, 1);
+  assert.deepEqual(room.sample()!.receivedMessages, {}, "each sample starts from zero");
+  room.reset("test");
+});
 
 test("room session refuses sockets past the pending-connection cap", () => {
   const { room } = session();

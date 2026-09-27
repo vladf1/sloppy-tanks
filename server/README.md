@@ -58,7 +58,8 @@ a room sends roughly five times a standard room's snapshot bandwidth.
 Room traffic uses permessage-deflate at zlib level 1, which browsers negotiate
 natively. It cut a standard room client from about 68 to 17 KB/s on the wire in
 headless Chrome, at about 1 ms of server CPU per client each second. Monitor byte
-counts are measured before compression.
+counts are measured before compression; the `wire` figures read the room sockets' TCP
+byte counters after it.
 
 `GET /rooms` returns public room metadata only, never names or seat tokens. Rooms
 publish on lobby changes and every 20 seconds while active; disconnected-empty
@@ -118,9 +119,11 @@ line per room (map, phase, players, time, score, tick cost and debt, traffic). A
 idle server logs one final summary and then stays quiet.
 
 `GET /stats` returns the same figures as JSON for the last 10 seconds, summed from the
-monitor's one-second readings, plus totals since start. It lists every room code, including unlisted rooms, so it answers only
-direct loopback requests without `X-Forwarded-For`, and Caddy also refuses the path.
-Traffic figures count UTF-16 characters of JSON, which equals bytes for ASCII.
+monitor's one-second readings, plus totals since start. It lists every room code,
+including unlisted rooms, so it answers only direct loopback requests without
+`X-Forwarded-For`, and Caddy also refuses the path. Traffic figures count UTF-16
+characters of JSON, which equals bytes for ASCII; `wire` figures are socket bytes after
+compression, including WebSocket frame and handshake bytes.
 `tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
 `debtMs` that keeps rising means the room is falling behind real time.
 
@@ -128,9 +131,12 @@ Traffic figures count UTF-16 characters of JSON, which equals bytes for ASCII.
 
 `/dashboard` (https://45-63-56-58.sslip.io/dashboard on the VPS, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that updates every
-second: CPU, event-loop busy share and lag, GC pauses, memory, traffic, players and rooms,
-the slowest room tick against its 50 ms budget, one row per room, recent room events and
-host load, with charts of the last five minutes. `dashboard.html` is plain HTML and
+second: CPU, event-loop busy share and lag percentiles, GC pauses, memory, traffic on
+the wire and before compression, players and rooms, messages per second by type in each
+direction, the slowest room tick against its 50 ms budget, one row per room, recent room
+events and host load, with charts of the last five minutes. Message types are read from
+the start of each message without parsing it, and names outside the protocol count as
+`other`. `dashboard.html` is plain HTML and
 script; the server bundle inlines it, and its charts load uPlot from jsDelivr, pinned by
 version and subresource integrity. Without the library the page still shows everything
 except the charts.

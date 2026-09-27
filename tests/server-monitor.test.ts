@@ -20,7 +20,11 @@ const room: RoomSample = {
   tickMaxMs: 9,
   sentBytes: 1024 * 100,
   receivedBytes: 1024,
+  sentMessages: { snapshot: 20, lobby: 1 },
+  receivedMessages: { input: 30 },
 };
+const noWire = () => ({ sent: 0, received: 0 });
+const idle = { samples: () => [], sockets: () => 0, wireBytes: noWire };
 
 test("server monitor reads every second and sums ten readings into each /stats sample", () => {
   let second = 0;
@@ -29,6 +33,7 @@ test("server monitor reads every second and sums ten readings into each /stats s
     {
       samples: () => [{ ...room, tickAvgMs: second % 2 ? 4 : 2, tickMaxMs: second % 2 ? 12 : 3 }],
       sockets: () => 3,
+      wireBytes: noWire,
     },
     () => {},
   );
@@ -52,8 +57,33 @@ test("server monitor reads every second and sums ten readings into each /stats s
   assert.equal(monitor.history.length, HISTORY_READINGS);
 });
 
+test("server monitor adds message types across rooms and turns wire counters into rates", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  let wire = { sent: 0, received: 0 };
+  const other = { ...room, room: "IJKLMNOP", sentMessages: { snapshot: 20, pong: 1 } };
+  const monitor = new ServerMonitor(
+    {
+      samples: () => [room, { ...other, receivedMessages: {} }],
+      sockets: () => 6,
+      wireBytes: () => wire,
+    },
+    () => {},
+  );
+  wire = { sent: 20 * 1024, received: 2 * 1024 };
+  t.mock.timers.tick(1000);
+  const reading = monitor.read();
+  assert.deepEqual(reading.sentMessages, { snapshot: 40, lobby: 1, pong: 1 });
+  assert.deepEqual(reading.receivedMessages, { input: 30 });
+  assert.equal(reading.wireSentKBps, 20);
+  assert.equal(reading.wireReceivedKBps, 2);
+  assert.equal("sentMessages" in reading.roomList[0], false, "counts are server-wide only");
+  wire = { sent: 30 * 1024, received: 2 * 1024 };
+  t.mock.timers.tick(1000);
+  assert.equal(monitor.read().wireSentKBps, 10, "readings take the difference of running totals");
+});
+
 test("server monitor keeps a bounded, numbered list of recent events", () => {
-  const monitor = new ServerMonitor({ samples: () => [], sockets: () => 0 }, () => {});
+  const monitor = new ServerMonitor(idle, () => {});
   for (let event = 0; event < RECENT_EVENTS + 5; event++)
     monitor.activity("ABCDEFGH", { type: "joined", players: 1 });
   assert.equal(monitor.events.length, RECENT_EVENTS);
@@ -70,7 +100,7 @@ test("server monitor summarizes each minute while active, then logs one idle sum
   const lines: string[] = [];
   let rooms = [room];
   const monitor = new ServerMonitor(
-    { samples: () => rooms, sockets: () => rooms.length * 3 },
+    { samples: () => rooms, sockets: () => rooms.length * 3, wireBytes: noWire },
     (line) => lines.push(line),
   );
   for (let sample = 0; sample < 5; sample++) monitor.sample();
@@ -92,9 +122,7 @@ test("server monitor summarizes each minute while active, then logs one idle sum
 
 test("server monitor logs room lifecycle in plain lines", () => {
   const lines: string[] = [];
-  const monitor = new ServerMonitor({ samples: () => [], sockets: () => 0 }, (line) =>
-    lines.push(line),
-  );
+  const monitor = new ServerMonitor(idle, (line) => lines.push(line));
   monitor.activity("ABCDEFGH", { type: "created" });
   monitor.activity("ABCDEFGH", { type: "joined", players: 1 });
   monitor.activity("ABCDEFGH", { type: "left", players: 0, code: 1006 });

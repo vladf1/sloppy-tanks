@@ -207,6 +207,13 @@ test("node server streams the dashboard without revealing room codes", async () 
     [["DAS•••••", 1]],
   );
   for (const { text } of [hello, reading]) assert.doesNotMatch(text, /DASHROOM/);
+  const points = server.monitor.history;
+  assert.ok(
+    points.some((point) => point.wireSentKBps > 0),
+    "socket bytes are counted",
+  );
+  assert.ok(points.some((point) => (point.receivedMessages.join ?? 0) > 0));
+  assert.ok(points.some((point) => (point.sentMessages.welcome ?? 0) > 0));
   assert.match(hello.text + reading.text, /DAS•••••/, "events and rooms show the masked code");
   viewer.close();
   player.socket.send(JSON.stringify({ type: "leave", roundId: 0 }));
