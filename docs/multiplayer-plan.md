@@ -18,7 +18,7 @@ Single-player must pay minimal cost for multiplayer support. Load the multiplaye
 | Game mode          | Team Battle; up to 8 players, at most 6 per team; bots fill the 12 seats                                                                              | Preserves the existing six-versus-six roster. Players choose a team with room and a player-legal tank.                                                          |
 | Latency handling   | Remote entities interpolated behind an adaptive 70–250 ms playout buffer; local aim immediate; local hull extrapolated at most 100 ms with correction | No movement prediction initially. If that test fails, bring prediction into v1 before building the client.                                                      |
 | Portability        | Room logic in plain TypeScript, separate from any transport                                                                                           | Made the move from Durable Objects to Node a small wrapper change. Replacing the custom replication protocol with Colyseus would still be a separate project.   |
-| Cost               | A small VPS at a flat monthly price                                                                                                                   | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `npm run vps:stats`.                |
+| Cost               | A small VPS at a flat monthly price                                                                                                                   | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `pnpm run vps:stats`.               |
 
 Not planned for v1: WebTransport, accounts or public matchmaking, co-op Solo Assault, the full per-player battle report (v1 shows a scoreboard), persisted live-match recovery, and production rollout. Own-tank movement prediction is deferred only if M1b demonstrates acceptable controls at the tested latencies.
 
@@ -70,11 +70,11 @@ Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame
 
 Rate limits run before a room is created or joined: 60 connection attempts/minute/IP and 120/minute overall. They reduce accidental room creation. Rooms also enforce 8 players, 6 per team, message/action limits, a 30-second empty-room grace, 5-minute idle lobby/results expiry and 30-minute absolute lifetime. Hidden/menu clients receive no snapshot backlog and resume from a fresh full baseline.
 
-Run `npm run check`, `npm run check:browser`, `npm run check:multiplayer-loading`, `npm run check:multiplayer`, and the [player harness](../server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `npm test`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
+Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-loading`, `pnpm run check:multiplayer`, and the [player harness](../server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `pnpm test`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 
-- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `npm run vps:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
+- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `pnpm run vps:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
 - **Bandwidth:** each client receives about 55–110 KB/s of JSON snapshots, uncompressed. That counts against the VPS plan's monthly transfer; binary encoding or compression would cut it.
 - **Placement:** every room runs where the VPS is, so friends far from it pay that distance in RTT. Record per-player RTT in M6.
 - **Restarts:** rooms are not persisted. A deploy or restart ends every live match with a room-reset notice; a crash leaves clients to reconnect into a fresh lobby.
@@ -170,17 +170,17 @@ Initial defaults below become named constants and use the server's clock; adjust
 
 ## Milestones
 
-Every implementation PR ends with `npm run check` passing, including server types/build once introduced. Add focused deterministic tests for changed behavior and run `npm run check:browser` for input, menu or rendering changes. Long hosting and latency measurements remain manual evidence, outside normal CI. Sizes are relative: S, M, L.
+Every implementation PR ends with `pnpm run check` passing, including server types/build once introduced. Add focused deterministic tests for changed behavior and run `pnpm run check:browser` for input, menu or rendering changes. Long hosting and latency measurements remain manual evidence, outside normal CI. Sizes are relative: S, M, L.
 
-Before the first simulation edit (M2 PR A), capture a fresh `npm run validate` baseline. Compare subsequent simulation changes with that baseline, allowing only `wallSeconds`. Inspect and restore only the generated validation output from this task. Preserve the original seeded behavior, not merely the results of an already-refactored parent revision.
+Before the first simulation edit (M2 PR A), capture a fresh `pnpm run validate` baseline. Compare subsequent simulation changes with that baseline, allowing only `wallSeconds`. Inspect and restore only the generated validation output from this task. Preserve the original seeded behavior, not merely the results of an already-refactored parent revision.
 
 Order: M1 hosting experiment and M1b local latency spike → M2 simulation/view boundaries → M3a early playable integration → finish M3/M4 → M5 full client flow → M6 friends playtest. M1b needs no server and no simulation changes, so it can run alongside M1. Share scheduling/timing code between the experiments and eventual host where practical. A minimal read-only presentation boundary may be pulled forward from M2 to make M1b faithful; capture the baseline first. The two-browser latency cases begin in M3a and are repeated in M5.
 
 ### M1: Server skeleton and hosting gate (M)
 
 - Create `server/` with a workerd physics entry and Rapier loader and a Durable Object running a bot-driven Team Battle at 60 Hz. Prototype a 20 Hz JSON stream with rounded numbers containing tanks, projectiles, moving cover/debris and events, plus representative full-state bursts. Position-only traffic is insufficient evidence for the final workload.
-- Add `wrangler`, `esbuild` as a direct dependency, and `@cloudflare/workers-types` as dev dependencies, then run `npm ci`. Add `server:dev`, `server:build` and `server:deploy`; ensure the latter two build the current source before use.
-- Add `server/tsconfig.json` and include it in `npm run typecheck`. Replace the inline `tsc --noEmit` in `build` with that combined type check, and add `server:build` to `npm run check`. Thus the gate checks both targets once through `build` and also verifies the Workers bundle; extending an otherwise unused `typecheck` script would not suffice. Lint server source; exclude `server/dist/` and Wrangler outputs from Git, Prettier and ESLint.
+- Add `wrangler`, `esbuild` as a direct dependency, and `@cloudflare/workers-types` as dev dependencies, then run `pnpm install`. Add `server:dev`, `server:build` and `server:deploy`; ensure the latter two build the current source before use.
+- Add `server/tsconfig.json` and include it in `pnpm run typecheck`. Replace the inline `tsc --noEmit` in `build` with that combined type check, and add `server:build` to `pnpm run check`. Thus the gate checks both targets once through `build` and also verifies the Workers bundle; extending an otherwise unused `typecheck` script would not suffice. Lint server source; exclude `server/dist/` and Wrangler outputs from Git, Prettier and ESLint.
 - Use the same bounded scheduling policy intended for M4. Drive the room from one 50 ms timer: each callback runs the fixed 1/60 s steps owed by elapsed time (normally three) and then sends one snapshot. That gives a third of the wakeups of a 60 Hz timer with the same visible latency, and every snapshot lines up with a step batch. Allow at most six steps in a callback and a 250 ms maximum accumulated debt. Retain debt between callbacks; if it exceeds that bound, terminate the round with an overload reason rather than silently skipping physics or entering an unbounded catch-up loop. Verify the runtime clock advances correctly during timer-driven and quiet periods.
 - Deploy to `workers.dev` on Free. Include one deliberate timer stall to verify the overload path separately from normal-load measurements. The expected load is 2–4 friends, so size the normal-load matrix to it:
   - repeated cold room creation;
@@ -256,7 +256,7 @@ Keep single-player Team Battle and Solo Assault behavior intact and compare agai
 - Also start late-joining mirrors from full baselines at several points, such as just after destruction and after bodies settle, and assert that they converge to the same render-state.
 - This covers real tank state, destroyed cover and stumps, collapse rubble, sleeping and waking bodies, fragment cleanup and capacity removal, pickups and respawns as they occur in matches.
 - It also fails whenever a field that rendering reads is not replicated, now or in a later feature. That is the ongoing cost of a client that does not simulate.
-- Keep a short window per map in `npm test`. Full-length matches are a manual script.
+- Keep a short window per map in `pnpm test`. Full-length matches are a manual script.
 
 Targeted tests cover what the round trip cannot observe:
 
@@ -270,7 +270,7 @@ Targeted tests cover what the round trip cannot observe:
 
 Measure actual UTF-8 serialized bytes per client per second, steady/burst snapshot sizes, event traffic, acknowledgements and full states on every map, with the wire rounding applied. Set documented budgets from those measurements and preserve representative fixtures for fast regression checks. Binary/Colyseus estimates are not acceptance thresholds for JSON.
 
-- **Done when:** the harness and the round-trip test run deterministically in `npm test`, all lifecycle/failure cases pass, wire-size budgets are recorded, and the fixture renders through the same mirror used by the eventual client.
+- **Done when:** the harness and the round-trip test run deterministically in `pnpm test`, all lifecycle/failure cases pass, wire-size budgets are recorded, and the fixture renders through the same mirror used by the eventual client.
 
 ### M4: Complete Durable Object server (M)
 
@@ -307,7 +307,7 @@ Measure actual UTF-8 serialized bytes per client per second, steady/burst snapsh
 ### M6: Playtest with friends (S)
 
 - Additional automated work does not require another home network: run bounded synthetic players from a separate Cloudflare test Worker/Durable Object against the public room endpoint; mix them with a local browser and record disconnects, reconnect identity, full/delta validity and bandwidth. Keep the runner manually invoked, authenticated and duration/player capped. This tests a client outside the local machine, but Cloudflare-to-Cloudflare traffic does not establish residential/mobile network behavior or human control feel. The runner is a follow-up, not deployed yet.
-- Run the server on `workers.dev` and publish the client to the dedicated dev site with `npm run deploy:dev`. Keep production unchanged. Check public game/test assets and build metadata after publishing.
+- Run the server on `workers.dev` and publish the client to the dedicated dev site with `pnpm run deploy:dev`. Keep production unchanged. Check public game/test assets and build metadata after publishing.
 - Record actual RTT per player and region, input-to-visible delay, jitter, bandwidth, request-quota use, deployed CPU/limit metrics, tick debt, full-state bursts, errors and player feedback. Compare with M1b's tested latency envelope rather than reporting only same-machine success.
 - **Done when:** several 5-minute rounds with 2–4 players on different networks finish without unexpected desync or room loss, hidden-tab and simultaneous-reconnect tests recover, deliberate server restarts return everyone clearly to the lobby, and responsiveness is acceptable. Prioritize follow-ups from the recorded results before considering production rollout.
 
@@ -341,7 +341,7 @@ Choose from the playtest results:
 | A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                  |
 | The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests          |
 | JSON traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                   |
-| The VPS runs out of CPU, memory or monthly transfer                       | Watch `npm run vps:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan   |
+| The VPS runs out of CPU, memory or monthly transfer                       | Watch `pnpm run vps:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan  |
 | Friends far from the VPS get high RTT                                     | Record per-player RTT; pick the VPS region for the expected players, or add hosts in other regions            |
 
 ## Gameplay defaults and decisions still requiring evidence

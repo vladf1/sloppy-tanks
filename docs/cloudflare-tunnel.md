@@ -10,7 +10,7 @@ Do not create public links automatically for development or browser checks.
   run the static server and tunnel as separate long-running processes:
 
   ```sh
-  npm run build
+  pnpm run build
   tunnel_root=$(mktemp -d /tmp/sloppy-tunnel-XXXXXX)
   ln -s "$PWD/dist" "$tunnel_root/sloppy-tanks"
   python3 -m http.server 4179 --bind 127.0.0.1 --directory "$tunnel_root"

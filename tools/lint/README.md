@@ -5,7 +5,7 @@ ESLint 8.70 only supports compiler APIs below TypeScript 6.1, so this isolated
 package pins TypeScript 6.0.3 for parsing and type-aware lint analysis. It never
 compiles the game.
 
-The root `postinstall` runs `npm ci --prefix tools/lint`, so both lockfiles
+The root `postinstall` runs `pnpm --dir tools/lint install --frozen-lockfile`, so both lockfiles
 belong in version control. This avoids unsupported peer overrides while keeping
 TypeScript 7 builds.
 

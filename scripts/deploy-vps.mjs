@@ -30,7 +30,7 @@ if (process.argv.includes("--provision")) {
 
 const version = await contentVersion();
 console.log(`Deploying Node multiplayer server (content ${version}) to ${VPS_SSH}`);
-run("npm", ["run", "server:build"]);
+run("pnpm", ["run", "server:build"]);
 run("scp", [
   ...SSH_OPTIONS,
   "server/dist/server.mjs",
