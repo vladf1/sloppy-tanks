@@ -19,11 +19,12 @@ const info = JSON.parse(
 // inline startup script only when the build has a multiplayer server URL.
 const index = readFileSync(new URL("../dist-dev/index.html", import.meta.url), "utf8");
 const assets = new URL("../dist-dev/assets/", import.meta.url);
-const clientHasServer = readdirSync(assets).some(
-  (name) =>
-    /^client-.*\.js$/.test(name) &&
-    readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL),
-);
+const scripts = readdirSync(assets).filter((name) => name.endsWith(".js"));
+// Code splitting may move the server address into a chunk that the room page shares with
+// Battle Setup's room list, so look for it in any script beside the client entry.
+const clientHasServer =
+  scripts.some((name) => /^client-.*\.js$/.test(name)) &&
+  scripts.some((name) => readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL));
 if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
   throw new Error(
     "dist-dev has no multiplayer entry or dev server URL; rebuild with npm run build:dev",
