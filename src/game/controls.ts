@@ -23,8 +23,14 @@ export class Controls {
   ny = 0;
   ammoSelection: AmmoSelection | undefined;
   lastAmmoScroll = -Infinity;
+  /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
+  look = 0;
+  /** Called on V; the owner decides whether the view may change. */
+  toggleView = () => {};
+  /** While first person steers, clicks capture the pointer and losing it pauses. */
+  private pointerWanted = false;
   constructor(
-    canvas: HTMLCanvasElement,
+    private readonly canvas: HTMLCanvasElement,
     public pause: () => void,
     zoom: (amount: number) => void,
     public active: () => boolean = () => true,
@@ -56,6 +62,12 @@ export class Controls {
         }
         return;
       }
+      if (e.code === "KeyV") {
+        if (!e.repeat) {
+          this.toggleView();
+        }
+        return;
+      }
       if (e.code === "Space" && target?.tagName === "BUTTON") {
         return;
       }
@@ -82,6 +94,7 @@ export class Controls {
         return;
       }
       this.touch.aiming = false;
+      this.look += e.movementX ?? 0;
       const r = canvas.getBoundingClientRect();
       this.nx = ((e.clientX - r.left) / r.width) * 2 - 1;
       this.ny = 1 - ((e.clientY - r.top) / r.height) * 2;
@@ -98,6 +111,7 @@ export class Controls {
         this.mine = true;
       }
       canvas.focus();
+      this.capturePointer();
     });
     window.addEventListener("pointerup", (e) => {
       if (e.pointerType === "touch") {
@@ -134,6 +148,19 @@ export class Controls {
       // window. Release held input, but keep the round running in those cases.
       this.clear();
     });
+    document.addEventListener("pointerlockchange", () => {
+      // Esc releases a captured pointer, sometimes without a keydown reaching the
+      // page. Without the pointer the turret cannot turn, so treat it as a pause;
+      // switching windows only releases input, as blur does elsewhere.
+      if (
+        this.pointerWanted &&
+        document.pointerLockElement !== canvas &&
+        document.hasFocus?.() !== false
+      ) {
+        this.clear();
+        pause();
+      }
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         this.clear();
@@ -143,7 +170,27 @@ export class Controls {
       }
     });
   }
+  /** First person wants raw mouse motion; release the pointer whenever it stops steering. */
+  holdPointer(wanted: boolean): void {
+    this.pointerWanted = wanted;
+    if (!wanted && document.pointerLockElement === this.canvas) {
+      document.exitPointerLock();
+    }
+  }
+  /** Needs a user gesture: a click on the arena or the key that entered first person. */
+  capturePointer(): void {
+    if (this.pointerWanted && document.pointerLockElement !== this.canvas) {
+      // Unsupported or refused locks still turn with ordinary mouse motion.
+      Promise.resolve(this.canvas.requestPointerLock?.()).catch(() => {});
+    }
+  }
+  takeLook(): number {
+    const look = this.look;
+    this.look = 0;
+    return look;
+  }
   clear(): void {
+    this.look = 0;
     this.touch.clear();
     this.keys.clear();
     this.fire = false;

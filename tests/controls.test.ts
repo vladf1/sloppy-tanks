@@ -203,3 +203,62 @@ test("touch does not use mouse firing or aiming, and unrelated touch release can
   assert.equal(f.controls.command(0).fire, true);
   f.dispose();
 });
+
+test("V toggles the view once per press, and mouse travel is drained per frame", () => {
+  const f = fixture();
+  let toggles = 0;
+  f.controls.toggleView = () => toggles++;
+  f.emit(f.win, "keydown", { code: "KeyV" });
+  f.emit(f.win, "keydown", { code: "KeyV", repeat: true });
+  assert.equal(toggles, 1);
+  f.emit(f.canvas, "pointermove", { clientX: 10, clientY: 10, movementX: 12 });
+  f.emit(f.canvas, "pointermove", { clientX: 5, clientY: 10, movementX: -5 });
+  f.emit(f.canvas, "pointermove", { pointerType: "touch", movementX: 40 });
+  assert.equal(f.controls.takeLook(), 7);
+  assert.equal(f.controls.takeLook(), 0);
+  f.emit(f.canvas, "pointermove", { clientX: 5, clientY: 10, movementX: 9 });
+  f.controls.clear();
+  assert.equal(f.controls.takeLook(), 0);
+  f.dispose();
+});
+
+test("first person captures the pointer on click and pauses when Esc releases it", () => {
+  const f = fixture();
+  let requests = 0;
+  let exits = 0;
+  Object.assign(f.canvas, {
+    requestPointerLock() {
+      requests++;
+      Object.assign(f.doc, { pointerLockElement: f.canvas });
+      return Promise.resolve();
+    },
+  });
+  Object.assign(f.doc, {
+    pointerLockElement: null,
+    hasFocus: () => true,
+    exitPointerLock() {
+      exits++;
+      Object.assign(f.doc, { pointerLockElement: null });
+      f.emit(f.doc, "pointerlockchange", {});
+    },
+  });
+  // Overhead play never captures the pointer.
+  f.emit(f.canvas, "pointerdown", { button: 0 });
+  assert.equal(requests, 0);
+  f.controls.holdPointer(true);
+  f.emit(f.canvas, "pointerdown", { button: 0 });
+  f.emit(f.doc, "pointerlockchange", {});
+  assert.deepEqual([requests, f.pauses], [1, 0]);
+  // Leaving first person releases the pointer without pausing.
+  f.controls.holdPointer(false);
+  assert.deepEqual([exits, f.pauses], [1, 0]);
+  f.controls.holdPointer(true);
+  f.controls.capturePointer();
+  f.emit(f.canvas, "pointerdown", { button: 0 });
+  assert.equal(f.controls.fire, true);
+  // The browser releases the pointer itself on Esc.
+  Object.assign(f.doc, { pointerLockElement: null });
+  f.emit(f.doc, "pointerlockchange", {});
+  assert.deepEqual([requests, f.pauses, f.controls.fire], [2, 1, false]);
+  f.dispose();
+});

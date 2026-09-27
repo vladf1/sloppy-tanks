@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const checks = [
   "browser-check.mjs",
+  "first-person-check.mjs",
   "startup-check.mjs",
   "map-start-check.mjs",
   "hud-feedback-check.mjs",

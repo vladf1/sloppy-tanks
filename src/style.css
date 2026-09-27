@@ -830,6 +830,62 @@ h2 {
 #death-cause:empty {
   display: none;
 }
+/* First person: the arena seen through a periscope. The frame only darkens
+   the edges, so the scoreboard, ammo and notices stay readable above it. */
+#cockpit {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 78% 74% at 50% 46%, transparent 64%, #0a121acc 90%, #05090d 100%),
+    linear-gradient(#05090d 0 4px, transparent 4px calc(100% - 4px), #05090d calc(100% - 4px));
+}
+#hud.first-person #cockpit {
+  display: block;
+}
+#view-mode {
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 0;
+  padding: 9px 12px;
+}
+#view-mode[aria-pressed="true"] {
+  background: #f0e9cecc;
+  color: #16314d;
+}
+.hull-compass {
+  position: absolute;
+  left: 50%;
+  bottom: 126px;
+  width: 54px;
+  height: 54px;
+  margin-left: -27px;
+  border: 1px solid #f0e9ce66;
+  border-radius: 50%;
+  background: #16314d99;
+}
+.hull-compass i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+.hull-compass .hull {
+  width: 20px;
+  height: 32px;
+  margin: -16px 0 0 -10px;
+  border: 2px solid #eee6cc;
+  border-top-width: 5px;
+  border-radius: 3px;
+}
+.hull-compass .gun {
+  width: 4px;
+  height: 22px;
+  margin: -22px 0 0 -2px;
+  border-radius: 2px;
+  background: #ffdf38;
+}
+
 #damage-direction {
   position: absolute;
   left: 50%;

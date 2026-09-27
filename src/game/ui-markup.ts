@@ -5,11 +5,12 @@ import type { Simulation } from "./simulation";
 
 export function hudMarkup(): string {
   return `<div id="hud">
+        <div id="cockpit" aria-hidden="true"><div class="hull-compass"><i class="hull"></i><i class="gun"></i></div></div>
         <div class="brand">SLOPPY<span>TANKS</span></div>
         <div class="scoreboard"><div class="team mint"><small id="label0">◆ BLUE</small><b id="score0">0</b></div>
         <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO ${SCORE_LIMIT}</small></div>
         <div class="team coral"><small id="label1">RED Ⅱ</small><b id="score1">0</b></div></div>
-        <div class="hud-actions"><button id="fullscreen" class="quiet" type="button" aria-label="Enter fullscreen" title="Enter fullscreen" aria-pressed="false">⛶</button><button id="pause" class="quiet" type="button" aria-label="Pause" title="Pause">Ⅱ</button></div>
+        <div class="hud-actions"><button id="view-mode" class="quiet" type="button" aria-label="First-person view" title="First-person view (V)" aria-pressed="false">◎</button><button id="fullscreen" class="quiet" type="button" aria-label="Enter fullscreen" title="Enter fullscreen" aria-pressed="false">⛶</button><button id="pause" class="quiet" type="button" aria-label="Pause" title="Pause">Ⅱ</button></div>
         <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
         <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div><b id="hp">100</b><span>HULL</span><i id="hpbar"></i></div></div>
         <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_ORDER.map(

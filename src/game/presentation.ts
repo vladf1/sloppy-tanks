@@ -39,7 +39,7 @@ import {
   updateInstances,
   storageInstances,
 } from "./render-resources";
-import { createReticle } from "./reticle";
+import { createReticle, RETICLE_HEIGHT } from "./reticle";
 import {
   createArenaFloor,
   createLighting,
@@ -62,7 +62,8 @@ import { timberParts } from "./timber-layout";
 import type { GroundKind } from "./ground-surfaces";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
-import { CAMERA, FEEDBACK, HUD_LAYER } from "./view-settings";
+import { CAMERA, FEEDBACK, FIRST_PERSON, HUD_LAYER } from "./view-settings";
+import { FirstPersonLook } from "./first-person";
 interface PickupModel extends THREE.Group {
   userData: {
     gem: THREE.Object3D;
@@ -102,6 +103,13 @@ export class Presentation {
   renderer: GameRenderer;
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(CAMERA.fieldOfView, 1, CAMERA.near, CAMERA.far);
+  /** The overhead pose, kept in first person too: wreck landing zones follow it. */
+  private overhead = new THREE.PerspectiveCamera(CAMERA.fieldOfView, 1, CAMERA.near, CAMERA.far);
+  readonly firstPerson = new FirstPersonLook();
+  /** Whether the last frame was drawn from inside the player's turret. */
+  inFirstPerson = false;
+  /** World X/Z of screen right, for stereo panning. */
+  readonly listenerRight = { x: 1, z: 0 };
   raycaster = new THREE.Raycaster();
   groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1);
   private floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -631,8 +639,10 @@ export class Presentation {
   resize(width = innerWidth, height = innerHeight, exact = false): void {
     this.renderer.setPixelRatio(exact ? 1 : Math.min(devicePixelRatio, CAMERA.maxPixelRatio));
     this.renderer.setSize(width, height, !exact);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    for (const camera of [this.camera, this.overhead]) {
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    }
   }
   private readonly touchOrigin = new THREE.Vector3();
   touchAim(position: { x: number; z: number }, dx: number, dy: number) {
@@ -656,6 +666,9 @@ export class Presentation {
     const origin = event.damageSource?.origin;
     if (!origin || Math.hypot(origin.x - event.x, origin.z - event.z) < 0.001) {
       return null;
+    }
+    if (this.inFirstPerson) {
+      return this.firstPerson.screenAngle(Math.atan2(origin.x - event.x, origin.z - event.z));
     }
     const direction = new THREE.Vector3(
       origin.x - event.x,
@@ -772,18 +785,37 @@ export class Presentation {
       overview ? 0 : THREE.MathUtils.lerp(simulation.viewer.previous.z, position.z, alpha),
     );
     const zoom = overview ? ARENA * 1.8 : this.zoom;
-    this.camera.position.set(
-      this.follow.x,
-      this.follow.y + zoom * 0.93,
-      this.follow.z + zoom * 0.72,
-    );
-    this.camera.lookAt(this.follow);
-    this.camera.updateMatrixWorld();
+    const overhead = this.overhead;
+    overhead.position.set(this.follow.x, this.follow.y + zoom * 0.93, this.follow.z + zoom * 0.72);
+    overhead.lookAt(this.follow);
+    overhead.updateMatrixWorld();
+    // Destroyed, the player watches the field from above until the respawn.
+    this.inFirstPerson = this.firstPerson.enabled && !overview && simulation.viewer.alive;
+    const camera = this.camera;
+    const fieldOfView = this.inFirstPerson ? FIRST_PERSON.fieldOfView : CAMERA.fieldOfView;
+    if (camera.fov !== fieldOfView) {
+      camera.fov = fieldOfView;
+      camera.updateProjectionMatrix();
+    }
+    if (this.inFirstPerson) {
+      // The eye position waits for the posed turret in placeFirstPersonEye();
+      // orientation is needed now because tank bars face the camera.
+      const yaw = this.firstPerson.yaw;
+      camera.rotation.set(FIRST_PERSON.pitch, yaw + Math.PI, 0, "YXZ");
+      this.listenerRight.x = -Math.cos(yaw);
+      this.listenerRight.z = Math.sin(yaw);
+    } else {
+      camera.position.copy(overhead.position);
+      camera.quaternion.copy(overhead.quaternion);
+      camera.updateMatrixWorld();
+      this.listenerRight.x = 1;
+      this.listenerRight.z = 0;
+    }
     const corners = this.corners;
     for (let i = 0; i < corners.length; i++) {
       this.raycaster.setFromCamera(
         this.pointer.set(i % 2 ? 0.8 : -0.8, i < 2 ? -0.7 : 0.65),
-        this.camera,
+        overhead,
       );
       this.raycaster.ray.intersectPlane(this.floorPlane, corners[i]);
     }
@@ -792,6 +824,25 @@ export class Presentation {
     bounds.maxX = Math.min(corners[1].x, corners[3].x);
     bounds.minZ = corners[2].z;
     bounds.maxZ = corners[0].z;
+  }
+  private readonly eye = new THREE.Vector3();
+  /** Seat the first-person camera in the posed turret, so it rides the hull's
+   * suspension, and float the reticle along the view. */
+  private placeFirstPersonEye(simulation: RenderState): void {
+    const model = this.tankMeshes.get(simulation.viewerId);
+    if (!this.inFirstPerson || !model) {
+      return;
+    }
+    const eye = FIRST_PERSON.eye[simulation.viewer.kind];
+    model.updateMatrixWorld();
+    model.userData.turret.localToWorld(this.camera.position.set(0, eye.height, eye.forward));
+    this.camera.updateMatrixWorld();
+    // The reticle's rings lie flat; stand them up to face the viewer.
+    this.crosshair.quaternion.copy(this.camera.quaternion);
+    this.crosshair.rotateX(Math.PI / 2);
+    this.crosshair.position
+      .copy(this.eye.set(0, 0, -FIRST_PERSON.reticleDistance))
+      .applyMatrix4(this.camera.matrixWorld);
   }
   private updatePlayerIndicators(
     simulation: RenderState,
@@ -809,13 +860,19 @@ export class Presentation {
     this.reticleCenter.opacity = confirmed || ready ? 1 : 0.3;
     this.reticleInk.color.setHex(confirmed ? 0xffffff : 0xfff9da);
     this.reticleCenter.color.setHex(confirmed ? 0xffffff : 0xffdf38);
-    this.crosshair.scale.setScalar(confirmed ? 1.2 : 1);
+    this.crosshair.scale.setScalar(
+      (confirmed ? 1.2 : 1) * (this.inFirstPerson ? FIRST_PERSON.reticleScale : 1),
+    );
+    if (!this.inFirstPerson) {
+      this.crosshair.quaternion.identity();
+      this.crosshair.position.y = RETICLE_HEIGHT;
+    }
     if (simulation.viewer.alive && !this.playerWasAlive) {
       this.spawnCue = FEEDBACK.spawnCueSeconds;
     }
     this.playerWasAlive = simulation.viewer.alive;
     this.spawnCue = Math.max(0, this.spawnCue - dt);
-    this.playerRing.visible = simulation.viewer.alive && !overview;
+    this.playerRing.visible = simulation.viewer.alive && !overview && !this.inFirstPerson;
     this.playerRing.position.set(
       THREE.MathUtils.lerp(simulation.viewer.previous.x, position.x, alpha),
       0,
@@ -855,7 +912,8 @@ export class Presentation {
         this.makeBar(tank.id, tank.team);
       }
       const bar = this.bars.get(tank.id)!;
-      bar.visible = tank.alive;
+      const seated = this.inFirstPerson && tank.id === simulation.viewerId;
+      bar.visible = tank.alive && !seated;
       updateTankProtection(bar, tank);
       if (!tank.alive) {
         this.hitUntil.delete(tank.id);
@@ -901,7 +959,8 @@ export class Presentation {
         "YXZ",
       );
       group.userData.turret.quaternion.copy(group.userData.hull.quaternion);
-      group.userData.turret.rotateY(tank.aim - tank.heading);
+      // Seated, the turret turns with the view rather than a tick behind it.
+      group.userData.turret.rotateY((seated ? this.firstPerson.yaw : tank.aim) - tank.heading);
       group.userData.barrel.position.z = -tank.recoil * 0.2;
       group.userData.trackGroup.position.z =
         tank.kind === "humvee" ? 0 : (this.time * Math.hypot(velocity.x, velocity.z) * 0.4) % 0.25;
@@ -1164,6 +1223,7 @@ export class Presentation {
     this.updateCamera(simulation, alpha, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
     this.updateTanks(simulation, alpha, dt);
+    this.placeFirstPersonEye(simulation);
     this.treeDebris.update(dt);
     this.updateCover(simulation);
     this.updatePickups(simulation, dt);
@@ -1172,7 +1232,9 @@ export class Presentation {
     this.projectiles.update(simulation.shots, this.time);
     this.laserVisuals.update(simulation, alpha, dt);
     this.particleEffects.update(dt, this.time);
-    this.crosshair.visible = simulation.match.phase === "playing";
+    // A destroyed player in first person watches from above without aiming.
+    this.crosshair.visible =
+      simulation.match.phase === "playing" && (this.inFirstPerson || !this.firstPerson.enabled);
     this.updatePartBatches(simulation);
     this.renderer.info.reset();
     // Poses are unchanged across the main, shadow and reflection passes. Update

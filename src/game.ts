@@ -3,6 +3,7 @@ import type { PreparedGame } from "./game/start-menu";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
+import { Cockpit } from "./game/cockpit";
 import { TouchModeController } from "./game/touch-mode";
 import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
@@ -172,6 +173,7 @@ export async function prepareGame(
     if (!audioSystem) {
       audioSystem = new AudioSystem();
       audioSystem.volume(volume);
+      audioSystem.listenerRight = view.listenerRight;
     }
     return audioSystem;
   };
@@ -307,6 +309,17 @@ export async function prepareGame(
     },
     (event) => view.damageAngle(event),
   );
+  const look = view.firstPerson;
+  const toggleView = () => {
+    if (sim.match.phase !== "playing") {
+      return;
+    }
+    look.toggle(sim.human.aim);
+    controls.holdPointer(look.enabled);
+    controls.capturePointer();
+  };
+  controls.toggleView = toggleView;
+  const cockpit = new Cockpit(root, toggleView);
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
   ui.overlay.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-kind]")) {
@@ -331,17 +344,28 @@ export async function prepareGame(
         sim.start();
       }
       const startSim = performance.now();
+      controls.holdPointer(look.enabled && sim.match.phase === "playing");
+      const lookPixels = controls.takeLook();
       if (sim.match.phase === "playing") {
         // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.
         accumulator = Math.min(accumulator + dt, STEP * MAX_CATCH_UP_STEPS);
         const position = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
-        const aim = controls.touch.aiming
-          ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
-          : view.aim(controls.nx, controls.ny);
-        const angle = Math.atan2(aim.x - position.x, aim.z - position.z);
+        let angle: number;
+        if (look.enabled) {
+          if (sim.human.alive) {
+            const stick = controls.touch.pointers.aim === null ? 0 : controls.touch.aimX;
+            look.turn(lookPixels, stick, dt);
+          }
+          angle = look.yaw;
+        } else {
+          const aim = controls.touch.aiming
+            ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
+            : view.aim(controls.nx, controls.ny);
+          angle = Math.atan2(aim.x - position.x, aim.z - position.z);
+        }
         let steps = 0;
         while (accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
-          sim.step(controls.command(angle), playback.autoplay);
+          sim.step(look.steer(controls.command(angle)), playback.autoplay);
           accumulator -= STEP;
           steps++;
         }
@@ -376,6 +400,10 @@ export async function prepareGame(
           playback.overview,
         );
       }
+      cockpit.update(
+        sim.match.phase !== "ready" && view.inFirstPerson,
+        look.screenAngle(sim.human.heading),
+      );
       const renderCost = performance.now() - renderStart;
       stats.frame(now, simCost, renderCost);
       if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
