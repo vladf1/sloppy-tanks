@@ -67,18 +67,62 @@ const MAX_CHANGES = 4096;
 /** Fields whose null is a real value rather than a deletion. */
 const COVER_NULLABLE = ["hp", "maxHp"];
 const MATCH_NULLABLE = ["winner"];
+/**
+ * Equality of captured wire values, as their JSON would compare: finite numbers, strings,
+ * booleans, null, arrays and plain records without undefined fields.
+ */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (!same(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  let fields = 0;
+  for (const field in left) {
+    if (!same(left[field], right[field])) {
+      return false;
+    }
+    fields++;
+  }
+  // Every left field matched, so equal counts mean the right has no extra field.
+  for (const _field in right) {
+    fields--;
+  }
+  return fields === 0;
+}
+/** Current fields keep their order, followed by deleted fields as null. */
 function changedFields(previous: object | undefined, next: object): FieldChanges | undefined {
   const before = previous as Record<string, unknown> | undefined;
   const current = next as Record<string, unknown>;
-  const changes: FieldChanges = {};
-  let changed = false;
-  for (const field of new Set([...Object.keys(current), ...Object.keys(before ?? {})])) {
-    if (!before || JSON.stringify(before[field]) !== JSON.stringify(current[field])) {
-      changes[field] = current[field] ?? null;
-      changed = true;
+  if (!before) {
+    return { ...current };
+  }
+  let changes: FieldChanges | undefined;
+  for (const field in current) {
+    if (!same(before[field], current[field])) {
+      (changes ??= {})[field] = current[field];
     }
   }
-  return changed ? changes : undefined;
+  for (const field in before) {
+    if (!Object.hasOwn(current, field)) {
+      (changes ??= {})[field] = null;
+    }
+  }
+  return changes;
 }
 function applyChanges(
   before: object | undefined,
@@ -106,36 +150,50 @@ function records(scene: Scene): Map<string, Record<string, unknown>> {
   }
   return result;
 }
+/** Each kind's records by entity id, so the host diffs frames without composite keys. */
+type EntityIndex = { [K in EntityType]: Map<number, object> };
+function indexEntities(scene: Scene): EntityIndex {
+  const index = {} as EntityIndex;
+  for (const kind of ENTITY_TYPES) {
+    const byId = (index[kind] = new Map<number, object>());
+    for (const entity of scene.entities[kind]) {
+      if (byId.has(entity.id)) {
+        throw new Error("Duplicate entity id");
+      }
+      byId.set(entity.id, entity);
+    }
+  }
+  return index;
+}
 /** Static fields are sent at creation; updates contain only changed fields, including null deletions. */
 export class StateStream {
   seq = 0;
-  private previous = new Map<string, Record<string, unknown>>();
+  private previous?: EntityIndex;
   private previousMatch?: Scene["match"];
   constructor(private readonly identity: Identity) {}
   full(state: Scene, tick: number, eventCursor: number): FullState {
-    if (this.seq === 0 && !this.previous.size) {
-      this.previous = records(state);
+    if (!this.previous) {
+      this.previous = indexEntities(state);
       this.previousMatch = state.match;
     }
     return { ...this.identity, type: "full", seq: this.seq, tick, eventCursor, state };
   }
   snapshot(state: Scene, tick: number, events: TimedEvent[], traces: ShotTrace[]): Snapshot {
-    const next = records(state);
+    const next = indexEntities(state);
     const updates: NonNullable<Snapshot["updates"]> = {};
     const removed: NonNullable<Snapshot["removed"]> = {};
     for (const kind of ENTITY_TYPES) {
+      const before = this.previous?.[kind];
       for (const entity of state.entities[kind]) {
-        const name = key(kind, entity.id);
-        const changes = changedFields(this.previous.get(name), next.get(name)!);
+        const changes = changedFields(before?.get(entity.id), entity);
         if (changes) {
           (updates[kind] ??= {})[entity.id] = changes;
         }
       }
-    }
-    for (const name of this.previous.keys()) {
-      if (!next.has(name)) {
-        const [kind, entityId] = name.split(":") as [EntityType, string];
-        (removed[kind] ??= []).push(Number(entityId));
+      for (const entityId of before?.keys() ?? []) {
+        if (!next[kind].has(entityId)) {
+          (removed[kind] ??= []).push(entityId);
+        }
       }
     }
     const match = changedFields(this.previousMatch, state.match);

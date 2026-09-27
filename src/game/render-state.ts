@@ -127,6 +127,21 @@ export interface RenderState {
   readonly customMap?: Simulation["customMap"];
 }
 
+/** Poses shared by local views and the multiplayer capture. A dead tank rests at its last
+ * planar position; destroyed cover without a body stays at its footprint. */
+export function tankPosition(tank: Tank): RenderPosition {
+  return tank.alive ? tank.body.translation() : { ...tank.previous, y: 0.65 };
+}
+export function tankVelocity(tank: Tank): RenderPosition {
+  return tank.alive ? tank.body.linvel() : { x: 0, y: 0, z: 0 };
+}
+export function coverPosition(cover: Cover): RenderPosition {
+  return cover.body.isValid() ? cover.body.translation() : { x: cover.x, y: 0, z: cover.z };
+}
+export function coverRotation(cover: Cover): RenderRotation {
+  return cover.body.isValid() ? cover.body.rotation() : { x: 0, y: 0, z: 0, w: 1 };
+}
+
 /** Stable getters avoid copying every entity every single-player frame. */
 function fields<T extends object, K extends keyof T, E extends object>(
   source: T,
@@ -175,10 +190,10 @@ class LocalRenderState implements RenderState {
     const simulation = this.simulation;
     return fields(tank, TANK_FIELDS, {
       get position() {
-        return tank.alive ? tank.body.translation() : { ...tank.previous, y: 0.65 };
+        return tankPosition(tank);
       },
       get velocity() {
-        return tank.alive ? tank.body.linvel() : { x: 0, y: 0, z: 0 };
+        return tankVelocity(tank);
       },
       get maxHp() {
         return simulation.maxHealth(tank);
@@ -191,10 +206,10 @@ class LocalRenderState implements RenderState {
   private coverViews = new EntityViews<Cover, RenderCover>((cover) =>
     fields(cover, COVER_FIELDS, {
       get position() {
-        return cover.body.isValid() ? cover.body.translation() : { x: cover.x, y: 0, z: cover.z };
+        return coverPosition(cover);
       },
       get rotation() {
-        return cover.body.isValid() ? cover.body.rotation() : { x: 0, y: 0, z: 0, w: 1 };
+        return coverRotation(cover);
       },
     }),
   );

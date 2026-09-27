@@ -1,15 +1,21 @@
 import {
-  renderState,
+  coverPosition,
+  coverRotation,
+  tankPosition,
+  tankVelocity,
   type RenderState,
   type RenderTank,
   type RenderCover,
   type RenderFragment,
+  type RenderPosition,
+  type RenderRotation,
   type RenderShot,
 } from "../game/render-state";
 import type { Simulation } from "../game/simulation";
 import { DEBRIS_CLEANUP_SECONDS } from "../game/debris-cleanup";
 import { FRAGMENT_CAPACITY } from "../game/simulation-rules";
-import type { Match, Mine, Pickup, SimEvent } from "../game/types";
+import type { TimberJoin, TimberPart } from "../game/timber-layout";
+import type { Cover, Fragment, Match, Mine, Pickup, SimEvent, Tank } from "../game/types";
 import { SCENARIOS, type Scenario } from "./scenarios";
 import {
   array,
@@ -359,67 +365,323 @@ const VALUES = new Set([
   "time",
 ]);
 export const PRECISION = { position: 1000, rotation: 10000, value: 100 };
-/** Only already-projected plain records enter this rounding pass. */
+function wireNumber(value: number, scale: number): number {
+  if (!Number.isFinite(value)) {
+    throw new Error("Non-finite wire number");
+  }
+  return Math.round(value * scale) / scale || 0;
+}
+/** Rounds already-projected plain records (events, traces) by field name: rotation and
+ * ANGLES fields to PRECISION.rotation, VALUES to PRECISION.value, others to PRECISION.position. */
 export function rounded<T>(value: T): T {
   const visit = (item: unknown, key = "", parent = ""): unknown => {
     if (typeof item === "number") {
-      if (!Number.isFinite(item)) {
-        throw new Error("Non-finite wire number");
-      }
-      const scale =
+      return wireNumber(
+        item,
         parent === "rotation" || ANGLES.has(key)
           ? PRECISION.rotation
           : VALUES.has(key)
             ? PRECISION.value
-            : PRECISION.position;
-      return Math.round(item * scale) / scale || 0;
+            : PRECISION.position,
+      );
     }
     if (Array.isArray(item)) {
       return item.map((entry) => visit(entry, key));
     }
     if (item && typeof item === "object") {
-      return Object.fromEntries(
-        Object.entries(item)
-          .filter(([, entry]) => entry !== undefined)
-          .map(([field, entry]) => [field, visit(entry, field, key)]),
-      );
+      const result: Record<string, unknown> = {};
+      for (const field in item) {
+        const entry = (item as Record<string, unknown>)[field];
+        if (entry !== undefined) {
+          result[field] = visit(entry, field, key);
+        }
+      }
+      return result;
     }
     return item;
   };
   return visit(value) as T;
 }
+
+/*
+ * The host writes each wire record directly instead of reading and rounding generic views
+ * every frame: the fields and key order of its reader, with the precision `rounded` gives that
+ * field name. Integer fields (ids, counts, colours, seeds, teams) are already exact. A new
+ * wire field belongs in both its reader and its function here; tests/scene-capture.test.ts
+ * holds the capture to the reader-and-rounded reference byte for byte, and clients still
+ * validate everything they receive.
+ */
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
+const round = {
+  position: (value: number) => wireNumber(value, PRECISION.position),
+  rotation: (value: number) => wireNumber(value, PRECISION.rotation),
+  value: (value: number) => wireNumber(value, PRECISION.value),
+};
+const vector = (v: RenderPosition): RenderPosition => ({
+  x: round.position(v.x),
+  y: round.position(v.y),
+  z: round.position(v.z),
+});
+const quaternion = (q: RenderRotation): RenderRotation => ({
+  x: round.rotation(q.x),
+  y: round.rotation(q.y),
+  z: round.rotation(q.z),
+  w: round.rotation(q.w),
+});
+function wireTank(tank: Tank, maxHp: number): WireTank {
+  return {
+    id: tank.id,
+    life: tank.life,
+    name: tank.name,
+    kind: tank.kind,
+    team: tank.team,
+    human: tank.human,
+    alive: tank.alive,
+    position: vector(tankPosition(tank)),
+    velocity: vector(tankVelocity(tank)),
+    heading: round.rotation(tank.heading),
+    aim: round.rotation(tank.aim),
+    hp: round.value(tank.hp),
+    maxHp: round.value(maxHp),
+    xp: round.value(tank.xp),
+    shield: round.value(tank.shield),
+    shieldPoints: round.value(tank.shieldPoints),
+    protection: round.value(tank.protection),
+    laser: round.value(tank.laser),
+    recoil: round.value(tank.recoil),
+    cooldown: round.value(tank.cooldown),
+    mineCooldown: round.value(tank.mineCooldown),
+    respawn: round.value(tank.respawn),
+    rapid: round.value(tank.rapid),
+    speed: round.value(tank.speed),
+    selectedAmmo: tank.selectedAmmo,
+    ammo: {
+      spread: tank.ammo.spread,
+      rocket: tank.ammo.rocket,
+      ricochet: tank.ammo.ricochet,
+      piercing: tank.ammo.piercing,
+    },
+    kills: tank.kills,
+    deaths: tank.deaths,
+    lastCombat: round.value(tank.lastCombat),
+  };
+}
+function wireCover(cover: Cover): WireCover {
+  const wire = {
+    id: cover.id,
+    kind: cover.kind,
+    x: round.position(cover.x),
+    z: round.position(cover.z),
+    w: round.position(cover.w),
+    h: round.position(cover.h),
+    d: round.position(cover.d),
+    hp: Number.isFinite(cover.hp) ? round.value(cover.hp) : null,
+    maxHp: Number.isFinite(cover.maxHp) ? round.value(cover.maxHp) : null,
+    alive: cover.alive,
+    destructible: cover.destructible,
+    color: cover.color,
+  } as Writable<WireCover>;
+  if (cover.debrisSeed !== undefined) {
+    wire.debrisSeed = cover.debrisSeed;
+  }
+  wire.position = vector(coverPosition(cover));
+  wire.rotation = quaternion(coverRotation(cover));
+  if (cover.timberHits) {
+    wire.timberHits = cover.timberHits.map((hit) => ({
+      x: round.position(hit.x),
+      y: round.position(hit.y),
+      z: round.position(hit.z),
+      size: round.position(hit.size),
+    }));
+  }
+  if (cover.timberJoin) {
+    const join: TimberJoin = {};
+    if (cover.timberJoin.openMin !== undefined) {
+      join.openMin = cover.timberJoin.openMin;
+    }
+    if (cover.timberJoin.openMax !== undefined) {
+      join.openMax = cover.timberJoin.openMax;
+    }
+    if (cover.timberJoin.post !== undefined) {
+      join.post = cover.timberJoin.post;
+    }
+    wire.timberJoin = join;
+  }
+  if (cover.motion) {
+    wire.motion = {
+      originX: round.position(cover.motion.originX),
+      originZ: round.position(cover.motion.originZ),
+      w: round.position(cover.motion.w),
+      d: round.position(cover.motion.d),
+    };
+  }
+  return wire;
+}
+function wireTimberPart(part: TimberPart): TimberPart {
+  return {
+    kind: part.kind,
+    index: part.index,
+    x: round.position(part.x),
+    y: round.position(part.y),
+    z: round.position(part.z),
+    w: round.position(part.w),
+    h: round.position(part.h),
+    d: round.position(part.d),
+    yaw: round.rotation(part.yaw),
+    lean: round.rotation(part.lean),
+    color: part.color,
+    damage: round.position(part.damage),
+    damageSeed: part.damageSeed,
+    marks: part.marks.map((mark) => ({
+      x: round.position(mark.x),
+      y: round.position(mark.y),
+      face: mark.face,
+      size: round.position(mark.size),
+      seed: mark.seed,
+    })),
+  };
+}
+function wireFragment(fragment: Fragment): RenderFragment {
+  const wire = {
+    id: fragment.id,
+    // Clients read life only for the final fade, so a steady value until then keeps
+    // every settled piece out of the per-frame deltas.
+    life: round.value(Math.min(fragment.life, DEBRIS_CLEANUP_SECONDS)),
+    size: round.position(fragment.size),
+    color: fragment.color,
+    position: vector(fragment.body.translation()),
+    rotation: quaternion(fragment.body.rotation()),
+  } as Writable<RenderFragment>;
+  if (fragment.shape !== undefined) {
+    wire.shape = fragment.shape;
+  }
+  if (fragment.dimensions) {
+    wire.dimensions = vector(fragment.dimensions);
+  }
+  if (fragment.material !== undefined) {
+    wire.material = fragment.material;
+  }
+  if (fragment.sourceKind !== undefined) {
+    wire.sourceKind = fragment.sourceKind;
+  }
+  if (fragment.timberPart) {
+    wire.timberPart = wireTimberPart(fragment.timberPart);
+  }
+  if (fragment.treeCoverId !== undefined) {
+    wire.treeCoverId = fragment.treeCoverId;
+  }
+  if (fragment.treeCenterY !== undefined) {
+    wire.treeCenterY = round.position(fragment.treeCenterY);
+  }
+  if (fragment.createdAt !== undefined) {
+    wire.createdAt = round.value(fragment.createdAt);
+  }
+  if (fragment.expiresAt !== undefined) {
+    wire.expiresAt = round.value(fragment.expiresAt);
+  }
+  if (fragment.wreck !== undefined) {
+    wire.wreck = fragment.wreck;
+  }
+  if (fragment.part !== undefined) {
+    wire.part = fragment.part;
+  }
+  if (fragment.team !== undefined) {
+    wire.team = fragment.team;
+  }
+  return wire;
+}
+function wireShot(shot: RenderShot): RenderShot {
+  const wire = { id: shot.id, x: round.position(shot.x), z: round.position(shot.z) } as RenderShot;
+  if (shot.y !== undefined) {
+    wire.y = round.position(shot.y);
+  }
+  if (shot.visualY !== undefined) {
+    wire.visualY = round.position(shot.visualY);
+  }
+  wire.team = shot.team;
+  wire.vx = round.position(shot.vx);
+  wire.vz = round.position(shot.vz);
+  wire.weapon = shot.weapon;
+  return wire;
+}
+function wireMine(mine: Mine): Mine {
+  const wire = {
+    id: mine.id,
+    x: round.position(mine.x),
+    z: round.position(mine.z),
+    owner: mine.owner,
+  } as Mine;
+  if (mine.ownerLife !== undefined) {
+    wire.ownerLife = mine.ownerLife;
+  }
+  if (mine.damage !== undefined) {
+    wire.damage = round.position(mine.damage);
+  }
+  wire.team = mine.team;
+  wire.arm = round.value(mine.arm);
+  wire.life = round.value(mine.life);
+  return wire;
+}
+function wirePickup(pickup: Pickup): Pickup {
+  const wire: Pickup = {
+    id: pickup.id,
+    x: round.position(pickup.x),
+    z: round.position(pickup.z),
+    kind: pickup.kind,
+    available: pickup.available,
+    cooldown: round.value(pickup.cooldown),
+  };
+  if (pickup.cooldownDuration !== undefined) {
+    wire.cooldownDuration = round.value(pickup.cooldownDuration);
+  }
+  return wire;
+}
+function wireMatch(match: Match): Match {
+  const wire = {
+    phase: match.phase,
+    time: round.value(match.time),
+    scores: [match.scores[0], match.scores[1]],
+    overtime: match.overtime,
+  } as Match;
+  if (match.endedEarly !== undefined) {
+    wire.endedEarly = match.endedEarly;
+  }
+  wire.winner = match.winner;
+  wire.round = match.round;
+  return wire;
+}
+function wireMap(simulation: Simulation): Scene["map"] {
+  const map: Scene["map"] = { theme: simulation.mapTheme };
+  if (simulation.mapFloor !== undefined) {
+    map.floor = simulation.mapFloor;
+  }
+  if (simulation.mapOuterFloor !== undefined) {
+    map.outerFloor = simulation.mapOuterFloor;
+  }
+  if (simulation.mapOuterFloorExtent !== undefined) {
+    map.outerFloorExtent = round.position(simulation.mapOuterFloorExtent);
+  }
+  if (simulation.mapScale !== 1) {
+    map.scale = round.position(simulation.mapScale);
+  }
+  return map;
+}
+/** Reads the simulation's entities rather than the local render views, whose per-entity
+ * getters cost more than the capture itself. */
 export function captureScene(simulation: Simulation): Scene {
-  const view = renderState(simulation, undefined, simulation.tanks[0].id);
-  return rounded(
-    sceneReader.read({
-      entities: {
-        tanks: view.tanks,
-        covers: view.covers.map((cover) => ({
-          ...cover,
-          hp: Number.isFinite(cover.hp) ? cover.hp : null,
-          maxHp: Number.isFinite(cover.maxHp) ? cover.maxHp : null,
-        })),
-        // Clients read life only for the final fade, so a steady value until then keeps
-        // every settled piece out of the per-frame deltas.
-        fragments: view.fragments.map((fragment) => ({
-          ...fragment,
-          life: Math.min(fragment.life, DEBRIS_CLEANUP_SECONDS),
-        })),
-        shots: view.shots,
-        mines: view.mines,
-        pickups: view.pickups,
-      },
-      elapsed: view.elapsed,
-      match: view.match,
-      map: {
-        theme: view.mapTheme,
-        floor: view.mapFloor,
-        outerFloor: view.mapOuterFloor,
-        outerFloorExtent: view.mapOuterFloorExtent,
-        scale: view.mapScale === 1 ? undefined : view.mapScale,
-      },
-    }),
-  );
+  return {
+    entities: {
+      tanks: simulation.tanks.map((tank) => wireTank(tank, simulation.maxHealth(tank))),
+      covers: simulation.covers.map(wireCover),
+      fragments: simulation.fragments.map(wireFragment),
+      shots: simulation.shots.map(wireShot),
+      mines: simulation.mines.map(wireMine),
+      pickups: simulation.pickups.map(wirePickup),
+    },
+    elapsed: round.position(simulation.elapsed),
+    match: wireMatch(simulation.match),
+    map: wireMap(simulation),
+  };
 }
 export function projectScene(scene: Scene, viewerId: number): RenderState {
   const tanks = scene.entities.tanks.map((tank) => ({

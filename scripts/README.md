@@ -150,6 +150,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `node scripts/frame-pacing-check.mjs`                 | First gameplay frame and seeded combat on every map, without discarding a warm-up |
 | `npm run benchmark:loading -- <label>`                | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
 | `node --import tsx scripts/destruction-benchmark.ts`  | Headless destruction physics cost for a fixed wreck and blast scenario            |
+| `node --import tsx scripts/capture-benchmark.ts`      | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
 | `npm run validate`                                    | Ten seeded headless matches and reset checks                                      |
 | `node scripts/benchmarks/host-download-benchmark.mjs` | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
 
@@ -164,6 +165,10 @@ time on an otherwise idle machine, and report sample counts with outliers.
 - `destruction-benchmark.ts` takes an output path (default
   `artifacts/performance/destruction-benchmark.json`); compare a baseline and a
   candidate run.
+- `capture-benchmark.ts` seeds each standard map and the Scrap Yard with one
+  idle player, warms up 1200 ticks, then times 400 intervals of three steps and
+  a snapshot. It takes an output path (default
+  `artifacts/performance/capture-benchmark.json`).
 - `npm run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 
