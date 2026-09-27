@@ -11,6 +11,11 @@ import {
 } from "../src/net/protocol";
 import { StateMirror } from "../src/net/replication";
 import { projectScene, SCENARIO_ROOMS } from "../src/net/scene-codec";
+import {
+  STRESS_AMMO_CRATE_MULTIPLIER,
+  STRESS_PLAYER_HEALTH_MULTIPLIER,
+  STRESS_POWER_UP_MULTIPLIER,
+} from "../src/stress-test-level";
 import { SUPERSTRESS_MAX_FRAGMENTS, SUPERSTRESS_SCALE } from "../src/superstress-level";
 
 before(async () => {
@@ -82,13 +87,20 @@ test("a room's first player decides its scenario, which its room listing carries
     assert.equal(SCENARIO_ROOMS.superstress.teamTanks * 2, 30, "lobby rosters count the bots");
     assert.equal(sim.maxFragments, SUPERSTRESS_MAX_FRAGMENTS);
     assert.ok(sim.afterStep, "the yard's rebuild and debris rules run in the room");
+    const boosted = VEHICLES.balanced.health * STRESS_PLAYER_HEALTH_MULTIPLIER;
     const alice = sim.tanks.find((tank) => tank.name === "alice")!;
-    assert.equal(sim.maxHealth(alice), VEHICLES.balanced.health, "players are not invulnerable");
+    assert.equal(sim.maxHealth(alice), boosted, "players are nearly invulnerable");
+    assert.equal(alice.hp, boosted);
+    const bot = sim.tanks.find((tank) => !tank.human)!;
+    assert.equal(sim.maxHealth(bot), VEHICLES[bot.kind].health, "bots keep normal health");
+    assert.equal(sim.powerUpDurationMultiplier, STRESS_POWER_UP_MULTIPLIER);
+    assert.equal(sim.ammoCrateMultiplier, STRESS_AMMO_CRATE_MULTIPLIER);
     // A late player takes over one of the 30 bot tanks instead of adding a 31st.
     yard.join("erin", { scenario: "superstress" });
     assert.equal(sim.tanks.length, 30);
     assert.equal(sim.tanks.filter((tank) => tank.driver === "human").length, 3);
-    assert.ok(sim.tanks.some((tank) => tank.name === "erin" && tank.human));
+    const erin = sim.tanks.find((tank) => tank.name === "erin" && tank.human)!;
+    assert.equal(erin.hp, boosted, "a taken-over bot tank respawns with the player's hull");
 
     standard.join("carol");
     standard.join("dave", { scenario: "superstress" });
@@ -100,6 +112,8 @@ test("a room's first player decides its scenario, which its room listing carries
     assert.equal(standard.host.simulation!.mapName, "PINE VILLAGE");
     assert.equal(standard.host.simulation!.tanks.length, 12);
     assert.equal(standard.host.simulation!.afterStep, undefined);
+    const carol = standard.host.simulation!.tanks.find((tank) => tank.name === "carol")!;
+    assert.equal(standard.host.simulation!.maxHealth(carol), VEHICLES.balanced.health);
     assert.ok(
       standard.texts
         .get("carol")!

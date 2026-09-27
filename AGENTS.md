@@ -186,8 +186,11 @@ tab, which lists and creates only Scrap Yard rooms via `/rooms?scenario=`; the
 plain `/rooms` list, and so the standard page and traffic bots, never shows
 them. Joins send the page's `scenario`, the room's first player fixes it, and
 `createMultiplayerSimulation` builds every round from `SUPERSTRESS_LEVEL` with
-normal player health and round rules. Clients learn the yard from the
-replicated scene (`map.theme`, `map.scale`) and must not import level code.
+normal round rules. That level carries the stress test's health and pickup
+multipliers, so players are nearly invulnerable online as well as offline;
+only single player adds endless scoring and the scout. Clients learn the yard
+from the replicated scene (`map.theme`, `map.scale`) and must not import level
+code.
 
 ## Assets, deployment, and evidence
 

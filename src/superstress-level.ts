@@ -5,7 +5,13 @@ import type { ArenaMap } from "./game/maps";
 import type { Simulation, SimulationSetup } from "./game/simulation";
 import { TIMBER_HEALTH } from "./game/timber-layout";
 import type { Cover, CoverKind } from "./game/types";
-import { STRESS_TANK_COUNT, STRESS_TEST_SETUP } from "./stress-test-level";
+import {
+  STRESS_AMMO_CRATE_MULTIPLIER,
+  STRESS_PLAYER_HEALTH_MULTIPLIER,
+  STRESS_POWER_UP_MULTIPLIER,
+  STRESS_TANK_COUNT,
+  STRESS_TEST_SETUP,
+} from "./stress-test-level";
 
 /** Two-thirds of the standard arena's width: the same 30 tanks fight at 2.4x the density. */
 export const SUPERSTRESS_SCALE = 0.65;
@@ -206,15 +212,19 @@ export function superstressRules(simulation: Simulation): void {
   lingerDebris(simulation);
 }
 
-/** The yard, its rules and its 30-tank roster, shared by single player and multiplayer rooms. */
+/** The yard, its rules and its 30-tank roster, shared by single player and multiplayer rooms.
+ * Players get the stress test's near-invulnerable hull; as there, pickups boost every tank. */
 export const SUPERSTRESS_LEVEL = {
   customMap: SUPERSTRESS_MAP,
   roundCount: STRESS_TANK_COUNT,
   maxFragments: SUPERSTRESS_MAX_FRAGMENTS,
+  humanHealthMultiplier: STRESS_PLAYER_HEALTH_MULTIPLIER,
+  powerUpDurationMultiplier: STRESS_POWER_UP_MULTIPLIER,
+  ammoCrateMultiplier: STRESS_AMMO_CRATE_MULTIPLIER,
   afterStep: superstressRules,
 } satisfies SimulationSetup;
 
-/** Single player keeps the stress test's endless scoring and near-invulnerable scout. */
+/** Single player keeps the stress test's endless scoring and scout. */
 export const SUPERSTRESS_SETUP = {
   ...STRESS_TEST_SETUP,
   ...SUPERSTRESS_LEVEL,

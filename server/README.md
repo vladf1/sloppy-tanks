@@ -51,9 +51,11 @@ baseline. Seat tokens stay in session storage, never in shared room links.
 
 A room created from a scenario page (`superstress.html`) is a scenario room: the
 first player's page fixes its mode and its bots fill that scenario's roster (30
-tanks on the Scrap Yard). Plain `/rooms` lists only standard rooms;
-`/rooms?scenario=superstress` lists that scenario's rooms for its own page. Such
-a room sends roughly five times a standard room's snapshot bandwidth.
+tanks on the Scrap Yard, where players are nearly invulnerable, power-ups last
+ten times longer and ammo crates hold ten times as much). Plain `/rooms` lists
+only standard rooms; `/rooms?scenario=superstress` lists that scenario's rooms
+for its own page. Such a room sends roughly five times a standard room's
+snapshot bandwidth.
 
 Room traffic uses permessage-deflate at zlib level 1, which browsers negotiate
 natively. It cut a standard room client from about 68 to 17 KB/s on the wire in
