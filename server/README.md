@@ -1,7 +1,7 @@
 # Multiplayer server
 
 A single Node process hosts every room in memory. `server.ts` serves `/health`,
-`/rooms` and the `/room/CODE` WebSocket. `room-session.ts` applies the socket
+`/rooms`, `/dashboard` and the `/room/CODE` WebSocket. `room-session.ts` applies the socket
 limits, join timeout and 50 ms timer around `MatchHost`, which owns each room's
 simulation, seats and protocol. The dev site uses it at `wss://45-63-56-58.sslip.io`,
 on a Vultr VPS behind Caddy.
@@ -117,9 +117,27 @@ minute: rooms, players, sockets, traffic, CPU, memory, event-loop delay, and one
 line per room (map, phase, players, time, score, tick cost and debt, traffic). An
 idle server logs one final summary and then stays quiet.
 
-`GET /stats` returns the same figures as JSON, sampled every 10 seconds, plus totals
-since start. It lists every room code, including unlisted rooms, so it answers only
+`GET /stats` returns the same figures as JSON for the last 10 seconds, summed from the
+monitor's one-second readings, plus totals since start. It lists every room code, including unlisted rooms, so it answers only
 direct loopback requests without `X-Forwarded-For`, and Caddy also refuses the path.
 Traffic figures count UTF-16 characters of JSON, which equals bytes for ASCII.
 `tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
 `debtMs` that keeps rising means the room is falling behind real time.
+
+### Dashboard
+
+`/dashboard` (https://45-63-56-58.sslip.io/dashboard on the VPS, or
+`http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that updates every
+second: CPU, event-loop busy share and lag, GC pauses, memory, traffic, players and rooms,
+the slowest room tick against its 50 ms budget, one row per room, recent room events and
+host load, with charts of the last five minutes. `dashboard.html` is plain HTML and
+script; the server bundle inlines it, and its charts load uPlot from jsDelivr, pinned by
+version and subresource integrity. Without the library the page still shows everything
+except the charts.
+
+The page reads `/dashboard/stream`, a Server-Sent Events stream that starts with the
+recent history and events and then sends each reading. A process admits 10 viewers and
+30 stream opens per minute per IP; the page retries on its own through restarts. A room
+code is enough to join a room, so the dashboard shows only its first three characters;
+full codes stay in `/stats` and the journal. The dashboard's event-loop lag excludes the
+10 ms probe interval that the `/stats` delay figures include.

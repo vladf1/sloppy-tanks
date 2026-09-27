@@ -11,6 +11,7 @@ import { SCENARIOS } from "../src/net/scene-codec";
 import { RoomCatalog } from "./room-catalog";
 import { RoomSession, type RoomSocket } from "./room-session";
 import { ServerMonitor } from "./monitor";
+import { Dashboard } from "./dashboard";
 import { RateLimit } from "./rate-limit";
 
 /** Headroom over MAX_CLIENT_MESSAGE_BYTES; RoomSession enforces the exact protocol limit. */
@@ -52,7 +53,10 @@ export interface MultiplayerServer {
   readonly monitor: ServerMonitor;
 }
 
-/** Multiplayer host: /health, /rooms, the /room/CODE WebSocket, and loopback-only /stats. */
+/**
+ * Multiplayer host: /health, /rooms, the /room/CODE WebSocket, the public /dashboard, and
+ * loopback-only /stats.
+ */
 export function createServer(options: ServerOptions): MultiplayerServer {
   const rooms = new Map<string, RoomSession<NodeSocket>>(),
     maxRooms = options.maxRooms ?? DEFAULT_MAX_ROOMS,
@@ -62,6 +66,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     connectionRate = new RateLimit(60),
     entryRate = new RateLimit(120),
     directoryRate = new RateLimit(120),
+    dashboardRate = new RateLimit(30),
     sockets = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_FRAME_BYTES,
@@ -74,7 +79,8 @@ export function createServer(options: ServerOptions): MultiplayerServer {
         sockets: () => sockets.clients.size,
       },
       options.log,
-    );
+    ),
+    dashboard = new Dashboard(monitor, { maxRooms });
   const allowed = (request: IncomingMessage) =>
     options.allowedOrigins.includes(request.headers.origin ?? "");
   const clientIp = (request: IncomingMessage) => {
@@ -112,6 +118,13 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       );
       if (!local || request.headers["x-forwarded-for"]) return reply(404, "Not found");
       return reply(200, monitor.latest ?? monitor.sample(), { "Cache-Control": "no-store" });
+    }
+    if (path === "/dashboard" || path === "/dashboard/") return dashboard.page(response);
+    if (path === "/dashboard/stream") {
+      if (!dashboardRate.allow(clientIp(request), Date.now()))
+        return reply(429, "Too many dashboard connections; try again shortly");
+      if (!dashboard.stream(response)) return reply(503, "Too many dashboard viewers");
+      return;
     }
     if (path === "/rooms") {
       if (!allowed(request)) return reply(403, "Origin not allowed");
@@ -206,6 +219,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
         });
       }),
     async close() {
+      dashboard.close();
       monitor.stop();
       http.close();
       for (const session of [...rooms.values()]) session.reset("server-restart");

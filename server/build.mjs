@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "../scripts/content-version.mjs";
 const repo = (path) => fileURLToPath(new URL(`../${path}`, import.meta.url));
@@ -18,5 +19,8 @@ await build({
   },
   // ws optionally loads native accelerators; the pure-JS fallbacks are enough here.
   external: ["bufferutil", "utf-8-validate"],
-  define: { __MULTIPLAYER_CONTENT_VERSION__: JSON.stringify(await contentVersion()) },
+  define: {
+    __MULTIPLAYER_CONTENT_VERSION__: JSON.stringify(await contentVersion()),
+    __DASHBOARD_PAGE__: JSON.stringify(await readFile(repo("server/dashboard.html"), "utf8")),
+  },
 });

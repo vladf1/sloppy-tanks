@@ -41,6 +41,8 @@ export interface RoomSample {
   ageSeconds: number;
   tick: number;
   debtMs: number;
+  /** Timer callbacks since the previous sample, which weight tickAvgMs over longer windows. */
+  ticks: number;
   tickAvgMs: number;
   tickMaxMs: number;
   sentBytes: number;
@@ -143,6 +145,7 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
       ageSeconds: Math.round((Date.now() - this.hostCreatedMs) / 1000),
       tick: this.host.tick,
       debtMs: this.host.debtMs,
+      ticks: this.ticks,
       tickAvgMs: this.ticks ? this.tickTotalMs / this.ticks : 0,
       tickMaxMs: this.tickMaxMs,
       sentBytes: this.sentBytes,
