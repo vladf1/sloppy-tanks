@@ -585,11 +585,10 @@ export function startMultiplayer(
   const loop = (now: number) => {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
-    // Release the pointer for any menu, including ones the server opens, and
-    // drop mouse travel made while destroyed or away so the turret never jumps.
-    controls.holdPointer(
-      !!view?.firstPerson.enabled && active && phase === "playing" && !ui.menu && !document.hidden,
-    );
+    // The controls hold the pointer only while `activeInput` allows steering, so
+    // death, disconnects and any menu (including ones the server opens) free it.
+    // Mouse travel made meanwhile is dropped so the turret never jumps.
+    controls.holdPointer(!!view?.firstPerson.enabled);
     const lookPixels = controls.takeLook();
     if (active && view && control && mirror.state && !document.hidden) {
       const updateStart = performance.now();

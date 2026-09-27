@@ -71,13 +71,40 @@ try {
 
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "paused");
-  assert.equal(
-    await page.evaluate(() => document.pointerLockElement),
-    null,
-    "pausing frees the pointer for the menu",
-  );
+  // The next frame releases the pointer; the check waits for it rather than racing it.
+  await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
   await page.locator("#resume").click();
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
+
+  // Dying in first person frees the pointer, so a physical click picks the respawn vehicle.
+  // The HUD hides the pause menu a few frames after play resumes; click the arena, not it.
+  await page.waitForFunction(
+    () => getComputedStyle(document.querySelector("#overlay")).display === "none",
+  );
+  await page.mouse.click(800, 450);
+  if (locked) {
+    await page.waitForFunction(
+      () => document.pointerLockElement === document.querySelector("#game"),
+    );
+  }
+  await page.evaluate(() => {
+    const { sim } = window.sloppy;
+    Object.assign(sim.human, { protection: 0, shield: 0, shieldPoints: 0 });
+    sim.damageTank(sim.human, 999, sim.human.id, sim.human.team);
+  });
+  const heavy = page.locator("#overlay .respawn [data-kind='heavy']");
+  await heavy.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
+  await page.screenshot({ path: `${output}/respawn.png` });
+  const choice = await heavy.boundingBox();
+  await page.mouse.click(choice.x + choice.width / 2, choice.y + choice.height / 2);
+  assert.equal(await page.evaluate(() => window.sloppy.sim.humanKind), "heavy");
+  await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
+  const respawned = await page.evaluate(() => ({
+    kind: window.sloppy.sim.human.kind,
+    firstPerson: window.sloppy.view.inFirstPerson,
+  }));
+  assert.deepEqual(respawned, { kind: "heavy", firstPerson: true });
 
   await page.locator("#view-mode").click();
   await page.waitForFunction(() => !window.sloppy.view.inFirstPerson);

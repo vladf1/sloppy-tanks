@@ -344,7 +344,7 @@ export async function prepareGame(
         sim.start();
       }
       const startSim = performance.now();
-      controls.holdPointer(look.enabled && sim.match.phase === "playing");
+      controls.holdPointer(look.enabled);
       const lookPixels = controls.takeLook();
       if (sim.match.phase === "playing") {
         // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.

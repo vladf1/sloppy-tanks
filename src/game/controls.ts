@@ -170,10 +170,11 @@ export class Controls {
       }
     });
   }
-  /** First person wants raw mouse motion; release the pointer whenever it stops steering. */
-  holdPointer(wanted: boolean): void {
-    this.pointerWanted = wanted;
-    if (!wanted && document.pointerLockElement === this.canvas) {
+  /** First person wants raw mouse motion, but only while its input steers: death,
+   * pauses and menus release the pointer so their buttons can be clicked. */
+  holdPointer(firstPerson: boolean): void {
+    this.pointerWanted = firstPerson && this.active();
+    if (!this.pointerWanted && document.pointerLockElement === this.canvas) {
       document.exitPointerLock();
     }
   }
