@@ -1,12 +1,13 @@
 import { hudMarkup } from "../game/ui-markup";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "../game/ammunition";
-import { VEHICLES } from "../game/data";
+import { TEAM_NAMES, VEHICLES } from "../game/data";
 import { healthBarState } from "../game/health-bar";
+import { MAP_OPTIONS } from "../game/map-options";
 import { rankIndex, RANKS } from "../game/veterancy";
 import type { RenderState } from "../game/render-state";
 import type { SimEvent, Weapon } from "../game/types";
-import { DEFAULT_ROUND_MINUTES, type Lobby } from "./protocol";
-import type { JoinChoice } from "./connection";
+import { DEFAULT_ROUND_MINUTES, type Lobby, type Player } from "./protocol";
+import type { ConnectionEnd, EndCause, JoinChoice } from "./connection";
 import { playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
 import "./multiplayer.css";
 
@@ -19,9 +20,73 @@ export interface NetworkActions {
   resume(): void;
   end(): void;
   leave(): void;
+  /** Join this room again after the connection ended. */
+  rejoin(): void;
+  /** Battle Setup with this room selected, `notice` saying why. */
+  setup(notice: string): void;
   ammo(weapon: Weapon): void;
   volume(value: number): void;
 }
+/** The heading of each connection end, and the retry it offers besides Battle Setup. */
+const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
+  lost: { title: "CONNECTION LOST", retry: "TRY AGAIN" },
+  rejected: { title: "DISCONNECTED", retry: "TRY AGAIN" },
+  "seat-expired": { title: "SEAT EXPIRED", retry: "JOIN AGAIN" },
+  "other-tab": { title: "PLAYING IN ANOTHER TAB", retry: "PLAY HERE" },
+  "room-ended": { title: "ROOM CLOSED" },
+  outdated: { title: "GAME UPDATED" },
+};
+const CONTROLS_HELP = [
+  "WASD / arrows: drive",
+  "Mouse: aim",
+  "Hold left click: fire",
+  "Right click: mine",
+  "Q / E or 1–5: ammo",
+  "Esc: menu",
+];
+const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network-title">
+  <header class="network-head">
+    <div class="network-room"><span class="eyebrow">ROOM <b class="room-code"></b></span><button id="copy-room" class="text-button" type="button">Copy invite link</button></div>
+    <div class="network-title-row"><h2 id="network-title"></h2><div id="network-score" class="network-score" aria-label="Final score" hidden><span id="final-blue"></span> : <span id="final-red"></span></div></div>
+    <p id="network-hint"></p>
+    <p id="network-summary" class="network-summary" aria-label="Room rules"></p>
+    <p id="network-message" role="status"></p>
+  </header>
+  <div id="player-fields" class="network-fields">
+    <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
+    <label>Tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced">Balanced</option><option value="heavy">Heavy</option></select></label>
+  </div>
+  <div id="host-settings" class="network-fields">
+    <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.map((map) => `<option value="${map.id}">${map.name}</option>`).join("")}</select></label>
+    <label>Bots<select id="room-bots"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="none">None</option></select></label>
+    <label>Minutes<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label>
+  </div>
+  <div id="network-scoreboard" hidden></div>
+  <div id="network-roster"></div>
+  <div class="network-actions">
+    <button id="start-match" class="primary" type="button" hidden>START BATTLE</button>
+    <button id="network-resume" class="primary" type="button" hidden>RESUME</button>
+    <button id="network-end" class="secondary" type="button" hidden>END BATTLE</button>
+    <button id="leave-room" class="secondary" type="button">LEAVE ROOM</button>
+  </div>
+  <div class="network-local" hidden>
+    <label>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
+    <label>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label>
+  </div>
+  <p class="network-help">${CONTROLS_HELP.map((item) => `<span>${item}</span>`).join(" ")}</p>
+</section>
+<section class="menu network-connection" role="alertdialog" aria-labelledby="connection-title" aria-describedby="connection-message" hidden>
+  <span class="eyebrow">ROOM <b class="room-code"></b></span>
+  <h2 id="connection-title"></h2>
+  <p id="connection-message"></p>
+  <div class="startup-track" aria-hidden="true"><span></span></div>
+  <div class="network-actions">
+    <button id="connection-retry" class="primary" type="button"></button>
+    <button id="connection-setup" type="button"></button>
+    <button id="connection-leave" class="secondary" type="button">LEAVE ROOM</button>
+  </div>
+</section>`;
+
 export class NetworkUI {
   readonly canvas: HTMLCanvasElement;
   readonly panel: HTMLElement;
@@ -30,8 +95,13 @@ export class NetworkUI {
   private feed: { text: string; time: number }[] = [];
   private toastTime = 0;
   private hurtTime = 0;
-  private playerId = "";
   private isJoined = false;
+  /** Whether the socket is live, being (re)connected, or has given up. */
+  private link: "live" | "connecting" | ConnectionEnd = "connecting";
+  /** The finished round, read from the final replicated state. */
+  private outcome?: { match: RenderState["match"]; team: number };
+  /** The round this host ended early; its seat had the menu open, so no final state came. */
+  private endedRound?: number;
   menu = false;
   constructor(
     readonly root: HTMLElement,
@@ -45,9 +115,8 @@ export class NetworkUI {
       '<div id="network-status" role="status"></div><div id="network-respawn" hidden></div>';
     this.canvas = root.querySelector("canvas")!;
     this.panel = root.querySelector("#overlay")!;
-    this.panel.innerHTML =
-      '<section class="menu compact network-menu"><div class="eyebrow">PLAY WITH FRIENDS</div><h1>ROOM <span id="room-code"></span></h1><p id="network-message">Up to eight friends. Bots fill both teams.</p><div class="network-choices"><label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label><label>Your tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced" selected>Balanced</option><option value="heavy">Heavy</option></select></label></div><div id="host-settings" class="network-choices" hidden><label>Map<select id="room-map"><option value="village">Pine Village</option><option value="harbor">Harbor Havoc</option><option value="quarry">Dusty Dig</option></select></label><label>Bots<select id="room-difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label><label>Match length (minutes)<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label><label class="network-toggle"><input id="room-humans-only" type="checkbox" />Humans only (no bots)</label></div><div id="network-roster"></div><div id="network-scoreboard"></div><div class="network-actions"><button id="start-match" class="primary" hidden>START BATTLE</button><button id="network-resume" class="primary" hidden>RESUME</button><button id="network-end" class="secondary" hidden>END BATTLE</button><button id="copy-room" class="secondary">COPY ROOM LINK</button><button id="leave-room" class="quiet">LEAVE ROOM</button></div><label class="network-local" hidden>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label><label class="network-local" hidden>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label><p id="network-help" class="network-help">WASD / arrows to drive · Mouse to aim and fire · Right click for mines<br />Opening this menu lets a bot drive your tank. The match keeps going.</p></section>';
-    this.set("room-code", room);
+    this.panel.innerHTML = MENU_MARKUP;
+    this.panel.querySelectorAll(".room-code").forEach((code) => (code.textContent = room));
     this.input("room-round-minutes").value = String(DEFAULT_ROUND_MINUTES);
     const players = document.createElement("aside");
     players.id = "network-players";
@@ -57,9 +126,22 @@ export class NetworkUI {
     this.root.querySelector("#feed")!.setAttribute("aria-live", "polite");
     this.input("network-volume").value = localStorage.getItem("sloppy-volume") ?? "0.6";
     this.on("start-match", () => this.actions.start());
-    this.on("network-end", () => this.actions.end());
+    this.on("network-end", () => {
+      this.endedRound = this.lastLobby?.roundId;
+      this.actions.end();
+    });
     this.on("network-resume", () => this.actions.resume());
     this.on("leave-room", () => this.actions.leave());
+    this.on("connection-leave", () => this.actions.leave());
+    this.on("connection-retry", () => {
+      this.showConnecting("RECONNECTING", "Connecting to the room…");
+      this.actions.rejoin();
+    });
+    this.on("connection-setup", () => {
+      if (typeof this.link === "object") {
+        this.actions.setup(this.link.text);
+      }
+    });
     this.on("pause", () => this.actions.pause());
     this.on("fullscreen", () => {
       if (document.fullscreenElement) {
@@ -78,16 +160,18 @@ export class NetworkUI {
         }
       });
     }
-    for (const field of ["room-map", "room-difficulty", "room-humans-only", "room-round-minutes"]) {
+    for (const field of ["room-map", "room-bots", "room-round-minutes"]) {
       this.root.querySelector("#" + field)!.addEventListener("change", () => {
         const length = this.input("room-round-minutes") as HTMLInputElement;
-        if (!length.reportValidity()) {
+        if (!this.lastLobby || !length.reportValidity()) {
           return;
         }
+        const bots = this.input("room-bots").value;
+        // "None" keeps the last difficulty for when bots come back.
         this.actions.settings(
           this.input("room-map").value,
-          this.input("room-difficulty").value,
-          this.root.querySelector<HTMLInputElement>("#room-humans-only")!.checked,
+          bots === "none" ? this.lastLobby.settings.difficulty : bots,
+          bots === "none",
           Number(length.value),
         );
       });
@@ -98,10 +182,8 @@ export class NetworkUI {
     this.on("copy-room", () => {
       void navigator.clipboard
         .writeText(location.href)
-        .then(() => this.set("network-message", "Room link copied. Send it to your friends."))
-        .catch(() => {
-          this.set("network-message", "Copy the address from your browser to invite friends.");
-        });
+        .then(() => this.notice("Invite link copied. Send it to your friends."))
+        .catch(() => this.notice("Copy the address from your browser to invite friends."));
     });
   }
   private input(name: string): HTMLInputElement | HTMLSelectElement {
@@ -109,6 +191,9 @@ export class NetworkUI {
   }
   private button(name: string): HTMLButtonElement {
     return this.root.querySelector<HTMLButtonElement>("#" + name)!;
+  }
+  private element(name: string): HTMLElement {
+    return this.root.querySelector<HTMLElement>("#" + name)!;
   }
   private on(name: string, action: () => void): void {
     this.root.querySelector("#" + name)!.addEventListener("click", action);
@@ -126,12 +211,60 @@ export class NetworkUI {
       team: side === "auto" ? undefined : team.read(Number(side)),
     };
   }
+  /** Connection progress. While the socket is down the room menu gives way to a dialog
+   * that says so; its only choice is to leave, since reconnecting is automatic. */
   status(text: string, connected: boolean): void {
-    this.set("network-status", text);
-    this.set("network-message", text);
-    if (!connected) {
-      this.panel.style.display = "grid";
+    this.set("network-status", connected ? text : "");
+    if (connected) {
+      this.link = "live";
+      this.render();
+    } else {
+      // A drop from a live room is news; later attempts only update the message.
+      this.showConnecting(
+        this.link === "live" ? "CONNECTION LOST" : this.element("connection-title").textContent,
+        text,
+      );
     }
+  }
+  /** A one-line answer in the room menu, such as a copied link or a full team. */
+  notice(text: string): void {
+    this.set("network-message", text);
+  }
+  /** The connection gave up. Offer what can still work for this cause. */
+  ended(end: ConnectionEnd): void {
+    this.link = end;
+    const ending = ENDINGS[end.cause];
+    this.set("connection-title", ending.title);
+    this.set("connection-message", end.text);
+    const retry = this.button("connection-retry");
+    retry.hidden = !ending.retry;
+    retry.textContent = ending.retry ?? "";
+    const setup = this.button("connection-setup");
+    setup.hidden = false;
+    setup.className = ending.retry ? "secondary" : "primary";
+    setup.textContent = end.cause === "outdated" ? "RELOAD" : "BATTLE SETUP";
+    this.button("connection-leave").hidden = true;
+    this.panel.querySelector<HTMLElement>(".network-connection .startup-track")!.hidden = true;
+    this.render();
+  }
+  private showConnecting(title: string, text: string): void {
+    this.link = "connecting";
+    this.set("connection-title", title);
+    const playing = this.lastLobby?.phase === "playing";
+    this.set(
+      "connection-message",
+      text +
+        (!playing
+          ? ""
+          : this.lastLobby!.settings.humansOnly
+            ? " Your tank sits idle until you're back."
+            : " A bot drives your tank until you're back."),
+    );
+    this.button("connection-retry").hidden = true;
+    this.button("connection-setup").hidden = true;
+    this.button("connection-leave").hidden = false;
+    this.panel.querySelector<HTMLElement>(".network-connection .startup-track")!.hidden = false;
+    this.render();
   }
   lobby(lobby: Lobby, playerId: string): void {
     if (this.lastLobby?.roomEpoch === lobby.roomEpoch) {
@@ -148,48 +281,118 @@ export class NetworkUI {
       }
     }
     this.lastLobby = lobby;
-    this.playerId = playerId;
     this.isJoined = true;
-    const mine = lobby.players.find((player) => player.playerId === playerId);
     const host = lobby.hostId === playerId;
     const playing = lobby.phase === "playing";
-    this.button("start-match").hidden = !host || playing;
-    this.button("start-match").disabled = false;
-    this.button("start-match").textContent =
-      lobby.phase === "results" ? "PLAY AGAIN" : "START BATTLE";
-    this.button("network-end").hidden = !host || !playing;
-    this.button("network-resume").hidden = !playing;
-    for (const field of ["player-team", "player-kind"]) {
-      this.input(field).disabled = playing;
+    if (lobby.phase !== "results") {
+      this.outcome = undefined;
     }
+    // Choices are only open between battles, and room rules only to the host;
+    // everyone else reads them as text rather than as disabled controls.
+    const editable = host && !playing;
+    this.renderHeading(lobby, host);
+    this.renderSummary(lobby);
+    this.element("network-summary").hidden = editable;
+    this.element("player-fields").hidden = playing;
+    this.element("host-settings").hidden = !editable;
+    const mine = lobby.players.find((player) => player.playerId === playerId);
     if (mine) {
       this.input("player-team").value = String(mine.team);
       this.input("player-kind").value = mine.kind;
     }
-    this.input("room-map").value = lobby.settings.mapMode;
     // A scenario room brings its own arena.
-    this.input("room-map").closest("label")!.hidden = lobby.scenario !== undefined;
-    this.input("room-difficulty").value = lobby.settings.difficulty;
-    this.input("room-round-minutes").value = String(lobby.settings.roundMinutes);
-    this.input("room-round-minutes").disabled = !host || playing;
-    this.input("room-map").disabled = this.input("room-difficulty").disabled = !host || playing;
-    const humansOnly = this.root.querySelector<HTMLInputElement>("#room-humans-only")!;
-    humansOnly.checked = lobby.settings.humansOnly;
-    humansOnly.disabled = !host || playing;
-    this.input("room-difficulty").disabled ||= lobby.settings.humansOnly;
-    this.set(
-      "network-help",
-      "WASD / arrows to drive · Mouse to aim and fire · Right click for mines. " +
-        (lobby.settings.humansOnly
-          ? "Humans only: empty seats stay empty. Opening this menu leaves your tank idle and vulnerable. The match keeps going."
-          : "Opening this menu lets a bot drive your tank. The match keeps going."),
-    );
-    this.root.querySelector<HTMLElement>("#host-settings")!.hidden = false;
+    this.element("room-map-field").hidden = lobby.scenario !== undefined;
+    this.input("room-map").value = lobby.settings.mapMode;
+    this.input("room-bots").value = lobby.settings.humansOnly ? "none" : lobby.settings.difficulty;
+    if (document.activeElement !== this.input("room-round-minutes")) {
+      this.input("room-round-minutes").value = String(lobby.settings.roundMinutes);
+    }
+    this.button("start-match").hidden = !host || playing;
+    this.button("start-match").textContent =
+      lobby.phase === "results" ? "PLAY AGAIN" : "START BATTLE";
+    this.button("network-end").hidden = !host || !playing;
+    this.button("network-resume").hidden = !playing;
     this.root
       .querySelectorAll<HTMLElement>(".network-local")
       .forEach((node) => (node.hidden = !playing));
-    const players = this.root.querySelector<HTMLElement>("#network-players")!;
-    players.hidden = !playing || this.menu;
+    this.renderPlayers(lobby, playerId);
+    this.renderRoster(lobby, playerId, playing);
+    this.renderScoreboard(lobby, playerId);
+    if (lobby.phase === "results") {
+      this.menu = false;
+    }
+    this.render();
+  }
+  private renderHeading(lobby: Lobby, host: boolean): void {
+    const hint =
+      lobby.phase === "playing"
+        ? lobby.settings.humansOnly
+          ? "The battle keeps going. Your tank sits idle and vulnerable while this menu is open."
+          : "The battle keeps going. A bot drives your tank while this menu is open."
+        : host
+          ? lobby.scenario
+            ? "Invite friends with the room link, then start when ready."
+            : "Pick the rules, invite friends, then start when ready."
+          : lobby.phase === "results"
+            ? "Waiting for the host to start the next battle."
+            : "Waiting for the host to start the battle.";
+    this.set("network-hint", hint);
+    this.set(
+      "network-title",
+      lobby.phase === "playing"
+        ? "BATTLE IN PROGRESS"
+        : lobby.phase === "results"
+          ? this.resultsTitle()
+          : "LOBBY",
+    );
+    this.renderScore();
+  }
+  /** The round that just ended, as the viewer's tank played it. */
+  result(match: RenderState["match"], team: number): void {
+    this.outcome = { match, team };
+  }
+  /** Victory or defeat when the final state arrived. A player who joined during the
+   * results, or had the menu open as the round ended, gets a neutral heading. */
+  private resultsTitle(): string {
+    const outcome = this.outcome;
+    if (!outcome) {
+      return this.endedRound === this.lastLobby?.roundId ? "BATTLE ENDED" : "ROUND COMPLETE";
+    }
+    if (outcome.match.endedEarly || outcome.match.winner === null) {
+      return "BATTLE ENDED";
+    }
+    return outcome.match.winner === outcome.team ? "VICTORY" : "DEFEAT";
+  }
+  private renderScore(): void {
+    const match = this.lastLobby?.phase === "results" ? this.outcome?.match : undefined;
+    this.element("network-score").hidden = !match;
+    if (match) {
+      this.set("final-blue", String(match.scores[0]));
+      this.set("final-red", String(match.scores[1]));
+    }
+  }
+  /** The room's rules as read-only chips: the arena, the bots and the match length. */
+  private renderSummary(lobby: Lobby): void {
+    const settings = lobby.settings;
+    const arena = lobby.scenario
+      ? SCENARIO_ROOMS[lobby.scenario].name
+      : (MAP_OPTIONS.find((map) => map.id === settings.mapMode)?.name ?? settings.mapMode);
+    const bots = settings.humansOnly
+      ? "No bots"
+      : settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1) + " bots";
+    const chips = [arena, bots, settings.roundMinutes + " min"];
+    const summary = this.element("network-summary");
+    if (summary.textContent !== chips.join("")) {
+      summary.replaceChildren(
+        ...chips.map((text) =>
+          Object.assign(document.createElement("span"), { textContent: text }),
+        ),
+      );
+    }
+  }
+  /** The compact kill list beside the HUD during a battle. */
+  private renderPlayers(lobby: Lobby, playerId: string): void {
+    const players = this.element("network-players");
     players.replaceChildren();
     this.playerRows.clear();
     const header = document.createElement("div");
@@ -217,65 +420,101 @@ export class NetworkUI {
         this.playerRows.set(player.tankId, score);
       }
     }
-    const roster = this.root.querySelector("#network-roster")!;
+  }
+  private renderRoster(lobby: Lobby, playerId: string, playing: boolean): void {
+    const roster = this.element("network-roster");
     roster.replaceChildren();
+    const teamTanks =
+      lobby.scenario && !lobby.settings.humansOnly ? SCENARIO_ROOMS[lobby.scenario].teamTanks : 6;
     for (const side of [0, 1]) {
-      const column = document.createElement("div");
-      const title = document.createElement("b");
-      title.textContent = side === 0 ? "BLUE TEAM" : "RED TEAM";
-      column.append(title);
-      for (const player of lobby.players.filter((player) => player.team === side)) {
-        const row = document.createElement("div");
-        row.textContent =
-          player.name +
-          " · " +
-          player.kills +
-          " kills" +
-          (player.playerId === lobby.hostId ? " · Host" : "") +
-          (!player.connected ? " · Reconnecting" : "");
-        column.append(row);
+      const members = lobby.players.filter((player) => player.team === side);
+      const column = document.createElement("section");
+      column.className = "network-team";
+      column.dataset.team = String(side);
+      const header = document.createElement("header");
+      const name = document.createElement("strong");
+      const fill = document.createElement("small");
+      name.textContent = TEAM_NAMES[side] + " TEAM";
+      const open = teamTanks - members.length;
+      fill.textContent = lobby.settings.humansOnly
+        ? open + (open === 1 ? " open seat" : " open seats")
+        : open + (open === 1 ? " bot" : " bots");
+      header.append(name, fill);
+      column.append(header);
+      for (const player of members) {
+        column.append(this.rosterRow(player, lobby, playerId, playing));
       }
-      const bots = document.createElement("small");
-      const teamTanks =
-        lobby.scenario && !lobby.settings.humansOnly ? SCENARIO_ROOMS[lobby.scenario].teamTanks : 6;
-      bots.textContent =
-        teamTanks -
-        lobby.players.filter((player) => player.team === side).length +
-        (lobby.settings.humansOnly ? " open seats" : " bots");
-      column.append(bots);
       roster.append(column);
     }
-    const board = this.root.querySelector("#network-scoreboard")!;
+  }
+  private rosterRow(player: Player, lobby: Lobby, playerId: string, playing: boolean): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "roster-player";
+    row.classList.toggle("you", player.playerId === playerId);
+    row.classList.toggle("reconnecting", !player.connected);
+    const name = document.createElement("span");
+    name.className = "roster-name";
+    name.textContent = player.name;
+    name.title = player.name;
+    const tags = [
+      player.playerId === playerId ? "YOU" : "",
+      player.playerId === lobby.hostId ? "HOST" : "",
+      !player.connected ? "RECONNECTING" : "",
+    ].filter(Boolean);
+    row.append(name);
+    if (tags.length) {
+      const tag = document.createElement("small");
+      tag.textContent = tags.join(" · ");
+      row.append(tag);
+    }
+    if (playing) {
+      const kills = document.createElement("b");
+      kills.textContent = String(player.kills);
+      kills.title = player.kills + (player.kills === 1 ? " kill" : " kills");
+      row.append(kills);
+    }
+    return row;
+  }
+  private renderScoreboard(lobby: Lobby, playerId: string): void {
+    const board = this.element("network-scoreboard");
+    board.hidden = lobby.phase !== "results";
     board.replaceChildren();
-    if (lobby.phase === "results") {
-      this.menu = false;
-      const heading = document.createElement("h2");
-      heading.textContent = "ROUND COMPLETE";
-      board.append(heading);
-      for (const player of [...lobby.scoreboard].sort((a, b) => b.kills - a.kills)) {
-        const row = document.createElement("p");
-        row.textContent =
-          player.name + " · " + player.kills + " kills / " + player.deaths + " deaths";
-        board.append(row);
+    if (board.hidden) {
+      return;
+    }
+    const table = document.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const label of ["LAST ROUND", "KILLS", "DEATHS"]) {
+      const cell = document.createElement("th");
+      cell.textContent = label;
+      head.append(cell);
+    }
+    const body = table.createTBody();
+    for (const player of [...lobby.scoreboard].sort(
+      (a, b) => b.kills - a.kills || a.deaths - b.deaths,
+    )) {
+      const row = body.insertRow();
+      row.dataset.team = String(player.team);
+      row.classList.toggle("you", player.playerId === playerId);
+      for (const value of [player.name, String(player.kills), String(player.deaths)]) {
+        row.insertCell().textContent = value;
       }
     }
-    this.panel.style.display = playing && !this.menu ? "none" : "grid";
-    if (!playing) {
-      this.set(
-        "network-message",
-        host
-          ? lobby.scenario
-            ? "Invite friends with the room link, then start when ready."
-            : "Invite friends, choose the map, then start when ready."
-          : "Waiting for the host to start the battle.",
-      );
-    }
+    board.append(table);
+  }
+  /** Which of the overlay's two dialogs shows, if any. */
+  private render(): void {
+    const playing = this.lastLobby?.phase === "playing";
+    const dropped = this.link !== "live";
+    this.panel.querySelector<HTMLElement>(".network-menu")!.hidden = dropped;
+    this.panel.querySelector<HTMLElement>(".network-connection")!.hidden = !dropped;
+    this.panel.style.display = dropped || !playing || this.menu ? "grid" : "none";
+    this.element("network-players").hidden = !playing || this.menu || dropped;
   }
   setMenu(open: boolean): void {
     this.menu = open;
-    if (this.lastLobby) {
-      this.lobby(this.lastLobby, this.playerId);
-    }
+    this.notice("");
+    this.render();
   }
   resetFeedback(): void {
     this.feed = [];

@@ -163,6 +163,16 @@ export function startMultiplayer(
       clearInput();
       connection.send("end");
     },
+    rejoin() {
+      // A seat the server still holds resumes; otherwise this takes a new one in the room.
+      void connection.connect({
+        ...selectedChoice,
+        create: undefined,
+        existingRoom: true,
+        scenario: pageScenario(),
+      });
+    },
+    setup: backToSetup,
     leave() {
       connection.leave();
       const url = new URL(location.href);
@@ -361,8 +371,19 @@ export function startMultiplayer(
         clearInput();
       }
       showStatus(text, connected);
-      if (connection.stopped) {
-        backToSetup(text);
+    },
+    notice(text) {
+      ui.notice(text);
+    },
+    ended(end) {
+      active = false;
+      clearInput();
+      // A join still behind Battle Setup reports there; a room on screen says what
+      // happened over the frozen arena and offers the way back that fits.
+      if (joining) {
+        joining.fail(end.text);
+      } else {
+        ui.ended(end);
       }
     },
     message(message) {
@@ -390,6 +411,12 @@ export function startMultiplayer(
           ui.resetFeedback();
         }
         phase = lobby.phase;
+        // The final snapshot precedes the results lobby. A suspended seat (menu open)
+        // receives no snapshots, so its mirror may still hold the round in play.
+        if (phase === "results" && control && mirror.state?.match.phase === "results") {
+          const final = mirror.render(control.tankId);
+          ui.result(final.match, final.viewer.team);
+        }
         ui.lobby(lobby, connection.playerId);
         if (phase !== "playing") {
           clearInput();

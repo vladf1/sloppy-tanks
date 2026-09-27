@@ -143,8 +143,8 @@ try {
       "Names remain literal text",
     );
     assert.deepEqual(await client.page.locator(".network-player b").allTextContents(), ["0", "0"]);
-    assert.equal(await client.page.locator("#room-round-minutes").inputValue(), "3");
-    assert.equal(await client.page.locator("#room-round-minutes").isDisabled(), true);
+    assert.match(await client.page.locator("#network-summary").textContent(), /3 min/);
+    assert.equal(await client.page.locator("#host-settings").isVisible(), false);
   }
   await alice.page.screenshot({ path: `${output}/players-and-join.png` });
   if (new URL(base).hostname === "127.0.0.1") {

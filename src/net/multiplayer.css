@@ -1,66 +1,315 @@
-.multiplayer .network-menu {
-  max-width: 640px;
+.multiplayer #overlay {
+  z-index: 15;
+}
+.multiplayer [hidden] {
+  display: none !important;
+}
+.multiplayer .network-menu,
+.multiplayer .network-connection {
+  --well: #0c2239;
+  --rule: #8bb9dc1f;
+  --label: #a6dfff;
+  --muted: #9fbcd2;
+  --text: #c4dfef;
+  --blue: #79c5ef;
+  --red: #ff8a79;
+  --accent: #ffcf38;
+  display: grid;
+  gap: 16px;
+  width: 100%;
   min-width: 0;
+  max-width: 560px;
   max-height: calc(100dvh - 32px);
   overflow: auto;
   overflow-wrap: anywhere;
-}
-.multiplayer .network-menu h1 {
-  font-size: clamp(24px, 4vw, 36px);
-  margin: 10px 0;
-}
-.network-choices {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 14px 0;
-}
-.multiplayer .network-choices label {
-  flex: 1;
-  min-width: 120px;
-  display: grid;
-  gap: 6px;
+  padding: 24px 28px;
   text-align: left;
+}
+.network-room {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.multiplayer .eyebrow {
   margin: 0;
 }
-.network-actions {
+.multiplayer .eyebrow b {
+  color: #f5faff;
+}
+.network-head h2,
+.network-connection h2 {
+  margin: 8px 0 0;
+  font-size: 40px;
+  letter-spacing: 0.5px;
+}
+.network-head p,
+.network-connection p {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+#network-message {
+  color: var(--accent);
+  font-weight: 600;
+}
+#network-message:empty {
+  display: none;
+}
+.network-title-row {
   display: flex;
-  gap: 10px;
   flex-wrap: wrap;
-  margin-top: 18px;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 16px;
 }
-.multiplayer .network-choices .network-toggle {
+.network-score {
+  font:
+    800 34px/1 Impact,
+    sans-serif;
+  letter-spacing: 2px;
+  color: #eef6fb;
+}
+#final-blue {
+  color: var(--blue);
+}
+#final-red {
+  color: var(--red);
+}
+.network-summary {
   display: flex;
-  flex-basis: 100%;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.network-summary span {
+  padding: 4px 10px;
+  border: 1px solid #92b4cf45;
+  border-radius: 999px;
+  background: var(--well);
+  color: #eef6fb;
+  font-size: 12px;
+  font-weight: 600;
+}
+.network-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
 }
-.multiplayer .network-toggle input[type="checkbox"] {
-  width: auto;
+.network-fields label,
+.network-local label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--label);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
 }
-.network-actions button {
-  flex: 1 1 180px;
+.multiplayer .network-fields input,
+.multiplayer .network-menu select {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #92b4cf45;
+  border-radius: 6px;
+  background: var(--well);
+  color: #f5faff;
+  font:
+    500 14px Arial,
+    sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.multiplayer .network-menu select {
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m2 2 4 4 4-4' fill='none' stroke='%23b6cedf' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.multiplayer :is(.network-menu, .network-connection) :is(input, select, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 #network-roster {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-  text-align: left;
-  line-height: 1.7;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
-#network-roster b {
-  color: #79c5ef;
+.network-team {
+  padding: 10px 12px 6px;
+  border-top: 3px solid var(--blue);
+  border-radius: 8px;
+  background: var(--well);
 }
-#network-roster > div:nth-child(2) b {
-  color: #ff8a79;
+.network-team[data-team="1"] {
+  border-top-color: var(--red);
 }
-#network-roster small,
-.network-help {
-  opacity: 0.75;
+.network-team header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.network-team strong {
+  color: var(--blue);
+  font:
+    800 18px Impact,
+    sans-serif;
+  letter-spacing: 1px;
+}
+.network-team[data-team="1"] strong {
+  color: var(--red);
+}
+.network-team header small {
+  color: var(--muted);
   font-size: 12px;
 }
-#network-scoreboard p {
-  margin: 5px 0;
+.roster-player {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--rule);
+  font-size: 14px;
+}
+.roster-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.roster-player small {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.roster-player.you small {
+  color: var(--accent);
+}
+.roster-player b {
+  margin-left: auto;
+  min-width: 2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.roster-player.reconnecting {
+  opacity: 0.55;
+}
+#network-scoreboard {
+  max-height: 220px;
+  overflow: auto;
+}
+#network-scoreboard table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+#network-scoreboard th {
+  padding: 0 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-align: right;
+}
+#network-scoreboard td {
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+  text-align: right;
+}
+#network-scoreboard :is(th, td):first-child {
+  text-align: left;
+}
+#network-scoreboard td:first-child {
+  padding-left: 9px;
+  border-left: 3px solid var(--blue);
+  font-weight: 700;
+}
+#network-scoreboard tr[data-team="1"] td:first-child {
+  border-left-color: var(--red);
+}
+#network-scoreboard tr.you td {
+  color: var(--accent);
+}
+/* The main action gets a row to itself; the rest share the next one. */
+.network-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.network-actions button {
+  flex: 1 1 0;
+  min-width: 120px;
+  margin: 0;
+}
+.network-actions .primary {
+  flex-basis: 100%;
+}
+.network-actions .secondary {
+  padding: 13px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+}
+.network-actions .secondary:hover {
+  border-color: #c9d6b8;
+  color: #fff;
+}
+.network-local {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.network-local input[type="range"] {
+  width: 100%;
+  height: 42px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.network-help {
+  margin: 0;
+  text-wrap: balance;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+  text-align: center;
+}
+/* Break between items, never inside one, with the separator ending the line. */
+.network-help span {
+  white-space: nowrap;
+}
+.network-help span:not(:last-child)::after {
+  content: " ·";
+}
+.multiplayer .network-connection {
+  max-width: 480px;
+  gap: 14px;
+  text-align: center;
+}
+.network-connection h2 {
+  font-size: 36px;
+}
+.network-connection p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.network-connection .startup-track {
+  margin: 2px 0;
 }
 #network-players {
   position: absolute;
@@ -126,60 +375,9 @@
   pointer-events: none;
   text-shadow: 0 2px 5px black;
 }
-.network-local {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 14px;
-}
-.multiplayer [hidden] {
-  display: none !important;
-}
-.multiplayer #overlay {
-  z-index: 15;
-}
-.multiplayer .network-menu button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.multiplayer .network-choices input:not([type="checkbox"]),
-.multiplayer .network-menu select {
-  -webkit-appearance: none;
-  appearance: none;
-  display: block;
-  width: 100%;
-  min-width: 0;
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid #92b4cf45;
-  border-radius: 6px;
-  background: #0c2239;
-  color: #f5faff;
-  font:
-    500 14px Arial,
-    sans-serif;
-}
-.multiplayer .network-menu select {
-  padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m2 2 4 4 4-4' fill='none' stroke='%23b6cedf' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-}
-.multiplayer .network-menu :is(input, select, button):focus-visible {
-  outline: 2px solid #ffcf38;
-  outline-offset: 3px;
-}
-.multiplayer .network-menu :is(input, select):disabled {
-  opacity: 0.55;
-  cursor: default;
-}
 @media (max-width: 520px) {
-  .multiplayer .network-menu {
+  .multiplayer .network-menu,
+  .multiplayer .network-connection {
     padding: 18px;
-  }
-  .network-choices {
-    gap: 8px;
-  }
-  .network-actions button {
-    flex-basis: 130px;
   }
 }
