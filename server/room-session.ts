@@ -8,6 +8,32 @@ export const MAX_PENDING_CONNECTIONS = 16;
 export const JOIN_TIMEOUT_MS = 5000;
 export const DIRECTORY_HEARTBEAT_MS = 20_000;
 export const MAX_SOCKET_MESSAGES_PER_SECOND = 65;
+/** Message types counted by name; anything else counts as "other" so clients cannot grow it. */
+const MESSAGE_TYPES = new Set([
+  // Server to client.
+  "welcome",
+  "lobby",
+  "control",
+  "full",
+  "snapshot",
+  "pong",
+  "error",
+  "room-reset",
+  // Client to server.
+  "join",
+  "input",
+  "ping",
+  "choose",
+  "settings",
+  "start",
+  "end",
+  "suspend",
+  "resume",
+  "resync",
+  "leave",
+]);
+/** Characters searched for the type; server messages put the room identity before it. */
+const TYPE_SEARCH_CHARS = 160;
 
 /** The part of a WebSocket that a room needs. */
 export interface RoomSocket {
@@ -47,6 +73,9 @@ export interface RoomSample {
   tickMaxMs: number;
   sentBytes: number;
   receivedBytes: number;
+  /** Messages sent and accepted per message type. */
+  sentMessages: Record<string, number>;
+  receivedMessages: Record<string, number>;
 }
 interface SocketInfo {
   id: string;
@@ -55,6 +84,19 @@ interface SocketInfo {
   windowMs: number;
   messages: number;
 }
+
+/**
+ * A message's type without parsing it. Both sides write `type` before any nested object
+ * (server messages lead with the room epoch and round), so the first match is the message's.
+ */
+export function messageType(text: string): string {
+  const type = /"type":"([a-z-]{1,16})"/.exec(text.slice(0, TYPE_SEARCH_CHARS))?.[1];
+  return type && MESSAGE_TYPES.has(type) ? type : "other";
+}
+const count = (counts: Record<string, number>, text: string) => {
+  const type = messageType(text);
+  counts[type] = (counts[type] ?? 0) + 1;
+};
 
 /**
  * Socket policy and the 50 ms timer around one MatchHost, independent of the WebSocket
@@ -74,6 +116,8 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
   private ticks = 0;
   private tickTotalMs = 0;
   private tickMaxMs = 0;
+  private sentMessages: Record<string, number> = {};
+  private receivedMessages: Record<string, number> = {};
   constructor(
     readonly room: string,
     private readonly events: RoomSessionEvents,
@@ -114,6 +158,7 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
       return;
     }
     this.receivedBytes += bytes;
+    count(this.receivedMessages, message as string);
     this.host?.receive(info.id, message as string, now);
   }
   /** The transport closed; the seat stays reserved for the host's reconnect grace. */
@@ -150,8 +195,12 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
       tickMaxMs: this.tickMaxMs,
       sentBytes: this.sentBytes,
       receivedBytes: this.receivedBytes,
+      sentMessages: this.sentMessages,
+      receivedMessages: this.receivedMessages,
     };
     this.sentBytes = this.receivedBytes = this.ticks = this.tickTotalMs = this.tickMaxMs = 0;
+    this.sentMessages = {};
+    this.receivedMessages = {};
     return sample;
   }
   private get players(): number {
@@ -172,6 +221,7 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
           try {
             socket.send(message);
             this.sentBytes += message.length;
+            count(this.sentMessages, message);
             if (message.startsWith('{"type":"welcome"')) {
               this.sockets.get(socket)!.joined = true;
               this.events.activity?.({ type: "joined", players: this.players });

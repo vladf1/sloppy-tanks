@@ -24,6 +24,10 @@
         --border: rgba(11, 11, 11, 0.1);
         --series-1: #2a78d6;
         --series-2: #eb6834;
+        --series-3: #1baf7a;
+        --series-4: #eda100;
+        --series-5: #e87ba4;
+        --series-6: #008300;
         --good: #0ca30c;
         --warning: #fab219;
         --critical: #d03b3b;
@@ -45,6 +49,10 @@
           --border: rgba(255, 255, 255, 0.1);
           --series-1: #3987e5;
           --series-2: #d95926;
+          --series-3: #199e70;
+          --series-4: #c98500;
+          --series-5: #d55181;
+          --series-6: #008300;
         }
       }
       * {
@@ -190,6 +198,8 @@
         margin-bottom: 6px;
       }
       .legend {
+        min-height: calc(2.8em + 4px);
+        align-content: flex-start;
         display: flex;
         flex-wrap: wrap;
         gap: 4px 14px;
@@ -458,7 +468,11 @@
         memory:
           "RSS (resident set size) is the physical RAM the server process holds: the JavaScript heap plus Rapier physics (WebAssembly) memory, network buffers and Node itself. systemd stops the server at 700 MB. Heap is the JavaScript-objects part, used of allocated.",
         traffic:
-          "Game data per second, measured before WebSocket compression; the wire carries roughly a quarter of the outgoing figure.",
+          "Bytes per second through the players' connections. Wire is what actually crossed the network after WebSocket compression; JSON is the game data before compression.",
+        messagesOut:
+          "Messages sent to players per second. snapshot carries the game 20 times a second; full is a complete state for a joining or resyncing player; lobby and control describe seats and tanks; pong answers pings; other is welcome, error and room-reset.",
+        messagesIn:
+          "Messages received from players per second. input carries controls; ping measures latency; join and leave enter and exit rooms; other is lobby actions such as settings, start, choose and resync.",
         gc: "Time the JavaScript garbage collector paused the server in the last second.",
         hostLoad:
           "Processes running or waiting for a CPU on the whole machine, averaged over a minute. Above the CPU count means the host is overloaded.",
@@ -582,8 +596,8 @@
         {
           label: "Traffic out",
           hint: HINTS.traffic,
-          value: (r) => `${fixed(r.sentKBps)} KB/s`,
-          note: (r) => `in ${fixed(r.receivedKBps)} KB/s`,
+          value: (r) => `${fixed(r.wireSentKBps)} KB/s`,
+          note: (r) => `JSON ${fixed(r.sentKBps)} KB/s`,
         },
         {
           label: "GC pauses",
@@ -605,6 +619,21 @@
         $("tiles").append(tile.node);
       }
 
+      /** One series per named message type, in a fixed order, plus the rest as "other". */
+      function messageSeries(direction, types) {
+        const rate = (point, type) => point[direction]?.[type] ?? 0;
+        return [
+          ...types.map((type) => ({ label: type, value: (point) => rate(point, type) })),
+          {
+            label: "other",
+            value: (point) =>
+              Object.entries(point[direction] ?? {})
+                .filter(([type]) => !types.includes(type))
+                .reduce((total, [, count]) => total + count, 0),
+          },
+        ];
+      }
+
       // Charts: the last five minutes, one unit per chart.
       const CHARTS = [
         {
@@ -623,6 +652,8 @@
           unit: "ms",
           floor: 5,
           series: [
+            { key: "loopLagP50Ms", label: "p50" },
+            { key: "loopLagP90Ms", label: "p90" },
             { key: "loopLagP99Ms", label: "p99" },
             { key: "loopLagMaxMs", label: "Max" },
           ],
@@ -652,8 +683,10 @@
           unit: "KB/s",
           floor: 10,
           series: [
-            { key: "sentKBps", label: "Out" },
-            { key: "receivedKBps", label: "In" },
+            { key: "wireSentKBps", label: "Out wire" },
+            { key: "sentKBps", label: "Out JSON" },
+            { key: "wireReceivedKBps", label: "In wire" },
+            { key: "receivedKBps", label: "In JSON" },
           ],
         },
         {
@@ -666,9 +699,31 @@
             { key: "rooms", label: "Rooms" },
           ],
         },
+        {
+          title: "Messages out",
+          hint: HINTS.messagesOut,
+          unit: "/s",
+          floor: 10,
+          digits: 0,
+          series: messageSeries("sentMessages", ["snapshot", "full", "lobby", "control", "pong"]),
+        },
+        {
+          title: "Messages in",
+          hint: HINTS.messagesIn,
+          unit: "/s",
+          floor: 10,
+          digits: 0,
+          series: messageSeries("receivedMessages", ["input", "ping", "join", "leave"]),
+        },
       ];
-      const withUnit = (chart, value) =>
-        `${fixed(value, chart.digits ?? 1)}${chart.unit === "%" ? "%" : chart.unit ? ` ${chart.unit}` : ""}`;
+      for (const chart of CHARTS)
+        for (const series of chart.series) series.value ??= (point) => point[series.key];
+      /** "12%" and "40/s" attach their unit; "5 ms" and "3 MB" take a space. */
+      const withUnit = (chart, value) => {
+        const unit =
+          chart.unit === "%" || chart.unit.startsWith("/") ? chart.unit : ` ${chart.unit}`;
+        return `${fixed(value, chart.digits ?? 1)}${chart.unit ? unit : ""}`;
+      };
 
       const PLOT_HEIGHT = 170;
       const plots = typeof uPlot === "function";
@@ -748,7 +803,7 @@
             for (const column of columns) column.push(null);
           }
           times.push(point.atMs);
-          chart.series.forEach((series, index) => columns[index].push(point[series.key]));
+          chart.series.forEach((series, index) => columns[index].push(series.value(point)));
           previousMs = point.atMs;
         }
         return [times, ...columns];
@@ -756,7 +811,7 @@
       /** Headers always show the latest reading; hovering never changes their size. */
       function showLatest(chart) {
         chart.series.forEach((series, column) => {
-          const value = state.latest?.[series.key];
+          const value = state.latest ? series.value(state.latest) : undefined;
           chart.values[column].textContent = value == null ? "–" : withUnit(chart, value);
         });
       }
@@ -938,8 +993,9 @@
         const facts = [
           ["Rooms created", reading.totals.roomsCreated],
           ["Players joined", reading.totals.joins],
-          ["Sent", `${fixed(reading.totals.sentMB)} MB`],
-          ["Received", `${fixed(reading.totals.receivedMB)} MB`],
+          ["Sent on the wire", `${fixed(reading.totals.wireSentMB)} MB`],
+          ["Sent before compression", `${fixed(reading.totals.sentMB)} MB`],
+          ["Received on the wire", `${fixed(reading.totals.wireReceivedMB)} MB`],
           [
             "Host load (1 min)",
             `${fixed(reading.hostLoad, 2)} on ${server.cpus} CPU`,

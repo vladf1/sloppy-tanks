@@ -3,7 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { Socket, type AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
@@ -67,6 +67,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     entryRate = new RateLimit(120),
     directoryRate = new RateLimit(120),
     dashboardRate = new RateLimit(30),
+    wire = new WireCounter(),
     sockets = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_FRAME_BYTES,
@@ -77,6 +78,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       {
         samples: () => [...rooms.values()].flatMap((session) => session.sample() ?? []),
         sockets: () => sockets.clients.size,
+        wireBytes: () => wire.total(),
       },
       options.log,
     ),
@@ -166,7 +168,11 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     const existing = rooms.get(code);
     if (existing?.full) return refuse(429, "Room connection limit");
     if (!existing && rooms.size >= maxRooms) return refuse(503, "Server is full; try again later");
-    sockets.handleUpgrade(request, stream, head, (socket) => admit(code, ip, socket));
+    sockets.handleUpgrade(request, stream, head, (socket) => {
+      // Node hands upgrades the connection's TCP socket, whose counters see compressed frames.
+      if (stream instanceof Socket) wire.track(stream);
+      admit(code, ip, socket);
+    });
   });
 
   function admit(code: string, ip: string, socket: WebSocket): void {
@@ -231,6 +237,28 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       http.closeAllConnections();
     },
   };
+}
+
+/** Bytes through room connections; a closed connection keeps its final totals. */
+class WireCounter {
+  private open = new Set<Socket>();
+  private closed = { sent: 0, received: 0 };
+  track(connection: Socket): void {
+    this.open.add(connection);
+    connection.once("close", () => {
+      this.open.delete(connection);
+      this.closed.sent += connection.bytesWritten;
+      this.closed.received += connection.bytesRead;
+    });
+  }
+  total(): { sent: number; received: number } {
+    let { sent, received } = this.closed;
+    for (const connection of this.open) {
+      sent += connection.bytesWritten;
+      received += connection.bytesRead;
+    }
+    return { sent, received };
+  }
 }
 
 /** Adapts a `ws` socket to RoomSession and sheds readers whose output queue keeps growing. */
