@@ -149,3 +149,48 @@ test("mirror rejects corrupt or skipped deltas atomically and a full baseline re
     sim.dispose();
   }
 });
+
+test("mirror allows one change per entity of each kind in a frame", () => {
+  const sim = createMultiplayerSimulation(4242, []);
+  try {
+    const identity = { roomEpoch: "r", roundId: 1 },
+      state = captureScene(sim),
+      mirror = new StateMirror();
+    const full = new StateStream(identity).full(state, 0, 0);
+    mirror.applyFull(full, identity);
+    const before = JSON.stringify(mirror.state),
+      tankId = sim.tanks[0].id,
+      frame = { tick: 1, elapsed: state.elapsed },
+      mine = { id: tankId, x: 0, z: 0, owner: tankId, team: 0, arm: 0, life: 1 };
+    assert.equal(
+      mirror.applySnapshot({
+        ...frame,
+        seq: 1,
+        updates: { tanks: { [tankId]: { hp: 1 } } },
+        removed: { tanks: [tankId] },
+      }),
+      undefined,
+    );
+    assert.equal(JSON.stringify(mirror.state), before);
+    assert.equal(mirror.needsFull, true);
+    mirror.applyFull(full, identity);
+    // Ids are claimed per kind, so another kind may reuse a tank's id in the same frame.
+    assert.ok(
+      mirror.applySnapshot({
+        ...frame,
+        seq: 1,
+        updates: { tanks: { [tankId]: { hp: 1 } }, mines: { [tankId]: mine } },
+      }),
+    );
+    assert.equal(mirror.state?.entities.tanks[0].hp, 1);
+    assert.deepEqual(mirror.state?.entities.mines.at(-1), mine);
+    // The removal that conflicted with the update above is valid in a frame of its own.
+    assert.ok(mirror.applySnapshot({ ...frame, seq: 2, removed: { tanks: [tankId] } }));
+    assert.equal(
+      mirror.state?.entities.tanks.some((tank) => tank.id === tankId),
+      false,
+    );
+  } finally {
+    sim.dispose();
+  }
+});

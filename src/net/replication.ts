@@ -62,7 +62,6 @@ export const traceReader = object<ShotTrace>({
   shot: shotReader,
   end: object({ x: number(), z: number() }),
 });
-const key = (kind: EntityType, entityId: number) => kind + ":" + entityId;
 const MAX_CHANGES = 4096;
 /** Fields whose null is a real value rather than a deletion. */
 const COVER_NULLABLE = ["hp", "maxHp"];
@@ -137,20 +136,10 @@ function applyChanges(
   }
   return merged;
 }
-function records(scene: Scene): Map<string, Record<string, unknown>> {
-  const result = new Map<string, Record<string, unknown>>();
-  for (const kind of ENTITY_TYPES) {
-    for (const entity of scene.entities[kind]) {
-      const name = key(kind, entity.id);
-      if (result.has(name)) {
-        throw new Error("Duplicate entity id");
-      }
-      result.set(name, entity as unknown as Record<string, unknown>);
-    }
-  }
-  return result;
-}
-/** Each kind's records by entity id, so the host diffs frames without composite keys. */
+/**
+ * Each kind's records by entity id in scene order, so the host diffs and the mirror applies
+ * frames without composite keys.
+ */
 type EntityIndex = { [K in EntityType]: Map<number, object> };
 function indexEntities(scene: Scene): EntityIndex {
   const index = {} as EntityIndex;
@@ -241,7 +230,7 @@ export class StateMirror {
     const seq = id.read(data.seq);
     const tick = id.read(data.tick);
     const cursor = id.read(data.eventCursor);
-    records(state);
+    indexEntities(state);
     // Validate quaternion semantics before committing the scene.
     projectScene(state, state.entities.tanks[0]?.id ?? -1);
     this.state = state;
@@ -265,8 +254,10 @@ export class StateMirror {
       if (tick < this.tick) {
         throw new Error("Tick went backwards");
       }
-      const next = records(this.state);
-      const changed = new Set<string>();
+      // Updates replace records in place and additions append, so each kind keeps its order.
+      const next = indexEntities(this.state);
+      const changed: Partial<Record<EntityType, Set<number>>> = {};
+      let changeCount = 0;
       const entityKind = (kind: string) => {
         if (!ENTITY_TYPES.some((candidate) => candidate === kind)) {
           throw new Error("Invalid entity type");
@@ -274,15 +265,15 @@ export class StateMirror {
         return kind as EntityType;
       };
       const claim = (kind: EntityType, entityId: number) => {
-        const name = key(kind, entityId);
-        if (changed.has(name)) {
+        const ids = (changed[kind] ??= new Set());
+        if (ids.has(entityId)) {
           throw new Error("Duplicate change");
         }
-        if (changed.size >= MAX_CHANGES) {
+        if (changeCount >= MAX_CHANGES) {
           throw new Error("Invalid changes");
         }
-        changed.add(name);
-        return name;
+        ids.add(entityId);
+        changeCount++;
       };
       for (const [kindName, byId] of Object.entries(record(data.updates ?? {}))) {
         const kind = entityKind(kindName);
@@ -291,9 +282,9 @@ export class StateMirror {
           if (String(entityId) !== idText) {
             throw new Error("Invalid entity id");
           }
-          const name = claim(kind, entityId);
+          claim(kind, entityId);
           const merged = applyChanges(
-            next.get(name),
+            next[kind].get(entityId),
             record(changes),
             kind === "covers" ? COVER_NULLABLE : [],
           );
@@ -301,24 +292,20 @@ export class StateMirror {
           if (entity.id !== entityId) {
             throw new Error("Entity identity changed");
           }
-          next.set(name, entity as unknown as Record<string, unknown>);
+          next[kind].set(entityId, entity);
         }
       }
       for (const [kindName, ids] of Object.entries(record(data.removed ?? {}))) {
         const kind = entityKind(kindName);
         for (const entityId of array(id, MAX_CHANGES).read(ids)) {
-          if (!next.delete(claim(kind, entityId))) {
+          claim(kind, entityId);
+          if (!next[kind].delete(entityId)) {
             throw new Error("Unknown removal");
           }
         }
       }
       const entities = Object.fromEntries(
-        ENTITY_TYPES.map((kind) => [
-          kind,
-          [...next.entries()]
-            .filter(([name]) => name.startsWith(kind + ":"))
-            .map(([, entity]) => entity),
-        ]),
+        ENTITY_TYPES.map((kind) => [kind, [...next[kind].values()]]),
       );
       const state = sceneReader.read({
         ...this.state,
