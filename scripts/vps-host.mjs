@@ -11,4 +11,4 @@ export const VPS_SSH_OPTIONS = [
   "StrictHostKeyChecking=accept-new",
 ];
 /** Public WebSocket URL of the VPS server; the dev site build points its client here. */
-export const VPS_MULTIPLAYER_URL = "wss://45-63-56-58.sslip.io";
+export const VPS_MULTIPLAYER_URL = "wss://45-63-56-58.nip.io";

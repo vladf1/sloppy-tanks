@@ -78,7 +78,7 @@ menu actions stay hidden, and that the menu fits desktop viewports.
 
 `pnpm run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
 plus a third for a late join. Run Vite and the local server first (`pnpm run
-server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.sslip.io`. The host creates a
+server:dev`), or set `SLOPPY_SERVER=wss://45-63-56-58.nip.io`. The host creates a
 humans-only room on Battle Setup and the others open its room link, which selects
 the room there. It covers literal names, room rules shown as text to guests and during
 play, the host's bot setting, and two-player rounds without fill bots. From the sent frames it checks that unchanged idle input goes out about once a

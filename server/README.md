@@ -3,7 +3,7 @@
 A single Node process hosts every room in memory. `server.ts` serves `/health`,
 `/rooms`, `/dashboard` and the `/room/CODE` WebSocket. `room-session.ts` applies the socket
 limits, join timeout and 50 ms timer around `MatchHost`, which owns each room's
-simulation, seats and protocol. The dev site uses it at `wss://45-63-56-58.sslip.io`,
+simulation, seats and protocol. The dev site uses it at `wss://45-63-56-58.nip.io`,
 on a Vultr VPS behind Caddy.
 
 ```sh
@@ -15,7 +15,7 @@ Open `?multiplayer` on the printed Vite URL. The client uses `ws://127.0.0.1:878
 locally. In another terminal, `pnpm run server:check:players` runs real player
 sockets on all maps. Reconnect, host transfer and expiry are covered by
 `tests/match-host.test.ts` and `tests/room-session.test.ts` in `pnpm test`.
-Use `SLOPPY_SERVER_URL=wss://45-63-56-58.sslip.io` with a listed
+Use `SLOPPY_SERVER_URL=wss://45-63-56-58.nip.io` with a listed
 `SLOPPY_ORIGIN` such as `https://sloppy-tanks-dev.pages.dev` to test the VPS.
 `pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects a
 remote server for that browser check. For sustained traffic from other regions,
@@ -89,7 +89,7 @@ with 4002.
 - `provision.sh` installs Node 24 (NodeSource) and Caddy (official repo), creates
   the `sloppy` service user, and allows only SSH, 80 and 443 through `ufw`.
 - The systemd unit and `/etc/sloppy-tanks.env` configure the service.
-- The `Caddyfile` sets up automatic Let's Encrypt TLS for the sslip.io name.
+- The `Caddyfile` sets up automatic Let's Encrypt TLS for the nip.io name.
 
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH as root.
 The scripts trust a new host's key on first contact and refuse a changed one, so after
@@ -135,7 +135,7 @@ compression, including WebSocket frame and handshake bytes.
 
 ### Dashboard
 
-`/dashboard` (https://45-63-56-58.sslip.io/dashboard on the VPS, or
+`/dashboard` (https://45-63-56-58.nip.io/dashboard on the VPS, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that updates every
 second: CPU, event-loop busy share and lag percentiles, GC pauses, memory, traffic on
 the wire and before compression, players and rooms, messages per second by type in each
