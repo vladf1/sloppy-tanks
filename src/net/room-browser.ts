@@ -1,6 +1,7 @@
 import { CONTENT_VERSION, roundMinutesReader } from "./protocol";
 import { roomListReader, type RoomListing } from "./room-list";
-import { mapMode, playerKind, team } from "./scene-codec";
+import { mapMode, playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
+import { pageScenario } from "./scenarios";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import type { JoinChoice } from "./connection";
 import type { RoomSelection } from "./pending-join";
@@ -66,6 +67,12 @@ export class RoomBrowser {
     this.refresh = this.element("#refresh-rooms");
     this.endpoint = new URL("/rooms", address);
     this.endpoint.protocol = address.protocol === "wss:" ? "https:" : "http:";
+    const scenario = pageScenario();
+    if (scenario) {
+      // A scenario page lists and creates only its own rooms, which bring their own arena.
+      this.endpoint.searchParams.set("scenario", scenario);
+      this.element(".room-maps").hidden = true;
+    }
     this.name.value ||= preferredPlayerName();
     // A setup copied from an earlier menu may still show that menu's rooms.
     this.render();
@@ -134,7 +141,8 @@ export class RoomBrowser {
       });
       const details = document.createElement("span");
       const title = document.createElement("strong");
-      title.textContent = `${mapName(room.mapMode)} · ${room.players}/${ROOM_PLAYERS} players`;
+      const arena = room.scenario ? SCENARIO_ROOMS[room.scenario].name : mapName(room.mapMode);
+      title.textContent = `${arena} · ${room.players}/${ROOM_PLAYERS} players`;
       const info = document.createElement("small");
       const seconds = Math.ceil(room.time);
       const phase =

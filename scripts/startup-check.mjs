@@ -224,7 +224,14 @@ try {
   results.retry = "passed";
   console.log("Failed-download retry passed.");
 
-  for (const path of ["?autoplay", "stresstest.html", "superstress.html"]) {
+  // The offline stress test has no rooms: ?multiplayer must not swap its workload for Battle
+  // Setup, as it does on the Scrap Yard.
+  for (const path of [
+    "?autoplay",
+    "stresstest.html",
+    "stresstest.html?multiplayer",
+    "superstress.html",
+  ]) {
     const automatic = await fresh();
     await automatic.page.goto(url + path);
     await playing(automatic.page);
@@ -236,6 +243,18 @@ try {
       }));
       assert.equal(tanks, 30);
       assert.equal(map, path === "superstress.html" ? "SCRAP YARD" : "STRESS GRID");
+    }
+    if (path === "superstress.html") {
+      // A physical click: the HUD's pointer routing must reach the injected button.
+      const online = await automatic.page.locator("#play-online").boundingBox();
+      assert.ok(online, "the local Scrap Yard offers online play");
+      await automatic.page.mouse.click(online.x + online.width / 2, online.y + online.height / 2);
+      await automatic.page.waitForURL(/superstress\.html\?multiplayer=?$/);
+      // Battle Setup's own multiplayer tab, not the single-player yard or its loading screen.
+      await automatic.page.locator("#multiplayer-panel").waitFor({ state: "visible" });
+      assert.equal(await automatic.page.locator("#loading").count(), 0);
+      // Scrap Yard rooms bring their own arena, so creating one offers no map choice.
+      await automatic.page.locator(".room-maps").waitFor({ state: "hidden" });
     }
     await automatic.context.close();
   }

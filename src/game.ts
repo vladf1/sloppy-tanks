@@ -299,6 +299,9 @@ export async function prepareGame(
     },
     (event) => view.damageAngle(event),
   );
+  if (scenario === "superstress") {
+    void import("./superstress-online").then(({ offerOnlinePlay }) => offerOnlinePlay(root));
+  }
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
   ui.overlay.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-kind]")) {

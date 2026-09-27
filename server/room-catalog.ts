@@ -22,10 +22,12 @@ export class RoomCatalog {
       if (now - room.updatedAt >= ROOM_LIST_TTL_MS) this.rooms.delete(code);
     }
   }
-  list(now: number): RoomListing[] {
+  /** Standard rooms, or only one scenario's rooms, so each page offers its own game. */
+  list(now: number, scenario?: RoomListing["scenario"]): RoomListing[] {
     this.prune(now);
     return [...this.rooms.values()]
       .map((room) => room.entry)
+      .filter((entry) => entry.scenario === scenario)
       .sort((a, b) => b.players - a.players || a.room.localeCompare(b.room));
   }
 }

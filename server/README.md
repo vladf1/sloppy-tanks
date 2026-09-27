@@ -49,6 +49,17 @@ grace. Idle lobbies/results expire after five minutes; absolute lifetime is 30 m
 Menu/hidden clients stop receiving snapshots until they resume with a full
 baseline. Seat tokens stay in session storage, never in shared room links.
 
+A room created from a scenario page (`superstress.html`) is a scenario room: the
+first player's page fixes its mode and its bots fill that scenario's roster (30
+tanks on the Scrap Yard). Plain `/rooms` lists only standard rooms;
+`/rooms?scenario=superstress` lists that scenario's rooms for its own page. Such
+a room sends roughly five times a standard room's snapshot bandwidth.
+
+Room traffic uses permessage-deflate at zlib level 1, which browsers negotiate
+natively. It cut a standard room client from about 68 to 17 KB/s on the wire in
+headless Chrome, at about 1 ms of server CPU per client each second. Monitor byte
+counts are measured before compression.
+
 `GET /rooms` returns public room metadata only, never names or seat tokens. Rooms
 publish on lobby changes and every 20 seconds while active; disconnected-empty
 rooms are removed immediately and stale entries expire after 45 seconds. The list

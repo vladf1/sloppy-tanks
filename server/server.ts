@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
+import { SCENARIOS } from "../src/net/scene-codec";
 import { RoomCatalog } from "./room-catalog";
 import { RoomSession, type RoomSocket } from "./room-session";
 import { ServerMonitor } from "./monitor";
@@ -16,6 +17,13 @@ import { RateLimit } from "./rate-limit";
 const MAX_FRAME_BYTES = 8192;
 /** Queued output after which a reader is too slow to follow 20 Hz snapshots. */
 const MAX_BUFFERED_BYTES = 2_000_000;
+/**
+ * Snapshots are repetitive JSON, so permessage-deflate sends about a quarter of the bytes
+ * (a standard room measured 85 → 23 KB/s per client). The fastest zlib level keeps about
+ * 90% of the default level's saving for 40% of its CPU, which the one-vCPU host needs more.
+ * Browsers negotiate it natively; messages under ws's 1 KB threshold stay uncompressed.
+ */
+const SNAPSHOT_DEFLATE = { zlibDeflateOptions: { level: 1 } };
 /** Time given to clients to finish closing handshakes when the server stops. */
 const SHUTDOWN_GRACE_MS = 1000;
 /**
@@ -57,7 +65,7 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     sockets = new WebSocketServer({
       noServer: true,
       maxPayload: MAX_FRAME_BYTES,
-      perMessageDeflate: false,
+      perMessageDeflate: SNAPSHOT_DEFLATE,
     }),
     http = createHttpServer((request, response) => handle(request, response)),
     monitor = new ServerMonitor(
@@ -77,7 +85,8 @@ export function createServer(options: ServerOptions): MultiplayerServer {
   };
 
   function handle(request: IncomingMessage, response: ServerResponse): void {
-    const path = new URL(request.url ?? "/", "http://host").pathname,
+    const url = new URL(request.url ?? "/", "http://host"),
+      path = url.pathname,
       origin = request.headers.origin ?? "",
       cors = { "Access-Control-Allow-Origin": origin, "Cache-Control": "no-store", Vary: "Origin" };
     const reply = (status: number, body?: unknown, headers: Record<string, string> = {}) => {
@@ -109,7 +118,12 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       if (request.method !== "GET") return reply(405, undefined, cors);
       if (!directoryRate.allow(clientIp(request), Date.now()))
         return reply(429, "Too many refreshes; try again shortly", cors);
-      return reply(200, { rooms: catalog.list(Date.now()) }, cors);
+      // A scenario page (superstress.html) asks for its own rooms; plain requests, including
+      // Battle Setup and the traffic bots, see only standard rooms.
+      const requested = url.searchParams.get("scenario");
+      const scenario = SCENARIOS.find((name) => name === requested);
+      if (requested !== null && !scenario) return reply(400, "Unknown scenario", cors);
+      return reply(200, { rooms: catalog.list(Date.now(), scenario) }, cors);
     }
     const room = /^\/room\/([^/]+)$/.exec(path)?.[1];
     if (room && ROOM_CODE.test(room)) {

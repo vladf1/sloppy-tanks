@@ -44,6 +44,7 @@ export function captureRenderState(simulation: Simulation, viewerId?: number): R
     mapFloor: source.mapFloor,
     mapOuterFloor: source.mapOuterFloor,
     mapOuterFloorExtent: source.mapOuterFloorExtent,
+    mapScale: source.mapScale,
     customMap: source.customMap,
   };
 }

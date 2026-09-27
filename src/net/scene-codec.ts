@@ -7,7 +7,10 @@ import {
   type RenderShot,
 } from "../game/render-state";
 import type { Simulation } from "../game/simulation";
+import { DEBRIS_CLEANUP_SECONDS } from "../game/debris-cleanup";
+import { FRAGMENT_CAPACITY } from "../game/simulation-rules";
 import type { Match, Mine, Pickup, SimEvent } from "../game/types";
+import { SCENARIOS, type Scenario } from "./scenarios";
 import {
   array,
   boolean,
@@ -46,6 +49,8 @@ export interface Scene {
     floor?: RenderState["mapFloor"];
     outerFloor?: RenderState["mapOuterFloor"];
     outerFloorExtent?: number;
+    /** Omitted for full-size maps. */
+    scale?: number;
   };
 }
 const n = number();
@@ -73,6 +78,15 @@ const coverKind = enumeration(
 );
 const material = enumeration("wood", "metal", "concrete");
 export const mapMode = enumeration("village", "harbor", "quarry");
+export { SCENARIOS, type Scenario };
+export const scenario = enumeration(...SCENARIOS);
+/** Room list names, and tanks per team (bots included) for lobby rosters; standard
+ * rooms field six. */
+export const SCENARIO_ROOMS: Record<Scenario, { name: string; teamTanks: number }> = {
+  superstress: { name: "Scrap Yard", teamTanks: 15 },
+};
+/** Standard rooms field 12 tanks; the superstress yard fields 30. */
+const MAX_SCENE_TANKS = 32;
 export const difficulty = enumeration("easy", "normal", "hard");
 const mark = object({
   x: n,
@@ -233,9 +247,9 @@ export const entityReaders: { [K in EntityType]: Reader<Entities[K][number]> } =
   pickups: pickupReader,
 };
 export const entitiesReader = object<Entities>({
-  tanks: array(tankReader, 12),
+  tanks: array(tankReader, MAX_SCENE_TANKS),
   covers: array(coverReader, 1024),
-  fragments: array(fragmentReader, 128),
+  fragments: array(fragmentReader, FRAGMENT_CAPACITY),
   shots: array(shotReader, 512),
   mines: array(mineReader, 256),
   pickups: array(pickupReader, 64),
@@ -263,10 +277,11 @@ export const sceneReader = object<Scene>({
   elapsed: n,
   match: matchReader,
   map: object({
-    theme: mapMode,
+    theme: enumeration("village", "harbor", "quarry", ...SCENARIOS),
     floor: optional(ground),
     outerFloor: optional(ground),
     outerFloorExtent: optional(n),
+    scale: optional(number(0.1, 1)),
   }),
 });
 export const eventReader = object<SimEvent>({
@@ -384,7 +399,12 @@ export function captureScene(simulation: Simulation): Scene {
           hp: Number.isFinite(cover.hp) ? cover.hp : null,
           maxHp: Number.isFinite(cover.maxHp) ? cover.maxHp : null,
         })),
-        fragments: view.fragments,
+        // Clients read life only for the final fade, so a steady value until then keeps
+        // every settled piece out of the per-frame deltas.
+        fragments: view.fragments.map((fragment) => ({
+          ...fragment,
+          life: Math.min(fragment.life, DEBRIS_CLEANUP_SECONDS),
+        })),
         shots: view.shots,
         mines: view.mines,
         pickups: view.pickups,
@@ -396,6 +416,7 @@ export function captureScene(simulation: Simulation): Scene {
         floor: view.mapFloor,
         outerFloor: view.mapOuterFloor,
         outerFloorExtent: view.mapOuterFloorExtent,
+        scale: view.mapScale === 1 ? undefined : view.mapScale,
       },
     }),
   );
@@ -437,5 +458,6 @@ export function projectScene(scene: Scene, viewerId: number): RenderState {
     mapFloor: scene.map.floor,
     mapOuterFloor: scene.map.outerFloor,
     mapOuterFloorExtent: scene.map.outerFloorExtent,
+    mapScale: scene.map.scale ?? 1,
   };
 }

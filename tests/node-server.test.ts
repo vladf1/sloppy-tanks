@@ -41,16 +41,17 @@ async function connect(room: string, headers: Record<string, string> = {}) {
   };
   return { socket, messages, closed, next };
 }
-const join = (name: string) =>
+const join = (name: string, extra: object = {}) =>
   JSON.stringify({
     type: "join",
     version: PROTOCOL_VERSION,
     contentVersion: CONTENT_VERSION,
     name,
     kind: "balanced",
+    ...extra,
   });
-const rooms = async (headers: Record<string, string> = { Origin: ORIGIN }) => {
-  const response = await fetch(`http://${base}/rooms`, { headers });
+const rooms = async (headers: Record<string, string> = { Origin: ORIGIN }, query = "") => {
+  const response = await fetch(`http://${base}/rooms${query}`, { headers });
   return { status: response.status, body: response.ok ? await response.json() : undefined };
 };
 
@@ -93,6 +94,7 @@ test("node server rejects foreign origins, plain HTTP rooms and invalid codes", 
 
 test("node server hosts a room, lists it and forgets it after the last leave", async () => {
   const player = await connect("TESTROOM");
+  assert.match(player.socket.extensions, /permessage-deflate/, "room traffic is compressed");
   player.socket.send(join("player"));
   await player.next("welcome");
   assert.equal(server.rooms.has("TESTROOM"), true);
@@ -115,6 +117,27 @@ test("node server hosts a room, lists it and forgets it after the last leave", a
   assert.equal(lines[0], "room TESTROOM created");
   assert.equal(lines[1], "room TESTROOM player joined (1 connected)");
   assert.match(lines.at(-1)!, /^room TESTROOM ended: empty after \d+s$/);
+});
+
+test("scenario rooms are listed only to their own page, and the plain list is unchanged", async () => {
+  const player = await connect("YARDROOM");
+  player.socket.send(
+    join("yard", {
+      scenario: "superstress",
+      create: { mapMode: "village", difficulty: "normal", humansOnly: false, roundMinutes: 5 },
+    }),
+  );
+  await player.next("welcome");
+  const codes = async (query: string) =>
+    ((await rooms(undefined, query)).body as { rooms: { room: string }[] }).rooms.map(
+      (room) => room.room,
+    );
+  assert.deepEqual(await codes(""), []);
+  assert.deepEqual(await codes("?scenario=superstress"), ["YARDROOM"]);
+  assert.equal((await rooms(undefined, "?scenario=nope")).status, 400);
+  player.socket.send(JSON.stringify({ type: "leave", roundId: 1 }));
+  await player.closed;
+  while (server.rooms.has("YARDROOM")) await new Promise((resolve) => setTimeout(resolve, 10));
 });
 
 test("node server serves /stats only to direct local requests", async () => {

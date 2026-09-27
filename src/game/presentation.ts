@@ -273,18 +273,19 @@ export class Presentation {
   readonly wreckView: WreckView = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   reset(source: Simulation | RenderState): void {
     const simulation = renderState(source, this.wreckView);
-    // A page offers one custom map, so its pads are built once at that map's scale.
-    const custom = simulation.customMap !== undefined;
+    const harbor = simulation.mapTheme === "harbor";
+    const quarry = simulation.mapTheme === "quarry";
+    const village = simulation.mapTheme === "village";
+    // Stress yards have no themed scenery, only plain pads. A page or room offers one such
+    // yard, so its pads are built once at that yard's scale.
+    const custom = !harbor && !quarry && !village;
     if (custom && !this.customSpawnPads) {
-      this.customSpawnPads = createSpawnPads(simulation.customMap?.scale);
+      this.customSpawnPads = createSpawnPads(simulation.mapScale);
       this.scene.add(this.customSpawnPads);
     }
     if (this.customSpawnPads) {
       this.customSpawnPads.visible = custom;
     }
-    const harbor = simulation.mapTheme === "harbor";
-    const quarry = simulation.mapTheme === "quarry";
-    const village = simulation.mapTheme === "village";
     if (simulation.mapOuterFloor && !this.customOuterFloor) {
       this.customOuterFloor = createArenaFloor(
         this.renderer,
@@ -301,7 +302,7 @@ export class Presentation {
       this.customFloor = createArenaFloor(
         this.renderer,
         simulation.mapFloor,
-        ARENA * 2 * (simulation.customMap?.scale ?? 1),
+        ARENA * 2 * simulation.mapScale,
       );
       this.customFloor.position.y = 0.008;
       this.scene.add(this.customFloor);

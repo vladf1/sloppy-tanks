@@ -10,7 +10,15 @@ import {
   TEAM_SLOTS,
 } from "./multiplayer-simulation";
 import { PlayerControls } from "./player-controls";
-import { captureScene, eventReader, rounded, shotReader, playerKind, team } from "./scene-codec";
+import {
+  captureScene,
+  eventReader,
+  rounded,
+  shotReader,
+  playerKind,
+  team,
+  type Scenario,
+} from "./scene-codec";
 import { StateStream, type TimedEvent, type ShotTrace, type Snapshot } from "./replication";
 import {
   CONTENT_VERSION,
@@ -75,6 +83,8 @@ export class MatchHost {
     humansOnly: false,
     roundMinutes: DEFAULT_ROUND_MINUTES,
   };
+  /** Fixed by the room's first player; every later join plays the same mode. */
+  scenario?: Scenario;
   phase: Lobby["phase"] = "lobby";
   roundId = 0;
   hostId = "";
@@ -346,6 +356,9 @@ export class MatchHost {
         deaths: 0,
       };
       seat = { player, token: this.options.token(), connection, suspended: false };
+      if (!this.seats.length && this.roundId === 0) {
+        this.scenario = request.scenario;
+      }
       this.seats.push(seat);
       if (this.simulation) {
         const tank = claimPlayerTank(this.simulation, player);
@@ -406,6 +419,7 @@ export class MatchHost {
       room,
       contentVersion: this.contentVersion,
       ...this.settings,
+      ...(this.scenario && { scenario: this.scenario }),
       players: this.clients.size,
       reserved: this.seats.length,
       phase: this.phase,
@@ -431,6 +445,7 @@ export class MatchHost {
       ((this.options.seed ?? 4242) + this.roundId - 1) >>> 0,
       this.seats.map((seat) => seat.player),
       { ...this.settings, round: this.roundId },
+      this.scenario,
     );
     this.simulation.match.time = this.settings.roundMinutes * 60;
     this.clock = new FixedStepClock(nowMs);
@@ -689,6 +704,7 @@ export class MatchHost {
       players: this.seats.map((seat) => ({ ...seat.player })),
       scoreboard: [...this.participants.values()].map((player) => ({ ...player })),
       settings: this.settings,
+      scenario: this.scenario,
     };
     const body = JSON.stringify(value);
     for (const connection of this.clients.keys()) {
