@@ -44,16 +44,17 @@ turn this file into a second directory listing.
 
 ## Normal development and validation
 
-Use Node.js 24 or newer and pnpm 11 or newer; `devEngines` in `package.json`
-pins the exact pnpm version, which pnpm 11+ switches to by itself, and makes
-npm refuse to run (`engines.pnpm` rejects older pnpm, which ignores the pin).
-Run `pnpm install` in a new checkout or worktree and after dependency
-changes; the root postinstall also installs the
-isolated lint toolchain in `tools/lint/`. Packages come from pnpm's shared
-store, so a worktree install takes about a second and no extra disk. pnpm
-blocks dependency install scripts: a new dependency that needs one fails the
-install until `pnpm approve-builds <name>` records it under `allowBuilds` in
-`pnpm-workspace.yaml`.
+Use Node.js 24 or newer and pnpm 11 or newer; if `pnpm` is missing, install it
+with `brew install pnpm`. `devEngines` in `package.json` pins the exact pnpm
+version, which pnpm 11+ switches to by itself, and makes npm (including `npx`)
+refuse to run; `engines.pnpm` rejects older pnpm, which ignores the pin. Run
+`pnpm install` in every new checkout or worktree and after dependency changes;
+it replaces `npm ci`, `pnpm add` replaces `npm install <package>`, and the
+root postinstall also installs the isolated lint toolchain in `tools/lint/`.
+Packages come from pnpm's shared store, so a worktree install takes about a
+second and no extra disk. pnpm blocks dependency install scripts: a new
+dependency that needs one fails the install until `pnpm approve-builds <name>`
+records it under `allowBuilds` in `pnpm-workspace.yaml`.
 
 ```sh
 pnpm run check                        # CI gate: lint, format, build and tests

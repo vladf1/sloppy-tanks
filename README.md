@@ -4,14 +4,15 @@ A browser tank game with destructible cover, team battles and solo survival. Bui
 
 ## Run
 
-Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) 11 or newer (for example `brew install pnpm`):
+Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) 11 or newer. On macOS:
 
 ```sh
-pnpm install
+brew install node pnpm   # once per machine
+pnpm install             # once per checkout or worktree, and after dependency changes
 pnpm run dev
 ```
 
-`package.json` pins the pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
+On other systems, `npm install -g pnpm` also works. `package.json` pins the exact pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
 
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`.
 
