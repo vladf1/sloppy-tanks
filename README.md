@@ -91,8 +91,11 @@ room page, or a join that gives up, returns there too, with the reason shown in 
 room list; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
 
-The in-game menu shows the room's rules as text during a battle and to guests;
-only the host changes them, between rounds. If the connection drops, a dialog
+The in-game menu shows the room's rules as text. Between rounds it leads with the
+last round's result; everyone stays in the room, so **Play again** keeps the group
+and its teams together, while **Battle Setup** leaves the room (closing it if you
+were the last player). The host can unfold **Change rules**, and anyone can change
+team or tank for the next battle. If the connection drops, a dialog
 replaces the menu while the game reconnects on its own. If it gives up, the
 dialog says why (lost connection, room closed, seat expired, seat opened in
 another tab, or a game update) and offers what still works: try again, play

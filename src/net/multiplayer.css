@@ -78,6 +78,7 @@
   color: var(--red);
 }
 .network-summary {
+  margin: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -90,6 +91,46 @@
   color: #eef6fb;
   font-size: 12px;
   font-weight: 600;
+}
+/* During a battle the rules sit under the heading; between battles the next battle's
+   rules follow the results and teams, just above the actions. */
+.network-menu > :is(.network-actions, .network-note, .network-local, .network-help) {
+  order: 2;
+}
+.network-menu:not([data-phase="playing"]) > .network-next {
+  order: 1;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.network-next {
+  display: grid;
+  gap: 10px;
+}
+.network-label {
+  color: var(--label);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+}
+.network-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+#choice-line span {
+  color: var(--text);
+  font-size: 13px;
+}
+#choice-line b {
+  color: #f5faff;
+}
+.network-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 .network-fields {
   display: grid;
