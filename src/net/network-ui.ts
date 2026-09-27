@@ -36,6 +36,14 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
   "room-ended": { title: "ROOM CLOSED" },
   outdated: { title: "GAME UPDATED" },
 };
+const PLAYER_TANKS = ["scout", "balanced", "heavy"] as const;
+/** Battle Setup's card name, such as "Big Rig". */
+function tankName(kind: (typeof PLAYER_TANKS)[number]): string {
+  return VEHICLES[kind].name
+    .split(" ")
+    .map((word) => word[0] + word.slice(1).toLowerCase())
+    .join(" ");
+}
 const CONTROLS_HELP = [
   "WASD / arrows: drive",
   "Mouse: aim",
@@ -49,18 +57,28 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     <div class="network-room"><span class="eyebrow">ROOM <b class="room-code"></b></span><button id="copy-room" class="text-button" type="button">Copy invite link</button></div>
     <div class="network-title-row"><h2 id="network-title"></h2><div id="network-score" class="network-score" aria-label="Final score" hidden><span id="final-blue"></span> : <span id="final-red"></span></div></div>
     <p id="network-hint"></p>
-    <p id="network-summary" class="network-summary" aria-label="Room rules"></p>
     <p id="network-message" role="status"></p>
   </header>
-  <div id="player-fields" class="network-fields">
-    <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
-    <label>Tank<select id="player-kind"><option value="scout">Scout</option><option value="balanced">Balanced</option><option value="heavy">Heavy</option></select></label>
-  </div>
-  <div id="host-settings" class="network-fields">
-    <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.map((map) => `<option value="${map.id}">${map.name}</option>`).join("")}</select></label>
-    <label>Bots<select id="room-bots"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="none">None</option></select></label>
-    <label>Minutes<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label>
-  </div>
+  <section class="network-next" aria-labelledby="next-label">
+    <div id="next-label" class="network-label">NEXT BATTLE</div>
+    <div class="network-line">
+      <p id="network-summary" class="network-summary" aria-label="Room rules"></p>
+      <button id="change-rules" class="text-button" type="button" aria-controls="host-settings" aria-expanded="false">Change rules</button>
+    </div>
+    <div id="host-settings" class="network-fields" hidden>
+      <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.map((map) => `<option value="${map.id}">${map.name}</option>`).join("")}</select></label>
+      <label>Bots<select id="room-bots"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="none">None</option></select></label>
+      <label>Minutes<input id="room-round-minutes" type="number" min="1" max="20" step="1" required /></label>
+    </div>
+    <div id="choice-line" class="network-line">
+      <span>You: <b id="next-choice"></b></span>
+      <button id="change-choice" class="text-button" type="button" aria-controls="player-fields" aria-expanded="false">Change team or tank</button>
+    </div>
+    <div id="player-fields" class="network-fields" hidden>
+      <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
+      <label>Tank<select id="player-kind">${PLAYER_TANKS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${VEHICLES[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
+    </div>
+  </section>
   <div id="network-scoreboard" hidden></div>
   <div id="network-roster"></div>
   <div class="network-actions">
@@ -69,6 +87,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     <button id="network-end" class="secondary" type="button" hidden>END BATTLE</button>
     <button id="leave-room" class="secondary" type="button">LEAVE ROOM</button>
   </div>
+  <p id="network-leave-note" class="network-note" hidden>You're the last player here, so leaving closes the room.</p>
   <div class="network-local" hidden>
     <label>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
     <label>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label>
@@ -102,6 +121,10 @@ export class NetworkUI {
   private outcome?: { match: RenderState["match"]; team: number };
   /** The round this host ended early; its seat had the menu open, so no final state came. */
   private endedRound?: number;
+  /** Between battles the rules and your team and tank stay folded until asked for. */
+  private editingRules = false;
+  private editingChoice = false;
+  private canEditRules = false;
   menu = false;
   constructor(
     readonly root: HTMLElement,
@@ -141,6 +164,14 @@ export class NetworkUI {
       if (typeof this.link === "object") {
         this.actions.setup(this.link.text);
       }
+    });
+    this.on("change-rules", () => {
+      this.editingRules = !this.editingRules;
+      this.renderEditing();
+    });
+    this.on("change-choice", () => {
+      this.editingChoice = !this.editingChoice;
+      this.renderEditing();
     });
     this.on("pause", () => this.actions.pause());
     this.on("fullscreen", () => {
@@ -287,19 +318,25 @@ export class NetworkUI {
     if (lobby.phase !== "results") {
       this.outcome = undefined;
     }
-    // Choices are only open between battles, and room rules only to the host;
-    // everyone else reads them as text rather than as disabled controls.
-    const editable = host && !playing;
-    this.renderHeading(lobby, host);
+    if (playing) {
+      this.editingRules = this.editingChoice = false;
+    }
+    // Choices are only open between battles, and room rules only to the host. Everyone
+    // reads the rules as text; the controls unfold only when someone asks to change them.
+    this.canEditRules = host && !playing;
+    const alone = lobby.players.length === 1;
+    this.panel.querySelector<HTMLElement>(".network-menu")!.dataset.phase = lobby.phase;
+    this.renderHeading(lobby, host, alone);
     this.renderSummary(lobby);
-    this.element("network-summary").hidden = editable;
-    this.element("player-fields").hidden = playing;
-    this.element("host-settings").hidden = !editable;
+    this.element("next-label").hidden = playing;
+    this.element("choice-line").hidden = playing;
     const mine = lobby.players.find((player) => player.playerId === playerId);
     if (mine) {
       this.input("player-team").value = String(mine.team);
       this.input("player-kind").value = mine.kind;
+      this.set("next-choice", (mine.team === 0 ? "Blue" : "Red") + " · " + tankName(mine.kind));
     }
+    this.renderEditing();
     // A scenario room brings its own arena.
     this.element("room-map-field").hidden = lobby.scenario !== undefined;
     this.input("room-map").value = lobby.settings.mapMode;
@@ -312,6 +349,9 @@ export class NetworkUI {
       lobby.phase === "results" ? "PLAY AGAIN" : "START BATTLE";
     this.button("network-end").hidden = !host || !playing;
     this.button("network-resume").hidden = !playing;
+    // Between battles, leaving the room is how you get back to Battle Setup.
+    this.button("leave-room").textContent = playing ? "LEAVE ROOM" : "BATTLE SETUP";
+    this.element("network-leave-note").hidden = !alone;
     this.root
       .querySelectorAll<HTMLElement>(".network-local")
       .forEach((node) => (node.hidden = !playing));
@@ -323,19 +363,25 @@ export class NetworkUI {
     }
     this.render();
   }
-  private renderHeading(lobby: Lobby, host: boolean): void {
+  private renderHeading(lobby: Lobby, host: boolean, alone: boolean): void {
+    const next = lobby.phase === "results" ? "the next battle" : "the battle";
+    const hostName = lobby.players.find((player) => player.playerId === lobby.hostId)?.name;
     const hint =
       lobby.phase === "playing"
         ? lobby.settings.humansOnly
           ? "The battle keeps going. Your tank sits idle and vulnerable while this menu is open."
           : "The battle keeps going. A bot drives your tank while this menu is open."
-        : host
-          ? lobby.scenario
-            ? "Invite friends with the room link, then start when ready."
-            : "Pick the rules, invite friends, then start when ready."
-          : lobby.phase === "results"
-            ? "Waiting for the host to start the next battle."
-            : "Waiting for the host to start the battle.";
+        : !host
+          ? "You stay in this room with everyone. Waiting for " +
+            (hostName ?? "the host") +
+            " to start " +
+            next +
+            "."
+          : alone
+            ? "You're the only one here. Share the invite link, or start " + next + " on your own."
+            : "Everyone stays in this room. " +
+              (lobby.phase === "results" ? "Play again" : "Start the battle") +
+              " to keep the teams together.";
     this.set("network-hint", hint);
     this.set(
       "network-title",
@@ -501,6 +547,19 @@ export class NetworkUI {
       }
     }
     board.append(table);
+  }
+  /** Fold or unfold the rules and your team and tank choice. */
+  private renderEditing(): void {
+    const between = !!this.lastLobby && this.lastLobby.phase !== "playing";
+    const rules = this.button("change-rules");
+    rules.hidden = !this.canEditRules;
+    rules.textContent = this.editingRules ? "Done" : "Change rules";
+    rules.setAttribute("aria-expanded", String(this.editingRules));
+    this.element("host-settings").hidden = !(this.canEditRules && this.editingRules);
+    const choice = this.button("change-choice");
+    choice.textContent = this.editingChoice ? "Done" : "Change team or tank";
+    choice.setAttribute("aria-expanded", String(this.editingChoice));
+    this.element("player-fields").hidden = !(between && this.editingChoice);
   }
   /** Which of the overlay's two dialogs shows, if any. */
   private render(): void {

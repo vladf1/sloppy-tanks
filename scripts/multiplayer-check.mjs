@@ -310,8 +310,11 @@ try {
     pages.map((page) => page.locator("#network-scoreboard tbody tr").first().waitFor()),
   );
   await alice.screenshot({ path: `${output}/results.png` });
-  // Choosing bots again restores fill bots next round; the guest reads the change as text.
-  assert.equal(await bob.locator("#host-settings").isVisible(), false);
+  // The rules stay folded until the host asks to change them; guests only read them.
+  // Choosing bots again restores fill bots next round.
+  assert.equal(await alice.locator("#host-settings").isVisible(), false);
+  assert.equal(await bob.locator("#change-rules").isVisible(), false);
+  await click(alice, "#change-rules");
   await alice.locator("#room-bots").selectOption("normal");
   await bob.waitForFunction(() =>
     document.querySelector("#network-summary").textContent.includes("Normal bots"),
