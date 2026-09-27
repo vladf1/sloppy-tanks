@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { VPS_SSH } from "./vps-host.mjs";
+import { VPS_SSH, VPS_SSH_OPTIONS } from "./vps-host.mjs";
 
 /** Read-only views of the VPS game server over SSH: `logs`, `stats` or `status`. */
 const COMMANDS = {
@@ -14,7 +14,7 @@ if (!(name in COMMANDS)) {
 }
 const result = spawnSync(
   "ssh",
-  ["-o", "ConnectTimeout=15", ...(name === "logs" ? ["-t"] : []), VPS_SSH, COMMANDS[name]],
+  [...VPS_SSH_OPTIONS, ...(name === "logs" ? ["-t"] : []), VPS_SSH, COMMANDS[name]],
   { stdio: name === "stats" ? ["inherit", "pipe", "inherit"] : "inherit", encoding: "utf8" },
 );
 if (name === "stats" && result.status === 0)

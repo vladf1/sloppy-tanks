@@ -92,6 +92,8 @@ with 4002.
 - The `Caddyfile` sets up automatic Let's Encrypt TLS for the sslip.io name.
 
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH as root.
+The scripts trust a new host's key on first contact and refuse a changed one, so after
+replacing the server at the same IP run `ssh-keygen -R <ip>` first.
 
 ```sh
 npm run vps:provision   # first time, or after editing deploy/vps/*; then deploys

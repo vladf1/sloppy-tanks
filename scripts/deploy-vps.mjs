@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { contentVersion } from "./content-version.mjs";
-import { VPS_MULTIPLAYER_URL, VPS_SSH } from "./vps-host.mjs";
+import { VPS_MULTIPLAYER_URL, VPS_SSH, VPS_SSH_OPTIONS } from "./vps-host.mjs";
 
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 60000;
-const SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"];
+const SSH_OPTIONS = ["-o", "BatchMode=yes", ...VPS_SSH_OPTIONS];
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: repo, stdio: "inherit" });
