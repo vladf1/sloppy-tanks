@@ -172,9 +172,13 @@ the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
 also uses. It does not deploy that server. A client only plays on a server
-built from the same game and network sources, so after merging changes to
-`src/game/` or `src/net/`, run `pnpm run vps:deploy` from `main`; until then, players
-on the production site are asked to reload and cannot join. Likewise,
+built from the same shared sources: the `src/` files the server bundle imports,
+listed by `node scripts/content-version.mjs`, and
+`pnpm run server:check-if-redeployment-required` says whether the live server
+matches this checkout. After merging changes to any of them, run
+`pnpm run server:deploy` from `main`; until then, players on the production site are
+asked to reload and cannot join. Client-only files (rendering, input, menus)
+never need a server deploy. Likewise,
 `pnpm run deploy:dev` from a branch with such changes replaces the shared server and
 breaks production multiplayer until `main` is deployed again.
 

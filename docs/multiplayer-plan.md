@@ -18,7 +18,7 @@ Single-player must pay minimal cost for multiplayer support. Load the multiplaye
 | Game mode          | Team Battle; up to 8 players, at most 6 per team; bots fill the 12 seats                                                                              | Preserves the existing six-versus-six roster. Players choose a team with room and a player-legal tank.                                                          |
 | Latency handling   | Remote entities interpolated behind an adaptive 70–250 ms playout buffer; local aim immediate; local hull extrapolated at most 100 ms with correction | No movement prediction initially. If that test fails, bring prediction into v1 before building the client.                                                      |
 | Portability        | Room logic in plain TypeScript, separate from any transport                                                                                           | Made the move from Durable Objects to Node a small wrapper change. Replacing the custom replication protocol with Colyseus would still be a separate project.   |
-| Cost               | A small VPS at a flat monthly price                                                                                                                   | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `pnpm run vps:stats`.               |
+| Cost               | A small VPS at a flat monthly price                                                                                                                   | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `pnpm run server:stats`.            |
 
 Not planned for v1: WebTransport, accounts or public matchmaking, co-op Solo Assault, the full per-player battle report (v1 shows a scoreboard), persisted live-match recovery, and production rollout. Own-tank movement prediction is deferred only if M1b demonstrates acceptable controls at the tested latencies.
 
@@ -74,7 +74,7 @@ Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-load
 
 ## Hosting assumptions
 
-- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `pnpm run vps:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
+- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `pnpm run server:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
 - **Bandwidth:** each client receives about 55–110 KB/s of JSON snapshots, uncompressed. That counts against the VPS plan's monthly transfer; binary encoding or compression would cut it.
 - **Placement:** every room runs where the VPS is, so friends far from it pay that distance in RTT. Record per-player RTT in M6.
 - **Restarts:** rooms are not persisted. A deploy or restart ends every live match with a room-reset notice; a crash leaves clients to reconnect into a fresh lobby.
@@ -327,22 +327,22 @@ Choose from the playtest results:
 
 ## Risks
 
-| Risk                                                                      | Mitigation                                                                                                    |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Actual Free CPU/timer limits do not support a continuous match            | Confirm applicability and run M1 on the deployed plan, including quiet periods; repeat on any chosen fallback |
-| Driving or camera motion feels delayed or steps at snapshot frequency     | M1b local latency spike before the refactor; prediction moves into v1 if it fails; two-browser recheck in M5  |
-| Missing removals, sleeping poses or old-life state leave the client wrong | Explicit lifecycle deltas, life ids, atomic full baselines, sequence checks and M3 failure tests              |
-| A field rendering reads is never replicated, now or in a later feature    | M3 round-trip test comparing mirror and authoritative render-state every snapshot                             |
-| Spatial effects appear before their delayed targets reach an impact       | Tick-stamped events and a shared remote display timeline, verified visually                                   |
-| Shots miss because aim was computed from a lagging displayed hull         | Send the pointer's ground aim point; the server computes the angle from the authoritative hull                |
-| Stale input keeps firing or applies actions after respawn                 | Input leases, control epochs, and bounded, expiring action queues                                             |
-| A brief connection hiccup hands a connected player's tank to a bot        | Silence idles the tank first; the bot drives only after 5 s, on suspend or on socket close                    |
-| Everyone briefly disconnects and loses the match                          | Bounded 30 s empty-room grace period with bot control; full state on return                                   |
-| A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                  |
-| The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests          |
-| JSON traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                   |
-| The VPS runs out of CPU, memory or monthly transfer                       | Watch `pnpm run vps:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan  |
-| Friends far from the VPS get high RTT                                     | Record per-player RTT; pick the VPS region for the expected players, or add hosts in other regions            |
+| Risk                                                                      | Mitigation                                                                                                      |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Actual Free CPU/timer limits do not support a continuous match            | Confirm applicability and run M1 on the deployed plan, including quiet periods; repeat on any chosen fallback   |
+| Driving or camera motion feels delayed or steps at snapshot frequency     | M1b local latency spike before the refactor; prediction moves into v1 if it fails; two-browser recheck in M5    |
+| Missing removals, sleeping poses or old-life state leave the client wrong | Explicit lifecycle deltas, life ids, atomic full baselines, sequence checks and M3 failure tests                |
+| A field rendering reads is never replicated, now or in a later feature    | M3 round-trip test comparing mirror and authoritative render-state every snapshot                               |
+| Spatial effects appear before their delayed targets reach an impact       | Tick-stamped events and a shared remote display timeline, verified visually                                     |
+| Shots miss because aim was computed from a lagging displayed hull         | Send the pointer's ground aim point; the server computes the angle from the authoritative hull                  |
+| Stale input keeps firing or applies actions after respawn                 | Input leases, control epochs, and bounded, expiring action queues                                               |
+| A brief connection hiccup hands a connected player's tank to a bot        | Silence idles the tank first; the bot drives only after 5 s, on suspend or on socket close                      |
+| Everyone briefly disconnects and loses the match                          | Bounded 30 s empty-room grace period with bot control; full state on return                                     |
+| A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                    |
+| The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests            |
+| JSON traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                     |
+| The VPS runs out of CPU, memory or monthly transfer                       | Watch `pnpm run server:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan |
+| Friends far from the VPS get high RTT                                     | Record per-player RTT; pick the VPS region for the expected players, or add hosts in other regions              |
 
 ## Gameplay defaults and decisions still requiring evidence
 
