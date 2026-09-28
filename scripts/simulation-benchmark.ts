@@ -70,7 +70,7 @@ for (let tick = 0; tick < WARMUP_TICKS + MEASURE_TICKS; tick++) {
 simulation.dispose();
 
 const ticks = tickMs.length;
-const sorted = tickMs.toSorted((a, b) => a - b);
+const sorted = [...tickMs].sort((a, b) => a - b);
 const percentile = (p: number) => sorted[Math.min(ticks - 1, Math.floor(p * ticks))];
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 console.log(
