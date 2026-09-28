@@ -60,6 +60,8 @@ export class AudioSystem {
   lastShot = -Infinity;
   lastHit = -Infinity;
   lastLaser = -Infinity;
+  /** World X/Z of screen right; first person turns it with the view. */
+  listenerRight = { x: 1, z: 0 };
   start(): void {
     this.enabled = true;
     void Howler.ctx?.resume();
@@ -135,6 +137,8 @@ export class AudioSystem {
         Math.max(0.05, 1 - d / AUDIO.fadeDistance),
       id,
     );
-    effect.stereo(Math.max(-1, Math.min(1, (event.x - listener.x) / AUDIO.stereoDistance)), id);
+    const right = this.listenerRight;
+    const across = (event.x - listener.x) * right.x + (event.z - listener.z) * right.z;
+    effect.stereo(Math.max(-1, Math.min(1, across / AUDIO.stereoDistance)), id);
   }
 }

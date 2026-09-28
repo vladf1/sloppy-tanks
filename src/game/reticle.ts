@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { put } from "./model-primitives";
 import { HUD_LAYER } from "./view-settings";
+/** Overhead, the reticle lies just above the aiming plane. */
+export const RETICLE_HEIGHT = 1.05;
 /** Geometry lies on the aiming plane; materials remain accessible for reload/hit feedback. */
 export function createReticle() {
   const crosshair = new THREE.Group();
@@ -47,6 +49,6 @@ export function createReticle() {
   center.renderOrder = 52;
   crosshair.add(center);
   crosshair.traverse((object) => object.layers.set(HUD_LAYER));
-  crosshair.position.y = 1.05;
+  crosshair.position.y = RETICLE_HEIGHT;
   return { crosshair, ink, center: center.material };
 }

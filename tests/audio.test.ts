@@ -28,6 +28,7 @@ test("scenery sound throttling does not swallow a vehicle explosion", () => {
     audio.lastHit =
     audio.lastLaser =
       -Infinity;
+  audio.listenerRight = { x: 1, z: 0 };
   audio.sounds = Object.fromEntries(
     ["wood-break", "rubble-break", "explosion"].map((name) => [
       name,
@@ -49,4 +50,22 @@ test("scenery sound throttling does not swallow a vehicle explosion", () => {
   audio.event({ type: "destroy", coverKind: "drum", ...listener }, listener);
   audio.event({ type: "explosion", coverKind: "drum", ...listener }, listener);
   assert.deepEqual(played, ["wood-break", "explosion", "explosion"]);
+});
+
+test("stereo pans along the listener's right, which first person turns with the view", () => {
+  const audio = Object.create(AudioSystem.prototype) as AudioSystem;
+  const pans: number[] = [];
+  audio.enabled = true;
+  audio.lastExplosion = -Infinity;
+  audio.sounds = {
+    explosion: { play: () => 1, volume: () => {}, stereo: (pan: number) => pans.push(pan) },
+  } as unknown as AudioSystem["sounds"];
+  const listener = { x: 0, z: 0 };
+  audio.listenerRight = { x: 1, z: 0 };
+  audio.event({ type: "explosion", x: 0, z: 30 }, listener);
+  // Facing +X, screen right is +Z.
+  audio.lastExplosion = -Infinity;
+  audio.listenerRight = { x: 0, z: 1 };
+  audio.event({ type: "explosion", x: 0, z: 30 }, listener);
+  assert.deepEqual(pans, [0, 1]);
 });

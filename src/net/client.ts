@@ -2,6 +2,7 @@ import { Presentation } from "../game/presentation";
 import { NerdStats } from "../game/nerd-stats";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
+import { Cockpit } from "../game/cockpit";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { loadTankSurface } from "../game/tank-surfaces";
 import { AMMO_ORDER, hasAmmo } from "../game/ammunition";
@@ -195,6 +196,16 @@ export function startMultiplayer(
     },
   });
   const controls = new Controls(ui.canvas, pause, zoom, activeInput, false);
+  const toggleView = () => {
+    if (!view || !display || phase !== "playing" || ui.menu) {
+      return;
+    }
+    view.firstPerson.toggle(display.viewer.aim);
+    controls.holdPointer(view.firstPerson.enabled);
+    controls.capturePointer();
+  };
+  controls.toggleView = toggleView;
+  const cockpit = new Cockpit(ui.root, toggleView);
   const touch = new TouchModeController(
     root,
     controls,
@@ -236,6 +247,7 @@ export function startMultiplayer(
     try {
       if (!view) {
         [view] = await Promise.all([Presentation.create(ui.canvas), loadTankSurface()]);
+        audio.listenerRight = view.listenerRight;
         stats = new NerdStats(
           root,
           () => {
@@ -496,16 +508,25 @@ export function startMultiplayer(
       }
     },
   });
-  const collect = (now: number) => {
+  const collect = (now: number, dt: number, lookPixels: number) => {
     if (!activeInput() || !view || !display || !control) {
       return;
     }
+    const look = view.firstPerson;
     const position = display.viewer.position;
-    const target = controls.touch.aiming
-      ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
-      : view.aim(controls.nx, controls.ny);
-    const angle = Math.atan2(target.x - position.x, target.z - position.z);
-    const command = controls.command(angle);
+    let target: { x: number; z: number } | undefined;
+    let angle: number;
+    if (look.enabled) {
+      const stick = controls.touch.pointers.aim === null ? 0 : controls.touch.aimX;
+      look.turn(lookPixels, stick, dt);
+      angle = look.yaw;
+    } else {
+      target = controls.touch.aiming
+        ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
+        : view.aim(controls.nx, controls.ny);
+      angle = Math.atan2(target.x - position.x, target.z - position.z);
+    }
+    const command = look.steer(controls.command(angle));
     // Aim is immediate presentation feedback; only the server decides what the shot hits.
     display = {
       ...display,
@@ -545,7 +566,7 @@ export function startMultiplayer(
       controlEpoch: control.controlEpoch,
       moveX: command.moveX,
       moveZ: command.moveZ,
-      aim: controls.touch.aiming ? { angle } : { x: target.x, z: target.z },
+      aim: target && !controls.touch.aiming ? { x: target.x, z: target.z } : { angle },
       fire: command.fire,
       actions: pending,
     };
@@ -564,6 +585,14 @@ export function startMultiplayer(
   const loop = (now: number) => {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
+    // Any menu (including ones the server opens) and disconnects free the pointer;
+    // a death keeps it captured for the respawn. Mouse travel while `activeInput`
+    // is off is dropped so the turret never jumps.
+    controls.holdPointer(
+      !!view?.firstPerson.enabled,
+      !active || !connection.connected || ui.menu || document.hidden || phase !== "playing",
+    );
+    const lookPixels = controls.takeLook();
     if (active && view && control && mirror.state && !document.hidden) {
       const updateStart = performance.now();
       if (!ui.menu) {
@@ -580,9 +609,14 @@ export function startMultiplayer(
         }
       }
       if (display) {
-        collect(now);
+        collect(now, dt, lookPixels);
         const renderStart = performance.now();
         view.render(display, 1, dt);
+        cockpit.update(
+          view.inFirstPerson,
+          view.firstPerson.screenAngle(display.viewer.heading),
+          controls.aimWaitsForClick,
+        );
         const renderCost = performance.now() - renderStart;
         ui.update(display, dt, connection.connected);
         stats?.frame(now, renderStart - updateStart, renderCost);
