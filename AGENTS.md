@@ -210,10 +210,11 @@ offline.
   under `assets/texture-sources/`. Regenerate checked-in WebP/audio assets
   only for an intentional artwork or sound change, and use the documented
   encoders rather than hand-editing generated binaries.
-- The GitHub Pages build uses the default `/sloppy-tanks/` base; the Cloudflare
-  build uses `DEPLOY_BASE=/` and `dist-cloudflare/`. Keep those bases and the
-  separate outputs intact. Both deployment workflows run `pnpm run check`, so a
-  shared lint/type/build failure can break both providers.
+- Production is GitHub Pages at the custom domain `sloppy-tanks.fridman.me`; its
+  workflow builds with `DEPLOY_BASE=/`, and `fridman.me/sloppy-tanks/` redirects
+  there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
+  The workflow runs `pnpm run check`, so a lint/type/build failure blocks the
+  deploy.
 - Treat historical artifacts, frame rates, CDN measurements, and deployment
   results as evidence from a particular environment and time. Re-measure live
   state before making current host or performance claims.
@@ -227,12 +228,12 @@ offline.
 - `pnpm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
   to the dedicated Cloudflare Pages project `sloppy-tanks-dev` (setup and URLs
   in `README.md`). It publishes current local files, including uncommitted
-  changes. Use this when asked to publish the dev site. Do not substitute the
-  production project `sloppy-tanks` or change either production deployment
-  workflow, and never upload the repository directory.
+  changes. Use this when asked to publish the dev site. Do not publish it to
+  production or change the production GitHub Pages workflow, and never upload
+  the repository directory.
 - `deploy:dev` first deploys the Node multiplayer server to the Vultr VPS
   (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms.
-  Production Pages sites use the same server. When a branch changes
+  The production site uses the same server. When a branch changes
   `src/game/` or `src/net/`, `deploy:dev` breaks production multiplayer until
   `main` is redeployed; say so before running it. After such changes reach
   `main`, run `pnpm run vps:deploy` from `main`.

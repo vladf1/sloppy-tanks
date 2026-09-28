@@ -19,6 +19,9 @@ jobs:
       # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need a
       # matching `pnpm run vps:deploy`, or players are told to reload.
       VITE_MULTIPLAYER_URL: wss://sloppy-tanks-server.fridman.me
+      # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
+      # its root; fridman.me/sloppy-tanks/ redirects there.
+      DEPLOY_BASE: /
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

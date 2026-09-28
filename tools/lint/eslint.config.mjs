@@ -8,7 +8,6 @@ export default tseslint.config(
   {
     ignores: [
       "dist/**",
-      "dist-cloudflare/**",
       "dist-dev/**",
       "server/dist/**",
       "bots/.wrangler/**",

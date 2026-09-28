@@ -16,7 +16,6 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "pnpm run typecheck && vite build",
-    "build:cloudflare": "tsc --noEmit && DEPLOY_BASE=/ vite build --outDir dist-cloudflare",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
     "check:browser": "node scripts/browser-checks.mjs",

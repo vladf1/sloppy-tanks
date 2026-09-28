@@ -11,16 +11,17 @@ const deployments = [
   {
     id: "github-pages",
     name: "GitHub Pages",
-    origin: "https://fridman.me",
-    prefix: "/sloppy-tanks",
-    entry: "https://fridman.me/sloppy-tanks/",
-  },
-  {
-    id: "cloudflare-pages",
-    name: "Cloudflare Pages",
     origin: "https://sloppy-tanks.fridman.me",
     prefix: "",
     entry: "https://sloppy-tanks.fridman.me/",
+  },
+  {
+    // The production Cloudflare site is gone; the dev site is the remaining Pages host.
+    id: "cloudflare-pages",
+    name: "Cloudflare Pages (dev site)",
+    origin: "https://sloppy-tanks-dev.fridman.me",
+    prefix: "",
+    entry: "https://sloppy-tanks-dev.fridman.me/",
   },
 ];
 

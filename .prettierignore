@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-cloudflare/
 artifacts/
 public/
 pnpm-lock.yaml

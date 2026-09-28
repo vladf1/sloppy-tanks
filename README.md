@@ -87,9 +87,8 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
-Multiplayer is available on the [GitHub Pages site](https://fridman.me/sloppy-tanks/?multiplayer),
-the [Cloudflare site](https://sloppy-tanks.fridman.me/?multiplayer) and the
-[dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); all three use the same
+Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
+and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); both use the same
 game server. Battle Setup has two tabs: **Single player** and **Multiplayer**.
 Both share the tank cards, so the tank you pick is the one you drive online.
 The Multiplayer tab lists open rooms (it polls only while shown). Your saved name
@@ -165,29 +164,21 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 ## Deployment
 
-Two independent workflows publish on pushes to `main`, after `pnpm run check` passes:
+A GitHub Pages workflow publishes on pushes to `main`, after `pnpm run check` passes.
+It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, the
+repository's Pages custom domain (a Namecheap CNAME to `vladf1.github.io`). The old
+address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
+the Vite dev server keep the default `/sloppy-tanks/` base.
 
-- **GitHub Pages:** `pnpm run build` produces `dist/` with the default `/sloppy-tanks/` base for <https://fridman.me/sloppy-tanks/>.
-- **Cloudflare Pages:** `pnpm run build:cloudflare` produces `dist-cloudflare/` with the `/` base for <https://sloppy-tanks.fridman.me/>. The Pages project is `sloppy-tanks`, with <https://sloppy-tanks.pages.dev/> as its provider URL.
-
-Both workflows set `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
-also uses. The workflows do not deploy that server. A client only plays on a server
+The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
+also uses. It does not deploy that server. A client only plays on a server
 built from the same game and network sources, so after merging changes to
 `src/game/` or `src/net/`, run `pnpm run vps:deploy` from `main`; until then, players
-on the production sites are asked to reload and cannot join. Likewise,
+on the production site are asked to reload and cannot join. Likewise,
 `pnpm run deploy:dev` from a branch with such changes replaces the shared server and
 breaks production multiplayer until `main` is deployed again.
 
-`DEPLOY_BASE` controls both Vite asset URLs and the physics preload. The Cloudflare build uses its own output directory and leaves `dist/` intact. Its workflow requires the GitHub Actions secret `CLOUDFLARE_API_TOKEN`, scoped to Cloudflare Pages:Edit on the deployment account. Never commit the token.
-
-For a manual Cloudflare deployment with authenticated Wrangler:
-
-```sh
-pnpm run build:cloudflare
-wrangler pages deploy dist-cloudflare --project-name sloppy-tanks --branch main
-```
-
-The Namecheap CNAME `sloppy-tanks` points to `sloppy-tanks.pages.dev`; the apex, `www`, and existing GitHub Pages configuration remain separate. To stop the experiment, disable the Cloudflare workflow and remove only that subdomain's CNAME and Pages custom-domain association.
+`DEPLOY_BASE` controls both Vite asset URLs and the physics preload.
 
 The build separates the interactive menu from gameplay, graphics, physics and audio dependencies. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. Rapier's WASM is emitted as a separate hashed file and preloaded from HTML. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
 
