@@ -60,7 +60,7 @@ test("node server reports health with the build's content version", async () => 
   const health = (await (await fetch(`http://${base}/health`)).json()) as Record<string, unknown>;
   assert.equal(health.contentVersion, CONTENT_VERSION);
   assert.equal(health.version, PROTOCOL_VERSION);
-  assert.deepEqual(Object.keys(health).sort(), ["contentVersion", "version"]);
+  assert.deepEqual(Object.keys(health).sort(), ["contentVersion", "serverBuild", "version"]);
 });
 
 test("node server root returns the same pretty-printed body as /health", async () => {

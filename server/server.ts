@@ -13,6 +13,10 @@ import { ServerMonitor } from "./monitor";
 import { Dashboard } from "./dashboard";
 import { RateLimit } from "./rate-limit";
 
+declare const __SERVER_BUILD__: string;
+/** Fingerprint of everything bundled into this server, so a deploy check can tell
+ * server-only changes apart from the client-facing `CONTENT_VERSION`. */
+const SERVER_BUILD = typeof __SERVER_BUILD__ === "undefined" ? "test-build" : __SERVER_BUILD__;
 /** Headroom over MAX_CLIENT_MESSAGE_BYTES; RoomSession enforces the exact protocol limit. */
 const MAX_FRAME_BYTES = 8192;
 /** Queued output after which a reader is too slow to follow 20 Hz snapshots. */
@@ -106,7 +110,11 @@ export function createServer(options: ServerOptions): MultiplayerServer {
     };
     if (path === "/" || path === "/health") {
       // Pretty-printed because operators read it in a browser; /rooms stays compact.
-      const health = { version: PROTOCOL_VERSION, contentVersion: CONTENT_VERSION };
+      const health = {
+        version: PROTOCOL_VERSION,
+        contentVersion: CONTENT_VERSION,
+        serverBuild: SERVER_BUILD,
+      };
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(health, null, 2) + "\n");
       return;

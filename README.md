@@ -177,8 +177,9 @@ listed by `node scripts/content-version.mjs`, and
 `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout. After merging changes to any of them, run
 `pnpm run server:deploy` from `main`; until then, players on the production site are
-asked to reload and cannot join. Client-only files (rendering, input, menus)
-never need a server deploy. Likewise,
+asked to reload and cannot join. Server-only changes (`server/`, bundled
+dependencies) keep clients compatible but still need that deploy to take effect;
+client-only files (rendering, input, menus) never do. Likewise,
 `pnpm run deploy:dev` from a branch with such changes replaces the shared server and
 breaks production multiplayer until `main` is deployed again.
 
