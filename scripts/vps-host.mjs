@@ -1,5 +1,5 @@
 /** The self-hosted multiplayer VPS (Vultr, Ubuntu); deployment files live in deploy/vps/. */
-export const VPS_SSH = process.env.SLOPPY_VPS_SSH ?? "root@45.63.56.58";
+export const VPS_SSH = process.env.SLOPPY_VPS_SSH ?? "root@sloppy-tanks-server.fridman.me";
 /**
  * accept-new trusts a fresh VPS's host key on first contact, so a replacement needs no
  * manual login, but still refuses a known host whose key has changed.
@@ -11,4 +11,4 @@ export const VPS_SSH_OPTIONS = [
   "StrictHostKeyChecking=accept-new",
 ];
 /** Public WebSocket URL of the VPS server; the dev site build points its client here. */
-export const VPS_MULTIPLAYER_URL = "wss://45-63-56-58.nip.io";
+export const VPS_MULTIPLAYER_URL = "wss://sloppy-tanks-server.fridman.me";

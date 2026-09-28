@@ -9,7 +9,7 @@
   "observability": { "enabled": true },
   "vars": {
     // The self-hosted game server on the VPS (scripts/vps-host.mjs).
-    "SERVER_URL": "https://45-63-56-58.nip.io",
+    "SERVER_URL": "https://sloppy-tanks-server.fridman.me",
     "BOT_ORIGIN": "https://sloppy-tanks-dev.pages.dev",
   },
 }

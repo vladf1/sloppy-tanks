@@ -7,7 +7,7 @@ ammunition. Bots are named `bot-<region>-<n>` and occupy real seats.
 
 The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`)
 targets `SERVER_URL` in `wrangler.jsonc`: the self-hosted game server on the VPS,
-`https://45-63-56-58.nip.io`. It is separate from the game server and both Pages
+`https://sloppy-tanks-server.fridman.me`. It is separate from the game server and both Pages
 sites, and still runs on Cloudflare so bots can connect from many regions.
 
 ## How they live

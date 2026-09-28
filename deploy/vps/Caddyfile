@@ -1,6 +1,6 @@
-# nip.io resolves this name to 45.63.56.58, so Let's Encrypt can issue a certificate
-# without a registered domain. Caddy forwards WebSocket upgrades as-is.
-45-63-56-58.nip.io {
+# sloppy-tanks-server.fridman.me is an A record at Namecheap, so moving providers means
+# updating that record. Caddy obtains its certificate and forwards WebSocket upgrades as-is.
+sloppy-tanks-server.fridman.me {
 	# Operator stats list every room code; read them over SSH (pnpm run vps:stats).
 	respond /stats 404
 	reverse_proxy 127.0.0.1:8787
