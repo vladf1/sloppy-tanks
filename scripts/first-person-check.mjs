@@ -15,6 +15,12 @@ try {
   const overheadAim = await page.evaluate(() => window.sloppy.sim.human.aim);
 
   await page.keyboard.press("v");
+  // The camera flies down into the turret before the cockpit HUD appears.
+  await page.waitForFunction(() => {
+    const { view } = window.sloppy;
+    return !view.inFirstPerson && view.camera.fov > 43 && view.camera.position.y > 4;
+  });
+  await page.screenshot({ path: `${output}/entering.png` });
   await page.waitForFunction(() => window.sloppy.view.inFirstPerson);
   const seated = await page.evaluate(() => {
     const { sim, view } = window.sloppy;
@@ -117,6 +123,7 @@ try {
   await destroy();
   await heavy.waitFor({ state: "visible" });
   await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.sloppy.view.inFirstPerson, null, { timeout: 2000 });
   assert.deepEqual(
     [await captured(), await page.evaluate(() => window.sloppy.view.inFirstPerson)],
     [locked, true],
@@ -134,6 +141,7 @@ try {
   await page.mouse.click(choice.x + choice.width / 2, choice.y + choice.height / 2);
   assert.equal(await page.evaluate(() => window.sloppy.sim.humanKind), "heavy");
   await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.sloppy.view.inFirstPerson, null, { timeout: 2000 });
   const respawned = await page.evaluate(() => ({
     kind: window.sloppy.sim.human.kind,
     firstPerson: window.sloppy.view.inFirstPerson,
@@ -141,7 +149,7 @@ try {
   assert.deepEqual(respawned, { kind: "heavy", firstPerson: true });
 
   await page.locator("#view-mode").click();
-  await page.waitForFunction(() => !window.sloppy.view.inFirstPerson);
+  await page.waitForFunction(() => window.sloppy.view.camera.fov === 43);
   const overhead = await page.evaluate(() => ({
     fov: window.sloppy.view.camera.fov,
     height: window.sloppy.view.camera.position.y,

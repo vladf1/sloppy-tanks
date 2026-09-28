@@ -613,7 +613,7 @@ export function startMultiplayer(
         const renderStart = performance.now();
         view.render(display, 1, dt);
         cockpit.update(
-          view.inFirstPerson,
+          view.seatWanted,
           view.firstPerson.screenAngle(display.viewer.heading),
           controls.aimWaitsForClick,
         );

@@ -58,3 +58,17 @@ export function viewRelativeMove(
     moveZ: (moveX * sin - moveZ * cos) * scale,
   };
 }
+
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
+
+/** How far along the line from the overhead pose to the eye the camera is at a
+ * view blend (0 overhead, 1 seated in the turret). */
+export function seatFlight(blend: number): number {
+  return easeInOut(blend);
+}
+
+/** How far the camera has turned from the overhead gaze to the turret's heading. */
+export function seatTurn(blend: number): number {
+  const start = FIRST_PERSON.transitionTurnStart;
+  return easeInOut(Math.min(1, Math.max(0, (blend - start) / (1 - start))));
+}

@@ -402,7 +402,7 @@ export async function prepareGame(
         );
       }
       cockpit.update(
-        sim.match.phase !== "ready" && view.inFirstPerson,
+        sim.match.phase !== "ready" && view.seatWanted,
         look.screenAngle(sim.human.heading),
         controls.aimWaitsForClick,
       );

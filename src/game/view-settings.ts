@@ -41,4 +41,9 @@ export const FIRST_PERSON = {
   reticleScale: 0.3,
   // Pickups hover at eye height; fading them keeps tanks behind them visible.
   pickupOpacity: 0.7,
+  // Switching views flies the camera between the overhead pose and the eye.
+  // It keeps the overhead gaze on the tank until this fraction of the flight,
+  // then swings to the turret's heading.
+  transitionSeconds: 0.8,
+  transitionTurnStart: 0.4,
 } as const;

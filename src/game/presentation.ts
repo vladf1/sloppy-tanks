@@ -63,7 +63,8 @@ import type { GroundKind } from "./ground-surfaces";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK, FIRST_PERSON, HUD_LAYER } from "./view-settings";
-import { FirstPersonLook } from "./first-person";
+import { FirstPersonLook, seatFlight, seatTurn } from "./first-person";
+import { angleDelta } from "./math";
 interface PickupModel extends THREE.Group {
   userData: {
     gem: THREE.Object3D;
@@ -108,6 +109,14 @@ export class Presentation {
   readonly firstPerson = new FirstPersonLook();
   /** Whether the last frame was drawn from inside the player's turret. */
   inFirstPerson = false;
+  /** Whether the view is heading into the turret; the turret then follows the look
+   * and the cockpit HUD shows from the start of the flight. */
+  seatWanted = false;
+  /** Camera progress from the overhead pose (0) to the turret eye (1). */
+  private seatBlend = 0;
+  /** A new round starts in the chosen view rather than flying into it. */
+  private snapSeat = true;
+  private readonly overheadGaze = new THREE.Vector3();
   /** World X/Z of screen right, for stereo panning. */
   readonly listenerRight = { x: 1, z: 0 };
   raycaster = new THREE.Raycaster();
@@ -283,6 +292,7 @@ export class Presentation {
   readonly wreckView: WreckView = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   reset(source: Simulation | RenderState): void {
     const simulation = renderState(source, this.wreckView);
+    this.snapSeat = true;
     const harbor = simulation.mapTheme === "harbor";
     const quarry = simulation.mapTheme === "quarry";
     const village = simulation.mapTheme === "village";
@@ -425,7 +435,7 @@ export class Presentation {
     const position = simulation.viewer.position;
     this.follow.set(position.x, 0, position.z);
     // Startup no longer renders a preview frame to establish the aiming camera.
-    this.updateCamera(simulation, 1, false);
+    this.updateCamera(simulation, 1, 0, false);
     // Prepare the actual draw materials before the menu's compileAsync warm-up.
     this.updatePartBatches(simulation);
   }
@@ -647,15 +657,16 @@ export class Presentation {
   private readonly touchOrigin = new THREE.Vector3();
   touchAim(position: { x: number; z: number }, dx: number, dy: number) {
     // Project relative to the tank so aiming follows the screen direction at any zoom.
-    const origin = this.touchOrigin.set(position.x, 0, position.z).project(this.camera);
+    const origin = this.touchOrigin.set(position.x, 0, position.z).project(this.overhead);
     const canvas = this.renderer.domElement;
     return this.aim(
       origin.x + (dx * 180) / canvas.clientWidth,
       origin.y - (dy * 180) / canvas.clientHeight,
     );
   }
+  /** Overhead aim reads the overhead pose, which a view transition leaves in place. */
   aim(nx: number, ny: number) {
-    this.raycaster.setFromCamera(this.pointer.set(nx, ny), this.camera);
+    this.raycaster.setFromCamera(this.pointer.set(nx, ny), this.overhead);
     const position = this.aimPoint;
     this.raycaster.ray.intersectPlane(this.groundPlane, position);
     this.crosshair.position.x = position.x;
@@ -674,7 +685,7 @@ export class Presentation {
       origin.x - event.x,
       0,
       origin.z - event.z,
-    ).transformDirection(this.camera.matrixWorldInverse);
+    ).transformDirection(this.overhead.matrixWorldInverse);
     return Math.atan2(direction.x, direction.y);
   }
   event(event: SimEvent, playerHit = false): void {
@@ -774,7 +785,12 @@ export class Presentation {
       }
     }
   }
-  private updateCamera(simulation: RenderState, alpha: number, overview: boolean): void {
+  private updateCamera(
+    simulation: RenderState,
+    alpha: number,
+    dt: number,
+    overview: boolean,
+  ): void {
     const position = simulation.viewer.alive
       ? simulation.viewer.position
       : simulation.viewer.previous;
@@ -790,20 +806,47 @@ export class Presentation {
     overhead.lookAt(this.follow);
     overhead.updateMatrixWorld();
     // Destroyed, the player watches the field from above until the respawn.
-    this.inFirstPerson = this.firstPerson.enabled && !overview && simulation.viewer.alive;
+    this.seatWanted = this.firstPerson.enabled && !overview && simulation.viewer.alive;
+    if (this.snapSeat || overview || !this.tankMeshes.has(simulation.viewerId)) {
+      this.snapSeat = false;
+      this.seatBlend = this.seatWanted ? 1 : 0;
+    } else {
+      const step = dt / FIRST_PERSON.transitionSeconds;
+      this.seatBlend = THREE.MathUtils.clamp(
+        this.seatBlend + (this.seatWanted ? step : -step),
+        0,
+        1,
+      );
+    }
+    this.inFirstPerson = this.seatBlend === 1;
     const camera = this.camera;
-    const fieldOfView = this.inFirstPerson ? FIRST_PERSON.fieldOfView : CAMERA.fieldOfView;
+    const fieldOfView = THREE.MathUtils.lerp(
+      CAMERA.fieldOfView,
+      FIRST_PERSON.fieldOfView,
+      seatFlight(this.seatBlend),
+    );
     if (camera.fov !== fieldOfView) {
       camera.fov = fieldOfView;
       camera.updateProjectionMatrix();
     }
-    if (this.inFirstPerson) {
+    if (this.seatBlend > 0) {
       // The eye position waits for the posed turret in placeFirstPersonEye();
-      // orientation is needed now because tank bars face the camera.
-      const yaw = this.firstPerson.yaw;
-      camera.rotation.set(FIRST_PERSON.pitch, yaw + Math.PI, 0, "YXZ");
-      this.listenerRight.x = -Math.cos(yaw);
-      this.listenerRight.z = Math.sin(yaw);
+      // orientation is needed now because tank bars face the camera. In flight
+      // the camera keeps the overhead gaze on the tank, then turns to the turret.
+      const yaw = this.firstPerson.enabled ? this.firstPerson.yaw : simulation.viewer.aim;
+      const gaze = overhead.getWorldDirection(this.overheadGaze);
+      const overheadPitch = Math.asin(gaze.y);
+      const overheadYaw = Math.atan2(-gaze.x, -gaze.z);
+      const turn = seatTurn(this.seatBlend);
+      camera.rotation.set(
+        THREE.MathUtils.lerp(overheadPitch, FIRST_PERSON.pitch, turn),
+        overheadYaw + angleDelta(overheadYaw, yaw + Math.PI) * turn,
+        0,
+        "YXZ",
+      );
+      const listenerYaw = turn < 0.5 ? Math.PI : yaw;
+      this.listenerRight.x = -Math.cos(listenerYaw);
+      this.listenerRight.z = Math.sin(listenerYaw);
     } else {
       camera.position.copy(overhead.position);
       camera.quaternion.copy(overhead.quaternion);
@@ -827,16 +870,21 @@ export class Presentation {
   }
   private readonly eye = new THREE.Vector3();
   /** Seat the first-person camera in the posed turret, so it rides the hull's
-   * suspension, and float the reticle along the view. */
+   * suspension, and float the reticle along the view. Between views the camera
+   * flies on the line from the overhead pose to that eye. */
   private placeFirstPersonEye(simulation: RenderState): void {
     const model = this.tankMeshes.get(simulation.viewerId);
-    if (!this.inFirstPerson || !model) {
+    if (this.seatBlend === 0 || !model) {
       return;
     }
     const eye = FIRST_PERSON.eye[simulation.viewer.kind];
     model.updateMatrixWorld();
-    model.userData.turret.localToWorld(this.camera.position.set(0, eye.height, eye.forward));
+    model.userData.turret.localToWorld(this.eye.set(0, eye.height, eye.forward));
+    this.camera.position.lerpVectors(this.overhead.position, this.eye, seatFlight(this.seatBlend));
     this.camera.updateMatrixWorld();
+    if (!this.inFirstPerson) {
+      return;
+    }
     // The reticle's rings lie flat; stand them up to face the viewer.
     this.crosshair.quaternion.copy(this.camera.quaternion);
     this.crosshair.rotateX(Math.PI / 2);
@@ -912,8 +960,10 @@ export class Presentation {
         this.makeBar(tank.id, tank.team);
       }
       const bar = this.bars.get(tank.id)!;
-      const seated = this.inFirstPerson && tank.id === simulation.viewerId;
-      bar.visible = tank.alive && !seated;
+      const viewer = tank.id === simulation.viewerId;
+      const seated = viewer && this.seatWanted;
+      // The camera flies through the player's bar on the way into the turret.
+      bar.visible = tank.alive && !(viewer && this.seatBlend > 0);
       updateTankProtection(bar, tank);
       if (!tank.alive) {
         this.hitUntil.delete(tank.id);
@@ -1221,7 +1271,7 @@ export class Presentation {
     if (this.quarryScenery?.visible) {
       this.quarryDust.update(simulation, dt);
     }
-    this.updateCamera(simulation, alpha, overview);
+    this.updateCamera(simulation, alpha, dt, overview);
     this.updatePlayerIndicators(simulation, alpha, dt, overview);
     this.updateTanks(simulation, alpha, dt);
     this.placeFirstPersonEye(simulation);
@@ -1233,9 +1283,11 @@ export class Presentation {
     this.projectiles.update(simulation.shots, this.time);
     this.laserVisuals.update(simulation, alpha, dt);
     this.particleEffects.update(dt, this.time);
-    // A destroyed player in first person watches from above without aiming.
+    // A destroyed player in first person watches from above without aiming,
+    // and neither reticle fits the view while the camera flies between them.
     this.crosshair.visible =
-      simulation.match.phase === "playing" && (this.inFirstPerson || !this.firstPerson.enabled);
+      simulation.match.phase === "playing" &&
+      (this.inFirstPerson || (!this.firstPerson.enabled && this.seatBlend === 0));
     this.updatePartBatches(simulation);
     this.renderer.info.reset();
     // Poses are unchanged across the main, shadow and reflection passes. Update
