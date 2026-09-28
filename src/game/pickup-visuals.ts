@@ -15,12 +15,29 @@ const hardwareGeometry = mergeGeometries([
   new THREE.BoxGeometry(1.9, 0.1, 1.28).translate(0, -0.5, 0),
   new THREE.BoxGeometry(0.2, 0.28, 0.08).translate(0, 0.38, 0.64),
 ]);
+// Pickup materials are always transparent so first person can fade them by
+// changing opacity alone, without switching pipelines mid-round. At full
+// opacity they look the same as opaque materials.
 const hardwareMaterial = new THREE.MeshStandardMaterial({
   color: 0x273544,
   roughness: 0.55,
   metalness: 0.5,
+  transparent: true,
 });
 let sharedFaceMaterial: THREE.MeshStandardMaterial | undefined;
+let pickupOpacity = 1;
+
+/** Fade every pickup cube and crate; first person sees through the ones at eye height. */
+export function setPickupOpacity(opacity: number): void {
+  if (opacity === pickupOpacity) {
+    return;
+  }
+  pickupOpacity = opacity;
+  hardwareMaterial.opacity = opacity;
+  if (sharedFaceMaterial) {
+    sharedFaceMaterial.opacity = opacity;
+  }
+}
 const faceGeometries = new Map<PickupKind, THREE.BufferGeometry>();
 /** Original high-contrast pictograms, shared across every face and pickup of a type. */
 function faceMaterial() {
@@ -38,6 +55,8 @@ function faceMaterial() {
     emissiveMap: texture,
     emissiveIntensity: 0.3,
     toneMapped: false,
+    transparent: true,
+    opacity: pickupOpacity,
   });
   sharedFaceMaterial = material;
   return material;

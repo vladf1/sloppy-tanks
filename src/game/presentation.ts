@@ -30,7 +30,7 @@ import {
   type TankModel,
 } from "./models";
 import { ParticleEffects, type Particle } from "./particle-effects";
-import { pickupCube } from "./pickup-visuals";
+import { pickupCube, setPickupOpacity } from "./pickup-visuals";
 import { ProjectileVisuals } from "./projectile-visuals";
 import {
   disposeOwned,
@@ -1022,6 +1022,7 @@ export class Presentation {
     }
   }
   private updatePickups(simulation: RenderState, dt: number): void {
+    setPickupOpacity(this.inFirstPerson ? FIRST_PERSON.pickupOpacity : 1);
     for (const pickup of simulation.pickups) {
       const group = this.pickupMeshes.get(pickup.id)!;
       const { refill, ring } = group.userData;

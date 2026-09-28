@@ -39,4 +39,6 @@ export const FIRST_PERSON = {
   // scale keeps it about as large on screen as the overhead ground reticle.
   reticleDistance: 12,
   reticleScale: 0.3,
+  // Pickups hover at eye height; fading them keeps tanks behind them visible.
+  pickupOpacity: 0.7,
 } as const;
