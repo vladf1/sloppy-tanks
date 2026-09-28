@@ -233,13 +233,20 @@ offline.
   the repository directory.
 - `deploy:dev` first deploys the Node multiplayer server to the Vultr VPS
   (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms.
-  The production site uses the same server. When a branch changes
-  `src/game/` or `src/net/`, `deploy:dev` breaks production multiplayer until
-  `main` is redeployed; say so before running it. After such changes reach
-  `main`, run `pnpm run vps:deploy` from `main`.
-  Change the VPS only through `deploy/vps/` and the `vps:*` scripts described
-  in `server/README.md`. The traffic bots in `bots/` remain a Cloudflare Worker
-  that targets the VPS; `pnpm run bots:deploy` publishes them separately.
+  The production site uses the same server. Client and server must agree on
+  a content hash of the `src/` files the server bundle imports (list them with
+  `node scripts/content-version.mjs`); client-only presentation, input and UI
+  files are outside it. When a branch changes the hash, `deploy:dev` breaks
+  production multiplayer until `main` is redeployed; say so before running
+  it. After such changes reach `main`, run `pnpm run server:deploy` from `main`.
+  `pnpm run server:check-if-redeployment-required` compares this checkout
+  with the live server and exits non-zero when a redeploy is needed; run it
+  before `deploy:dev` and after a merge instead of judging by which
+  directories changed.
+  Change the VPS only through `deploy/vps/` and the `server:*` deploy
+  scripts described in `server/README.md`. The traffic bots in `bots/` remain
+  a Cloudflare Worker that targets the VPS; `pnpm run bots:deploy` publishes
+  them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and

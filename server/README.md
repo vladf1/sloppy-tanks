@@ -26,8 +26,9 @@ the traffic bots (a separate Cloudflare Worker) join open rooms on the VPS; see
 
 `build.mjs` bundles `main.ts`, `ws`, three.js and the compat Rapier package (which
 inlines its WASM) into one `server/dist/server.mjs`, so the VPS needs only Node 24.
-It stamps the same content hash of game/network sources and pinned engine versions
-that the client build uses. After editing those sources, **restart Vite and
+It stamps the same content hash that the client build uses: every `src/` file this
+bundle imports, plus the pinned engine versions (`scripts/content-version.mjs`).
+After editing those sources, **restart Vite and
 rebuild the server together**; mismatched clients are rejected with a reload
 message. No client URL override is accepted in production builds. Keep
 `@dimforge/rapier3d` and `@dimforge/rapier3d-compat` pinned to the same version.
@@ -96,13 +97,13 @@ with 4002.
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH as root.
 The scripts trust a new host's key on first contact and refuse a changed one. To move
 to another server or provider, provision it with `SLOPPY_VPS_SSH=root@<new ip> pnpm run
-vps:provision`, repoint the A record, then run
+server:provision`, repoint the A record, then run
 `ssh-keygen -R sloppy-tanks-server.fridman.me` so the scripts accept the new host key.
 Caddy obtains the certificate once the record reaches the new server.
 
 ```sh
-pnpm run vps:provision   # first time, or after editing deploy/vps/*; then deploys
-pnpm run vps:deploy      # pnpm run check, upload server.mjs, restart, wait for /health
+pnpm run server:provision  # first time, or after editing deploy/vps/*; then deploys
+pnpm run server:deploy     # pnpm run check, upload server.mjs, restart, wait for /health
 ```
 
 `pnpm run deploy:dev` also deploys the server first, waits until `/health` reports
@@ -117,9 +118,11 @@ before deploying.
 ## Monitoring
 
 ```sh
-pnpm run vps:logs     # follow the journal: room lifecycle lines and minute summaries
-pnpm run vps:stats    # /stats JSON over SSH
-pnpm run vps:status   # systemctl status for the game server and Caddy
+pnpm run server:logs    # follow the journal: room lifecycle lines and minute summaries
+pnpm run server:stats   # /stats JSON over SSH
+pnpm run server:status  # systemctl status for the game server and Caddy
+# exit 1 when the live server does not match this checkout and needs a redeploy
+pnpm run server:check-if-redeployment-required
 ```
 
 The log has one line per event: a room is created, a player joins, disconnects or
