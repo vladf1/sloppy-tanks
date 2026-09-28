@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { InstancedBufferAttribute, Matrix4, Vector3 } from "three";
 import { Simulation } from "../src/game/simulation";
 import {

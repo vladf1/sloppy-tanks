@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { CONTENT_VERSION } from "../src/net/protocol";
 import { createServer } from "./server";
 

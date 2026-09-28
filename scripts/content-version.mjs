@@ -50,7 +50,10 @@ export async function contentSources() {
 
 /** Clients and the server must match on this: the shared sources and pinned engines. */
 export async function contentVersion() {
-  return hashFiles(await contentSources(), await pinnedVersions(["@dimforge/rapier3d", "three"]));
+  return hashFiles(
+    await contentSources(),
+    await pinnedVersions(["@dimforge/rapier3d-simd", "three"]),
+  );
 }
 
 /** Everything that makes up the deployed server, including server-only code and

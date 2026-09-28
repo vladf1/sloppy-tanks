@@ -14,7 +14,7 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: /^@dimforge\/rapier3d-compat$/,
+        find: /^@dimforge\/rapier3d-simd-compat$/,
         replacement: fileURLToPath(new URL("./src/game/physics-browser.ts", import.meta.url)),
       },
     ],
@@ -44,7 +44,7 @@ export default defineConfig({
       },
     },
   ],
-  optimizeDeps: { exclude: ["@dimforge/rapier3d"] },
+  optimizeDeps: { exclude: ["@dimforge/rapier3d-simd"] },
   build: {
     rolldownOptions: {
       input: {

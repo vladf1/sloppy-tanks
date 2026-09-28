@@ -1,6 +1,6 @@
 import { updateHumveeGoal } from "./humvee-tactics";
 import { enemyDifficulty } from "./difficulty";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { canCollectAmmo, isSpecialAmmo } from "./ammunition";
 import { BOT_AMMO, botProfile } from "./bot-personalities";
 import { bestBy, distance, GROUP, WEAPONS } from "./data";

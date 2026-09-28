@@ -1,7 +1,7 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { tankModel } from "../src/game/models";
 import { SHELL_HIT_RADIUS, tankHitTime } from "../src/game/hitboxes";
 import { Simulation } from "../src/game/simulation";
