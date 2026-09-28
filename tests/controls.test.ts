@@ -227,71 +227,132 @@ test("V toggles the view once per press, and mouse travel is drained per frame",
   f.dispose();
 });
 
-/** Browser-like pointer lock: requests lock the canvas and exits announce the change. */
+/** Browser-like pointer lock: requests and releases both announce the change. */
 function mockPointerLock(f: ReturnType<typeof fixture>) {
-  const lock = { requests: 0, exits: 0 };
+  const doc = f.doc as unknown as { pointerLockElement: unknown };
+  const lock = {
+    requests: 0,
+    exits: 0,
+    held: () => doc.pointerLockElement === f.canvas,
+    /** The browser's own Esc handling, which may release without delivering the key. */
+    releaseByBrowser() {
+      doc.pointerLockElement = null;
+      f.emit(f.doc, "pointerlockchange", {});
+    },
+  };
   Object.assign(f.canvas, {
     requestPointerLock() {
       lock.requests++;
-      Object.assign(f.doc, { pointerLockElement: f.canvas });
+      doc.pointerLockElement = f.canvas;
+      f.emit(f.doc, "pointerlockchange", {});
       return Promise.resolve();
     },
   });
   Object.assign(f.doc, {
     pointerLockElement: null,
-    hasFocus: () => true,
     exitPointerLock() {
       lock.exits++;
-      Object.assign(f.doc, { pointerLockElement: null });
-      f.emit(f.doc, "pointerlockchange", {});
+      lock.releaseByBrowser();
     },
   });
   return lock;
 }
 
-test("first person captures the pointer on click and pauses when Esc releases it", () => {
+/** Stand-in for `performance.now`, so key timing needs no real waiting. */
+function mockClock() {
+  let now = 1000;
+  const own = Object.getOwnPropertyDescriptor(performance, "now");
+  Object.defineProperty(performance, "now", { value: () => now, configurable: true });
+  return {
+    advance(ms: number) {
+      now += ms;
+    },
+    restore() {
+      if (own) {
+        Object.defineProperty(performance, "now", own);
+      } else {
+        Reflect.deleteProperty(performance, "now");
+      }
+    },
+  };
+}
+
+test("first-person Esc frees the cursor, and Esc with a free cursor pauses", () => {
   const f = fixture();
   const lock = mockPointerLock(f);
-  // Overhead play never captures the pointer.
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  assert.equal(lock.requests, 0);
-  f.controls.holdPointer(true);
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  f.emit(f.doc, "pointerlockchange", {});
-  assert.deepEqual([lock.requests, f.pauses], [1, 0]);
-  // Leaving first person releases the pointer without pausing.
-  f.controls.holdPointer(false);
-  assert.deepEqual([lock.exits, f.pauses], [1, 0]);
-  f.controls.holdPointer(true);
-  f.controls.capturePointer();
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  assert.equal(f.controls.fire, true);
-  // The browser releases the pointer itself on Esc.
-  Object.assign(f.doc, { pointerLockElement: null });
-  f.emit(f.doc, "pointerlockchange", {});
-  assert.deepEqual([lock.requests, f.pauses, f.controls.fire], [2, 1, false]);
-  f.dispose();
+  const clock = mockClock();
+  try {
+    // Overhead play never captures the pointer, and Esc pauses at once.
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    f.emit(f.win, "pointerup", { button: 0 });
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.deepEqual([lock.requests, f.pauses], [0, 1]);
+    // First person: a click captures the pointer and fires.
+    f.controls.holdPointer(true);
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    assert.deepEqual([lock.requests, f.controls.fire], [1, true]);
+    // Esc only frees the cursor: the round keeps running and the view holds still.
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.deepEqual([lock.held(), f.pauses, f.controls.fire], [false, 1, false]);
+    assert.equal(f.controls.aimWaitsForClick, true);
+    f.emit(f.canvas, "pointermove", { clientX: 5, clientY: 5, movementX: 30 });
+    assert.equal(f.controls.takeLook(), 0);
+    // Esc with the cursor already free opens the menu.
+    clock.advance(1000);
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.equal(f.pauses, 2);
+    // A click takes the pointer back without firing.
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    assert.deepEqual([lock.requests, lock.held(), f.controls.fire], [2, true, false]);
+    // A browser that releases first and then delivers the key still only frees the cursor.
+    lock.releaseByBrowser();
+    clock.advance(100);
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.equal(f.pauses, 2);
+    // Leaving first person releases a captured pointer.
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    f.controls.holdPointer(false);
+    assert.deepEqual([lock.requests, lock.exits, lock.held(), f.pauses], [3, 2, false, 2]);
+  } finally {
+    clock.restore();
+    f.dispose();
+  }
 });
 
-test("death frees a first-person pointer for the respawn menu until play resumes", () => {
+test("a first-person pointer stays captured through a death; menus release it", () => {
   const f = fixture();
   const lock = mockPointerLock(f);
-  f.controls.holdPointer(true);
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  assert.equal(lock.requests, 1);
-  // Destroyed while still in first person: the next frame frees the cursor without pausing.
-  f.inputActive = false;
-  f.controls.holdPointer(true);
-  assert.deepEqual([lock.exits, f.pauses], [1, 0]);
-  // Neither pressing V nor clicking while destroyed captures it again.
-  f.controls.capturePointer();
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  assert.equal(lock.requests, 1);
-  // After respawning, the first click on the arena captures it.
-  f.inputActive = true;
-  f.controls.holdPointer(true);
-  assert.equal(lock.requests, 1);
-  f.emit(f.canvas, "pointerdown", { button: 0 });
-  assert.equal(lock.requests, 2);
-  f.dispose();
+  const clock = mockClock();
+  try {
+    f.controls.holdPointer(true);
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    // Destroyed and respawned: the pointer never leaves, so no click or new lock notice.
+    f.inputActive = false;
+    f.controls.holdPointer(true);
+    f.inputActive = true;
+    f.controls.holdPointer(true);
+    assert.deepEqual([lock.requests, lock.exits, lock.held(), f.pauses], [1, 0, true, 0]);
+    // A menu frees it for its buttons.
+    f.controls.holdPointer(true, true);
+    assert.deepEqual([lock.held(), f.pauses], [false, 0]);
+    // Esc while destroyed frees it for the respawn choices without pausing.
+    f.controls.holdPointer(true);
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    f.inputActive = false;
+    f.controls.holdPointer(true);
+    clock.advance(1000);
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.deepEqual([lock.requests, lock.held(), f.pauses], [2, false, 0]);
+    // Clicks while destroyed pick a tank without capturing; the first after respawning aims.
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    assert.equal(lock.requests, 2);
+    f.inputActive = true;
+    f.controls.holdPointer(true);
+    assert.equal(f.controls.aimWaitsForClick, true);
+    f.emit(f.canvas, "pointerdown", { button: 0 });
+    assert.deepEqual([lock.requests, f.controls.fire], [3, false]);
+  } finally {
+    clock.restore();
+    f.dispose();
+  }
 });

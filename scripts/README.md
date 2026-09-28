@@ -29,20 +29,20 @@ menu (the startup overlay otherwise swallows pointer and wheel input), and
 `freezeLoop()` holds only the game's own `loop` callback so a check advances exact
 frames while Three.js's animation callbacks keep running.
 
-| Script                             | Verifies                                                                                                                                           |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; stable WebGPU buffers across destructive resets                                         |
-| `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, Esc and death free the pointer, physical respawn choice, overhead restore |
-| `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                           |
-| `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                     |
-| `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                             |
-| `touch-controls-check.mjs`         | Thumb sticks and simultaneous fingers, zoom, pause, touch preference and portrait hit-testing                                                      |
-| `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                               |
-| `render-bundles-check.mjs`         | Cached draws match ordinary draws on all maps with moving and switched cameras                                                                     |
-| `destruction-check.mjs`            | Timber stages and breach, tree stumps and falling crowns, tower rubble textures, debris sink and fade                                              |
-| `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, water reflections) and suspension fixtures                                                           |
-| `multiplayer-simulation-check.mjs` | Two independently controlled seats, viewer cameras/bars, isolated speed sliders and literal player names                                           |
-| `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                 |
+| Script                             | Verifies                                                                                                                                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; stable WebGPU buffers across destructive resets                                                                                             |
+| `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, first Esc frees the cursor and a second pauses, death keeps the pointer, Esc then a physical respawn choice, overhead restore |
+| `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                               |
+| `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                         |
+| `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                 |
+| `touch-controls-check.mjs`         | Thumb sticks and simultaneous fingers, zoom, pause, touch preference and portrait hit-testing                                                                                                          |
+| `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                   |
+| `render-bundles-check.mjs`         | Cached draws match ordinary draws on all maps with moving and switched cameras                                                                                                                         |
+| `destruction-check.mjs`            | Timber stages and breach, tree stumps and falling crowns, tower rubble textures, debris sink and fade                                                                                                  |
+| `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, water reflections) and suspension fixtures                                                                                                               |
+| `multiplayer-simulation-check.mjs` | Two independently controlled seats, viewer cameras/bars, isolated speed sliders and literal player names                                                                                               |
+| `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                     |
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
 the production build splits the touch UI into separate files; it needs no dev

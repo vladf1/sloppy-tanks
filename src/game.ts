@@ -344,7 +344,8 @@ export async function prepareGame(
         sim.start();
       }
       const startSim = performance.now();
-      controls.holdPointer(look.enabled);
+      // Pause, results and the round menu need the cursor; a death keeps it captured.
+      controls.holdPointer(look.enabled, sim.match.phase !== "playing");
       const lookPixels = controls.takeLook();
       if (sim.match.phase === "playing") {
         // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.
@@ -403,6 +404,7 @@ export async function prepareGame(
       cockpit.update(
         sim.match.phase !== "ready" && view.inFirstPerson,
         look.screenAngle(sim.human.heading),
+        controls.aimWaitsForClick,
       );
       const renderCost = performance.now() - renderStart;
       stats.frame(now, simCost, renderCost);

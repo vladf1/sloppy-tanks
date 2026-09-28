@@ -585,10 +585,13 @@ export function startMultiplayer(
   const loop = (now: number) => {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
-    // The controls hold the pointer only while `activeInput` allows steering, so
-    // death, disconnects and any menu (including ones the server opens) free it.
-    // Mouse travel made meanwhile is dropped so the turret never jumps.
-    controls.holdPointer(!!view?.firstPerson.enabled);
+    // Any menu (including ones the server opens) and disconnects free the pointer;
+    // a death keeps it captured for the respawn. Mouse travel while `activeInput`
+    // is off is dropped so the turret never jumps.
+    controls.holdPointer(
+      !!view?.firstPerson.enabled,
+      !active || !connection.connected || ui.menu || document.hidden || phase !== "playing",
+    );
     const lookPixels = controls.takeLook();
     if (active && view && control && mirror.state && !document.hidden) {
       const updateStart = performance.now();
@@ -609,7 +612,11 @@ export function startMultiplayer(
         collect(now, dt, lookPixels);
         const renderStart = performance.now();
         view.render(display, 1, dt);
-        cockpit.update(view.inFirstPerson, view.firstPerson.screenAngle(display.viewer.heading));
+        cockpit.update(
+          view.inFirstPerson,
+          view.firstPerson.screenAngle(display.viewer.heading),
+          controls.aimWaitsForClick,
+        );
         const renderCost = performance.now() - renderStart;
         ui.update(display, dt, connection.connected);
         stats?.frame(now, renderStart - updateStart, renderCost);

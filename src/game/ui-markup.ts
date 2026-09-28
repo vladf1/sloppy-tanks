@@ -5,7 +5,7 @@ import type { Simulation } from "./simulation";
 
 export function hudMarkup(): string {
   return `<div id="hud">
-        <div id="cockpit" aria-hidden="true"><div class="hull-compass"><i class="hull"></i><i class="gun"></i></div></div>
+        <div id="cockpit" aria-hidden="true"><div class="hull-compass"><i class="hull"></i><i class="gun"></i></div><p class="aim-hint" hidden>Click to aim · Esc for menu</p></div>
         <div class="brand">SLOPPY<span>TANKS</span></div>
         <div class="scoreboard"><div class="team mint"><small id="label0">◆ BLUE</small><b id="score0">0</b></div>
         <div class="clock"><b id="time">5:00</b><small id="objective">FIRST TO ${SCORE_LIMIT}</small></div>

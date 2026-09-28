@@ -69,14 +69,34 @@ try {
     () => document.pointerLockElement === document.querySelector("#game"),
   );
 
+  const phase = () => page.evaluate(() => window.sloppy.sim.match.phase);
+  const captured = () =>
+    page.evaluate(() => document.pointerLockElement === document.querySelector("#game"));
+  const freed = () =>
+    page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
+
+  // Esc first frees the cursor and keeps the round running; Esc again opens the menu.
+  await page.keyboard.press("Escape");
+  await freed();
+  assert.equal(await phase(), "playing");
+  if (locked) {
+    // The HUD shows the hint on its next frame.
+    await page.locator("#cockpit .aim-hint").waitFor({ state: "visible", timeout: 2000 });
+    const yaw = await page.evaluate(() => window.sloppy.view.firstPerson.yaw);
+    await page.mouse.move(1100, 300, { steps: 5 });
+    await page.waitForTimeout(100);
+    const after = await page.evaluate(() => window.sloppy.view.firstPerson.yaw);
+    assert.equal(after, yaw, "a free cursor reaches the HUD without turning the view");
+    await page.screenshot({ path: `${output}/cursor-free.png` });
+  }
+  // Past the window in which a browser's own Esc release and key count as one press.
+  await page.waitForTimeout(300);
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "paused");
-  // The next frame releases the pointer; the check waits for it rather than racing it.
-  await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
   await page.locator("#resume").click();
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
 
-  // Dying in first person frees the pointer, so a physical click picks the respawn vehicle.
+  // A death keeps the pointer captured, so the respawn needs no click or new lock notice.
   // The HUD hides the pause menu a few frames after play resumes; click the arena, not it.
   await page.waitForFunction(
     () => getComputedStyle(document.querySelector("#overlay")).display === "none",
@@ -87,14 +107,28 @@ try {
       () => document.pointerLockElement === document.querySelector("#game"),
     );
   }
-  await page.evaluate(() => {
-    const { sim } = window.sloppy;
-    Object.assign(sim.human, { protection: 0, shield: 0, shieldPoints: 0 });
-    sim.damageTank(sim.human, 999, sim.human.id, sim.human.team);
-  });
+  const destroy = () =>
+    page.evaluate(() => {
+      const { sim } = window.sloppy;
+      Object.assign(sim.human, { protection: 0, shield: 0, shieldPoints: 0 });
+      sim.damageTank(sim.human, 999, sim.human.id, sim.human.team);
+    });
   const heavy = page.locator("#overlay .respawn [data-kind='heavy']");
+  await destroy();
   await heavy.waitFor({ state: "visible" });
-  await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
+  await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
+  assert.deepEqual(
+    [await captured(), await page.evaluate(() => window.sloppy.view.inFirstPerson)],
+    [locked, true],
+    "the respawn is back in first person with the pointer still captured",
+  );
+
+  // Esc while destroyed frees the cursor without pausing, so a physical click picks a tank.
+  await destroy();
+  await heavy.waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  await freed();
+  assert.equal(await phase(), "playing");
   await page.screenshot({ path: `${output}/respawn.png` });
   const choice = await heavy.boundingBox();
   await page.mouse.click(choice.x + choice.width / 2, choice.y + choice.height / 2);

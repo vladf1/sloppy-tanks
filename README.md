@@ -50,7 +50,7 @@ one.
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
 
-In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc releases it and pauses), WASD steers relative to where you look, and the compass above the ammo strip shows which way the hull points. On touchscreens the right stick turns the view. While destroyed, you watch from above until you respawn.
+In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc frees the cursor and a second Esc pauses), WASD steers relative to where you look, the compass above the ammo strip shows which way the hull points, and pickups turn see-through. On touchscreens the right stick turns the view. While destroyed, you watch from above and the pointer stays captured for the respawn; press Esc to pick another tank.
 
 Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
