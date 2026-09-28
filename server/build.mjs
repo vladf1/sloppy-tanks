@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { contentVersion } from "../scripts/content-version.mjs";
+import { contentVersion, serverBuild } from "../scripts/content-version.mjs";
 const repo = (path) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 // One self-contained file: the compat Rapier package inlines its WASM, so the host
 // needs only Node, not node_modules.
@@ -21,6 +21,7 @@ await build({
   external: ["bufferutil", "utf-8-validate"],
   define: {
     __MULTIPLAYER_CONTENT_VERSION__: JSON.stringify(await contentVersion()),
+    __SERVER_BUILD__: JSON.stringify(await serverBuild()),
     __DASHBOARD_PAGE__: JSON.stringify(await readFile(repo("server/dashboard.html"), "utf8")),
   },
 });

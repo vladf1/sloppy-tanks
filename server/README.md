@@ -28,6 +28,9 @@ the traffic bots (a separate Cloudflare Worker) join open rooms on the VPS; see
 inlines its WASM) into one `server/dist/server.mjs`, so the VPS needs only Node 24.
 It stamps the same content hash that the client build uses: every `src/` file this
 bundle imports, plus the pinned engine versions (`scripts/content-version.mjs`).
+It also stamps a `serverBuild` fingerprint of every bundled input, including
+`server/` and its dependencies, which `/health` reports so deploys and the
+redeploy check notice server-only changes that leave clients compatible.
 After editing those sources, **restart Vite and
 rebuild the server together**; mismatched clients are rejected with a reload
 message. No client URL override is accepted in production builds. Keep
@@ -121,7 +124,8 @@ before deploying.
 pnpm run server:logs    # follow the journal: room lifecycle lines and minute summaries
 pnpm run server:stats   # /stats JSON over SSH
 pnpm run server:status  # systemctl status for the game server and Caddy
-# exit 1 when the live server does not match this checkout and needs a redeploy
+# exit 1 when the live server needs a redeploy: clients are refused, or only
+# server code changed; SLOPPY_SERVER_URL=ws://127.0.0.1:8787 checks a local one
 pnpm run server:check-if-redeployment-required
 ```
 

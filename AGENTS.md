@@ -240,8 +240,10 @@ offline.
   production multiplayer until `main` is redeployed; say so before running
   it. After such changes reach `main`, run `pnpm run server:deploy` from `main`.
   `pnpm run server:check-if-redeployment-required` compares this checkout
-  with the live server and exits non-zero when a redeploy is needed; run it
-  before `deploy:dev` and after a merge instead of judging by which
+  with the live server's `/health` and exits non-zero when a redeploy is
+  needed. It tells clients-refused (content hash) apart from server-only
+  changes (`serverBuild`: `server/`, bundled dependencies, build settings).
+  Run it before `deploy:dev` and after a merge instead of judging by which
   directories changed.
   Change the VPS only through `deploy/vps/` and the `server:*` deploy
   scripts described in `server/README.md`. The traffic bots in `bots/` remain

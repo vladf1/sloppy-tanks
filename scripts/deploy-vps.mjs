@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { contentVersion } from "./content-version.mjs";
+import { contentVersion, serverBuild } from "./content-version.mjs";
 import { VPS_MULTIPLAYER_URL, VPS_SSH, VPS_SSH_OPTIONS } from "./vps-host.mjs";
 
 const repo = new URL("..", import.meta.url);
@@ -29,7 +29,8 @@ if (process.argv.includes("--provision")) {
 }
 
 const version = await contentVersion();
-console.log(`Deploying Node multiplayer server (content ${version}) to ${VPS_SSH}`);
+const build = await serverBuild();
+console.log(`Deploying Node multiplayer server (content ${version}, build ${build}) to ${VPS_SSH}`);
 run("pnpm", ["run", "server:build"]);
 run("scp", [
   ...SSH_OPTIONS,
@@ -53,9 +54,13 @@ for (;;) {
   const status = await fetch(health, { cache: "no-store" })
     .then((response) => response.json())
     .catch(() => ({}));
-  if (status.contentVersion === version) break;
+  // The build, not only the content version, so a server-only change cannot pass
+  // against the previous process before the restart completes.
+  if (status.contentVersion === version && status.serverBuild === build) break;
   if (Date.now() > deadline)
-    throw new Error(`VPS server reports ${JSON.stringify(status)}; expected content ${version}`);
+    throw new Error(
+      `VPS server reports ${JSON.stringify(status)}; expected content ${version}, build ${build}`,
+    );
   await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 console.log(`VPS multiplayer server is live at ${VPS_MULTIPLAYER_URL}`);
