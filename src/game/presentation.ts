@@ -62,6 +62,7 @@ import { timberParts } from "./timber-layout";
 import type { GroundKind } from "./ground-surfaces";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
+import { tankVisualMuzzle } from "./tank-dimensions";
 import { CAMERA, FEEDBACK, FIRST_PERSON, HUD_LAYER } from "./view-settings";
 import { FirstPersonLook, seatFlight, seatTurn } from "./first-person";
 import { angleDelta } from "./math";
@@ -888,9 +889,19 @@ export class Presentation {
     // The reticle's rings lie flat; stand them up to face the viewer.
     this.crosshair.quaternion.copy(this.camera.quaternion);
     this.crosshair.rotateX(Math.PI / 2);
+    // Shells fly level at muzzle height, below the eye, so on screen they climb
+    // toward the horizon. The reticle sits on that lane at a typical range; at
+    // screen centre (below the horizon) shells would pass over it.
+    const yaw = this.firstPerson.yaw;
+    const lane = this.eye.set(
+      this.follow.x + Math.sin(yaw) * FIRST_PERSON.reticleRange,
+      model.position.y + tankVisualMuzzle(simulation.viewer.kind).y,
+      this.follow.z + Math.cos(yaw) * FIRST_PERSON.reticleRange,
+    );
+    const toLane = lane.sub(this.camera.position).normalize();
     this.crosshair.position
-      .copy(this.eye.set(0, 0, -FIRST_PERSON.reticleDistance))
-      .applyMatrix4(this.camera.matrixWorld);
+      .copy(this.camera.position)
+      .addScaledVector(toLane, FIRST_PERSON.reticleDistance);
   }
   private updatePlayerIndicators(
     simulation: RenderState,
