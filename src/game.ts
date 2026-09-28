@@ -8,15 +8,27 @@ import { Controls } from "./game/controls";
 import { STEP } from "./game/data";
 import { Presentation } from "./game/presentation";
 import { selectedMap, Simulation, type SimulationSetup } from "./game/simulation";
+import { isExtraLevel, type MapId } from "./game/map-options";
+import { singlePlayerRules, STANDARD_RULES } from "./game/level-rules";
 import { tuneSpeed } from "./game/speed-tuning";
 import { loadTankSurface } from "./game/tank-surfaces";
 import { MENU_READY_STATUS, UI } from "./game/ui";
 import { CAMERA } from "./game/view-settings";
 import { NerdStats } from "./game/nerd-stats";
+import { afterPaint } from "./game/task-yield";
 const MAX_FRAME_DELTA_SECONDS = 0.1;
 const MAX_CATCH_UP_STEPS = 5;
 const HUD_UPDATE_EVERY_FRAMES = 4;
 const MILLISECONDS_PER_SECOND = 1000;
+
+/** A map's level rules. An extra level's code downloads only once a player chooses it. */
+async function levelRules(mapMode: MapId): Promise<SimulationSetup> {
+  if (!isExtraLevel(mapMode)) {
+    return STANDARD_RULES;
+  }
+  const { EXTRA_LEVELS } = await import("./extra-levels");
+  return singlePlayerRules(EXTRA_LEVELS[mapMode]);
+}
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -32,9 +44,6 @@ export async function prepareGame(
   root.innerHTML =
     '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
-  // Stress pages name a fixed scenario that replaces the menu and keeps running when hidden.
-  const scenario = document.documentElement.dataset.scenario;
-  const stressTest = scenario !== undefined;
   // The physics binary is the largest download. Device setup, image decoding and
   // map scenery do not need it, so they proceed while it arrives and compiles.
   const physics = RAPIER.init();
@@ -48,15 +57,10 @@ export async function prepareGame(
     root.remove();
     throw error;
   }
-  let stressSetup: SimulationSetup;
+  let rules: SimulationSetup;
   try {
-    stressSetup =
-      scenario === "superstress"
-        ? (await import("./superstress-level")).SUPERSTRESS_SETUP
-        : stressTest
-          ? (await import("./stress-test-level")).STRESS_TEST_SETUP
-          : {};
-    const map = selectedMap(preparedOptions.mapMode, stressSetup.customMap);
+    rules = await levelRules(preparedOptions.mapMode);
+    const map = selectedMap(preparedOptions.mapMode, rules.customMap);
     view.buildScenery(map.theme ?? map.id);
     await physics;
   } catch (error) {
@@ -66,7 +70,7 @@ export async function prepareGame(
   }
   // Browser startup previously constructed round 2, then immediately discarded
   // it for round 3. Keep the round (it seeds bot names), build only that world.
-  const sim = new Simulation(seed, { ...preparedOptions, ...stressSetup, round: 3 });
+  const sim = new Simulation(seed, { ...preparedOptions, ...rules, round: 3 });
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   view.reset(sim);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -103,9 +107,18 @@ export async function prepareGame(
   async function updateArena(): Promise<void> {
     while (arena !== "prepared" || !sameGameOptions(preparedOptions, wantedOptions)) {
       if (arena === "stale" || !sameGameOptions(preparedOptions, wantedOptions)) {
+        const choices = gameChoices(wantedOptions);
+        const rules = await levelRules(choices.mapMode);
+        // The rebuild blocks the main thread for up to a few hundred milliseconds; show
+        // the player's new choice, or GO's WAIT, before it starts.
+        await afterPaint();
+        if (!sameGameOptions(choices, wantedOptions)) {
+          // Chosen again meanwhile, perhaps while an extra level downloaded.
+          continue;
+        }
         arena = "stale";
-        Object.assign(preparedOptions, gameChoices(wantedOptions));
-        Object.assign(sim, preparedOptions);
+        Object.assign(preparedOptions, choices);
+        Object.assign(sim, preparedOptions, rules);
         sim.reset();
         view.reset(sim);
         arena = "reset";
@@ -150,7 +163,6 @@ export async function prepareGame(
     pause,
     zoom,
     () => sim.match.phase === "playing" && sim.human.alive,
-    !stressTest,
   );
   // Creating the AudioContext can block the main thread for over 150 ms. Sounds
   // are first needed when a round begins, so this waits until the menu is ready.
@@ -203,10 +215,6 @@ export async function prepareGame(
       status.textContent = "Preparing your arena…";
     }
     try {
-      if (arena !== "prepared" || !sameGameOptions(preparedOptions, sim)) {
-        // Let WAIT paint before the synchronous world rebuild.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
       await prepareArena(sim, (stage) => {
         if (status) {
           status.textContent = stage;
@@ -229,7 +237,7 @@ export async function prepareGame(
   }
   /** The in-game battle setup edits the simulation's choices directly. */
   async function preloadFromMenu(): Promise<void> {
-    if (stressTest || roundStarting || sim.match.phase !== "ready") {
+    if (roundStarting || sim.match.phase !== "ready") {
       return;
     }
     try {
@@ -299,9 +307,6 @@ export async function prepareGame(
     },
     (event) => view.damageAngle(event),
   );
-  if (scenario === "superstress") {
-    void import("./superstress-online").then(({ offerOnlinePlay }) => offerOnlinePlay(root));
-  }
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
   ui.overlay.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-kind]")) {
@@ -311,23 +316,13 @@ export async function prepareGame(
   const touchControls = new TouchModeController(root, controls, sim, zoom);
   window.addEventListener("resize", () => view.resize());
   const recorder = new FrameRecorder(sim, canvas);
-  let frameRequest = 0;
-  let backgroundTimer = 0;
-  document.addEventListener("visibilitychange", () => {
-    if (!stressTest) {
-      return;
-    }
-    cancelAnimationFrame(frameRequest);
-    clearTimeout(backgroundTimer);
-    loop(performance.now());
-  });
   function loop(now: number): void {
     // A queued RAF timestamp can precede beginRound() after a slow map rebuild.
     // Never run time backwards or extrapolate tanks beyond their physics poses.
     const raw = Math.max(0, (now - last) / MILLISECONDS_PER_SECOND);
     const dt = Math.min(MAX_FRAME_DELTA_SECONDS, raw);
     last = Math.max(last, now);
-    if (active && (stressTest || !document.hidden)) {
+    if (active && !document.hidden) {
       if (sim.match.phase === "results" && playback.autoRounds) {
         controls.clear();
         recorder.completedRounds++;
@@ -381,9 +376,6 @@ export async function prepareGame(
           playback.overview,
         );
       }
-      if (frameIndex === 0) {
-        document.querySelector("#loading")?.remove();
-      }
       const renderCost = performance.now() - renderStart;
       stats.frame(now, simCost, renderCost);
       if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
@@ -404,13 +396,9 @@ export async function prepareGame(
         });
       }
     }
-    if (stressTest && document.hidden) {
-      backgroundTimer = window.setTimeout(() => loop(performance.now()), 1000 / 60);
-    } else {
-      frameRequest = requestAnimationFrame(loop);
-    }
+    requestAnimationFrame(loop);
   }
-  frameRequest = requestAnimationFrame(loop);
+  requestAnimationFrame(loop);
   if (import.meta.env.DEV) {
     Object.assign(window, {
       sloppy: createDebug(sim, view, audio, controls, start, restart, recorder, playback),
@@ -424,15 +412,11 @@ export async function prepareGame(
 
   // Let the ready menu paint first; GO still creates audio if it arrives sooner.
   requestAnimationFrame(() => setTimeout(audio, 0));
-  // The stress level ignores menu choices, so its first arena is the only one.
   return {
-    prepare: (options, onShaders) =>
-      stressTest ? Promise.resolve() : prepareArena(options, onShaders),
+    prepare: prepareArena,
     async start(options) {
-      if (!stressTest) {
-        // Usually already prepared while the player chose; then this is instant.
-        await prepareArena(options, onStage);
-      }
+      // Usually already prepared while the player chose; then this is instant.
+      await prepareArena(options, onStage);
       beginRound();
     },
   };

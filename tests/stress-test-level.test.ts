@@ -3,11 +3,11 @@ import { before, test } from "node:test";
 import RAPIER from "@dimforge/rapier3d-compat";
 import {
   STRESS_PLAYER_HEALTH_MULTIPLIER,
-  STRESS_PLAYER_KIND,
   STRESS_TANK_COUNT,
+  STRESS_TEST_LEVEL,
   STRESS_TEST_MAP,
-  STRESS_TEST_SETUP,
 } from "../src/stress-test-level";
+import { singlePlayerRules } from "../src/game/level-rules";
 import { MAPS } from "../src/game/maps";
 import { Simulation } from "../src/game/simulation";
 import { STEP, VEHICLES } from "../src/game/data";
@@ -17,7 +17,7 @@ before(async () => {
 });
 
 test("stress pickups and all 30 spawns have hull clearance and navigable routes", () => {
-  const sim = new Simulation(731, { ...STRESS_TEST_SETUP, round: 3 });
+  const sim = new Simulation(731, { ...singlePlayerRules(STRESS_TEST_LEVEL), round: 3 });
   try {
     assert.equal(sim.tanks.length, STRESS_TANK_COUNT);
     const points = [...sim.pickups, ...sim.tanks.map((tank) => tank.body.translation())];
@@ -92,15 +92,20 @@ test("stress objects keep the authored maps' destructibility rules", () => {
 });
 
 test("stress configuration survives respawns and resets and never ends at the normal limits", () => {
-  const sim = new Simulation(731, { ...STRESS_TEST_SETUP, round: 3 });
+  // The player keeps the tank chosen in Battle Setup.
+  const sim = new Simulation(731, {
+    ...singlePlayerRules(STRESS_TEST_LEVEL),
+    humanKind: "heavy",
+    round: 3,
+  });
   try {
     const initialBodies = sim.world.bodies.len();
     for (let round = 0; round < 2; round++) {
       assert.equal(sim.mapName, "STRESS GRID");
       assert.equal(sim.tanks.filter((tank) => tank.team === 0).length, 15);
       assert.equal(sim.tanks.filter((tank) => tank.team === 1).length, 15);
-      assert.equal(sim.human.kind, STRESS_PLAYER_KIND);
-      const hp = VEHICLES[STRESS_PLAYER_KIND].health * STRESS_PLAYER_HEALTH_MULTIPLIER;
+      assert.equal(sim.human.kind, "heavy");
+      const hp = VEHICLES.heavy.health * STRESS_PLAYER_HEALTH_MULTIPLIER;
       assert.equal(sim.human.hp, hp);
       sim.start();
       sim.match.scores = [100, 100];

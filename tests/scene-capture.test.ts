@@ -98,7 +98,7 @@ const ROOMS = [
   { mapMode: "village", ticks: 450 },
   { mapMode: "harbor", ticks: 450 },
   { mapMode: "quarry", ticks: 450 },
-  { scenario: "superstress", ticks: 300 },
+  { mapMode: "superstress", ticks: 300 },
 ] as const;
 const EXPECTED_FIELDS = [
   "covers.debrisSeed",
@@ -125,12 +125,11 @@ test("captured scenes and field deltas match the schema reference byte for byte"
   const seen = new Set<string>();
   let removals = 0;
   for (const room of ROOMS) {
-    const name = "scenario" in room ? room.scenario : room.mapMode;
+    const name = room.mapMode;
     const sim = createMultiplayerSimulation(
       4242,
       [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
-      "mapMode" in room ? { mapMode: room.mapMode } : {},
-      "scenario" in room ? room.scenario : undefined,
+      { mapMode: room.mapMode },
     );
     try {
       sim.start();

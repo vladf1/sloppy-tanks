@@ -86,6 +86,34 @@ export async function startRound(page, { touch = false } = {}) {
   );
 }
 
+/**
+ * Choose a map in Battle Setup with pointer clicks, as a player does: a button in the row
+ * of standard maps, or the dropdown that replaces it with `?extralevels`. `name` is
+ * "mapMode" for single player or "roomMap" for a new room.
+ * @param {import("playwright").Page} page
+ * @param {string} map
+ * @param {"mapMode" | "roomMap"} [name]
+ */
+export async function chooseMap(page, map, name = "mapMode") {
+  const dropdown = page.locator(`.map-picker[data-name="${name}"] .map-picker-button`);
+  if (await dropdown.isVisible()) {
+    await dropdown.click();
+    await page.locator(`#${name}-${map}`).click();
+  } else {
+    await page.locator(`input[name="${name}"][value="${map}"]`).click();
+  }
+  await page.waitForFunction(
+    ([name, map]) =>
+      document.querySelector(`.map-picker[data-name="${name}"]`)?.dataset.value === map,
+    [name, map],
+  );
+}
+
+/** The map Battle Setup shows as chosen. @param {import("playwright").Page} page */
+export function chosenMap(page, name = "mapMode") {
+  return page.locator(`.map-picker[data-name="${name}"]`).getAttribute("data-value");
+}
+
 /** Set only the game seed; mocking global Math.random also duplicates Three.js UUIDs. */
 export async function seedGame(page, seed) {
   if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("Invalid fixture seed");

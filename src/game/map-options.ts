@@ -1,18 +1,65 @@
-/** The authored maps offered by the menu and `?map=` links. */
+/** The maps offered by Battle Setup, room settings and `?map=` links. This module imports
+ * nothing: the inline startup script and the server both read it. */
 export const MAP_OPTIONS = [
   {
     id: "village",
     name: "Pine Village",
     description: "A quiet little village. Bring the noise.",
+    icon: "village",
+    tint: "#2f7d4f",
   },
   {
     id: "harbor",
     name: "Harbor Havoc",
     description: "Salt air. Hot steel. Dockside mayhem.",
+    icon: "harbor",
+    tint: "#2c6fa8",
   },
   {
     id: "quarry",
     name: "Dusty Dig",
     description: "Open ground. Weathered stone. Dig your own shortcut.",
+    icon: "quarry",
+    tint: "#a8733a",
+  },
+  // Extra levels are offered only with `?extralevels`. Each brings its own arena, bot
+  // roster and rules from `src/extra-levels.ts`, which the browser loads once one is chosen.
+  {
+    id: "stress-test",
+    name: "Stress Grid",
+    description: "30 tanks · 75 destructibles · permanent buildings and barriers",
+    icon: "stress",
+    tint: "#6a5ea8",
+    extra: true,
+    teamTanks: 15,
+  },
+  {
+    id: "superstress",
+    name: "Scrap Yard",
+    description: "Compact yard · 30 tanks · cover rebuilds and debris lingers",
+    icon: "yard",
+    tint: "#8a5a44",
+    extra: true,
+    teamTanks: 15,
   },
 ] as const;
+
+export type MapOption = (typeof MAP_OPTIONS)[number];
+export type MapId = MapOption["id"];
+export type ExtraLevelId = Extract<MapOption, { extra: true }>["id"];
+export type StandardMapId = Exclude<MapId, ExtraLevelId>;
+
+export const MAP_IDS: readonly MapId[] = MAP_OPTIONS.map((map) => map.id);
+
+export function mapOption(id: string | null | undefined): MapOption | undefined {
+  return MAP_OPTIONS.find((map) => map.id === id);
+}
+
+export function isExtraLevel(id: MapId): id is ExtraLevelId {
+  return "extra" in mapOption(id)!;
+}
+
+/** Battle Setup offers the extra levels only on a page opened with `?extralevels`. */
+export function showsExtraLevels(search: string): boolean {
+  return new URLSearchParams(search).has("extralevels");
+}

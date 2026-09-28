@@ -5,8 +5,7 @@ import { boolean, object, optional, record, string } from "./schema";
 import { playerKind, team } from "./scene-codec";
 
 const PENDING_JOIN_KEY = "sloppy-pending-join";
-// The room page, not the stored choice, names a scenario.
-const pendingChoiceReader = object<Omit<JoinChoice, "scenario">>({
+const pendingChoiceReader = object<JoinChoice>({
   name: string(24, 1),
   kind: playerKind,
   team: optional(team),

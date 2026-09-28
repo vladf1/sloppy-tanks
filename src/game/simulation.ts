@@ -29,6 +29,7 @@ import {
 } from "./debris-cleanup";
 import { newMatch, tickMatch } from "./match";
 import { MAPS, type ArenaMap } from "./maps";
+import type { MapId } from "./map-options";
 import { quarryRockShape, quarryRockVariant } from "./quarry-rock-shape";
 import { DRAGON_TOOTH_MASS, dragonToothVariant, quarryBarrierHulls } from "./quarry-barrier-shapes";
 import { Navigation } from "./navigation";
@@ -76,10 +77,14 @@ export type SimulationSetup = Partial<
   >
 > & { round?: number };
 
-/** The authored map for a menu choice, or the stress fixture's custom map. It
- * needs no physics world, so the renderer can build scenery before one exists. */
+/** The authored map for a menu choice, or an extra level's own map. It needs no
+ * physics world, so the renderer can build scenery before one exists. */
 export function selectedMap(mapMode: Simulation["mapMode"], customMap?: ArenaMap): ArenaMap {
-  return customMap ?? MAPS.find((map) => map.id === mapMode)!;
+  const map = customMap ?? MAPS.find((candidate) => candidate.id === mapMode);
+  if (!map) {
+    throw new Error(`The ${mapMode} level brings its own map; apply its level setup first`);
+  }
+  return map;
 }
 
 const movableCover = (cover: Pick<Cover, "kind">) =>
@@ -124,7 +129,7 @@ export class Simulation {
   difficulty: Difficulty = "normal";
   gameMode: "team" | "solo" = "team";
   endlessMatch = false;
-  mapMode: (typeof MAPS)[number]["id"] = "village";
+  mapMode: MapId = "village";
   customMap?: ArenaMap;
   humanHealthMultiplier = 1;
   powerUpDurationMultiplier = 1;

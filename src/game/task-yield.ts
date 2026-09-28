@@ -62,3 +62,21 @@ export function nextTask(): Promise<void> {
     port2.postMessage(null);
   });
 }
+
+/** A hidden tab paints no frames; after this long `afterPaint` stops waiting for one. */
+const PAINT_FALLBACK_MS = 100;
+
+/** Resolve just after the browser paints its next frame, so a new choice shows before
+ * long synchronous work starts. An animation frame runs right before the paint, and a
+ * task it queues runs after it. */
+export function afterPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, PAINT_FALLBACK_MS);
+    requestAnimationFrame(() => {
+      void nextTask().then(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  });
+}

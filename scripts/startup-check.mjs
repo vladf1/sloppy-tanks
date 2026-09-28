@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
+import {
+  chooseMap,
+  chosenMap,
+  gameUrl as url,
+  launchGame,
+  startRound,
+} from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
@@ -36,12 +42,8 @@ try {
     await route.continue();
   });
   await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
-  await delayed.page.locator("#loading").waitFor({ state: "detached" });
   assert.equal(await delayed.page.locator("canvas").count(), 0);
-  assert.equal(
-    await delayed.page.locator('input[name="mapMode"][value="harbor"]').isChecked(),
-    true,
-  );
+  assert.equal(await chosenMap(delayed.page), "harbor");
   await delayed.page.locator('[data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
@@ -54,7 +56,7 @@ try {
     /round|Downloading|Building|Preparing/,
   );
   // A last-minute choice during the queued start must reach the actual round.
-  await delayed.page.locator('input[name="mapMode"][value="quarry"]').check();
+  await chooseMap(delayed.page, "quarry");
   assert.equal(await delayed.page.locator("canvas").count(), 0);
   releasePhysics();
   await playing(delayed.page);
@@ -102,7 +104,7 @@ try {
   );
   assert.equal(await graphics.page.locator("#start").isDisabled(), true);
   assert.equal(await graphics.page.locator("#game").isVisible(), false);
-  await graphics.page.locator('input[name="mapMode"][value="harbor"]').check();
+  await chooseMap(graphics.page, "harbor");
   await graphics.page.screenshot({ path: `${output}/loading-queued-desktop.png` });
   await graphics.page.evaluate(() => window.releaseGraphics());
   await playing(graphics.page);
@@ -167,7 +169,7 @@ try {
   await warm.page.waitForTimeout(150);
   assert.equal(await warm.page.evaluate(() => window.sloppy.view.time), frozen);
   assert.equal(await warm.page.locator("#game").isVisible(), false);
-  await warm.page.locator('input[name="mapMode"][value="harbor"]').check();
+  await chooseMap(warm.page, "harbor");
   await warm.page.locator('[data-kind="scout"]').click();
   await startRound(warm.page);
   await playing(warm.page);
@@ -185,7 +187,7 @@ try {
   await changed.page.goto(url);
   await ready(changed.page);
   await changed.page.locator('input[value="solo"]').check();
-  await changed.page.locator('input[name="mapMode"][value="harbor"]').check();
+  await chooseMap(changed.page, "harbor");
   await changed.page.locator('[data-kind="heavy"]').click();
   await startRound(changed.page);
   await playing(changed.page);
@@ -201,10 +203,7 @@ try {
   // The chosen map is remembered and prepared behind the next visit's menu.
   await changed.page.reload();
   await ready(changed.page);
-  assert.equal(
-    await changed.page.locator('input[name="mapMode"][value="harbor"]').isChecked(),
-    true,
-  );
+  assert.equal(await chosenMap(changed.page), "harbor");
   assert.equal(await changed.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   await changed.context.close();
 
@@ -224,42 +223,59 @@ try {
   results.retry = "passed";
   console.log("Failed-download retry passed.");
 
-  // The offline stress test has no rooms: ?multiplayer must not swap its workload for Battle
-  // Setup, as it does on the Scrap Yard.
-  for (const path of [
-    "?autoplay",
-    "stresstest.html",
-    "stresstest.html?multiplayer",
-    "superstress.html",
+  // Extra levels appear, marked, only with ?extralevels, and a link can start one directly.
+  // Without them the standard maps stay a row of buttons.
+  const plain = await fresh();
+  await plain.page.goto(url + "?map=superstress");
+  await ready(plain.page);
+  assert.equal(await chosenMap(plain.page), "village");
+  assert.equal(await plain.page.locator('.map-picker[data-name="mapMode"]').isVisible(), false);
+  assert.equal(await plain.page.locator('.map-row input[name="mapMode"]').count(), 3);
+  await chooseMap(plain.page, "quarry");
+  assert.equal(await plain.page.locator('input[name="mapMode"][value="quarry"]').isChecked(), true);
+  await plain.page.waitForFunction(() => window.sloppy?.sim.mapName === "DUSTY DIG");
+  await plain.context.close();
+  for (const [level, name] of [
+    ["stress-test", "STRESS GRID"],
+    ["superstress", "SCRAP YARD"],
   ]) {
     const automatic = await fresh();
-    await automatic.page.goto(url + path);
+    await automatic.page.goto(`${url}?extralevels&map=${level}&autoplay`);
     await playing(automatic.page);
     assert.equal(await automatic.page.locator("#startup-overlay").count(), 0);
-    if (path !== "?autoplay") {
-      const { tanks, map } = await automatic.page.evaluate(() => ({
-        tanks: window.sloppy.sim.tanks.length,
-        map: window.sloppy.sim.mapName,
-      }));
-      assert.equal(tanks, 30);
-      assert.equal(map, path === "superstress.html" ? "SCRAP YARD" : "STRESS GRID");
-    }
-    if (path === "superstress.html") {
-      // A physical click: the HUD's pointer routing must reach the injected button.
-      const online = await automatic.page.locator("#play-online").boundingBox();
-      assert.ok(online, "the local Scrap Yard offers online play");
-      await automatic.page.mouse.click(online.x + online.width / 2, online.y + online.height / 2);
-      await automatic.page.waitForURL(/superstress\.html\?multiplayer=?$/);
-      // Battle Setup's own multiplayer tab, not the single-player yard or its loading screen.
-      await automatic.page.locator("#multiplayer-panel").waitFor({ state: "visible" });
-      assert.equal(await automatic.page.locator("#loading").count(), 0);
-      // Scrap Yard rooms bring their own arena, so creating one offers no map choice.
-      await automatic.page.locator(".room-maps").waitFor({ state: "hidden" });
-    }
+    const { tanks, map, mode, endless } = await automatic.page.evaluate(() => ({
+      tanks: window.sloppy.sim.tanks.length,
+      map: window.sloppy.sim.mapName,
+      mode: window.sloppy.sim.gameMode,
+      endless: window.sloppy.sim.endlessMatch,
+    }));
+    assert.deepEqual([tanks, map, mode, endless], [30, name, "team", true]);
     await automatic.context.close();
   }
+  // Choosing an extra level fixes the battle format; a standard map frees it again.
+  const extra = await fresh();
+  await extra.page.goto(url + "?extralevels");
+  await ready(extra.page);
+  assert.equal(await extra.page.locator(".map-row").first().isVisible(), false);
+  await extra.page.locator('input[value="solo"]').check();
+  await chooseMap(extra.page, "superstress");
+  assert.equal(await extra.page.locator(".map-picker-current .level-badge").textContent(), "EXTRA");
+  assert.equal(await extra.page.locator('input[value="solo"]').isDisabled(), true);
+  assert.equal(await extra.page.locator('input[value="team"]').isChecked(), true);
+  // The level's code downloads first; the menu stays ready, as GO waits for it.
+  await extra.page.waitForFunction(() => window.sloppy?.sim.mapName === "SCRAP YARD");
+  await chooseMap(extra.page, "harbor");
+  assert.equal(await extra.page.locator('input[value="solo"]').isDisabled(), false);
+  await extra.page.waitForFunction(() => window.sloppy.sim.mapName === "HARBOR HAVOC");
+  const standard = await extra.page.evaluate(() => ({
+    tanks: window.sloppy.sim.tanks.length,
+    endless: window.sloppy.sim.endlessMatch,
+    rules: typeof window.sloppy.sim.afterStep,
+  }));
+  assert.deepEqual(standard, { tanks: 12, endless: false, rules: "undefined" });
+  await extra.context.close();
   results.automaticStarts = "passed";
-  console.log("Autoplay and stress-test startup passed.");
+  console.log("Autoplay and extra-level startup passed.");
 
   for (const viewport of [{ width: 1440, height: 1000 }]) {
     const layout = await fresh(viewport);

@@ -11,3 +11,12 @@ test("a linked map wins over the remembered map, which wins over the default", (
   assert.equal(map("", "atlantis"), "village");
   assert.equal(map("", null), "village");
 });
+
+test("extra levels are chosen from links or memory only on a page offering them", () => {
+  const map = (search: string, lastMap: string | null) =>
+    initialGameOptions(1, search, null, lastMap).mapMode;
+  assert.equal(map("?map=superstress", "quarry"), "quarry");
+  assert.equal(map("", "stress-test"), "village");
+  assert.equal(map("?extralevels&map=superstress", "quarry"), "superstress");
+  assert.equal(map("?extralevels", "stress-test"), "stress-test");
+});

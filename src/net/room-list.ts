@@ -1,11 +1,11 @@
-import { array, boolean, enumeration, id, number, object, optional, string } from "./schema";
+import { array, boolean, enumeration, id, number, object, string } from "./schema";
 import {
   ROOM_CODE,
   DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,
   roundMinutesReader,
 } from "./protocol";
-import { difficulty, mapMode, scenario, type Scenario } from "./scene-codec";
+import { difficulty, mapMode } from "./scene-codec";
 
 export const MAX_LISTED_ROOMS = 256;
 export const ROOM_LIST_TTL_MS = 45_000;
@@ -33,10 +33,6 @@ export const roomListingReader = object({
   roundId: id,
   time: number(0, MAX_ROUND_MINUTES * 60),
   scores: array(id, 2),
-  /** Absent for standard rooms; `/rooms?scenario=` lists a scenario's own rooms. */
-  scenario: optional(scenario),
 });
-export type RoomListing = Omit<ReturnType<typeof roomListingReader.read>, "scenario"> & {
-  scenario?: Scenario;
-};
+export type RoomListing = ReturnType<typeof roomListingReader.read>;
 export const roomListReader = object({ rooms: array(roomListingReader, MAX_LISTED_ROOMS) });

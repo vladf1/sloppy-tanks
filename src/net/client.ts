@@ -19,7 +19,6 @@ import { ROOM_CODE, lobbyReader, controlReader, settingsReader, type Control } f
 import { id } from "./schema";
 import { serverAddress } from "./server-address";
 import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
-import { pageScenario } from "./scenarios";
 
 const MAX_ACTIONS = 8;
 /** Join the room chosen on Battle Setup. The room page builds out of sight and replaces
@@ -169,7 +168,6 @@ export function startMultiplayer(
         ...selectedChoice,
         create: undefined,
         existingRoom: true,
-        scenario: pageScenario(),
       });
     },
     setup: backToSetup,
@@ -607,7 +605,7 @@ export function startMultiplayer(
   requestAnimationFrame(loop);
   audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
   audio.start();
-  void connection.connect({ ...selectedChoice, scenario: pageScenario() });
+  void connection.connect(selectedChoice);
   if (import.meta.env.DEV) {
     Object.assign(window, {
       sloppyMultiplayer: {

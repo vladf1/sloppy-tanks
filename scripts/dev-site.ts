@@ -4,12 +4,6 @@ import type { Plugin } from "vite";
 
 // Deliberate allowlist: do not publish source directories or Node-only test runners.
 export const devPages = [
-  { path: "stresstest.html", title: "Stress test", detail: "30 tanks and continuous combat" },
-  {
-    path: "superstress.html",
-    title: "Super stress test",
-    detail: "30 tanks in a compact yard of rebuilding cover",
-  },
   {
     path: "tools/tank-surface-check.html",
     title: "Tank surfaces",
@@ -27,6 +21,15 @@ export const devPages = [
   })),
 ];
 
+/** Links into the game itself, listed beside the pages above; they need no build input. */
+const devLinks = [
+  {
+    href: "/?extralevels",
+    title: "Extra levels",
+    detail: "Battle Setup with the Stress Grid and Scrap Yard stress levels",
+  },
+];
+
 export function devSite(): Plugin {
   const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
   const dirty = Boolean(
@@ -40,10 +43,10 @@ export function devSite(): Plugin {
       handler(html) {
         return html.replace(
           "<!-- dev-pages -->",
-          devPages
+          [...devLinks, ...devPages.map((page) => ({ ...page, href: `/${page.path}` }))]
             .map(
-              ({ path, title, detail }) =>
-                `<li><a href="/${path}">${title}</a><p>${detail}</p></li>`,
+              ({ href, title, detail }) =>
+                `<li><a href="${href}">${title}</a><p>${detail}</p></li>`,
             )
             .join("\n"),
         );

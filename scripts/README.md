@@ -52,8 +52,9 @@ node scripts/touch-loading-check.mjs
 ```
 
 The dev server also serves interactive fixtures, listed on the dev site's
-`/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html`,
-`tools/tank-surface-check.html`, `stresstest.html` and `superstress.html`. Fixtures with a pass/fail
+`/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
+`tools/tank-surface-check.html`, plus a link to the game with `?extralevels`, whose
+Battle Setup offers the Stress Grid and Scrap Yard. Fixtures with a pass/fail
 verdict show it in a `#result` element starting with `PASS` or `FAIL`, which
 `fixtures-check.mjs` reads.
 

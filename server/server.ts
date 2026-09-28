@@ -7,7 +7,6 @@ import { Socket, type AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION, ROOM_CODE } from "../src/net/protocol";
-import { SCENARIOS } from "../src/net/scene-codec";
 import { RoomCatalog } from "./room-catalog";
 import { RoomSession, type RoomSocket } from "./room-session";
 import { ServerMonitor } from "./monitor";
@@ -133,12 +132,10 @@ export function createServer(options: ServerOptions): MultiplayerServer {
       if (request.method !== "GET") return reply(405, undefined, cors);
       if (!directoryRate.allow(clientIp(request), Date.now()))
         return reply(429, "Too many refreshes; try again shortly", cors);
-      // A scenario page (superstress.html) asks for its own rooms; plain requests, including
-      // Battle Setup and the traffic bots, see only standard rooms.
-      const requested = url.searchParams.get("scenario");
-      const scenario = SCENARIOS.find((name) => name === requested);
-      if (requested !== null && !scenario) return reply(400, "Unknown scenario", cors);
-      return reply(200, { rooms: catalog.list(Date.now(), scenario) }, cors);
+      // Battle Setup asks for every room. Plain requests, such as the traffic bots', see
+      // only rooms on standard maps.
+      const extraLevels = url.searchParams.has("extralevels");
+      return reply(200, { rooms: catalog.list(Date.now(), extraLevels) }, cors);
     }
     const room = /^\/room\/([^/]+)$/.exec(path)?.[1];
     if (room && ROOM_CODE.test(room)) {

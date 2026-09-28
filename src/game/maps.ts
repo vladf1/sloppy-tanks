@@ -1,4 +1,4 @@
-import { MAP_OPTIONS } from "./map-options";
+import { MAP_OPTIONS, type StandardMapId } from "./map-options";
 import { arenaLayout } from "./arena";
 import type { CoverDef } from "./arena";
 import type { GroundKind } from "./ground-surfaces";
@@ -18,9 +18,13 @@ export interface ArenaMap {
   layout: () => CoverDef[];
 }
 
-const layouts = { village: arenaLayout, harbor: harborLayout, quarry: quarryLayout };
+const layouts: Record<StandardMapId, () => CoverDef[]> = {
+  village: arenaLayout,
+  harbor: harborLayout,
+  quarry: quarryLayout,
+};
 
-export const MAPS = MAP_OPTIONS.map((map) => ({
-  ...map,
-  layout: layouts[map.id],
-})) satisfies ArenaMap[];
+/** The standard maps. Extra levels bring their own map as `customMap`. */
+export const MAPS = MAP_OPTIONS.flatMap((map) =>
+  "extra" in map ? [] : [{ ...map, layout: layouts[map.id] }],
+) satisfies ArenaMap[];

@@ -14,6 +14,12 @@
       <path d="M12 7v14M8 11h8M5 14a7 7 0 0 0 14 0" />
     </symbol>
     <symbol id="icon-quarry" viewBox="0 0 24 24"><path d="M2 20 9 8l4 6 3-4 6 10z" /></symbol>
+    <symbol id="icon-stress" viewBox="0 0 24 24">
+      <path d="M4 4h16v16H4zM4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16" />
+    </symbol>
+    <symbol id="icon-yard" viewBox="0 0 24 24">
+      <path d="M3 20h18M4 20v-6.5h7.5V20M12.5 20v-6.5H20V20M8.2 13.5V7h7.5v6.5" />
+    </symbol>
   </svg>
   <header class="setup-header">
     <h1 id="setup-title">BATTLE SETUP</h1>
@@ -150,39 +156,9 @@
           >
         </div>
       </div>
-      <div class="setup-section map-choice" role="radiogroup" aria-labelledby="map-label">
+      <div class="setup-section map-choice">
         <div class="setup-label"><span id="map-label">MAP</span></div>
-        <div class="choice-cards">
-          <label class="choice-card"
-            ><input type="radio" name="mapMode" value="village" checked /><svg
-              class="choice-icon"
-              style="--tint: #2f7d4f"
-            >
-              <use href="#icon-village" /></svg
-            ><span
-              ><b>Pine Village</b><small>A quiet little village. Bring the noise.</small></span
-            ></label
-          ><label class="choice-card"
-            ><input type="radio" name="mapMode" value="harbor" /><svg
-              class="choice-icon"
-              style="--tint: #2c6fa8"
-            >
-              <use href="#icon-harbor" /></svg
-            ><span
-              ><b>Harbor Havoc</b><small>Salt air. Hot steel. Dockside mayhem.</small></span
-            ></label
-          ><label class="choice-card"
-            ><input type="radio" name="mapMode" value="quarry" /><svg
-              class="choice-icon"
-              style="--tint: #a8733a"
-            >
-              <use href="#icon-quarry" /></svg
-            ><span
-              ><b>Dusty Dig</b
-              ><small>Open ground. Weathered stone. Dig your own shortcut.</small></span
-            ></label
-          >
-        </div>
+        <!-- map-choice:mapMode:map-label:cards -->
       </div>
       <div class="startup-progress">
         <div class="startup-progress-copy">
@@ -244,30 +220,7 @@
       </div>
       <div class="setup-section room-create">
         <div class="setup-label"><span id="new-room-label">NEW ROOM</span></div>
-        <div class="room-maps" role="radiogroup" aria-labelledby="new-room-label">
-          <label class="room-map"
-            ><input type="radio" name="roomMap" value="village" checked /><svg
-              class="choice-icon"
-              style="--tint: #2f7d4f"
-            >
-              <use href="#icon-village" /></svg
-            ><span>Pine Village</span></label
-          ><label class="room-map"
-            ><input type="radio" name="roomMap" value="harbor" /><svg
-              class="choice-icon"
-              style="--tint: #2c6fa8"
-            >
-              <use href="#icon-harbor" /></svg
-            ><span>Harbor Havoc</span></label
-          ><label class="room-map"
-            ><input type="radio" name="roomMap" value="quarry" /><svg
-              class="choice-icon"
-              style="--tint: #a8733a"
-            >
-              <use href="#icon-quarry" /></svg
-            ><span>Dusty Dig</span></label
-          >
-        </div>
+        <!-- map-choice:roomMap:new-room-label:tiles -->
         <div class="room-rules">
           <label class="room-length"
             >Match length<span

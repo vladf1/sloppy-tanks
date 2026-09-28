@@ -59,6 +59,7 @@ import { setTreeDamage, setTreeDestroyed, trunkFragment } from "./tree-models";
 import { TreeDebris } from "./tree-debris";
 import type { Fragment, SimEvent, Team, VehicleKind, WreckPart } from "./types";
 import { timberParts } from "./timber-layout";
+import type { GroundKind } from "./ground-surfaces";
 import { ageWreckMaterial } from "./wreck-aging";
 import { rankIndex } from "./veterancy";
 import { CAMERA, FEEDBACK, HUD_LAYER } from "./view-settings";
@@ -125,9 +126,10 @@ export class Presentation {
   private villageScenery?: VillageScenery;
   private harborScenery?: HarborScenery;
   private quarryScenery?: QuarryScenery;
-  private customSpawnPads?: THREE.Group;
-  private customFloor?: THREE.Mesh;
-  private customOuterFloor?: THREE.Mesh;
+  /** Plain yards' pads by scale and floors by ground and extent. Like themed scenery they
+   * are built on first use and kept, so switching between extra levels reuses them. */
+  private customSpawnPads = new Map<number, THREE.Group>();
+  private customFloors = new Map<string, THREE.Mesh>();
   private lighting: ReturnType<typeof createLighting>;
   private particleEffects = new ParticleEffects();
   debrisMeshes = new Map<NonNullable<Fragment["shape"]>, THREE.InstancedMesh>();
@@ -276,39 +278,20 @@ export class Presentation {
     const harbor = simulation.mapTheme === "harbor";
     const quarry = simulation.mapTheme === "quarry";
     const village = simulation.mapTheme === "village";
-    // Stress yards have no themed scenery, only plain pads. A page or room offers one such
-    // yard, so its pads are built once at that yard's scale.
+    // Extra levels have no themed scenery, only plain pads and floors.
     const custom = !harbor && !quarry && !village;
-    if (custom && !this.customSpawnPads) {
-      this.customSpawnPads = createSpawnPads(simulation.mapScale);
-      this.scene.add(this.customSpawnPads);
+    const pads = custom ? this.customSpawnPad(simulation.mapScale) : undefined;
+    for (const group of this.customSpawnPads.values()) {
+      group.visible = group === pads;
     }
-    if (this.customSpawnPads) {
-      this.customSpawnPads.visible = custom;
-    }
-    if (simulation.mapOuterFloor && !this.customOuterFloor) {
-      this.customOuterFloor = createArenaFloor(
-        this.renderer,
-        simulation.mapOuterFloor,
-        simulation.mapOuterFloorExtent,
-      );
-      this.customOuterFloor.position.y = -0.002;
-      this.scene.add(this.customOuterFloor);
-    }
-    if (this.customOuterFloor) {
-      this.customOuterFloor.visible = Boolean(simulation.mapOuterFloor);
-    }
-    if (simulation.mapFloor && !this.customFloor) {
-      this.customFloor = createArenaFloor(
-        this.renderer,
-        simulation.mapFloor,
-        ARENA * 2 * simulation.mapScale,
-      );
-      this.customFloor.position.y = 0.008;
-      this.scene.add(this.customFloor);
-    }
-    if (this.customFloor) {
-      this.customFloor.visible = Boolean(simulation.mapFloor);
+    const outerFloor =
+      simulation.mapOuterFloor &&
+      this.customFloor(simulation.mapOuterFloor, simulation.mapOuterFloorExtent, -0.002);
+    const floor =
+      simulation.mapFloor &&
+      this.customFloor(simulation.mapFloor, ARENA * 2 * simulation.mapScale, 0.008);
+    for (const mesh of this.customFloors.values()) {
+      mesh.visible = mesh === floor || mesh === outerFloor;
     }
     this.buildScenery(simulation.mapTheme);
     if (this.villageScenery) {
@@ -438,6 +421,28 @@ export class Presentation {
     // Prepare the actual draw materials before the menu's compileAsync warm-up.
     this.updatePartBatches(simulation);
   }
+  private customSpawnPad(scale: number): THREE.Group {
+    let pads = this.customSpawnPads.get(scale);
+    if (!pads) {
+      pads = createSpawnPads(scale);
+      this.customSpawnPads.set(scale, pads);
+      this.scene.add(pads);
+    }
+    return pads;
+  }
+
+  private customFloor(kind: GroundKind, extent: number | undefined, y: number): THREE.Mesh {
+    const key = `${kind}:${extent}:${y}`;
+    let floor = this.customFloors.get(key);
+    if (!floor) {
+      floor = createArenaFloor(this.renderer, kind, extent);
+      floor.position.y = y;
+      this.customFloors.set(key, floor);
+      this.scene.add(floor);
+    }
+    return floor;
+  }
+
   /** Build a theme's cached scenery. It needs no physics world, so startup can
    * do this while the physics binary is still downloading; reset() reuses it. */
   buildScenery(theme: RenderState["mapTheme"]): void {

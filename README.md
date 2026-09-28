@@ -29,6 +29,15 @@ Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
 Map links accept `?map=village`, `?map=harbor` or `?map=quarry`.
 
+Opening the game with `?extralevels` adds two stress levels, marked **EXTRA**, to
+the map dropdowns: **Stress Grid** (30 tanks among 75 destructibles) and
+**Scrap Yard** (30 tanks in a compact yard whose cover rebuilds). In single player
+they are an endless 15 v 15 team battle with your chosen tank; online they follow
+the room's rules. Players are nearly invulnerable on both, and pickups are ten
+times stronger. Rooms on these levels appear in the room list only on such a page;
+their room links work for anyone. `?extralevels&map=superstress` links straight to
+one.
+
 | Control            | Action                                                   |
 | ------------------ | -------------------------------------------------------- |
 | WASD / arrows      | Steer toward a screen direction; opposite input reverses |

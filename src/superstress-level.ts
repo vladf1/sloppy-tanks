@@ -10,7 +10,6 @@ import {
   STRESS_PLAYER_HEALTH_MULTIPLIER,
   STRESS_POWER_UP_MULTIPLIER,
   STRESS_TANK_COUNT,
-  STRESS_TEST_SETUP,
 } from "./stress-test-level";
 
 /** Two-thirds of the standard arena's width: the same 30 tanks fight at 2.4x the density. */
@@ -222,10 +221,4 @@ export const SUPERSTRESS_LEVEL = {
   powerUpDurationMultiplier: STRESS_POWER_UP_MULTIPLIER,
   ammoCrateMultiplier: STRESS_AMMO_CRATE_MULTIPLIER,
   afterStep: superstressRules,
-} satisfies SimulationSetup;
-
-/** Single player keeps the stress test's endless scoring and scout. */
-export const SUPERSTRESS_SETUP = {
-  ...STRESS_TEST_SETUP,
-  ...SUPERSTRESS_LEVEL,
 } satisfies SimulationSetup;

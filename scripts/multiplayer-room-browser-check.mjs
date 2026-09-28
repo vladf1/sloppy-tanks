@@ -238,9 +238,47 @@ try {
   await bob.page.keyboard.press("ArrowRight");
   await bob.page.locator("#multiplayer-panel:not([hidden])").waitFor();
   await until(() => bob.listRequests > pausedPolls, "The multiplayer tab polls again");
+  // Extra levels: offered and listed only with ?extralevels, yet a room link works anywhere.
+  const extraLevels = new URL(base);
+  extraLevels.searchParams.set("extralevels", "");
+  extraLevels.searchParams.set("multiplayer", "");
+  await alice.page.goto(extraLevels.href);
+  await waitForRoomBrowser(alice.page);
+  assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
+  await chooseRoomMap(alice.page, "superstress");
+  assert.equal(
+    await alice.page.locator("#create-humans-only").isChecked(),
+    false,
+    "An extra level fills its roster with bots by default",
+  );
+  assert.equal(
+    await alice.page.locator(".room-create .map-picker-current .level-badge").textContent(),
+    "EXTRA",
+  );
+  await click(alice.page, "#create-room");
+  await until(
+    () => alice.lobby?.settings.mapMode === "superstress" && alice.lobby.phase === "playing",
+    "An extra-level room starts on its level",
+  );
+  const yard = new URL(alice.page.url()).searchParams.get("room");
+  const yardSelector = `input[name="room-choice"][value="${yard}"]`;
+  const plainRequests = bob.listRequests;
+  await click(bob.page, "#refresh-rooms");
+  await until(() => bob.listRequests > plainRequests, "The plain page lists rooms again");
+  await bob.page.waitForTimeout(500);
+  assert.equal(await bob.page.locator(yardSelector).count(), 0, "Plain pages hide extra levels");
+  const link = new URL(base);
+  link.searchParams.set("room", yard);
+  await bob.page.goto(link.href);
+  await bob.page.locator(`${yardSelector}:checked`).waitFor();
+  const yardRow = bob.page.locator(".room-row").filter({ has: bob.page.locator(yardSelector) });
+  assert.match(await yardRow.locator("strong").innerText(), /^Scrap Yard\s*EXTRA · 1\/8 players$/);
+  await click(alice.page, "#pause");
+  await click(alice.page, "#leave-room");
+  await alice.page.locator("#multiplayer-panel:not([hidden])").waitFor();
   assert.deepEqual(errors, []);
   console.log(
-    "Room browser: tabs, shared tank cards, random/saved names, responsive UI, create/start selected map after a reload, in-page join, listing, Auto teams, live player kills, join notifications, match length, late join, stats counters, no in-game or single-player polling and empty-room removal passed.",
+    "Room browser: tabs, shared tank cards, random/saved names, responsive UI, create/start selected map after a reload, in-page join, listing, Auto teams, live player kills, join notifications, match length, late join, stats counters, no in-game or single-player polling, empty-room removal and extra-level rooms passed.",
   );
 } finally {
   await writeFile(

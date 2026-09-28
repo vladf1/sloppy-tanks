@@ -1,5 +1,6 @@
 import { DIFFICULTIES, parseDifficulty } from "./difficulty";
-import { MAP_OPTIONS } from "./map-options";
+import { isExtraLevel, mapOption, showsExtraLevels, type MapId } from "./map-options";
+import { bindMapChoice, setMapChoice } from "./map-picker";
 import { Random } from "./math";
 import type { Simulation } from "./simulation";
 import type { VehicleKind } from "./types";
@@ -10,7 +11,8 @@ export type GameOptions = Pick<
 >;
 
 /** A link's `?map=` wins; otherwise the player's last map is the one prepared
- * behind the menu, so a returning player's GO needs no rebuild. */
+ * behind the menu, so a returning player's GO needs no rebuild. Extra levels are
+ * offered only with `?extralevels`. */
 export function initialGameOptions(
   seed: number,
   search: string,
@@ -18,7 +20,11 @@ export function initialGameOptions(
   lastMap: string | null = null,
 ): GameOptions {
   const requestedMap = new URLSearchParams(search).get("map");
-  const map = (id: string | null) => MAP_OPTIONS.find((option) => option.id === id)?.id;
+  const extraLevels = showsExtraLevels(search);
+  const map = (id: string | null) => {
+    const option = mapOption(id);
+    return option && (extraLevels || !isExtraLevel(option.id)) ? option.id : undefined;
+  };
   return {
     humanKind: "balanced",
     humanTeam: new Random(seed).next() < 0.5 ? 0 : 1,
@@ -47,11 +53,13 @@ export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
 /** Apply per-visit choices to the build-time menu without replacing its DOM. */
 export function syncGameOptions(overlay: HTMLElement, options: GameOptions): void {
   showTank(overlay, options.humanKind);
-  for (const key of ["gameMode", "mapMode", "difficulty"] as const) {
+  for (const key of ["gameMode", "difficulty"] as const) {
     overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) => {
       input.checked = input.value === options[key];
     });
   }
+  setMapChoice(overlay, "mapMode", options.mapMode);
+  showBattleFormat(overlay, options.mapMode);
   // Each difficulty explains itself in a tooltip, so choosing one never reflows the menu.
   overlay.querySelectorAll<HTMLInputElement>('input[name="difficulty"]').forEach((input) => {
     const description = DIFFICULTIES[parseDifficulty(input.value)].description;
@@ -59,6 +67,30 @@ export function syncGameOptions(overlay: HTMLElement, options: GameOptions): voi
     input.setAttribute("aria-description", description);
   });
   showTankTeam(overlay, options.humanTeam);
+}
+
+/** An extra level plays its own team battle: Team Battle describes its roster, and Solo
+ * Assault waits until a standard map is chosen again. */
+function showBattleFormat(overlay: HTMLElement, mapMode: MapId): void {
+  const level = mapOption(mapMode);
+  const teamTanks = level && "teamTanks" in level ? level.teamTanks : undefined;
+  overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
+    const card = input.closest<HTMLElement>(".choice-card");
+    const note = card?.querySelector<HTMLElement>("small");
+    if (input.value === "team" && note) {
+      note.dataset.standard ??= note.textContent ?? "";
+      note.textContent = teamTanks
+        ? `${teamTanks} vs ${teamTanks} · Endless respawns and scoring`
+        : note.dataset.standard;
+    } else if (input.value === "solo") {
+      input.disabled = teamTanks !== undefined;
+      if (teamTanks !== undefined) {
+        card?.setAttribute("data-tip", `Not available on ${level!.name}`);
+      } else {
+        card?.removeAttribute("data-tip");
+      }
+    }
+  });
 }
 
 /** Mark one tank card as the player's choice. */
@@ -90,19 +122,32 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
       showTank(overlay, options.humanKind);
     });
   });
-  for (const key of ["gameMode", "mapMode", "difficulty"] as const) {
+  for (const key of ["gameMode", "difficulty"] as const) {
     overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) => {
       input.addEventListener("change", () => {
         if (key === "difficulty") {
           options.difficulty = parseDifficulty(input.value);
           localStorage.setItem("sloppy-difficulty", options.difficulty);
-        } else if (key === "gameMode") {
-          options.gameMode = input.value as GameOptions["gameMode"];
         } else {
-          options.mapMode = input.value as GameOptions["mapMode"];
-          localStorage.setItem("sloppy-map", options.mapMode);
+          options.gameMode = input.value as GameOptions["gameMode"];
         }
       });
     });
   }
+  // Runs before the menu's own change listeners, which the event reaches as it bubbles.
+  bindMapChoice(overlay, "mapMode", (value) => {
+    const mapMode = mapOption(value)?.id;
+    if (!mapMode) {
+      return;
+    }
+    options.mapMode = mapMode;
+    localStorage.setItem("sloppy-map", mapMode);
+    if (isExtraLevel(mapMode)) {
+      options.gameMode = "team";
+      overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
+        input.checked = input.value === "team";
+      });
+    }
+    showBattleFormat(overlay, mapMode);
+  });
 }

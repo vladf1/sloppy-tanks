@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { build, minify, type Plugin } from "vite";
+import { mapChoiceMarkup } from "./map-picker-markup.ts";
 
 const entry = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const game = fileURLToPath(new URL("../src/game.ts", import.meta.url));
@@ -30,9 +31,17 @@ export function startupHtml(base: string): Plugin {
             new URL("../src/game/battle-setup.html", import.meta.url),
             "utf8",
           );
+          const setup = markup
+            .replaceAll("%BASE_URL%", base)
+            .replace(
+              /<!-- map-choice:(\w+):([\w-]+):(cards|tiles) -->/g,
+              (_comment, name: string, label: string, style: string) =>
+                mapChoiceMarkup(name, label, style === "tiles"),
+            );
+          // Replacer functions insert text literally; a replacement string would read `$&`.
           html = html.replace(
             "<!-- battle-setup -->",
-            `<div id="startup-overlay" data-state="loading">${markup.replaceAll("%BASE_URL%", base)}</div>`,
+            () => `<div id="startup-overlay" data-state="loading">${setup}</div>`,
           );
         }
         if (!html.includes("<!-- startup-script -->")) return html;
@@ -130,20 +139,27 @@ export function startupHtml(base: string): Plugin {
         const links = preloads.size
           ? `<script>if(!new URLSearchParams(location.search).has("room")&&!new URLSearchParams(location.search).has("multiplayer")){for(const href of ${JSON.stringify([...preloads].map((file) => base + file))}){const link=document.createElement("link");link.rel="modulepreload";link.crossOrigin="anonymous";link.href=href;document.head.append(link);}}</script>`
           : "";
-        return html.replace("</head>", `${links}${style}</head>`).replace(
-          "<!-- startup-script -->",
-          `<script type="module">${code
-            .replace(/import\((["'`])sloppy:game\1\)/g, entryImport(gameUrl, gameChunk?.fileName))
-            .replace(
-              /import\((["'`])sloppy:multiplayer\1\)/g,
-              entryImport(multiplayerUrl, multiplayerChunk?.fileName),
-            )
-            .replace(
-              /import\((["'`])sloppy:rooms\1\)/g,
-              entryImport(roomBrowserUrl, roomBrowserChunk?.fileName),
-            )
-            .replace(/<\/script/gi, "<\\/script")}</script>`,
-        );
+        // Minified code can contain `$&`, which a replacement string would expand.
+        return html
+          .replace("</head>", () => `${links}${style}</head>`)
+          .replace(
+            "<!-- startup-script -->",
+            () =>
+              `<script type="module">${code
+                .replace(
+                  /import\((["'`])sloppy:game\1\)/g,
+                  entryImport(gameUrl, gameChunk?.fileName),
+                )
+                .replace(
+                  /import\((["'`])sloppy:multiplayer\1\)/g,
+                  entryImport(multiplayerUrl, multiplayerChunk?.fileName),
+                )
+                .replace(
+                  /import\((["'`])sloppy:rooms\1\)/g,
+                  entryImport(roomBrowserUrl, roomBrowserChunk?.fileName),
+                )
+                .replace(/<\/script/gi, "<\\/script")}</script>`,
+          );
       },
     },
   };

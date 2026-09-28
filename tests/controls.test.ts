@@ -91,12 +91,12 @@ test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and
     ["hidden", true, 1],
     ["Escape", true, 1],
     ["clear", true, 0],
-    // Stress mode keeps running in the background, but Escape still pauses.
+    // A multiplayer room keeps running in the background, but Escape still pauses.
     ["blur", false, 0],
     ["hidden", false, 0],
     ["Escape", false, 1],
   ] as const) {
-    const label = `${interruption}${pauseWhenHidden ? "" : " (stress)"}`;
+    const label = `${interruption}${pauseWhenHidden ? "" : " (multiplayer)"}`;
     const f = fixture(pauseWhenHidden);
     f.emit(f.win, "keydown", { code: "KeyD" });
     f.emit(f.canvas, "pointerdown", { button: 0 });

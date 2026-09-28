@@ -3,14 +3,12 @@ import { ARENA } from "./game/data";
 import type { ArenaMap } from "./game/maps";
 import type { SimulationSetup } from "./game/simulation";
 import type { CoverKind } from "./game/types";
-import type { VehicleKind } from "./game/types";
 import { TIMBER_HEALTH } from "./game/timber-layout";
 
 export const STRESS_TANK_COUNT = 30;
 export const STRESS_PLAYER_HEALTH_MULTIPLIER = 10_000;
 export const STRESS_POWER_UP_MULTIPLIER = 10;
 export const STRESS_AMMO_CRATE_MULTIPLIER = 10;
-export const STRESS_PLAYER_KIND: VehicleKind = "scout";
 
 function stressTestLayout(): CoverDef[] {
   const covers: CoverDef[] = [];
@@ -130,11 +128,10 @@ export const STRESS_TEST_MAP: ArenaMap = {
   layout: stressTestLayout,
 };
 
-export const STRESS_TEST_SETUP = {
+/** The grid and its 30-tank roster, shared by single player and multiplayer rooms. Players
+ * get a near-invulnerable hull, and pickups boost every tank. */
+export const STRESS_TEST_LEVEL = {
   customMap: STRESS_TEST_MAP,
-  gameMode: "team",
-  endlessMatch: true,
-  humanKind: STRESS_PLAYER_KIND,
   roundCount: STRESS_TANK_COUNT,
   humanHealthMultiplier: STRESS_PLAYER_HEALTH_MULTIPLIER,
   powerUpDurationMultiplier: STRESS_POWER_UP_MULTIPLIER,

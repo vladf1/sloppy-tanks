@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { chooseMap, headless } from "./browser-helpers.mjs";
 
 /** The Vite dev server's default page; checks use `SLOPPY_URL` for any other. */
 export const DEFAULT_GAME_URL = "http://127.0.0.1:5173/sloppy-tanks/";
@@ -177,5 +177,5 @@ export async function waitForRoomBrowser(page) {
 
 /** Pick a map for a new room from Battle Setup's multiplayer tab. */
 export async function chooseRoomMap(page, map) {
-  await page.locator(`input[name="roomMap"][value="${map}"]`).check();
+  await chooseMap(page, map, "roomMap");
 }

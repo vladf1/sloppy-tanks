@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
+  chooseMap,
   freezeLoop,
   gameUrl as url,
   launchGame,
@@ -31,7 +32,7 @@ try {
     await page.waitForFunction(
       () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
     );
-    await page.locator(`input[name="mapMode"][value="${map}"]`).check();
+    await chooseMap(page, map);
     await page.evaluate(() => {
       window.beforeStart = performance.now();
       window.startFrames = [];

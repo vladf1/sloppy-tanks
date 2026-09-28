@@ -15,7 +15,8 @@ const ROOMS = [
   { name: "village", mapMode: "village" },
   { name: "harbor", mapMode: "harbor" },
   { name: "quarry", mapMode: "quarry" },
-  { name: "scrap-yard", scenario: "superstress" },
+  { name: "stress-grid", mapMode: "stress-test" },
+  { name: "scrap-yard", mapMode: "superstress" },
 ] as const;
 const STAGES = ["physics", "capture", "diff", "stringify"] as const;
 
@@ -41,8 +42,7 @@ for (const room of ROOMS) {
   const sim = createMultiplayerSimulation(
     SEED,
     [{ playerId: "one", name: "One", team: 0, slot: 0, kind: "balanced" }],
-    "mapMode" in room ? { mapMode: room.mapMode } : {},
-    "scenario" in room ? room.scenario : undefined,
+    { mapMode: room.mapMode },
   );
   sim.start();
   const idle = new Map();

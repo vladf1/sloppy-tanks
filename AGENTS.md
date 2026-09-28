@@ -169,37 +169,40 @@ a slow run.
   batching, bundles, or startup warm-up. `renderer.info.render.drawCalls`
   counts draws; `calls` counts renderer invocations.
 
-## Maps, stress mode, and authored data
+## Maps, extra levels, and authored data
 
 Map layouts are gameplay data, not only scenery. A new or moved obstacle,
 pickup, or spawn must preserve hull clearance, team access, and navigation
 reachability; add or update a test for those properties. Check both projectile
 line-of-sight and tank steering when changing cover geometry.
 
-`stresstest.html` is an intentional workload (30 tanks, 75 destructible
-objects, endless scoring, and an 80-fragment cap). It should remain useful for
-finding body, navigation, destruction, and resource-growth regressions, not
-be weakened to make a normal match look healthy.
+Extra levels are maps with their own arena, roster and rules, offered in Battle
+Setup's map dropdowns (marked EXTRA, in their own group) only on a page opened
+with `?extralevels`. Each is a `MAP_OPTIONS` entry with `extra: true` and an
+`EXTRA_LEVELS` setup in `src/extra-levels.ts`, whose map id must equal the entry
+id. Single player imports that registry only once an extra level is chosen and
+plays it as an endless team battle (`singlePlayerRules`); switching back applies
+`STANDARD_RULES`, so every rule a level sets needs a standard value there. A
+room plays one like any map: the host picks it, `createMultiplayerSimulation`
+applies the same setup with the room's round rules, and plain `/rooms` (which
+the traffic bots read) leaves those rooms out while Battle Setup asks for
+`/rooms?extralevels`. Clients learn a level from the replicated scene
+(`map.theme`, `map.scale`) and must not import level code.
 
-`superstress.html` packs the same 30 tanks into a yard at `SUPERSTRESS_SCALE`
-of the standard arena, with over 100 destructibles, a 240-fragment budget,
-cover that rebuilds in place and debris that lingers until the budget needs
-room. Its rules live in `src/superstress-level.ts` and reach the game only
-through `Simulation.afterStep`, `restoreCover` and the map's `scale`; keep
-level behaviour there rather than branching on it in shared code. Author its
-placements in standard-arena coordinates so the scale stays one knob.
+The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 75
+destructible objects and an 80-fragment cap). It should remain useful for
+finding body, navigation, destruction, and resource-growth regressions, not be
+weakened to make a normal match look healthy.
 
-Online, the yard is a scenario room. `superstress.html?multiplayer` (its PLAY
-ONLINE button) and its room links open the standard Battle Setup multiplayer
-tab, which lists and creates only Scrap Yard rooms via `/rooms?scenario=`; the
-plain `/rooms` list, and so the standard page and traffic bots, never shows
-them. Joins send the page's `scenario`, the room's first player fixes it, and
-`createMultiplayerSimulation` builds every round from `SUPERSTRESS_LEVEL` with
-normal round rules. That level carries the stress test's health and pickup
-multipliers, so players are nearly invulnerable online as well as offline;
-only single player adds endless scoring and the scout. Clients learn the yard
-from the replicated scene (`map.theme`, `map.scale`) and must not import level
-code.
+The Scrap Yard (`superstress`) packs the same 30 tanks into a yard at
+`SUPERSTRESS_SCALE` of the standard arena, with over 100 destructibles, a
+240-fragment budget, cover that rebuilds in place and debris that lingers until
+the budget needs room. Its rules live in `src/superstress-level.ts` and reach the
+game only through `Simulation.afterStep`, `restoreCover` and the map's `scale`;
+keep level behaviour there rather than branching on it in shared code. Author
+its placements in standard-arena coordinates so the scale stays one knob. Both
+levels give players a near-invulnerable hull and boosted pickups, online and
+offline.
 
 ## Assets, deployment, and evidence
 

@@ -120,12 +120,11 @@ test("node server hosts a room, lists it and forgets it after the last leave", a
   assert.match(lines.at(-1)!, /^room TESTROOM ended: empty after \d+s$/);
 });
 
-test("scenario rooms are listed only to their own page, and the plain list is unchanged", async () => {
+test("extra-level rooms are listed only when asked for, and the plain list is unchanged", async () => {
   const player = await connect("YARDROOM");
   player.socket.send(
     join("yard", {
-      scenario: "superstress",
-      create: { mapMode: "village", difficulty: "normal", humansOnly: false, roundMinutes: 5 },
+      create: { mapMode: "superstress", difficulty: "normal", humansOnly: false, roundMinutes: 5 },
     }),
   );
   await player.next("welcome");
@@ -134,8 +133,7 @@ test("scenario rooms are listed only to their own page, and the plain list is un
       (room) => room.room,
     );
   assert.deepEqual(await codes(""), []);
-  assert.deepEqual(await codes("?scenario=superstress"), ["YARDROOM"]);
-  assert.equal((await rooms(undefined, "?scenario=nope")).status, 400);
+  assert.deepEqual(await codes("?extralevels"), ["YARDROOM"]);
   player.socket.send(JSON.stringify({ type: "leave", roundId: 1 }));
   await player.closed;
   while (server.rooms.has("YARDROOM")) await new Promise((resolve) => setTimeout(resolve, 10));

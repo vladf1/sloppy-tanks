@@ -1,11 +1,10 @@
 import { CONTENT_VERSION, roundMinutesReader } from "./protocol";
 import { roomListReader, type RoomListing } from "./room-list";
-import { mapMode, playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
-import { pageScenario } from "./scenarios";
+import { mapMode, playerKind, team } from "./scene-codec";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import type { JoinChoice } from "./connection";
 import type { RoomSelection } from "./pending-join";
-import { MAP_OPTIONS } from "../game/map-options";
+import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
 import type { VehicleKind } from "../game/types";
 
 // Battle Setup loads this module alone before any other multiplayer code.
@@ -16,10 +15,6 @@ const REFRESH_MS = 5000;
 const LIST_TIMEOUT_MS = 8000;
 const ROOM_PLAYERS = 8;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-function mapName(id: RoomListing["mapMode"]): string {
-  return MAP_OPTIONS.find((map) => map.id === id)?.name ?? id;
-}
 
 function newRoomCode(): string {
   return [...crypto.getRandomValues(new Uint8Array(8))]
@@ -42,6 +37,10 @@ export class RoomBrowser {
   private readonly join: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
   private readonly endpoint: URL;
+  private readonly roomMap: HTMLElement;
+  /** Extra-level rooms show only on a page offering those levels, or when linked. */
+  private readonly extraLevels = showsExtraLevels(location.search);
+  private readonly linkedRoom?: string;
   private rooms: RoomListing[] = [];
   private selected = "";
   /** Shown instead of the usual prompt until the player picks a room. */
@@ -65,14 +64,12 @@ export class RoomBrowser {
     this.name = this.element("#player-name");
     this.join = this.element("#join-room");
     this.refresh = this.element("#refresh-rooms");
+    this.roomMap = this.element('.map-picker[data-name="roomMap"]');
+    this.linkedRoom = link?.room;
     this.endpoint = new URL("/rooms", address);
     this.endpoint.protocol = address.protocol === "wss:" ? "https:" : "http:";
-    const scenario = pageScenario();
-    if (scenario) {
-      // A scenario page lists and creates only its own rooms, which bring their own arena.
-      this.endpoint.searchParams.set("scenario", scenario);
-      this.element(".room-maps").hidden = true;
-    }
+    // The plain list, which the traffic bots read too, leaves extra-level rooms out.
+    this.endpoint.searchParams.set("extralevels", "");
     this.name.value ||= preferredPlayerName();
     // A setup copied from an earlier menu may still show that menu's rooms.
     this.render();
@@ -141,8 +138,14 @@ export class RoomBrowser {
       });
       const details = document.createElement("span");
       const title = document.createElement("strong");
-      const arena = room.scenario ? SCENARIO_ROOMS[room.scenario].name : mapName(room.mapMode);
-      title.textContent = `${arena} · ${room.players}/${ROOM_PLAYERS} players`;
+      title.append(mapOption(room.mapMode)?.name ?? room.mapMode);
+      if (isExtraLevel(room.mapMode)) {
+        const badge = document.createElement("em");
+        badge.className = "level-badge";
+        badge.textContent = "EXTRA";
+        title.append(badge);
+      }
+      title.append(` · ${room.players}/${ROOM_PLAYERS} players`);
       const info = document.createElement("small");
       const seconds = Math.ceil(room.time);
       const phase =
@@ -193,7 +196,12 @@ export class RoomBrowser {
         if (!response.ok) {
           throw new Error("Rooms unavailable. Try Refresh in a moment.");
         }
-        this.rooms = roomListReader.read(await response.json()).rooms;
+        this.rooms = roomListReader
+          .read(await response.json())
+          .rooms.filter(
+            (room) =>
+              this.extraLevels || !isExtraLevel(room.mapMode) || room.room === this.linkedRoom,
+          );
         const linked = this.link && this.followLink(this.link);
         this.render();
         if (linked) {
@@ -292,7 +300,7 @@ export class RoomBrowser {
       return;
     }
     const create = {
-      mapMode: mapMode.read(this.checked("roomMap")),
+      mapMode: mapMode.read(this.roomMap.dataset.value),
       difficulty: "normal" as const,
       humansOnly: this.element<HTMLInputElement>("#create-humans-only").checked,
       roundMinutes: roundMinutesReader.read(Number(length.value)),

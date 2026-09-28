@@ -3,7 +3,7 @@ import { endBattle } from "./match";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
 import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
 import { bindGameOptions, syncGameOptions } from "./game-options";
-import { bindPlayModes, initialPlayMode, removeMultiplayerTab } from "./play-modes";
+import { bindPlayModes, initialPlayMode } from "./play-modes";
 import { healthBarState } from "./health-bar";
 import type { Simulation } from "./simulation";
 import type { DamageCause, SimEvent, Weapon } from "./types";
@@ -120,26 +120,6 @@ export class UI {
     this.playModes = undefined;
     if (phase === "ready") {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
-      if (simulation.customMap) {
-        removeMultiplayerTab(this.overlay);
-        const details = [
-          ["30-Tank Stress Battle", "15 vs 15 · Endless respawns and scoring · No victory"],
-          [simulation.customMap.name, simulation.customMap.description],
-        ];
-        this.overlay.querySelectorAll(".battle-choice, .map-choice").forEach((section, index) => {
-          const choices = section.querySelectorAll(".choice-card");
-          choices.forEach((choice, i) => {
-            if (i > 0) {
-              choice.remove();
-            }
-          });
-          choices[0].classList.add("fixed");
-          choices[0].querySelector("input")?.remove();
-          choices[0].querySelector(".choice-icon")?.remove();
-          choices[0].querySelector("b")!.textContent = details[index][0];
-          choices[0].querySelector("small")!.textContent = details[index][1];
-        });
-      }
     } else {
       this.overlay.innerHTML = menuMarkup(
         simulation,

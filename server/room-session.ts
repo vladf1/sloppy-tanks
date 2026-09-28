@@ -2,7 +2,6 @@ import { MatchHost } from "../src/net/match-host";
 import { HOST_INTERVAL_MS } from "../src/net/fixed-step-clock";
 import { MAX_CLIENT_MESSAGE_BYTES } from "../src/net/protocol";
 import type { RoomListing } from "../src/net/room-list";
-import type { Scenario } from "../src/net/scene-codec";
 
 export const MAX_PENDING_CONNECTIONS = 16;
 export const JOIN_TIMEOUT_MS = 5000;
@@ -56,8 +55,7 @@ export interface RoomSessionEvents {
 /** One room's state and load since the previous sample. Byte counts are UTF-16 lengths. */
 export interface RoomSample {
   room: string;
-  /** The scenario for scenario rooms, whose map setting is unused. */
-  mapMode: RoomListing["mapMode"] | Scenario;
+  mapMode: RoomListing["mapMode"];
   phase: RoomListing["phase"];
   players: number;
   seats: number;
@@ -180,7 +178,7 @@ export class RoomSession<Socket extends RoomSocket = RoomSocket> {
     const entry = this.host.directoryEntry(this.room);
     const sample: RoomSample = {
       room: this.room,
-      mapMode: this.host.scenario ?? entry.mapMode,
+      mapMode: entry.mapMode,
       phase: entry.phase,
       players: entry.players,
       seats: entry.reserved,

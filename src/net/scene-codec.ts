@@ -16,7 +16,7 @@ import { DEBRIS_CLEANUP_SECONDS } from "../game/debris-cleanup";
 import { FRAGMENT_CAPACITY } from "../game/simulation-rules";
 import type { TimberJoin, TimberPart } from "../game/timber-layout";
 import type { Cover, Fragment, Match, Mine, Pickup, SimEvent, Tank } from "../game/types";
-import { SCENARIOS, type Scenario } from "./scenarios";
+import { MAP_IDS } from "../game/map-options";
 import {
   array,
   boolean,
@@ -83,15 +83,9 @@ const coverKind = enumeration(
   "boundary",
 );
 const material = enumeration("wood", "metal", "concrete");
-export const mapMode = enumeration("village", "harbor", "quarry");
-export { SCENARIOS, type Scenario };
-export const scenario = enumeration(...SCENARIOS);
-/** Room list names, and tanks per team (bots included) for lobby rosters; standard
- * rooms field six. */
-export const SCENARIO_ROOMS: Record<Scenario, { name: string; teamTanks: number }> = {
-  superstress: { name: "Scrap Yard", teamTanks: 15 },
-};
-/** Standard rooms field 12 tanks; the superstress yard fields 30. */
+/** Every map, extra levels included; a room may play any of them. */
+export const mapMode = enumeration(...MAP_IDS);
+/** Standard rooms field 12 tanks; the extra levels field 30. */
 const MAX_SCENE_TANKS = 32;
 export const difficulty = enumeration("easy", "normal", "hard");
 const mark = object({
@@ -283,7 +277,8 @@ export const sceneReader = object<Scene>({
   elapsed: n,
   match: matchReader,
   map: object({
-    theme: enumeration("village", "harbor", "quarry", ...SCENARIOS),
+    // A themed map's theme is its id, and an extra level's plain yard is named by its id.
+    theme: mapMode,
     floor: optional(ground),
     outerFloor: optional(ground),
     outerFloorExtent: optional(n),

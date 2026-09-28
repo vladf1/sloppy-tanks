@@ -7,7 +7,6 @@ import {
   type RoomSettings,
 } from "./protocol";
 import { id, record, string } from "./schema";
-import type { Scenario } from "./scene-codec";
 import type { PlayerVehicleKind, Team } from "../game/types";
 
 const RECONNECT_WINDOW_MS = 30_000;
@@ -20,7 +19,6 @@ export interface JoinChoice {
   team?: Team;
   create?: RoomSettings;
   existingRoom?: boolean;
-  scenario?: Scenario;
 }
 /** Why a connection stopped retrying. Each cause offers its own way back into a game. */
 export type EndCause =

@@ -31,10 +31,7 @@ export default defineConfig({
         order: "post",
         handler(_html, context) {
           const binary = Object.keys(context.bundle ?? {}).find((name) => name.endsWith(".wasm"));
-          return binary &&
-            ["index.html", "stresstest.html", "superstress.html"].some((page) =>
-              context.filename.endsWith(page),
-            )
+          return binary && context.filename.endsWith("index.html")
             ? [
                 {
                   tag: "script",
@@ -52,8 +49,6 @@ export default defineConfig({
     rolldownOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
-        stresstest: fileURLToPath(new URL("./stresstest.html", import.meta.url)),
-        superstress: fileURLToPath(new URL("./superstress.html", import.meta.url)),
       },
       output: {
         codeSplitting: {

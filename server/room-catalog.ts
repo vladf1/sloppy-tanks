@@ -1,3 +1,4 @@
+import { isExtraLevel } from "../src/game/map-options";
 import { MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, type RoomListing } from "../src/net/room-list";
 
 interface ListedRoom {
@@ -22,12 +23,12 @@ export class RoomCatalog {
       if (now - room.updatedAt >= ROOM_LIST_TTL_MS) this.rooms.delete(code);
     }
   }
-  /** Standard rooms, or only one scenario's rooms, so each page offers its own game. */
-  list(now: number, scenario?: RoomListing["scenario"]): RoomListing[] {
+  /** Rooms on standard maps, plus rooms on extra levels when asked for. */
+  list(now: number, extraLevels = false): RoomListing[] {
     this.prune(now);
     return [...this.rooms.values()]
       .map((room) => room.entry)
-      .filter((entry) => entry.scenario === scenario)
+      .filter((entry) => extraLevels || !isExtraLevel(entry.mapMode))
       .sort((a, b) => b.players - a.players || a.room.localeCompare(b.room));
   }
 }

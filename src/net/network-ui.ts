@@ -2,14 +2,17 @@ import { hudMarkup } from "../game/ui-markup";
 import { AMMO_ORDER, equippedWeapon, hasAmmo } from "../game/ammunition";
 import { TEAM_NAMES, VEHICLES } from "../game/data";
 import { healthBarState } from "../game/health-bar";
-import { MAP_OPTIONS } from "../game/map-options";
+import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
 import { rankIndex, RANKS } from "../game/veterancy";
 import type { RenderState } from "../game/render-state";
 import type { SimEvent, Weapon } from "../game/types";
 import { DEFAULT_ROUND_MINUTES, MAX_ROUND_MINUTES, type Lobby, type Player } from "./protocol";
 import type { ConnectionEnd, EndCause, JoinChoice } from "./connection";
-import { playerKind, SCENARIO_ROOMS, team } from "./scene-codec";
+import { playerKind, team } from "./scene-codec";
 import "./multiplayer.css";
+
+/** Tanks per team, bots included, on a standard map; extra levels name their own. */
+const STANDARD_TEAM_TANKS = 6;
 
 /** The in-room menu. Players choose their name, and first team and tank, on Battle Setup. */
 export interface NetworkActions {
@@ -66,7 +69,11 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
       <button id="change-rules" class="text-button" type="button" aria-controls="host-settings" aria-expanded="false">Change rules</button>
     </div>
     <div id="host-settings" class="network-fields" hidden>
-      <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.map((map) => `<option value="${map.id}">${map.name}</option>`).join("")}</select></label>
+      <label id="room-map-field">Map<select id="room-map">${MAP_OPTIONS.filter(
+        (map) => !("extra" in map),
+      )
+        .map((map) => `<option value="${map.id}">${map.name}</option>`)
+        .join("")}</select></label>
       <label>Bots<select id="room-bots"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option><option value="none">None</option></select></label>
       <label>Minutes<input id="room-round-minutes" type="number" min="1" max="${MAX_ROUND_MINUTES}" step="1" required /></label>
     </div>
@@ -337,8 +344,7 @@ export class NetworkUI {
       this.set("next-choice", (mine.team === 0 ? "Blue" : "Red") + " · " + tankName(mine.kind));
     }
     this.renderEditing();
-    // A scenario room brings its own arena.
-    this.element("room-map-field").hidden = lobby.scenario !== undefined;
+    this.offerExtraLevels(isExtraLevel(lobby.settings.mapMode));
     this.input("room-map").value = lobby.settings.mapMode;
     this.input("room-bots").value = lobby.settings.humansOnly ? "none" : lobby.settings.difficulty;
     if (document.activeElement !== this.input("room-round-minutes")) {
@@ -417,12 +423,28 @@ export class NetworkUI {
       this.set("final-red", String(match.scores[1]));
     }
   }
+  /** The host's map list adds the extra levels on a page opened with `?extralevels`, or
+   * while the room plays one, so the current map always shows. */
+  private offerExtraLevels(playingOne: boolean): void {
+    const select = this.input("room-map");
+    const offered = select.querySelector("optgroup");
+    if (offered || !(playingOne || showsExtraLevels(location.search))) {
+      return;
+    }
+    const group = document.createElement("optgroup");
+    group.label = "Extra levels";
+    for (const map of MAP_OPTIONS) {
+      if ("extra" in map) {
+        group.append(new Option(map.name, map.id));
+      }
+    }
+    select.append(group);
+  }
   /** The room's rules as read-only chips: the arena, the bots and the match length. */
   private renderSummary(lobby: Lobby): void {
     const settings = lobby.settings;
-    const arena = lobby.scenario
-      ? SCENARIO_ROOMS[lobby.scenario].name
-      : (MAP_OPTIONS.find((map) => map.id === settings.mapMode)?.name ?? settings.mapMode);
+    const map = mapOption(settings.mapMode);
+    const arena = (map?.name ?? settings.mapMode) + (map && "extra" in map ? " · Extra level" : "");
     const bots = settings.humansOnly
       ? "No bots"
       : settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1) + " bots";
@@ -470,8 +492,9 @@ export class NetworkUI {
   private renderRoster(lobby: Lobby, playerId: string, playing: boolean): void {
     const roster = this.element("network-roster");
     roster.replaceChildren();
+    const map = mapOption(lobby.settings.mapMode);
     const teamTanks =
-      lobby.scenario && !lobby.settings.humansOnly ? SCENARIO_ROOMS[lobby.scenario].teamTanks : 6;
+      map && "teamTanks" in map && !lobby.settings.humansOnly ? map.teamTanks : STANDARD_TEAM_TANKS;
     for (const side of [0, 1]) {
       const members = lobby.players.filter((player) => player.team === side);
       const column = document.createElement("section");

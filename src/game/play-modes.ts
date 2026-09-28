@@ -1,4 +1,6 @@
 import { showTankTeam, type GameOptions } from "./game-options";
+import { isExtraLevel, mapOption } from "./map-options";
+import { bindMapChoice } from "./map-picker";
 import type { RoomBrowser } from "../net/room-browser";
 import type { RoomSelection } from "../net/pending-join";
 import type { RoomLink } from "../net/room-browser";
@@ -45,8 +47,8 @@ function rememberPlayMode(mode: PlayMode): void {
   history.replaceState(history.state, "", url);
 }
 
-/** Pages without rooms (no game server, the stress test) offer only single player. */
-export function removeMultiplayerTab(setup: HTMLElement): void {
+/** Sites without a game server offer only single player. */
+function removeMultiplayerTab(setup: HTMLElement): void {
   setup.querySelector(".play-tabs")?.remove();
   setup.querySelector("#multiplayer-panel")?.remove();
 }
@@ -113,6 +115,13 @@ export function bindPlayModes(
     handlers.single();
     return { close() {} };
   }
+  bindMapChoice(panel, "roomMap", (value) => {
+    const map = mapOption(value);
+    if (map && isExtraLevel(map.id)) {
+      // An extra level is for its crowd of bots; a player can still tick Humans only.
+      panel.querySelector<HTMLInputElement>("#create-humans-only")!.checked = false;
+    }
+  });
   let rooms: Promise<RoomBrowser> | undefined;
   let closed = false;
   // Auto keeps the single-player colour; a chosen team repaints the tank previews.

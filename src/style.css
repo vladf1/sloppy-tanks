@@ -902,9 +902,6 @@ h2 {
   background: transparent;
   color: #a8bfd1;
   text-align: left;
-  transition:
-    background 0.15s,
-    color 0.15s;
 }
 .play-tab svg {
   flex: 0 0 26px;
@@ -972,9 +969,6 @@ h2 {
 .start .vehicle {
   padding: 12px 16px 10px;
 }
-.start .vehicle.selected {
-  padding: 11px 15px 9px;
-}
 /* Name and role share the top line, leaving the card's height to the tank. */
 .start .vehicle {
   display: grid;
@@ -1029,30 +1023,37 @@ h2 {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 12px;
 }
 .choice-card,
 .room-map,
 .segment {
   position: relative;
-  border: 1px solid var(--card-border);
-  border-radius: 7px;
-  background: var(--card);
   cursor: pointer;
-  transition: background 0.15s;
 }
-.choice-card:hover,
-.room-map:hover,
-.segment:hover {
-  background: var(--card-hover);
+/* Every Battle Setup choice looks like the play tabs: its options sit in one dark well,
+   and the chosen one lifts out of it with a brighter fill and a yellow ring. */
+.start :is(.vehicles, .choice-cards, .segmented, .room-maps, .map-picker) {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--well);
 }
-.choice-card:has(input:checked),
-.choice-card.fixed,
-.room-map:has(input:checked),
-.segment:has(input:checked) {
-  border-color: var(--accent);
+/* Hover and selection switch at once, so a click shows its result on the next frame. */
+.start :is(.vehicle, .choice-card, .segment, .room-map, .room-row) {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  transition: none;
+}
+.start :is(.vehicle, .choice-card, .segment, .room-map, .room-row):hover {
+  background: #17344f;
+}
+.start .vehicle.selected,
+.start :is(.choice-card, .segment, .room-map, .room-row):has(input:checked),
+.map-picker-button,
+.map-picker-option[aria-selected="true"] {
   background: var(--card-selected);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .choice-card:has(input:focus-visible),
 .room-map:has(input:focus-visible),
@@ -1079,8 +1080,16 @@ h2 {
   min-height: 72px;
   padding: 10px 12px;
 }
-.choice-card.fixed {
-  cursor: default;
+/* Solo Assault waits while an extra level fixes the battle format. */
+.choice-card:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.start .choice-card:has(input:disabled):hover {
+  background: transparent;
+}
+.choice-card input:disabled {
+  cursor: not-allowed;
 }
 .choice-icon {
   flex: 0 0 36px;
@@ -1105,11 +1114,142 @@ h2 {
   font-size: 12px;
   line-height: 1.35;
 }
+/* Map dropdowns: the closed picker shows its chosen map in a well, like the other choices;
+   its list opens in the top layer, so it inherits the menu's colours but not its clipping. */
+.map-picker-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 14px 10px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.map-picker-button:hover,
+.map-picker-button[aria-expanded="true"] {
+  background: var(--card-hover);
+}
+.map-picker-button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+.map-picker-current {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.map-picker-text {
+  min-width: 0;
+}
+.map-picker-text b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+.map-picker-text small {
+  display: block;
+  margin-top: 3px;
+  color: #c4dfef;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.map-picker-chevron {
+  flex: 0 0 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s;
+}
+.map-picker-button[aria-expanded="true"] .map-picker-chevron {
+  transform: rotate(180deg);
+}
+.map-picker-list {
+  position: fixed;
+  inset: auto;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid #8bb9dc33;
+  border-radius: 12px;
+  background: var(--well);
+  box-shadow: 0 14px 34px #000a;
+  color: #fff;
+  font:
+    14px system-ui,
+    sans-serif;
+}
+.map-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.map-picker-option.active {
+  background: #17344f;
+}
+.map-picker-option[aria-selected="true"].active {
+  background: var(--card-hover);
+}
+.map-picker-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #ffcf3855;
+}
+.map-picker-group-label {
+  padding: 4px 10px 6px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+/* Marks extra levels wherever they are named: pickers, room lists and lobby rules. */
+.level-badge {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--accent, #ffcf38);
+  border-radius: 4px;
+  color: var(--accent, #ffcf38);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1.2;
+}
+.room-row .level-badge {
+  margin-left: 8px;
+  vertical-align: 1px;
+}
+/* The new room's narrow column shows only each map's name until the list opens. */
+.room-create .map-picker-button {
+  min-height: 52px;
+  padding: 7px 10px 7px 8px;
+  gap: 8px;
+}
+.room-create .map-picker-current {
+  gap: 10px;
+}
+.room-create .map-picker-current small {
+  display: none;
+}
+.room-create .map-picker-current .choice-icon {
+  flex-basis: 30px;
+  height: 30px;
+  padding: 6px;
+}
 .segmented {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 6px;
 }
 .segment {
   display: grid;
@@ -1239,21 +1379,14 @@ h2 {
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: var(--card);
   cursor: pointer;
-}
-.room-row:hover:not(:has(input:disabled, input:checked)) {
-  background: var(--card-hover);
-}
-.room-row:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--card-selected);
 }
 .room-row:has(input:disabled) {
   opacity: 0.5;
   cursor: default;
+}
+.start .room-row:has(input:disabled):hover {
+  background: transparent;
 }
 .room-row:has(input:focus-visible) {
   outline: 3px solid #fff;
@@ -1343,10 +1476,6 @@ h2 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
-/* Scenario pages create rooms that bring their own arena. */
-.room-maps[hidden] {
-  display: none;
-}
 .room-map {
   display: grid;
   justify-items: center;
@@ -1362,6 +1491,11 @@ h2 {
   width: 30px;
   height: 30px;
   padding: 6px;
+}
+/* With the extra levels, the dropdown replaces the row of standard maps. */
+.map-row[hidden],
+.map-picker[hidden] {
+  display: none;
 }
 .room-rules {
   display: flex;
@@ -1464,11 +1598,8 @@ h2 {
   .play-tabs {
     flex-basis: auto;
   }
-  .choice-icon {
+  .choice-cards .choice-icon {
     display: none;
-  }
-  .room-map .choice-icon {
-    display: block;
   }
 }
 @media (max-width: 600px) {

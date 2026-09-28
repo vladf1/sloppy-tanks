@@ -5,7 +5,7 @@
 // destruction-physics, debris-cleanup, game).
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { freezeLoop, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
+import { chooseMap, freezeLoop, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
 
 const out = "artifacts/performance/destruction";
 mkdirSync(out, { recursive: true });
@@ -23,7 +23,7 @@ const draw = () =>
 try {
   await freezeLoop(page);
   await page.goto(gameUrl);
-  await page.locator('input[name="mapMode"][value="village"]').check();
+  await chooseMap(page, "village");
   await startRound(page);
   await page.evaluate(() => {
     document

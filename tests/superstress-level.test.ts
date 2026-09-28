@@ -9,9 +9,12 @@ import {
   REBUILD_SECONDS,
   SUPERSTRESS_MAP,
   SUPERSTRESS_SCALE,
-  SUPERSTRESS_SETUP,
+  SUPERSTRESS_LEVEL,
   superstressRules,
 } from "../src/superstress-level";
+import { singlePlayerRules } from "../src/game/level-rules";
+
+const SUPERSTRESS_SETUP = singlePlayerRules(SUPERSTRESS_LEVEL);
 
 const YARD = ARENA * SUPERSTRESS_SCALE;
 

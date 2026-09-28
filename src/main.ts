@@ -4,8 +4,9 @@ import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./gam
 import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
 import { PICKUP_ATLAS_PATH } from "./game/pickup-atlas";
+import { isExtraLevel, showsExtraLevels } from "./game/map-options";
+import { showExtraLevels } from "./game/map-picker";
 import type { RoomSelection } from "./net/pending-join";
-import { pageScenario } from "./net/scenarios";
 import type { PlayerVehicleKind } from "./game/types";
 import "./style.css";
 
@@ -19,14 +20,10 @@ const PLAYER_KINDS: readonly string[] = [
 // into a room it chose, it stays up while the room loads, until the arena can draw.
 const linkedRoom = new URLSearchParams(location.search).get("room")?.toUpperCase();
 const setupView = linkedRoom ? takeSetupView(linkedRoom) : undefined;
-// Stress pages cover their single-player startup with a loading screen. The Scrap Yard,
-// the one with rooms, opened for multiplayer shows Battle Setup instead, listing only its
-// own rooms; the offline stress test always runs its single-player workload.
-const stressPage = document.documentElement.dataset.scenario !== undefined;
-const onlineScenario = pageScenario() !== undefined;
-const scenarioOnline = onlineScenario && initialPlayMode(location.search) === "multiplayer";
-if (scenarioOnline) {
-  document.querySelector("#loading")?.remove();
+// Offer the extra levels before any remembered choice picks one.
+const startupOverlay = document.querySelector<HTMLElement>("#startup-overlay");
+if (startupOverlay && showsExtraLevels(location.search)) {
+  showExtraLevels(startupOverlay);
 }
 const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
 if (linkedRoom && setupView?.joining && joiningSetup) {
@@ -69,6 +66,7 @@ function preloadImages(options: GameOptions): void {
       ? ["textures/harbor/dock.webp", "textures/harbor/steel.webp", "textures/water/normals.webp"]
       : []),
     ...(options.mapMode === "quarry" ? ["textures/quarry/sandstone.webp"] : []),
+    ...(isExtraLevel(options.mapMode) ? ["textures/ground/dry-grass.webp"] : []),
   ]) {
     const link = document.createElement("link");
     link.rel = "preload";
@@ -92,8 +90,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;
   }
-  const autoStart =
-    (stressPage && !scenarioOnline) || new URLSearchParams(location.search).has("autoplay");
+  const autoStart = new URLSearchParams(location.search).has("autoplay");
   const load = async (onStage: (stage: string) => void = () => {}) => {
     onStage("Downloading game files…");
     const { prepareGame } = await import("./game");
@@ -113,25 +110,15 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
       })
       .catch((error: unknown) => {
         console.error("Game startup failed", error);
-        const loading = document.querySelector("#loading p");
-        const message = startupErrorMessage(
+        root.textContent = startupErrorMessage(
           error,
           "The arena could not load. Please reload to try again.",
         );
-        if (loading) {
-          loading.textContent = message;
-        } else {
-          root.textContent = message;
-        }
       });
     return;
   }
   const menu = new StartMenu(root, options, load);
   const setup = menu.overlay.querySelector<HTMLElement>(".start")!;
-  if (onlineScenario) {
-    // A stress arena is for its crowd of bots; a remembered choice below still wins.
-    setup.querySelector<HTMLInputElement>("#create-humans-only")!.checked = false;
-  }
   if (view) {
     restoreChoices(setup, view);
   }
@@ -156,8 +143,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     initialPlayMode(location.search),
     {
       choices: () => options,
-      // A stress page's single player is its own fixed arena, which starts on load.
-      single: onlineScenario ? () => location.replace(location.pathname) : prepareArena,
+      single: prepareArena,
       enterRoom(selection, reload) {
         const joining = JoinScreen.start(
           setup,
