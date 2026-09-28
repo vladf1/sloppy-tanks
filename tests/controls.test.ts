@@ -313,6 +313,10 @@ test("first-person Esc frees the cursor, and Esc with a free cursor pauses", () 
     f.emit(f.canvas, "pointerdown", { button: 0 });
     f.controls.holdPointer(false);
     assert.deepEqual([lock.requests, lock.exits, lock.held(), f.pauses], [3, 2, false, 2]);
+    // An Esc just after the game's own release is a new press: overhead pauses at once.
+    clock.advance(100);
+    f.emit(f.win, "keydown", { code: "Escape" });
+    assert.equal(f.pauses, 3);
   } finally {
     clock.restore();
     f.dispose();

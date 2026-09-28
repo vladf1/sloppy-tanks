@@ -34,7 +34,10 @@ export class Controls {
   private pointerWanted = false;
   /** Set once the browser grants a lock; until then mouse look works uncaptured. */
   private lockWorks = false;
+  /** When the browser, not the game, last released the pointer (Esc or a window switch). */
   private lockReleasedAt = -Infinity;
+  /** The game asked for the pending release: leaving first person, a menu, or Esc itself. */
+  private releaseRequested = false;
   constructor(
     private readonly canvas: HTMLCanvasElement,
     public pause: () => void,
@@ -50,6 +53,8 @@ export class Controls {
           document.pointerLockElement === canvas ||
           performance.now() - this.lockReleasedAt < ESC_RELEASE_WINDOW_MS
         ) {
+          // This press is spent; the next Esc opens the menu.
+          this.lockReleasedAt = -Infinity;
           this.releasePointer();
           return;
         }
@@ -174,11 +179,17 @@ export class Controls {
     document.addEventListener("pointerlockchange", () => {
       if (document.pointerLockElement === canvas) {
         this.lockWorks = true;
+        this.releaseRequested = false;
+        this.lockReleasedAt = -Infinity;
         return;
       }
-      // Esc, a window switch or a menu freed the cursor, sometimes without a keydown
-      // reaching the page. The round keeps running; aiming waits for a click.
-      this.lockReleasedAt = performance.now();
+      // Esc, a window switch or a menu freed the cursor. The round keeps running;
+      // aiming waits for a click. Only a release the browser made on its own may
+      // be followed by the same Esc press arriving as a key.
+      if (!this.releaseRequested) {
+        this.lockReleasedAt = performance.now();
+      }
+      this.releaseRequested = false;
       this.fire = false;
       this.look = 0;
     });
@@ -208,6 +219,7 @@ export class Controls {
   }
   private releasePointer(): void {
     if (document.pointerLockElement === this.canvas) {
+      this.releaseRequested = true;
       document.exitPointerLock();
     }
   }
