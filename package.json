@@ -26,6 +26,7 @@
     "generate:ammo": "node --import tsx scripts/generate-ammo-icons.ts && pnpm run generate:pickup-atlas",
     "generate:pickup-atlas": "node --import tsx scripts/generate-pickup-atlas.ts",
     "generate:audio": "node --import tsx scripts/generate-audio.ts",
+    "generate:favicon": "node --import tsx scripts/generate-favicon.ts",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
