@@ -6,11 +6,11 @@ const RANGE = 28;
 const MIN_RANGE = 16;
 const ARRIVAL = 2;
 const REPLAN_SECONDS = 1;
-const WITHDRAW_SECONDS = 6;
-const RELOAD_PAUSE = 1;
+const WITHDRAW_SECONDS = 4.5;
+const RELOAD_PAUSE = 0.6;
 const SEARCH_SECONDS = 5;
-const REPOSITION_DISTANCE = 5;
-export const HUMVEE_AIM_SECONDS = 0.9;
+const REPOSITION_DISTANCE = 4;
+export const HUMVEE_AIM_SECONDS = 0.75;
 export const HUMVEE_DEPARTURE_SECONDS = 0.65;
 
 export interface HumveeTactics {
