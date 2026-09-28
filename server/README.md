@@ -24,7 +24,7 @@ the traffic bots (a separate Cloudflare Worker) join open rooms on the VPS; see
 
 ## Build and settings
 
-`build.mjs` bundles `main.ts`, `ws`, three.js and the compat Rapier package (which
+`build.mjs` bundles `main.ts`, `ws`, three.js and the SIMD compat Rapier package (which
 inlines its WASM) into one `server/dist/server.mjs`, so the VPS needs only Node 24.
 It stamps the same content hash that the client build uses: every `src/` file this
 bundle imports, plus the pinned engine versions (`scripts/content-version.mjs`).
@@ -34,7 +34,7 @@ redeploy check notice server-only changes that leave clients compatible.
 After editing those sources, **restart Vite and
 rebuild the server together**; mismatched clients are rejected with a reload
 message. No client URL override is accepted in production builds. Keep
-`@dimforge/rapier3d` and `@dimforge/rapier3d-compat` pinned to the same version.
+`@dimforge/rapier3d-simd` and `@dimforge/rapier3d-simd-compat` pinned to the same version.
 
 Settings come from the environment:
 

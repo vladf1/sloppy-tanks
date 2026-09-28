@@ -1,6 +1,6 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation } from "../src/game/simulation";
 import { newMatch, awardKill, tickMatch } from "../src/game/match";
 import { fireWeapon, stepProjectiles } from "../src/game/weapons";

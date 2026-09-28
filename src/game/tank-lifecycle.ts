@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { clearAmmo, emptyAmmo } from "./ammunition";
 import { spawnPositions } from "./arena";
 import { BOT_PROFILES, botAssignment } from "./bot-personalities";

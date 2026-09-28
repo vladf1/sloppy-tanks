@@ -5,7 +5,7 @@ import { breakScenery } from "./scenery-pieces";
 import { DIFFICULTIES } from "./difficulty";
 import { clearAmmo } from "./ammunition";
 import { COMBAT, MINE } from "./combat-rules";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { distance, GROUP } from "./data";
 import { treeProportions } from "./tree-proportions";
 import { awardKill } from "./match";

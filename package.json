@@ -51,13 +51,13 @@
     "bots:deploy": "wrangler deploy --config bots/wrangler.jsonc"
   },
   "dependencies": {
-    "@dimforge/rapier3d": "0.20.0",
+    "@dimforge/rapier3d-simd": "0.20.0",
     "howler": "2.2.4",
     "three": "0.185.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
-    "@dimforge/rapier3d-compat": "0.20.0",
+    "@dimforge/rapier3d-simd-compat": "0.20.0",
     "@eslint/js": "10.0.1",
     "@napi-rs/canvas": "^1.0.8",
     "@tweakpane/core": "2.0.5",

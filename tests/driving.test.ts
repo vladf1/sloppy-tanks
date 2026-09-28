@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand, type VehicleKind } from "../src/game/types";
 import { angleDelta, MOVE_ACCELERATION, STEP, VEHICLES } from "../src/game/data";

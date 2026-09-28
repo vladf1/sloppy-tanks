@@ -1,6 +1,6 @@
 import type { HumveeTactics } from "./humvee-tactics";
 import type { TimberHit, TimberJoin, TimberPart } from "./timber-layout";
-import type RAPIER from "@dimforge/rapier3d-compat";
+import type RAPIER from "@dimforge/rapier3d-simd-compat";
 import type { DebrisMaterial } from "./debris-physics";
 import type { BotPersonality } from "./bot-personalities";
 export type Team = 0 | 1;

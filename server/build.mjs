@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "../scripts/content-version.mjs";
 const repo = (path) => fileURLToPath(new URL(`../${path}`, import.meta.url));
-// One self-contained file: the compat Rapier package inlines its WASM, so the host
+// One self-contained file: the SIMD compat Rapier package inlines its WASM, so the host
 // needs only Node, not node_modules.
 await build({
   entryPoints: [repo("server/main.ts")],

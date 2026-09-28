@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { writeFileSync } from "node:fs";
 import { Simulation } from "../src/game/simulation";
 
