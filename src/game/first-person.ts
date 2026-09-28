@@ -42,7 +42,9 @@ export class FirstPersonLook {
 
 /** Rotate screen-style movement (negative Z is forward, positive X is right)
  * into the world for a view facing `yaw`. The overhead camera faces yaw = π,
- * where this is the identity. */
+ * where this is the identity. The result is capped at unit length: a rotated
+ * keyboard diagonal would otherwise put up to √2 on one axis, which the
+ * multiplayer server rejects as out-of-range input (driving caps it at 1 anyway). */
 export function viewRelativeMove(
   moveX: number,
   moveZ: number,
@@ -50,8 +52,9 @@ export function viewRelativeMove(
 ): { moveX: number; moveZ: number } {
   const sin = Math.sin(yaw);
   const cos = Math.cos(yaw);
+  const scale = 1 / Math.max(1, Math.hypot(moveX, moveZ));
   return {
-    moveX: -moveX * cos - moveZ * sin,
-    moveZ: moveX * sin - moveZ * cos,
+    moveX: (-moveX * cos - moveZ * sin) * scale,
+    moveZ: (moveX * sin - moveZ * cos) * scale,
   };
 }

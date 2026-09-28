@@ -31,6 +31,23 @@ test("forward drives along the view and right drives to its right", () => {
   }
 });
 
+test("a rotated keyboard diagonal stays within the multiplayer input range", () => {
+  for (const yaw of [0, Math.PI / 4, 0.7, -2.1, Math.PI / 2]) {
+    for (const [moveX, moveZ] of [
+      [1, -1],
+      [-1, -1],
+      [1, 1],
+    ]) {
+      const moved = viewRelativeMove(moveX, moveZ, yaw);
+      close(Math.hypot(moved.moveX, moved.moveZ), 1);
+      assert.ok(Math.abs(moved.moveX) <= 1 && Math.abs(moved.moveZ) <= 1);
+      const direction = viewRelativeMove(moveX / Math.SQRT2, moveZ / Math.SQRT2, yaw);
+      close(moved.moveX, direction.moveX);
+      close(moved.moveZ, direction.moveZ);
+    }
+  }
+});
+
 test("entering first person starts from the turret aim and steering follows the view", () => {
   const look = new FirstPersonLook();
   const command = { ...idleCommand(), moveZ: -1, aim: 0.3, fire: true };
