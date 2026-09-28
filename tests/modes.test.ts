@@ -1,6 +1,6 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import type { CoverDef } from "../src/game/arena";
 import { ARENA } from "../src/game/data";
 import { MAPS } from "../src/game/maps";

@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation } from "../src/game/simulation";
 import { idleCommand } from "../src/game/types";
 import { mkdirSync, writeFileSync } from "node:fs";

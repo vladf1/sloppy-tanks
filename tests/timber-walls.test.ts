@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation } from "../src/game/simulation";
 import { stepProjectiles } from "../src/game/weapons";
 import { Box3, Euler, Quaternion } from "three";

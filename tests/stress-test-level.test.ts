@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import {
   STRESS_PLAYER_HEALTH_MULTIPLIER,
   STRESS_TANK_COUNT,

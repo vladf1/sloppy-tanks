@@ -1,7 +1,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import WebSocket from "ws";
 import { CONTENT_VERSION, PROTOCOL_VERSION } from "../src/net/protocol";
 import { MAX_DASHBOARD_VIEWERS } from "../server/dashboard";

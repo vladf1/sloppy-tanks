@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { GROUP } from "./data";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import type { Simulation } from "./simulation";

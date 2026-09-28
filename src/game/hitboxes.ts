@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { GROUP, VEHICLES } from "./data";
 import { tankHull } from "./tank-dimensions";
 import type { Shot, Tank, VehicleKind } from "./types";

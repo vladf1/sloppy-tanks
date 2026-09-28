@@ -7,7 +7,7 @@ import {
 } from "../src/game/humvee-tactics";
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { preferredAmmo } from "../src/game/bot-personalities";
 import { angleDelta, distance, GROUP, STEP, VEHICLES, WEAPONS } from "../src/game/data";
 import { COMBAT } from "../src/game/combat-rules";

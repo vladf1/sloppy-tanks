@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { renderState } from "../src/game/render-state";
 import type { Simulation } from "../src/game/simulation";
 import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";

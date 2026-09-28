@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { blastDebris, hitMovableCover, hitProjectileDebris } from "../src/game/debris-physics";
 import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";
 import { GROUP, Random, STEP } from "../src/game/data";

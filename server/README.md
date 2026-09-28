@@ -34,7 +34,7 @@ redeploy check notice server-only changes that leave clients compatible.
 After editing those sources, **restart Vite and
 rebuild the server together**; mismatched clients are rejected with a reload
 message. No client URL override is accepted in production builds. Keep
-`@dimforge/rapier3d` and `@dimforge/rapier3d-compat` pinned to the same version.
+`@dimforge/rapier3d-simd` and `@dimforge/rapier3d-simd-compat` pinned to the same version.
 
 Settings come from the environment:
 

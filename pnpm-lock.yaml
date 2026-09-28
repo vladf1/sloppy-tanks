@@ -166,7 +166,7 @@ importers:
 
   .:
     dependencies:
-      '@dimforge/rapier3d':
+      '@dimforge/rapier3d-simd':
         specifier: 0.20.0
         version: 0.20.0
       howler:
@@ -179,7 +179,7 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20260923.1
         version: 5.20260923.1
-      '@dimforge/rapier3d-compat':
+      '@dimforge/rapier3d-simd-compat':
         specifier: 0.20.0
         version: 0.20.0
       '@eslint/js':
@@ -301,11 +301,11 @@ packages:
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
 
-  '@dimforge/rapier3d-compat@0.20.0':
-    resolution: {integrity: sha512-X4W9pJBdGRX5CO3c/gUNjBFEFG2fn4nYxp9k8STdBDaLa0/w5XTW2ArpayS+9jGFojTi3uFSOWAElCd4rkpekA==}
+  '@dimforge/rapier3d-simd-compat@0.20.0':
+    resolution: {integrity: sha512-xYdWPBuCkNwj47mTl7erpO6zicyaQ8YujA7jDX5qVczi0lETfv39shEZm7t5tD237gTBqbuwNf2otv4l97f1dA==}
 
-  '@dimforge/rapier3d@0.20.0':
-    resolution: {integrity: sha512-Tj5dwOG5kXgcN/JRgOLTk64UFBd9KkaCAsWHcmPXOcyuBX6Vo7/ptSwS6zW++NvZebjJOW9/njmIqTM4VsaUog==}
+  '@dimforge/rapier3d-simd@0.20.0':
+    resolution: {integrity: sha512-0Gx0GVp0PlTibBoiiPqfaflV0L0e/5Lk9M6DwxqCmLp/Ii8UBwZ+opgdT7/6ah/AvIHipwoyC7JlqAzLob723Q==}
 
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
@@ -1805,9 +1805,9 @@ snapshots:
 
   '@dimforge/rapier3d-compat@0.12.0': {}
 
-  '@dimforge/rapier3d-compat@0.20.0': {}
+  '@dimforge/rapier3d-simd-compat@0.20.0': {}
 
-  '@dimforge/rapier3d@0.20.0': {}
+  '@dimforge/rapier3d-simd@0.20.0': {}
 
   '@emnapi/runtime@1.11.3':
     dependencies:

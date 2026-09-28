@@ -1,5 +1,5 @@
 import { withdrawHumvee } from "./humvee-tactics";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { consumeAmmo, equippedWeapon } from "./ammunition";
 import { COMBAT } from "./combat-rules";
 import { GROUP, PLAYER_FIRE_RATE_MULTIPLIER, TEAM_COLORS, WEAPONS } from "./data";

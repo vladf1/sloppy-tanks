@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, mock, test } from "node:test";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation, type SimulationSetup } from "../src/game/simulation";
 import { idleCommand } from "../src/game/types";
 import { STEP } from "../src/game/data";
