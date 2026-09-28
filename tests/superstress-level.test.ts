@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { ARENA, STEP } from "../src/game/data";
 import { DEBRIS_CLEANUP_SECONDS } from "../src/game/debris-cleanup";
 import { Simulation } from "../src/game/simulation";
@@ -159,7 +159,9 @@ test("a seeded superstress brawl keeps rebuilding its cover and stays inside its
     const coverCount = sim.covers.length;
     const restored = new Set<number>();
     sim.start();
-    for (let i = 0; i < 10 / STEP; i++) {
+    // Two rebuild delays, so every cover felled in the first six seconds has had time to
+    // return; a shorter window hinges on whether one opening shot sets off a drum chain.
+    for (let i = 0; i < (2 * REBUILD_SECONDS) / STEP; i++) {
       sim.step(undefined, true);
       for (const event of sim.events.splice(0)) {
         if (event.type === "impact" && event.id !== undefined && event.coverKind) {

@@ -1,5 +1,5 @@
 import { timberDamageStage, timberParts } from "./timber-layout";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Euler, Quaternion, Vector3 } from "three";
 import { GROUP, Random } from "./data";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";

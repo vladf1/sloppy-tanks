@@ -154,6 +154,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `pnpm run benchmark:loading -- <label>`               | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
 | `node --import tsx scripts/destruction-benchmark.ts`  | Headless destruction physics cost for a fixed wreck and blast scenario            |
 | `node --import tsx scripts/capture-benchmark.ts`      | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
+| `node --import tsx scripts/simulation-benchmark.ts`   | Headless seeded autoplay tick time and `World.step` share on one map              |
 | `pnpm run validate`                                   | Ten seeded headless matches and reset checks                                      |
 | `node scripts/benchmarks/host-download-benchmark.mjs` | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
 
@@ -172,6 +173,10 @@ time on an otherwise idle machine, and report sample counts with outliers.
   idle player, warms up 1200 ticks, then times 400 intervals of three steps and
   a snapshot. It takes an output path (default
   `artifacts/performance/capture-benchmark.json`).
+- `simulation-benchmark.ts` takes a map id, a seed and optionally `count`; it
+  warms up 600 ticks, times 3600 and prints JSON. `count` tallies rapier.js calls
+  per tick instead of timing. For an engine change, run a base-commit worktree
+  and the candidate alternately over several maps and seeds.
 - `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 

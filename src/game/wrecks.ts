@@ -1,6 +1,6 @@
 import { HUMVEE_BODY_LENGTH_SCALE } from "./humvee-model";
 import { humveeTumble } from "./tank-destruction";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { trackDebrisContacts } from "./debris-physics";
 import { DEBRIS_CLEANUP_SECONDS } from "./debris-cleanup";
 import { ARENA, GROUP, VEHICLES } from "./data";

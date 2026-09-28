@@ -1,8 +1,8 @@
-import * as RAPIER from "@dimforge/rapier3d";
-import * as bindings from "@dimforge/rapier3d/rapier_wasm3d_bg.js";
-import binaryUrl from "@dimforge/rapier3d/rapier_wasm3d_bg.wasm?url";
+import * as RAPIER from "@dimforge/rapier3d-simd";
+import * as bindings from "@dimforge/rapier3d-simd/rapier_wasm3d_bg.js";
+import binaryUrl from "@dimforge/rapier3d-simd/rapier_wasm3d_bg.wasm?url";
 
-export * from "@dimforge/rapier3d";
+export * from "@dimforge/rapier3d-simd";
 
 declare global {
   interface Window {

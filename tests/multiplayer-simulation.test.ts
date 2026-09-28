@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";
 import { setDriver } from "../src/net/player-controls";
 import { Simulation } from "../src/game/simulation";

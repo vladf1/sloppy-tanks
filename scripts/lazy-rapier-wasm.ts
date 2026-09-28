@@ -1,6 +1,6 @@
 import type { Plugin } from "vite";
 
-const bindings = /[\\/]@dimforge[\\/]rapier3d[\\/]rapier_wasm3d\.js$/;
+const bindings = /[\\/]@dimforge[\\/]rapier3d-simd[\\/]rapier_wasm3d\.js$/;
 
 /** Rapier's wasm-bindgen entry imports its binary at module scope. Bundled, that
  * becomes a top-level await, so no game module could run until the whole binary

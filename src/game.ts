@@ -1,6 +1,6 @@
 import { gameChoices, sameGameOptions, type GameOptions } from "./game/game-options";
 import type { PreparedGame } from "./game/start-menu";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
 import { Cockpit } from "./game/cockpit";

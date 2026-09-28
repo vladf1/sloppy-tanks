@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 
 /** Match the twelve-sided barrel: it rolls, then rests on a facet instead of creeping forever. */
 export function barrelCollider(w: number, h: number, d: number): RAPIER.ColliderDesc {

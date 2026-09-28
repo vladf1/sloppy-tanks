@@ -1,7 +1,7 @@
 import { endBattle } from "../src/game/match";
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { Simulation } from "../src/game/simulation";
 import { combatFeats, recapStats, savePersonalBests } from "../src/game/round-recap";
 import { earnExperience } from "../src/game/veterancy";

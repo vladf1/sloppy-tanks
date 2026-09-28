@@ -1,4 +1,4 @@
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { blastDebris, hitMovableCover, hitProjectileDebris } from "./debris-physics";
 import { COMBAT, MINE } from "./combat-rules";
 import {

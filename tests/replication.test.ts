@@ -1,6 +1,6 @@
 import { before, test } from "node:test";
 import assert from "node:assert/strict";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { StateMirror, StateStream, type Snapshot } from "../src/net/replication";
 import { captureScene, projectScene } from "../src/net/scene-codec";
 import { createMultiplayerSimulation } from "../src/net/multiplayer-simulation";

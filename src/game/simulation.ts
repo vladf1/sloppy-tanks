@@ -1,5 +1,5 @@
 import { newCombatRecord } from "./combat-record";
-import RAPIER from "@dimforge/rapier3d-compat";
+import RAPIER from "@dimforge/rapier3d-simd-compat";
 import { barrelCollider } from "./barrel-physics";
 import { botCommand } from "./ai";
 import { hasAmmo, selectAmmo } from "./ammunition";
