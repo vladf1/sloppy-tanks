@@ -13,6 +13,7 @@ pub mod material;
 pub mod model;
 pub mod presentation;
 pub mod shader;
+pub mod shadow_merge;
 
 #[cfg(target_arch = "wasm32")]
 pub mod gpu;

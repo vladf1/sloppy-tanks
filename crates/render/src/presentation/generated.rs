@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 
-use sloppy_core::models::effects_scenery::{QUARRY_SOIL_TEXTURE, canvas_texture};
 use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_soil, sand_accum};
 use sloppy_core::scene::{Node, TextureRef, TextureSource};
 
@@ -65,6 +64,8 @@ pub fn generated_keys(root: &Node) -> Vec<&'static str> {
 /// Generated textures presentation has supplied or is baking.
 #[derive(Default)]
 pub struct GeneratedTextures {
+    /// Keys already supplied or baking (read by the browser adapter).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     done: HashSet<&'static str>,
     soil: Option<SoilBake>,
 }
@@ -80,7 +81,9 @@ impl GeneratedTextures {
 mod browser {
     use super::*;
     use crate::gpu::Renderer;
-    use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture};
+    use sloppy_core::models::effects_scenery::{
+        CanvasOp, CanvasTexture, QUARRY_SOIL_TEXTURE, canvas_texture,
+    };
     use wasm_bindgen::JsCast;
 
     impl GeneratedTextures {

@@ -11,7 +11,10 @@ use crate::effects::EffectRegistry;
 use crate::gpu::context::{DEPTH_FORMAT, HDR_FORMAT};
 use crate::gpu::resources::Layouts;
 use crate::model::Vertex;
-use crate::shader::{BlendMode, Pass, PipelineKey, ShaderKey, shader_source, water_source};
+use crate::shader::{
+    BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_merged_source, water_source,
+};
+use crate::shadow_merge::ShadowVertex;
 
 pub const SAMPLE_COUNT: u32 = 4;
 
@@ -25,6 +28,22 @@ const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
     4 => Float32x4,
     5 => Float32x4,
 ];
+const SHADOW_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Uint32,
+];
+const SHADOW_BASE_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
+
+/// Merged shadow-caster pipelines by drawn side (see `shadow_merge.rs`).
+pub const SHADOW_MERGED_SIDES: [Side; 3] = [Side::Front, Side::Back, Side::Double];
+
+pub fn shadow_merged_index(side: Side) -> usize {
+    match side {
+        Side::Front => 0,
+        Side::Back => 1,
+        Side::Double => 2,
+    }
+}
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -69,6 +88,8 @@ pub struct Pipelines {
     surface_layout: wgpu::PipelineLayout,
     pub water: wgpu::RenderPipeline,
     pub output: wgpu::RenderPipeline,
+    /// Depth-only merged casters, indexed by [`shadow_merged_index`].
+    pub shadow_merged: Vec<wgpu::RenderPipeline>,
     /// Pipelines created since the counter was last read (warm-up progress).
     pub created: u32,
 }
@@ -156,6 +177,56 @@ impl Pipelines {
             multiview_mask: None,
             cache: None,
         });
+        let merged_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow merged"),
+            bind_group_layouts: &[Some(&layouts.frame)],
+            immediate_size: 0,
+        });
+        let merged_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow merged"),
+            source: wgpu::ShaderSource::Wgsl(shadow_merged_source().into()),
+        });
+        let shadow_merged = SHADOW_MERGED_SIDES
+            .iter()
+            .map(|&side| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("shadow merged"),
+                    layout: Some(&merged_layout),
+                    vertex: wgpu::VertexState {
+                        module: &merged_module,
+                        entry_point: Some("vs_shadow_merged"),
+                        compilation_options: Default::default(),
+                        buffers: &[
+                            Some(wgpu::VertexBufferLayout {
+                                array_stride: size_of::<ShadowVertex>() as u64,
+                                step_mode: wgpu::VertexStepMode::Vertex,
+                                attributes: &SHADOW_VERTEX_ATTRIBUTES,
+                            }),
+                            Some(wgpu::VertexBufferLayout {
+                                array_stride: 4,
+                                step_mode: wgpu::VertexStepMode::Instance,
+                                attributes: &SHADOW_BASE_ATTRIBUTES,
+                            }),
+                        ],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        cull_mode: cull_mode(side),
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: None,
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .collect();
         Self {
             modules: HashMap::new(),
             pipelines: Vec::new(),
@@ -163,7 +234,8 @@ impl Pipelines {
             surface_layout,
             water,
             output,
-            created: 3,
+            shadow_merged,
+            created: 3 + SHADOW_MERGED_SIDES.len() as u32,
         }
     }
 
@@ -272,12 +344,12 @@ impl Pipelines {
         index
     }
 
-    /// Pipelines including the fixed water and output ones.
+    /// Pipelines including the fixed water, output and merged shadow ones.
     pub fn count(&self) -> usize {
-        self.pipelines.len() + 2
+        self.pipelines.len() + 2 + self.shadow_merged.len()
     }
 
     pub fn module_count(&self) -> usize {
-        self.modules.len() + 2
+        self.modules.len() + 3
     }
 }
