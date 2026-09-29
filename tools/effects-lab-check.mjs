@@ -1,7 +1,7 @@
 // Headless check of the effects lab: startup and warm-up, the frozen side-by-side
 // scene against the captured Three.js references (when present), repeated triggers
 // (pools stay bounded, no late pipelines), reset and
-// GPU/console errors. Needs the labs engine (`pnpm run wasm -- --labs`) and a dev server:
+// GPU/console errors. Needs the labs engine (`pnpm run wasm:labs`) and a dev server:
 //   pnpm exec vite --host 127.0.0.1 --port 5194 --strictPort
 //   EFFECTS_LAB_URL=http://127.0.0.1:5194/sloppy-tanks/tools/effects-lab.html node tools/effects-lab-check.mjs
 // Screenshots and the report go to artifacts/performance/effects-lab/.

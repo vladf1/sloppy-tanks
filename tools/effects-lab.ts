@@ -6,7 +6,7 @@
 // from its own stream, so only the overall match is meaningful (the last calibration
 // measured a mean error of about 2 of 255 at t = 4). Without the references the lab
 // still draws and reports the effects.
-// Build the labs engine with `pnpm run wasm -- --labs`, then open
+// Build the labs engine with `pnpm run wasm:labs`, then open
 // /sloppy-tanks/tools/effects-lab.html on the dev server.
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.

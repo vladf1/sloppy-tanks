@@ -1,4 +1,4 @@
-// Types for the generated engine glue when `pnpm run wasm` (or `pnpm run wasm -- --labs`)
+// Types for the generated engine glue when `pnpm run wasm` (or `pnpm run wasm:labs`)
 // has not run yet, so type checking does not depend on a Rust toolchain. Once built,
 // TypeScript resolves the real `src/generated/engine*/engine.d.ts` instead. Only the
 // calls TypeScript makes are declared.

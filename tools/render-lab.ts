@@ -4,7 +4,7 @@
 // amplified difference image. The references were captured from the Three.js side
 // before it left the project (`scripts/README.md`, Labs); without them the lab still
 // draws and reports the renderer, and the difference stays blank.
-// Build the labs engine with `pnpm run wasm -- --labs`, then open
+// Build the labs engine with `pnpm run wasm:labs`, then open
 // /sloppy-tanks/tools/render-lab.html on the dev server.
 // `?freeze=<seconds>` pins the effect/water clock for screenshots (the references use
 // 1.25).

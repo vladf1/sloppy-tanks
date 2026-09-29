@@ -24,7 +24,7 @@ TypeScript engine and its Node tests, `three`, `@types/three`,
 Toolchain: Rust 1.98.1 (`rust-toolchain.toml`), `wasm32-unknown-unknown`,
 `x86_64-unknown-linux-musl`, wasm-bindgen CLI 0.2.129. Rapier 0.36 (Rust)
 replaces Rapier JS 0.20; physics differences are a deliberate version change.
-`pnpm run wasm -- --labs` builds the development labs into
+`pnpm run wasm:labs` builds the development labs into
 `src/generated/engine-labs/`; production builds never include them.
 
 ## Decisions

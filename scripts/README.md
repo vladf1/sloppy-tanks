@@ -81,7 +81,7 @@ with a pass/fail verdict show it in a `#result` element starting with `PASS` or
 
 The render lab, effects lab and tank previews use the labs build of the engine
 (`RenderLab`, `EffectsLab`; the `labs` feature of `sloppy-web`), which the game never
-loads: build it with `pnpm run wasm -- --labs` (into `src/generated/engine-labs/`),
+loads: build it with `pnpm run wasm:labs` (into `src/generated/engine-labs/`),
 then open the page on the dev server.
 
 | Page or script                                          | Shows or checks                                                                                         |

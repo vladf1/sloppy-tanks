@@ -1,7 +1,7 @@
 // Headless check of the render lab: startup, warm-up, the comparison with the captured
 // Three.js references (when present), joint overrides, frustum culling, resizing,
 // fading without late pipelines, repeated scene reloads (resources must not grow),
-// picking, and GPU/console errors. Needs the labs engine (`pnpm run wasm -- --labs`)
+// picking, and GPU/console errors. Needs the labs engine (`pnpm run wasm:labs`)
 // and a dev server:
 //   pnpm exec vite --host 127.0.0.1 --port 5190 --strictPort
 //   RENDER_LAB_URL=http://127.0.0.1:5190/sloppy-tanks/tools/render-lab.html node tools/render-lab-check.mjs
