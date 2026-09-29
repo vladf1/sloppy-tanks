@@ -22,7 +22,7 @@
 //! - `debug_set_sim(patch)`: `{ elapsed, gameMode, reinforcementDelay, match: {
 //!   phase, time, scores, winner }, combatRecord: {...} }`.
 //! - `debug_set_pickups(pickups)`, `debug_add_shot(shot)`, `debug_add_mine(x, z,
-//!   team, arm)`, `debug_reinforce()`, `debug_rig_rng(below)` (the next gameplay draw
+//!   team, arm)`, `debug_set_fragment_life(life)`, `debug_reinforce()`, `debug_rig_rng(below)` (the next gameplay draw
 //!   is below `below`).
 //! - `debug_step(ticks, moveX, moveZ)`: fixed simulation steps with the human's
 //!   command, without drawing; `debug_render(alpha, dt, overview, camera)` draws one
@@ -443,6 +443,13 @@ impl Game {
             life: 20.0,
         });
         id
+    }
+
+    /// Set every fragment's remaining life (seconds), to show debris cleanup stages.
+    pub fn debug_set_fragment_life(&mut self, life: f64) {
+        for fragment in &mut self.sim.fragments {
+            fragment.life = life;
+        }
     }
 
     pub fn debug_clear_mines(&mut self) {
