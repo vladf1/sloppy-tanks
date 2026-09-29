@@ -49,43 +49,18 @@ pub mod part {
 /// A team index (TS `Team`, 0 or 1), indexing [`TEAM_COLORS`].
 pub type Team = u8;
 
-/// Vehicle kinds (TS `VehicleKind` in `src/game/types.ts`). Defined here until the
-/// simulation's equivalent is shared.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum VehicleKind {
-    Scout,
-    Balanced,
-    Heavy,
-    Humvee,
-}
+pub use crate::sim::types::VehicleKind;
 
 impl VehicleKind {
-    pub const ALL: [VehicleKind; 4] = [
-        VehicleKind::Scout,
-        VehicleKind::Balanced,
-        VehicleKind::Heavy,
-        VehicleKind::Humvee,
-    ];
-
     /// The TypeScript identifier, also the model root's node name.
     pub fn name(self) -> &'static str {
-        match self {
-            VehicleKind::Scout => "scout",
-            VehicleKind::Balanced => "balanced",
-            VehicleKind::Heavy => "heavy",
-            VehicleKind::Humvee => "humvee",
-        }
+        self.as_str()
     }
 
-    /// Uniform model scale (`VEHICLES[kind].scale` in `src/game/data.ts`): real
-    /// vehicle proportions fitted to the arena's 1.95 m reference width.
+    /// Uniform model scale (`VEHICLES[kind].scale`): real vehicle proportions fitted
+    /// to the arena's 1.95 m reference width.
     pub fn scale(self) -> f64 {
-        match self {
-            VehicleKind::Scout => (3.59 / 2.3) * (1.95 / 3.66),
-            VehicleKind::Balanced => 1.95 / 2.42,
-            VehicleKind::Heavy => (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
-            VehicleKind::Humvee => 0.9,
-        }
+        crate::sim::data::vehicle(self).scale
     }
 }
 

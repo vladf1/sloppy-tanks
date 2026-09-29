@@ -10,8 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::geometry::{Mesh, box_geometry, cylinder_geometry, rounded_box_geometry};
 use crate::scene::{Color, Material, Node};
 
-/// Team paint colors (`TEAM_COLORS` in `src/game/data.ts`), indexed by team.
-pub const TEAM_COLORS: [u32; 2] = [0x008cff, 0xff303e];
+pub use crate::sim::data::TEAM_COLORS;
 
 /// Default metalness and roughness of `material()`.
 pub const DEFAULT_METALNESS: f64 = 0.05;

@@ -225,7 +225,11 @@ pub fn recover_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2
         return;
     }
     let angle = desired.x.atan2(desired.z);
-    let side = if brain.recoveries.is_multiple_of(2) { 1.0 } else { -1.0 };
+    let side = if brain.recoveries.is_multiple_of(2) {
+        1.0
+    } else {
+        -1.0
+    };
     for offset in [(side * PI) / 2.0, (-side * PI) / 2.0, PI, (side * PI) / 4.0] {
         let goal = Vec2::new(
             position.x + (angle + offset).sin() * DETOUR_DISTANCE,
