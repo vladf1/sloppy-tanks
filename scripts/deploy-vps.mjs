@@ -13,7 +13,7 @@ function run(command, args) {
 }
 const ssh = (script) => run("ssh", [...SSH_OPTIONS, VPS_SSH, script]);
 
-// --provision installs Node, Caddy, the systemd unit and the environment file first.
+// --provision installs Caddy, the service user, the systemd unit and the environment file first.
 if (process.argv.includes("--provision")) {
   console.log(`Provisioning ${VPS_SSH}`);
   ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
@@ -30,22 +30,18 @@ if (process.argv.includes("--provision")) {
 
 const version = await contentVersion();
 const build = await serverBuild();
-console.log(`Deploying Node multiplayer server (content ${version}, build ${build}) to ${VPS_SSH}`);
-run("pnpm", ["run", "server:build"]);
+console.log(`Deploying the multiplayer server (content ${version}, build ${build}) to ${VPS_SSH}`);
+// A static musl binary: the host needs no runtime, only the file.
+run("node", ["scripts/build-server.mjs", "--vps"]);
 run("scp", [
   ...SSH_OPTIONS,
-  "server/dist/server.mjs",
-  `${VPS_SSH}:/opt/sloppy-tanks/server.mjs.new`,
+  "target/x86_64-unknown-linux-musl/server/sloppy-server",
+  `${VPS_SSH}:/opt/sloppy-tanks/sloppy-server.new`,
 ]);
-run("scp", [
-  ...SSH_OPTIONS,
-  "server/dist/server.mjs.map",
-  `${VPS_SSH}:/opt/sloppy-tanks/server.mjs.map.new`,
-]);
-// Rename in place so a crash-restart never loads a partially copied bundle. The restart
+// Rename in place so a crash-restart never runs a partially copied binary. The restart
 // resets live rooms; clients receive room-reset from the graceful shutdown.
 ssh(
-  "cd /opt/sloppy-tanks && mv -f server.mjs.map.new server.mjs.map && mv -f server.mjs.new server.mjs && systemctl restart sloppy-tanks",
+  "cd /opt/sloppy-tanks && chmod 755 sloppy-server.new && mv -f sloppy-server.new sloppy-server && systemctl restart sloppy-tanks",
 );
 
 const health = new URL("/health", VPS_MULTIPLAYER_URL.replace(/^ws/, "http"));

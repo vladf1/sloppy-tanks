@@ -1,29 +1,37 @@
-import { build } from "esbuild";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
-/** Files the server build reads besides its import graph: the inlined dashboard page
- * and the bundling settings themselves. */
-const SERVER_BUILD_FILES = ["server/build.mjs", "server/dashboard.html"];
+const repo = fileURLToPath(root);
 
-let inputs;
-/** Every file in the server bundle's import graph, relative to the repository root,
- * including the bundled packages under node_modules (their paths carry versions). */
-function serverInputs() {
-  inputs ??= build({
-    entryPoints: [fileURLToPath(new URL("server/main.ts", root))],
-    absWorkingDir: fileURLToPath(root),
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    external: ["bufferutil", "utf-8-validate"],
-    write: false,
-    metafile: true,
-    logLevel: "silent",
-  }).then((result) => Object.keys(result.metafile.inputs).sort());
-  return inputs;
+/** Every file under `directory` (relative to the repository root), sorted. */
+async function filesUnder(directory) {
+  const entries = await readdir(new URL(directory, root), { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => `${entry.parentPath}/${entry.name}`.slice(repo.length).split("\\").join("/"))
+    .sort();
+}
+
+/** The resolved crates (name, version, enabled features) a package compiles with. The
+ * lock file also pins crates only other packages use, so hashing it whole would tie
+ * client compatibility to server-only or renderer-only dependency updates. */
+function dependencyTree(pkg, target) {
+  const args = ["tree", "--locked", "-p", pkg, "-e", "normal", "--prefix", "none"];
+  if (target) args.push("--target", target);
+  args.push("-f", "{p} {f}");
+  const result = spawnSync("cargo", args, { cwd: repo, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`cargo tree failed for ${pkg}: ${result.stderr || result.error?.message}`);
+  }
+  // Local packages print their absolute path, which differs between checkouts.
+  const lines = result.stdout
+    .split("\n")
+    .map((line) => line.replace(/\s*\([^)]*\)/g, "").trim())
+    .filter(Boolean);
+  return [...new Set(lines)].sort();
 }
 
 async function hashFiles(paths, extra = []) {
@@ -31,38 +39,47 @@ async function hashFiles(paths, extra = []) {
   for (const path of paths) {
     hash.update(path + "\0").update(await readFile(new URL(path, root)));
   }
-  for (const value of extra) hash.update(value);
+  for (const value of extra) hash.update(value + "\n");
   return hash.digest("hex").slice(0, 24);
 }
 
-async function pinnedVersions(names) {
-  const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
-  return names.map((name) => name + "=" + (pkg.dependencies[name] ?? pkg.devDependencies[name]));
-}
-
-/** Repository sources the multiplayer server runs that the client build shares.
- * Only these can make a client and server disagree about the game, so client-only
- * presentation, input and UI files stay out of the hash and never force a server
- * redeploy. Server-only files under `server/` are left out for the same reason. */
+/** Sources the multiplayer server runs that the browser build shares: the whole core
+ * crate (rules, simulation, models it measures, protocol and replication). Only these
+ * can make a client and server disagree about the game, so renderer, browser-binding
+ * and server-only code stay out and never force a server redeploy. Integration tests
+ * and examples never reach either build. */
 export async function contentSources() {
-  return (await serverInputs()).filter((path) => path.startsWith("src/"));
-}
-
-/** Clients and the server must match on this: the shared sources and pinned engines. */
-export async function contentVersion() {
-  return hashFiles(
-    await contentSources(),
-    await pinnedVersions(["@dimforge/rapier3d-simd", "three"]),
+  const files = await filesUnder("crates/core");
+  return files.filter(
+    (path) => !path.startsWith("crates/core/tests/") && !path.startsWith("crates/core/examples/"),
   );
 }
 
-/** Everything that makes up the deployed server, including server-only code and
- * dependencies that never affect client compatibility. A change here needs a server
- * redeploy to take effect even when `contentVersion` still matches. */
+/** Clients and the server must match on this: the shared sources, the crates they
+ * compile with (Rapier, glam, serde) and the compiler that builds both. */
+export async function contentVersion() {
+  return hashFiles(
+    [...(await contentSources()), "rust-toolchain.toml"],
+    dependencyTree("sloppy-core"),
+  );
+}
+
+/** Everything that makes up the deployed server, including server-only code, its
+ * dependencies and build settings, which never affect client compatibility. A change
+ * here needs a server redeploy to take effect even when `contentVersion` matches. */
 export async function serverBuild() {
   return hashFiles(
-    [...(await serverInputs()), ...SERVER_BUILD_FILES],
-    await pinnedVersions(["esbuild"]),
+    [
+      ...(await contentSources()),
+      ...(await filesUnder("crates/server")).filter(
+        (path) => !path.startsWith("crates/server/tests/"),
+      ),
+      "Cargo.toml",
+      ".cargo/config.toml",
+      "rust-toolchain.toml",
+      "scripts/build-server.mjs",
+    ],
+    dependencyTree("sloppy-server", "x86_64-unknown-linux-musl"),
   );
 }
 

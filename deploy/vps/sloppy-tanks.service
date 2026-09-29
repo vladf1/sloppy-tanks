@@ -8,7 +8,7 @@ Type=simple
 User=sloppy
 Group=sloppy
 EnvironmentFile=/etc/sloppy-tanks.env
-ExecStart=/usr/bin/node --enable-source-maps /opt/sloppy-tanks/server.mjs
+ExecStart=/opt/sloppy-tanks/sloppy-server
 Restart=always
 RestartSec=2
 # SIGTERM resets rooms and waits up to a second for clients to finish closing.
