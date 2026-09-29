@@ -1,5 +1,5 @@
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { PROTOCOL_VERSION } from "../src/net/protocol.ts";
+import { readFile } from "node:fs/promises";
 import { VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
@@ -11,6 +11,16 @@ import { VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
 const HEALTH_TIMEOUT_MS = 10_000;
 const endpoint = process.env.SLOPPY_SERVER_URL ?? VPS_MULTIPLAYER_URL;
 const health = new URL("/health", endpoint.replace(/^ws/, "http"));
+// The protocol version is a constant of the shared Rust core both builds compile.
+const protocolSource = await readFile(
+  new URL("../crates/core/src/net/protocol.rs", import.meta.url),
+  "utf8",
+);
+const PROTOCOL_VERSION = Number(
+  /pub const PROTOCOL_VERSION: u32 = (\d+);/.exec(protocolSource)?.[1],
+);
+if (!Number.isInteger(PROTOCOL_VERSION))
+  throw new Error("PROTOCOL_VERSION not found in protocol.rs");
 const local = {
   version: PROTOCOL_VERSION,
   contentVersion: await contentVersion(),

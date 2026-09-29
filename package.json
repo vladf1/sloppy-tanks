@@ -44,7 +44,7 @@
     "server:logs": "node scripts/vps.mjs logs",
     "server:stats": "node scripts/vps.mjs stats",
     "server:status": "node scripts/vps.mjs status",
-    "server:check-if-redeployment-required": "node --import tsx scripts/check-server-redeployment.mjs",
+    "server:check-if-redeployment-required": "node scripts/check-server-redeployment.mjs",
     "check:multiplayer-loading": "node scripts/multiplayer-loading-check.mjs",
     "check:multiplayer": "node scripts/multiplayer-check.mjs",
     "server:check:players": "node --import tsx scripts/multiplayer-player-check.mjs",
