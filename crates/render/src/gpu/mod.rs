@@ -710,8 +710,8 @@ impl Renderer {
         let ctx = Context::new(canvas).await?;
         let device = &ctx.device;
         let layouts = Layouts::new(device);
-        let pipelines = Pipelines::new(device, &layouts, ctx.config.format).await;
-        let textures = TextureStore::new(device, &ctx.queue, options.asset_base).await;
+        let pipelines = Pipelines::new(device, &layouts, ctx.config.format);
+        let textures = TextureStore::new(device, &ctx.queue, options.asset_base);
         let sun_shadow = SunShadow::default();
         let shadow_map = depth_texture(device, "sun shadow map", sun_shadow.map_size);
         let dummy_depth =
@@ -1585,6 +1585,7 @@ impl Renderer {
     /// the page between calls (a short timer while only `compiling` remains).
     pub fn prepare_step(&mut self, budget: u32) -> PrepareProgress {
         self.update_textures();
+        let fixed_pending = !self.pipelines.fixed_ready(&self.ctx.device);
         let mut compiled = 0;
         let device = &self.ctx.device;
         for class in self.classes.iter_mut().flatten() {
@@ -1615,8 +1616,8 @@ impl Renderer {
         }
         PrepareProgress {
             compiled,
-            remaining: self.missing_pipelines(),
-            compiling: self.pipelines.compiling(),
+            remaining: self.missing_pipelines() + u32::from(fixed_pending),
+            compiling: self.pipelines.compiling() + u32::from(fixed_pending),
         }
     }
 
@@ -1624,6 +1625,7 @@ impl Renderer {
     /// background compile has not finished.
     fn complete_pipelines(&mut self) {
         let device = &self.ctx.device;
+        self.pipelines.ensure_fixed(device);
         for class in self.classes.iter_mut().flatten() {
             if class.main.is_none() {
                 class.main = Some(
@@ -2236,6 +2238,9 @@ impl Renderer {
     /// Compile pipelines for any class drawn this frame that warm-up missed.
     fn ensure_frame_pipelines(&mut self) {
         let device = &self.ctx.device;
+        if self.pipelines.ensure_fixed(device) {
+            self.stats.late_pipelines += 1;
+        }
         for (view, draws) in self.views.iter().enumerate() {
             for draw in draws.opaque.iter().chain(&draws.transparent) {
                 let class = self.classes[draw.class as usize]
@@ -2383,7 +2388,7 @@ impl Renderer {
                         continue;
                     };
                     if mesh.pipeline != pipeline {
-                        pass.set_pipeline(&self.pipelines.shadow_merged[mesh.pipeline]);
+                        pass.set_pipeline(&self.pipelines.fixed().shadow_merged[mesh.pipeline]);
                         pipeline = mesh.pipeline;
                     }
                     if let Some(material) = mesh.material {
@@ -2415,7 +2420,7 @@ impl Renderer {
             draws.encode(&mut pass, &view.opaque, MAIN_VIEW, stats);
             if let Some(water) = &self.water {
                 let mesh = self.meshes.get(water.mesh);
-                pass.set_pipeline(&self.pipelines.water);
+                pass.set_pipeline(&self.pipelines.fixed().water);
                 pass.set_bind_group(1, &water.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex.slice(..));
                 pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
@@ -2442,7 +2447,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipelines.output);
+            pass.set_pipeline(&self.pipelines.fixed().output);
             pass.set_bind_group(0, &self.output_group, &[]);
             pass.draw(0..3, 0..1);
             stats.draw_calls += 1;

@@ -14,7 +14,7 @@
 //! wgpu 30's `backend/webgpu.rs`: a descriptor that differs only costs the stall
 //! again, since the pipeline drawn with is always wgpu's own.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::rc::Rc;
@@ -127,6 +127,41 @@ impl PipelineSpec {
 #[derive(Clone)]
 pub struct RawModule(JsValue);
 
+/// A fixed set of pipelines compiling in the background from the moment the
+/// renderer exists, so the page builds the arena meanwhile; the owner creates the
+/// wgpu pipelines once [`Background::done`] (or at once when it cannot wait).
+pub struct Background {
+    done: Rc<Cell<bool>>,
+    /// The compiled pipelines, held so the browser's cache keeps them until wgpu asks.
+    _held: Rc<RefCell<Vec<JsValue>>>,
+}
+
+impl Background {
+    pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &str)]) -> Self {
+        let precompiler = Precompiler::<()>::new(device);
+        let jobs: Vec<(PipelineSpec, RawModule)> = jobs
+            .iter()
+            .map(|(spec, source)| ((*spec).clone(), precompiler.module(spec.label, source)))
+            .collect();
+        let done = Rc::new(Cell::new(false));
+        let held = Rc::new(RefCell::new(Vec::new()));
+        let (finished, compiled) = (done.clone(), held.clone());
+        // Issued now: a spawned task would only start once the page yields, after the
+        // arena these compiles should overlap.
+        let jobs: Vec<_> = jobs.iter().map(|(spec, raw)| (spec, raw)).collect();
+        let compiling = precompiler.compile_all(&jobs);
+        wasm_bindgen_futures::spawn_local(async move {
+            *compiled.borrow_mut() = compiling.await;
+            finished.set(true);
+        });
+        Self { done, _held: held }
+    }
+
+    pub fn done(&self) -> bool {
+        self.done.get()
+    }
+}
+
 struct Queue<K> {
     /// Keys ever queued (a key compiles once per page).
     started: HashSet<K>,
@@ -230,10 +265,13 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
-    /// Compile every spec in the background and wait for all of them; for the few
-    /// fixed pipelines created with the renderer. Hold the returned pipelines until
+    /// Start compiling every spec in the background now; the future resolves to the
+    /// compiled pipelines, for the few fixed ones ([`Background`]). Hold them until
     /// wgpu has created its own, so the browser's cache still has them.
-    pub async fn compile_all(&self, specs: &[(&PipelineSpec, &RawModule)]) -> Vec<JsValue> {
+    pub fn compile_all(
+        &self,
+        specs: &[(&PipelineSpec, &RawModule)],
+    ) -> impl Future<Output = Vec<JsValue>> + 'static {
         let mut promises = Vec::with_capacity(specs.len());
         for (spec, module) in specs {
             match self.descriptor(spec, module) {
@@ -245,16 +283,18 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                 ),
             }
         }
-        let mut compiled = Vec::with_capacity(promises.len());
-        for promise in promises {
-            match JsFuture::from(promise).await {
-                Ok(pipeline) => compiled.push(pipeline),
-                Err(error) => {
-                    web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error)
+        async move {
+            let mut compiled = Vec::with_capacity(promises.len());
+            for promise in promises {
+                match JsFuture::from(promise).await {
+                    Ok(pipeline) => compiled.push(pipeline),
+                    Err(error) => {
+                        web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error)
+                    }
                 }
             }
+            compiled
         }
-        compiled
     }
 
     fn layout(&self, kind: LayoutKind) -> Result<JsValue, String> {

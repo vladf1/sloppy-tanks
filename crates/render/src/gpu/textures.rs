@@ -13,7 +13,7 @@ use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
-use crate::gpu::precompile::{LayoutKind, PipelineSpec, Precompiler};
+use crate::gpu::precompile::{Background, LayoutKind, PipelineSpec};
 use crate::shader::MIPMAP_WGSL;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -92,8 +92,11 @@ pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
 
 struct MipmapGenerator {
     layout: wgpu::BindGroupLayout,
-    srgb: wgpu::RenderPipeline,
-    linear: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    /// The sRGB and linear blit specs while they compile in the background.
+    pending: Option<(PipelineSpec, PipelineSpec, Background)>,
+    /// The sRGB and linear blit pipelines.
+    pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     sampler: wgpu::Sampler,
 }
 
@@ -112,12 +115,9 @@ fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
 }
 
 impl MipmapGenerator {
-    /// Compiles both blit pipelines in the background before creating them.
-    async fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mipmap blit"),
-            source: wgpu::ShaderSource::Wgsl(MIPMAP_WGSL.into()),
-        });
+    /// Starts compiling both blit pipelines in the background; [`Self::ready`]
+    /// creates them once compiled.
+    fn new(device: &wgpu::Device) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mipmap source"),
             entries: MIPMAP_SOURCE_ENTRIES,
@@ -129,14 +129,11 @@ impl MipmapGenerator {
         });
         let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
         let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
-        let precompiler = Precompiler::<()>::new(device);
-        let raw = precompiler.module("mipmap blit", MIPMAP_WGSL);
-        let _compiled = precompiler
-            .compile_all(&[(&srgb, &raw), (&linear, &raw)])
-            .await;
+        let compile = Background::start(device, &[(&srgb, MIPMAP_WGSL), (&linear, MIPMAP_WGSL)]);
         Self {
-            srgb: srgb.create(device, &pipeline_layout, &module),
-            linear: linear.create(device, &pipeline_layout, &module),
+            pending: Some((srgb, linear, compile)),
+            pipelines: None,
+            pipeline_layout,
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("mipmap"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -147,6 +144,24 @@ impl MipmapGenerator {
         }
     }
 
+    /// Whether the blit pipelines exist, creating them once compiled.
+    fn ready(&mut self, device: &wgpu::Device) -> bool {
+        if let Some((srgb, linear, compile)) = &self.pending
+            && compile.done()
+        {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mipmap blit"),
+                source: wgpu::ShaderSource::Wgsl(MIPMAP_WGSL.into()),
+            });
+            self.pipelines = Some((
+                srgb.create(device, &self.pipeline_layout, &module),
+                linear.create(device, &self.pipeline_layout, &module),
+            ));
+            self.pending = None;
+        }
+        self.pipelines.is_some()
+    }
+
     fn generate(
         &self,
         device: &wgpu::Device,
@@ -154,6 +169,7 @@ impl MipmapGenerator {
         texture: &wgpu::Texture,
         srgb: bool,
     ) {
+        let (srgb_blit, linear_blit) = self.pipelines.as_ref().expect("mipmap pipelines");
         let levels = texture.mip_level_count();
         if levels < 2 {
             return;
@@ -201,7 +217,7 @@ impl MipmapGenerator {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(if srgb { &self.srgb } else { &self.linear });
+            pass.set_pipeline(if srgb { srgb_blit } else { linear_blit });
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -239,7 +255,7 @@ pub struct TextureStore {
 }
 
 impl TextureStore {
-    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, asset_base: String) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, asset_base: String) -> Self {
         let placeholder = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("white placeholder"),
             size: wgpu::Extent3d {
@@ -274,7 +290,7 @@ impl TextureStore {
             generated: HashMap::new(),
             samplers: HashMap::new(),
             placeholder: placeholder.create_view(&Default::default()),
-            mipmaps: MipmapGenerator::new(device).await,
+            mipmaps: MipmapGenerator::new(device),
             asset_base,
             generation: 0,
             failures: Vec::new(),
@@ -351,8 +367,12 @@ impl TextureStore {
     }
 
     /// Upload everything that finished loading. Returns true when any texture
-    /// became ready.
+    /// became ready. Loaded textures wait (still pending) until the mipmap blits have
+    /// compiled.
     pub fn drain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
+        if !self.mipmaps.ready(device) {
+            return false;
+        }
         let loaded: Vec<_> = self.loaded.borrow_mut().drain(..).collect();
         let changed = !loaded.is_empty();
         for Loaded { key, result } in loaded {

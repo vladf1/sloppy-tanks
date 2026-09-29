@@ -21,7 +21,7 @@ use sloppy_core::scene::Side;
 
 use crate::effects::EffectRegistry;
 use crate::gpu::context::{DEPTH_FORMAT, HDR_FORMAT};
-use crate::gpu::precompile::{LayoutKind, PipelineSpec, Precompiler, RawModule};
+use crate::gpu::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::gpu::resources::Layouts;
 use crate::model::Vertex;
 use crate::shader::{
@@ -287,12 +287,8 @@ fn pipeline_layout(
     })
 }
 
-pub struct Pipelines {
-    precompiler: Precompiler<PipelineKey>,
-    sources: HashMap<ShaderKey, String>,
-    pipelines: Vec<wgpu::RenderPipeline>,
-    index: HashMap<PipelineKey, u32>,
-    surface_layout: wgpu::PipelineLayout,
+/// The water, output and merged shadow pipelines every arena draws with.
+pub struct FixedPipelines {
     pub water: wgpu::RenderPipeline,
     pub output: wgpu::RenderPipeline,
     /// Merged casters, depth-only then alpha-tested, indexed by
@@ -300,65 +296,146 @@ pub struct Pipelines {
     pub shadow_merged: Vec<wgpu::RenderPipeline>,
 }
 
+/// Which layout a fixed pipeline uses.
+#[derive(Clone, Copy)]
+enum FixedLayout {
+    Water,
+    Output,
+    Merged,
+    Surface,
+}
+
+/// The fixed pipelines while they compile in the background.
+struct FixedJobs {
+    /// Water, output, then the merged casters in [`shadow_merged_index`] order.
+    jobs: Vec<(PipelineSpec, FixedLayout, String)>,
+    compile: Background,
+}
+
+pub struct Pipelines {
+    precompiler: Precompiler<PipelineKey>,
+    sources: HashMap<ShaderKey, String>,
+    pipelines: Vec<wgpu::RenderPipeline>,
+    index: HashMap<PipelineKey, u32>,
+    surface_layout: wgpu::PipelineLayout,
+    water_layout: wgpu::PipelineLayout,
+    output_layout: wgpu::PipelineLayout,
+    merged_layout: wgpu::PipelineLayout,
+    fixed_jobs: Option<FixedJobs>,
+    fixed: Option<FixedPipelines>,
+}
+
 impl Pipelines {
-    /// Compile the fixed water, output and merged shadow pipelines in the background,
-    /// then create them.
-    pub async fn new(
+    /// Start compiling the fixed water, output and merged shadow pipelines in the
+    /// background; they are created once compiled ([`Self::fixed_ready`]) while the
+    /// page builds the arena, which no longer waits for them.
+    pub fn new(
         device: &wgpu::Device,
         layouts: &Layouts,
         canvas_format: wgpu::TextureFormat,
     ) -> Self {
-        let precompiler = Precompiler::new(device);
         let surface_layout =
             pipeline_layout(device, "surface", &[&layouts.frame, &layouts.material]);
         let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
         let output_layout = pipeline_layout(device, "output", &[&layouts.output]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let water_source = water_source();
-        let merged_source = shadow_merged_source();
-        let cutout_source = shadow_cutout_source();
-        let water = (water_spec(), &water_layout, water_source.as_str());
-        let output = (
-            output_spec(canvas_format),
-            &output_layout,
-            crate::shader::OUTPUT_WGSL,
-        );
-        let merged: Vec<_> = [false, true]
-            .into_iter()
-            .flat_map(|cutout| SHADOW_MERGED_SIDES.iter().map(move |&side| (cutout, side)))
-            .map(|(cutout, side)| {
-                let spec = shadow_merged_spec(side, cutout);
-                if cutout {
-                    (spec, &surface_layout, cutout_source.as_str())
+        let (merged_source, cutout_source) = (shadow_merged_source(), shadow_cutout_source());
+        let mut jobs = vec![
+            (water_spec(), FixedLayout::Water, water_source()),
+            (
+                output_spec(canvas_format),
+                FixedLayout::Output,
+                crate::shader::OUTPUT_WGSL.to_owned(),
+            ),
+        ];
+        for cutout in [false, true] {
+            for &side in &SHADOW_MERGED_SIDES {
+                jobs.push(if cutout {
+                    (
+                        shadow_merged_spec(side, true),
+                        FixedLayout::Surface,
+                        cutout_source.clone(),
+                    )
                 } else {
-                    (spec, &merged_layout, merged_source.as_str())
-                }
-            })
-            .collect();
-        let fixed: Vec<_> = [&water, &output].into_iter().chain(&merged).collect();
-        let raw: Vec<RawModule> = fixed
+                    (
+                        shadow_merged_spec(side, false),
+                        FixedLayout::Merged,
+                        merged_source.clone(),
+                    )
+                });
+            }
+        }
+        let specs: Vec<_> = jobs
             .iter()
-            .map(|(spec, _, source)| precompiler.module(spec.label, source))
+            .map(|(spec, _, source)| (spec, source.as_str()))
             .collect();
-        let jobs: Vec<_> = fixed
-            .iter()
-            .zip(&raw)
-            .map(|(job, raw)| (&job.0, raw))
-            .collect();
-        let _compiled = precompiler.compile_all(&jobs).await;
-        let create = |(spec, layout, source): &(PipelineSpec, &wgpu::PipelineLayout, &str)| {
-            spec.create(device, layout, &module(device, spec.label, source))
-        };
+        let compile = Background::start(device, &specs);
         Self {
-            water: create(&water),
-            output: create(&output),
-            shadow_merged: merged.iter().map(create).collect(),
-            precompiler,
+            precompiler: Precompiler::new(device),
             sources: HashMap::new(),
             pipelines: Vec::new(),
             index: HashMap::new(),
             surface_layout,
+            water_layout,
+            output_layout,
+            merged_layout,
+            fixed_jobs: Some(FixedJobs { jobs, compile }),
+            fixed: None,
         }
+    }
+
+    /// Whether the fixed pipelines exist, creating them once their background compile
+    /// has finished.
+    pub fn fixed_ready(&mut self, device: &wgpu::Device) -> bool {
+        if self
+            .fixed_jobs
+            .as_ref()
+            .is_some_and(|fixed| fixed.compile.done())
+        {
+            self.create_fixed(device);
+        }
+        self.fixed.is_some()
+    }
+
+    /// Create the fixed pipelines now, compiling them synchronously if their
+    /// background compile has not finished; returns whether that stalled.
+    pub fn ensure_fixed(&mut self, device: &wgpu::Device) -> bool {
+        let stalled = !self.fixed_ready(device);
+        if stalled {
+            self.create_fixed(device);
+        }
+        stalled
+    }
+
+    fn create_fixed(&mut self, device: &wgpu::Device) {
+        let Some(FixedJobs {
+            jobs,
+            compile: _held,
+        }) = self.fixed_jobs.take()
+        else {
+            return;
+        };
+        let mut created = jobs.iter().map(|(spec, layout, source)| {
+            let layout = match layout {
+                FixedLayout::Water => &self.water_layout,
+                FixedLayout::Output => &self.output_layout,
+                FixedLayout::Merged => &self.merged_layout,
+                FixedLayout::Surface => &self.surface_layout,
+            };
+            spec.create(device, layout, &module(device, spec.label, source))
+        });
+        self.fixed = Some(FixedPipelines {
+            water: created.next().expect("water pipeline"),
+            output: created.next().expect("output pipeline"),
+            shadow_merged: created.collect(),
+        });
+    }
+
+    /// The fixed pipelines; draws first make sure of them ([`Self::ensure_fixed`]).
+    pub fn fixed(&self) -> &FixedPipelines {
+        self.fixed
+            .as_ref()
+            .expect("fixed pipelines are created before drawing")
     }
 
     pub fn find(&self, key: &PipelineKey) -> Option<u32> {
@@ -435,7 +512,11 @@ impl Pipelines {
 
     /// Pipelines including the fixed water, output and merged shadow ones.
     pub fn count(&self) -> usize {
-        self.pipelines.len() + 2 + self.shadow_merged.len()
+        self.pipelines.len()
+            + self
+                .fixed
+                .as_ref()
+                .map_or(0, |fixed| 2 + fixed.shadow_merged.len())
     }
 
     /// Distinct shader sources, including the fixed water, output and merged shadow
