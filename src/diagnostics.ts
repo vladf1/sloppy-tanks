@@ -179,6 +179,12 @@ export function createDebug(
     collapse(): void {
       game.debug_collapse();
     },
+    giveAmmo(count = 5): void {
+      game.debug_give_ammo(count);
+    },
+    killHuman(): void {
+      game.debug_kill_human();
+    },
     soak(seconds = 1200) {
       const startTime = performance.now();
       const result = JSON.parse(game.debug_soak(seconds)) as Record<string, unknown>;

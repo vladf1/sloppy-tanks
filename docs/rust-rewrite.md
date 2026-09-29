@@ -5,12 +5,12 @@ Baseline: `main` at 35afd91 (TypeScript + Three.js + Rapier JS 0.20, Node server
 
 ## Layout
 
-| Crate                  | Target         | Owns                                                                  |
-| ---------------------- | -------------- | --------------------------------------------------------------------- |
-| `crates/core`          | native + wasm  | `sim/` gameplay, `geometry/` meshes, `scene.rs` model contract, `models/`, `net/` protocol/replication/match host |
-| `crates/render`        | wasm (wgpu)    | WebGPU renderer, WGSL, presentation and effects                       |
-| `crates/web`           | wasm cdylib    | wasm-bindgen API for the page: game loop, commands, HUD state, network client state |
-| `crates/server`        | native binary  | HTTP/WebSocket server, rooms, limits, monitor, dashboard              |
+| Crate           | Target        | Owns                                                                                                              |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `crates/core`   | native + wasm | `sim/` gameplay, `geometry/` meshes, `scene.rs` model contract, `models/`, `net/` protocol/replication/match host |
+| `crates/render` | wasm (wgpu)   | WebGPU renderer, WGSL, presentation and effects                                                                   |
+| `crates/web`    | wasm cdylib   | wasm-bindgen API for the page: game loop, commands, HUD state, network client state                               |
+| `crates/server` | native binary | HTTP/WebSocket server, rooms, limits, monitor, dashboard                                                          |
 
 Toolchain: Rust 1.98.1 (`rust-toolchain.toml`), `wasm32-unknown-unknown`, wasm-bindgen CLI 0.2.129.
 Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate version change.
@@ -56,3 +56,44 @@ Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate
   machine), server `MatchRoom` adapter; golden wire test vs the TS host is structurally
   identical; real-socket smoke with TS traffic bots passed. Merge, then bind NetworkClient
   in `crates/web` and replace the TS multiplayer client internals.
+
+## Single-player shell
+
+`src/game.ts` drives the wasm `Game` (`crates/web/src/game.rs`); `src/engine.ts` loads
+the glue and takes over the binary download that production pages start in `<head>`
+(the `engine-download` plugin in `vite.config.ts`). `src/game/engine-api.ts` holds the
+packed input and frame-result slots and the JSON shapes of `hud_json`, `drain_events`
+and `stats_json`. `Controls` and the touch sticks only gather raw input
+(`Controls.takeInput`); the engine builds commands. The HUD, menus, battle report,
+audio and Stats for nerds read engine JSON. `tests/single-player-imports.test.ts`
+fails if single player reaches Three.js, Rapier JS or any TypeScript engine module.
+
+Legacy bridges for the TypeScript multiplayer client, to delete with it:
+`Controls.command()` and the four-argument `NerdStats` constructor.
+
+`pnpm run wasm` must run before `tsc`, `vite build` or the dev server: `src/engine.ts`
+imports the generated `src/generated/engine/`.
+
+### `window.sloppy` (development builds)
+
+| Member                                        | Backed by / meaning                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `game`                                        | The wasm `Game` itself                                                     |
+| `sim`, `view` (getters), `debug()`            | `debug_json()`: a fresh copy per read (match, human, tanks, camera, zoom…) |
+| `hud()`, `stats()`, `snapshot()`              | `hud_json()`, `stats_json()`, `debug_snapshot()`                           |
+| `error()`                                     | `error()`: the first GPU error or null                                     |
+| `frames`, `events`                            | Engine frames run and events drained by the page                           |
+| `audio`, `controls`                           | The page's `AudioSystem` and `Controls`                                    |
+| `start()`, `restart()`                        | A fresh round now / a fresh world behind Battle Setup                      |
+| `autoplay(v)`, `overview(v)`, `autoRounds(v)` | `debug_set_autoplay/overview/auto_rounds`                                  |
+| `zoom(z)`, `firstPerson()`                    | `debug_set_zoom`, `toggle_first_person`                                    |
+| `giveAmmo(n)`, `killHuman()`                  | `debug_give_ammo`, `debug_kill_human`                                      |
+| `stress()`, `collapse()`, `soak(s)`           | `debug_stress`, `debug_collapse`, `debug_soak` (synchronous)               |
+| `record()`, `stop()`, `report()`, `samples`   | Frame recorder (per-frame `stats_json` while recording)                    |
+| `exactResolution()`                           | `resize(2560, 1440, 1, true)` until reload                                 |
+
+`sim` and `view` are read-only snapshots: checks that assigned simulation fields
+(`sim.human.ammo.rocket = 10`) use the methods instead. Zoom from the wheel or touch
+buttons reaches the engine with the next frame's input, so checks wait a frame.
+`scripts/profile.mjs` uses `game.debug_configure(seed, tanks, team)` and
+`game.debug_stress_burst()`.

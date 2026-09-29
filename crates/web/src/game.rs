@@ -43,17 +43,23 @@
 //!   events: [SimEvent & { playerHit, own, damageAngle }] }` for audio and HUD;
 //!   `damageAngle` is the clockwise screen angle (radians) of damage the viewer
 //!   took, or null.
-//! - `hud_json() -> JSON`: match, scores, clock, the human's stats, ammo, rank,
-//!   cooldowns, effects, scoreboard, and the round recap once results show.
+//! - `hud_json() -> JSON`: match, scores, score limit, team names, clock, the
+//!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
+//!   recap once results show. The first recap of a result saves personal bests
+//!   in `localStorage` and reports them (`best`, `improved`, `persisted`).
 //! - `stats_json() -> JSON`: Stats for nerds (frame/sim/render ms, draw calls,
-//!   triangles, GPU resources, bodies, shots, fragments).
+//!   triangles, GPU resources, bodies and their sleep state, shots, pickups,
+//!   fragments, particles, pixel ratio).
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
 //!   the CSS size times the pixel ratio, capped at 1.5 unless `exact`.
 //! - `toggle_first_person() -> bool`: V / the view button while playing.
+//! - `set_human_kind(kind)`: the respawn menu's tank, keeping the world.
 //! - `set_speed(key, value) -> f64`: "tank-speed" or "bullet-speed" scale.
 //! - `debug_*`: the dev `window.sloppy` hooks (`debug_json`, `debug_snapshot`,
 //!   `debug_set_autoplay`, `debug_set_overview`, `debug_set_auto_rounds`,
-//!   `debug_set_zoom`, `debug_collapse`, `debug_stress`, `debug_soak`).
+//!   `debug_set_zoom`, `debug_collapse`, `debug_stress`, `debug_soak`,
+//!   `debug_give_ammo`, `debug_kill_human`, `debug_configure`,
+//!   `debug_stress_burst`).
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
 use glam::Vec2;
@@ -934,6 +940,31 @@ impl Game {
                 ..Shot::default()
             });
         }
+    }
+
+    /// Stock every special ammunition with `count` rounds (HUD and input checks).
+    pub fn debug_give_ammo(&mut self, count: f64) {
+        let index = self.human_index();
+        let ammo = &mut self.sim.tanks[index].ammo;
+        ammo.spread = count;
+        ammo.rocket = count;
+        ammo.ricochet = count;
+        ammo.piercing = count;
+    }
+
+    /// Destroy the human's tank as an enemy kill (death, respawn and pointer checks).
+    pub fn debug_kill_human(&mut self) {
+        let index = self.human_index();
+        let tank = &mut self.sim.tanks[index];
+        tank.protection = 0.0;
+        tank.shield = 0.0;
+        let team = tank.team;
+        let enemy = self.sim.tanks.iter().find(|other| other.team != team);
+        let (owner, owner_team) = enemy.map_or((0, Team::from_index(team.index() + 1)), |other| {
+            (other.id, other.team)
+        });
+        self.sim
+            .damage_tank(index, 1e12, owner, owner_team, None, None);
     }
 
     /// Profiling setup: the seed, tank count and human team the next reset uses.

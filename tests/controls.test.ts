@@ -175,14 +175,15 @@ test("touch joins the packed input and one-shot actions are sent once", () => {
 test("Q/E and number keys queue exactly one selection without consuming held fire", () => {
   const f = fixture();
   f.controls.fire = true;
-  for (const [code, step, slot] of [
+  const presses: [code: string, step: number, slot: number][] = [
     ["KeyQ", -1, 0],
     ["KeyE", 1, 0],
-    ...SLOTS.flatMap((_weapon, i) => [
+    ...SLOTS.flatMap((_weapon, i): [string, number, number][] => [
       [`Digit${i + 1}`, 0, i + 1],
       [`Numpad${i + 1}`, 0, i + 1],
     ]),
-  ] as const) {
+  ];
+  for (const [code, step, slot] of presses) {
     f.emit(f.win, "keydown", { code });
     const input = frame(f.controls);
     assert.deepEqual([input.ammoStep, input.ammoSlot, input.fire], [step, slot, 1], code);
