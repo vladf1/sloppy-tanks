@@ -243,7 +243,7 @@ impl RenderLab {
 
     /// Replace the clear color without reloading the scene.
     pub fn set_background(&mut self, color: u32) {
-        let mut environment = self.renderer.environment().clone();
+        let mut environment = *self.renderer.environment();
         environment.background = color;
         self.renderer.set_environment(environment);
     }
