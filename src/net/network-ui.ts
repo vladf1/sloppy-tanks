@@ -1,13 +1,7 @@
 import { hudMarkup } from "../game/ui-markup";
 import { AMMO_ORDER } from "../game/ammo-options";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
-import type {
-  EngineEvent,
-  MatchState,
-  PlayerVehicleKind,
-  Team,
-  Weapon,
-} from "../game/engine-api";
+import type { EngineEvent, MatchState, PlayerVehicleKind, Team, Weapon } from "../game/engine-api";
 import {
   DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,

@@ -69,7 +69,12 @@ test("traffic bots create a room on the Rust server, drive with accepted input a
   const room = randomRoomCode();
   const bots = ["a", "b", "c"].map((id, index) => {
     const bot = new BotPlayer("bot-" + id, seeded(index + 7));
-    return { bot, closed: undefined as number | undefined, acked: 0, socket: undefined as WebSocket | undefined };
+    return {
+      bot,
+      closed: undefined as number | undefined,
+      acked: 0,
+      socket: undefined as WebSocket | undefined,
+    };
   });
   for (const [index, seat] of bots.entries()) {
     const socket = new WebSocket(`ws://${base}/room/${room}`, { origin: ORIGIN });
@@ -94,7 +99,10 @@ test("traffic bots create a room on the Rust server, drive with accepted input a
   }
   assert.equal(bots[0].bot.phase, "playing", "The creating bot starts the first round");
 
-  const timer = setInterval(() => bots.forEach(({ bot }) => bot.update(performance.now())), STEP_MS);
+  const timer = setInterval(
+    () => bots.forEach(({ bot }) => bot.update(performance.now())),
+    STEP_MS,
+  );
   await new Promise((resolve) => setTimeout(resolve, DRIVE_MS));
   clearInterval(timer);
 
