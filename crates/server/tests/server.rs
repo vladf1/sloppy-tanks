@@ -304,7 +304,12 @@ async fn reports_health_with_the_content_version_at_the_root_too() {
         "fields keep the TypeScript order"
     );
     let root = get(&base, "/", &[]).await;
-    assert_eq!((root.status, root.body), (200, health.body));
+    let dashboard = get(&base, "/dashboard", &[]).await;
+    assert_eq!(root.status, 200);
+    assert_eq!(
+        root.body, dashboard.body,
+        "the bare address shows the dashboard"
+    );
     server.close().await;
 }
 

@@ -434,7 +434,7 @@ async fn route(
         ("Vary", "Origin"),
     ];
     match path.as_str() {
-        "/" | "/health" => {
+        "/health" => {
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
             let health = Health {
                 version: PROTOCOL_VERSION,
@@ -460,7 +460,9 @@ async fn route(
             let json = serde_json::to_string(&stats).expect("stats serialize");
             reply(200, Reply::Json(json), &[("Cache-Control", "no-store")])
         }
-        "/dashboard" | "/dashboard/" => {
+        // The bare address shows the dashboard: people open it in a browser, and scripts
+        // read /health.
+        "/" | "/dashboard" | "/dashboard/" => {
             let mut response = Response::builder().status(200);
             for (name, value) in PAGE_HEADERS {
                 response = response.header(name, value);

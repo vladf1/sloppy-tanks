@@ -1,7 +1,7 @@
 # Multiplayer server
 
 `sloppy-server` is one native Rust process that hosts every room in memory. It
-serves `/health`, `/rooms`, `/stats`, `/dashboard` and the `/room/CODE` WebSocket
+serves `/health`, `/rooms`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
 on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
