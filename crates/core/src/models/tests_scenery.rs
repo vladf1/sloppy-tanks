@@ -12,9 +12,11 @@
 //! renderOrder,frustumCulled` and `INST=count,matrices,colors` for instanced
 //! draws.
 //!
-//! The background forest (`pine-valley-landscape` child 4) is built from the
-//! props agent's tree models, still pending here: its subtree is skipped. So are
-//! the reflector target objects Three attaches under the water meshes.
+//! The reflector target objects Three attaches under the water meshes are skipped.
+//! The background forest's foliage is placed by Euler rotations, whose `sin`/`cos`
+//! can differ from V8's in the last bit; its normals (unlike its positions) show
+//! that in a few f32 ulps, so they are compared on a 1/65536 grid instead
+//! ([`forest_normals_match_typescript_on_a_grid`]).
 //!
 //! Set `SCENERY_DUMP=<file>` to write the Rust dump with full material summaries
 //! for diffing against the script's output.
@@ -330,16 +332,28 @@ fn sections() -> Vec<(String, Node)> {
     sections
 }
 
-/// Subtrees only one side builds: the pending forest and Three's reflector targets.
+/// Subtrees only one side builds: Three's reflector targets.
 fn skipped(section: &str, path: &str) -> bool {
-    (section == "village" && (path.starts_with("r.4.4.") || path.starts_with("r.4.1.")))
+    (section == "village" && path.starts_with("r.4.1."))
         || (section == "harbor" && path.starts_with("r.0."))
 }
 
 /// Lines whose child count differs only because of a skipped subtree.
 fn loose_children(section: &str, path: &str) -> bool {
-    (section == "village" && (path == "r.4.4" || path == "r.4.1"))
-        || (section == "harbor" && path == "r.0")
+    (section == "village" && path == "r.4.1") || (section == "harbor" && path == "r.0")
+}
+
+/// Forest batches whose normals are compared on a grid (see the module docs).
+fn grid_normals(section: &str, path: &str) -> bool {
+    section == "village" && path.starts_with("r.4.4.")
+}
+
+fn without_normals(line: &str) -> String {
+    let mut fields: Vec<&str> = line.split('|').collect();
+    if let Some(field) = fields.iter_mut().find(|f| f.starts_with("N=")) {
+        *field = "N=*";
+    }
+    fields.join("|")
 }
 
 fn without_children(line: &str) -> String {
@@ -386,6 +400,8 @@ fn scenery_matches_typescript() {
             let path = a.split('|').next().unwrap();
             let (a, b) = if loose_children(name, path) {
                 (without_children(a), without_children(b))
+            } else if grid_normals(name, path) {
+                (without_normals(a), without_normals(b))
             } else {
                 (a.to_string(), b.to_string())
             };
@@ -403,6 +419,31 @@ fn scenery_matches_typescript() {
         mismatches.len(),
         mismatches.join("\n")
     );
+}
+
+/// Normals of the background forest batches on a 1/65536 grid, printed by the
+/// same Node script (`Math.round(n * 65536) >>> 0`, FNV-1a).
+const FOREST_NORMALS: [u32; 12] = [
+    0x72ceb051, 0xffc44498, 0x676600a9, 0x55a63595, 0x6983d7ed, 0xf8860e3f, 0xa98e1337, 0x45f233a3,
+    0x3e336f69, 0x32763e85, 0x996b0ffd, 0xbf98d555,
+];
+
+#[test]
+fn forest_normals_match_typescript_on_a_grid() {
+    let village = VillageScenery::new();
+    let forest = &village.root.children[4].children[4];
+    let hashes: Vec<u32> =
+        forest
+            .children
+            .iter()
+            .map(|batch| {
+                let mesh = &batch.drawable.as_ref().expect("a batch").mesh;
+                fnv(mesh.normals.iter().flatten().map(|&n| {
+                    crate::geometry::math::js_round(f64::from(n) * 65536.0) as i64 as u32
+                }))
+            })
+            .collect();
+    assert_eq!(hashes, FOREST_NORMALS);
 }
 
 fn reference() -> String {
@@ -520,7 +561,7 @@ fn scenery_textures_per_theme() {
             "generated:quarry-sign",
         ]
     );
-    // The village also draws the (pending) tree models' textures.
+    // The village also draws the tree models' textures.
     let village = names(MapTheme::Village);
     for texture in [
         "textures/ground/dry-grass.webp",
@@ -591,6 +632,18 @@ r.4.2|pine-mountain-ridge|1|0|=|V=2457|I=14040|P=8eda18c3|N=d77fd824|U=4a0d61cb|
 r.4.3|-|1|1|=
 r.4.3.0|-|1|0|=|V=8400|I=-1|P=72061a56|N=14a64e51|U=99ef87a5|C=43c19091|A=-|X=-|M=4083e32b|F=1,1,0,1
 r.4.4|-|1|12|=
+r.4.4.0|-|1|0|=|V=3552|I=-1|P=a965684c|N=955de00f|U=423180c5|C=e4f0b505|A=-|X=-|M=c69807ea|F=1,1,0,1
+r.4.4.1|-|1|0|=|V=43200|I=-1|P=2f2885f2|N=413b49a5|U=4ff93c45|C=4cec1d55|A=-|X=-|M=6e8067c4|F=1,1,0,1
+r.4.4.2|-|1|0|=|V=6828|I=-1|P=f25411ef|N=7af486b1|U=1672d8b5|C=9da8dde9|A=-|X=-|M=411c49e7|F=1,1,0,1
+r.4.4.3|-|1|0|=|V=7200|I=-1|P=dffdc794|N=ddbab9db|U=a7a1cac5|C=-|A=-|X=-|M=02993172|F=1,1,0,1
+r.4.4.4|-|1|0|=|V=7200|I=-1|P=15b33451|N=6a0b2637|U=a7a1cac5|C=-|A=-|X=-|M=620964e9|F=1,1,0,1
+r.4.4.5|-|1|0|=|V=7920|I=-1|P=1368de24|N=e85472db|U=101a2f45|C=-|A=-|X=-|M=60959079|F=1,1,0,1
+r.4.4.6|-|1|0|=|V=6840|I=-1|P=613a5ef0|N=5516203b|U=baf25085|C=-|A=-|X=-|M=3df4f3c8|F=1,1,0,1
+r.4.4.7|-|1|0|=|V=6840|I=-1|P=2a720ed4|N=ecb23359|U=baf25085|C=-|A=-|X=-|M=fdf7dae7|F=1,1,0,1
+r.4.4.8|-|1|0|=|V=7524|I=-1|P=cadc3bec|N=1a942855|U=56f28065|C=-|A=-|X=-|M=81f3868c|F=1,1,0,1
+r.4.4.9|-|1|0|=|V=5760|I=-1|P=8cf24b1e|N=96756e2d|U=c7e6c1c5|C=-|A=-|X=-|M=e19daaef|F=1,1,0,1
+r.4.4.10|-|1|0|=|V=5760|I=-1|P=6fef4bad|N=7fa9a9db|U=c7e6c1c5|C=-|A=-|X=-|M=5c8f3850|F=1,1,0,1
+r.4.4.11|-|1|0|=|V=6336|I=-1|P=1dd02658|N=dab03449|U=8cdc2bc5|C=-|A=-|X=-|M=2bc50090|F=1,1,0,1
 r.5|village-meadow|1|2|=
 r.5.0|-|1|0|=|V=12|I=-1|P=c84148df|N=8f2c550b|U=-|C=-|A=-|X=windOrigin:2:b0e57cfa|M=543eda4f|F=0,1,0,1|INST=1948,3337f077,819444d3
 r.5.1|-|1|0|=|V=24|I=-1|P=8fefde65|N=ea4d8f85|U=3b55ff85|C=-|A=-|X=-|M=23d1a285|F=0,1,0,1|INST=601,116d27e5,c5dc1e08

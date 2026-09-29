@@ -7,8 +7,8 @@
 //! is `Instance::color`; the fading copies of shed boughs are plain transparent
 //! materials whose `opacity` presentation animates ([`super::fading_material`]).
 //!
-//! The temporary surfaces in `pending_props` also name `sandstone` and
-//! `quarry-dust`; those belong to the scenery port and are documented there.
+//! Rock cover draws with the scenery's sandstone and sand-drift effects
+//! ([`super::effects_scenery::SANDSTONE`], [`super::effects_scenery::SAND_DRIFT`]).
 
 use crate::scene::{Effect, Material};
 

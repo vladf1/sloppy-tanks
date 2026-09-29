@@ -74,7 +74,7 @@ fn descriptor(material: &Material) -> String {
 }
 
 fn color_hash(mesh: &Mesh, precision: Precision) -> u32 {
-    match mesh.attribute("color_alpha") {
+    match mesh.attribute(effects_scenery::VERTEX_ALPHA) {
         Some(alpha) => {
             fnv(mesh.colors.iter().zip(&alpha.data).flat_map(|(rgb, a)| {
                 [rgb[0], rgb[1], rgb[2], *a].map(|v| value_word(v, precision))

@@ -6,13 +6,7 @@
 //! `Random`, `ARENA`, `spawn_positions` and `quarry_layout` are exact ports (the
 //! scenery reference tests depend on them); `tree_model` is a placeholder.
 
-use std::sync::{Arc, OnceLock};
-
-use glam::DVec3;
-
 use crate::geometry::math::to_int32;
-use crate::geometry::{Mesh, cone_geometry};
-use crate::scene::{Material, Node};
 
 // PENDING: replaced by the simulation's `Random` (src/game/math.ts) at integration.
 /// Mulberry32 with the double-valued state of the TypeScript: `state` grows by the
@@ -146,51 +140,6 @@ pub fn quarry_layout() -> Vec<LayoutCover> {
         }
     }
     covers
-}
-
-/// The placement fields of `treeModel`'s cover argument (`Pick<Cover, "x" | "z" |
-/// "w" | "d" | "h">`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TreeDef {
-    pub x: f64,
-    pub z: f64,
-    pub w: f64,
-    pub d: f64,
-    pub h: f64,
-}
-
-/// `treeModel(c, detail)`'s level of detail.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TreeDetail {
-    Full,
-    Background,
-}
-
-// PENDING: replaced by the props agent's tree_models at integration.
-/// `treeModel(c, detail)`: a group positioned at `(x, 0, z)` whose direct children
-/// are mesh parts (the background forest re-parents them into one batch). This
-/// placeholder is one cone per tree and does not consume any shared RNG, like the
-/// real model (which seeds its own stream from the position).
-pub fn tree_model(def: &TreeDef, _detail: TreeDetail) -> Node {
-    static CONE: OnceLock<(Arc<Mesh>, Arc<Material>)> = OnceLock::new();
-    let (mesh, material) = CONE.get_or_init(|| {
-        let mut cone = cone_geometry(0.5, 1.0, 8);
-        cone.translate(0.0, 0.5, 0.0);
-        (
-            Arc::new(cone),
-            Arc::new(Material::standard(0x5c8c35, 0.0, 0.9)),
-        )
-    });
-    let mut group = Node::group("");
-    group.position = DVec3::new(def.x, 0.0, def.z);
-    let mut crown = Node::mesh(mesh.clone(), material.clone());
-    crown.scale = DVec3::new(def.w, def.h, def.d);
-    if let Some(drawable) = &mut crown.drawable {
-        drawable.cast_shadow = true;
-        drawable.receive_shadow = true;
-    }
-    group.children.push(crown);
-    group
 }
 
 #[cfg(test)]

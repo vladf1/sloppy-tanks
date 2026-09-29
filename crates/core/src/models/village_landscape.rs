@@ -14,8 +14,9 @@ use crate::scene::{Material, Node};
 use super::batching::batch;
 use super::ground_surfaces::ground_uvs;
 use super::model_primitives::put;
-use super::pending_scenery::{Random, TreeDef, TreeDetail, tree_model};
+use super::pending_scenery::Random;
 use super::scenery::{adopt_children, lerp, lerp_color, linear, smoothstep};
+use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use super::water_surface::{WaterKind, water_surface};
 
 /// Height of the creek's mirror plane.
@@ -205,9 +206,9 @@ const TREELINE: [[f64; 2]; 15] = [
     [67.0, 42.0],
 ];
 
-fn plant_tree(forest: &mut Node, def: TreeDef) {
-    let mut tree = tree_model(&def, TreeDetail::Background);
-    tree.position.y = valley_height(def.x, def.z) + mountain_rise(def.x, def.z);
+fn plant_tree(forest: &mut Node, shape: TreeShape) {
+    let mut tree = tree_model(&shape, TreeDetail::Background).node;
+    tree.position.y = valley_height(shape.x, shape.z) + mountain_rise(shape.x, shape.z);
     adopt_children(forest, tree);
 }
 
@@ -260,7 +261,7 @@ fn backdrop(group: &mut Node) {
         let span = rng.range(3.3, 5.6);
         plant_tree(
             &mut forest,
-            TreeDef {
+            TreeShape {
                 x,
                 z,
                 w: span,
@@ -273,7 +274,7 @@ fn backdrop(group: &mut Node) {
         let h = 8.0 + rng.next() * 2.0;
         plant_tree(
             &mut forest,
-            TreeDef {
+            TreeShape {
                 x,
                 z,
                 w: 4.4,

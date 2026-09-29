@@ -155,7 +155,6 @@ mod cottage_details;
 mod cover_model;
 pub mod effects_props;
 mod flags;
-mod pending_props;
 mod pickup_visuals;
 mod prop_support;
 mod quarry_barriers;

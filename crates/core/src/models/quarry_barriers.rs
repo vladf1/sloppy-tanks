@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use glam::DMat4;
 
+use super::concrete_surfaces::concrete_material;
+use super::harbor_surfaces::{HarborSurface, harbor_box};
 use super::model_primitives::{Cache, cylinder_part, material, put, shadowed};
-use super::pending_props::{HarborSurface, concrete_material, harbor_box};
 use super::prop_support::apply_matrix_to_node;
 use super::quarry_shapes::{
     HEDGEHOG_BEAMS, dragon_tooth_point, dragon_tooth_profile, dragon_tooth_variant,

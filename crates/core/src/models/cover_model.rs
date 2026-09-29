@@ -10,16 +10,15 @@ use std::f64::consts::PI;
 use glam::DVec3;
 
 use super::barrel_surfaces::explosive_barrel;
+use super::concrete_surfaces::concrete_wall;
 use super::cottage_details::cottage_details;
 use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
+use super::house_surfaces::{shingle_roof, siding_box, siding_gable};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, put, rotated};
-use super::pending_props::{
-    RubbleStone, concrete_wall, sandstone_footing, sandstone_rock, sandstone_rubble, shingle_roof,
-    siding_box, siding_gable,
-};
 use super::prop_support::Random;
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
 use super::quarry_shapes::quarry_rock_variant;
+use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
 use super::timber_model::{
     TimberHit, TimberJoin, TimberPart, TimberWall, add_timber_parts, timber_damage_stage,
     timber_parts,
