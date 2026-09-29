@@ -136,3 +136,15 @@ imports the generated `src/generated/engine/`.
 buttons reaches the engine with the next frame's input, so checks wait a frame.
 `scripts/profile.mjs` uses `game.debug_configure(seed, tanks, team)` and
 `game.debug_stress_burst()`.
+
+## Status (2026-09-29, late)
+
+- `pnpm run check` passes on `codex/rust-rewrite` (36:30 local): 504 Rust tests (1 ignored:
+  full soil bake), 36 TS tests, fmt/clippy (native, wasm, wasm+labs), Vite build, server build.
+- All 11 browser checks passed against the Rust engine (agent run); multiplayer checks passed
+  against the local Rust server.
+- Running: async pipeline compilation (cold Metal cache stalls the browser ~4.5 s with wgpu's
+  sync `create_render_pipeline`; rooms already wait via `gpuPending`).
+- Left: merge async compile work; final matched measurements vs baseline (readiness, frame
+  tails, memory, sizes); CI workflow unexercised on GitHub; tank preview asset not regenerated
+  (13/255 brighter); shell nits (first click after resume, late touch preference).
