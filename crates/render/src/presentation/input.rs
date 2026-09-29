@@ -95,7 +95,10 @@ impl InputFrame {
             down: on(slot::DOWN),
             left: on(slot::LEFT),
             right: on(slot::RIGHT),
-            touch_move: (get(slot::TOUCH_MOVE_X) as f64, get(slot::TOUCH_MOVE_Z) as f64),
+            touch_move: (
+                get(slot::TOUCH_MOVE_X) as f64,
+                get(slot::TOUCH_MOVE_Z) as f64,
+            ),
             fire: on(slot::FIRE),
             mine: get(slot::MINE) > 0.0,
             ammo_slot: get(slot::AMMO_SLOT).clamp(0.0, AMMO_ORDER.len() as f32) as u8,

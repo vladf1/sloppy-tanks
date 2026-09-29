@@ -77,7 +77,7 @@ use sloppy_render::gpu::{Renderer, RendererOptions};
 use sloppy_render::presentation::hud::health_bar_state;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
-use sloppy_render::presentation::{Presentation, PrepareStatus};
+use sloppy_render::presentation::{PrepareStatus, Presentation};
 use wasm_bindgen::prelude::*;
 
 /// Frame deltas are capped so a stalled tab never fast-forwards the match.
@@ -221,7 +221,10 @@ pub struct Game {
 impl Game {
     /// Create the renderer on `canvas`, build the chosen arena and begin
     /// preparing it. Rejects when WebGPU is unavailable.
-    pub async fn create(canvas: web_sys::HtmlCanvasElement, config_json: &str) -> Result<Game, JsValue> {
+    pub async fn create(
+        canvas: web_sys::HtmlCanvasElement,
+        config_json: &str,
+    ) -> Result<Game, JsValue> {
         console_error_panic_hook::set_once();
         let config: GameConfig =
             serde_json::from_str(config_json).map_err(|error| js_error(error.to_string()))?;
@@ -246,7 +249,9 @@ impl Game {
         }
         let client = Vec2::new(
             config.css_width.unwrap_or(f64::from(canvas.client_width())) as f32,
-            config.css_height.unwrap_or(f64::from(canvas.client_height())) as f32,
+            config
+                .css_height
+                .unwrap_or(f64::from(canvas.client_height())) as f32,
         );
         let renderer = Renderer::new(
             canvas,
@@ -457,8 +462,8 @@ impl Game {
             self.accumulator = 0.0;
         }
         let human = self.human_index();
-        let clear_input = self.sim.match_state.phase != MatchPhase::Playing
-            || !self.sim.tanks[human].alive;
+        let clear_input =
+            self.sim.match_state.phase != MatchPhase::Playing || !self.sim.tanks[human].alive;
         if clear_input {
             self.commands.clear();
         }
@@ -488,12 +493,12 @@ impl Game {
             self.view.rig.first_person.screen_angle(tank.heading) as f32;
         result[frame_slot::EVENTS] = self.events.len() as f32;
         result[frame_slot::CLEAR_INPUT] = f32::from(u8::from(clear_input));
-        result[frame_slot::HUD_DUE] =
-            f32::from(u8::from(self.frame_index % HUD_UPDATE_EVERY_FRAMES == 0));
+        result[frame_slot::HUD_DUE] = f32::from(u8::from(
+            self.frame_index.is_multiple_of(HUD_UPDATE_EVERY_FRAMES),
+        ));
         result[frame_slot::SIM_MS] = self.times.sim_ms as f32;
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
-        result[frame_slot::FIRST_PERSON] =
-            f32::from(u8::from(self.view.rig.first_person.enabled));
+        result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         self.frame_index += 1;
         Ok(result)
     }
@@ -736,7 +741,20 @@ impl Game {
                 })
             })
             .collect();
+        let fragments: Vec<Value> = self
+            .state
+            .fragments
+            .iter()
+            .take(64)
+            .map(|f| {
+                json!({
+                    "id": f.id, "shape": f.shape, "wreck": f.wreck, "part": f.part,
+                    "life": f.life, "createdAt": f.created_at, "y": f.position.y,
+                })
+            })
+            .collect();
         json!({
+            "fragmentViews": fragments,
             "seed": sim.seed,
             "phase": sim.match_state.phase,
             "match": sim.match_state,

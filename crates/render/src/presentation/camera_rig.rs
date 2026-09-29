@@ -315,7 +315,10 @@ mod tests {
         assert!(rig.camera.position.distance(expected) < 1e-4);
         // The screen centre aims near the tank (the aim plane is above the follow point).
         let aim = rig.aim(Vec2::ZERO);
-        assert!((aim.x - 10.0).abs() < 1e-3 && (aim.z + 5.0).abs() < 0.5, "{aim:?}");
+        assert!(
+            (aim.x - 10.0).abs() < 1e-3 && (aim.z + 5.0).abs() < 0.5,
+            "{aim:?}"
+        );
         // Screen up aims away from the camera (-Z).
         assert!(rig.aim(Vec2::new(0.0, 0.8)).z < -10.0);
         let view = rig.wreck_view;

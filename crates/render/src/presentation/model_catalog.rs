@@ -117,7 +117,13 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
         CoverKind::Tree => {
             let trunk_height = h.max(4.0);
             let mut crown = Node::group("tree-crown");
-            put(&mut crown, cylinder_part(0.35, trunk_height * 0.6, 0x7a5a3a, 8), 0.0, trunk_height * 0.3, 0.0);
+            put(
+                &mut crown,
+                cylinder_part(0.35, trunk_height * 0.6, 0x7a5a3a, 8),
+                0.0,
+                trunk_height * 0.3,
+                0.0,
+            );
             let mut foliage = Node::mesh(
                 Arc::new(cone_geometry(w.max(1.5) * 0.9, trunk_height * 0.8, 9)),
                 paint(0x3f7d3a),
@@ -150,7 +156,13 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
             stump_cut.position = DVec3::new(0.0, 0.5, 0.0);
             stump_cut.visible = false;
             root.children.push(stump_cut);
-            put(&mut root, cylinder_part(0.4, 0.5, 0x6d4f33, 8), 0.0, 0.25, 0.0);
+            put(
+                &mut root,
+                cylinder_part(0.4, 0.5, 0x6d4f33, 8),
+                0.0,
+                0.25,
+                0.0,
+            );
             tree = Some(TreeParts {
                 crown: "tree-crown".into(),
                 cut_surface: "tree-cut".into(),
@@ -158,16 +170,34 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
             });
         }
         CoverKind::Drum => {
-            put(&mut root, cylinder_part(w / 2.0, h, cover.color, 14), 0.0, h / 2.0, 0.0);
+            put(
+                &mut root,
+                cylinder_part(w / 2.0, h, cover.color, 14),
+                0.0,
+                h / 2.0,
+                0.0,
+            );
         }
         CoverKind::House => {
-            put(&mut root, box_part(w, h * 0.68, d, cover.color, 0.0), 0.0, h * 0.34, 0.0);
+            put(
+                &mut root,
+                box_part(w, h * 0.68, d, cover.color, 0.0),
+                0.0,
+                h * 0.34,
+                0.0,
+            );
             let mut roof = box_part(w + 0.4, h * 0.32, d + 0.4, 0xb23b2e, 0.0);
             roof.position = DVec3::new(0.0, h * 0.84, 0.0);
             root.children.push(roof);
         }
         _ => {
-            put(&mut root, box_part(w, h, d, cover.color, 0.0), 0.0, h / 2.0, 0.0);
+            put(
+                &mut root,
+                box_part(w, h, d, cover.color, 0.0),
+                0.0,
+                h / 2.0,
+                0.0,
+            );
         }
     }
     CoverModel { root, key, tree }
@@ -232,10 +262,22 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
     };
     let mut root = Node::group(format!("{} scenery", theme.name()));
     let size = ARENA * 2.0 + 6.0;
-    put(&mut root, box_part(size, 1.2, size, board, 0.4), 0.0, -0.8, 0.0);
+    put(
+        &mut root,
+        box_part(size, 1.2, size, board, 0.4),
+        0.0,
+        -0.8,
+        0.0,
+    );
     match theme {
         Theme::Village => {
-            put(&mut root, arena_floor(GroundKind::DryGrass, ARENA * 2.0), 0.0, 0.008, 0.0);
+            put(
+                &mut root,
+                arena_floor(GroundKind::DryGrass, ARENA * 2.0),
+                0.0,
+                0.008,
+                0.0,
+            );
         }
         _ => {
             let mut floor = Node::mesh(

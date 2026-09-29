@@ -27,7 +27,7 @@ pub mod view_settings;
 mod view;
 
 #[cfg(target_arch = "wasm32")]
-pub use view::{Presentation, PresentationStats, PrepareStatus};
+pub use view::{PrepareStatus, Presentation, PresentationStats};
 
 use crate::effects::EffectDefinition;
 
@@ -66,7 +66,7 @@ impl CosmeticRandom {
     }
 
     /// A value in [0, 1).
-    pub fn next(&mut self) -> f64 {
+    pub fn next_f64(&mut self) -> f64 {
         // xorshift64*
         let mut x = self.0;
         x ^= x >> 12;
@@ -80,8 +80,8 @@ impl CosmeticRandom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shader::{Pass, ShaderKey, shader_source};
     use crate::effects::EffectRegistry;
+    use crate::shader::{Pass, ShaderKey, shader_source};
     use sloppy_core::scene::Side;
 
     fn validate(label: &str, code: &str) {
@@ -121,7 +121,7 @@ mod tests {
     fn cosmetic_random_stays_in_range() {
         let mut random = CosmeticRandom::new(7);
         for _ in 0..1000 {
-            let value = random.next();
+            let value = random.next_f64();
             assert!((0.0..1.0).contains(&value));
         }
     }

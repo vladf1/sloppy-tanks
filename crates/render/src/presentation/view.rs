@@ -34,9 +34,7 @@ use super::suspension::TankSuspension;
 use super::theme::{
     SHADOW_BIAS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, Theme, ThemeLook, theme_look,
 };
-use super::view_settings::{
-    BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT,
-};
+use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT};
 use super::{CosmeticRandom, PRESENTATION_EFFECTS};
 use crate::color::hex_to_linear;
 use crate::effects::Effects;
@@ -137,9 +135,21 @@ fn world_height(bounds: &Aabb, world: &Mat4) -> f32 {
     let mut high = f32::NEG_INFINITY;
     for i in 0..8 {
         let corner = Vec3::new(
-            if i & 1 == 0 { bounds.min.x } else { bounds.max.x } as f32,
-            if i & 2 == 0 { bounds.min.y } else { bounds.max.y } as f32,
-            if i & 4 == 0 { bounds.min.z } else { bounds.max.z } as f32,
+            if i & 1 == 0 {
+                bounds.min.x
+            } else {
+                bounds.max.x
+            } as f32,
+            if i & 2 == 0 {
+                bounds.min.y
+            } else {
+                bounds.max.y
+            } as f32,
+            if i & 4 == 0 {
+                bounds.min.z
+            } else {
+                bounds.max.z
+            } as f32,
         );
         let y = world.transform_point3(corner).y;
         low = low.min(y);
@@ -152,9 +162,21 @@ fn lowest(bounds: &Aabb, world: &Mat4) -> f32 {
     (0..8)
         .map(|i| {
             let corner = Vec3::new(
-                if i & 1 == 0 { bounds.min.x } else { bounds.max.x } as f32,
-                if i & 2 == 0 { bounds.min.y } else { bounds.max.y } as f32,
-                if i & 4 == 0 { bounds.min.z } else { bounds.max.z } as f32,
+                if i & 1 == 0 {
+                    bounds.min.x
+                } else {
+                    bounds.max.x
+                } as f32,
+                if i & 2 == 0 {
+                    bounds.min.y
+                } else {
+                    bounds.max.y
+                } as f32,
+                if i & 4 == 0 {
+                    bounds.min.z
+                } else {
+                    bounds.max.z
+                } as f32,
             );
             world.transform_point3(corner).y
         })
@@ -418,9 +440,12 @@ struct FallingBranch {
     resting_y: f32,
 }
 
+/// An animated scenery part: its instance, placement and motion over time.
+type SceneryMoverView = (InstanceId, DMat4, fn(f64) -> DMat4);
+
 struct SceneryView {
     statics: InstanceId,
-    movers: Vec<(InstanceId, DMat4, fn(f64) -> DMat4)>,
+    movers: Vec<SceneryMoverView>,
     water: Option<WaterSettings>,
 }
 
@@ -554,7 +579,9 @@ impl Presentation {
             random,
             scratch: Vec::new(),
         };
-        presentation.flags.update(&mut presentation.renderer, 0.0, &mut presentation.random);
+        presentation
+            .flags
+            .update(&mut presentation.renderer, 0.0, &mut presentation.random);
         presentation
     }
 
@@ -1026,10 +1053,7 @@ impl Presentation {
         if event.kind == SimEventType::Respawn {
             return;
         }
-        if matches!(
-            event.kind,
-            SimEventType::Pickup | SimEventType::Promotion
-        ) {
+        if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
         }
         // Fiery blasts light the scene; burnouts smoulder without a flash.
@@ -1122,7 +1146,8 @@ impl Presentation {
             && (rig.in_first_person || (!rig.first_person.enabled && rig.seat_blend == 0.0));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);
-        self.renderer.set_transform(self.reticle.instance, self.crosshair);
+        self.renderer
+            .set_transform(self.reticle.instance, self.crosshair);
         self.flash *= (-dt * FEEDBACK.flash_decay).exp() as f32;
         self.renderer.set_point_light(
             FLASH_LIGHT,
@@ -1287,7 +1312,8 @@ impl Presentation {
             // The camera flies through the player's bar on the way into the turret.
             renderer.set_visible(view.bar, tank.alive && !(viewer && seat_blend > 0.0));
             let (fills, ranks, shield, shield_fill, spawn, spawn_fill) = bar_joints;
-            let meters = protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
+            let meters =
+                protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
             renderer.set_node_visible(view.bar, shield.index, meters.shield_visible);
             renderer.set_node_transform(
                 view.bar,
@@ -1328,9 +1354,8 @@ impl Presentation {
             let mut x = lerp(tank.previous.x, position.x, alpha);
             let y = position.y - TANK_MODEL_DROP;
             let mut z = lerp(tank.previous.z, position.z, alpha);
-            let hit_remaining = (self.hit_until.get(&tank.id).copied().unwrap_or(0.0)
-                - self.time)
-                .max(0.0);
+            let hit_remaining =
+                (self.hit_until.get(&tank.id).copied().unwrap_or(0.0) - self.time).max(0.0);
             let hit_fade = hit_remaining / FEEDBACK.recoil_seconds;
             let hit_age = FEEDBACK.recoil_seconds - hit_remaining;
             // Render-only recoil: physics, steering and the camera keep the true pose.
@@ -1367,7 +1392,8 @@ impl Presentation {
                 suspension.roll.angle as f32,
             );
             let aim = if seated { look_yaw } else { tank.aim };
-            let turret_rotation = hull_rotation * Quat::from_rotation_y((aim - tank.heading) as f32);
+            let turret_rotation =
+                hull_rotation * Quat::from_rotation_y((aim - tank.heading) as f32);
             let hull_pose = hull.with_rotation(hull_rotation);
             let turret_pose = turret.with_rotation(turret_rotation);
             let barrel_pose = barrel.with_position(Vec3::new(
@@ -1380,11 +1406,8 @@ impl Presentation {
             } else {
                 (self.time * velocity.x.hypot(velocity.z) * TRACK_SCROLL) % TRACK_PERIOD
             };
-            let track_pose = track.with_position(Vec3::new(
-                track.position.x,
-                track.position.y,
-                scroll as f32,
-            ));
+            let track_pose =
+                track.with_position(Vec3::new(track.position.x, track.position.y, scroll as f32));
             for (joint, pose) in [
                 (hull.index, hull_pose),
                 (turret.index, turret_pose),
@@ -1398,7 +1421,11 @@ impl Presentation {
                 camera_rotation,
                 Vec3::new(
                     x as f32,
-                    if viewer { PLAYER_BAR_HEIGHT } else { BAR_HEIGHT } as f32,
+                    if viewer {
+                        PLAYER_BAR_HEIGHT
+                    } else {
+                        BAR_HEIGHT
+                    } as f32,
                     z as f32,
                 ),
             );
@@ -1488,14 +1515,10 @@ impl Presentation {
                     Vec3::new(effect.x, 0.0, effect.z),
                 ),
             );
-            self.renderer
-                .set_opacity(effect.ring, (0.85 * fade) as f32);
-            let tank = effect.tank.and_then(|id| {
-                state
-                    .tanks
-                    .iter()
-                    .find(|tank| tank.id == id && tank.alive)
-            });
+            self.renderer.set_opacity(effect.ring, (0.85 * fade) as f32);
+            let tank = effect
+                .tank
+                .and_then(|id| state.tanks.iter().find(|tank| tank.id == id && tank.alive));
             self.renderer.set_visible(effect.glow, tank.is_some());
             if let Some(tank) = tank {
                 let position = tank.position;
@@ -1512,12 +1535,10 @@ impl Presentation {
                         ),
                     ),
                 );
-                self.renderer
-                    .set_opacity(effect.glow, (0.2 * fade) as f32);
+                self.renderer.set_opacity(effect.glow, (0.2 * fade) as f32);
             }
         }
     }
-
 
     fn update_covers(&mut self, state: &RenderState) {
         let mut shed = Vec::new();
@@ -1561,7 +1582,8 @@ impl Presentation {
                 }
                 self.renderer
                     .set_node_visible(view.instance, tree.crown, !stump);
-                self.renderer.set_node_visible(view.instance, tree.cut, stump);
+                self.renderer
+                    .set_node_visible(view.instance, tree.cut, stump);
             }
             self.renderer
                 .set_visible(view.instance, cover.alive || stump);
@@ -1589,7 +1611,9 @@ impl Presentation {
             .tree
             .as_ref()
             .and_then(|tree| nodes.iter().position(|node| node.name == tree.crown))
-            .map_or(view.world, |crown| joint_world(nodes, &[], view.world, crown));
+            .map_or(view.world, |crown| {
+                joint_world(nodes, &[], view.world, crown)
+            });
         let mut branch = source.clone();
         branch.position = DVec3::ZERO;
         branch.rotation = glam::DQuat::IDENTITY;
@@ -1611,11 +1635,11 @@ impl Presentation {
         outward.y = 0.0;
         let outward = outward.normalize_or_zero();
         let random = &mut self.random;
-        let speed = 1.2 + random.next() as f32;
+        let speed = 1.2 + random.next_f64() as f32;
         let spin = Vec3::new(
-            random.next() as f32 - 0.5,
-            random.next() as f32 - 0.5,
-            random.next() as f32 - 0.5,
+            random.next_f64() as f32 - 0.5,
+            random.next_f64() as f32 - 0.5,
+            random.next_f64() as f32 - 0.5,
         );
         self.branches.push_back(FallingBranch {
             model,
@@ -1780,7 +1804,8 @@ impl Presentation {
                         view.instance,
                         Mat4::from_scale_rotation_translation(scale, rotation, position),
                     );
-                    self.renderer.set_tint(view.instance, linear(fragment.color));
+                    self.renderer
+                        .set_tint(view.instance, linear(fragment.color));
                 }
                 FragmentLook::Wreck(..) | FragmentLook::Owned(..) => {
                     let (scale, bounds) = match &view.look {
@@ -1793,7 +1818,8 @@ impl Presentation {
                     };
                     let scale = Vec3::splat(scale);
                     if cleanup > 0.0 {
-                        let world = Mat4::from_scale_rotation_translation(scale, rotation, position);
+                        let world =
+                            Mat4::from_scale_rotation_translation(scale, rotation, position);
                         let sink = *view
                             .sink
                             .get_or_insert_with(|| world_height(&bounds, &world) + SINK_MARGIN);
@@ -1837,7 +1863,10 @@ impl Presentation {
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
             let part = fragment.part.unwrap_or(WreckPart::Hull);
-            let model = self.library.wreck(&mut self.renderer, kind, team, part).model;
+            let model = self
+                .library
+                .wreck(&mut self.renderer, kind, team, part)
+                .model;
             (model, FragmentLook::Wreck(kind, team, part))
         } else {
             let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
@@ -1943,7 +1972,7 @@ impl Flags {
             wind_from: random_wind(random),
             wind_to: random_wind(random),
             wind_start: 0.0,
-            wind_duration: 3.0 + random.next() * 4.0,
+            wind_duration: 3.0 + random.next_f64() * 4.0,
         }
     }
 
@@ -1954,7 +1983,7 @@ impl Flags {
             self.wind_start += self.wind_duration;
             self.wind_from = self.wind_to;
             self.wind_to = random_wind(random);
-            self.wind_duration = 3.0 + random.next() * 4.0;
+            self.wind_duration = 3.0 + random.next_f64() * 4.0;
         }
         let progress = ((time - self.wind_start) / self.wind_duration).max(0.0);
         let blend = progress * progress * (3.0 - 2.0 * progress);
@@ -1968,5 +1997,8 @@ impl Flags {
 }
 
 fn random_wind(random: &mut CosmeticRandom) -> (f64, f64) {
-    (0.15 + random.next() * 0.85, (random.next() - 0.5) * 1.3)
+    (
+        0.15 + random.next_f64() * 0.85,
+        (random.next_f64() - 0.5) * 1.3,
+    )
 }

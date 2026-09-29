@@ -86,8 +86,14 @@ mod tests {
 
     #[test]
     fn health_colors_follow_the_thresholds() {
-        assert_eq!(health_bar_state(100.0, 100.0, Team::Red).tone, HealthColor::Team);
-        assert_eq!(health_bar_state(60.0, 100.0, Team::Red).tone, HealthColor::Warning);
+        assert_eq!(
+            health_bar_state(100.0, 100.0, Team::Red).tone,
+            HealthColor::Team
+        );
+        assert_eq!(
+            health_bar_state(60.0, 100.0, Team::Red).tone,
+            HealthColor::Warning
+        );
         assert_eq!(health_bar_state(30.0, 100.0, Team::Red).color, 0xff7c73);
         assert_eq!(health_bar_state(-5.0, 100.0, Team::Blue).ratio, 0.0);
         let meters = protection_meters(true, 5.0, 60.0, 1.0);

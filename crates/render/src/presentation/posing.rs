@@ -58,7 +58,12 @@ impl JointBasis {
 
 /// World transform of joint `index`, given the root's world matrix and the
 /// instance's joint overrides (`None` keeps the rest pose).
-pub fn joint_world(nodes: &[ModelNode], overrides: &[Option<Mat4>], root: Mat4, index: usize) -> Mat4 {
+pub fn joint_world(
+    nodes: &[ModelNode],
+    overrides: &[Option<Mat4>],
+    root: Mat4,
+    index: usize,
+) -> Mat4 {
     if index == 0 {
         return root;
     }

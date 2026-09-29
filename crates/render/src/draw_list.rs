@@ -206,7 +206,18 @@ impl DrawListBuilder {
                     Source::Range { first, count } => (first, count),
                     Source::Record(index) => {
                         self.records.push(self.pending_records[index as usize]);
-                        (base + self.records.len() as u32 - 1, 1)
+                        let at = base + self.records.len() as u32 - 1;
+                        // Neighbours in the sorted order that share a class draw as
+                        // one instanced call: instances rasterize in order, so the
+                        // blend order is unchanged (tank bars, pickup glows).
+                        if let Some(last) = draws.transparent.last_mut()
+                            && last.class == item.class
+                            && last.first_instance + last.instance_count == at
+                        {
+                            last.instance_count += 1;
+                            continue;
+                        }
+                        (at, 1)
                     }
                 };
                 draws.transparent.push(Draw {
@@ -284,6 +295,19 @@ mod tests {
             .map(|d| d.class)
             .collect();
         assert_eq!(classes, [3, 2, 4, 1]);
+        // Neighbours of one class merge; a class between them keeps them apart.
+        builder.clear();
+        for (class, order, depth) in [(5, 1, 30.0), (5, 1, 20.0), (6, 1, 10.0), (5, 1, 5.0)] {
+            let r = builder.record(record(depth));
+            builder.push(MAIN_VIEW, class, true, order, depth, r);
+        }
+        builder.finish(0, &mut views);
+        let draws: Vec<_> = views[MAIN_VIEW]
+            .transparent
+            .iter()
+            .map(|d| (d.class, d.instance_count))
+            .collect();
+        assert_eq!(draws, [(5, 2), (6, 1), (5, 1)]);
         builder.clear();
         builder.finish(0, &mut views);
         assert!(views[MAIN_VIEW].is_empty());

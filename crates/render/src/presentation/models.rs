@@ -13,15 +13,12 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use sloppy_core::geometry::{
-    CylinderGeometry, Mesh, RingGeometry, Shape, box_geometry, circle_geometry,
-    cylinder_geometry, plane_geometry, plane_geometry_segments, ring_geometry,
-    rounded_box_geometry, shape_geometry, sphere_geometry, tetrahedron_geometry,
-    torus_geometry,
+    CylinderGeometry, Mesh, RingGeometry, Shape, box_geometry, circle_geometry, cylinder_geometry,
+    plane_geometry, plane_geometry_segments, ring_geometry, rounded_box_geometry, shape_geometry,
+    sphere_geometry, tetrahedron_geometry, torus_geometry,
 };
 use sloppy_core::models::{DEFAULT_BOX_RADIUS, TEAM_COLORS, box_part, cylinder_part, paint, put};
-use sloppy_core::scene::{
-    Blending, Color, Effect, Material, Node, Side, TextureRef, Wrap,
-};
+use sloppy_core::scene::{Blending, Color, Effect, Material, Node, Side, TextureRef, Wrap};
 use sloppy_core::sim::arena::spawn_positions;
 use sloppy_core::sim::data::{MINE_RADIUS, SHIELD_CAPACITY, pickup};
 use sloppy_core::sim::maps::GroundKind;
@@ -268,7 +265,11 @@ fn reticle_layer(outline: bool, ink: Arc<Material>, center: Option<Arc<Material>
     let across = arc(plane_geometry(length, width));
     let along = arc(plane_geometry(width, length));
     for (x, z) in [(-0.83, 0.0), (0.83, 0.0), (0.0, -0.83), (0.0, 0.83)] {
-        let geometry = if x == 0.0 { along.clone() } else { across.clone() };
+        let geometry = if x == 0.0 {
+            along.clone()
+        } else {
+            across.clone()
+        };
         nodes.push(at(flat(mesh(geometry, ink.clone(), order)), x, 0.0, z));
     }
     if let Some(center) = center {
@@ -426,7 +427,13 @@ pub fn pickup_gem(kind: PickupKind) -> Node {
 pub fn pickup_base(kind: PickupKind) -> Node {
     let color = pickup(kind).color;
     let mut root = Node::group("pickup");
-    put(&mut root, cylinder_part(1.05, 0.12, 0x25435f, 24), 0.0, 0.08, 0.0);
+    put(
+        &mut root,
+        cylinder_part(1.05, 0.12, 0x25435f, 24),
+        0.0,
+        0.08,
+        0.0,
+    );
     let torus = arc(torus_geometry(0.94, 0.045, 5, 24));
     for (name, opacity) in [(joint::PICKUP_RING, 1.0), (joint::PICKUP_RING_DIM, 0.2)] {
         let material = Arc::new(Material {
@@ -509,7 +516,13 @@ pub fn pickup_effect_glow() -> Node {
 /// A mine painted like the pickups' bases, with a blinking team cap.
 pub fn mine(team: Team) -> Node {
     let mut root = Node::group("mine");
-    put(&mut root, cylinder_part(MINE_RADIUS, 0.17, 0x384f47, 12), 0.0, 0.12, 0.0);
+    put(
+        &mut root,
+        cylinder_part(MINE_RADIUS, 0.17, 0x384f47, 12),
+        0.0,
+        0.12,
+        0.0,
+    );
     put(
         &mut root,
         named(
@@ -563,7 +576,10 @@ pub fn barrel_scrap(lid: bool) -> Mesh {
         *position = moved.map(|v| v as f32);
     }
     let bounds = sloppy_core::geometry::Aabb::from_points(
-        geometry.positions.iter().map(|p| sloppy_core::geometry::widen(*p)),
+        geometry
+            .positions
+            .iter()
+            .map(|p| sloppy_core::geometry::widen(*p)),
     );
     let size = bounds.size();
     geometry.center();
@@ -577,7 +593,13 @@ pub fn barrel_scrap(lid: bool) -> Mesh {
 pub fn debris_piece(shape: FragmentShape) -> Option<Node> {
     let white = paint(0xffffff);
     let geometry = match shape {
-        FragmentShape::Armor => arc(rounded_box_geometry(1.25, 0.16, 0.85, 1, DEFAULT_BOX_RADIUS)),
+        FragmentShape::Armor => arc(rounded_box_geometry(
+            1.25,
+            0.16,
+            0.85,
+            1,
+            DEFAULT_BOX_RADIUS,
+        )),
         FragmentShape::Wheel => arc(cylinder_geometry(0.48, 0.48, 0.28, 10)),
         FragmentShape::Track => arc(rounded_box_geometry(0.5, 0.2, 1.5, 1, DEFAULT_BOX_RADIUS)),
         FragmentShape::Shard => arc(tetrahedron_geometry(0.75, 0)),
@@ -627,10 +649,34 @@ pub fn spawn_pads(scale: f64) -> Node {
         let color = TEAM_COLORS[team.index()];
         for position in spawn_positions(team, scale) {
             let (x, z) = (position.x, position.z);
-            put(&mut details, cylinder_part(2.75, 0.1, 0x283c4e, 8), x, 0.08, z);
-            put(&mut details, cylinder_part(2.52, 0.045, 0x718898, 8), x, 0.135, z);
-            put(&mut details, cylinder_part(2.37, 0.035, 0x223d51, 32), x, 0.17, z);
-            put(&mut details, cylinder_part(1.98, 0.025, 0x455e70, 8), x, 0.193, z);
+            put(
+                &mut details,
+                cylinder_part(2.75, 0.1, 0x283c4e, 8),
+                x,
+                0.08,
+                z,
+            );
+            put(
+                &mut details,
+                cylinder_part(2.52, 0.045, 0x718898, 8),
+                x,
+                0.135,
+                z,
+            );
+            put(
+                &mut details,
+                cylinder_part(2.37, 0.035, 0x223d51, 32),
+                x,
+                0.17,
+                z,
+            );
+            put(
+                &mut details,
+                cylinder_part(1.98, 0.025, 0x455e70, 8),
+                x,
+                0.193,
+                z,
+            );
             for i in 0..8 {
                 let angle = f64::from(i) * PI / 4.0;
                 let mut segment = Node::mesh(rim.clone(), paint(color));
@@ -738,7 +784,13 @@ pub fn arena_floor(kind: GroundKind, extent: f64) -> Node {
 /// its pole's foot. Instance data carries (gust, wind x, wind z, phase).
 pub fn flag(team: Team) -> Node {
     let mut root = Node::group("flag");
-    put(&mut root, cylinder_part(0.055, 4.8, 0x59656a, 8), 0.0, 2.4, 0.0);
+    put(
+        &mut root,
+        cylinder_part(0.055, 4.8, 0x59656a, 8),
+        0.0,
+        2.4,
+        0.0,
+    );
     let material = Arc::new(Material {
         color: Color(TEAM_COLORS[team.index()]),
         roughness: 1.0,
@@ -818,7 +870,9 @@ mod tests {
         for lid in [false, true] {
             let mesh = barrel_scrap(lid);
             let bounds = sloppy_core::geometry::Aabb::from_points(
-                mesh.positions.iter().map(|p| sloppy_core::geometry::widen(*p)),
+                mesh.positions
+                    .iter()
+                    .map(|p| sloppy_core::geometry::widen(*p)),
             );
             let size = bounds.size();
             assert!((size.x - 1.0).abs() < 1e-5 && (size.y - 1.0).abs() < 1e-5);
@@ -826,6 +880,8 @@ mod tests {
         assert_eq!(spawn_pads(1.0).children.len(), 10 * (4 + 16 + 10 + 1 + 2));
         assert_eq!(flag_placements().len(), 10);
         let uv = pickup_atlas_uv(PickupKind::Spread, 0.0, 1.0);
-        assert!((uv[0] - 16.0 / 864.0).abs() < 1e-12 && (uv[1] - (1.0 - 16.0 / 864.0)).abs() < 1e-12);
+        assert!(
+            (uv[0] - 16.0 / 864.0).abs() < 1e-12 && (uv[1] - (1.0 - 16.0 / 864.0)).abs() < 1e-12
+        );
     }
 }
