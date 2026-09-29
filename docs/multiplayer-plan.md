@@ -105,6 +105,11 @@ New modules:
 | `src/net/connection.ts`             | Client: WebSocket, reconnect with a seat token, ping, and the dev-only delay harness                                                                     |
 | `server/`                           | Node HTTP/WebSocket server, room sessions, room catalog, rate limits, monitoring, esbuild bundle and `tsconfig.json`; `deploy/vps/` holds the host setup |
 
+In the Rust rewrite the browser client's replication, interpolation and connection run in
+`crates/core/src/net/` (`client.rs`, `network_timeline.rs`, `replication.rs`), bound for the
+page by `NetGame` (`crates/web/src/net_game.rs`); `src/net/client.ts` only adapts sockets,
+timers, storage and the DOM.
+
 Local single-player adapts its `Simulation` to the same read-only presentation boundary. The network mirror does not construct or step a gameplay simulation, mutate physics bodies for interpolation, or cast stand-in objects to `RAPIER.RigidBody`. Keep menu actions and simulation-specific diagnostics outside that read-only contract. Reuse persistent entity views or bounded buffers to avoid introducing a full scene allocation on every frame.
 
 ## Protocol v1

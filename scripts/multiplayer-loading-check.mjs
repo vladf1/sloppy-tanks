@@ -114,8 +114,15 @@ try {
       `Multiplayer loads ${file}`,
     );
   }
+  // The room page runs on the engine Wasm; Rapier's JS build and binary stay out.
+  const binaries = networkRequests
+    .map((url) => new URL(url).pathname)
+    .filter((path) => path.endsWith(".wasm"));
+  assert.ok(
+    binaries.length > 0 && binaries.every((path) => /\/engine_bg-[\w-]+\.wasm$/.test(path)),
+    `Multiplayer downloads only the engine Wasm: ${binaries.join(", ")}`,
+  );
   for (const url of networkRequests) {
-    assert.ok(!url.endsWith(".wasm"), "Multiplayer must not download client physics");
     const path = new URL(url).pathname;
     const modules = [...chunks].find(([file]) => path.endsWith(`/${file}`))?.[1].modules ?? [];
     assert.ok(
@@ -128,7 +135,7 @@ try {
     );
   }
   result.networkRequests = networkRequests;
-  console.log("Multiplayer: no client simulation, Rapier JS or Rapier WASM requests.");
+  console.log("Multiplayer: the engine Wasm only; no TypeScript simulation or Rapier JS/WASM.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.httpServer.close(resolve));

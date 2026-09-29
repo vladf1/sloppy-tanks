@@ -235,9 +235,9 @@ export class NetworkStats {
             "Triangles submitted per rendered frame.",
           ],
           [
-            "GPU meshes",
+            "GPU geometries",
             stats.meshes,
-            "Distinct mesh buffers currently uploaded to the GPU. Changes on map load, not per frame.",
+            "Distinct geometry buffers currently uploaded to the GPU. Changes on map load, not per frame.",
           ],
           [
             "GPU textures",

@@ -71,9 +71,11 @@ socket shows.
 
 `pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
 multiplayer requests, sockets or UI in single-player, server or traffic-bot code in
-any browser chunk, and client simulation or Rapier JS/WASM downloads when opening
-multiplayer. `tests/multiplayer-client-imports.test.ts` guards the same import
-boundary in `pnpm test` and prints the offending import chain.
+any browser chunk, and any download but the engine Wasm, the TypeScript simulation or
+Rapier JS/WASM when opening a room. `tests/multiplayer-client-imports.test.ts` guards
+the same import boundary in `pnpm test` (no TypeScript engine, replication, schema
+readers, physics or Three.js from the room page or room list) and prints the
+offending import chain.
 It also checks that a room link opens Battle Setup rather than a room page, that
 multiplayer's extracted stylesheet loads only once a room is entered, that inactive
 menu actions stay hidden, and that the menu fits desktop viewports.
@@ -112,8 +114,9 @@ Use `SLOPPY_URL` for either the local Vite URL or the public dev site,
 separate evidence. Buttons and room selection
 use physical coordinate clicks.
 
-`node scripts/multiplayer-restart-check.mjs` starts an isolated local server on
-port 8790 that admits the `SLOPPY_URL` origin, kills and restarts it during a round
+`node scripts/multiplayer-restart-check.mjs` starts an isolated native server
+(`target/server/sloppy-server`) on port 8790, or `SLOPPY_RESTART_PORT`, that admits the
+`SLOPPY_URL` origin, kills and restarts it during a round
 (a crash, not a graceful stop) and checks that the connection dialog shows, that the
 browser returns to a fresh lobby and prepares another map, and that a graceful stop
 then shows the room-closed dialog with its way back to Battle Setup. Run

@@ -13,14 +13,16 @@ import {
 const output = "artifacts/performance/multiplayer/restart";
 await mkdir(output, { recursive: true });
 const url = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
-const PORT = 8790;
+// Other sessions may hold the usual local ports; SLOPPY_RESTART_PORT picks another.
+const PORT = Number(process.env.SLOPPY_RESTART_PORT ?? 8790);
 url.searchParams.set("multiplayer", "");
 url.searchParams.set("server", `ws://127.0.0.1:${PORT}`);
 let server,
   logs = "";
 const errors = [];
 async function startServer() {
-  server = spawn(process.execPath, ["--enable-source-maps", "server/dist/server.mjs"], {
+  // The native server `pnpm run server:build` produces.
+  server = spawn("target/server/sloppy-server", [], {
     // Admit whichever Vite origin the check was given, not only the default local ports.
     env: { ...process.env, PORT: String(PORT), ALLOWED_ORIGINS: url.origin },
     stdio: ["ignore", "pipe", "pipe"],

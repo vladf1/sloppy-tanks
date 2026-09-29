@@ -150,26 +150,25 @@ try {
   if (new URL(base).hostname === "127.0.0.1") {
     const score = await alice.page.evaluate(() => {
       const game = window.sloppyMultiplayer,
-        original = game.display;
+        original = game.hud;
       game.ui.update(
         {
           ...original,
-          tanks: original.tanks.map((tank) => ({
+          scoreboard: original.scoreboard.map((tank) => ({
             ...tank,
-            kills: tank.id === original.viewerId ? 4 : tank.kills,
+            kills: tank.id === original.human.id ? 4 : tank.kills,
           })),
         },
-        0,
         0,
         true,
       );
       const text = document.querySelector(
         `[data-player-id="${game.connection.playerId}"] b`,
       ).textContent;
-      game.ui.update(original, 0, 0, true);
+      game.ui.update(original, 0, true);
       return text;
     });
-    assert.equal(score, "4", "The live list renders kill updates from authoritative render state");
+    assert.equal(score, "4", "The live list renders kill updates from the engine's HUD record");
   }
   const polls = clients.map((client) => client.listRequests);
   await until(() => clients.every((client) => client.updates > 10), "Clients receive updates");
