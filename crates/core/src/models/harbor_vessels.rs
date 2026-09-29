@@ -10,7 +10,7 @@ use crate::geometry::{Mesh, torus_geometry};
 use crate::scene::Node;
 
 use super::batching::batch;
-use super::harbor_models::{CargoShape, shipping_container};
+use super::harbor_models::{CargoShape, ship_container};
 use super::harbor_surfaces::{HarborSurface, harbor_box, harbor_material, steel_box};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, paint, put, rotated};
 use super::model_primitives::{adopt_children, span_between};
@@ -89,7 +89,7 @@ fn container_ship(color: u32, variant: usize) -> Node {
             for level in 0..levels {
                 let mut cargo = Node::group("");
                 let paint_index = (bay + level * 2 + variant + usize::from(row > 0.0)) % 5;
-                shipping_container(
+                ship_container(
                     &mut cargo,
                     CargoShape {
                         w: 9.6,

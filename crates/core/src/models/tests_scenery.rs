@@ -18,6 +18,10 @@
 //! that in a few f32 ulps, so they are compared on a 1/65536 grid instead
 //! ([`forest_normals_match_typescript_on_a_grid`]).
 //!
+//! The moored ships' cargo departs from the TypeScript on purpose: its fittings
+//! are square boxes (`ship_container`), so the ships' painted batches are
+//! compared without their geometry ([`square_ship_fittings`]).
+//!
 //! Set `SCENERY_DUMP=<file>` to write the Rust dump with full material summaries
 //! for diffing against the script's output.
 
@@ -345,6 +349,26 @@ fn loose_children(section: &str, path: &str) -> bool {
     (section == "village" && path == "r.4.1") || (section == "harbor" && path == "r.0")
 }
 
+/// The ships' painted batches, which carry their cargo (fleet child `ship.1`).
+fn square_ship_fittings(section: &str, path: &str) -> bool {
+    let ships = ["0", "1", "2"];
+    match section {
+        "harbor" => ships.iter().any(|ship| path == format!("r.1.{ship}.1")),
+        "harbor-5.3" => ships.iter().any(|ship| path == format!("r.{ship}.1")),
+        _ => false,
+    }
+}
+
+fn without_geometry(line: &str) -> String {
+    line.split('|')
+        .map(|field| match field.split_once('=') {
+            Some((key @ ("V" | "I" | "P" | "N" | "U" | "C"), _)) => format!("{key}=*"),
+            _ => field.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 /// Forest batches whose normals are compared on a grid (see the module docs).
 fn grid_normals(section: &str, path: &str) -> bool {
     section == "village" && path.starts_with("r.4.4.")
@@ -404,6 +428,8 @@ fn scenery_matches_typescript() {
                 (without_children(a), without_children(b))
             } else if grid_normals(name, path) {
                 (without_normals(a), without_normals(b))
+            } else if square_ship_fittings(name, path) {
+                (without_geometry(a), without_geometry(b))
             } else {
                 (a.to_string(), b.to_string())
             };
@@ -582,6 +608,40 @@ fn scenery_textures_per_theme() {
         "harbor-label-loading",
     ] {
         assert!(effects_scenery::canvas_texture(key).is_some(), "{key}");
+    }
+}
+
+fn triangles(node: &Node) -> usize {
+    let own = node.drawable.as_ref().map_or(0, |drawable| {
+        let mesh = &drawable.mesh;
+        mesh.indices.as_ref().map_or(mesh.vertex_count(), Vec::len) / 3
+    });
+    own + node.children.iter().map(triangles).sum::<usize>()
+}
+
+#[test]
+fn ship_cargo_uses_square_fittings() {
+    let shape = CargoShape {
+        w: 9.6,
+        d: 4.5,
+        h: 3.2,
+        color: 0xcb7d43,
+    };
+    let built = |build: fn(&mut Node, CargoShape)| {
+        let mut group = Node::group("");
+        build(&mut group, shape);
+        triangles(&group)
+    };
+    let cover = built(shipping_container);
+    let cargo = built(harbor_models::ship_container);
+    assert!(
+        cargo * 5 < cover,
+        "cargo {cargo} vs cover {cover} triangles"
+    );
+    // Each ship is drawn for the view, the sun's shadow and the water reflection.
+    let harbor = HarborScenery::new();
+    for ship in &harbor.root.children[1].children[..3] {
+        assert!(triangles(ship) < 25_000, "{} triangles", triangles(ship));
     }
 }
 

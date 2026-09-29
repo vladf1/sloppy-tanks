@@ -43,9 +43,24 @@ pub struct CrateShape {
 pub const CARGO_SPLIT: &str = "cargo-split";
 const LOCK_SILVER: u32 = 0xc4c4ad;
 
+/// Corner radius of a container's small fittings (ribs, rails, doors, bars).
+const FITTING_RADIUS: f64 = 0.025;
+
 /// `shippingContainer(group, c)`: append a container's parts to `group`, long
 /// axis along x unless `d > w`.
 pub fn shipping_container(group: &mut Node, c: CargoShape) {
+    container_parts(group, c, FITTING_RADIUS);
+}
+
+/// A container stacked on a moored ship. Seen only across the basin, its fittings
+/// are square boxes: rounded ones (108 triangles each instead of 12) made every
+/// ship about 131,000 triangles, drawn again for shadows and the water reflection,
+/// and bound the harbor's frame time on the GPU for no visible difference.
+pub fn ship_container(group: &mut Node, c: CargoShape) {
+    container_parts(group, c, 0.0);
+}
+
+fn container_parts(group: &mut Node, c: CargoShape, fitting_radius: f64) {
     let along_z = c.d > c.w;
     let width = if along_z { c.d } else { c.w };
     let depth = if along_z { c.w } else { c.d };
@@ -53,7 +68,7 @@ pub fn shipping_container(group: &mut Node, c: CargoShape) {
         let mut mesh = if w * h * d > 1.0 {
             steel_box(w, h, d, color)
         } else {
-            box_part(w, h, d, color, 0.025)
+            box_part(w, h, d, color, fitting_radius)
         };
         if along_z {
             mesh = rotated(mesh, 0.0, FRAC_PI_2, 0.0);
