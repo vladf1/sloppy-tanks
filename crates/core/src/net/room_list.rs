@@ -60,8 +60,7 @@ pub struct RoomListing {
 impl RoomListing {
     /// `roomListingReader`.
     pub fn read(source: &Record) -> ReadResult<Self> {
-        let scores = field(source, "scores", |v| array(v, 2, |item| id32(Some(item))))?;
-        let listing = Self {
+        Ok(Self {
             room: field(source, "room", |v| {
                 let code = string(v, 8, 8)?;
                 if is_room_code(&code) {
@@ -89,12 +88,15 @@ impl RoomListing {
             time: field(source, "time", |v| {
                 number_in(v, 0.0, f64::from(MAX_ROUND_MINUTES * 60), false)
             })? as u32,
-            scores: [
-                scores.first().copied().unwrap_or(0),
-                scores.get(1).copied().unwrap_or(0),
-            ],
-        };
-        Ok(listing)
+            // `array(id, 2)`: up to two scores; a missing one reads as zero.
+            scores: field(source, "scores", |v| {
+                let scores = array(v, 2, |item| id32(Some(item)))?;
+                Ok([
+                    scores.first().copied().unwrap_or(0),
+                    scores.get(1).copied().unwrap_or(0),
+                ])
+            })?,
+        })
     }
 }
 
