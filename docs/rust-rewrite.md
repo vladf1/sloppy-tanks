@@ -82,7 +82,20 @@ installs the pinned toolchain through rustup and a cached wasm-bindgen-cli
 
 ## Download size
 
-SIZES_PLACEHOLDER
+Production `dist/index.html` plus `dist/assets/*` (all JavaScript, CSS and Wasm the
+game and room pages can load; textures, audio and previews are unchanged), gzip -9 and
+Brotli quality 11, measured locally on 2026-09-29 against the baseline build:
+
+| Build                             | Files | Raw bytes | Gzip bytes | Brotli bytes |
+| --------------------------------- | ----: | --------: | ---------: | -----------: |
+| Baseline (TS + Three + Rapier JS) |    19 | 3,636,073 |  1,144,674 |      882,570 |
+| Rust engine                       |    12 | 3,578,926 |  1,255,594 |      944,799 |
+
+The final build is one engine binary (`engine_bg-*.wasm`: 3,329,339 raw, 1,177,893 gzip,
+876,849 Brotli) and about 250 KB raw of page shell. The baseline split its engine
+into `graphics` (Three.js, 813,764 raw), `physics` (157,655) plus the Rapier Wasm
+(2,196,730) and the TypeScript engine chunks. Compressed, the Rust build is 7–10%
+larger; the labs feature keeps about 170 KB raw of render/effects lab code out of it.
 
 ## Single-player shell
 
