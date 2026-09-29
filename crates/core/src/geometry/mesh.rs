@@ -291,9 +291,31 @@ impl Mesh {
 /// `BufferGeometryUtils.mergeGeometries(geometries)` without groups: concatenates
 /// attributes, offsetting indices. Returns `None` when the meshes are not all
 /// indexed or all non-indexed, or do not share the same attribute set.
+///
+/// A mesh without vertices (a degenerate shape, a decal clipped flat against an
+/// edge) stores empty attribute arrays where Three kept empty attributes, so it
+/// merges with any layout and contributes nothing, as it did in Three.
 pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
     let first = meshes.first()?;
-    let indexed = first.indices.is_some();
+    let parts: Vec<&Mesh> = meshes
+        .iter()
+        .copied()
+        .filter(|mesh| mesh.vertex_count() > 0)
+        .collect();
+    let Some(template) = parts.first() else {
+        return Some(Mesh {
+            indices: first.indices.as_ref().map(|_| Vec::new()),
+            attributes: first
+                .attributes
+                .iter()
+                .map(|attribute| Attribute {
+                    data: Vec::new(),
+                    ..attribute.clone()
+                })
+                .collect(),
+            ..Mesh::default()
+        });
+    };
     let layout = |mesh: &Mesh| {
         let mut names: Vec<&str> = mesh.attributes.iter().map(|a| a.name).collect();
         names.sort_unstable();
@@ -305,15 +327,15 @@ pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
             names,
         )
     };
-    let expected = layout(first);
-    if meshes.iter().any(|mesh| layout(mesh) != expected) {
+    let expected = layout(template);
+    if parts.iter().any(|mesh| layout(mesh) != expected) {
         return None;
     }
     let mut merged = Mesh {
-        indices: indexed.then(Vec::new),
+        indices: template.indices.is_some().then(Vec::new),
         ..Mesh::default()
     };
-    for mesh in meshes {
+    for mesh in &parts {
         if let (Some(target), Some(source)) = (&mut merged.indices, &mesh.indices) {
             let offset = merged.positions.len() as u32;
             target.extend(source.iter().map(|i| i + offset));
@@ -323,9 +345,9 @@ pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
         merged.uvs.extend_from_slice(&mesh.uvs);
         merged.colors.extend_from_slice(&mesh.colors);
     }
-    for attribute in &first.attributes {
+    for attribute in &template.attributes {
         let mut data = Vec::new();
-        for mesh in meshes {
+        for mesh in &parts {
             let source = mesh.attribute(attribute.name)?;
             if source.item_size != attribute.item_size {
                 return None;
@@ -333,10 +355,49 @@ pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
             data.extend_from_slice(&source.data);
         }
         merged.attributes.push(Attribute {
-            name: attribute.name,
-            item_size: attribute.item_size,
             data,
+            ..attribute.clone()
         });
     }
     Some(merged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn triangle(offset: f32) -> Mesh {
+        Mesh {
+            positions: vec![
+                [offset, 0.0, 0.0],
+                [offset + 1.0, 0.0, 0.0],
+                [offset, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            ..Mesh::default()
+        }
+    }
+
+    #[test]
+    fn merging_concatenates_and_rejects_mismatched_layouts() {
+        let merged = merge_geometries(&[&triangle(0.0), &triangle(2.0)]).expect("same layout");
+        assert_eq!(merged.vertex_count(), 6);
+        assert_eq!(merged.positions[3], [2.0, 0.0, 0.0]);
+        let mut colored = triangle(4.0);
+        colored.colors = vec![[1.0; 3]; 3];
+        assert!(merge_geometries(&[&triangle(0.0), &colored]).is_none());
+    }
+
+    #[test]
+    fn meshes_without_vertices_merge_harmlessly() {
+        // A shape that triangulates to nothing has no normals, uvs or colors.
+        let empty = Mesh::default();
+        let mut colored = triangle(0.0);
+        colored.colors = vec![[0.5; 3]; 3];
+        let merged = merge_geometries(&[&empty, &colored, &empty]).expect("empty parts merge");
+        assert_eq!(merged, colored);
+        let only_empty = merge_geometries(&[&empty, &empty]).expect("nothing to merge");
+        assert_eq!(only_empty.vertex_count(), 0);
+    }
 }

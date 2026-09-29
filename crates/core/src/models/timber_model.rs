@@ -89,11 +89,6 @@ fn add_mark(group: &mut Node, p: &TimberPart, mark_index: usize, mark: &TimberMa
         } else {
             0.0
         });
-        // A scar clipped flat against an edge triangulates to nothing. Three merged
-        // its empty attributes harmlessly; `merge_geometries` would reject the batch.
-        if mesh.triangle_count() == 0 {
-            return;
-        }
         let offset = 0.003 + mark_index as f64 * 0.001 + layer * 0.001;
         put(
             group,
