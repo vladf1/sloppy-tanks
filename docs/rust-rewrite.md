@@ -24,12 +24,14 @@ Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate
 
 ## Checklist
 
-- [ ] Wave 1: core simulation port (+ tests)
-- [ ] Wave 1: geometry library + all models/scenery (CPU)
-- [ ] Wave 1: renderer foundation (PBR, shadows, fog, tone mapping, textures, instancing, custom effects)
-- [ ] Wave 1: native server infrastructure (HTTP, WS + deflate, limits, catalog, monitor, dashboard)
+- [x] Wave 1: core simulation port (+ 232 tests; construction/RNG parity exact vs TS)
+- [x] Wave 1: geometry library + vehicle models (bit-exact vs Three r185)
+- [ ] Wave 1b: cover/tree/prop models; map scenery
+- [x] Wave 1: renderer foundation (PBR, shadows, fog, tone mapping, textures, instancing, custom effects)
+- [x] Wave 1: native server infrastructure (HTTP, WS + deflate, limits, catalog, monitor, dashboard)
 - [ ] Wave 2: presentation + runtime effects (tanks, cover, fragments, particles, tracks, projectiles, HUD bars, cameras)
 - [ ] Wave 2: net: replication, scene codec, match host, client timeline/interpolation
 - [ ] Wave 2: web crate + TS shell (menus, UI, audio, controls, touch, network UI)
-- [ ] Wave 3: remove Three.js/TS engine and Node server; content-version hashing for Rust; deploy scripts
+- [x] Content-version hashing for Rust; static musl server build; VPS deploy scripts
+- [ ] Wave 3: remove Three.js/TS engine and Node server
 - [ ] Wave 3: final verification (cargo fmt/clippy/test, pnpm check, browser checks, multiplayer, measurements)
