@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use glam::{DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::{Aabb, node_bounds};
-use sloppy_core::models::{self, part, tank_model, tank_visual_muzzle, wreck_model};
+use sloppy_core::models::{part, tank_model, tank_visual_muzzle, wreck_model};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
@@ -84,16 +84,6 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 fn linear(hex: u32) -> [f32; 3] {
     hex_to_linear(hex)
-}
-
-fn sim_wreck_part(part: WreckPart) -> models::WreckPart {
-    match part {
-        WreckPart::Intact => models::WreckPart::Intact,
-        WreckPart::Hull => models::WreckPart::Hull,
-        WreckPart::Turret => models::WreckPart::Turret,
-        WreckPart::TurretBarrel => models::WreckPart::TurretBarrel,
-        WreckPart::Barrel => models::WreckPart::Barrel,
-    }
 }
 
 const WRECK_PARTS: [WreckPart; 5] = [
@@ -257,7 +247,7 @@ fn basis(renderer: &Renderer, model: ModelId, source: &Node, name: &str) -> Join
 impl Library {
     fn tank(&mut self, renderer: &mut Renderer, kind: VehicleKind, team: Team) -> &TankModel {
         self.tanks.entry((kind, team)).or_insert_with(|| {
-            let source = tank_model(kind, team.index() as u8);
+            let source = tank_model(kind, team);
             let model = renderer.add_model(&source, Lifetime::Shared);
             TankModel {
                 model,
@@ -295,7 +285,7 @@ impl Library {
         part: WreckPart,
     ) -> &BoundedModel {
         self.wrecks.entry((kind, team, part)).or_insert_with(|| {
-            let source = wreck_model(kind, team.index() as u8, sim_wreck_part(part));
+            let source = wreck_model(kind, team, part);
             BoundedModel {
                 model: renderer.add_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),

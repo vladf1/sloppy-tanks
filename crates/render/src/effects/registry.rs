@@ -152,7 +152,6 @@ impl EffectRegistry {
     }
 }
 
-<<<<<<<< HEAD:crates/render/src/effects/registry.rs
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,58 +199,5 @@ mod tests {
             validate(effect.name, &shader_source(&shadow, &registry));
         }
         assert_eq!(registry.iter().count(), BUILTIN_EFFECTS.len());
-========
-// ------------------------------------------------------------------ runtime effects
-//
-// STUB owned by presentation until the runtime-effects work lands: particles,
-// explosions, tracks, dust, projectile and laser visuals replace this `Effects`
-// with the same signatures. Presentation calls `event` for every drained
-// simulation event, then `update` once per frame after entity poses. It keeps
-// point light slot 0 for its own explosion flash; runtime effects may use the
-// other slots.
-
-#[cfg(target_arch = "wasm32")]
-pub use runtime::Effects;
-
-#[cfg(target_arch = "wasm32")]
-mod runtime {
-    use sloppy_core::sim::{RenderState, SimEvent};
-
-    use crate::gpu::Renderer;
-
-    /// Runtime effects (stub: draws nothing).
-    pub struct Effects {}
-
-    impl Effects {
-        pub fn new(_renderer: &mut Renderer) -> Self {
-            Self {}
-        }
-
-        pub fn reset(&mut self, _renderer: &mut Renderer, _state: &RenderState) {}
-
-        /// One simulation event; `player_hit` marks hurt/death events the viewer caused.
-        pub fn event(
-            &mut self,
-            _renderer: &mut Renderer,
-            _state: &RenderState,
-            _event: &SimEvent,
-            _player_hit: bool,
-        ) {
-        }
-
-        /// Once per rendered frame after entity poses are updated; `alpha` interpolates physics poses.
-        pub fn update(
-            &mut self,
-            _renderer: &mut Renderer,
-            _state: &RenderState,
-            _alpha: f32,
-            _dt: f32,
-            _time: f64,
-        ) {
-        }
-
-        /// Pipelines/variants to compile during prepare, so first use never stalls.
-        pub fn warm_up_samples(&mut self, _renderer: &mut Renderer) {}
->>>>>>>> fe54bd9 (Add presentation's pure parts: cameras, first person, input, HUD models, themes):crates/render/src/effects/mod.rs
     }
 }
