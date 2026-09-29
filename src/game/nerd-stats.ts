@@ -4,30 +4,6 @@ export type StatsRow = [label: string, value: string | number, tip: string];
 /** Rows per panel section; Performance is measured by the panel itself. */
 export type StatsSections = Partial<Record<string, StatsRow[]>>;
 
-/** @deprecated The TypeScript multiplayer client's sample, until it moves to the engine. */
-export interface NetworkStatsSample {
-  state: {
-    tanks: readonly { alive: boolean }[];
-    pickups: readonly { available: boolean }[];
-    mines: readonly unknown[];
-    shots: readonly unknown[];
-    fragments: readonly unknown[];
-    elapsed: number;
-  };
-  rows: StatsRow[];
-}
-/** @deprecated The Three.js presentation the TypeScript multiplayer client passes. */
-export interface LegacyStatsView {
-  renderer: {
-    info: {
-      render: { drawCalls: number; triangles: number };
-      memory: { geometries: number; textures: number };
-    };
-    getPixelRatio(): number;
-  };
-  particles: { length: number };
-}
-
 const SINGLE_PLAYER_SECTIONS = ["Performance", "Physics", "Render", "Battle", "Configuration"];
 const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configuration"];
 
@@ -106,53 +82,6 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
   };
 }
 
-/** @deprecated Rows for the TypeScript multiplayer client's Three.js presentation. */
-function legacyNetworkSections(sample: NetworkStatsSample, view: LegacyStatsView): StatsSections {
-  const { state } = sample;
-  const info = view.renderer.info;
-  return {
-    Network: sample.rows,
-    Render: [
-      ["Draw calls / frame", info.render.drawCalls, "GPU draw calls issued per rendered frame."],
-      [
-        "Triangles / frame",
-        info.render.triangles.toLocaleString(),
-        "Triangles submitted per rendered frame.",
-      ],
-      ["GPU geometries", info.memory.geometries, "Distinct geometry buffers on the GPU."],
-      ["GPU textures", info.memory.textures, "Textures currently uploaded to the GPU."],
-    ],
-    Battle: [
-      [
-        "Tanks",
-        `${state.tanks.filter((tank) => tank.alive).length} / ${state.tanks.length}`,
-        "Tanks alive out of total spawned.",
-      ],
-      ["Mines", state.mines.length, "Live mines on the field."],
-      [
-        "Pickups ready",
-        `${state.pickups.filter((pickup) => pickup.available).length} / ${state.pickups.length}`,
-        "Pickups available now out of total placed.",
-      ],
-      ["Projectiles", state.shots.length, "Shots currently flying."],
-      ["Visual particles", view.particles.length, "Active chips, sparks and leaves."],
-      [
-        "Debris bodies",
-        state.fragments.length,
-        "Debris pieces in the received scene; server physics allocation is not measured here.",
-      ],
-      [
-        "Sim time",
-        `${state.elapsed.toFixed(1)}s`,
-        "Elapsed simulation time since the round started.",
-      ],
-    ],
-    Configuration: [
-      ["Pixel ratio", view.renderer.getPixelRatio(), "Renderer resolution multiplier."],
-    ],
-  };
-}
-
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
   private readonly element: HTMLElement;
@@ -162,8 +91,6 @@ export class NerdStats {
     string,
     { list: HTMLElement; rows: Map<string, HTMLPreElement> }
   >();
-  private readonly source: () => StatsSections | undefined;
-  private readonly active: () => boolean;
   private readonly network: boolean;
   private open = false;
   private start = 0;
@@ -172,39 +99,15 @@ export class NerdStats {
   private renderTotal = 0;
 
   /** `source` reports the panel's rows when it refreshes; `active` says whether the
-   * panel may open (a round is on screen). */
+   * panel may open (a round is on screen). A room's panel shows network rows instead
+   * of physics, which runs on the server. */
   constructor(
     root: HTMLElement,
-    source: () => StatsSections | undefined,
-    active: () => boolean,
-    options?: { network?: boolean },
-  );
-  /** @deprecated The TypeScript multiplayer client's form. */
-  constructor(
-    root: HTMLElement,
-    source: () => NetworkStatsSample | undefined,
-    view: LegacyStatsView,
-    active: () => boolean,
-  );
-  constructor(
-    root: HTMLElement,
-    source: (() => StatsSections | undefined) | (() => NetworkStatsSample | undefined),
-    third: (() => boolean) | LegacyStatsView,
-    fourth?: (() => boolean) | { network?: boolean },
+    private readonly source: () => StatsSections | undefined,
+    private readonly active: () => boolean,
+    { network = false }: { network?: boolean } = {},
   ) {
-    if (typeof third === "function") {
-      this.source = source as () => StatsSections | undefined;
-      this.active = third;
-      this.network = !!(fourth as { network?: boolean } | undefined)?.network;
-    } else {
-      const sample = source as () => NetworkStatsSample | undefined;
-      this.source = () => {
-        const value = sample();
-        return value && legacyNetworkSections(value, third);
-      };
-      this.active = fourth as () => boolean;
-      this.network = true;
-    }
+    this.network = network;
     this.element = document.createElement("aside");
     this.element.id = "nerd-stats";
     this.element.setAttribute("aria-label", "Game statistics");
@@ -223,8 +126,9 @@ export class NerdStats {
       this.details.append(section);
       this.sections.set(title, { list, rows: new Map() });
     }
-    this.details.title =
-      "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries and textures are allocated buffers; they change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
+    this.details.title = this.network
+      ? "CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame."
+      : "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries and textures are allocated buffers; they change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
     const toggle = () => {
       if (!this.active()) {
         return;

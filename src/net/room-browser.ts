@@ -6,7 +6,7 @@ import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
-import type { VehicleKind } from "../game/types";
+import type { VehicleKind } from "../game/engine-api";
 
 // Battle Setup loads this module alone before any other multiplayer code.
 export { serverAddress } from "./server-address";

@@ -7,9 +7,6 @@ const ZOOM_STEP = 2;
 /** Browsers may release a captured pointer on Esc just before delivering the key;
  * a key this soon after the release belongs to the same press. */
 const ESC_RELEASE_WINDOW_MS = 250;
-/** The legacy TypeScript command path throttles the wheel itself; the engine does
- * the same for the packed `wheelAmmo` slot. */
-const LEGACY_AMMO_SCROLL_INTERVAL_MS = 120;
 
 /** A queued ammo choice: a weapon, or -1/+1 to cycle stocked ammunition. */
 export type AmmoSelection = Weapon | -1 | 1;
@@ -40,7 +37,6 @@ export class Controls {
   ammoSelection: AmmoSelection | undefined;
   /** Plain wheel since the last frame: -1 previous ammo, +1 next. */
   wheelAmmo = 0;
-  lastAmmoScroll = -Infinity;
   /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
   look = 0;
   /** Called on V; the owner decides whether the view may change. */
@@ -253,7 +249,6 @@ export class Controls {
     this.mine = false;
     this.ammoSelection = undefined;
     this.wheelAmmo = 0;
-    this.lastAmmoScroll = -Infinity;
   }
   /** Pack this frame's raw control state into `out` (see `INPUT`) and consume the
    * one-shot presses. Zoom and the view toggle belong to the caller. */
@@ -283,42 +278,5 @@ export class Controls {
     this.ammoSelection = undefined;
     this.wheelAmmo = 0;
     return out;
-  }
-  /** @deprecated The TypeScript multiplayer client's command path, kept until it moves
-   * to the engine; single player sends `takeInput` to the engine instead. */
-  command(aim: number): {
-    moveX: number;
-    moveZ: number;
-    aim: number;
-    fire: boolean;
-    mine: boolean;
-    ammoSelection?: AmmoSelection;
-  } {
-    const mine = this.mine;
-    let ammoSelection = this.active() ? this.ammoSelection : undefined;
-    if (
-      ammoSelection === undefined &&
-      this.wheelAmmo &&
-      this.active() &&
-      performance.now() - this.lastAmmoScroll >= LEGACY_AMMO_SCROLL_INTERVAL_MS
-    ) {
-      ammoSelection = this.wheelAmmo as -1 | 1;
-      this.lastAmmoScroll = performance.now();
-    }
-    this.ammoSelection = undefined;
-    this.wheelAmmo = 0;
-    this.mine = false;
-    return {
-      moveX:
-        Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) -
-          Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft")) || this.touch.moveX,
-      moveZ:
-        Number(this.keys.has("KeyS") || this.keys.has("ArrowDown")) -
-          Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) || this.touch.moveZ,
-      aim,
-      fire: this.fire || this.touch.fire,
-      mine,
-      ammoSelection,
-    };
   }
 }

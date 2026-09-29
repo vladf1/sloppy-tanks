@@ -1,8 +1,13 @@
 import { hudMarkup } from "../game/ui-markup";
-import { AMMO_ORDER } from "../game/ammunition";
-import { TEAM_NAMES, VEHICLES } from "../game/data";
+import { AMMO_ORDER } from "../game/ammo-options";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
-import type { Match, PlayerVehicleKind, SimEvent, Team, Weapon } from "../game/types";
+import type {
+  EngineEvent,
+  MatchState,
+  PlayerVehicleKind,
+  Team,
+  Weapon,
+} from "../game/engine-api";
 import {
   DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,
@@ -27,7 +32,7 @@ export interface HudAmmo {
 /** The engine's HUD record for the viewer's tank and the scoreboard. The engine works
  * out health colours, ranks and ammo, so the page only displays them. */
 export interface Hud {
-  match: Match;
+  match: MatchState;
   elapsed: number;
   human: {
     id: number;
@@ -56,12 +61,15 @@ export interface Hud {
   scoreboard: { id: number; name: string; team: Team; kills: number; deaths: number }[];
 }
 /** A displayed event with the viewer-relative flags (`drain_events()`). */
-export type HudEvent = SimEvent & {
-  playerHit: boolean;
-  own: boolean;
-  /** Clockwise screen angle of damage the viewer took, or null. */
-  damageAngle: number | null;
+export type HudEvent = EngineEvent;
+
+/** Battle Setup's tank cards (`battle-setup.html`); the engine owns the vehicles' stats. */
+const TANK_LABELS: Record<PlayerVehicleKind, { name: string; tag: string }> = {
+  scout: { name: "SKIPPER", tag: "Light scout" },
+  balanced: { name: "BRUISER", tag: "Balanced tank" },
+  heavy: { name: "BIG RIG", tag: "Heavy tank" },
 };
+const TEAM_NAMES = ["BLUE", "RED"] as const;
 
 /** Tanks per team, bots included, on a standard map; extra levels name their own. */
 const STANDARD_TEAM_TANKS = 6;
@@ -93,7 +101,7 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
 };
 /** Battle Setup's card name, such as "Big Rig". */
 function tankName(kind: PlayerVehicleKind): string {
-  return VEHICLES[kind].name
+  return TANK_LABELS[kind].name
     .split(" ")
     .map((word) => word[0] + word.slice(1).toLowerCase())
     .join(" ");
@@ -134,7 +142,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     </div>
     <div id="player-fields" class="network-fields" hidden>
       <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
-      <label>Tank<select id="player-kind">${PLAYER_KINDS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${VEHICLES[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
+      <label>Tank<select id="player-kind">${PLAYER_KINDS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${TANK_LABELS[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
     </div>
   </section>
   <div id="network-scoreboard" hidden></div>
@@ -176,7 +184,7 @@ export class NetworkUI {
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
   /** The finished round, read from the final replicated state. */
-  private outcome?: { match: Match; team: number };
+  private outcome?: { match: MatchState; team: number };
   /** The round this host ended early; its seat had the menu open, so no final state came. */
   private endedRound?: number;
   /** Between battles the rules and your team and tank stay folded until asked for. */
@@ -452,7 +460,7 @@ export class NetworkUI {
     this.renderScore();
   }
   /** The round that just ended, as the viewer's tank played it. */
-  result(match: Match, team: number): void {
+  result(match: MatchState, team: number): void {
     this.outcome = { match, team };
   }
   /** Victory or defeat when the final state arrived. A player who joined during the

@@ -6,10 +6,10 @@ import { Cockpit } from "../game/cockpit";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
-import type { Match } from "../game/types";
+import { INPUT, type MatchState as Match } from "../game/engine-api";
+import { NerdStats } from "../game/nerd-stats";
 import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
-import { NetworkStats, type NetworkStatsSource } from "./network-stats";
-import { INPUT_LENGTH, packInput } from "./input-frame";
+import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
 import {
   ROOM_CODE,
   TRANSPORT_DELAY_PARAMS,
@@ -226,7 +226,7 @@ export async function startMultiplayer(
   let zoom = 0;
   let phase: Lobby["phase"] = "lobby";
   let lastResult: Float32Array = new Float32Array(0);
-  const input = new Float32Array(INPUT_LENGTH);
+  const input = new Float32Array(INPUT.length);
   const sockets = new Map<number, WebSocket>();
   /** Checks can observe displayed events (dev builds only). */
   let onEvent: ((event: HudEvent) => void) | undefined;
@@ -268,11 +268,14 @@ export async function startMultiplayer(
     },
     (amount) => (zoom += amount),
   );
-  const stats = new NetworkStats(
+  const stats = new NerdStats(
     root,
-    (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
-    () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
+    networkStatsSections(
+      (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
+      () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
+    ),
     () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
+    { network: true },
   );
   const reveal = () => {
     if (joining) {
@@ -466,7 +469,8 @@ export async function startMultiplayer(
         lastResult[FRAME.pointerFree] === 1,
       );
     }
-    packInput(controls, input, zoom);
+    controls.takeInput(input);
+    input[INPUT.zoom] = zoom;
     zoom = 0;
     const result = game.frame(now, input);
     lastResult = result;

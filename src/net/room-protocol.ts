@@ -1,15 +1,15 @@
 import type { MapId } from "../game/map-options";
-import type { PlayerVehicleKind, Team } from "../game/types";
+import type { Difficulty, PlayerVehicleKind, Team } from "../game/engine-api";
 
-/** Room records and limits the page shows: types and constants only. The browser's
- * connection, replication and input run in the Rust engine (`NetGame`); the TypeScript
- * readers in `protocol.ts` remain for the Node server and its tests. */
+/** Room records and limits the page shows: types and constants only. The connection,
+ * replication and input run in the Rust engine (`NetGame`); the wire protocol itself
+ * lives in `crates/core/src/net`. */
 
 export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 export const DEFAULT_ROUND_MINUTES = 20;
 export const MAX_ROUND_MINUTES = 99;
 export const PLAYER_KINDS = ["scout", "balanced", "heavy"] as const satisfies PlayerVehicleKind[];
-export type Difficulty = "easy" | "normal" | "hard";
+export type { Difficulty };
 export type RoomPhase = "lobby" | "playing" | "results";
 
 /** The host's rules for the next battle. */

@@ -101,18 +101,6 @@ test("inactive play rejects wheel ammo selection", () => {
   assert.equal(frame(f.controls).wheel, 0);
   f.dispose();
 });
-test("the legacy multiplayer command still throttles the wheel to one change per 120 ms", () => {
-  const f = fixture();
-  f.emit(f.canvas, "wheel", { deltaY: 100 });
-  assert.equal(f.controls.command(0).ammoSelection, 1);
-  f.emit(f.canvas, "wheel", { deltaY: -100 });
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
-  f.controls.lastAmmoScroll -= 120;
-  f.emit(f.canvas, "wheel", { deltaY: -100 });
-  assert.equal(f.controls.command(0).ammoSelection, -1);
-  f.dispose();
-});
-
 test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and touch input", () => {
   for (const [interruption, pauseWhenHidden, pauses] of [
     ["blur", true, 0],

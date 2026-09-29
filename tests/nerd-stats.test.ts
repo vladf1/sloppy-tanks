@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
 import type { EngineStats } from "../src/game/engine-api";
+import { networkStatsSections, type NetworkStatsSource } from "../src/net/network-stats";
 
 type Listener = () => void;
 
@@ -80,24 +81,34 @@ function fixture(network = false) {
   };
   Object.defineProperty(globalThis, "window", { value: win, configurable: true });
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-  // The multiplayer client's received scene and Three.js presentation (legacy form).
-  const scene = {
-    tanks: [{ alive: true }, { alive: false }, { alive: true }],
-    mines: [{}, {}],
-    pickups: [{ available: true }, { available: false }],
-    fragments: [{}],
-    shots: [{}, {}, {}],
-    elapsed: 12.34,
-  };
-  const view = {
-    renderer: {
-      info: {
-        render: { drawCalls: 42, triangles: 123456 },
-        memory: { geometries: 9, textures: 11 },
-      },
-      getPixelRatio: () => 2,
+  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
+  const room: NetworkStatsSource = {
+    drawCalls: 42,
+    triangles: 123456,
+    meshes: 9,
+    textures: 11,
+    scene: {
+      tanks: 3,
+      alive: 2,
+      mines: 2,
+      pickups: 2,
+      pickupsReady: 1,
+      shots: 3,
+      fragments: 1,
+      elapsed: 12.34,
     },
-    particles: [{}, {}, {}],
+    network: {
+      rttMs: 42,
+      receivedUpdates: 7,
+      snapshotAgeMs: 12,
+      bufferMs: 80,
+      marginMs: 20,
+      underrun: 0,
+      serverTick: 900,
+      inputSeq: 10,
+      inputAck: 9,
+      connected: true,
+    },
   };
   const engine = {
     bodies: 10,
@@ -127,15 +138,15 @@ function fixture(network = false) {
   const stats = network
     ? new NerdStats(
         root as unknown as HTMLElement,
-        () => {
-          reads++;
-          return {
-            state: scene,
-            rows: [["RTT", "42 ms", "Round-trip time to the server."]],
-          };
-        },
-        view,
+        networkStatsSections(
+          () => {
+            reads++;
+            return room;
+          },
+          () => 2,
+        ),
         () => true,
+        { network: true },
       )
     : new NerdStats(
         root as unknown as HTMLElement,
@@ -184,6 +195,8 @@ test("network stats use received scene counts and never require a client physics
       .map((row) => row.textContent)
       .join("\n");
     assert.ok(text.includes("RTT") && text.includes("42 ms"));
+    assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
+    assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
     assert.ok(text.includes("Update CPU / frame"));
     assert.ok(!text.includes("Sim CPU / frame"));
     f.stats.frame(1, 1, 2);
