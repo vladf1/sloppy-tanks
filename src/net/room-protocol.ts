@@ -66,6 +66,8 @@ export type EndCause =
   | "other-tab"
   /** This page and the server run different game versions. */
   | "outdated"
+  /** WebGPU reported a validation error or lost the device; only a reload recovers. */
+  | "renderer"
   | "rejected";
 export interface ConnectionEnd {
   cause: EndCause;

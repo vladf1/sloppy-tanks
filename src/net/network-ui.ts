@@ -92,6 +92,7 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
   "other-tab": { title: "PLAYING IN ANOTHER TAB", retry: "PLAY HERE" },
   "room-ended": { title: "ROOM CLOSED" },
   outdated: { title: "GAME UPDATED" },
+  renderer: { title: "RENDERER STOPPED" },
 };
 /** Battle Setup's card name, such as "Big Rig". */
 function tankName(kind: PlayerVehicleKind): string {
@@ -334,7 +335,8 @@ export class NetworkUI {
     const setup = this.button("connection-setup");
     setup.hidden = false;
     setup.className = ending.retry ? "secondary" : "primary";
-    setup.textContent = end.cause === "outdated" ? "RELOAD" : "BATTLE SETUP";
+    setup.textContent =
+      end.cause === "outdated" || end.cause === "renderer" ? "RELOAD" : "BATTLE SETUP";
     this.button("connection-leave").hidden = true;
     this.panel.querySelector<HTMLElement>(".network-connection .startup-track")!.hidden = true;
     this.render();

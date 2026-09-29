@@ -37,6 +37,8 @@ const FRAME = {
 } as const;
 /** The engine asks for timers at least this often (heartbeat, reconnect, dev delay). */
 const POLL_MS = 250;
+/** How often, in frames, to ask the engine for a recorded GPU error. */
+const ERROR_CHECK_EVERY_FRAMES = 30;
 /** A socket this far behind on sends is closed and reconnected instead. */
 const MAX_BUFFERED_BYTES = 16_384;
 /** Pipelines compiled per task while preparing an arena. */
@@ -464,12 +466,45 @@ export async function startMultiplayer(
       onEvent?.(event);
     }
   };
+  let stopped = false;
+  let frames = 0;
+  /** A GPU validation error or device loss: stop drawing, give up the connection and
+   * say so, rather than throwing every frame behind a frozen view. */
+  const fail = (error: unknown) => {
+    stopped = true;
+    console.error("The room page stopped", error);
+    clearInterval(poll);
+    controls.clear();
+    controls.holdPointer(false, true);
+    game.stop();
+    pump();
+    ui.ended({
+      cause: "renderer",
+      text: "The renderer stopped. Reload the page to play again.",
+    });
+  };
   const loop = (now: number) => {
+    if (stopped) {
+      return;
+    }
     requestAnimationFrame(loop);
     controls.takeInput(input);
     input[INPUT.zoom] = zoom;
     zoom = 0;
-    const result = game.frame(now, input);
+    let result: Float32Array;
+    try {
+      result = game.frame(now, input);
+      // Most GPU errors arrive asynchronously, so the engine records them for polling.
+      if (frames++ % ERROR_CHECK_EVERY_FRAMES === 0) {
+        const error = game.error();
+        if (error) {
+          throw new Error(error);
+        }
+      }
+    } catch (error) {
+      fail(error);
+      return;
+    }
     lastResult = result;
     // Any menu (including ones the server opens) and disconnects free the pointer;
     // a death keeps it captured for the respawn. Mouse travel while input is off is
