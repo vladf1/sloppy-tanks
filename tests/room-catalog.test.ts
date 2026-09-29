@@ -4,7 +4,7 @@ import { RoomCatalog } from "../server/room-catalog";
 import {
   MAX_LISTED_ROOMS,
   ROOM_LIST_TTL_MS,
-  roomListReader,
+  readRoomList,
   type RoomListing,
 } from "../src/net/room-list";
 const entry: RoomListing = {
@@ -46,7 +46,7 @@ test("directory capacity is bounded and evicts the least recently refreshed list
   assert.equal(catalog.list(MAX_LISTED_ROOMS + 1)[0].players, 4);
 });
 test("room list decoder rejects malformed identifiers and unbounded player counts", () => {
-  assert.equal(roomListReader.read({ rooms: [entry] }).rooms.length, 1);
-  assert.throws(() => roomListReader.read({ rooms: [{ ...entry, room: '"AAAAAAA' }] }));
-  assert.throws(() => roomListReader.read({ rooms: [{ ...entry, players: 9 }] }));
+  assert.equal(readRoomList({ rooms: [entry] }).length, 1);
+  assert.throws(() => readRoomList({ rooms: [{ ...entry, room: '"AAAAAAA' }] }));
+  assert.throws(() => readRoomList({ rooms: [{ ...entry, players: 9 }] }));
 });

@@ -1,15 +1,67 @@
 import { hudMarkup } from "../game/ui-markup";
-import { AMMO_ORDER, equippedWeapon, hasAmmo } from "../game/ammunition";
+import { AMMO_ORDER } from "../game/ammunition";
 import { TEAM_NAMES, VEHICLES } from "../game/data";
-import { healthBarState } from "../game/health-bar";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
-import { rankIndex, RANKS } from "../game/veterancy";
-import type { RenderState } from "../game/render-state";
-import type { SimEvent, Weapon } from "../game/types";
-import { DEFAULT_ROUND_MINUTES, MAX_ROUND_MINUTES, type Lobby, type Player } from "./protocol";
-import type { ConnectionEnd, EndCause, JoinChoice } from "./connection";
-import { playerKind, team } from "./scene-codec";
+import type { Match, PlayerVehicleKind, SimEvent, Team, Weapon } from "../game/types";
+import {
+  DEFAULT_ROUND_MINUTES,
+  MAX_ROUND_MINUTES,
+  PLAYER_KINDS,
+  isPlayerKind,
+  type ConnectionEnd,
+  type EndCause,
+  type JoinChoice,
+  type Lobby,
+  type Player,
+} from "./room-protocol";
 import "./multiplayer.css";
+
+/** One ammo slot of the HUD record (`Game.hud_json()` / `NetGame.hud_json()`). */
+export interface HudAmmo {
+  weapon: Weapon;
+  /** Rounds left; null for the unlimited standard shell. */
+  count: number | null;
+  selected: boolean;
+  available: boolean;
+}
+/** The engine's HUD record for the viewer's tank and the scoreboard. The engine works
+ * out health colours, ranks and ammo, so the page only displays them. */
+export interface Hud {
+  match: Match;
+  elapsed: number;
+  human: {
+    id: number;
+    name: string;
+    kind: PlayerVehicleKind;
+    vehicleName: string;
+    team: Team;
+    alive: boolean;
+    hp: number;
+    maxHp: number;
+    healthRatio: number;
+    healthColor: number;
+    rankName: string;
+    ammo: HudAmmo[];
+    mineCooldown: number;
+    protection: number;
+    shield: number;
+    shieldPoints: number;
+    rapid: number;
+    speed: number;
+    laser: number;
+    respawn: number;
+    kills: number;
+    deaths: number;
+  };
+  scoreboard: { id: number; name: string; team: Team; kills: number; deaths: number }[];
+}
+/** A displayed event with the viewer-relative flags (`drain_events()`). */
+export type HudEvent = SimEvent & {
+  playerHit: boolean;
+  own: boolean;
+  /** Clockwise screen angle of damage the viewer took, or null. */
+  damageAngle: number | null;
+};
 
 /** Tanks per team, bots included, on a standard map; extra levels name their own. */
 const STANDARD_TEAM_TANKS = 6;
@@ -39,9 +91,8 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
   "room-ended": { title: "ROOM CLOSED" },
   outdated: { title: "GAME UPDATED" },
 };
-const PLAYER_TANKS = ["scout", "balanced", "heavy"] as const;
 /** Battle Setup's card name, such as "Big Rig". */
-function tankName(kind: (typeof PLAYER_TANKS)[number]): string {
+function tankName(kind: PlayerVehicleKind): string {
   return VEHICLES[kind].name
     .split(" ")
     .map((word) => word[0] + word.slice(1).toLowerCase())
@@ -83,7 +134,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     </div>
     <div id="player-fields" class="network-fields" hidden>
       <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
-      <label>Tank<select id="player-kind">${PLAYER_TANKS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${VEHICLES[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
+      <label>Tank<select id="player-kind">${PLAYER_KINDS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${VEHICLES[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
     </div>
   </section>
   <div id="network-scoreboard" hidden></div>
@@ -125,7 +176,7 @@ export class NetworkUI {
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
   /** The finished round, read from the final replicated state. */
-  private outcome?: { match: RenderState["match"]; team: number };
+  private outcome?: { match: Match; team: number };
   /** The round this host ended early; its seat had the menu open, so no final state came. */
   private endedRound?: number;
   /** Between battles the rules and your team and tank stay folded until asked for. */
@@ -244,9 +295,10 @@ export class NetworkUI {
   }
   private choice(): Pick<JoinChoice, "team" | "kind"> {
     const side = this.input("player-team").value;
+    const kind = this.input("player-kind").value;
     return {
-      kind: playerKind.read(this.input("player-kind").value),
-      team: side === "auto" ? undefined : team.read(Number(side)),
+      kind: isPlayerKind(kind) ? kind : "balanced",
+      team: side === "0" ? 0 : side === "1" ? 1 : undefined,
     };
   }
   /** Connection progress. While the socket is down the room menu gives way to a dialog
@@ -400,7 +452,7 @@ export class NetworkUI {
     this.renderScore();
   }
   /** The round that just ended, as the viewer's tank played it. */
-  result(match: RenderState["match"], team: number): void {
+  result(match: Match, team: number): void {
     this.outcome = { match, team };
   }
   /** Victory or defeat when the final state arrived. A player who joined during the
@@ -610,15 +662,15 @@ export class NetworkUI {
     this.feed.unshift({ text, time: 5 });
     this.feed.length = Math.min(4, this.feed.length);
   }
-  event(event: SimEvent, state: RenderState, damageAngle: number | null): void {
+  event(event: HudEvent, hud: Hud): void {
+    const viewerId = hud.human.id;
+    const damageAngle = event.damageAngle;
     if (event.type === "death") {
       const name = (id: number | undefined) =>
-        id === state.viewerId
-          ? "YOU"
-          : (state.tanks.find((tank) => tank.id === id)?.name ?? "YARD");
+        id === viewerId ? "YOU" : (hud.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
       this.addFeed(name(event.owner) + "  ▸  " + name(event.id));
     }
-    if (event.id === state.viewerId) {
+    if (event.id === viewerId) {
       if (event.label) {
         this.set("toast", event.label);
         this.toastTime = 2;
@@ -633,16 +685,15 @@ export class NetworkUI {
       }
     }
   }
-  update(state: RenderState, dt: number, connected: boolean): void {
-    for (const tank of state.tanks) {
+  update(hud: Hud, dt: number, connected: boolean): void {
+    for (const tank of hud.scoreboard) {
       const score = this.playerRows.get(tank.id);
       if (score && score.textContent !== String(tank.kills)) {
         score.textContent = String(tank.kills);
       }
     }
-    const tank = state.viewer;
-    const match = state.match;
-    const health = healthBarState(tank.hp, tank.maxHp, tank.team);
+    const tank = hud.human;
+    const match = hud.match;
     this.root.querySelector<HTMLElement>("#hud")!.style.opacity = "1";
     this.set("score0", String(match.scores[0]));
     this.set("score1", String(match.scores[1]));
@@ -654,19 +705,18 @@ export class NetworkUI {
         : Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0"),
     );
     this.set("hp", String(Math.max(0, Math.ceil(tank.hp))));
-    this.set("vehicle-name", VEHICLES[tank.kind].name);
-    this.set("rank", RANKS[rankIndex(tank)].name.toUpperCase());
+    this.set("vehicle-name", tank.vehicleName);
+    this.set("rank", tank.rankName.toUpperCase());
     const bar = this.root.querySelector<HTMLElement>("#hpbar")!;
-    bar.style.width = health.ratio * 100 + "%";
-    bar.style.backgroundColor = "#" + health.color.toString(16).padStart(6, "0");
-    const selected = equippedWeapon(tank);
-    for (const weapon of AMMO_ORDER) {
-      this.set("ammo-count-" + weapon, weapon === "standard" ? "∞" : String(tank.ammo[weapon]));
-      const slot = this.button("ammo-" + weapon);
+    bar.style.width = tank.healthRatio * 100 + "%";
+    bar.style.backgroundColor = "#" + tank.healthColor.toString(16).padStart(6, "0");
+    for (const ammo of tank.ammo) {
+      this.set("ammo-count-" + ammo.weapon, ammo.count === null ? "∞" : String(ammo.count));
+      const slot = this.button("ammo-" + ammo.weapon);
       slot.disabled = !tank.alive || !connected || this.menu;
-      slot.classList.toggle("selected", selected === weapon);
-      slot.classList.toggle("empty", !hasAmmo(tank, weapon));
-      slot.setAttribute("aria-pressed", String(selected === weapon));
+      slot.classList.toggle("selected", ammo.selected);
+      slot.classList.toggle("empty", !ammo.available);
+      slot.setAttribute("aria-pressed", String(ammo.selected));
     }
     this.set(
       "mine",

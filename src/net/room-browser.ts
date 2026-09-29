@@ -1,8 +1,9 @@
-import { CONTENT_VERSION, roundMinutesReader } from "./protocol";
-import { roomListReader, type RoomListing } from "./room-list";
-import { mapMode, playerKind, team } from "./scene-codec";
+// The engine build stamps the content version its joins send (scripts/build-wasm.mjs);
+// rooms of another version can't take this page's players.
+import { CONTENT_VERSION } from "../generated/engine/content-version.js";
+import { readRoomList, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
-import type { JoinChoice } from "./connection";
+import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
 import type { VehicleKind } from "../game/types";
@@ -196,12 +197,10 @@ export class RoomBrowser {
         if (!response.ok) {
           throw new Error("Rooms unavailable. Try Refresh in a moment.");
         }
-        this.rooms = roomListReader
-          .read(await response.json())
-          .rooms.filter(
-            (room) =>
-              this.extraLevels || !isExtraLevel(room.mapMode) || room.room === this.linkedRoom,
-          );
+        this.rooms = readRoomList(await response.json()).filter(
+          (room) =>
+            this.extraLevels || !isExtraLevel(room.mapMode) || room.room === this.linkedRoom,
+        );
         const linked = this.link && this.followLink(this.link);
         this.render();
         if (linked) {
@@ -268,11 +267,11 @@ export class RoomBrowser {
     }
     rememberPlayerName(name);
     const side = this.checked("playerTeam");
-    return {
-      name,
-      kind: playerKind.read(this.tank()),
-      team: side === "auto" ? undefined : team.read(Number(side)),
-    };
+    const kind = this.tank();
+    if (!isPlayerKind(kind)) {
+      return undefined;
+    }
+    return { name, kind, team: side === "0" ? 0 : side === "1" ? 1 : undefined };
   }
 
   private joinSelected(): void {
@@ -299,11 +298,16 @@ export class RoomBrowser {
       length.focus();
       return;
     }
+    const map = mapOption(this.roomMap.dataset.value ?? "");
+    const roundMinutes = Number(length.value);
+    if (!map || !isRoundMinutes(roundMinutes)) {
+      return;
+    }
     const create = {
-      mapMode: mapMode.read(this.roomMap.dataset.value),
+      mapMode: map.id,
       difficulty: "normal" as const,
       humansOnly: this.element<HTMLInputElement>("#create-humans-only").checked,
-      roundMinutes: roundMinutesReader.read(Number(length.value)),
+      roundMinutes,
     };
     this.close();
     this.enter({ room: newRoomCode(), choice: { ...choice, create } });

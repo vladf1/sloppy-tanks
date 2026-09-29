@@ -178,16 +178,11 @@ try {
       },
       { once: true },
     );
-    const event = game.view.event.bind(game.view);
-    game.view.event = (value, hit) => {
-      if (
-        value.type === "shot" &&
-        value.id === game.control.tankId &&
-        audit.fireStart &&
-        !audit.shotMs
-      )
+    // Displayed events reach presentation in the engine; the page reports each one.
+    const tankId = game.control.tankId;
+    game.onEvent = (value) => {
+      if (value.type === "shot" && value.id === tankId && audit.fireStart && !audit.shotMs)
         audit.shotMs = performance.now() - audit.fireStart;
-      event(value, hit);
     };
     const observe = () => {
       if (

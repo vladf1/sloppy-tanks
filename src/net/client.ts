@@ -1,36 +1,82 @@
-import { Presentation } from "../game/presentation";
-import { NerdStats } from "../game/nerd-stats";
+import init, { NetGame } from "../generated/engine/engine.js";
+import wasmUrl from "../generated/engine/engine_bg.wasm?url";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
-import { loadTankSurface } from "../game/tank-surfaces";
-import { AMMO_ORDER, hasAmmo } from "../game/ammunition";
-import { CAMERA } from "../game/view-settings";
-import type { RenderState } from "../game/render-state";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
-import type { Weapon } from "../game/types";
-import { encodeInput, type ControlInput } from "./player-controls";
-import { InputCadence } from "./input-cadence";
-import { Connection, TRANSPORT_DELAY_PARAMS } from "./connection";
-import { StateMirror } from "./replication";
-import { NetworkTimeline } from "./interpolation";
-import { NetworkUI } from "./network-ui";
-import { ROOM_CODE, lobbyReader, controlReader, settingsReader, type Control } from "./protocol";
-import { id } from "./schema";
+import { nextTask } from "../game/task-yield";
+import type { Match } from "../game/types";
+import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
+import { NetworkStats, type NetworkStatsSource } from "./network-stats";
+import { INPUT_LENGTH, packInput } from "./input-frame";
+import {
+  ROOM_CODE,
+  TRANSPORT_DELAY_PARAMS,
+  type ConnectionEnd,
+  type JoinChoice,
+  type Lobby,
+} from "./room-protocol";
 import { serverAddress } from "./server-address";
 import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
 
-const MAX_ACTIONS = 8;
+/** `NetGame.frame` result slots (`net_frame_slot` in `crates/web/src/net_game.rs`). */
+const FRAME = {
+  phase: 0,
+  cockpit: 2,
+  hullAngle: 3,
+  events: 4,
+  hudDue: 6,
+  simMs: 7,
+  renderMs: 8,
+  firstPerson: 9,
+  dt: 10,
+  drawn: 11,
+  pointerFree: 12,
+} as const;
+/** The engine asks for timers at least this often (heartbeat, reconnect, dev delay). */
+const POLL_MS = 250;
+/** A socket this far behind on sends is closed and reconnected instead. */
+const MAX_BUFFERED_BYTES = 16_384;
+/** Pipelines compiled per task while preparing an arena. */
+const PREPARE_BUDGET = 4;
+/** Renderer resolution cap from the display pixel ratio (`CAMERA.max_pixel_ratio`). */
+const MAX_PIXEL_RATIO = 1.5;
+
+type Action =
+  | { type: "open"; socket: number; url: string }
+  | { type: "send"; socket: number; text: string }
+  | { type: "close"; socket: number }
+  | { type: "saveSeat"; token: string; roomEpoch: string }
+  | { type: "forgetSeat" };
+type Notice =
+  | { type: "status"; text: string; connected: boolean }
+  | { type: "notice"; text: string }
+  | ({ type: "ended" } & ConnectionEnd)
+  | { type: "lobby"; lobby: Lobby; playerId: string }
+  | { type: "result"; match: Match; team: number }
+  | { type: "resetFeedback" | "clearInput" | "reveal" | "prepare" | "baselineShown" }
+  | { type: "arenaFailed"; error: string };
+interface DrainedEvents {
+  listener: { x: number; z: number };
+  listenerRight: { x: number; z: number };
+  events: HudEvent[];
+}
+
+let engine: Promise<unknown> | undefined;
+
 /** Join the room chosen on Battle Setup. The room page builds out of sight and replaces
  * `setup` only once its arena can draw, so the arena's first stalled frames never show;
  * a join or room that gives up returns to Battle Setup instead. Without `selection`, the
- * choices come from the page that reloaded into the room. */
-export function startMultiplayer(
+ * choices come from the page that reloaded into the room.
+ *
+ * The Rust engine (`NetGame`) runs the connection, replication, interpolation, input and
+ * drawing; this page adapter owns the sockets, timers, storage and DOM. */
+export async function startMultiplayer(
   app: HTMLElement,
   setup: JoinScreen,
   selection?: RoomSelection,
-): void {
+): Promise<void> {
   const room = selection?.room ?? new URLSearchParams(location.search).get("room")?.toUpperCase();
   if (!room || !ROOM_CODE.test(room)) {
     // Battle Setup's multiplayer tab lists the rooms that exist.
@@ -49,88 +95,22 @@ export function startMultiplayer(
   if (selection) {
     history.replaceState(null, "", roomAddress(room));
   }
-  const selectedChoice = selection?.choice ?? takePendingJoin(room);
-  if (!selectedChoice) {
+  engine ??= init({ module_or_path: wasmUrl });
+  await engine;
+  const pending = selection ? undefined : takePendingJoin();
+  const choiceJson = selection
+    ? JSON.stringify(selection.choice)
+    : NetGame.pending_join(pending, room);
+  if (!choiceJson) {
     setup.fail("Choose your tank and join the room again.");
     return;
   }
+  const selectedChoice = JSON.parse(choiceJson) as JoinChoice;
+  const server = address.href.replace(/\/$/, "");
+  const seatKey = "sloppy-seat:" + server + ":" + room;
   let joining: JoinScreen | undefined = setup;
   const root = app.appendChild(document.createElement("div"));
   root.hidden = true;
-  const reveal = () => {
-    if (joining) {
-      joining.done();
-      joining = undefined;
-      root.hidden = false;
-    }
-  };
-  const showStatus = (text: string, connected: boolean) => {
-    ui.status(text, connected);
-    joining?.status(text);
-  };
-  const mirror = new StateMirror();
-  const timeline = new NetworkTimeline();
-  let view: Presentation | undefined;
-  let stats: NerdStats | undefined;
-  let lastSnapshotMs = 0;
-  let receivedUpdates = 0;
-  let statsSampleMs = 0;
-  let statsSampleUpdates = 0;
-  let appliedInput = 0;
-  const audio = new AudioSystem();
-  let control: Control | undefined;
-  let display: RenderState | undefined;
-  let readyRound = 0;
-  let preparing = false;
-  let active = false;
-  let seq = 0;
-  let pending: ControlInput["actions"] = [];
-  let pendingWeapon: Weapon | undefined;
-  let last = performance.now();
-  const inputCadence = new InputCadence();
-  let requestedFull = false;
-  let lastResumeMs = -Infinity;
-  let phase = "lobby";
-  const clearInput = () => {
-    controls?.clear();
-    pending = [];
-    pendingWeapon = undefined;
-  };
-  const activeInput = () =>
-    !!(
-      active &&
-      connection.connected &&
-      !ui.menu &&
-      !document.hidden &&
-      phase === "playing" &&
-      control?.driver === "human" &&
-      display?.viewer.alive &&
-      display.viewer.life === control.life &&
-      !mirror.needsFull
-    );
-  const zoom = (amount: number) => {
-    if (view) {
-      view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + amount));
-    }
-  };
-  const pause = () => {
-    if (phase !== "playing" || ui.menu || joining) {
-      return;
-    }
-    ui.setMenu(true);
-    clearInput();
-    connection.send("suspend");
-  };
-  const resume = () => {
-    if (!connection.connected) {
-      return;
-    }
-    clearInput();
-    ui.setMenu(false);
-    active = false;
-    lastResumeMs = performance.now();
-    connection.send("resume");
-  };
   /** Battle Setup, with this room selected, is where to join again. */
   const backToSetup = (notice: string) => {
     if (joining) {
@@ -148,32 +128,41 @@ export function startMultiplayer(
   };
   const ui = new NetworkUI(root, room, {
     choose(choice) {
-      connection.send("choose", { team: choice.team, kind: choice.kind });
+      game.choose(choice.team ?? -1, choice.kind, performance.now());
+      pump();
     },
     settings(mapMode, difficulty, humansOnly, roundMinutes) {
-      connection.settings(settingsReader.read({ mapMode, difficulty, humansOnly, roundMinutes }));
+      try {
+        game.settings(
+          JSON.stringify({ mapMode, difficulty, humansOnly, roundMinutes }),
+          performance.now(),
+        );
+      } catch (error) {
+        console.error("Invalid room settings", error);
+      }
+      pump();
     },
     start() {
-      clearInput();
-      connection.send("start");
+      controls.clear();
+      game.start(performance.now());
+      pump();
     },
     pause,
     resume,
     end() {
-      clearInput();
-      connection.send("end");
+      controls.clear();
+      game.end(performance.now());
+      pump();
     },
     rejoin() {
       // A seat the server still holds resumes; otherwise this takes a new one in the room.
-      void connection.connect({
-        ...selectedChoice,
-        create: undefined,
-        existingRoom: true,
-      });
+      game.rejoin(performance.now());
+      pump();
     },
     setup: backToSetup,
     leave() {
-      connection.leave();
+      game.leave(performance.now());
+      pump();
       const url = new URL(location.href);
       for (const key of ["room", ...TRANSPORT_DELAY_PARAMS]) {
         url.searchParams.delete(key);
@@ -182,9 +171,7 @@ export function startMultiplayer(
       location.assign(url);
     },
     ammo(weapon) {
-      if (activeInput()) {
-        controls.ammoSelection = weapon;
-      }
+      game.select_ammo(weapon);
     },
     volume(value) {
       audio.volume(value);
@@ -195,13 +182,75 @@ export function startMultiplayer(
       }
     },
   });
-  const controls = new Controls(ui.canvas, pause, zoom, activeInput, false);
-  const toggleView = () => {
-    if (!view || !display || phase !== "playing" || ui.menu) {
+  const cssSize = (): [number, number] => {
+    const canvas = ui.canvas;
+    // A room still joining behind Battle Setup is hidden; it draws at window size.
+    return canvas.clientWidth && canvas.clientHeight
+      ? [canvas.clientWidth, canvas.clientHeight]
+      : [innerWidth, innerHeight];
+  };
+  const params = new URLSearchParams(location.search);
+  const delay = import.meta.env.DEV
+    ? Object.fromEntries(
+        TRANSPORT_DELAY_PARAMS.filter((key) => params.has(key)).map((key) => [
+          key,
+          params.get(key),
+        ]),
+      )
+    : {};
+  let game: NetGame;
+  try {
+    const [width, height] = cssSize();
+    game = await NetGame.create(
+      ui.canvas,
+      JSON.stringify({
+        server,
+        room,
+        savedSeat: savedSeat(seatKey),
+        ...delay,
+        assetBase: import.meta.env.BASE_URL,
+        cssWidth: width,
+        cssHeight: height,
+        pixelRatio: devicePixelRatio,
+      }),
+    );
+  } catch (error) {
+    console.error("Multiplayer graphics failed", error);
+    root.remove();
+    backToSetup("The arena could not load. Try again, or play single player.");
+    return;
+  }
+  const audio = new AudioSystem();
+  let hud: Hud | undefined;
+  let hudDt = 0;
+  let zoom = 0;
+  let phase: Lobby["phase"] = "lobby";
+  let lastResult: Float32Array = new Float32Array(0);
+  const input = new Float32Array(INPUT_LENGTH);
+  const sockets = new Map<number, WebSocket>();
+  /** Checks can observe displayed events (dev builds only). */
+  let onEvent: ((event: HudEvent) => void) | undefined;
+  const activeInput = () => game.active_input();
+  function pause(): void {
+    if (joining || !game.pause(performance.now())) {
       return;
     }
-    view.firstPerson.toggle(display.viewer.aim);
-    controls.holdPointer(view.firstPerson.enabled);
+    ui.setMenu(true);
+    controls.clear();
+    pump();
+  }
+  function resume(): void {
+    controls.clear();
+    const open = game.resume(performance.now());
+    ui.setMenu(open);
+    pump();
+  }
+  const controls = new Controls(ui.canvas, pause, (amount) => (zoom += amount), activeInput, false);
+  const toggleView = () => {
+    if (phase !== "playing" || ui.menu) {
+      return;
+    }
+    controls.holdPointer(game.toggle_first_person());
     controls.capturePointer();
   };
   controls.toggleView = toggleView;
@@ -211,448 +260,299 @@ export function startMultiplayer(
     controls,
     {
       get human() {
-        return display?.viewer ?? { mineCooldown: 0 };
+        return { mineCooldown: hud?.human.mineCooldown ?? 0 };
       },
       get match(): TouchState["match"] {
         return { phase: ui.menu ? "paused" : phase === "playing" ? "playing" : "ready" };
       },
     },
-    zoom,
+    (amount) => (zoom += amount),
   );
-  const resetDisplay = () => {
-    if (!control || !mirror.state) {
+  const stats = new NetworkStats(
+    root,
+    (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
+    () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
+    () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
+  );
+  const reveal = () => {
+    if (joining) {
+      joining.done();
+      joining = undefined;
+      root.hidden = false;
+      resize();
+    }
+  };
+  const showStatus = (text: string, connected: boolean) => {
+    ui.status(text, connected);
+    joining?.status(text);
+  };
+
+  const openSocket = (id: number, url: string) => {
+    const socket = new WebSocket(url);
+    sockets.set(id, socket);
+    socket.onopen = () => {
+      game.socket_opened(id, performance.now());
+      pump();
+    };
+    socket.onmessage = (event) => {
+      // Binary frames are never valid; the engine rejects the placeholder.
+      game.socket_message(
+        id,
+        typeof event.data === "string" ? event.data : "\u0000",
+        performance.now(),
+      );
+      pump();
+    };
+    socket.onclose = (event) => {
+      sockets.delete(id);
+      game.socket_closed(id, event.code, performance.now());
+      pump();
+    };
+    socket.onerror = () => {
+      /* onclose owns retry; browsers hide failed-upgrade details. */
+    };
+  };
+  const perform = (action: Action) => {
+    switch (action.type) {
+      case "open":
+        openSocket(action.socket, action.url);
+        break;
+      case "send": {
+        const socket = sockets.get(action.socket);
+        if (socket?.readyState !== WebSocket.OPEN) {
+          break;
+        }
+        if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+          socket.close();
+        } else {
+          socket.send(action.text);
+        }
+        break;
+      }
+      case "close":
+        sockets.get(action.socket)?.close();
+        break;
+      case "saveSeat":
+        try {
+          sessionStorage.setItem(
+            seatKey,
+            JSON.stringify({ token: action.token, roomEpoch: action.roomEpoch }),
+          );
+        } catch {
+          /* Session can continue without storage. */
+        }
+        break;
+      case "forgetSeat":
+        try {
+          sessionStorage.removeItem(seatKey);
+        } catch {
+          /* Optional storage. */
+        }
+        break;
+    }
+  };
+  const handle = (notice: Notice) => {
+    switch (notice.type) {
+      case "status":
+        showStatus(notice.text, notice.connected);
+        break;
+      case "notice":
+        ui.notice(notice.text);
+        break;
+      case "ended":
+        controls.clear();
+        // A join still behind Battle Setup reports there; a room on screen says what
+        // happened over the frozen arena and offers the way back that fits.
+        if (joining) {
+          joining.fail(notice.text);
+        } else {
+          ui.ended(notice);
+        }
+        break;
+      case "lobby":
+        phase = notice.lobby.phase;
+        ui.lobby(notice.lobby, notice.playerId);
+        break;
+      case "result":
+        ui.result(notice.match, notice.team);
+        break;
+      case "resetFeedback":
+        ui.resetFeedback();
+        break;
+      case "clearInput":
+        controls.clear();
+        break;
+      case "reveal":
+        reveal();
+        break;
+      case "prepare":
+        void prepare();
+        break;
+      case "arenaFailed":
+        console.error("Multiplayer graphics failed", notice.error);
+        backToSetup("The arena could not load. Try again, or play single player.");
+        break;
+      case "baselineShown":
+        ui.canvas.focus();
+        break;
+    }
+  };
+  let pumping = false;
+  /** Perform the engine's socket and storage work, then its UI notices, until both are
+   * empty; handlers may call back into the engine. */
+  function pump(): void {
+    if (pumping) {
       return;
     }
-    display = mirror.render(control.tankId);
-    timeline.reset(display, mirror.tick, performance.now());
-  };
-  const requestFull = () => {
-    if (!requestedFull) {
-      requestedFull = true;
-      active = false;
-      clearInput();
-      connection.send("resync");
+    pumping = true;
+    try {
+      for (;;) {
+        const actions = JSON.parse(game.take_actions()) as Action[];
+        actions.forEach(perform);
+        const notices = JSON.parse(game.take_notices()) as Notice[];
+        notices.forEach(handle);
+        if (!actions.length && !notices.length) {
+          break;
+        }
+      }
+    } finally {
+      pumping = false;
     }
-  };
-  const prepare = async () => {
-    if (preparing || !control || !mirror.state) {
+  }
+  let preparing = false;
+  /** Compile the arena between tasks, so the join screen keeps painting. */
+  async function prepare(): Promise<void> {
+    if (preparing) {
       return;
     }
     preparing = true;
-    active = false;
-    connection.send("suspend");
-    showStatus("Preparing the arena…", true);
-    const round = connection.roundId;
-    const epoch = connection.roomEpoch;
     try {
-      if (!view) {
-        [view] = await Promise.all([Presentation.create(ui.canvas), loadTankSurface()]);
-        audio.listenerRight = view.listenerRight;
-        stats = new NerdStats(
-          root,
-          () => {
-            if (!display) {
-              return undefined;
-            }
-            const now = performance.now();
-            const rate = statsSampleMs
-              ? ((receivedUpdates - statsSampleUpdates) * 1000) / (now - statsSampleMs)
-              : 0;
-            statsSampleMs = now;
-            statsSampleUpdates = receivedUpdates;
-            return {
-              state: display,
-              rows: [
-                [
-                  "RTT",
-                  `${Math.round(connection.rtt)} ms`,
-                  "Measured round-trip time to the game server.",
-                ],
-                [
-                  "Updates received",
-                  receivedUpdates,
-                  "Full-state messages and snapshot batches received during this page session. A batch can contain several simulation snapshots.",
-                ],
-                [
-                  "Update rate",
-                  `${rate.toFixed(1)} /s`,
-                  "Full-state messages and snapshot batches received per second, not rendered FPS.",
-                ],
-                [
-                  "Snapshot age",
-                  `${Math.round(now - lastSnapshotMs)} ms`,
-                  "Time since the last full state or snapshot arrived.",
-                ],
-                [
-                  "Playout buffer",
-                  `${Math.round(timeline.clock.bufferMs)} ms`,
-                  "How far other tanks are drawn behind the fastest recent snapshot arrival. It grows when snapshots arrive late and shrinks slowly afterwards.",
-                ],
-                [
-                  "Buffered ahead",
-                  `${Math.round(timeline.marginMs)} ms`,
-                  "Received simulation not yet displayed. Negative means snapshots are late and other tanks are briefly extrapolated.",
-                ],
-                [
-                  "Underrun",
-                  `${(timeline.clock.underrun * 100).toFixed(1)} %`,
-                  "Share of recent frames drawn past the newest snapshot. Sustained values mean visible stutter.",
-                ],
-                ["Server tick", mirror.tick, "Latest authoritative simulation tick received."],
-                [
-                  "Input seq sent / ack",
-                  `${seq} / ${appliedInput}`,
-                  "Latest input sequence sent and acknowledged by the server. Active input sends up to 20/s; unchanged idle input refreshes once/s to retain your seat. These are not received state updates.",
-                ],
-                [
-                  "Connection",
-                  connection.connected ? "Connected" : "Reconnecting",
-                  "Current game-server connection state.",
-                ],
-              ],
-            };
-          },
-          view,
-          () => active && !ui.menu && phase === "playing",
-        );
+      for (;;) {
+        await nextTask();
+        const [, , , done] = game.prepare_step(PREPARE_BUDGET, performance.now());
+        if (done) {
+          break;
+        }
       }
-      if (!mirror.state || !control) {
-        return;
-      }
-      const state = mirror.render(control.tankId);
-      view.reset(state);
-      await view.prepare(state, (stage) => showStatus(stage, true));
-      if (round !== connection.roundId || epoch !== connection.roomEpoch) {
-        return;
-      }
-      readyRound = round;
-      resetDisplay();
-      showStatus("Connected", true);
-      lastResumeMs = performance.now();
-      // Resuming sends a fresh full state; showBaseline starts the arena from it.
-      connection.send("resume");
-    } catch (error) {
-      graphicsFailed(error);
     } finally {
       preparing = false;
-      // The host may start a new round while GPU compilation for the old one is pending.
-      if (
-        mirror.state &&
-        control &&
-        connection.connected &&
-        (round !== connection.roundId || epoch !== connection.roomEpoch)
-      ) {
-        void prepare();
-      }
     }
+    pump();
+  }
+  const resize = () => {
+    const [width, height] = cssSize();
+    game.resize(width, height, devicePixelRatio, false);
   };
-  const graphicsFailed = (error: unknown) => {
-    console.error("Multiplayer graphics failed", error);
-    backToSetup("The arena could not load. Try again, or play single player.");
-  };
-  let baselines = 0;
-  /** A full state makes reset() build every model again, and drawing new models the
-   * first time stalls for hundreds of milliseconds. Draw them before the arena takes
-   * input, and keep a room page that is still joining hidden until then. */
-  const showBaseline = async (arena: Presentation, state: RenderState) => {
-    const baseline = ++baselines;
-    active = false;
-    arena.reset(state);
-    try {
-      await arena.drawFirstFrames(state);
-    } catch (error) {
-      graphicsFailed(error);
-      return;
-    }
-    if (baseline !== baselines || readyRound !== connection.roundId || !control) {
-      return;
-    }
-    // Snapshots kept arriving while the frames were drawn.
-    resetDisplay();
-    active = true;
-    reveal();
-    ui.canvas.focus();
-  };
-  const connection = new Connection(address.href.replace(/\/$/, ""), room, {
-    clearInput,
-    status(text, connected) {
-      if (!connected) {
-        active = false;
-        clearInput();
+  const route = (drained: DrainedEvents) => {
+    audio.listenerRight = drained.listenerRight;
+    for (const event of drained.events) {
+      audio.event(event, drained.listener, event.playerHit, event.own);
+      if (hud) {
+        ui.event(event, hud);
       }
-      showStatus(text, connected);
-    },
-    notice(text) {
-      ui.notice(text);
-    },
-    ended(end) {
-      active = false;
-      clearInput();
-      // A join still behind Battle Setup reports there; a room on screen says what
-      // happened over the frozen arena and offers the way back that fits.
-      if (joining) {
-        joining.fail(end.text);
-      } else {
-        ui.ended(end);
-      }
-    },
-    message(message) {
-      if (message.type === "welcome") {
-        if (mirror.roomEpoch !== connection.roomEpoch) {
-          readyRound = 0;
-          ui.resetFeedback();
-        }
-        mirror.needsFull = true;
-        active = false;
-        control = undefined;
-        requestedFull = false;
-      } else if (message.type === "lobby") {
-        const lobby = lobbyReader.read(message);
-        if (lobby.roomEpoch !== connection.roomEpoch) {
-          return;
-        }
-        if (lobby.roundId !== connection.roundId) {
-          connection.roundId = lobby.roundId;
-          connection.observedTick = 0;
-          mirror.needsFull = true;
-          active = false;
-          control = undefined;
-          clearInput();
-          ui.resetFeedback();
-        }
-        phase = lobby.phase;
-        // The final snapshot precedes the results lobby. A suspended seat (menu open)
-        // receives no snapshots, so its mirror may still hold the round in play.
-        if (phase === "results" && control && mirror.state?.match.phase === "results") {
-          const final = mirror.render(control.tankId);
-          ui.result(final.match, final.viewer.team);
-        }
-        ui.lobby(lobby, connection.playerId);
-        if (phase !== "playing") {
-          clearInput();
-          // A room between battles needs its menu now. A new room starts its battle
-          // right after this first lobby, so it keeps loading behind Battle Setup.
-          if (phase === "results" || !selectedChoice.create) {
-            reveal();
-          }
-        }
-      } else if (message.type === "control") {
-        const next = controlReader.read(message);
-        if (next.roomEpoch !== connection.roomEpoch || next.roundId !== connection.roundId) {
-          return;
-        }
-        if (next.controlEpoch !== control?.controlEpoch || next.life !== control.life) {
-          clearInput();
-        }
-        control = next;
-        if (
-          next.driver !== "human" &&
-          !ui.menu &&
-          !document.hidden &&
-          readyRound === connection.roundId &&
-          performance.now() - lastResumeMs > 1000
-        ) {
-          lastResumeMs = performance.now();
-          connection.send("resume");
-        }
-      } else if (message.type === "full") {
-        lastSnapshotMs = performance.now();
-        appliedInput = 0;
-        mirror.applyFull(message, { roomEpoch: connection.roomEpoch, roundId: connection.roundId });
-        receivedUpdates++;
-        connection.observedTick = mirror.tick;
-        requestedFull = false;
-        clearInput();
-        resetDisplay();
-        if (readyRound !== connection.roundId) {
-          void prepare();
-        } else if (view && display) {
-          void showBaseline(view, display);
-        }
-      } else if (message.type === "snapshot") {
-        appliedInput = id.read(message.ack);
-        lastSnapshotMs = performance.now();
-        if (!Array.isArray(message.snapshots) || message.snapshots.length > 8) {
-          throw new Error("Invalid frame batch");
-        }
-        receivedUpdates++;
-        if (message.roundId !== connection.roundId) {
-          return;
-        }
-        let pushed = false;
-        for (const snapshot of message.snapshots) {
-          const result = mirror.applySnapshot(snapshot);
-          if (!result) {
-            requestFull();
-            break;
-          }
-          connection.observedTick = mirror.tick;
-          if (control && readyRound === connection.roundId && !document.hidden && !ui.menu) {
-            try {
-              timeline.push(
-                mirror.render(control.tankId),
-                mirror.tick,
-                result.events,
-                result.traces,
-              );
-              pushed = true;
-            } catch {
-              requestFull();
-              break;
-            }
-          }
-        }
-        if (pushed) {
-          timeline.arrive(lastSnapshotMs);
-        }
-      }
-    },
-  });
-  const collect = (now: number, dt: number, lookPixels: number) => {
-    if (!activeInput() || !view || !display || !control) {
-      return;
-    }
-    const look = view.firstPerson;
-    const position = display.viewer.position;
-    let target: { x: number; z: number } | undefined;
-    let angle: number;
-    if (look.enabled) {
-      const stick = controls.touch.pointers.aim === null ? 0 : controls.touch.aimX;
-      look.turn(lookPixels, stick, dt);
-      angle = look.yaw;
-    } else {
-      target = controls.touch.aiming
-        ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
-        : view.aim(controls.nx, controls.ny);
-      angle = Math.atan2(target.x - position.x, target.z - position.z);
-    }
-    const command = look.steer(controls.command(angle));
-    // Aim is immediate presentation feedback; only the server decides what the shot hits.
-    display = {
-      ...display,
-      viewer: { ...display.viewer, aim: angle },
-      tanks: display.tanks.map((tank) =>
-        tank.id === display!.viewerId ? { ...tank, aim: angle } : tank,
-      ),
-    };
-    if (command.mine) {
-      pending.push({ type: "mine" });
-    }
-    if (command.ammoSelection !== undefined) {
-      let weapon =
-        typeof command.ammoSelection === "string"
-          ? command.ammoSelection
-          : (pendingWeapon ?? display.viewer.selectedAmmo);
-      if (typeof command.ammoSelection === "number") {
-        const index = AMMO_ORDER.indexOf(weapon as (typeof AMMO_ORDER)[number]);
-        for (let offset = 1; offset <= AMMO_ORDER.length; offset++) {
-          const candidate =
-            AMMO_ORDER[
-              (index + command.ammoSelection * offset + AMMO_ORDER.length) % AMMO_ORDER.length
-            ];
-          if (hasAmmo(display.viewer, candidate)) {
-            weapon = candidate;
-            break;
-          }
-        }
-      }
-      pendingWeapon = weapon;
-      pending.push({ type: "ammo", weapon });
-    }
-    if (pending.length > MAX_ACTIONS) {
-      pending = pending.slice(-MAX_ACTIONS);
-    }
-    const input = {
-      controlEpoch: control.controlEpoch,
-      moveX: command.moveX,
-      moveZ: command.moveZ,
-      aim: target && !controls.touch.aiming ? { x: target.x, z: target.z } : { angle },
-      fire: command.fire,
-      actions: pending,
-    };
-    if (!inputCadence.due(input, now)) {
-      return;
-    }
-    if (
-      connection.send("input", encodeInput({ ...input, seq: seq + 1, observedTick: mirror.tick }))
-    ) {
-      seq++;
-      inputCadence.sent(input, now);
-      pending = [];
-      pendingWeapon = undefined;
+      onEvent?.(event);
     }
   };
   const loop = (now: number) => {
-    const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
-    last = now;
+    requestAnimationFrame(loop);
     // Any menu (including ones the server opens) and disconnects free the pointer;
-    // a death keeps it captured for the respawn. Mouse travel while `activeInput`
-    // is off is dropped so the turret never jumps.
-    controls.holdPointer(
-      !!view?.firstPerson.enabled,
-      !active || !connection.connected || ui.menu || document.hidden || phase !== "playing",
-    );
-    const lookPixels = controls.takeLook();
-    if (active && view && control && mirror.state && !document.hidden) {
-      const updateStart = performance.now();
-      if (!ui.menu) {
-        const sample = timeline.read(now, connection.rtt, dt);
-        display = sample.state;
-        for (const event of sample.events) {
-          const playerHit =
-            (event.type === "hurt" || event.type === "death") &&
-            event.owner === display.viewerId &&
-            event.team !== display.viewer.team;
-          view.event(event, playerHit);
-          audio.event(event, display.viewer.position, playerHit, event.id === display.viewerId);
-          ui.event(event, display, view.damageAngle(event));
-        }
+    // a death keeps it captured for the respawn. Mouse travel while input is off is
+    // dropped so the turret never jumps.
+    if (lastResult.length) {
+      controls.holdPointer(
+        lastResult[FRAME.firstPerson] === 1,
+        lastResult[FRAME.pointerFree] === 1,
+      );
+    }
+    packInput(controls, input, zoom);
+    zoom = 0;
+    const result = game.frame(now, input);
+    lastResult = result;
+    pump();
+    if (result[FRAME.drawn]) {
+      hudDt += result[FRAME.dt];
+      if (result[FRAME.hudDue]) {
+        hud = (JSON.parse(game.hud_json()) as Hud | null) ?? hud;
       }
-      if (display) {
-        collect(now, dt, lookPixels);
-        const renderStart = performance.now();
-        view.render(display, 1, dt);
-        cockpit.update(
-          view.seatWanted,
-          view.firstPerson.screenAngle(display.viewer.heading),
-          controls.aimWaitsForClick,
-        );
-        const renderCost = performance.now() - renderStart;
-        ui.update(display, dt, connection.connected);
-        stats?.frame(now, renderStart - updateStart, renderCost);
+      if (result[FRAME.events] > 0) {
+        route(JSON.parse(game.drain_events()) as DrainedEvents);
       }
+      if (hud && result[FRAME.hudDue]) {
+        ui.update(hud, hudDt, game.connected());
+        hudDt = 0;
+      }
+      cockpit.update(
+        result[FRAME.cockpit] === 1,
+        result[FRAME.hullAngle],
+        controls.aimWaitsForClick,
+      );
+      stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+    } else if (result[FRAME.events] > 0) {
+      game.drain_events();
     }
     touch.update();
-    requestAnimationFrame(loop);
   };
-  window.addEventListener("resize", () => view?.resize());
+  const poll = setInterval(() => {
+    game.poll(performance.now());
+    pump();
+  }, POLL_MS);
+  new ResizeObserver(resize).observe(ui.canvas);
+  window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", () => {
-    clearInput();
-    if (document.hidden) {
-      connection.send("suspend");
-      active = false;
-    } else if (phase === "playing" && !ui.menu) {
-      resume();
-    }
+    controls.clear();
+    game.set_hidden(document.hidden, performance.now());
+    pump();
   });
-  window.addEventListener("pagehide", () => connection.stop(), { once: true });
+  window.addEventListener(
+    "pagehide",
+    () => {
+      clearInterval(poll);
+      game.stop();
+      pump();
+    },
+    { once: true },
+  );
   requestAnimationFrame(loop);
   audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
   audio.start();
-  void connection.connect(selectedChoice);
+  game.connect(choiceJson, performance.now());
+  pump();
   if (import.meta.env.DEV) {
+    const debug = () =>
+      JSON.parse(game.debug_json()) as {
+        connection: Record<string, unknown>;
+        tick: number;
+        control: unknown;
+        display: unknown;
+        prepared: boolean;
+        view: unknown;
+      };
+    const current = () => [...sockets.values()].at(-1);
     Object.assign(window, {
       sloppyMultiplayer: {
-        connection,
-        mirror,
+        game,
+        get connection() {
+          return { ...debug().connection, socket: current() };
+        },
+        get mirror() {
+          return { tick: debug().tick };
+        },
         get control() {
-          return control;
+          return debug().control ?? undefined;
         },
         get display() {
-          return display;
+          return debug().display ?? undefined;
         },
+        /** The arena, once prepared. */
         get view() {
-          return view;
+          const state = debug();
+          return state.prepared ? state.view : undefined;
+        },
+        get hud() {
+          return hud;
+        },
+        set onEvent(listener: ((event: HudEvent) => void) | undefined) {
+          onEvent = listener;
         },
         controls,
         ui,
@@ -660,5 +560,20 @@ export function startMultiplayer(
         resume,
       },
     });
+  }
+}
+
+/** A seat this tab held in the room before a reload; the engine checks it. */
+function savedSeat(key: string): { token: string; roomEpoch: string } | undefined {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) ?? "null") as {
+      token?: unknown;
+      roomEpoch?: unknown;
+    } | null;
+    return typeof saved?.token === "string" && typeof saved.roomEpoch === "string"
+      ? { token: saved.token, roomEpoch: saved.roomEpoch }
+      : undefined;
+  } catch {
+    return undefined;
   }
 }

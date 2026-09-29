@@ -1,8 +1,17 @@
-import type { PlayerAssignment } from "../game/types";
 import type { ControlInput } from "./player-controls";
 import type { FullState, Identity, Snapshot } from "./replication";
 import { array, boolean, id, object, optional, string, enumeration, number } from "./schema";
 import { team, playerKind, mapMode, difficulty } from "./scene-codec";
+import {
+  DEFAULT_ROUND_MINUTES,
+  MAX_ROUND_MINUTES,
+  type Lobby,
+  type Player,
+  type RoomSettings,
+} from "./room-protocol";
+
+export { DEFAULT_ROUND_MINUTES, MAX_ROUND_MINUTES, ROOM_CODE } from "./room-protocol";
+export type { Lobby, Player, RoomSettings } from "./room-protocol";
 
 declare const __MULTIPLAYER_CONTENT_VERSION__: string;
 export const PROTOCOL_VERSION = 1;
@@ -12,18 +21,15 @@ export const CONTENT_VERSION =
     : __MULTIPLAYER_CONTENT_VERSION__;
 export const MAX_CLIENT_MESSAGE_BYTES = 4096;
 export const MAX_SERVER_MESSAGE_BYTES = 1_000_000;
-export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 export const EMPTY_GRACE_MS = 30_000;
 export const ROOM_IDLE_MS = 5 * 60_000;
-export const DEFAULT_ROUND_MINUTES = 20;
-export const MAX_ROUND_MINUTES = 99;
 export const roundMinutesReader = number(1, MAX_ROUND_MINUTES, true);
 /** A room hosts no new battle after this long; one already under way may finish. */
 export const MAX_ROOM_MS = 4 * 60 * 60_000;
 /** How far a battle may run past MAX_ROOM_MS: its longest length plus overtime, so an
  * endless next-kill overtime still cannot hold a room open forever. */
 export const MAX_BATTLE_OVERRUN_MS = (MAX_ROUND_MINUTES + 30) * 60_000;
-export const settingsReader = object({
+export const settingsReader = object<RoomSettings>({
   mapMode,
   difficulty,
   humansOnly: boolean,
@@ -32,21 +38,6 @@ export const settingsReader = object({
       roundMinutesReader.read(value === undefined ? DEFAULT_ROUND_MINUTES : value),
   },
 });
-export type RoomSettings = ReturnType<typeof settingsReader.read>;
-export interface Player extends PlayerAssignment {
-  connected: boolean;
-  tankId?: number;
-  kills: number;
-  deaths: number;
-}
-export interface Lobby extends Identity {
-  type: "lobby";
-  phase: "lobby" | "playing" | "results";
-  hostId: string;
-  players: Player[];
-  scoreboard: Player[];
-  settings: RoomSettings;
-}
 export interface Control extends Identity {
   type: "control";
   tankId: number;
