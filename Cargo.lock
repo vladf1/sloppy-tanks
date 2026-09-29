@@ -1058,6 +1058,7 @@ dependencies = [
  "bytemuck",
  "glam 0.33.11",
  "js-sys",
+ "naga",
  "sloppy-core",
  "wasm-bindgen",
  "wasm-bindgen-futures",

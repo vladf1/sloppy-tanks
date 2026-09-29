@@ -16,4 +16,18 @@ wgpu.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["HtmlCanvasElement", "console"] }
+web-sys = { workspace = true, features = [
+  "HtmlCanvasElement",
+  "console",
+  "Window",
+  "Response",
+  "Blob",
+  "ImageBitmap",
+  "ImageBitmapOptions",
+  "PremultiplyAlpha",
+  "ColorSpaceConversion",
+] }
+
+[dev-dependencies]
+# Validates every generated WGSL variant natively; browsers still compile the result.
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
