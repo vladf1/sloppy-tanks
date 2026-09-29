@@ -163,6 +163,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
+    /// A browser module for one pipeline (`pipelines.rs` says why not shared).
     pub fn module(&self, label: &str, source: &str) -> RawModule {
         let descriptor = object(&[("label", label.into()), ("code", source.into())]);
         RawModule(self.device.create_shader_module(&descriptor))

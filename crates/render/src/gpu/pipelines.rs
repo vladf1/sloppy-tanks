@@ -1,7 +1,14 @@
 //! Render pipelines, cached by `PipelineKey` for the page's lifetime (the game's
 //! variants are bounded, and recompiling them after every round reset would stall;
-//! see `keepReleasedPipelines` in the former renderer.ts). Shader modules are
+//! see `keepReleasedPipelines` in the former renderer.ts). Shader sources are
 //! cached by `ShaderKey`.
+//!
+//! Every pipeline gets shader module objects of its own, even when it shares the
+//! source with others. WebKit fully recompiles a pipeline whose module object an
+//! earlier pipeline used (150-180 ms for a lit surface on a cold cache, one pipeline
+//! at a time), while a new module whose source it has compiled before costs about
+//! 2 ms whatever the pipeline state. Chrome looks modules up by their source, so the
+//! extra objects cost it nothing.
 //!
 //! Every pipeline is compiled in the background first (`precompile.rs`): the fixed
 //! ones while the renderer is created, the scene's variants through
@@ -248,25 +255,23 @@ fn surface_spec(key: &PipelineKey, effects: &EffectRegistry) -> PipelineSpec {
     }
 }
 
-/// A shader module for wgpu and its browser twin for the precompiler.
-struct Modules {
-    wgpu: wgpu::ShaderModule,
-    raw: RawModule,
+/// The cached WGSL of a surface or shadow variant.
+fn source<'a>(
+    sources: &'a mut HashMap<ShaderKey, String>,
+    effects: &EffectRegistry,
+    shader: ShaderKey,
+) -> &'a str {
+    sources
+        .entry(shader)
+        .or_insert_with(|| shader_source(&shader, effects))
 }
 
-fn modules(
-    device: &wgpu::Device,
-    precompiler: &Precompiler<PipelineKey>,
-    label: &str,
-    source: &str,
-) -> Modules {
-    Modules {
-        wgpu: device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        }),
-        raw: precompiler.module(label, source),
-    }
+/// A wgpu shader module for one pipeline (see the module comment).
+fn module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    })
 }
 
 fn pipeline_layout(
@@ -284,7 +289,7 @@ fn pipeline_layout(
 
 pub struct Pipelines {
     precompiler: Precompiler<PipelineKey>,
-    modules: HashMap<ShaderKey, Modules>,
+    sources: HashMap<ShaderKey, String>,
     pipelines: Vec<wgpu::RenderPipeline>,
     index: HashMap<PipelineKey, u32>,
     surface_layout: wgpu::PipelineLayout,
@@ -309,54 +314,47 @@ impl Pipelines {
         let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
         let output_layout = pipeline_layout(device, "output", &[&layouts.output]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let water_module = modules(device, &precompiler, "water", &water_source());
-        let output_module = modules(device, &precompiler, "output", crate::shader::OUTPUT_WGSL);
-        let merged_module = modules(
-            device,
-            &precompiler,
-            "shadow merged",
-            &shadow_merged_source(),
+        let water_source = water_source();
+        let merged_source = shadow_merged_source();
+        let cutout_source = shadow_cutout_source();
+        let water = (water_spec(), &water_layout, water_source.as_str());
+        let output = (
+            output_spec(canvas_format),
+            &output_layout,
+            crate::shader::OUTPUT_WGSL,
         );
-        let cutout_module = modules(
-            device,
-            &precompiler,
-            "shadow cutout",
-            &shadow_cutout_source(),
-        );
-        let water = water_spec();
-        let output = output_spec(canvas_format);
-        let merged: Vec<(PipelineSpec, bool)> = [false, true]
+        let merged: Vec<_> = [false, true]
             .into_iter()
             .flat_map(|cutout| SHADOW_MERGED_SIDES.iter().map(move |&side| (cutout, side)))
-            .map(|(cutout, side)| (shadow_merged_spec(side, cutout), cutout))
-            .collect();
-        let merged_parts = |cutout: bool| {
-            if cutout {
-                (&cutout_module, &surface_layout)
-            } else {
-                (&merged_module, &merged_layout)
-            }
-        };
-        let mut jobs = vec![(&water, &water_module.raw), (&output, &output_module.raw)];
-        jobs.extend(
-            merged
-                .iter()
-                .map(|(spec, cutout)| (spec, &merged_parts(*cutout).0.raw)),
-        );
-        let _compiled = precompiler.compile_all(&jobs).await;
-        let shadow_merged = merged
-            .iter()
-            .map(|(spec, cutout)| {
-                let (module, layout) = merged_parts(*cutout);
-                spec.create(device, layout, &module.wgpu)
+            .map(|(cutout, side)| {
+                let spec = shadow_merged_spec(side, cutout);
+                if cutout {
+                    (spec, &surface_layout, cutout_source.as_str())
+                } else {
+                    (spec, &merged_layout, merged_source.as_str())
+                }
             })
             .collect();
+        let fixed: Vec<_> = [&water, &output].into_iter().chain(&merged).collect();
+        let raw: Vec<RawModule> = fixed
+            .iter()
+            .map(|(spec, _, source)| precompiler.module(spec.label, source))
+            .collect();
+        let jobs: Vec<_> = fixed
+            .iter()
+            .zip(&raw)
+            .map(|(job, raw)| (&job.0, raw))
+            .collect();
+        let _compiled = precompiler.compile_all(&jobs).await;
+        let create = |(spec, layout, source): &(PipelineSpec, &wgpu::PipelineLayout, &str)| {
+            spec.create(device, layout, &module(device, spec.label, source))
+        };
         Self {
-            water: water.create(device, &water_layout, &water_module.wgpu),
-            output: output.create(device, &output_layout, &output_module.wgpu),
-            shadow_merged,
+            water: create(&water),
+            output: create(&output),
+            shadow_merged: merged.iter().map(create).collect(),
             precompiler,
-            modules: HashMap::new(),
+            sources: HashMap::new(),
             pipelines: Vec::new(),
             index: HashMap::new(),
             surface_layout,
@@ -369,22 +367,6 @@ impl Pipelines {
 
     pub fn get(&self, index: u32) -> &wgpu::RenderPipeline {
         &self.pipelines[index as usize]
-    }
-
-    fn ensure_modules(
-        &mut self,
-        device: &wgpu::Device,
-        effects: &EffectRegistry,
-        shader: ShaderKey,
-    ) {
-        let precompiler = &self.precompiler;
-        self.modules.entry(shader).or_insert_with(|| {
-            let label = match shader.pass {
-                Pass::Main => "surface",
-                Pass::Shadow => "shadow",
-            };
-            modules(device, precompiler, label, &shader_source(&shader, effects))
-        });
     }
 
     /// The pipeline for a key once the background compile has finished, created
@@ -405,9 +387,9 @@ impl Pipelines {
         }
         if !self.precompiler.queued(key) {
             let spec = surface_spec(key, effects);
-            self.ensure_modules(device, effects, key.shader);
-            self.precompiler
-                .start(*key, &spec, &self.modules[&key.shader].raw);
+            let source = source(&mut self.sources, effects, key.shader);
+            let raw = self.precompiler.module(spec.label, source);
+            self.precompiler.start(*key, &spec, &raw);
         }
         None
     }
@@ -433,9 +415,12 @@ impl Pipelines {
         key: &PipelineKey,
     ) -> u32 {
         let spec = surface_spec(key, effects);
-        self.ensure_modules(device, effects, key.shader);
-        let module = &self.modules[&key.shader].wgpu;
-        let pipeline = spec.create(device, &self.surface_layout, module);
+        let module = module(
+            device,
+            spec.label,
+            source(&mut self.sources, effects, key.shader),
+        );
+        let pipeline = spec.create(device, &self.surface_layout, &module);
         self.precompiler.release(key);
         self.pipelines.push(pipeline);
         let index = self.pipelines.len() as u32 - 1;
@@ -453,7 +438,9 @@ impl Pipelines {
         self.pipelines.len() + 2 + self.shadow_merged.len()
     }
 
+    /// Distinct shader sources, including the fixed water, output and merged shadow
+    /// ones.
     pub fn module_count(&self) -> usize {
-        self.modules.len() + 4
+        self.sources.len() + 4
     }
 }
