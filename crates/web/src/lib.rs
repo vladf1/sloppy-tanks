@@ -2,10 +2,12 @@
 //! and the renderer. Hot loops and game state stay on this side of the boundary.
 //!
 //! - [`Game`] (`game.rs`): single-player play, one call per frame.
+//! - [`NetGame`] (`net_game.rs`): one multiplayer room page, one call per frame.
 //! - [`RenderLab`] (`lab.rs`): the renderer calibration scene of `tools/render-lab.html`.
 
 #![recursion_limit = "256"]
 
+pub mod hud;
 pub mod lab_scene;
 
 #[cfg(target_arch = "wasm32")]
@@ -14,6 +16,10 @@ mod effects_lab;
 mod game;
 #[cfg(target_arch = "wasm32")]
 mod lab;
+#[cfg(target_arch = "wasm32")]
+mod net_game;
+#[cfg(target_arch = "wasm32")]
+mod stats;
 
 #[cfg(target_arch = "wasm32")]
 pub use effects_lab::EffectsLab;
@@ -21,3 +27,5 @@ pub use effects_lab::EffectsLab;
 pub use game::Game;
 #[cfg(target_arch = "wasm32")]
 pub use lab::RenderLab;
+#[cfg(target_arch = "wasm32")]
+pub use net_game::NetGame;
