@@ -154,10 +154,11 @@ impl RenderLab {
         self.renderer.texture_failures().to_vec()
     }
 
-    /// Compile up to `budget` pipelines; returns `[compiled, remaining]`.
+    /// Create up to `budget` pipelines compiled in the background; returns
+    /// `[compiled, remaining, compiling]` (`compiling`: still in background compiles).
     pub fn prepare_step(&mut self, budget: u32) -> Vec<u32> {
         let progress = self.renderer.prepare_step(budget);
-        vec![progress.compiled, progress.remaining]
+        vec![progress.compiled, progress.remaining, progress.compiling]
     }
 
     pub fn warm_up(&mut self) -> Result<(), JsValue> {

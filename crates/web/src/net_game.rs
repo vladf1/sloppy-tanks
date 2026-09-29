@@ -470,10 +470,11 @@ impl NetGame {
 
     // ---------------------------------------------------------- arena
 
-    /// Compile up to `budget` pipelines for the arena `prepare` asked for;
-    /// `[compiled, remaining, texturesPending, done, gpuPending]`. Once compiled it warms
-    /// every variant and waits for the GPU to run that work (`gpuPending`: poll again
-    /// after a short timer rather than a task); when done it draws the first frames and
+    /// Create up to `budget` background-compiled pipelines for the arena `prepare` asked
+    /// for; `[compiled, remaining, texturesPending, done, gpuPending]`. Once compiled it
+    /// warms every variant and waits for the GPU to run that work (`gpuPending`, also set
+    /// while only background compiles remain: poll again after a short timer rather than
+    /// a task); when done it draws the first frames and
     /// tells the room the arena is ready. The seat stays suspended until then, so a
     /// shader compile that takes seconds never makes the room drop this connection.
     pub fn prepare_step(&mut self, budget: u32, now: f64) -> Vec<f64> {

@@ -479,11 +479,12 @@ async function waitFor(check: () => boolean): Promise<void> {
 /** Compile every pipeline in small steps, reporting progress, then warm up. */
 async function prepareRust(lab: RenderLab): Promise<void> {
   for (;;) {
-    const [compiled, remaining] = lab.prepare_step(4);
+    const [compiled, remaining, compiling] = lab.prepare_step(4);
     status.textContent = `Compiling pipelines… ${remaining} left`;
     if (remaining === 0) break;
-    if (compiled === 0) throw new Error("Pipeline preparation made no progress");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (compiled === 0 && compiling === 0) throw new Error("Pipeline preparation made no progress");
+    // Background compiles finish on their own; poll them on a short timer.
+    await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
   }
   await waitFor(() => lab.textures_pending() === 0);
   lab.warm_up();

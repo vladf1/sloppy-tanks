@@ -13,6 +13,7 @@ use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
+use crate::gpu::precompile::{LayoutKind, PipelineSpec, Precompiler};
 use crate::shader::MIPMAP_WGSL;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -69,6 +70,26 @@ struct Loaded {
     result: Result<Pixels, String>,
 }
 
+/// The mipmap blit's source level and sampler (shared with `precompile.rs`).
+pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    },
+];
+
 struct MipmapGenerator {
     layout: wgpu::BindGroupLayout,
     srgb: wgpu::RenderPipeline,
@@ -76,64 +97,46 @@ struct MipmapGenerator {
     sampler: wgpu::Sampler,
 }
 
+fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
+    PipelineSpec {
+        label: "mipmap",
+        layout: LayoutKind::Mipmap,
+        vertex_entry: "vs_blit",
+        fragment_entry: Some("fs_blit"),
+        buffers: vec![],
+        targets: vec![Some(format.into())],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+    }
+}
+
 impl MipmapGenerator {
-    fn new(device: &wgpu::Device) -> Self {
+    /// Compiles both blit pipelines in the background before creating them.
+    async fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mipmap blit"),
             source: wgpu::ShaderSource::Wgsl(MIPMAP_WGSL.into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mipmap source"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: MIPMAP_SOURCE_ENTRIES,
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mipmap"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |format: wgpu::TextureFormat| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mipmap"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_blit"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_blit"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(format.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
+        let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
+        let precompiler = Precompiler::<()>::new(device);
+        let raw = precompiler.module("mipmap blit", MIPMAP_WGSL);
+        let _compiled = precompiler
+            .compile_all(&[(&srgb, &raw), (&linear, &raw)])
+            .await;
         Self {
-            srgb: pipeline(wgpu::TextureFormat::Rgba8UnormSrgb),
-            linear: pipeline(wgpu::TextureFormat::Rgba8Unorm),
+            srgb: srgb.create(device, &pipeline_layout, &module),
+            linear: linear.create(device, &pipeline_layout, &module),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("mipmap"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -236,7 +239,7 @@ pub struct TextureStore {
 }
 
 impl TextureStore {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, asset_base: String) -> Self {
+    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, asset_base: String) -> Self {
         let placeholder = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("white placeholder"),
             size: wgpu::Extent3d {
@@ -271,7 +274,7 @@ impl TextureStore {
             generated: HashMap::new(),
             samplers: HashMap::new(),
             placeholder: placeholder.create_view(&Default::default()),
-            mipmaps: MipmapGenerator::new(device),
+            mipmaps: MipmapGenerator::new(device).await,
             asset_base,
             generation: 0,
             failures: Vec::new(),

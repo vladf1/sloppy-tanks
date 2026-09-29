@@ -2,6 +2,11 @@
 //! variants are bounded, and recompiling them after every round reset would stall;
 //! see `keepReleasedPipelines` in the former renderer.ts). Shader modules are
 //! cached by `ShaderKey`.
+//!
+//! Every pipeline is compiled in the background first (`precompile.rs`): the fixed
+//! ones while the renderer is created, the scene's variants through
+//! [`Pipelines::request`] while an arena prepares. Only a variant first met while
+//! drawing ([`Pipelines::ensure`]) still compiles synchronously.
 
 use std::collections::HashMap;
 
@@ -9,6 +14,7 @@ use sloppy_core::scene::Side;
 
 use crate::effects::EffectRegistry;
 use crate::gpu::context::{DEPTH_FORMAT, HDR_FORMAT};
+use crate::gpu::precompile::{LayoutKind, PipelineSpec, Precompiler, RawModule};
 use crate::gpu::resources::Layouts;
 use crate::model::Vertex;
 use crate::shader::{
@@ -25,7 +31,7 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     2 => Float32x2,
     3 => Float32x4,
 ];
-const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+static EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
     4 => Float32x4,
     5 => Float32x4,
 ];
@@ -86,8 +92,199 @@ fn blend_state(mode: BlendMode) -> Option<wgpu::BlendState> {
     }
 }
 
+fn depth_state(
+    write: bool,
+    compare: wgpu::CompareFunction,
+    bias: wgpu::DepthBiasState,
+) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(write),
+        depth_compare: Some(compare),
+        stencil: Default::default(),
+        bias,
+    }
+}
+
+fn water_spec() -> PipelineSpec {
+    PipelineSpec {
+        label: "water",
+        layout: LayoutKind::Water,
+        vertex_entry: "vs_water",
+        fragment_entry: Some("fs_water"),
+        buffers: vec![vertex_layout()],
+        targets: vec![Some(HDR_FORMAT.into())],
+        primitive: wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(depth_state(
+            true,
+            wgpu::CompareFunction::LessEqual,
+            Default::default(),
+        )),
+        multisample: wgpu::MultisampleState {
+            count: SAMPLE_COUNT,
+            ..Default::default()
+        },
+    }
+}
+
+fn output_spec(canvas_format: wgpu::TextureFormat) -> PipelineSpec {
+    PipelineSpec {
+        label: "output",
+        layout: LayoutKind::Output,
+        vertex_entry: "vs_fullscreen",
+        fragment_entry: Some("fs_output"),
+        buffers: vec![],
+        targets: vec![Some(canvas_format.into())],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+    }
+}
+
+fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
+    PipelineSpec {
+        label: if cutout {
+            "shadow cutout"
+        } else {
+            "shadow merged"
+        },
+        layout: if cutout {
+            LayoutKind::Surface
+        } else {
+            LayoutKind::ShadowMerged
+        },
+        vertex_entry: if cutout {
+            "vs_shadow_cutout"
+        } else {
+            "vs_shadow_merged"
+        },
+        fragment_entry: cutout.then_some("fs_shadow_cutout"),
+        buffers: vec![
+            wgpu::VertexBufferLayout {
+                array_stride: size_of::<ShadowVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &SHADOW_VERTEX_ATTRIBUTES,
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: 4,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &SHADOW_BASE_ATTRIBUTES,
+            },
+        ],
+        targets: vec![],
+        primitive: wgpu::PrimitiveState {
+            cull_mode: cull_mode(side),
+            ..Default::default()
+        },
+        depth_stencil: Some(depth_state(
+            true,
+            wgpu::CompareFunction::LessEqual,
+            Default::default(),
+        )),
+        multisample: Default::default(),
+    }
+}
+
+/// A surface or shadow variant.
+fn surface_spec(key: &PipelineKey, effects: &EffectRegistry) -> PipelineSpec {
+    let shader = key.shader;
+    let main = shader.pass == Pass::Main;
+    let mut buffers = vec![vertex_layout()];
+    if shader.extra_attributes > 0 {
+        buffers.push(wgpu::VertexBufferLayout {
+            array_stride: 16 * shader.extra_attributes as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &EXTRA_ATTRIBUTES[..shader.extra_attributes as usize],
+        });
+    }
+    let fragment_entry = if main {
+        Some("fs_main")
+    } else if shader.shadow_needs_fragment(effects) {
+        Some("fs_shadow")
+    } else {
+        None
+    };
+    let targets = if main {
+        vec![Some(wgpu::ColorTargetState {
+            format: HDR_FORMAT,
+            blend: blend_state(key.blend),
+            write_mask: wgpu::ColorWrites::ALL,
+        })]
+    } else {
+        vec![]
+    };
+    PipelineSpec {
+        label: if main { "surface" } else { "shadow" },
+        layout: LayoutKind::Surface,
+        vertex_entry: if main { "vs_main" } else { "vs_shadow" },
+        fragment_entry,
+        buffers,
+        targets,
+        primitive: wgpu::PrimitiveState {
+            cull_mode: cull_mode(key.side),
+            ..Default::default()
+        },
+        depth_stencil: Some(depth_state(
+            key.depth_write,
+            if key.depth_test {
+                wgpu::CompareFunction::LessEqual
+            } else {
+                wgpu::CompareFunction::Always
+            },
+            wgpu::DepthBiasState {
+                constant: key.depth_bias.constant,
+                slope_scale: key.depth_bias.slope_scale(),
+                clamp: 0.0,
+            },
+        )),
+        multisample: wgpu::MultisampleState {
+            count: if main { SAMPLE_COUNT } else { 1 },
+            mask: !0,
+            alpha_to_coverage_enabled: key.alpha_to_coverage,
+        },
+    }
+}
+
+/// A shader module for wgpu and its browser twin for the precompiler.
+struct Modules {
+    wgpu: wgpu::ShaderModule,
+    raw: RawModule,
+}
+
+fn modules(
+    device: &wgpu::Device,
+    precompiler: &Precompiler<PipelineKey>,
+    label: &str,
+    source: &str,
+) -> Modules {
+    Modules {
+        wgpu: device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        }),
+        raw: precompiler.module(label, source),
+    }
+}
+
+fn pipeline_layout(
+    device: &wgpu::Device,
+    label: &str,
+    groups: &[&wgpu::BindGroupLayout],
+) -> wgpu::PipelineLayout {
+    let groups: Vec<_> = groups.iter().copied().map(Some).collect();
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &groups,
+        immediate_size: 0,
+    })
+}
+
 pub struct Pipelines {
-    modules: HashMap<ShaderKey, wgpu::ShaderModule>,
+    precompiler: Precompiler<PipelineKey>,
+    modules: HashMap<ShaderKey, Modules>,
     pipelines: Vec<wgpu::RenderPipeline>,
     index: HashMap<PipelineKey, u32>,
     surface_layout: wgpu::PipelineLayout,
@@ -96,179 +293,73 @@ pub struct Pipelines {
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// [`shadow_merged_index`].
     pub shadow_merged: Vec<wgpu::RenderPipeline>,
-    /// Pipelines created since the counter was last read (warm-up progress).
-    pub created: u32,
 }
 
 impl Pipelines {
-    pub fn new(
+    /// Compile the fixed water, output and merged shadow pipelines in the background,
+    /// then create them.
+    pub async fn new(
         device: &wgpu::Device,
         layouts: &Layouts,
         canvas_format: wgpu::TextureFormat,
     ) -> Self {
-        let surface_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("surface"),
-            bind_group_layouts: &[Some(&layouts.frame), Some(&layouts.material)],
-            immediate_size: 0,
-        });
-        let water_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("water"),
-            bind_group_layouts: &[Some(&layouts.frame), Some(&layouts.water)],
-            immediate_size: 0,
-        });
-        let water_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("water"),
-            source: wgpu::ShaderSource::Wgsl(water_source().into()),
-        });
-        let water = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("water"),
-            layout: Some(&water_layout),
-            vertex: wgpu::VertexState {
-                module: &water_module,
-                entry_point: Some("vs_water"),
-                compilation_options: Default::default(),
-                buffers: &[Some(vertex_layout())],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLE_COUNT,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &water_module,
-                entry_point: Some("fs_water"),
-                compilation_options: Default::default(),
-                targets: &[Some(HDR_FORMAT.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let output_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("output"),
-            bind_group_layouts: &[Some(&layouts.output)],
-            immediate_size: 0,
-        });
-        let output_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("output"),
-            source: wgpu::ShaderSource::Wgsl(crate::shader::OUTPUT_WGSL.into()),
-        });
-        let output = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("output"),
-            layout: Some(&output_layout),
-            vertex: wgpu::VertexState {
-                module: &output_module,
-                entry_point: Some("vs_fullscreen"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &output_module,
-                entry_point: Some("fs_output"),
-                compilation_options: Default::default(),
-                targets: &[Some(canvas_format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let merged_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow merged"),
-            bind_group_layouts: &[Some(&layouts.frame)],
-            immediate_size: 0,
-        });
-        let merged_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow merged"),
-            source: wgpu::ShaderSource::Wgsl(shadow_merged_source().into()),
-        });
-        let cutout_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow cutout"),
-            source: wgpu::ShaderSource::Wgsl(shadow_cutout_source().into()),
-        });
-        let shadow_merged = [false, true]
+        let precompiler = Precompiler::new(device);
+        let surface_layout =
+            pipeline_layout(device, "surface", &[&layouts.frame, &layouts.material]);
+        let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
+        let output_layout = pipeline_layout(device, "output", &[&layouts.output]);
+        let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
+        let water_module = modules(device, &precompiler, "water", &water_source());
+        let output_module = modules(device, &precompiler, "output", crate::shader::OUTPUT_WGSL);
+        let merged_module = modules(
+            device,
+            &precompiler,
+            "shadow merged",
+            &shadow_merged_source(),
+        );
+        let cutout_module = modules(
+            device,
+            &precompiler,
+            "shadow cutout",
+            &shadow_cutout_source(),
+        );
+        let water = water_spec();
+        let output = output_spec(canvas_format);
+        let merged: Vec<(PipelineSpec, bool)> = [false, true]
             .into_iter()
             .flat_map(|cutout| SHADOW_MERGED_SIDES.iter().map(move |&side| (cutout, side)))
-            .map(|(cutout, side)| {
-                let module = if cutout {
-                    &cutout_module
-                } else {
-                    &merged_module
-                };
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(if cutout {
-                        "shadow cutout"
-                    } else {
-                        "shadow merged"
-                    }),
-                    layout: Some(if cutout {
-                        &surface_layout
-                    } else {
-                        &merged_layout
-                    }),
-                    vertex: wgpu::VertexState {
-                        module,
-                        entry_point: Some(if cutout {
-                            "vs_shadow_cutout"
-                        } else {
-                            "vs_shadow_merged"
-                        }),
-                        compilation_options: Default::default(),
-                        buffers: &[
-                            Some(wgpu::VertexBufferLayout {
-                                array_stride: size_of::<ShadowVertex>() as u64,
-                                step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &SHADOW_VERTEX_ATTRIBUTES,
-                            }),
-                            Some(wgpu::VertexBufferLayout {
-                                array_stride: 4,
-                                step_mode: wgpu::VertexStepMode::Instance,
-                                attributes: &SHADOW_BASE_ATTRIBUTES,
-                            }),
-                        ],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        cull_mode: cull_mode(side),
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: cutout.then(|| wgpu::FragmentState {
-                        module,
-                        entry_point: Some("fs_shadow_cutout"),
-                        compilation_options: Default::default(),
-                        targets: &[],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+            .map(|(cutout, side)| (shadow_merged_spec(side, cutout), cutout))
+            .collect();
+        let merged_parts = |cutout: bool| {
+            if cutout {
+                (&cutout_module, &surface_layout)
+            } else {
+                (&merged_module, &merged_layout)
+            }
+        };
+        let mut jobs = vec![(&water, &water_module.raw), (&output, &output_module.raw)];
+        jobs.extend(
+            merged
+                .iter()
+                .map(|(spec, cutout)| (spec, &merged_parts(*cutout).0.raw)),
+        );
+        let _compiled = precompiler.compile_all(&jobs).await;
+        let shadow_merged = merged
+            .iter()
+            .map(|(spec, cutout)| {
+                let (module, layout) = merged_parts(*cutout);
+                spec.create(device, layout, &module.wgpu)
             })
             .collect();
         Self {
+            water: water.create(device, &water_layout, &water_module.wgpu),
+            output: output.create(device, &output_layout, &output_module.wgpu),
+            shadow_merged,
+            precompiler,
             modules: HashMap::new(),
             pipelines: Vec::new(),
             index: HashMap::new(),
             surface_layout,
-            water,
-            output,
-            shadow_merged,
-            created: 3 + 2 * SHADOW_MERGED_SIDES.len() as u32,
         }
     }
 
@@ -280,101 +371,81 @@ impl Pipelines {
         &self.pipelines[index as usize]
     }
 
-    /// The pipeline for a key, compiling it on first use.
+    fn ensure_modules(
+        &mut self,
+        device: &wgpu::Device,
+        effects: &EffectRegistry,
+        shader: ShaderKey,
+    ) {
+        let precompiler = &self.precompiler;
+        self.modules.entry(shader).or_insert_with(|| {
+            let label = match shader.pass {
+                Pass::Main => "surface",
+                Pass::Shadow => "shadow",
+            };
+            modules(device, precompiler, label, &shader_source(&shader, effects))
+        });
+    }
+
+    /// The pipeline for a key once the background compile has finished, created
+    /// then only if `create` (the caller's per-step budget); until then it queues the
+    /// compile and returns `None`.
+    pub fn request(
+        &mut self,
+        device: &wgpu::Device,
+        effects: &EffectRegistry,
+        key: &PipelineKey,
+        create: bool,
+    ) -> Option<u32> {
+        if let Some(index) = self.find(key) {
+            return Some(index);
+        }
+        if self.precompiler.finished(key) {
+            return create.then(|| self.create(device, effects, key));
+        }
+        if !self.precompiler.queued(key) {
+            let spec = surface_spec(key, effects);
+            self.ensure_modules(device, effects, key.shader);
+            self.precompiler
+                .start(*key, &spec, &self.modules[&key.shader].raw);
+        }
+        None
+    }
+
+    /// The pipeline for a key, compiling it synchronously on first use (a stall on a
+    /// cold shader cache; preparation uses [`Self::request`]).
     pub fn ensure(
         &mut self,
         device: &wgpu::Device,
         effects: &EffectRegistry,
         key: &PipelineKey,
     ) -> u32 {
-        if let Some(index) = self.find(key) {
-            return index;
+        match self.find(key) {
+            Some(index) => index,
+            None => self.create(device, effects, key),
         }
-        let shader = key.shader;
-        let module = self.modules.entry(shader).or_insert_with(|| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(match shader.pass {
-                    Pass::Main => "surface",
-                    Pass::Shadow => "shadow",
-                }),
-                source: wgpu::ShaderSource::Wgsl(shader_source(&shader, effects).into()),
-            })
-        });
-        let extra = wgpu::VertexBufferLayout {
-            array_stride: 16 * shader.extra_attributes as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &EXTRA_ATTRIBUTES[..shader.extra_attributes as usize],
-        };
-        let buffers = [
-            Some(vertex_layout()),
-            (shader.extra_attributes > 0).then_some(extra),
-        ];
-        let buffers = &buffers[..1 + (shader.extra_attributes > 0) as usize];
-        let main = shader.pass == Pass::Main;
-        let targets = [Some(wgpu::ColorTargetState {
-            format: HDR_FORMAT,
-            blend: blend_state(key.blend),
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let fragment = if main {
-            Some(wgpu::FragmentState {
-                module,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &targets,
-            })
-        } else if shader.shadow_needs_fragment(effects) {
-            Some(wgpu::FragmentState {
-                module,
-                entry_point: Some("fs_shadow"),
-                compilation_options: Default::default(),
-                targets: &[],
-            })
-        } else {
-            None
-        };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(if main { "surface" } else { "shadow" }),
-            layout: Some(&self.surface_layout),
-            vertex: wgpu::VertexState {
-                module,
-                entry_point: Some(if main { "vs_main" } else { "vs_shadow" }),
-                compilation_options: Default::default(),
-                buffers,
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: cull_mode(key.side),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(key.depth_write),
-                depth_compare: Some(if key.depth_test {
-                    wgpu::CompareFunction::LessEqual
-                } else {
-                    wgpu::CompareFunction::Always
-                }),
-                stencil: Default::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: key.depth_bias.constant,
-                    slope_scale: key.depth_bias.slope_scale(),
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState {
-                count: if main { SAMPLE_COUNT } else { 1 },
-                mask: !0,
-                alpha_to_coverage_enabled: key.alpha_to_coverage,
-            },
-            fragment,
-            multiview_mask: None,
-            cache: None,
-        });
+    }
+
+    fn create(
+        &mut self,
+        device: &wgpu::Device,
+        effects: &EffectRegistry,
+        key: &PipelineKey,
+    ) -> u32 {
+        let spec = surface_spec(key, effects);
+        self.ensure_modules(device, effects, key.shader);
+        let module = &self.modules[&key.shader].wgpu;
+        let pipeline = spec.create(device, &self.surface_layout, module);
+        self.precompiler.release(key);
         self.pipelines.push(pipeline);
-        self.created += 1;
         let index = self.pipelines.len() as u32 - 1;
         self.index.insert(*key, index);
         index
+    }
+
+    /// Variants queued for or in background compilation.
+    pub fn compiling(&self) -> u32 {
+        self.precompiler.compiling()
     }
 
     /// Pipelines including the fixed water, output and merged shadow ones.

@@ -11,11 +11,13 @@ export function nextTask(): Promise<void> {
   });
 }
 
-/** How often arena preparation polls a GPU that is still running its warm-up. */
+/** How often arena preparation polls a GPU that is still compiling pipelines in the
+ * background or running the warm-up. */
 const GPU_POLL_MS = 16;
 
 /** Wait before the next `prepare_step`: a message task while pipelines and textures
- * remain, or a short timer while the GPU compiles and runs the warm-up (`gpuPending`),
+ * remain, or a short timer while only the GPU works (`gpuPending`: background
+ * pipeline compiles or the warm-up),
  * which can take seconds on a cold shader cache and should not spin the page. */
 export function nextPrepareStep(gpuPending: boolean): Promise<void> {
   return gpuPending ? new Promise((resolve) => setTimeout(resolve, GPU_POLL_MS)) : nextTask();

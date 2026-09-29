@@ -16,14 +16,17 @@
 //! - `Lifetime::Round` models, instances and scenery are released by
 //!   `reset_round`; `Lifetime::Shared` ones persist. GPU meshes and materials keyed
 //!   by `Arc` identity outlive resets while their `Arc` is still held elsewhere.
-//! - Pipelines compile on demand and are cached forever; call `prepare_step`
-//!   until nothing remains, then `warm_up`, before the first gameplay frame.
+//! - Pipelines are cached forever. `prepare_step` compiles the scene's variants
+//!   on the browser's background threads (`precompile.rs`); call it until nothing
+//!   remains, then `warm_up`, before the first gameplay frame. A variant first met
+//!   while drawing compiles synchronously and counts as a late pipeline.
 
 mod context;
 mod inspect;
 mod lut;
 mod pipelines;
 mod pools;
+mod precompile;
 mod resources;
 mod textures;
 
@@ -266,6 +269,8 @@ pub struct PrepareProgress {
     pub compiled: u32,
     /// Pipelines the registered scene still needs.
     pub remaining: u32,
+    /// Pipelines compiling in the background; later calls create them.
+    pub compiling: u32,
 }
 
 /// Counters for "Stats for nerds". Draw calls and triangles cover every pass of
@@ -705,8 +710,8 @@ impl Renderer {
         let ctx = Context::new(canvas).await?;
         let device = &ctx.device;
         let layouts = Layouts::new(device);
-        let pipelines = Pipelines::new(device, &layouts, ctx.config.format);
-        let textures = TextureStore::new(device, &ctx.queue, options.asset_base);
+        let pipelines = Pipelines::new(device, &layouts, ctx.config.format).await;
+        let textures = TextureStore::new(device, &ctx.queue, options.asset_base).await;
         let sun_shadow = SunShadow::default();
         let shadow_map = depth_texture(device, "sun shadow map", sun_shadow.map_size);
         let dummy_depth =
@@ -1567,49 +1572,60 @@ impl Renderer {
             .sum()
     }
 
-    /// Compile up to `budget` pipelines the registered scene needs. Yield to the
-    /// page between calls so the loading screen stays responsive.
+    /// Create up to `budget` of the pipelines the registered scene needs whose
+    /// background compile has finished, and queue the compiles of the rest. Yield to
+    /// the page between calls (a short timer while only `compiling` remains).
     pub fn prepare_step(&mut self, budget: u32) -> PrepareProgress {
         self.update_textures();
         let mut compiled = 0;
         let device = &self.ctx.device;
         for class in self.classes.iter_mut().flatten() {
-            if compiled >= budget {
-                break;
-            }
-            if class.main.is_none() {
-                class.main = Some(
-                    self.pipelines
-                        .ensure(device, &self.effects, &class.main_key),
-                );
-                compiled += 1;
-            }
-            if let (Some(key), None) = (&class.back_key, class.back) {
-                class.back = Some(self.pipelines.ensure(device, &self.effects, key));
-                compiled += 1;
-            }
-            if class.casters > 0 && class.shadow.is_none() && compiled < budget {
-                class.shadow = Some(self.pipelines.ensure(
-                    device,
-                    &self.effects,
-                    &class.shadow_key,
-                ));
-                compiled += 1;
+            let slots = [
+                (&mut class.main, Some(&class.main_key)),
+                (&mut class.back, class.back_key.as_ref()),
+                (
+                    &mut class.shadow,
+                    (class.casters > 0).then_some(&class.shadow_key),
+                ),
+            ];
+            for (slot, key) in slots {
+                if slot.is_none()
+                    && let Some(key) = key
+                {
+                    *slot = self
+                        .pipelines
+                        .request(device, &self.effects, key, compiled < budget);
+                    compiled += slot.is_some() as u32;
+                }
             }
         }
         PrepareProgress {
             compiled,
             remaining: self.missing_pipelines(),
+            compiling: self.pipelines.compiling(),
         }
     }
 
-    /// Compile everything the scene needs, reporting after each small batch.
-    pub fn prepare_all(&mut self, mut progress: impl FnMut(PrepareProgress)) {
-        loop {
-            let step = self.prepare_step(4);
-            progress(step);
-            if step.remaining == 0 || step.compiled == 0 {
-                break;
+    /// Create every pipeline the scene still needs, synchronously for any whose
+    /// background compile has not finished.
+    fn complete_pipelines(&mut self) {
+        let device = &self.ctx.device;
+        for class in self.classes.iter_mut().flatten() {
+            if class.main.is_none() {
+                class.main = Some(
+                    self.pipelines
+                        .ensure(device, &self.effects, &class.main_key),
+                );
+            }
+            if let (Some(key), None) = (&class.back_key, class.back) {
+                class.back = Some(self.pipelines.ensure(device, &self.effects, key));
+            }
+            if class.casters > 0 && class.shadow.is_none() {
+                class.shadow = Some(self.pipelines.ensure(
+                    device,
+                    &self.effects,
+                    &class.shadow_key,
+                ));
             }
         }
     }
@@ -1631,7 +1647,8 @@ impl Renderer {
     /// Draw every prepared variant once offscreen (shadow, main, water and output
     /// passes) so the browser finishes compiling before gameplay needs them.
     pub fn warm_up(&mut self) -> Result<(), String> {
-        while self.prepare_step(u32::MAX).remaining > 0 {}
+        self.update_textures();
+        self.complete_pipelines();
         self.upload_static();
         self.write_view_uniforms();
         for draws in &mut self.views {

@@ -29,10 +29,11 @@
 //!   play as an endless team battle) and needs `prepare_step` again. Returns
 //!   whether it rebuilt.
 //! - `prepare_step(budget) -> Float64Array [compiled, remaining, texturesPending,
-//!   done, gpuPending]`: compiles up to `budget` pipelines per call; once nothing
-//!   remains and textures have loaded it warms every variant and reports
-//!   `gpuPending = 1` until the GPU has compiled and run that work (poll on a short
-//!   timer meanwhile), then draws the first frames and reports `done = 1`.
+//!   done, gpuPending]`: creates up to `budget` pipelines per call as their
+//!   background compiles finish; once nothing remains and textures have loaded it
+//!   warms every variant, then draws the first frames and reports `done = 1`.
+//!   `gpuPending = 1` while only the GPU is working (background compiles or the
+//!   warm-up): poll on a short timer then rather than a task.
 //! - `start()`: begin the round (GO, PLAY AGAIN). `resume()`: continue a pause.
 //!   `pause()`: pause a playing round. `restart()`: a fresh world for Battle
 //!   Setup (phase `ready`; prepare again). `end_battle()`: END BATTLE.

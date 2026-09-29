@@ -480,7 +480,8 @@ pub struct PrepareStatus {
     pub compiled: u32,
     pub remaining: u32,
     pub textures_pending: u32,
-    /// The warm-up was submitted and the GPU is still compiling or running it.
+    /// Only the GPU is working: compiling pipelines in the background, or running
+    /// the submitted warm-up. Poll again after a short timer rather than a task.
     pub gpu_pending: bool,
     /// Everything is compiled and warm; [`Presentation::finish_prepare`] may draw.
     pub ready: bool,
@@ -874,15 +875,17 @@ impl Presentation {
         self.effects.warm_up_samples(&mut self.renderer);
     }
 
-    /// Compile up to `budget` pipelines; yield to the page between calls. Once nothing
-    /// remains and textures have loaded, draw every prepared variant offscreen, release
-    /// the samples and wait (over later calls) until the GPU has run that warm-up.
+    /// Create up to `budget` pipelines whose background compile has finished and queue
+    /// the rest; yield to the page between calls. Once nothing remains and textures
+    /// have loaded, draw every prepared variant offscreen, release the samples and wait
+    /// (over later calls) until the GPU has run that warm-up.
     pub fn prepare_step(&mut self, budget: u32) -> Result<PrepareStatus, String> {
         // One band of any soil bake per step keeps the loading screen responsive.
         self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
         let PrepareProgress {
             compiled,
             remaining,
+            compiling,
         } = if self.preparation == Preparation::Compiling {
             self.renderer.prepare_step(budget)
         } else {
@@ -906,7 +909,8 @@ impl Presentation {
             compiled,
             remaining,
             textures_pending,
-            gpu_pending: self.preparation.awaiting_gpu(),
+            gpu_pending: self.preparation.awaiting_gpu()
+                || (compiled == 0 && compiling > 0 && !self.textures.baking()),
             ready: self.preparation.ready(),
         })
     }

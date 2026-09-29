@@ -166,11 +166,12 @@ async function createRust(): Promise<EffectsLab> {
   lab.set_camera(new Float32Array(CAMERA.position), new Float32Array(CAMERA.target));
   lab.set_state(JSON.stringify(stateAt(0)));
   for (;;) {
-    const [compiled, remaining] = lab.prepare_step(4);
+    const [compiled, remaining, compiling] = lab.prepare_step(4);
     status.textContent = `Compiling pipelines… ${remaining} left`;
     if (remaining === 0) break;
-    if (compiled === 0) throw new Error("Pipeline preparation made no progress");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (compiled === 0 && compiling === 0) throw new Error("Pipeline preparation made no progress");
+    // Background compiles finish on their own; poll them on a short timer.
+    await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
   }
   while (lab.textures_pending() > 0) {
     await new Promise((resolve) => setTimeout(resolve, 16));

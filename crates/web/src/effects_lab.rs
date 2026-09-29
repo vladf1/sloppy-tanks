@@ -192,11 +192,12 @@ impl EffectsLab {
         self.renderer.render(time as f32).map_err(js_error)
     }
 
-    /// Compile up to `budget` pipelines; returns `[compiled, remaining]`.
+    /// Create up to `budget` pipelines compiled in the background; returns
+    /// `[compiled, remaining, compiling]` (`compiling`: still in background compiles).
     pub fn prepare_step(&mut self, budget: u32) -> Vec<u32> {
         self.effects.warm_up_samples(&mut self.renderer);
         let progress = self.renderer.prepare_step(budget);
-        vec![progress.compiled, progress.remaining]
+        vec![progress.compiled, progress.remaining, progress.compiling]
     }
 
     pub fn warm_up(&mut self) -> Result<(), JsValue> {
