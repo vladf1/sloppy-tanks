@@ -78,10 +78,24 @@ try {
   });
   await delayed.context.close();
 
-  // Hold the arena's textures too: preparation waits for them after compiling its
-  // pipelines, so GO and late choices must survive this separate stage, and the
-  // simulation must not start behind the menu.
+  // Hold GPU preparation too: every pipeline compiles in the background
+  // (createRenderPipelineAsync), starting while the arena is built, and preparation
+  // then waits for the arena's textures. GO and late choices must survive this
+  // separate stage, and the simulation must not start behind the menu.
   const graphics = await fresh();
+  await graphics.page.addInitScript(() => {
+    const compile = GPUDevice.prototype.createRenderPipelineAsync;
+    const gate = new Promise((resolve) => {
+      window.releaseCompiles = resolve;
+    });
+    window.heldCompiles = 0;
+    GPUDevice.prototype.createRenderPipelineAsync = async function (...args) {
+      window.heldCompiles++;
+      const pipeline = await compile.apply(this, args);
+      await gate;
+      return pipeline;
+    };
+  });
   let releaseTextures;
   const textures = new Promise((resolve) => {
     releaseTextures = resolve;
@@ -91,10 +105,10 @@ try {
     await route.continue();
   });
   await graphics.page.goto(url, { waitUntil: "domcontentloaded" });
-  await graphics.page.waitForFunction(() =>
-    /Preparing graphics|Shaders loaded|Loading textures/.test(
-      document.querySelector("#startup-status")?.textContent ?? "",
-    ),
+  await graphics.page.waitForFunction(() => window.heldCompiles > 0);
+  assert.match(
+    await graphics.page.locator("#startup-status").textContent(),
+    /Building the arena|Preparing graphics|Shaders loaded|Compiling shaders/,
   );
   const graphicsBox = await graphics.page.locator("#start").boundingBox();
   assert.ok(graphicsBox);
@@ -107,6 +121,11 @@ try {
   await chooseMap(graphics.page, "harbor");
   await graphics.page.screenshot({ path: `${output}/loading-queued-desktop.png` });
   assert.equal(await graphics.page.evaluate(() => window.sloppy?.sim.elapsed ?? 0), 0);
+  assert.notEqual(
+    await graphics.page.locator("#startup-overlay").getAttribute("data-state"),
+    "ready",
+  );
+  await graphics.page.evaluate(() => window.releaseCompiles());
   releaseTextures();
   await playing(graphics.page);
   assert.equal(await graphics.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
