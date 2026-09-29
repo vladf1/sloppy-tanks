@@ -9,7 +9,7 @@ import { gameUrl, headless, installEngineHelpers } from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/webkit-startup";
 mkdirSync(output, { recursive: true });
-/** Distinct pipelines an arena may prepare; the maps need about 60-75. */
+/** Distinct pipelines an arena may prepare; the maps need about 45-55. */
 const MAX_PIPELINES = 150;
 /** Preparing a warm arena takes about a second; a cold shader cache takes longer. */
 const READY_TIMEOUT_MS = 120_000;
