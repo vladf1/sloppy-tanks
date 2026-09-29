@@ -1,36 +1,32 @@
 //! The one adapter between presentation and the cover, tree, prop and scenery
-//! model builders.
+//! model builders in `sloppy_core::models`.
 //!
-//! **PLACEHOLDERS — wire at merge.** The functions marked `PLACEHOLDER` return
-//! simple boxes, cylinders and cones so presentation, batching, damage stages,
-//! felling and debris run end to end before the real models exist. At merge the
-//! lead replaces their bodies with the model crates' builders, keeping these
-//! signatures and the conventions documented on each type:
-//!
-//! - [`cover_model`] ← `models::cover_model(cover, stage)` / `models::tree_model(cover)`
-//! - [`timber_part_model`] ← `models::timber_part_model(part)` (`timber-model.ts`)
-//! - [`surface_debris_piece`] ← `sidingBox` / `trunkFragment` pieces (`house-surfaces.ts`, `tree-models.ts`)
-//! - [`scenery`] ← `models::scenery::build(theme)` (village, harbor, quarry scenery,
-//!   the harbor/creek water surfaces and scenery animation such as the mill wheel
-//!   or bobbing boats)
-//!
-//! Everything else here ([`cover_damage_stage`], [`CoverModel`] conventions) is
-//! real logic ported from `cover-model.ts`.
-
-use std::f64::consts::PI;
-use std::sync::Arc;
+//! - [`cover_model`] ← `models::cover_model(cover, Full, stage)`, batched like
+//!   `physicalCoverModel` in `presentation.ts`; trees name their crown, cut face
+//!   and shedding boughs ([`TreeParts`]).
+//! - [`timber_part_model`] ← `models::timber_part_model(part)`.
+//! - [`surface_debris_piece`] ← `siding_box` / `trunk_fragment` (`presentation.ts`
+//!   debris meshes).
+//! - [`scenery`] ← `models::build_scenery(theme)`, split into what bakes static,
+//!   the parts [`Scenery::update`] animates (movers), the water surface the
+//!   renderer draws with its planar reflection, and the chimney smoke that
+//!   `VillageScenery::set_covers` refills each round.
 
 use glam::{DMat4, DVec3};
-use sloppy_core::geometry::{Mesh, circle_geometry, cone_geometry, plane_geometry};
-use sloppy_core::models::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, paint, put};
-use sloppy_core::scene::{Material, Node};
-use sloppy_core::sim::data::ARENA;
-use sloppy_core::sim::maps::GroundKind;
+use sloppy_core::geometry::Mesh;
+use sloppy_core::models::{
+    self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
+    WATERWHEEL, batch, branch_drop_stage, build_scenery, siding_box, tree_part, trunk_fragment,
+};
+use sloppy_core::scene::{Effect, Node};
+use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
+use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
-use sloppy_core::sim::timber_layout::{TimberPart, timber_damage_stage};
+use sloppy_core::sim::timber_layout::TimberPart;
 use sloppy_core::sim::{CoverKind, FragmentShape};
 
-use super::models::{arena_floor, spawn_pads, water_plane};
+pub use sloppy_core::models::{cover_damage_stage, tree_branch_stage};
+
 use super::theme::Theme;
 
 /// A cover's drawable model.
@@ -42,13 +38,11 @@ use super::theme::Theme;
 /// - Presentation poses movable covers (drums, teeth, hedgehogs) by their body:
 ///   it drops the root's children by `h / (2 * root.scale.y)` and replaces the
 ///   root translation/rotation with the body pose, keeping the root scale.
-/// - Named nodes are joints presentation may hide (see [`TreeParts`]); leave
-///   other parts unnamed so they batch.
+/// - Named nodes are joints presentation may hide (see [`TreeParts`]).
 pub struct CoverModel {
     pub root: Node,
     /// Equal for covers that look identical, so they share one prepared model
-    /// and draw instanced. Include every input the builder reads (kind, size,
-    /// color, seed, damage stage, timber hits and joins).
+    /// and draw instanced ([`cover_key`]).
     pub key: String,
     pub tree: Option<TreeParts>,
 }
@@ -58,191 +52,160 @@ pub struct CoverModel {
 pub struct TreeParts {
     /// Joint name of the trunk-and-crown group: hidden when felled; its subtree is
     /// also the falling crown fragment, placed `-tree_center_y` below the body.
-    pub crown: String,
+    pub crown: &'static str,
     /// Joint name of the stump's cut face, shown only once felled.
-    pub cut_surface: String,
-    /// Boughs shed with damage, each visible while `drop_stage` exceeds the
-    /// branch damage stage (0 healthy, 1 hurt, 2 at 35% health).
+    pub cut_surface: &'static str,
+    /// Boughs shed with damage, in crown order, each visible while `drop_stage`
+    /// exceeds the branch damage stage (0 healthy, 1 hurt, 2 at 35% health).
     pub branches: Vec<TreeBranch>,
 }
 
 pub struct TreeBranch {
-    pub name: String,
+    /// Its index among the crown's children (bough names repeat per stage).
+    pub crown_child: usize,
     pub drop_stage: u32,
 }
 
-/// `coverDamageStage`: cargo and timber rebuild with dents and splinters as they
-/// take damage; other covers keep one look.
-pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
-    match kind {
-        CoverKind::Cargo => {
-            if hp >= max_hp {
-                0
-            } else if hp > max_hp * 0.35 {
-                1
-            } else {
-                2
-            }
+impl TreeParts {
+    /// Whether a model joint is a shedding bough (joints of one tree appear in
+    /// crown order).
+    pub fn is_branch(name: &str) -> bool {
+        name == tree_part::BRANCH_STAGE_1 || name == tree_part::BRANCH_STAGE_2
+    }
+}
+
+/// What distinguishes covers that look alike: every builder input except where
+/// the model stands. Builders seeded by position contribute their seed or
+/// variant, so identical drums, containers, hedgehogs and walls share one model.
+pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
+    let placement = match cover.kind {
+        CoverKind::Drum
+        | CoverKind::Hedgehog
+        | CoverKind::Container
+        | CoverKind::Concrete
+        | CoverKind::Boundary
+        | CoverKind::Tower => String::new(),
+        CoverKind::Rock => format!("v{}", quarry_rock_variant(cover.x, cover.z)),
+        CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
+        CoverKind::Rubble if cover.debris_seed.is_some() => {
+            format!("s{}", cover.debris_seed.unwrap_or(0.0))
         }
-        CoverKind::Timber => timber_damage_stage(hp, max_hp),
-        _ => 0,
-    }
-}
-
-/// `setTreeDamage` stages: shed two boughs after the first damage, then two more
-/// at 35% health.
-pub fn tree_branch_stage(health_ratio: f64) -> u32 {
-    if health_ratio >= 1.0 {
-        0
-    } else if health_ratio > 0.35 {
-        1
-    } else {
-        2
-    }
-}
-
-/// PLACEHOLDER for `models::cover_model` / `models::tree_model`.
-pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
-    let (w, h, d) = (cover.w, cover.h, cover.d);
-    let mut root = Node::group("cover");
-    root.position = DVec3::new(cover.x, 0.0, cover.z);
-    let key = format!(
-        "{:?}/{w}/{h}/{d}/{:x}/{stage}/{}",
+        _ => format!("@{}/{}", cover.x, cover.z),
+    };
+    let hits: Vec<String> = cover
+        .timber_hits
+        .iter()
+        .map(|hit| format!("{hit:?}"))
+        .collect();
+    format!(
+        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}",
         cover.kind,
+        cover.w,
+        cover.h,
+        cover.d,
         cover.color,
-        cover.timber_hits.len()
-    );
-    let mut tree = None;
-    match cover.kind {
-        CoverKind::Tree => {
-            let trunk_height = h.max(4.0);
-            let mut crown = Node::group("tree-crown");
-            put(
-                &mut crown,
-                cylinder_part(0.35, trunk_height * 0.6, 0x7a5a3a, 8),
-                0.0,
-                trunk_height * 0.3,
-                0.0,
-            );
-            let mut foliage = Node::mesh(
-                Arc::new(cone_geometry(w.max(1.5) * 0.9, trunk_height * 0.8, 9)),
-                paint(0x3f7d3a),
-            );
-            if let Some(drawable) = &mut foliage.drawable {
-                drawable.cast_shadow = true;
-                drawable.receive_shadow = true;
-            }
-            put(&mut crown, foliage, 0.0, trunk_height * 0.75, 0.0);
-            let mut branches = Vec::new();
-            for i in 0..4 {
-                let name = format!("tree-branch-{i}");
-                let angle = f64::from(i) * PI / 2.0 + 0.4;
-                let mut bough = Node::group(name.clone());
-                let mut leaves = box_part(1.1, 0.5, 1.1, 0x4c8f3f, DEFAULT_BOX_RADIUS);
-                leaves.position = DVec3::new(0.6, 0.0, 0.0);
-                bough.children.push(leaves);
-                bough.set_rotation_euler(0.0, angle, 0.0);
-                bough.position = DVec3::new(0.0, trunk_height * 0.45, 0.0);
-                crown.children.push(bough);
-                branches.push(TreeBranch {
-                    name,
-                    drop_stage: if i < 2 { 1 } else { 2 },
-                });
-            }
-            root.children.push(crown);
-            let mut stump_cut = Node::mesh(Arc::new(circle_geometry(0.36, 12)), paint(0xc9a67a));
-            stump_cut.set_rotation_euler(-PI / 2.0, 0.0, 0.0);
-            stump_cut.name = "tree-cut".into();
-            stump_cut.position = DVec3::new(0.0, 0.5, 0.0);
-            stump_cut.visible = false;
-            root.children.push(stump_cut);
-            put(
-                &mut root,
-                cylinder_part(0.4, 0.5, 0x6d4f33, 8),
-                0.0,
-                0.25,
-                0.0,
-            );
-            tree = Some(TreeParts {
-                crown: "tree-crown".into(),
-                cut_surface: "tree-cut".into(),
-                branches,
-            });
-        }
-        CoverKind::Drum => {
-            put(
-                &mut root,
-                cylinder_part(w / 2.0, h, cover.color, 14),
-                0.0,
-                h / 2.0,
-                0.0,
-            );
-        }
-        CoverKind::House => {
-            put(
-                &mut root,
-                box_part(w, h * 0.68, d, cover.color, 0.0),
-                0.0,
-                h * 0.34,
-                0.0,
-            );
-            let mut roof = box_part(w + 0.4, h * 0.32, d + 0.4, 0xb23b2e, 0.0);
-            roof.position = DVec3::new(0.0, h * 0.84, 0.0);
-            root.children.push(roof);
-        }
-        _ => {
-            put(
-                &mut root,
-                box_part(w, h, d, cover.color, 0.0),
-                0.0,
-                h / 2.0,
-                0.0,
-            );
-        }
+        cover.timber_join,
+        hits.join(";"),
+    )
+}
+
+/// `physicalCoverModel`'s model: the cover's full-detail model, batched.
+pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
+    let shape = CoverShape::from(cover);
+    let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage).node;
+    batch(&mut root);
+    let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
+    CoverModel {
+        root,
+        key: cover_key(cover, stage),
+        tree,
     }
-    CoverModel { root, key, tree }
 }
 
-/// PLACEHOLDER for `timberPartModel(part)`: a group whose frame is the part's
-/// centre (the fragment body pose places it).
+fn tree_parts(root: &Node) -> TreeParts {
+    let branches = root
+        .find(tree_part::CROWN)
+        .map(|crown| {
+            crown
+                .children
+                .iter()
+                .enumerate()
+                .filter_map(|(crown_child, bough)| {
+                    branch_drop_stage(bough).map(|drop_stage| TreeBranch {
+                        crown_child,
+                        drop_stage,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    TreeParts {
+        crown: tree_part::CROWN,
+        cut_surface: tree_part::CUT_SURFACE,
+        branches,
+    }
+}
+
+/// `timberPartModel(part)`: a group whose frame is the part's centre (the
+/// fragment body pose places it).
 pub fn timber_part_model(part: &TimberPart) -> Node {
-    let mut root = Node::group("timber-part");
-    root.children
-        .push(box_part(part.w, part.h, part.d, part.color, 0.0));
-    root
+    core_models::timber_part_model(part)
 }
 
-/// PLACEHOLDER for the textured debris pieces: `sidingBox(1.5, 0.18, 0.45)` for
-/// wood, `sidingBox(1, 1, 1)` for panels and beams, `trunkFragment()` for logs.
-/// Unit-colored (white) so the instance tint paints each piece.
+/// The textured debris pieces (`presentation.ts`): `sidingBox(1.5, 0.18, 0.45)`
+/// for wood, `sidingBox(1, 1, 1)` for panels and beams, `trunkFragment()` for
+/// logs. Unit-colored (white) so the instance tint paints each piece.
 pub fn surface_debris_piece(shape: FragmentShape) -> Node {
     let piece = match shape {
-        FragmentShape::Wood => box_part(1.5, 0.18, 0.45, 0xffffff, 0.0),
-        FragmentShape::Log => cylinder_part(0.43, 1.0, 0xffffff, 8),
-        _ => box_part(1.0, 1.0, 1.0, 0xffffff, 0.0),
+        FragmentShape::Wood => siding_box(1.5, 0.18, 0.45, 0xffffff),
+        FragmentShape::Log => (*trunk_fragment()).clone(),
+        _ => siding_box(1.0, 1.0, 1.0, 0xffffff),
     };
     let mut root = Node::group("debris");
     root.children.push(piece);
     root
 }
 
-/// Theme scenery: static geometry baked once, optional movers, optional water.
+/// A themed scenery split for drawing.
 pub struct SceneryModel {
-    /// Baked into static batches (world transforms as authored).
+    /// The live core scenery: [`Scenery::update`] animates it each frame and the
+    /// village refills its chimney smoke with `set_covers` on reset.
+    pub scenery: Scenery,
+    /// Everything that never moves, baked into static batches (world transforms
+    /// as authored).
     pub root: Node,
-    /// Animated scenery parts; each frame presentation places `root` at
-    /// `world * motion(time)`.
+    /// Subtrees [`Scenery::update`] moves or blinks.
     pub movers: Vec<SceneryMover>,
     pub water: Option<SceneryWater>,
+    /// The village chimney smoke: an instanced wisp quad (see
+    /// [`smoke_instances`]).
+    pub smoke: Option<Node>,
 }
 
+/// An animated scenery subtree, found by its child-index path from the root.
 pub struct SceneryMover {
+    /// The subtree, with its own transform left to the instance.
     pub root: Node,
-    pub world: DMat4,
-    pub motion: fn(f64) -> DMat4,
+    path: Vec<usize>,
+    /// World transform of its (static) parent.
+    parent_world: DMat4,
 }
 
-/// The planar-reflection water surface in world XZ at y = 0.
+impl SceneryMover {
+    /// The subtree's world transform and visibility in the animated scenery.
+    pub fn pose(&self, scenery: &Scenery) -> (DMat4, bool) {
+        let mut node = scenery.root();
+        let mut visible = node.visible;
+        for &index in &self.path {
+            node = &node.children[index];
+            visible &= node.visible;
+        }
+        (self.parent_world * node.local_matrix(), visible)
+    }
+}
+
+/// The planar-reflection water surface in world XZ at y = 0, drawn at the
+/// material's mirror height.
 pub enum SceneryWater {
     /// `HarborWater`: the basin around the pier.
     Harbor(Mesh),
@@ -250,75 +213,184 @@ pub enum SceneryWater {
     Creek(Mesh),
 }
 
-/// PLACEHOLDER for `models::scenery::build(theme)`: a plain ground board per
-/// theme (the village's is the real `createTerrain` board and grass), and the
-/// harbor's water basin.
-pub fn scenery(theme: Theme) -> Option<SceneryModel> {
-    let (board, outer) = match theme {
-        Theme::Village => (0x947c4d, 0x6f9a4a),
-        Theme::Harbor => (0x8d918f, 0x6f7a7d),
-        Theme::Quarry => (0xc7a878, 0xb99a6c),
-        Theme::Custom => return None,
-    };
-    let mut root = Node::group(format!("{} scenery", theme.name()));
-    let size = ARENA * 2.0 + 6.0;
-    put(
-        &mut root,
-        box_part(size, 1.2, size, board, 0.4),
-        0.0,
-        -0.8,
-        0.0,
-    );
-    match theme {
-        Theme::Village => {
-            put(
-                &mut root,
-                arena_floor(GroundKind::DryGrass, ARENA * 2.0),
-                0.0,
-                0.008,
-                0.0,
-            );
-        }
-        _ => {
-            let mut floor = Node::mesh(
-                Arc::new(flat_plane(ARENA * 2.0)),
-                Arc::new(Material::standard(board, 0.0, 1.0)),
-            );
-            if let Some(drawable) = &mut floor.drawable {
-                drawable.receive_shadow = true;
+/// A node's child-index path and its parent's world transform.
+fn find_path(root: &Node, matches: &dyn Fn(&Node) -> bool) -> Option<(Vec<usize>, DMat4)> {
+    fn visit(
+        node: &Node,
+        world: DMat4,
+        matches: &dyn Fn(&Node) -> bool,
+        path: &mut Vec<usize>,
+    ) -> Option<DMat4> {
+        for (index, child) in node.children.iter().enumerate() {
+            path.push(index);
+            if matches(child) {
+                return Some(world);
             }
-            put(&mut root, floor, 0.0, 0.008, 0.0);
+            if let Some(found) = visit(child, world * child.local_matrix(), matches, path) {
+                return Some(found);
+            }
+            path.pop();
         }
+        None
     }
-    // Every themed scenery builds its own spawn pads (`createSpawnPads`).
-    root.children.push(spawn_pads(1.0));
-    if theme != Theme::Harbor {
-        let mut surround = Node::mesh(
-            Arc::new(flat_plane(360.0)),
-            Arc::new(Material::standard(outer, 0.0, 1.0)),
-        );
-        if let Some(drawable) = &mut surround.drawable {
-            drawable.receive_shadow = true;
+    let mut path = Vec::new();
+    let world = visit(root, root.local_matrix(), matches, &mut path)?;
+    Some((path, world))
+}
+
+fn node_at<'a>(root: &'a Node, path: &[usize]) -> &'a Node {
+    path.iter().fold(root, |node, &index| &node.children[index])
+}
+
+/// Replace the node at `path` with an empty group (keeping sibling indices).
+fn take_at(root: &mut Node, path: &[usize]) -> Node {
+    let mut node = root;
+    for &index in path {
+        node = &mut node.children[index];
+    }
+    std::mem::replace(node, Node::group(""))
+}
+
+/// The paths of the subtrees `Scenery::update` animates.
+fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
+    let root = scenery.root();
+    match scenery {
+        Scenery::Village(_) => find_path(root, &|node| node.name == WATERWHEEL)
+            .map(|(path, _)| vec![path])
+            .unwrap_or_default(),
+        Scenery::Harbor(_) => {
+            // `HarborScenery::update`: the fleet's ships bob and roll, each crane's
+            // load (its last child) sways, and the beacon group blinks.
+            let fleet_index = 1;
+            let fleet = &root.children[fleet_index];
+            let mut paths = Vec::new();
+            for (index, child) in fleet.children.iter().enumerate() {
+                if index < SHIP_COUNT {
+                    paths.push(vec![fleet_index, index]);
+                } else {
+                    paths.push(vec![fleet_index, index, child.children.len() - 1]);
+                }
+            }
+            paths.push(vec![root.children.len() - 1]);
+            paths
         }
-        put(&mut root, surround, 0.0, -1.4, 0.0);
+        Scenery::Quarry(_) => Vec::new(),
     }
-    let water = (theme == Theme::Harbor).then(|| SceneryWater::Harbor(water_plane(340.0)));
-    Some(SceneryModel {
-        root,
-        movers: Vec::new(),
-        water,
+}
+
+/// Moored ships in `HarborFleet` (its first children; the cranes follow).
+const SHIP_COUNT: usize = 3;
+
+fn is_water(node: &Node) -> bool {
+    node.drawable.as_ref().is_some_and(|drawable| {
+        matches!(&drawable.material.effect, Effect::Custom { name, .. }
+            if *name == core_models::effects_scenery::WATER)
     })
 }
 
-fn flat_plane(size: f64) -> Mesh {
-    let mut plane = plane_geometry(size, size);
-    plane.rotate_x(-PI / 2.0);
-    plane
+/// `buildScenery(theme)`: the theme's scenery, split for drawing. `None` for
+/// extra levels, which show plain pads and floors instead.
+pub fn scenery(theme: Theme) -> Option<SceneryModel> {
+    let map_theme = match theme {
+        Theme::Village => core_models::MapTheme::Village,
+        Theme::Harbor => core_models::MapTheme::Harbor,
+        Theme::Quarry => core_models::MapTheme::Quarry,
+        Theme::Custom => return None,
+    };
+    let mut scenery = build_scenery(map_theme);
+    scenery.update(0.0);
+    let source = scenery.root();
+    let mut root = source.clone();
+    let mut movers = Vec::new();
+    for path in animated_paths(&scenery) {
+        let parent_world = path[..path.len() - 1]
+            .iter()
+            .fold((source, source.local_matrix()), |(node, world), &index| {
+                let child = &node.children[index];
+                (child, world * child.local_matrix())
+            })
+            .1;
+        let mut subtree = take_at(&mut root, &path);
+        subtree.position = DVec3::ZERO;
+        subtree.rotation = glam::DQuat::IDENTITY;
+        subtree.scale = DVec3::ONE;
+        subtree.visible = true;
+        movers.push(SceneryMover {
+            root: subtree,
+            path,
+            parent_world,
+        });
+    }
+    let water = find_path(source, &is_water).map(|(path, parent_world)| {
+        let node = node_at(source, &path);
+        take_at(&mut root, &path);
+        let drawable = node.drawable.as_ref().expect("water mesh");
+        let height = match &drawable.material.effect {
+            Effect::Custom { params, .. } => f64::from(params[1]),
+            Effect::None => 0.0,
+        };
+        let mut mesh = (*drawable.mesh).clone();
+        mesh.apply_matrix4(&(parent_world * node.local_matrix()));
+        mesh.translate(0.0, -height, 0.0);
+        if theme == Theme::Harbor {
+            SceneryWater::Harbor(mesh)
+        } else {
+            SceneryWater::Creek(mesh)
+        }
+    });
+    let smoke = find_path(source, &|node| node.name == CHIMNEY_SMOKE_NODE)
+        .map(|(path, _)| take_at(&mut root, &path));
+    Some(SceneryModel {
+        scenery,
+        root,
+        movers,
+        water,
+        smoke,
+    })
+}
+
+/// Fill the village chimney smoke for this round's houses and return the
+/// refreshed smoke node (`VillageAtmosphere.setCovers`).
+pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Node> {
+    let Scenery::Village(village) = scenery else {
+        return None;
+    };
+    let covers: Vec<SmokeCover> = covers
+        .iter()
+        .map(|cover| SmokeCover {
+            kind: cover.kind.as_str(),
+            destructible: cover.destructible,
+            x: cover.x,
+            z: cover.z,
+            w: cover.w,
+            h: cover.h,
+            d: cover.d,
+        })
+        .collect();
+    village.set_covers(&covers);
+    village.root.find(CHIMNEY_SMOKE_NODE).cloned()
+}
+
+/// The wisp instances of a smoke node: identity placements with each wisp's
+/// origin and phase as effect data.
+pub fn smoke_instances(smoke: &Node) -> Vec<crate::model::InstanceData> {
+    let Some(drawable) = &smoke.drawable else {
+        return Vec::new();
+    };
+    let count = drawable.instances.as_ref().map_or(0, Vec::len);
+    (0..count)
+        .map(|index| crate::model::InstanceData {
+            matrix: glam::Mat4::IDENTITY,
+            color: [1.0; 3],
+            data: crate::model::instance_attribute_data(&drawable.mesh, index),
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sloppy_core::sim::render_state::RenderCover;
 
     #[test]
     fn damage_stages_follow_cover_model_ts() {
@@ -329,5 +401,40 @@ mod tests {
         assert_eq!(tree_branch_stage(1.0), 0);
         assert_eq!(tree_branch_stage(0.5), 1);
         assert_eq!(tree_branch_stage(0.35), 2);
+    }
+
+    #[test]
+    fn scenery_splits_movers_water_and_smoke() {
+        let village = scenery(Theme::Village).expect("village");
+        assert_eq!(village.movers.len(), 1);
+        assert!(matches!(village.water, Some(SceneryWater::Creek(_))));
+        assert!(village.smoke.is_some());
+        assert!(village.root.find(WATERWHEEL).is_none());
+        let harbor = scenery(Theme::Harbor).expect("harbor");
+        assert!(matches!(harbor.water, Some(SceneryWater::Harbor(_))));
+        // Three ships, four crane loads and the beacons.
+        assert_eq!(harbor.movers.len(), 8);
+        let quarry = scenery(Theme::Quarry).expect("quarry");
+        assert!(quarry.movers.is_empty() && quarry.water.is_none());
+        assert!(scenery(Theme::Custom).is_none());
+    }
+
+    #[test]
+    fn identical_covers_share_keys() {
+        let drum = |x: f64| RenderCover {
+            kind: CoverKind::Drum,
+            x,
+            z: 3.0,
+            w: 1.2,
+            h: 1.6,
+            d: 1.2,
+            ..RenderCover::default()
+        };
+        assert_eq!(cover_key(&drum(0.0), 0), cover_key(&drum(5.0), 0));
+        let house = |x: f64| RenderCover {
+            kind: CoverKind::House,
+            ..drum(x)
+        };
+        assert_ne!(cover_key(&house(0.0), 0), cover_key(&house(5.0), 0));
     }
 }

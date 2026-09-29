@@ -26,6 +26,9 @@ web-sys = { workspace = true, features = [
   "ImageBitmapOptions",
   "PremultiplyAlpha",
   "ColorSpaceConversion",
+  "OffscreenCanvas",
+  "OffscreenCanvasRenderingContext2d",
+  "ImageData",
 ] }
 
 [dev-dependencies]

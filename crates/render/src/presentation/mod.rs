@@ -14,6 +14,7 @@
 
 pub mod camera_rig;
 pub mod first_person;
+pub mod generated;
 pub mod hud;
 pub mod input;
 pub mod model_catalog;
@@ -36,13 +37,7 @@ pub const FLAG_CLOTH: EffectDefinition = EffectDefinition {
     name: models::FLAG_CLOTH_EFFECT,
     wgsl: include_str!("shaders/flag_cloth.wgsl"),
     attributes: &[],
-};
-
-/// Pickup pictograms glowing with their own texture.
-pub const PICKUP_FACE: EffectDefinition = EffectDefinition {
-    name: models::PICKUP_FACE_EFFECT,
-    wgsl: include_str!("shaders/pickup_face.wgsl"),
-    attributes: &[],
+    shadow_fade: false,
 };
 
 /// The pickup refill arc growing back segment by segment.
@@ -50,10 +45,11 @@ pub const PICKUP_REFILL: EffectDefinition = EffectDefinition {
     name: models::PICKUP_REFILL_EFFECT,
     wgsl: include_str!("shaders/pickup_refill.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 3] = [FLAG_CLOTH, PICKUP_FACE, PICKUP_REFILL];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_REFILL];
 
 /// Cosmetic randomness (wind gusts, falling boughs). Never gameplay: the seeded
 /// simulation stream is untouched.

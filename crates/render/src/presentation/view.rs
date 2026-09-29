@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use glam::{DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::{Aabb, node_bounds};
-use sloppy_core::models::{part, tank_model, tank_visual_muzzle, wreck_model};
+use sloppy_core::models::{
+    FLAG_CLOTH_NODE, aged_wreck_material, custom_floor, custom_spawn_pads, flags_model, part,
+    pickup_cube, tank_model, tank_visual_muzzle, wreck_brightness, wreck_model,
+};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
@@ -24,9 +27,11 @@ use sloppy_core::sim::{
 };
 
 use super::camera_rig::{CameraRig, ViewerPose};
+use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::hud::{HealthColor, health_bar_state, protection_meters, spawn_pulse};
 use super::model_catalog::{
-    self, CoverModel, SceneryWater, TreeParts, cover_damage_stage, tree_branch_stage,
+    self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_damage_stage, cover_key,
+    tree_branch_stage,
 };
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, quat, vec3};
@@ -285,7 +290,8 @@ impl Library {
         part: WreckPart,
     ) -> &BoundedModel {
         self.wrecks.entry((kind, team, part)).or_insert_with(|| {
-            let source = wreck_model(kind, team, part);
+            let mut source = (*wreck_model(kind, team, part)).clone();
+            age_materials(&mut source);
             BoundedModel {
                 model: renderer.add_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),
@@ -297,7 +303,7 @@ impl Library {
         self.pickups.entry(kind).or_insert_with(|| {
             let base = renderer.add_model(&own::pickup_base(kind), Lifetime::Shared);
             PickupModel {
-                gem: renderer.add_model(&own::pickup_gem(kind), Lifetime::Shared),
+                gem: renderer.add_model(&pickup_cube(kind), Lifetime::Shared),
                 ring: joint_index(renderer, base, joint::PICKUP_RING),
                 ring_dim: joint_index(renderer, base, joint::PICKUP_RING_DIM),
                 refill: joint_index(renderer, base, joint::PICKUP_REFILL),
@@ -354,7 +360,8 @@ struct TankView {
 struct BranchView {
     joint: usize,
     drop_stage: u32,
-    name: String,
+    /// Its index among the source crown's children.
+    crown_child: usize,
     shown: bool,
 }
 
@@ -379,6 +386,8 @@ struct CoverView {
 struct CoverModelEntry {
     model: ModelId,
     users: u32,
+    /// Where the model was built; other covers sharing it are offset from here.
+    origin: DVec3,
     source: Arc<Node>,
     tree: Option<TreeParts>,
 }
@@ -430,17 +439,21 @@ struct FallingBranch {
     resting_y: f32,
 }
 
-/// An animated scenery part: its instance, placement and motion over time.
-type SceneryMoverView = (InstanceId, DMat4, fn(f64) -> DMat4);
-
 struct SceneryView {
+    /// The live core scenery that `update(time)` animates.
+    scenery: sloppy_core::models::Scenery,
     statics: InstanceId,
-    movers: Vec<SceneryMoverView>,
+    /// Animated parts and their instances.
+    movers: Vec<(InstanceId, SceneryMover)>,
     water: Option<WaterSettings>,
+    /// The village chimney smoke model and its instance.
+    smoke: Option<(ModelId, InstanceId)>,
 }
 
+/// The team flags (`flags_model`: instanced poles and cloth) and the one arena
+/// breeze that ripples them.
 struct Flags {
-    instances: Vec<(InstanceId, f32)>,
+    instance: InstanceId,
     wind_from: (f64, f64),
     wind_to: (f64, f64),
     wind_start: f64,
@@ -502,6 +515,8 @@ pub struct Presentation {
     samples: Vec<InstanceId>,
     sample_models: Vec<ModelId>,
     random: CosmeticRandom,
+    /// Canvas-drawn and baked textures the scenery and cover sample.
+    textures: GeneratedTextures,
     scratch: Vec<u32>,
     /// Ids present this frame, for dropping views of departed entities.
     live: std::collections::HashSet<u32>,
@@ -569,6 +584,7 @@ impl Presentation {
             samples: Vec::new(),
             sample_models: Vec::new(),
             random,
+            textures: GeneratedTextures::default(),
             scratch: Vec::new(),
             live: std::collections::HashSet::new(),
         };
@@ -617,34 +633,52 @@ impl Presentation {
         if self.scenery.contains_key(key) {
             return;
         }
-        let Some(scenery) = model_catalog::scenery(theme) else {
+        let Some(model) = model_catalog::scenery(theme) else {
             return;
         };
-        let statics = self.renderer.add_scenery(&scenery.root, Lifetime::Shared);
+        self.textures
+            .request_scenery(&mut self.renderer, &model.root);
+        let statics = self.renderer.add_scenery(&model.root, Lifetime::Shared);
         self.renderer.set_visible(statics, false);
-        let movers = scenery
+        let movers = model
             .movers
             .into_iter()
             .map(|mover| {
-                let model = self.renderer.add_model(&mover.root, Lifetime::Shared);
+                self.textures
+                    .request_scenery(&mut self.renderer, &mover.root);
+                let model_id = self.renderer.add_model(&mover.root, Lifetime::Shared);
+                let (world, _) = mover.pose(&model.scenery);
                 let instance = self
                     .renderer
-                    .add_instance(model, mover.world.as_mat4(), Lifetime::Shared)
+                    .add_instance(model_id, world.as_mat4(), Lifetime::Shared)
                     .expect("model just added");
                 self.renderer.set_visible(instance, false);
-                (instance, mover.world, mover.motion)
+                (instance, mover)
             })
             .collect();
-        let water = scenery.water.map(|water| match water {
+        let water = model.water.map(|water| match water {
             SceneryWater::Harbor(mesh) => WaterSettings::harbor(Arc::new(mesh)),
             SceneryWater::Creek(mesh) => WaterSettings::creek(Arc::new(mesh)),
+        });
+        let smoke = model.smoke.map(|smoke| {
+            let model_id = self.renderer.add_model(&smoke, Lifetime::Shared);
+            let instance = self
+                .renderer
+                .add_instance(model_id, Mat4::IDENTITY, Lifetime::Shared)
+                .expect("model just added");
+            // Wisps are screen-space sprites of the sky, not reflected scenery.
+            self.renderer.set_reflected(instance, false);
+            self.renderer.set_visible(instance, false);
+            (model_id, instance)
         });
         self.scenery.insert(
             key,
             SceneryView {
+                scenery: model.scenery,
                 statics,
                 movers,
                 water,
+                smoke,
             },
         );
     }
@@ -652,7 +686,7 @@ impl Presentation {
     fn custom_pads(&mut self, scale: f64) -> InstanceId {
         *self.pads.entry(scale.to_bits()).or_insert_with(|| {
             self.renderer
-                .add_scenery(&own::spawn_pads(scale), Lifetime::Shared)
+                .add_scenery(&custom_spawn_pads(scale), Lifetime::Shared)
         })
     }
 
@@ -664,9 +698,8 @@ impl Presentation {
     ) -> InstanceId {
         let key = format!("{kind:?}:{extent}:{y}");
         *self.floors.entry(key).or_insert_with(|| {
-            let mut floor = own::arena_floor(kind, extent);
-            floor.position.y = y;
-            self.renderer.add_scenery(&floor, Lifetime::Shared)
+            self.renderer
+                .add_scenery(&custom_floor(kind, Some(extent), y), Lifetime::Shared)
         })
     }
 
@@ -689,11 +722,22 @@ impl Presentation {
                 .set_visible(id, Some(id) == floor || Some(id) == outer);
         }
         self.build_scenery(&state.map_theme);
-        for (&key, view) in &self.scenery {
+        for (&key, view) in &mut self.scenery {
             let shown = key == theme.name();
             self.renderer.set_visible(view.statics, shown);
-            for (instance, _, _) in &view.movers {
-                self.renderer.set_visible(*instance, shown);
+            for (instance, mover) in &view.movers {
+                let (_, visible) = mover.pose(&view.scenery);
+                self.renderer.set_visible(*instance, shown && visible);
+            }
+            if let Some((model, instance)) = view.smoke {
+                self.renderer.set_visible(instance, shown);
+                if shown
+                    && let Some(smoke) =
+                        model_catalog::refill_smoke(&mut view.scenery, &state.covers)
+                {
+                    let wisps = model_catalog::smoke_instances(&smoke);
+                    self.renderer.set_part_instances(model, 0, &wisps);
+                }
             }
         }
         if self.theme != Some(theme) {
@@ -805,28 +849,16 @@ impl Presentation {
                         .push(self.renderer.add_model(&node, Lifetime::Round));
                 }
             }
-            if let Some(view) = self.covers.get(&cover.id)
-                && let Some(entry) = self.cover_models.get(&view.key)
-                && let Some(tree) = &entry.tree
-                && seen.insert(format!("tree:{}", view.key))
-            {
-                if let Some(crown) = crown_fragment(&entry.source, &tree.crown, 0.0) {
-                    self.sample_models
-                        .push(self.renderer.add_model(&crown, Lifetime::Round));
-                }
-                for branch in &tree.branches {
-                    if let Some(node) = entry.source.find(&branch.name) {
-                        self.sample_models
-                            .push(self.renderer.add_model(node, Lifetime::Round));
-                    }
-                }
-            }
+            // Falling crowns and boughs reuse the live tree's materials, whose
+            // faded variants every movable model registers up front.
         }
         self.effects.warm_up_samples(&mut self.renderer);
     }
 
     /// Compile up to `budget` pipelines; yield to the page between calls.
     pub fn prepare_step(&mut self, budget: u32) -> PrepareStatus {
+        // One band of any soil bake per step keeps the loading screen responsive.
+        self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
         let PrepareProgress {
             compiled,
             remaining,
@@ -888,53 +920,58 @@ impl Presentation {
         }
     }
 
-    fn cover_entry(&mut self, cover: &RenderCover, stage: u32) -> (String, bool, Vec3) {
-        let movable = cover.motion.is_some();
-        let CoverModel {
-            mut root,
-            key,
-            tree,
-        } = if let Some(motion) = cover.motion {
-            // Movable cover builds at its original footprint.
-            let original = RenderCover {
+    /// The cover as its model is built: movable cover at its original footprint.
+    fn built_cover(cover: &RenderCover) -> std::borrow::Cow<'_, RenderCover> {
+        match cover.motion {
+            Some(motion) => std::borrow::Cow::Owned(RenderCover {
                 x: motion.origin_x,
                 z: motion.origin_z,
                 w: motion.w,
                 d: motion.d,
                 ..cover.clone()
-            };
-            model_catalog::cover_model(&original, stage)
-        } else {
-            model_catalog::cover_model(cover, stage)
-        };
-        let key = if movable {
-            format!("{key}/movable")
-        } else {
-            key
-        };
-        let scale = root.scale.as_vec3();
+            }),
+            None => std::borrow::Cow::Borrowed(cover),
+        }
+    }
+
+    /// The shared model of a cover's look, building it on first use. Returns its
+    /// key and the cover's world placement.
+    fn cover_entry(&mut self, cover: &RenderCover, stage: u32) -> (String, Mat4) {
+        let movable = cover.motion.is_some();
+        let built = Self::built_cover(cover);
+        let mut key = cover_key(&built, stage);
         if movable {
-            // The body's centre is half the cover's height up; drop the parts.
-            let drop = cover.h / (2.0 * root.scale.y);
-            for child in &mut root.children {
-                child.position.y -= drop;
-            }
+            key += "/movable";
         }
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
+            let CoverModel { mut root, tree, .. } = model_catalog::cover_model(&built, stage);
+            if movable {
+                // The body's centre is half the cover's height up; drop the parts.
+                let drop = cover.h / (2.0 * root.scale.y);
+                for child in &mut root.children {
+                    child.position.y -= drop;
+                }
+            }
+            self.textures.request_scenery(&mut self.renderer, &root);
             let model = self.renderer.add_model(&root, Lifetime::Round);
             self.cover_models.insert(
                 key.clone(),
                 CoverModelEntry {
                     model,
                     users: 1,
+                    origin: DVec3::new(built.x, 0.0, built.z),
                     source: Arc::new(root),
                     tree,
                 },
             );
         }
-        (key, movable, scale)
+        // Covers sharing a look share its model; each stands at its own footprint.
+        let entry = &self.cover_models[&key];
+        let offset = DVec3::new(built.x, 0.0, built.z) - entry.origin;
+        let world = (DMat4::from_translation(offset) * entry.source.local_matrix()).as_mat4();
+        (key, world)
     }
 
     fn release_cover_model(&mut self, key: &str) {
@@ -949,24 +986,34 @@ impl Presentation {
 
     fn add_cover(&mut self, cover: &RenderCover) {
         let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-        let (key, movable, scale) = self.cover_entry(cover, stage);
+        let (key, world) = self.cover_entry(cover, stage);
         let entry = &self.cover_models[&key];
-        let world = entry.source.local_matrix().as_mat4();
         let model = entry.model;
-        let tree = entry.tree.as_ref().map(|parts| TreeView {
-            crown: joint_index(&self.renderer, model, &parts.crown),
-            cut: joint_index(&self.renderer, model, &parts.cut_surface),
-            branches: parts
-                .branches
+        let scale = entry.source.scale.as_vec3();
+        let tree = entry.tree.as_ref().map(|parts| {
+            let nodes = self.renderer.model_nodes(model);
+            let joints: Vec<usize> = nodes
                 .iter()
-                .map(|branch| BranchView {
-                    joint: joint_index(&self.renderer, model, &branch.name),
-                    drop_stage: branch.drop_stage,
-                    name: branch.name.clone(),
-                    shown: true,
-                })
-                .collect(),
-            branch_stage: 0,
+                .enumerate()
+                .filter(|(_, node)| TreeParts::is_branch(&node.name))
+                .map(|(index, _)| index)
+                .collect();
+            TreeView {
+                crown: joint_index(&self.renderer, model, parts.crown),
+                cut: joint_index(&self.renderer, model, parts.cut_surface),
+                branches: parts
+                    .branches
+                    .iter()
+                    .zip(joints)
+                    .map(|(branch, joint)| BranchView {
+                        joint,
+                        drop_stage: branch.drop_stage,
+                        crown_child: branch.crown_child,
+                        shown: true,
+                    })
+                    .collect(),
+                branch_stage: 0,
+            }
         });
         let instance = self
             .renderer
@@ -979,7 +1026,7 @@ impl Presentation {
                 key,
                 stage,
                 hits: cover.timber_hits.len(),
-                movable,
+                movable: cover.motion.is_some(),
                 scale,
                 world,
                 tree,
@@ -1112,6 +1159,9 @@ impl Presentation {
         overview: bool,
     ) -> Result<(), String> {
         self.time += dt;
+        if self.textures.busy() {
+            self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
+        }
         self.flags
             .update(&mut self.renderer, self.time, &mut self.random);
         self.update_scenery();
@@ -1158,10 +1208,12 @@ impl Presentation {
 
     fn update_scenery(&mut self) {
         let Some(theme) = self.theme else { return };
-        if let Some(view) = self.scenery.get(theme.name()) {
-            for (instance, world, motion) in &view.movers {
-                self.renderer
-                    .set_transform(*instance, (*world * motion(self.time)).as_mat4());
+        if let Some(view) = self.scenery.get_mut(theme.name()) {
+            view.scenery.update(self.time);
+            for (instance, mover) in &view.movers {
+                let (world, visible) = mover.pose(&view.scenery);
+                self.renderer.set_transform(*instance, world.as_mat4());
+                self.renderer.set_visible(*instance, visible);
             }
         }
     }
@@ -1564,7 +1616,7 @@ impl Presentation {
                         for branch in &mut tree.branches {
                             let visible = branch.drop_stage > stage;
                             if branch.shown && !visible {
-                                shed.push((cover.id, branch.joint, branch.name.clone()));
+                                shed.push((cover.id, branch.joint, branch.crown_child));
                             }
                             branch.shown = visible;
                             self.renderer
@@ -1580,21 +1632,26 @@ impl Presentation {
             self.renderer
                 .set_visible(view.instance, cover.alive || stump);
         }
-        for (cover, joint, name) in shed {
-            self.shed_branch(cover, joint, &name);
+        for (cover, joint, crown_child) in shed {
+            self.shed_branch(cover, joint, crown_child);
         }
     }
 
     /// Drop a bough from a damaged tree: a detached copy falls, tumbles, lands and
     /// fades (`TreeDebris.shed`).
-    fn shed_branch(&mut self, cover: u32, joint: usize, name: &str) {
+    fn shed_branch(&mut self, cover: u32, joint: usize, crown_child: usize) {
         let Some(view) = self.covers.get(&cover) else {
             return;
         };
         let Some(entry) = self.cover_models.get(&view.key) else {
             return;
         };
-        let Some(source) = entry.source.find(name) else {
+        let Some(source) = entry
+            .tree
+            .as_ref()
+            .and_then(|tree| entry.source.find(tree.crown))
+            .and_then(|crown| crown.children.get(crown_child))
+        else {
             return;
         };
         let nodes = self.renderer.model_nodes(entry.model);
@@ -1821,10 +1878,12 @@ impl Presentation {
                         Mat4::from_scale_rotation_translation(scale, rotation, position),
                     );
                     if let FragmentLook::Wreck(..) = view.look {
-                        // Burnt paint darkens over the first seconds (`wreck-aging.ts`).
+                        // Burnt paint and team glow darken over the first seconds
+                        // (`wreck-aging.ts`), fed per instance to the aging effect.
                         let since = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
-                        let brightness = (0.8 - 0.6 * (since / 2.5).clamp(0.0, 1.0)) as f32;
-                        self.renderer.set_tint(view.instance, [brightness; 3]);
+                        let brightness = wreck_brightness(since) as f32;
+                        self.renderer
+                            .set_instance_data(view.instance, [brightness, 1.0, 0.0, 0.0]);
                     }
                 }
             }
@@ -1843,10 +1902,18 @@ impl Presentation {
         } else if let Some(tree) = fragment.tree_cover_id {
             let view = self.covers.get(&tree)?;
             let entry = self.cover_models.get(&view.key)?;
+            let shed: Vec<usize> = view.tree.as_ref().map_or_else(Vec::new, |tree| {
+                tree.branches
+                    .iter()
+                    .filter(|branch| !branch.shown)
+                    .map(|branch| branch.crown_child)
+                    .collect()
+            });
             let crown = crown_fragment(
                 &entry.source,
-                &entry.tree.as_ref()?.crown,
+                entry.tree.as_ref()?.crown,
                 fragment.tree_center_y.unwrap_or(0.0),
+                &shed,
             )?;
             let bounds = node_bounds(&crown, DMat4::IDENTITY);
             let model = self.renderer.add_model(&crown, Lifetime::Round);
@@ -1909,10 +1976,27 @@ impl Presentation {
     }
 }
 
+/// Give every material of a wreck the aging effect, which darkens base and
+/// emissive color by the brightness each instance carries.
+fn age_materials(node: &mut Node) {
+    if let Some(drawable) = &mut node.drawable {
+        drawable.material = Arc::new(aged_wreck_material(&drawable.material, 0.0));
+    }
+    for child in &mut node.children {
+        age_materials(child);
+    }
+}
+
 /// The falling crown of a felled tree: its trunk-and-crown subtree, lowered so
 /// the fragment body's centre sits `center_y` up the trunk.
-fn crown_fragment(source: &Node, crown: &str, center_y: f64) -> Option<Node> {
+fn crown_fragment(source: &Node, crown: &str, center_y: f64, shed: &[usize]) -> Option<Node> {
     let mut node = source.find(crown)?.clone();
+    // Boughs already shed stay gone from the falling crown.
+    for &index in shed {
+        if let Some(bough) = node.children.get_mut(index) {
+            bough.visible = false;
+        }
+    }
     node.name = String::new();
     node.visible = true;
     node.position = DVec3::new(0.0, -center_y, 0.0);
@@ -1942,23 +2026,14 @@ fn environment(look: &ThemeLook) -> Environment {
 
 impl Flags {
     fn new(renderer: &mut Renderer, random: &mut CosmeticRandom) -> Self {
-        let models = [Team::Blue, Team::Red]
-            .map(|team| renderer.add_model(&own::flag(team), Lifetime::Shared));
-        let instances = own::flag_placements()
-            .into_iter()
-            .map(|(team, position, phase)| {
-                let instance = renderer
-                    .add_instance(
-                        models[team.index()],
-                        Mat4::from_translation(position.as_vec3()),
-                        Lifetime::Shared,
-                    )
-                    .expect("flag model");
-                (instance, phase)
-            })
-            .collect();
+        let flags = flags_model();
+        debug_assert!(flags.find(FLAG_CLOTH_NODE).is_some());
+        let model = renderer.add_model(&flags, Lifetime::Shared);
+        let instance = renderer
+            .add_instance(model, Mat4::IDENTITY, Lifetime::Shared)
+            .expect("flag model");
         Self {
-            instances,
+            instance,
             wind_from: random_wind(random),
             wind_to: random_wind(random),
             wind_start: 0.0,
@@ -1980,9 +2055,7 @@ impl Flags {
         let gust = lerp(self.wind_from.0, self.wind_to.0, blend) as f32;
         let direction = lerp(self.wind_from.1, self.wind_to.1, blend);
         let (sin, cos) = direction.sin_cos();
-        for &(instance, phase) in &self.instances {
-            renderer.set_instance_data(instance, [gust, sin as f32, cos as f32, phase]);
-        }
+        renderer.set_instance_data(self.instance, [gust, sin as f32, cos as f32, 0.0]);
     }
 }
 
