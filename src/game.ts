@@ -212,6 +212,8 @@ export async function prepareGame(
     phase = hud!.match.phase;
     alive = hud!.human.alive;
     holdPointer();
+    // A rebuilt pause menu shows the touch preference at once.
+    touchControls.update();
   };
   function pause(): void {
     if (phase === "playing") {
@@ -433,7 +435,6 @@ export async function prepareGame(
       stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
       if (result[FRAME.hudDue]) {
         updateHud(result[FRAME.dt] * HUD_UPDATE_EVERY_FRAMES);
-        touchControls.update();
       }
       recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
     }

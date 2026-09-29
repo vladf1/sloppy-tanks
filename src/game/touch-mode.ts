@@ -93,6 +93,8 @@ export class TouchModeController {
     }
   }
 
+  /** Call after each HUD read: a phase change may have rebuilt the pause menu, whose
+   * selector then shows the preference, and the overlay follows the HUD state. */
   update(): void {
     const phase = this.simulation.match.phase;
     // UI rebuilds the pause menu only on phase transitions. Do not query DOM every frame.
