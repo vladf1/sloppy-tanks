@@ -1,0 +1,1094 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Sloppy Tanks server</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css"
+      integrity="sha384-IfV0B7MIOYuO95kO9G5ySKPz/85zqFNOAs8iy4tkK5zd9izhJAB8b7lHrwYqqmYE"
+      crossorigin="anonymous"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f9f9f7;
+        --surface: #fcfcfb;
+        --ink: #0b0b0b;
+        --ink-2: #52514e;
+        --muted: #898781;
+        --grid: #e1e0d9;
+        --axis: #c3c2b7;
+        --border: rgba(11, 11, 11, 0.1);
+        --series-1: #2a78d6;
+        --series-2: #eb6834;
+        --series-3: #1baf7a;
+        --series-4: #eda100;
+        --series-5: #e87ba4;
+        --series-6: #008300;
+        --good: #0ca30c;
+        --warning: #fab219;
+        --critical: #d03b3b;
+        font:
+          14px/1.4 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --page: #0d0d0d;
+          --surface: #1a1a19;
+          --ink: #ffffff;
+          --ink-2: #c3c2b7;
+          --grid: #2c2c2a;
+          --axis: #383835;
+          --border: rgba(255, 255, 255, 0.1);
+          --series-1: #3987e5;
+          --series-2: #d95926;
+          --series-3: #199e70;
+          --series-4: #c98500;
+          --series-5: #d55181;
+          --series-6: #008300;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+      }
+      main {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 20px 16px 40px;
+        display: grid;
+        gap: 16px;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 600;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      h2 {
+        font-size: 15px;
+        margin-bottom: 10px;
+      }
+      h3 {
+        font-size: 13px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .top h1 {
+        flex: none;
+      }
+      .meta {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--ink-2);
+        font-size: 13px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .status {
+        flex: none;
+        min-width: 150px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .status::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .status[data-state="live"]::before {
+        background: var(--good);
+      }
+      .status[data-state="waiting"]::before {
+        background: var(--warning);
+      }
+      .status[data-state="offline"]::before {
+        background: var(--critical);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        min-width: 0;
+      }
+      .tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .tile {
+        display: grid;
+        gap: 2px;
+      }
+      .tile > * {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .tile .label {
+        color: var(--ink-2);
+        font-size: 12px;
+      }
+      .tile .value {
+        font-size: 26px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .tile .unit {
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--ink-2);
+      }
+      .tile .note {
+        color: var(--muted);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .tile[data-level] .note {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .tile[data-level="warning"] {
+        box-shadow: inset 3px 0 var(--warning);
+      }
+      .tile[data-level="critical"] {
+        box-shadow: inset 3px 0 var(--critical);
+      }
+      .tile[data-level="warning"] .icon {
+        color: var(--warning);
+      }
+      .tile[data-level="critical"] .icon {
+        color: var(--critical);
+      }
+      .charts {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 12px;
+      }
+      .chart header {
+        display: grid;
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+      .legend {
+        min-height: calc(2.8em + 4px);
+        align-content: flex-start;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        color: var(--ink-2);
+        font-size: 12px;
+      }
+      .legend li {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .legend b {
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .key {
+        display: inline-block;
+        width: 14px;
+        height: 2px;
+        border-radius: 1px;
+        background: var(--key);
+      }
+      .key.dashed {
+        background: repeating-linear-gradient(90deg, var(--key) 0 4px, transparent 4px 7px);
+      }
+      .plot {
+        position: relative;
+        min-height: 170px;
+      }
+      .tip {
+        position: absolute;
+        top: 4px;
+        z-index: 1;
+        pointer-events: none;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .tip time {
+        display: block;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .tip div {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--ink-2);
+      }
+      .tip b {
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .uplot .u-cursor-x {
+        border-right: 1px solid var(--muted);
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      th,
+      td {
+        padding: 6px 10px;
+        text-align: right;
+        border-bottom: 1px solid var(--grid);
+      }
+      th {
+        color: var(--ink-2);
+        font-weight: 600;
+        font-size: 12px;
+      }
+      th:nth-child(-n + 3),
+      td:nth-child(-n + 3) {
+        text-align: left;
+      }
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      td.empty {
+        text-align: left;
+        color: var(--muted);
+      }
+      .code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .lower {
+        display: grid;
+        grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+        gap: 12px;
+      }
+      @media (max-width: 860px) {
+        .lower {
+          grid-template-columns: 1fr;
+        }
+      }
+      .events {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        max-height: 320px;
+        overflow-y: auto;
+        font-size: 13px;
+      }
+      .events li {
+        display: grid;
+        grid-template-columns: auto auto 1fr;
+        gap: 10px;
+        padding: 4px 0;
+        border-bottom: 1px solid var(--grid);
+      }
+      .events time {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .events .none {
+        display: block;
+        color: var(--muted);
+        border: 0;
+      }
+      dl.facts {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 16px;
+        margin: 0;
+        font-size: 13px;
+      }
+      dl.facts dt {
+        color: var(--ink-2);
+      }
+      dl.facts dd {
+        margin: 0;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      [data-tip] {
+        cursor: help;
+        text-decoration: underline dotted var(--muted);
+        text-underline-offset: 3px;
+      }
+      .hint {
+        position: fixed;
+        z-index: 10;
+        max-width: 300px;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.45;
+        text-align: left;
+        white-space: normal;
+        pointer-events: none;
+      }
+      .footnote {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="top">
+        <h1>Sloppy Tanks server</h1>
+        <span class="status" id="status" data-state="waiting" role="status">Connecting…</span>
+        <span class="meta" id="meta"></span>
+      </div>
+      <section class="tiles" id="tiles" aria-label="Current load"></section>
+      <section class="charts" id="charts" aria-label="Last five minutes"></section>
+      <section class="card">
+        <h2>Rooms</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Map</th>
+                <th>Phase</th>
+                <th>Players</th>
+                <th data-tip="Open connections, including ones that have not taken a seat yet.">
+                  Sockets
+                </th>
+                <th>Time left</th>
+                <th>Score</th>
+                <th data-tip="How long this match has existed.">Age</th>
+                <th
+                  data-tip="Average time of one 50 ms room update (simulation plus snapshots) over the last second."
+                >
+                  Tick avg
+                </th>
+                <th
+                  data-tip="Longest room update in the last second. Over 50 ms, the room falls behind real time."
+                >
+                  Tick max
+                </th>
+                <th
+                  data-tip="Simulation time the room still owes. A value that keeps rising means the room cannot keep up."
+                >
+                  Debt
+                </th>
+                <th
+                  data-tip="Game data sent to this room’s players per second, before compression."
+                >
+                  Out KB/s
+                </th>
+                <th data-tip="Input received from this room’s players per second.">In KB/s</th>
+              </tr>
+            </thead>
+            <tbody id="rooms"></tbody>
+          </table>
+        </div>
+      </section>
+      <div class="lower">
+        <section class="card">
+          <h2>Recent events</h2>
+          <ol class="events" id="events"></ol>
+        </section>
+        <section class="card">
+          <h2>Since start</h2>
+          <dl class="facts" id="facts"></dl>
+        </section>
+      </div>
+      <p class="footnote">
+        Updated every second. Traffic is measured before WebSocket compression. Room codes are
+        partly hidden because a code is enough to join a room.
+      </p>
+    </main>
+    <script
+      src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"
+      integrity="sha384-Gx3t0zdBAuQOuvvmaLZj7HKEiSgWTAs+VdtNY7wt19QDPTDQjFIwAuXDj0zeN00c"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      "use strict";
+      const HISTORY_FALLBACK_MS = 300_000;
+      /** A reading older than this means the stream has stalled. */
+      const STALE_MS = 5000;
+      const RETRY_MS = 5000;
+      const TICK_BUDGET_MS = 50;
+
+      const $ = (id) => document.getElementById(id);
+      /** Explanations for labels a reader may not know; shown on hover or focus. */
+      const HINTS = {
+        players:
+          "Players with a seat in any room. Sockets also count connections that have not joined yet.",
+        rooms: "Live matches. New rooms are refused at the cap; joining an existing room never is.",
+        cpu: "Share of one CPU core the server process used in the last second, across all its threads. Workers busy is the share of time the runtime's worker threads spent running rooms, sockets and compression rather than waiting.",
+        lag: "How late the runtime ran a 10 ms probe timer, beyond the scheduled time. High lag delays room updates and network messages.",
+        tick: "Longest single room update (simulation plus sending snapshots) in the last second. Rooms update every 50 ms, so a tick over 50 ms falls behind real time.",
+        memory:
+          "RSS (resident set size) is the physical RAM the server process holds: rooms, Rapier physics, network and compression buffers and the program itself. systemd stops the server at 700 MB. Heap is what the server has allocated now, of the most it ever held at once.",
+        traffic:
+          "Bytes per second through the players' connections. Wire is what actually crossed the network after WebSocket compression; JSON is the game data before compression.",
+        messagesOut:
+          "Messages sent to players per second. snapshot carries the game 20 times a second; full is a complete state for a joining or resyncing player; lobby and control describe seats and tanks; pong answers pings; other is welcome, error and room-reset.",
+        messagesIn:
+          "Messages received from players per second. input carries controls; ping measures latency; join and leave enter and exit rooms; other is lobby actions such as settings, start, choose and resync.",
+        hostLoad:
+          "Processes running or waiting for a CPU on the whole machine, averaged over a minute. Above the CPU count means the host is overloaded.",
+      };
+      const element = (tag, className, text) => {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
+      const fixed = (value, digits = 1) =>
+        Number.isFinite(value) ? value.toFixed(digits).replace(/\.0+$/, "") : "–";
+      const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
+      function span(seconds) {
+        const s = Math.max(0, Math.round(seconds));
+        const d = Math.floor(s / 86400),
+          h = Math.floor((s % 86400) / 3600),
+          m = Math.floor((s % 3600) / 60);
+        if (d) return `${d}d ${h}h`;
+        if (h) return `${h}h ${m}m`;
+        if (m) return `${m}m ${s % 60}s`;
+        return `${s}s`;
+      }
+      const minutes = (seconds) =>
+        `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+      function level(value, warning, critical) {
+        if (value >= critical) return "critical";
+        if (value >= warning) return "warning";
+        return "";
+      }
+
+      const state = { server: null, history: [], latest: null, events: [], receivedMs: 0 };
+      const windowMs = () =>
+        state.server
+          ? state.server.historyReadings * state.server.readingIntervalMs
+          : HISTORY_FALLBACK_MS;
+
+      const hint = element("div", "hint");
+      hint.id = "hint";
+      hint.hidden = true;
+      hint.setAttribute("role", "tooltip");
+      document.body.append(hint);
+      /** Marks `node` as explained by `text`; one shared floating hint shows it. */
+      function explain(node, text) {
+        if (!text) return node;
+        node.dataset.tip = text;
+        node.tabIndex = 0;
+        node.setAttribute("aria-describedby", "hint");
+        return node;
+      }
+      function showHint(target) {
+        hint.textContent = target.dataset.tip;
+        hint.hidden = false;
+        const box = target.getBoundingClientRect(),
+          width = hint.offsetWidth,
+          height = hint.offsetHeight;
+        hint.style.left = `${Math.max(8, Math.min(box.left, innerWidth - width - 8))}px`;
+        hint.style.top = `${box.bottom + 6 + height > innerHeight ? box.top - 6 - height : box.bottom + 6}px`;
+      }
+      for (const node of document.querySelectorAll("[data-tip]")) explain(node, node.dataset.tip);
+      for (const [type, show] of [
+        ["pointerover", true],
+        ["focusin", true],
+        ["pointerout", false],
+        ["focusout", false],
+      ])
+        document.addEventListener(type, (event) => {
+          const target = event.target.closest?.("[data-tip]");
+          if (!target) return;
+          if (show) showHint(target);
+          else hint.hidden = true;
+        });
+      addEventListener("scroll", () => (hint.hidden = true), { passive: true });
+
+      // Tiles: the current second at a glance.
+      const TILES = [
+        {
+          label: "Players",
+          hint: HINTS.players,
+          value: (r) => r.players,
+          note: (r) => `${r.sockets} sockets`,
+        },
+        {
+          label: "Rooms",
+          hint: HINTS.rooms,
+          value: (r) => r.rooms,
+          note: () => `of ${state.server?.maxRooms ?? "?"} allowed`,
+          level: (r) => (state.server && r.rooms >= state.server.maxRooms ? "warning" : ""),
+          flag: "At the room cap",
+        },
+        {
+          label: "CPU",
+          hint: HINTS.cpu,
+          value: (r) => `${fixed(r.cpuPercent)}%`,
+          note: (r) => `loop busy ${fixed(r.loopBusyPercent)}%`,
+          level: (r) => level(r.cpuPercent, 70, 90),
+          flag: "High",
+        },
+        {
+          label: "Runtime lag p99",
+          hint: HINTS.lag,
+          value: (r) => `${fixed(r.loopLagP99Ms)} ms`,
+          note: (r) => `max ${fixed(r.loopLagMaxMs)} ms`,
+          level: (r) => level(r.loopLagP99Ms, 20, TICK_BUDGET_MS),
+          flag: "Slow",
+        },
+        {
+          label: "Slowest room tick",
+          hint: HINTS.tick,
+          value: (r) => `${fixed(r.tickMaxMs)} ms`,
+          note: () => `budget ${TICK_BUDGET_MS} ms`,
+          level: (r) => level(r.tickMaxMs, TICK_BUDGET_MS / 2, TICK_BUDGET_MS),
+          flag: "Near or over budget",
+        },
+        {
+          label: "Memory (RSS)",
+          hint: HINTS.memory,
+          value: (r) => `${fixed(r.rssMB, 0)} MB`,
+          note: (r) => `heap ${fixed(r.heapUsedMB, 0)} / ${fixed(r.heapTotalMB, 0)} MB`,
+        },
+        {
+          label: "Traffic out",
+          hint: HINTS.traffic,
+          value: (r) => `${fixed(r.wireSentKBps)} KB/s`,
+          note: (r) => `JSON ${fixed(r.sentKBps)} KB/s`,
+        },
+      ];
+      for (const tile of TILES) {
+        tile.node = element("article", "card tile");
+        tile.valueNode = element("span", "value", "–");
+        tile.unitNode = element("span", "unit");
+        tile.noteNode = element("span", "note", "");
+        tile.node.append(
+          explain(element("span", "label", tile.label), tile.hint),
+          tile.valueNode,
+          tile.noteNode,
+        );
+        $("tiles").append(tile.node);
+      }
+
+      /** One series per named message type, in a fixed order, plus the rest as "other". */
+      function messageSeries(direction, types) {
+        const rate = (point, type) => point[direction]?.[type] ?? 0;
+        return [
+          ...types.map((type) => ({ label: type, value: (point) => rate(point, type) })),
+          {
+            label: "other",
+            value: (point) =>
+              Object.entries(point[direction] ?? {})
+                .filter(([type]) => !types.includes(type))
+                .reduce((total, [, count]) => total + count, 0),
+          },
+        ];
+      }
+
+      // Charts: the last five minutes, one unit per chart.
+      const CHARTS = [
+        {
+          title: "CPU",
+          hint: HINTS.cpu,
+          unit: "%",
+          floor: 10,
+          series: [
+            { key: "cpuPercent", label: "Process CPU" },
+            { key: "loopBusyPercent", label: "Workers busy" },
+          ],
+        },
+        {
+          title: "Runtime lag",
+          hint: HINTS.lag,
+          unit: "ms",
+          floor: 5,
+          series: [
+            { key: "loopLagP50Ms", label: "p50" },
+            { key: "loopLagP90Ms", label: "p90" },
+            { key: "loopLagP99Ms", label: "p99" },
+            { key: "loopLagMaxMs", label: "Max" },
+          ],
+        },
+        {
+          title: "Slowest room tick",
+          hint: HINTS.tick,
+          unit: "ms",
+          floor: 10,
+          reference: { value: TICK_BUDGET_MS, label: "Tick budget" },
+          series: [{ key: "tickMaxMs", label: "Slowest tick" }],
+        },
+        {
+          title: "Memory",
+          hint: HINTS.memory,
+          unit: "MB",
+          floor: 64,
+          digits: 0,
+          series: [
+            { key: "rssMB", label: "RSS" },
+            { key: "heapUsedMB", label: "Heap used" },
+          ],
+        },
+        {
+          title: "Traffic",
+          hint: HINTS.traffic,
+          unit: "KB/s",
+          floor: 10,
+          series: [
+            { key: "wireSentKBps", label: "Out wire" },
+            { key: "sentKBps", label: "Out JSON" },
+            { key: "wireReceivedKBps", label: "In wire" },
+            { key: "receivedKBps", label: "In JSON" },
+          ],
+        },
+        {
+          title: "Players and rooms",
+          unit: "",
+          floor: 4,
+          digits: 0,
+          series: [
+            { key: "players", label: "Players" },
+            { key: "rooms", label: "Rooms" },
+          ],
+        },
+        {
+          title: "Messages out",
+          hint: HINTS.messagesOut,
+          unit: "/s",
+          floor: 10,
+          digits: 0,
+          series: messageSeries("sentMessages", ["snapshot", "full", "lobby", "control", "pong"]),
+        },
+        {
+          title: "Messages in",
+          hint: HINTS.messagesIn,
+          unit: "/s",
+          floor: 10,
+          digits: 0,
+          series: messageSeries("receivedMessages", ["input", "ping", "join", "leave"]),
+        },
+      ];
+      for (const chart of CHARTS)
+        for (const series of chart.series) series.value ??= (point) => point[series.key];
+      /** "12%" and "40/s" attach their unit; "5 ms" and "3 MB" take a space. */
+      const withUnit = (chart, value) => {
+        const unit =
+          chart.unit === "%" || chart.unit.startsWith("/") ? chart.unit : ` ${chart.unit}`;
+        return `${fixed(value, chart.digits ?? 1)}${chart.unit ? unit : ""}`;
+      };
+
+      const PLOT_HEIGHT = 170;
+      const plots = typeof uPlot === "function";
+      const plotSize = (chart) => ({ width: chart.plotNode.clientWidth, height: PLOT_HEIGHT });
+      for (const chart of CHARTS) {
+        const card = element("article", "card chart");
+        const header = element("header");
+        const legend = element("ul", "legend");
+        chart.values = chart.series.map((series, index) => {
+          const item = element("li");
+          // A single series is named by the chart title, so it shows only its value.
+          if (chart.series.length > 1) {
+            const key = element("span", "key");
+            key.style.setProperty("--key", `var(--series-${index + 1})`);
+            item.append(key, element("span", "", series.label));
+          }
+          const value = element("b", "", "–");
+          item.append(value);
+          legend.append(item);
+          return value;
+        });
+        if (chart.reference) {
+          const item = element("li");
+          const key = element("span", "key dashed");
+          key.style.setProperty("--key", "var(--muted)");
+          item.append(
+            key,
+            element(
+              "span",
+              "",
+              `${chart.reference.label} ${withUnit(chart, chart.reference.value)}`,
+            ),
+          );
+          legend.append(item);
+        }
+        header.append(explain(element("h3", "", chart.title), chart.hint), legend);
+        chart.plotNode = element("div", "plot");
+        chart.tip = element("div", "tip");
+        chart.tip.hidden = true;
+        chart.plotNode.append(chart.tip);
+        // All charts share the crosshair; only the one under the pointer shows a tooltip.
+        chart.plotNode.addEventListener("pointerenter", () => (chart.pointed = true));
+        chart.plotNode.addEventListener("pointerleave", () => {
+          chart.pointed = false;
+          chart.tip.hidden = true;
+        });
+        card.append(header, chart.plotNode);
+        $("charts").append(card);
+        if (plots) new ResizeObserver(() => chart.plot?.setSize(plotSize(chart))).observe(card);
+      }
+      if (!plots)
+        $("charts").prepend(
+          element("p", "footnote", "Charts need the uPlot library from cdn.jsdelivr.net."),
+        );
+
+      function niceCeiling(value) {
+        const power = 10 ** Math.floor(Math.log10(value));
+        for (const step of [1, 2, 2.5, 5, 10]) if (value <= step * power) return step * power;
+        return 10 * power;
+      }
+      const shortClock = (ms) =>
+        new Date(ms).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: new Date(ms).getSeconds() ? "2-digit" : undefined,
+          hour12: false,
+        });
+      /** The chart's columns, with a gap wherever readings stopped (a restart or outage). */
+      function plotData(chart) {
+        const gapMs = (state.server?.readingIntervalMs ?? 1000) * 3,
+          times = [],
+          columns = chart.series.map(() => []);
+        let previousMs = -Infinity;
+        for (const point of state.history) {
+          if (times.length && point.atMs - previousMs > gapMs) {
+            times.push(previousMs + 1);
+            for (const column of columns) column.push(null);
+          }
+          times.push(point.atMs);
+          chart.series.forEach((series, index) => columns[index].push(series.value(point)));
+          previousMs = point.atMs;
+        }
+        return [times, ...columns];
+      }
+      /** Headers always show the latest reading; hovering never changes their size. */
+      function showLatest(chart) {
+        chart.series.forEach((series, column) => {
+          const value = state.latest ? series.value(state.latest) : undefined;
+          chart.values[column].textContent = value == null ? "–" : withUnit(chart, value);
+        });
+      }
+      /** The hovered chart's tooltip, floating beside the crosshair over the plot. */
+      function showTip(chart, u) {
+        const index = u.cursor.idx,
+          atMs = index == null ? undefined : u.data[0][index];
+        chart.tip.hidden = !chart.pointed || atMs === undefined;
+        if (chart.tip.hidden) return;
+        chart.tip.replaceChildren(element("time", "", clock(atMs)));
+        chart.series.forEach((series, column) => {
+          const row = element("div");
+          const key = element("span", "key");
+          key.style.setProperty("--key", `var(--series-${column + 1})`);
+          const value = u.data[column + 1][index];
+          row.append(key, element("b", "", value == null ? "–" : withUnit(chart, value)));
+          row.append(series.label);
+          chart.tip.append(row);
+        });
+        const x = u.over.offsetLeft + u.cursor.left,
+          width = chart.tip.offsetWidth;
+        chart.tip.style.left = `${x + 12 + width > chart.plotNode.clientWidth ? x - 12 - width : x + 12}px`;
+      }
+      function createPlot(chart) {
+        const style = getComputedStyle(document.documentElement),
+          color = (name) => style.getPropertyValue(name).trim(),
+          now = () => state.latest?.atMs ?? Date.now(),
+          axis = {
+            stroke: color("--muted"),
+            font: "11px system-ui, -apple-system, 'Segoe UI', sans-serif",
+            grid: { stroke: color("--grid"), width: 1 },
+            ticks: { stroke: color("--grid"), width: 1, size: 4 },
+          };
+        return new uPlot(
+          {
+            ...plotSize(chart),
+            ms: 1,
+            legend: { show: false },
+            cursor: {
+              sync: { key: "server" },
+              y: false,
+              drag: { x: false, y: false },
+              // Snap the crosshair to the reading its values come from.
+              move: (u, left, top) => {
+                const atMs = u.data[0][u.posToIdx(left)];
+                return [atMs === undefined ? left : u.valToPos(atMs, "x"), top];
+              },
+              points: {
+                size: 8,
+                width: 2,
+                stroke: color("--surface"),
+                fill: (u, index) => u.series[index]._stroke,
+              },
+            },
+            scales: {
+              // A fixed five-minute window ending at the latest reading, so charts line up.
+              x: { time: true, range: () => [now() - windowMs(), now()] },
+              y: {
+                range: (u, min, max) => [0, niceCeiling(Math.max(chart.floor, (max ?? 0) * 1.1))],
+              },
+            },
+            axes: [
+              { ...axis, space: 45, values: (u, ticks) => ticks.map(shortClock) },
+              {
+                ...axis,
+                size: 46,
+                values: (u, ticks) => ticks.map((tick) => fixed(tick, tick % 1 ? 1 : 0)),
+              },
+            ],
+            series: [
+              {},
+              ...chart.series.map((series, index) => ({
+                label: series.label,
+                stroke: color(`--series-${index + 1}`),
+                width: 2,
+                points: { show: false },
+              })),
+            ],
+            hooks: {
+              setCursor: [(u) => showTip(chart, u)],
+              draw: [(u) => drawReference(chart, u, color("--muted"))],
+            },
+          },
+          plotData(chart),
+          chart.plotNode,
+        );
+      }
+      function drawReference(chart, u, stroke) {
+        if (!chart.reference || chart.reference.value > u.scales.y.max) return;
+        const ratio = window.devicePixelRatio || 1,
+          y = Math.round(u.valToPos(chart.reference.value, "y", true)) + 0.5,
+          context = u.ctx;
+        context.save();
+        context.strokeStyle = stroke;
+        context.lineWidth = ratio;
+        context.setLineDash([4 * ratio, 3 * ratio]);
+        context.beginPath();
+        context.moveTo(u.bbox.left, y);
+        context.lineTo(u.bbox.left + u.bbox.width, y);
+        context.stroke();
+        context.restore();
+      }
+      function drawCharts() {
+        if (!plots) return;
+        for (const chart of CHARTS) {
+          if (chart.plot) chart.plot.setData(plotData(chart));
+          else chart.plot = createPlot(chart);
+          showLatest(chart);
+          showTip(chart, chart.plot);
+        }
+      }
+      // Plot colours are read once, so rebuild the charts when the colour scheme flips.
+      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        for (const chart of CHARTS) {
+          chart.plot?.destroy();
+          chart.plot = null;
+        }
+        drawCharts();
+      });
+
+      function renderRooms(rooms) {
+        const body = $("rooms");
+        if (!rooms.length) {
+          const cell = element("td", "empty", "No live rooms.");
+          cell.colSpan = 13;
+          const row = element("tr");
+          row.append(cell);
+          body.replaceChildren(row);
+          return;
+        }
+        body.replaceChildren(
+          ...rooms.map((room) => {
+            const row = element("tr");
+            for (const [text, className] of [
+              [room.room, "code"],
+              [room.mapMode],
+              [room.phase],
+              [`${room.players} / ${room.seats}`],
+              [room.sockets],
+              [minutes(room.timeLeft)],
+              [room.scores.join(" – ")],
+              [span(room.ageSeconds)],
+              [`${fixed(room.tickAvgMs, 2)} ms`],
+              [`${fixed(room.tickMaxMs, 2)} ms`],
+              [`${fixed(room.debtMs)} ms`],
+              [fixed(room.sentKBps)],
+              [fixed(room.receivedKBps)],
+            ])
+              row.append(element("td", className, String(text)));
+            return row;
+          }),
+        );
+      }
+      function renderEvents() {
+        const list = $("events");
+        if (!state.events.length) {
+          list.replaceChildren(element("li", "none", "Nothing yet."));
+          return;
+        }
+        list.replaceChildren(
+          ...state.events
+            .slice()
+            .reverse()
+            .map((event) => {
+              const item = element("li");
+              const time = element("time", "", clock(event.atMs));
+              time.dateTime = new Date(event.atMs).toISOString();
+              item.append(
+                time,
+                element("span", "code", event.room),
+                element("span", "", event.message),
+              );
+              return item;
+            }),
+        );
+      }
+      function renderFacts(reading) {
+        const server = state.server;
+        const facts = [
+          ["Rooms created", reading.totals.roomsCreated],
+          ["Players joined", reading.totals.joins],
+          ["Sent on the wire", `${fixed(reading.totals.wireSentMB)} MB`],
+          ["Sent before compression", `${fixed(reading.totals.sentMB)} MB`],
+          ["Received on the wire", `${fixed(reading.totals.wireReceivedMB)} MB`],
+          [
+            "Host load (1 min)",
+            `${fixed(reading.hostLoad, 2)} on ${server.cpus} CPU`,
+            HINTS.hostLoad,
+          ],
+          ["Host memory", `${reading.hostMemoryUsedMB} / ${server.hostMemoryMB} MB`],
+          ["Dashboard viewers", reading.viewers],
+        ];
+        $("facts").replaceChildren(
+          ...facts.flatMap(([label, value, tip]) => [
+            explain(element("dt", "", label), tip),
+            element("dd", "", String(value)),
+          ]),
+        );
+      }
+      function render() {
+        const reading = state.latest,
+          server = state.server;
+        if (!reading || !server) return;
+        for (const tile of TILES) {
+          const [number, unit = ""] = String(tile.value(reading)).split(" ");
+          tile.valueNode.replaceChildren(number, unit ? tile.unitNode : "");
+          tile.unitNode.textContent = ` ${unit}`;
+          const flagged = tile.level?.(reading) ?? "";
+          if (flagged) {
+            tile.node.dataset.level = flagged;
+            tile.noteNode.replaceChildren(element("span", "icon", "▲"), ` ${tile.flag}`);
+          } else {
+            delete tile.node.dataset.level;
+            tile.noteNode.textContent = tile.note(reading);
+          }
+        }
+        drawCharts();
+        renderRooms(reading.roomList);
+        renderFacts(reading);
+        $("meta").textContent = [
+          `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
+          `content ${server.contentVersion}`,
+          `protocol ${server.protocolVersion}`,
+          server.runtime,
+          `updated ${clock(reading.atMs)}`,
+        ].join(" · ");
+        document.title = `${reading.players} players · Sloppy Tanks server`;
+      }
+
+      function setStatus(kind, text) {
+        $("status").dataset.state = kind;
+        $("status").textContent = text;
+      }
+      let source = null,
+        retry = null;
+      function connect() {
+        clearTimeout(retry);
+        source?.close();
+        source = new EventSource("/dashboard/stream");
+        source.addEventListener("hello", (message) => {
+          const hello = JSON.parse(message.data);
+          state.server = hello.server;
+          state.history = hello.history;
+          state.events = hello.events;
+          state.latest = hello.reading ?? null;
+          state.receivedMs = Date.now();
+          setStatus("live", "Live");
+          renderEvents();
+          render();
+        });
+        source.addEventListener("reading", (message) => {
+          const { events, ...reading } = JSON.parse(message.data);
+          const { roomList, totals, viewers, hostLoad, hostMemoryUsedMB, ...point } = reading;
+          state.latest = reading;
+          state.history.push(point);
+          const cutoff = reading.atMs - windowMs();
+          while (state.history.length && state.history[0].atMs < cutoff) state.history.shift();
+          // An event from just before this stream opened comes in hello and again here.
+          const lastId = state.events.at(-1)?.id ?? 0;
+          const fresh = events.filter((event) => event.id > lastId);
+          if (fresh.length) {
+            state.events.push(...fresh);
+            state.events.splice(0, Math.max(0, state.events.length - 100));
+            renderEvents();
+          }
+          state.receivedMs = Date.now();
+          setStatus("live", "Live");
+          render();
+        });
+        source.addEventListener("error", () => {
+          // EventSource retries dropped streams itself but gives up on an error status
+          // (the proxy during a restart, or a full viewer list), so retry those here.
+          if (source.readyState === EventSource.CLOSED) {
+            setStatus("offline", "Offline, retrying…");
+            retry = setTimeout(connect, RETRY_MS);
+          } else setStatus("waiting", "Reconnecting…");
+        });
+      }
+      setInterval(() => {
+        if ($("status").dataset.state === "live" && Date.now() - state.receivedMs > STALE_MS)
+          setStatus("waiting", "No updates…");
+      }, 1000);
+      renderEvents();
+      connect();
+    </script>
+  </body>
+</html>
