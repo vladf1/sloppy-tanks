@@ -11,6 +11,7 @@ pub mod draw_list;
 pub mod effects;
 pub mod material;
 pub mod model;
+pub mod presentation;
 pub mod shader;
 
 #[cfg(target_arch = "wasm32")]
