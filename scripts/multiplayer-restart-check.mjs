@@ -21,6 +21,12 @@ let server,
   logs = "";
 const errors = [];
 async function startServer() {
+  // Another session's server on this port would answer the health probe in its place.
+  const busy = await fetch(`http://127.0.0.1:${PORT}/health`).then(
+    () => true,
+    () => false,
+  );
+  assert.ok(!busy, `port ${PORT} is already in use; set SLOPPY_RESTART_PORT`);
   // The native server `pnpm run server:build` produces.
   server = spawn("target/server/sloppy-server", [], {
     // Admit whichever Vite origin the check was given, not only the default local ports.
