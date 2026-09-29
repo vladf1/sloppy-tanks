@@ -47,8 +47,7 @@ features or weaken stress workloads to make the rewrite easier.
 ## Repository and isolation
 
 - Repository: https://github.com/vladf1/sloppy-tanks.
-- Use the Rust/WebGPU experiment PR accompanying this task as the reference
-  implementation. Its source is in `experiments/rust-webgpu/`, with setup and
+- Reference implementation: [Rust/WebGPU experiment PR #25](https://github.com/vladf1/sloppy-tanks/pull/25). Its source is in `experiments/rust-webgpu/`, with setup and
   launch commands in that directory's `README.md`. All paths below are relative
   to the repository root unless stated otherwise.
 - Inspect the current branch, HEAD and `git status --short`; main may have advanced
@@ -294,6 +293,8 @@ needed by the existing workload.
 
 - Production browser target runs the actual game with Rust/Wasm gameplay and
   custom Rust WebGPU rendering, without Three.js or the old TS simulation runtime.
+  Remove `three`/`@types/three`, TSL and Three.js imports from the final project;
+  migrate any remaining model/asset utilities that depend on them.
 - All existing modes/maps/extra levels, controls, presentation and lifecycle paths
   are accounted for; no silent feature omissions.
 - The server runtime is fully Rust, not a Node wrapper around Wasm/Rust. The old
