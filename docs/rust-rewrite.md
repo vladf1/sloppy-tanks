@@ -139,16 +139,18 @@ buttons reaches the engine with the next frame's input, so checks wait a frame.
 
 ## Status (2026-09-29, late)
 
-- `pnpm run check` passes on `codex/rust-rewrite` (36:30 local): 504 Rust tests (1 ignored:
-  full soil bake), 36 TS tests, fmt/clippy (native, wasm, wasm+labs), Vite build, server build.
-- All 11 browser checks passed against the Rust engine (agent run); multiplayer checks passed
-  against the local Rust server.
-- Running: async pipeline compilation (cold Metal cache stalls the browser ~4.5 s with wgpu's
-  sync `create_render_pipeline`; rooms already wait via `gpuPending`).
-- Left: merge async compile work; final matched measurements vs baseline (readiness, frame
-  tails, memory, sizes); CI workflow unexercised on GitHub; tank preview asset not regenerated
-  (13/255 brighter); shell nits (first click after resume, late touch preference).
+- `pnpm run check` passes on `codex/rust-rewrite` (36:30 local from cold, 3:04 with warm
+  caches): 504 Rust tests (1 ignored: full soil bake), 36 TS tests, fmt/clippy (native, wasm,
+  wasm+labs), Vite build, server build.
 - Async pipeline compilation merged (e07ebd3, 98b602b): cold-cache frame gaps 4.4–6.9 s →
-  0.13–0.2 s, ready 3.5–5× sooner. Its startup-check change (8f39b15 on
-  `worktree-agent-ac12927a0b68560b5`, hold background compiles) conflicted with the ported
-  check and is not applied yet; re-apply it to `scripts/startup-check.mjs`.
+  0.13–0.2 s, ready 3.5–5× sooner. The startup check now holds the background compiles
+  (`createRenderPipelineAsync`) as well as the textures behind the menu.
+- Shell nits fixed: a click right after RESUME takes the pointer back in first person, the
+  pause menu shows the touch preference at once, and replaced pickups lose their views.
+- `webkit-startup-check.mjs` (in `check:browser`) plays the village and quarry in
+  Playwright's WebKit (Safari 26.6 engine) with WebGPU: 67 shaders, 75 pipelines, no errors.
+- All 12 browser checks passed (WebKit rerun alone after relaxing its frame count) and the
+  multiplayer checks (plain and 100 ms latency with jitter and stalls, room browser, restart,
+  loading) passed against the local Rust server.
+- Left: final matched measurements vs baseline (readiness, frame tails, memory, sizes); CI
+  workflow unexercised on GitHub; tank preview asset not regenerated (13/255 brighter).
