@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { VPS_SSH, VPS_SSH_OPTIONS } from "./vps-host.mjs";
 
-/** Read-only views of the VPS game server over SSH: `logs`, `stats` or `status`. */
+/** Read-only views of a VPS game server over SSH: `logs`, `stats` or `status`.
+ * `--dev` reads the dev site's server (sloppy-tanks-dev on loopback port 8788). */
+const dev = process.argv.includes("--dev");
+const service = dev ? "sloppy-tanks-dev" : "sloppy-tanks";
 const COMMANDS = {
-  logs: "journalctl -u sloppy-tanks -f -n 50 --output cat",
-  stats: "curl -s http://127.0.0.1:8787/stats",
-  status: "systemctl status sloppy-tanks caddy --no-pager",
+  logs: `journalctl -u ${service} -f -n 50 --output cat`,
+  stats: `curl -s http://127.0.0.1:${dev ? 8788 : 8787}/stats`,
+  status: `systemctl status ${service} caddy --no-pager`,
 };
 const name = process.argv[2];
 if (!(name in COMMANDS)) {

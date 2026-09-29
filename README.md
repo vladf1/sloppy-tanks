@@ -195,8 +195,8 @@ repository's Pages custom domain (a Namecheap CNAME to `vladf1.github.io`). The 
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
-The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
-also uses. It does not deploy that server. A client only plays on a server
+The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server. It does not deploy that
+server; the dev site uses a separate one (below). A client only plays on a server
 built from the same shared sources: the `crates/core` files and the crates they
 compile with, listed by `node scripts/content-version.mjs`, and
 `pnpm run server:check-if-redeployment-required` says whether the live server
@@ -205,9 +205,7 @@ matches this checkout. After merging changes to any of them, run
 asked to reload and cannot join. Server-only changes (`crates/server`, its
 dependencies and build settings) keep clients compatible but still need that deploy
 to take effect; client-only files (`crates/render`, `crates/web`, the page shell)
-never do. Likewise,
-`pnpm run deploy:dev` from a branch with such changes replaces the shared server and
-breaks production multiplayer until `main` is deployed again.
+never do.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the engine download.
 
@@ -221,9 +219,12 @@ Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` firs
 (or provide a Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
-The dev build always connects the **Multiplayer** tab to the multiplayer server
-on the VPS, and `deploy:dev` redeploys that server from the same checkout first
-(over SSH) so client and server versions match.
+The dev build connects the **Multiplayer** tab to the dev multiplayer server,
+`wss://sloppy-tanks-server.fridman.me:8443`: a second server process on the same VPS,
+separate from production's, whose dashboard is
+<https://sloppy-tanks-server.fridman.me:8443/dashboard>. `deploy:dev` redeploys that dev
+server from the same checkout first (over SSH) so client and server versions match;
+production multiplayer is never affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

@@ -6,8 +6,9 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
-browser engine runs. The production and dev sites use it at
-`wss://sloppy-tanks-server.fridman.me`, on a Vultr VPS behind Caddy.
+browser engine runs. On a Vultr VPS behind Caddy, the production site uses it at
+`wss://sloppy-tanks-server.fridman.me` and the dev site uses a second, separate
+process at `wss://sloppy-tanks-server.fridman.me:8443`.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
@@ -105,13 +106,17 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 `deploy/vps/` holds the Ubuntu setup:
 
 - `provision.sh` installs Caddy (official repo), creates the `sloppy` service
-  user, and allows only SSH, 80 and 443 through `ufw`. The server is a static
+  user, and allows only SSH, 80, 443 and 8443 through `ufw`. The server is a static
   binary and needs no runtime.
 - The systemd unit (`/opt/sloppy-tanks/sloppy-server`, sandboxed, `MemoryMax`)
-  and `/etc/sloppy-tanks.env` configure the service.
+  and `/etc/sloppy-tanks.env` configure the service. The dev site's server is a
+  second unit, `sloppy-tanks-dev` (`/opt/sloppy-tanks-dev/`, loopback port 8788,
+  `/etc/sloppy-tanks-dev.env` with the dev origins and a smaller `MAX_ROOMS` and
+  `MemoryMax`); `provision-dev.sh` installs only it, Caddy's config and the 8443 rule.
 - The `Caddyfile` sets up automatic Let's Encrypt TLS for
   `sloppy-tanks-server.fridman.me`, an A record in the fridman.me DNS at
-  Namecheap, and refuses `/stats`. The deploy scripts reach the host by the same
+  Namecheap, and refuses `/stats`. Port 8443 of the same hostname, with the same
+  certificate, forwards to the dev server. The deploy scripts reach the host by the same
   name.
 
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH
@@ -124,11 +129,13 @@ server.
 
 ```sh
 pnpm run server:provision  # first time, or after editing deploy/vps/*; then deploys
+pnpm run server:provision:dev  # only the dev server's unit, Caddy config and 8443 rule; then deploys it
 pnpm run server:deploy     # pnpm run check, build the musl binary, upload, restart, wait for /health
 ```
 
-`pnpm run deploy:dev` also deploys the server first, waits until `/health`
-reports the checkout's content version, then uploads the dev site. It refuses
+`pnpm run deploy:dev` deploys the dev server first (`deploy-vps.mjs --dev`), waits
+until its `/health` reports the checkout's content version, then uploads the dev
+site; it never restarts production's server. It refuses
 to upload a build without the multiplayer entry.
 
 A restart or deploy ends every live room. The graceful `SIGTERM`/`SIGINT`
@@ -142,8 +149,9 @@ Stop load tests before deploying.
 pnpm run server:logs    # follow the journal: room lifecycle lines and minute summaries
 pnpm run server:stats   # /stats JSON over SSH
 pnpm run server:status  # systemctl status for the game server and Caddy
+# the same for the dev server: node scripts/vps.mjs logs|stats|status --dev
 # exit 1 when the live server needs a redeploy: clients are refused, or only
-# server code changed; SLOPPY_SERVER_URL=ws://127.0.0.1:8787 checks a local one
+# server code changed; --dev checks the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
 pnpm run server:check-if-redeployment-required
 ```
 
@@ -167,7 +175,8 @@ collector) and remains only for the record's shape.
 
 ### Dashboard
 
-`/dashboard` (https://sloppy-tanks-server.fridman.me/dashboard on the VPS, or
+`/dashboard` (https://sloppy-tanks-server.fridman.me/dashboard on the VPS, the dev
+server's at https://sloppy-tanks-server.fridman.me:8443/dashboard, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before

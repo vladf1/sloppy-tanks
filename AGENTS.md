@@ -281,20 +281,21 @@ offline.
   changes. Use this when asked to publish the dev site. Do not publish it to
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
-- `deploy:dev` first deploys the Node multiplayer server to the Vultr VPS
-  (`scripts/deploy-vps.mjs`, key-based SSH), which resets its live rooms.
-  The production site uses the same server. Client and server must agree on
-  a content hash of the `crates/core` sources, the crates they resolve to and
-  `rust-toolchain.toml` (list them with `node scripts/content-version.mjs`);
-  `crates/render`, `crates/web` and the page shell are outside it. When a branch changes the hash, `deploy:dev` breaks
-  production multiplayer until `main` is redeployed; say so before running
-  it. After such changes reach `main`, run `pnpm run server:deploy` from `main`.
-  `pnpm run server:check-if-redeployment-required` compares this checkout
-  with the live server's `/health` and exits non-zero when a redeploy is
-  needed. It tells clients-refused (content hash) apart from server-only
-  changes (`serverBuild`: `crates/server`, its dependencies, build settings).
-  Run it before `deploy:dev` and after a merge instead of judging by which
-  directories changed.
+- `deploy:dev` first deploys the dev site's own multiplayer server
+  (`scripts/deploy-vps.mjs --dev`, key-based SSH): a second service,
+  `sloppy-tanks-dev`, on the same Vultr VPS, served at port 8443 of the
+  production hostname. It resets only the dev server's rooms and never touches
+  production's server. Client and server must agree on a content hash of the
+  `crates/core` sources, the crates they resolve to and `rust-toolchain.toml`
+  (list them with `node scripts/content-version.mjs`); `crates/render`,
+  `crates/web` and the page shell are outside it. After such changes reach
+  `main`, production needs `pnpm run server:deploy` from `main`; ask before
+  running it. `pnpm run server:check-if-redeployment-required` (add `--dev` for
+  the dev server) compares this checkout with a live server's `/health` and
+  exits non-zero when a redeploy is needed. It tells clients-refused (content
+  hash) apart from server-only changes (`serverBuild`: `crates/server`, its
+  dependencies, build settings). Run it after a merge instead of judging by
+  which directories changed.
   Change the VPS only through `deploy/vps/` and the `server:*` deploy
   scripts described in `crates/server/README.md`. The traffic bots in `bots/` remain
   a Cloudflare Worker that targets the VPS; `pnpm run bots:deploy` publishes
