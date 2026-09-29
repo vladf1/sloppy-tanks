@@ -7,3 +7,4 @@ dist-dev/
 server/dist/
 bots/.wrangler/
 bots/.dev.vars
+/target/

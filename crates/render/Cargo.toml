@@ -1,0 +1,19 @@
+[package]
+name = "sloppy-render"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Sloppy Tanks WebGPU renderer: wgpu with handwritten WGSL"
+
+[dependencies]
+sloppy-core.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlCanvasElement", "console"] }

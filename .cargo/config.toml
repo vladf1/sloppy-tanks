@@ -1,0 +1,3 @@
+[target.wasm32-unknown-unknown]
+# Match the previous Rapier package, which enabled 128-bit WebAssembly SIMD.
+rustflags = ["-C", "target-feature=+simd128"]
