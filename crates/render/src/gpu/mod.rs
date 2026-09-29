@@ -20,12 +20,14 @@
 //!   until nothing remains, then `warm_up`, before the first gameplay frame.
 
 mod context;
+mod inspect;
 mod lut;
 mod pipelines;
 mod pools;
 mod resources;
 mod textures;
 
+pub use inspect::InstanceState;
 pub use pools::PoolId;
 
 use std::collections::HashMap;

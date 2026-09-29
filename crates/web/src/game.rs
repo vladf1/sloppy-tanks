@@ -91,6 +91,8 @@ use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use wasm_bindgen::prelude::*;
 
+mod debug;
+
 /// Frame deltas are capped so a stalled tab never fast-forwards the match.
 const MAX_FRAME_DELTA_SECONDS: f64 = 0.1;
 /// Catch-up after a stall is bounded so one slow frame cannot spiral.

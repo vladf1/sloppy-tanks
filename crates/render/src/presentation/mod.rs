@@ -29,7 +29,10 @@ pub mod view_settings;
 mod view;
 
 #[cfg(target_arch = "wasm32")]
-pub use view::{PrepareStatus, Presentation, PresentationStats};
+pub use view::{
+    CoverInspection, FragmentInspection, PickupInspection, PrepareStatus, Presentation,
+    PresentationStats, ReticleInspection, TankInspection, ViewInspection,
+};
 
 use crate::effects::EffectDefinition;
 

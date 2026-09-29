@@ -49,6 +49,13 @@ use crate::gpu::{
     SunShadow, WaterSettings,
 };
 
+mod inspect;
+
+pub use inspect::{
+    CoverInspection, FragmentInspection, PickupInspection, ReticleInspection, TankInspection,
+    ViewInspection,
+};
+
 /// Hit shake: render-only recoil when a tank takes damage.
 const HIT_SHAKE: [f64; 4] = [0.12, 0.09, 0.035, 0.045];
 /// A dead tank's model hides; the live model rides this far below the body.
