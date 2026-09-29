@@ -148,3 +148,7 @@ buttons reaches the engine with the next frame's input, so checks wait a frame.
 - Left: merge async compile work; final matched measurements vs baseline (readiness, frame
   tails, memory, sizes); CI workflow unexercised on GitHub; tank preview asset not regenerated
   (13/255 brighter); shell nits (first click after resume, late touch preference).
+- Async pipeline compilation merged (e07ebd3, 98b602b): cold-cache frame gaps 4.4–6.9 s →
+  0.13–0.2 s, ready 3.5–5× sooner. Its startup-check change (8f39b15 on
+  `worktree-agent-ac12927a0b68560b5`, hold background compiles) conflicted with the ported
+  check and is not applied yet; re-apply it to `scripts/startup-check.mjs`.
