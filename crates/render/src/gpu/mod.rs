@@ -22,8 +22,11 @@
 mod context;
 mod lut;
 mod pipelines;
+mod pools;
 mod resources;
 mod textures;
+
+pub use pools::PoolId;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -49,6 +52,7 @@ use crate::model::{
 use crate::shader::{PipelineKey, ShaderKey};
 use context::{ColorTarget, Context, DEPTH_FORMAT};
 use pipelines::{Pipelines, SAMPLE_COUNT};
+use pools::PoolEntry;
 use resources::{Layouts, MaterialStore, MeshStore};
 use textures::TextureStore;
 
@@ -275,6 +279,9 @@ pub struct RenderStats {
     pub draw_classes: u32,
     /// Estimated GPU bytes: meshes, textures, attachments, shadow map, instances.
     pub gpu_bytes: u64,
+    /// Instance pools registered, and the instances they drew last frame.
+    pub pools: u32,
+    pub pool_instances: u32,
 }
 
 /// WGSL `Frame`.
@@ -320,11 +327,17 @@ struct ClassKey {
     material: u32,
     receive_shadow: bool,
     faded: bool,
+    /// The instance pool that owns this class, `NO_POOL` for model parts.
+    pool: u32,
 }
+
+const NO_POOL: u32 = u32::MAX;
 
 /// A mesh + material + pipeline combination that instances batch under.
 struct ClassEntry {
     key: ClassKey,
+    /// Pool classes draw from their pool's own instance buffer.
+    pool: Option<u32>,
     transparent: bool,
     main_key: PipelineKey,
     /// Transparent double-sided materials draw back faces first, then front
@@ -495,6 +508,7 @@ pub struct Renderer {
     free_classes: Vec<u32>,
     models: Slab<ModelEntry>,
     instances: Slab<InstanceEntry>,
+    pools: Slab<PoolEntry>,
 
     main_target: ColorTarget,
     shadow_map: wgpu::Texture,
@@ -638,6 +652,7 @@ impl Renderer {
             free_classes: Vec::new(),
             models: Slab::default(),
             instances: Slab::default(),
+            pools: Slab::default(),
             shadow_view: shadow_map.create_view(&Default::default()),
             shadow_map,
             dummy_depth,
@@ -700,46 +715,49 @@ impl Renderer {
     }
 
     fn rebuild_view_groups(&mut self) {
-        let device = &self.ctx.device;
-        self.view_groups = (0..VIEW_COUNT)
-            .map(|view| {
-                let shadow = if view == SHADOW_VIEW {
-                    &self.dummy_depth
-                } else {
-                    &self.shadow_view
-                };
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("frame"),
-                    layout: &self.layouts.frame,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.view_uniforms[view].as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(shadow),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&self.lut_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: self.instance_buffer.as_entire_binding(),
-                        },
-                    ],
-                })
+        self.view_groups = self.frame_groups(&self.instance_buffer);
+        self.rebuild_pool_groups();
+    }
+
+    /// The frame bind group of a view with `instances` as its instance records.
+    fn frame_group(&self, view: usize, instances: &wgpu::Buffer) -> wgpu::BindGroup {
+        let shadow = if view == SHADOW_VIEW {
+            &self.dummy_depth
+        } else {
+            &self.shadow_view
+        };
+        self.ctx
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("frame"),
+                layout: &self.layouts.frame,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.view_uniforms[view].as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(shadow),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&self.lut_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: instances.as_entire_binding(),
+                    },
+                ],
             })
-            .collect();
     }
 
     // ---------------------------------------------------------------- setup
@@ -941,12 +959,14 @@ impl Renderer {
         receive_shadow: bool,
         faded: bool,
         cast: bool,
+        pool: Option<u32>,
     ) -> u32 {
         let key = ClassKey {
             mesh,
             material,
             receive_shadow,
             faded,
+            pool: pool.unwrap_or(NO_POOL),
         };
         let index = match self.class_index.get(&key) {
             Some(&index) => index,
@@ -967,6 +987,7 @@ impl Renderer {
                 let shadow_shader = ShaderKey::shadow(source, gpu.effect, extra, faded);
                 let entry = ClassEntry {
                     key,
+                    pool,
                     transparent,
                     main_key: if two_pass {
                         main_key(&face(Side::Front))
@@ -1001,6 +1022,18 @@ impl Renderer {
         class.users += 1;
         class.casters += cast as u32;
         index
+    }
+
+    /// The draw class of an instance pool (its own, keyed by the pool slot).
+    fn class_for_pool(
+        &mut self,
+        mesh: u32,
+        material: u32,
+        receive_shadow: bool,
+        cast: bool,
+        pool: u32,
+    ) -> u32 {
+        self.class(mesh, material, receive_shadow, false, cast, Some(pool))
     }
 
     fn release_class(&mut self, index: u32, cast: bool) {
@@ -1040,14 +1073,29 @@ impl Renderer {
             if self.meshes.get(mesh).index_count == 0 {
                 continue;
             }
-            let class = self.class(mesh, material, part.receive_shadow, false, part.cast_shadow);
+            let class = self.class(
+                mesh,
+                material,
+                part.receive_shadow,
+                false,
+                part.cast_shadow,
+                None,
+            );
             // Movable models may fade; give them the blended variant up front so
             // warm-up compiles it.
             let fadeable = !scenery
                 && !part.material.transparent
                 && part.material.blending == Blending::Normal;
-            let faded_class = fadeable
-                .then(|| self.class(mesh, material, part.receive_shadow, true, part.cast_shadow));
+            let faded_class = fadeable.then(|| {
+                self.class(
+                    mesh,
+                    material,
+                    part.receive_shadow,
+                    true,
+                    part.cast_shadow,
+                    None,
+                )
+            });
             parts.push(PartEntry {
                 node: part.node,
                 local: part.local,
@@ -1304,6 +1352,7 @@ impl Renderer {
     /// Release everything created with `Lifetime::Round`, then free GPU meshes and
     /// materials that nothing uses and no caller still holds.
     pub fn reset_round(&mut self) {
+        self.release_round_pools();
         let round: Vec<u32> = self
             .instances
             .iter()
@@ -1739,7 +1788,6 @@ impl Renderer {
             models,
             classes,
             builder,
-            views,
             joints,
             joint_visible,
             culls,
@@ -1845,8 +1893,9 @@ impl Renderer {
                 }
             }
         }
+        self.push_pool_draws();
         let base = self.static_records.len() as u32;
-        builder.finish(base, views);
+        self.builder.finish(base, &mut self.views);
     }
 
     /// Compile pipelines for any class drawn this frame that warm-up missed.
@@ -1951,6 +2000,8 @@ impl Renderer {
             meshes: &self.meshes,
             materials: &self.materials,
             pipelines: &self.pipelines,
+            pools: &self.pools,
+            frame_groups: &self.view_groups,
         };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1969,7 +2020,12 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.view_groups[SHADOW_VIEW], &[]);
-            let count = draws.encode(&mut pass, &self.views[SHADOW_VIEW].opaque, true, stats);
+            let count = draws.encode(
+                &mut pass,
+                &self.views[SHADOW_VIEW].opaque,
+                SHADOW_VIEW,
+                stats,
+            );
             stats.shadow_draw_calls = count;
         }
         stats.reflection_draw_calls = 0;
@@ -1977,15 +2033,15 @@ impl Renderer {
             let mut pass = scene_pass(encoder, "water reflection", &water.target, clear);
             pass.set_bind_group(0, &self.view_groups[REFLECTION_VIEW], &[]);
             let view = &self.views[REFLECTION_VIEW];
-            let count = draws.encode(&mut pass, &view.opaque, false, stats)
-                + draws.encode(&mut pass, &view.transparent, false, stats);
+            let count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, stats)
+                + draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, stats);
             stats.reflection_draw_calls = count;
         }
         {
             let mut pass = scene_pass(encoder, "main view", &self.main_target, clear);
             pass.set_bind_group(0, &self.view_groups[MAIN_VIEW], &[]);
             let view = &self.views[MAIN_VIEW];
-            draws.encode(&mut pass, &view.opaque, false, stats);
+            draws.encode(&mut pass, &view.opaque, MAIN_VIEW, stats);
             if let Some(water) = &self.water {
                 let mesh = self.meshes.get(water.mesh);
                 pass.set_pipeline(&self.pipelines.water);
@@ -1996,7 +2052,7 @@ impl Renderer {
                 stats.draw_calls += 1;
                 stats.triangles += mesh.index_count as u64 / 3;
             }
-            draws.encode(&mut pass, &view.transparent, false, stats);
+            draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2036,11 +2092,15 @@ impl Renderer {
         stats.draw_classes = self.classes.iter().flatten().count() as u32;
         // Mesh buffers, material uniforms, 3 view uniforms, instance buffer,
         // output and water uniforms.
+        let (pools, pool_instances) = self.pool_totals();
+        stats.pools = pools;
+        stats.pool_instances = pool_instances;
         stats.buffers = (self.meshes.buffers()
             + self.materials.count()
             + VIEW_COUNT
             + 2
-            + self.water.is_some() as usize) as u32;
+            + self.water.is_some() as usize
+            + pools as usize) as u32;
         let shadow = self.sun_shadow.map_size as u64;
         let (width, height) = self.size();
         stats.gpu_bytes = self.meshes.bytes()
@@ -2052,6 +2112,7 @@ impl Renderer {
                 .map_or(0, |w| w.target.bytes(SAMPLE_COUNT))
             + shadow * shadow * 4
             + self.instance_capacity as u64 * RECORD_SIZE
+            + self.pool_bytes()
             + width as u64 * height as u64 * 4;
         stats
     }
@@ -2093,25 +2154,42 @@ struct DrawContext<'a> {
     meshes: &'a MeshStore,
     materials: &'a MaterialStore,
     pipelines: &'a Pipelines,
+    pools: &'a Slab<PoolEntry>,
+    frame_groups: &'a [wgpu::BindGroup],
 }
 
 impl DrawContext<'_> {
     /// Encode draws, skipping redundant state changes. Returns the draw count.
+    /// The caller binds the view's frame group; pool draws swap in their own
+    /// instance buffer and the frame group is restored afterwards.
     fn encode(
         &self,
         pass: &mut wgpu::RenderPass,
         draws: &[Draw],
-        shadow: bool,
+        view: usize,
         stats: &mut RenderStats,
     ) -> u32 {
+        let shadow = view == SHADOW_VIEW;
         let mut last_pipeline = u32::MAX;
         let mut last_material = u32::MAX;
         let mut last_mesh = u32::MAX;
+        let mut bound_pool: Option<u32> = None;
         let mut count = 0;
         for draw in draws {
             let Some(class) = &self.classes[draw.class as usize] else {
                 continue;
             };
+            if class.pool != bound_pool {
+                let group = match class.pool {
+                    Some(pool) => match self.pools.at(pool) {
+                        Some(entry) => &entry.groups[view],
+                        None => continue,
+                    },
+                    None => &self.frame_groups[view],
+                };
+                pass.set_bind_group(0, group, &[]);
+                bound_pool = class.pool;
+            }
             let Some(pipeline) = (if shadow { class.shadow } else { class.main }) else {
                 continue;
             };
@@ -2142,6 +2220,9 @@ impl DrawContext<'_> {
                 count += 1;
                 stats.triangles += (mesh.index_count / 3) as u64 * draw.instance_count as u64;
             }
+        }
+        if bound_pool.is_some() {
+            pass.set_bind_group(0, &self.frame_groups[view], &[]);
         }
         stats.draw_calls += count;
         count

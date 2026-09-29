@@ -48,7 +48,7 @@ impl EffectDefinition {
 /// speed rad/s, unused).
 pub const WAVE: EffectDefinition = EffectDefinition {
     name: "wave",
-    wgsl: include_str!("shaders/effects/wave.wgsl"),
+    wgsl: include_str!("../shaders/effects/wave.wgsl"),
     attributes: &[],
 };
 
@@ -57,12 +57,46 @@ pub const WAVE: EffectDefinition = EffectDefinition {
 /// metre × 2π, minimum opacity, unused, unused).
 pub const PULSE: EffectDefinition = EffectDefinition {
     name: "pulse",
-    wgsl: include_str!("shaders/effects/pulse.wgsl"),
+    wgsl: include_str!("../shaders/effects/pulse.wgsl"),
     attributes: &[],
 };
 
-/// Effects available before any registration. Later waves add the game's own.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 2] = [WAVE, PULSE];
+/// Explosion smoke and fire (`explosion-effects.ts` puffs): a camera-facing quad
+/// sized by the instance's X/Y scale, shaded as a soft disc. Instance tint is the
+/// linear color and opacity. No params.
+pub const PUFF: EffectDefinition = EffectDefinition {
+    name: "puff",
+    wgsl: include_str!("../shaders/effects/puff.wgsl"),
+    attributes: &[],
+};
+
+/// A blast's scorched ground ring. `instance_data` = (age s, phase rad). No params.
+pub const BLAST_RING: EffectDefinition = EffectDefinition {
+    name: "blast-ring",
+    wgsl: include_str!("../shaders/effects/blast_ring.wgsl"),
+    attributes: &[],
+};
+
+/// Fading tread marks (`tracks.ts`). `instance_data` = (birth s, strength);
+/// params[0].x is the trail clock, which the track pool writes every frame.
+pub const TRACK_MARK: EffectDefinition = EffectDefinition {
+    name: "track-mark",
+    wgsl: include_str!("../shaders/effects/track_mark.wgsl"),
+    attributes: &[],
+};
+
+/// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
+/// quarry wisps. Instance tint is the linear color and opacity. No params.
+pub const DUST: EffectDefinition = EffectDefinition {
+    name: "dust",
+    wgsl: include_str!("../shaders/effects/dust.wgsl"),
+    attributes: &[],
+};
+
+/// Effects available before any registration: the lab samples and the game's
+/// runtime effect looks.
+pub const BUILTIN_EFFECTS: [EffectDefinition; 6] =
+    [WAVE, PULSE, PUFF, BLAST_RING, TRACK_MARK, DUST];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.
 #[derive(Clone, Debug)]
@@ -115,5 +149,55 @@ impl EffectRegistry {
             .iter()
             .enumerate()
             .map(|(index, effect)| (index as u16 + 1, effect))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shader::{Pass, ShaderKey, shader_source};
+    use sloppy_core::scene::Side;
+
+    fn validate(label: &str, code: &str) {
+        let module = naga::front::wgsl::parse_str(code)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+    }
+
+    /// Every builtin effect compiles in the variants its materials use: basic and
+    /// lit, with and without vertex colors, double-sided, and the shadow pass.
+    #[test]
+    fn every_builtin_effect_is_valid_wgsl() {
+        let registry = EffectRegistry::default();
+        for (id, effect) in registry.iter() {
+            for (lit, vertex_colors, side) in [
+                (false, false, Side::Front),
+                (true, true, Side::Front),
+                (false, false, Side::Double),
+            ] {
+                let key = ShaderKey {
+                    pass: Pass::Main,
+                    lit,
+                    vertex_colors,
+                    fog: true,
+                    side,
+                    effect: id,
+                    ..ShaderKey::default()
+                };
+                validate(effect.name, &shader_source(&key, &registry));
+            }
+            let shadow = ShaderKey {
+                pass: Pass::Shadow,
+                effect: id,
+                ..ShaderKey::default()
+            };
+            validate(effect.name, &shader_source(&shadow, &registry));
+        }
+        assert_eq!(registry.iter().count(), BUILTIN_EFFECTS.len());
     }
 }

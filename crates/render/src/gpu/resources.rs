@@ -300,6 +300,9 @@ impl MeshStore {
 }
 
 /// WGSL `MaterialUniform`.
+/// Byte offset of `MaterialUniform::params`, for pools that animate them.
+pub const MATERIAL_PARAMS_OFFSET: u64 = 5 * 16;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialUniform {
@@ -441,7 +444,7 @@ impl MaterialStore {
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("material uniform"),
             contents: bytemuck::bytes_of(&MaterialUniform::of(material)),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let (bind_group, waiting) = Self::bind_group(device, layouts, textures, material, &uniform);
         let gpu = GpuMaterial {
