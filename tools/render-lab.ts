@@ -253,6 +253,20 @@ const SCENE = {
       ...lit,
     },
     {
+      // Transparent and double-sided: Three draws back faces, then front faces.
+      name: "veil",
+      geometry: { type: "sphere", radius: 1, widthSegments: 24, heightSegments: 12 },
+      material: {
+        color: 0x9ad0ff,
+        roughness: 0.4,
+        transparent: true,
+        opacity: 0.5,
+        side: "double",
+      },
+      position: [5.5, 1.1, 7],
+      castShadow: true,
+    },
+    {
       name: "flag",
       geometry: { type: "plane", width: 3, height: 2, widthSegments: 24, heightSegments: 8 },
       material: {

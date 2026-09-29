@@ -7,8 +7,8 @@ use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::scene::Node;
 use sloppy_render::camera::{PerspectiveCamera, ShadowCamera};
 use sloppy_render::gpu::{
-    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, RendererOptions, SunShadow,
-    WaterSettings,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, RendererOptions,
+    SunShadow, WaterSettings,
 };
 use wasm_bindgen::prelude::*;
 
@@ -184,7 +184,12 @@ impl RenderLab {
     /// Turn a joint of the `copy`-th instance of an object about Y by `yaw`
     /// radians on top of its rest pose (a turret traverse).
     pub fn pose_joint(&mut self, name: &str, copy: usize, joint: &str, yaw: f32) -> bool {
-        let Some((_, id)) = self.objects.iter().filter(|(object, _)| object == name).nth(copy) else {
+        let Some((_, id)) = self
+            .objects
+            .iter()
+            .filter(|(object, _)| object == name)
+            .nth(copy)
+        else {
             return false;
         };
         let Some(&(_, model)) = self.models.iter().find(|(instance, _)| instance == id) else {

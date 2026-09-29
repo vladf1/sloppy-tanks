@@ -31,7 +31,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, TextureRef, Wrap};
+use sloppy_core::scene::{Blending, Node, Side, TextureRef, Wrap};
 use wgpu::util::DeviceExt;
 
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, Sphere, mirror_view};
@@ -327,8 +327,12 @@ struct ClassEntry {
     key: ClassKey,
     transparent: bool,
     main_key: PipelineKey,
+    /// Transparent double-sided materials draw back faces first, then front
+    /// faces, like Three's two-pass `DoubleSide` transparency.
+    back_key: Option<PipelineKey>,
     shadow_key: PipelineKey,
     main: Option<u32>,
+    back: Option<u32>,
     shadow: Option<u32>,
     /// Parts using this class that cast shadows.
     casters: u32,
@@ -950,14 +954,29 @@ impl Renderer {
                 let gpu = self.materials.get(material);
                 let extra = self.meshes.get(mesh).extra_attributes;
                 let source = &gpu.material;
-                let main_shader = ShaderKey::main(source, gpu.effect, extra, receive_shadow);
+                let transparent = is_transparent(source) || faded;
+                let main_key = |material: &sloppy_core::scene::Material| {
+                    let shader = ShaderKey::main(material, gpu.effect, extra, receive_shadow);
+                    PipelineKey::main(shader, material, faded)
+                };
+                let two_pass = transparent && source.side == Side::Double;
+                let face = |side| sloppy_core::scene::Material {
+                    side,
+                    ..(**source).clone()
+                };
                 let shadow_shader = ShaderKey::shadow(source, gpu.effect, extra, faded);
                 let entry = ClassEntry {
                     key,
-                    transparent: is_transparent(source) || faded,
-                    main_key: PipelineKey::main(main_shader, source, faded),
+                    transparent,
+                    main_key: if two_pass {
+                        main_key(&face(Side::Front))
+                    } else {
+                        main_key(source)
+                    },
+                    back_key: two_pass.then(|| main_key(&face(Side::Back))),
                     shadow_key: PipelineKey::shadow(shadow_shader),
                     main: None,
+                    back: None,
                     shadow: None,
                     casters: 0,
                     users: 0,
@@ -1326,7 +1345,9 @@ impl Renderer {
             .iter()
             .flatten()
             .map(|class| {
-                class.main.is_none() as u32 + (class.casters > 0 && class.shadow.is_none()) as u32
+                class.main.is_none() as u32
+                    + (class.back_key.is_some() && class.back.is_none()) as u32
+                    + (class.casters > 0 && class.shadow.is_none()) as u32
             })
             .sum()
     }
@@ -1346,6 +1367,10 @@ impl Renderer {
                     self.pipelines
                         .ensure(device, &self.effects, &class.main_key),
                 );
+                compiled += 1;
+            }
+            if let (Some(key), None) = (&class.back_key, class.back) {
+                class.back = Some(self.pipelines.ensure(device, &self.effects, key));
                 compiled += 1;
             }
             if class.casters > 0 && class.shadow.is_none() && compiled < budget {
@@ -1844,6 +1869,14 @@ impl Renderer {
                     }
                     *slot = Some(self.pipelines.ensure(device, &self.effects, key));
                 }
+                if view != SHADOW_VIEW
+                    && let (Some(key), None) = (&class.back_key, class.back)
+                {
+                    if self.pipelines.find(key).is_none() {
+                        self.stats.late_pipelines += 1;
+                    }
+                    class.back = Some(self.pipelines.ensure(device, &self.effects, key));
+                }
             }
         }
     }
@@ -2082,10 +2115,7 @@ impl DrawContext<'_> {
             let Some(pipeline) = (if shadow { class.shadow } else { class.main }) else {
                 continue;
             };
-            if pipeline != last_pipeline {
-                pass.set_pipeline(self.pipelines.get(pipeline));
-                last_pipeline = pipeline;
-            }
+            let back = if shadow { None } else { class.back };
             if class.key.material != last_material {
                 pass.set_bind_group(1, &self.materials.get(class.key.material).bind_group, &[]);
                 last_material = class.key.material;
@@ -2099,13 +2129,19 @@ impl DrawContext<'_> {
                 pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
                 last_mesh = class.key.mesh;
             }
-            pass.draw_indexed(
-                0..mesh.index_count,
-                0,
-                draw.first_instance..draw.first_instance + draw.instance_count,
-            );
-            count += 1;
-            stats.triangles += (mesh.index_count / 3) as u64 * draw.instance_count as u64;
+            for pipeline in back.into_iter().chain([pipeline]) {
+                if pipeline != last_pipeline {
+                    pass.set_pipeline(self.pipelines.get(pipeline));
+                    last_pipeline = pipeline;
+                }
+                pass.draw_indexed(
+                    0..mesh.index_count,
+                    0,
+                    draw.first_instance..draw.first_instance + draw.instance_count,
+                );
+                count += 1;
+                stats.triangles += (mesh.index_count / 3) as u64 * draw.instance_count as u64;
+            }
         }
         stats.draw_calls += count;
         count
