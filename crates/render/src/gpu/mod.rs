@@ -1114,7 +1114,8 @@ impl Renderer {
                     ..(**source).clone()
                 };
                 let dithered = faded || self.effects.get(gpu.effect).is_some_and(|e| e.shadow_fade);
-                let shadow_shader = ShaderKey::shadow(source, gpu.effect, extra, dithered);
+                let shadow_shader =
+                    ShaderKey::shadow(source, gpu.effect, extra, dithered, &self.effects);
                 let entry = ClassEntry {
                     key,
                     pool,
@@ -1125,7 +1126,7 @@ impl Renderer {
                         main_key(source)
                     },
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
-                    shadow_key: PipelineKey::shadow(shadow_shader),
+                    shadow_key: PipelineKey::shadow(shadow_shader, source),
                     main: None,
                     back: None,
                     shadow: None,

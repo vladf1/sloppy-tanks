@@ -260,7 +260,6 @@ impl EffectRegistry {
 mod tests {
     use super::*;
     use crate::shader::{Pass, ShaderKey, shader_source};
-    use sloppy_core::scene::Side;
 
     fn validate(label: &str, code: &str) {
         let module = naga::front::wgsl::parse_str(code)
@@ -274,25 +273,17 @@ mod tests {
     }
 
     /// Every builtin effect compiles in the variants its materials use: basic and
-    /// lit, with and without vertex colors, double-sided, and the shadow pass.
+    /// lit, with and without an alpha test, and the shadow pass.
     #[test]
     fn every_builtin_effect_is_valid_wgsl() {
         let registry = EffectRegistry::default();
         for (id, effect) in registry.iter() {
-            for (lit, vertex_colors, side, map) in [
-                (false, false, Side::Front, false),
-                (true, true, Side::Front, true),
-                (true, true, Side::Front, false),
-                (false, false, Side::Double, true),
-            ] {
+            for (lit, alpha_test) in [(false, false), (true, false), (true, true), (false, true)] {
                 let key = ShaderKey {
                     pass: Pass::Main,
                     lit,
-                    map,
-                    vertex_colors,
-                    fog: true,
+                    alpha_test,
                     receive_shadow: lit,
-                    side,
                     effect: id,
                     ..ShaderKey::default()
                 };
@@ -301,7 +292,6 @@ mod tests {
             for alpha_test in [false, true] {
                 let shadow = ShaderKey {
                     pass: Pass::Shadow,
-                    map: alpha_test,
                     alpha_test,
                     shadow_fade: effect.shadow_fade,
                     effect: id,

@@ -1,7 +1,8 @@
 // Main-pass surface shader: Three r185 MeshStandardMaterial (LIT) or
 // MeshBasicMaterial, with map, emissive map, bump map, RGBA vertex colors, flat
 // shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
-// point lights.
+// point lights. Lighting, alpha test and shadow reception are variant constants;
+// the cheap per-material features are uniform branches (`material_has`).
 // Lighting runs in world space; every dot and cross product Three evaluates in
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
@@ -175,7 +176,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let dpy = -dpdy(input.world);
     let flat_normal = normalize(cross(dpx, dpy));
     var geometry_normal = normalize(input.normal);
-    if FLAT_SHADING {
+    if material_has(MATERIAL_FLAT_SHADING) {
         geometry_normal = flat_normal;
     }
     let geometry_view = normalize((frame.view * vec4f(geometry_normal, 0.0)).xyz);
@@ -187,46 +188,52 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let bump_dx = dpdx(bump_uv);
     let bump_dy = -dpdy(bump_uv);
     var texel = vec4f(1.0);
-    if HAS_MAP {
+    if material_has(MATERIAL_MAP) {
         texel = textureSample(map_texture, map_sampler, map_uv);
     }
     var emissive_texel = vec3f(1.0);
-    if HAS_EMISSIVE_MAP {
-        emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
+    // Emissive and bump maps light standard materials only; unlit variants drop them.
+    if LIT {
+        if material_has(MATERIAL_EMISSIVE_MAP) {
+            emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
+        }
     }
     var height = vec3f(0.0);
-    if HAS_BUMP {
-        height = vec3f(
-            textureSample(bump_texture, bump_sampler, bump_uv).r,
-            textureSample(bump_texture, bump_sampler, bump_uv + bump_dx).r,
-            textureSample(bump_texture, bump_sampler, bump_uv + bump_dy).r,
-        );
+    if LIT {
+        if material_has(MATERIAL_BUMP) {
+            height = vec3f(
+                textureSample(bump_texture, bump_sampler, bump_uv).r,
+                textureSample(bump_texture, bump_sampler, bump_uv + bump_dx).r,
+                textureSample(bump_texture, bump_sampler, bump_uv + bump_dy).r,
+            );
+        }
     }
 
     var base = material.color * texel;
-    if VERTEX_COLORS {
+    if material_has(MATERIAL_VERTEX_COLORS) {
         base = base * input.color;
     }
     base = vec4f(base.rgb * input.tint.rgb, base.a * input.tint.a);
 
     var normal = geometry_normal;
-    if !FLAT_SHADING {
-        if DOUBLE_SIDED {
-            normal = normal * face;
-        } else if BACK_SIDE {
-            normal = -normal;
-        }
+    if !material_has(MATERIAL_FLAT_SHADING) {
+        // Pipelines cull by the material's side, so every drawn fragment of a
+        // front-sided material faces the camera and every one of a back-sided
+        // material faces away: this is Three's flip for back and double sides.
+        normal = normal * face;
     }
-    if HAS_BUMP {
-        // Mikkelsen's surface-gradient bump (Three perturbNormalArb).
-        let dhdxy = vec2f(height.y - height.x, height.z - height.x) * material.surface.w;
-        let sigma_x = normalize(dpx);
-        let sigma_y = normalize(dpy);
-        let r1 = cross(sigma_y, normal);
-        let r2 = cross(normal, sigma_x);
-        let det = dot(sigma_x, r1) * face;
-        let gradient = sign(det) * (dhdxy.x * r1 + dhdxy.y * r2);
-        normal = normalize(abs(det) * normal - gradient);
+    if LIT {
+        if material_has(MATERIAL_BUMP) {
+            // Mikkelsen's surface-gradient bump (Three perturbNormalArb).
+            let dhdxy = vec2f(height.y - height.x, height.z - height.x) * material.surface.w;
+            let sigma_x = normalize(dpx);
+            let sigma_y = normalize(dpy);
+            let r1 = cross(sigma_y, normal);
+            let r2 = cross(normal, sigma_x);
+            let det = dot(sigma_x, r1) * face;
+            let gradient = sign(det) * (dhdxy.x * r1 + dhdxy.y * r2);
+            normal = normalize(abs(det) * normal - gradient);
+        }
     }
 
     let view_direction = normalize(frame.camera_position.xyz - input.world);
@@ -245,11 +252,14 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     fragment.instance_data = input.data;
     fragment.view_direction = view_direction;
     fragment.front_facing = front_facing;
-    fragment.vertex_color = select(vec4f(1.0), input.color, VERTEX_COLORS);
+    fragment.vertex_color = select(vec4f(1.0), input.color, material_has(MATERIAL_VERTEX_COLORS));
     fragment.tint = input.tint;
     effect_surface(&surface, fragment);
     let alpha_width = fwidth(surface.opacity);
 
+    // Three writes alpha 1 for opaque materials; here they draw with blending off,
+    // and nothing reads the HDR target's alpha (the output and water passes read
+    // rgb), so their alpha is left as computed.
     var alpha = surface.opacity;
     if ALPHA_TEST {
         let cutoff = material.surface.z;
@@ -262,15 +272,12 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
             discard;
         }
     }
-    if FORCE_OPAQUE {
-        alpha = 1.0;
-    }
 
     var color = surface.color;
     if LIT {
         color = shade_standard(surface, input.world, view_direction, input.clip.xy, geometry_roughness);
     }
-    if FOG {
+    if material_has(MATERIAL_FOG) {
         if frame.fog_color.w > 0.5 {
             let depth = -(frame.view * vec4f(input.world, 1.0)).z;
             color = mix(color, frame.fog_color.rgb, smoothstep(frame.fog_range.x, frame.fog_range.y, depth));

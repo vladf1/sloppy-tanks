@@ -2,11 +2,19 @@
 //! everything that changes the generated code; `PipelineKey` adds fixed-function
 //! state. Both are cached by value, so every distinct material setup compiles once
 //! per page and survives round resets.
+//!
+//! Each distinct shader costs a full compile on a cold shader cache (about 0.3 s
+//! for a lit one on an Apple GPU, one at a time in WebKit), so only what changes the
+//! cost of every pixel is a variant: lighting, shadow reception, alpha test and
+//! effects. The cheap per-material features ([`MaterialFeatures`]) are uniform
+//! branches, and the side a material draws follows from the pipeline's culling.
 
 use sloppy_core::scene::{Blending, Material, Shading, Side};
 
 use crate::effects::EffectRegistry;
-use crate::material::{forces_opaque_alpha, shadow_side};
+use crate::material::shadow_side;
+
+mod specialize;
 
 pub const COMMON_WGSL: &str = include_str!("shaders/common.wgsl");
 pub const MATERIAL_WGSL: &str = include_str!("shaders/material.wgsl");
@@ -33,18 +41,9 @@ pub struct ShaderKey {
     pub pass: Pass,
     /// MeshStandardMaterial lighting; false is MeshBasicMaterial.
     pub lit: bool,
-    pub map: bool,
-    /// Lit materials only: the emissive color is multiplied by `emissive_map`.
-    pub emissive_map: bool,
-    pub bump: bool,
-    pub vertex_colors: bool,
-    pub flat: bool,
     pub alpha_test: bool,
     pub alpha_to_coverage: bool,
-    pub force_opaque: bool,
-    pub fog: bool,
     pub receive_shadow: bool,
-    pub side: Side,
     /// Effect id from the registry; 0 is none.
     pub effect: u16,
     /// Extra vertex attributes the effect reads (0..=2).
@@ -64,17 +63,9 @@ impl ShaderKey {
         Self {
             pass: Pass::Main,
             lit,
-            map: material.map.is_some(),
-            emissive_map: lit && material.emissive_map.is_some(),
-            bump: lit && material.bump_map.is_some(),
-            vertex_colors: material.vertex_colors,
-            flat: material.flat_shading,
             alpha_test: material.alpha_test > 0.0,
             alpha_to_coverage: material.alpha_to_coverage && material.alpha_test > 0.0,
-            force_opaque: forces_opaque_alpha(material),
-            fog: material.fog,
             receive_shadow: lit && receive_shadow,
-            side: material.side,
             effect,
             extra_attributes,
             shadow_fade: false,
@@ -82,17 +73,23 @@ impl ShaderKey {
     }
 
     /// Depth-only variants ignore everything but what can discard a fragment or
-    /// move a vertex, so most casters share one or two shaders.
-    pub fn shadow(material: &Material, effect: u16, extra_attributes: u8, fade: bool) -> Self {
+    /// move a vertex, so most casters share one or two shaders. An effect that only
+    /// shades the surface matters to an alpha-tested caster alone.
+    pub fn shadow(
+        material: &Material,
+        effect: u16,
+        extra_attributes: u8,
+        fade: bool,
+        effects: &EffectRegistry,
+    ) -> Self {
         let alpha_test = material.alpha_test > 0.0;
+        let definition = effects.get(effect);
+        let moves = definition.is_some_and(|e| e.has_vertex() || e.has_world() || e.has_clip());
+        let shades = definition.is_some_and(|e| e.has_surface()) && alpha_test;
         Self {
             pass: Pass::Shadow,
-            map: alpha_test && material.map.is_some(),
             alpha_test,
-            side: material
-                .shadow_side
-                .unwrap_or_else(|| shadow_side(material.side)),
-            effect,
+            effect: if moves || shades { effect } else { 0 },
             extra_attributes,
             shadow_fade: fade,
             ..Self::default()
@@ -106,6 +103,43 @@ impl ShaderKey {
             || effects
                 .get(self.effect)
                 .is_some_and(|e| e.has_surface() && self.alpha_test)
+    }
+}
+
+/// The `MATERIAL_*` feature bits of `material.wgsl`, written to the material
+/// uniform: features that cost a uniform branch rather than a shader variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaterialFeatures(pub u32);
+
+impl MaterialFeatures {
+    pub const MAP: u32 = 1;
+    pub const EMISSIVE_MAP: u32 = 2;
+    pub const BUMP: u32 = 4;
+    pub const VERTEX_COLORS: u32 = 8;
+    pub const FLAT_SHADING: u32 = 16;
+    pub const FOG: u32 = 32;
+
+    pub fn of(material: &Material) -> Self {
+        let lit = material.shading == Shading::Standard;
+        let features = [
+            (Self::MAP, material.map.is_some()),
+            // Emissive and bump maps apply to standard materials only.
+            (Self::EMISSIVE_MAP, lit && material.emissive_map.is_some()),
+            (Self::BUMP, lit && material.bump_map.is_some()),
+            (Self::VERTEX_COLORS, material.vertex_colors),
+            (Self::FLAT_SHADING, material.flat_shading),
+            (Self::FOG, material.fog),
+        ];
+        Self(
+            features
+                .into_iter()
+                .filter(|&(_, used)| used)
+                .fold(0, |bits, (bit, _)| bits | bit),
+        )
+    }
+
+    pub fn has(self, feature: u32) -> bool {
+        self.0 & feature != 0
     }
 }
 
@@ -160,15 +194,11 @@ pub struct PipelineKey {
 impl PipelineKey {
     /// `faded` draws an opaque material with blending, for per-instance opacity.
     pub fn main(shader: ShaderKey, material: &Material, faded: bool) -> Self {
-        let mut shader = shader;
         let blend = match material.blending {
             Blending::Additive => BlendMode::Additive,
             Blending::Normal if material.transparent || faded => BlendMode::Normal,
             Blending::Normal => BlendMode::Replace,
         };
-        if faded {
-            shader.force_opaque = false;
-        }
         Self {
             shader,
             blend,
@@ -180,21 +210,21 @@ impl PipelineKey {
         }
     }
 
-    pub fn shadow(shader: ShaderKey) -> Self {
+    /// The shadow pass draws the faces `Material.shadow_side` names (Three's default
+    /// is the side opposite the drawn one).
+    pub fn shadow(shader: ShaderKey, material: &Material) -> Self {
         Self {
             shader,
             blend: BlendMode::Replace,
             depth_test: true,
             depth_write: true,
             depth_bias: DepthBias::default(),
-            side: shader.side,
+            side: material
+                .shadow_side
+                .unwrap_or_else(|| shadow_side(material.side)),
             alpha_to_coverage: false,
         }
     }
-}
-
-fn flag(name: &str, value: bool) -> String {
-    format!("const {name}: bool = {value};\n")
 }
 
 fn vertex_input(extra_attributes: u8) -> String {
@@ -217,27 +247,35 @@ fn vertex_input(extra_attributes: u8) -> String {
     code
 }
 
-/// The complete WGSL for a surface or shadow variant.
+/// The variant constants the templates branch on.
+fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
+    [
+        ("LIT", key.lit),
+        ("ALPHA_TEST", key.alpha_test),
+        ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
+        ("RECEIVE_SHADOW", key.receive_shadow),
+        ("SHADOW_FADE", key.shadow_fade),
+    ]
+}
+
+/// The complete WGSL for a surface or shadow variant, reduced to the code its flags
+/// enable (`specialize.rs`).
 pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
+    let flags = flags(key);
     let mut code = String::with_capacity(24 * 1024);
-    code += &flag("LIT", key.lit);
-    code += &flag("HAS_MAP", key.map);
-    code += &flag("HAS_EMISSIVE_MAP", key.emissive_map);
-    code += &flag("HAS_BUMP", key.bump);
-    code += &flag("VERTEX_COLORS", key.vertex_colors);
-    code += &flag("FLAT_SHADING", key.flat);
-    code += &flag("ALPHA_TEST", key.alpha_test);
-    code += &flag("ALPHA_TO_COVERAGE", key.alpha_to_coverage);
-    code += &flag("FORCE_OPAQUE", key.force_opaque);
-    code += &flag("FOG", key.fog);
-    code += &flag("RECEIVE_SHADOW", key.receive_shadow);
-    code += &flag("DOUBLE_SIDED", key.side == Side::Double);
-    code += &flag("BACK_SIDE", key.side == Side::Back);
-    code += &flag("SHADOW_FADE", key.shadow_fade);
-    code += &vertex_input(key.extra_attributes);
+    for (name, value) in flags {
+        code += &format!("const {name}: bool = {value};\n");
+    }
+    let effect = effects.get(key.effect);
+    // Only effects read the extra attributes; without one the pipeline still lists
+    // them in its vertex layout, which WebGPU allows.
+    code += &vertex_input(if effect.is_some() {
+        key.extra_attributes
+    } else {
+        0
+    });
     code += COMMON_WGSL;
     code += MATERIAL_WGSL;
-    let effect = effects.get(key.effect);
     if let Some(effect) = effect {
         code += effect.wgsl;
         code += "\n";
@@ -258,26 +296,28 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
         Pass::Main => STANDARD_WGSL,
         Pass::Shadow => SHADOW_WGSL,
     };
-    code
+    specialize::specialize(&code, &flags)
 }
 
 /// The merged shadow-caster shader (`shadow_merge.rs`).
 pub fn shadow_merged_source() -> String {
-    format!("{}{}", COMMON_WGSL, SHADOW_MERGED_WGSL)
+    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_MERGED_WGSL}"), &[])
 }
 
 /// The merged alpha-tested shadow-caster shader.
 pub fn shadow_cutout_source() -> String {
-    format!("{}{}", COMMON_WGSL, SHADOW_CUTOUT_WGSL)
+    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_CUTOUT_WGSL}"), &[])
 }
 
 /// The water shader: frame declarations plus the water template.
 pub fn water_source() -> String {
-    format!("{}{}", COMMON_WGSL, WATER_WGSL)
+    specialize::specialize(&format!("{COMMON_WGSL}{WATER_WGSL}"), &[])
 }
 
 #[cfg(test)]
 mod tests {
+    use sloppy_core::scene::TextureRef;
+
     use super::*;
 
     fn validate(label: &str, code: &str) {
@@ -294,36 +334,24 @@ mod tests {
     #[test]
     fn every_surface_variant_is_valid_wgsl() {
         let effects = EffectRegistry::default();
-        let mut count = 0;
-        for bits in 0..(1u32 << 9) {
+        for bits in 0..(1u32 << 4) {
             let bit = |i: u32| bits & (1 << i) != 0;
             for effect in 0..=2u16 {
-                let key = ShaderKey {
-                    pass: Pass::Main,
-                    lit: bit(0),
-                    map: bit(1),
-                    emissive_map: bit(0) && bit(2),
-                    bump: bit(2),
-                    vertex_colors: bit(3),
-                    flat: bit(4),
-                    alpha_test: bit(5),
-                    alpha_to_coverage: bit(6),
-                    force_opaque: bit(7),
-                    fog: true,
-                    receive_shadow: bit(8),
-                    side: [Side::Front, Side::Back, Side::Double][(bits % 3) as usize],
-                    effect,
-                    extra_attributes: (bits % 3) as u8,
-                    shadow_fade: false,
-                };
-                // Validating every combination is slow in debug; sample them.
-                if bits % 7 == 0 || effect > 0 && bits % 31 == 0 {
+                for extra_attributes in 0..=2 {
+                    let key = ShaderKey {
+                        pass: Pass::Main,
+                        lit: bit(0),
+                        alpha_test: bit(1),
+                        alpha_to_coverage: bit(1) && bit(2),
+                        receive_shadow: bit(0) && bit(3),
+                        effect,
+                        extra_attributes,
+                        shadow_fade: false,
+                    };
                     validate(&format!("{key:?}"), &shader_source(&key, &effects));
-                    count += 1;
                 }
             }
         }
-        assert!(count > 60);
     }
 
     #[test]
@@ -334,7 +362,6 @@ mod tests {
                 for effect in 0..=2u16 {
                     let key = ShaderKey {
                         pass: Pass::Shadow,
-                        map: alpha_test,
                         alpha_test,
                         shadow_fade: fade,
                         effect,
@@ -356,20 +383,144 @@ mod tests {
     }
 
     #[test]
-    fn shadow_keys_collapse_irrelevant_state() {
-        let a = ShaderKey::shadow(&Material::standard(0xff0000, 0.1, 0.5), 0, 0, false);
-        let b = ShaderKey::shadow(
-            &Material {
-                flat_shading: true,
-                fog: false,
-                ..Material::basic(0x00ff00)
+    fn variants_carry_only_the_code_they_run() {
+        let effects = EffectRegistry::default();
+        let unlit = shader_source(&ShaderKey::default(), &effects);
+        assert!(!unlit.contains("shade_standard") && !unlit.contains("bump_texture,"));
+        assert!(!unlit.contains("discard") && !unlit.contains("//"));
+        let lit = shader_source(
+            &ShaderKey {
+                lit: true,
+                ..ShaderKey::default()
             },
-            0,
-            0,
-            false,
+            &effects,
         );
+        assert!(lit.contains("fn shade_standard(") && !lit.contains("fn sun_shadow("));
+        let shadowed = shader_source(
+            &ShaderKey {
+                lit: true,
+                receive_shadow: true,
+                ..ShaderKey::default()
+            },
+            &effects,
+        );
+        assert!(shadowed.contains("fn sun_shadow("));
+        let caster = shader_source(
+            &ShaderKey::shadow(&Material::default(), 0, 0, false, &effects),
+            &effects,
+        );
+        assert!(!caster.contains("map_texture,") && !caster.contains("fn tsl_hash("));
+    }
+
+    #[test]
+    fn cheap_material_features_share_one_shader() {
+        let atlas = TextureRef::file("atlas.webp");
+        let plain = Material::standard(0x808080, 0.5, 0.1);
+        let featured = Material {
+            map: Some(atlas.clone()),
+            emissive_map: Some(atlas.clone()),
+            bump_map: Some(atlas),
+            vertex_colors: true,
+            flat_shading: true,
+            fog: false,
+            side: Side::Double,
+            ..plain.clone()
+        };
+        assert_eq!(
+            ShaderKey::main(&plain, 0, 0, true),
+            ShaderKey::main(&featured, 0, 0, true)
+        );
+        let features = MaterialFeatures::of(&featured);
+        for feature in [
+            MaterialFeatures::MAP,
+            MaterialFeatures::EMISSIVE_MAP,
+            MaterialFeatures::BUMP,
+            MaterialFeatures::VERTEX_COLORS,
+            MaterialFeatures::FLAT_SHADING,
+        ] {
+            assert!(features.has(feature));
+        }
+        assert!(!features.has(MaterialFeatures::FOG));
+        assert!(MaterialFeatures::of(&plain).has(MaterialFeatures::FOG));
+    }
+
+    #[test]
+    fn emissive_and_bump_maps_only_apply_to_standard_materials() {
+        let atlas = TextureRef::file("atlas.webp");
+        let unlit = Material {
+            emissive_map: Some(atlas.clone()),
+            bump_map: Some(atlas),
+            ..Material::basic(0xffffff)
+        };
+        let features = MaterialFeatures::of(&unlit);
+        assert!(!features.has(MaterialFeatures::EMISSIVE_MAP));
+        assert!(!features.has(MaterialFeatures::BUMP));
+    }
+
+    #[test]
+    fn material_feature_bits_match_the_wgsl() {
+        for (name, bit) in [
+            ("MAP", MaterialFeatures::MAP),
+            ("EMISSIVE_MAP", MaterialFeatures::EMISSIVE_MAP),
+            ("BUMP", MaterialFeatures::BUMP),
+            ("VERTEX_COLORS", MaterialFeatures::VERTEX_COLORS),
+            ("FLAT_SHADING", MaterialFeatures::FLAT_SHADING),
+            ("FOG", MaterialFeatures::FOG),
+        ] {
+            let declaration = format!("const MATERIAL_{name}: u32 = {bit}u;");
+            assert!(MATERIAL_WGSL.contains(&declaration), "{declaration}");
+        }
+    }
+
+    #[test]
+    fn shadow_keys_collapse_irrelevant_state() {
+        let effects = EffectRegistry::default();
+        let red = Material::standard(0xff0000, 0.1, 0.5);
+        let a = ShaderKey::shadow(&red, 0, 0, false, &effects);
+        let green = Material {
+            flat_shading: true,
+            fog: false,
+            side: Side::Double,
+            ..Material::basic(0x00ff00)
+        };
+        let b = ShaderKey::shadow(&green, 0, 0, false, &effects);
         assert_eq!(a, b);
-        assert_eq!(a.side, Side::Back);
+        assert_eq!(PipelineKey::shadow(a, &red).side, Side::Back);
+        assert_eq!(PipelineKey::shadow(b, &green).side, Side::Double);
+    }
+
+    #[test]
+    fn casters_ignore_effects_that_only_shade_the_surface() {
+        let effects = EffectRegistry::default();
+        let id = |name| effects.id(name).unwrap();
+        let (pulse, wave) = (id("pulse"), id("wave"));
+        let solid = Material::default();
+        let cutout = Material {
+            alpha_test: 0.5,
+            ..Material::default()
+        };
+        assert_eq!(
+            ShaderKey::shadow(&solid, pulse, 0, false, &effects).effect,
+            0
+        );
+        assert_eq!(
+            ShaderKey::shadow(&solid, pulse, 0, true, &effects).effect,
+            0
+        );
+        assert_eq!(
+            ShaderKey::shadow(&cutout, pulse, 0, false, &effects).effect,
+            pulse
+        );
+        assert_eq!(
+            ShaderKey::shadow(&solid, wave, 0, false, &effects).effect,
+            wave
+        );
+        let plain = ShaderKey::shadow(&solid, 0, 0, false, &effects);
+        let with_attributes = ShaderKey::shadow(&solid, pulse, 2, false, &effects);
+        assert_eq!(
+            shader_source(&plain, &effects),
+            shader_source(&with_attributes, &effects)
+        );
     }
 
     #[test]
@@ -381,7 +532,8 @@ mod tests {
         let main = PipelineKey::main(ShaderKey::main(&drift, 0, 0, true), &drift, false);
         assert_eq!(main.depth_bias.constant, -1);
         assert_eq!(main.depth_bias.slope_scale(), -1.0);
-        let shadow = PipelineKey::shadow(ShaderKey::shadow(&drift, 0, 0, false));
+        let effects = EffectRegistry::default();
+        let shadow = PipelineKey::shadow(ShaderKey::shadow(&drift, 0, 0, false, &effects), &drift);
         assert_eq!(shadow.depth_bias, DepthBias::default());
         let plain = PipelineKey::main(
             ShaderKey::main(&Material::default(), 0, 0, true),
@@ -389,20 +541,5 @@ mod tests {
             false,
         );
         assert_ne!(plain, main);
-    }
-
-    #[test]
-    fn emissive_maps_only_light_standard_materials() {
-        let atlas = sloppy_core::scene::TextureRef::file("atlas.webp");
-        let lit = Material {
-            emissive_map: Some(atlas.clone()),
-            ..Material::default()
-        };
-        assert!(ShaderKey::main(&lit, 0, 0, false).emissive_map);
-        let unlit = Material {
-            emissive_map: Some(atlas),
-            ..Material::basic(0xffffff)
-        };
-        assert!(!ShaderKey::main(&unlit, 0, 0, false).emissive_map);
     }
 }

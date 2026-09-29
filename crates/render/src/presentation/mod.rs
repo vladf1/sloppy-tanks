@@ -82,7 +82,6 @@ mod tests {
     use super::*;
     use crate::effects::EffectRegistry;
     use crate::shader::{Pass, ShaderKey, shader_source};
-    use sloppy_core::scene::Side;
 
     fn validate(label: &str, code: &str) {
         let module = naga::front::wgsl::parse_str(code)
@@ -101,13 +100,12 @@ mod tests {
         for effect in PRESENTATION_EFFECTS {
             let id = effects.register(effect);
             for pass in [Pass::Main, Pass::Shadow] {
-                for (map, lit) in [(false, true), (true, true), (false, false)] {
+                for (alpha_test, lit) in [(false, true), (true, true), (false, false)] {
                     let key = ShaderKey {
                         pass,
                         lit,
-                        map,
-                        fog: true,
-                        side: Side::Double,
+                        alpha_test,
+                        receive_shadow: lit,
                         effect: id,
                         ..ShaderKey::default()
                     };

@@ -17,6 +17,23 @@ struct MaterialUniform {
     extra_transforms: array<vec4f, 2>,
     // Effect parameters, 16 floats.
     params: array<vec4f, 4>,
+    // x: the MATERIAL_* features below that this material uses.
+    features: vec4u,
+}
+
+// Material features that cost a uniform branch instead of a shader variant, so
+// materials that differ only in these share one pipeline's shader (`shader.rs`,
+// `MaterialFeatures`). A uniform branch keeps derivatives and implicit-LOD samples in
+// uniform control flow.
+const MATERIAL_MAP: u32 = 1u;
+const MATERIAL_EMISSIVE_MAP: u32 = 2u;
+const MATERIAL_BUMP: u32 = 4u;
+const MATERIAL_VERTEX_COLORS: u32 = 8u;
+const MATERIAL_FLAT_SHADING: u32 = 16u;
+const MATERIAL_FOG: u32 = 32u;
+
+fn material_has(feature: u32) -> bool {
+    return (material.features.x & feature) != 0u;
 }
 
 @group(1) @binding(0) var<uniform> material: MaterialUniform;

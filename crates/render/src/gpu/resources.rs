@@ -17,6 +17,7 @@ use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
 use crate::gpu::textures::TextureStore;
 use crate::model::{MeshData, Vertex};
+use crate::shader::MaterialFeatures;
 
 /// Bind group layouts shared by every pipeline.
 pub struct Layouts {
@@ -352,6 +353,8 @@ pub struct MaterialUniform {
     pub emissive_transform: [f32; 4],
     pub extra_transforms: [[f32; 4]; EXTRA_TEXTURE_SLOTS],
     pub params: [[f32; 4]; 4],
+    /// x: `MaterialFeatures` bits.
+    pub features: [u32; 4],
 }
 
 impl MaterialUniform {
@@ -384,6 +387,7 @@ impl MaterialUniform {
             emissive_transform: transform(material.emissive_map.as_ref()),
             extra_transforms: std::array::from_fn(|slot| transform(extra_texture(material, slot))),
             params,
+            features: [MaterialFeatures::of(material).0, 0, 0, 0],
         }
     }
 }

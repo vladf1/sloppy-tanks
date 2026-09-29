@@ -6,18 +6,13 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
+use sloppy_core::scene::{Effect, Material, Shading, Side, TextureRef};
 
 use crate::color::hex_to_linear;
 
 /// Whether a material draws in Three's transparent list (sorted back to front).
 pub fn is_transparent(material: &Material) -> bool {
     material.transparent
-}
-
-/// Three's `NodeBuilder.isOpaque()`: such materials write alpha 1.
-pub fn forces_opaque_alpha(material: &Material) -> bool {
-    !material.transparent && material.blending == Blending::Normal && !material.alpha_to_coverage
 }
 
 /// Materials whose paint can be baked into vertex colors: opaque standard surfaces
@@ -193,7 +188,6 @@ mod tests {
             ..Material::default()
         };
         assert!(!is_paintable(&glass));
-        assert!(!forces_opaque_alpha(&glass));
         assert!(!is_paintable(&Material::basic(0xffffff)));
         let wavy = Material {
             effect: Effect::Custom {

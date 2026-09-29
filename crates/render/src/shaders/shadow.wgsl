@@ -37,8 +37,10 @@ fn vs_shadow(input: VertexIn, @builtin(instance_index) index: u32) -> ShadowOut 
 fn fs_shadow(input: ShadowOut, @builtin(front_facing) front_facing: bool) {
     let map_uv = input.uv * material.map_transform.xy + material.map_transform.zw;
     var texel = vec4f(1.0);
-    if HAS_MAP {
-        texel = textureSample(map_texture, map_sampler, map_uv);
+    if ALPHA_TEST {
+        if material_has(MATERIAL_MAP) {
+            texel = textureSample(map_texture, map_sampler, map_uv);
+        }
     }
     var surface: Surface;
     surface.color = material.color.rgb * texel.rgb;
