@@ -26,11 +26,11 @@ pub struct Layouts {
     pub output: wgpu::BindGroupLayout,
 }
 
-fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
+const fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
     staged_texture_entry(binding, filterable, wgpu::ShaderStages::FRAGMENT)
 }
 
-fn staged_texture_entry(
+const fn staged_texture_entry(
     binding: u32,
     filterable: bool,
     visibility: wgpu::ShaderStages,
@@ -47,11 +47,11 @@ fn staged_texture_entry(
     }
 }
 
-fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
+const fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
     staged_sampler_entry(binding, ty, wgpu::ShaderStages::FRAGMENT)
 }
 
-fn staged_sampler_entry(
+const fn staged_sampler_entry(
     binding: u32,
     ty: wgpu::SamplerBindingType,
     visibility: wgpu::ShaderStages,
@@ -67,7 +67,7 @@ fn staged_sampler_entry(
 /// Secondary effect textures a material binds (`Material::extra_textures`).
 pub const EXTRA_TEXTURE_SLOTS: usize = 2;
 
-fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+const fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -80,77 +80,78 @@ fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+// The entries are data so the pipeline precompiler (`precompile.rs`) builds the
+// same layouts as wgpu.
+use wgpu::SamplerBindingType::{Comparison, Filtering};
+
+/// Frame uniforms, sun shadow map, reflection and the instance records.
+pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    uniform_entry(0),
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    },
+    sampler_entry(2, Comparison),
+    texture_entry(3, true),
+    sampler_entry(4, Filtering),
+    wgpu::BindGroupLayoutEntry {
+        binding: 5,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
+/// A uniform block and two filtered textures (the water).
+pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    uniform_entry(0),
+    texture_entry(1, true),
+    sampler_entry(2, Filtering),
+    texture_entry(3, true),
+    sampler_entry(4, Filtering),
+];
+
+pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
+    &[texture_entry(0, false), uniform_entry(1)];
+
+/// Map, bump and emissive map for the surface; effect textures for any stage.
+pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    uniform_entry(0),
+    texture_entry(1, true),
+    sampler_entry(2, Filtering),
+    texture_entry(3, true),
+    sampler_entry(4, Filtering),
+    texture_entry(5, true),
+    sampler_entry(6, Filtering),
+    staged_texture_entry(7, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
+    staged_sampler_entry(8, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
+    staged_texture_entry(9, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
+    staged_sampler_entry(10, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
+];
+
 impl Layouts {
     pub fn new(device: &wgpu::Device) -> Self {
-        use wgpu::SamplerBindingType::{Comparison, Filtering};
-        let frame = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("frame"),
-            entries: &[
-                uniform_entry(0),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                sampler_entry(2, Comparison),
-                texture_entry(3, true),
-                sampler_entry(4, Filtering),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let textured = |label| {
+        let layout = |label, entries| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some(label),
-                entries: &[
-                    uniform_entry(0),
-                    texture_entry(1, true),
-                    sampler_entry(2, Filtering),
-                    texture_entry(3, true),
-                    sampler_entry(4, Filtering),
-                ],
+                entries,
             })
         };
-        let output = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("output"),
-            entries: &[texture_entry(0, false), uniform_entry(1)],
-        });
-        // Map, bump and emissive map for the surface; effect textures for any stage.
-        let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        let material = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("material"),
-            entries: &[
-                uniform_entry(0),
-                texture_entry(1, true),
-                sampler_entry(2, Filtering),
-                texture_entry(3, true),
-                sampler_entry(4, Filtering),
-                texture_entry(5, true),
-                sampler_entry(6, Filtering),
-                staged_texture_entry(7, true, both),
-                staged_sampler_entry(8, Filtering, both),
-                staged_texture_entry(9, true, both),
-                staged_sampler_entry(10, Filtering, both),
-            ],
-        });
         Self {
-            frame,
-            material,
-            water: textured("water"),
-            output,
+            frame: layout("frame", FRAME_ENTRIES),
+            material: layout("material", MATERIAL_ENTRIES),
+            water: layout("water", TEXTURED_ENTRIES),
+            output: layout("output", OUTPUT_ENTRIES),
         }
     }
 }
