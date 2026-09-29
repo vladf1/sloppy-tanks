@@ -1,0 +1,909 @@
+//! The room host's policy (`tests/match-host.test.ts`): seats, humans-only rooms, reconnects,
+//! host transfer, round boundaries, lifetime rules, baselines and snapshot streams.
+
+mod net_support;
+mod support;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use net_support::{Harness, harness, harness_at, set_translation};
+use serde_json::{Value, json};
+use sloppy_core::net::protocol::{
+    CONTENT_VERSION, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS, MAX_ROUND_MINUTES, RoomPhase,
+};
+use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
+use sloppy_core::net::scene_codec::Scene;
+use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, SimEvent, SimEventType, Team};
+use support::clear_arena;
+
+fn mirror_from(h: &Harness, name: &str) -> (StateMirror, Value) {
+    let full = h.latest(name, "full");
+    let mut mirror = StateMirror::default();
+    let epoch = full["roomEpoch"].as_str().unwrap().to_string();
+    let round = full["roundId"].as_u64().unwrap();
+    mirror
+        .apply_full(&full, &epoch, round)
+        .expect("valid baseline");
+    (mirror, full)
+}
+
+fn apply_latest(h: &Harness, name: &str, mirror: &mut StateMirror) {
+    for snapshot in h.latest(name, "snapshot")["snapshots"].as_array().unwrap() {
+        assert!(mirror.apply_snapshot(snapshot).is_some());
+    }
+}
+
+fn capture(h: &Harness) -> Value {
+    let scene = Scene::capture(h.host.simulation.as_ref().unwrap());
+    serde_json::from_str(&scene.to_json()).unwrap()
+}
+
+fn tank_id(h: &mut Harness, index: usize) -> u32 {
+    h.sim().tanks[index].id
+}
+
+fn index_of(h: &mut Harness, id: u32) -> usize {
+    h.sim().tank_index(id).expect("tank exists")
+}
+
+#[test]
+fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fill_bots() {
+    let mut h = harness();
+    h.join("alice", json!({ "team": 0 }));
+    h.join("bob", json!({ "team": 1 }));
+    h.action(
+        "alice",
+        "settings",
+        json!({ "mapMode": "harbor", "difficulty": "normal", "humansOnly": true }),
+    );
+    assert_eq!(h.latest("bob", "lobby")["settings"]["humansOnly"], true);
+    h.action("alice", "start", json!({}));
+    assert_eq!(h.sim().tanks.len(), 2);
+    let alice = h.tank_of("alice");
+    let alice = tank_id(&mut h, alice);
+    let bob = h.tank_of("bob");
+    let bob = tank_id(&mut h, bob);
+    h.action("alice", "suspend", json!({}));
+    assert_eq!(h.latest("alice", "control")["driver"], "idle");
+    for _ in 0..110 {
+        h.advance();
+    }
+    assert!(h.sim().tanks.iter().all(|tank| tank.driver == Driver::Idle));
+    assert_eq!(h.sim().shots_fired, 0);
+    h.action("alice", "resume", json!({}));
+    let index = index_of(&mut h, alice);
+    assert_eq!(h.sim().tanks[index].driver, Driver::Human);
+    let token = h.latest("bob", "welcome")["token"].clone();
+    h.disconnect("bob");
+    let index = index_of(&mut h, bob);
+    assert_eq!(h.sim().tanks[index].driver, Driver::Idle);
+    h.join(
+        "bob-again",
+        json!({ "token": token, "roomEpoch": "test-room" }),
+    );
+    assert_eq!(h.latest("bob-again", "control")["tankId"], bob);
+    assert_eq!(h.sim().tanks[index].driver, Driver::Human);
+    let bob_body = h.sim().tanks[index].body;
+    h.action("bob-again", "leave", json!({}));
+    assert_eq!(h.sim().tanks.len(), 1);
+    assert!(
+        !h.sim().world.bodies.contains(bob_body),
+        "leaving removes the hull collider too"
+    );
+    h.advance();
+    let (mut mirror, full) = mirror_from(&h, "alice");
+    let full_seq = full["seq"].as_u64().unwrap();
+    for message in h.all("alice").to_vec() {
+        if message["type"] == "snapshot"
+            && message["snapshots"][0]["seq"].as_u64().unwrap() > full_seq
+        {
+            for snapshot in message["snapshots"].as_array().unwrap() {
+                assert!(mirror.apply_snapshot(snapshot).is_some());
+            }
+        }
+    }
+    assert_eq!(
+        mirror.render(alice).unwrap().tanks.len(),
+        1,
+        "mirror removes departed tanks"
+    );
+    h.join("carol", json!({ "team": 1, "kind": "heavy" }));
+    let carol = h.tank_of("carol");
+    assert_eq!(h.sim().tanks.len(), 2);
+    assert_eq!(h.sim().tanks[carol].name, "carol");
+    assert_eq!(h.sim().tanks[carol].kind.as_str(), "heavy");
+    assert_ne!(
+        h.sim().tanks[carol].id,
+        bob,
+        "new occupant cannot inherit old ordnance ownership"
+    );
+    h.sim().tanks[carol].protection = 0.0;
+    let alice_index = index_of(&mut h, alice);
+    let (team, life) = (
+        h.sim().tanks[alice_index].team,
+        h.sim().tanks[alice_index].life,
+    );
+    h.sim()
+        .damage_tank(carol, 10000.0, alice, team, Some(life), None);
+    h.advance();
+    let carol = h.tank_of("carol");
+    assert!(!h.sim().tanks[carol].alive);
+    h.action("carol", "leave", json!({}));
+    h.advance();
+    assert_eq!(
+        h.sim().tanks.len(),
+        1,
+        "dead departed players cannot respawn"
+    );
+    h.action("alice", "end", json!({}));
+    h.action(
+        "alice",
+        "settings",
+        json!({ "mapMode": "village", "difficulty": "normal", "humansOnly": false }),
+    );
+    h.action("alice", "start", json!({}));
+    assert_eq!(
+        h.sim().tanks.len(),
+        12,
+        "bots can be restored for the next round"
+    );
+}
+
+#[test]
+fn humans_only_removes_expired_reservations_and_accepts_new_occupants_without_growing_the_roster() {
+    let mut h = harness();
+    h.join("alice", json!({ "team": 0 }));
+    h.join("bob", json!({ "team": 1 }));
+    h.action(
+        "alice",
+        "settings",
+        json!({ "mapMode": "village", "difficulty": "easy", "humansOnly": true }),
+    );
+    h.action("alice", "start", json!({}));
+    let bob_body = h.sim().tanks[1].body;
+    h.disconnect("bob");
+    for _ in 0..601 {
+        h.advance();
+        for messages in h.messages.values_mut() {
+            let excess = messages.len().saturating_sub(12);
+            messages.drain(..excess);
+        }
+        for texts in h.texts.values_mut() {
+            texts.clear();
+        }
+    }
+    assert_eq!(h.sim().tanks.len(), 1);
+    assert!(!h.sim().world.bodies.contains(bob_body));
+    let bodies = h.sim().world.bodies.len();
+    for i in 0..10 {
+        let name = format!("late-{i}");
+        h.join(&name, json!({ "team": 1 }));
+        assert_eq!(h.sim().tanks.len(), 2);
+        assert_eq!(h.sim().world.bodies.len(), bodies + 1);
+        h.action(&name, "leave", json!({}));
+        assert_eq!(h.sim().tanks.len(), 1);
+        assert_eq!(h.sim().world.bodies.len(), bodies);
+    }
+}
+
+fn input(control_epoch: &Value, seq: u64, observed: u64, extra: Value) -> Value {
+    net_support::merged(
+        json!({
+            "controlEpoch": control_epoch,
+            "seq": seq,
+            "observedTick": observed,
+            "moveX": 0,
+            "moveZ": 0,
+            "aim": { "angle": 0 },
+        }),
+        extra,
+    )
+}
+
+#[test]
+fn a_shell_in_straight_flight_is_one_trace_segment_per_frame() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let human = h.sim().human_index().unwrap();
+    set_translation(h.sim(), human, 0.0, 0.65, 0.0);
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let tick = h.host.tick();
+    h.action(
+        "alice",
+        "input",
+        input(&epoch, 1, tick, json!({ "fire": true })),
+    );
+    h.advance();
+    h.advance();
+    let traces: Vec<Value> = h.latest("alice", "snapshot")["snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|snap| snap["traces"].as_array().cloned().unwrap_or_default())
+        .collect();
+    let sim = h.host.simulation.as_ref().unwrap();
+    let owner = sim.tanks[human].id;
+    let flying: Vec<_> = sim
+        .shots
+        .iter()
+        .filter(|shot| shot.owner == owner)
+        .collect();
+    assert!(!flying.is_empty());
+    for shot in flying {
+        let segments: Vec<&Value> = traces
+            .iter()
+            .filter(|trace| trace["shot"]["id"] == shot.id)
+            .collect();
+        assert_eq!(segments.len(), 1);
+        let span = segments[0]["endTick"].as_f64().unwrap() - segments[0]["tick"].as_f64().unwrap();
+        assert_eq!(span, 3.0);
+        let round = |v: f64| sloppy_core::sim::math::js_round(v * 1000.0) / 1000.0;
+        assert_eq!(segments[0]["end"]["x"].as_f64().unwrap(), round(shot.x));
+        assert_eq!(segments[0]["end"]["z"].as_f64().unwrap(), round(shot.z));
+    }
+}
+
+#[test]
+fn two_seats_drive_independently_reconnect_revokes_the_old_socket_and_host_transfer_persists() {
+    let mut h = harness();
+    h.join("alice", json!({ "kind": "scout", "team": 0 }));
+    h.join("bob", json!({ "kind": "heavy", "team": 1 }));
+    h.action("alice", "start", json!({}));
+    let token = h.latest("alice", "welcome")["token"].clone();
+    let first = h.latest("alice", "control");
+    let second = h.latest("bob", "control");
+    let a = first["tankId"].as_u64().unwrap() as u32;
+    let b = second["tankId"].as_u64().unwrap() as u32;
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let ai = index_of(&mut h, a);
+    let bi = index_of(&mut h, b);
+    set_translation(h.sim(), ai, -10.0, 0.65, 0.0);
+    set_translation(h.sim(), bi, 10.0, 0.65, 0.0);
+    for seq in 1..=20 {
+        for (client, control, move_z) in [("alice", &first, 1), ("bob", &second, -1)] {
+            let tick = h.host.tick();
+            h.action(
+                client,
+                "input",
+                input(
+                    &control["controlEpoch"],
+                    seq,
+                    tick,
+                    json!({ "moveZ": move_z, "fire": false, "actions": [] }),
+                ),
+            );
+        }
+        h.advance();
+    }
+    let sim = h.sim();
+    let az = sim.body_translation(sim.tanks[ai].body).z;
+    let bz = sim.body_translation(sim.tanks[bi].body).z;
+    assert!(az > 3.0, "alice moved to {az}");
+    assert!(bz < -2.0, "bob moved to {bz}");
+    h.disconnect("alice");
+    assert_eq!(h.sim().tanks[ai].driver, Driver::Bot);
+    assert_eq!(
+        h.latest("bob", "lobby")["hostId"],
+        h.latest("bob", "welcome")["playerId"]
+    );
+    h.join(
+        "alice-new",
+        json!({ "token": token, "roomEpoch": "test-room", "team": 1, "kind": "heavy" }),
+    );
+    assert_eq!(h.sim().tanks[ai].kind.as_str(), "scout");
+    assert_eq!(h.sim().tanks[ai].team, Team::Blue);
+    assert_eq!(h.sim().tanks[ai].driver, Driver::Human);
+    assert_eq!(
+        h.latest("alice-new", "lobby")["hostId"],
+        h.latest("bob", "welcome")["playerId"]
+    );
+    h.join(
+        "alice-newer",
+        json!({ "token": token, "roomEpoch": "test-room" }),
+    );
+    assert!(h.closed.iter().any(|name| name == "alice-new"));
+    assert!(
+        h.latest("alice-newer", "control")["controlEpoch"].as_u64()
+            > first["controlEpoch"].as_u64()
+    );
+    let tick = h.host.tick();
+    h.action(
+        "alice-new",
+        "input",
+        input(
+            &first["controlEpoch"],
+            99,
+            tick,
+            json!({ "moveX": 1, "fire": true, "actions": [] }),
+        ),
+    );
+    assert_eq!(
+        h.sim().tanks[ai].driver,
+        Driver::Human,
+        "revoked socket cannot suspend the replacement socket"
+    );
+}
+
+#[test]
+fn round_and_epoch_boundaries_suspension_seat_expiry_and_empty_room_cleanup_are_bounded() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let control = h.latest("alice", "control");
+    let tank = h.sim().human_index().unwrap();
+    h.action("alice", "suspend", json!({}));
+    assert_eq!(h.sim().tanks[tank].driver, Driver::Bot);
+    h.action("alice", "resume", json!({}));
+    assert_eq!(h.sim().tanks[tank].driver, Driver::Human);
+    h.action(
+        "alice",
+        "input",
+        net_support::merged(
+            input(&control["controlEpoch"], 1, 0, json!({})),
+            json!({ "roundId": 0, "moveX": 1, "fire": true, "actions": [{ "type": "mine" }] }),
+        ),
+    );
+    h.advance();
+    assert!(!h.sim().tanks[tank].command.fire);
+    assert_eq!(h.sim().mines.len(), 0);
+    h.disconnect("alice");
+    h.now += 30_000;
+    h.tick_only(0);
+    assert!(h.host.disposed);
+    assert!(h.host.simulation.is_none());
+}
+
+#[test]
+fn a_heartbeat_in_flight_from_the_previous_round_cannot_disconnect_a_player() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    for _ in 0..10 {
+        h.advance();
+    }
+    let old_tick = h.host.tick();
+    h.action("alice", "end", json!({}));
+    h.action("alice", "start", json!({}));
+    let now = h.now;
+    h.action(
+        "alice",
+        "ping",
+        json!({ "roundId": 1, "observedTick": old_tick, "t": now }),
+    );
+    assert_eq!(h.host.connections(), 1);
+    assert!(h.closed.is_empty());
+    h.action("alice", "ping", json!({ "observedTick": 0, "t": now }));
+    assert_eq!(h.latest("alice", "pong")["tick"], 0);
+}
+
+#[test]
+fn suspended_clients_receive_no_snapshot_backlog_and_resume_with_a_current_baseline() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    h.action("alice", "suspend", json!({}));
+    for _ in 0..80 {
+        h.advance();
+    }
+    assert_eq!(h.count("alice", "snapshot"), 0);
+    h.action("alice", "resume", json!({}));
+    assert_eq!(h.latest("alice", "full")["tick"], h.host.tick());
+    h.advance();
+    assert_eq!(h.host.connections(), 1);
+    assert!(h.count("alice", "snapshot") > 0);
+}
+
+#[test]
+fn late_join_starts_a_fresh_chassis_and_score_and_departed_ordnance_cannot_credit_the_newcomer() {
+    let mut h = harness();
+    h.join("alice", json!({ "team": 0 }));
+    h.join("bob", json!({ "team": 1 }));
+    h.action("alice", "start", json!({}));
+    let a = h.tank_of("alice");
+    let (a_id, old_life) = (h.sim().tanks[a].id, h.sim().tanks[a].life);
+    h.action("alice", "leave", json!({}));
+    h.join("carol", json!({ "team": 0, "kind": "scout" }));
+    let c = h.tank_of("carol");
+    let carol = h.sim().tanks[c].clone();
+    assert_eq!(carol.id, a_id);
+    assert!(carol.life > old_life);
+    assert_eq!(carol.kind.as_str(), "scout");
+    assert_eq!(carol.kills, 0);
+    let victim = h
+        .sim()
+        .tanks
+        .iter()
+        .position(|tank| tank.team == Team::Red)
+        .unwrap();
+    h.sim().tanks[victim].protection = 0.0;
+    h.sim()
+        .damage_tank(victim, 10000.0, carol.id, carol.team, Some(old_life), None);
+    h.advance();
+    let c = h.tank_of("carol");
+    assert_eq!(h.sim().tanks[c].kills, 0);
+    assert_eq!(h.sim().tanks[c].xp, 0.0);
+    h.action("bob", "end", json!({}));
+    let score = h.latest("bob", "lobby")["scoreboard"].clone();
+    let kills = |name: &str| {
+        score
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|player| player["name"] == name)
+            .map(|player| player["kills"].clone())
+    };
+    assert_eq!(kills("alice"), Some(json!(1)));
+    assert_eq!(kills("carol"), Some(json!(0)));
+    h.action("bob", "start", json!({}));
+    assert_eq!(h.host.round_id, 2);
+    assert_eq!(h.sim().tanks.len(), 12);
+}
+
+#[test]
+fn a_full_room_full_team_invalid_kind_and_incompatible_build_are_rejected_before_authority() {
+    let mut h = harness();
+    h.join("bad-version", json!({ "version": 999 }));
+    assert_eq!(h.latest("bad-version", "error")["code"], "incompatible");
+    h.join("bad-kind", json!({ "kind": "humvee" }));
+    assert!(h.closed.iter().any(|name| name == "bad-kind"));
+    assert_eq!(
+        h.latest("bad-kind", "error")["message"],
+        "kind: Invalid choice"
+    );
+    for i in 0..6 {
+        h.join(&format!("p{i}"), json!({ "team": 0 }));
+    }
+    h.join("full-team", json!({ "team": 0 }));
+    assert_eq!(h.latest("full-team", "error")["code"], "team-full");
+    h.join("p6", json!({ "team": 1 }));
+    h.join("p7", json!({ "team": 1 }));
+    h.join("ninth", json!({}));
+    assert_eq!(h.latest("ninth", "error")["code"], "room-full");
+    h.action("p0", "start", json!({}));
+    assert_eq!(h.sim().tanks.iter().filter(|tank| tank.human).count(), 8);
+}
+
+#[test]
+fn real_host_messages_apply_to_mirrors_and_projectile_traces_survive_an_impact_between_snapshots() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let (mut mirror, _) = mirror_from(&h, "alice");
+    let control = h.latest("alice", "control");
+    let tank = h.sim().human_index().unwrap();
+    h.sim().tanks[tank].protection = 0.0;
+    set_translation(h.sim(), tank, 0.0, 0.65, 0.0);
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let tank = h.sim().human_index().unwrap();
+    h.sim().add_cover(&CoverDef::new(
+        CoverKind::Concrete,
+        0.0,
+        4.0,
+        10.0,
+        1.0,
+        4.0,
+        100.0,
+        0x999999,
+    ));
+    h.action(
+        "alice",
+        "input",
+        input(
+            &control["controlEpoch"],
+            1,
+            0,
+            json!({ "fire": true, "actions": [] }),
+        ),
+    );
+    h.advance();
+    let snaps = h.latest("alice", "snapshot")["snapshots"].clone();
+    for snap in snaps.as_array().unwrap() {
+        assert!(mirror.apply_snapshot(snap).is_some());
+    }
+    assert_eq!(mirror.state.as_ref().unwrap().to_value(), capture(&h));
+    let team = h.sim().tanks[tank].team.index();
+    let sim = h.host.simulation.as_ref().unwrap();
+    let traces: Vec<Value> = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|snap| snap["traces"].as_array().cloned().unwrap_or_default())
+        .collect();
+    assert!(traces.iter().any(|trace| {
+        trace["shot"]["team"] == team
+            && !sim.shots.iter().any(|shot| trace["shot"]["id"] == shot.id)
+    }));
+    assert!(
+        snaps
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|snap| snap["events"].as_array().cloned().unwrap_or_default())
+            .any(|event| event["event"]["type"] == "impact")
+    );
+}
+
+#[test]
+fn membership_and_lifecycle_changes_between_broadcasts_keep_a_frame_at_their_own_tick() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let (mut mirror, _) = mirror_from(&h, "alice");
+    let first = h.host.tick() + 1;
+    let pickup = h.sim().pickups[0].id;
+    let cover = h
+        .sim()
+        .covers
+        .iter()
+        .position(|cover| cover.alive && cover.destructible)
+        .unwrap();
+    let cover_id = h.sim().covers[cover].id;
+    let piece = Arc::new(AtomicU32::new(0));
+    let recorded = piece.clone();
+    // A pickup vanishes and returns inside one 50 ms batch; debris lands and is cleared.
+    h.host.tick_hook = Some(Box::new(move |sim, tick| {
+        let supply = sim.pickups.iter().position(|p| p.id == pickup).unwrap();
+        if tick == first {
+            sim.pickups[supply].available = false;
+            sim.damage_cover(cover, 10000.0, 0, Team::Blue, None, None);
+            sim.fragment(
+                0.0,
+                0.0,
+                0xffffff,
+                0.5,
+                sloppy_core::sim::types::FragmentShape::Shard,
+                1.0,
+            );
+            recorded.store(sim.fragments.last().unwrap().id, Ordering::SeqCst);
+        } else if tick == first + 1 {
+            sim.pickups[supply].available = true;
+            sim.fragments.last_mut().unwrap().life = 0.0;
+        }
+    }));
+    h.advance();
+    let frames = h.latest("alice", "snapshot")["snapshots"].clone();
+    let ticks: Vec<u64> = frames
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|frame| frame["tick"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ticks, vec![first, first + 1, first + 2]);
+    let piece = piece.load(Ordering::SeqCst);
+    let mut states = Vec::new();
+    for frame in frames.as_array().unwrap() {
+        assert!(mirror.apply_snapshot(frame).is_some());
+        states.push(mirror.state.clone().unwrap());
+    }
+    let available: Vec<bool> = states
+        .iter()
+        .map(|scene| scene.pickups.get(pickup).unwrap().value.available)
+        .collect();
+    assert_eq!(available, vec![false, true, true]);
+    assert!(!states[0].covers.get(cover_id).unwrap().value.alive);
+    assert!(states[0].fragments.contains(piece));
+    assert!(!states[2].fragments.contains(piece));
+    assert_eq!(mirror.state.as_ref().unwrap().to_value(), capture(&h));
+}
+
+#[test]
+fn slow_readers_disconnect_and_overload_terminates_the_room_instead_of_skipping_physics() {
+    let mut slow = harness();
+    slow.join("alice", json!({}));
+    slow.action("alice", "start", json!({}));
+    for _ in 0..70 {
+        slow.tick_only(50);
+    }
+    assert_eq!(slow.host.connections(), 0);
+    assert!(slow.closed.iter().any(|name| name == "alice"));
+
+    let mut overloaded = harness();
+    overloaded.join("alice", json!({}));
+    overloaded.action("alice", "start", json!({}));
+    overloaded.tick_only(1000);
+    assert!(overloaded.host.disposed);
+    assert_eq!(
+        overloaded.latest("alice", "room-reset")["reason"],
+        "overload"
+    );
+}
+
+#[test]
+fn resync_skips_events_already_included_in_its_baseline_and_repeated_rounds_retain_12_slots() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    for round in 1..=12 {
+        h.action("alice", "start", json!({}));
+        assert_eq!(h.host.round_id, round);
+        assert_eq!(h.sim().tanks.len(), 12);
+        assert_eq!(h.latest("alice", "control")["controlEpoch"], 1);
+        h.advance();
+        h.action("alice", "end", json!({}));
+    }
+    let mut state = Scene::capture(h.host.simulation.as_ref().unwrap());
+    let mut stream = StateStream::new("r", 1);
+    let mut mirror = StateMirror::default();
+    let full: Value = serde_json::from_str(&stream.full(&state, 0, 2)).unwrap();
+    mirror.apply_full(&full, "r", 1).unwrap();
+    let events: Vec<String> = (1..=3)
+        .map(|id| TimedEvent::write(id, id as f64, &SimEvent::at(SimEventType::Impact, 0.0, 0.0)))
+        .collect();
+    let frame: Value = serde_json::from_str(&stream.snapshot(&mut state, 3, &events, &[])).unwrap();
+    let result = mirror.apply_snapshot(&frame).unwrap();
+    assert_eq!(
+        result.events.iter().map(|e| e.event_id).collect::<Vec<_>>(),
+        vec![3]
+    );
+}
+
+#[test]
+fn auto_team_balances_human_seats_honors_explicit_teams_and_excludes_the_player_changing_teams() {
+    let mut h = harness();
+    h.join("alice", json!({ "team": 1 }));
+    h.join("bob", json!({}));
+    h.join("carol", json!({}));
+    let teams = |h: &Harness| -> Vec<u64> {
+        h.latest("alice", "lobby")["players"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|player| player["team"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(teams(&h), vec![1, 0, 0]);
+    h.action("carol", "choose", json!({ "kind": "balanced", "team": 1 }));
+    h.join("dave", json!({}));
+    assert_eq!(teams(&h), vec![1, 0, 1, 0]);
+    h.action("alice", "choose", json!({ "kind": "balanced" }));
+    assert_eq!(teams(&h)[0], 1);
+}
+
+#[test]
+fn create_starts_a_selected_humans_only_map_immediately_and_subsequent_players_join_the_running_battle()
+ {
+    let mut h = harness();
+    let create = json!({ "mapMode": "quarry", "difficulty": "normal", "humansOnly": true });
+    h.join("alice", json!({ "create": create }));
+    assert_eq!(h.host.phase, RoomPhase::Playing);
+    assert_eq!(h.host.settings.map_mode.as_str(), "quarry");
+    assert_eq!(h.sim().tanks.len(), 1);
+    assert_eq!(h.latest("alice", "full")["roundId"], 1);
+    h.join("collision", json!({ "create": create }));
+    assert_eq!(h.latest("collision", "error")["code"], "room-exists");
+    h.join("bob", json!({ "existingRoom": true }));
+    assert_eq!(h.sim().tanks.len(), 2);
+    assert_eq!(h.latest("bob", "full")["roundId"], 1);
+    let teams: Vec<Team> = h.sim().tanks.iter().map(|tank| tank.team).collect();
+    assert_eq!(teams, vec![Team::Blue, Team::Red]);
+    assert_eq!(
+        serde_json::to_value(h.host.directory_entry("ABCDEFGH")).unwrap(),
+        json!({
+            "room": "ABCDEFGH",
+            "contentVersion": CONTENT_VERSION,
+            "mapMode": "quarry",
+            "difficulty": "normal",
+            "humansOnly": true,
+            "roundMinutes": 20,
+            "players": 2,
+            "reserved": 2,
+            "phase": "playing",
+            "roundId": 1,
+            "time": 1200,
+            "scores": [0, 0],
+        })
+    );
+    h.action("alice", "leave", json!({}));
+    assert!(!h.host.disposed);
+    h.action("bob", "leave", json!({}));
+    assert!(h.host.disposed);
+    assert!(h.host.simulation.is_none());
+    assert_eq!(h.host.directory_entry("ABCDEFGH").players, 0);
+}
+
+#[test]
+fn a_token_from_an_expired_room_epoch_joins_as_a_new_player_with_a_reset_notice() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    assert_eq!(h.latest("alice", "welcome")["reset"], false);
+    h.join(
+        "returning",
+        json!({ "token": "credential-from-an-old-room", "roomEpoch": "expired-room" }),
+    );
+    let welcome = h.latest("returning", "welcome");
+    assert_eq!(
+        welcome["reset"], true,
+        "the client must drop its old session state"
+    );
+    assert_eq!(welcome["roomEpoch"], "test-room");
+    assert_ne!(welcome["token"], "credential-from-an-old-room");
+    assert_eq!(
+        h.latest("returning", "lobby")["players"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    // A stale token for this same epoch names a seat that expired, which is refused instead.
+    h.join(
+        "expired",
+        json!({ "token": "credential-never-issued", "roomEpoch": "test-room" }),
+    );
+    assert_eq!(h.latest("expired", "error")["code"], "seat-expired");
+}
+
+#[test]
+fn a_stale_directory_selection_cannot_recreate_an_empty_room_and_a_dropped_connection_retains_its_grace()
+ {
+    let mut h = harness();
+    h.join("stale", json!({ "existingRoom": true }));
+    assert_eq!(h.latest("stale", "error")["code"], "room-gone");
+    assert_eq!(h.host.connections(), 0);
+    h.join(
+        "alice",
+        json!({ "create": { "mapMode": "harbor", "difficulty": "easy", "humansOnly": true } }),
+    );
+    let token = h.latest("alice", "welcome")["token"].clone();
+    h.disconnect("alice");
+    assert!(!h.host.disposed);
+    assert_eq!(h.host.directory_entry("ABCDEFGH").players, 0);
+    assert_eq!(h.host.directory_entry("ABCDEFGH").reserved, 1);
+    h.join(
+        "back",
+        json!({ "token": token, "roomEpoch": "test-room", "existingRoom": true }),
+    );
+    assert_eq!(h.host.connections(), 1);
+    assert_eq!(h.host.round_id, 1);
+}
+
+#[test]
+fn round_length_defaults_to_twenty_minutes_and_is_controlled_by_the_host_between_rounds() {
+    let settings = json!({ "mapMode": "village", "difficulty": "normal", "humansOnly": true });
+    let with_minutes =
+        |minutes: u32| net_support::merged(settings.clone(), json!({ "roundMinutes": minutes }));
+    let mut h = harness();
+    h.join("alice", json!({ "create": settings }));
+    h.join("bob", json!({}));
+    assert_eq!(h.sim().match_state.time, 1200.0);
+    assert_eq!(h.latest("bob", "lobby")["settings"]["roundMinutes"], 20);
+    h.action("alice", "end", json!({}));
+    h.action("bob", "settings", with_minutes(1));
+    assert_eq!(
+        h.host.settings.round_minutes, 20,
+        "Guest cannot change the next round"
+    );
+    let token = h.latest("bob", "welcome")["token"].clone();
+    h.join("bob", json!({ "token": token, "roomEpoch": "test-room" }));
+    h.action("alice", "settings", with_minutes(1));
+    h.action("alice", "start", json!({}));
+    assert_eq!(h.sim().match_state.time, 60.0);
+    assert_eq!(h.latest("bob", "lobby")["settings"]["roundMinutes"], 1);
+    h.sim().match_state.scores = [1, 0];
+    // Skip to the last frame of the minute instead of simulating all of it.
+    h.sim().match_state.time = 0.01;
+    h.advance();
+    assert_eq!(h.host.phase, RoomPhase::Results);
+    assert_eq!(h.sim().match_state.winner, Some(Team::Blue));
+    assert_eq!(h.sim().match_state.time, 0.0);
+    h.action("alice", "start", json!({}));
+    h.action("alice", "settings", with_minutes(20));
+    assert_eq!(
+        h.host.settings.round_minutes, 1,
+        "Cannot change a running match"
+    );
+}
+
+#[test]
+fn a_room_past_its_lifetime_lets_the_battle_under_way_finish_then_closes() {
+    let create = json!({
+        "mapMode": "village",
+        "difficulty": "normal",
+        "humansOnly": true,
+        "roundMinutes": MAX_ROUND_MINUTES,
+    });
+    // Created exactly one lifetime ago: the battle it starts now keeps running.
+    let mut h = harness_at(-(MAX_ROOM_MS as i64), "test-room", 4242);
+    h.join("alice", json!({ "create": create }));
+    assert_eq!(h.host.phase, RoomPhase::Playing);
+    assert_eq!(
+        h.host.directory_entry("ABCDEFGH").time,
+        MAX_ROUND_MINUTES * 60
+    );
+    h.advance();
+    assert!(!h.host.disposed, "A battle under way is not cut short");
+    h.sim().match_state.scores = [1, 0];
+    h.sim().match_state.time = 0.01;
+    h.advance();
+    assert_eq!(h.host.phase, RoomPhase::Results);
+    h.advance();
+    assert!(
+        h.host.disposed,
+        "No new battle once the lifetime has passed"
+    );
+    assert_eq!(h.latest("alice", "room-reset")["reason"], "expired");
+    // Even a battle stuck in overtime ends with the room at the hard limit.
+    let mut stuck = harness_at(
+        -((MAX_ROOM_MS + MAX_BATTLE_OVERRUN_MS) as i64),
+        "test-room",
+        4242,
+    );
+    stuck.join("alice", json!({ "create": create }));
+    stuck.advance();
+    assert!(stuck.host.disposed);
+}
+
+#[test]
+fn live_snapshots_carry_each_players_authoritative_kills_and_preserve_them_through_respawn() {
+    let mut h = harness();
+    h.join(
+        "alice",
+        json!({
+            "team": 0,
+            "create": { "mapMode": "village", "difficulty": "normal", "humansOnly": true },
+        }),
+    );
+    h.join("bob", json!({ "team": 1 }));
+    let alice = h.sim().tanks[0].clone();
+    let bob = h.sim().tanks[1].id;
+    let mut mirror = StateMirror::default();
+    mirror
+        .apply_full(&h.latest("alice", "full"), "test-room", 1)
+        .unwrap();
+    h.sim().tanks[1].protection = 0.0;
+    h.sim()
+        .damage_tank(1, 10000.0, alice.id, alice.team, Some(alice.life), None);
+    h.advance();
+    apply_latest(&h, "alice", &mut mirror);
+    assert_eq!(mirror.render(alice.id).unwrap().viewer().unwrap().kills, 1);
+    assert_eq!(mirror.render(bob).unwrap().viewer().unwrap().deaths, 1);
+    h.sim().respawn(0, None);
+    h.advance();
+    apply_latest(&h, "alice", &mut mirror);
+    assert_eq!(mirror.render(alice.id).unwrap().viewer().unwrap().kills, 1);
+    h.join("carol", json!({}));
+    let players = h.latest("carol", "lobby")["players"].clone();
+    let alice_row = players
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|player| player["name"] == "alice")
+        .unwrap()
+        .clone();
+    assert_eq!(alice_row["kills"], 1);
+}
+
+#[test]
+fn wire_messages_keep_the_typescript_key_order() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    h.advance();
+    let texts = h.texts["alice"].clone();
+    let starts = |prefix: &str| texts.iter().any(|text| text.starts_with(prefix));
+    assert!(starts(r#"{"type":"welcome","version":1,"contentVersion":"#));
+    assert!(starts(
+        r#"{"roomEpoch":"test-room","roundId":0,"type":"lobby","phase":"lobby""#
+    ));
+    assert!(starts(
+        r#"{"roomEpoch":"test-room","roundId":1,"type":"control","tankId":"#
+    ));
+    assert!(starts(
+        r#"{"roomEpoch":"test-room","roundId":1,"type":"full","seq":0,"tick":0,"eventCursor":"#
+    ));
+    assert!(starts(
+        r#"{"type":"snapshot","roundId":1,"ack":0,"snapshots":[{"seq":1,"tick":"#
+    ));
+    assert!(starts(r#"{"type":"pong","t":50,"tick":0}"#));
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains(".0,") || text.contains(".0}"))
+    );
+    let _ = MatchPhase::Playing;
+}

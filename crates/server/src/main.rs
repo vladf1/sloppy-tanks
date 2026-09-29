@@ -4,7 +4,7 @@
 use std::process::ExitCode;
 
 use sloppy_server::config::Settings;
-use sloppy_server::lobby_host::LobbyHost;
+use sloppy_server::match_room::MatchRoom;
 use sloppy_server::process_stats::CountingAllocator;
 use sloppy_server::protocol::CONTENT_VERSION;
 use sloppy_server::server::{MultiplayerServer, ServerOptions};
@@ -33,10 +33,9 @@ async fn serve(settings: Settings) -> ExitCode {
     if let Some(max_rooms) = settings.max_rooms {
         options.max_rooms = max_rooms;
     }
-    // Until the MatchHost port lands in sloppy-core, rooms host lobbies only.
     let server = match MultiplayerServer::listen(
         options,
-        LobbyHost::new,
+        MatchRoom::new,
         (settings.host.as_str(), settings.port),
     )
     .await
