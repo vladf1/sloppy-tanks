@@ -93,7 +93,10 @@ try {
     });
     assert.equal(mutations, 0, "Off stops updates even after touch UI was created");
     await page.locator("#pause").click();
-    assert.equal(await page.locator("#touch-mode").inputValue(), "off");
+    // The pause menu shows the saved preference from its next HUD refresh on.
+    await page.waitForFunction(() => document.querySelector("#touch-mode")?.value === "off", null, {
+      timeout: 2000,
+    });
     await page.locator("#touch-mode").selectOption("on");
     await page.locator("#resume").click();
     await page.locator(".touch-controls").waitFor({ state: "visible" });

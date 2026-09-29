@@ -10,9 +10,9 @@ export async function loadLabsEngine(): Promise<LabsEngine> {
   try {
     engine = await import("../src/generated/engine-labs/engine.js");
   } catch (error) {
-    throw new Error(
-      `The labs engine is not built: run \`pnpm run wasm -- --labs\` (${String(error)})`,
-    );
+    throw new Error("The labs engine is not built: run `pnpm run wasm -- --labs`", {
+      cause: error,
+    });
   }
   // The glue finds its binary beside itself.
   await engine.default();
