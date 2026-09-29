@@ -23,6 +23,8 @@ use sloppy_core::scene::{Blending, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, SHIELD_CAPACITY, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
+use crate::effects::spawn_pad_decks::SpawnPadDecks;
+
 /// Joint names.
 pub mod joint {
     /// Tank bar hull fill, one per health color; scaled along x by the ratio.
@@ -432,6 +434,13 @@ pub fn pickup_effect_glow() -> Node {
 }
 
 /// A mine painted like the pickups' bases, with a blinking team cap.
+/// How far to raise a mine at `(x, z)` so it lies on a spawn pad's deck rather
+/// than inside it; zero on open ground. Only the drawn model moves: the mine's
+/// simulated position and trigger radius stay on the ground plane.
+pub fn mine_lift(pads: &SpawnPadDecks, x: f64, z: f64) -> f64 {
+    pads.top_within(x, z, MINE_RADIUS).unwrap_or(0.0)
+}
+
 pub fn mine(team: Team) -> Node {
     let mut root = Node::group("mine");
     put(
@@ -541,6 +550,59 @@ mod tests {
             ring.min.y
         );
         assert!(SPAWN_PULSE_HEIGHT > ring.max.y, "pulse under the ring");
+    }
+
+    #[test]
+    fn mines_lie_on_every_spawn_pad_deck_and_on_open_ground_as_before() {
+        use crate::effects::spawn_pad_decks::tests::{pad_models, surface_top, triangles_near};
+        use glam::DMat4;
+        use sloppy_core::geometry::node_bounds;
+        use sloppy_core::sim::arena::spawn_positions;
+        const STEP: f64 = 0.3;
+        const SPAN: i32 = 11;
+        // Samples around a mine's rim can miss the smallest pad fittings.
+        const MAX_FLOAT: f64 = 0.06;
+        let bottom = node_bounds(&mine(Team::Red), DMat4::IDENTITY).min.y;
+        assert!(bottom > 0.0, "the mine sits on the ground");
+        for (theme, pads) in pad_models() {
+            let decks = SpawnPadDecks::new(theme, 1.0);
+            for team in [Team::Blue, Team::Red] {
+                let center = spawn_positions(team, 1.0)[1];
+                let triangles = triangles_near(&pads, center, STEP * f64::from(SPAN) + 1.0);
+                let mut on_pad = 0;
+                for i in -SPAN..=SPAN {
+                    for j in -SPAN..=SPAN {
+                        let x = center.x + f64::from(i) * STEP + 0.013;
+                        let z = center.z + f64::from(j) * STEP + 0.017;
+                        // The highest deck anywhere under the mine's disc.
+                        let mut deck = 0.0_f64;
+                        for ring in 0..=3 {
+                            let r = MINE_RADIUS * f64::from(ring) / 3.0;
+                            for k in 0..32 {
+                                let a = f64::from(k) * std::f64::consts::TAU / 32.0;
+                                let top = surface_top(&triangles, x + r * a.sin(), z + r * a.cos());
+                                deck = deck.max(top.unwrap_or(0.0));
+                            }
+                        }
+                        let lift = mine_lift(&decks, x, z);
+                        if deck <= 0.05 {
+                            // Off the pads a mine stays where it always was, unless its
+                            // rim grazes a deck corner between the samples.
+                            let graze = decks.top_within(x, z, MINE_RADIUS - 0.05).is_none();
+                            assert!(lift == 0.0 || graze, "{theme} lifted {lift} at {x} {z}");
+                            continue;
+                        }
+                        on_pad += 1;
+                        assert!(
+                            lift + bottom > deck + 0.01 && lift < deck + MAX_FLOAT,
+                            "{theme} mine lifted {lift} over deck {deck} at {x} {z}"
+                        );
+                    }
+                }
+                assert!(on_pad > 150, "{theme}: {on_pad} mines on the pad");
+            }
+            assert_eq!(mine_lift(&decks, 0.0, 0.0), 0.0);
+        }
     }
 
     #[test]

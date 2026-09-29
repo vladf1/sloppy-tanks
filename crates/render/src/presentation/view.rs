@@ -44,6 +44,7 @@ use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT
 use super::{CosmeticRandom, PRESENTATION_EFFECTS};
 use crate::color::hex_to_linear;
 use crate::effects::Effects;
+use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, PrepareProgress, Renderer,
     SunShadow, WaterSettings,
@@ -522,6 +523,8 @@ pub struct Presentation {
     fragments: HashMap<u32, FragmentView>,
     pickups: HashMap<u32, PickupView>,
     mines: HashMap<u32, MineView>,
+    /// The spawn pads mines may lie on, for their drawn height.
+    pad_decks: SpawnPadDecks,
     pickup_effects: VecDeque<PickupEffect>,
     branches: VecDeque<FallingBranch>,
     hit_until: HashMap<u32, f64>,
@@ -592,6 +595,7 @@ impl Presentation {
             fragments: HashMap::new(),
             pickups: HashMap::new(),
             mines: HashMap::new(),
+            pad_decks: SpawnPadDecks::default(),
             pickup_effects: VecDeque::new(),
             branches: VecDeque::new(),
             hit_until: HashMap::new(),
@@ -2103,6 +2107,7 @@ impl Presentation {
             }
         }
         let blink = (self.time * 10.0).sin() > 0.0;
+        self.pad_decks.sync(state);
         for mine in &state.mines {
             if !self.mines.contains_key(&mine.id) {
                 let (model, light) = {
@@ -2113,7 +2118,11 @@ impl Presentation {
                     .renderer
                     .add_instance(
                         model,
-                        Mat4::from_translation(Vec3::new(mine.x as f32, 0.0, mine.z as f32)),
+                        Mat4::from_translation(Vec3::new(
+                            mine.x as f32,
+                            own::mine_lift(&self.pad_decks, mine.x, mine.z) as f32,
+                            mine.z as f32,
+                        )),
                         Lifetime::Round,
                     )
                     .expect("mine model");
