@@ -1876,6 +1876,19 @@ impl Presentation {
         } else {
             1.0
         } as f32;
+        // Pickups that left the arena (rules and fixtures may replace them).
+        self.scratch.clear();
+        self.live.clear();
+        self.live
+            .extend(state.pickups.iter().map(|pickup| pickup.id));
+        self.scratch
+            .extend(self.pickups.keys().filter(|id| !self.live.contains(*id)));
+        for id in self.scratch.drain(..) {
+            if let Some(view) = self.pickups.remove(&id) {
+                self.renderer.remove_instance(view.base);
+                self.renderer.remove_instance(view.gem);
+            }
+        }
         for pickup in &state.pickups {
             if !self.pickups.contains_key(&pickup.id) {
                 self.add_pickup(pickup.id, pickup.kind, pickup.x, pickup.z);

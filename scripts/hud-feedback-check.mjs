@@ -340,8 +340,6 @@ try {
         })),
       ),
     );
-    // New pickups replace the old ones only in a rebuilt view, as at a round start.
-    game.debug_rebuild_view();
   });
   await advance();
   const pads = () =>
@@ -381,7 +379,6 @@ try {
     game.debug_set_pickups(
       JSON.stringify(kinds.map((kind, i) => ({ kind, x: (i - 3.5) * 4, z: -6, available: true }))),
     );
-    game.debug_rebuild_view();
   });
   await advance();
   assert.ok((await pads()).every((p) => p.gem && p.lit));
