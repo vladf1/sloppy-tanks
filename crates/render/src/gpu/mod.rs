@@ -1723,7 +1723,8 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("warm-up"),
         });
-        self.encode_frame(&mut encoder, &probe_view, false);
+        self.encode_scene(&mut encoder, false);
+        self.encode_output(&mut encoder, &probe_view);
         self.ctx.queue.submit([encoder.finish()]);
         probe.destroy();
         for draws in &mut self.views {
@@ -2300,6 +2301,20 @@ impl Renderer {
         }
         self.upload_shadow_bases();
         self.write_view_uniforms();
+        // The scene and the canvas go in separate command buffers. WebKit paces a
+        // WebGPU canvas by the GPU time of the command buffers that write its texture
+        // (`WebGPUFramePacer`) and lowers the frame rate when that exceeds a display
+        // frame; with the whole frame in one buffer the scene counted against the
+        // canvas and Safari settled at 30 fps. The output buffer is one full-screen
+        // triangle.
+        let mut encoder = self
+            .ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("scene"),
+            });
+        self.encode_scene(&mut encoder, self.reflection_active);
+        self.ctx.queue.submit([encoder.finish()]);
         let output = match self.ctx.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -2319,21 +2334,17 @@ impl Renderer {
             .ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame"),
+                label: Some("output"),
             });
-        self.encode_frame(&mut encoder, &view, self.reflection_active);
+        self.encode_output(&mut encoder, &view);
         self.ctx.queue.submit([encoder.finish()]);
         self.ctx.queue.present(output);
         self.stats.instance_records = dynamic + self.merged_records.len() as u32;
         Ok(())
     }
 
-    fn encode_frame(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        output: &wgpu::TextureView,
-        reflection: bool,
-    ) {
+    /// The sun shadow, water reflection and main view passes, into `main_target`.
+    fn encode_scene(&mut self, encoder: &mut wgpu::CommandEncoder, reflection: bool) {
         let stats = &mut self.stats;
         stats.draw_calls = 0;
         stats.triangles = 0;
@@ -2430,6 +2441,10 @@ impl Renderer {
             }
             draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
         }
+    }
+
+    /// Draw `main_target` into the canvas through the output transform.
+    fn encode_output(&mut self, encoder: &mut wgpu::CommandEncoder, output: &wgpu::TextureView) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("output"),
@@ -2450,7 +2465,7 @@ impl Renderer {
             pass.set_pipeline(&self.pipelines.fixed().output);
             pass.set_bind_group(0, &self.output_group, &[]);
             pass.draw(0..3, 0..1);
-            stats.draw_calls += 1;
+            self.stats.draw_calls += 1;
         }
     }
 
