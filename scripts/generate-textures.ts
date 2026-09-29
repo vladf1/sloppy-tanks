@@ -2,7 +2,7 @@ import { encodeWebp } from "./encode-webp";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { PICKUPS } from "../src/game/data";
+import { PICKUPS } from "./asset-data";
 import "./generate-barrels";
 import "./generate-ammo-icons";
 import "./generate-laser-pickup";

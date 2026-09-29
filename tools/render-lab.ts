@@ -1,28 +1,16 @@
-// Render lab: one calibration scene drawn by the Rust wgpu renderer and by the
-// game's Three.js r185 setup (lights, fog, ACES, PCF shadows, planar water), side
-// by side with an amplified difference image. Both renderers build from the same
-// JSON spec. Build the engine with `pnpm run wasm`, then open
+// Render lab: one calibration scene drawn by the engine's wgpu renderer (lights, fog,
+// ACES, PCF shadows, planar water, custom effects, jointed and faded models), beside a
+// reference image of the same scene from the game's former Three.js r185 setup and an
+// amplified difference image. The references were captured from the Three.js side
+// before it left the project (`scripts/README.md`, Labs); without them the lab still
+// draws and reports the renderer, and the difference stays blank.
+// Build the labs engine with `pnpm run wasm -- --labs`, then open
 // /sloppy-tanks/tools/render-lab.html on the dev server.
-// `?freeze=<seconds>` pins the effect/water clock for screenshots.
-import * as THREE from "three/webgpu";
-import {
-  Fn,
-  cos,
-  materialEmissive,
-  materialOpacity,
-  mix,
-  normalLocal,
-  normalize,
-  positionLocal,
-  positionWorld,
-  sin,
-  uniform,
-  uv,
-  vec3,
-} from "three/tsl";
-import { WaterSurface } from "../src/game/water-surface";
-import init, { RenderLab } from "../src/generated/engine/engine.js";
-import wasmUrl from "../src/generated/engine/engine_bg.wasm?url";
+// `?freeze=<seconds>` pins the effect/water clock for screenshots (the references use
+// 1.25).
+import type { RenderLab } from "../src/generated/engine-labs/engine.js";
+import { compareImages, loadReference, pixels } from "./lab-references";
+import { loadLabsEngine } from "./labs-engine";
 
 type Vec3 = [number, number, number];
 interface TextureSpec {
@@ -421,12 +409,6 @@ const SCENE = {
     },
   ] as ObjectSpec[],
 };
-
-const status = document.querySelector<HTMLElement>("#status")!;
-const statsView = document.querySelector<HTMLElement>("#stats")!;
-const rustCanvas = document.querySelector<HTMLCanvasElement>("#rust")!;
-const threeCanvas = document.querySelector<HTMLCanvasElement>("#three")!;
-const diffCanvas = document.querySelector<HTMLCanvasElement>("#diff")!;
 const base = import.meta.env.BASE_URL;
 const params = new URLSearchParams(location.search);
 const frozen = params.has("freeze") ? Number(params.get("freeze")) : undefined;
@@ -453,274 +435,35 @@ function leafPixels(): Uint8Array {
 }
 const LEAF = leafPixels();
 
-// ------------------------------------------------------------ Three.js side
+const status = document.querySelector<HTMLElement>("#status")!;
+const statsView = document.querySelector<HTMLElement>("#stats")!;
+const rustCanvas = document.querySelector<HTMLCanvasElement>("#rust")!;
+const referenceCanvas = document.querySelector<HTMLCanvasElement>("#reference")!;
+const diffCanvas = document.querySelector<HTMLCanvasElement>("#diff")!;
 
-const labTime = uniform(0);
-const loads: Promise<unknown>[] = [];
-const textureCache = new Map<string, THREE.Texture>();
+/** The reference poses: camera `[position, target]` and drawing-buffer size. */
+const POSES = {
+  default: { camera: [SCENE.camera.position, SCENE.camera.target], size: [640, 400] },
+  overhead: {
+    camera: [
+      [0, 32.32, 24.48],
+      [0, 0.7, 0],
+    ],
+    size: [640, 400],
+  },
+  close: {
+    camera: [
+      [-3, 3.2, 21],
+      [0, 1.2, 0],
+    ],
+    size: [640, 400],
+  },
+  resized: { camera: [SCENE.camera.position, SCENE.camera.target], size: [800, 500] },
+} as const satisfies Record<string, { camera: readonly [Vec3, Vec3]; size: readonly number[] }>;
+type Pose = keyof typeof POSES;
 
-function threeTexture(spec: TextureSpec): THREE.Texture {
-  const key = JSON.stringify(spec);
-  let texture = textureCache.get(key);
-  if (texture) return texture;
-  if (spec.generated) {
-    texture = new THREE.DataTexture(LEAF, 64, 64);
-    texture.flipY = true;
-    texture.generateMipmaps = true;
-    texture.needsUpdate = true;
-  } else {
-    const loaded = new THREE.TextureLoader().loadAsync(`${base}${spec.path}`);
-    texture = new THREE.Texture();
-    const target = texture;
-    loads.push(
-      loaded.then((image) => {
-        target.image = image.image;
-        target.needsUpdate = true;
-      }),
-    );
-  }
-  const wrap =
-    spec.wrap === "clamp"
-      ? THREE.ClampToEdgeWrapping
-      : spec.wrap === "mirror"
-        ? THREE.MirroredRepeatWrapping
-        : THREE.RepeatWrapping;
-  texture.wrapS = texture.wrapT = wrap;
-  texture.repeat.set(...(spec.repeat ?? [1, 1]));
-  texture.colorSpace = spec.srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = spec.anisotropy ?? 1;
-  if (!spec.generated) {
-    texture.flipY = spec.flipY ?? true;
-  }
-  textureCache.set(key, texture);
-  return texture;
-}
-
-function threeGeometry(spec: GeometrySpec): THREE.BufferGeometry {
-  switch (spec.type) {
-    case "box":
-      return new THREE.BoxGeometry(spec.width, spec.height, spec.depth);
-    case "sphere":
-      return new THREE.SphereGeometry(spec.radius, spec.widthSegments, spec.heightSegments);
-    case "plane":
-      return new THREE.PlaneGeometry(
-        spec.width,
-        spec.height,
-        spec.widthSegments,
-        spec.heightSegments,
-      );
-    case "ground": {
-      // createArenaFloor("dry-grass") and groundUVs().
-      const segments = Math.max(1, Math.round(spec.extent / 2.5));
-      const geometry = new THREE.PlaneGeometry(
-        spec.extent,
-        spec.extent,
-        segments,
-        segments,
-      ).rotateX(-Math.PI / 2);
-      const positions = geometry.getAttribute("position");
-      const uvs = geometry.getAttribute("uv");
-      const colors: number[] = [];
-      for (let i = 0; i < positions.count; i++) {
-        const x = positions.getX(i);
-        const z = positions.getZ(i);
-        uvs.setXY(i, x / 8, z / 8);
-        const patch =
-          0.5 + 0.25 * Math.sin(x * 0.18 + z * 0.09) + 0.25 * Math.sin(z * 0.22 - x * 0.1);
-        colors.push(0.68 + patch * 0.28, 0.83 + patch * 0.14, 0.42 + patch * 0.36);
-      }
-      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-      return geometry;
-    }
-  }
-}
-
-function threeMaterial(spec: MaterialSpec): THREE.Material {
-  const common = {
-    color: spec.color,
-    map: spec.map ? threeTexture(spec.map) : null,
-    vertexColors: spec.vertexColors ?? false,
-    transparent: spec.transparent ?? false,
-    opacity: spec.opacity ?? 1,
-    alphaTest: spec.alphaTest ?? 0,
-    alphaToCoverage: spec.alphaToCoverage ?? false,
-    side:
-      spec.side === "double"
-        ? THREE.DoubleSide
-        : spec.side === "back"
-          ? THREE.BackSide
-          : THREE.FrontSide,
-    blending: spec.blending === "additive" ? THREE.AdditiveBlending : THREE.NormalBlending,
-    depthWrite: spec.depthWrite ?? true,
-  };
-  if (spec.shading === "basic") {
-    return new THREE.MeshBasicNodeMaterial(common);
-  }
-  const material = new THREE.MeshStandardNodeMaterial({
-    ...common,
-    roughness: spec.roughness ?? 1,
-    metalness: spec.metalness ?? 0,
-    emissive: spec.emissive ?? 0,
-    emissiveIntensity: spec.emissiveIntensity ?? 1,
-    flatShading: spec.flatShading ?? false,
-    emissiveMap: spec.emissiveMap ? threeTexture(spec.emissiveMap) : null,
-    bumpMap: spec.bumpMap ? threeTexture(spec.bumpMap) : null,
-    bumpScale: spec.bumpScale ?? 1,
-  });
-  if (spec.polygonOffset) {
-    material.polygonOffset = true;
-    [material.polygonOffsetFactor, material.polygonOffsetUnits] = spec.polygonOffset;
-  }
-  const effect = spec.effect;
-  if (effect?.name === "wave") {
-    // TSL twin of crates/render/src/shaders/effects/wave.wgsl.
-    const [amplitude, wavelength, speed] = effect.params;
-    const k = (2 * Math.PI) / wavelength;
-    material.positionNode = Fn(() => {
-      const phase = positionLocal.x.mul(k).sub(labTime.mul(speed));
-      const weight = uv().x.clamp(0, 1);
-      const slope = weight.mul(cos(phase)).mul(amplitude * k);
-      normalLocal.assign(normalize(normalLocal.add(vec3(slope.negate().mul(normalLocal.z), 0, 0))));
-      return positionLocal.add(vec3(0, 0, sin(phase).mul(amplitude).mul(weight)));
-    })();
-  } else if (effect?.name === "pulse") {
-    // TSL twin of effects/pulse.wgsl.
-    const [r, g, b, speed, frequency, minimum] = effect.params;
-    const band = sin(positionWorld.y.mul(frequency).sub(labTime.mul(speed)))
-      .mul(0.5)
-      .add(0.5);
-    material.emissiveNode = materialEmissive.add(vec3(r, g, b).mul(band.mul(band)));
-    material.opacityNode = materialOpacity.mul(mix(minimum, 1, band));
-  }
-  return material;
-}
-
-function euler(rotation: Vec3 | undefined): THREE.Euler {
-  return new THREE.Euler(...(rotation ?? [0, 0, 0]));
-}
-
-async function createThree() {
-  const renderer = new THREE.WebGPURenderer({ canvas: threeCanvas, antialias: true });
-  await renderer.init();
-  renderer.setPixelRatio(1);
-  renderer.setSize(threeCanvas.width, threeCanvas.height, false);
-  // presentation.ts
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = SCENE.exposure;
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(SCENE.background);
-  scene.fog = new THREE.Fog(SCENE.fog.color, SCENE.fog.near, SCENE.fog.far);
-  // createLighting()
-  const fill = new THREE.HemisphereLight(
-    SCENE.hemisphere.sky,
-    SCENE.hemisphere.ground,
-    SCENE.hemisphere.intensity,
-  );
-  scene.add(fill);
-  const sun = new THREE.DirectionalLight(SCENE.sun.color, SCENE.sun.intensity);
-  sun.position.set(...SCENE.sun.position);
-  sun.target.position.set(...SCENE.sun.target);
-  scene.add(sun.target);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(SCENE.shadow.mapSize, SCENE.shadow.mapSize);
-  const shadowCamera = sun.shadow.camera;
-  shadowCamera.left = shadowCamera.bottom = -SCENE.shadow.half;
-  shadowCamera.right = shadowCamera.top = SCENE.shadow.half;
-  shadowCamera.near = SCENE.shadow.near;
-  shadowCamera.far = SCENE.shadow.near + SCENE.shadow.depth;
-  shadowCamera.updateProjectionMatrix();
-  sun.shadow.normalBias = SCENE.shadow.normalBias;
-  sun.shadow.bias = SCENE.shadow.bias;
-  scene.add(sun);
-  const point = SCENE.pointLight;
-  const flash = new THREE.PointLight(point.color, point.intensity, point.distance, point.decay);
-  flash.position.set(...point.position);
-  scene.add(flash);
-  const byName = new Map<string, THREE.Object3D[]>();
-  function build(object: ObjectSpec): THREE.Mesh {
-    const geometry = threeGeometry(object.geometry);
-    const material = threeMaterial(object.material);
-    let mesh: THREE.Mesh;
-    if (object.instances) {
-      const instanced = new THREE.InstancedMesh(geometry, material, object.instances.length);
-      object.instances.forEach((offset, i) =>
-        instanced.setMatrixAt(i, new THREE.Matrix4().makeTranslation(...offset)),
-      );
-      mesh = instanced;
-    } else {
-      mesh = new THREE.Mesh(geometry, material);
-    }
-    mesh.position.set(...object.position);
-    mesh.rotation.copy(euler(object.rotation));
-    mesh.castShadow = object.castShadow ?? false;
-    mesh.receiveShadow = object.receiveShadow ?? false;
-    mesh.name = object.name;
-    for (const child of object.children ?? []) {
-      mesh.add(build(child));
-    }
-    return mesh;
-  }
-  for (const object of SCENE.objects) {
-    const mesh = build(object);
-    const copies = [mesh];
-    for (const offset of object.copies ?? []) {
-      const copy = mesh.clone();
-      copy.position.add(new THREE.Vector3(...offset));
-      copies.push(copy);
-    }
-    byName.set(object.name, copies);
-    scene.add(...copies);
-  }
-  const waterSpec = SCENE.water;
-  const water = new WaterSurface(
-    new THREE.PlaneGeometry(waterSpec.width, waterSpec.depth),
-    "harbor",
-    waterSpec.height,
-  );
-  water.position.x = waterSpec.center[0];
-  water.position.z = waterSpec.center[1];
-  scene.add(water);
-  const camera = new THREE.PerspectiveCamera(
-    SCENE.camera.fov,
-    threeCanvas.width / threeCanvas.height,
-    SCENE.camera.near,
-    SCENE.camera.far,
-  );
-  camera.position.set(...SCENE.camera.position);
-  camera.lookAt(...SCENE.camera.target);
-  await Promise.all(loads);
-  return {
-    renderer,
-    frame(time: number) {
-      labTime.value = time;
-      water.update(time);
-      renderer.render(scene, camera);
-    },
-    setCamera(position: Vec3, target: Vec3) {
-      camera.position.set(...position);
-      camera.lookAt(...target);
-    },
-    poseJoint(name: string, copy: number, joint: string, yaw: number) {
-      const node = byName.get(name)?.[copy]?.getObjectByName(joint);
-      if (node) node.rotation.y += yaw;
-    },
-    resize(width: number, height: number) {
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-    },
-  };
-}
-
-// ------------------------------------------------------------ Rust side
-
-async function createRust() {
-  await init({ module_or_path: wasmUrl });
+async function createRust(): Promise<RenderLab> {
+  const { RenderLab } = await loadLabsEngine();
   const lab = await RenderLab.create(rustCanvas, base);
   lab.set_generated_texture("lab-leaf", 64, 64, LEAF);
   lab.load_scene(JSON.stringify(SCENE));
@@ -746,71 +489,47 @@ async function prepareRust(lab: RenderLab): Promise<void> {
   lab.warm_up();
 }
 
-function pixels(canvas: HTMLCanvasElement): ImageData {
-  const copy = document.createElement("canvas");
-  copy.width = canvas.width;
-  copy.height = canvas.height;
-  const context = copy.getContext("2d", { willReadFrequently: true })!;
-  context.drawImage(canvas, 0, 0);
-  return context.getImageData(0, 0, canvas.width, canvas.height);
-}
-
 async function main() {
   if (!navigator.gpu) throw new Error("WebGPU is required.");
-  const [rust, three] = await Promise.all([createRust(), createThree()]);
+  const rust = await createRust();
   await prepareRust(rust);
   let time = frozen ?? 0;
-  const start = performance.now();
-  function drawBoth(t: number) {
-    rust.frame(t);
-    three.frame(t);
+  let pose: Pose = "default";
+  const references = new Map<Pose, ImageData | undefined>();
+  for (const name of Object.keys(POSES) as Pose[]) {
+    references.set(name, await loadReference(`render-${name}`));
   }
-  /** Draw both at the same time and diff them in the same task. */
-  function compare(t = time) {
-    drawBoth(t);
-    const a = pixels(rustCanvas);
-    const b = pixels(threeCanvas);
-    const diff = new ImageData(a.width, a.height);
-    const grid = 4;
-    const cells = Array.from({ length: grid * grid }, () => ({ sum: 0, count: 0 }));
-    let sum = 0;
-    let max = 0;
-    const mean = [
-      [0, 0, 0],
-      [0, 0, 0],
-    ];
-    for (let i = 0; i < a.data.length; i += 4) {
-      let pixel = 0;
-      for (let c = 0; c < 3; c++) {
-        const d = Math.abs(a.data[i + c] - b.data[i + c]);
-        pixel += d;
-        mean[0][c] += a.data[i + c];
-        mean[1][c] += b.data[i + c];
-        diff.data[i + c] = Math.min(255, d * 4);
-      }
-      diff.data[i + 3] = 255;
-      pixel /= 3;
-      sum += pixel;
-      max = Math.max(max, pixel);
-      const p = i / 4;
-      const x = Math.floor(((p % a.width) / a.width) * grid);
-      const y = Math.floor((Math.floor(p / a.width) / a.height) * grid);
-      cells[y * grid + x].sum += pixel;
-      cells[y * grid + x].count++;
+  function resize(width: number, height: number) {
+    for (const canvas of [rustCanvas, referenceCanvas, diffCanvas]) {
+      canvas.width = width;
+      canvas.height = height;
     }
-    diffCanvas.getContext("2d")!.putImageData(diff, 0, 0);
-    const count = a.data.length / 4;
-    return {
-      time: t,
-      meanAbsDiff: sum / count,
-      maxAbsDiff: max,
-      rustMeanRgb: mean[0].map((v) => v / count),
-      threeMeanRgb: mean[1].map((v) => v / count),
-      cellMeanDiff: cells.map((cell) => Math.round((cell.sum / cell.count) * 10) / 10),
-    };
+    rust.resize(width, height);
+  }
+  /** Draw and diff against the pose's reference in the same task. */
+  function compare(t = time) {
+    rust.frame(t);
+    const reference = references.get(pose);
+    const image = pixels(rustCanvas);
+    if (reference && reference.width === image.width && reference.height === image.height) {
+      referenceCanvas.getContext("2d")!.putImageData(reference, 0, 0);
+    } else {
+      referenceCanvas
+        .getContext("2d")!
+        .clearRect(0, 0, referenceCanvas.width, referenceCanvas.height);
+    }
+    return { time: t, pose, ...compareImages(image, reference, diffCanvas) };
   }
   const api = {
     compare,
+    /** The reference poses, `default`, `overhead`, `close` and `resized` (800×500). */
+    usePose(name: Pose) {
+      pose = name;
+      const { camera, size } = POSES[name];
+      resize(size[0], size[1]);
+      api.setCamera(camera[0], camera[1]);
+      return compare();
+    },
     stats: () => JSON.parse(rust.stats()),
     error: () => rust.error() ?? null,
     textureFailures: () => rust.texture_failures(),
@@ -820,37 +539,32 @@ async function main() {
       rust.frame(time);
       return api.stats();
     },
-    setCamera(position: Vec3, target: Vec3) {
+    setCamera(position: readonly number[], target: readonly number[]) {
       rust.set_camera(new Float32Array(position), new Float32Array(target));
-      three.setCamera(position, target);
     },
     setOpacity: (name: string, opacity: number) => rust.set_opacity(name, opacity),
-    /** Traverse a joint (for example a tank turret) in both renderers. */
+    /** Traverse a joint (for example a tank turret). */
     poseJoint(name: string, copy: number, joint: string, yaw: number) {
       if (!rust.pose_joint(name, copy, joint, yaw)) throw new Error(`No joint ${name}/${joint}`);
-      three.poseJoint(name, copy, joint, yaw);
     },
-    /** Resize both drawing buffers (the CSS size stays fixed). */
-    resize(width: number, height: number) {
-      for (const canvas of [rustCanvas, threeCanvas, diffCanvas]) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      rust.resize(width, height);
-      three.resize(width, height);
-    },
+    /** Resize the drawing buffers (the CSS size stays fixed); no reference matches. */
+    resize,
     pick: (x: number, y: number, height: number) => Array.from(rust.pick(x, y, height)),
   };
   Object.assign(window, { renderLab: api });
   const report = compare();
   statsView.textContent = JSON.stringify({ ...report, renderer: api.stats() }, null, 1);
   document.body.dataset.state = "ready";
-  status.textContent = frozen === undefined ? "Live" : `Frozen at t = ${frozen} s`;
+  const referenced = [...references.values()].some(Boolean)
+    ? "compared with the Three.js references"
+    : "no references found: the difference stays blank";
+  status.textContent = `${frozen === undefined ? "Live" : `Frozen at t = ${frozen} s`}; ${referenced}`;
   if (frozen === undefined) {
+    const start = performance.now();
     const loop = (now: number) => {
       time = (now - start) / 1000;
       try {
-        drawBoth(time);
+        rust.frame(time);
         requestAnimationFrame(loop);
       } catch (error) {
         fail(error);

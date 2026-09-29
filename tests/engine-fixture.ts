@@ -4,6 +4,7 @@
 // starting with PASS or FAIL, which `scripts/fixtures-check.mjs` reads.
 import { createGame, type Game } from "../src/engine";
 import type { GameOptions } from "../src/game/game-options";
+import { nextPrepareStep } from "../src/game/task-yield";
 
 export type { Game };
 
@@ -34,8 +35,14 @@ export async function fixtureGame(canvas: HTMLCanvasElement, config: FixtureConf
 
 /** Compile the arena's pipelines and wait for its textures, yielding between steps. */
 export async function prepare(game: Game): Promise<void> {
-  while (!game.prepare_step(PREPARE_BUDGET)[3]) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  let gpuPending = false;
+  for (;;) {
+    await nextPrepareStep(gpuPending);
+    const [, , , done, pending] = game.prepare_step(PREPARE_BUDGET);
+    if (done) {
+      return;
+    }
+    gpuPending = pending === 1;
   }
 }
 

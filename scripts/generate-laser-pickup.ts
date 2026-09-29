@@ -1,7 +1,7 @@
 import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
-import { PICKUPS } from "../src/game/data";
+import { PICKUPS } from "./asset-data";
 
 // Saved pictogram: a defensive emitter zaps an approaching shell.
 const canvas = createCanvas(256, 256),

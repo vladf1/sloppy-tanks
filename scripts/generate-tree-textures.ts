@@ -1,7 +1,7 @@
 import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
-import { Random } from "../src/game/data";
+import { Random } from "./asset-data";
 
 // Small, deterministic surface patterns. Runtime loads only these saved 256px WebP images.
 const output = new URL("../public/textures/trees/", import.meta.url);

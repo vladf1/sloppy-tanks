@@ -1,13 +1,12 @@
 import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
-import { AMMO_ORDER, isSpecialAmmo } from "../src/game/ammunition";
-import { WEAPONS } from "../src/game/data";
+import { SPECIAL_AMMO, WEAPONS } from "./asset-data";
 
 // Original vector pictograms rasterized offline; the game only loads these WebP images.
 const output = new URL("../assets/texture-sources/pickups/", import.meta.url);
 await mkdir(output, { recursive: true });
-for (const kind of AMMO_ORDER.filter(isSpecialAmmo)) {
+for (const kind of SPECIAL_AMMO) {
   const canvas = createCanvas(256, 256),
     c = canvas.getContext("2d");
   const color = `#${WEAPONS[kind].color.toString(16).padStart(6, "0")}`;

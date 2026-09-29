@@ -200,6 +200,9 @@ pub struct SunSpec {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowSpec {
+    /// False draws without the sun's shadow map (the tank previews' lighting).
+    #[serde(default = "yes")]
+    pub enabled: bool,
     pub map_size: u32,
     pub half: f32,
     pub near: f32,

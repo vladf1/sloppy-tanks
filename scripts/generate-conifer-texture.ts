@@ -1,7 +1,7 @@
 import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { writeFile } from "node:fs/promises";
-import { Random } from "../src/game/data";
+import { Random } from "./asset-data";
 
 // One reusable, transparent needle spray. Alpha testing keeps foliage in the opaque pass.
 const size = 512;

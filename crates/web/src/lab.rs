@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3};
+use sloppy_core::models::tank_model;
 use sloppy_core::scene::Node;
+use sloppy_core::sim::{Team, VehicleKind};
 use sloppy_render::camera::{PerspectiveCamera, ShadowCamera};
 use sloppy_render::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, RendererOptions,
@@ -68,7 +70,7 @@ impl RenderLab {
         });
         let sun = Vec3::from(spec.sun.position);
         self.renderer.set_sun_shadow(SunShadow {
-            enabled: true,
+            enabled: spec.shadow.enabled,
             map_size: spec.shadow.map_size,
             camera: ShadowCamera::square(
                 sun,
@@ -202,6 +204,48 @@ impl RenderLab {
         self.renderer
             .set_node_transform(*id, node, Some(rest * Mat4::from_rotation_y(yaw)));
         true
+    }
+
+    /// Place the game's model of a vehicle (`kind` "scout", "balanced", "heavy" or
+    /// "humvee"; `team` 0 blue, 1 red) as the object `name`, turned `yaw` about Y.
+    /// It joins the scene before `prepare_step`, like the spec's objects.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_vehicle(
+        &mut self,
+        name: &str,
+        kind: &str,
+        team: u8,
+        x: f32,
+        y: f32,
+        z: f32,
+        yaw: f32,
+    ) -> Result<(), JsValue> {
+        let kind: VehicleKind = serde_json::from_value(serde_json::Value::from(kind))
+            .map_err(|error| js_error(error.to_string()))?;
+        // The model root's own transform (the chassis scale) moves to the instance,
+        // as for the spec's objects.
+        let mut root = (*tank_model(kind, Team::from_index(usize::from(team)))).clone();
+        let world =
+            Mat4::from_rotation_translation(glam::Quat::from_rotation_y(yaw), Vec3::new(x, y, z))
+                * root.local_matrix().as_mat4();
+        root.position = glam::DVec3::ZERO;
+        root.rotation = glam::DQuat::IDENTITY;
+        root.scale = glam::DVec3::ONE;
+        let model = self.renderer.add_model(&root, Lifetime::Round);
+        let instance = self
+            .renderer
+            .add_instance(model, world, Lifetime::Round)
+            .ok_or_else(|| js_error("vehicle model"))?;
+        self.objects.push((name.to_owned(), instance));
+        self.models.push((instance, model));
+        Ok(())
+    }
+
+    /// Replace the clear color without reloading the scene.
+    pub fn set_background(&mut self, color: u32) {
+        let mut environment = self.renderer.environment().clone();
+        environment.background = color;
+        self.renderer.set_environment(environment);
     }
 
     pub fn set_visible(&mut self, name: &str, visible: bool) {

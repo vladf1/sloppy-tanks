@@ -1,6 +1,7 @@
 // Headless check of the effects lab: startup and warm-up, the frozen side-by-side
-// scene, repeated triggers (pools stay bounded, no late pipelines), reset and
-// GPU/console errors. Needs the engine built (`pnpm run wasm`) and a dev server:
+// scene against the captured Three.js references (when present), repeated triggers
+// (pools stay bounded, no late pipelines), reset and
+// GPU/console errors. Needs the labs engine (`pnpm run wasm -- --labs`) and a dev server:
 //   pnpm exec vite --host 127.0.0.1 --port 5194 --strictPort
 //   EFFECTS_LAB_URL=http://127.0.0.1:5194/sloppy-tanks/tools/effects-lab.html node tools/effects-lab-check.mjs
 // Screenshots and the report go to artifacts/performance/effects-lab/.
@@ -18,8 +19,19 @@ const { browser, page, errors } = await launchGame({
   consoleErrors: true,
 });
 const report = {};
+/** The effects' cosmetic randomness differs from the Three side's, so the references
+ * match only overall: the last calibration measured 1.9–2.1 (4.2 in the close-up). */
+const tolerance = Number(process.env.EFFECTS_LAB_TOLERANCE ?? 4);
+const within = (comparison, name) => {
+  if (comparison.reference) {
+    assert.ok(
+      comparison.meanAbsDiff <= tolerance,
+      `${name}: mean |Δ| ${comparison.meanAbsDiff} exceeds ${tolerance} against the reference`,
+    );
+  }
+};
 const shoot = async (name) => {
-  for (const id of ["rust", "three", "diff"]) {
+  for (const id of ["rust", "reference", "diff"]) {
     await page.locator(`#${id}`).screenshot({ path: `${output}${name}-${id}.png` });
   }
 };
@@ -43,10 +55,10 @@ try {
     await shoot(name);
     await page.screenshot({ path: `${output}${name}-page.png` });
     assert.equal(report[name].stats.latePipelines, 0, "warm-up compiled every effect");
+    within(report[name].comparison, name);
   }
   // A close view of the blasts.
-  await page.evaluate(() => window.effectsLab.setCamera([0, 7, 17], [0, 1, 5]));
-  report.close = await page.evaluate(() => window.effectsLab.compare());
+  report.close = await page.evaluate(() => window.effectsLab.closeUp());
   await shoot("close");
   // Keep the script running through several periods: pools stay bounded.
   report.long = await page.evaluate(() => window.effectsLab.advance(20));
@@ -89,4 +101,8 @@ try {
   await writeFile(`${output}report.json`, JSON.stringify(report, null, 1));
   await browser.close();
 }
-console.log(`effects lab ok: ${output}`);
+const error = (comparison) =>
+  comparison.reference ? comparison.meanAbsDiff.toFixed(2) : "no reference";
+console.log(
+  `effects lab ok: mean |Δ| vs Three.js village ${error(report.village.comparison)}, quarry ${error(report.quarry.comparison)}, close-up ${error(report.close)}; ${output}`,
+);

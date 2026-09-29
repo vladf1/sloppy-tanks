@@ -8,7 +8,7 @@ import {
   PICKUP_ATLAS_STRIDE,
   PICKUP_ATLAS_TILES,
   PICKUP_ICON_SIZE,
-} from "../src/game/pickup-atlas";
+} from "./asset-data";
 
 // Pack existing, lossless artwork offline. Extrude edge pixels into every gutter
 // so filtering/mipmaps do not sample the neighboring pickup's icon.

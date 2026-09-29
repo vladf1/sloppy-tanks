@@ -1,9 +1,13 @@
-// Headless check of the render lab: startup, warm-up, the Rust/Three.js pixel
-// comparison, repeated scene reloads (resources must not grow), picking, and
-// GPU/console errors. Needs the engine built (`pnpm run wasm`) and a dev server:
+// Headless check of the render lab: startup, warm-up, the comparison with the captured
+// Three.js references (when present), joint overrides, frustum culling, resizing,
+// fading without late pipelines, repeated scene reloads (resources must not grow),
+// picking, and GPU/console errors. Needs the labs engine (`pnpm run wasm -- --labs`)
+// and a dev server:
 //   pnpm exec vite --host 127.0.0.1 --port 5190 --strictPort
 //   RENDER_LAB_URL=http://127.0.0.1:5190/sloppy-tanks/tools/render-lab.html node tools/render-lab-check.mjs
-// Screenshots and the report go to artifacts/performance/render-lab/.
+// Screenshots and the report go to artifacts/performance/render-lab/. With the
+// references, the mean error of each pose must stay within `RENDER_LAB_TOLERANCE`
+// (default 1.0 of 255) of the Three.js frames; the last calibration measured 0.15–0.25.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -11,7 +15,9 @@ import { launchGame } from "../scripts/browser-helpers.mjs";
 
 const url =
   process.env.RENDER_LAB_URL ?? "http://127.0.0.1:5190/sloppy-tanks/tools/render-lab.html";
-const freeze = process.env.RENDER_LAB_TIME ?? "1.25";
+/** The references were captured at this effect/water time. */
+const REFERENCE_TIME = "1.25";
+const tolerance = Number(process.env.RENDER_LAB_TOLERANCE ?? 1);
 const output = fileURLToPath(new URL("../artifacts/performance/render-lab/", import.meta.url));
 await mkdir(output, { recursive: true });
 const { browser, page, errors } = await launchGame({
@@ -19,8 +25,21 @@ const { browser, page, errors } = await launchGame({
   consoleErrors: true,
 });
 const report = {};
+const shoot = async (name) => {
+  for (const id of ["rust", "reference", "diff"]) {
+    await page.locator(`#${id}`).screenshot({ path: `${output}${name}-${id}.png` });
+  }
+};
+const within = (comparison, name) => {
+  if (comparison.reference) {
+    assert.ok(
+      comparison.meanAbsDiff <= tolerance,
+      `${name}: mean |Δ| ${comparison.meanAbsDiff} exceeds ${tolerance} against the reference`,
+    );
+  }
+};
 try {
-  await page.goto(`${url}?freeze=${freeze}`);
+  await page.goto(`${url}?freeze=${REFERENCE_TIME}`);
   await page.waitForFunction(() => ["ready", "error"].includes(document.body.dataset.state), null, {
     timeout: 90000,
   });
@@ -28,37 +47,29 @@ try {
   assert.equal(state, "ready", await page.locator("#status").textContent());
   report.comparison = await page.evaluate(() => window.renderLab.compare());
   report.stats = await page.evaluate(() => window.renderLab.stats());
-  for (const id of ["rust", "three", "diff"]) {
-    await page.locator(`#${id}`).screenshot({ path: `${output}${id}.png` });
-  }
+  within(report.comparison, "default");
+  await shoot("default");
   await page.screenshot({ path: `${output}page.png` });
-  // Joint overrides: turn the second tank's turret in both renderers.
+  // The remaining references were captured with the second tank's turret turned.
   await page.evaluate(() => window.renderLab.poseJoint("tank", 1, "turret", 1.2));
-  // The game's default overhead pose (presentation.ts, zoom 34): shadows and PBR.
-  // Three's harbor water skips its reflection when the view shows no open water
-  // (`waterInView`) and keeps the last one, so compare this pose first.
-  await page.evaluate(() => window.renderLab.setCamera([0, 32.32, 24.48], [0, 0.7, 0]));
-  report.overhead = await page.evaluate(() => window.renderLab.compare());
-  for (const id of ["rust", "three", "diff"]) {
-    await page.locator(`#${id}`).screenshot({ path: `${output}overhead-${id}.png` });
-  }
+  // The game's default overhead pose (zoom 34): shadows and PBR.
+  report.overhead = await page.evaluate(() => window.renderLab.usePose("overhead"));
+  within(report.overhead, "overhead");
+  await shoot("overhead");
   // A close-up of the reflection, fog and effects from lower down.
-  await page.evaluate(() => window.renderLab.setCamera([-3, 3.2, 21], [0, 1.2, 0]));
-  report.closeUp = await page.evaluate(() => window.renderLab.compare());
-  for (const id of ["rust", "three", "diff"]) {
-    await page.locator(`#${id}`).screenshot({ path: `${output}close-${id}.png` });
-  }
+  report.closeUp = await page.evaluate(() => window.renderLab.usePose("close"));
+  within(report.closeUp, "close-up");
+  await shoot("close");
   // Looking away from the scene culls nearly everything.
   await page.evaluate(() => window.renderLab.setCamera([0, 9, 30], [0, 12, 80]));
   await page.evaluate(() => window.renderLab.compare());
   report.culled = await page.evaluate(() => window.renderLab.stats());
   assert.ok(report.culled.drawCalls < report.stats.drawCalls / 2, "frustum culling drops draws");
-  await page.evaluate(() => window.renderLab.setCamera([0, 9, 30], [0, 1.5, 0]));
   // Resizing replaces the attachments; the image stays matched.
-  await page.evaluate(() => window.renderLab.resize(800, 500));
-  report.resized = await page.evaluate(() => window.renderLab.compare());
-  await page.locator("#rust").screenshot({ path: `${output}resized-rust.png` });
-  await page.evaluate(() => window.renderLab.resize(640, 400));
+  report.resized = await page.evaluate(() => window.renderLab.usePose("resized"));
+  within(report.resized, "resized");
+  await shoot("resized");
+  await page.evaluate(() => window.renderLab.usePose("default"));
   // Fading uses the pre-compiled blended variant; no pipeline compiles late.
   await page.evaluate(() => window.renderLab.setOpacity("hull", 0.5));
   await page.evaluate(() => window.renderLab.compare());
@@ -105,9 +116,11 @@ try {
   assert.deepEqual(report.textureFailures, []);
   assert.equal(report.gpuError, null);
   assert.deepEqual(errors, []);
+  const error = (comparison) =>
+    comparison.reference ? comparison.meanAbsDiff.toFixed(2) : "no reference";
   console.log(
-    `PASS: mean |Δ| ${report.comparison.meanAbsDiff.toFixed(2)} (close-up ${report.closeUp.meanAbsDiff.toFixed(2)}), ` +
-      `overhead ${report.overhead.meanAbsDiff.toFixed(2)}, resized ${report.resized.meanAbsDiff.toFixed(2)}; ` +
+    `PASS: mean |Δ| vs Three.js ${error(report.comparison)} (close-up ${error(report.closeUp)}), ` +
+      `overhead ${error(report.overhead)}, resized ${error(report.resized)}; ` +
       `${report.stats.drawCalls} draws (${report.culled.drawCalls} culled view), ${report.stats.pipelines} pipelines. ` +
       `Report: ${output}report.json`,
   );
