@@ -24,38 +24,42 @@ try {
   async function finish(mode, kills) {
     await page.evaluate(
       ({ mode, kills }) => {
-        const debug = window.sloppy;
-        debug.sim.gameMode = mode;
-        debug.start();
-        const sim = debug.sim;
-        sim.elapsed = 300;
-        Object.assign(sim.human, {
+        const { sloppy, engine } = window;
+        engine.setSim({ gameMode: mode });
+        sloppy.start();
+        const humanTeam = sloppy.sim.humanTeam;
+        engine.setHuman({
           kills,
           damageDealt: 2840,
           bestLifeKills: 8,
           highestRank: 3,
           deaths: 3,
         });
-        Object.assign(sim.combatRecord, {
-          lifeStarted: 265,
-          longestLife: 132,
-          busiestMinute: 9,
-          multikill: 4,
-          clutchKills: 3,
-          revengeKills: 2,
-          posthumousKills: 1,
-          mineKills: 3,
-          coverDestroyed: 23,
-          pickups: 14,
-          shots: 112,
-          directHits: 68,
-          damageTaken: 386,
-          shieldAbsorbed: 240,
+        engine.setSim({
+          elapsed: 300,
+          combatRecord: {
+            lifeStarted: 265,
+            longestLife: 132,
+            busiestMinute: 9,
+            multikill: 4,
+            clutchKills: 3,
+            revengeKills: 2,
+            posthumousKills: 1,
+            mineKills: 3,
+            coverDestroyed: 23,
+            pickups: 14,
+            shots: 112,
+            directHits: 68,
+            damageTaken: 386,
+            shieldAbsorbed: 240,
+          },
+          match: {
+            scores: humanTeam === 0 ? [52, 39] : [39, 52],
+            time: 0,
+            winner: humanTeam,
+            phase: "results",
+          },
         });
-        sim.match.scores = sim.humanTeam === 0 ? [52, 39] : [39, 52];
-        sim.match.time = 0;
-        sim.match.winner = sim.humanTeam;
-        sim.match.phase = "results";
       },
       { mode, kills },
     );
@@ -83,9 +87,8 @@ try {
   await open();
   for (const mode of ["team", "solo"]) {
     await page.evaluate((mode) => {
-      const d = window.sloppy;
-      d.sim.gameMode = mode;
-      d.start();
+      window.engine.setSim({ gameMode: mode });
+      window.sloppy.start();
     }, mode);
     await page.keyboard.press("Escape");
     await page.locator("#end-battle").waitFor();
@@ -165,14 +168,16 @@ try {
   assert.match(await page.locator("#time").innerText(), /10:00|9:59/);
   assert.equal(await page.locator("#score0").innerText(), "0");
   await page.evaluate(() => {
-    const s = window.sloppy.sim;
-    s.human.protection = 999;
+    const { sloppy, engine } = window;
+    const game = sloppy.game;
+    const human = engine.state().human;
+    engine.setHuman({ protection: 999 });
     for (let i = 0; i < 55; i++) {
-      const t = s.tanks.find((t) => !t.human && t.alive);
-      t.protection = 0;
-      s.damageTank(t, 9999, s.human.id, s.humanTeam);
-      s.reinforcementDelay = 0;
-      s.reinforceSolo();
+      const t = engine.state().tanks.find((t) => !t.human && t.alive);
+      engine.setTank(t.id, { protection: 0 });
+      game.debug_damage_tank(t.id, 9999, human.id, human.team);
+      engine.setSim({ reinforcementDelay: 0 });
+      game.debug_reinforce();
     }
   });
   await page.waitForFunction(() => document.querySelector("#score0").textContent === "55");
@@ -183,9 +188,7 @@ try {
   const frozen = await page.evaluate(() => window.sloppy.sim.match.time);
   await page.waitForTimeout(200);
   assert.equal(await page.evaluate(() => window.sloppy.sim.match.time), frozen, "pause freezes");
-  await page.evaluate(() => {
-    window.sloppy.sim.match.time = 0.001;
-  });
+  await page.evaluate(() => window.engine.setSim({ match: { time: 0.001 } }));
   await click("#resume");
   await page.waitForFunction(
     () => document.querySelector("#overlay h2")?.textContent === "SURVIVED",
@@ -195,11 +198,12 @@ try {
   await click("#restart");
   await startRound(page);
   await page.evaluate(() => {
-    const d = window.sloppy;
-    d.sim.elapsed = 42;
-    const enemy = d.sim.tanks.find((t) => t.team !== d.sim.human.team);
-    d.sim.human.protection = 0;
-    d.sim.damageTank(d.sim.human, 9999, enemy.id, enemy.team);
+    const { sloppy, engine } = window;
+    engine.setSim({ elapsed: 42 });
+    const { human, tanks } = engine.state();
+    const enemy = tanks.find((t) => t.team !== human.team);
+    engine.setHuman({ protection: 0, shield: 0 });
+    sloppy.game.debug_damage_tank(human.id, 9999, enemy.id, enemy.team);
   });
   await page.locator(".recap-stats").waitFor();
   assert.match(await page.locator(".results h2").innerText(), /TANK DESTROYED/);

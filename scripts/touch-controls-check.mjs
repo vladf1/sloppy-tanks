@@ -67,9 +67,7 @@ try {
   await touch("touchEnd", 3);
   await page.waitForFunction(() => window.sloppy.sim.human.mineCooldown > 0);
   assert.equal((await state()).fire, true, "mine tap does not cancel shooting");
-  await page.evaluate(() => {
-    window.sloppy.sim.human.ammo.rocket = 10;
-  });
+  await page.evaluate(() => window.sloppy.giveAmmo(10));
   const ammo = await center("#ammo-rocket");
   await touch("touchStart", 3, ammo.x, ammo.y);
   await touch("touchEnd", 3);
@@ -86,10 +84,11 @@ try {
   assert.equal(input.aiming, true, "release retains aim");
 
   const zoom = await page.evaluate(() => window.sloppy.view.zoom);
+  // Zoom reaches the engine with the next frame's input.
   await page.locator("#zoom-in").tap();
-  assert.equal(await page.evaluate(() => window.sloppy.view.zoom), zoom - 2);
+  await page.waitForFunction((zoom) => window.sloppy.view.zoom === zoom - 2, zoom);
   await page.locator("#zoom-out").tap();
-  assert.equal(await page.evaluate(() => window.sloppy.view.zoom), zoom);
+  await page.waitForFunction((zoom) => window.sloppy.view.zoom === zoom, zoom);
 
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 55, drive.y);

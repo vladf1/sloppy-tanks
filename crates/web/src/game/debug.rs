@@ -27,7 +27,8 @@
 //! - `debug_step(ticks, moveX, moveZ)`: fixed simulation steps with the human's
 //!   command, without drawing; `debug_render(alpha, dt, overview, camera)` draws one
 //!   frame, from `camera = [px, py, pz, tx, ty, tz]` when given.
-//! - `debug_rebuild_view()`: rebuild every entity view and prepare again.
+//! - `debug_rebuild_view()`: rebuild every entity view and prepare again;
+//!   `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
 //! - `debug_view_json()`: `Presentation::inspect` as JSON; `debug_covers_json()`: the
 //!   simulation's covers.
 //! - `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
@@ -510,6 +511,20 @@ impl Game {
                 .map_err(js_error)?;
         }
         Ok(())
+    }
+
+    /// A world point in the last frame's camera as canvas CSS pixels `[x, y]`, for
+    /// aiming real pointer input at it.
+    pub fn debug_screen_point(&self, x: f32, y: f32, z: f32) -> Vec<f32> {
+        let ndc = self
+            .view
+            .renderer
+            .camera()
+            .project(glam::Vec3::new(x, y, z));
+        vec![
+            (ndc.x + 1.0) * 0.5 * self.client.x,
+            (1.0 - ndc.y) * 0.5 * self.client.y,
+        ]
     }
 
     /// Rebuild every entity view for the current world and prepare it again.

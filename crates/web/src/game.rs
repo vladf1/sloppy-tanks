@@ -834,6 +834,7 @@ impl Game {
             "humanTeam": sim.human_team,
             "humanKind": sim.human_kind,
             "shotsFired": sim.shots_fired,
+            "combatRecord": sim.combat_record,
             "shots": sim.shots.len(),
             "fragments": sim.fragments.len(),
             "bodies": sim.world.bodies.len(),
