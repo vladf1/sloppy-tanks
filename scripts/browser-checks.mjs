@@ -12,7 +12,7 @@ const checks = [
   "hud-feedback-check.mjs",
   "touch-controls-check.mjs",
   "round-recap-check.mjs",
-  "render-bundles-check.mjs",
+  "render-cameras-check.mjs",
   "destruction-check.mjs",
   "fixtures-check.mjs",
   "multiplayer-simulation-check.mjs",
