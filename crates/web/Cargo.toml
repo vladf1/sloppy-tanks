@@ -9,6 +9,11 @@ description = "Browser entry points: the game loop, input commands and network s
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
+# builds leave them out; `pnpm run wasm -- --labs` builds them.
+labs = []
+
 [dependencies]
 sloppy-core.workspace = true
 sloppy-render.workspace = true
