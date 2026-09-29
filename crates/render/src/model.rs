@@ -91,7 +91,9 @@ impl MeshData {
         }
         match &mesh.indices {
             Some(indices) => self.indices.extend(indices.iter().map(|i| base + i)),
-            None => self.indices.extend(base..base + mesh.positions.len() as u32),
+            None => self
+                .indices
+                .extend(base..base + mesh.positions.len() as u32),
         }
     }
 }
@@ -262,7 +264,13 @@ impl<'a> Builder<'a, '_> {
 
     fn add(&mut self, node: usize, drawable: &'a Drawable, transform: DMat4) {
         if drawable.instances.is_some() {
-            self.single.push((node, Pending { drawable, transform }));
+            self.single.push((
+                node,
+                Pending {
+                    drawable,
+                    transform,
+                },
+            ));
             return;
         }
         let (material, painted) = self.draw_material(&drawable.material);
@@ -276,10 +284,22 @@ impl<'a> Builder<'a, '_> {
             frustum_culled: drawable.frustum_culled,
             cell: self.cell(drawable, &transform),
         };
-        self.groups.push(key, Pending { drawable, transform });
+        self.groups.push(
+            key,
+            Pending {
+                drawable,
+                transform,
+            },
+        );
     }
 
-    fn part(&self, node: usize, pending: &Pending, mesh: PartMesh, material: Arc<Material>) -> PreparedPart {
+    fn part(
+        &self,
+        node: usize,
+        pending: &Pending,
+        mesh: PartMesh,
+        material: Arc<Material>,
+    ) -> PreparedPart {
         let drawable = pending.drawable;
         PreparedPart {
             node,
@@ -298,7 +318,12 @@ impl<'a> Builder<'a, '_> {
         let singles = std::mem::take(&mut self.single);
         for (node, pending) in &singles {
             let material = self.interner.intern(&pending.drawable.material);
-            let part = self.part(*node, pending, PartMesh::Shared(pending.drawable.mesh.clone()), material);
+            let part = self.part(
+                *node,
+                pending,
+                PartMesh::Shared(pending.drawable.mesh.clone()),
+                material,
+            );
             self.model.parts.push(part);
         }
         let groups = std::mem::take(&mut self.groups.order);
@@ -307,7 +332,12 @@ impl<'a> Builder<'a, '_> {
                 // A lone part keeps its shared mesh and exact material.
                 let pending = &members[0];
                 let material = self.interner.intern(&pending.drawable.material);
-                let part = self.part(key.node, pending, PartMesh::Shared(pending.drawable.mesh.clone()), material);
+                let part = self.part(
+                    key.node,
+                    pending,
+                    PartMesh::Shared(pending.drawable.mesh.clone()),
+                    material,
+                );
                 self.model.parts.push(part);
                 continue;
             }
@@ -319,11 +349,21 @@ impl<'a> Builder<'a, '_> {
             };
             for pending in &members {
                 let paint = key.painted.then(|| paint_color(&pending.drawable.material));
-                data.append(&pending.drawable.mesh, attributes, Some(&pending.transform.as_mat4()), paint);
+                data.append(
+                    &pending.drawable.mesh,
+                    attributes,
+                    Some(&pending.transform.as_mat4()),
+                    paint,
+                );
             }
             self.model.meshes.push(data.finish());
             let first = &members[0];
-            let mut part = self.part(key.node, first, PartMesh::Owned(self.model.meshes.len() - 1), material);
+            let mut part = self.part(
+                key.node,
+                first,
+                PartMesh::Owned(self.model.meshes.len() - 1),
+                material,
+            );
             part.local = Mat4::IDENTITY;
             self.model.parts.push(part);
         }
@@ -445,7 +485,13 @@ pub fn prepare_scenery(
     for (drawable, world) in all {
         let key = repeat_key(drawable);
         if drawable.instances.is_none() && counts[&key] >= options.instance_threshold {
-            repeated.push(key, Pending { drawable, transform: world });
+            repeated.push(
+                key,
+                Pending {
+                    drawable,
+                    transform: world,
+                },
+            );
         } else {
             builder.add(0, drawable, world);
         }
@@ -497,7 +543,12 @@ mod tests {
 
     fn quad() -> Arc<Mesh> {
         Arc::new(Mesh {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
             normals: vec![[0.0, 0.0, 1.0]; 4],
             uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             indices: Some(vec![0, 1, 2, 0, 2, 3]),
@@ -526,7 +577,11 @@ mod tests {
         });
         let mut root = Node::group("tank");
         let mut hull = Node::group("");
-        hull.children = vec![part(&mesh, &green, 0.0), part(&mesh, &grey, 2.0), part(&mesh, &glass, 4.0)];
+        hull.children = vec![
+            part(&mesh, &green, 0.0),
+            part(&mesh, &grey, 2.0),
+            part(&mesh, &glass, 4.0),
+        ];
         let mut turret = Node::group("turret");
         turret.position = DVec3::new(0.0, 1.5, 0.0);
         turret.rotation = DQuat::from_rotation_y(0.5);
@@ -549,10 +604,15 @@ mod tests {
         // Root: green + grey merge into one painted draw; glass stays alone.
         let root_parts: Vec<_> = model.parts.iter().filter(|p| p.node == 0).collect();
         assert_eq!(root_parts.len(), 2);
-        let merged = root_parts.iter().find(|p| matches!(p.mesh, PartMesh::Owned(_))).unwrap();
+        let merged = root_parts
+            .iter()
+            .find(|p| matches!(p.mesh, PartMesh::Owned(_)))
+            .unwrap();
         assert!(merged.material.vertex_colors);
         assert_eq!(merged.material.color, Color(0xffffff));
-        let PartMesh::Owned(index) = merged.mesh else { unreachable!() };
+        let PartMesh::Owned(index) = merged.mesh else {
+            unreachable!()
+        };
         let data = &model.meshes[index];
         assert_eq!(data.vertices.len(), 8);
         assert_eq!(data.triangle_count(), 4);
@@ -611,11 +671,28 @@ mod tests {
         ]);
         root.children.push(grass);
         let mut interner = MaterialInterner::default();
-        let scenery = prepare_scenery(&root, &mut interner, &no_attributes, SceneryOptions::default());
-        let instanced: Vec<_> = scenery.parts.iter().filter(|p| p.instances.is_some()).collect();
+        let scenery = prepare_scenery(
+            &root,
+            &mut interner,
+            &no_attributes,
+            SceneryOptions::default(),
+        );
+        let instanced: Vec<_> = scenery
+            .parts
+            .iter()
+            .filter(|p| p.instances.is_some())
+            .collect();
         assert_eq!(instanced.len(), 2);
-        assert!(instanced.iter().any(|p| p.instances.as_ref().unwrap().len() == 30));
-        let merged: Vec<_> = scenery.parts.iter().filter(|p| p.instances.is_none()).collect();
+        assert!(
+            instanced
+                .iter()
+                .any(|p| p.instances.as_ref().unwrap().len() == 30)
+        );
+        let merged: Vec<_> = scenery
+            .parts
+            .iter()
+            .filter(|p| p.instances.is_none())
+            .collect();
         // Moss at x 0 and 5 share a cell and merge; x 100 is another cell.
         assert_eq!(merged.len(), 2);
         let vertices: usize = scenery.meshes.iter().map(|m| m.vertices.len()).sum();

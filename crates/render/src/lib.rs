@@ -20,6 +20,6 @@ pub use camera::{Frustum, PerspectiveCamera, Ray, ShadowCamera, Sphere};
 pub use effects::{EffectDefinition, EffectRegistry};
 #[cfg(target_arch = "wasm32")]
 pub use gpu::{
-    Environment, InstanceId, Lifetime, ModelId, PointLight, PrepareProgress, RenderStats,
-    Renderer, RendererOptions, SunShadow, WaterSettings,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, PrepareProgress, RenderStats,
+    Renderer, RendererOptions, SunShadow, WaterSettings, WaterShore,
 };

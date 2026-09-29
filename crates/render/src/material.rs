@@ -128,6 +128,14 @@ impl MaterialInterner {
         self.intern(&Arc::new(material))
     }
 
+    /// Forget materials nobody else holds any more (after a round reset).
+    pub fn retain_used(&mut self) {
+        self.by_hash.retain(|_, bucket| {
+            bucket.retain(|material| Arc::strong_count(material) > 1);
+            !bucket.is_empty()
+        });
+    }
+
     pub fn len(&self) -> usize {
         self.by_hash.values().map(Vec::len).sum()
     }

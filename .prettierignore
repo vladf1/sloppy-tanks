@@ -10,3 +10,4 @@ dist-dev/
 server/dist/
 bots/.wrangler/
 bots/.dev.vars
+src/generated/

@@ -16,6 +16,8 @@ export default tseslint.config(
       "node_modules/**",
       "public/**",
       "scripts/benchmarks/**",
+      "src/generated/**",
+      "target/**",
     ],
   },
   js.configs.recommended,

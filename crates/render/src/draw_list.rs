@@ -110,7 +110,15 @@ impl DrawListBuilder {
         self.pending_records.len() as u32 - 1
     }
 
-    pub fn push(&mut self, view: usize, class: u32, transparent: bool, render_order: i32, depth: f32, record: u32) {
+    pub fn push(
+        &mut self,
+        view: usize,
+        class: u32,
+        transparent: bool,
+        render_order: i32,
+        depth: f32,
+        record: u32,
+    ) {
         let item = Item {
             render_order,
             class,
@@ -216,7 +224,11 @@ mod tests {
     use super::*;
 
     fn record(x: f32) -> InstanceRecord {
-        InstanceRecord::new(&Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)), [1.0; 4], [0.0; 4])
+        InstanceRecord::new(
+            &Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)),
+            [1.0; 4],
+            [0.0; 4],
+        )
     }
 
     #[test]
@@ -233,9 +245,21 @@ mod tests {
         assert_eq!(
             views[MAIN_VIEW].opaque,
             [
-                Draw { class: 1, first_instance: 10, instance_count: 2 },
-                Draw { class: 1, first_instance: 0, instance_count: 500 },
-                Draw { class: 3, first_instance: 12, instance_count: 3 },
+                Draw {
+                    class: 1,
+                    first_instance: 10,
+                    instance_count: 2
+                },
+                Draw {
+                    class: 1,
+                    first_instance: 0,
+                    instance_count: 500
+                },
+                Draw {
+                    class: 3,
+                    first_instance: 12,
+                    instance_count: 3
+                },
             ]
         );
         assert_eq!(views[SHADOW_VIEW].opaque.len(), 2);
@@ -254,7 +278,11 @@ mod tests {
             builder.push(MAIN_VIEW, class, true, order, depth, r);
         }
         builder.finish(0, &mut views);
-        let classes: Vec<_> = views[MAIN_VIEW].transparent.iter().map(|d| d.class).collect();
+        let classes: Vec<_> = views[MAIN_VIEW]
+            .transparent
+            .iter()
+            .map(|d| d.class)
+            .collect();
         assert_eq!(classes, [3, 2, 4, 1]);
         builder.clear();
         builder.finish(0, &mut views);

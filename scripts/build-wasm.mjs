@@ -1,0 +1,42 @@
+// Build the browser engine: release Wasm for `sloppy-web`, then its wasm-bindgen
+// glue into the ignored `src/generated/engine/`. Pages import
+// `src/generated/engine/engine.js` and the binary through Vite's `?url`, and
+// initialize with `init({ module_or_path: wasmUrl })`. Vite does not compile Rust:
+// rerun this after Rust or WGSL edits.
+//
+// Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
+// Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
+// matching the `wasm-bindgen` crate pin.
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const steps = [
+  [
+    "cargo",
+    ["build", "--locked", "--release", "--target", "wasm32-unknown-unknown", "-p", "sloppy-web"],
+  ],
+  [
+    "wasm-bindgen",
+    [
+      "target/wasm32-unknown-unknown/release/sloppy_web.wasm",
+      "--target",
+      "web",
+      "--out-dir",
+      "src/generated/engine",
+      "--out-name",
+      "engine",
+    ],
+  ],
+];
+for (const [command, args] of steps) {
+  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
+  if (result.error) {
+    console.error(
+      `${command}: ${result.error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.129.`,
+    );
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}

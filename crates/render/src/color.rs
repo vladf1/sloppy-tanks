@@ -78,7 +78,10 @@ mod tests {
         let white = aces_filmic(Vec3::splat(1.0), 1.0);
         assert!((white.x - 0.763_397).abs() < 1e-4, "{white:?}");
         let warm = aces_filmic(Vec3::new(0.5, 0.2, 0.1), 1.0);
-        assert!(warm.distance(Vec3::new(0.574_004, 0.255_061, 0.118_743)) < 1e-4, "{warm:?}");
+        assert!(
+            warm.distance(Vec3::new(0.574_004, 0.255_061, 0.118_743)) < 1e-4,
+            "{warm:?}"
+        );
         assert_eq!(aces_filmic(Vec3::ZERO, 1.0), Vec3::ZERO);
         let hot = aces_filmic(Vec3::splat(40.0), 1.0);
         assert!(hot.min_element() > 0.99);

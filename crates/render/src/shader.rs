@@ -50,7 +50,12 @@ pub struct ShaderKey {
 }
 
 impl ShaderKey {
-    pub fn main(material: &Material, effect: u16, extra_attributes: u8, receive_shadow: bool) -> Self {
+    pub fn main(
+        material: &Material,
+        effect: u16,
+        extra_attributes: u8,
+        receive_shadow: bool,
+    ) -> Self {
         let lit = material.shading == Shading::Standard;
         Self {
             pass: Pass::Main,
@@ -91,7 +96,9 @@ impl ShaderKey {
     pub fn shadow_needs_fragment(&self, effects: &EffectRegistry) -> bool {
         self.alpha_test
             || self.shadow_fade
-            || effects.get(self.effect).is_some_and(|e| e.has_surface() && self.alpha_test)
+            || effects
+                .get(self.effect)
+                .is_some_and(|e| e.has_surface() && self.alpha_test)
     }
 }
 

@@ -346,8 +346,10 @@ mod tests {
     #[test]
     fn projection_uses_webgpu_depth_range() {
         let camera = game_camera();
-        let near = camera.project(camera.position + (camera.target - camera.position).normalize() * 0.1);
-        let far = camera.project(camera.position + (camera.target - camera.position).normalize() * 320.0);
+        let near =
+            camera.project(camera.position + (camera.target - camera.position).normalize() * 0.1);
+        let far =
+            camera.project(camera.position + (camera.target - camera.position).normalize() * 320.0);
         assert!(near.z.abs() < 1e-4, "{near:?}");
         assert!((far.z - 1.0).abs() < 1e-4, "{far:?}");
     }
@@ -421,7 +423,11 @@ mod tests {
         let camera = game_camera();
         let (view, projection) = mirror_view(&camera, -2.2).unwrap();
         let eye = view.inverse().w_axis.xyz();
-        let expected = Vec3::new(camera.position.x, -2.0 * 2.2 - camera.position.y, camera.position.z);
+        let expected = Vec3::new(
+            camera.position.x,
+            -2.0 * 2.2 - camera.position.y,
+            camera.position.z,
+        );
         assert!(eye.distance(expected) < 1e-3, "{eye:?}");
         // A point above the water projects inside the depth range; one below it
         // falls behind the oblique near plane.

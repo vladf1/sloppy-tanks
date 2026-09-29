@@ -18,6 +18,7 @@
     "build": "pnpm run typecheck && vite build",
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "node --import tsx scripts/validate.ts",
+    "wasm": "node scripts/build-wasm.mjs",
     "check:browser": "node scripts/browser-checks.mjs",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs && pnpm run generate:pickup-atlas",
     "optimize:textures": "node scripts/optimize-textures.mjs",

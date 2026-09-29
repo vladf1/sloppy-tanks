@@ -81,7 +81,10 @@ impl Default for EffectRegistry {
 impl EffectRegistry {
     /// Register or replace an effect by name; returns its id.
     pub fn register(&mut self, effect: EffectDefinition) -> u16 {
-        assert!(effect.attributes.len() <= 2, "effects read at most two attributes");
+        assert!(
+            effect.attributes.len() <= 2,
+            "effects read at most two attributes"
+        );
         if let Some(index) = self.effects.iter().position(|e| e.name == effect.name) {
             self.effects[index] = effect;
             return index as u16 + 1;
