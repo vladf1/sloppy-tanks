@@ -112,6 +112,8 @@
       let playing = false;
       let completed = false;
       let busy = false;
+      // Set while the checks run and their verdict shows; the readout leaves it alone.
+      let verdict = false;
       let stage = 0;
       let stageTime = 0;
       let accumulator = 0;
@@ -121,6 +123,7 @@
 
       async function playSequence(next, loop = false) {
         completed = false;
+        verdict = false;
         sequence = next;
         looping = loop;
         stage = stageTime = accumulator = 0;
@@ -225,7 +228,7 @@ Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
           }
           if (!busy) {
             draw(game, playing ? dt * Number(speed.value) : 0);
-            if (now - lastReadout > 50 || !playing) {
+            if (!verdict && (now - lastReadout > 50 || !playing)) {
               showMotion();
               lastReadout = now;
             }
@@ -247,6 +250,7 @@ Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
         completed = true;
         accumulator = 0;
         pause.textContent = "Replay";
+        verdict = true;
         output.textContent = "Running…";
         try {
           await runChecks();
