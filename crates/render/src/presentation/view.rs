@@ -905,14 +905,33 @@ impl Presentation {
             self.renderer.await_gpu();
         }
         self.preparation.gpu_finished(self.renderer.gpu_idle());
+        // Nothing to do here but wait for the GPU or the page's bake worker: the page
+        // polls on a timer. A band baked here needs the next step at once.
+        let waiting = compiling > 0 || self.textures.baking_elsewhere();
         Ok(PrepareStatus {
             compiled,
             remaining,
             textures_pending,
             gpu_pending: self.preparation.awaiting_gpu()
-                || (compiled == 0 && compiling > 0 && !self.textures.baking()),
+                || (compiled == 0 && waiting && !self.textures.busy()),
             ready: self.preparation.ready(),
         })
+    }
+
+    /// A generated texture the page should bake off the main thread with the
+    /// engine's `bake_texture`, handed out once (see `generated.rs`).
+    pub fn claim_texture_bake(&mut self) -> Option<&'static str> {
+        self.textures.claim_bake()
+    }
+
+    /// The pixels of a claimed bake; `false` when the key was no longer awaited.
+    pub fn supply_texture(&mut self, key: &str, rgba: Vec<u8>) -> Result<bool, String> {
+        self.textures.supply(&mut self.renderer, key, rgba)
+    }
+
+    /// Bake a claimed texture here after all (the page's worker failed).
+    pub fn release_texture_bake(&mut self, key: &str) {
+        self.textures.release_bake(key);
     }
 
     /// Draw the actual first frames once [`PrepareStatus::ready`], so combat starts

@@ -6,6 +6,7 @@ import { Cockpit } from "../game/cockpit";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
+import { startTextureBake } from "../game/texture-bake";
 import { INPUT, type MatchState as Match } from "../game/engine-api";
 import { NerdStats } from "../game/nerd-stats";
 import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
@@ -437,6 +438,7 @@ export async function startMultiplayer(
       let gpuPending = false;
       for (;;) {
         await nextPrepareStep(gpuPending);
+        startTextureBake(game, wasmUrl);
         const [, , , done, waitingForGpu] = game.prepare_step(PREPARE_BUDGET, performance.now());
         if (done) {
           break;

@@ -1,10 +1,18 @@
 //! Generated textures scenery names by key (`TextureSource::Generated`): the
-//! quarry soil, baked in Rust in row bands so no frame stalls on it, and the
-//! signs and harbor labels, drawn by the browser's Canvas 2D (its fonts) from
-//! `effects_scenery::canvas_texture` and read back as RGBA.
+//! quarry soil, baked in Rust, and the signs and harbor labels, drawn by the
+//! browser's Canvas 2D (its fonts) from `effects_scenery::canvas_texture` and read
+//! back as RGBA.
+//!
+//! The soil takes about 0.6 s of Wasm, so the page claims it
+//! ([`GeneratedTextures::claim_bake`]) and bakes it in a worker running the engine's
+//! `bake_texture` while the main thread builds the arena and its pipelines; the
+//! pixels come back through [`GeneratedTextures::supply`]. A page that claims
+//! nothing (the labs), or whose worker fails, bakes it here in row bands between
+//! preparation steps instead.
 
 use std::collections::HashSet;
 
+use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
 use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_soil, sand_accum};
 use sloppy_core::scene::{Node, TextureRef, TextureSource};
 
@@ -68,12 +76,54 @@ pub struct GeneratedTextures {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     done: HashSet<&'static str>,
     soil: Option<SoilBake>,
+    /// A bake the page runs off the main thread, awaiting [`Self::supply`].
+    elsewhere: Option<&'static str>,
 }
 
 impl GeneratedTextures {
-    /// Whether a band of work remains (the soil bake).
+    /// Whether a band of work remains here (the soil bake).
     pub fn busy(&self) -> bool {
         self.soil.is_some()
+    }
+
+    /// Whether a bake is still in progress, here or in the page's worker (its
+    /// texture is not uploaded yet).
+    pub fn baking(&self) -> bool {
+        self.soil.is_some() || self.elsewhere.is_some()
+    }
+
+    /// Whether only the page's worker is baking.
+    pub fn baking_elsewhere(&self) -> bool {
+        self.elsewhere.is_some() && self.soil.is_none()
+    }
+
+    /// Hand a bake that has not started to the page, which runs `bake_texture(key)`
+    /// off the main thread and returns the pixels through [`Self::supply`].
+    pub fn claim_bake(&mut self) -> Option<&'static str> {
+        if self.elsewhere.is_some() || self.soil.as_ref().is_none_or(|bake| bake.rows > 0) {
+            return None;
+        }
+        self.soil = None;
+        self.elsewhere = Some(QUARRY_SOIL_TEXTURE);
+        self.elsewhere
+    }
+
+    /// Take a claimed bake back (the page's worker failed): bake it here.
+    pub fn release_bake(&mut self, key: &str) {
+        if self.elsewhere == Some(key) {
+            self.elsewhere = None;
+            self.soil = Some(SoilBake::default());
+        }
+    }
+
+    /// The claimed key the page's pixels answer, once; `None` for a key not awaited.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    fn take_supplied(&mut self, key: &str) -> Option<&'static str> {
+        if self.elsewhere == Some(key) {
+            self.elsewhere.take()
+        } else {
+            None
+        }
     }
 }
 
@@ -81,9 +131,7 @@ impl GeneratedTextures {
 mod browser {
     use super::*;
     use crate::gpu::Renderer;
-    use sloppy_core::models::effects_scenery::{
-        CanvasOp, CanvasTexture, QUARRY_SOIL_TEXTURE, canvas_texture,
-    };
+    use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture, canvas_texture};
     use wasm_bindgen::JsCast;
 
     impl GeneratedTextures {
@@ -109,9 +157,23 @@ mod browser {
             }
         }
 
-        /// Whether a soil bake is still in progress (its texture is not uploaded yet).
-        pub fn baking(&self) -> bool {
-            self.soil.is_some()
+        /// Upload the pixels of a claimed bake (RGBA8 rows, top first). Returns
+        /// whether the key was awaited; a stale result is dropped.
+        pub fn supply(
+            &mut self,
+            renderer: &mut Renderer,
+            key: &str,
+            rgba: Vec<u8>,
+        ) -> Result<bool, String> {
+            let size = QUARRY_SOIL_SIZE as u32;
+            if rgba.len() != (size * size * 4) as usize {
+                return Err(format!("{key}: {} bytes baked", rgba.len()));
+            }
+            let Some(key) = self.take_supplied(key) else {
+                return Ok(false);
+            };
+            renderer.set_generated_texture(key, size, size, rgba);
+            Ok(true)
         }
 
         /// Bake one band of pending soil; uploads it once complete.
@@ -192,6 +254,42 @@ mod browser {
 mod tests {
     use super::*;
     use sloppy_core::models::quarry_soil_pixels;
+
+    #[test]
+    fn the_page_claims_a_soil_bake_once_before_it_starts() {
+        let mut textures = GeneratedTextures {
+            soil: Some(SoilBake::default()),
+            ..GeneratedTextures::default()
+        };
+        assert_eq!(textures.claim_bake(), Some(QUARRY_SOIL_TEXTURE));
+        assert!(textures.baking() && textures.baking_elsewhere() && !textures.busy());
+        assert_eq!(textures.claim_bake(), None);
+        assert_eq!(textures.take_supplied("sign"), None);
+        assert_eq!(
+            textures.take_supplied(QUARRY_SOIL_TEXTURE),
+            Some(QUARRY_SOIL_TEXTURE)
+        );
+        assert!(!textures.baking());
+        assert_eq!(
+            textures.take_supplied(QUARRY_SOIL_TEXTURE),
+            None,
+            "supplied once"
+        );
+    }
+
+    #[test]
+    fn a_released_or_started_bake_stays_on_the_main_thread() {
+        let mut textures = GeneratedTextures {
+            soil: Some(SoilBake::default()),
+            ..GeneratedTextures::default()
+        };
+        textures.claim_bake();
+        textures.release_bake(QUARRY_SOIL_TEXTURE);
+        assert!(textures.busy() && !textures.baking_elsewhere());
+        textures.soil.as_mut().unwrap().step(SOIL_ROWS_PER_STEP);
+        assert_eq!(textures.claim_bake(), None, "half-baked here");
+        assert!(GeneratedTextures::default().claim_bake().is_none());
+    }
 
     #[test]
     fn banded_soil_matches_the_whole_bake() {

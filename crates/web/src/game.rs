@@ -379,6 +379,22 @@ impl Game {
         ])
     }
 
+    /// A generated texture to bake off the main thread (`bake_texture(key)` in a
+    /// worker), handed out once; `supply_texture` returns the pixels.
+    pub fn claim_texture_bake(&mut self) -> Option<String> {
+        self.view.claim_texture_bake().map(str::to_owned)
+    }
+
+    /// The pixels of a claimed bake; `false` when the arena no longer waits for them.
+    pub fn supply_texture(&mut self, key: &str, rgba: Vec<u8>) -> Result<bool, JsValue> {
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// Bake a claimed texture on the main thread after all (the worker failed).
+    pub fn release_texture_bake(&mut self, key: &str) {
+        self.view.release_texture_bake(key);
+    }
+
     /// Begin the round: GO, or PLAY AGAIN after results.
     pub fn start(&mut self) {
         if self.sim.match_state.phase == MatchPhase::Results {

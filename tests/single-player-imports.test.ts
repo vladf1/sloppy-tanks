@@ -30,6 +30,7 @@ const SHELL = new Set([
     "start-menu",
     "startup-error",
     "task-yield",
+    "texture-bake",
     "touch-controls",
     "touch-input",
     "touch-mode",

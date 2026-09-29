@@ -26,6 +26,7 @@ const SHELL = new Set([
     "play-modes",
     "round-recap",
     "task-yield",
+    "texture-bake",
     "touch-controls",
     "touch-input",
     "touch-mode",

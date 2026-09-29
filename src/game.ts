@@ -3,7 +3,7 @@
 // browser side: preparing the arena behind Battle Setup, one engine frame per
 // animation frame with the packed raw input, and engine events and HUD state for
 // sound and the DOM.
-import { createGame, type Game } from "./engine";
+import { createGame, engineModule, type Game } from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
 import { Cockpit } from "./game/cockpit";
@@ -22,6 +22,7 @@ import { isExtraLevel, showsExtraLevels } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import type { PreparedGame } from "./game/start-menu";
 import { afterPaint, nextPrepareStep } from "./game/task-yield";
+import { startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
 const HUD_UPDATE_EVERY_FRAMES = 4;
@@ -126,6 +127,7 @@ export async function prepareGame(
         if (inRound || !sameGameOptions(prepared, wanted)) {
           break;
         }
+        startTextureBake(game, engineModule());
         const [compiled, remaining, texturesPending, done, waitingForGpu] =
           game.prepare_step(PREPARE_BUDGET);
         gpuPending = waitingForGpu === 1;

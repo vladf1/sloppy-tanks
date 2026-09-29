@@ -17,6 +17,7 @@ declare global {
 }
 
 let ready: Promise<void> | undefined;
+let compiled: WebAssembly.Module | undefined;
 
 /** Use the page's early download once; a retry after a failure fetches again. */
 function download(): Promise<Response> {
@@ -32,14 +33,27 @@ export function loadEngine(): Promise<void> {
     if (!response.ok) {
       throw new Error(`Engine download failed: HTTP ${response.status}`);
     }
-    // wasm-bindgen compiles a Response with instantiateStreaming when it is served
-    // as application/wasm, and falls back to an ArrayBuffer otherwise.
-    await init({ module_or_path: response });
+    // Compiled here rather than by wasm-bindgen so bake workers can instantiate the
+    // same module (`texture-bake.ts`) without compiling it again.
+    const module =
+      response.headers.get("Content-Type") === "application/wasm"
+        ? await WebAssembly.compileStreaming(response)
+        : await WebAssembly.compile(await response.arrayBuffer());
+    await init({ module_or_path: module });
+    compiled = module;
   })();
   ready.catch(() => {
     ready = undefined;
   });
   return ready;
+}
+
+/** The engine's compiled module once `loadEngine` has finished. */
+export function engineModule(): WebAssembly.Module {
+  if (!compiled) {
+    throw new Error("The engine has not loaded");
+  }
+  return compiled;
 }
 
 /** Create the engine's single-player game on `canvas`. WebGPU failures become
