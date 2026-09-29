@@ -1560,16 +1560,23 @@ impl Renderer {
 
     // ---------------------------------------------------------------- warm-up
 
+    /// Distinct pipelines the registered scene still lacks. Many draw classes share
+    /// one pipeline (every opaque textured mesh, say), so progress counts keys, not
+    /// class slots: the scene's shaders, as the player sees them.
     fn missing_pipelines(&self) -> u32 {
-        self.classes
-            .iter()
-            .flatten()
-            .map(|class| {
-                class.main.is_none() as u32
-                    + (class.back_key.is_some() && class.back.is_none()) as u32
-                    + (class.casters > 0 && class.shadow.is_none()) as u32
-            })
-            .sum()
+        let mut missing = std::collections::HashSet::new();
+        for class in self.classes.iter().flatten() {
+            if class.main.is_none() {
+                missing.insert(class.main_key);
+            }
+            if let (Some(key), None) = (&class.back_key, class.back) {
+                missing.insert(*key);
+            }
+            if class.casters > 0 && class.shadow.is_none() {
+                missing.insert(class.shadow_key);
+            }
+        }
+        missing.len() as u32
     }
 
     /// Create up to `budget` of the pipelines the registered scene needs whose
@@ -1592,6 +1599,12 @@ impl Renderer {
                 if slot.is_none()
                     && let Some(key) = key
                 {
+                    // Another class already made this pipeline: sharing it is free and
+                    // must not use up the budget meant for real compiles.
+                    if let Some(index) = self.pipelines.find(key) {
+                        *slot = Some(index);
+                        continue;
+                    }
                     *slot = self
                         .pipelines
                         .request(device, &self.effects, key, compiled < budget);

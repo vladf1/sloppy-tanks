@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "game-server",
+      "runtimeExecutable": "./target/server/sloppy-server",
+      "runtimeArgs": [],
+      "port": 8787
     }
   ]
 }
