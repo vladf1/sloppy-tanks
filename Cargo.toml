@@ -21,6 +21,17 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
 console_error_panic_hook = "0.1"
+# Native multiplayer server (crates/server).
+tokio = { version = "1.53", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal", "io-util"] }
+hyper = { version = "1.11", features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+sha1_smol = "1"
+getrandom = "0.4"
+libc = "0.2"
 
 # The browser build: small, whole-program optimized, no unwinding tables.
 [profile.release]

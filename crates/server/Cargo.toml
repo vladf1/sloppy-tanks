@@ -10,3 +10,20 @@ description = "Native multiplayer server: HTTP, WebSocket rooms and authoritativ
 sloppy-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+sha1_smol.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+# An independent WebSocket client, so end-to-end tests do not only check the codec
+# against itself.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
