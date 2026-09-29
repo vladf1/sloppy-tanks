@@ -63,6 +63,10 @@ try {
     return { stages, visible: view(wall.id).shown, neighbor: view(neighbor.id).shown };
   });
   assert.deepEqual(results.timber, { stages: [0, 1, 2, 3], visible: false, neighbor: true });
+  // Each stage replaced the wall's model; the drawn frame freed the superseded meshes
+  // instead of keeping them until the round resets.
+  results.unusedMeshes = await page.evaluate(() => window.sloppy.stats().unusedMeshes);
+  assert.equal(results.unusedMeshes, 0, "superseded cover meshes are freed");
   await page.screenshot({ path: `${out}/timber-breach.png` });
 
   // Trees: felling keeps the same model with its stump, hides the crown, and the

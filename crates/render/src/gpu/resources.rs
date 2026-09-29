@@ -186,6 +186,8 @@ pub struct MeshStore {
     slots: Vec<Option<GpuMesh>>,
     free: Vec<u32>,
     shared: HashMap<(usize, Vec<&'static str>), u32>,
+    /// A shared mesh lost its last draw class since the last collection.
+    released: bool,
 }
 
 fn buffer(
@@ -293,6 +295,25 @@ impl MeshStore {
         self.slots[index as usize].as_mut().expect("live mesh")
     }
 
+    /// A draw class stopped using a mesh. Models come and go mid-round (cover
+    /// looks, timber members, falling crowns and boughs), so a mesh that loses its
+    /// last user is freed at the next [`collect_released`](Self::collect_released)
+    /// rather than lingering until the round resets.
+    pub fn remove_user(&mut self, index: u32) {
+        let mesh = self.get_mut(index);
+        mesh.users -= 1;
+        if mesh.users == 0 {
+            self.released = true;
+        }
+    }
+
+    /// Free the shared meshes released since the last call that no caller holds.
+    pub fn collect_released(&mut self) {
+        if std::mem::take(&mut self.released) {
+            self.collect_unused();
+        }
+    }
+
     pub fn release(&mut self, index: u32) {
         if let Some(mesh) = self.slots[index as usize].take() {
             mesh.destroy();
@@ -323,6 +344,21 @@ impl MeshStore {
 
     pub fn count(&self) -> usize {
         self.slots.iter().flatten().count()
+    }
+
+    /// Shared meshes that nothing draws and no caller holds, awaiting collection.
+    pub fn unused(&self) -> usize {
+        self.slots
+            .iter()
+            .flatten()
+            .filter(|mesh| {
+                mesh.users == 0
+                    && mesh
+                        .source
+                        .as_ref()
+                        .is_some_and(|(source, _)| Arc::strong_count(source) == 1)
+            })
+            .count()
     }
 
     pub fn bytes(&self) -> u64 {

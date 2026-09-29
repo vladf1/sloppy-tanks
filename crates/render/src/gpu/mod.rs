@@ -288,6 +288,8 @@ pub struct RenderStats {
     /// Pipelines compiled while drawing (a warm-up miss if nonzero after prepare).
     pub late_pipelines: u32,
     pub meshes: u32,
+    /// Shared meshes nothing draws or holds; zero after a frame.
+    pub unused_meshes: u32,
     pub materials: u32,
     pub textures: u32,
     pub textures_pending: u32,
@@ -979,7 +981,7 @@ impl Renderer {
         if let Some(water) = self.water.take() {
             water.target.destroy();
             water.uniform.destroy();
-            self.meshes.get_mut(water.mesh).users -= 1;
+            self.meshes.remove_user(water.mesh);
             drop(water);
             // The surface mesh is usually rebuilt per map; free it now if unused.
             self.meshes.collect_unused();
@@ -1174,7 +1176,7 @@ impl Renderer {
         if class.users == 0 {
             let class = self.classes[index as usize].take().expect("live class");
             self.class_index.remove(&class.key);
-            self.meshes.get_mut(class.key.mesh).users -= 1;
+            self.meshes.remove_user(class.key.mesh);
             self.materials.get_mut(class.key.material).users -= 1;
             self.free_classes.push(index);
         }
@@ -2277,6 +2279,7 @@ impl Renderer {
             return Err(error);
         }
         self.time = time;
+        self.meshes.collect_released();
         self.update_textures();
         self.upload_static();
         self.update_culls();
@@ -2475,6 +2478,7 @@ impl Renderer {
         stats.pipelines = self.pipelines.count() as u32;
         stats.shader_modules = self.pipelines.module_count() as u32;
         stats.meshes = self.meshes.count() as u32;
+        stats.unused_meshes = self.meshes.unused() as u32;
         stats.materials = self.materials.count() as u32;
         stats.textures = self.textures.count() as u32;
         stats.textures_pending = self.textures.pending() as u32;

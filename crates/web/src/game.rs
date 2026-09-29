@@ -730,6 +730,7 @@ impl Game {
             "shaderModules": render.shader_modules,
             "latePipelines": render.late_pipelines,
             "meshes": render.meshes,
+            "unusedMeshes": render.unused_meshes,
             "materials": render.materials,
             "textures": render.textures,
             "texturesPending": render.textures_pending,
