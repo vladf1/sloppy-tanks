@@ -1,12 +1,18 @@
 import { TouchInput } from "./touch-input";
-import { AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS } from "./ammunition";
-import type { AmmoSelection, VehicleCommand } from "./types";
+import { AMMO_ORDER } from "./ammo-options";
+import { INPUT, type Weapon } from "./engine-api";
 const PRIMARY_BUTTON = 0;
 const SECONDARY_BUTTON = 2;
 const ZOOM_STEP = 2;
 /** Browsers may release a captured pointer on Esc just before delivering the key;
  * a key this soon after the release belongs to the same press. */
 const ESC_RELEASE_WINDOW_MS = 250;
+/** The legacy TypeScript command path throttles the wheel itself; the engine does
+ * the same for the packed `wheelAmmo` slot. */
+const LEGACY_AMMO_SCROLL_INTERVAL_MS = 120;
+
+/** A queued ammo choice: a weapon, or -1/+1 to cycle stocked ammunition. */
+export type AmmoSelection = Weapon | -1 | 1;
 
 const ammoKeys = new Map<string, AmmoSelection>([
   ["KeyQ", -1],
@@ -16,6 +22,13 @@ AMMO_ORDER.forEach((weapon, i) => {
   ammoKeys.set(`Digit${i + 1}`, weapon);
   ammoKeys.set(`Numpad${i + 1}`, weapon);
 });
+
+const held = (keys: Set<string>, ...codes: string[]) =>
+  codes.some((code) => keys.has(code)) ? 1 : 0;
+
+/** Raw keyboard, mouse and touch state for the engine. Continuous input stays held;
+ * one-shot presses (a mine, an ammo choice, a wheel step) queue until `takeInput`
+ * hands them to the engine, which applies them on its next simulation tick. */
 export class Controls {
   readonly touch = new TouchInput();
   keys = new Set<string>();
@@ -25,6 +38,8 @@ export class Controls {
   nx = 0;
   ny = 0;
   ammoSelection: AmmoSelection | undefined;
+  /** Plain wheel since the last frame: -1 previous ammo, +1 next. */
+  wheelAmmo = 0;
   lastAmmoScroll = -Infinity;
   /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
   look = 0;
@@ -160,13 +175,8 @@ export class Controls {
           if (delta) {
             zoom(Math.sign(delta) * ZOOM_STEP);
           }
-        } else if (
-          e.deltaY &&
-          this.active() &&
-          performance.now() - this.lastAmmoScroll >= AMMO_SCROLL_INTERVAL_MS
-        ) {
-          this.ammoSelection = e.deltaY > 0 ? 1 : -1;
-          this.lastAmmoScroll = performance.now();
+        } else if (e.deltaY && this.active()) {
+          this.wheelAmmo = e.deltaY > 0 ? 1 : -1;
         }
       },
       { passive: false },
@@ -242,13 +252,61 @@ export class Controls {
     this.fire = false;
     this.mine = false;
     this.ammoSelection = undefined;
+    this.wheelAmmo = 0;
     this.lastAmmoScroll = -Infinity;
   }
-  /** Consume queued actions once per physics tick; continuous movement/fire stay held. */
-  command(aim: number): VehicleCommand {
-    const mine = this.mine;
-    const ammoSelection = this.active() ? this.ammoSelection : undefined;
+  /** Pack this frame's raw control state into `out` (see `INPUT`) and consume the
+   * one-shot presses. Zoom and the view toggle belong to the caller. */
+  takeInput(out: Float32Array): Float32Array {
+    const touch = this.touch;
+    out[INPUT.up] = held(this.keys, "KeyW", "ArrowUp");
+    out[INPUT.down] = held(this.keys, "KeyS", "ArrowDown");
+    out[INPUT.left] = held(this.keys, "KeyA", "ArrowLeft");
+    out[INPUT.right] = held(this.keys, "KeyD", "ArrowRight");
+    out[INPUT.touchMoveX] = touch.moveX;
+    out[INPUT.touchMoveZ] = touch.moveZ;
+    out[INPUT.fire] = this.fire || touch.fire ? 1 : 0;
+    out[INPUT.mine] = this.mine ? 1 : 0;
+    const selection = this.ammoSelection;
+    out[INPUT.ammoSlot] =
+      typeof selection === "string" ? AMMO_ORDER.indexOf(selection as never) + 1 : 0;
+    out[INPUT.ammoStep] = typeof selection === "number" ? selection : 0;
+    out[INPUT.wheelAmmo] = this.wheelAmmo;
+    out[INPUT.pointerX] = this.nx;
+    out[INPUT.pointerY] = this.ny;
+    out[INPUT.touchAiming] = touch.aiming ? 1 : 0;
+    out[INPUT.touchAimX] = touch.aimX;
+    out[INPUT.touchAimY] = touch.aimY;
+    out[INPUT.aimStickHeld] = touch.pointers.aim === null ? 0 : 1;
+    out[INPUT.lookPixels] = this.takeLook();
+    this.mine = false;
     this.ammoSelection = undefined;
+    this.wheelAmmo = 0;
+    return out;
+  }
+  /** @deprecated The TypeScript multiplayer client's command path, kept until it moves
+   * to the engine; single player sends `takeInput` to the engine instead. */
+  command(aim: number): {
+    moveX: number;
+    moveZ: number;
+    aim: number;
+    fire: boolean;
+    mine: boolean;
+    ammoSelection?: AmmoSelection;
+  } {
+    const mine = this.mine;
+    let ammoSelection = this.active() ? this.ammoSelection : undefined;
+    if (
+      ammoSelection === undefined &&
+      this.wheelAmmo &&
+      this.active() &&
+      performance.now() - this.lastAmmoScroll >= LEGACY_AMMO_SCROLL_INTERVAL_MS
+    ) {
+      ammoSelection = this.wheelAmmo as -1 | 1;
+      this.lastAmmoScroll = performance.now();
+    }
+    this.ammoSelection = undefined;
+    this.wheelAmmo = 0;
     this.mine = false;
     return {
       moveX:

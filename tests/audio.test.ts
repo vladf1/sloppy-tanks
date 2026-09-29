@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AudioSystem, destructionSound } from "../src/game/audio";
-import type { CoverKind } from "../src/game/types";
+import type { CoverKind } from "../src/game/engine-api";
 
 test("cover destruction uses material sounds while drums defer to their blast", () => {
   for (const kind of ["tree", "timber", "cargo"] as const) {

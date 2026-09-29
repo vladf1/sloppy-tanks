@@ -1,7 +1,10 @@
-import type { Presentation } from "./presentation";
-import type { Simulation } from "./simulation";
+import type { EngineStats } from "./engine-api";
 
 export type StatsRow = [label: string, value: string | number, tip: string];
+/** Rows per panel section; Performance is measured by the panel itself. */
+export type StatsSections = Partial<Record<string, StatsRow[]>>;
+
+/** @deprecated The TypeScript multiplayer client's sample, until it moves to the engine. */
 export interface NetworkStatsSample {
   state: {
     tanks: readonly { alive: boolean }[];
@@ -13,6 +16,142 @@ export interface NetworkStatsSample {
   };
   rows: StatsRow[];
 }
+/** @deprecated The Three.js presentation the TypeScript multiplayer client passes. */
+export interface LegacyStatsView {
+  renderer: {
+    info: {
+      render: { drawCalls: number; triangles: number };
+      memory: { geometries: number; textures: number };
+    };
+    getPixelRatio(): number;
+  };
+  particles: { length: number };
+}
+
+const SINGLE_PLAYER_SECTIONS = ["Performance", "Physics", "Render", "Battle", "Configuration"];
+const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configuration"];
+
+/** The single-player panel's rows from the engine's `stats_json`. */
+export function engineStatsSections(stats: EngineStats): StatsSections {
+  return {
+    Physics: [
+      ["Bodies", stats.bodies, "Rigid bodies in the physics world."],
+      [
+        "Fixed / dynamic",
+        `${stats.fixedBodies} / ${stats.dynamicBodies}`,
+        "Static bodies versus simulated bodies.",
+      ],
+      [
+        "Awake / sleeping",
+        `${stats.dynamicBodies - stats.sleepingBodies} / ${stats.sleepingBodies}`,
+        "Simulated bodies awake versus sleeping. Dynamic bodies only.",
+      ],
+      ["Colliders", stats.colliders, "Collision shapes in the physics world."],
+    ],
+    Render: [
+      ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
+      [
+        "Triangles / frame",
+        stats.triangles.toLocaleString(),
+        "Triangles submitted per rendered frame.",
+      ],
+      [
+        "GPU geometries",
+        stats.meshes,
+        "Distinct mesh buffers currently uploaded to the GPU. Changes on map load, not per frame.",
+      ],
+      [
+        "GPU textures",
+        stats.textures,
+        "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
+      ],
+      [
+        "GPU memory",
+        `${(stats.gpuBytes / 1048576).toFixed(1)} MB`,
+        "Estimated GPU memory for meshes, textures, render targets, the shadow map and instances.",
+      ],
+    ],
+    Battle: [
+      ["Tanks", `${stats.tanksAlive} / ${stats.tanks}`, "Tanks alive out of total spawned."],
+      ["Mines", stats.mines, "Live mines on the field."],
+      [
+        "Pickups ready",
+        `${stats.pickupsReady} / ${stats.pickups}`,
+        "Pickups available now out of total placed.",
+      ],
+      ["Projectiles", stats.shots, "Shots currently flying."],
+      [
+        "Visual particles",
+        stats.particles,
+        "Active chips, sparks and leaves. Smoke uses separate buffers.",
+      ],
+      [
+        "Debris bodies",
+        `${stats.fragments} / ${stats.maxFragments}`,
+        "Physics debris pieces alive out of the pool cap.",
+      ],
+      [
+        "Sim time",
+        `${stats.elapsed.toFixed(1)}s`,
+        "Elapsed simulation time since the round started.",
+      ],
+    ],
+    Configuration: [
+      [
+        "Pixel ratio",
+        stats.pixelRatio,
+        "Renderer resolution multiplier, capped from the display pixel ratio.",
+      ],
+    ],
+  };
+}
+
+/** @deprecated Rows for the TypeScript multiplayer client's Three.js presentation. */
+function legacyNetworkSections(sample: NetworkStatsSample, view: LegacyStatsView): StatsSections {
+  const { state } = sample;
+  const info = view.renderer.info;
+  return {
+    Network: sample.rows,
+    Render: [
+      ["Draw calls / frame", info.render.drawCalls, "GPU draw calls issued per rendered frame."],
+      [
+        "Triangles / frame",
+        info.render.triangles.toLocaleString(),
+        "Triangles submitted per rendered frame.",
+      ],
+      ["GPU geometries", info.memory.geometries, "Distinct geometry buffers on the GPU."],
+      ["GPU textures", info.memory.textures, "Textures currently uploaded to the GPU."],
+    ],
+    Battle: [
+      [
+        "Tanks",
+        `${state.tanks.filter((tank) => tank.alive).length} / ${state.tanks.length}`,
+        "Tanks alive out of total spawned.",
+      ],
+      ["Mines", state.mines.length, "Live mines on the field."],
+      [
+        "Pickups ready",
+        `${state.pickups.filter((pickup) => pickup.available).length} / ${state.pickups.length}`,
+        "Pickups available now out of total placed.",
+      ],
+      ["Projectiles", state.shots.length, "Shots currently flying."],
+      ["Visual particles", view.particles.length, "Active chips, sparks and leaves."],
+      [
+        "Debris bodies",
+        state.fragments.length,
+        "Debris pieces in the received scene; server physics allocation is not measured here.",
+      ],
+      [
+        "Sim time",
+        `${state.elapsed.toFixed(1)}s`,
+        "Elapsed simulation time since the round started.",
+      ],
+    ],
+    Configuration: [
+      ["Pixel ratio", view.renderer.getPixelRatio(), "Renderer resolution multiplier."],
+    ],
+  };
+}
 
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
@@ -23,18 +162,49 @@ export class NerdStats {
     string,
     { list: HTMLElement; rows: Map<string, HTMLPreElement> }
   >();
+  private readonly source: () => StatsSections | undefined;
+  private readonly active: () => boolean;
+  private readonly network: boolean;
   private open = false;
   private start = 0;
   private frames = 0;
   private simTotal = 0;
   private renderTotal = 0;
 
+  /** `source` reports the panel's rows when it refreshes; `active` says whether the
+   * panel may open (a round is on screen). */
   constructor(
     root: HTMLElement,
-    private source: Simulation | (() => NetworkStatsSample | undefined),
-    private view: Presentation,
+    source: () => StatsSections | undefined,
     active: () => boolean,
+    options?: { network?: boolean },
+  );
+  /** @deprecated The TypeScript multiplayer client's form. */
+  constructor(
+    root: HTMLElement,
+    source: () => NetworkStatsSample | undefined,
+    view: LegacyStatsView,
+    active: () => boolean,
+  );
+  constructor(
+    root: HTMLElement,
+    source: (() => StatsSections | undefined) | (() => NetworkStatsSample | undefined),
+    third: (() => boolean) | LegacyStatsView,
+    fourth?: (() => boolean) | { network?: boolean },
   ) {
+    if (typeof third === "function") {
+      this.source = source as () => StatsSections | undefined;
+      this.active = third;
+      this.network = !!(fourth as { network?: boolean } | undefined)?.network;
+    } else {
+      const sample = source as () => NetworkStatsSample | undefined;
+      this.source = () => {
+        const value = sample();
+        return value && legacyNetworkSections(value, third);
+      };
+      this.active = fourth as () => boolean;
+      this.network = true;
+    }
     this.element = document.createElement("aside");
     this.element.id = "nerd-stats";
     this.element.setAttribute("aria-label", "Game statistics");
@@ -43,13 +213,7 @@ export class NerdStats {
     root.append(this.element);
     this.button = this.element.querySelector("button")!;
     this.details = this.element.querySelector("#nerd-stats-details")!;
-    for (const title of [
-      "Performance",
-      typeof source === "function" ? "Network" : "Physics",
-      "Render",
-      "Battle",
-      "Configuration",
-    ]) {
+    for (const title of this.network ? NETWORK_SECTIONS : SINGLE_PLAYER_SECTIONS) {
       const section = document.createElement("details");
       section.open = title !== "Configuration";
       const heading = document.createElement("summary");
@@ -62,7 +226,7 @@ export class NerdStats {
     this.details.title =
       "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries and textures are allocated buffers; they change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
     const toggle = () => {
-      if (!active()) {
+      if (!this.active()) {
         return;
       }
       this.open = !this.open;
@@ -88,13 +252,18 @@ export class NerdStats {
       ) {
         return;
       }
-      if (!active()) {
+      if (!this.active()) {
         return;
       }
       event.preventDefault();
       toggle();
     });
     document.addEventListener("visibilitychange", () => this.reset());
+  }
+
+  /** Whether the panel is open, so the caller can skip gathering rows otherwise. */
+  get expanded(): boolean {
+    return this.open;
   }
 
   private reset(): void {
@@ -121,142 +290,39 @@ export class NerdStats {
   }
 
   private refresh(frameMs?: number): void {
-    const { source, view } = this;
-    const sim = typeof source === "function" ? undefined : source;
-    const network = typeof source === "function" ? source() : undefined;
-    const state = sim ?? network?.state;
-    if (!state) {
+    const sections = this.source();
+    if (!sections) {
       return;
     }
-    let fixed = 0;
-    let dynamic = 0;
-    let sleeping = 0;
-    sim?.world.bodies.forEach((body) => {
-      if (body.isFixed()) {
-        fixed++;
-      }
-      if (body.isDynamic()) {
-        dynamic++;
-        if (body.isSleeping()) {
-          sleeping++;
-        }
-      }
-    });
-    const info = view.renderer.info.render;
-    const memory = view.renderer.info.memory;
-    const alive = state.tanks.filter((tank) => tank.alive).length;
-    const pickupsReady = state.pickups.filter((pickup) => pickup.available).length;
-    const sections: [string, StatsRow[]][] = [
+    const performance: StatsRow[] = [
       [
-        "Performance",
-        [
-          [
-            "FPS",
-            frameMs ? Math.round(1000 / frameMs) : "—",
-            "Rendered frames per second, averaged over the sampling window.",
-          ],
-          [
-            "Frame interval",
-            frameMs ? `${frameMs.toFixed(1)} ms` : "—",
-            "Average wall-clock time per frame over the sampling window.",
-          ],
-          [
-            sim ? "Sim CPU / frame" : "Update CPU / frame",
-            this.frames ? `${(this.simTotal / this.frames).toFixed(2)} ms` : "—",
-            sim
-              ? "Average CPU time spent stepping the simulation per frame. Excludes GPU work."
-              : "Client interpolation, input and effect update CPU time per frame. Excludes message decoding and server physics.",
-          ],
-          [
-            "Render CPU / frame",
-            this.frames ? `${(this.renderTotal / this.frames).toFixed(2)} ms` : "—",
-            "Average CPU time spent submitting draw calls per frame. Excludes GPU work.",
-          ],
-        ],
-      ],
-      network
-        ? ["Network", network.rows]
-        : [
-            "Physics",
-            [
-              ["Bodies", sim!.world.bodies.len(), "Rigid bodies in the physics world."],
-              [
-                "Fixed / dynamic",
-                `${fixed} / ${dynamic}`,
-                "Static bodies versus simulated bodies.",
-              ],
-              [
-                "Awake / sleeping",
-                `${dynamic - sleeping} / ${sleeping}`,
-                "Simulated bodies awake versus sleeping. Dynamic bodies only.",
-              ],
-              ["Colliders", sim!.world.colliders.len(), "Collision shapes in the physics world."],
-            ],
-          ],
-      [
-        "Render",
-        [
-          ["Draw calls / frame", info.drawCalls, "GPU draw calls issued per rendered frame."],
-          [
-            "Triangles / frame",
-            info.triangles.toLocaleString(),
-            "Triangles submitted per rendered frame.",
-          ],
-          [
-            "GPU geometries",
-            memory.geometries,
-            "Distinct geometry buffers currently uploaded to the GPU. Changes on map load, not per frame.",
-          ],
-          [
-            "GPU textures",
-            memory.textures,
-            "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
-          ],
-        ],
+        "FPS",
+        frameMs ? Math.round(1000 / frameMs) : "—",
+        "Rendered frames per second, averaged over the sampling window.",
       ],
       [
-        "Battle",
-        [
-          ["Tanks", `${alive} / ${state.tanks.length}`, "Tanks alive out of total spawned."],
-          ["Mines", state.mines.length, "Live mines on the field."],
-          [
-            "Pickups ready",
-            `${pickupsReady} / ${state.pickups.length}`,
-            "Pickups available now out of total placed.",
-          ],
-          ["Projectiles", state.shots.length, "Shots currently flying."],
-          [
-            "Visual particles",
-            view.particles.length,
-            "Active chips, sparks and leaves. Smoke uses separate buffers.",
-          ],
-          [
-            "Debris bodies",
-            sim ? `${sim.fragments.length} / ${sim.maxFragments}` : state.fragments.length,
-            sim
-              ? "Physics debris pieces alive out of the pool cap."
-              : "Debris pieces in the received scene; server physics allocation is not measured here.",
-          ],
-          [
-            "Sim time",
-            `${state.elapsed.toFixed(1)}s`,
-            "Elapsed simulation time since the round started.",
-          ],
-        ],
+        "Frame interval",
+        frameMs ? `${frameMs.toFixed(1)} ms` : "—",
+        "Average wall-clock time per frame over the sampling window.",
       ],
       [
-        "Configuration",
-        [
-          [
-            "Pixel ratio",
-            view.renderer.getPixelRatio(),
-            "Renderer resolution multiplier, capped from the display pixel ratio.",
-          ],
-        ],
+        this.network ? "Update CPU / frame" : "Sim CPU / frame",
+        this.frames ? `${(this.simTotal / this.frames).toFixed(2)} ms` : "—",
+        this.network
+          ? "Client interpolation, input and effect update CPU time per frame. Excludes message decoding and server physics."
+          : "Average CPU time spent stepping the simulation per frame. Excludes GPU work.",
+      ],
+      [
+        "Render CPU / frame",
+        this.frames ? `${(this.renderTotal / this.frames).toFixed(2)} ms` : "—",
+        "Average CPU time spent submitting draw calls per frame. Excludes GPU work.",
       ],
     ];
-    for (const [title, rows] of sections) {
-      const target = this.sections.get(title)!;
+    for (const [title, rows] of Object.entries({ Performance: performance, ...sections })) {
+      const target = this.sections.get(title);
+      if (!target || !rows) {
+        continue;
+      }
       for (const [label, value, tip] of rows) {
         let row = target.rows.get(label);
         if (!row) {

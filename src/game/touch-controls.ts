@@ -2,7 +2,6 @@ import "../touch-controls.css";
 import { bindPress } from "./button-input";
 import type { Controls } from "./controls";
 import type { TouchState } from "./touch-mode";
-import { MINE } from "./combat-rules";
 import { FIRE_START, type StickKind } from "./touch-input";
 
 const STICK_RADIUS = 58;
@@ -15,6 +14,9 @@ export class TouchControls {
   private readonly sticks: Record<StickKind, HTMLElement>;
   private readonly origins = { drive: { x: 0, y: 0 }, aim: { x: 0, y: 0 } };
   private enabled = false;
+  /** The cooldown a mine started with: the button fills over the engine's reload,
+   * whatever length the engine gives it. */
+  private mineReload = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -141,8 +143,12 @@ export class TouchControls {
     const playing = this.controls.active();
     this.layer.hidden = !playing;
     const cooldown = this.simulation.human.mineCooldown;
+    this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;
-    this.mine.style.setProperty("--mine-ready", `${(1 - cooldown / MINE.cooldownSeconds) * 100}%`);
+    this.mine.style.setProperty(
+      "--mine-ready",
+      `${cooldown > 0 ? (1 - cooldown / this.mineReload) * 100 : 100}%`,
+    );
     this.mine.querySelector("small")!.textContent =
       cooldown > 0 ? `${cooldown.toFixed(1)}s` : "MINE";
     this.mine.setAttribute(

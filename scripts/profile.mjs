@@ -61,55 +61,23 @@ async function setup(scenario, seed) {
   await page.evaluate(
     ({ scenario, seed }) => {
       const d = window.sloppy;
-      d.sim.seed = seed;
-      d.sim.roundCount = 12;
-      d.sim.humanTeam = 0;
+      d.game.debug_configure(seed, 12, 0);
       d.start();
       if (scenario === "stress") d.stress();
-      d.view.resize(innerWidth, innerHeight, true);
+      d.exactResolution();
       d.overview(scenario === "stress");
       d.autoplay();
       if (scenario === "stress") {
+        // Refill debris and shells and blow up a drum every five simulated seconds.
         let nextBurst = 5;
-        const step = d.sim.step.bind(d.sim);
-        d.sim.step = (...args) => {
-          step(...args);
-          if (d.sim.elapsed < nextBurst) return;
-          nextBurst += 5;
-          const s = d.sim;
-          for (let i = s.fragments.length; i < s.maxFragments; i++)
-            s.fragment(s.rng.range(-15, 15), s.rng.range(-15, 15), 0xc5a978, 0.5);
-          for (let i = s.shots.length; i < 200; i++) {
-            const a = (i * Math.PI * 2) / 200;
-            s.shots.push({
-              id: s.nextId++,
-              x: Math.sin(a) * 15,
-              z: Math.cos(a) * 15,
-              vx: Math.cos(a) * 45,
-              vz: Math.sin(a) * 45,
-              owner: s.tanks[i % 24].id,
-              team: i % 2 === 0 ? 0 : 1,
-              damage: 40,
-              bounces: 4,
-              life: 4,
-              piercing: 0,
-              weapon: "standard",
-            });
+        const burst = () => {
+          if (d.sim.elapsed >= nextBurst) {
+            nextBurst += 5;
+            d.game.debug_stress_burst();
           }
-          for (const x of [-5, 0, 5]) {
-            const c = s.addCover({
-              kind: "drum",
-              x,
-              z: 0,
-              w: 1.2,
-              d: 1.2,
-              h: 1.7,
-              hp: 30,
-              color: 0xe3854d,
-            });
-            if (x === 5) s.damageCover(c, 999, s.human.id, s.humanTeam);
-          }
+          requestAnimationFrame(burst);
         };
+        requestAnimationFrame(burst);
       }
       d.record();
     },
@@ -126,8 +94,8 @@ try {
       if (navigations !== navigation)
         throw new Error("Page reloaded during timing; discard this run and repeat.");
       const report = await page.evaluate(() => window.sloppy.stop());
-      if (report.snapshot.elapsed < 18)
-        throw new Error("Measurement paused or could not keep up: " + report.snapshot.elapsed);
+      const elapsed = /** @type {{ elapsed: number }} */ (report.snapshot).elapsed;
+      if (elapsed < 18) throw new Error("Measurement paused or could not keep up: " + elapsed);
       results.runs.push({ scenario, seed, ...report });
       save();
       console.log(

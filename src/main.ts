@@ -3,11 +3,10 @@ import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
-import { PICKUP_ATLAS_PATH } from "./game/pickup-atlas";
 import { isExtraLevel, showsExtraLevels } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import type { RoomSelection } from "./net/pending-join";
-import type { PlayerVehicleKind } from "./game/types";
+import type { PlayerVehicleKind } from "./game/engine-api";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -42,11 +41,12 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
 }
 
 function preloadImages(options: GameOptions): void {
-  // Start scene image downloads alongside the engine/WASM request, before model
-  // construction discovers them. Small late requests otherwise delay warm-up.
-  // Image preloads share TextureLoader's browser cache; no second fetch/decode path.
+  // Start scene image downloads alongside the engine request, before the engine's
+  // scenery discovers them. Small late requests otherwise delay warm-up. The engine
+  // fetches textures with fetch(), so these preloads are fetch-destination requests
+  // in the same CORS mode, which the engine's requests reuse.
   for (const path of [
-    PICKUP_ATLAS_PATH,
+    "textures/pickups/atlas.webp",
     "textures/tanks/armor-wear.webp",
     "textures/ground/packed-dirt.webp",
     "textures/houses/siding.webp",
@@ -70,7 +70,7 @@ function preloadImages(options: GameOptions): void {
   ]) {
     const link = document.createElement("link");
     link.rel = "preload";
-    link.as = "image";
+    link.as = "fetch";
     link.crossOrigin = "anonymous";
     link.href = `${import.meta.env.BASE_URL}${path}`;
     document.head.append(link);

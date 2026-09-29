@@ -1,5 +1,14 @@
 import { Howl, Howler } from "howler";
-import type { SimEvent, Vec2, Weapon } from "./types";
+import type { CoverKind, EventBatch, EventType, Point, Weapon } from "./engine-api";
+
+/** The parts of an engine event that choose and place a sound. */
+export interface SoundEvent {
+  type: EventType;
+  x: number;
+  z: number;
+  weapon?: Weapon;
+  coverKind?: CoverKind;
+}
 
 const AUDIO = {
   hitIntervalMs: 80,
@@ -29,7 +38,7 @@ const shotSounds = {
 } as const satisfies Record<Weapon, string>;
 
 /** Drums emit a separate blast event; do not play a second sound for their shell. */
-export function destructionSound(event: SimEvent): "wood-break" | "rubble-break" | null {
+export function destructionSound(event: SoundEvent): "wood-break" | "rubble-break" | null {
   if (event.type !== "destroy" || event.coverKind === "drum") {
     return null;
   }
@@ -69,7 +78,14 @@ export class AudioSystem {
   volume(v: number): void {
     Howler.volume(v);
   }
-  event(event: SimEvent, listener: Vec2, playerHit = false, playerEvent = false): void {
+  /** Play one frame's drained engine events from the human's position. */
+  play(batch: EventBatch): void {
+    this.listenerRight = batch.listenerRight;
+    for (const event of batch.events) {
+      this.event(event, batch.listener, event.playerHit, event.own);
+    }
+  }
+  event(event: SoundEvent, listener: Point, playerHit = false, playerEvent = false): void {
     if (!this.enabled) {
       return;
     }

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Controls } from "../src/game/controls";
+import { INPUT } from "../src/game/engine-api";
 function fixture(pauseWhenHidden = true) {
   const win = new EventTarget(),
     doc = new EventTarget(),
@@ -54,24 +55,35 @@ function fixture(pauseWhenHidden = true) {
     },
   };
 }
-test("quick right click is queued until exactly one command consumes the mine", () => {
+/** One animation frame's packed input, as the engine receives it. */
+function frame(controls: Controls) {
+  const input = controls.takeInput(new Float32Array(INPUT.length));
+  return {
+    moveX: input[INPUT.right] - input[INPUT.left] || input[INPUT.touchMoveX],
+    fire: input[INPUT.fire],
+    mine: input[INPUT.mine],
+    ammoSlot: input[INPUT.ammoSlot],
+    ammoStep: input[INPUT.ammoStep],
+    wheel: input[INPUT.wheelAmmo],
+    input,
+  };
+}
+const SLOTS = ["standard", "spread", "rocket", "ricochet", "piercing"];
+test("quick right click is queued until exactly one frame takes the mine", () => {
   const f = fixture();
   f.emit(f.canvas, "pointerdown", { button: 2 });
   f.emit(f.win, "pointerup", { button: 2 });
-  assert.equal(f.controls.command(0).mine, true);
-  assert.equal(f.controls.command(0).mine, false);
+  assert.equal(frame(f.controls).mine, 1);
+  assert.equal(frame(f.controls).mine, 0);
   f.dispose();
 });
-test("wheel queues one ammo change per 120 ms; Shift-wheel only zooms", () => {
+test("the wheel sends one ammo step per frame (the engine throttles it); Shift-wheel only zooms", () => {
   const f = fixture();
   f.emit(f.canvas, "wheel", { deltaY: 100, shiftKey: false });
-  assert.equal(f.controls.command(0).ammoSelection, 1);
+  assert.equal(frame(f.controls).wheel, 1);
+  assert.equal(frame(f.controls).wheel, 0);
   f.emit(f.canvas, "wheel", { deltaY: -100, shiftKey: false });
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
-  f.controls.lastAmmoScroll -= 120;
-  f.emit(f.canvas, "wheel", { deltaY: -100, shiftKey: false });
-  assert.equal(f.controls.command(0).ammoSelection, -1);
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
+  assert.equal(frame(f.controls).wheel, -1);
   f.emit(f.canvas, "wheel", { deltaY: 100, shiftKey: true });
   f.emit(f.canvas, "wheel", { deltaY: -100, shiftKey: true });
   f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 100, shiftKey: true });
@@ -79,14 +91,25 @@ test("wheel queues one ammo change per 120 ms; Shift-wheel only zooms", () => {
   f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 0, shiftKey: true });
   f.emit(f.canvas, "wheel", { deltaY: 0, deltaX: 100, shiftKey: false });
   assert.deepEqual(f.zooms, [2, -2, 2, -2]);
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
+  assert.equal(frame(f.controls).wheel, 0);
   f.dispose();
 });
 test("inactive play rejects wheel ammo selection", () => {
   const f = fixture();
   f.controls.active = () => false;
   f.emit(f.canvas, "wheel", { deltaY: 1 });
+  assert.equal(frame(f.controls).wheel, 0);
+  f.dispose();
+});
+test("the legacy multiplayer command still throttles the wheel to one change per 120 ms", () => {
+  const f = fixture();
+  f.emit(f.canvas, "wheel", { deltaY: 100 });
+  assert.equal(f.controls.command(0).ammoSelection, 1);
+  f.emit(f.canvas, "wheel", { deltaY: -100 });
   assert.equal(f.controls.command(0).ammoSelection, undefined);
+  f.controls.lastAmmoScroll -= 120;
+  f.emit(f.canvas, "wheel", { deltaY: -100 });
+  assert.equal(f.controls.command(0).ammoSelection, -1);
   f.dispose();
 });
 
@@ -112,24 +135,24 @@ test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and
     f.controls.touch.move("drive", 1, 1, 0);
     f.controls.touch.move("aim", 2, 1, 0);
     assert.equal(f.controls.fire, true);
-    assert.equal(f.controls.ammoSelection, 1);
+    assert.equal(f.controls.wheelAmmo, 1);
     if (interruption === "clear") f.controls.clear();
     else if (interruption === "Escape") f.emit(f.win, "keydown", { code: "Escape" });
     else if (interruption === "hidden") {
       Object.assign(f.doc, { hidden: true });
       f.emit(f.doc, "visibilitychange", {});
     } else f.emit(f.win, "blur", {});
-    const command = f.controls.command(1);
+    const input = frame(f.controls);
     assert.deepEqual(
-      [command.moveX, command.fire, command.mine, command.ammoSelection, f.pauses],
-      [0, false, false, undefined, pauses],
+      [input.moveX, input.fire, input.mine, input.wheel, input.input[INPUT.aimStickHeld], f.pauses],
+      [0, 0, 0, 0, 0, pauses],
       label,
     );
     f.dispose();
   }
 });
 
-test("touch joins the shared command and consumes one-shot actions once", () => {
+test("touch joins the packed input and one-shot actions are sent once", () => {
   const f = fixture();
   f.controls.touch.begin("drive", 1);
   f.controls.touch.begin("aim", 2);
@@ -137,63 +160,66 @@ test("touch joins the shared command and consumes one-shot actions once", () => 
   f.controls.touch.move("aim", 2, 1, 0);
   f.controls.mine = true;
   f.controls.ammoSelection = "rocket";
-  const first = f.controls.command(0.7);
-  assert.ok(Math.abs(first.moveX - 0.5) < 1e-8);
-  assert.equal(first.fire, true);
-  assert.equal(first.mine, true);
-  assert.equal(first.ammoSelection, "rocket");
-  const second = f.controls.command(0.7);
-  assert.equal(second.fire, true);
-  assert.equal(second.mine, false);
-  assert.equal(second.ammoSelection, undefined);
+  const first = frame(f.controls);
+  assert.ok(Math.abs(first.input[INPUT.touchMoveX] - 0.5) < 1e-6);
+  assert.deepEqual(
+    [first.fire, first.mine, first.ammoSlot, first.input[INPUT.touchAiming]],
+    [1, 1, 3, 1],
+  );
+  assert.deepEqual([first.input[INPUT.touchAimX], first.input[INPUT.aimStickHeld]], [1, 1]);
+  const second = frame(f.controls);
+  assert.deepEqual([second.fire, second.mine, second.ammoSlot], [1, 0, 0]);
   f.dispose();
 });
 
 test("Q/E and number keys queue exactly one selection without consuming held fire", () => {
   const f = fixture();
   f.controls.fire = true;
-  const expected = ["standard", "spread", "rocket", "ricochet", "piercing"];
-  for (const [code, selection] of [
-    ["KeyQ", -1],
-    ["KeyE", 1],
-    ...expected.flatMap((weapon, i) => [
-      [`Digit${i + 1}`, weapon],
-      [`Numpad${i + 1}`, weapon],
+  for (const [code, step, slot] of [
+    ["KeyQ", -1, 0],
+    ["KeyE", 1, 0],
+    ...SLOTS.flatMap((_weapon, i) => [
+      [`Digit${i + 1}`, 0, i + 1],
+      [`Numpad${i + 1}`, 0, i + 1],
     ]),
-  ]) {
+  ] as const) {
     f.emit(f.win, "keydown", { code });
-    const command = f.controls.command(0);
-    assert.equal(command.ammoSelection, selection);
-    assert.equal(command.fire, true);
-    assert.equal(f.controls.command(0).ammoSelection, undefined);
+    const input = frame(f.controls);
+    assert.deepEqual([input.ammoStep, input.ammoSlot, input.fire], [step, slot, 1], code);
+    assert.deepEqual([frame(f.controls).ammoStep, frame(f.controls).ammoSlot], [0, 0]);
     f.emit(f.win, "keydown", { code, repeat: true });
-    assert.equal(f.controls.command(0).ammoSelection, undefined);
+    const repeated = frame(f.controls);
+    assert.deepEqual([repeated.ammoStep, repeated.ammoSlot], [0, 0]);
   }
   f.dispose();
 });
 
 test("ammo shortcuts ignore inactive play, browser modifiers and editable controls", () => {
   const f = fixture();
+  const none = () => {
+    const input = frame(f.controls);
+    return input.ammoStep === 0 && input.ammoSlot === 0;
+  };
   f.controls.active = () => false;
   f.emit(f.win, "keydown", { code: "KeyE" });
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
+  assert.ok(none());
   f.controls.active = () => true;
   for (const modifier of ["metaKey", "ctrlKey", "altKey"]) {
     f.emit(f.win, "keydown", { code: "Digit3", [modifier]: true });
-    assert.equal(f.controls.command(0).ammoSelection, undefined);
+    assert.ok(none());
   }
   for (const tagName of ["INPUT", "TEXTAREA", "SELECT"]) {
     Object.assign(f.win, { tagName });
     f.emit(f.win, "keydown", { code: "KeyE" });
-    assert.equal(f.controls.command(0).ammoSelection, undefined);
+    assert.ok(none());
   }
   Object.assign(f.win, { tagName: "DIV", isContentEditable: true });
   f.emit(f.win, "keydown", { code: "Digit5" });
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
+  assert.ok(none());
   Object.assign(f.win, { isContentEditable: false });
   f.emit(f.win, "keydown", { code: "KeyE" });
   f.emit(f.win, "blur", {});
-  assert.equal(f.controls.command(0).ammoSelection, undefined);
+  assert.ok(none());
   f.dispose();
 });
 
@@ -201,11 +227,14 @@ test("touch does not use mouse firing or aiming, and unrelated touch release can
   const f = fixture();
   f.emit(f.canvas, "pointerdown", { button: 0, pointerType: "touch" });
   f.emit(f.canvas, "pointermove", { clientX: 95, clientY: 95, pointerType: "touch" });
-  assert.equal(f.controls.command(0).fire, false);
+  assert.equal(frame(f.controls).fire, 0);
   assert.equal(f.controls.nx, 0);
+  f.emit(f.canvas, "pointermove", { clientX: 75, clientY: 25, pointerType: "mouse" });
+  const aimed = frame(f.controls).input;
+  assert.deepEqual([aimed[INPUT.pointerX], aimed[INPUT.pointerY]], [0.5, 0.5]);
   f.emit(f.canvas, "pointerdown", { button: 0, pointerType: "mouse" });
   f.emit(f.win, "pointerup", { button: 0, pointerType: "touch" });
-  assert.equal(f.controls.command(0).fire, true);
+  assert.equal(frame(f.controls).fire, 1);
   f.dispose();
 });
 

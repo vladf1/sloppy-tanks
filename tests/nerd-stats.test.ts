@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NerdStats } from "../src/game/nerd-stats";
+import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
+import type { EngineStats } from "../src/game/engine-api";
 
 type Listener = () => void;
 
@@ -63,9 +64,6 @@ class StubElement {
   }
 }
 
-type SimParam = ConstructorParameters<typeof NerdStats>[1];
-type ViewParam = ConstructorParameters<typeof NerdStats>[2];
-
 const SECTION_TITLES = ["Performance", "Physics", "Render", "Battle", "Configuration"];
 
 function fixture(network = false) {
@@ -82,21 +80,14 @@ function fixture(network = false) {
   };
   Object.defineProperty(globalThis, "window", { value: win, configurable: true });
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-  const sim = {
-    world: {
-      bodies: { forEach(_cb: unknown): void {}, len: () => 10 },
-      colliders: { len: () => 4 },
-    },
+  // The multiplayer client's received scene and Three.js presentation (legacy form).
+  const scene = {
     tanks: [{ alive: true }, { alive: false }, { alive: true }],
     mines: [{}, {}],
     pickups: [{ available: true }, { available: false }],
     fragments: [{}],
-    maxFragments: 8,
     shots: [{}, {}, {}],
-    match: { phase: "playing", round: 2, time: 84.2, scores: [3, 2], overtime: false },
     elapsed: 12.34,
-    seed: 123,
-    mapName: "VILLAGE",
   };
   const view = {
     renderer: {
@@ -108,19 +99,52 @@ function fixture(network = false) {
     },
     particles: [{}, {}, {}],
   };
+  const engine = {
+    bodies: 10,
+    fixedBodies: 6,
+    dynamicBodies: 4,
+    sleepingBodies: 1,
+    colliders: 4,
+    drawCalls: 42,
+    triangles: 123456,
+    meshes: 9,
+    textures: 11,
+    gpuBytes: 3 * 1048576,
+    tanks: 3,
+    tanksAlive: 2,
+    mines: 2,
+    pickups: 2,
+    pickupsReady: 1,
+    shots: 3,
+    particles: 3,
+    fragments: 1,
+    maxFragments: 8,
+    elapsed: 12.34,
+    pixelRatio: 1.5,
+  } as EngineStats;
   const root = new StubElement("DIV");
   let reads = 0;
-  const stats = new NerdStats(
-    root as unknown as HTMLElement,
-    network
-      ? () => {
+  const stats = network
+    ? new NerdStats(
+        root as unknown as HTMLElement,
+        () => {
           reads++;
-          return { state: sim, rows: [["RTT", "42 ms", "Round-trip time to the server."]] };
-        }
-      : (sim as unknown as SimParam),
-    view as unknown as ViewParam,
-    () => true,
-  );
+          return {
+            state: scene,
+            rows: [["RTT", "42 ms", "Round-trip time to the server."]],
+          };
+        },
+        view,
+        () => true,
+      )
+    : new NerdStats(
+        root as unknown as HTMLElement,
+        () => {
+          reads++;
+          return engineStatsSections(engine);
+        },
+        () => true,
+      );
   assert.ok(created.length > 0);
   const panel = created[0];
   assert.equal(panel.tagName, "ASIDE");
@@ -188,7 +212,7 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 20);
+    assert.equal(bodies.length, 21);
     const renderRows = sections
       .find((section) => section.querySelector("summary")?.textContent === "Render")!
       .querySelectorAll("pre")
@@ -218,6 +242,13 @@ test("panel has one open section per group with the expected rows", () => {
       "1 / 2",
       "GPU geometries",
       "GPU textures",
+      "GPU memory",
+      "3.0 MB",
+      "Fixed / dynamic",
+      "6 / 4",
+      "Awake / sleeping",
+      "3 / 1",
+      "1 / 8",
       "Draw calls / frame",
       "Triangles / frame",
     ]) {

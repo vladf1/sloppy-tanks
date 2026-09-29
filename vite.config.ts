@@ -23,19 +23,22 @@ export default defineConfig({
     lazyRapierWasm(),
     startupHtml(base),
     {
-      // Safari never hands a <link rel=preload as=fetch> response to a later
-      // fetch(), so it downloaded the physics binary twice. Start the one real
-      // request in <head>; physics-browser.ts takes it over in init().
-      name: "physics-download",
+      // Start the engine binary's one real request in <head>, in parallel with the
+      // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari
+      // never hands a <link rel=preload as=fetch> response to a later fetch(), so a
+      // preload link would download the binary twice there.
+      name: "engine-download",
       transformIndexHtml: {
         order: "post",
         handler(_html, context) {
-          const binary = Object.keys(context.bundle ?? {}).find((name) => name.endsWith(".wasm"));
+          const binary = Object.keys(context.bundle ?? {}).find((name) =>
+            /(^|\/)engine_bg-[\w-]+\.wasm$/.test(name),
+          );
           return binary && context.filename.endsWith("index.html")
             ? [
                 {
                   tag: "script",
-                  children: `if(!new URLSearchParams(location.search).has("room")&&!new URLSearchParams(location.search).has("multiplayer")){window.sloppyPhysicsBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyPhysicsBinary.catch(()=>{});}`,
+                  children: `window.sloppyEngineBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyEngineBinary.catch(()=>{});`,
                   injectTo: "head",
                 },
               ]

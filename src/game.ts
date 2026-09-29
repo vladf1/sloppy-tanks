@@ -1,35 +1,36 @@
-import { gameChoices, sameGameOptions, type GameOptions } from "./game/game-options";
-import type { PreparedGame } from "./game/start-menu";
-import RAPIER from "@dimforge/rapier3d-simd-compat";
+// Single player in the page: the Rust engine (`crates/web/src/game.rs`) owns the
+// simulation, its fixed-step loop, presentation and rendering. This module keeps the
+// browser side: preparing the arena behind Battle Setup, one engine frame per
+// animation frame with the packed raw input, and engine events and HUD state for
+// sound and the DOM.
+import { createGame, type Game } from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { AudioSystem } from "./game/audio";
 import { Cockpit } from "./game/cockpit";
-import { TouchModeController } from "./game/touch-mode";
 import { Controls } from "./game/controls";
-import { STEP } from "./game/data";
-import { Presentation } from "./game/presentation";
-import { selectedMap, Simulation, type SimulationSetup } from "./game/simulation";
-import { isExtraLevel, type MapId } from "./game/map-options";
-import { singlePlayerRules, STANDARD_RULES } from "./game/level-rules";
-import { tuneSpeed } from "./game/speed-tuning";
-import { loadTankSurface } from "./game/tank-surfaces";
+import {
+  FRAME,
+  INPUT,
+  PHASES,
+  type EngineStats,
+  type EventBatch,
+  type HudState,
+  type Phase,
+} from "./game/engine-api";
+import { sameGameOptions, type GameOptions } from "./game/game-options";
+import { isExtraLevel, showsExtraLevels } from "./game/map-options";
+import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import type { PreparedGame } from "./game/start-menu";
+import { afterPaint, nextTask } from "./game/task-yield";
+import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
-import { CAMERA } from "./game/view-settings";
-import { NerdStats } from "./game/nerd-stats";
-import { afterPaint } from "./game/task-yield";
-const MAX_FRAME_DELTA_SECONDS = 0.1;
-const MAX_CATCH_UP_STEPS = 5;
 const HUD_UPDATE_EVERY_FRAMES = 4;
-const MILLISECONDS_PER_SECOND = 1000;
-
-/** A map's level rules. An extra level's code downloads only once a player chooses it. */
-async function levelRules(mapMode: MapId): Promise<SimulationSetup> {
-  if (!isExtraLevel(mapMode)) {
-    return STANDARD_RULES;
-  }
-  const { EXTRA_LEVELS } = await import("./extra-levels");
-  return singlePlayerRules(EXTRA_LEVELS[mapMode]);
-}
+/** Pipelines compiled per preparation call; the menu stays responsive between calls. */
+const PREPARE_BUDGET = 4;
+/** How often the loop asks the renderer whether the GPU reported an error. */
+const ERROR_CHECK_EVERY_FRAMES = 30;
+/** `window.sloppy.exactResolution()` renders at this size whatever the window. */
+const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -44,53 +45,44 @@ export async function prepareGame(
   app.append(root);
   root.innerHTML =
     '<canvas id="game" tabindex="0" aria-label="Sloppy Tanks 3D demolition arena"></canvas>';
-  const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
-  // The physics binary is the largest download. Device setup, image decoding and
-  // map scenery do not need it, so they proceed while it arrives and compiles.
-  const physics = RAPIER.init();
-  // Graphics setup may fail first; the await below still reports physics errors.
-  physics.catch(() => {});
-  const preparedOptions = { ...getOptions() };
-  let view: Presentation;
+  const canvas = root.querySelector<HTMLCanvasElement>("#game")!;
+  const params = new URLSearchParams(location.search);
+  // The Battle Setup choices; the in-game menu edits this object too.
+  const choices: GameOptions = { ...getOptions() };
+  let game: Game;
   try {
-    [view] = await Promise.all([Presentation.create(canvas), loadTankSurface()]);
+    game = await createGame(canvas, {
+      seed,
+      assetBase: import.meta.env.BASE_URL,
+      map: choices.mapMode,
+      extraLevels: showsExtraLevels(location.search) || isExtraLevel(choices.mapMode),
+      difficulty: choices.difficulty,
+      humanKind: choices.humanKind,
+      humanTeam: choices.humanTeam,
+      gameMode: choices.gameMode,
+      autoplay: params.has("autoplay"),
+      cssWidth: innerWidth,
+      cssHeight: innerHeight,
+      pixelRatio: devicePixelRatio,
+    });
   } catch (error) {
     root.remove();
     throw error;
   }
-  let rules: SimulationSetup;
-  try {
-    rules = await levelRules(preparedOptions.mapMode);
-    const map = selectedMap(preparedOptions.mapMode, rules.customMap);
-    view.buildScenery(map.theme ?? map.id);
-    await physics;
-  } catch (error) {
-    view.renderer.dispose();
-    root.remove();
-    throw error;
-  }
-  // Browser startup previously constructed round 2, then immediately discarded
-  // it for round 3. Keep the round (it seeds bot names), build only that world.
-  const sim = new Simulation(seed, { ...preparedOptions, ...rules, round: 3 });
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  view.reset(sim);
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  onStage("Preparing graphics…");
-  // Compile shaders while the menu is visible, without drawing a background scene.
-  await view.prepare(sim, onStage);
-  // The hidden arena GO starts. "reset" still needs its shaders and first frame;
-  // "stale" has played a round and needs a new world first.
-  let arena: "prepared" | "reset" | "stale" = "prepared";
-  let wantedOptions: GameOptions = preparedOptions;
+  // The options the engine's world was built with.
+  let prepared: GameOptions = { ...choices };
+  let wanted: GameOptions = prepared;
   let reportShaders = onStage;
   let arenaPreparation: Promise<void> | undefined;
-  // Bumped when a round begins or resets the world outside a preparation.
-  let arenaRevision = 0;
+  // A world in use is never rebuilt; BATTLE SETUP gives the menu a fresh one.
+  let inRound = false;
+  onStage("Preparing graphics…");
+
   /** Bring the hidden arena to `options` while the player is still choosing.
    * One preparation runs at a time; choices changed meanwhile are picked up by
    * its loop, and choices that already match cost nothing. */
   function prepareArena(options: GameOptions, report: (stage: string) => void): Promise<void> {
-    wantedOptions = options;
+    wanted = options;
     reportShaders = report;
     if (!arenaPreparation) {
       // Cleared only after assignment: a run with nothing to do settles at once.
@@ -106,64 +98,66 @@ export async function prepareGame(
     return arenaPreparation;
   }
   async function updateArena(): Promise<void> {
-    while (arena !== "prepared" || !sameGameOptions(preparedOptions, wantedOptions)) {
-      if (arena === "stale" || !sameGameOptions(preparedOptions, wantedOptions)) {
-        const choices = gameChoices(wantedOptions);
-        const rules = await levelRules(choices.mapMode);
+    let total = 0;
+    for (;;) {
+      if (inRound) {
+        return;
+      }
+      if (!sameGameOptions(prepared, wanted)) {
+        const next = { ...wanted };
         // The rebuild blocks the main thread for up to a few hundred milliseconds; show
         // the player's new choice, or GO's WAIT, before it starts.
         await afterPaint();
-        if (!sameGameOptions(choices, wantedOptions)) {
-          // Chosen again meanwhile, perhaps while an extra level downloaded.
+        if (inRound) {
+          return;
+        }
+        if (!sameGameOptions(next, wanted)) {
           continue;
         }
-        arena = "stale";
-        Object.assign(preparedOptions, choices);
-        Object.assign(sim, preparedOptions, rules);
-        sim.reset();
-        view.reset(sim);
-        arena = "reset";
+        game.set_options(JSON.stringify(next));
+        prepared = next;
+        total = 0;
       }
-      const revision = arenaRevision;
-      await view.prepare(sim, (stage) => reportShaders(stage));
-      if (revision !== arenaRevision) {
-        // A round began or reset the world meanwhile; never rebuild a world in
-        // use. Its arena state already says what the next preparation needs.
-        return;
+      // Compile a few pipelines per task until the world's shaders, textures and
+      // first frames are ready, or the choices change again.
+      for (;;) {
+        await nextTask();
+        if (inRound || !sameGameOptions(prepared, wanted)) {
+          break;
+        }
+        const [compiled, remaining, texturesPending, done] = game.prepare_step(PREPARE_BUDGET);
+        total += compiled;
+        if (done) {
+          return;
+        }
+        reportShaders(
+          remaining > 0
+            ? `Shaders loaded: ${total} of ${total + remaining}`
+            : `Loading textures… ${texturesPending} left`,
+        );
       }
-      arena = "prepared";
     }
   }
+
   let active = false;
+  let phase: Phase = "ready";
+  let alive = true;
+  let hud: HudState | undefined;
+  const readHud = () => (hud = JSON.parse(game.hud_json()) as HudState);
   const stats = new NerdStats(
     root,
-    sim,
-    view,
+    () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
     () => active && !root.classList.contains("menu-ready"),
   );
-  const playback = {
-    autoplay: new URLSearchParams(location.search).has("autoplay"),
-    overview: false,
-    autoRounds: false,
-  };
-  let accumulator = 0;
-  let last = performance.now();
-  let frameIndex = 0;
-  const pause = () => {
-    if (sim.match.phase === "playing") {
-      sim.match.phase = "paused";
-      controls.clear();
-      accumulator = 0;
-    }
-  };
-  const zoom = (n: number) => {
-    view.zoom = Math.max(CAMERA.minZoom, Math.min(CAMERA.maxZoom, view.zoom + n));
+  let pendingZoom = 0;
+  const zoom = (amount: number) => {
+    pendingZoom += amount;
   };
   const controls = new Controls(
     canvas,
-    pause,
+    () => pause(),
     zoom,
-    () => sim.match.phase === "playing" && sim.human.alive,
+    () => phase === "playing" && alive,
   );
   // Creating the AudioContext can block the main thread for over 150 ms. Sounds
   // are first needed when a round begins, so this waits until the menu is ready.
@@ -173,29 +167,46 @@ export async function prepareGame(
     if (!audioSystem) {
       audioSystem = new AudioSystem();
       audioSystem.volume(volume);
-      audioSystem.listenerRight = view.listenerRight;
     }
     return audioSystem;
   };
   const settings = (key: string, value: number) => {
     if (key === "tank-speed" || key === "bullet-speed") {
-      value = tuneSpeed(sim, key, value);
+      value = game.set_speed(key, value);
     }
-    localStorage.setItem("sloppy-" + key, String(value));
+    try {
+      localStorage.setItem("sloppy-" + key, String(value));
+    } catch {
+      /* Session-only preference. */
+    }
     if (key === "volume") {
       volume = value;
       audioSystem?.volume(value);
     }
   };
-  settings("volume", Number(localStorage.getItem("sloppy-volume") ?? ".6"));
+  const saved = (key: string, fallback: string) => {
+    try {
+      return Number(localStorage.getItem("sloppy-" + key) ?? fallback);
+    } catch {
+      return Number(fallback);
+    }
+  };
+  settings("volume", saved("volume", ".6"));
   for (const key of ["tank-speed", "bullet-speed"] as const) {
-    settings(key, Number(localStorage.getItem("sloppy-" + key) ?? "1"));
+    settings(key, saved(key, "1"));
   }
-  function start(): void {
-    controls.clear();
-    sim.reset();
-    view.reset(sim);
-    beginRound();
+
+  const updateHud = (dt: number) => {
+    ui.update(readHud(), dt);
+    phase = hud!.match.phase;
+    alive = hud!.human.alive;
+  };
+  function pause(): void {
+    if (phase === "playing") {
+      game.pause();
+      controls.clear();
+      updateHud(0);
+    }
   }
   let roundStarting = false;
   async function startFromMenu(): Promise<void> {
@@ -217,7 +228,12 @@ export async function prepareGame(
       status.textContent = "Preparing your arena…";
     }
     try {
-      await prepareArena(sim, (stage) => {
+      if (phase === "results") {
+        // PLAY AGAIN: the engine starts a fresh world with the same choices.
+        beginRound();
+        return;
+      }
+      await prepareArena(choices, (stage) => {
         if (status) {
           status.textContent = stage;
         }
@@ -237,13 +253,13 @@ export async function prepareGame(
       roundStarting = false;
     }
   }
-  /** The in-game battle setup edits the simulation's choices directly. */
+  /** Prepare the in-game battle setup's choices while the player is still choosing. */
   async function preloadFromMenu(): Promise<void> {
-    if (roundStarting || sim.match.phase !== "ready") {
+    if (roundStarting || inRound) {
       return;
     }
     try {
-      await prepareArena(sim, (stage) => {
+      await prepareArena(choices, (stage) => {
         delete ui.overlay.dataset.state;
         const status = ui.overlay.querySelector("#startup-status");
         if (status) {
@@ -254,7 +270,7 @@ export async function prepareGame(
       // GO prepares again and reports the failure.
       console.error("Arena preparation failed", error);
     }
-    if (!roundStarting && sim.match.phase === "ready" && ui.overlay.dataset.state !== "ready") {
+    if (!roundStarting && !inRound && ui.overlay.dataset.state !== "ready") {
       ui.overlay.dataset.state = "ready";
       const status = ui.overlay.querySelector("#startup-status");
       if (status) {
@@ -263,190 +279,206 @@ export async function prepareGame(
     }
   }
   function beginRound(): void {
-    arena = "stale";
-    arenaRevision++;
+    inRound = true;
     active = true;
     root.hidden = false;
     root.classList.remove("menu-ready");
-    sim.start();
+    controls.clear();
+    game.start();
     audio().start();
     canvas.focus();
-    accumulator = 0;
-    last = performance.now();
-    ui.update(0);
+    updateHud(0);
   }
+  /** BATTLE SETUP: a fresh world behind the menu, prepared again before GO. */
   function restart(): void {
     controls.clear();
-    sim.reset();
-    view.reset(sim);
-    Object.assign(preparedOptions, gameChoices(sim));
-    arena = "reset";
-    arenaRevision++;
-    ui.lastPhase = "";
-    accumulator = 0;
+    game.restart();
+    inRound = false;
+    ui.refresh();
+    updateHud(0);
   }
-  const ui = new UI(
-    root,
-    sim,
-    () => {
-      void startFromMenu();
-    },
-    () => {
+  const ui = new UI(root, choices, {
+    start: () => void startFromMenu(),
+    resume() {
       controls.clear();
-      sim.start();
-      accumulator = 0;
+      game.resume();
+      updateHud(0);
     },
-    () => {
+    restart() {
       restart();
       void preloadFromMenu();
     },
-    settings,
+    endBattle() {
+      game.end_battle();
+      updateHud(0);
+    },
     pause,
-    (weapon) => {
-      if (sim.match.phase === "playing" && sim.human.alive) {
+    setting: settings,
+    selectAmmo(weapon) {
+      if (phase === "playing" && alive) {
         controls.ammoSelection = weapon;
       }
     },
-    (event) => view.damageAngle(event),
-  );
-  const look = view.firstPerson;
+  });
   const toggleView = () => {
-    if (sim.match.phase !== "playing") {
-      return;
-    }
-    look.toggle(sim.human.aim);
-    controls.holdPointer(look.enabled);
+    const firstPerson = game.toggle_first_person();
+    controls.holdPointer(firstPerson);
     controls.capturePointer();
   };
   controls.toggleView = toggleView;
   const cockpit = new Cockpit(root, toggleView);
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
   ui.overlay.addEventListener("click", (event) => {
-    if (event.target instanceof Element && event.target.closest("[data-kind]")) {
+    if (!(event.target instanceof Element && event.target.closest("[data-kind]"))) {
+      return;
+    }
+    if (inRound) {
+      // The respawn menu's tank cards choose the next life's tank.
+      game.set_human_kind(choices.humanKind);
+      prepared = { ...prepared, humanKind: choices.humanKind };
+    } else {
       void preloadFromMenu();
     }
   });
-  const touchControls = new TouchModeController(root, controls, sim, zoom);
-  window.addEventListener("resize", () => view.resize());
-  const recorder = new FrameRecorder(sim, canvas);
+  const touchControls = new TouchModeController(
+    root,
+    controls,
+    {
+      get human() {
+        return { mineCooldown: hud?.human.mineCooldown ?? 0 };
+      },
+      get match() {
+        return { phase };
+      },
+    },
+    zoom,
+  );
+  let exactResolution = false;
+  const resize = () =>
+    exactResolution
+      ? game.resize(EXACT_RESOLUTION.width, EXACT_RESOLUTION.height, 1, true)
+      : game.resize(innerWidth, innerHeight, devicePixelRatio, false);
+  window.addEventListener("resize", resize);
+  const recorder = new FrameRecorder(game, canvas);
+  const counters = { frames: 0, events: 0 };
+  const input = new Float32Array(INPUT.length);
+  let stopped = false;
+  let last = performance.now();
+  const fail = (error: unknown) => {
+    stopped = true;
+    console.error("The game stopped", error);
+    ui.toast.textContent = "The renderer stopped. Reload the page to play again.";
+    ui.toast.classList.add("visible");
+    ui.toastTime = Infinity;
+  };
   function loop(now: number): void {
-    // A queued RAF timestamp can precede beginRound() after a slow map rebuild.
-    // Never run time backwards or extrapolate tanks beyond their physics poses.
-    const raw = Math.max(0, (now - last) / MILLISECONDS_PER_SECOND);
-    const dt = Math.min(MAX_FRAME_DELTA_SECONDS, raw);
+    if (stopped) {
+      return;
+    }
+    const frameMs = Math.max(0, now - last);
     last = Math.max(last, now);
     if (active && !document.hidden) {
-      if (sim.match.phase === "results" && playback.autoRounds) {
-        controls.clear();
-        recorder.completedRounds++;
-        sim.reset();
-        view.reset(sim);
-        sim.start();
-      }
-      const startSim = performance.now();
-      // Pause, results and the round menu need the cursor; a death keeps it captured.
-      controls.holdPointer(look.enabled, sim.match.phase !== "playing");
-      const lookPixels = controls.takeLook();
-      if (sim.match.phase === "playing") {
-        // Bound catch-up after stalls so one slow frame cannot spiral into more missed frames.
-        accumulator = Math.min(accumulator + dt, STEP * MAX_CATCH_UP_STEPS);
-        const position = sim.human.alive ? sim.human.body.translation() : sim.human.previous;
-        let angle: number;
-        if (look.enabled) {
-          if (sim.human.alive) {
-            const stick = controls.touch.pointers.aim === null ? 0 : controls.touch.aimX;
-            look.turn(lookPixels, stick, dt);
+      controls.takeInput(input);
+      input[INPUT.zoom] = pendingZoom;
+      pendingZoom = 0;
+      let result: Float32Array;
+      try {
+        result = game.frame(now, input);
+        if (counters.frames % ERROR_CHECK_EVERY_FRAMES === 0) {
+          const error = game.error();
+          if (error) {
+            throw new Error(error);
           }
-          angle = look.yaw;
-        } else {
-          const aim = controls.touch.aiming
-            ? view.touchAim(position, controls.touch.aimX, controls.touch.aimY)
-            : view.aim(controls.nx, controls.ny);
-          angle = Math.atan2(aim.x - position.x, aim.z - position.z);
         }
-        let steps = 0;
-        while (accumulator >= STEP && steps < MAX_CATCH_UP_STEPS) {
-          sim.step(look.steer(controls.command(angle)), playback.autoplay);
-          accumulator -= STEP;
-          steps++;
-        }
-      } else {
-        accumulator = 0;
+      } catch (error) {
+        fail(error);
+        return;
       }
-      if (sim.match.phase !== "playing" || !sim.human.alive) {
+      counters.frames++;
+      phase = PHASES[result[FRAME.phase]] ?? "ready";
+      alive = result[FRAME.humanAlive] === 1;
+      // Pause, results and the round menu need the cursor; a death keeps it captured.
+      controls.holdPointer(result[FRAME.firstPerson] === 1, phase !== "playing");
+      if (result[FRAME.clearInput]) {
         controls.clear();
       }
-      const simCost = performance.now() - startSim;
-      const events = sim.events.splice(0);
-      for (const event of events) {
-        const playerHit =
-          (event.type === "hurt" || event.type === "death") &&
-          event.owner === sim.human.id &&
-          event.team !== sim.human.team;
-        view.event(event, playerHit);
-        audio().event(
-          event,
-          sim.human.alive ? sim.human.body.translation() : sim.human.previous,
-          playerHit,
-          event.id === sim.human.id,
-        );
-        ui.event(event);
-      }
-      const renderStart = performance.now();
-      if (sim.match.phase !== "ready") {
-        view.render(
-          sim,
-          sim.match.phase === "playing" ? accumulator / STEP : 1,
-          dt,
-          playback.overview,
-        );
+      if (result[FRAME.events] > 0) {
+        const batch = JSON.parse(game.drain_events()) as EventBatch;
+        counters.events += batch.events.length;
+        audio().play(batch);
+        // A death names its killer, who may have joined since the last HUD update.
+        const state =
+          hud && !batch.events.some((event) => event.type === "death") ? hud : readHud();
+        for (const event of batch.events) {
+          ui.event(event, state);
+        }
       }
       cockpit.update(
-        sim.match.phase !== "ready" && view.seatWanted,
-        look.screenAngle(sim.human.heading),
+        result[FRAME.cockpit] === 1,
+        result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      const renderCost = performance.now() - renderStart;
-      stats.frame(now, simCost, renderCost);
-      if (frameIndex++ % HUD_UPDATE_EVERY_FRAMES === 0) {
-        ui.update(dt * HUD_UPDATE_EVERY_FRAMES);
+      stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      if (result[FRAME.hudDue]) {
+        updateHud(result[FRAME.dt] * HUD_UPDATE_EVERY_FRAMES);
         touchControls.update();
       }
-      if (recorder.recording) {
-        recorder.capture({
-          frame: raw * MILLISECONDS_PER_SECOND,
-          sim: simCost,
-          render: renderCost,
-          calls: view.renderer.info.render.drawCalls,
-          triangles: view.renderer.info.render.triangles,
-          bodies: sim.world.bodies.len(),
-          shots: sim.shots.length,
-          fragments: sim.fragments.length,
-          time: (now - recorder.recordStart) / MILLISECONDS_PER_SECOND,
-        });
-      }
+      recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
     }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
   if (import.meta.env.DEV) {
     Object.assign(window, {
-      sloppy: createDebug(sim, view, audio, controls, start, restart, recorder, playback),
+      sloppy: createDebug(
+        game,
+        audio,
+        controls,
+        {
+          start() {
+            controls.clear();
+            game.restart();
+            beginRound();
+          },
+          restart,
+          resize(exact) {
+            exactResolution = exact;
+            resize();
+          },
+        },
+        recorder,
+        counters,
+      ),
     });
-    if (new URLSearchParams(location.search).has("tweak")) {
+    if (params.has("tweak")) {
       const { Pane } = await import("tweakpane");
       const pane = new Pane({ title: "Yard workshop" });
-      pane.addBinding(view, "zoom", { min: CAMERA.minZoom, max: CAMERA.maxZoom });
+      const view = () =>
+        (JSON.parse(game.debug_json()) as { view: Record<"zoom" | "minZoom" | "maxZoom", number> })
+          .view;
+      const camera = {
+        get zoom() {
+          return view().zoom;
+        },
+        set zoom(value: number) {
+          game.debug_set_zoom(value);
+        },
+      };
+      const { minZoom, maxZoom } = view();
+      pane.addBinding(camera, "zoom", { min: minZoom, max: maxZoom });
     }
   }
 
   // Let the ready menu paint first; GO still creates audio if it arrives sooner.
   requestAnimationFrame(() => setTimeout(audio, 0));
+  // The first arena prepares here, so the menu reports its shader progress.
+  await prepareArena(choices, onStage);
   return {
     prepare: prepareArena,
     async start(options) {
       // Usually already prepared while the player chose; then this is instant.
-      await prepareArena(options, onStage);
+      Object.assign(choices, options);
+      await prepareArena(choices, onStage);
       beginRound();
     },
   };

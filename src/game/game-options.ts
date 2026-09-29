@@ -1,14 +1,28 @@
-import { DIFFICULTIES, parseDifficulty } from "./difficulty";
+import type { Difficulty, GameMode, Team, VehicleKind } from "./engine-api";
 import { isExtraLevel, mapOption, showsExtraLevels, type MapId } from "./map-options";
 import { bindMapChoice, setMapChoice } from "./map-picker";
-import { Random } from "./math";
-import type { Simulation } from "./simulation";
-import type { VehicleKind } from "./types";
 
-export type GameOptions = Pick<
-  Simulation,
-  "humanKind" | "humanTeam" | "gameMode" | "mapMode" | "difficulty"
->;
+/** Battle Setup's choices, as the engine's `Game.set_options` takes them. */
+export interface GameOptions {
+  humanKind: VehicleKind;
+  humanTeam: Team;
+  gameMode: GameMode;
+  mapMode: MapId;
+  difficulty: Difficulty;
+}
+
+export function parseDifficulty(value: string | null): Difficulty {
+  return value === "easy" || value === "hard" ? value : "normal";
+}
+
+/** The first draw of the game's seeded stream (Mulberry32), which picks the player's
+ * team. The engine draws the same way, so a seed always means the same team. */
+export function firstSeededDraw(seed: number): number {
+  let t = (seed + 0x6d2b79f5) | 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 
 /** A link's `?map=` wins; otherwise the player's last map is the one prepared
  * behind the menu, so a returning player's GO needs no rebuild. Extra levels are
@@ -27,7 +41,7 @@ export function initialGameOptions(
   };
   return {
     humanKind: "balanced",
-    humanTeam: new Random(seed).next() < 0.5 ? 0 : 1,
+    humanTeam: firstSeededDraw(seed) < 0.5 ? 0 : 1,
     gameMode: "team",
     mapMode: map(requestedMap) ?? map(lastMap) ?? "village",
     difficulty: parseDifficulty(difficulty),
@@ -60,12 +74,6 @@ export function syncGameOptions(overlay: HTMLElement, options: GameOptions): voi
   }
   setMapChoice(overlay, "mapMode", options.mapMode);
   showBattleFormat(overlay, options.mapMode);
-  // Each difficulty explains itself in a tooltip, so choosing one never reflows the menu.
-  overlay.querySelectorAll<HTMLInputElement>('input[name="difficulty"]').forEach((input) => {
-    const description = DIFFICULTIES[parseDifficulty(input.value)].description;
-    input.closest<HTMLElement>(".segment")?.setAttribute("data-tip", description);
-    input.setAttribute("aria-description", description);
-  });
   showTankTeam(overlay, options.humanTeam);
 }
 

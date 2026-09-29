@@ -1,14 +1,9 @@
 import { bindPress } from "./button-input";
-import { endBattle } from "./match";
-import { AMMO_ORDER, equippedWeapon, hasAmmo } from "./ammunition";
-import { SCORE_LIMIT, VEHICLES, WEAPONS } from "./data";
-import { bindGameOptions, syncGameOptions } from "./game-options";
+import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
+import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
-import { healthBarState } from "./health-bar";
-import type { Simulation } from "./simulation";
-import type { DamageCause, SimEvent, Weapon } from "./types";
+import type { DamageCause, EngineEvent, HudState } from "./engine-api";
 import { hudMarkup, menuMarkup } from "./ui-markup";
-import { rankIndex, RANKS, REPAIR_DELAY } from "./veterancy";
 const DAMAGE_LABELS: Record<DamageCause, string> = {
   standard: "Standard shell",
   spread: "Spread shot",
@@ -24,6 +19,18 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Ready when you are";
 
+export interface UIActions {
+  start(): void;
+  resume(): void;
+  /** BATTLE SETUP: a fresh world behind the menu. */
+  restart(): void;
+  endBattle(): void;
+  pause(): void;
+  setting(key: string, value: number): void;
+  selectAmmo(weapon: AmmoWeapon): void;
+}
+
+/** The DOM HUD, menus and battle report, drawn from the engine's HUD state. */
 export class UI {
   overlay: HTMLElement;
   hud: HTMLElement;
@@ -36,19 +43,16 @@ export class UI {
   damageTime = 0;
   deathCause = "";
   lastRound = 0;
+  /** The HUD state of the latest `update`. */
+  state?: HudState;
   private readonly battleSetup: HTMLElement;
   private playModes?: { close(): void };
   feedRows: { text: string; time: number }[] = [];
   constructor(
     root: HTMLElement,
-    public simulation: Simulation,
-    public start: () => void,
-    public resume: () => void,
-    public restart: () => void,
-    public setting: (key: string, value: number) => void,
-    public pause: () => void,
-    public selectAmmo: (weapon: Weapon) => void,
-    public damageAngle: (event: SimEvent) => number | null,
+    /** The Battle Setup choices the in-game menu edits. */
+    private readonly choices: GameOptions,
+    private readonly actions: UIActions,
   ) {
     // Keep the HTML-delivered UI for later rounds, without retaining event handlers.
     this.battleSetup = document
@@ -71,13 +75,13 @@ export class UI {
     this.hud = root.querySelector("#hud")!;
     this.toast = root.querySelector("#toast")!;
     this.feed = root.querySelector("#feed")!;
-    for (const weapon of AMMO_ORDER) {
+    for (const { weapon } of AMMO_OPTIONS) {
       const button = root.querySelector<HTMLButtonElement>(`#ammo-${weapon}`)!;
-      bindPress(button, () => this.selectAmmo(weapon));
+      bindPress(button, () => actions.selectAmmo(weapon));
     }
     bindPress(root.querySelector("#pause")!, () => {
-      if (simulation.match.phase === "playing") {
-        this.pause();
+      if (this.state?.match.phase === "playing") {
+        actions.pause();
         this.lastPhase = "";
       }
     });
@@ -111,10 +115,9 @@ export class UI {
       void toggleFullscreen();
     });
   }
-  show(): void {
-    const simulation = this.simulation;
-    const phase = simulation.match.phase;
-    this.overlay.style.display = phase === "playing" && simulation.human.alive ? "none" : "grid";
+  private show(state: HudState): void {
+    const phase = state.match.phase;
+    this.overlay.style.display = phase === "playing" && state.human.alive ? "none" : "grid";
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     this.playModes?.close();
     this.playModes = undefined;
@@ -122,20 +125,21 @@ export class UI {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
     } else {
       this.overlay.innerHTML = menuMarkup(
-        simulation,
+        state,
         this.battleSetup.querySelector(".menu-help")!.innerHTML,
       );
       this.overlay
         .querySelector(".respawn")
         ?.append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
     }
-    syncGameOptions(this.overlay, simulation);
-    bindGameOptions(this.overlay, simulation);
+    const choices = this.choices;
+    syncGameOptions(this.overlay, choices);
+    bindGameOptions(this.overlay, choices);
     const setup = this.overlay.querySelector<HTMLElement>(".start");
     if (setup) {
       // This page already runs a single-player arena, so a chosen room opens in a fresh page.
       this.playModes = bindPlayModes(setup, initialPlayMode(location.search), {
-        choices: () => simulation,
+        choices: () => choices,
         single: () => {},
         enterRoom: (_selection, reload) => reload(),
       });
@@ -146,18 +150,16 @@ export class UI {
     if (death) {
       death.textContent = this.deathCause;
     }
-    this.overlay.querySelector("#start")?.addEventListener("click", this.start);
-    this.overlay.querySelector("#play-again")?.addEventListener("click", this.start);
-    this.overlay.querySelector("#resume")?.addEventListener("click", this.resume);
-    this.overlay.querySelector("#end-battle")?.addEventListener("click", () => {
-      endBattle(simulation.match);
-      this.update(0);
-    });
-    this.overlay.querySelector("#restart")?.addEventListener("click", this.restart);
+    const { actions } = this;
+    this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
+    this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
+    this.overlay.querySelector("#resume")?.addEventListener("click", () => actions.resume());
+    this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
+    this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
     for (const key of ["volume", "tank-speed", "bullet-speed"]) {
       this.overlay.querySelector<HTMLInputElement>("#" + key)?.addEventListener("input", (e) => {
         const value = +(e.target as HTMLInputElement).value;
-        this.setting(key, value);
+        actions.setting(key, value);
         const output = this.overlay.querySelector(`#${key}-value`);
         if (output) {
           output.textContent = `${Math.round(value * 100)}%`;
@@ -165,11 +167,12 @@ export class UI {
       });
     }
   }
-  private syncRound(): void {
-    if (this.lastRound === this.simulation.match.round) {
+  /** A new round, or a Battle Setup world, starts with no feedback from the last. */
+  private syncRound(round: number): void {
+    if (this.lastRound === round) {
       return;
     }
-    this.lastRound = this.simulation.match.round;
+    this.lastRound = round;
     this.lastPhase = "";
     this.deathCause = "";
     this.damageTime = 0;
@@ -178,24 +181,29 @@ export class UI {
     this.toast.classList.remove("visible");
     this.hud.querySelector("#ammo-notice")!.textContent = "";
   }
-  event(event: SimEvent): void {
-    this.syncRound();
-    if (event.id === this.simulation.human.id) {
-      if (event.type === "notice" && this.simulation.human.alive) {
+  /** Show the menu for the current phase again (after a pause the page caused). */
+  refresh(): void {
+    this.lastPhase = "";
+  }
+  /** One drained engine event; `state` names the tanks it mentions. */
+  event(event: EngineEvent, state: HudState): void {
+    this.syncRound(state.match.round);
+    const human = state.human;
+    if (event.id === human.id) {
+      if (event.type === "notice" && human.alive) {
         this.hud.querySelector("#ammo-notice")!.textContent = event.label ?? "";
         this.ammoNoticeTime = 3;
       }
       if (event.type === "hurt" || event.type === "death") {
-        const angle = this.damageAngle(event);
         const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
-        if (angle !== null) {
-          indicator.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+        if (event.damageAngle !== null) {
+          indicator.style.transform = `translate(-50%, -50%) rotate(${event.damageAngle}rad)`;
           indicator.hidden = false;
           this.damageTime = 1.2;
         }
       }
       if (event.type === "death") {
-        const killer = this.simulation.tanks.find((tank) => tank.id === event.owner);
+        const killer = state.scoreboard.find((tank) => tank.id === event.owner);
         const cause = event.damageSource
           ? DAMAGE_LABELS[event.damageSource.cause]
           : "Unknown weapon";
@@ -215,26 +223,24 @@ export class UI {
     }
     if (
       (event.type === "pickup" || event.type === "promotion" || event.type === "death") &&
-      event.id === this.simulation.human.id
+      event.id === human.id
     ) {
       this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
       this.toastTime = event.type === "pickup" ? 1.5 : 2;
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      const { human, tanks } = this.simulation;
       const name = (id: number | undefined) =>
-        id === human.id ? "YOU" : (tanks.find((tank) => tank.id === id)?.name ?? "YARD");
+        id === human.id ? "YOU" : (state.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
       this.feedRows.unshift({ text: `${name(event.owner)}  ▸  ${name(event.id)}`, time: 5 });
     }
   }
-  update(dt: number): void {
-    const simulation = this.simulation;
-    const tank = simulation.human;
-    const maxHp = simulation.maxHealth(tank);
-    const { match, elapsed } = simulation;
+  update(state: HudState, dt: number): void {
+    this.state = state;
+    const tank = state.human;
+    const { match, elapsed } = state;
     const dead = !tank.alive;
-    this.syncRound();
+    this.syncRound(match.round);
     if (match.phase === "playing") {
       this.damageTime = Math.max(0, this.damageTime - dt);
       this.ammoNoticeTime = Math.max(0, this.ammoNoticeTime - dt);
@@ -248,7 +254,7 @@ export class UI {
     if (this.lastPhase !== match.phase || dead !== this.lastDead) {
       this.lastPhase = match.phase;
       this.lastDead = dead;
-      this.show();
+      this.show(state);
     }
     const set = (id: string, text: string) => {
       const e = document.getElementById(id);
@@ -256,60 +262,53 @@ export class UI {
         e.textContent = text;
       }
     };
-    const solo = simulation.gameMode === "solo";
+    const solo = state.gameMode === "solo";
     set("label0", solo ? "KILLS" : "◆ BLUE");
     set("label1", solo ? "ACTIVE" : "RED Ⅱ");
     set(
       "objective",
       solo
         ? "SURVIVE · ONE LIFE"
-        : simulation.endlessMatch
+        : state.endlessMatch
           ? "ENDLESS STRESS"
-          : `FIRST TO ${SCORE_LIMIT}`,
+          : `FIRST TO ${state.scoreLimit}`,
     );
     set("score0", String(solo ? tank.kills : match.scores[0]));
-    set(
-      "score1",
-      String(
-        solo
-          ? simulation.tanks.filter((tank) => !tank.human && tank.alive).length
-          : match.scores[1],
-      ),
-    );
-    const sec = simulation.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
+    set("score1", String(solo ? state.activeEnemies : match.scores[1]));
+    const sec = state.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
     set(
       "time",
-      simulation.endlessMatch
+      state.endlessMatch
         ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
         : match.overtime
           ? "NEXT KILL"
           : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`,
     );
     set("hp", String(Math.ceil(tank.hp)));
-    set("vehicle-name", VEHICLES[tank.kind].name);
-    const rank = rankIndex(tank);
-    const stats = RANKS[rank];
-    set("rank", stats.name.toUpperCase());
+    set("vehicle-name", tank.vehicleName);
+    const rank = tank.rank;
+    set("rank", tank.rankName.toUpperCase());
     const rankLabel = document.getElementById("rank")!;
     rankLabel.dataset.rank = String(rank);
     rankLabel.title =
       rank === 0
         ? "Earn XP from enemy hull damage and kills. Ranks reset on respawn."
-        : `+${Math.round((stats.damage - 1) * 100)}% damage · +${Math.round((stats.fireRate - 1) * 100)}% fire rate · +${Math.round((stats.health - 1) * 100)}% hull${stats.repair ? ` · repairs ${stats.repair * 100}% hull/s after ${REPAIR_DELAY}s out of combat` : ""}`;
-    const selected = equippedWeapon(tank);
-    for (const weapon of AMMO_ORDER) {
-      const count = weapon === "standard" ? "∞" : String(tank.ammo[weapon]);
+        : `+${Math.round((tank.rankDamage - 1) * 100)}% damage · +${Math.round((tank.rankFireRate - 1) * 100)}% fire rate · +${Math.round((tank.rankHealth - 1) * 100)}% hull${tank.rankRepair ? ` · repairs ${tank.rankRepair * 100}% hull/s after ${tank.repairDelay}s out of combat` : ""}`;
+    AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
+      const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
+      const selected = !!slotState?.selected;
+      const count = slotState?.count === null ? "∞" : String(slotState?.count ?? 0);
       set(`ammo-count-${weapon}`, count);
       const slot = document.getElementById(`ammo-${weapon}`)! as HTMLButtonElement;
       slot.disabled = dead || match.phase !== "playing";
-      slot.setAttribute("aria-pressed", String(selected === weapon));
-      slot.classList.toggle("selected", selected === weapon);
-      slot.classList.toggle("empty", !hasAmmo(tank, weapon));
-      const label = `${AMMO_ORDER.indexOf(weapon) + 1}: ${WEAPONS[weapon].label}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected === weapon ? ", selected" : ""}`;
+      slot.setAttribute("aria-pressed", String(selected));
+      slot.classList.toggle("selected", selected);
+      slot.classList.toggle("empty", !slotState?.available);
+      const label = `${index + 1}: ${name}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected ? ", selected" : ""}`;
       if (slot.getAttribute("aria-label") !== label) {
         slot.setAttribute("aria-label", label);
       }
-    }
+    });
     set(
       "mine",
       tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
@@ -324,22 +323,19 @@ export class UI {
         tank.rapid > 0 ? `» RAPID ${Math.ceil(tank.rapid)}s` : null,
         tank.speed > 0 ? `ϟ BOOST ${Math.ceil(tank.speed)}s` : null,
         tank.laser > 0 ? `✧ LASER DEFENSE ${Math.ceil(tank.laser)}s` : null,
-        tank.alive && stats.repair && tank.hp < maxHp && elapsed - tank.lastCombat >= REPAIR_DELAY
-          ? "SELF-REPAIR"
-          : null,
+        tank.selfRepair ? "SELF-REPAIR" : null,
       ]
         .filter(Boolean)
         .join("  "),
     );
     set("respawn-count", String(Math.ceil(tank.respawn)));
-    const health = healthBarState(tank.hp, maxHp, tank.team);
     this.hud
       .querySelector(".status")!
-      .classList.toggle("critical-health", tank.alive && health.ratio < 0.25);
+      .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
     this.hud.classList.toggle("paused", match.phase !== "playing");
     const hpbar = document.getElementById("hpbar")!;
-    hpbar.style.width = `${health.ratio * 100}%`;
-    hpbar.style.backgroundColor = `#${health.color.toString(16).padStart(6, "0")}`;
+    hpbar.style.width = `${tank.healthRatio * 100}%`;
+    hpbar.style.backgroundColor = `#${tank.healthColor.toString(16).padStart(6, "0")}`;
     this.toastTime -= dt;
     if (this.toastTime <= 0) {
       this.toast.classList.remove("visible");

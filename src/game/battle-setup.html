@@ -145,14 +145,28 @@
       >
         <div class="setup-label"><span id="difficulty-label">DIFFICULTY</span></div>
         <div class="segmented">
-          <label class="segment"
-            ><input type="radio" name="difficulty" value="easy" /><span>Easy</span></label
-          ><label class="segment"
-            ><input type="radio" name="difficulty" value="normal" checked /><span
-              >Normal</span
-            ></label
-          ><label class="segment"
-            ><input type="radio" name="difficulty" value="hard" /><span>Hard</span></label
+          <label class="segment" data-tip="Slightly more forgiving enemies · 10% less enemy damage"
+            ><input
+              type="radio"
+              name="difficulty"
+              value="easy"
+              aria-description="Slightly more forgiving enemies · 10% less enemy damage"
+            /><span>Easy</span></label
+          ><label class="segment" data-tip="The original combat balance"
+            ><input
+              type="radio"
+              name="difficulty"
+              value="normal"
+              checked
+              aria-description="The original combat balance"
+            /><span>Normal</span></label
+          ><label class="segment" data-tip="Faster, sharper enemies · 15% more enemy damage"
+            ><input
+              type="radio"
+              name="difficulty"
+              value="hard"
+              aria-description="Faster, sharper enemies · 15% more enemy damage"
+            /><span>Hard</span></label
           >
         </div>
       </div>

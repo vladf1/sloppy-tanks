@@ -1,10 +1,11 @@
 import type { Controls } from "./controls";
-import type { Match, Tank } from "./types";
+import type { Phase } from "./engine-api";
 import type { TouchControls } from "./touch-controls";
 import type { TouchMode } from "./touch-input";
+/** What the touch overlay shows: the mine button's cooldown and whether to show at all. */
 export interface TouchState {
-  readonly human: Pick<Tank, "mineCooldown">;
-  readonly match: Pick<Match, "phase">;
+  readonly human: { readonly mineCooldown: number };
+  readonly match: { readonly phase: Phase };
 }
 
 /** Desktop retains only detection/settings; joystick code and CSS load on first enable. */
