@@ -37,6 +37,11 @@ fn kilobytes(bytes: u64, seconds: f64) -> f64 {
 fn megabytes(bytes: u64) -> f64 {
     round(bytes as f64 / MB, 1)
 }
+/// Running traffic totals keep 1 KB resolution, so the dashboard can show a quiet
+/// server's first kilobytes instead of "0 MB".
+fn total_megabytes(bytes: u64) -> f64 {
+    round(bytes as f64 / MB, 3)
+}
 fn cpu_percent(micros: u64, seconds: f64) -> f64 {
     round(micros as f64 / 1e4 / seconds, 1)
 }
@@ -425,10 +430,10 @@ impl ServerMonitor {
         Totals {
             rooms_created: self.counts.rooms_created,
             joins: self.counts.joins,
-            sent_mb: megabytes(self.counts.sent_bytes),
-            received_mb: megabytes(self.counts.received_bytes),
-            wire_sent_mb: megabytes(self.counts.wire_sent_bytes),
-            wire_received_mb: megabytes(self.counts.wire_received_bytes),
+            sent_mb: total_megabytes(self.counts.sent_bytes),
+            received_mb: total_megabytes(self.counts.received_bytes),
+            wire_sent_mb: total_megabytes(self.counts.wire_sent_bytes),
+            wire_received_mb: total_megabytes(self.counts.wire_received_bytes),
         }
     }
 
@@ -755,7 +760,10 @@ mod tests {
             .expect("the tenth reading is a sample");
         assert_eq!(stats.room_list[0].tick_avg_ms, 3.0);
         assert_eq!(stats.room_list[0].tick_max_ms, 12.0);
-        assert_eq!(stats.totals.sent_mb, 1.0, "ten readings of 100 KB");
+        assert_eq!(
+            stats.totals.sent_mb, 0.977,
+            "ten readings of 100 KB, to the nearest KB"
+        );
         assert_eq!(stats.window_seconds, 10.0);
         assert_eq!(heard.len(), 10, "a sample is also a reading");
         assert_eq!(monitor.history().len(), 10);

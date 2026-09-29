@@ -484,6 +484,9 @@
       };
       const fixed = (value, digits = 1) =>
         Number.isFinite(value) ? value.toFixed(digits).replace(/\.0+$/, "") : "–";
+      /** Traffic totals below 1 MB read in KB, so a quiet server does not show "0 MB". */
+      const megabytes = (mb) =>
+        Number.isFinite(mb) && mb < 1 ? `${fixed(mb * 1024, 0)} KB` : `${fixed(mb)} MB`;
       const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour12: false });
       function span(seconds) {
         const s = Math.max(0, Math.round(seconds));
@@ -986,9 +989,9 @@
         const facts = [
           ["Rooms created", reading.totals.roomsCreated],
           ["Players joined", reading.totals.joins],
-          ["Sent on the wire", `${fixed(reading.totals.wireSentMB)} MB`],
-          ["Sent before compression", `${fixed(reading.totals.sentMB)} MB`],
-          ["Received on the wire", `${fixed(reading.totals.wireReceivedMB)} MB`],
+          ["Sent on the wire", megabytes(reading.totals.wireSentMB)],
+          ["Sent before compression", megabytes(reading.totals.sentMB)],
+          ["Received on the wire", megabytes(reading.totals.wireReceivedMB)],
           [
             "Host load (1 min)",
             `${fixed(reading.hostLoad, 2)} on ${server.cpus} CPU`,
