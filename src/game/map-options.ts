@@ -23,7 +23,8 @@ export const MAP_OPTIONS = [
     tint: "#a8733a",
   },
   // Extra levels are offered only with `?extralevels`. Each brings its own arena, bot
-  // roster and rules from `src/extra-levels.ts`, which the browser loads once one is chosen.
+  // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); this menu
+  // list mirrors `crates/core/src/sim/map_options.rs`.
   {
     id: "stress-test",
     name: "Stress Grid",
