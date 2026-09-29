@@ -1,0 +1,2287 @@
+{
+  "connections": {
+    "alice": [
+      {
+        "type": "welcome",
+        "exact": {
+          "type": "welcome",
+          "version": 1,
+          "contentVersion": "golden-content",
+          "roomEpoch": "golden-room",
+          "playerId": "credential-00000000000000000001",
+          "token": "credential-00000000000000000002",
+          "hostId": "credential-00000000000000000001",
+          "reset": false
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 0,
+          "type": "lobby",
+          "phase": "lobby",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0
+            }
+          ],
+          "scoreboard": [],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "normal",
+            "humansOnly": false,
+            "roundMinutes": 20
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "control",
+          "tankId": 104,
+          "life": 0,
+          "controlEpoch": 1,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 50, "tick": 0 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 100, "tick": 3 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 150, "tick": 6 } },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 200, "tick": 9 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 250, "tick": 12 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 300, "tick": 15 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 350, "tick": 18 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 400, "tick": 21 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 450, "tick": 24 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 500, "tick": 27 } },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 550, "tick": 30 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 600, "tick": 33 } },
+      { "type": "snapshot" },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "control",
+          "tankId": 58,
+          "life": 0,
+          "controlEpoch": 1,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 650, "tick": 0 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 700, "tick": 3 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 750, "tick": 6 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 800, "tick": 9 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 850, "tick": 12 } },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 900, "tick": 15 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 950, "tick": 18 } },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 1000, "tick": 21 } },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 1050, "tick": 24 } },
+      { "type": "snapshot" },
+      {
+        "type": "room-reset",
+        "exact": { "type": "room-reset", "roomEpoch": "golden-room", "reason": "server-restart" }
+      },
+      { "type": "close:1012" }
+    ],
+    "bob": [
+      {
+        "type": "welcome",
+        "exact": {
+          "type": "welcome",
+          "version": 1,
+          "contentVersion": "golden-content",
+          "roomEpoch": "golden-room",
+          "playerId": "credential-00000000000000000003",
+          "token": "credential-00000000000000000004",
+          "hostId": "credential-00000000000000000001",
+          "reset": false
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "control",
+          "tankId": 105,
+          "life": 1,
+          "controlEpoch": 1,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 200, "tick": 9 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 250, "tick": 12 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 300, "tick": 15 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 350, "tick": 18 } },
+      { "type": "snapshot" },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "control",
+          "tankId": 105,
+          "life": 1,
+          "controlEpoch": 2,
+          "driver": "bot"
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 400, "tick": 21 } },
+      { "type": "pong", "exact": { "type": "pong", "t": 450, "tick": 24 } },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "control",
+          "tankId": 105,
+          "life": 1,
+          "controlEpoch": 3,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 500, "tick": 27 } },
+      { "type": "snapshot" },
+      { "type": "full" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      { "type": "pong", "exact": { "type": "pong", "t": 550, "tick": 30 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 600, "tick": 33 } },
+      { "type": "snapshot" },
+      { "type": "snapshot" },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "results",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "control",
+          "tankId": 59,
+          "life": 0,
+          "controlEpoch": 1,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 650, "tick": 0 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 700, "tick": 3 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 750, "tick": 6 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 800, "tick": 9 } },
+      { "type": "snapshot" },
+      { "type": "pong", "exact": { "type": "pong", "t": 850, "tick": 12 } },
+      { "type": "snapshot" },
+      { "type": "close:1000" }
+    ],
+    "carol": [
+      {
+        "type": "welcome",
+        "exact": {
+          "type": "welcome",
+          "version": 1,
+          "contentVersion": "golden-content",
+          "roomEpoch": "golden-room",
+          "playerId": "credential-00000000000000000005",
+          "token": "credential-00000000000000000006",
+          "hostId": "credential-00000000000000000001",
+          "reset": false
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 104
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "heavy",
+              "team": 1,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 105
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 106
+            }
+          ],
+          "settings": {
+            "mapMode": "village",
+            "difficulty": "easy",
+            "humansOnly": false,
+            "roundMinutes": 5
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 1,
+          "type": "control",
+          "tankId": 106,
+          "life": 1,
+          "controlEpoch": 1,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "invalid-message",
+          "message": "Choices are locked during a round",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" },
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "invalid-message",
+          "message": "Join required",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ],
+    "carol-again": [
+      {
+        "type": "welcome",
+        "exact": {
+          "type": "welcome",
+          "version": 1,
+          "contentVersion": "golden-content",
+          "roomEpoch": "golden-room",
+          "playerId": "credential-00000000000000000005",
+          "token": "credential-00000000000000000006",
+          "hostId": "credential-00000000000000000001",
+          "reset": false
+        }
+      },
+      {
+        "type": "lobby",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "lobby",
+          "phase": "playing",
+          "hostId": "credential-00000000000000000001",
+          "players": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "scoreboard": [
+            {
+              "playerId": "credential-00000000000000000001",
+              "name": "alice",
+              "kind": "scout",
+              "team": 0,
+              "slot": 0,
+              "connected": true,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 58
+            },
+            {
+              "playerId": "credential-00000000000000000003",
+              "name": "bob",
+              "kind": "balanced",
+              "team": 1,
+              "slot": 0,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 59
+            },
+            {
+              "playerId": "credential-00000000000000000005",
+              "name": "carol",
+              "kind": "balanced",
+              "team": 0,
+              "slot": 1,
+              "connected": false,
+              "kills": 0,
+              "deaths": 0,
+              "tankId": 60
+            }
+          ],
+          "settings": {
+            "mapMode": "harbor",
+            "difficulty": "hard",
+            "humansOnly": true,
+            "roundMinutes": 3
+          }
+        }
+      },
+      {
+        "type": "control",
+        "exact": {
+          "roomEpoch": "golden-room",
+          "roundId": 2,
+          "type": "control",
+          "tankId": 60,
+          "life": 0,
+          "controlEpoch": 3,
+          "driver": "human"
+        }
+      },
+      { "type": "full" },
+      { "type": "pong", "exact": { "type": "pong", "t": 1000, "tick": 21 } },
+      { "type": "snapshot" },
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "invalid-message",
+          "message": "Only the lobby host can change settings",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ],
+    "dave": [
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "incompatible",
+          "message": "Game updated. Reload this page before joining.",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ],
+    "eve": [
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "invalid-message",
+          "message": "kind: Invalid choice",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ],
+    "frank": [
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "invalid-message",
+          "message": "Join required",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ],
+    "late": [
+      {
+        "type": "error",
+        "exact": {
+          "type": "error",
+          "code": "expired",
+          "message": "This room has expired. Create a new room.",
+          "fatal": true
+        }
+      },
+      { "type": "close:1008" }
+    ]
+  },
+  "signatures": {
+    "full": [
+      "full.eventCursor:number",
+      "full.roomEpoch:string",
+      "full.roundId:number",
+      "full.seq:number",
+      "full.state.elapsed:number",
+      "full.state.entities.covers:array",
+      "full.state.entities.covers[].alive:boolean",
+      "full.state.entities.covers[].color:number",
+      "full.state.entities.covers[].d:number",
+      "full.state.entities.covers[].destructible:boolean",
+      "full.state.entities.covers[].h:number",
+      "full.state.entities.covers[].hp:null",
+      "full.state.entities.covers[].hp:number",
+      "full.state.entities.covers[].id:number",
+      "full.state.entities.covers[].kind:string",
+      "full.state.entities.covers[].maxHp:null",
+      "full.state.entities.covers[].maxHp:number",
+      "full.state.entities.covers[].motion.d:number",
+      "full.state.entities.covers[].motion.originX:number",
+      "full.state.entities.covers[].motion.originZ:number",
+      "full.state.entities.covers[].motion.w:number",
+      "full.state.entities.covers[].motion:object",
+      "full.state.entities.covers[].position.x:number",
+      "full.state.entities.covers[].position.y:number",
+      "full.state.entities.covers[].position.z:number",
+      "full.state.entities.covers[].position:object",
+      "full.state.entities.covers[].rotation.w:number",
+      "full.state.entities.covers[].rotation.x:number",
+      "full.state.entities.covers[].rotation.y:number",
+      "full.state.entities.covers[].rotation.z:number",
+      "full.state.entities.covers[].rotation:object",
+      "full.state.entities.covers[].timberJoin.openMax:boolean",
+      "full.state.entities.covers[].timberJoin.openMin:boolean",
+      "full.state.entities.covers[].timberJoin.post:boolean",
+      "full.state.entities.covers[].timberJoin:object",
+      "full.state.entities.covers[].w:number",
+      "full.state.entities.covers[].x:number",
+      "full.state.entities.covers[].z:number",
+      "full.state.entities.covers[]:object",
+      "full.state.entities.fragments:array",
+      "full.state.entities.mines:array",
+      "full.state.entities.mines[].arm:number",
+      "full.state.entities.mines[].damage:number",
+      "full.state.entities.mines[].id:number",
+      "full.state.entities.mines[].life:number",
+      "full.state.entities.mines[].owner:number",
+      "full.state.entities.mines[].ownerLife:number",
+      "full.state.entities.mines[].team:number",
+      "full.state.entities.mines[].x:number",
+      "full.state.entities.mines[].z:number",
+      "full.state.entities.mines[]:object",
+      "full.state.entities.pickups:array",
+      "full.state.entities.pickups[].available:boolean",
+      "full.state.entities.pickups[].cooldown:number",
+      "full.state.entities.pickups[].cooldownDuration:number",
+      "full.state.entities.pickups[].id:number",
+      "full.state.entities.pickups[].kind:string",
+      "full.state.entities.pickups[].x:number",
+      "full.state.entities.pickups[].z:number",
+      "full.state.entities.pickups[]:object",
+      "full.state.entities.shots:array",
+      "full.state.entities.shots[].id:number",
+      "full.state.entities.shots[].team:number",
+      "full.state.entities.shots[].visualY:number",
+      "full.state.entities.shots[].vx:number",
+      "full.state.entities.shots[].vz:number",
+      "full.state.entities.shots[].weapon:string",
+      "full.state.entities.shots[].x:number",
+      "full.state.entities.shots[].y:number",
+      "full.state.entities.shots[].z:number",
+      "full.state.entities.shots[]:object",
+      "full.state.entities.tanks:array",
+      "full.state.entities.tanks[].aim:number",
+      "full.state.entities.tanks[].alive:boolean",
+      "full.state.entities.tanks[].ammo.piercing:number",
+      "full.state.entities.tanks[].ammo.ricochet:number",
+      "full.state.entities.tanks[].ammo.rocket:number",
+      "full.state.entities.tanks[].ammo.spread:number",
+      "full.state.entities.tanks[].ammo:object",
+      "full.state.entities.tanks[].cooldown:number",
+      "full.state.entities.tanks[].deaths:number",
+      "full.state.entities.tanks[].heading:number",
+      "full.state.entities.tanks[].hp:number",
+      "full.state.entities.tanks[].human:boolean",
+      "full.state.entities.tanks[].id:number",
+      "full.state.entities.tanks[].kills:number",
+      "full.state.entities.tanks[].kind:string",
+      "full.state.entities.tanks[].laser:number",
+      "full.state.entities.tanks[].lastCombat:number",
+      "full.state.entities.tanks[].life:number",
+      "full.state.entities.tanks[].maxHp:number",
+      "full.state.entities.tanks[].mineCooldown:number",
+      "full.state.entities.tanks[].name:string",
+      "full.state.entities.tanks[].position.x:number",
+      "full.state.entities.tanks[].position.y:number",
+      "full.state.entities.tanks[].position.z:number",
+      "full.state.entities.tanks[].position:object",
+      "full.state.entities.tanks[].protection:number",
+      "full.state.entities.tanks[].rapid:number",
+      "full.state.entities.tanks[].recoil:number",
+      "full.state.entities.tanks[].respawn:number",
+      "full.state.entities.tanks[].selectedAmmo:string",
+      "full.state.entities.tanks[].shield:number",
+      "full.state.entities.tanks[].shieldPoints:number",
+      "full.state.entities.tanks[].speed:number",
+      "full.state.entities.tanks[].team:number",
+      "full.state.entities.tanks[].velocity.x:number",
+      "full.state.entities.tanks[].velocity.y:number",
+      "full.state.entities.tanks[].velocity.z:number",
+      "full.state.entities.tanks[].velocity:object",
+      "full.state.entities.tanks[].xp:number",
+      "full.state.entities.tanks[]:object",
+      "full.state.entities:object",
+      "full.state.map.theme:string",
+      "full.state.map:object",
+      "full.state.match.overtime:boolean",
+      "full.state.match.phase:string",
+      "full.state.match.round:number",
+      "full.state.match.scores:array",
+      "full.state.match.scores[]:number",
+      "full.state.match.time:number",
+      "full.state.match.winner:null",
+      "full.state.match:object",
+      "full.state:object",
+      "full.tick:number",
+      "full.type:string",
+      "full:object"
+    ],
+    "snapshot": [
+      "snapshot.ack:number",
+      "snapshot.roundId:number",
+      "snapshot.snapshots:array",
+      "snapshot.snapshots[].elapsed:number",
+      "snapshot.snapshots[].events:array",
+      "snapshot.snapshots[].events[].event(debris-impact).force:number",
+      "snapshot.snapshots[].events[].event(debris-impact).height:number",
+      "snapshot.snapshots[].events[].event(debris-impact).id:number",
+      "snapshot.snapshots[].events[].event(debris-impact).material:string",
+      "snapshot.snapshots[].events[].event(debris-impact).type:string",
+      "snapshot.snapshots[].events[].event(debris-impact).x:number",
+      "snapshot.snapshots[].events[].event(debris-impact).z:number",
+      "snapshot.snapshots[].events[].event(notice).id:number",
+      "snapshot.snapshots[].events[].event(notice).label:string",
+      "snapshot.snapshots[].events[].event(notice).type:string",
+      "snapshot.snapshots[].events[].event(notice).x:number",
+      "snapshot.snapshots[].events[].event(notice).z:number",
+      "snapshot.snapshots[].events[].event(respawn).id:number",
+      "snapshot.snapshots[].events[].event(respawn).type:string",
+      "snapshot.snapshots[].events[].event(respawn).x:number",
+      "snapshot.snapshots[].events[].event(respawn).z:number",
+      "snapshot.snapshots[].events[].event(shot).color:number",
+      "snapshot.snapshots[].events[].event(shot).id:number",
+      "snapshot.snapshots[].events[].event(shot).size:number",
+      "snapshot.snapshots[].events[].event(shot).team:number",
+      "snapshot.snapshots[].events[].event(shot).type:string",
+      "snapshot.snapshots[].events[].event(shot).weapon:string",
+      "snapshot.snapshots[].events[].event(shot).x:number",
+      "snapshot.snapshots[].events[].event(shot).z:number",
+      "snapshot.snapshots[].events[].event:object",
+      "snapshot.snapshots[].events[].eventId:number",
+      "snapshot.snapshots[].events[].tick:number",
+      "snapshot.snapshots[].events[]:object",
+      "snapshot.snapshots[].match.endedEarly:boolean",
+      "snapshot.snapshots[].match.phase:string",
+      "snapshot.snapshots[].match.time:number",
+      "snapshot.snapshots[].match:object",
+      "snapshot.snapshots[].removed.tanks:array",
+      "snapshot.snapshots[].removed.tanks[]:number",
+      "snapshot.snapshots[].removed:object",
+      "snapshot.snapshots[].seq:number",
+      "snapshot.snapshots[].tick:number",
+      "snapshot.snapshots[].traces:array",
+      "snapshot.snapshots[].traces[].end.x:number",
+      "snapshot.snapshots[].traces[].end.z:number",
+      "snapshot.snapshots[].traces[].end:object",
+      "snapshot.snapshots[].traces[].endTick:number",
+      "snapshot.snapshots[].traces[].shot.id:number",
+      "snapshot.snapshots[].traces[].shot.team:number",
+      "snapshot.snapshots[].traces[].shot.visualY:number",
+      "snapshot.snapshots[].traces[].shot.vx:number",
+      "snapshot.snapshots[].traces[].shot.vz:number",
+      "snapshot.snapshots[].traces[].shot.weapon:string",
+      "snapshot.snapshots[].traces[].shot.x:number",
+      "snapshot.snapshots[].traces[].shot.y:number",
+      "snapshot.snapshots[].traces[].shot.z:number",
+      "snapshot.snapshots[].traces[].shot:object",
+      "snapshot.snapshots[].traces[].tick:number",
+      "snapshot.snapshots[].traces[]:object",
+      "snapshot.snapshots[].updates.covers.*.d:number",
+      "snapshot.snapshots[].updates.covers.*.position.x:number",
+      "snapshot.snapshots[].updates.covers.*.position.y:number",
+      "snapshot.snapshots[].updates.covers.*.position.z:number",
+      "snapshot.snapshots[].updates.covers.*.position:object",
+      "snapshot.snapshots[].updates.covers.*.rotation.w:number",
+      "snapshot.snapshots[].updates.covers.*.rotation.x:number",
+      "snapshot.snapshots[].updates.covers.*.rotation.y:number",
+      "snapshot.snapshots[].updates.covers.*.rotation.z:number",
+      "snapshot.snapshots[].updates.covers.*.rotation:object",
+      "snapshot.snapshots[].updates.covers.*.w:number",
+      "snapshot.snapshots[].updates.covers.*.x:number",
+      "snapshot.snapshots[].updates.covers.*.z:number",
+      "snapshot.snapshots[].updates.covers.*:object",
+      "snapshot.snapshots[].updates.covers:object",
+      "snapshot.snapshots[].updates.mines.*.arm:number",
+      "snapshot.snapshots[].updates.mines.*.damage:number",
+      "snapshot.snapshots[].updates.mines.*.id:number",
+      "snapshot.snapshots[].updates.mines.*.life:number",
+      "snapshot.snapshots[].updates.mines.*.owner:number",
+      "snapshot.snapshots[].updates.mines.*.ownerLife:number",
+      "snapshot.snapshots[].updates.mines.*.team:number",
+      "snapshot.snapshots[].updates.mines.*.x:number",
+      "snapshot.snapshots[].updates.mines.*.z:number",
+      "snapshot.snapshots[].updates.mines.*:object",
+      "snapshot.snapshots[].updates.mines:object",
+      "snapshot.snapshots[].updates.pickups.*.cooldown:number",
+      "snapshot.snapshots[].updates.pickups.*:object",
+      "snapshot.snapshots[].updates.pickups:object",
+      "snapshot.snapshots[].updates.shots.*.id:number",
+      "snapshot.snapshots[].updates.shots.*.team:number",
+      "snapshot.snapshots[].updates.shots.*.visualY:number",
+      "snapshot.snapshots[].updates.shots.*.vx:number",
+      "snapshot.snapshots[].updates.shots.*.vz:number",
+      "snapshot.snapshots[].updates.shots.*.weapon:string",
+      "snapshot.snapshots[].updates.shots.*.x:number",
+      "snapshot.snapshots[].updates.shots.*.y:number",
+      "snapshot.snapshots[].updates.shots.*.z:number",
+      "snapshot.snapshots[].updates.shots.*:object",
+      "snapshot.snapshots[].updates.shots:object",
+      "snapshot.snapshots[].updates.tanks.*.aim:number",
+      "snapshot.snapshots[].updates.tanks.*.cooldown:number",
+      "snapshot.snapshots[].updates.tanks.*.heading:number",
+      "snapshot.snapshots[].updates.tanks.*.hp:number",
+      "snapshot.snapshots[].updates.tanks.*.human:boolean",
+      "snapshot.snapshots[].updates.tanks.*.kind:string",
+      "snapshot.snapshots[].updates.tanks.*.lastCombat:number",
+      "snapshot.snapshots[].updates.tanks.*.life:number",
+      "snapshot.snapshots[].updates.tanks.*.maxHp:number",
+      "snapshot.snapshots[].updates.tanks.*.mineCooldown:number",
+      "snapshot.snapshots[].updates.tanks.*.name:string",
+      "snapshot.snapshots[].updates.tanks.*.position.x:number",
+      "snapshot.snapshots[].updates.tanks.*.position.y:number",
+      "snapshot.snapshots[].updates.tanks.*.position.z:number",
+      "snapshot.snapshots[].updates.tanks.*.position:object",
+      "snapshot.snapshots[].updates.tanks.*.protection:number",
+      "snapshot.snapshots[].updates.tanks.*.recoil:number",
+      "snapshot.snapshots[].updates.tanks.*.selectedAmmo:string",
+      "snapshot.snapshots[].updates.tanks.*.velocity.x:number",
+      "snapshot.snapshots[].updates.tanks.*.velocity.y:number",
+      "snapshot.snapshots[].updates.tanks.*.velocity.z:number",
+      "snapshot.snapshots[].updates.tanks.*.velocity:object",
+      "snapshot.snapshots[].updates.tanks.*:object",
+      "snapshot.snapshots[].updates.tanks:object",
+      "snapshot.snapshots[].updates:object",
+      "snapshot.snapshots[]:object",
+      "snapshot.type:string",
+      "snapshot:object"
+    ]
+  }
+}

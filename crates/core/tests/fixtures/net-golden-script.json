@@ -1,0 +1,118 @@
+{
+  "roomEpoch": "golden-room",
+  "seed": 4242,
+  "steps": [
+    {
+      "op": "join",
+      "conn": "alice",
+      "extra": {
+        "team": 0,
+        "kind": "scout",
+        "create": {
+          "mapMode": "village",
+          "difficulty": "easy",
+          "humansOnly": false,
+          "roundMinutes": 5
+        }
+      }
+    },
+    { "op": "advance", "count": 3 },
+    { "op": "join", "conn": "bob", "extra": { "team": 1, "kind": "heavy" } },
+    { "op": "advance", "count": 1 },
+    { "op": "input", "conn": "alice", "moveX": 0, "moveZ": 1, "aim": { "angle": 0 }, "fire": true },
+    {
+      "op": "input",
+      "conn": "bob",
+      "moveX": 0.5,
+      "moveZ": -1,
+      "aim": { "x": 10.1234, "z": -40.5 }
+    },
+    { "op": "advance", "count": 1 },
+    {
+      "op": "input",
+      "conn": "alice",
+      "moveX": 0,
+      "moveZ": 1,
+      "aim": { "angle": 0.01 },
+      "fire": true,
+      "actions": [{ "type": "mine" }]
+    },
+    {
+      "op": "input",
+      "conn": "bob",
+      "moveX": 0,
+      "moveZ": -1,
+      "aim": { "angle": 3.1 },
+      "actions": [{ "type": "ammo", "weapon": "spread" }]
+    },
+    { "op": "advance", "count": 1 },
+    {
+      "op": "input",
+      "conn": "alice",
+      "moveX": -1,
+      "moveZ": 0,
+      "aim": { "angle": 0.02 },
+      "fire": true
+    },
+    { "op": "advance", "count": 1 },
+    { "op": "action", "conn": "bob", "type": "suspend" },
+    { "op": "advance", "count": 2 },
+    { "op": "action", "conn": "bob", "type": "resume" },
+    { "op": "advance", "count": 1 },
+    { "op": "action", "conn": "bob", "type": "resync" },
+    { "op": "join", "conn": "carol", "extra": { "kind": "balanced" } },
+    { "op": "action", "conn": "carol", "type": "choose", "extra": { "kind": "heavy" } },
+    { "op": "advance", "count": 2 },
+    { "op": "action", "conn": "alice", "type": "end" },
+    {
+      "op": "action",
+      "conn": "alice",
+      "type": "settings",
+      "extra": { "mapMode": "harbor", "difficulty": "hard", "humansOnly": true, "roundMinutes": 3 }
+    },
+    { "op": "action", "conn": "bob", "type": "choose", "extra": { "kind": "balanced", "team": 1 } },
+    { "op": "action", "conn": "carol", "type": "choose", "extra": { "kind": "scout", "team": 1 } },
+    { "op": "action", "conn": "alice", "type": "start" },
+    { "op": "advance", "count": 1 },
+    { "op": "input", "conn": "alice", "moveX": 1, "moveZ": 0, "aim": { "angle": 0 }, "fire": true },
+    {
+      "op": "input",
+      "conn": "bob",
+      "moveX": -1,
+      "moveZ": 0,
+      "aim": { "angle": 3.14159 },
+      "fire": true
+    },
+    { "op": "advance", "count": 2 },
+    {
+      "op": "input",
+      "conn": "alice",
+      "moveX": 1,
+      "moveZ": 0.25,
+      "aim": { "angle": 0 },
+      "fire": true
+    },
+    { "op": "advance", "count": 2 },
+    { "op": "action", "conn": "bob", "type": "leave" },
+    { "op": "disconnect", "conn": "carol" },
+    { "op": "advance", "count": 2 },
+    { "op": "join", "conn": "carol-again", "extra": { "kind": "scout" }, "tokenOf": "carol" },
+    { "op": "advance", "count": 1 },
+    { "op": "join", "conn": "dave", "extra": { "version": 999 } },
+    { "op": "join", "conn": "eve", "extra": { "kind": "humvee" } },
+    {
+      "op": "raw",
+      "conn": "frank",
+      "text": "{\"type\":\"ping\",\"roundId\":2,\"t\":1,\"observedTick\":0}"
+    },
+    {
+      "op": "action",
+      "conn": "carol-again",
+      "type": "settings",
+      "extra": { "mapMode": "village", "difficulty": "easy", "humansOnly": false }
+    },
+    { "op": "advance", "count": 1 },
+    { "op": "dispose", "reason": "server-restart" },
+    { "op": "raw", "conn": "late", "text": "{\"type\":\"join\"}" }
+  ]
+}
