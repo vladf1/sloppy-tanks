@@ -11,7 +11,7 @@ use glam::DVec3;
 
 use super::barrel_surfaces::explosive_barrel;
 use super::cottage_details::cottage_details;
-use super::harbor_models::{CargoShape, cargo_stack, shipping_container};
+use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, put, rotated};
 use super::pending_props::{
     RubbleStone, concrete_wall, sandstone_footing, sandstone_rock, sandstone_rubble, shingle_roof,
@@ -203,10 +203,18 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
             group.scale = DVec3::new(c.w / 2.9, c.h / 2.7, c.d / 3.2);
         }
         CoverKind::Rock => rock(group, c),
-        CoverKind::Container => shipping_container(group, &cargo_shape(c)),
+        CoverKind::Container => shipping_container(
+            group,
+            CargoShape {
+                w: c.w,
+                d: c.d,
+                h: c.h,
+                color: c.color,
+            },
+        ),
         CoverKind::Cargo => {
             model.damage_stage = damage_stage;
-            cargo_stack(group, &cargo_shape(c), damage_stage);
+            cargo_stack(group, crate_shape(c), damage_stage);
         }
         CoverKind::House => house(group, c),
         CoverKind::Timber => {
@@ -285,8 +293,8 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
     model
 }
 
-fn cargo_shape(c: &CoverShape) -> CargoShape {
-    CargoShape {
+fn crate_shape(c: &CoverShape) -> CrateShape {
+    CrateShape {
         x: c.x,
         z: c.z,
         w: c.w,

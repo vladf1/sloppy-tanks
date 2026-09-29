@@ -1,0 +1,112 @@
+//! Port of `ground-surfaces.ts`: the dry-grass and packed-dirt ground materials,
+//! world-aligned ground UVs and the feathered village road strips.
+
+use crate::geometry::{Attribute, Mesh};
+use crate::scene::{Material, TextureRef, Wrap};
+
+use super::effects_scenery::VERTEX_ALPHA;
+use super::village_roads::ROAD_SHOULDER;
+
+/// `GroundKind`: the two ground albedo tiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GroundKind {
+    DryGrass,
+    PackedDirt,
+}
+
+impl GroundKind {
+    /// The TypeScript identifier (map definitions name floors by it).
+    pub fn name(self) -> &'static str {
+        match self {
+            GroundKind::DryGrass => "dry-grass",
+            GroundKind::PackedDirt => "packed-dirt",
+        }
+    }
+
+    pub fn texture_path(self) -> &'static str {
+        match self {
+            GroundKind::DryGrass => "textures/ground/dry-grass.webp",
+            GroundKind::PackedDirt => "textures/ground/packed-dirt.webp",
+        }
+    }
+}
+
+/// World metres per ground texture tile.
+const GROUND_TILE: f64 = 8.0;
+/// Ground maps ask for 4x anisotropy (`Math.min(4, renderer.getMaxAnisotropy())`);
+/// the renderer clamps to the adapter's limit.
+const GROUND_ANISOTROPY: u8 = 4;
+
+/// The ground albedo tile. Mirroring joins the generated edges without relying on
+/// perfect AI tiling; mipmaps keep distant ground stable and cheap.
+pub fn ground_texture(kind: GroundKind) -> TextureRef {
+    TextureRef {
+        wrap: Wrap::Mirror,
+        anisotropy: GROUND_ANISOTROPY,
+        ..TextureRef::file(kind.texture_path())
+    }
+}
+
+/// `groundMaterial(renderer, kind)`: a new (unshared) material, since callers tint
+/// or blend it; the texture is shared by value.
+pub fn ground_material(kind: GroundKind) -> Material {
+    let color = match kind {
+        GroundKind::DryGrass => 0xe2e8d5,
+        GroundKind::PackedDirt => 0xe5dbcc,
+    };
+    Material {
+        map: Some(ground_texture(kind)),
+        ..Material::standard(color, 0.0, 1.0)
+    }
+}
+
+/// `groundUVs(geometry, x, z)`: one tile per eight world metres, aligned across roads
+/// and intersections. `x`/`z` is the mesh's world offset.
+pub fn ground_uvs(mesh: &mut Mesh, x: f64, z: f64) {
+    mesh.uvs = mesh
+        .positions
+        .iter()
+        .map(|p| {
+            [
+                ((f64::from(p[0]) + x) / GROUND_TILE) as f32,
+                ((f64::from(p[2]) + z) / GROUND_TILE) as f32,
+            ]
+        })
+        .collect();
+}
+
+/// `roadGeometry(w, d, x, z)`: a 4x4 grid whose outer ring fades to transparent
+/// (narrow alpha shoulders soften road borders; the opaque center stays flat).
+/// Colors are white; the RGBA color's alpha is the [`VERTEX_ALPHA`] attribute.
+pub fn road_geometry(w: f64, d: f64, x: f64, z: f64) -> Mesh {
+    let shoulder = ROAD_SHOULDER;
+    let xs = [-w / 2.0, -w / 2.0 + shoulder, w / 2.0 - shoulder, w / 2.0];
+    let zs = [-d / 2.0, -d / 2.0 + shoulder, d / 2.0 - shoulder, d / 2.0];
+    let mut positions = Vec::with_capacity(48);
+    let mut uvs = Vec::with_capacity(32);
+    let mut alpha = Vec::with_capacity(16);
+    for (row, &pz) in zs.iter().enumerate() {
+        for (col, &px) in xs.iter().enumerate() {
+            positions.extend([px, 0.0, pz]);
+            uvs.extend([(px + x) / GROUND_TILE, (pz + z) / GROUND_TILE]);
+            let edge = row == 0 || row == 3 || col == 0 || col == 3;
+            alpha.push(if edge { 0.0 } else { 1.0 });
+        }
+    }
+    let mut indices = Vec::with_capacity(54);
+    for row in 0..3 {
+        for col in 0..3 {
+            let i = row * 4 + col;
+            indices.extend([i, i + 4, i + 1, i + 1, i + 4, i + 5]);
+        }
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &uvs, Some(indices));
+    mesh.colors = vec![[1.0; 3]; 16];
+    mesh.set_attribute(Attribute {
+        name: VERTEX_ALPHA,
+        item_size: 1,
+        data: alpha,
+    });
+    mesh.compute_vertex_normals();
+    mesh
+}

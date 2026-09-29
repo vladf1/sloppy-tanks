@@ -13,6 +13,37 @@ mod tank_model;
 mod tank_surfaces;
 mod wreck_model;
 
+// Scenery (village, harbor, quarry, extra-level floors).
+mod concrete_surfaces;
+pub mod effects_scenery;
+mod ground_surfaces;
+mod harbor_models;
+mod harbor_scenery;
+mod harbor_surfaces;
+mod harbor_vessels;
+mod harbor_water;
+mod house_surfaces;
+mod loading_assets;
+pub mod pending_scenery;
+mod quarry_benches;
+mod quarry_machinery;
+mod quarry_ramp;
+mod quarry_rock_shape;
+mod quarry_scenery;
+mod quarry_scree;
+mod quarry_site_details;
+mod quarry_soil;
+mod quarry_surfaces;
+mod quarry_terrain;
+mod scenery;
+mod village_atmosphere;
+mod village_landmarks;
+mod village_landscape;
+mod village_roads;
+mod village_scenery;
+mod village_vegetation;
+mod water_surface;
+
 pub use batching::batch;
 pub use humvee_model::{HUMVEE_BODY_LENGTH_SCALE, humvee_model};
 pub use model_primitives::{
@@ -26,6 +57,56 @@ pub use tank_dimensions::{
 pub use tank_model::{tank_model, tank_model_variant};
 pub use tank_surfaces::{ARMOR_WEAR_TEXTURE, apply_tank_surface, armor_wear_texture};
 pub use wreck_model::{WreckPart, wreck_model};
+
+pub use concrete_surfaces::{CONCRETE_TEXTURE, concrete_material, concrete_wall};
+pub use ground_surfaces::{GroundKind, ground_material, ground_texture, ground_uvs, road_geometry};
+pub use harbor_models::{CARGO_SPLIT, CargoShape, CrateShape, cargo_stack, shipping_container};
+pub use harbor_scenery::HarborScenery;
+pub use harbor_surfaces::{HarborSurface, harbor_box, harbor_material, steel_box};
+pub use harbor_vessels::{HarborFleet, harbor_beam};
+pub use harbor_water::{HARBOR_WATER_HEIGHT, harbor_water};
+pub use house_surfaces::{
+    HouseSurface, house_material, house_texture, shingle_roof, siding_box, siding_gable,
+};
+pub use loading_assets::node_textures;
+pub use quarry_benches::{
+    ButteSpot, ScreeSpot, StockpileSpot, TalusStrip, quarry_bench, quarry_butte,
+    quarry_butte_footprint, quarry_butte_spot, quarry_scree_spots, quarry_stockpile_geometry,
+    quarry_stockpile_reach, quarry_stockpile_spot, quarry_talus_geometry, quarry_talus_point,
+    quarry_talus_strips,
+};
+pub use quarry_machinery::{quarry_dump_truck, quarry_excavator};
+pub use quarry_ramp::{
+    QUARRY_RAMP, QuarryRamp, RampRock, quarry_ramp_boulders, quarry_ramp_geometry,
+    quarry_ramp_height, quarry_ramp_spoil,
+};
+pub use quarry_rock_shape::{RockShape, quarry_rock_shape, quarry_rock_variant};
+pub use quarry_scenery::{QuarryScenery, SpawnPadPiece, SpawnPadShape, quarry_spawn_pad_pieces};
+pub use quarry_scree::{quarry_scree, quarry_scree_geometry, quarry_scree_rubble};
+pub use quarry_soil::{
+    ACCUM_CELLS, QUARRY_SOIL_SIZE, QUARRY_TERRAIN_EXTENT, bake_quarry_soil, quarry_soil_pixels,
+};
+pub use quarry_surfaces::{
+    RubbleStone, roughen_stone, sand_drift_material, sandstone_footing, sandstone_material,
+    sandstone_rock, sandstone_rubble,
+};
+pub use quarry_terrain::{
+    QUARRY_FLOOR, plain_soil_colors, quarry_soil_texture, quarry_terrain, sand_accum, soil_material,
+};
+pub use scenery::{
+    MapTheme, SHADOW_DEPTH, Scenery, ShadowBox, build_scenery, create_arena_floor,
+    create_spawn_pads, custom_floor, custom_spawn_pads, default_sun_shadow, fit_sun_shadow,
+    lighting,
+};
+pub use village_atmosphere::{SmokeCover, set_chimney_smoke, village_atmosphere};
+pub use village_landmarks::{WATERWHEEL, village_landmarks};
+pub use village_landscape::{
+    CREEK_HEIGHT, creek_distance, valley_height, valley_height_at, village_landscape,
+};
+pub use village_roads::{ROAD_SHOULDER, VillageRoad, is_village_dirt, village_roads};
+pub use village_scenery::{CHIMNEY_SMOKE_NODE, VillageScenery};
+pub use village_vegetation::{MEADOW_FLOWERS, MEADOW_TUFTS, village_vegetation};
+pub use water_surface::{WATER_NORMALS, WaterKind, water_material, water_surface};
 
 /// Names of the vehicle parts the TypeScript kept in `userData`. Every vehicle
 /// model (tanks and Humvee) has all of them.
@@ -74,7 +155,6 @@ mod cottage_details;
 mod cover_model;
 pub mod effects_props;
 mod flags;
-mod harbor_models;
 mod pending_props;
 mod pickup_visuals;
 mod prop_support;
@@ -95,7 +175,6 @@ pub use effects_props::{aged_wreck_material, debris_fade_material, wreck_brightn
 pub use flags::{
     FLAG_CLOTH_BOUNDS_RADIUS, FLAG_CLOTH_NODE, FLAG_POLE, flag_phase, flag_positions, flags_model,
 };
-pub use harbor_models::{CargoShape, cargo_stack, shipping_container};
 pub use pickup_visuals::{
     PICKUP_ATLAS_PADDING, PICKUP_ATLAS_PATH, PICKUP_ATLAS_SIZE, PICKUP_ATLAS_STRIDE,
     PICKUP_ICON_SIZE, PickupKind, pickup_atlas_uv, pickup_cube,
@@ -103,8 +182,8 @@ pub use pickup_visuals::{
 pub use prop_support::Random;
 pub use quarry_barriers::{dragon_tooth, steel_hedgehog};
 pub use quarry_shapes::{
-    HEDGEHOG_BEAMS, HedgehogBeam, RockShape, ToothProfile, dragon_tooth_point,
-    dragon_tooth_profile, dragon_tooth_variant, quarry_rock_shape, quarry_rock_variant,
+    HEDGEHOG_BEAMS, HedgehogBeam, ToothProfile, dragon_tooth_point, dragon_tooth_profile,
+    dragon_tooth_variant,
 };
 pub use timber_model::{
     TIMBER_HEALTH, TimberFace, TimberHit, TimberJoin, TimberMark, TimberPart, TimberPartKind,
