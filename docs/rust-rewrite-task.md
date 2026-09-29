@@ -1,5 +1,10 @@
 # Task: complete Sloppy Tanks Rust/Wasm + WebGPU rewrite
 
+> Historical task statement for the rewrite, kept for its contracts and completion
+> criteria. The paths it names under `experiments/rust-webgpu/`, `server/` and the
+> TypeScript engine were removed after the rewrite (they remain in version
+> history); [rust-rewrite.md](rust-rewrite.md) describes the final state.
+
 Implement the complete rewrite described below. This is an implementation task,
 not a request for another proposal or another small demo. Make routine decisions
 and keep working autonomously. The user is ambitious but wants efficient use of

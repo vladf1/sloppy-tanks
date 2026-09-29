@@ -1,20 +1,34 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. Built with TypeScript, Three.js, Rapier and Howler.
+A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom `wgpu` renderer draws with handwritten WGSL on WebGPU, and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 
-Use Node.js 24 or newer and [pnpm](https://pnpm.io/installation) 11 or newer. On macOS:
+Use Node.js 24 or newer, [pnpm](https://pnpm.io/installation) 11 or newer, and Rust through [rustup](https://rustup.rs). On macOS:
 
 ```sh
-brew install node pnpm   # once per machine
-pnpm install             # once per checkout or worktree, and after dependency changes
+brew install node pnpm rustup   # once per machine
+rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+pnpm install                    # once per checkout or worktree, and after dependency changes
+pnpm run wasm                   # build the engine; rerun after Rust or WGSL edits
 pnpm run dev
+```
+
+`rust-toolchain.toml` pins the Rust release, rustfmt, clippy and the
+`wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets. The wasm-bindgen CLI must match the `wasm-bindgen` crate pin
+(0.2.129). Homebrew's `rust` formula provides a `cargo` that ignores
+`rust-toolchain.toml`, so rustup's must come first on `PATH`:
+
+```sh
+export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 ```
 
 On other systems, `npm install -g pnpm` also works. `package.json` pins the exact pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
 
-Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`.
+Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
+serves the release Wasm from `src/generated/engine/`; it does not compile Rust,
+so run `pnpm run wasm` again after changing a crate.
 
 Rendering requires WebGPU, HTTPS or localhost, and a browser/GPU that supports it. There is no WebGL fallback. **Stats for nerds** shows rendering diagnostics.
 
@@ -63,27 +77,38 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-pnpm run check          # lint, formatting, TypeScript, production build and tests
-pnpm test               # simulation and behavior regression tests
+pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
+pnpm run wasm           # release Wasm and its glue into src/generated/engine/
+pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
+pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace --release)
 pnpm run validate       # ten seeded full matches and reset checks
-pnpm run build          # production output in dist/
+pnpm run build          # production output in dist/ (builds the Wasm first)
 pnpm run lint:fix       # safe ESLint fixes
-pnpm run format         # Prettier for source, tests, scripts, styles and docs
+pnpm run format         # Prettier for source, tests, scripts, styles and docs; cargo fmt for Rust
 pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
-[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements, and [docs/rust-rewrite.md](docs/rust-rewrite.md) records how the engine moved from TypeScript to Rust.
 
-| Area                           | Starting points                                                                                    |
-| ------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Startup and game loop          | `src/main.ts`, `src/game.ts`                                                                       |
-| Simulation and match lifecycle | `src/game/simulation.ts`, `src/game/match.ts`                                                      |
-| Driving, weapons and damage    | `src/game/tank-driving.ts`, `src/game/weapons.ts`, `src/game/projectiles.ts`, `src/game/damage.ts` |
-| Bots and navigation            | `src/game/ai.ts`, `src/game/bot-strategy.ts`, `src/game/bot-movement.ts`, `src/game/navigation.ts` |
-| Maps and scenery               | `src/game/maps.ts`, `src/game/presentation.ts`, `src/game/scenery.ts`                              |
-| Models and shared resources    | `src/game/tank-model.ts`, `src/game/cover-model.ts`, `src/game/render-resources.ts`                |
-| Balance and progression        | `src/game/data.ts`, `src/game/combat-rules.ts`, `src/game/difficulty.ts`, `src/game/veterancy.ts`  |
-| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                      |
+| Crate / directory | Target        | Owns                                                                                    |
+| ----------------- | ------------- | --------------------------------------------------------------------------------------- |
+| `crates/core`     | native + Wasm | Simulation, rules, bots, maps (`sim/`), meshes and models, multiplayer protocol (`net/`) |
+| `crates/render`   | Wasm          | The WebGPU renderer, WGSL shaders, presentation, effects and cameras                    |
+| `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                |
+| `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard            |
+| `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page              |
+
+| Area                           | Starting points                                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                       |
+| Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                    |
+| Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                           |
+| Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                           |
+| Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/mod.rs` |
+| Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`         |
+| Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                            |
+| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                  |
+| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                                |
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
@@ -134,12 +159,11 @@ age, server tick and input sequence sent/acknowledged. A received update is one
 full-state message or snapshot batch; an input acknowledgement confirms the
 server processed an input sequence. Render includes GPU geometries and textures.
 
-Single-player downloads no multiplayer code and opens no game-server connection.
+Single-player downloads no multiplayer page code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
-[server guide](server/README.md) describes local development and deployment. The dev
-site's multiplayer runs on a stand-alone Node server on a VPS, with rooms held in
-memory.
+[server guide](crates/server/README.md) describes local development and deployment.
+Multiplayer runs on a stand-alone Rust server on a VPS, with rooms held in memory.
 
 ## Assets
 
@@ -173,14 +197,15 @@ the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server, which the dev site
 also uses. It does not deploy that server. A client only plays on a server
-built from the same shared sources: the `src/` files the server bundle imports,
-listed by `node scripts/content-version.mjs`, and
+built from the same shared sources: the `crates/core` files and the crates they
+compile with, listed by `node scripts/content-version.mjs`, and
 `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout. After merging changes to any of them, run
 `pnpm run server:deploy` from `main`; until then, players on the production site are
-asked to reload and cannot join. Server-only changes (`server/`, bundled
-dependencies) keep clients compatible but still need that deploy to take effect;
-client-only files (rendering, input, menus) never do. Likewise,
+asked to reload and cannot join. Server-only changes (`crates/server`, its
+dependencies and build settings) keep clients compatible but still need that deploy
+to take effect; client-only files (`crates/render`, `crates/web`, the page shell)
+never do. Likewise,
 `pnpm run deploy:dev` from a branch with such changes replaces the shared server and
 breaks production multiplayer until `main` is deployed again.
 

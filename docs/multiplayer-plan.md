@@ -1,6 +1,6 @@
 # Multiplayer v1 plan
 
-Status: the player server and browser client are implemented and published on the dev site. On 2026-09-25 hosting moved from Cloudflare Durable Objects to a stand-alone Node server on a Vultr VPS (rooms in memory; see the [server guide](../server/README.md)), and the Worker and Durable Object code was removed. Milestone text below that mentions Durable Objects or workerd records how the work was done at the time. The remaining gate is human feedback from different networks.
+Status: the player server and browser client are implemented and published on the dev site. On 2026-09-25 hosting moved from Cloudflare Durable Objects to a stand-alone Node server on a Vultr VPS (rooms in memory), and the Worker and Durable Object code was removed. On 2026-09-29 the Rust rewrite replaced that server with the native Rust `sloppy-server` on the same VPS (see the [server guide](../crates/server/README.md)); text below that mentions the Node server or TypeScript modules records how the work was done at the time. Milestone text below that mentions Durable Objects or workerd records how the work was done at the time. The remaining gate is human feedback from different networks.
 
 ## Goal
 
@@ -31,7 +31,7 @@ Considered and set aside:
 
 ## Implementation status
 
-The [real player server](../server/README.md) is a Node process that wraps a platform-independent `MatchHost` per room in `RoomSession`. The client enters through a dynamic import, with its own connection, mirror, timeline and lobby. Normal single-player requests no networking modules, opens no socket, and allocates no network scene copies. Multiplayer does not download or initialize client Rapier physics.
+The [real player server](../crates/server/README.md) is a Rust process that wraps the shared core's `MatchHost` per room in a `RoomSession`. The client enters through a dynamic import; the engine's `NetGame` owns its connection, mirror, timeline and lobby state. Normal single-player requests no networking modules, opens no socket, and allocates no network scene copies. Multiplayer does not download or initialize client Rapier physics.
 
 - **M2 implemented:** independently driven seats, life/ownership separation, per-world tuning, bot takeover, explicit viewer presentation/audio/HUD/touch integration and no multiplayer battle recorder. The fresh seeded single-player validation still matches the captured pre-refactor baseline apart from wall time.
 - **M3/M3a implemented:** versioned room/round/control identities, session-only seat tokens, input leases and acknowledgements, field deltas, atomic full baselines, resync, literal names, late joins, departed-player score attribution, host transfer and round transitions. Deterministic tests cover all maps, destruction, short-lived projectile paths, coalesced death/respawn effects, quaternion interpolation, slow readers, overload, suspension and repeated rounds.
@@ -70,7 +70,7 @@ Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame
 
 Rate limits run before a room is created or joined: 60 connection attempts/minute/IP and 120/minute overall. They reduce accidental room creation. Rooms also enforce 8 players, 6 per team, message/action limits, a 30-second empty-room grace, 5-minute idle lobby/results expiry and 30-minute absolute lifetime. Hidden/menu clients receive no snapshot backlog and resume from a fresh full baseline.
 
-Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-loading`, `pnpm run check:multiplayer`, and the [player harness](../server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `pnpm test`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
+Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-loading`, `pnpm run check:multiplayer`, and the [player harness](../crates/server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `pnpm run test:rust`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 

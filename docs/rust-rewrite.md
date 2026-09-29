@@ -1,7 +1,11 @@
-# Rust/Wasm + WebGPU rewrite: progress
+# Rust/Wasm + WebGPU rewrite
 
-Branch `codex/rust-rewrite`. Task statement: `experiments/rust-webgpu/REWRITE-TASK.md`.
-Baseline: `main` at 35afd91 (TypeScript + Three.js + Rapier JS 0.20, Node server).
+The game engine moved from TypeScript, Three.js and Rapier JS to one Rust
+implementation shared by the browser (Wasm + WebGPU) and the native multiplayer
+server. Baseline: `main` at 35afd91 (TypeScript + Three.js r185 + Rapier JS 0.20,
+Node server). Task statement: [rust-rewrite-task.md](rust-rewrite-task.md); its
+reference experiment (`experiments/rust-webgpu/`, PR #25) was removed once
+superseded and remains in Git history.
 
 ## Layout
 
@@ -9,11 +13,19 @@ Baseline: `main` at 35afd91 (TypeScript + Three.js + Rapier JS 0.20, Node server
 | --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `crates/core`   | native + wasm | `sim/` gameplay, `geometry/` meshes, `scene.rs` model contract, `models/`, `net/` protocol/replication/match host |
 | `crates/render` | wasm (wgpu)   | WebGPU renderer, WGSL, presentation and effects                                                                   |
-| `crates/web`    | wasm cdylib   | wasm-bindgen API for the page: game loop, commands, HUD state, network client state                               |
-| `crates/server` | native binary | HTTP/WebSocket server, rooms, limits, monitor, dashboard                                                          |
+| `crates/web`    | wasm cdylib   | wasm-bindgen API for the page: `Game`, `NetGame`; `RenderLab`/`EffectsLab` with the `labs` feature                |
+| `crates/server` | native binary | HTTP/WebSocket server, rooms, limits, monitor, dashboard ([guide](../crates/server/README.md))                    |
 
-Toolchain: Rust 1.98.1 (`rust-toolchain.toml`), `wasm32-unknown-unknown`, wasm-bindgen CLI 0.2.129.
-Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate version change.
+The TypeScript left in `src/` is the page shell: menus, HUD, input gathering,
+touch controls, audio and the room page's DOM. The Node server (`server/`), the
+TypeScript engine and its Node tests, `three`, `@types/three`,
+`@dimforge/rapier3d-simd` and `@dimforge/rapier3d-simd-compat` are gone.
+
+Toolchain: Rust 1.98.1 (`rust-toolchain.toml`), `wasm32-unknown-unknown`,
+`x86_64-unknown-linux-musl`, wasm-bindgen CLI 0.2.129. Rapier 0.36 (Rust)
+replaces Rapier JS 0.20; physics differences are a deliberate version change.
+`pnpm run wasm -- --labs` builds the development labs into
+`src/generated/engine-labs/`; production builds never include them.
 
 ## Decisions
 
@@ -22,40 +34,55 @@ Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate
 - Wire protocol stays JSON with the same message shapes, so traffic bots keep working.
 - Models are CPU node trees in core: the renderer draws them and the simulation measures them.
 
-## Checklist
+## Test mapping
 
-- [x] Wave 1: core simulation port (+ 232 tests; construction/RNG parity exact vs TS)
-- [x] Wave 1: geometry library + vehicle models (bit-exact vs Three r185)
-- [x] Wave 1b: cover/tree/prop models; map scenery; integration and de-duplication with sim
-- [x] Wave 1: renderer foundation (PBR, shadows, fog, tone mapping, textures, instancing, custom effects)
-- [x] Wave 1: native server infrastructure (HTTP, WS + deflate, limits, catalog, monitor, dashboard)
-- [x] Wave 2: runtime effects (pools, lab vs Three.js)
-- [ ] Wave 2: model effect WGSL (flag-cloth, wreck-aging, debris-fade, pickup-surface, meadow-sway, chimney-smoke, quarry-soil, sandstone, sand-drift)
-- [ ] Wave 2: presentation (tanks, cover, fragments, particles, tracks, projectiles, HUD bars, cameras)
-- [ ] Wave 2: net: replication, scene codec, match host, client timeline/interpolation
-- [ ] Wave 2: web crate + TS shell (menus, UI, audio, controls, touch, network UI)
-- [x] Content-version hashing for Rust; static musl server build; VPS deploy scripts
-- [ ] Wave 3: remove Three.js/TS engine and Node server
-- [ ] Wave 3: final verification (cargo fmt/clippy/test, pnpm check, browser checks, multiplayer, measurements)
+The TypeScript engine's Node tests left with their subjects. Their behavior is
+covered in Rust (`cargo test --workspace --release`, 502 tests in 48 binaries on
+2026-09-29); golden fixtures recorded from the TypeScript engine
+(`crates/core/tests/fixtures/`) pin construction parity and the wire format.
 
-## Status notes (2026-09-29)
+| Removed TypeScript test                                                                                                  | Rust coverage                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `ammunition`, `bot-movement`, `cover-destruction`, `cover-hit-effects`, `debris-cleanup`                                 | `crates/core/tests/` files of the same names (`ammunition.rs`, `bot_movement.rs`, …)                      |
+| `destruction-physics`, `difficulty`, `driving`, `game`, `hit-registration`, `humvee`, `laser-defense`                    | `crates/core/tests/` files of the same names                                                              |
+| `map-layout`, `modes`, `movable-barrels`, `navigation`, `personalities`, `quarry`, `shoot-mines`, `simulation-setup`     | `crates/core/tests/` files of the same names                                                              |
+| `stress-test-level`, `superstress-level`, `tank-contact`, `tank-destruction`, `timber-walls`, `veterancy`                | `crates/core/tests/` files of the same names                                                              |
+| `render-state`                                                                                                           | `crates/core/tests/render_state.rs`                                                                       |
+| `extra-levels-multiplayer`                                                                                               | `crates/core/tests/net_extra_levels.rs`                                                                   |
+| `match-host`, `traffic-bots` (host half)                                                                                 | `crates/core/tests/net_match_host.rs`, `net_golden.rs`; `tests/traffic-bots.test.ts` now uses the server  |
+| `multiplayer-simulation`, `player-controls`                                                                              | `crates/core/tests/net_player_controls.rs`                                                                |
+| `replication`, `scene-capture`                                                                                           | `crates/core/tests/net_replication.rs`                                                                    |
+| `network-clock`                                                                                                          | `crates/core/tests/net_timing.rs` (fixed-step clock, input cadence, playout and render timelines)         |
+| `batching`, `part-batches`                                                                                               | `crates/render`: `draw_list`, `model`, `shadow_merge` tests; `crates/core/src/models/tests*.rs`           |
+| `flags`, `tree-damage`, `village-scenery`, `pickup-atlas`                                                                | `crates/core/src/models/tests_props.rs`, `tests_scenery.rs` (`flags_match_typescript`, `tree_damage_…`) |
+| `projectile-visuals`, `explosion-effects`, `tracks`, `track-dust`                                                        | `crates/render/src/effects/` unit tests (`projectiles`, `explosions`, `particles`, `tracks`, `track_dust`) |
+| `first-person`, `tank-suspension`                                                                                        | `crates/render/src/presentation/first_person.rs`, `suspension.rs`, `camera_rig.rs` tests                  |
+| `renderer`, `renderer-resources`, `prepare-scene`, `loading-assets`, `bundle-stats`                                      | `crates/render/src/shader.rs` and `effects/registry.rs` (every WGSL variant validates); browser checks     |
+| `rate-limit`, `room-catalog`, `room-session`, `server-monitor`                                                           | `crates/server/src/`: `rate_limit`, `room_catalog`, `session_tests`, `monitor` tests                      |
+| `node-server`                                                                                                            | `crates/server/tests/server.rs`, `match_room.rs`                                                          |
+| `lazy-rapier-wasm`                                                                                                       | None: the Vite plugin it tested is gone with Rapier JS                                                    |
 
-- Running when paused: presentation + single-player Game bindings (worktree agent),
-  networking/match host port (worktree agent). Merge their branches next.
-- Next: model effect shaders; wire `presentation/model_catalog.rs` to real models;
-  TS shell on the Game API; multiplayer client bindings; remove Three.js/TS engine and
-  Node server; final verification. Toolchain PATH must put rustup first:
-  `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
-- Presentation + Game API finished on branch `worktree-agent-a75d18446fab95167`
-  (commits fe54bd9..0aeefe1), not merged yet: its `effects/mod.rs` is a stub that the
-  merged effects port replaces; `presentation/model_catalog.rs` still returns placeholder
-  models and must be wired to `models::{build_scenery, cover_model, tree_model, ...}`.
-  Release wasm 2.76 MB raw / 0.98 MB gzip; shadow pass ~150 draws (needs cross-model batching).
-- Networking finished on branch `worktree-agent-a4f9dd187621c52fd` (2b9a8aa..51dcf68), not
-  merged yet: core `net/` (protocol, codec, replication, MatchHost, NetworkClient state
-  machine), server `MatchRoom` adapter; golden wire test vs the TS host is structurally
-  identical; real-socket smoke with TS traffic bots passed. Merge, then bind NetworkClient
-  in `crates/web` and replace the TS multiplayer client internals.
+Kept TypeScript tests (`pnpm test`): audio, button input, controls, game options,
+Stats for nerds, round recap, startup errors, task yield, touch input, the two
+import boundaries, and the traffic bots against the built Rust server.
+`scripts/validate.ts` became `cargo run --release -p sloppy-core --example validate`
+(`pnpm run validate`); the simulation and capture benchmarks became the
+`simulation_benchmark` and `capture_benchmark` examples; the destruction benchmark
+was not ported.
+
+## Quality gate
+
+`pnpm run check` (also CI, `.github/workflows/`) runs Prettier and `cargo fmt`
+checks, the Wasm build, `tsc` for the shell/tests/scripts/tools and bots, the Vite
+build, ESLint, clippy with `-D warnings` (workspace natively with all targets,
+`sloppy-render` and `sloppy-web` on wasm32, and `sloppy-web` with `labs`), the
+native server build, `pnpm test` and `cargo test --workspace --release`. CI
+installs the pinned toolchain through rustup and a cached wasm-bindgen-cli
+0.2.129 (`.github/actions/setup`).
+
+## Download size
+
+SIZES_PLACEHOLDER
 
 ## Single-player shell
 
@@ -66,10 +93,9 @@ packed input and frame-result slots and the JSON shapes of `hud_json`, `drain_ev
 and `stats_json`. `Controls` and the touch sticks only gather raw input
 (`Controls.takeInput`); the engine builds commands. The HUD, menus, battle report,
 audio and Stats for nerds read engine JSON. `tests/single-player-imports.test.ts`
-fails if single player reaches Three.js, Rapier JS or any TypeScript engine module.
-
-Legacy bridges for the TypeScript multiplayer client, to delete with it:
-`Controls.command()` and the four-argument `NerdStats` constructor.
+and `tests/multiplayer-client-imports.test.ts` allowlist the shell modules each
+page may load. The room page (`src/net/client.ts`) drives `NetGame` the same way,
+sharing `Controls.takeInput` and `NerdStats` (with `network-stats.ts` rows).
 
 `pnpm run wasm` must run before `tsc`, `vite build` or the dev server: `src/engine.ts`
 imports the generated `src/generated/engine/`.

@@ -1,3 +1,0 @@
-[target.wasm32-unknown-unknown]
-# The main game's Rapier package also enables 128-bit WebAssembly SIMD.
-rustflags = ["-C", "target-feature=+simd128"]
