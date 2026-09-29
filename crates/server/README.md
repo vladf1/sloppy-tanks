@@ -77,9 +77,10 @@ for `/rooms?extralevels` and shows the others only on a page opened with
 `?extralevels`, or when following that room's link. A Scrap Yard room sends
 roughly five times a standard room's snapshot bandwidth.
 
-Room traffic uses permessage-deflate at zlib level 1 with context takeover,
-which browsers negotiate natively; a client that does not offer it gets plain
-frames. Monitor byte counts are measured before compression; the `wire` figures
+Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy; level
+1's quick strategy sent about a quarter more than the former Node server's zlib
+level 1) with context takeover, which browsers negotiate natively; a client that
+does not offer it gets plain frames. Monitor byte counts are measured before compression; the `wire` figures
 count socket bytes after it.
 
 `GET /rooms` returns public room metadata only, never names or seat tokens.

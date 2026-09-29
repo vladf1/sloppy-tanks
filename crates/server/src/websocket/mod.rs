@@ -6,9 +6,10 @@
 //! takeover, which is most of the saving on repetitive snapshots) and inflates without
 //! an output bound, and yawc drags in rustls, reqwest-style dependencies and MPL
 //! licensing. The protocol a server needs is small, so this module implements it over
-//! `flate2` (zlib-rs backend, zlib level 1), matching `ws`'s behaviour: context takeover
-//! in both directions unless the client asks otherwise, messages under 1 KiB sent
-//! uncompressed, and one bounded message size for compressed and plain messages.
+//! `flate2` (zlib-rs backend at `deflate::COMPRESSION_LEVEL`), matching `ws`'s behaviour:
+//! context takeover in both directions unless the client asks otherwise, messages under
+//! 1 KiB sent uncompressed, and one bounded message size for compressed and plain
+//! messages.
 
 pub mod codec;
 pub mod deflate;

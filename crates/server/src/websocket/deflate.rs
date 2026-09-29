@@ -6,9 +6,12 @@ use super::codec::Role;
 use super::extension::DeflateParams;
 
 /// Snapshots are repetitive JSON, so permessage-deflate sends about a quarter of the
-/// bytes. The fastest zlib level keeps about 90% of the default level's saving for 40% of
-/// its CPU, which the one-vCPU host needs more.
-pub const COMPRESSION_LEVEL: u32 = 1;
+/// bytes. zlib-rs level 1 is zlib-ng's quick strategy (static Huffman codes only), which
+/// sent 22-27% more than the former Node server's classic zlib level 1 on recorded room
+/// streams. Level 2, the fast strategy, sends about 7% less than classic level 1 for
+/// 1.3-1.6 times the quick strategy's CPU, still below classic level 1's; higher levels
+/// save a little more for CPU the one-vCPU host needs more.
+pub const COMPRESSION_LEVEL: u32 = 2;
 /// Messages shorter than this go out uncompressed, like `ws`'s default threshold: the
 /// deflate block overhead outweighs the saving on pings, pongs and control messages.
 pub const COMPRESSION_THRESHOLD: usize = 1024;
