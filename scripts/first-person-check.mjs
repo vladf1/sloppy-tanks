@@ -18,21 +18,21 @@ try {
   // The camera flies down into the turret before the cockpit HUD appears.
   await page.waitForFunction(() => {
     const { view } = window.sloppy;
-    return !view.inFirstPerson && view.camera.fov > 43 && view.camera.position.y > 4;
+    return !view.inFirstPerson && view.camera.fov > 43 && view.camera.position[1] > 4;
   });
   await page.screenshot({ path: `${output}/entering.png` });
   await page.waitForFunction(() => window.sloppy.view.inFirstPerson);
   const seated = await page.evaluate(() => {
     const { sim, view } = window.sloppy;
-    const eye = view.camera.position;
-    const tank = sim.human.body.translation();
+    const [x, y, z] = view.camera.position;
+    const tank = sim.human;
     return {
       yaw: view.firstPerson.yaw,
-      eyeHeight: eye.y,
-      eyeDistance: Math.hypot(eye.x - tank.x, eye.z - tank.z),
+      eyeHeight: y,
+      eyeDistance: Math.hypot(x - tank.x, z - tank.z),
       hud: document.querySelector("#hud").classList.contains("first-person"),
       pressed: document.querySelector("#view-mode").getAttribute("aria-pressed"),
-      ownModel: view.tankMeshes.get(sim.human.id).visible,
+      ownModel: window.engine.view().tanks.find((view) => view.id === tank.id).shown,
     };
   });
   assert.ok(Math.abs(turn(overheadAim, seated.yaw)) < 0.05, "entering keeps the turret aim");
@@ -55,11 +55,11 @@ try {
   assert.ok(Math.abs(turn(turned.yaw, turned.aim)) < 0.05, "the turret follows the view");
 
   // W drives where the turret looks, not toward the top of the screen.
-  const start = await page.evaluate(() => window.sloppy.sim.human.body.translation());
+  const start = await page.evaluate(() => window.sloppy.sim.human);
   await page.keyboard.down("w");
   await page.waitForTimeout(1500);
   await page.keyboard.up("w");
-  const end = await page.evaluate(() => window.sloppy.sim.human.body.translation());
+  const end = await page.evaluate(() => window.sloppy.sim.human);
   const moved = Math.hypot(end.x - start.x, end.z - start.z);
   const along =
     ((end.x - start.x) * Math.sin(turned.yaw) + (end.z - start.z) * Math.cos(turned.yaw)) / moved;
@@ -103,9 +103,13 @@ try {
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
 
   // A death keeps the pointer captured, so the respawn needs no click or new lock notice.
-  // The HUD hides the pause menu a few frames after play resumes; click the arena, not it.
+  // The pause menu hides as play resumes, and the next frame wants the pointer again;
+  // click the arena, not the menu, after that frame.
   await page.waitForFunction(
     () => getComputedStyle(document.querySelector("#overlay")).display === "none",
+  );
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
   await page.mouse.click(800, 450);
   if (locked) {
@@ -115,9 +119,8 @@ try {
   }
   const destroy = () =>
     page.evaluate(() => {
-      const { sim } = window.sloppy;
-      Object.assign(sim.human, { protection: 0, shield: 0, shieldPoints: 0 });
-      sim.damageTank(sim.human, 999, sim.human.id, sim.human.team);
+      window.engine.setHuman({ shieldPoints: 0 });
+      window.sloppy.killHuman();
     });
   const heavy = page.locator("#overlay .respawn [data-kind='heavy']");
   await destroy();
@@ -152,13 +155,13 @@ try {
   await page.waitForFunction(() => window.sloppy.view.camera.fov === 43);
   const overhead = await page.evaluate(() => ({
     fov: window.sloppy.view.camera.fov,
-    height: window.sloppy.view.camera.position.y,
-    reticle: window.sloppy.view.crosshair.position.y,
+    height: window.sloppy.view.camera.position[1],
+    reticle: window.sloppy.view.crosshair.position[1],
     hud: document.querySelector("#hud").classList.contains("first-person"),
   }));
   assert.ok(overhead.height > 15, `overhead camera restored: ${overhead.height}`);
   assert.equal(overhead.fov, 43);
-  assert.equal(overhead.reticle, 1.05);
+  assert.ok(Math.abs(overhead.reticle - 1.05) < 1e-6, `reticle height ${overhead.reticle}`);
   assert.equal(overhead.hud, false);
   await page.screenshot({ path: `${output}/overhead.png` });
   assert.deepEqual(errors, []);

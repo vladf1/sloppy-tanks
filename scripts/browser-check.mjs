@@ -1,20 +1,51 @@
+// Desktop play through real input: keyboard driving, mouse fire, tank choice, pause and
+// zoom; then renderer resources across tower collapses, destructive resets and mines.
 import { gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 const output = "artifacts/performance/browser-controls";
 mkdirSync(output, { recursive: true });
 const { browser, page, errors } = await launchGame();
+/** Renderer allocations that must not grow; draw counts vary with the view. */
+const RESOURCE_KEYS = [
+  "pipelines",
+  "shaderModules",
+  "meshes",
+  "materials",
+  "textures",
+  "buffers",
+  "models",
+  "instances",
+  "gpuBytes",
+];
+const resources = (stats) => Object.fromEntries(RESOURCE_KEYS.map((key) => [key, stats[key]]));
 try {
+  // Count live WebGPU buffers at the API, independently of the renderer's own counters.
+  await page.addInitScript(() => {
+    const live = new Map();
+    window.gpuBuffers = live;
+    const create = GPUDevice.prototype.createBuffer;
+    GPUDevice.prototype.createBuffer = function (descriptor) {
+      const buffer = create.call(this, descriptor);
+      live.set(buffer, descriptor.size);
+      return buffer;
+    };
+    const destroy = GPUBuffer.prototype.destroy;
+    GPUBuffer.prototype.destroy = function () {
+      live.delete(this);
+      return destroy.call(this);
+    };
+  });
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
   await page.screenshot({ path: `${output}/start.png` });
   await page.locator('[data-kind="balanced"]').click();
   await startRound(page);
-  const before = await page.evaluate(() => window.sloppy.sim.snapshot());
+  const before = await page.evaluate(() => window.sloppy.snapshot());
   const pose = () =>
     page.evaluate(() => {
-      const tank = window.sloppy.sim.human;
-      return { ...tank.body.translation(), heading: tank.heading };
+      const { x, z, heading } = window.engine.state().human;
+      return { x, z, heading };
     });
   const start = await pose();
   await page.mouse.move(1100, 440);
@@ -32,8 +63,9 @@ try {
   await page.mouse.up();
   const down = await pose();
   assert.ok(down.z - right.z > 1, `S must drive toward the camera: ${JSON.stringify(down)}`);
+  assert.ok((await page.evaluate(() => window.sloppy.sim.shotsFired)) > 0, "held mouse fires");
   await page.mouse.click(800, 460, { button: "right" });
-  const after = await page.evaluate(() => window.sloppy.sim.snapshot());
+  const after = await page.evaluate(() => window.sloppy.snapshot());
   await page.screenshot({ path: `${output}/driving.png` });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
@@ -46,102 +78,86 @@ try {
   await page.mouse.wheel(0, 100);
   await page.keyboard.up("Shift");
   await page.waitForFunction((value) => window.sloppy.view.zoom !== value, zoom);
-  const beforeCollapseBatches = await page.evaluate(() => {
-    const batches = window.sloppy.view.partBatches.batches.map((batch) => batch.mesh.uuid);
+
+  // Tower rubble arrives mid-round: it must draw with pipelines the arena already
+  // warmed up (no late compile) and get visible models.
+  const beforeCollapse = await page.evaluate(() => {
     window.sloppy.overview();
     window.sloppy.collapse();
-    return batches;
+    return window.engine.stats();
   });
   await page.waitForTimeout(650);
-  assert.deepEqual(
-    await page.evaluate(() =>
-      window.sloppy.view.partBatches.batches.map((batch) => batch.mesh.uuid),
-    ),
-    beforeCollapseBatches,
-    "tower rubble must not rebuild the warmed tank/tree batches",
-  );
-  assert.ok(
-    await page.evaluate(() => {
-      const d = window.sloppy;
-      const rubble = d.sim.covers.filter((cover) => cover.kind === "rubble");
-      return (
-        rubble.length > 0 && rubble.every((cover) => d.view.coverMeshes.get(cover.id)?.visible)
-      );
-    }),
-    "new rubble still receives visible models",
-  );
+  const collapsed = await page.evaluate(() => {
+    const { engine } = window;
+    const rubble = engine.covers().filter((cover) => cover.kind === "rubble");
+    const views = new Map(engine.view().covers.map((cover) => [cover.id, cover]));
+    return {
+      rubble: rubble.length,
+      shown: rubble.every((cover) => views.get(cover.id)?.shown),
+      stats: engine.stats(),
+    };
+  });
+  assert.ok(collapsed.rubble > 0 && collapsed.shown, "new rubble receives visible models");
+  assert.equal(collapsed.stats.latePipelines, 0, "rubble draws with warmed pipelines");
+  assert.equal(collapsed.stats.pipelines, beforeCollapse.pipelines, "no new pipelines");
   await page.screenshot({ path: `${output}/collapse.png` });
   await page.waitForTimeout(5000);
   await page.screenshot({ path: `${output}/ruined.png` });
+
+  // Ten destructive rounds: every tank destroyed, then a fresh round. Renderer
+  // allocations and live WebGPU buffers must return to the same totals.
   const resets = await page.evaluate(() => {
-    const d = window.sloppy,
-      memory = [];
-    const device = d.view.renderer.backend.device;
-    const buffers = new Map();
-    // Count actual live allocations as well as the renderer's resource counters.
-    if (device) {
-      const createBuffer = device.createBuffer.bind(device);
-      device.createBuffer = (descriptor) => {
-        const buffer = createBuffer(descriptor);
-        buffers.set(buffer, descriptor.size);
-        const destroy = buffer.destroy.bind(buffer);
-        buffer.destroy = () => {
-          buffers.delete(buffer);
-          destroy();
-        };
-        return buffer;
-      };
-    }
+    const { sloppy, engine } = window;
+    const game = sloppy.game;
+    const memory = [];
     for (let i = 0; i < 10; i++) {
-      d.sim.seed = 207;
-      d.start();
-      for (const tank of d.sim.tanks) {
-        tank.protection = 0;
-        d.sim.damageTank(tank, 999, tank.id, tank.team);
+      game.debug_configure(207, 12, 0);
+      sloppy.start();
+      for (const tank of engine.state().tanks) {
+        engine.setTank(tank.id, { protection: 0, shield: 0 });
+        game.debug_damage_tank(tank.id, 999, tank.id, tank.team);
       }
-      d.view.render(d.sim, 1, 0);
-      d.start();
-      d.view.render(d.sim, 1, 0);
+      engine.draw();
+      sloppy.start();
+      engine.draw();
+      const live = [...window.gpuBuffers.values()];
       memory.push({
-        ...d.view.renderer.info.memory,
-        gpuBuffers: buffers.size,
-        gpuBufferBytes: [...buffers.values()].reduce((sum, size) => sum + size, 0),
+        ...engine.stats(),
+        gpuBuffers: live.length,
+        gpuBufferBytes: live.reduce((sum, size) => sum + size, 0),
       });
     }
     return memory;
   });
-  const stableMemory = ({ programsSize, total, ...memory }) => ({
-    ...memory,
-    // Generated shader identifiers grow with node IDs. Shader count must stay
-    // fixed; compare actual buffer/texture bytes independently of source length.
-    resourceBytes: total - programsSize,
+  const stable = (memory) => ({
+    ...resources(memory),
+    gpuBuffers: memory.gpuBuffers,
+    gpuBufferBytes: memory.gpuBufferBytes,
   });
   for (const memory of resets.slice(1)) {
-    assert.deepEqual(stableMemory(memory), stableMemory(resets[0]));
+    assert.deepEqual(stable(memory), stable(resets[0]), "resets keep renderer resources");
   }
+  // Mines laid and cleared thirty times: their views must not accumulate.
   const mineResources = await page.evaluate(() => {
-    const { sim, view } = window.sloppy;
+    const { sloppy, engine } = window;
+    const game = sloppy.game;
+    const { x, z, team } = engine.state().human;
     const memory = [];
     for (let i = 0; i < 30; i++) {
-      sim.mines.push({
-        id: sim.nextId++,
-        owner: sim.human.id,
-        team: sim.humanTeam,
-        x: sim.human.previous.x,
-        z: sim.human.previous.z,
-        arm: 0,
-        life: 20,
-      });
-      view.render(sim, 1, 0);
-      sim.mines.length = 0;
-      view.render(sim, 1, 0);
-      memory.push({ ...view.renderer.info.memory });
+      game.debug_add_mine(x, z, team, 0);
+      engine.draw();
+      if (engine.view().mines !== 1) throw new Error("the mine needs a view");
+      game.debug_clear_mines();
+      engine.draw();
+      memory.push({ ...engine.stats(), views: engine.view().mines });
     }
     return memory;
   });
   for (const memory of mineResources.slice(1)) {
-    assert.deepEqual(stableMemory(memory), stableMemory(mineResources[0]));
+    assert.deepEqual(resources(memory), resources(mineResources[0]), "mines keep resources");
+    assert.equal(memory.views, 0);
   }
+  assert.equal(await page.evaluate(() => window.sloppy.error()), null, "no GPU error");
   assert.deepEqual(errors, []);
   writeFileSync(
     `${output}/results.json`,
@@ -149,11 +165,11 @@ try {
   );
   console.log(
     JSON.stringify({
-      before: before.tanks.find((t) => t.personality === "player"),
+      before: before.counts,
       after: after.counts,
       paused,
-      resets: resets.at(-1),
-      mineResources: mineResources.at(-1),
+      resets: stable(resets.at(-1)),
+      mineResources: resources(mineResources.at(-1)),
       errors,
     }),
   );

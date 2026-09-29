@@ -388,7 +388,9 @@ impl Game {
         self.sim.start();
         self.active = true;
         self.accumulator = 0.0;
-        self.last_ms = None;
+        // Animation frames queued before GO (behind a slow arena rebuild) carry older
+        // timestamps; measuring from now keeps them from advancing the new round.
+        self.last_ms = Some(now_ms());
     }
 
     pub fn resume(&mut self) {

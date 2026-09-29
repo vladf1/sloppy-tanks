@@ -78,23 +78,23 @@ try {
   });
   await delayed.context.close();
 
-  // Hold GPU compilation too: GO and late choices must survive this separate
-  // preparation stage, and the simulation must not start behind the menu.
+  // Hold the arena's textures too: preparation waits for them after compiling its
+  // pipelines, so GO and late choices must survive this separate stage, and the
+  // simulation must not start behind the menu.
   const graphics = await fresh();
-  await graphics.page.addInitScript(() => {
-    const compile = GPUDevice.prototype.createRenderPipelineAsync;
-    const gate = new Promise((resolve) => {
-      window.releaseGraphics = resolve;
-    });
-    GPUDevice.prototype.createRenderPipelineAsync = async function (...args) {
-      const pipeline = await compile.apply(this, args);
-      await gate;
-      return pipeline;
-    };
+  let releaseTextures;
+  const textures = new Promise((resolve) => {
+    releaseTextures = resolve;
+  });
+  await graphics.page.route(/\/textures\/.*\.webp(?:\?|$)/, async (route) => {
+    await textures;
+    await route.continue();
   });
   await graphics.page.goto(url, { waitUntil: "domcontentloaded" });
   await graphics.page.waitForFunction(() =>
-    document.querySelector("#startup-status")?.textContent.includes("Preparing graphics"),
+    /Preparing graphics|Shaders loaded|Loading textures/.test(
+      document.querySelector("#startup-status")?.textContent ?? "",
+    ),
   );
   const graphicsBox = await graphics.page.locator("#start").boundingBox();
   assert.ok(graphicsBox);
@@ -106,7 +106,8 @@ try {
   assert.equal(await graphics.page.locator("#game").isVisible(), false);
   await chooseMap(graphics.page, "harbor");
   await graphics.page.screenshot({ path: `${output}/loading-queued-desktop.png` });
-  await graphics.page.evaluate(() => window.releaseGraphics());
+  assert.equal(await graphics.page.evaluate(() => window.sloppy?.sim.elapsed ?? 0), 0);
+  releaseTextures();
   await playing(graphics.page);
   assert.equal(await graphics.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   results.delayedGraphics = "early GO and changed map passed";
@@ -119,19 +120,30 @@ try {
   });
   await warm.page.goto(url);
   await ready(warm.page);
-  // Startup fetches the pickup atlas early and TextureLoader reuses that download.
+  // Startup fetches the pickup atlas early and the engine reuses that download.
   assert.equal(pickupTextures.length, 1, "one pickup texture download");
   assert.ok(pickupTextures[0].endsWith("/textures/pickups/atlas.webp"));
   results.prepared = await warm.page.evaluate(() => {
-    window.preparedWorld = window.sloppy.sim.world;
-    window.preparedRenderer = window.sloppy.view.renderer;
+    const { sloppy } = window;
+    window.preparedGame = sloppy.game;
+    // A rebuild at GO would set new options or restart the world; count both.
+    window.rebuilds = 0;
+    const game = Object.getPrototypeOf(sloppy.game);
+    for (const name of ["set_options", "restart"]) {
+      const original = game[name];
+      game[name] = function (...args) {
+        window.rebuilds++;
+        return original.apply(this, args);
+      };
+    }
     return {
-      time: window.sloppy.view.time,
-      elapsed: window.sloppy.sim.elapsed,
-      draws: window.sloppy.view.renderer.info.render.drawCalls,
+      time: sloppy.view.time,
+      elapsed: sloppy.sim.elapsed,
+      prepared: sloppy.sim.prepared,
+      phase: sloppy.sim.phase,
     };
   });
-  assert.deepEqual(results.prepared, { time: 0, elapsed: 0, draws: 0 });
+  assert.deepEqual(results.prepared, { time: 0, elapsed: 0, prepared: true, phase: "ready" });
   // Each vehicle card clips the shared preview sheet: 3 kinds × 2 team rows of 640×400.
   results.previews = await warm.page.evaluate(async () => {
     const tiles = [...document.querySelectorAll(".tank-preview image")];
@@ -145,10 +157,7 @@ try {
   await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
   await startRound(warm.page);
   await playing(warm.page);
-  assert.equal(
-    await warm.page.evaluate(() => window.preparedWorld === window.sloppy.sim.world),
-    true,
-  );
+  assert.equal(await warm.page.evaluate(() => window.rebuilds), 0, "GO reuses the arena");
   await warm.page.mouse.move(950, 450);
   await warm.page.keyboard.down("d");
   await warm.page.mouse.down();
@@ -176,9 +185,9 @@ try {
   results.newRound = await warm.page.evaluate(() => ({
     map: window.sloppy.sim.mapMode,
     tank: window.sloppy.sim.human.kind,
-    sameRenderer: window.preparedRenderer === window.sloppy.view.renderer,
+    sameEngine: window.preparedGame === window.sloppy.game,
   }));
-  assert.deepEqual(results.newRound, { map: "harbor", tank: "scout", sameRenderer: true });
+  assert.deepEqual(results.newRound, { map: "harbor", tank: "scout", sameEngine: true });
   await warm.page.screenshot({ path: `${output}/gameplay.png` });
   await warm.context.close();
 
@@ -270,9 +279,8 @@ try {
   const standard = await extra.page.evaluate(() => ({
     tanks: window.sloppy.sim.tanks.length,
     endless: window.sloppy.sim.endlessMatch,
-    rules: typeof window.sloppy.sim.afterStep,
   }));
-  assert.deepEqual(standard, { tanks: 12, endless: false, rules: "undefined" });
+  assert.deepEqual(standard, { tanks: 12, endless: false });
   await extra.context.close();
   results.automaticStarts = "passed";
   console.log("Autoplay and extra-level startup passed.");

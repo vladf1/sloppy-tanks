@@ -11,7 +11,8 @@ export const headless = !process.env.SLOPPY_HEADED;
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
 /**
- * Launch installed Chrome with one desktop context and page. Page errors from every
+ * Launch installed Chrome with one desktop context and page, with `window.engine`
+ * (`installEngineHelpers`) in every page. Page errors from every
  * page in the context are collected in `errors`; `consoleErrors` also collects
  * console.error output (shader compilation failures are only reported there).
  * @param {{ viewport?: { width: number, height: number }, hasTouch?: boolean, consoleErrors?: boolean }} [options]
@@ -27,6 +28,7 @@ export async function launchGame({
     args: ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
   });
   const context = await browser.newContext({ viewport, hasTouch, deviceScaleFactor: 1 });
+  await installEngineHelpers(context);
   const errors = [];
   context.on("page", (page) => {
     page.on("pageerror", (error) => errors.push(error.message));
@@ -45,8 +47,10 @@ export async function launchGame({
 /**
  * Hold the game's own `loop` animation callback so a check decides exactly when
  * frames run: `window.advanceFrame(ms)` runs one loop frame `ms` after the previous
- * one, and `window.runLoop(timestamp)` runs one at an absolute RAF timestamp.
- * Three.js and other animation callbacks keep running normally.
+ * one, and `window.runLoop(timestamp)` runs one at an absolute RAF timestamp. The
+ * loop is the one callback that hands the packed input to `Game.frame`, so every
+ * engine frame (simulation steps, events, HUD refresh and drawing) happens only
+ * then. Other animation callbacks keep running normally.
  * @param {import("playwright").Page} page
  */
 export async function freezeLoop(page) {
@@ -63,6 +67,33 @@ export async function freezeLoop(page) {
       loop(timestamp);
     };
     window.advanceFrame = (ms) => window.runLoop((now ?? performance.now()) + ms);
+  });
+}
+
+/**
+ * Install `window.engine` in every page of `target`: shorthands for the dev-only
+ * `Game.debug_*` fixture hooks (`crates/web/src/game/debug.rs`) that parse their
+ * JSON. `engine.state()` is the simulation and camera (`debug_json`), `engine.view()`
+ * what every entity's view showed in the last frame, `engine.covers()` the covers and
+ * `engine.stats()` the renderer counters. Use it once `window.sloppy` exists.
+ * @param {import("playwright").BrowserContext | import("playwright").Page} target
+ */
+export async function installEngineHelpers(target) {
+  await target.addInitScript(() => {
+    const game = () => window.sloppy.game;
+    window.engine = {
+      state: () => JSON.parse(game().debug_json()),
+      view: () => JSON.parse(game().debug_view_json()),
+      covers: () => JSON.parse(game().debug_covers_json()),
+      stats: () => JSON.parse(game().stats_json()),
+      /** Draw one still frame, from `camera = [px, py, pz, tx, ty, tz]` when given. */
+      draw: (camera = [], overview = false) =>
+        game().debug_render(1, 0, overview, new Float32Array(camera)),
+      setTank: (id, patch) => game().debug_set_tank(id, JSON.stringify(patch)),
+      setHuman: (patch) =>
+        game().debug_set_tank(window.engine.state().human.id, JSON.stringify(patch)),
+      setSim: (patch) => game().debug_set_sim(JSON.stringify(patch)),
+    };
   });
 }
 
@@ -114,7 +145,8 @@ export function chosenMap(page, name = "mapMode") {
   return page.locator(`.map-picker[data-name="${name}"]`).getAttribute("data-value");
 }
 
-/** Set only the game seed; mocking global Math.random also duplicates Three.js UUIDs. */
+/** Set only the seed the startup script hands the engine; the page's other
+ * `Math.random` uses (cosmetic variation, bot names) stay untouched. */
 export async function seedGame(page, seed) {
   if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("Invalid fixture seed");
   // Startup is bundled inline in HTML in both Vite modes.

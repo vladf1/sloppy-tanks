@@ -518,8 +518,9 @@ impl Game {
     }
 
     /// What every entity's view shows after the last frame (`Presentation::inspect`).
-    pub fn debug_view_json(&self) -> String {
+    pub fn debug_view_json(&mut self) -> String {
         let inspection = self.view.inspect();
+        let effects = self.view.effects.stats();
         let v3 = |v: glam::Vec3| [v.x, v.y, v.z];
         let reticle = &inspection.reticle;
         json!({
@@ -558,6 +559,17 @@ impl Game {
                 "lenses": inspection.laser_lenses,
                 "cores": inspection.laser_cores,
                 "beams": inspection.laser_beams,
+            },
+            "effects": {
+                "particles": effects.particles,
+                "blasts": effects.blasts,
+                "puffs": effects.puffs,
+                "trackMarks": effects.track_marks,
+                "trackDust": effects.track_dust,
+                "projectiles": effects.projectiles,
+                "laserBeams": effects.laser_beams,
+                "pickupEffects": effects.pickup_effects,
+                "instances": effects.instances,
             },
         })
         .to_string()
