@@ -84,7 +84,9 @@ impl ShaderKey {
             pass: Pass::Shadow,
             map: alpha_test && material.map.is_some(),
             alpha_test,
-            side: shadow_side(material.side),
+            side: material
+                .shadow_side
+                .unwrap_or_else(|| shadow_side(material.side)),
             effect,
             extra_attributes,
             shadow_fade: fade,

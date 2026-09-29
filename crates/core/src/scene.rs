@@ -118,6 +118,9 @@ pub struct Material {
     pub alpha_test: f32,
     pub alpha_to_coverage: bool,
     pub side: Side,
+    /// Faces that cast shadows (Three.js `shadowSide`); `None` casts the faces opposite
+    /// `side`, Three's default for single-sided materials.
+    pub shadow_side: Option<Side>,
     pub blending: Blending,
     pub depth_test: bool,
     pub depth_write: bool,
@@ -146,6 +149,7 @@ impl Default for Material {
             alpha_test: 0.0,
             alpha_to_coverage: false,
             side: Side::Front,
+            shadow_side: None,
             blending: Blending::Normal,
             depth_test: true,
             depth_write: true,

@@ -83,10 +83,14 @@ impl RecapStats {
     }
 }
 
+/// Browser storage was unavailable or refused the write (private browsing, quota).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageUnavailable;
+
 /// Browser storage access; errors model private browsing and quota failures.
 pub trait RecordStorage {
-    fn get_item(&self, key: &str) -> Result<Option<String>, ()>;
-    fn set_item(&mut self, key: &str, value: &str) -> Result<(), ()>;
+    fn get_item(&self, key: &str) -> Result<Option<String>, StorageUnavailable>;
+    fn set_item(&mut self, key: &str, value: &str) -> Result<(), StorageUnavailable>;
 }
 
 #[derive(Clone, Debug, PartialEq)]

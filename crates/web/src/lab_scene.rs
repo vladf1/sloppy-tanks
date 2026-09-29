@@ -287,6 +287,7 @@ pub fn material(spec: &MaterialSpec) -> Material {
             Some("double") => Side::Double,
             _ => Side::Front,
         },
+        shadow_side: None,
         blending: if spec.blending.as_deref() == Some("additive") {
             Blending::Additive
         } else {
