@@ -7,9 +7,9 @@ use std::f64::consts::PI;
 
 use crate::geometry::Mesh;
 
-use super::pending_scenery::Random;
 use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
-use super::scenery::{clamp, js_hypot, lerp, smoothstep};
+use crate::geometry::math::{js_hypot, lerp, smoothstep};
+use crate::sim::math::{Random, clamp};
 
 /// `QUARRY_RAMP`: the ramp's authored extents.
 pub struct QuarryRamp {

@@ -1,7 +1,7 @@
 //! Port of `village-roads.ts`: the Pine Village road strips, shared by the road
 //! meshes and surface effects (track dust) so their boundaries stay aligned.
 
-use super::pending_scenery::ARENA;
+use crate::sim::data::ARENA;
 
 /// Width of the feathered alpha shoulder along every road edge, in metres.
 pub const ROAD_SHOULDER: f64 = 0.7;

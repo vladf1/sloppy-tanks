@@ -28,6 +28,7 @@ use glam::DMat4;
 use super::effects_scenery::{CHIMNEY_SMOKE, QUARRY_SOIL, SAND_DRIFT, VERTEX_ALPHA, WATER};
 use super::*;
 use crate::scene::{Effect, Material, Node, Shading, Side, TextureRef, TextureSource};
+use crate::sim::quarry_rock_shape::quarry_rock_shape;
 
 fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
@@ -280,7 +281,7 @@ fn sections() -> Vec<(String, Node)> {
         (GroundKind::DryGrass, 140.0, -0.002),
     ] {
         sections.push((
-            format!("floor-{}-{extent}", kind.name()),
+            format!("floor-{}-{extent}", kind.as_str()),
             custom_floor(kind, Some(extent), y),
         ));
     }
@@ -602,7 +603,7 @@ fn quarry_rock_shape_and_spawn_pads() {
     let shape = quarry_rock_shape(2.0, 1.0, 3.0, 5);
     assert_eq!(shape.positions.len(), (7 * 16 + 1) * 3);
     assert_eq!(shape.indices.len(), (6 * 16 * 2 + 16) * 3);
-    let pieces = quarry_spawn_pad_pieces(1);
+    let pieces = quarry_spawn_pad_pieces(Team::Red);
     assert_eq!(pieces.len(), 18);
     assert!(pieces.iter().all(|p| p.y + p.h / 2.0 < 1.2));
 }

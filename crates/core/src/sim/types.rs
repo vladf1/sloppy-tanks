@@ -241,6 +241,33 @@ pub enum PickupKind {
 }
 
 impl PickupKind {
+    pub const ALL: [PickupKind; 9] = [
+        PickupKind::Spread,
+        PickupKind::Rocket,
+        PickupKind::Ricochet,
+        PickupKind::Piercing,
+        PickupKind::Rapid,
+        PickupKind::Shield,
+        PickupKind::Speed,
+        PickupKind::Repair,
+        PickupKind::Laser,
+    ];
+
+    /// The TypeScript identifier (the serialized name).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PickupKind::Spread => "spread",
+            PickupKind::Rocket => "rocket",
+            PickupKind::Ricochet => "ricochet",
+            PickupKind::Piercing => "piercing",
+            PickupKind::Rapid => "rapid",
+            PickupKind::Shield => "shield",
+            PickupKind::Speed => "speed",
+            PickupKind::Repair => "repair",
+            PickupKind::Laser => "laser",
+        }
+    }
+
     pub const fn special_ammo(self) -> Option<SpecialAmmo> {
         match self {
             PickupKind::Spread => Some(SpecialAmmo::Spread),
@@ -418,6 +445,41 @@ pub enum CoverKind {
 }
 
 impl CoverKind {
+    pub const ALL: [CoverKind; 13] = [
+        CoverKind::Rock,
+        CoverKind::Teeth,
+        CoverKind::Hedgehog,
+        CoverKind::Container,
+        CoverKind::Cargo,
+        CoverKind::House,
+        CoverKind::Tree,
+        CoverKind::Timber,
+        CoverKind::Concrete,
+        CoverKind::Drum,
+        CoverKind::Tower,
+        CoverKind::Rubble,
+        CoverKind::Boundary,
+    ];
+
+    /// The TypeScript identifier (the serialized name).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CoverKind::Rock => "rock",
+            CoverKind::Teeth => "teeth",
+            CoverKind::Hedgehog => "hedgehog",
+            CoverKind::Container => "container",
+            CoverKind::Cargo => "cargo",
+            CoverKind::House => "house",
+            CoverKind::Tree => "tree",
+            CoverKind::Timber => "timber",
+            CoverKind::Concrete => "concrete",
+            CoverKind::Drum => "drum",
+            CoverKind::Tower => "tower",
+            CoverKind::Rubble => "rubble",
+            CoverKind::Boundary => "boundary",
+        }
+    }
+
     /// Drums, dragon's teeth and hedgehogs are dynamic bodies that blasts and shells push.
     pub const fn movable(self) -> bool {
         matches!(
@@ -543,10 +605,15 @@ pub struct Pickup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WreckPart {
+    /// Hull and turret together.
     Intact,
+    /// The hull alone, with the turret ring cut open.
     Hull,
+    /// The turret without its gun.
     Turret,
+    /// The turret with its gun.
     TurretBarrel,
+    /// The gun alone.
     Barrel,
 }
 

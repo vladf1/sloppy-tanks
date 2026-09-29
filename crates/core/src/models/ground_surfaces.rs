@@ -7,27 +7,13 @@ use crate::scene::{Material, TextureRef, Wrap};
 use super::effects_scenery::VERTEX_ALPHA;
 use super::village_roads::ROAD_SHOULDER;
 
-/// `GroundKind`: the two ground albedo tiles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum GroundKind {
-    DryGrass,
-    PackedDirt,
-}
+pub use crate::sim::maps::GroundKind;
 
-impl GroundKind {
-    /// The TypeScript identifier (map definitions name floors by it).
-    pub fn name(self) -> &'static str {
-        match self {
-            GroundKind::DryGrass => "dry-grass",
-            GroundKind::PackedDirt => "packed-dirt",
-        }
-    }
-
-    pub fn texture_path(self) -> &'static str {
-        match self {
-            GroundKind::DryGrass => "textures/ground/dry-grass.webp",
-            GroundKind::PackedDirt => "textures/ground/packed-dirt.webp",
-        }
+/// The ground albedo tile of a floor kind under `public/`.
+pub fn ground_texture_path(kind: GroundKind) -> &'static str {
+    match kind {
+        GroundKind::DryGrass => "textures/ground/dry-grass.webp",
+        GroundKind::PackedDirt => "textures/ground/packed-dirt.webp",
     }
 }
 
@@ -43,7 +29,7 @@ pub fn ground_texture(kind: GroundKind) -> TextureRef {
     TextureRef {
         wrap: Wrap::Mirror,
         anisotropy: GROUND_ANISOTROPY,
-        ..TextureRef::file(kind.texture_path())
+        ..TextureRef::file(ground_texture_path(kind))
     }
 }
 

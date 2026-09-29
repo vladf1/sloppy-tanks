@@ -7,14 +7,16 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
 use crate::geometry::Mesh;
-use crate::geometry::math::js_round;
+use crate::geometry::math::{js_round, smoothstep};
 use crate::scene::{Material, Node};
+use crate::sim::arena::spawn_positions;
+use crate::sim::math::Random;
+use crate::sim::types::{Team, Vec2};
 
 use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;
 use super::harbor_surfaces::steel_box;
 use super::model_primitives::{TEAM_COLORS, box_part, cylinder_part, put, rotated};
-use super::pending_scenery::{Random, spawn_positions};
 use super::quarry_benches::{
     quarry_bench, quarry_butte, quarry_butte_spot, quarry_scree_spots, quarry_stockpile_geometry,
     quarry_stockpile_reach, quarry_stockpile_spot, quarry_talus_geometry, quarry_talus_point,
@@ -29,7 +31,6 @@ use super::quarry_site_details::quarry_site_details;
 use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
 use super::quarry_surfaces::{RubbleStone, sandstone_rock, sandstone_rubble};
 use super::quarry_terrain::quarry_terrain;
-use super::scenery::smoothstep;
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
 const APRON: f64 = -1.8;
@@ -91,7 +92,7 @@ pub struct SpawnPadPiece {
 /// with a worn centre, a ring of hazard dashes, chevrons pointing at the arena and
 /// one team-capped beacon post). Everything stays ankle-high so pads read as
 /// markings, never as cover.
-pub fn quarry_spawn_pad_pieces(team: u8) -> Vec<SpawnPadPiece> {
+pub fn quarry_spawn_pad_pieces(team: Team) -> Vec<SpawnPadPiece> {
     use SpawnPadShape::*;
     let piece = |shape, dx, dz, y, w, h, d, color, rot_y| SpawnPadPiece {
         dx,
@@ -125,8 +126,8 @@ pub fn quarry_spawn_pad_pieces(team: u8) -> Vec<SpawnPadPiece> {
     }
     // Big wedge centred on the pad: the arms meet at an apex aiming at the arena
     // while the triangle's centroid sits exactly on the spawn point.
-    let inward = if team == 0 { 1.0 } else { -1.0 };
-    let team_color = TEAM_COLORS[usize::from(team)];
+    let inward = if team == Team::Blue { 1.0 } else { -1.0 };
+    let team_color = TEAM_COLORS[team.index()];
     for s in [-1.0, 1.0] {
         pieces.push(piece(
             Chevron,
@@ -140,7 +141,7 @@ pub fn quarry_spawn_pad_pieces(team: u8) -> Vec<SpawnPadPiece> {
             s * 0.5 * inward,
         ));
     }
-    let side = if team == 0 { -1.0 } else { 1.0 };
+    let side = if team == Team::Blue { -1.0 } else { 1.0 };
     pieces.push(piece(
         Post,
         side * 2.5,
@@ -166,7 +167,7 @@ pub fn quarry_spawn_pad_pieces(team: u8) -> Vec<SpawnPadPiece> {
     pieces
 }
 
-fn quarry_spawn_pad(group: &mut Node, team: u8, x: f64, z: f64) {
+fn quarry_spawn_pad(group: &mut Node, team: Team, x: f64, z: f64) {
     for piece in quarry_spawn_pad_pieces(team) {
         let mesh = match piece.shape {
             SpawnPadShape::Disc => cylinder_part(piece.w, piece.h, piece.color, 20),
@@ -391,8 +392,8 @@ impl QuarryScenery {
         }
         put(&mut root, truck, 69.0, -1.75, 18.0);
         boundary_dressing(&mut equipment);
-        for team in [0u8, 1] {
-            for (x, z) in spawn_positions(team, 1.0) {
+        for team in [Team::Blue, Team::Red] {
+            for Vec2 { x, z } in spawn_positions(team, 1.0) {
                 quarry_spawn_pad(&mut equipment, team, x, z);
             }
         }

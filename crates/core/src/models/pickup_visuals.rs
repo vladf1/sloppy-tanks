@@ -11,70 +11,21 @@ use super::effects_props::PICKUP_SURFACE;
 use super::model_primitives::Cache;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
 use crate::scene::{Color, Effect, Material, Node, TextureRef, Wrap};
+use crate::sim::ammunition::is_special_ammo;
+use crate::sim::types::PickupKind;
 
-/// Pickup kinds (TS `PickupKind`): the special ammo types, then the power-ups.
-/// Defined here until the simulation's equivalent is shared.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PickupKind {
-    Spread,
-    Rocket,
-    Ricochet,
-    Piercing,
-    Rapid,
-    Shield,
-    Speed,
-    Repair,
-    Laser,
-}
-
-impl PickupKind {
-    pub const ALL: [PickupKind; 9] = [
-        PickupKind::Spread,
-        PickupKind::Rocket,
-        PickupKind::Ricochet,
-        PickupKind::Piercing,
-        PickupKind::Rapid,
-        PickupKind::Shield,
-        PickupKind::Speed,
-        PickupKind::Repair,
-        PickupKind::Laser,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            PickupKind::Spread => "spread",
-            PickupKind::Rocket => "rocket",
-            PickupKind::Ricochet => "ricochet",
-            PickupKind::Piercing => "piercing",
-            PickupKind::Rapid => "rapid",
-            PickupKind::Shield => "shield",
-            PickupKind::Speed => "speed",
-            PickupKind::Repair => "repair",
-            PickupKind::Laser => "laser",
-        }
-    }
-
-    /// `isSpecialAmmo(kind)`: ammo pickups are crates, power-ups are cubes.
-    pub fn is_special_ammo(self) -> bool {
-        matches!(
-            self,
-            PickupKind::Spread | PickupKind::Rocket | PickupKind::Ricochet | PickupKind::Piercing
-        )
-    }
-
-    /// `PICKUP_ATLAS_TILES[kind]`: (column, row) of the pictogram.
-    pub fn atlas_tile(self) -> (u32, u32) {
-        match self {
-            PickupKind::Spread => (0, 0),
-            PickupKind::Rocket => (1, 0),
-            PickupKind::Ricochet => (2, 0),
-            PickupKind::Piercing => (0, 1),
-            PickupKind::Rapid => (1, 1),
-            PickupKind::Shield => (2, 1),
-            PickupKind::Speed => (0, 2),
-            PickupKind::Repair => (1, 2),
-            PickupKind::Laser => (2, 2),
-        }
+/// `PICKUP_ATLAS_TILES[kind]`: (column, row) of the kind's pictogram.
+pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
+    match kind {
+        PickupKind::Spread => (0, 0),
+        PickupKind::Rocket => (1, 0),
+        PickupKind::Ricochet => (2, 0),
+        PickupKind::Piercing => (0, 1),
+        PickupKind::Rapid => (1, 1),
+        PickupKind::Shield => (2, 1),
+        PickupKind::Speed => (0, 2),
+        PickupKind::Repair => (1, 2),
+        PickupKind::Laser => (2, 2),
     }
 }
 
@@ -87,7 +38,7 @@ pub const PICKUP_ATLAS_SIZE: f64 = PICKUP_ATLAS_STRIDE * 3.0;
 
 /// `pickupAtlasUV(kind, u, v)`: a face UV mapped into the kind's padded atlas tile.
 pub fn pickup_atlas_uv(kind: PickupKind, u: f64, v: f64) -> [f64; 2] {
-    let (column, row) = kind.atlas_tile();
+    let (column, row) = pickup_atlas_tile(kind);
     [
         (f64::from(column) * PICKUP_ATLAS_STRIDE + PICKUP_ATLAS_PADDING + u * PICKUP_ICON_SIZE)
             / PICKUP_ATLAS_SIZE,
@@ -166,7 +117,7 @@ fn face_material() -> Arc<Material> {
 /// `faceGeometry(kind)`: the crate or cube with every face showing the kind's tile.
 fn face_geometry(kind: PickupKind) -> Arc<Mesh> {
     FACES.get_or_insert(kind, || {
-        let mut mesh = if kind.is_special_ammo() {
+        let mut mesh = if is_special_ammo(kind) {
             box_geometry(1.8, 1.05, 1.2)
         } else {
             box_geometry(1.25, 1.25, 1.25)
@@ -191,7 +142,7 @@ fn caster(mesh: Arc<Mesh>, material: Arc<Material>) -> Node {
 /// and its hardware for ammo. Presentation spins and bobs it (TS `userData.gem`).
 pub fn pickup_cube(kind: PickupKind) -> Node {
     let body = caster(face_geometry(kind), face_material());
-    if !kind.is_special_ammo() {
+    if !is_special_ammo(kind) {
         return body;
     }
     let mut crate_group = Node::default();

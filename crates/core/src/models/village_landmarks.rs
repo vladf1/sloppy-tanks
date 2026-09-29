@@ -12,8 +12,8 @@ use crate::scene::Node;
 use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;
 use super::house_surfaces::{shingle_roof, siding_box, siding_gable};
+use super::model_primitives::span_between;
 use super::model_primitives::{DEFAULT_ROUGHNESS, box_part, cylinder_part, material, put, rotated};
-use super::scenery::{distance, span_between};
 
 /// The watermill wheel's node name; [`VillageScenery::update`] turns it.
 ///
@@ -24,7 +24,7 @@ const TIMBER: u32 = 0x725236;
 /// `beam(group, a, b, width, color)`: a square timber between two points.
 fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
     let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let part = box_part(width, distance(to, from), width, color, 0.0);
+    let part = box_part(width, to.distance(from), width, color, 0.0);
     group.children.push(span_between(part, from, to));
 }
 

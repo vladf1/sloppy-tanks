@@ -7,6 +7,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use glam::{DMat4, DVec3};
+
+use crate::geometry::math::{compose, decompose, normalize, quat_from_unit_vectors};
 use crate::geometry::{Mesh, box_geometry, cylinder_geometry, rounded_box_geometry};
 use crate::scene::{Color, Material, Node};
 
@@ -117,7 +120,7 @@ pub fn cylinder_part(radius: f64, height: f64, color: u32, sides: u32) -> Node {
 
 /// `put(parent, obj, x, y, z)`: position a part and append it to its parent.
 pub fn put(parent: &mut Node, mut child: Node, x: f64, y: f64, z: f64) {
-    child.position = glam::DVec3::new(x, y, z);
+    child.position = DVec3::new(x, y, z);
     parent.children.push(child);
 }
 
@@ -125,4 +128,38 @@ pub fn put(parent: &mut Node, mut child: Node, x: f64, y: f64, z: f64) {
 pub fn rotated(mut node: Node, x: f64, y: f64, z: f64) -> Node {
     node.set_rotation_euler(x, y, z);
     node
+}
+
+/// `object.applyMatrix4(matrix)` for an object with automatic matrix updates:
+/// premultiply its composed matrix and decompose the product back into the
+/// node's position, rotation and scale.
+pub fn apply_matrix_to_node(node: &mut Node, matrix: &DMat4) {
+    let product = *matrix * compose(node.position, node.rotation, node.scale);
+    let (position, rotation, scale) = decompose(&product);
+    node.position = position;
+    node.rotation = rotation;
+    node.scale = scale;
+}
+
+/// `child.applyMatrix4(group.matrix)` for each of `group`'s children, appended to
+/// `parent`: bakes an assembly's transform into its parts so a later batch merges
+/// them with the parent's other parts.
+pub fn adopt_children(parent: &mut Node, group: Node) {
+    let matrix = compose(group.position, group.rotation, group.scale);
+    for mut child in group.children {
+        apply_matrix_to_node(&mut child, &matrix);
+        parent.children.push(child);
+    }
+}
+
+/// A part stretched between two points along its local y axis (the scenery's
+/// `beam` helpers): positioned at the midpoint and turned from +y to the segment.
+pub fn span_between(mut part: Node, from: DVec3, to: DVec3) -> Node {
+    part.position = DVec3::new(
+        (from.x + to.x) * 0.5,
+        (from.y + to.y) * 0.5,
+        (from.z + to.z) * 0.5,
+    );
+    part.rotation = quat_from_unit_vectors(DVec3::Y, normalize(to - from));
+    part
 }

@@ -162,7 +162,7 @@ pub fn humvee_model(team: Team, wreck: bool) -> Node {
     let base = if wreck {
         WRECK_PAINT
     } else {
-        TEAM_COLORS[usize::from(team)]
+        TEAM_COLORS[team.index()]
     };
     let palette = Palette {
         base,

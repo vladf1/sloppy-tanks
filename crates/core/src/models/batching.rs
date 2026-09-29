@@ -35,7 +35,7 @@ static VERTEX_MATERIALS: Mutex<Vec<(VertexMaterialKey, Arc<Material>)>> = Mutex:
 /// `vertexMaterial(source)`: the shared vertex-color clone for opaque standard
 /// paint, or the source itself for anything else (unlit, transparent, cut-out,
 /// already vertex-colored, or a custom effect).
-fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
+pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if source.shading != Shading::Standard
         || source.effect != Effect::None
         || source.transparent

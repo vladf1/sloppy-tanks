@@ -13,11 +13,12 @@ use crate::scene::{Material, Node};
 
 use super::batching::batch;
 use super::ground_surfaces::ground_uvs;
+use super::model_primitives::adopt_children;
 use super::model_primitives::put;
-use super::pending_scenery::Random;
-use super::scenery::{adopt_children, lerp, lerp_color, linear, smoothstep};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use super::water_surface::{WaterKind, water_surface};
+use crate::geometry::math::{hex_to_linear, lerp, lerp_color, smoothstep};
+use crate::sim::math::Random;
 
 /// Height of the creek's mirror plane.
 pub const CREEK_HEIGHT: f64 = -2.65;
@@ -157,7 +158,7 @@ pub fn village_landscape(grass: Arc<Material>) -> Node {
     let mut group = Node::group("pine-valley-landscape");
     let mut geometry = plane_geometry_segments(340.0, 340.0, 112, 112);
     geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
-    let bank = linear(0x8c967f);
+    let bank = hex_to_linear(0x8c967f);
     let mut colors = Vec::with_capacity(geometry.positions.len());
     for p in &mut geometry.positions {
         let (x, z) = (f64::from(p[0]), f64::from(p[2]));
@@ -287,7 +288,11 @@ fn backdrop(group: &mut Node) {
     let mut ridge = plane_geometry_segments(360.0, 95.0, 90, 26);
     ridge.rotate_x(-std::f64::consts::FRAC_PI_2);
     ridge.translate(0.0, 0.0, -159.5);
-    let (rock_color, snow, grass) = (linear(0x82948a), linear(0xe7eadb), linear(0x768d63));
+    let (rock_color, snow, grass) = (
+        hex_to_linear(0x82948a),
+        hex_to_linear(0xe7eadb),
+        hex_to_linear(0x768d63),
+    );
     let mut shades = Vec::with_capacity(ridge.positions.len());
     for p in &mut ridge.positions {
         let (x, z) = (f64::from(p[0]), f64::from(p[2]));

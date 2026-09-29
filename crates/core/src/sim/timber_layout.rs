@@ -4,7 +4,7 @@ use std::f64::consts::PI;
 
 use serde::{Deserialize, Serialize};
 
-use super::math::js_round;
+use super::math::{js_round, to_int32};
 use super::types::Cover;
 
 pub const TIMBER_HEALTH: f64 = 80.0;
@@ -175,8 +175,9 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
     let pitch = (wall.h - 0.12) / BEAM_COUNT as f64;
     let colors = [wall.color, 0x94613e, 0xa66f46];
     // Cosmetic randomness is stable per wall and never consumes the combat RNG.
-    let seed = (js_round(wall.x * 100.0) as i32).wrapping_mul(73_856_093)
-        ^ (js_round(wall.z * 100.0) as i32).wrapping_mul(19_349_663);
+    // `Math.imul` converts with ToInt32, which wraps rather than saturates.
+    let seed = to_int32(js_round(wall.x * 100.0)).wrapping_mul(73_856_093)
+        ^ to_int32(js_round(wall.z * 100.0)).wrapping_mul(19_349_663);
     let mut parts = Vec::new();
     let beams = if post { 0 } else { BEAM_COUNT };
     for index in 0..beams {

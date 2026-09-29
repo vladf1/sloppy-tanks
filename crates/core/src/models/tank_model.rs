@@ -248,7 +248,7 @@ fn tracked_model(kind: VehicleKind, team: Team, wreck: bool, open_turret_ring: b
     let color = if wreck {
         WRECK_PAINT
     } else {
-        TEAM_COLORS[usize::from(team)]
+        TEAM_COLORS[team.index()]
     };
     // Dimensions include the tracks and skirts, not just the center armor slab.
     // Hull length/overall width: compact scout ~1.94, Abrams/Type 99 ~2.17.
@@ -527,7 +527,7 @@ fn turret(c: &Chassis, team: Team) -> Node {
     let antenna = cylinder_part(0.018, if c.scout { 0.5 } else { 0.7 }, DARK, 5);
     put(&mut turret, antenna, 0.53, roof + 0.25, -0.67);
     turret.children.push(barrel(c));
-    if team == 0 {
+    if team == Team::Blue {
         let badge = rotated(
             box_part(0.18, 0.025, 0.18, MARKING_WHITE, 0.0),
             0.0,

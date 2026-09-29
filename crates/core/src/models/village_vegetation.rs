@@ -12,8 +12,8 @@ use crate::geometry::{Attribute, Mesh, octahedron_geometry};
 use crate::scene::{Effect, Instance, Material, Node, Side};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
-use super::pending_scenery::Random;
 use super::village_landscape::{creek_distance, valley_height_at};
+use crate::sim::math::Random;
 
 /// Instance capacities of the tuft and flower meshes.
 pub const MEADOW_TUFTS: usize = 3600;

@@ -9,9 +9,11 @@ use crate::geometry::{Mesh, plane_geometry_segments};
 use crate::scene::{Effect, Material, Node, TextureRef, TextureSource, Wrap};
 
 use super::effects_scenery::{QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
-use super::pending_scenery::{Random, quarry_layout};
 use super::quarry_soil::{ACCUM_CELLS, QUARRY_TERRAIN_EXTENT};
-use super::scenery::js_hypot;
+use crate::geometry::math::js_hypot;
+use crate::sim::math::Random;
+use crate::sim::quarry_layout::quarry_layout;
+use crate::sim::types::CoverKind;
 
 const EXTENT: f64 = QUARRY_TERRAIN_EXTENT;
 /// Grid resolution of the floor mesh (1.5 m cells).
@@ -48,7 +50,7 @@ pub fn sand_accum() -> &'static [f32] {
             }
         };
         for cover in quarry_layout() {
-            if cover.kind == "boundary" {
+            if cover.kind == CoverKind::Boundary {
                 continue;
             }
             // Overlapping blobs biased downwind (+x) read as drift, not stamped circles.

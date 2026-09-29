@@ -21,6 +21,9 @@ use super::*;
 use crate::geometry::Mesh;
 use crate::geometry::math::{compose, js_round};
 use crate::scene::{Material, Node, Side, TextureSource};
+use crate::sim::math::Random;
+use crate::sim::timber_layout::{TimberHit, TimberJoin, TimberPart, TimberPartKind};
+use crate::sim::types::{CoverKind, PickupKind};
 
 fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
@@ -171,7 +174,7 @@ pub(super) struct CoverCase {
     expected: Summary,
     exact: u32,
     timber_parts: (usize, u32),
-    tree: Option<(usize, u32)>,
+    tree: Option<(u32, u32)>,
 }
 
 fn timber_hash(parts: &[TimberPart]) -> u32 {
@@ -257,7 +260,7 @@ fn every_cover_kind_is_covered() {
     for kind in CoverKind::ALL {
         assert!(COVER_CASES.iter().any(|case| case.kind == kind), "{kind:?}");
     }
-    let families: std::collections::BTreeSet<usize> = COVER_CASES
+    let families: std::collections::BTreeSet<u32> = COVER_CASES
         .iter()
         .filter_map(|case| case.tree.map(|t| t.0))
         .collect();

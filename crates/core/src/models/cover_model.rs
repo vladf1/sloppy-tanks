@@ -1,4 +1,4 @@
-//! Port of `cover-model.ts` (with `tower-layout.ts`): the model of every cover kind.
+//! Port of `cover-model.ts`: the model of every cover kind.
 //!
 //! `cover_model` returns the unbatched tree like the TypeScript: a group at the
 //! cover's x/z whose direct mesh children presentation batches (`batch`) before
@@ -15,73 +15,20 @@ use super::cottage_details::cottage_details;
 use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
 use super::house_surfaces::{shingle_roof, siding_box, siding_gable};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, put, rotated};
-use super::prop_support::Random;
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
-use super::quarry_shapes::quarry_rock_variant;
 use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
-use super::timber_model::{
-    TimberHit, TimberJoin, TimberPart, TimberWall, add_timber_parts, timber_damage_stage,
-    timber_parts,
-};
+use super::timber_model::add_timber_parts;
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::geometry::math::{js_round, scale_hex_color};
 use crate::scene::Node;
-
-/// Cover kinds (TS `CoverKind` in `src/game/types.ts`). Defined here until the
-/// simulation's equivalent is shared; de-duplicate at integration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CoverKind {
-    Rock,
-    Teeth,
-    Hedgehog,
-    Container,
-    Cargo,
-    House,
-    Tree,
-    Timber,
-    Concrete,
-    Drum,
-    Tower,
-    Rubble,
-    Boundary,
-}
-
-impl CoverKind {
-    pub const ALL: [CoverKind; 13] = [
-        CoverKind::Rock,
-        CoverKind::Teeth,
-        CoverKind::Hedgehog,
-        CoverKind::Container,
-        CoverKind::Cargo,
-        CoverKind::House,
-        CoverKind::Tree,
-        CoverKind::Timber,
-        CoverKind::Concrete,
-        CoverKind::Drum,
-        CoverKind::Tower,
-        CoverKind::Rubble,
-        CoverKind::Boundary,
-    ];
-
-    /// The TypeScript identifier.
-    pub fn name(self) -> &'static str {
-        match self {
-            CoverKind::Rock => "rock",
-            CoverKind::Teeth => "teeth",
-            CoverKind::Hedgehog => "hedgehog",
-            CoverKind::Container => "container",
-            CoverKind::Cargo => "cargo",
-            CoverKind::House => "house",
-            CoverKind::Tree => "tree",
-            CoverKind::Timber => "timber",
-            CoverKind::Concrete => "concrete",
-            CoverKind::Drum => "drum",
-            CoverKind::Tower => "tower",
-            CoverKind::Rubble => "rubble",
-            CoverKind::Boundary => "boundary",
-        }
-    }
-}
+use crate::sim::math::Random;
+use crate::sim::quarry_rock_shape::quarry_rock_variant;
+use crate::sim::render_state::RenderCover;
+use crate::sim::timber_layout::{
+    TimberHit, TimberJoin, TimberPart, TimberWall, timber_damage_stage, timber_parts,
+};
+use crate::sim::tower_layout::TOWER_BASE;
+use crate::sim::types::CoverKind;
 
 /// The cover fields the models read (`Pick<Cover, "kind" | "x" | ... >`).
 #[derive(Clone, Debug, PartialEq)]
@@ -99,16 +46,21 @@ pub struct CoverShape {
     pub timber_join: Option<TimberJoin>,
 }
 
-/// The tower footprint shared by the intact model, surviving foundations and
-/// collision (`TOWER_BASE` in `tower-layout.ts`). Shared with the simulation;
-/// de-duplicate at integration.
-pub mod tower_base {
-    pub const OFFSET: f64 = 2.55;
-    pub const WIDTH: f64 = 1.3;
-    pub const DEPTH: f64 = 3.0;
-    pub const HEIGHT: f64 = 0.85;
-    pub const RUBBLE_HEIGHT: f64 = 1.25;
-    pub const POST_Z: f64 = 1.05;
+impl From<&RenderCover> for CoverShape {
+    fn from(cover: &RenderCover) -> Self {
+        Self {
+            kind: cover.kind,
+            x: cover.x,
+            z: cover.z,
+            w: cover.w,
+            d: cover.d,
+            h: cover.h,
+            color: cover.color,
+            debris_seed: cover.debris_seed,
+            timber_hits: cover.timber_hits.clone(),
+            timber_join: cover.timber_join,
+        }
+    }
 }
 
 /// A built cover and the values the TypeScript kept in `userData`.
@@ -123,7 +75,7 @@ pub struct CoverModel {
     /// The timber members drawn (TS `userData.timberParts`), unlengthened.
     pub timber_parts: Vec<TimberPart>,
     /// The tree family and seed for tree covers (TS `userData.family`/`seed`).
-    pub tree: Option<(usize, u32)>,
+    pub tree: Option<(u32, u32)>,
 }
 
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
@@ -152,9 +104,9 @@ const TOWER_ROOF: u32 = 0x197451;
 fn tower_foundation(group: &mut Node, x: f64) {
     put(
         group,
-        concrete_wall(tower_base::WIDTH, tower_base::HEIGHT, tower_base::DEPTH),
+        concrete_wall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
         x,
-        tower_base::HEIGHT / 2.0,
+        TOWER_BASE.height / 2.0,
         0.0,
     );
 }
@@ -227,7 +179,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
                     d: c.d,
                     h: c.h,
                     color: c.color,
-                    hits: c.timber_hits.clone(),
+                    hits: &c.timber_hits,
                     join: c.timber_join,
                 },
                 damage_stage,
@@ -560,16 +512,16 @@ fn house(group: &mut Node, c: &CoverShape) {
 /// A braced timber lookout on two concrete foundations with a ladder.
 fn tower(group: &mut Node, c: &CoverShape) {
     for side in [-1.0, 1.0] {
-        let x = side * tower_base::OFFSET;
+        let x = side * TOWER_BASE.offset;
         tower_foundation(group, x);
-        for z in [-tower_base::POST_Z, tower_base::POST_Z] {
-            put(group, tower_post(4.3), x, tower_base::HEIGHT + 2.15, z);
+        for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
+            put(group, tower_post(4.3), x, TOWER_BASE.height + 2.15, z);
         }
         // Cross bracing terminates at the same posts that survive the collapse.
         for direction in [-1.0, 1.0] {
             let brace = rotated(
                 siding_box(0.18, 4.35, 0.18, TOWER_BRACE),
-                direction * (2.0 * tower_base::POST_Z).atan2(3.8),
+                direction * (2.0 * TOWER_BASE.post_z).atan2(3.8),
                 0.0,
                 0.0,
             );
@@ -626,21 +578,21 @@ fn rubble(group: &mut Node, c: &CoverShape) {
     fn choose<T: Copy>(rng: &mut Random, values: &[T]) -> T {
         values[(rng.next() * values.len() as f64).floor() as usize]
     }
-    for z in [-tower_base::POST_Z, tower_base::POST_Z] {
+    for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
         // Cut posts keep their original position, section and grain direction.
         let height = choose(&mut rng, &[0.12, 0.2, 0.28, 0.34]);
         put(
             group,
             tower_post(height),
             0.0,
-            tower_base::HEIGHT + height / 2.0,
+            TOWER_BASE.height + height / 2.0,
             z,
         );
         if rng.next() < 0.7 {
             let rz = rng.range(-0.4, 0.4);
             let splinter = rotated(siding_box(0.09, 0.12, 0.16, 0xc5a073), 0.0, 0.0, rz);
             let x = rng.range(-0.1, 0.1);
-            put(group, splinter, x, tower_base::HEIGHT + height - 0.01, z);
+            put(group, splinter, x, TOWER_BASE.height + height - 0.01, z);
         }
     }
     // Discrete sizes reuse cached geometry; each foundation gets its own scatter.
@@ -652,18 +604,17 @@ fn rubble(group: &mut Node, c: &CoverShape) {
         let color = choose(&mut rng, &[c.color, TOWER_DECK, TOWER_BRACE]);
         let board = rotated(siding_box(width, 0.09, length, color), 0.0, yaw, 0.0);
         // Keep the pile inside its foundation, preserving the opened center route.
-        let room_x = ((tower_base::WIDTH - width * yaw.cos() - length * yaw.sin().abs()) / 2.0
+        let room_x = ((TOWER_BASE.width - width * yaw.cos() - length * yaw.sin().abs()) / 2.0
             - 0.02)
             .max(0.0);
-        let room_z =
-            (tower_base::DEPTH - length * yaw.cos() - width * yaw.sin().abs()) / 2.0 - 0.02;
+        let room_z = (TOWER_BASE.depth - length * yaw.cos() - width * yaw.sin().abs()) / 2.0 - 0.02;
         let x = rng.range(-room_x, room_x);
         let z = rng.range(-room_z, room_z);
         put(
             group,
             board,
             x,
-            tower_base::HEIGHT + 0.045 + f64::from(i) * 0.055,
+            TOWER_BASE.height + 0.045 + f64::from(i) * 0.055,
             z,
         );
     }

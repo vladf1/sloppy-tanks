@@ -5,17 +5,18 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::{Arc, OnceLock};
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
-use crate::geometry::math::{js_round, js_sign, quat_from_euler, scale_hex_color};
+use crate::geometry::math::{
+    apply_quaternion, js_round, js_sign, quat_from_euler, scale_hex_color,
+};
 use crate::geometry::{Mesh, Shape, shape_geometry};
 use crate::scene::Node;
+use crate::sim::math::Random;
 
 use super::harbor_surfaces::steel_box;
 use super::house_surfaces::siding_box;
 use super::model_primitives::{box_part, material, put, rotated};
-use super::pending_scenery::Random;
-use super::scenery::{apply_quaternion, v2};
 
 /// `Pick<Cover, "w" | "d" | "h" | "color">`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -256,7 +257,7 @@ fn split_geometries() -> &'static [Arc<Mesh>; 4] {
                 [0.03, -0.25],
             ]
             .iter()
-            .map(|&[x, y]| v2(x * rng.range(0.65, 1.35), y))
+            .map(|&[x, y]| DVec2::new(x * rng.range(0.65, 1.35), y))
             .collect();
             Arc::new(shape_geometry(&[Shape::from_points(&points)], 12))
         })

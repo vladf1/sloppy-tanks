@@ -12,8 +12,8 @@ use crate::scene::Node;
 
 use super::batching::batch;
 use super::model_primitives::shadowed;
-use super::pending_scenery::Random;
 use super::quarry_surfaces::{sandstone_material, sandstone_rock};
+use crate::sim::math::Random;
 
 /// Fractions of the face height, toe to crest; (0.3, 0.34) and (0.62, 0.66) are
 /// the narrow ledges left between blast lifts.

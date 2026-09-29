@@ -13,9 +13,9 @@ use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
 use super::effects_scenery::{SAND_DRIFT, SANDSTONE, VERTEX_ALPHA};
 use super::model_primitives::{Cache, shadowed};
-use super::pending_scenery::Random;
-use super::quarry_rock_shape::quarry_rock_shape;
 use super::quarry_terrain::quarry_soil_texture;
+use crate::sim::math::Random;
+use crate::sim::quarry_rock_shape::quarry_rock_shape;
 
 pub const SANDSTONE_TEXTURE: &str = "textures/quarry/sandstone.webp";
 /// World metres per rock bump-UV tile.

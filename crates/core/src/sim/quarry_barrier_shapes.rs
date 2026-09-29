@@ -65,6 +65,7 @@ pub fn dragon_tooth_point(
     ]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HedgehogBeam {
     pub length: f64,
     pub rx: f64,

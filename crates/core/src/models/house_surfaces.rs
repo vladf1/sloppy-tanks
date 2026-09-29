@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
+use crate::geometry::math::js_hypot;
 use crate::geometry::{ExtrudeOptions, Mesh, Path, Shape, box_geometry, extrude_geometry};
 use crate::scene::{Material, Node, Side, TextureRef, Wrap};
 
 use super::model_primitives::{Cache, shadowed};
-use super::scenery::js_hypot;
 
 /// World metres per siding or shingle tile.
 const TILE_METRES: f64 = 2.56;

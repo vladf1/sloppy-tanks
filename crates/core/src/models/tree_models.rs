@@ -1,5 +1,4 @@
-//! Ports of `tree-models.ts` and the proportions half of `tree-proportions.ts`:
-//! six tree families (pine, spruce, fir, oak, birch, aspen) from textured limbs,
+//! Port of `tree-models.ts`: six tree families (pine, spruce, fir, oak, birch, aspen) from textured limbs,
 //! needle-spray cards and leaf lobes, seeded by position.
 //!
 //! A full-detail tree (a cover) is an unnamed group at the tree's x/z holding
@@ -9,6 +8,9 @@
 //! [`tree_part::BRANCH_STAGE_1`]), each centred on its own bounds, then the batched
 //! trunk and foliage. A background tree is one unbatched group (itself named
 //! `trunk-and-crown`, as in the TypeScript) without stump or boughs.
+//!
+//! Proportions (family, height, stump) come from the simulation's
+//! [`tree_proportions`], which also sizes the tree's collider and stump.
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -17,12 +19,14 @@ use glam::{DMat4, DVec3};
 
 use super::batching::{batch, paint_mesh};
 use super::model_primitives::{Cache, shadowed};
-use super::prop_support::{
-    Random, multiply_hex, quat_from_euler_yxz, quat_from_unit_vectors, rotate_z,
+use crate::geometry::math::{
+    multiply_hex, normalize, quat_from_euler, quat_from_euler_yxz, quat_from_unit_vectors,
+    quat_rotate_z,
 };
-use crate::geometry::math::{js_round, normalize, quat_from_euler, to_int32};
 use crate::geometry::{CylinderGeometry, Mesh, icosahedron_geometry, node_bounds};
 use crate::scene::{Material, Node, Side, TextureRef};
+use crate::sim::math::Random;
+use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
 
 /// Node names that presentation looks up on a full-detail tree.
 pub mod tree_part {
@@ -60,55 +64,12 @@ pub enum TreeDetail {
     Background,
 }
 
-/// `treeProportions(c)`: the deterministic proportions shared by the standing tree,
-/// its fallen trunk and its stump, and the stream the model keeps drawing from.
-///
-/// Shared with `sim::tree_proportions`; de-duplicate at integration.
-#[derive(Clone, Debug)]
-pub struct TreeProportions {
-    pub seed: u32,
-    pub rng: Random,
-    pub family: usize,
-    pub twist: f64,
-    pub height: f64,
-    pub radius: f64,
-    pub stump_height: f64,
-    /// Blocks the solid flared trunk, not the thin roots along the ground.
-    pub stump_radius: f64,
-}
-
-pub fn tree_proportions(c: &TreeShape) -> TreeProportions {
-    let seed = (to_int32(js_round(c.x * 100.0) * 73_856_093.0)
-        ^ to_int32(js_round(c.z * 100.0) * 19_349_663.0)) as u32;
-    let mut rng = Random::new(f64::from(seed));
-    let family = (rng.next() * 6.0).floor() as usize;
-    let twist = rng.range(0.0, PI * 2.0);
-    let height = c.h * rng.range(0.9, 1.07);
-    let radius = c.w.min(c.d)
-        * match family {
-            3 => 0.14,
-            4 | 5 => 0.1,
-            _ => 0.12,
-        };
-    let stump_height = radius * rng.range(1.5, 1.9);
-    TreeProportions {
-        seed,
-        rng,
-        family,
-        twist,
-        height,
-        radius,
-        stump_height,
-        stump_radius: radius * 1.25,
-    }
-}
-
 /// A built tree and the traits the TypeScript kept in `userData`.
 #[derive(Clone, Debug)]
 pub struct TreeModel {
     pub node: Node,
     /// Index into [`TREE_FAMILIES`].
-    pub family: usize,
+    pub family: u32,
     pub seed: u32,
 }
 
@@ -384,12 +345,12 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
         radius,
         stump_height,
         ..
-    } = tree_proportions(c);
+    } = tree_proportions(c.x, c.z, c.w, c.d, c.h);
     let full = detail == TreeDetail::Full;
     let conifer = family < 3;
     let pale = family == 4 || family == 5;
     let bark = if pale {
-        surface(TreeSurface::Birch, BIRCH_COLORS[family - 4])
+        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4])
     } else {
         surface(TreeSurface::Bark, BARK_COLOR)
     };
@@ -400,7 +361,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
             } else {
                 TreeSurface::Leaves
             },
-            multiply_hex(LEAF_COLORS[family], tint),
+            multiply_hex(LEAF_COLORS[family as usize], tint),
         )
     });
     let mut group = Node {
@@ -521,7 +482,7 @@ fn add_conifer_crown(
     rng: &mut Random,
     bark: &Arc<Material>,
     leaves: &[Arc<Material>; 3],
-    family: usize,
+    family: u32,
     twist: f64,
     height: f64,
     radius: f64,
@@ -561,7 +522,7 @@ fn add_conifer_crown(
                     DVec3::new(start.x, start.y - height * 0.06, start.z),
                     DVec3::new(span * 0.85, span * 0.85, height * (0.27 - t * 0.1)),
                 );
-                shoot.rotation = rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), angle);
+                shoot.rotation = quat_rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), angle);
                 continue;
             }
             let stage = match (i, j) {
@@ -612,7 +573,7 @@ fn add_conifer_crown(
         DVec3::new(lean_x * 0.9, height * 0.82, lean_z * 0.9),
         DVec3::new(c.w * 0.2, c.w * 0.2, height * 0.2),
     );
-    leader.rotation = rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), twist);
+    leader.rotation = quat_rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), twist);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -622,7 +583,7 @@ fn add_broadleaf_crown(
     rng: &mut Random,
     bark: &Arc<Material>,
     leaves: &[Arc<Material>; 3],
-    family: usize,
+    family: u32,
     twist: f64,
     height: f64,
     radius: f64,

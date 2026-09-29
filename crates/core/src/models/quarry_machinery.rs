@@ -7,13 +7,14 @@ use std::sync::Arc;
 
 use glam::DVec3;
 
-use crate::scene::{Material, Node, TextureRef, Wrap};
+use crate::scene::{Material, Node};
 
 use super::batching::batch;
 use super::harbor_surfaces::steel_box;
+use super::model_primitives::span_between;
 use super::model_primitives::{Cache, box_part, cylinder_part, material, put, rotated};
-use super::scenery::{distance, quat_from_unit_vectors, span_between};
-use crate::geometry::math::normalize;
+use super::tank_surfaces::armor_wear_texture;
+use crate::geometry::math::{normalize, quat_from_unit_vectors};
 
 // Sun-faded industrial yellow, dusty steel, rusty red and one muted teal accent.
 const PAINT: u32 = 0xc69a4b;
@@ -25,7 +26,6 @@ const TEAL: u32 = 0x4e7d7c;
 const DUST: u32 = 0xc9b78d;
 /// The cab roof's pale paint, weathered like the fleet yellow.
 const CAB_ROOF: u32 = 0xd2c6a2;
-pub const PAINT_WEAR_TEXTURE: &str = "textures/tanks/armor-wear.webp";
 
 /// `accent(w, h, d, color, metal, rough)`: a weathered accent box (rust eats light,
 /// dust film kills reflections).
@@ -43,11 +43,7 @@ static FLEET_PAINT: Cache<u32, Material> = Cache::new();
 /// so the fleet's paint can weather independently of harbor props.
 fn fleet_paint(color: u32) -> Arc<Material> {
     FLEET_PAINT.get_or_insert(color, || {
-        let wear = TextureRef {
-            wrap: Wrap::Repeat,
-            anisotropy: 4,
-            ..TextureRef::file(PAINT_WEAR_TEXTURE)
-        };
+        let wear = armor_wear_texture();
         Material {
             map: Some(wear.clone()),
             bump_map: Some(wear),
@@ -77,7 +73,7 @@ fn weather_paint(node: &mut Node) {
 /// `beam(group, a, b, width, color)`: a painted steel member between two points.
 fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
     let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let mesh = steel_box(width, distance(from, to), width, color);
+    let mesh = steel_box(width, from.distance(to), width, color);
     group.children.push(span_between(mesh, from, to));
 }
 

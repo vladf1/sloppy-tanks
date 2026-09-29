@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use glam::{DMat4, DVec3};
 
 use super::tank_model::tank_model;
-use super::{VehicleKind, part};
+use super::{Team, VehicleKind, part};
 use crate::geometry::node_bounds;
 
 /// The Humvee's combat launch height. The visual roof launcher stays high, but its
@@ -32,7 +32,7 @@ pub struct TankDimensions {
 
 /// Measure one chassis from its team-0 model.
 fn measure(kind: VehicleKind) -> TankDimensions {
-    let model = tank_model(kind, 0);
+    let model = tank_model(kind, Team::Blue);
     let (hull, hull_parent) = model
         .find_with_parent_world(part::HULL, DMat4::IDENTITY)
         .expect("vehicle models have a hull");

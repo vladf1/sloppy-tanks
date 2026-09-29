@@ -13,14 +13,17 @@ use crate::scene::{Material, Node, Side, TextureRef, TextureSource, Wrap};
 
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::steel_box;
+use super::model_primitives::{adopt_children, span_between};
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::pending_scenery::{Random, spawn_positions};
 use super::quarry_surfaces::{RubbleStone, sandstone_rubble};
-use super::scenery::{adopt_children, distance, js_hypot, linear, span_between};
+use crate::geometry::math::{hex_to_linear, js_hypot};
+use crate::sim::arena::spawn_positions;
+use crate::sim::math::Random;
+use crate::sim::types::Team;
 
 fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
     let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let mesh = steel_box(width, distance(from, to), width, color);
+    let mesh = steel_box(width, from.distance(to), width, color);
     group.children.push(span_between(mesh, from, to));
 }
 
@@ -62,9 +65,10 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
     let mut rng = Random::new(62541.0);
     // Spilled haul loads leave tight clusters of flat gravel across the work floor,
     // with a scatter of strays between them. Spawn pads stay clean.
-    let pads: Vec<(f64, f64)> = spawn_positions(0, 1.0)
+    let pads: Vec<(f64, f64)> = spawn_positions(Team::Blue, 1.0)
         .into_iter()
-        .chain(spawn_positions(1, 1.0))
+        .chain(spawn_positions(Team::Red, 1.0))
+        .map(|p| (p.x, p.z))
         .collect();
     let mut stones = Vec::new();
     let mut stone = |rng: &mut Random, x: f64, z: f64, size: f64| {
@@ -133,7 +137,7 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
 fn scrub(rng: &mut Random) -> Node {
     let mut scrub: Vec<f64> = Vec::new();
     let mut tints: Vec<[f32; 3]> = Vec::new();
-    let (sage, straw) = (linear(0x87866a), linear(0xa99571));
+    let (sage, straw) = (hex_to_linear(0x87866a), hex_to_linear(0xa99571));
     for i in 0..190 {
         let side = if i % 2 == 1 { -1.0 } else { 1.0 };
         let along = rng.range(-72.0, 72.0);

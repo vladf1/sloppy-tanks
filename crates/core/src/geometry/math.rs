@@ -16,25 +16,8 @@ pub fn js_sign(value: f64) -> f64 {
     }
 }
 
-/// JavaScript `Math.round` for finite values: halves round towards +infinity.
-pub fn js_round(value: f64) -> f64 {
-    let floor = value.floor();
-    if value - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
-}
-
-/// ECMAScript ToInt32 (`value | 0`, `~~value`): truncate, then wrap modulo 2^32.
-pub fn to_int32(value: f64) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    let truncated = value.trunc();
-    let wrapped = truncated.rem_euclid(4_294_967_296.0);
-    (wrapped as u32) as i32
-}
+// JavaScript number conversions shared with the simulation, which owns them.
+pub use crate::sim::math::{js_round, to_int32};
 
 /// `Vector3.normalize()`: multiply by the reciprocal length; a zero vector stays zero.
 pub fn normalize(v: DVec3) -> DVec3 {
@@ -138,6 +121,81 @@ pub fn quat_from_euler(x: f64, y: f64, z: f64) -> DQuat {
         c1 * c2 * s3 + s1 * s2 * c3,
         c1 * c2 * c3 - s1 * s2 * s3,
     )
+}
+
+/// `Quaternion.setFromEuler` for Euler order `YXZ`.
+pub fn quat_from_euler_yxz(x: f64, y: f64, z: f64) -> DQuat {
+    let (c1, c2, c3) = ((x / 2.0).cos(), (y / 2.0).cos(), (z / 2.0).cos());
+    let (s1, s2, s3) = ((x / 2.0).sin(), (y / 2.0).sin(), (z / 2.0).sin());
+    DQuat::from_xyzw(
+        s1 * c2 * c3 + c1 * s2 * s3,
+        c1 * s2 * c3 - s1 * c2 * s3,
+        c1 * c2 * s3 - s1 * s2 * c3,
+        c1 * c2 * c3 + s1 * s2 * s3,
+    )
+}
+
+/// `Quaternion.normalize`: a zero quaternion becomes the identity.
+pub fn quat_normalize(q: DQuat) -> DQuat {
+    let length = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+    if length == 0.0 {
+        return DQuat::IDENTITY;
+    }
+    let inverse = 1.0 / length;
+    DQuat::from_xyzw(q.x * inverse, q.y * inverse, q.z * inverse, q.w * inverse)
+}
+
+/// `Quaternion.setFromUnitVectors(from, to)` for normalised vectors.
+pub fn quat_from_unit_vectors(from: DVec3, to: DVec3) -> DQuat {
+    let r = from.x * to.x + from.y * to.y + from.z * to.z + 1.0;
+    let q = if r < 1e-8 {
+        if from.x.abs() > from.z.abs() {
+            DQuat::from_xyzw(-from.y, from.x, 0.0, 0.0)
+        } else {
+            DQuat::from_xyzw(0.0, -from.z, from.y, 0.0)
+        }
+    } else {
+        DQuat::from_xyzw(
+            from.y * to.z - from.z * to.y,
+            from.z * to.x - from.x * to.z,
+            from.x * to.y - from.y * to.x,
+            r,
+        )
+    };
+    quat_normalize(q)
+}
+
+/// `Quaternion.multiplyQuaternions(a, b)`.
+pub fn quat_multiply(a: DQuat, b: DQuat) -> DQuat {
+    DQuat::from_xyzw(
+        a.x * b.w + a.w * b.x + a.y * b.z - a.z * b.y,
+        a.y * b.w + a.w * b.y + a.z * b.x - a.x * b.z,
+        a.z * b.w + a.w * b.z + a.x * b.y - a.y * b.x,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    )
+}
+
+/// `Object3D.rotateZ(angle)`: a local rotation after the current one.
+pub fn quat_rotate_z(q: DQuat, angle: f64) -> DQuat {
+    let half = angle / 2.0;
+    quat_multiply(q, DQuat::from_xyzw(0.0, 0.0, half.sin(), half.cos()))
+}
+
+/// `Vector3.applyQuaternion`.
+pub fn apply_quaternion(v: DVec3, q: DQuat) -> DVec3 {
+    let tx = 2.0 * (q.y * v.z - q.z * v.y);
+    let ty = 2.0 * (q.z * v.x - q.x * v.z);
+    let tz = 2.0 * (q.x * v.y - q.y * v.x);
+    DVec3::new(
+        v.x + q.w * tx + q.y * tz - q.z * ty,
+        v.y + q.w * ty + q.z * tx - q.x * tz,
+        v.z + q.w * tz + q.x * ty - q.y * tx,
+    )
+}
+
+/// `Vector3.applyEuler(new Euler(x, y, z))` in the default `XYZ` order.
+pub fn apply_euler(v: DVec3, x: f64, y: f64, z: f64) -> DVec3 {
+    apply_quaternion(v, quat_from_euler(x, y, z))
 }
 
 /// `Matrix4.compose(position, quaternion, scale)`.
@@ -263,6 +321,63 @@ pub fn linear_to_hex(rgb: [f64; 3]) -> u32 {
 pub fn scale_hex_color(hex: u32, factor: f64) -> u32 {
     let [r, g, b] = hex_to_linear(hex);
     linear_to_hex([r * factor, g * factor, b * factor])
+}
+
+/// `new THREE.Color(a).multiply(new THREE.Color(b)).getHex()`.
+pub fn multiply_hex(a: u32, b: u32) -> u32 {
+    let (a, b) = (hex_to_linear(a), hex_to_linear(b));
+    linear_to_hex([a[0] * b[0], a[1] * b[1], a[2] * b[2]])
+}
+
+/// `Color.lerp(target, alpha)` on linear channels.
+pub fn lerp_color(color: [f64; 3], target: [f64; 3], alpha: f64) -> [f64; 3] {
+    [
+        color[0] + (target[0] - color[0]) * alpha,
+        color[1] + (target[1] - color[1]) * alpha,
+        color[2] + (target[2] - color[2]) * alpha,
+    ]
+}
+
+/// V8's `Math.hypot`: scale by the largest magnitude and Kahan-sum the squares,
+/// which can differ from libm's `hypot` in the last bit.
+pub fn js_hypot(values: &[f64]) -> f64 {
+    let max = values.iter().fold(0.0f64, |max, v| max.max(v.abs()));
+    if max == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if values.iter().any(|v| v.is_nan()) {
+        return f64::NAN;
+    }
+    if max == 0.0 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    let mut compensation = 0.0;
+    for value in values {
+        let n = value.abs() / max;
+        let summand = n * n - compensation;
+        let preliminary = sum + summand;
+        compensation = (preliminary - sum) - summand;
+        sum = preliminary;
+    }
+    sum.sqrt() * max
+}
+
+/// `MathUtils.smoothstep(x, min, max)`.
+pub fn smoothstep(x: f64, min: f64, max: f64) -> f64 {
+    if x <= min {
+        return 0.0;
+    }
+    if x >= max {
+        return 1.0;
+    }
+    let x = (x - min) / (max - min);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// `MathUtils.lerp(x, y, t)`.
+pub fn lerp(x: f64, y: f64, t: f64) -> f64 {
+    (1.0 - t) * x + t * y
 }
 
 #[cfg(test)]

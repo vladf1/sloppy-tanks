@@ -13,13 +13,13 @@ use super::batching::batch;
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::{HarborSurface, harbor_box, harbor_material, steel_box};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, paint, put, rotated};
-use super::scenery::{adopt_children, distance, span_between};
+use super::model_primitives::{adopt_children, span_between};
 
 /// `harborBeam(group, a, b, width, color)`: a square beam between authored
 /// endpoints (crane braces, rails, rigging and mooring lines).
 pub fn harbor_beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
     let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let beam = box_part(width, distance(from, to), width, color, 0.0);
+    let beam = box_part(width, from.distance(to), width, color, 0.0);
     group.children.push(span_between(beam, from, to));
 }
 

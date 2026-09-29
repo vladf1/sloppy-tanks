@@ -16,20 +16,7 @@ use crate::geometry::math::{compose, decompose};
 use crate::geometry::node_bounds;
 use crate::scene::Node;
 
-/// Which assembly a wreck piece is (TS `WreckPart`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum WreckPart {
-    /// Hull and turret together.
-    Intact,
-    /// The hull alone, with the turret ring cut open.
-    Hull,
-    /// The turret without its gun.
-    Turret,
-    /// The turret with its gun.
-    TurretBarrel,
-    /// The gun alone.
-    Barrel,
-}
+pub use crate::sim::types::WreckPart;
 
 /// Intact wrecks are centred on this fixed point rather than their bounds, so
 /// they rest where the live vehicle stood.

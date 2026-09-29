@@ -9,8 +9,8 @@
 
 use std::sync::OnceLock;
 
-use super::pending_scenery::Random;
-use super::scenery::js_hypot;
+use crate::geometry::math::{js_hypot, lerp, smoothstep};
+use crate::sim::math::Random;
 
 /// Side of the square quarry terrain and soil bake, in metres.
 pub const QUARRY_TERRAIN_EXTENT: f64 = 210.0;
@@ -19,15 +19,6 @@ pub const QUARRY_SOIL_SIZE: usize = 2048;
 /// Side of the sand accumulation grid (about 2 m per cell).
 pub const ACCUM_CELLS: usize = 105;
 const EXTENT: f64 = QUARRY_TERRAIN_EXTENT;
-
-/// Local `smooth`: `MathUtils.smoothstep` arithmetic.
-fn smooth(x: f64, min: f64, max: f64) -> f64 {
-    super::scenery::smoothstep(x, min, max)
-}
-
-fn lerp(x: f64, y: f64, t: f64) -> f64 {
-    (1.0 - t) * x + t * y
-}
 
 /// The 256² value-noise table (seeded, stored as f32 like the Float32Array).
 fn soil_noise() -> &'static [f32] {
@@ -123,8 +114,8 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
             // drift bands break any hint of cellular repetition without another octave.
             let warp = (x * 0.021 + 1.7).sin() * (z * 0.023 - 0.6).sin();
             let bands = (x * 0.045 + z * 0.031 + 1.2).sin() * (z * 0.052 - x * 0.013 + 0.4).sin();
-            let sand = smooth(macro_field + warp * 0.18 + bands * 0.1, 0.54, 0.68);
-            let rocky = 1.0 - smooth(macro_field - warp * 0.15, 0.27, 0.45);
+            let sand = smoothstep(macro_field + warp * 0.18 + bands * 0.1, 0.54, 0.68);
+            let rocky = 1.0 - smoothstep(macro_field - warp * 0.15, 0.27, 0.45);
             // Rounded outer haul loop and a gently wandering east/west crossing: a
             // graded, compacted bed with crisp shoulders and a windrow of loose spill.
             let qx = x.abs() - 39.0;
@@ -138,7 +129,7 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
             let mut rut = 0.0;
             if distance < 9.5 {
                 let edge = (noise(table, x * 0.42, z * 0.42) - 0.5) * 1.3;
-                road = 1.0 - smooth(distance + edge, 4.2, 5.5);
+                road = 1.0 - smoothstep(distance + edge, 4.2, 5.5);
                 let w = (distance + edge * 0.7 - 6.1) / 0.8;
                 windrow = (-w * w).exp();
                 // Two-lane dual-wheel haul tracks, pressed darker into the compacted bed.
@@ -148,13 +139,13 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
             }
             // Trampled work floor: one broad central apron plus two midfield patches
             // between the rock shoulders. Fixed smooth shapes, no extra noise.
-            let wear = (1.0 - smooth(js_hypot(&[x / 30.0, z / 23.0]), 0.55, 1.0))
-                .max(1.0 - smooth(js_hypot(&[(x.abs() - 25.0) / 13.0, z / 16.0]), 0.5, 1.0));
+            let wear = (1.0 - smoothstep(js_hypot(&[x / 30.0, z / 23.0]), 0.55, 1.0))
+                .max(1.0 - smoothstep(js_hypot(&[(x.abs() - 25.0) / 13.0, z / 16.0]), 0.5, 1.0));
             // Beyond the wall the ground falls to the machinery apron: loose fill on
             // the embankment, then a working floor of darker quarry fines.
             let reach = x.abs().max(z.abs());
-            let apron = smooth(reach, 60.2, 61.5);
-            let fill = apron * (1.0 - smooth(reach, 65.0, 67.5));
+            let apron = smoothstep(reach, 60.2, 61.5);
+            let fill = apron * (1.0 - smoothstep(reach, 65.0, 67.5));
             let fine = rng.range(-5.0, 5.0) * 0.6;
             let aggregate = if rng.next() > 0.975 {
                 rng.range(-22.0, 17.0) * 0.6
@@ -199,7 +190,7 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
                 - rut * 9.0
                 + ripple;
             // Drifted sand against cover bases and along the quiet outer shoulders.
-            let shoulder = smooth(reach, 48.0, 58.0) * (1.0 - apron) * off_road;
+            let shoulder = smoothstep(reach, 48.0, 58.0) * (1.0 - apron) * off_road;
             let drift = 0.5f64.min(sample_accum(accum, x, z) * 0.55 + shoulder * 0.3);
             r += (216.0 - r) * drift;
             g += (199.0 - g) * drift;

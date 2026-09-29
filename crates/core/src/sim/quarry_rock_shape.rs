@@ -3,6 +3,7 @@
 
 use super::math::{Random, js_round};
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct RockShape {
     /// xyz triples.
     pub positions: Vec<f32>,

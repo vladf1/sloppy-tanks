@@ -85,7 +85,7 @@ fn vehicle_models_match_typescript_counts() {
         (VehicleKind::Humvee, 1, 364, 13220, 7276, 141, 9, 5, 212),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
-        let model = tank_model(kind, team);
+        let model = tank_model(kind, Team::from_index(team));
         assert_eq!(model.name, kind.name());
         assert_eq!(
             counts(&model),
@@ -108,14 +108,14 @@ fn vehicle_models_match_typescript_counts() {
         (VehicleKind::Humvee, (364, 13220, 7276)),
     ];
     for (kind, expected) in open {
-        let model = tank_model_variant(kind, 0, false, true);
+        let model = tank_model_variant(kind, Team::Blue, false, true);
         assert_eq!(counts(&model), expected, "{kind:?} with open turret ring");
     }
 }
 
 #[test]
 fn painted_parts_use_the_wear_texture() {
-    let model = tank_model(VehicleKind::Balanced, 1);
+    let model = tank_model(VehicleKind::Balanced, Team::Red);
     let hull = model.find(part::HULL).unwrap();
     let armor = hull.children[1].drawable.as_ref().unwrap();
     assert_eq!(armor.material.color.0, TEAM_COLORS[1]);
@@ -152,7 +152,7 @@ type BatchSummary = (usize, u32, u32, u32, u32);
 #[test]
 fn wreck_batches_match_typescript() {
     #[rustfmt::skip]
-    let expected: [(VehicleKind, Team, WreckPart, &[BatchSummary]); 4] = [
+    let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
             (168, 0x07919fd3, 0x539f3c63, 0xd4cf4796, 0xca7383bd),
             (162, 0x02c459a9, 0x982f7ac8, 0x173b500c, 0x5952a13b),
@@ -185,7 +185,7 @@ fn wreck_batches_match_typescript() {
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {
-        let wreck = wreck_model(kind, team, wreck_part);
+        let wreck = wreck_model(kind, Team::from_index(team), wreck_part);
         let actual: Vec<_> = wreck
             .children
             .iter()

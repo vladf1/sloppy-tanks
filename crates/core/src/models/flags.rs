@@ -13,6 +13,7 @@ use super::model_primitives::{TEAM_COLORS, cylinder_part};
 use super::{Team, model_primitives::Cache};
 use crate::geometry::plane_geometry_segments;
 use crate::scene::{Color, Effect, Instance, Material, Node, Side};
+use crate::sim::arena::spawn_positions;
 
 /// Node names of the flag instanced meshes.
 pub const FLAG_POLE: &str = "flag-pole";
@@ -20,8 +21,6 @@ pub const FLAG_CLOTH_NODE: &str = "flag-cloth";
 
 /// Flags stand at this x on each team's side, one per spawn row.
 const FLAG_X: f64 = 62.0;
-/// `spawnPositions(team)` z rows in `arena.ts`; team 1 mirrors them.
-const SPAWN_ROWS: [f64; 5] = [-46.0, -23.0, 0.0, 23.0, 46.0];
 const POLE_COLOR: u32 = 0x59656a;
 const POLE_Y: f64 = 2.4;
 const CLOTH_Y: f64 = 4.6;
@@ -31,8 +30,8 @@ pub const FLAG_CLOTH_BOUNDS_RADIUS: f64 = 2.0;
 
 /// The x and z of each of a team's flags (TS `spawnPositions(team)` with x = ±62).
 pub fn flag_positions(team: Team) -> [(f64, f64); 5] {
-    let x = if team == 0 { -FLAG_X } else { FLAG_X };
-    SPAWN_ROWS.map(|z| (x, if team == 0 { z } else { -z }))
+    let x = if team == Team::Blue { -FLAG_X } else { FLAG_X };
+    spawn_positions(team, 1.0).map(|spawn| (x, spawn.z))
 }
 
 /// A flag's ripple phase (TS attribute `flagPhase`): the cloth shader derives it from
@@ -45,7 +44,7 @@ static CLOTH_MATERIALS: Cache<Team, Material> = Cache::new();
 
 fn cloth_material(team: Team) -> Arc<Material> {
     CLOTH_MATERIALS.get_or_insert(team, || Material {
-        color: Color(TEAM_COLORS[team as usize]),
+        color: Color(TEAM_COLORS[team.index()]),
         roughness: 1.0,
         side: Side::Double,
         effect: Effect::Custom {
@@ -77,12 +76,14 @@ pub fn flags_model() -> Node {
     if let Some(drawable) = &mut pole.drawable {
         drawable.instances = Some(instances(
             POLE_Y,
-            flag_positions(0).into_iter().chain(flag_positions(1)),
+            flag_positions(Team::Blue)
+                .into_iter()
+                .chain(flag_positions(Team::Red)),
         ));
     }
     group.children.push(pole);
     let plane = Arc::new(plane_geometry_segments(1.4, 0.9, 16, 6));
-    for team in [0, 1] {
+    for team in [Team::Blue, Team::Red] {
         let mut cloth = Node::mesh(plane.clone(), cloth_material(team));
         cloth.name = FLAG_CLOTH_NODE.to_string();
         if let Some(drawable) = &mut cloth.drawable {

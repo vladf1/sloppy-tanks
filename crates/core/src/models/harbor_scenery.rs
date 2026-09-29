@@ -18,7 +18,8 @@ use super::house_surfaces::siding_box;
 use super::model_primitives::{
     DEFAULT_BOX_RADIUS, TEAM_COLORS, box_part, cylinder_part, paint, put, rotated,
 };
-use super::pending_scenery::spawn_positions;
+use crate::sim::arena::spawn_positions;
+use crate::sim::types::{Team, Vec2};
 
 /// Indices of the animated groups among [`HarborScenery::root`]'s children.
 const FLEET_CHILD: usize = 1;
@@ -223,8 +224,8 @@ impl HarborScenery {
         paint_label(&mut root, "HARBOR HAVOC", 0.0, -48.0, 28.0, 4.0);
         paint_label(&mut root, "PORT 07", 0.0, 48.0, 15.0, 3.5);
         paint_label(&mut root, "LOADING", 0.0, 3.5, 8.0, 1.1);
-        for team in [0u8, 1] {
-            for (x, z) in spawn_positions(team, 1.0) {
+        for team in [Team::Blue, Team::Red] {
+            for Vec2 { x, z } in spawn_positions(team, 1.0) {
                 put(
                     &mut details,
                     cylinder_part(2.65, 0.08, 0x293f4a, 12),
@@ -234,7 +235,7 @@ impl HarborScenery {
                 );
                 let ring = Node::mesh(
                     Arc::new(ring_geometry(2.1, 2.3, 32)),
-                    paint(TEAM_COLORS[usize::from(team)]),
+                    paint(TEAM_COLORS[team.index()]),
                 );
                 put(
                     &mut details,

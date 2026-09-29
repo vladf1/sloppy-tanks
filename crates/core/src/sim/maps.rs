@@ -14,6 +14,16 @@ pub enum GroundKind {
     PackedDirt,
 }
 
+impl GroundKind {
+    /// The TypeScript identifier (the serialized name).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            GroundKind::DryGrass => "dry-grass",
+            GroundKind::PackedDirt => "packed-dirt",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MapTheme {

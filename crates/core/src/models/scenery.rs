@@ -11,28 +11,25 @@
 
 use std::sync::Arc;
 
-use glam::{DMat4, DQuat, DVec2, DVec3};
+use glam::{DMat4, DVec3};
 
-use crate::geometry::math::{compose, decompose, hex_to_linear, normalize};
-use crate::geometry::{Mesh, Path, RingGeometry, Shape, plane_geometry_segments, shape_geometry};
+use crate::geometry::math::normalize;
+use crate::geometry::{Path, RingGeometry, Shape, plane_geometry_segments, shape_geometry};
 use crate::scene::{Material, Node};
+use crate::sim::arena::spawn_positions;
+use crate::sim::data::ARENA;
+use crate::sim::types::{Team, Vec2};
 
-use super::batching::batch;
+use super::batching::{batch, paint_mesh};
 use super::ground_surfaces::{GroundKind, ground_material, ground_uvs, road_geometry};
 use super::harbor_scenery::HarborScenery;
 use super::model_primitives::{TEAM_COLORS, box_part, cylinder_part, paint, put, rotated};
-use super::pending_scenery::{ARENA, spawn_positions};
 use super::quarry_scenery::QuarryScenery;
 use super::village_roads::village_roads;
 use super::village_scenery::VillageScenery;
 
 /// A standard map's scenery theme (`RenderState["mapTheme"]`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum MapTheme {
-    Village,
-    Harbor,
-    Quarry,
-}
+pub use crate::sim::maps::MapTheme;
 
 /// One theme's retained scenery.
 pub enum Scenery {
@@ -103,10 +100,10 @@ pub fn create_spawn_pads(scale: f64) -> Node {
     let mut arrow = shape_geometry(&[Shape::new(arrow_path)], 12);
     arrow.rotate_x(-std::f64::consts::FRAC_PI_2);
     let arrow = Arc::new(arrow);
-    for team in [0u8, 1] {
-        let side = if team == 0 { -1.0 } else { 1.0 };
-        let color = TEAM_COLORS[usize::from(team)];
-        for (x, z) in spawn_positions(team, scale) {
+    for team in [Team::Blue, Team::Red] {
+        let side = if team == Team::Blue { -1.0 } else { 1.0 };
+        let color = TEAM_COLORS[team.index()];
+        for Vec2 { x, z } in spawn_positions(team, scale) {
             // Low octagonal deployment plinth with a recessed deck and segmented team lights.
             put(
                 &mut details,
@@ -168,7 +165,11 @@ pub fn create_spawn_pads(scale: f64) -> Node {
             );
             put(&mut details, badge, x, 0.22, z);
             for offset in [3.1, 3.8] {
-                let yaw = if team == 0 { 0.0 } else { std::f64::consts::PI };
+                let yaw = if team == Team::Blue {
+                    0.0
+                } else {
+                    std::f64::consts::PI
+                };
                 let chevron = rotated(Node::mesh(arrow.clone(), paint(color)), 0.0, yaw, 0.0);
                 put(&mut details, chevron, x - side * offset, 0.09, z);
             }
@@ -402,182 +403,4 @@ pub fn fit_sun_shadow(sun: DVec3, target: DVec3, half: f64, low: f64, high: f64)
         near,
         far: near + SHADOW_DEPTH,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers: JavaScript/Three.js-exact math and node utilities.
-
-/// V8's `Math.hypot`: scale by the largest magnitude and Kahan-sum the squares.
-pub(crate) fn js_hypot(values: &[f64]) -> f64 {
-    let max = values.iter().fold(0.0f64, |max, v| max.max(v.abs()));
-    if max == f64::INFINITY {
-        return f64::INFINITY;
-    }
-    if values.iter().any(|v| v.is_nan()) {
-        return f64::NAN;
-    }
-    if max == 0.0 {
-        return 0.0;
-    }
-    let mut sum = 0.0;
-    let mut compensation = 0.0;
-    for value in values {
-        let n = value.abs() / max;
-        let summand = n * n - compensation;
-        let preliminary = sum + summand;
-        compensation = (preliminary - sum) - summand;
-        sum = preliminary;
-    }
-    sum.sqrt() * max
-}
-
-/// `MathUtils.smoothstep(x, min, max)`.
-pub(crate) fn smoothstep(x: f64, min: f64, max: f64) -> f64 {
-    if x <= min {
-        return 0.0;
-    }
-    if x >= max {
-        return 1.0;
-    }
-    let x = (x - min) / (max - min);
-    x * x * (3.0 - 2.0 * x)
-}
-
-/// `MathUtils.lerp(x, y, t)`.
-pub(crate) fn lerp(x: f64, y: f64, t: f64) -> f64 {
-    (1.0 - t) * x + t * y
-}
-
-/// `MathUtils.clamp(value, min, max)`.
-pub(crate) fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    min.max(max.min(value))
-}
-
-/// `Color.lerp(target, alpha)` on linear channels.
-pub(crate) fn lerp_color(color: [f64; 3], target: [f64; 3], alpha: f64) -> [f64; 3] {
-    [
-        color[0] + (target[0] - color[0]) * alpha,
-        color[1] + (target[1] - color[1]) * alpha,
-        color[2] + (target[2] - color[2]) * alpha,
-    ]
-}
-
-/// `new THREE.Color(hex)` channels (linear).
-pub(crate) fn linear(hex: u32) -> [f64; 3] {
-    hex_to_linear(hex)
-}
-
-/// `Quaternion.setFromUnitVectors(from, to)` for normalised vectors.
-pub(crate) fn quat_from_unit_vectors(from: DVec3, to: DVec3) -> DQuat {
-    let r = from.x * to.x + from.y * to.y + from.z * to.z + 1.0;
-    let (x, y, z, w) = if r < 1e-8 {
-        if from.x.abs() > from.z.abs() {
-            (-from.y, from.x, 0.0, 0.0)
-        } else {
-            (0.0, -from.z, from.y, 0.0)
-        }
-    } else {
-        (
-            from.y * to.z - from.z * to.y,
-            from.z * to.x - from.x * to.z,
-            from.x * to.y - from.y * to.x,
-            r,
-        )
-    };
-    let length = (x * x + y * y + z * z + w * w).sqrt();
-    if length == 0.0 {
-        return DQuat::IDENTITY;
-    }
-    let inverse = 1.0 / length;
-    DQuat::from_xyzw(x * inverse, y * inverse, z * inverse, w * inverse)
-}
-
-/// A part stretched between two points along its local y axis (the scenery's
-/// `beam` helpers): positioned at the midpoint and turned from +y to the segment.
-pub(crate) fn span_between(mut part: Node, from: DVec3, to: DVec3) -> Node {
-    part.position = DVec3::new(
-        (from.x + to.x) * 0.5,
-        (from.y + to.y) * 0.5,
-        (from.z + to.z) * 0.5,
-    );
-    part.rotation = quat_from_unit_vectors(DVec3::Y, normalize(to - from));
-    part
-}
-
-/// `Vector3.distanceTo`.
-pub(crate) fn distance(a: DVec3, b: DVec3) -> f64 {
-    let d = a - b;
-    (d.x * d.x + d.y * d.y + d.z * d.z).sqrt()
-}
-
-/// `Object3D.applyMatrix4(matrix)` for each of `group`'s children, appended to
-/// `parent`: bakes an assembly's transform into its parts so a later batch merges
-/// them with the parent's other parts.
-pub(crate) fn adopt_children(parent: &mut Node, group: Node) {
-    let matrix = compose(group.position, group.rotation, group.scale);
-    for mut child in group.children {
-        let local = matrix * compose(child.position, child.rotation, child.scale);
-        let (position, rotation, scale) = decompose(&local);
-        child.position = position;
-        child.rotation = rotation;
-        child.scale = scale;
-        parent.children.push(child);
-    }
-}
-
-/// `paintMesh(mesh)`: bake an opaque paint color into a standalone mesh's vertices
-/// and switch it to the shared vertex-color material, so it shares the batched
-/// parts' shader. The geometry keeps its indices.
-pub(crate) fn paint_mesh(node: &mut Node) {
-    let Some(drawable) = &mut node.drawable else {
-        return;
-    };
-    let painted = shared_vertex_material(&drawable.material);
-    if Arc::ptr_eq(&painted, &drawable.material) {
-        return;
-    }
-    let [r, g, b] = hex_to_linear(drawable.material.color.0);
-    let mut mesh = (*drawable.mesh).clone();
-    mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
-    drawable.mesh = Arc::new(mesh);
-    drawable.material = painted;
-}
-
-/// The vertex-color material `batch` would draw `source` with (its private
-/// `vertexMaterial`), found by batching a one-triangle probe.
-fn shared_vertex_material(source: &Arc<Material>) -> Arc<Material> {
-    let probe = Mesh::from_f64(
-        &[0.0; 9],
-        &[0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
-        &[0.0; 6],
-        None,
-    );
-    let mut group = Node::group("");
-    group
-        .children
-        .push(Node::mesh(Arc::new(probe), source.clone()));
-    batch(&mut group);
-    group.children[0]
-        .drawable
-        .as_ref()
-        .expect("batched probe")
-        .material
-        .clone()
-}
-
-/// `Vector3.applyQuaternion`.
-pub(crate) fn apply_quaternion(v: DVec3, q: DQuat) -> DVec3 {
-    let tx = 2.0 * (q.y * v.z - q.z * v.y);
-    let ty = 2.0 * (q.z * v.x - q.x * v.z);
-    let tz = 2.0 * (q.x * v.y - q.y * v.x);
-    DVec3::new(
-        v.x + q.w * tx + q.y * tz - q.z * ty,
-        v.y + q.w * ty + q.z * tx - q.x * tz,
-        v.z + q.w * tz + q.x * ty - q.y * tx,
-    )
-}
-
-/// A 2D point.
-pub(crate) fn v2(x: f64, y: f64) -> DVec2 {
-    DVec2::new(x, y)
 }

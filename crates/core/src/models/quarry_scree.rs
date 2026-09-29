@@ -9,11 +9,11 @@ use glam::DVec3;
 use crate::geometry::{Mesh, icosahedron_geometry, merge_geometries, narrow, widen};
 use crate::scene::{Material, Node};
 
-use super::pending_scenery::Random;
 use super::quarry_benches::ScreeSpot;
 use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
 use super::quarry_surfaces::{roughen_stone, sandstone_material};
 use super::quarry_terrain::plain_soil_colors;
+use crate::sim::math::Random;
 
 /// `screePoint(spot, u, t)`: a fan of sediment with scalloped toes and sides buried
 /// below the apron. The high back extends into the quarry cut so it cannot expose
