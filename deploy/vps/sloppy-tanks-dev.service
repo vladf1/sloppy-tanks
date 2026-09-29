@@ -1,0 +1,30 @@
+[Unit]
+Description=Sloppy Tanks dev multiplayer server (the dev site's rooms)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sloppy
+Group=sloppy
+EnvironmentFile=/etc/sloppy-tanks-dev.env
+ExecStart=/opt/sloppy-tanks-dev/sloppy-server
+Restart=always
+RestartSec=2
+# SIGTERM resets rooms and waits up to a second for clients to finish closing.
+TimeoutStopSec=10
+# The dev copy shares the one-vCPU host with production; keep it small.
+MemoryMax=250M
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

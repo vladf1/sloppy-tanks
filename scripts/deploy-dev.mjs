@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { VPS_MULTIPLAYER_URL as DEV_MULTIPLAYER_URL } from "./vps-host.mjs";
+import { VPS_DEV_MULTIPLAYER_URL as DEV_MULTIPLAYER_URL } from "./vps-host.mjs";
 
 const repo = new URL("..", import.meta.url);
 const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };
@@ -32,9 +32,10 @@ if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
 }
 
 // Clients and the server reject each other unless both were built from the same
-// game/network sources, so publish the VPS server from this checkout first. The
-// deploy waits until the VPS reports this checkout's content version.
-run("node", ["scripts/deploy-vps.mjs"]);
+// game/network sources, so publish the dev server from this checkout first. It is a
+// separate process from production's, which this never touches. The deploy waits until
+// the dev server reports this checkout's content version.
+run("node", ["scripts/deploy-vps.mjs", "--dev"]);
 
 console.log(
   `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,

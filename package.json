@@ -45,6 +45,7 @@
     "server:dev": "node scripts/build-server.mjs && ./target/server/sloppy-server",
     "server:deploy": "pnpm run check && node scripts/deploy-vps.mjs",
     "server:provision": "node scripts/deploy-vps.mjs --provision",
+    "server:provision:dev": "node scripts/deploy-vps.mjs --dev --provision",
     "server:logs": "node scripts/vps.mjs logs",
     "server:stats": "node scripts/vps.mjs stats",
     "server:status": "node scripts/vps.mjs status",

@@ -1,15 +1,17 @@
 import { contentVersion, serverBuild } from "./content-version.mjs";
 import { readFile } from "node:fs/promises";
-import { VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
+import { VPS_DEV_MULTIPLAYER_URL, VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
  * with what the live server reports: the protocol and content version decide whether
  * clients built from here can join, and the server build catches server-only changes
  * (server/, bundled dependencies, build settings) that leave clients compatible.
  * Exit 0: nothing to deploy; 1: redeploy needed; 2: the server did not answer.
- * SLOPPY_SERVER_URL checks another server, such as a local one. */
+ * `--dev` checks the dev site's server; SLOPPY_SERVER_URL checks another, such as a local one. */
 const HEALTH_TIMEOUT_MS = 10_000;
-const endpoint = process.env.SLOPPY_SERVER_URL ?? VPS_MULTIPLAYER_URL;
+const endpoint =
+  process.env.SLOPPY_SERVER_URL ??
+  (process.argv.includes("--dev") ? VPS_DEV_MULTIPLAYER_URL : VPS_MULTIPLAYER_URL);
 const health = new URL("/health", endpoint.replace(/^ws/, "http"));
 // The protocol version is a constant of the shared Rust core both builds compile.
 const protocolSource = await readFile(

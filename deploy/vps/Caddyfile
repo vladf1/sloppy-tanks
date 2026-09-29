@@ -5,3 +5,10 @@ sloppy-tanks-server.fridman.me {
 	respond /stats 404
 	reverse_proxy 127.0.0.1:8787
 }
+
+# The dev site's server (sloppy-tanks-dev.service) on another port of the same hostname,
+# so it shares the certificate and needs no DNS record of its own.
+sloppy-tanks-server.fridman.me:8443 {
+	respond /stats 404
+	reverse_proxy 127.0.0.1:8788
+}

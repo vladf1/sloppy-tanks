@@ -10,5 +10,10 @@ export const VPS_SSH_OPTIONS = [
   "-o",
   "StrictHostKeyChecking=accept-new",
 ];
-/** Public WebSocket URL of the VPS server; the dev site build points its client here. */
+/** Public WebSocket URL of the production VPS server. */
 export const VPS_MULTIPLAYER_URL = "wss://sloppy-tanks-server.fridman.me";
+/**
+ * The dev site's server: a second process on the same VPS behind Caddy on port 8443 of
+ * the same hostname and certificate, so dev deploys never replace production's server.
+ */
+export const VPS_DEV_MULTIPLAYER_URL = "wss://sloppy-tanks-server.fridman.me:8443";
