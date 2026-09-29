@@ -139,7 +139,7 @@ impl EffectsLab {
                         .models
                         .entry((tank.kind, tank.team))
                         .or_insert_with(|| {
-                            let node = tank_model(tank.kind, tank.team as u8);
+                            let node = tank_model(tank.kind, tank.team);
                             // Instances place the root; keep its own transform (the
                             // vehicle scale) to apply under that placement.
                             let root = node.local_matrix().as_mat4();
