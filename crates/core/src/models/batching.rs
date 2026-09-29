@@ -88,6 +88,25 @@ fn baked_part(node: &Node, mesh: &Mesh, paint: Option<Color>) -> Mesh {
     baked
 }
 
+/// `paintMesh(mesh)`: give one standalone mesh the shared vertex-color material of
+/// batched parts, baking its paint into a new color attribute (the geometry keeps
+/// its index). Meshes whose material keeps its own shader are unchanged.
+pub fn paint_mesh(node: &mut Node) {
+    let Some(drawable) = &mut node.drawable else {
+        return;
+    };
+    let source = drawable.material.clone();
+    let painted = vertex_material(&source);
+    if Arc::ptr_eq(&painted, &source) {
+        return;
+    }
+    let [r, g, b] = hex_to_linear(source.color.0);
+    let mut mesh = (*drawable.mesh).clone();
+    mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
+    drawable.mesh = Arc::new(mesh);
+    drawable.material = painted;
+}
+
 /// `batch(group)`: replace the group's direct, non-instanced mesh children with
 /// one merged mesh per draw material, appended after the remaining children in
 /// order of first use. Nested groups (movable assemblies) are left alone. Merged

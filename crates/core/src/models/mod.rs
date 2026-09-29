@@ -66,3 +66,39 @@ impl VehicleKind {
 
 #[cfg(test)]
 mod tests;
+
+// Cover, tree and prop models.
+mod barrel_surfaces;
+mod cottage_details;
+mod cover_model;
+mod harbor_models;
+mod pending_props;
+mod prop_support;
+mod quarry_barriers;
+mod quarry_shapes;
+mod timber_model;
+mod tree_models;
+
+pub use barrel_surfaces::{PAINTED_DRUM_TEXTURE, explosive_barrel};
+pub use batching::paint_mesh;
+pub use cottage_details::cottage_details;
+pub use cover_model::{
+    CoverKind, CoverModel, CoverShape, cover_damage_stage, cover_model, tower_base,
+};
+pub use harbor_models::{CargoShape, cargo_stack, shipping_container};
+pub use prop_support::Random;
+pub use quarry_barriers::{dragon_tooth, steel_hedgehog};
+pub use quarry_shapes::{
+    HEDGEHOG_BEAMS, HedgehogBeam, RockShape, ToothProfile, dragon_tooth_point,
+    dragon_tooth_profile, dragon_tooth_variant, quarry_rock_shape, quarry_rock_variant,
+};
+pub use timber_model::{
+    TIMBER_HEALTH, TimberFace, TimberHit, TimberJoin, TimberMark, TimberPart, TimberPartKind,
+    TimberWall, add_timber_parts, timber_damage_stage, timber_part_model, timber_parts,
+};
+pub use tree_models::{
+    TREE_FAMILIES, TreeDetail, TreeModel, TreeProportions, TreeShape, branch_drop_stage,
+    set_tree_damage, set_tree_destroyed, tree_branch_stage, tree_model, tree_part,
+    tree_proportions, trunk_fragment,
+};
+
