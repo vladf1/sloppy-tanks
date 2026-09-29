@@ -137,20 +137,18 @@ buttons reaches the engine with the next frame's input, so checks wait a frame.
 `scripts/profile.mjs` uses `game.debug_configure(seed, tanks, team)` and
 `game.debug_stress_burst()`.
 
-## Status (2026-09-29, late)
+## Status (2026-09-29)
 
-- `pnpm run check` passes on `codex/rust-rewrite` (36:30 local from cold, 3:04 with warm
-  caches): 504 Rust tests (1 ignored: full soil bake), 36 TS tests, fmt/clippy (native, wasm,
-  wasm+labs), Vite build, server build.
-- Async pipeline compilation merged (e07ebd3, 98b602b): cold-cache frame gaps 4.4–6.9 s →
-  0.13–0.2 s, ready 3.5–5× sooner. The startup check now holds the background compiles
-  (`createRenderPipelineAsync`) as well as the textures behind the menu.
-- Shell nits fixed: a click right after RESUME takes the pointer back in first person, the
-  pause menu shows the touch preference at once, and replaced pickups lose their views.
-- `webkit-startup-check.mjs` (in `check:browser`) plays the village and quarry in
-  Playwright's WebKit (Safari 26.6 engine) with WebGPU: 67 shaders, 75 pipelines, no errors.
-- All 12 browser checks passed (WebKit rerun alone after relaxing its frame count) and the
-  multiplayer checks (plain and 100 ms latency with jitter and stalls, room browser, restart,
-  loading) passed against the local Rust server.
-- Left: final matched measurements vs baseline (readiness, frame tails, memory, sizes); CI
-  workflow unexercised on GitHub; tank preview asset not regenerated (13/255 brighter).
+Feature-complete and verified locally (PR #26, draft until a coordinated browser+server
+release). `pnpm run check` passes (516 Rust, 36 TS tests); `check:browser` passes 12 checks
+including headless WebKit; multiplayer checks pass against a local Rust server.
+
+Deliberate differences from the TypeScript baseline: Rapier 0.36 contact response; zlib-rs
+level 2 WebSocket compression (fewer bytes than the old level 1); square cargo fittings on
+the three moored harbor ships (GPU cost); ownerless damage sent as `owner: 0`.
+
+Known trade-offs: the page downloads one engine Wasm (≈0.89 MB Brotli), so single player is
+~10% larger compressed and a room entry fetches the whole engine (prefetched from Battle
+Setup). Not done: regenerating `public/previews/tanks.webp` with the Rust renderer (its
+candidate is ~13/255 brighter), and a first CI run with Rust happened on the PR only.
+Matched measurements are in the ignored `artifacts/performance/rust-rewrite/final/`.
