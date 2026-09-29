@@ -201,7 +201,8 @@ impl Material {
 }
 
 /// Per-instance transform and optional color of an InstancedMesh. Per-instance
-/// custom data lives in the mesh's [`Attribute::per_instance`] attributes, one item
+/// custom data lives in the mesh's
+/// [`per_instance`](crate::geometry::Attribute::per_instance) attributes, one item
 /// per instance in this list's order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {

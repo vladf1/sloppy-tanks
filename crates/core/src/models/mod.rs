@@ -173,7 +173,9 @@ pub use scenery::{
     create_spawn_pads, custom_floor, custom_spawn_pads, default_sun_shadow, fit_sun_shadow,
     lighting,
 };
-pub use village_atmosphere::{SmokeCover, set_chimney_smoke, village_atmosphere};
+pub use village_atmosphere::{
+    SMOKE_SOURCES, SmokeCover, WISPS_PER_SOURCE, set_chimney_smoke, village_atmosphere,
+};
 pub use village_landmarks::{WATERWHEEL, village_landmarks};
 pub use village_landscape::{
     CREEK_HEIGHT, creek_distance, valley_height, valley_height_at, village_landscape,
