@@ -33,13 +33,34 @@ sha1_smol = "1"
 getrandom = "0.4"
 libc = "0.2"
 
-# The browser build: small, whole-program optimized, no unwinding tables.
+# The browser build: small, whole-program optimized, no unwinding tables. Most code is
+# optimized for size; the physics and renderer crates run every frame, so they keep
+# "s" (measured: an all-"z" build simulated the 30-tank Scrap Yard 60% slower, while
+# this mix matches all-"s" speed with a 6% smaller gzip download).
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.release.package.rapier3d]
+opt-level = "s"
+
+[profile.release.package.parry3d]
+opt-level = "s"
+
+[profile.release.package.nalgebra]
+opt-level = "s"
+
+[profile.release.package.simba]
+opt-level = "s"
+
+[profile.release.package.wide]
+opt-level = "s"
+
+[profile.release.package.sloppy-render]
+opt-level = "s"
 
 # The native multiplayer server favors speed and keeps unwinding, so one room's
 # panic can be contained without ending every other room in the process.
@@ -48,6 +69,22 @@ inherits = "release"
 opt-level = 3
 panic = "unwind"
 strip = false
+
+[profile.server.package.rapier3d]
+opt-level = 3
+
+[profile.server.package.parry3d]
+opt-level = 3
+
+[profile.server.package.nalgebra]
+opt-level = 3
+
+[profile.server.package.simba]
+opt-level = 3
+
+[profile.server.package.wide]
+opt-level = 3
+
 
 # Physics tests run natively in debug; optimize dependencies so seeded matches finish quickly.
 [profile.dev.package."*"]
