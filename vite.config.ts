@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { lazyRapierWasm } from "./scripts/lazy-rapier-wasm.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
+import { threeFromSource } from "./scripts/three-from-source.ts";
 import { contentVersion } from "./scripts/content-version.mjs";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
@@ -21,6 +22,7 @@ export default defineConfig({
   },
   plugins: [
     lazyRapierWasm(),
+    threeFromSource(),
     startupHtml(base),
     {
       // Safari never hands a <link rel=preload as=fetch> response to a later
@@ -44,7 +46,9 @@ export default defineConfig({
       },
     },
   ],
-  optimizeDeps: { exclude: ["@dimforge/rapier3d-simd"] },
+  // Three must stay unbundled in dev: pre-bundling the add-ons would give them a
+  // second copy of the core classes, breaking instanceof against the source build.
+  optimizeDeps: { exclude: ["@dimforge/rapier3d-simd", "three"] },
   build: {
     rolldownOptions: {
       input: {
