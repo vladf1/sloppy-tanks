@@ -60,13 +60,16 @@ use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon, has_ammo};
-use sloppy_core::sim::data::{STEP, vehicle};
+use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::data::{SCORE_LIMIT, STEP, TEAM_NAMES, vehicle};
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::game_options::{GameOptions, game_choices, initial_game_options};
 use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::end_battle;
-use sloppy_core::sim::round_recap::{Metric, combat_feats, recap_stats};
+use sloppy_core::sim::round_recap::{
+    Metric, RecordStorage, StorageUnavailable, combat_feats, recap_stats, save_personal_bests,
+};
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
@@ -180,6 +183,28 @@ enum Preparation {
     Done,
 }
 
+/// Personal bests live in the page's `localStorage`; private browsing or a full
+/// quota only makes them session-only.
+struct BrowserStorage(Option<web_sys::Storage>);
+
+impl BrowserStorage {
+    fn local() -> Self {
+        Self(web_sys::window().and_then(|window| window.local_storage().ok().flatten()))
+    }
+}
+
+impl RecordStorage for BrowserStorage {
+    fn get_item(&self, key: &str) -> Result<Option<String>, StorageUnavailable> {
+        let storage = self.0.as_ref().ok_or(StorageUnavailable)?;
+        storage.get_item(key).map_err(|_| StorageUnavailable)
+    }
+
+    fn set_item(&mut self, key: &str, value: &str) -> Result<(), StorageUnavailable> {
+        let storage = self.0.as_ref().ok_or(StorageUnavailable)?;
+        storage.set_item(key, value).map_err(|_| StorageUnavailable)
+    }
+}
+
 struct PendingEvent {
     event: SimEvent,
     player_hit: bool,
@@ -217,6 +242,8 @@ pub struct Game {
     pixel_ratio: f64,
     exact: bool,
     times: FrameTimes,
+    /// The finished round's recap; personal bests are saved once per result.
+    recap: Option<Value>,
 }
 
 #[wasm_bindgen]
@@ -293,6 +320,7 @@ impl Game {
             pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
             exact: false,
             times: FrameTimes::default(),
+            recap: None,
         };
         game.apply_size();
         game.reset_view();
@@ -535,7 +563,10 @@ impl Game {
     }
 
     /// Everything the page HUD and menus show, as JSON.
-    pub fn hud_json(&self) -> String {
+    pub fn hud_json(&mut self) -> String {
+        if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
+            self.recap = Some(self.finish_recap());
+        }
         let sim = &self.sim;
         let tank = sim.human();
         let max_hp = sim.max_health(tank);
@@ -569,28 +600,11 @@ impl Game {
                 })
             })
             .collect();
-        let recap = (sim.match_state.phase == MatchPhase::Results).then(|| {
-            let stats = recap_stats(sim);
-            let combat = &sim.combat_record;
-            let metrics: serde_json::Map<String, Value> = Metric::ALL
-                .iter()
-                .map(|&metric| (metric.key().to_string(), Value::from(stats.get(metric))))
-                .collect();
-            json!({
-                "stats": metrics,
-                "feats": combat_feats(&stats, combat.shots, combat.direct_hits),
-                "shots": combat.shots,
-                "directHits": combat.direct_hits,
-                "damageTaken": combat.damage_taken,
-                "shieldAbsorbed": combat.shield_absorbed,
-                "recordsKey": format!(
-                    "sloppy-records-v1:{}:{}:{}",
-                    serde_json::to_value(sim.game_mode).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default(),
-                    sim.map_name(),
-                    serde_json::to_value(sim.difficulty).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default(),
-                ),
-            })
-        });
+        let recap = if sim.match_state.phase == MatchPhase::Results {
+            self.recap.as_ref()
+        } else {
+            None
+        };
         json!({
             "match": sim.match_state,
             "elapsed": sim.elapsed,
@@ -600,6 +614,8 @@ impl Game {
             "mapName": sim.map_name(),
             "difficulty": sim.difficulty,
             "humanTeam": sim.human_team,
+            "scoreLimit": SCORE_LIMIT,
+            "teamNames": TEAM_NAMES,
             "activeEnemies": sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
             "speedTuning": sim.speed_tuning,
             "human": {
@@ -620,6 +636,7 @@ impl Game {
                 "rankFireRate": stats.fire_rate,
                 "rankHealth": stats.health,
                 "rankRepair": stats.repair,
+                "repairDelay": REPAIR_DELAY,
                 "selectedAmmo": tank.selected_ammo,
                 "equipped": selected,
                 "ammo": ammo,
@@ -643,11 +660,35 @@ impl Game {
     }
 
     /// Stats for nerds, as JSON.
-    pub fn stats_json(&self) -> String {
+    pub fn stats_json(&mut self) -> String {
         let render = self.view.renderer.stats();
         let view = self.view.stats();
+        let effects = self.view.effects.stats();
         let counts = self.sim.snapshot().counts;
+        let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
+        for (_, body) in self.sim.world.bodies.iter() {
+            if body.is_fixed() {
+                fixed += 1;
+            }
+            if body.is_dynamic() {
+                dynamic += 1;
+                if body.is_sleeping() {
+                    sleeping += 1;
+                }
+            }
+        }
         json!({
+            "fixedBodies": fixed,
+            "dynamicBodies": dynamic,
+            "sleepingBodies": sleeping,
+            "tanksAlive": self.sim.tanks.iter().filter(|tank| tank.alive).count(),
+            "pickups": self.sim.pickups.len(),
+            "pickupsReady": self.sim.pickups.iter().filter(|pickup| pickup.available).count(),
+            "maxFragments": self.sim.max_fragments,
+            "particles": effects.particles,
+            "effectInstances": effects.instances,
+            "elapsed": self.sim.elapsed,
+            "pixelRatio": self.effective_pixel_ratio(),
             "frameMs": self.times.frame_ms,
             "averageFrameMs": self.times.average_ms,
             "fps": if self.times.average_ms > 0.0 { 1000.0 / self.times.average_ms } else { 0.0 },
@@ -706,6 +747,19 @@ impl Game {
             self.view.rig.first_person.toggle(aim);
         }
         self.view.rig.first_person.enabled
+    }
+
+    /// The tank the human respawns in, chosen from the respawn menu mid-round. The
+    /// world is kept; Battle Setup's next `set_options` sees the same choice.
+    pub fn set_human_kind(&mut self, kind: &str) -> Result<(), JsValue> {
+        let kind: VehicleKind = serde_json::from_value(Value::from(kind))
+            .map_err(|error| js_error(error.to_string()))?;
+        if kind == VehicleKind::Humvee {
+            return Err(js_error("The player cannot drive a Humvee"));
+        }
+        self.sim.human_kind = kind;
+        self.options.human_kind = kind;
+        Ok(())
     }
 
     /// "tank-speed" or "bullet-speed"; returns the scale in effect.
@@ -788,6 +842,8 @@ impl Game {
             "tanks": tanks,
             "view": {
                 "zoom": rig.zoom,
+                "minZoom": CAMERA.min_zoom,
+                "maxZoom": CAMERA.max_zoom,
                 "time": self.view.time,
                 "inFirstPerson": rig.in_first_person,
                 "seatWanted": rig.seat_wanted,
@@ -880,6 +936,64 @@ impl Game {
         }
     }
 
+    /// Profiling setup: the seed, tank count and human team the next reset uses.
+    pub fn debug_configure(&mut self, seed: f64, tank_count: usize, human_team: u8) {
+        self.sim.seed = seed;
+        self.sim.round_count = tank_count;
+        self.sim.human_team = Team::from_index(usize::from(human_team));
+    }
+
+    /// The profiling stress burst: refill debris and a ring of 200 shells, and drop
+    /// three drums on the centre line, blowing up the last.
+    pub fn debug_stress_burst(&mut self) {
+        while self.sim.fragments.len() < self.sim.max_fragments {
+            let x = self.sim.rng.range(-15.0, 15.0);
+            let z = self.sim.rng.range(-15.0, 15.0);
+            self.sim
+                .fragment(x, z, 0xc5a978, 0.5, FragmentShape::Shard, 1.0);
+        }
+        let owners: Vec<u32> = self.sim.tanks.iter().map(|tank| tank.id).collect();
+        for i in self.sim.shots.len()..200 {
+            let angle = i as f64 * std::f64::consts::TAU / 200.0;
+            let id = self.sim.next_id;
+            self.sim.next_id += 1;
+            self.sim.shots.push(Shot {
+                id,
+                x: angle.sin() * 15.0,
+                z: angle.cos() * 15.0,
+                vx: angle.cos() * 45.0,
+                vz: angle.sin() * 45.0,
+                owner: owners[i % owners.len()],
+                team: Team::from_index(i),
+                damage: 40.0,
+                bounces: 4,
+                life: 4.0,
+                weapon: Weapon::Standard,
+                ..Shot::default()
+            });
+        }
+        let (id, team) = (self.sim.human().id, self.sim.human_team);
+        for x in [-5.0, 0.0, 5.0] {
+            let def = CoverDef {
+                kind: CoverKind::Drum,
+                x,
+                z: 0.0,
+                w: 1.2,
+                d: 1.2,
+                h: 1.7,
+                hp: 30.0,
+                color: 0xe3854d,
+                timber_join: None,
+                timber_bays: None,
+                debris_seed: None,
+            };
+            let index = self.sim.add_cover(&def);
+            if x == 5.0 {
+                self.sim.damage_cover(index, 999.0, id, team, None, None);
+            }
+        }
+    }
+
     /// Simulate `seconds` of autoplay as fast as possible, resetting finished
     /// rounds; returns `{ simulatedSeconds, resets, snapshot }`.
     pub fn debug_soak(&mut self, seconds: f64) -> String {
@@ -924,12 +1038,52 @@ impl Game {
         self.sim.fill_render_state(&mut self.state, None);
     }
 
-    fn apply_size(&mut self) {
-        let ratio = if self.exact {
+    fn effective_pixel_ratio(&self) -> f64 {
+        if self.exact {
             1.0
         } else {
             self.pixel_ratio.min(CAMERA.max_pixel_ratio)
+        }
+    }
+
+    /// The results screen's recap, saving personal bests for this mode, map and
+    /// difficulty once.
+    fn finish_recap(&self) -> Value {
+        let sim = &self.sim;
+        let stats = recap_stats(sim);
+        let combat = &sim.combat_record;
+        let label = |value: Value| value.as_str().map(str::to_owned).unwrap_or_default();
+        let key = format!(
+            "sloppy-records-v1:{}:{}:{}",
+            label(json!(sim.game_mode)),
+            sim.map_name(),
+            label(json!(sim.difficulty)),
+        );
+        let records = save_personal_bests(&mut BrowserStorage::local(), &key, &stats);
+        let metrics = |values: &sloppy_core::sim::round_recap::RecapStats| {
+            Metric::ALL
+                .iter()
+                .map(|&metric| (metric.key().to_string(), Value::from(values.get(metric))))
+                .collect::<serde_json::Map<String, Value>>()
         };
+        json!({
+            "stats": metrics(&stats),
+            "best": metrics(&records.best),
+            "improved": records.improved.iter().map(|metric| metric.key()).collect::<Vec<_>>(),
+            "established": records.established,
+            "persisted": records.persisted,
+            "feats": combat_feats(&stats, combat.shots, combat.direct_hits),
+            "shots": combat.shots,
+            "directHits": combat.direct_hits,
+            "damageTaken": combat.damage_taken,
+            "shieldAbsorbed": combat.shield_absorbed,
+            "rankNames": RANKS.iter().map(|rank| rank.name).collect::<Vec<_>>(),
+            "recordsKey": key,
+        })
+    }
+
+    fn apply_size(&mut self) {
+        let ratio = self.effective_pixel_ratio();
         let width = (f64::from(self.client.x) * ratio).round().max(1.0) as u32;
         let height = (f64::from(self.client.y) * ratio).round().max(1.0) as u32;
         self.view.resize(width, height);
@@ -943,6 +1097,7 @@ impl Game {
         self.sim.set_wreck_view(Some(self.view.wreck_view()));
         self.view.begin_prepare(&self.state);
         self.preparation = Preparation::Compiling;
+        self.recap = None;
         self.events.clear();
         self.accumulator = 0.0;
     }
