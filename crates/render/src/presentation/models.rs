@@ -292,10 +292,24 @@ pub fn reticle() -> Node {
     root
 }
 
+/// World heights of the player ring's dark rim and yellow paint. The player spawns
+/// on a pad, so both clear the tallest spawn-pad deck (the village and extra-level
+/// badge tops out at 0.2325 m) by more than the depth precision of the farthest
+/// camera: at the TypeScript heights (0.1 and 0.12, also scaled by the vehicle) the
+/// ring sat just under the harbor deck and z-fought with it, and it was buried in
+/// the village and quarry pads. Presentation scales the ring's radius, not these.
+pub const PLAYER_RING_RIM_HEIGHT: f64 = 0.26;
+pub const PLAYER_RING_PAINT_HEIGHT: f64 = 0.28;
+/// The spawn pulse spreads just above the ring, clear of the pad it marks.
+pub const SPAWN_PULSE_HEIGHT: f64 = 0.3;
+
 /// A thin dark rim reads on sand; the yellow ring identifies the player on either team.
 pub fn player_ring() -> Node {
     let mut root = Node::group("player-ring");
-    for (inner, outer, color, y) in [(1.48, 1.9, 0x172f4a, 0.1), (1.56, 1.8, 0xffe522, 0.12)] {
+    for (inner, outer, color, y) in [
+        (1.48, 1.9, 0x172f4a, PLAYER_RING_RIM_HEIGHT),
+        (1.56, 1.8, 0xffe522, PLAYER_RING_PAINT_HEIGHT),
+    ] {
         let material = Arc::new(Material {
             side: Side::Double,
             tone_mapped: false,
@@ -502,6 +516,31 @@ mod tests {
         let mut found = Vec::new();
         names(&pickup_base(PickupKind::Laser), &mut found);
         assert!(found.iter().any(|n| n == joint::PICKUP_REFILL));
+    }
+
+    #[test]
+    fn player_ring_and_spawn_pulse_clear_every_spawn_pad_deck() {
+        use glam::DMat4;
+        use sloppy_core::geometry::node_bounds;
+        use sloppy_core::models::{SpawnPadShape, create_spawn_pads, quarry_spawn_pad_pieces};
+        // Village and extra-level plinths; harbor decks (0.1, team ring 0.11) are lower.
+        let mut deck = node_bounds(&create_spawn_pads(1.0), DMat4::IDENTITY).max.y;
+        for team in [Team::Blue, Team::Red] {
+            for piece in quarry_spawn_pad_pieces(team) {
+                if !matches!(piece.shape, SpawnPadShape::Post | SpawnPadShape::Cap) {
+                    deck = deck.max(piece.y + piece.h / 2.0);
+                }
+            }
+        }
+        // Several depth-buffer steps at the farthest overhead zoom.
+        const CLEARANCE: f64 = 0.02;
+        let ring = node_bounds(&player_ring(), DMat4::IDENTITY);
+        assert!(
+            ring.min.y > deck + CLEARANCE,
+            "ring {} deck {deck}",
+            ring.min.y
+        );
+        assert!(SPAWN_PULSE_HEIGHT > ring.max.y, "pulse under the ring");
     }
 
     #[test]

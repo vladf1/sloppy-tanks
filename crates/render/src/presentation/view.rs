@@ -78,7 +78,6 @@ const GEM_BOB: f64 = 0.18;
 /// Pickup glow proportions around the collecting tank.
 const GLOW_SCALE: Vec3 = Vec3::new(1.65, 1.25, 1.9);
 const GLOW_HEIGHT: f32 = 1.1;
-const SPAWN_PULSE_HEIGHT: f32 = 0.14;
 /// Felling boughs (`tree-debris.ts`).
 const MAX_BRANCHES: usize = 32;
 const BRANCH_LIFETIME: f64 = 6.0;
@@ -1433,9 +1432,14 @@ impl Presentation {
         );
         let vehicle_scale = vehicle(viewer.kind).scale as f32;
         self.renderer.set_visible(self.player_ring, ring_visible);
+        // The ring grows with the vehicle but keeps its heights above the spawn pads.
         self.renderer.set_transform(
             self.player_ring,
-            Mat4::from_scale_rotation_translation(Vec3::splat(vehicle_scale), Quat::IDENTITY, at),
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(vehicle_scale, 1.0, vehicle_scale),
+                Quat::IDENTITY,
+                at,
+            ),
         );
         let pulse_visible = ring_visible && self.spawn_cue > 0.0;
         self.renderer.set_visible(self.pulse, pulse_visible);
@@ -1446,7 +1450,7 @@ impl Presentation {
                 Mat4::from_scale_rotation_translation(
                     Vec3::splat(size as f32),
                     Quat::IDENTITY,
-                    Vec3::new(at.x, SPAWN_PULSE_HEIGHT, at.z),
+                    Vec3::new(at.x, own::SPAWN_PULSE_HEIGHT as f32, at.z),
                 ),
             );
             self.renderer.set_opacity(self.pulse, opacity as f32);
