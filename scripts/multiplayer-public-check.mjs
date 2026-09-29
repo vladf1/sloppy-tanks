@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { StateMirror } from "../src/net/replication.ts";
+import { StateMirror } from "./state-mirror.mjs";
 import {
   checkMultiplayerMenu,
   click,

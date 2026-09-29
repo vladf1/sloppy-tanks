@@ -41,8 +41,8 @@ export async function click(page, selector) {
 
 /**
  * Records a page's room traffic from its real WebSocket frames, across reloads and
- * reconnects. Pass `mirror: new StateMirror()` (from src/net/replication.ts, which needs
- * `node --import tsx`) to rebuild authoritative state and assert snapshot continuity.
+ * reconnects. Pass `mirror: new StateMirror()` (from `state-mirror.mjs`)
+ * to rebuild the replicated scene and assert snapshot continuity.
  * Server `error`/`room-reset` messages and malformed frames go to `errors`.
  */
 export function recordRoomFrames(page, errors, { mirror } = {}) {

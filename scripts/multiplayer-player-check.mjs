@@ -3,10 +3,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
 import WebSocket from "ws";
 import { BotPlayer, randomRoomCode } from "../bots/bot-player.ts";
-import { PROTOCOL_VERSION } from "../src/net/protocol.ts";
-import { StateMirror } from "../src/net/replication.ts";
+import { StateMirror } from "./state-mirror.mjs";
 import { contentVersion } from "./content-version.mjs";
 
+/** The wire protocol version (`PROTOCOL_VERSION` in `crates/core/src/net/protocol.rs`). */
+const PROTOCOL_VERSION = 1;
 const endpoint = process.env.SLOPPY_SERVER_URL ?? "ws://127.0.0.1:8787";
 const origin = process.env.SLOPPY_ORIGIN ?? "http://127.0.0.1:5173";
 const seconds = Number(process.env.SLOPPY_PLAYER_SECONDS ?? 15);

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { StateMirror } from "../src/net/replication.ts";
-import { BOT_NAMES } from "../src/game/bot-personalities.ts";
+import { StateMirror } from "./state-mirror.mjs";
 import {
   DEFAULT_GAME_URL,
   assertJoinedBehindSetup,
@@ -52,7 +51,8 @@ try {
   assert.ok(new URL(alice.page.url()).searchParams.has("multiplayer"), "The tab is kept on reload");
   assert.equal(await alice.page.locator("#tab-single").getAttribute("aria-selected"), "false");
   assert.equal(await alice.page.locator("#start").isVisible(), false, "GO is single-player only");
-  assert.ok(BOT_NAMES.includes(await alice.page.locator("#player-name").inputValue()));
+  // A fresh visitor gets one of the bot roster's names (`src/net/player-name.ts`).
+  assert.match(await alice.page.locator("#player-name").inputValue(), /^[A-Z][A-Z ]{1,23}$/);
   assert.equal(await alice.page.locator('input[name="playerTeam"]:checked').inputValue(), "auto");
   assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
   assert.equal(await alice.page.locator("#create-round-minutes").inputValue(), "20");
