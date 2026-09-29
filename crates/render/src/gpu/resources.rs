@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Effect, Material};
+use sloppy_core::scene::{Effect, Material, TextureRef};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Sphere;
@@ -27,9 +27,17 @@ pub struct Layouts {
 }
 
 fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
+    staged_texture_entry(binding, filterable, wgpu::ShaderStages::FRAGMENT)
+}
+
+fn staged_texture_entry(
+    binding: u32,
+    filterable: bool,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
+        visibility,
         ty: wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable },
             view_dimension: wgpu::TextureViewDimension::D2,
@@ -40,13 +48,24 @@ fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
 }
 
 fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
+    staged_sampler_entry(binding, ty, wgpu::ShaderStages::FRAGMENT)
+}
+
+fn staged_sampler_entry(
+    binding: u32,
+    ty: wgpu::SamplerBindingType,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
+        visibility,
         ty: wgpu::BindingType::Sampler(ty),
         count: None,
     }
 }
+
+/// Secondary effect textures a material binds (`Material::extra_textures`).
+pub const EXTRA_TEXTURE_SLOTS: usize = 2;
 
 fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
@@ -109,9 +128,27 @@ impl Layouts {
             label: Some("output"),
             entries: &[texture_entry(0, false), uniform_entry(1)],
         });
+        // Map, bump and emissive map for the surface; effect textures for any stage.
+        let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let material = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("material"),
+            entries: &[
+                uniform_entry(0),
+                texture_entry(1, true),
+                sampler_entry(2, Filtering),
+                texture_entry(3, true),
+                sampler_entry(4, Filtering),
+                texture_entry(5, true),
+                sampler_entry(6, Filtering),
+                staged_texture_entry(7, true, both),
+                staged_sampler_entry(8, Filtering, both),
+                staged_texture_entry(9, true, both),
+                staged_sampler_entry(10, Filtering, both),
+            ],
+        });
         Self {
             frame,
-            material: textured("material"),
+            material,
             water: textured("water"),
             output,
         }
@@ -311,6 +348,8 @@ pub struct MaterialUniform {
     pub surface: [f32; 4],
     pub map_transform: [f32; 4],
     pub bump_transform: [f32; 4],
+    pub emissive_transform: [f32; 4],
+    pub extra_transforms: [[f32; 4]; EXTRA_TEXTURE_SLOTS],
     pub params: [[f32; 4]; 4],
 }
 
@@ -319,8 +358,8 @@ impl MaterialUniform {
         let [r, g, b] = hex_to_linear(material.color.0);
         let [er, eg, eb] = hex_to_linear(material.emissive.0);
         let i = material.emissive_intensity;
-        let transform = |t: &Option<sloppy_core::scene::TextureRef>| {
-            t.as_ref().map_or([1.0, 1.0, 0.0, 0.0], |t| {
+        let transform = |t: Option<&TextureRef>| {
+            t.map_or([1.0, 1.0, 0.0, 0.0], |t| {
                 [t.repeat[0], t.repeat[1], t.offset[0], t.offset[1]]
             })
         };
@@ -339,11 +378,35 @@ impl MaterialUniform {
                 material.alpha_test,
                 material.bump_scale,
             ],
-            map_transform: transform(&material.map),
-            bump_transform: transform(&material.bump_map),
+            map_transform: transform(material.map.as_ref()),
+            bump_transform: transform(material.bump_map.as_ref()),
+            emissive_transform: transform(material.emissive_map.as_ref()),
+            extra_transforms: std::array::from_fn(|slot| transform(extra_texture(material, slot))),
             params,
         }
     }
+}
+
+/// The texture in an effect's extra slot, if the material names one.
+fn extra_texture(material: &Material, slot: usize) -> Option<&TextureRef> {
+    material
+        .extra_textures
+        .get(slot)
+        .map(|(_, texture)| texture)
+}
+
+/// Every texture a material samples.
+fn material_textures(material: &Material) -> impl Iterator<Item = &TextureRef> {
+    [&material.map, &material.bump_map, &material.emissive_map]
+        .into_iter()
+        .flatten()
+        .chain(
+            material
+                .extra_textures
+                .iter()
+                .take(EXTRA_TEXTURE_SLOTS)
+                .map(|(_, texture)| texture),
+        )
 }
 
 pub struct GpuMaterial {
@@ -374,43 +437,45 @@ impl MaterialStore {
         material: &Material,
         uniform: &wgpu::Buffer,
     ) -> (wgpu::BindGroup, bool) {
-        let map_sampler = textures.sampler(device, material.map.as_ref());
-        let bump_sampler = textures.sampler(device, material.bump_map.as_ref());
-        let (map, map_ready) = match &material.map {
-            Some(texture) => textures.view(texture),
-            None => (textures.placeholder(), true),
-        };
-        let (bump, bump_ready) = match &material.bump_map {
-            Some(texture) => textures.view(texture),
-            None => (textures.placeholder(), true),
-        };
+        // Texture slots in binding order: map, bump, emissive, then effect extras.
+        let slots = [
+            material.map.as_ref(),
+            material.bump_map.as_ref(),
+            material.emissive_map.as_ref(),
+            extra_texture(material, 0),
+            extra_texture(material, 1),
+        ];
+        let samplers = slots.map(|texture| textures.sampler(device, texture));
+        let mut ready = true;
+        let views = slots.map(|texture| match texture {
+            Some(texture) => {
+                let (view, loaded) = textures.view(texture);
+                ready &= loaded;
+                view
+            }
+            None => textures.placeholder(),
+        });
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform.as_entire_binding(),
+        }];
+        for (slot, (view, sampler)) in views.iter().zip(&samplers).enumerate() {
+            let binding = 1 + slot as u32 * 2;
+            entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: binding + 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            });
+        }
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material"),
             layout: &layouts.material,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&map_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(bump),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&bump_sampler),
-                },
-            ],
+            entries: &entries,
         });
-        (bind_group, !(map_ready && bump_ready))
+        (bind_group, !ready)
     }
 
     /// The GPU material for an interned material, creating it on first use.
@@ -426,7 +491,7 @@ impl MaterialStore {
         if let Some(&index) = self.by_ptr.get(&key) {
             return index;
         }
-        for texture in material.map.iter().chain(&material.bump_map) {
+        for texture in material_textures(material) {
             textures.request(texture);
         }
         let effect = match &material.effect {

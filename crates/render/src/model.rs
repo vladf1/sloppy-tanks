@@ -24,15 +24,16 @@ use sloppy_core::scene::{Drawable, Material, Node};
 use crate::camera::Sphere;
 use crate::material::{MaterialInterner, is_paintable, paint_color, painted};
 
-/// The uploaded vertex layout (44 bytes).
+/// The uploaded vertex layout (48 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    /// Linear RGB; white when the mesh has no colors.
-    pub color: [f32; 3],
+    /// Linear RGB and alpha: white when the mesh has no colors, alpha from its
+    /// `VERTEX_ALPHA` attribute (RGBA vertex colors) or 1.
+    pub color: [f32; 4],
 }
 
 /// CPU vertex data ready for upload.
@@ -40,7 +41,8 @@ pub struct Vertex {
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    /// `extra_attributes` vec4s per vertex, in the effect's attribute order.
+    /// `extra_attributes` vec4s per vertex, in the effect's attribute order
+    /// (per-vertex attributes only; per-instance ones travel with instances).
     pub extra: Vec<[f32; 4]>,
     pub extra_attributes: u8,
     pub bounds: Sphere,
@@ -65,6 +67,7 @@ impl MeshData {
     ) {
         let base = self.vertices.len() as u32;
         let normal_matrix = transform.map(|m| Mat3::from_mat4(*m).inverse().transpose());
+        let alpha = mesh.vertex_alpha();
         for (i, position) in mesh.positions.iter().enumerate() {
             let mut position = Vec3::from(*position);
             let mut normal = mesh.normals.get(i).map_or(Vec3::Y, |n| Vec3::from(*n));
@@ -72,15 +75,18 @@ impl MeshData {
                 position = matrix.transform_point3(position);
                 normal = (normal_matrix * normal).normalize_or_zero();
             }
+            let [r, g, b] =
+                paint.unwrap_or_else(|| mesh.colors.get(i).copied().unwrap_or([1.0; 3]));
+            let a = alpha.and_then(|alpha| alpha.get(i)).copied().unwrap_or(1.0);
             self.vertices.push(Vertex {
                 position: position.into(),
                 normal: normal.into(),
                 uv: mesh.uvs.get(i).copied().unwrap_or_default(),
-                color: paint.unwrap_or_else(|| mesh.colors.get(i).copied().unwrap_or([1.0; 3])),
+                color: [r, g, b, a],
             });
             for name in attributes {
                 let mut value = [0.0; 4];
-                if let Some(attribute) = mesh.attribute(name) {
+                if let Some(attribute) = mesh.attribute(name).filter(|a| !a.per_instance) {
                     let size = attribute.item_size as usize;
                     for (k, slot) in value.iter_mut().enumerate().take(size.min(4)) {
                         *slot = attribute.data.get(i * size + k).copied().unwrap_or(0.0);
@@ -114,6 +120,27 @@ pub struct InstanceData {
     pub matrix: Mat4,
     /// Linear RGB multiplier (Three `instanceColor`).
     pub color: [f32; 3],
+    /// Effect data from the mesh's per-instance attributes (see
+    /// [`instance_attribute_data`]); `None` keeps the placed instance's data.
+    pub data: Option<[f32; 4]>,
+}
+
+/// The effect data of instance `index`: the mesh's per-instance attributes packed
+/// in attribute order into four floats (extra components are dropped), or `None`
+/// when the mesh has none.
+pub fn instance_attribute_data(mesh: &Mesh, index: usize) -> Option<[f32; 4]> {
+    let mut data = [0.0; 4];
+    let mut filled = 0;
+    for attribute in mesh.attributes.iter().filter(|a| a.per_instance) {
+        let size = usize::from(attribute.item_size);
+        for k in 0..size {
+            if filled < 4 {
+                data[filled] = attribute.data.get(index * size + k).copied().unwrap_or(0.0);
+                filled += 1;
+            }
+        }
+    }
+    (filled > 0).then_some(data)
 }
 
 #[derive(Clone, Debug)]
@@ -221,9 +248,11 @@ fn instances_of(drawable: &Drawable) -> Option<Vec<InstanceData>> {
     drawable.instances.as_ref().map(|instances| {
         instances
             .iter()
-            .map(|instance| InstanceData {
+            .enumerate()
+            .map(|(index, instance)| InstanceData {
                 matrix: instance.matrix.as_mat4(),
                 color: instance.color.unwrap_or([1.0; 3]),
+                data: instance_attribute_data(&drawable.mesh, index),
             })
             .collect()
     })
@@ -514,6 +543,7 @@ pub fn prepare_scenery(
                     .map(|pending| InstanceData {
                         matrix: pending.transform.as_mat4(),
                         color: [1.0; 3],
+                        data: None,
                     })
                     .collect(),
             ),
@@ -642,6 +672,30 @@ mod tests {
         model.joint_transforms(place, &overrides, &mut joints);
         let barrel_origin = joints[2].transform_point3(Vec3::ZERO);
         assert!(barrel_origin.distance(Vec3::new(10.0, 1.7, 1.0)) < 1e-5);
+    }
+
+    #[test]
+    fn vertex_alpha_and_instance_attributes_reach_the_upload() {
+        use sloppy_core::geometry::{Attribute, VERTEX_ALPHA};
+        let mut faded = (*quad()).clone();
+        faded.colors = vec![[0.5; 3]; 4];
+        faded.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, vec![1.0, 0.5, 0.0, 1.0]));
+        faded.set_attribute(Attribute::instance(
+            "origin",
+            3,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        ));
+        faded.set_attribute(Attribute::instance("phase", 1, vec![0.25, 0.75]));
+        let data = mesh_data(&faded, &["origin"]);
+        assert_eq!(data.vertices[1].color, [0.5, 0.5, 0.5, 0.5]);
+        // Per-instance attributes never become per-vertex effect inputs.
+        assert_eq!(data.extra[0], [0.0; 4]);
+        assert_eq!(
+            instance_attribute_data(&faded, 1),
+            Some([4.0, 5.0, 6.0, 0.75])
+        );
+        assert_eq!(instance_attribute_data(&quad(), 0), None);
+        assert_eq!(mesh_data(&quad(), &[]).vertices[0].color, [1.0; 4]);
     }
 
     #[test]

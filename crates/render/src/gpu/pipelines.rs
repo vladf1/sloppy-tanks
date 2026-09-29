@@ -19,7 +19,7 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x3,
     2 => Float32x2,
-    3 => Float32x3,
+    3 => Float32x4,
 ];
 const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
     4 => Float32x4,
@@ -250,7 +250,11 @@ impl Pipelines {
                     wgpu::CompareFunction::Always
                 }),
                 stencil: Default::default(),
-                bias: Default::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: key.depth_bias.constant,
+                    slope_scale: key.depth_bias.slope_scale(),
+                    clamp: 0.0,
+                },
             }),
             multisample: wgpu::MultisampleState {
                 count: if main { SAMPLE_COUNT } else { 1 },

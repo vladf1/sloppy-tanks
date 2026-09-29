@@ -21,13 +21,15 @@ pub fn forces_opaque_alpha(material: &Material) -> bool {
 }
 
 /// Materials whose paint can be baked into vertex colors: opaque standard surfaces
-/// without per-pixel alpha, vertex colors or custom shading.
+/// without per-pixel alpha, vertex colors, an emissive map or custom shading
+/// (the models' `vertex_material` rule).
 pub fn is_paintable(material: &Material) -> bool {
     material.shading == Shading::Standard
         && !material.transparent
         && material.opacity == 1.0
         && material.alpha_test == 0.0
         && !material.vertex_colors
+        && material.emissive_map.is_none()
         && material.effect == Effect::None
 }
 
@@ -45,7 +47,7 @@ pub fn paint_color(material: &Material) -> [f32; 3] {
     hex_to_linear(material.color.0)
 }
 
-fn hash_texture(texture: &Option<TextureRef>, state: &mut impl Hasher) {
+fn hash_texture(texture: Option<&TextureRef>, state: &mut impl Hasher) {
     match texture {
         None => 0u8.hash(state),
         Some(texture) => {
@@ -58,6 +60,7 @@ fn hash_texture(texture: &Option<TextureRef>, state: &mut impl Hasher) {
             texture.srgb.hash(state);
             texture.anisotropy.hash(state);
             texture.mipmaps.hash(state);
+            texture.flip_y.hash(state);
         }
     }
 }
@@ -79,8 +82,17 @@ pub fn material_hash(material: &Material) -> u64 {
         value.to_bits().hash(&mut state);
     }
     m.emissive.hash(&mut state);
-    hash_texture(&m.map, &mut state);
-    hash_texture(&m.bump_map, &mut state);
+    hash_texture(m.map.as_ref(), &mut state);
+    hash_texture(m.emissive_map.as_ref(), &mut state);
+    hash_texture(m.bump_map.as_ref(), &mut state);
+    for (name, texture) in &m.extra_textures {
+        name.hash(&mut state);
+        hash_texture(Some(texture), &mut state);
+    }
+    m.shadow_side.hash(&mut state);
+    m.polygon_offset
+        .map(|(factor, units)| (factor.to_bits(), units.to_bits()))
+        .hash(&mut state);
     (
         m.vertex_colors,
         m.flat_shading,

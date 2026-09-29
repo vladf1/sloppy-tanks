@@ -1,7 +1,8 @@
 //! Textures: `public/` files fetched and decoded by the browser
 //! (`createImageBitmap`) and copied with `copyExternalImageToTexture`, plus pixels
-//! generated at runtime. Uploads flip Y like Three's `flipY`, so UV (0,0) is the
-//! image's bottom-left; mip levels are rendered from the level above.
+//! generated at runtime. Uploads flip Y like Three's `flipY` (unless the reference
+//! clears `flip_y`), so UV (0,0) is the image's bottom-left; mip levels are
+//! rendered from the level above.
 //! Until a texture arrives, materials sample a white placeholder.
 
 use std::cell::RefCell;
@@ -19,6 +20,7 @@ pub struct TextureKey {
     pub source: TextureSource,
     pub srgb: bool,
     pub mipmaps: bool,
+    pub flip_y: bool,
 }
 
 impl TextureKey {
@@ -27,6 +29,7 @@ impl TextureKey {
             source: texture.source.clone(),
             srgb: texture.srgb,
             mipmaps: texture.mipmaps,
+            flip_y: texture.flip_y,
         }
     }
 }
@@ -400,7 +403,7 @@ impl TextureStore {
                                 &wgpu::CopyExternalImageSourceInfo {
                                     source: wgpu::ExternalImageSource::ImageBitmap(bitmap.clone()),
                                     origin: wgpu::Origin2d::ZERO,
-                                    flip_y: true,
+                                    flip_y: key.flip_y,
                                 },
                                 wgpu::CopyExternalImageDestInfo {
                                     texture: &texture,
@@ -417,10 +420,15 @@ impl TextureStore {
                         Pixels::Raw { rgba, .. } => {
                             // Flip rows like Three's flipY upload of a canvas.
                             let row = (width * 4) as usize;
-                            let mut flipped = Vec::with_capacity(rgba.len());
-                            for y in (0..height as usize).rev() {
-                                flipped.extend_from_slice(&rgba[y * row..(y + 1) * row]);
-                            }
+                            let flipped = if key.flip_y {
+                                let mut flipped = Vec::with_capacity(rgba.len());
+                                for y in (0..height as usize).rev() {
+                                    flipped.extend_from_slice(&rgba[y * row..(y + 1) * row]);
+                                }
+                                flipped
+                            } else {
+                                rgba
+                            };
                             queue.write_texture(
                                 texture.as_image_copy(),
                                 &flipped,

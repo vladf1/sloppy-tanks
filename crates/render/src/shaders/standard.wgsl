@@ -1,6 +1,7 @@
 // Main-pass surface shader: Three r185 MeshStandardMaterial (LIT) or
-// MeshBasicMaterial, with map, bump map, vertex colors, flat shading, alpha test,
-// fog, the sun's PCF shadow, hemisphere fill and up to four point lights.
+// MeshBasicMaterial, with map, emissive map, bump map, RGBA vertex colors, flat
+// shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
+// point lights.
 // Lighting runs in world space; every dot and cross product Three evaluates in
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
@@ -10,7 +11,7 @@ struct VertexOut {
     @location(0) world: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
-    @location(3) color: vec3f,
+    @location(3) color: vec4f,
     @location(4) tint: vec4f,
     @location(5) data: vec4f,
     @location(6) extra0: vec4f,
@@ -31,7 +32,7 @@ fn vs_main(input: VertexIn, @builtin(instance_index) index: u32) -> VertexOut {
     out.world = w.position;
     out.normal = w.normal;
     out.uv = v.uv;
-    out.color = v.color;
+    out.color = vec4f(v.color, v.color_alpha);
     out.tint = instance.tint;
     out.data = instance.data;
     out.extra0 = v.extra0;
@@ -180,12 +181,17 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     let normal_change = max(abs(dpdx(geometry_view)), abs(dpdy(geometry_view)));
     let geometry_roughness = max(max(normal_change.x, normal_change.y), normal_change.z);
     let map_uv = input.uv * material.map_transform.xy + material.map_transform.zw;
+    let emissive_uv = input.uv * material.emissive_transform.xy + material.emissive_transform.zw;
     let bump_uv = input.uv * material.bump_transform.xy + material.bump_transform.zw;
     let bump_dx = dpdx(bump_uv);
     let bump_dy = -dpdy(bump_uv);
     var texel = vec4f(1.0);
     if HAS_MAP {
         texel = textureSample(map_texture, map_sampler, map_uv);
+    }
+    var emissive_texel = vec3f(1.0);
+    if HAS_EMISSIVE_MAP {
+        emissive_texel = textureSample(emissive_texture, emissive_sampler, emissive_uv).rgb;
     }
     var height = vec3f(0.0);
     if HAS_BUMP {
@@ -198,7 +204,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
 
     var base = material.color * texel;
     if VERTEX_COLORS {
-        base = vec4f(base.rgb * input.color, base.a);
+        base = base * input.color;
     }
     base = vec4f(base.rgb * input.tint.rgb, base.a * input.tint.a);
 
@@ -229,7 +235,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     surface.normal = normal;
     surface.roughness = material.surface.x;
     surface.metalness = material.surface.y;
-    surface.emissive = material.emissive.rgb;
+    surface.emissive = material.emissive.rgb * emissive_texel;
     var fragment: EffectFragment;
     fragment.world = input.world;
     fragment.uv = input.uv;

@@ -32,6 +32,8 @@ interface TextureSpec {
   repeat?: [number, number];
   srgb: boolean;
   anisotropy?: number;
+  /** Three's `flipY` (default true). */
+  flipY?: boolean;
 }
 interface MaterialSpec {
   shading?: "standard" | "basic";
@@ -41,6 +43,7 @@ interface MaterialSpec {
   emissive?: number;
   emissiveIntensity?: number;
   map?: TextureSpec;
+  emissiveMap?: TextureSpec;
   bumpMap?: TextureSpec;
   bumpScale?: number;
   vertexColors?: boolean;
@@ -52,6 +55,8 @@ interface MaterialSpec {
   side?: "front" | "back" | "double";
   blending?: "normal" | "additive";
   depthWrite?: boolean;
+  /** Three's polygon offset as [factor, units]. */
+  polygonOffset?: [number, number];
   effect?: { name: "wave" | "pulse"; params: number[] };
 }
 type GeometrySpec =
@@ -362,6 +367,51 @@ const SCENE = {
       ],
     },
     {
+      // Emissive map: the pictogram-glow path of pickups.
+      name: "glow-map",
+      geometry: { type: "box", width: 1.4, height: 1.4, depth: 1.4 },
+      material: {
+        color: 0x404040,
+        roughness: 0.6,
+        emissive: 0xffb060,
+        emissiveIntensity: 0.9,
+        emissiveMap: concrete,
+      },
+      position: [11, 0.7, -3],
+      rotation: [0, 0.6, 0],
+      ...lit,
+    },
+    {
+      // An unflipped upload (the house tiles' former DataTexture rows).
+      name: "unflipped",
+      geometry: { type: "plane", width: 2.4, height: 2.4 },
+      material: {
+        color: 0xffffff,
+        roughness: 0.9,
+        map: { ...concrete, flipY: false },
+        side: "double",
+      },
+      position: [11, 1.4, -8],
+      rotation: [0, -0.5, 0],
+      ...lit,
+    },
+    {
+      // A drift over coplanar ground, held on top by its polygon offset.
+      name: "decal",
+      geometry: { type: "plane", width: 3, height: 2 },
+      material: {
+        color: 0xc05030,
+        roughness: 1,
+        transparent: true,
+        opacity: 0.8,
+        depthWrite: false,
+        polygonOffset: [-1, -1],
+      },
+      position: [1.5, 0, -7],
+      rotation: [-Math.PI / 2, 0, 0.3],
+      receiveShadow: true,
+    },
+    {
       name: "column",
       geometry: { type: "box", width: 0.8, height: 5, depth: 0.8 },
       material: { color: 0xc8c8c8, roughness: 0.6 },
@@ -441,6 +491,9 @@ function threeTexture(spec: TextureSpec): THREE.Texture {
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.anisotropy = spec.anisotropy ?? 1;
+  if (!spec.generated) {
+    texture.flipY = spec.flipY ?? true;
+  }
   textureCache.set(key, texture);
   return texture;
 }
@@ -512,9 +565,14 @@ function threeMaterial(spec: MaterialSpec): THREE.Material {
     emissive: spec.emissive ?? 0,
     emissiveIntensity: spec.emissiveIntensity ?? 1,
     flatShading: spec.flatShading ?? false,
+    emissiveMap: spec.emissiveMap ? threeTexture(spec.emissiveMap) : null,
     bumpMap: spec.bumpMap ? threeTexture(spec.bumpMap) : null,
     bumpScale: spec.bumpScale ?? 1,
   });
+  if (spec.polygonOffset) {
+    material.polygonOffset = true;
+    [material.polygonOffsetFactor, material.polygonOffsetUnits] = spec.polygonOffset;
+  }
   const effect = spec.effect;
   if (effect?.name === "wave") {
     // TSL twin of crates/render/src/shaders/effects/wave.wgsl.

@@ -1570,7 +1570,7 @@ impl Renderer {
                     self.static_records.push(InstanceRecord::new(
                         &world,
                         [item.color[0], item.color[1], item.color[2], 1.0],
-                        [0.0; 4],
+                        item.data.unwrap_or([0.0; 4]),
                     ));
                 }
                 ranges.push(bounds.map(|bounds| StaticRange {
@@ -1854,7 +1854,7 @@ impl Renderer {
                     }
                     continue;
                 }
-                let mut emit = |world: Mat4, color: [f32; 3]| {
+                let mut emit = |world: Mat4, color: [f32; 3], data: [f32; 4]| {
                     let sphere = part.bounds.transformed(&world);
                     let mut record = None;
                     for view in 0..VIEW_COUNT {
@@ -1870,7 +1870,7 @@ impl Renderer {
                                     tint[2] * color[2],
                                     tint[3],
                                 ],
-                                instance.data,
+                                data,
                             ))
                         });
                         builder.push(
@@ -1886,10 +1886,14 @@ impl Renderer {
                 match &part.instances {
                     Some(list) => {
                         for item in list {
-                            emit(transform * item.matrix, item.color);
+                            emit(
+                                transform * item.matrix,
+                                item.color,
+                                item.data.unwrap_or(instance.data),
+                            );
                         }
                     }
-                    None => emit(transform, [1.0; 3]),
+                    None => emit(transform, [1.0; 3], instance.data),
                 }
             }
         }
