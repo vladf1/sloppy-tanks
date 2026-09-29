@@ -506,14 +506,23 @@ impl StateMirror {
         };
         for (kind_name, by_id) in record(section("updates"))? {
             let kind = entity_kind(kind_name)?;
-            for (id_text, fields) in record(by_id)? {
-                let entity = id_text
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(|number| id(Some(&Value::from(number))).ok())
-                    .filter(|number| number.to_string() == *id_text)
-                    .and_then(|number| u32::try_from(number).ok())
-                    .ok_or("Invalid entity id")?;
+            // JavaScript visits integer keys in numeric order, so new records append in
+            // id order; serde's map would visit them as text.
+            let mut entries = record(by_id)?
+                .iter()
+                .map(|(id_text, fields)| {
+                    id_text
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(|number| id(Some(&Value::from(number))).ok())
+                        .filter(|number| number.to_string() == *id_text)
+                        .and_then(|number| u32::try_from(number).ok())
+                        .map(|entity| (entity, fields))
+                        .ok_or_else(|| "Invalid entity id".to_string())
+                })
+                .collect::<ReadResult<Vec<_>>>()?;
+            entries.sort_by_key(|(entity, _)| *entity);
+            for (entity, fields) in entries {
                 claim(kind, entity)?;
                 let fields = record(fields)?;
                 match kind {

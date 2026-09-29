@@ -223,3 +223,55 @@ pub fn set_linvel(sim: &mut Simulation, index: usize, x: f64, y: f64, z: f64) {
 pub fn object(value: &Value) -> &Map<String, Value> {
     value.as_object().expect("an object")
 }
+
+/// JSON equality with numbers compared as doubles (`1` equals `1.0`), like `deepEqual` on
+/// parsed JavaScript values.
+pub fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same(x, y))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(key, value)| y.get(key).is_some_and(|other| same(value, other)))
+        }
+        _ => a == b,
+    }
+}
+
+/// Asserts [`same`], printing the first differing path.
+pub fn assert_same(a: &Value, b: &Value, context: &str) {
+    fn first_difference(a: &Value, b: &Value, path: String) -> Option<String> {
+        match (a, b) {
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x
+                .iter()
+                .zip(y)
+                .enumerate()
+                .find_map(|(i, (x, y))| first_difference(x, y, format!("{path}[{i}]"))),
+            (Value::Object(x), Value::Object(y)) => {
+                for (key, value) in x {
+                    match y.get(key) {
+                        Some(other) => {
+                            if let Some(found) =
+                                first_difference(value, other, format!("{path}.{key}"))
+                            {
+                                return Some(found);
+                            }
+                        }
+                        None => return Some(format!("{path}.{key}: {value} vs missing")),
+                    }
+                }
+                y.keys()
+                    .find(|key| !x.contains_key(*key))
+                    .map(|key| format!("{path}.{key}: missing vs {}", y[key]))
+            }
+            _ if same(a, b) => None,
+            _ => Some(format!("{path}: {a} vs {b}")),
+        }
+    }
+    if let Some(difference) = first_difference(a, b, String::new()) {
+        panic!("{context}: {difference}");
+    }
+}
