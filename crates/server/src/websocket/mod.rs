@@ -1,6 +1,6 @@
 //! RFC 6455 WebSocket framing with RFC 7692 permessage-deflate.
 //!
-//! No maintained Rust WebSocket crate offered what the Node server's `ws` does here:
+//! No maintained Rust WebSocket crate offered what the former Node server's `ws` did here:
 //! tungstenite 0.30 rejects every frame with RSV1 set (no permessage-deflate at all),
 //! soketto's deflate extension builds a fresh compressor per message (no context
 //! takeover, which is most of the saving on repetitive snapshots) and inflates without

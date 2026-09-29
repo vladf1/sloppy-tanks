@@ -1,4 +1,4 @@
-//! Socket policy and the 50 ms timer around one [`RoomHost`] (`server/room-session.ts`).
+//! Socket policy and the 50 ms timer around one [`RoomHost`].
 //!
 //! A session is plain synchronous state: it never touches the network or a runtime
 //! timer. The server's room task feeds it socket events and calls

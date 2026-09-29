@@ -7,7 +7,6 @@ assets/texture-sources/
 scripts/benchmarks/
 dist-dev/
 .claude/
-server/dist/
 bots/.wrangler/
 bots/.dev.vars
 src/generated/

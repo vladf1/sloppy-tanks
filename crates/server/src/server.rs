@@ -1,5 +1,4 @@
-//! HTTP routes, the `/room/CODE` WebSocket upgrade, connection limits and shutdown
-//! (`server/server.ts`).
+//! HTTP routes, the `/room/CODE` WebSocket upgrade, connection limits and shutdown.
 
 use std::collections::HashMap;
 use std::convert::Infallible;

@@ -1,4 +1,4 @@
-//! Settings from the environment (`server/main.ts`).
+//! Settings from the environment.
 
 /// Local Vite and preview origins; deployments list their public sites in `ALLOWED_ORIGINS`.
 const LOCAL_ORIGIN_PORTS: [u16; 5] = [5173, 5174, 5175, 4179, 4180];

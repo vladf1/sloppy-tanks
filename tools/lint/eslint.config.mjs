@@ -9,7 +9,6 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       "dist-dev/**",
-      "server/dist/**",
       "bots/.wrangler/**",
       ".claude/**",
       "artifacts/**",

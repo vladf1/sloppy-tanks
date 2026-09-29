@@ -1,5 +1,5 @@
 //! Per-second readings, 10-second `/stats` samples, minute summaries and room lifecycle
-//! lines (`server/monitor.ts`). Observation only: nothing here feeds back into rooms.
+//! lines. Observation only: nothing here feeds back into rooms.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
