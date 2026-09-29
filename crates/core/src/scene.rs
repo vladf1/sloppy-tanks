@@ -258,6 +258,31 @@ impl Node {
         DMat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
     }
 
+    /// Set `rotation` from Euler angles in Three's default XYZ order, exactly as
+    /// assigning `object.rotation.set(x, y, z)` did.
+    pub fn set_rotation_euler(&mut self, x: f64, y: f64, z: f64) {
+        self.rotation = crate::geometry::math::quat_from_euler(x, y, z);
+    }
+
+    /// The world matrix (relative to `parent`'s frame) of this node.
+    pub fn world_matrix(&self, parent: DMat4) -> DMat4 {
+        parent * self.local_matrix()
+    }
+
+    /// Depth-first search by name that also returns the matrix of the found node's
+    /// parent frame (starting from `parent` for this node), so callers can measure
+    /// a part in its model's space, like Three's `matrixWorld` after
+    /// `updateMatrixWorld`.
+    pub fn find_with_parent_world(&self, name: &str, parent: DMat4) -> Option<(&Node, DMat4)> {
+        if self.name == name {
+            return Some((self, parent));
+        }
+        let world = self.world_matrix(parent);
+        self.children
+            .iter()
+            .find_map(|child| child.find_with_parent_world(name, world))
+    }
+
     /// Depth-first search by name.
     pub fn find(&self, name: &str) -> Option<&Node> {
         if self.name == name {
