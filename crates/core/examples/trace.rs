@@ -1,10 +1,16 @@
 //! Per-tick trace of a seeded autoplay match, for comparing against the TypeScript engine:
-//! `cargo run -p sloppy-core --release --example trace -- <seed> <map|solo> <ticks>`.
+//! `cargo run -p sloppy-core --release --example trace -- <seed> <map|solo|mp> <ticks>`.
+//! Its TypeScript twin is `crates/core/tests/fixtures/trace.ts`; the two print identical lines
+//! until the physics engines' contact responses first differ.
+
+use std::collections::BTreeMap;
 
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::level_rules::single_player_rules;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::{GameMode, Simulation, SimulationSetup, VehicleCommand};
+use sloppy_core::sim::{
+    GameMode, PlayerAssignment, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -14,6 +20,28 @@ fn main() {
     let setup = match map {
         "solo" => SimulationSetup {
             game_mode: Some(GameMode::Solo),
+            ..SimulationSetup::default()
+        },
+        // Two seats: a heavy driving north and firing every 50 ticks, and an idle scout.
+        "mp" => SimulationSetup {
+            game_mode: Some(GameMode::Team),
+            round_count: Some(12),
+            players: Some(vec![
+                PlayerAssignment {
+                    player_id: "a".into(),
+                    name: "ALPHA".into(),
+                    team: Team::Blue,
+                    slot: 1,
+                    kind: VehicleKind::Heavy,
+                },
+                PlayerAssignment {
+                    player_id: "b".into(),
+                    name: "BRAVO".into(),
+                    team: Team::Red,
+                    slot: 0,
+                    kind: VehicleKind::Scout,
+                },
+            ]),
             ..SimulationSetup::default()
         },
         other => {
@@ -31,7 +59,22 @@ fn main() {
     let mut simulation = Simulation::new(seed, setup);
     simulation.start();
     for tick in 1..=ticks {
-        simulation.step(VehicleCommand::idle(), true);
+        if map == "mp" {
+            let seat = simulation
+                .tanks
+                .iter()
+                .find(|tank| tank.player_id.as_deref() == Some("a"))
+                .expect("seat a has a tank")
+                .id;
+            let command = VehicleCommand {
+                move_z: 1.0,
+                fire: tick % 50 == 0,
+                ..VehicleCommand::idle()
+            };
+            simulation.step_with(&BTreeMap::from([(seat, command)]));
+        } else {
+            simulation.step(VehicleCommand::idle(), true);
+        }
         let tanks: Vec<String> = simulation
             .tanks
             .iter()
