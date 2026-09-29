@@ -17,6 +17,14 @@ export default defineConfig({
         find: /^@dimforge\/rapier3d-simd-compat$/,
         replacement: fileURLToPath(new URL("./src/game/physics-browser.ts", import.meta.url)),
       },
+      // Bundle Three from its WebGPU sources. r185's prebuilt three.webgpu.js
+      // holds TSL in one frozen object that three/tsl reads every export from,
+      // which kept every TSL function and node class; the sources export an ES
+      // namespace that tree-shakes. Plain "three" would otherwise name the WebGL
+      // build. All three entries must resolve to the same files, or Three loads twice.
+      { find: /^three(\/webgpu)?$/, replacement: "three/src/Three.WebGPU.js" },
+      // r185's Three.TSL.js re-exports names its node sources no longer define.
+      { find: /^three\/tsl$/, replacement: "three/src/nodes/TSL.js" },
     ],
   },
   plugins: [
