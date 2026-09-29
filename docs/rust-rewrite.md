@@ -51,3 +51,8 @@ Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate
   merged effects port replaces; `presentation/model_catalog.rs` still returns placeholder
   models and must be wired to `models::{build_scenery, cover_model, tree_model, ...}`.
   Release wasm 2.76 MB raw / 0.98 MB gzip; shadow pass ~150 draws (needs cross-model batching).
+- Networking finished on branch `worktree-agent-a4f9dd187621c52fd` (2b9a8aa..51dcf68), not
+  merged yet: core `net/` (protocol, codec, replication, MatchHost, NetworkClient state
+  machine), server `MatchRoom` adapter; golden wire test vs the TS host is structurally
+  identical; real-socket smoke with TS traffic bots passed. Merge, then bind NetworkClient
+  in `crates/web` and replace the TS multiplayer client internals.
