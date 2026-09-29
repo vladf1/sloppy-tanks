@@ -243,19 +243,19 @@ impl ExplosionEffects {
         };
         // Cosmetic draw order: tempo, scale, barrel scale, phase.
         blast.tempo = if blast.tank || blast.barrel {
-            0.9 + random.next() * 0.2
+            0.9 + random.next_f64() * 0.2
         } else {
             1.0
         };
         blast.scale = if blast.tank {
-            (size / 3.0) * (0.9 + random.next() * 0.25)
+            (size / 3.0) * (0.9 + random.next_f64() * 0.25)
         } else {
             (size / 4.5).clamp(0.55, 1.45)
         };
         if blast.barrel {
-            blast.scale *= 0.88 + random.next() * 0.25;
+            blast.scale *= 0.88 + random.next_f64() * 0.25;
         }
-        blast.phase = random.next() * TAU;
+        blast.phase = random.next_f64() * TAU;
         blast.fire = fire;
     }
 

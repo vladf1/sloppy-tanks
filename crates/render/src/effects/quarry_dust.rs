@@ -72,14 +72,14 @@ impl QuarryDust {
             return;
         }
         // Larger, fainter sheets stay well above the tanks so readability never suffers.
-        if random.next() < HIGH_SHEET_CHANCE {
-            let x = -50.0 + random.next() * 100.0;
-            let z = -50.0 + random.next() * 100.0;
-            let y = 2.4 + random.next() * 2.4;
-            let vx = 1.5 + random.next() * 1.5;
-            let life = 6.0 + random.next() * 3.0;
-            let size = 5.0 + random.next() * 3.5;
-            let phase = random.next() * TAU;
+        if random.next_f64() < HIGH_SHEET_CHANCE {
+            let x = -50.0 + random.next_f64() * 100.0;
+            let z = -50.0 + random.next_f64() * 100.0;
+            let y = 2.4 + random.next_f64() * 2.4;
+            let vx = 1.5 + random.next_f64() * 1.5;
+            let life = 6.0 + random.next_f64() * 3.0;
+            let size = 5.0 + random.next_f64() * 3.5;
+            let phase = random.next_f64() * TAU;
             self.wisps.push(Wisp {
                 x,
                 y,
@@ -93,16 +93,16 @@ impl QuarryDust {
             });
             return;
         }
-        let side = if random.next() < 0.5 { -1.0 } else { 1.0 };
-        let z = side * (63.0 + random.next() * 8.0);
+        let side = if random.next_f64() < 0.5 { -1.0 } else { 1.0 };
+        let z = side * (63.0 + random.next_f64() * 8.0);
         // Rest on the dipped apron outside the wall, the grade the terrain bakes.
         let ground = -((z.abs() - 60.0) * 0.3).min(1.8);
-        let x = -70.0 + random.next() * 140.0;
-        let y = ground + 0.5 + random.next() * 0.9;
-        let vx = 1.2 + random.next() * 1.2;
-        let life = 5.0 + random.next() * 3.0;
-        let size = 2.5 + random.next() * 2.0;
-        let phase = random.next() * TAU;
+        let x = -70.0 + random.next_f64() * 140.0;
+        let y = ground + 0.5 + random.next_f64() * 0.9;
+        let vx = 1.2 + random.next_f64() * 1.2;
+        let life = 5.0 + random.next_f64() * 3.0;
+        let size = 2.5 + random.next_f64() * 2.0;
+        let phase = random.next_f64() * TAU;
         self.wisps.push(Wisp {
             x,
             y,
@@ -131,7 +131,7 @@ impl QuarryDust {
         let step = dt.min(MAX_STEP);
         self.timer -= step;
         if self.timer <= 0.0 {
-            self.timer = 0.35 + random.next() * 0.6;
+            self.timer = 0.35 + random.next_f64() * 0.6;
             self.spawn(random);
         }
         let elapsed = state.elapsed;
@@ -160,6 +160,7 @@ impl QuarryDust {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

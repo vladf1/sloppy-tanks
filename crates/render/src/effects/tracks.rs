@@ -202,6 +202,7 @@ impl TrackTrails {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use sloppy_core::sim::render_state::RenderTank;
@@ -390,7 +391,10 @@ mod tests {
         trails.update(&s, 1.0);
         assert_eq!(trails.len(), 0, "no expired instances remain in the draw");
         step(&mut trails, &mut s, 3.0);
-        assert!(trails.len() > 0, "new tracks resume after all marks expire");
+        assert!(
+            !trails.is_empty(),
+            "new tracks resume after all marks expire"
+        );
     }
 
     #[test]
@@ -404,7 +408,7 @@ mod tests {
             assert!(trails.records.dirty().len() <= 3);
             trails.records.take_dirty(|_, _| {});
         }
-        assert!(trails.len() > 0);
+        assert!(!trails.is_empty());
     }
 
     #[test]

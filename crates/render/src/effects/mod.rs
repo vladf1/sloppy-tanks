@@ -282,6 +282,11 @@ mod browser {
             &self.systems
         }
 
+        /// Restart the cosmetic random stream (repeatable lab screenshots).
+        pub fn set_seed(&mut self, seed: u64) {
+            self.systems.random = super::CosmeticRandom::seeded(seed);
+        }
+
         fn sync(&mut self, renderer: &mut Renderer) {
             let Self { systems, pools } = self;
             let mut next = pools.iter();
@@ -310,6 +315,7 @@ mod browser {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use sloppy_core::sim::render_state::RenderTank;

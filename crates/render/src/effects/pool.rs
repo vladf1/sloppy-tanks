@@ -200,7 +200,7 @@ mod tests {
             pool.push(at(i as f32));
         }
         assert_eq!(pool.len(), 4, "a full pool refuses records");
-        assert_eq!(pool.dirty(), [0..4]);
+        assert_eq!(pool.dirty().first(), Some(&(0..4)));
         let mut uploads = Vec::new();
         pool.take_dirty(|first, records| uploads.push((first, records.len())));
         assert_eq!(uploads, [(0, 4)]);

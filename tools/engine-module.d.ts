@@ -21,5 +21,21 @@ declare module "*/generated/engine/engine.js" {
     error(): string | undefined;
     free(): void;
   }
+  export class EffectsLab {
+    static create(canvas: HTMLCanvasElement, assetBase: string): Promise<EffectsLab>;
+    set_seed(seed: number): void;
+    set_state(json: string): void;
+    event(json: string, playerHit: boolean): void;
+    reset(): void;
+    frame(alpha: number, dt: number, time: number): void;
+    prepare_step(budget: number): Uint32Array;
+    warm_up(): void;
+    textures_pending(): number;
+    set_camera(position: Float32Array, target: Float32Array): void;
+    resize(width: number, height: number): void;
+    stats(): string;
+    error(): string | undefined;
+    free(): void;
+  }
   export default function init(options: { module_or_path: string | URL }): Promise<unknown>;
 }

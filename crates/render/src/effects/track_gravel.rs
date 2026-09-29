@@ -64,12 +64,12 @@ impl TrackGravel {
                 return;
             }
             // Draw order: vx, vz, vy, life, size, spin.
-            let vx = vx + (random.next() - 0.5) * 0.8;
-            let vz = vz + (random.next() - 0.5) * 0.8;
-            let vy = 1.6 + random.next() * 1.4 + strength * 0.6;
-            let life = 0.5 + random.next() * 0.22;
-            let size = 0.055 + random.next() * 0.05;
-            let spin = random.next() * std::f64::consts::TAU;
+            let vx = vx + (random.next_f64() - 0.5) * 0.8;
+            let vz = vz + (random.next_f64() - 0.5) * 0.8;
+            let vy = 1.6 + random.next_f64() * 1.4 + strength * 0.6;
+            let life = 0.5 + random.next_f64() * 0.22;
+            let size = 0.055 + random.next_f64() * 0.05;
+            let spin = random.next_f64() * std::f64::consts::TAU;
             self.live.push(Pebble {
                 x,
                 y: 0.15,

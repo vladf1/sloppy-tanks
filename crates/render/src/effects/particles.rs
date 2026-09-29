@@ -174,7 +174,7 @@ impl ParticleEffects {
         // The real beams carry a collapse; add only a hit-sized handful of chips.
         let count = if timber_wall {
             style.count as i64 - 2
-                + (random.next() * 5.0).floor() as i64
+                + (random.next_f64() * 5.0).floor() as i64
                 + if explosion { 2 } else { 0 }
         } else if burnout {
             3
@@ -198,13 +198,13 @@ impl ParticleEffects {
             } else if tree {
                 // Twelve entries: every fourth a bark chip, the rest leaves.
                 let j = i % 12;
-                if j % 4 == 0 {
+                if j.is_multiple_of(4) {
                     0x98633e
                 } else {
                     [0x175e3b, 0x2c9452, accent.unwrap_or(0x389b58)][j % 3]
                 }
             } else if pickup {
-                if i % 4 == 0 {
+                if i.is_multiple_of(4) {
                     0xffffff
                 } else {
                     accent.unwrap_or(0xffffff)
@@ -228,37 +228,37 @@ impl ParticleEffects {
         while (i as i64) < count && self.particles.len() < MAX_PARTICLES {
             // Draw order matches the former object literal: life, x, y, z, vx, vy, vz, size.
             let life = if tank_death {
-                0.8 + random.next() * 0.4
+                0.8 + random.next_f64() * 0.4
             } else {
-                (style.life[0] + random.next() * style.life[1]) * life_scale
+                (style.life[0] + random.next_f64() * style.life[1]) * life_scale
             };
-            let x = event.x + (random.next() - 0.5) * style.scatter;
+            let x = event.x + (random.next_f64() - 0.5) * style.scatter;
             let y = if chip_hit && tree {
-                if i % 4 == 0 {
-                    0.7 + random.next() * 0.4
+                if i.is_multiple_of(4) {
+                    0.7 + random.next_f64() * 0.4
                 } else {
-                    event.height.unwrap_or(5.0) * (0.45 + random.next() * 0.35)
+                    event.height.unwrap_or(5.0) * (0.45 + random.next_f64() * 0.35)
                 }
             } else {
                 style.height
             };
-            let z = event.z + (random.next() - 0.5) * style.scatter;
-            let vx = (random.next() - 0.5) * speed;
+            let z = event.z + (random.next_f64() - 0.5) * style.scatter;
+            let vx = (random.next_f64() - 0.5) * speed;
             let vy = if tank_death {
-                (if burnout { 1.5 } else { 3.5 }) + random.next() * 2.8
+                (if burnout { 1.5 } else { 3.5 }) + random.next_f64() * 2.8
             } else {
-                style.lift + random.next() * if tree { 5.0 } else { speed }
+                style.lift + random.next_f64() * if tree { 5.0 } else { speed }
             };
-            let vz = (random.next() - 0.5) * speed;
+            let vz = (random.next_f64() - 0.5) * speed;
             let size = if fiery {
-                0.05 + random.next() * 0.06
+                0.05 + random.next_f64() * 0.06
             } else {
-                style.size[0] + random.next() * style.size[1]
+                style.size[0] + random.next_f64() * style.size[1]
             };
             let shape = if timber {
                 Some(ParticleShape::Splinter)
             } else if tree {
-                Some(if i % 4 == 0 {
+                Some(if i.is_multiple_of(4) {
                     ParticleShape::Splinter
                 } else {
                     ParticleShape::Leaf

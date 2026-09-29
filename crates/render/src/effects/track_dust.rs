@@ -255,8 +255,8 @@ impl TrackDust {
                         if self.puffs.len() >= TRACK_DUST_CAPACITY {
                             break;
                         }
-                        let life = (if quarry { 0.55 } else { 0.45 }) + random.next() * 0.2;
-                        let size = (0.8 + random.next() * 0.2)
+                        let life = (if quarry { 0.55 } else { 0.45 }) + random.next_f64() * 0.2;
+                        let size = (0.8 + random.next_f64() * 0.2)
                             * scale
                             * if quarry { 1.15 } else { 1.0 }
                             * (1.0 + strength * 0.1);
@@ -306,6 +306,7 @@ impl TrackDust {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::effects::track_gravel::TRACK_GRAVEL_CAPACITY;
@@ -433,7 +434,7 @@ mod tests {
         for _ in 0..30 {
             f.step(12.0);
         }
-        assert!(f.dust.len() > 0);
+        assert!(!f.dust.is_empty());
         f.dust.reset();
         assert_eq!(f.dust.len(), 0);
     }
@@ -475,7 +476,7 @@ mod tests {
         for _ in 0..60 {
             f.step(30.0);
         }
-        assert!(f.dust.len() > 0);
+        assert!(!f.dust.is_empty());
     }
 
     #[test]
@@ -492,14 +493,14 @@ mod tests {
                 for _ in 0..30 {
                     f.step(12.0);
                 }
-                assert!(f.dust.len() > 0, "dirt road raises dust");
+                assert!(!f.dust.is_empty(), "dirt road raises dust");
                 f.place(20.0, 12.0);
                 for _ in 0..45 {
                     f.step(12.0);
                 }
                 assert_eq!(f.dust.len(), 0, "dust fades after leaving the road");
             } else {
-                assert!(f.dust.len() > 0, "{theme} keeps its dust");
+                assert!(!f.dust.is_empty(), "{theme} keeps its dust");
             }
         }
     }
@@ -512,7 +513,7 @@ mod tests {
             for _ in 0..30 {
                 f.step(speed);
             }
-            assert!(f.dust.len() > 0);
+            assert!(!f.dust.is_empty());
             for p in f.origins() {
                 assert!(p.x < 8.3, "only the track on dirt emits");
             }

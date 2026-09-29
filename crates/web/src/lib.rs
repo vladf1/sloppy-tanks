@@ -7,7 +7,11 @@
 pub mod lab_scene;
 
 #[cfg(target_arch = "wasm32")]
+mod effects_lab;
+#[cfg(target_arch = "wasm32")]
 mod lab;
 
+#[cfg(target_arch = "wasm32")]
+pub use effects_lab::EffectsLab;
 #[cfg(target_arch = "wasm32")]
 pub use lab::RenderLab;

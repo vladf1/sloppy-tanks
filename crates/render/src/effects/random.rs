@@ -31,7 +31,7 @@ impl CosmeticRandom {
         }
     }
 
-    pub fn next(&mut self) -> f64 {
+    pub fn next_f64(&mut self) -> f64 {
         if let Some(value) = self.fixed {
             return value;
         }
@@ -53,11 +53,11 @@ mod tests {
         let mut random = CosmeticRandom::seeded(7);
         let mut sum = 0.0;
         for _ in 0..10_000 {
-            let value = random.next();
+            let value = random.next_f64();
             assert!((0.0..1.0).contains(&value));
             sum += value;
         }
         assert!((sum / 10_000.0 - 0.5).abs() < 0.02);
-        assert_eq!(CosmeticRandom::constant(0.5).next(), 0.5);
+        assert_eq!(CosmeticRandom::constant(0.5).next_f64(), 0.5);
     }
 }
