@@ -33,8 +33,9 @@
 //! - Notices (`take_notices`): `status {text, connected}`, `notice {text}`, `ended {cause,
 //!   text}`, `lobby {lobby, playerId}` (the wire lobby record), `result {match, team}`,
 //!   `resetFeedback`, `clearInput`, `reveal`, `prepare` (run `prepare_step` between tasks
-//!   until it reports done), `arenaFailed {error}` and `baselineShown` (the arena drew the
-//!   first frames of a new baseline and takes input again).
+//!   until it reports done; while it reports `gpuPending`, wait on a short timer),
+//!   `arenaFailed {error}` and `baselineShown` (the arena drew the first frames of a new
+//!   baseline and takes input again).
 //! - `frame(now, input) -> Float32Array` ([`net_frame_slot`]): input is the packed raw
 //!   control state of `Game.frame` (`sloppy_render::presentation::input::slot`); command
 //!   building, aiming and the input cadence run here.
@@ -61,9 +62,9 @@ use sloppy_core::sim::map_options::map_option_for;
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::{GameMode, MatchPhase, RenderState, SimEvent, SimEventType, Weapon};
 use sloppy_render::gpu::{Renderer, RendererOptions};
+use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
-use sloppy_render::presentation::{PrepareStatus, Presentation};
 use wasm_bindgen::prelude::*;
 
 use crate::hud::{human_json, scoreboard_json};
@@ -470,19 +471,25 @@ impl NetGame {
     // ---------------------------------------------------------- arena
 
     /// Compile up to `budget` pipelines for the arena `prepare` asked for;
-    /// `[compiled, remaining, texturesPending, done]`. When done it warms every variant,
-    /// draws the first frames and tells the room the arena is ready.
+    /// `[compiled, remaining, texturesPending, done, gpuPending]`. Once compiled it warms
+    /// every variant and waits for the GPU to run that work (`gpuPending`: poll again
+    /// after a short timer rather than a task); when done it draws the first frames and
+    /// tells the room the arena is ready. The seat stays suspended until then, so a
+    /// shader compile that takes seconds never makes the room drop this connection.
     pub fn prepare_step(&mut self, budget: u32, now: f64) -> Vec<f64> {
         if self.arena.is_none() {
-            return vec![0.0, 0.0, 0.0, 1.0];
+            return vec![0.0, 0.0, 0.0, 1.0, 0.0];
         }
-        let PrepareStatus {
-            compiled,
-            remaining,
-            textures_pending,
-        } = self.view.prepare_step(budget.max(1));
-        let ready = remaining == 0 && textures_pending == 0;
-        if ready && let Some(arena) = self.arena.take() {
+        let status = match self.view.prepare_step(budget.max(1)) {
+            Ok(status) => status,
+            Err(error) => {
+                self.arena_failed(error);
+                return vec![0.0, 0.0, 0.0, 1.0, 0.0];
+            }
+        };
+        if status.ready
+            && let Some(arena) = self.arena.take()
+        {
             match self.view.finish_prepare(&arena.state) {
                 Ok(()) => {
                     self.prepared = true;
@@ -492,11 +499,13 @@ impl NetGame {
                 Err(error) => self.arena_failed(error),
             }
         }
+        let flag = |value: bool| if value { 1.0 } else { 0.0 };
         vec![
-            f64::from(compiled),
-            f64::from(remaining),
-            f64::from(textures_pending),
-            if ready { 1.0 } else { 0.0 },
+            f64::from(status.compiled),
+            f64::from(status.remaining),
+            f64::from(status.textures_pending),
+            flag(status.ready),
+            flag(status.gpu_pending),
         ]
     }
 

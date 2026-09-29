@@ -63,6 +63,16 @@ export function nextTask(): Promise<void> {
   });
 }
 
+/** How often arena preparation polls a GPU that is still running its warm-up. */
+const GPU_POLL_MS = 16;
+
+/** Wait before the next `prepare_step`: a message task while pipelines and textures
+ * remain, or a short timer while the GPU compiles and runs the warm-up (`gpuPending`),
+ * which can take seconds on a cold shader cache and should not spin the page. */
+export function nextPrepareStep(gpuPending: boolean): Promise<void> {
+  return gpuPending ? new Promise((resolve) => setTimeout(resolve, GPU_POLL_MS)) : nextTask();
+}
+
 /** A hidden tab paints no frames; after this long `afterPaint` stops waiting for one. */
 const PAINT_FALLBACK_MS = 100;
 

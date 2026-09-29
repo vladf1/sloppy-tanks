@@ -5,7 +5,7 @@ import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
-import { nextTask } from "../game/task-yield";
+import { nextPrepareStep } from "../game/task-yield";
 import type { Match } from "../game/types";
 import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
 import { NetworkStats, type NetworkStatsSource } from "./network-stats";
@@ -427,12 +427,14 @@ export async function startMultiplayer(
     }
     preparing = true;
     try {
+      let gpuPending = false;
       for (;;) {
-        await nextTask();
-        const [, , , done] = game.prepare_step(PREPARE_BUDGET, performance.now());
+        await nextPrepareStep(gpuPending);
+        const [, , , done, waitingForGpu] = game.prepare_step(PREPARE_BUDGET, performance.now());
         if (done) {
           break;
         }
+        gpuPending = waitingForGpu === 1;
       }
     } finally {
       preparing = false;

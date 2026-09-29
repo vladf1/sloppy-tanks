@@ -35,6 +35,7 @@ use super::model_catalog::{
 };
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, quat, vec3};
+use super::preparation::Preparation;
 use super::suspension::TankSuspension;
 use super::theme::{
     SHADOW_BIAS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, Theme, ThemeLook, theme_look,
@@ -465,12 +466,17 @@ struct Flags {
     wind_duration: f64,
 }
 
-/// Round-start preparation (`prepare()`): pipelines, textures, then first frames.
+/// Round-start preparation (`prepare()`): pipelines, textures, the GPU running the
+/// warm-up, then first frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PrepareStatus {
     pub compiled: u32,
     pub remaining: u32,
     pub textures_pending: u32,
+    /// The warm-up was submitted and the GPU is still compiling or running it.
+    pub gpu_pending: bool,
+    /// Everything is compiled and warm; [`Presentation::finish_prepare`] may draw.
+    pub ready: bool,
 }
 
 /// Counts for diagnostics and Stats for nerds.
@@ -525,6 +531,7 @@ pub struct Presentation {
     scratch: Vec<u32>,
     /// Ids present this frame, for dropping views of departed entities.
     live: std::collections::HashSet<u32>,
+    preparation: Preparation,
 }
 
 impl Presentation {
@@ -592,6 +599,7 @@ impl Presentation {
             textures: GeneratedTextures::default(),
             scratch: Vec::new(),
             live: std::collections::HashSet::new(),
+            preparation: Preparation::default(),
         };
         presentation
             .flags
@@ -803,6 +811,7 @@ impl Presentation {
     /// boughs, mines, pickup glows, debris pieces), so `prepare_step` compiles
     /// their pipelines before combat instead of mid-fight.
     pub fn begin_prepare(&mut self, state: &RenderState) {
+        self.preparation = Preparation::default();
         for kind in VehicleKind::ALL {
             for team in [Team::Blue, Team::Red] {
                 self.library.tank(&mut self.renderer, kind, team);
@@ -858,31 +867,46 @@ impl Presentation {
         self.effects.warm_up_samples(&mut self.renderer);
     }
 
-    /// Compile up to `budget` pipelines; yield to the page between calls.
-    pub fn prepare_step(&mut self, budget: u32) -> PrepareStatus {
+    /// Compile up to `budget` pipelines; yield to the page between calls. Once nothing
+    /// remains and textures have loaded, draw every prepared variant offscreen, release
+    /// the samples and wait (over later calls) until the GPU has run that warm-up.
+    pub fn prepare_step(&mut self, budget: u32) -> Result<PrepareStatus, String> {
         // One band of any soil bake per step keeps the loading screen responsive.
         self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
         let PrepareProgress {
             compiled,
             remaining,
-        } = self.renderer.prepare_step(budget);
-        PrepareStatus {
+        } = if self.preparation == Preparation::Compiling {
+            self.renderer.prepare_step(budget)
+        } else {
+            PrepareProgress::default()
+        };
+        // A soil bake in progress still owes the renderer its texture.
+        let textures_pending =
+            self.renderer.textures_pending() as u32 + u32::from(self.textures.baking());
+        if self.preparation.warm_up_due(remaining, textures_pending) {
+            self.renderer.warm_up()?;
+            for model in self.sample_models.drain(..) {
+                self.renderer.remove_model(model);
+            }
+            for instance in self.samples.drain(..) {
+                self.renderer.remove_instance(instance);
+            }
+            self.renderer.await_gpu();
+        }
+        self.preparation.gpu_finished(self.renderer.gpu_idle());
+        Ok(PrepareStatus {
             compiled,
             remaining,
-            textures_pending: self.renderer.textures_pending() as u32,
-        }
+            textures_pending,
+            gpu_pending: self.preparation.awaiting_gpu(),
+            ready: self.preparation.ready(),
+        })
     }
 
-    /// Draw every prepared variant offscreen, release the samples, then draw the
-    /// actual first frames so combat starts without a compile stall.
+    /// Draw the actual first frames once [`PrepareStatus::ready`], so combat starts
+    /// without a compile stall.
     pub fn finish_prepare(&mut self, state: &RenderState) -> Result<(), String> {
-        self.renderer.warm_up()?;
-        for model in self.sample_models.drain(..) {
-            self.renderer.remove_model(model);
-        }
-        for instance in self.samples.drain(..) {
-            self.renderer.remove_instance(instance);
-        }
         for _ in 0..2 {
             self.render(state, 1.0, 0.0, false)?;
         }

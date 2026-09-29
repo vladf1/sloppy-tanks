@@ -109,6 +109,11 @@ mod browser {
             }
         }
 
+        /// Whether a soil bake is still in progress (its texture is not uploaded yet).
+        pub fn baking(&self) -> bool {
+            self.soil.is_some()
+        }
+
         /// Bake one band of pending soil; uploads it once complete.
         pub fn step(&mut self, renderer: &mut Renderer, rows: usize) {
             if let Some(bake) = &mut self.soil

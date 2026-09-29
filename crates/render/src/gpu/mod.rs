@@ -30,6 +30,7 @@ pub use pools::PoolId;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
@@ -613,6 +614,8 @@ pub struct Renderer {
     shadow_base_buffer: wgpu::Buffer,
     shadow_base_capacity: u32,
     stats: RenderStats,
+    /// Set once the GPU has run everything submitted before the last [`Renderer::await_gpu`].
+    gpu_idle: Arc<AtomicBool>,
 }
 
 fn uniform_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
@@ -804,6 +807,7 @@ impl Renderer {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             stats: RenderStats::default(),
+            gpu_idle: Arc::new(AtomicBool::new(true)),
             ctx,
         };
         renderer.rebuild_view_groups();
@@ -1606,6 +1610,20 @@ impl Renderer {
                 break;
             }
         }
+    }
+
+    /// Ask to be told when the GPU has run everything submitted so far, including the
+    /// compilation of every pipeline created before; [`Self::gpu_idle`] turns true then.
+    pub fn await_gpu(&mut self) {
+        let idle = Arc::new(AtomicBool::new(false));
+        self.gpu_idle = idle.clone();
+        self.ctx
+            .queue
+            .on_submitted_work_done(move || idle.store(true, Ordering::Release));
+    }
+
+    pub fn gpu_idle(&self) -> bool {
+        self.gpu_idle.load(Ordering::Acquire)
     }
 
     /// Draw every prepared variant once offscreen (shadow, main, water and output

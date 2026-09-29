@@ -21,7 +21,7 @@ import { sameGameOptions, type GameOptions } from "./game/game-options";
 import { isExtraLevel, showsExtraLevels } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import type { PreparedGame } from "./game/start-menu";
-import { afterPaint, nextTask } from "./game/task-yield";
+import { afterPaint, nextPrepareStep } from "./game/task-yield";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
 const HUD_UPDATE_EVERY_FRAMES = 4;
@@ -120,12 +120,15 @@ export async function prepareGame(
       }
       // Compile a few pipelines per task until the world's shaders, textures and
       // first frames are ready, or the choices change again.
+      let gpuPending = false;
       for (;;) {
-        await nextTask();
+        await nextPrepareStep(gpuPending);
         if (inRound || !sameGameOptions(prepared, wanted)) {
           break;
         }
-        const [compiled, remaining, texturesPending, done] = game.prepare_step(PREPARE_BUDGET);
+        const [compiled, remaining, texturesPending, done, waitingForGpu] =
+          game.prepare_step(PREPARE_BUDGET);
+        gpuPending = waitingForGpu === 1;
         total += compiled;
         if (done) {
           return;
@@ -133,7 +136,9 @@ export async function prepareGame(
         reportShaders(
           remaining > 0
             ? `Shaders loaded: ${total} of ${total + remaining}`
-            : `Loading textures… ${texturesPending} left`,
+            : gpuPending
+              ? "Compiling shaders…"
+              : `Loading textures… ${texturesPending} left`,
         );
       }
     }

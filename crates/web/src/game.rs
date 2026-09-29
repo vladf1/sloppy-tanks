@@ -7,8 +7,9 @@
 //!
 //! ```text
 //! const game = await Game.create(canvas, JSON.stringify(config));
-//! // Loading screen: compile pipelines and wait for textures, yielding between calls.
-//! while (!(await nextTask(), game.prepare_step(4))[3]) {}
+//! // Loading screen: compile pipelines, wait for textures and for the GPU to run the
+//! // warm-up; a task between steps, a short timer while `gpuPending` (slot 4).
+//! while (!(await nextPrepareStep(pending), game.prepare_step(4))[3]) {}
 //! game.start();                          // GO: the round begins
 //! requestAnimationFrame(function loop(now) {
 //!   const result = game.frame(now, input); // input: Float32Array(INPUT_LENGTH)
@@ -28,9 +29,10 @@
 //!   play as an endless team battle) and needs `prepare_step` again. Returns
 //!   whether it rebuilt.
 //! - `prepare_step(budget) -> Float64Array [compiled, remaining, texturesPending,
-//!   done]`: compiles up to `budget` pipelines per call; once nothing remains and
-//!   textures have loaded it warms every variant, draws the first frames and
-//!   reports `done = 1`.
+//!   done, gpuPending]`: compiles up to `budget` pipelines per call; once nothing
+//!   remains and textures have loaded it warms every variant and reports
+//!   `gpuPending = 1` until the GPU has compiled and run that work (poll on a short
+//!   timer meanwhile), then draws the first frames and reports `done = 1`.
 //! - `start()`: begin the round (GO, PLAY AGAIN). `resume()`: continue a pause.
 //!   `pause()`: pause a playing round. `restart()`: a fresh world for Battle
 //!   Setup (phase `ready`; prepare again). `end_battle()`: END BATTLE.
@@ -83,10 +85,10 @@ use sloppy_core::sim::{
     Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::gpu::{Renderer, RendererOptions};
+use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::hud::health_bar_state;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
-use sloppy_render::presentation::{PrepareStatus, Presentation};
 use wasm_bindgen::prelude::*;
 
 /// Frame deltas are capped so a stalled tab never fast-forwards the match.
@@ -352,27 +354,25 @@ impl Game {
         Ok(true)
     }
 
-    /// Compile up to `budget` pipelines; `[compiled, remaining, texturesPending, done]`.
+    /// Compile up to `budget` pipelines;
+    /// `[compiled, remaining, texturesPending, done, gpuPending]`.
     pub fn prepare_step(&mut self, budget: u32) -> Result<Vec<f64>, JsValue> {
         if self.preparation == Preparation::Done {
-            return Ok(vec![0.0, 0.0, 0.0, 1.0]);
+            return Ok(vec![0.0, 0.0, 0.0, 1.0, 0.0]);
         }
-        let PrepareStatus {
-            compiled,
-            remaining,
-            textures_pending,
-        } = self.view.prepare_step(budget.max(1));
-        let ready = remaining == 0 && textures_pending == 0;
-        if ready {
+        let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
+        if status.ready {
             self.fill_state();
             self.view.finish_prepare(&self.state).map_err(js_error)?;
             self.preparation = Preparation::Done;
         }
+        let flag = |value: bool| if value { 1.0 } else { 0.0 };
         Ok(vec![
-            f64::from(compiled),
-            f64::from(remaining),
-            f64::from(textures_pending),
-            if ready { 1.0 } else { 0.0 },
+            f64::from(status.compiled),
+            f64::from(status.remaining),
+            f64::from(status.textures_pending),
+            flag(status.ready),
+            flag(status.gpu_pending),
         ])
     }
 
