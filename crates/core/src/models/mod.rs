@@ -119,3 +119,5 @@ pub use tree_models::{
     tree_proportions, trunk_fragment,
 };
 
+#[cfg(test)]
+mod tests_props;
