@@ -86,6 +86,7 @@ try {
   await waitForRoomBrowser(networkPage);
   await checkMultiplayerMenu(networkPage);
   // A room link opens the same Battle Setup tab, not a room page.
+  const roomLinkRequests = networkRequests.length;
   await networkPage.goto(server.resolvedUrls.local[0] + "?room=ABCD2345");
   await waitForRoomBrowser(networkPage);
   assert.equal(await networkPage.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
@@ -121,6 +122,16 @@ try {
   assert.ok(
     binaries.length > 0 && binaries.every((path) => /\/engine_bg-[\w-]+\.wasm$/.test(path)),
     `Multiplayer downloads only the engine Wasm: ${binaries.join(", ")}`,
+  );
+  // Entering the room takes over the page's early <head> download (src/engine.ts)
+  // instead of fetching the engine again.
+  const roomLinkBinaries = networkRequests
+    .slice(roomLinkRequests)
+    .filter((url) => new URL(url).pathname.endsWith(".wasm"));
+  assert.equal(
+    roomLinkBinaries.length,
+    1,
+    `The room page downloads the engine once: ${roomLinkBinaries.join(", ")}`,
   );
   for (const url of networkRequests) {
     const path = new URL(url).pathname;

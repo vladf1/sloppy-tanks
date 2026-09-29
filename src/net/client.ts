@@ -1,5 +1,4 @@
-import init, { NetGame } from "../generated/engine/engine.js";
-import wasmUrl from "../generated/engine/engine_bg.wasm?url";
+import { engineModule, loadEngine, NetGame } from "../engine";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
@@ -66,8 +65,6 @@ interface DrainedEvents {
   events: HudEvent[];
 }
 
-let engine: Promise<unknown> | undefined;
-
 /** Join the room chosen on Battle Setup. The room page builds out of sight and replaces
  * `setup` only once its arena can draw, so the arena's first stalled frames never show;
  * a join or room that gives up returns to Battle Setup instead. Without `selection`, the
@@ -98,8 +95,9 @@ export async function startMultiplayer(
   if (selection) {
     history.replaceState(null, "", roomAddress(room));
   }
-  engine ??= init({ module_or_path: wasmUrl });
-  await engine;
+  // The shared loader takes over the page's early download and compiles the binary
+  // once, whether single player already loaded it or this room page is the first.
+  await loadEngine();
   const pending = selection ? undefined : takePendingJoin();
   const choiceJson = selection
     ? JSON.stringify(selection.choice)
@@ -440,7 +438,7 @@ export async function startMultiplayer(
       let gpuPending = false;
       for (;;) {
         await nextPrepareStep(gpuPending);
-        startTextureBake(game, wasmUrl);
+        startTextureBake(game, engineModule());
         const [, , , done, waitingForGpu] = game.prepare_step(PREPARE_BUDGET, performance.now());
         if (done) {
           break;

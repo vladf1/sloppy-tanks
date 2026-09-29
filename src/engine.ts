@@ -1,13 +1,14 @@
-// The Rust engine for the page: the wasm-bindgen glue and its hashed binary, built
-// into `src/generated/engine/` by `pnpm run wasm`. Production pages start the
-// binary's download from an inline <head> script (the engine-download plugin in
-// vite.config.ts); this module takes that response over, so the download and
-// compilation overlap with the menu and the engine's own JavaScript.
-import init, { Game } from "./generated/engine/engine.js";
+// The Rust engine for the page, single player and room alike: the wasm-bindgen glue
+// and its hashed binary, built into `src/generated/engine/` by `pnpm run wasm`.
+// Production pages start the binary's download from an inline <head> script (the
+// engine-download plugin in vite.config.ts); this module takes that response over,
+// so the download and compilation overlap with the menu and the engine's own
+// JavaScript, and a page downloads and compiles the engine once.
+import init, { Game, NetGame } from "./generated/engine/engine.js";
 import binaryUrl from "./generated/engine/engine_bg.wasm?url";
 import { WebGPUUnavailableError } from "./game/startup-error";
 
-export { Game };
+export { Game, NetGame };
 
 declare global {
   interface Window {

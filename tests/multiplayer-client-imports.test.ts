@@ -10,6 +10,7 @@ const ROOM_BROWSER = "src/net/room-browser.ts";
 // be game logic creeping back into TypeScript or a library download on joining a room.
 // scripts/multiplayer-loading-check.mjs checks the real Vite chunks in a browser.
 const SHELL = new Set([
+  "src/engine.ts",
   "src/touch-controls.css",
   ...[
     "ammo-options",
@@ -25,6 +26,7 @@ const SHELL = new Set([
     "nerd-stats",
     "play-modes",
     "round-recap",
+    "startup-error",
     "task-yield",
     "texture-bake",
     "touch-controls",
@@ -105,11 +107,15 @@ for (const entry of [CLIENT, ROOM_BROWSER]) {
   });
 }
 
-test("the room page runs on the Rust engine build", async () => {
+test("the room page runs on the Rust engine build through the shared loader", async () => {
   const inputs = await staticGraph(CLIENT);
-  const engine = inputs[CLIENT].imports.filter((item) => item.external).map((item) => item.path);
-  assert.deepEqual(engine.sort(), [
-    "../generated/engine/engine.js",
-    "../generated/engine/engine_bg.wasm?url",
+  const external = (file: string) =>
+    inputs[file].imports.filter((item) => item.external).map((item) => item.path);
+  // The loader reuses the page's early download and one compiled module (src/engine.ts).
+  assert.deepEqual(external(CLIENT), []);
+  assert.ok(inputs[CLIENT].imports.some((item) => item.path === "src/engine.ts"));
+  assert.deepEqual(external("src/engine.ts").sort(), [
+    "./generated/engine/engine.js",
+    "./generated/engine/engine_bg.wasm?url",
   ]);
 });
