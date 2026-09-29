@@ -101,7 +101,8 @@ const HEAVY: VehicleStats = vehicle_stats(
     (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
     Weapon::Standard,
 );
-const HUMVEE: VehicleStats = vehicle_stats("HUNTER", "TOW Humvee", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
+const HUMVEE: VehicleStats =
+    vehicle_stats("HUNTER", "TOW Humvee", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
 
 pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
     match kind {
@@ -339,9 +340,24 @@ mod tests {
     fn speeds_match_the_typescript_table() {
         // Values printed by the TS `VEHICLES` and `WEAPONS` tables.
         let expected = [
-            (VehicleKind::Scout, 11.103161181308407, 40.0, 0.8316108339272986),
-            (VehicleKind::Balanced, 8.954162242990652, 32.0, 0.8057851239669421),
-            (VehicleKind::Heavy, 6.805163304672895, 24.0, 0.8577868852459014),
+            (
+                VehicleKind::Scout,
+                11.103161181308407,
+                40.0,
+                0.8316108339272986,
+            ),
+            (
+                VehicleKind::Balanced,
+                8.954162242990652,
+                32.0,
+                0.8057851239669421,
+            ),
+            (
+                VehicleKind::Heavy,
+                6.805163304672895,
+                24.0,
+                0.8577868852459014,
+            ),
             (VehicleKind::Humvee, 13.61032660934579, 49.0, 0.9),
         ];
         for (kind, speed, speed_kmh, scale) in expected {

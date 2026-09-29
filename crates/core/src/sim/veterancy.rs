@@ -52,14 +52,22 @@ pub const REPAIR_DELAY: f64 = 5.0;
 
 /// The rank a tank with `xp` experience holds.
 pub fn rank_index(xp: f64) -> usize {
-    (1..RANKS.len()).rev().find(|&i| xp >= RANKS[i].xp).unwrap_or(0)
+    (1..RANKS.len())
+        .rev()
+        .find(|&i| xp >= RANKS[i].xp)
+        .unwrap_or(0)
 }
 
 pub fn rank_stats(xp: f64) -> &'static Rank {
     &RANKS[rank_index(xp)]
 }
 
-pub fn earn_experience(simulation: &mut Simulation, tank_index: usize, amount: f64, owner_life: Option<u32>) {
+pub fn earn_experience(
+    simulation: &mut Simulation,
+    tank_index: usize,
+    amount: f64,
+    owner_life: Option<u32>,
+) {
     let tank = &simulation.tanks[tank_index];
     // A mine/shell from a destroyed tank must not promote its replacement.
     if !tank.alive || amount <= 0.0 || owner_life.is_some_and(|life| life != tank.life) {

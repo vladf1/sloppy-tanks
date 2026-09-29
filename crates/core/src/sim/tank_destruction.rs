@@ -3,7 +3,9 @@
 use super::math::to_int32;
 
 fn destruction_hash(seed: i32, id: u32, deaths: u32) -> u32 {
-    let mut hash = (seed ^ (id as i32).wrapping_mul(0x9e3779b1u32 as i32) ^ (deaths as i32).wrapping_mul(0x85ebca6bu32 as i32)) as u32;
+    let mut hash = (seed
+        ^ (id as i32).wrapping_mul(0x9e3779b1u32 as i32)
+        ^ (deaths as i32).wrapping_mul(0x85ebca6bu32 as i32)) as u32;
     hash = ((hash ^ (hash >> 16)) as i32).wrapping_mul(0x7feb352d) as u32;
     hash = ((hash ^ (hash >> 15)) as i32).wrapping_mul(0x846ca68bu32 as i32) as u32;
     hash ^ (hash >> 16)
@@ -11,7 +13,7 @@ fn destruction_hash(seed: i32, id: u32, deaths: u32) -> u32 {
 
 /// Whether this death is a quiet burnout rather than a violent breakup.
 pub fn tank_burnout(seed: f64, id: u32, deaths: u32) -> bool {
-    destruction_hash(to_int32(seed), id, deaths) % 5 == 0
+    destruction_hash(to_int32(seed), id, deaths).is_multiple_of(5)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -66,7 +66,8 @@ pub fn quarry_rock_shape(w: f64, h: f64, d: f64, variant: u32) -> RockShape {
     for [level, scale] in rings {
         for (side, &[x, z]) in outline.iter().enumerate() {
             // Local erosion breaks a few faces, without wrapping every rock in identical steps.
-            let worn_scale = scale + (level * 8.0 + side as f64 * 0.7).sin() * erosion[side] * level;
+            let worn_scale =
+                scale + (level * 8.0 + side as f64 * 0.7).sin() * erosion[side] * level;
             positions.push((x * w * worn_scale) / 2.0);
             positions.push(if level == 0.0 {
                 -0.12

@@ -50,7 +50,9 @@ pub struct HumveeTactics {
 }
 
 fn tank_position(simulation: &Simulation, tank_index: usize) -> Vec2 {
-    simulation.body_translation(simulation.tanks[tank_index].body).planar()
+    simulation
+        .body_translation(simulation.tanks[tank_index].body)
+        .planar()
 }
 
 fn set_goal(simulation: &mut Simulation, tank_index: usize, goal: Vec2) {
@@ -85,7 +87,8 @@ fn escape_point(simulation: &Simulation, from: Vec2, threat: Vec2) -> Option<Vec
             if !hidden && gain < MINIMUM_OPEN_GAIN {
                 continue;
             }
-            let score = (if hidden { HIDDEN_ESCAPE_BONUS } else { 0.0 }) + gain - distance(from, point);
+            let score =
+                (if hidden { HIDDEN_ESCAPE_BONUS } else { 0.0 }) + gain - distance(from, point);
             candidates.push((point, score));
         }
     }
@@ -119,8 +122,13 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
     });
     let threat = tank.brain.last_seen;
     let has_target = tank.brain.target != 0;
-    let tactics = tank.brain.humvee.as_ref().expect("tactics were just created");
-    if tactics.phase == HumveePhase::Attack && has_target && distance(position, threat) < MIN_RANGE {
+    let tactics = tank
+        .brain
+        .humvee
+        .as_ref()
+        .expect("tactics were just created");
+    if tactics.phase == HumveePhase::Attack && has_target && distance(position, threat) < MIN_RANGE
+    {
         let escape = escape_point(simulation, position, threat).unwrap_or(position);
         let tactics = humvee(simulation, tank_index);
         tactics.phase = HumveePhase::Withdraw;
@@ -138,7 +146,8 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         // A moving enemy or destroyed cover can invalidate the original hiding place.
         let replan_at = tactics.replan_at;
         if elapsed >= replan_at
-            && ((reached && simulation.visible(position, threat)) || distance(position, threat) < MIN_RANGE)
+            && ((reached && simulation.visible(position, threat))
+                || distance(position, threat) < MIN_RANGE)
         {
             let escape = escape_point(simulation, position, threat);
             let tactics = humvee(simulation, tank_index);
@@ -182,8 +191,12 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         return true;
     }
     tactics.replan_at = elapsed + REPLAN_SECONDS;
-    let (planned_threat, firing_point, last_shot, flank) =
-        (tactics.planned_threat, tactics.firing_point, tactics.last_shot, tactics.flank);
+    let (planned_threat, firing_point, last_shot, flank) = (
+        tactics.planned_threat,
+        tactics.firing_point,
+        tactics.last_shot,
+        tactics.flank,
+    );
     if planned_threat.is_some_and(|planned| distance(planned, threat) < THREAT_MOVED_DISTANCE)
         && !simulation.nav.is_blocked(firing_point)
         && simulation.visible(firing_point, threat)
@@ -193,12 +206,18 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
     }
     let angle = (position.x - threat.x).atan2(position.z - threat.z);
     let mut candidates = Vec::new();
-    if last_shot.is_none() && distance(position, threat) >= MIN_RANGE && distance(position, threat) <= MAX_HOLD_RANGE {
+    if last_shot.is_none()
+        && distance(position, threat) >= MIN_RANGE
+        && distance(position, threat) <= MAX_HOLD_RANGE
+    {
         candidates.push(position);
     }
     for offset in [0.3, 0.6, 0.9, -0.3, -0.6, 0.0] {
         let heading = angle + offset * flank;
-        candidates.push(Vec2::new(threat.x + heading.sin() * RANGE, threat.z + heading.cos() * RANGE));
+        candidates.push(Vec2::new(
+            threat.x + heading.sin() * RANGE,
+            threat.z + heading.cos() * RANGE,
+        ));
     }
     for candidate in candidates {
         let point = simulation.nav.point(simulation.nav.index(candidate));
@@ -213,7 +232,9 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         };
         let path = simulation.nav.find(position, point);
         if (path.is_empty() && distance(position, point) > ARRIVAL)
-            || path.iter().any(|&waypoint| distance(waypoint, threat) < MIN_RANGE - 2.0)
+            || path
+                .iter()
+                .any(|&waypoint| distance(waypoint, threat) < MIN_RANGE - 2.0)
         {
             continue;
         }
@@ -242,7 +263,11 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
 }
 
 fn humvee(simulation: &mut Simulation, tank_index: usize) -> &mut HumveeTactics {
-    simulation.tanks[tank_index].brain.humvee.as_mut().expect("humvee tactics")
+    simulation.tanks[tank_index]
+        .brain
+        .humvee
+        .as_mut()
+        .expect("humvee tactics")
 }
 
 /// Commit only after an actual launch, not an attempted or ally-blocked shot.
@@ -273,13 +298,21 @@ pub fn withdraw_humvee(simulation: &mut Simulation, tank_index: usize) {
 pub fn humvee_can_fire(simulation: &Simulation, tank_index: usize) -> bool {
     let tank = &simulation.tanks[tank_index];
     let position = tank_position(simulation, tank_index);
-    tank.brain.humvee.as_ref().is_some_and(|tactics| tactics.phase == HumveePhase::Attack)
+    tank.brain
+        .humvee
+        .as_ref()
+        .is_some_and(|tactics| tactics.phase == HumveePhase::Attack)
         && distance(position, tank.brain.last_seen) >= MIN_RANGE
         && distance(position, tank.brain.goal) < FIRING_POINT_ARRIVAL
 }
 
 /// A visible firing pause gives opponents time to line up a counter-shot.
-pub fn steady_humvee_shot(simulation: &mut Simulation, tank_index: usize, can_fire: bool, dt: f64) -> bool {
+pub fn steady_humvee_shot(
+    simulation: &mut Simulation,
+    tank_index: usize,
+    can_fire: bool,
+    dt: f64,
+) -> bool {
     let tank = &mut simulation.tanks[tank_index];
     let (target, cooldown, fire_delay) = (tank.brain.target, tank.cooldown, tank.brain.fire_delay);
     let Some(tactics) = tank.brain.humvee.as_mut() else {
@@ -302,5 +335,7 @@ pub fn humvee_holding_position(simulation: &Simulation, tank_index: usize) -> bo
         .brain
         .humvee
         .as_ref()
-        .is_some_and(|tactics| tactics.aim_seconds > 0.0 || simulation.elapsed < tactics.departure_at)
+        .is_some_and(|tactics| {
+            tactics.aim_seconds > 0.0 || simulation.elapsed < tactics.departure_at
+        })
 }

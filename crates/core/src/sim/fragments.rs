@@ -23,15 +23,26 @@ pub fn create_fragment(
     // Draw order is part of the seeded stream: height, velocity xyz, spin xyz, then life.
     let rng = &mut simulation.rng;
     let y = rng.range(1.0, 3.0);
-    let linvel = vector(rng.range(-7.0, 7.0), rng.range(5.0, 14.0), rng.range(-7.0, 7.0));
-    let angvel = vector(rng.range(-6.0, 6.0), rng.range(-6.0, 6.0), rng.range(-6.0, 6.0));
+    let linvel = vector(
+        rng.range(-7.0, 7.0),
+        rng.range(5.0, 14.0),
+        rng.range(-7.0, 7.0),
+    );
+    let angvel = vector(
+        rng.range(-6.0, 6.0),
+        rng.range(-6.0, 6.0),
+        rng.range(-6.0, 6.0),
+    );
     let body = simulation.world.insert_body(
         RigidBodyBuilder::dynamic()
             .translation(vector(x, y, z))
             .linvel(linvel)
             .angvel(angvel),
     );
-    let flat = matches!(shape, FragmentShape::Armor | FragmentShape::Track | FragmentShape::Wood);
+    let flat = matches!(
+        shape,
+        FragmentShape::Armor | FragmentShape::Track | FragmentShape::Wood
+    );
     let wood = shape == FragmentShape::Wood;
     simulation.world.insert_collider(
         ColliderBuilder::cuboid(

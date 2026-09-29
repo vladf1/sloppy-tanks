@@ -4,6 +4,7 @@
 use rapier3d::prelude::SharedShape;
 
 use super::ammunition::clear_ammo;
+use super::arena::CoverDef;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
 use super::data::group;
@@ -17,11 +18,13 @@ use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
 use super::tank_destruction::tank_burnout;
-use super::arena::CoverDef;
 use super::timber_layout::TimberHit;
 use super::tower_layout::TOWER_BASE;
 use super::tree_proportions::tree_proportions;
-use super::types::{CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, SimEvent, SimEventType, Team, VehicleKind};
+use super::types::{
+    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, SimEvent, SimEventType, Team,
+    VehicleKind,
+};
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
 
@@ -49,7 +52,10 @@ pub fn damage_tank(
     {
         amount *= difficulty_tuning(simulation.difficulty).damage;
     }
-    if !simulation.multiplayer() && team != simulation.human_team && tank.team == simulation.human_team {
+    if !simulation.multiplayer()
+        && team != simulation.human_team
+        && tank.team == simulation.human_team
+    {
         amount *= difficulty_tuning(simulation.difficulty).damage;
     }
     if simulation.game_mode == GameMode::Solo && team != simulation.human_team {
@@ -126,7 +132,13 @@ pub fn damage_tank(
     }
     if simulation.game_mode == GameMode::Team {
         let allow_victory = !simulation.endless_match;
-        award_kill(&mut simulation.match_state, victim_team, team, owner == victim_id, allow_victory);
+        award_kill(
+            &mut simulation.match_state,
+            victim_team,
+            team,
+            owner == victim_id,
+            allow_victory,
+        );
     }
     simulation.check_solo_result();
     let burnout = tank_burnout(simulation.seed, victim_id, life);
@@ -213,7 +225,8 @@ pub fn damage_cover(
     if cover.kind == CoverKind::Tree {
         // A tank-only upright footprint stops planar hulls climbing or crossing the
         // stump while shells can still fly through the space left by the crown.
-        let stump_radius = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h).stump_radius;
+        let stump_radius =
+            tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h).stump_radius;
         let offset = 0.8 - cover.h / 2.0;
         let collider = &mut simulation.world.colliders[cover.collider];
         collider.set_shape(SharedShape::cylinder(0.8, stump_radius as f32));
@@ -225,7 +238,16 @@ pub fn damage_cover(
     let region = moved_cover_region(&simulation.covers[cover_index]);
     simulation.nav.rebuild(&simulation.covers, Some(region));
     let cover = &simulation.covers[cover_index];
-    let (kind, x, z, w, d, h, color, id) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h, cover.color, cover.id);
+    let (kind, x, z, w, d, h, color, id) = (
+        cover.kind,
+        cover.x,
+        cover.z,
+        cover.w,
+        cover.d,
+        cover.h,
+        cover.color,
+        cover.id,
+    );
     let mut destroy = SimEvent::at(SimEventType::Destroy, x, z);
     destroy.cover_kind = Some(kind);
     destroy.height = Some(h);
@@ -238,7 +260,11 @@ pub fn damage_cover(
             let fx = x + simulation.rng.range(-w / 2.0, w / 2.0);
             let fz = z + simulation.rng.range(-d / 2.0, d / 2.0);
             let size = simulation.rng.range(0.3, 0.7);
-            let shape = if kind == CoverKind::House { FragmentShape::Track } else { FragmentShape::Shard };
+            let shape = if kind == CoverKind::House {
+                FragmentShape::Track
+            } else {
+                FragmentShape::Shard
+            };
             simulation.fragment(fx, fz, color, size, shape, 1.0);
         }
     }
@@ -326,7 +352,10 @@ pub fn explode(
             owner,
             team,
             owner_life,
-            Some(DamageSource { cause, origin: position }),
+            Some(DamageSource {
+                cause,
+                origin: position,
+            }),
         );
         let tank = &simulation.tanks[i];
         if tank.alive && (tank.team != team || tank.id == owner) {

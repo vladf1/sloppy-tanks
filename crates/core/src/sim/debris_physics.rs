@@ -97,7 +97,16 @@ pub fn blast_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, powe
         };
         let max_velocity = if fragment.wreck.is_some() { 8.0 } else { 14.0 };
         let body = fragment.body;
-        if blast_body(simulation, body, origin, radius, power, false, lever, max_velocity) {
+        if blast_body(
+            simulation,
+            body,
+            origin,
+            radius,
+            power,
+            false,
+            lever,
+            max_velocity,
+        ) {
             let elapsed = simulation.elapsed;
             let fragment = &mut simulation.fragments[i];
             // Let a second launch finish, but never extend life beyond the original deadline.
@@ -111,7 +120,16 @@ pub fn blast_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, powe
         if cover.alive {
             let drum = cover.kind == CoverKind::Drum;
             let body = cover.body;
-            blast_body(simulation, body, origin, radius, power, !drum, 0.35, if drum { 14.0 } else { 4.0 });
+            blast_body(
+                simulation,
+                body,
+                origin,
+                radius,
+                power,
+                !drum,
+                0.35,
+                if drum { 14.0 } else { 4.0 },
+            );
         }
     }
 }
@@ -141,14 +159,27 @@ fn blast_body(
     }
     let horizontal = dx.hypot(dz);
     // At the epicenter pressure has no preferred horizontal direction.
-    let nx = if horizontal > 0.001 { dx / horizontal } else { 0.0 };
-    let nz = if horizontal > 0.001 { dz / horizontal } else { 0.0 };
+    let nx = if horizontal > 0.001 {
+        dx / horizontal
+    } else {
+        0.0
+    };
+    let nz = if horizontal > 0.001 {
+        dz / horizontal
+    } else {
+        0.0
+    };
     let falloff = (1.0 - distance / radius).powi(2);
     let strength = (power / 60.0).min(1.8) * falloff;
     // Apply bounded force instead of cancelling mass: heavier pieces resist the same blast.
-    let impulse = (body.mass() as f64 * max_velocity).min(if heavy { 24.0 } else { 12.0 }) * strength;
+    let impulse =
+        (body.mass() as f64 * max_velocity).min(if heavy { 24.0 } else { 12.0 }) * strength;
     body.apply_impulse_at_point(
-        vector(nx * impulse, impulse * if heavy { 0.65 } else { 0.85 }, nz * impulse),
+        vector(
+            nx * impulse,
+            impulse * if heavy { 0.65 } else { 0.85 },
+            nz * impulse,
+        ),
         // Pressure catches a facing edge above the centre, producing real pitch and roll.
         vector(
             p.x - nx * lever + nz * lever * 0.5,
@@ -171,7 +202,9 @@ fn shell_impulse(shot: &Shot, rocket: f64, piercing: f64, other: f64) -> f64 {
 /// Shells shove dragon's teeth and hedgehogs at the struck point.
 pub fn hit_movable_cover(simulation: &mut Simulation, cover_index: usize, shot: &Shot) {
     let cover = &simulation.covers[cover_index];
-    if (cover.kind != CoverKind::Teeth && cover.kind != CoverKind::Hedgehog) || cover.motion.is_none() {
+    if (cover.kind != CoverKind::Teeth && cover.kind != CoverKind::Hedgehog)
+        || cover.motion.is_none()
+    {
         return;
     }
     let speed = shot.vx.hypot(shot.vz);
@@ -180,14 +213,23 @@ pub fn hit_movable_cover(simulation: &mut Simulation, cover_index: usize, shot: 
     }
     let impulse = shell_impulse(shot, 10.0, 8.4, 6.0);
     simulation.world.bodies[cover.body].apply_impulse_at_point(
-        vector((shot.vx / speed) * impulse, 0.0, (shot.vz / speed) * impulse),
+        vector(
+            (shot.vx / speed) * impulse,
+            0.0,
+            (shot.vz / speed) * impulse,
+        ),
         vector(shot.x, shot.combat_y(), shot.z),
         true,
     );
 }
 
 /// Substantial debris absorbs the round and takes only physical impulse.
-pub fn hit_projectile_debris(simulation: &mut Simulation, fragment_index: usize, shot: &Shot, point: Point3) {
+pub fn hit_projectile_debris(
+    simulation: &mut Simulation,
+    fragment_index: usize,
+    shot: &Shot,
+    point: Point3,
+) {
     let fragment = &simulation.fragments[fragment_index];
     let speed = shot.vx.hypot(shot.vz);
     if (fragment.wreck.is_none() && fragment.dimensions.is_none()) || speed == 0.0 {
@@ -198,7 +240,11 @@ pub fn hit_projectile_debris(simulation: &mut Simulation, fragment_index: usize,
     // The same impulse moves light wood more than heavy wreckage; cap tiny-piece launches.
     let strength = impulse.min(body.mass() as f64 * 5.0);
     body.apply_impulse_at_point(
-        vector((shot.vx / speed) * strength, 0.0, (shot.vz / speed) * strength),
+        vector(
+            (shot.vx / speed) * strength,
+            0.0,
+            (shot.vz / speed) * strength,
+        ),
         vector(point.x, point.y, point.z),
         true,
     );
@@ -213,7 +259,12 @@ pub fn drain_debris_contacts(simulation: &mut Simulation) {
             continue;
         }
         for handle in [event.collider1, event.collider2] {
-            let Some(body) = simulation.world.colliders.get(handle).and_then(|collider| collider.parent()) else {
+            let Some(body) = simulation
+                .world
+                .colliders
+                .get(handle)
+                .and_then(|collider| collider.parent())
+            else {
                 continue;
             };
             let elapsed = simulation.elapsed;

@@ -100,7 +100,11 @@ pub struct PersonalBests {
     pub persisted: bool,
 }
 
-pub fn save_personal_bests(storage: &mut impl RecordStorage, key: &str, stats: &RecapStats) -> PersonalBests {
+pub fn save_personal_bests(
+    storage: &mut impl RecordStorage,
+    key: &str,
+    stats: &RecapStats,
+) -> PersonalBests {
     let mut best = *stats;
     let mut improved = Vec::new();
     let mut established = false;
@@ -144,7 +148,8 @@ fn json_number(value: f64) -> serde_json::Value {
     if value.fract() == 0.0 && value.abs() < 9e15 {
         serde_json::Value::from(value as i64)
     } else {
-        serde_json::Number::from_f64(value).map_or(serde_json::Value::Null, serde_json::Value::Number)
+        serde_json::Number::from_f64(value)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number)
     }
 }
 
@@ -190,7 +195,10 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
     let mut feats = Vec::new();
     let value = |metric| stats.get(metric);
     if value(Metric::Multikill) >= 3.0 {
-        feats.push(feat("ONE-TANK ARMY", format!("{} kills in five seconds", value(Metric::Multikill))));
+        feats.push(feat(
+            "ONE-TANK ARMY",
+            format!("{} kills in five seconds", value(Metric::Multikill)),
+        ));
     }
     if value(Metric::ClutchKills) >= 2.0 {
         feats.push(feat(
@@ -202,11 +210,17 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
     if posthumous > 0.0 {
         feats.push(feat(
             "DEAD BUT DANGEROUS",
-            format!("{posthumous} kill{} from a previous life's ordnance", plural(posthumous, "s")),
+            format!(
+                "{posthumous} kill{} from a previous life's ordnance",
+                plural(posthumous, "s")
+            ),
         ));
     }
     if value(Metric::MineKills) >= 2.0 {
-        feats.push(feat("MIND YOUR STEP", format!("{} mine-blast kills", value(Metric::MineKills))));
+        feats.push(feat(
+            "MIND YOUR STEP",
+            format!("{} mine-blast kills", value(Metric::MineKills)),
+        ));
     }
     let revenge = value(Metric::RevengeKills);
     if revenge > 0.0 {
@@ -218,7 +232,10 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
     if value(Metric::CoverDestroyed) >= 10.0 {
         feats.push(feat(
             "URBAN REDEVELOPMENT",
-            format!("{} pieces of cover demolished", value(Metric::CoverDestroyed)),
+            format!(
+                "{} pieces of cover demolished",
+                value(Metric::CoverDestroyed)
+            ),
         ));
     }
     if shots >= 20 && direct_hits as f64 / shots as f64 >= 0.65 {
@@ -233,13 +250,19 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
     if value(Metric::LongestLife) >= 180.0 {
         feats.push(feat(
             "HARD TO KILL",
-            format!("{} without getting wrecked", duration(value(Metric::LongestLife))),
+            format!(
+                "{} without getting wrecked",
+                duration(value(Metric::LongestLife))
+            ),
         ));
     }
     if value(Metric::BusiestMinute) >= 5.0 {
         feats.push(feat(
             "RUSH HOUR",
-            format!("{} kills in your busiest minute", value(Metric::BusiestMinute)),
+            format!(
+                "{} kills in your busiest minute",
+                value(Metric::BusiestMinute)
+            ),
         ));
     }
     if value(Metric::Rank) == 3.0 {
@@ -251,5 +274,9 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
 
 /// `m:ss`.
 pub fn duration(seconds: f64) -> String {
-    format!("{}:{:02}", (seconds / 60.0).floor(), (seconds % 60.0).floor() as i64)
+    format!(
+        "{}:{:02}",
+        (seconds / 60.0).floor(),
+        (seconds % 60.0).floor() as i64
+    )
 }

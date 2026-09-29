@@ -25,7 +25,8 @@ pub fn tune_speed(simulation: &mut Simulation, key: SpeedSetting, value: f64) ->
         SpeedSetting::TankSpeed => {
             simulation.speed_tuning.tank_speed = scale;
             for tank in simulation.tanks.iter().filter(|tank| tank.alive) {
-                simulation.world.bodies[tank.body].set_soft_ccd_prediction(soft_ccd_prediction(tank.kind, scale) as f32);
+                simulation.world.bodies[tank.body]
+                    .set_soft_ccd_prediction(soft_ccd_prediction(tank.kind, scale) as f32);
             }
         }
         SpeedSetting::BulletSpeed => {

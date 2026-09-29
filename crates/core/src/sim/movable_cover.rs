@@ -55,21 +55,33 @@ pub fn update_movable_cover(simulation: &mut Simulation) {
         if elapsed < motion.check_at {
             continue;
         }
-        let motion = cover.motion.as_mut().expect("movable cover tracks its motion");
+        let motion = cover
+            .motion
+            .as_mut()
+            .expect("movable cover tracks its motion");
         motion.check_at = elapsed + NAV_CHECK_SECONDS;
         let change = (cover.x - motion.x)
             .abs()
             .max((cover.z - motion.z).abs())
             .max((cover.w - motion.nav_w).abs() / 2.0)
             .max((cover.d - motion.nav_d).abs() / 2.0);
-        if change < if sleeping { SETTLED_REBUILD_DISTANCE } else { MOVING_REBUILD_DISTANCE } {
+        if change
+            < if sleeping {
+                SETTLED_REBUILD_DISTANCE
+            } else {
+                MOVING_REBUILD_DISTANCE
+            }
+        {
             continue;
         }
         let region = moved_cover_region(cover);
         let cover = &mut simulation.covers[index];
         let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
         simulation.nav.rebuild(&simulation.covers, Some(region));
-        let motion = simulation.covers[index].motion.as_mut().expect("movable cover tracks its motion");
+        let motion = simulation.covers[index]
+            .motion
+            .as_mut()
+            .expect("movable cover tracks its motion");
         motion.x = x;
         motion.z = z;
         motion.nav_w = w;

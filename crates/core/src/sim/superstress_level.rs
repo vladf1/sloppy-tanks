@@ -10,7 +10,8 @@ use super::map_options::MapId;
 use super::maps::{ArenaMap, GroundKind};
 use super::simulation::{Simulation, SimulationSetup};
 use super::stress_test_level::{
-    STRESS_AMMO_CRATE_MULTIPLIER, STRESS_PLAYER_HEALTH_MULTIPLIER, STRESS_POWER_UP_MULTIPLIER, STRESS_TANK_COUNT,
+    STRESS_AMMO_CRATE_MULTIPLIER, STRESS_PLAYER_HEALTH_MULTIPLIER, STRESS_POWER_UP_MULTIPLIER,
+    STRESS_TANK_COUNT,
 };
 use super::timber_layout::TIMBER_HEALTH;
 use super::types::{CoverKind, SimEvent, SimEventType};
@@ -104,7 +105,11 @@ impl Yard {
     fn crate_block(&mut self, x: f64, z: f64) {
         for dx in [-1.0, 1.0] {
             for dz in [-1.0, 1.0] {
-                self.place(Piece::Cargo, at(x) + (dx * 2.8) / 2.0, at(z) + (dz * 2.8) / 2.0);
+                self.place(
+                    Piece::Cargo,
+                    at(x) + (dx * 2.8) / 2.0,
+                    at(z) + (dz * 2.8) / 2.0,
+                );
             }
         }
     }
@@ -119,7 +124,18 @@ impl Yard {
 fn superstress_layout() -> Vec<CoverDef> {
     let mut yard = Yard { covers: Vec::new() };
     // A hard square fence keeps every body and chain reaction inside the yard.
-    let wall = |x, z, w, d| CoverDef::new(CoverKind::Boundary, x, z, w, d, 2.2, f64::INFINITY, 0x7b7162);
+    let wall = |x, z, w, d| {
+        CoverDef::new(
+            CoverKind::Boundary,
+            x,
+            z,
+            w,
+            d,
+            2.2,
+            f64::INFINITY,
+            0x7b7162,
+        )
+    };
     yard.pair(wall(YARD + 0.5, 0.0, 1.0, YARD * 2.0 + 2.0));
     yard.pair(wall(0.0, YARD + 0.5, YARD * 2.0 + 2.0, 1.0));
 
@@ -189,7 +205,8 @@ fn footprint_occupied(simulation: &Simulation, cover_index: usize) -> bool {
             return false;
         }
         let p = simulation.body_translation(tank.body);
-        (p.x - x).abs() < w / 2.0 + REBUILD_CLEARANCE && (p.z - z).abs() < d / 2.0 + REBUILD_CLEARANCE
+        (p.x - x).abs() < w / 2.0 + REBUILD_CLEARANCE
+            && (p.z - z).abs() < d / 2.0 + REBUILD_CLEARANCE
     })
 }
 

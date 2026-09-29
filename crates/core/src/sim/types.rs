@@ -25,7 +25,11 @@ impl Team {
     }
 
     pub const fn from_index(index: usize) -> Team {
-        if index % 2 == 0 { Team::Blue } else { Team::Red }
+        if index.is_multiple_of(2) {
+            Team::Blue
+        } else {
+            Team::Red
+        }
     }
 
     pub const fn opponent(self) -> Team {
@@ -70,7 +74,11 @@ impl VehicleKind {
         VehicleKind::Humvee,
     ];
     /// The chassis a player may drive (every kind but the bot-only Humvee).
-    pub const PLAYABLE: [VehicleKind; 3] = [VehicleKind::Scout, VehicleKind::Balanced, VehicleKind::Heavy];
+    pub const PLAYABLE: [VehicleKind; 3] = [
+        VehicleKind::Scout,
+        VehicleKind::Balanced,
+        VehicleKind::Heavy,
+    ];
 
     pub const fn index(self) -> usize {
         self as usize
@@ -211,7 +219,9 @@ impl<'de> Deserialize<'de> for AmmoSelection {
         match Raw::deserialize(deserializer)? {
             Raw::Weapon(weapon) => Ok(AmmoSelection::Weapon(weapon)),
             Raw::Step(step @ (-1 | 1)) => Ok(AmmoSelection::Step(step)),
-            Raw::Step(other) => Err(serde::de::Error::custom(format!("invalid ammo step {other}"))),
+            Raw::Step(other) => Err(serde::de::Error::custom(format!(
+                "invalid ammo step {other}"
+            ))),
         }
     }
 }
@@ -410,7 +420,10 @@ pub enum CoverKind {
 impl CoverKind {
     /// Drums, dragon's teeth and hedgehogs are dynamic bodies that blasts and shells push.
     pub const fn movable(self) -> bool {
-        matches!(self, CoverKind::Drum | CoverKind::Teeth | CoverKind::Hedgehog)
+        matches!(
+            self,
+            CoverKind::Drum | CoverKind::Teeth | CoverKind::Hedgehog
+        )
     }
 }
 

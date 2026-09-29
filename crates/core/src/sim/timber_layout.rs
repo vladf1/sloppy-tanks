@@ -195,7 +195,11 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
             h: pitch - 0.025,
             d: 0.66f64.min(depth * 0.75),
             yaw,
-            lean: if index == BEAM_COUNT - 1 { stage as f64 * 0.006 } else { 0.0 },
+            lean: if index == BEAM_COUNT - 1 {
+                stage as f64 * 0.006
+            } else {
+                0.0
+            },
             color: colors[index % colors.len()],
             damage,
             marks: Vec::new(),
@@ -247,7 +251,11 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
             .iter()
             .enumerate()
             .map(|(i, part)| (i, local(part)))
-            .min_by(|a, b| a.1.3.partial_cmp(&b.1.3).unwrap_or(std::cmp::Ordering::Equal))
+            .min_by(|a, b| {
+                a.1.3
+                    .partial_cmp(&b.1.3)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         else {
             continue;
         };
@@ -257,7 +265,11 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
             x: if end { z } else { x },
             y,
             face: if end {
-                if x < 0.0 { TimberFace::Left } else { TimberFace::Right }
+                if x < 0.0 {
+                    TimberFace::Left
+                } else {
+                    TimberFace::Right
+                }
             } else if z < 0.0 {
                 TimberFace::Back
             } else {

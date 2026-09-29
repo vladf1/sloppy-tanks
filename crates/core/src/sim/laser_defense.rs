@@ -18,12 +18,24 @@ pub fn laser_contact_time(
     elapsed: f64,
     frame_delta: f64,
 ) -> Option<f64> {
-    if !tank.alive || tank.laser <= 0.0 || tank.team == shot.team || shot.laser_checked_by.contains(&tank.id) {
+    if !tank.alive
+        || tank.laser <= 0.0
+        || tank.team == shot.team
+        || shot.laser_checked_by.contains(&tank.id)
+    {
         return None;
     }
     let end = simulation.body_translation(tank.body);
-    let tx = if frame_delta > 0.0 { (end.x - tank.previous.x) / frame_delta } else { 0.0 };
-    let tz = if frame_delta > 0.0 { (end.z - tank.previous.z) / frame_delta } else { 0.0 };
+    let tx = if frame_delta > 0.0 {
+        (end.x - tank.previous.x) / frame_delta
+    } else {
+        0.0
+    };
+    let tz = if frame_delta > 0.0 {
+        (end.z - tank.previous.z) / frame_delta
+    } else {
+        0.0
+    };
     let x = end.x - tx * (frame_delta - elapsed);
     let z = end.z - tz * (frame_delta - elapsed);
     let dx = shot.x - x;
@@ -45,7 +57,11 @@ pub fn laser_contact_time(
     if discriminant < 0.0 {
         return None;
     }
-    let time = if c <= 0.0 { 0.0 } else { (-approach - discriminant.sqrt()) / speed2 };
+    let time = if c <= 0.0 {
+        0.0
+    } else {
+        (-approach - discriminant.sqrt()) / speed2
+    };
     if time < 0.0 || time > limit {
         return None;
     }

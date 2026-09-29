@@ -89,9 +89,13 @@ pub fn record_kill(
         stats.recent_kills.remove(0);
     }
     stats.busiest_minute = stats.busiest_minute.max(stats.recent_kills.len());
-    stats.multikill = stats
-        .multikill
-        .max(stats.recent_kills.iter().filter(|&&time| elapsed - time < 5.0).count());
+    stats.multikill = stats.multikill.max(
+        stats
+            .recent_kills
+            .iter()
+            .filter(|&&time| elapsed - time < 5.0)
+            .count(),
+    );
     if !current_life {
         stats.posthumous_kills += 1;
     } else if clutch {

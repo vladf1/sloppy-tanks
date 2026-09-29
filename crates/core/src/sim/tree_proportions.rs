@@ -19,7 +19,8 @@ pub struct TreeProportions {
 
 /// Proportions for a tree cover footprint at (x, z) with size w/d/h.
 pub fn tree_proportions(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeProportions {
-    let seed = (to_int32(js_round(x * 100.0) * 73_856_093.0) ^ to_int32(js_round(z * 100.0) * 19_349_663.0)) as u32;
+    let seed = (to_int32(js_round(x * 100.0) * 73_856_093.0)
+        ^ to_int32(js_round(z * 100.0) * 19_349_663.0)) as u32;
     let mut rng = Random::new(seed as f64);
     let family = (rng.next() * 6.0).floor() as u32;
     let twist = rng.range(0.0, PI * 2.0);

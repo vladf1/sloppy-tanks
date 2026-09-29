@@ -105,7 +105,10 @@ pub fn map_option(id: &str) -> Option<&'static MapOption> {
 }
 
 pub fn map_option_for(id: MapId) -> &'static MapOption {
-    MAP_OPTIONS.iter().find(|option| option.id == id).expect("every map id has an option")
+    MAP_OPTIONS
+        .iter()
+        .find(|option| option.id == id)
+        .expect("every map id has an option")
 }
 
 pub fn is_extra_level(id: MapId) -> bool {

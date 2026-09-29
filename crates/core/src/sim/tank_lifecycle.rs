@@ -7,7 +7,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyBuilder, RigidBodyHandle};
 
 use super::ammunition::{clear_ammo, empty_ammo};
 use super::arena::spawn_positions;
-use super::bot_personalities::{bot_assignment, bot_profile_for, BotPersonality};
+use super::bot_personalities::{BotPersonality, bot_assignment, bot_profile_for};
 use super::data::{STEP, group, vehicle};
 use super::hitboxes::tank_contact_collider;
 use super::math::{Vec2, best_by};
@@ -15,7 +15,7 @@ use super::physics::{interaction_groups, vector};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
 use super::types::{
-    Brain, BotMode, Driver, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind, Weapon,
+    BotMode, Brain, Driver, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind, Weapon,
 };
 
 /// Soft-CCD reach for a chassis: two ticks at 1.5x its (tuned) top speed.
@@ -32,7 +32,11 @@ fn create_tank_body(
     let stats = vehicle(kind);
     let body = simulation.world.insert_body(
         RigidBodyBuilder::dynamic()
-            .translation(vector(position.x, SIMULATION_RULES.tank_body_height, position.z))
+            .translation(vector(
+                position.x,
+                SIMULATION_RULES.tank_body_height,
+                position.z,
+            ))
             .enabled_rotations(false, true, false)
             .linear_damping(SIMULATION_RULES.tank_linear_damping as f32)
             .angular_damping(SIMULATION_RULES.tank_angular_damping as f32)
@@ -47,21 +51,38 @@ fn create_tank_body(
             .restitution(0.1),
         Some(body),
     );
-    simulation.world.insert_collider(tank_contact_collider(kind), Some(body));
+    simulation
+        .world
+        .insert_collider(tank_contact_collider(kind), Some(body));
     (body, collider)
 }
 
-pub fn spawn_tank(simulation: &mut Simulation, team: Team, human: bool, kind: VehicleKind, slot: usize) -> usize {
+pub fn spawn_tank(
+    simulation: &mut Simulation,
+    team: Team,
+    human: bool,
+    kind: VehicleKind,
+    slot: usize,
+) -> usize {
     let spawn = if simulation.game_mode == GameMode::Solo && !human {
         let limit = simulation.active_enemy_limit;
         Vec2 {
-            x: if team == Team::Blue { -SOLO.spawn_x } else { SOLO.spawn_x },
-            z: -SOLO.spawn_half_span_z + ((slot % limit) as f64 * (SOLO.spawn_half_span_z * 2.0)) / (limit as f64 - 1.0),
+            x: if team == Team::Blue {
+                -SOLO.spawn_x
+            } else {
+                SOLO.spawn_x
+            },
+            z: -SOLO.spawn_half_span_z
+                + ((slot % limit) as f64 * (SOLO.spawn_half_span_z * 2.0)) / (limit as f64 - 1.0),
         }
     } else {
         spawn_positions(team, simulation.map_scale())[slot % 5]
     };
-    let offset = if simulation.game_mode == GameMode::Solo { 0.0 } else { (slot / 5) as f64 * 3.0 };
+    let offset = if simulation.game_mode == GameMode::Solo {
+        0.0
+    } else {
+        (slot / 5) as f64 * 3.0
+    };
     // Later rows share a spawn lane, but interpolation and AI history must start
     // at their offset body positions, not at the first tank in that lane.
     let position = Vec2 {
@@ -72,7 +93,9 @@ pub fn spawn_tank(simulation: &mut Simulation, team: Team, human: bool, kind: Ve
     let assignment = bot_assignment(slot, team, ordinal);
     let kind = if human {
         kind
-    } else if simulation.game_mode == GameMode::Team && assignment.personality == BotPersonality::Support {
+    } else if simulation.game_mode == GameMode::Team
+        && assignment.personality == BotPersonality::Support
+    {
         // Team support slots carry the fragile, fast HMMWV hunter. Solo mode keeps
         // its original six-enemy roster and does not introduce the team-only unit.
         VehicleKind::Humvee
@@ -81,13 +104,17 @@ pub fn spawn_tank(simulation: &mut Simulation, team: Team, human: bool, kind: Ve
     };
     let speed_scale = simulation.speed_tuning.tank_speed;
     let (body, collider) = create_tank_body(simulation, kind, position, speed_scale);
-    let player = simulation
-        .players
-        .as_ref()
-        .and_then(|players| players.iter().find(|p| p.team == team && p.slot == slot).cloned());
+    let player = simulation.players.as_ref().and_then(|players| {
+        players
+            .iter()
+            .find(|p| p.team == team && p.slot == slot)
+            .cloned()
+    });
     let names = &simulation.bot_names;
     let name = if human {
-        player.as_ref().map_or_else(|| "YOU".to_string(), |player| player.name.clone())
+        player
+            .as_ref()
+            .map_or_else(|| "YOU".to_string(), |player| player.name.clone())
     } else {
         let mut name = names[ordinal % names.len()].to_string();
         if ordinal >= names.len() {
@@ -121,7 +148,11 @@ pub fn spawn_tank(simulation: &mut Simulation, team: Team, human: bool, kind: Ve
         laser: 0.0,
         cooldown: 0.0,
         mine_cooldown: 0.0,
-        aim: if team == Team::Blue { PI / 2.0 } else { -PI / 2.0 },
+        aim: if team == Team::Blue {
+            PI / 2.0
+        } else {
+            -PI / 2.0
+        },
         heading: 0.0,
         previous: position,
         recoil: 0.0,
@@ -181,12 +212,15 @@ pub fn respawn_tank(simulation: &mut Simulation, tank_index: usize, position: Op
         .filter(|&i| simulation.tanks[i].alive && simulation.tanks[i].team != team)
         .collect();
     let friends: Vec<usize> = (0..simulation.tanks.len())
-        .filter(|&i| i != tank_index && simulation.tanks[i].alive && simulation.tanks[i].team == team)
+        .filter(|&i| {
+            i != tank_index && simulation.tanks[i].alive && simulation.tanks[i].team == team
+        })
         .collect();
     let p = position.unwrap_or_else(|| {
-        best_by(spawn_positions(team, simulation.map_scale()), |&candidate| {
-            simulation.spawn_score(candidate, &enemies, &friends)
-        })
+        best_by(
+            spawn_positions(team, simulation.map_scale()),
+            |&candidate| simulation.spawn_score(candidate, &enemies, &friends),
+        )
         .expect("a team always has spawn lanes")
     });
     simulation.tanks[tank_index].kind = kind;

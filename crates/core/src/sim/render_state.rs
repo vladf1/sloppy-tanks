@@ -13,8 +13,8 @@ use super::simulation::Simulation;
 use super::simulation_rules::SIMULATION_RULES;
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
 use super::types::{
-    AmmoInventory, CoverKind, CoverMotion, Fragment, FragmentShape, Match, Mine, Pickup, Shot, Tank, Team,
-    VehicleKind, Weapon, WreckPart,
+    AmmoInventory, CoverKind, CoverMotion, Fragment, FragmentShape, Match, Mine, Pickup, Shot,
+    Tank, Team, VehicleKind, Weapon, WreckPart,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -265,19 +265,30 @@ impl Simulation {
         if tank.alive {
             self.body_translation(tank.body)
         } else {
-            Point3::new(tank.previous.x, SIMULATION_RULES.tank_body_height, tank.previous.z)
+            Point3::new(
+                tank.previous.x,
+                SIMULATION_RULES.tank_body_height,
+                tank.previous.z,
+            )
         }
     }
 
     pub fn tank_velocity(&self, tank: &Tank) -> Point3 {
-        if tank.alive { self.body_linvel(tank.body) } else { Point3::ZERO }
+        if tank.alive {
+            self.body_linvel(tank.body)
+        } else {
+            Point3::ZERO
+        }
     }
 
     /// Fill `state` for the tank `viewer` (the first human by default). Reuses the state's
     /// allocations, so steady-state frames do not allocate.
     pub fn fill_render_state(&self, state: &mut RenderState, viewer: Option<u32>) {
-        state.viewer_id = viewer.unwrap_or_else(|| self.human_index().map_or(0, |i| self.tanks[i].id));
-        fill_each(&mut state.tanks, &self.tanks, |view, tank| self.fill_tank(view, tank));
+        state.viewer_id =
+            viewer.unwrap_or_else(|| self.human_index().map_or(0, |i| self.tanks[i].id));
+        fill_each(&mut state.tanks, &self.tanks, |view, tank| {
+            self.fill_tank(view, tank)
+        });
         fill_each(&mut state.covers, &self.covers, |view, cover| {
             let has_body = self.world.bodies.contains(cover.body);
             view.id = cover.id;
@@ -301,10 +312,18 @@ impl Simulation {
             } else {
                 Point3::new(cover.x, 0.0, cover.z)
             };
-            view.rotation = if has_body { self.body_rotation(cover.body) } else { Quat4::IDENTITY };
+            view.rotation = if has_body {
+                self.body_rotation(cover.body)
+            } else {
+                Quat4::IDENTITY
+            };
         });
-        fill_each(&mut state.fragments, &self.fragments, |view, fragment| self.fill_fragment(view, fragment));
-        fill_each(&mut state.shots, &self.shots, |view, shot| *view = RenderShot::from(shot));
+        fill_each(&mut state.fragments, &self.fragments, |view, fragment| {
+            self.fill_fragment(view, fragment)
+        });
+        fill_each(&mut state.shots, &self.shots, |view, shot| {
+            *view = RenderShot::from(shot)
+        });
         state.mines.clone_from(&self.mines);
         state.pickups.clone_from(&self.pickups);
         state.elapsed = self.elapsed;

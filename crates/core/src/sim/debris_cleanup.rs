@@ -65,8 +65,15 @@ pub fn cleanup_candidate(simulation: &Simulation, candidates: Option<&[usize]>) 
                 .fold(f64::INFINITY, js_min),
             _ => (p.x - focus.x).powi(2) + (p.z - focus.z).powi(2),
         };
-        let priority = if distance2 < NEARBY_DISTANCE * NEARBY_DISTANCE { 2.0 } else { 0.0 }
-            + if debris_moving(simulation, fragment) { 1.0 } else { 0.0 };
+        let priority = if distance2 < NEARBY_DISTANCE * NEARBY_DISTANCE {
+            2.0
+        } else {
+            0.0
+        } + if debris_moving(simulation, fragment) {
+            1.0
+        } else {
+            0.0
+        };
         // Discrete priority dominates; within it prefer already fading and older pieces.
         let score = priority * 1000.0 + fragment.life.min(100.0) - distance2.min(10000.0) * 0.00001;
         if score < best_score {
@@ -83,7 +90,11 @@ pub fn prepare_debris_cleanup(simulation: &mut Simulation) {
     if simulation.fragments.len() <= target {
         return;
     }
-    let fading = simulation.fragments.iter().filter(|f| f.life > DEBRIS_CLEANUP_SECONDS).count();
+    let fading = simulation
+        .fragments
+        .iter()
+        .filter(|f| f.life > DEBRIS_CLEANUP_SECONDS)
+        .count();
     let mut excess = fading as i64 - target as i64;
     if excess <= 0 {
         return;
@@ -91,7 +102,9 @@ pub fn prepare_debris_cleanup(simulation: &mut Simulation) {
     let mut candidates: Vec<usize> = (0..simulation.fragments.len())
         .filter(|&i| {
             let fragment = &simulation.fragments[i];
-            fragment.life > DEBRIS_CLEANUP_SECONDS && fragment.life <= 3.0 && !debris_moving(simulation, fragment)
+            fragment.life > DEBRIS_CLEANUP_SECONDS
+                && fragment.life <= 3.0
+                && !debris_moving(simulation, fragment)
         })
         .collect();
     while excess > 0 && !candidates.is_empty() {

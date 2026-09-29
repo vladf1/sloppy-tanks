@@ -45,12 +45,23 @@ pub fn from_rotation(value: Rotation) -> Quat4 {
 
 /// Rapier normalizes a quaternion given from outside, as the JS bindings did.
 pub fn to_rotation(value: Quat4) -> Rotation {
-    Rotation::from_xyzw(value.x as f32, value.y as f32, value.z as f32, value.w as f32).normalize()
+    Rotation::from_xyzw(
+        value.x as f32,
+        value.y as f32,
+        value.z as f32,
+        value.w as f32,
+    )
+    .normalize()
 }
 
 /// A convex hull from xyz triples.
 pub fn convex_hull(points: &[f32]) -> ColliderBuilder {
-    let points: Vec<Vector> = points.chunks_exact(3).map(|p| Vector::new(p[0], p[1], p[2])).collect();
+    let points: Vec<Vector> = points
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| Vector::new(p[0], p[1], p[2]))
+        .collect();
     ColliderBuilder::convex_hull(&points).expect("authored hull points are not degenerate")
 }
 
@@ -69,11 +80,19 @@ pub struct ContactForce {
 
 impl ContactForces {
     pub fn drain(&self) -> Vec<ContactForce> {
-        std::mem::take(&mut *self.events.lock().unwrap_or_else(|poison| poison.into_inner()))
+        std::mem::take(
+            &mut *self
+                .events
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        )
     }
 
     pub fn clear(&self) {
-        self.events.lock().unwrap_or_else(|poison| poison.into_inner()).clear();
+        self.events
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clear();
     }
 }
 
@@ -95,11 +114,14 @@ impl EventHandler for ContactForces {
         contact_pair: &ContactPair,
         total_force_magnitude: Real,
     ) {
-        self.events.lock().unwrap_or_else(|poison| poison.into_inner()).push(ContactForce {
-            collider1: contact_pair.collider1,
-            collider2: contact_pair.collider2,
-            total_force_magnitude,
-        });
+        self.events
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(ContactForce {
+                collider1: contact_pair.collider1,
+                collider2: contact_pair.collider2,
+                total_force_magnitude,
+            });
     }
 
     fn handle_soft_body_tear_event(&self, _soft_bodies: &SoftBodySet, _event: &SoftBodyTearEvent) {}

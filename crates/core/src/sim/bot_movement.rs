@@ -35,11 +35,21 @@ const RECOVERY_COMMITMENT_SECONDS: f64 = 1.8;
 
 /// Follow a few visible waypoints ahead, then brake as the destination approaches.
 pub fn route_direction(simulation: &mut Simulation, tank_index: usize) -> Vec2 {
-    let position = simulation.body_translation(simulation.tanks[tank_index].body).planar();
+    let position = simulation
+        .body_translation(simulation.tanks[tank_index].body)
+        .planar();
     let nav = &simulation.nav;
     let brain = &mut simulation.tanks[tank_index].brain;
-    let goal = if brain.recovery > 0.0 { brain.recovery_goal } else { brain.goal };
-    let arrived = brain.path.iter().take_while(|&&waypoint| distance(position, waypoint) < WAYPOINT_RADIUS).count();
+    let goal = if brain.recovery > 0.0 {
+        brain.recovery_goal
+    } else {
+        brain.goal
+    };
+    let arrived = brain
+        .path
+        .iter()
+        .take_while(|&&waypoint| distance(position, waypoint) < WAYPOINT_RADIUS)
+        .count();
     brain.path.drain(..arrived);
     let mut skip = 0;
     for i in 1..LOOKAHEAD_WAYPOINTS.min(brain.path.len()) {
@@ -63,13 +73,23 @@ pub fn route_direction(simulation: &mut Simulation, tank_index: usize) -> Vec2 {
     if d < ARRIVAL_RADIUS {
         return Vec2::ZERO;
     }
-    let speed = if brain.path.len() > 1 { 1.0 } else { 1f64.min(d / BRAKING_DISTANCE) };
+    let speed = if brain.path.len() > 1 {
+        1.0
+    } else {
+        1f64.min(d / BRAKING_DISTANCE)
+    };
     Vec2::new((dx / d) * speed, (dz / d) * speed)
 }
 
 /// Check the visible hull, including other tanks, before choosing a steering direction.
 /// Callers only compare the result with `needed`, so casting stops once it falls short.
-fn clearance(simulation: &Simulation, tank_index: usize, direction: Vec2, length: f64, needed: f64) -> f64 {
+fn clearance(
+    simulation: &Simulation,
+    tank_index: usize,
+    direction: Vec2,
+    length: f64,
+    needed: f64,
+) -> f64 {
     let tank = &simulation.tanks[tank_index];
     let collider = &simulation.world.colliders[tank.collider];
     let position = collider.translation();
@@ -84,7 +104,10 @@ fn clearance(simulation: &Simulation, tank_index: usize, direction: Vec2, length
         .groups(interaction_groups(query))
         .exclude_rigid_body(tank.body);
     // Check both the current hull and the orientation it is turning toward.
-    for yaw in [tank.heading, tank.heading + angle_delta(tank.heading, angle)] {
+    for yaw in [
+        tank.heading,
+        tank.heading + angle_delta(tank.heading, angle),
+    ] {
         let pose = Pose::from_parts(position, to_rotation(Quat4::yaw(yaw)));
         let options = ShapeCastOptions {
             max_time_of_impact: clear as f32,
@@ -125,7 +148,9 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
         LOOKAHEAD_DISTANCE
     };
     let enough = lookahead * CLEAR_FRACTION;
-    if avoidance_time > 0.0 && clearance(simulation, tank_index, avoidance, lookahead, enough) >= enough {
+    if avoidance_time > 0.0
+        && clearance(simulation, tank_index, avoidance, lookahead, enough) >= enough
+    {
         return Vec2::new(avoidance.x * magnitude, avoidance.z * magnitude);
     }
     if clearance(simulation, tank_index, direction, lookahead, enough) >= enough {
@@ -135,17 +160,36 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
     let mut best_score = f64::NEG_INFINITY;
     let mut best_clearance = 0.0;
     // Keep right when meeting another tank; the same local rule separates both vehicles.
-    for angle in [PI / 4.0, PI / 2.0, -PI / 4.0, -PI / 2.0, PI * 0.75, -PI * 0.75, PI] {
+    for angle in [
+        PI / 4.0,
+        PI / 2.0,
+        -PI / 4.0,
+        -PI / 2.0,
+        PI * 0.75,
+        -PI * 0.75,
+        PI,
+    ] {
         let cos = angle.cos();
         let sin = angle.sin();
-        let candidate = Vec2::new(direction.x * cos + direction.z * sin, direction.z * cos - direction.x * sin);
+        let candidate = Vec2::new(
+            direction.x * cos + direction.z * sin,
+            direction.z * cos - direction.x * sin,
+        );
         let continuity = candidate.x * avoidance.x + candidate.z * avoidance.z;
-        let score = |open: f64| 1f64.min(open / lookahead) * CLEARANCE_WEIGHT + cos + continuity * CONTINUITY_WEIGHT;
+        let score = |open: f64| {
+            1f64.min(open / lookahead) * CLEARANCE_WEIGHT + cos + continuity * CONTINUITY_WEIGHT
+        };
         // An obstruction only lowers the score, so a side that cannot win fully open needs no cast.
         if score(lookahead) <= best_score {
             continue;
         }
-        let open = clearance(simulation, tank_index, candidate, lookahead, MINIMUM_CLEARANCE);
+        let open = clearance(
+            simulation,
+            tank_index,
+            candidate,
+            lookahead,
+            MINIMUM_CLEARANCE,
+        );
         if open > MINIMUM_CLEARANCE && score(open) > best_score {
             best = candidate;
             best_score = score(open);
@@ -161,10 +205,14 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
 
 /// Sustained lack of progress triggers a committed detour, independent of decision timing.
 pub fn recover_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, dt: f64) {
-    let position = simulation.body_translation(simulation.tanks[tank_index].body).planar();
+    let position = simulation
+        .body_translation(simulation.tanks[tank_index].body)
+        .planar();
     let brain = &mut simulation.tanks[tank_index].brain;
     brain.recovery = 0f64.max(brain.recovery - dt);
-    if distance(position, brain.last) > PROGRESS_DISTANCE || desired.x.hypot(desired.z) < MOVEMENT_DEADZONE {
+    if distance(position, brain.last) > PROGRESS_DISTANCE
+        || desired.x.hypot(desired.z) < MOVEMENT_DEADZONE
+    {
         brain.last = position;
         brain.stuck = 0.0;
     } else {
@@ -177,7 +225,7 @@ pub fn recover_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2
         return;
     }
     let angle = desired.x.atan2(desired.z);
-    let side = if brain.recoveries % 2 != 0 { -1.0 } else { 1.0 };
+    let side = if brain.recoveries.is_multiple_of(2) { 1.0 } else { -1.0 };
     for offset in [(side * PI) / 2.0, (-side * PI) / 2.0, PI, (side * PI) / 4.0] {
         let goal = Vec2::new(
             position.x + (angle + offset).sin() * DETOUR_DISTANCE,

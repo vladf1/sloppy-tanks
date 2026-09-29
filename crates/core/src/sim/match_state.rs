@@ -15,7 +15,13 @@ pub fn new_match(round: u32) -> Match {
     }
 }
 
-pub fn award_kill(state: &mut Match, victim: Team, killer: Team, self_kill: bool, allow_victory: bool) {
+pub fn award_kill(
+    state: &mut Match,
+    victim: Team,
+    killer: Team,
+    self_kill: bool,
+    allow_victory: bool,
+) {
     if self_kill || victim == killer || state.phase != MatchPhase::Playing {
         return;
     }
@@ -34,7 +40,14 @@ pub fn tick_match(state: &mut Match, dt: f64) {
         if state.scores[0] == state.scores[1] {
             state.overtime = true;
         } else {
-            finish(state, if state.scores[0] > state.scores[1] { Team::Blue } else { Team::Red });
+            finish(
+                state,
+                if state.scores[0] > state.scores[1] {
+                    Team::Blue
+                } else {
+                    Team::Red
+                },
+            );
         }
     }
 }

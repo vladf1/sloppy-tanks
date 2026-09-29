@@ -154,15 +154,23 @@ pub fn bot_assignment(slot: usize, team: Team, ordinal: usize) -> BotAssignment 
     let roster = [
         BotPersonality::Scout,
         BotPersonality::Guard,
-        if team == Team::Blue { BotPersonality::Sniper } else { BotPersonality::Artillery },
+        if team == Team::Blue {
+            BotPersonality::Sniper
+        } else {
+            BotPersonality::Artillery
+        },
         BotPersonality::Heavy,
         BotPersonality::Minelayer,
         BotPersonality::Support,
-        if team == Team::Blue { BotPersonality::Artillery } else { BotPersonality::Sniper },
+        if team == Team::Blue {
+            BotPersonality::Artillery
+        } else {
+            BotPersonality::Sniper
+        },
     ];
     BotAssignment {
         personality: roster[slot % roster.len()],
-        ultra_aggressive: (ordinal + 1) % 10 == 0,
+        ultra_aggressive: (ordinal + 1).is_multiple_of(10),
     }
 }
 
@@ -196,7 +204,12 @@ pub fn preferred_ammo(tank: &Tank) -> Weapon {
 /// Seconds between a bot's shots with `fired` (its equipped weapon by default).
 pub fn bot_reload(tank: &Tank, jitter: f64, fired: Option<Weapon>) -> f64 {
     let fired = fired.unwrap_or_else(|| equipped_weapon(tank));
-    let base = bot_profile(tank).reload * if tank.brain.ultra_aggressive { 0.48 } else { 1.0 };
+    let base = bot_profile(tank).reload
+        * if tank.brain.ultra_aggressive {
+            0.48
+        } else {
+            1.0
+        };
     // Hunters close faster, but never erase the human's matched-weapon advantage.
     ((base + jitter).max(weapon(fired).interval * 1.15) * if tank.rapid > 0.0 { 0.5 } else { 1.0 })
         / rank_stats(tank.xp).fire_rate
@@ -208,7 +221,11 @@ pub fn combat_movement(tank: &Tank, dx: f64, dz: f64, strafe: f64) -> Vec2 {
         0.0 => 1.0,
         length => length,
     };
-    let range = if tank.brain.ultra_aggressive { 7.0 } else { profile.range };
+    let range = if tank.brain.ultra_aggressive {
+        7.0
+    } else {
+        profile.range
+    };
     if d < range - 2.0 {
         return Vec2::new(-dx / d, -dz / d);
     }

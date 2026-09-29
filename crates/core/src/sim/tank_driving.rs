@@ -13,18 +13,31 @@ const DRIVE_DEADZONE: f64 = 0.05;
 const REVERSE_ANGLE_EPSILON: f64 = 1e-6;
 const SPEED_BOOST_MULTIPLIER: f64 = 1.5;
 
-pub fn drive_tank(tank: &mut Tank, body: &mut RigidBody, command: &VehicleCommand, dt: f64, speed_scale: f64) {
+pub fn drive_tank(
+    tank: &mut Tank,
+    body: &mut RigidBody,
+    command: &VehicleCommand,
+    dt: f64,
+    speed_scale: f64,
+) {
     let input_magnitude = command.move_x.hypot(command.move_z);
-    let speed = vehicle(tank.kind).speed * speed_scale * if tank.speed > 0.0 { SPEED_BOOST_MULTIPLIER } else { 1.0 };
+    let speed = vehicle(tank.kind).speed
+        * speed_scale
+        * if tank.speed > 0.0 {
+            SPEED_BOOST_MULTIPLIER
+        } else {
+            1.0
+        };
     let mut drive = 0.0;
     if input_magnitude > DRIVE_DEADZONE {
         let desired = command.move_x.atan2(command.move_z);
         // Choose the nearer end of the hull; perpendicular input favors forward.
-        let reverse_requested = angle_delta(tank.heading, desired).abs() > PI / 2.0 + REVERSE_ANGLE_EPSILON;
+        let reverse_requested =
+            angle_delta(tank.heading, desired).abs() > PI / 2.0 + REVERSE_ANGLE_EPSILON;
         // HMMWVs are hunters: rotate and drive forward to retreat instead of backing into
         // danger. Only a committed stuck-position recovery may use reverse gear.
-        let reverse =
-            reverse_requested && (tank.kind != VehicleKind::Humvee || tank.human || tank.brain.recovery > 0.0);
+        let reverse = reverse_requested
+            && (tank.kind != VehicleKind::Humvee || tank.human || tank.brain.recovery > 0.0);
         let target = desired + if reverse { PI } else { 0.0 };
         let turn = angle_delta(tank.heading, target);
         tank.heading += (-HULL_TURN_SPEED * dt).max((HULL_TURN_SPEED * dt).min(turn));
@@ -42,7 +55,8 @@ pub fn drive_tank(tank: &mut Tank, body: &mut RigidBody, command: &VehicleComman
     let velocity_delta_x = desired_velocity_x - velocity.x as f64;
     let velocity_delta_z = desired_velocity_z - velocity.z as f64;
     let delta = velocity_delta_x.hypot(velocity_delta_z);
-    let acceleration_fraction = 1f64.min((MOVE_ACCELERATION * dt) / if delta == 0.0 { 1.0 } else { delta });
+    let acceleration_fraction =
+        1f64.min((MOVE_ACCELERATION * dt) / if delta == 0.0 { 1.0 } else { delta });
     // Bounded impulses preserve knockback; no per-frame velocity overwrite.
     let mass = body.mass() as f64;
     body.apply_impulse(

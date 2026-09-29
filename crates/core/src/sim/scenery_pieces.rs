@@ -10,7 +10,9 @@ use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
 use super::math::{Point3, Quat4, Random};
-use super::physics::{from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector};
+use super::physics::{
+    from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
+};
 use super::simulation::Simulation;
 use super::timber_layout::{TimberWall, timber_damage_stage, timber_parts};
 use super::tower_layout::TOWER_BASE;
@@ -64,7 +66,11 @@ impl Breakup<'_> {
         } else {
             ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
         };
-        let density = if material == DebrisMaterial::Metal { 0.65 } else { 0.35 };
+        let density = if material == DebrisMaterial::Metal {
+            0.65
+        } else {
+            0.35
+        };
         let collider = simulation.world.insert_collider(
             builder
                 .collision_groups(interaction_groups(group::PUSHABLE_DEBRIS))
@@ -75,8 +81,16 @@ impl Breakup<'_> {
         );
         let angle = self.rng.range(0.0, PI * 2.0);
         let outward = x.hypot(z);
-        let nx = if outward > 0.1 { x / outward } else { angle.cos() };
-        let nz = if outward > 0.1 { z / outward } else { angle.sin() };
+        let nx = if outward > 0.1 {
+            x / outward
+        } else {
+            angle.cos()
+        };
+        let nz = if outward > 0.1 {
+            z / outward
+        } else {
+            angle.sin()
+        };
         let speed = self.rng.range(2.0, 5.0);
         let rigid_body = &mut simulation.world.bodies[body];
         let mass = rigid_body.mass() as f64;
@@ -87,7 +101,13 @@ impl Breakup<'_> {
             true,
         );
         track_debris_contacts(simulation, body, collider, id, material);
-        let mut fragment = Fragment::new(id, body, PIECE_LIFE + DEBRIS_CLEANUP_SECONDS, 1.0, color.unwrap_or(cover.color));
+        let mut fragment = Fragment::new(
+            id,
+            body,
+            PIECE_LIFE + DEBRIS_CLEANUP_SECONDS,
+            1.0,
+            color.unwrap_or(cover.color),
+        );
         fragment.shape = Some(shape);
         fragment.dimensions = Some(Point3::new(w, h, d));
         fragment.material = Some(material);
@@ -101,7 +121,12 @@ impl Breakup<'_> {
 
 /// Break destroyed scenery into physical pieces. Returns false for kinds without authored
 /// pieces, whose callers fall back to small fragments.
-pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Option<CoverPose>, previous_hp: f64) -> bool {
+pub fn break_scenery(
+    simulation: &mut Simulation,
+    cover_index: usize,
+    pose: Option<CoverPose>,
+    previous_hp: f64,
+) -> bool {
     let mut cover = simulation.covers[cover_index].clone();
     // Navigation bounds expand as a barrel tips; fragments keep its original dimensions.
     if let Some(motion) = cover.motion {
@@ -143,7 +168,14 @@ pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Opti
                     wood,
                 );
             }
-            breakup.piece(simulation, FragmentShape::Panel, [0.0, cover.h, 0.0], [cover.w, 0.12, cover.d], None, wood);
+            breakup.piece(
+                simulation,
+                FragmentShape::Panel,
+                [0.0, cover.h, 0.0],
+                [cover.w, 0.12, cover.d],
+                None,
+                wood,
+            );
             breakup.piece(
                 simulation,
                 FragmentShape::Beam,
@@ -168,7 +200,8 @@ pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Opti
                 let rotation = Quat4::from_euler_xyz(0.0, part.yaw, part.lean);
                 simulation.fragments[index].timber_part = Some(part);
                 let collider = simulation.world.bodies[body].colliders()[0];
-                simulation.world.colliders[collider].set_collision_groups(interaction_groups(group::TIMBER_DEBRIS));
+                simulation.world.colliders[collider]
+                    .set_collision_groups(interaction_groups(group::TIMBER_DEBRIS));
                 let rigid_body = &mut simulation.world.bodies[body];
                 rigid_body.enable_ccd(true);
                 rigid_body.set_additional_solver_iterations(2);
@@ -188,8 +221,12 @@ pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Opti
         }
         CoverKind::Tree => {
             let proportions = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h);
-            let (family, height, radius, stump) =
-                (proportions.family, proportions.height, proportions.radius, proportions.stump_height);
+            let (family, height, radius, stump) = (
+                proportions.family,
+                proportions.height,
+                proportions.radius,
+                proportions.stump_height,
+            );
             let length = height * if family < 3 { 0.98 } else { 0.78 } - stump;
             let center = stump + length / 2.0;
             let trunk = breakup.piece(
@@ -259,11 +296,22 @@ pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Opti
         CoverKind::Tower => {
             // Split deck and two structural posts; foundations still use the existing rubble.
             for side in [-1.0, 1.0] {
-                breakup.piece(simulation, FragmentShape::Panel, [side * 1.5, 5.0, 0.0], [2.9, 0.35, 5.0], Some(0x887d59), wood);
+                breakup.piece(
+                    simulation,
+                    FragmentShape::Panel,
+                    [side * 1.5, 5.0, 0.0],
+                    [2.9, 0.35, 5.0],
+                    Some(0x887d59),
+                    wood,
+                );
                 breakup.piece(
                     simulation,
                     FragmentShape::Beam,
-                    [side * TOWER_BASE.offset, TOWER_BASE.height + 2.15, -TOWER_BASE.post_z],
+                    [
+                        side * TOWER_BASE.offset,
+                        TOWER_BASE.height + 2.15,
+                        -TOWER_BASE.post_z,
+                    ],
                     [0.35, 4.3, 0.35],
                     Some(0x887454),
                     wood,
@@ -276,7 +324,11 @@ pub fn break_scenery(simulation: &mut Simulation, cover_index: usize, pose: Opti
         // Carry the authored breakup into the barrel's current world pose before the blast.
         let rotation = pose.rotation;
         for id in &breakup.pieces {
-            let Some(fragment) = simulation.fragments.iter().find(|fragment| fragment.id == *id) else {
+            let Some(fragment) = simulation
+                .fragments
+                .iter()
+                .find(|fragment| fragment.id == *id)
+            else {
                 continue;
             };
             let body = &mut simulation.world.bodies[fragment.body];

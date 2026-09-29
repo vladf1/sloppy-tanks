@@ -8,7 +8,10 @@ use rapier3d::prelude::{ColliderHandle, Pose, Ray};
 
 use super::combat_rules::{COMBAT, MINE};
 use super::damage::{damage_cover, damage_tank, explode};
-use super::data::{INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup, weapon};
+use super::data::{
+    INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
+    weapon,
+};
 use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debris};
 use super::hitboxes::{SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
@@ -33,7 +36,10 @@ fn guide_tow_missile(simulation: &mut Simulation, shot_index: usize, dt: f64) {
         return;
     }
     let target = simulation.tanks.iter().find(|tank| {
-        tank.id == target_id && Some(tank.life) == shot.target_life && tank.alive && tank.team != shot.team
+        tank.id == target_id
+            && Some(tank.life) == shot.target_life
+            && tank.alive
+            && tank.team != shot.team
     });
     let Some(target) = target else {
         // A lost target or a new life cannot inherit the launch lock.
@@ -49,7 +55,8 @@ fn guide_tow_missile(simulation: &mut Simulation, shot_index: usize, dt: f64) {
     let position = simulation.body_translation(target.body);
     let desired = (position.x - shot.x).atan2(position.z - shot.z);
     let current = shot.vx.atan2(shot.vz);
-    let turn = (-COMBAT.tow_turn_rate * dt).max((COMBAT.tow_turn_rate * dt).min(angle_delta(current, desired)));
+    let turn = (-COMBAT.tow_turn_rate * dt)
+        .max((COMBAT.tow_turn_rate * dt).min(angle_delta(current, desired)));
     let heading = current + turn;
     let shot = &mut simulation.shots[shot_index];
     shot.vx = heading.sin() * speed;
@@ -100,7 +107,8 @@ fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
     // This blast only hits tanks; it does not invent cover/mine chain reactions.
     for i in 0..simulation.tanks.len() {
         let tank = &simulation.tanks[i];
-        if !tank.alive || distance(simulation.body_translation(tank.body).planar(), point) >= radius {
+        if !tank.alive || distance(simulation.body_translation(tank.body).planar(), point) >= radius
+        {
             continue;
         }
         let enemy_shot = if a.team != tank.team { a } else { b };
@@ -149,11 +157,17 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     }
     let rocket_base_speed = weapon(Weapon::Rocket).speed * simulation.speed_tuning.bullet_speed;
     let rocket_top_speed = rocket_base_speed * COMBAT.rocket_top_speed_multiplier;
-    let rocket_acceleration = (rocket_top_speed - rocket_base_speed) / COMBAT.rocket_acceleration_seconds;
-    for shot in simulation.shots.iter_mut().filter(|shot| shot.weapon == Weapon::Rocket) {
+    let rocket_acceleration =
+        (rocket_top_speed - rocket_base_speed) / COMBAT.rocket_acceleration_seconds;
+    for shot in simulation
+        .shots
+        .iter_mut()
+        .filter(|shot| shot.weapon == Weapon::Rocket)
+    {
         let speed = shot.vx.hypot(shot.vz);
         if speed > 0.0 && speed < rocket_top_speed {
-            let scale = rocket_top_speed.min(speed + rocket_acceleration * dt.min(shot.life)) / speed;
+            let scale =
+                rocket_top_speed.min(speed + rocket_acceleration * dt.min(shot.life)) / speed;
             shot.vx *= scale;
             shot.vz *= scale;
         }
@@ -161,10 +175,15 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     let mut remaining = dt;
     // Resolve the earliest contact across all shells, then query again after any
     // bounce/destruction. A wall or tank hit cannot be undone by a later intercept.
-    let defenses = simulation.tanks.iter().filter(|tank| tank.alive && tank.laser > 0.0).count();
+    let defenses = simulation
+        .tanks
+        .iter()
+        .filter(|tank| tank.alive && tank.laser > 0.0)
+        .count();
     let budget = simulation.shots.len() * (COMBAT.contacts_per_shot + defenses) + 1;
     let mut event = 0;
-    while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget {
+    while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget
+    {
         let (next, time) = find_next_contact(
             simulation,
             remaining,
@@ -190,7 +209,11 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
             break;
         };
         let shot_id = simulation.shots[next.shot()].id;
-        let fraction = if sweep_tank_motion { (dt - remaining) / dt } else { 1.0 };
+        let fraction = if sweep_tank_motion {
+            (dt - remaining) / dt
+        } else {
+            1.0
+        };
         if resolve_contact(simulation, next, fraction)
             && let Some(index) = simulation.shots.iter().position(|shot| shot.id == shot_id)
         {
@@ -312,16 +335,23 @@ fn find_next_contact(
         }
         let probe = ShotProbe::from(shot);
         for (ti, tank) in simulation.tanks.iter().enumerate() {
-            if let Some(contact) =
-                tank_hit_time(simulation, &probe, tank, time, elapsed, tank_frame_delta, tank_positions[ti])
-                && (contact < time || next.is_none())
+            if let Some(contact) = tank_hit_time(
+                simulation,
+                &probe,
+                tank,
+                time,
+                elapsed,
+                tank_frame_delta,
+                tank_positions[ti],
+            ) && (contact < time || next.is_none())
             {
                 time = contact;
                 next = Some(Contact::Tank { shot: si, tank: ti });
             }
             if defenses
                 && tank.laser > 0.0
-                && let Some(laser) = laser_contact_time(simulation, shot, tank, time, elapsed, tank_frame_delta)
+                && let Some(laser) =
+                    laser_contact_time(simulation, shot, tank, time, elapsed, tank_frame_delta)
                 && (laser < time || next.is_none())
             {
                 time = laser;
@@ -360,7 +390,12 @@ fn find_next_contact(
                 );
                 if simulation
                     .world
-                    .cast_ray(&ray, separation as f32, true, query_filter(group::COVER_QUERY))
+                    .cast_ray(
+                        &ray,
+                        separation as f32,
+                        true,
+                        query_filter(group::COVER_QUERY),
+                    )
                     .is_some()
                 {
                     continue;
@@ -414,7 +449,10 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
             }
             // A successful zap vaporizes the shell without triggering a rocket blast.
         }
-        Contact::Pair { shot: si, other: oi } => {
+        Contact::Pair {
+            shot: si,
+            other: oi,
+        } => {
             let other = simulation.shots[oi].clone();
             let a_pierces = shot.piercing > 0;
             let b_pierces = other.piercing > 0;
@@ -472,7 +510,11 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                     from_vector(
                         collider
                             .shape()
-                            .project_point(collider.position(), vector(shell_point.x, shell_point.y, shell_point.z), true)
+                            .project_point(
+                                collider.position(),
+                                vector(shell_point.x, shell_point.y, shell_point.z),
+                                true,
+                            )
                             .point,
                     )
                 })
@@ -491,7 +533,12 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
             } else {
                 hit_projectile_debris(simulation, fi, &shot, point);
             }
-            let mut impact = impact_event(point.x, point.z, 0.6, if timber { fragment_color } else { shot_color });
+            let mut impact = impact_event(
+                point.x,
+                point.z,
+                0.6,
+                if timber { fragment_color } else { shot_color },
+            );
             impact.height = Some(point.y);
             impact.cover_kind = timber.then_some(CoverKind::Timber);
             simulation.events.push(impact);
@@ -499,7 +546,10 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
         Contact::Tank { shot: si, tank: ti } => {
             let target = &simulation.tanks[ti];
             if !shot.recap_hit
-                && simulation.tanks.iter().any(|tank| simulation.records(tank) && tank.id == shot.owner)
+                && simulation
+                    .tanks
+                    .iter()
+                    .any(|tank| simulation.records(tank) && tank.id == shot.owner)
                 && target.team != shot.team
                 && target.protection <= 0.0
             {
@@ -533,7 +583,10 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                     shot.owner_life,
                     Some(DamageSource {
                         cause: shot.weapon.into(),
-                        origin: Vec2::new(position.x - shot.vx / speed, position.z - shot.vz / speed),
+                        origin: Vec2::new(
+                            position.x - shot.vx / speed,
+                            position.z - shot.vz / speed,
+                        ),
                     }),
                 );
             }
@@ -541,7 +594,11 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                 shot.x,
                 shot.z,
                 0.6,
-                if target_team == shot.team { FRIENDLY_IMPACT_COLOR } else { shot_color },
+                if target_team == shot.team {
+                    FRIENDLY_IMPACT_COLOR
+                } else {
+                    shot_color
+                },
             );
             impact.height = Some(1.0);
             simulation.events.push(impact);
@@ -556,7 +613,8 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                 if simulation.covers[ci].kind == CoverKind::Timber {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {
-                        simulation.covers[ci].timber_kick = Some(Vec2::new(shot.vx / speed, shot.vz / speed));
+                        simulation.covers[ci].timber_kick =
+                            Some(Vec2::new(shot.vx / speed, shot.vz / speed));
                     }
                 }
                 hit_movable_cover(simulation, ci, &shot);
@@ -603,9 +661,18 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
             }
             let shot = &simulation.shots[si];
             let chipped = cover.map(|ci| &simulation.covers[ci]).filter(|cover| {
-                cover.alive && matches!(cover.kind, CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo)
+                cover.alive
+                    && matches!(
+                        cover.kind,
+                        CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo
+                    )
             });
-            let mut impact = impact_event(shot.x, shot.z, 0.6, chipped.map_or(shot_color, |cover| cover.color));
+            let mut impact = impact_event(
+                shot.x,
+                shot.z,
+                0.6,
+                chipped.map_or(shot_color, |cover| cover.color),
+            );
             impact.cover_kind = chipped.map(|cover| cover.kind);
             impact.height = chipped.map(|cover| cover.h);
             simulation.events.push(impact);

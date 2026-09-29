@@ -1,7 +1,9 @@
 //! Ammunition choice, inventory and crate refills.
 
 use super::data::{vehicle, weapon};
-use super::types::{AmmoInventory, AmmoSelection, PickupKind, SpecialAmmo, Tank, VehicleKind, Weapon};
+use super::types::{
+    AmmoInventory, AmmoSelection, PickupKind, SpecialAmmo, Tank, VehicleKind, Weapon,
+};
 
 pub const AMMO_ORDER: [Weapon; 5] = [
     Weapon::Standard,
@@ -46,7 +48,10 @@ pub fn has_ammo_for(kind: VehicleKind, ammo: &AmmoInventory, selected: Weapon) -
     match selected {
         Weapon::Tow => vehicle(kind).weapon == Weapon::Tow,
         Weapon::Standard => vehicle(kind).weapon == Weapon::Standard,
-        other => vehicle(kind).weapon == Weapon::Standard && other.special().is_some_and(|s| ammo.get(s) > 0.0),
+        other => {
+            vehicle(kind).weapon == Weapon::Standard
+                && other.special().is_some_and(|s| ammo.get(s) > 0.0)
+        }
     }
 }
 
@@ -91,9 +96,13 @@ pub fn select_ammo(tank: &mut Tank, selection: Option<AmmoSelection>) {
         }
         Some(AmmoSelection::Step(step)) if step != 0 => {
             let count = AMMO_ORDER.len() as i32;
-            let start = AMMO_ORDER.iter().position(|&w| w == tank.selected_ammo).map_or(-1, |i| i as i32);
+            let start = AMMO_ORDER
+                .iter()
+                .position(|&w| w == tank.selected_ammo)
+                .map_or(-1, |i| i as i32);
             for offset in 1..=count {
-                let candidate = AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize];
+                let candidate =
+                    AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize];
                 if has_ammo(tank, candidate) {
                     tank.selected_ammo = candidate;
                     break;
@@ -116,7 +125,8 @@ pub fn consume_ammo(tank: &mut Tank, fired: Weapon) {
 
 pub fn refill_ammo(tank: &mut Tank, kind: SpecialAmmo, multiplier: f64) -> f64 {
     let stats = weapon(kind.weapon());
-    let received = (stats.per_crate * multiplier).min(stats.carry_limit * multiplier - tank.ammo.get(kind));
+    let received =
+        (stats.per_crate * multiplier).min(stats.carry_limit * multiplier - tank.ammo.get(kind));
     *tank.ammo.get_mut(kind) += received;
     received
 }

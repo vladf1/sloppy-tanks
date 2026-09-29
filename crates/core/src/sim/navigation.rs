@@ -82,7 +82,9 @@ impl Navigation {
             if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {
-                let diameter = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h).stump_radius * 2.0;
+                let diameter = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h)
+                    .stump_radius
+                    * 2.0;
                 self.obstacles.push(Footprint {
                     x: cover.x,
                     z: cover.z,
@@ -140,7 +142,12 @@ impl Navigation {
                 for x in -r..=r {
                     let a = (cell % GRID_SIZE) as i64 + x;
                     let b = (cell / GRID_SIZE) as i64 + z;
-                    if a >= 0 && a < size && b >= 0 && b < size && self.blocked[(b * size + a) as usize] == 0 {
+                    if a >= 0
+                        && a < size
+                        && b >= 0
+                        && b < size
+                        && self.blocked[(b * size + a) as usize] == 0
+                    {
                         return (b * size + a) as usize;
                     }
                 }
@@ -153,8 +160,14 @@ impl Navigation {
     pub fn clear_line(&self, from: Vec2, to: Vec2) -> bool {
         let steps = ((to.x - from.x).hypot(to.z - from.z) / (CELL_SIZE / 3.0)).ceil() as i64;
         for i in 0..=steps {
-            let f = if steps != 0 { i as f64 / steps as f64 } else { 0.0 };
-            if self.blocked[cell_at(from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f)] != 0 {
+            let f = if steps != 0 {
+                i as f64 / steps as f64
+            } else {
+                0.0
+            };
+            if self.blocked[cell_at(from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f)]
+                != 0
+            {
                 return false;
             }
         }
@@ -174,8 +187,9 @@ impl Navigation {
         self.open.clear();
         let goal_x = (goal % GRID_SIZE) as i64;
         let goal_z = (goal / GRID_SIZE) as i64;
-        let heuristic =
-            |cell: usize| ((cell % GRID_SIZE) as i64 - goal_x).abs() + ((cell / GRID_SIZE) as i64 - goal_z).abs();
+        let heuristic = |cell: usize| {
+            ((cell % GRID_SIZE) as i64 - goal_x).abs() + ((cell / GRID_SIZE) as i64 - goal_z).abs()
+        };
         // A cheaper route to an open cell pushes a smaller estimate with the cell's original
         // discovery order, so the outdated entry always pops after the cell has closed.
         let mut discoveries = 0u32;

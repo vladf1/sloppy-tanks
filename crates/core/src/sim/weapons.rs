@@ -36,17 +36,19 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
     let visual_muzzle_height = position.y - MUZZLE_FRAME_OFFSET + visual_muzzle.y;
     let tow_target = (fired == Weapon::Tow)
         .then(|| {
-            simulation
-                .tanks
-                .iter()
-                .find(|candidate| candidate.id == tank.brain.target && candidate.alive && candidate.team != tank.team)
+            simulation.tanks.iter().find(|candidate| {
+                candidate.id == tank.brain.target && candidate.alive && candidate.team != tank.team
+            })
         })
         .flatten()
         .map(|target| (target.id, target.life, target.body));
     // Only launch at a visible enemy; rejected requests must not consume a reload.
     if fired == Weapon::Tow {
         let visible = tow_target.is_some_and(|(_, _, body)| {
-            simulation.visible(position.planar(), simulation.body_translation(body).planar())
+            simulation.visible(
+                position.planar(),
+                simulation.body_translation(body).planar(),
+            )
         });
         if !visible {
             return;
@@ -59,8 +61,9 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
     tank.last_combat = elapsed;
     tank.cooldown = interval;
     tank.recoil = 1.0;
-    let (aim, id, team, life, xp, human, kind) =
-        (tank.aim, tank.id, tank.team, tank.life, tank.xp, tank.human, tank.kind);
+    let (aim, id, team, life, xp, human, kind) = (
+        tank.aim, tank.id, tank.team, tank.life, tank.xp, tank.human, tank.kind,
+    );
     let direction = Vec2::new(aim.sin(), aim.cos());
     // Trace to the muzzle so a barrel poking into cover or a tank cannot shoot through it.
     let mut spawn_distance = muzzle.z;
@@ -68,11 +71,12 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
         vector(position.x, muzzle_height, position.z),
         vector(direction.x, 0.0, direction.z),
     );
-    if let Some((_, time)) =
-        simulation
-            .world
-            .cast_ray(&ray, spawn_distance as f32, true, query_filter(group::COVER_QUERY))
-    {
+    if let Some((_, time)) = simulation.world.cast_ray(
+        &ray,
+        spawn_distance as f32,
+        true,
+        query_filter(group::COVER_QUERY),
+    ) {
         spawn_distance = spawn_distance.min(time as f64);
     }
     let probe = ShotProbe {
@@ -84,7 +88,8 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
         owner: id,
     };
     for target in &simulation.tanks {
-        if let Some(hit) = tank_hit_time(simulation, &probe, target, spawn_distance, 0.0, 0.0, None) {
+        if let Some(hit) = tank_hit_time(simulation, &probe, target, spawn_distance, 0.0, 0.0, None)
+        {
             spawn_distance = spawn_distance.min(hit);
         }
     }
@@ -134,10 +139,16 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
     if kind == VehicleKind::Humvee && !human {
         withdraw_humvee(simulation, tank_index);
     }
-    if human && fired != Weapon::Standard && simulation.tanks[tank_index].selected_ammo == Weapon::Standard {
+    if human
+        && fired != Weapon::Standard
+        && simulation.tanks[tank_index].selected_ammo == Weapon::Standard
+    {
         let mut notice = SimEvent::at(SimEventType::Notice, position.x, position.z);
         notice.id = Some(id);
-        notice.label = Some(format!("{} EMPTY — switched to STANDARD (unlimited)", stats.label));
+        notice.label = Some(format!(
+            "{} EMPTY — switched to STANDARD (unlimited)",
+            stats.label
+        ));
         simulation.events.push(notice);
     }
     let mut shot = SimEvent::at(
@@ -156,6 +167,14 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
 /// Seconds between this tank's shots with its equipped weapon.
 pub fn weapon_interval(tank: &Tank) -> f64 {
     (weapon(equipped_weapon(tank)).interval
-        * if tank.rapid > 0.0 { COMBAT.rapid_reload_multiplier } else { 1.0 })
-        / ((if tank.human { PLAYER_FIRE_RATE_MULTIPLIER } else { 1.0 }) * rank_stats(tank.xp).fire_rate)
+        * if tank.rapid > 0.0 {
+            COMBAT.rapid_reload_multiplier
+        } else {
+            1.0
+        })
+        / ((if tank.human {
+            PLAYER_FIRE_RATE_MULTIPLIER
+        } else {
+            1.0
+        }) * rank_stats(tank.xp).fire_rate)
 }

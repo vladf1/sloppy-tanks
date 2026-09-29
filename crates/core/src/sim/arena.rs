@@ -25,7 +25,16 @@ pub struct CoverDef {
 
 impl CoverDef {
     #[allow(clippy::too_many_arguments)]
-    pub const fn new(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64, hp: f64, color: u32) -> Self {
+    pub const fn new(
+        kind: CoverKind,
+        x: f64,
+        z: f64,
+        w: f64,
+        d: f64,
+        h: f64,
+        hp: f64,
+        color: u32,
+    ) -> Self {
         Self {
             kind,
             x,
@@ -47,19 +56,73 @@ fn authored_layout() -> Vec<CoverDef> {
     let infinite = f64::INFINITY;
     let cover = CoverDef::new;
     for s in [-1.0, 1.0] {
-        result.push(cover(CoverKind::Boundary, s * (ARENA + 0.5), 0.0, 1.0, ARENA * 2.0 + 2.0, 2.2, infinite, 0xa68c68));
-        result.push(cover(CoverKind::Boundary, 0.0, s * (ARENA + 0.5), ARENA * 2.0 + 2.0, 1.0, 2.2, infinite, 0xa68c68));
+        result.push(cover(
+            CoverKind::Boundary,
+            s * (ARENA + 0.5),
+            0.0,
+            1.0,
+            ARENA * 2.0 + 2.0,
+            2.2,
+            infinite,
+            0xa68c68,
+        ));
+        result.push(cover(
+            CoverKind::Boundary,
+            0.0,
+            s * (ARENA + 0.5),
+            ARENA * 2.0 + 2.0,
+            1.0,
+            2.2,
+            infinite,
+            0xa68c68,
+        ));
         for z in [-45.0, -9.0, 9.0, 45.0] {
-            result.push(cover(CoverKind::Tree, s * 36.0, z, 2.6, 2.6, 5.8, 80.0, 0x169f65));
+            result.push(cover(
+                CoverKind::Tree,
+                s * 36.0,
+                z,
+                2.6,
+                2.6,
+                5.8,
+                80.0,
+                0x169f65,
+            ));
         }
         for z in [-39.0, -13.0, 13.0, 39.0] {
-            result.push(cover(CoverKind::House, s * 45.0, z, 5.0, 6.0, 4.6, infinite, 0xb87b4c));
+            result.push(cover(
+                CoverKind::House,
+                s * 45.0,
+                z,
+                5.0,
+                6.0,
+                4.6,
+                infinite,
+                0xb87b4c,
+            ));
         }
         for z in [-46.0, 46.0] {
-            result.push(cover(CoverKind::House, s * 17.0, z, 7.0, 5.0, 5.2, infinite, 0xc78b50));
+            result.push(cover(
+                CoverKind::House,
+                s * 17.0,
+                z,
+                7.0,
+                5.0,
+                5.2,
+                infinite,
+                0xc78b50,
+            ));
         }
         for z in [-28.0, 28.0] {
-            result.push(cover(CoverKind::Tree, s * 23.0, z, 2.6, 2.6, 6.0, 80.0, 0x169f65));
+            result.push(cover(
+                CoverKind::Tree,
+                s * 23.0,
+                z,
+                2.6,
+                2.6,
+                6.0,
+                80.0,
+                0x169f65,
+            ));
             // Open cottage gardens provide flanking space; each timber bay breaks independently.
             let depth = 0.9;
             let back_x = 33.2;
@@ -84,14 +147,32 @@ fn authored_layout() -> Vec<CoverDef> {
                 });
                 run.timber_bays = Some(2);
                 result.push(run);
-                let mut post = cover(CoverKind::Timber, s * back_x, z + end * 5.0, depth, depth, 2.8, TIMBER_HEALTH, 0x805336);
+                let mut post = cover(
+                    CoverKind::Timber,
+                    s * back_x,
+                    z + end * 5.0,
+                    depth,
+                    depth,
+                    2.8,
+                    TIMBER_HEALTH,
+                    0x805336,
+                );
                 post.timber_join = Some(TimberJoin {
                     post: true,
                     ..TimberJoin::default()
                 });
                 result.push(post);
             }
-            let mut back = cover(CoverKind::Timber, s * back_x, z, depth, 10.0 - depth - 0.08, 2.8, TIMBER_HEALTH, 0xb47a49);
+            let mut back = cover(
+                CoverKind::Timber,
+                s * back_x,
+                z,
+                depth,
+                10.0 - depth - 0.08,
+                2.8,
+                TIMBER_HEALTH,
+                0xb47a49,
+            );
             back.timber_join = Some(TimberJoin {
                 open_min: true,
                 open_max: true,
@@ -99,16 +180,61 @@ fn authored_layout() -> Vec<CoverDef> {
             });
             back.timber_bays = Some(3);
             result.push(back);
-            result.push(cover(CoverKind::Drum, s * 25.0, z - s, 1.2, 1.2, 1.7, 30.0, 0xff5b24));
+            result.push(cover(
+                CoverKind::Drum,
+                s * 25.0,
+                z - s,
+                1.2,
+                1.2,
+                1.7,
+                30.0,
+                0xff5b24,
+            ));
         }
         for x in [-6.0, -2.0, 2.0, 6.0] {
-            result.push(cover(CoverKind::Timber, x, s * 13.0, 3.7, 0.9, 2.8, TIMBER_HEALTH, 0xb47a49));
+            result.push(cover(
+                CoverKind::Timber,
+                x,
+                s * 13.0,
+                3.7,
+                0.9,
+                2.8,
+                TIMBER_HEALTH,
+                0xb47a49,
+            ));
         }
-        result.push(cover(CoverKind::Tower, s * 12.75, -s * 28.0, 6.0, 5.0, 7.5, 180.0, 0xbd864a));
+        result.push(cover(
+            CoverKind::Tower,
+            s * 12.75,
+            -s * 28.0,
+            6.0,
+            5.0,
+            7.5,
+            180.0,
+            0xbd864a,
+        ));
         for z in [-2.0, 2.0] {
-            result.push(cover(CoverKind::Drum, s * 6.0, z, 1.2, 1.2, 1.7, 30.0, 0xff5b24));
+            result.push(cover(
+                CoverKind::Drum,
+                s * 6.0,
+                z,
+                1.2,
+                1.2,
+                1.7,
+                30.0,
+                0xff5b24,
+            ));
         }
-        result.push(cover(CoverKind::House, s * 24.0, 0.0, 5.0, 7.0, 4.9, 180.0, 0xb87b4c));
+        result.push(cover(
+            CoverKind::House,
+            s * 24.0,
+            0.0,
+            5.0,
+            7.0,
+            4.9,
+            180.0,
+            0xb87b4c,
+        ));
     }
     result
 }

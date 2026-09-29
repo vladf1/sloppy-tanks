@@ -51,7 +51,8 @@ pub fn step_mines(simulation: &mut Simulation, dt: f64) {
             && simulation.tanks.iter().any(|tank| {
                 tank.alive
                     && tank.team != mine.team
-                    && distance(simulation.body_translation(tank.body).planar(), at) < MINE.trigger_radius
+                    && distance(simulation.body_translation(tank.body).planar(), at)
+                        < MINE.trigger_radius
             });
         if triggered {
             simulation.mines.remove(index);

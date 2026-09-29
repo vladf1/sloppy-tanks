@@ -1,6 +1,8 @@
 //! Crate collection.
 
-use super::ammunition::{AMMO_RESPAWN_SECONDS, can_collect_ammo, has_advanced_ammo, refill_ammo, select_ammo};
+use super::ammunition::{
+    AMMO_RESPAWN_SECONDS, can_collect_ammo, has_advanced_ammo, refill_ammo, select_ammo,
+};
 use super::data::{LASER_DEFENSE, SHIELD_CAPACITY, pickup, weapon};
 use super::simulation::Simulation;
 use super::types::{AmmoSelection, Pickup, PickupKind, SimEvent, SimEventType};
@@ -42,7 +44,11 @@ pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, supply: &m
         PickupKind::Spread | PickupKind::Rocket | PickupKind::Ricochet | PickupKind::Piercing => {
             let ammo = kind.special_ammo().expect("ammunition crate");
             let should_auto_select = tank.human && !has_advanced_ammo(tank);
-            label = format!("+{} {}", refill_ammo(tank, ammo, multiplier), weapon(ammo.weapon()).unit);
+            label = format!(
+                "+{} {}",
+                refill_ammo(tank, ammo, multiplier),
+                weapon(ammo.weapon()).unit
+            );
             if should_auto_select {
                 select_ammo(tank, Some(AmmoSelection::Weapon(ammo.weapon())));
             }

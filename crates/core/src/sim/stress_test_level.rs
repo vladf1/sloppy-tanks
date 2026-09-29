@@ -17,12 +17,31 @@ pub const STRESS_AMMO_CRATE_MULTIPLIER: f64 = 10.0;
 fn stress_test_layout() -> Vec<CoverDef> {
     let mut covers = Vec::new();
     let infinite = f64::INFINITY;
-    let mut add = |kind, x, z, w, d, h, hp, color| covers.push(CoverDef::new(kind, x, z, w, d, h, hp, color));
+    let mut add =
+        |kind, x, z, w, d, h, hp, color| covers.push(CoverDef::new(kind, x, z, w, d, h, hp, color));
 
     // A hard square perimeter keeps every body and chain reaction inside the test yard.
     for side in [-1.0, 1.0] {
-        add(CoverKind::Boundary, side * (ARENA + 0.5), 0.0, 1.0, ARENA * 2.0 + 2.0, 2.2, infinite, 0x7b7162);
-        add(CoverKind::Boundary, 0.0, side * (ARENA + 0.5), ARENA * 2.0 + 2.0, 1.0, 2.2, infinite, 0x7b7162);
+        add(
+            CoverKind::Boundary,
+            side * (ARENA + 0.5),
+            0.0,
+            1.0,
+            ARENA * 2.0 + 2.0,
+            2.2,
+            infinite,
+            0x7b7162,
+        );
+        add(
+            CoverKind::Boundary,
+            0.0,
+            side * (ARENA + 0.5),
+            ARENA * 2.0 + 2.0,
+            1.0,
+            2.2,
+            infinite,
+            0x7b7162,
+        );
     }
 
     // Dense symmetric quadrants exercise draw calls, pathfinding, collisions and every major
@@ -60,26 +79,98 @@ fn stress_test_layout() -> Vec<CoverDef> {
     // Breakable barricades create four temporary gates around the open centre.
     for side in [-1.0, 1.0] {
         for offset in [-12.0, -6.0, 0.0, 6.0, 12.0] {
-            add(CoverKind::Timber, offset, side * 22.0, 4.2, 0.9, 2.8, TIMBER_HEALTH, 0xb47a49);
-            add(CoverKind::Timber, side * 22.0, offset, 0.9, 4.2, 2.8, TIMBER_HEALTH, 0xb47a49);
+            add(
+                CoverKind::Timber,
+                offset,
+                side * 22.0,
+                4.2,
+                0.9,
+                2.8,
+                TIMBER_HEALTH,
+                0xb47a49,
+            );
+            add(
+                CoverKind::Timber,
+                side * 22.0,
+                offset,
+                0.9,
+                4.2,
+                2.8,
+                TIMBER_HEALTH,
+                0xb47a49,
+            );
         }
     }
 
     // Permanent buildings create hard sight-line breaks without sealing the broad central lanes.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
-            add(CoverKind::House, offset, side * 35.0, 5.5, 6.5, 5.0, infinite, 0xb87b4c);
-            add(CoverKind::House, side * 35.0, offset, 6.5, 5.5, 5.0, infinite, 0xc78b50);
+            add(
+                CoverKind::House,
+                offset,
+                side * 35.0,
+                5.5,
+                6.5,
+                5.0,
+                infinite,
+                0xb87b4c,
+            );
+            add(
+                CoverKind::House,
+                side * 35.0,
+                offset,
+                6.5,
+                5.5,
+                5.0,
+                infinite,
+                0xc78b50,
+            );
         }
     }
 
     // Tree groves sit between the permanent houses, outer obstacle grid and spawn approaches.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
-            add(CoverKind::Tree, offset, side * 45.0, 2.8, 2.8, 6.2, 80.0, 0x169f65);
-            add(CoverKind::Tree, offset, side * 27.0, 2.6, 2.6, 5.8, 80.0, 0x218f55);
-            add(CoverKind::Tree, side * 45.0, offset, 2.8, 2.8, 6.2, 80.0, 0x169f65);
-            add(CoverKind::Tree, side * 27.0, offset, 2.6, 2.6, 5.8, 80.0, 0x218f55);
+            add(
+                CoverKind::Tree,
+                offset,
+                side * 45.0,
+                2.8,
+                2.8,
+                6.2,
+                80.0,
+                0x169f65,
+            );
+            add(
+                CoverKind::Tree,
+                offset,
+                side * 27.0,
+                2.6,
+                2.6,
+                5.8,
+                80.0,
+                0x218f55,
+            );
+            add(
+                CoverKind::Tree,
+                side * 45.0,
+                offset,
+                2.8,
+                2.8,
+                6.2,
+                80.0,
+                0x169f65,
+            );
+            add(
+                CoverKind::Tree,
+                side * 27.0,
+                offset,
+                2.6,
+                2.6,
+                5.8,
+                80.0,
+                0x218f55,
+            );
         }
     }
 
@@ -101,7 +192,16 @@ fn stress_test_layout() -> Vec<CoverDef> {
     // Extra permanent teeth guard the north and south verges without blocking spawn pads.
     for side in [-1.0, 1.0] {
         for x in [-42.0, -28.0, -14.0, 14.0, 28.0, 42.0] {
-            add(CoverKind::Teeth, x, side * 54.0, 2.4, 2.4, 2.5, infinite, 0xc8c2b5);
+            add(
+                CoverKind::Teeth,
+                x,
+                side * 54.0,
+                2.4,
+                2.4,
+                2.5,
+                infinite,
+                0xc8c2b5,
+            );
         }
     }
     covers

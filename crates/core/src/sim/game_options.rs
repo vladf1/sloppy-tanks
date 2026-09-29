@@ -34,9 +34,15 @@ pub fn initial_game_options(
     };
     GameOptions {
         human_kind: VehicleKind::Balanced,
-        human_team: if Random::new(seed).next() < 0.5 { Team::Blue } else { Team::Red },
+        human_team: if Random::new(seed).next() < 0.5 {
+            Team::Blue
+        } else {
+            Team::Red
+        },
         game_mode: GameMode::Team,
-        map_mode: map(requested_map).or_else(|| map(last_map)).unwrap_or(MapId::Village),
+        map_mode: map(requested_map)
+            .or_else(|| map(last_map))
+            .unwrap_or(MapId::Village),
         difficulty: parse_difficulty(difficulty),
     }
 }

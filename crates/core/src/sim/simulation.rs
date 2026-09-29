@@ -13,8 +13,12 @@ use super::barrel_physics::barrel_collider;
 use super::bot_personalities::{BotPersonality, shuffled_bot_names};
 use super::combat_record::CombatRecord;
 use super::data::{ARENA, LASER_DEFENSE, SOLO_TIME, STEP, group, vehicle};
-use super::debris_cleanup::{DEBRIS_CLEANUP_SECONDS, cleanup_candidate, debris_moving, prepare_debris_cleanup};
-use super::debris_physics::{DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts};
+use super::debris_cleanup::{
+    DEBRIS_CLEANUP_SECONDS, cleanup_candidate, debris_moving, prepare_debris_cleanup,
+};
+use super::debris_physics::{
+    DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
+};
 use super::difficulty::Difficulty;
 use super::fragments::create_fragment;
 use super::map_options::MapId;
@@ -24,7 +28,8 @@ use super::math::{Point3, Quat4, Random, Vec2, best_by, distance, js_round, to_u
 use super::movable_cover::update_movable_cover;
 use super::navigation::{Footprint, Navigation};
 use super::physics::{
-    ContactForces, convex_hull, from_rotation, from_vector, interaction_groups, query_filter, vector,
+    ContactForces, convex_hull, from_rotation, from_vector, interaction_groups, query_filter,
+    vector,
 };
 use super::pickups::collect_pickup;
 use super::projectiles::step_projectiles;
@@ -34,8 +39,9 @@ use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SP
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::{respawn_tank, spawn_tank};
 use super::types::{
-    Cover, CoverKind, CoverMotion, Driver, Fragment, FragmentShape, Match, MatchPhase, Mine, Pickup,
-    PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind, Weapon,
+    Cover, CoverKind, CoverMotion, Driver, Fragment, FragmentShape, Match, MatchPhase, Mine,
+    Pickup, PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand,
+    VehicleKind, Weapon,
 };
 use super::veterancy::{rank_index, rank_stats, repair_veteran};
 use super::weapons::{fire_weapon, place_mine, step_mines};
@@ -116,8 +122,12 @@ impl SimulationSetup {
             custom_map: other.custom_map.or(self.custom_map),
             endless_match: other.endless_match.or(self.endless_match),
             round_count: other.round_count.or(self.round_count),
-            human_health_multiplier: other.human_health_multiplier.or(self.human_health_multiplier),
-            power_up_duration_multiplier: other.power_up_duration_multiplier.or(self.power_up_duration_multiplier),
+            human_health_multiplier: other
+                .human_health_multiplier
+                .or(self.human_health_multiplier),
+            power_up_duration_multiplier: other
+                .power_up_duration_multiplier
+                .or(self.power_up_duration_multiplier),
             ammo_crate_multiplier: other.ammo_crate_multiplier.or(self.ammo_crate_multiplier),
             max_fragments: other.max_fragments.or(self.max_fragments),
             after_step: other.after_step.or(self.after_step),
@@ -246,7 +256,11 @@ pub struct Simulation {
 impl Simulation {
     pub fn new(seed: f64, setup: SimulationSetup) -> Self {
         let mut rng = Random::new(seed);
-        let human_team = if rng.next() < 0.5 { Team::Blue } else { Team::Red };
+        let human_team = if rng.next() < 0.5 {
+            Team::Blue
+        } else {
+            Team::Red
+        };
         let mut simulation = Simulation {
             world: PhysicsWorld::new(),
             contact_forces: ContactForces::default(),
@@ -323,8 +337,16 @@ impl Simulation {
     pub fn max_health(&self, tank: &Tank) -> f64 {
         js_round(
             vehicle(tank.kind).health
-                * if tank.human { self.human_health_multiplier } else { 1.0 }
-                * if self.is_easy_enemy(tank) { SOLO.enemy_health_multiplier } else { 1.0 }
+                * if tank.human {
+                    self.human_health_multiplier
+                } else {
+                    1.0
+                }
+                * if self.is_easy_enemy(tank) {
+                    SOLO.enemy_health_multiplier
+                } else {
+                    1.0
+                }
                 * rank_stats(tank.xp).health
                 * 100.0,
         ) / 100.0
@@ -394,10 +416,14 @@ impl Simulation {
         if self.game_mode == GameMode::Solo {
             self.match_state.time = SOLO_TIME;
         }
-        let round_seed = to_uint32(self.seed + self.match_state.round as f64 * SIMULATION_RULES.round_seed_stride);
+        let round_seed = to_uint32(
+            self.seed + self.match_state.round as f64 * SIMULATION_RULES.round_seed_stride,
+        );
         self.bot_names = shuffled_bot_names(round_seed as f64);
         self.current_map = selected_map(self.map_mode, self.custom_map);
-        let ground = self.world.insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
+        let ground = self
+            .world
+            .insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
         self.world.insert_collider(
             ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
                 .collision_groups(interaction_groups(group::GROUND)),
@@ -419,8 +445,16 @@ impl Simulation {
                     x: placement.x * scale,
                     z: placement.z * scale,
                     available: !laser,
-                    cooldown: if laser { LASER_DEFENSE.initial_delay } else { 0.0 },
-                    cooldown_duration: if laser { LASER_DEFENSE.initial_delay } else { 0.0 },
+                    cooldown: if laser {
+                        LASER_DEFENSE.initial_delay
+                    } else {
+                        0.0
+                    },
+                    cooldown_duration: if laser {
+                        LASER_DEFENSE.initial_delay
+                    } else {
+                        0.0
+                    },
                 }
             })
             .collect();
@@ -435,10 +469,12 @@ impl Simulation {
             for i in 0..count {
                 let team = Team::from_index(i % 2);
                 let slot = i / 2;
-                let player = self
-                    .players
-                    .as_ref()
-                    .and_then(|players| players.iter().find(|p| p.team == team && p.slot == slot).cloned());
+                let player = self.players.as_ref().and_then(|players| {
+                    players
+                        .iter()
+                        .find(|p| p.team == team && p.slot == slot)
+                        .cloned()
+                });
                 if self.multiplayer() && self.humans_only && player.is_none() {
                     continue;
                 }
@@ -450,7 +486,11 @@ impl Simulation {
                 let kind = match &player {
                     Some(player) => player.kind,
                     None if i == self.human_team.index() => self.human_kind,
-                    None => [VehicleKind::Scout, VehicleKind::Balanced, VehicleKind::Heavy][slot % 3],
+                    None => [
+                        VehicleKind::Scout,
+                        VehicleKind::Balanced,
+                        VehicleKind::Heavy,
+                    ][slot % 3],
                 };
                 self.add_tank(team, human, kind, slot);
             }
@@ -546,23 +586,37 @@ impl Simulation {
         } else {
             RigidBodyBuilder::fixed()
         };
-        let body = self.world.insert_body(builder.translation(vector(x, h / 2.0, z)));
+        let body = self
+            .world
+            .insert_body(builder.translation(vector(x, h / 2.0, z)));
         let shapes: Vec<ColliderBuilder> = match kind {
             CoverKind::Teeth | CoverKind::Hedgehog => {
-                quarry_barrier_hulls(kind, w, h, d, dragon_tooth_variant(x, z)).iter().map(|points| convex_hull(points)).collect()
+                quarry_barrier_hulls(kind, w, h, d, dragon_tooth_variant(x, z))
+                    .iter()
+                    .map(|points| convex_hull(points))
+                    .collect()
             }
             CoverKind::Drum => vec![barrel_collider(w, h, d)],
             CoverKind::Rock => {
                 let rock = quarry_rock_shape(w, h, d, quarry_rock_variant(x, z));
                 let vertices = rock
                     .positions
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|p| Vector::new(p[0], (p[1] as f64 - h / 2.0) as f32, p[2]))
                     .collect();
-                let indices = rock.indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect();
-                vec![ColliderBuilder::trimesh(vertices, indices).expect("authored rock mesh is valid")]
+                let indices = rock.indices.as_chunks::<3>().0.to_vec();
+                vec![
+                    ColliderBuilder::trimesh(vertices, indices)
+                        .expect("authored rock mesh is valid"),
+                ]
             }
-            _ => vec![ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)],
+            _ => vec![ColliderBuilder::cuboid(
+                (w / 2.0) as f32,
+                (h / 2.0) as f32,
+                (d / 2.0) as f32,
+            )],
         };
         let surface = cover_surface(kind);
         let count = shapes.len() as f64;
@@ -584,7 +638,9 @@ impl Simulation {
                         .friction(material.friction as f32)
                         .restitution(material.restitution as f32)
                 } else {
-                    shape.collision_groups(interaction_groups(group::COVER)).friction(0.4)
+                    shape
+                        .collision_groups(interaction_groups(group::COVER))
+                        .friction(0.4)
                 };
                 self.world.insert_collider(shape, Some(body))
             })
@@ -652,7 +708,10 @@ impl Simulation {
     /// Advance one fixed tick of local play. The human tank follows `command` unless
     /// `autoplay` hands it to the bot brain.
     pub fn step(&mut self, command: VehicleCommand, autoplay: bool) {
-        assert!(!self.multiplayer(), "Multiplayer requires per-tank commands through step_with");
+        assert!(
+            !self.multiplayer(),
+            "Multiplayer requires per-tank commands through step_with"
+        );
         self.advance(Some(command), autoplay, None);
     }
 
@@ -707,7 +766,8 @@ impl Simulation {
             tank.rapid = 0f64.max(tank.rapid - STEP);
             tank.speed = 0f64.max(tank.speed - STEP);
             tank.laser = 0f64.max(tank.laser - STEP);
-            tank.recoil = 0f64.max(tank.recoil - STEP * SIMULATION_RULES.recoil_recovery_per_second);
+            tank.recoil =
+                0f64.max(tank.recoil - STEP * SIMULATION_RULES.recoil_recovery_per_second);
             let c = match commands {
                 Some(commands) => match tank.driver {
                     Driver::Bot => bot_command(self, i, STEP),
@@ -728,7 +788,10 @@ impl Simulation {
             {
                 let mut event = SimEvent::at(SimEventType::Notice, position.x, position.z);
                 event.id = Some(tank.id);
-                event.label = Some(format!("{} EMPTY — collect an ammo crate", chosen.as_str().to_uppercase()));
+                event.label = Some(format!(
+                    "{} EMPTY — collect an ammo crate",
+                    chosen.as_str().to_uppercase()
+                ));
                 self.events.push(event);
             }
             let tank = &mut self.tanks[i];
@@ -755,7 +818,10 @@ impl Simulation {
         let tank_positions: Vec<Option<Vec2>> = self
             .tanks
             .iter()
-            .map(|tank| tank.alive.then(|| from_vector(self.world.bodies[tank.body].translation()).planar()))
+            .map(|tank| {
+                tank.alive
+                    .then(|| from_vector(self.world.bodies[tank.body].translation()).planar())
+            })
             .collect();
         for p in 0..self.pickups.len() {
             let pickup = &mut self.pickups[p];
@@ -788,7 +854,9 @@ impl Simulation {
             // Keep substantial debris solid while it is still moving, with a hard age limit.
             let hold = fragment.life > DEBRIS_CLEANUP_SECONDS
                 && fragment.life - STEP <= DEBRIS_CLEANUP_SECONDS
-                && fragment.expires_at.is_some_and(|expires| self.elapsed < expires - DEBRIS_CLEANUP_SECONDS)
+                && fragment
+                    .expires_at
+                    .is_some_and(|expires| self.elapsed < expires - DEBRIS_CLEANUP_SECONDS)
                 && debris_moving(self, fragment);
             let fragment = &mut self.fragments[i];
             if !hold {
@@ -833,12 +901,21 @@ impl Simulation {
         let limit = self.active_enemy_limit;
         let slots: Vec<Vec2> = (0..limit)
             .map(|slot| Vec2 {
-                x: if team == Team::Blue { -SOLO.spawn_x } else { SOLO.spawn_x },
-                z: -SOLO.spawn_half_span_z + (slot as f64 * (SOLO.spawn_half_span_z * 2.0)) / (limit as f64 - 1.0),
+                x: if team == Team::Blue {
+                    -SOLO.spawn_x
+                } else {
+                    SOLO.spawn_x
+                },
+                z: -SOLO.spawn_half_span_z
+                    + (slot as f64 * (SOLO.spawn_half_span_z * 2.0)) / (limit as f64 - 1.0),
             })
             .filter(|&p| {
                 self.tanks.iter().all(|tank| {
-                    !tank.alive || distance(p, from_vector(self.world.bodies[tank.body].translation()).planar()) > 4.0
+                    !tank.alive
+                        || distance(
+                            p,
+                            from_vector(self.world.bodies[tank.body].translation()).planar(),
+                        ) > 4.0
                 })
             })
             .collect();
@@ -848,7 +925,11 @@ impl Simulation {
             return;
         };
         // Reuse the six enemy slots so long runs do not accumulate tanks or HUD meshes.
-        let Some(replacement) = self.tanks.iter().position(|tank| !tank.human && !tank.alive) else {
+        let Some(replacement) = self
+            .tanks
+            .iter()
+            .position(|tank| !tank.human && !tank.alive)
+        else {
             return;
         };
         self.respawn(replacement, Some(spawn));
@@ -887,7 +968,8 @@ impl Simulation {
         }
         for &friend in friends {
             let q = self.body_translation(self.tanks[friend].body).planar();
-            score -= 0f64.max(SPAWN_SCORING.ally_clearance - distance(position, q)) * SPAWN_SCORING.ally_proximity_penalty;
+            score -= 0f64.max(SPAWN_SCORING.ally_clearance - distance(position, q))
+                * SPAWN_SCORING.ally_proximity_penalty;
         }
         score
     }
@@ -898,7 +980,10 @@ impl Simulation {
         if len < 0.01 {
             return true;
         }
-        let ray = Ray::new(vector(a.x, 1.0, a.z), vector((b.x - a.x) / len, 0.0, (b.z - a.z) / len));
+        let ray = Ray::new(
+            vector(a.x, 1.0, a.z),
+            vector((b.x - a.x) / len, 0.0, (b.z - a.z) / len),
+        );
         self.world
             .cast_ray(&ray, len as f32, true, query_filter(group::COVER_QUERY))
             .is_none()
@@ -917,7 +1002,15 @@ impl Simulation {
     }
 
     /// A small cosmetic physics fragment.
-    pub fn fragment(&mut self, x: f64, z: f64, color: u32, size: f64, shape: FragmentShape, lifetime_scale: f64) {
+    pub fn fragment(
+        &mut self,
+        x: f64,
+        z: f64,
+        color: u32,
+        size: f64,
+        shape: FragmentShape,
+        lifetime_scale: f64,
+    ) {
         create_fragment(self, x, z, color, size, shape, lifetime_scale);
     }
 
@@ -960,7 +1053,9 @@ impl Simulation {
         owner_life: Option<u32>,
         cause: super::types::DamageCause,
     ) {
-        super::damage::explode(self, position, radius, damage, owner, team, owner_life, cause);
+        super::damage::explode(
+            self, position, radius, damage, owner, team, owner_life, cause,
+        );
     }
 
     /// Remove a body with its colliders, and forget its debris-contact metadata.
@@ -1024,7 +1119,11 @@ impl Simulation {
                         mode: tank.brain.mode,
                         recovering: tank.brain.recovery > 0.0,
                         recoveries: tank.brain.recoveries,
-                        personality: if tank.human { None } else { Some(tank.brain.personality) },
+                        personality: if tank.human {
+                            None
+                        } else {
+                            Some(tank.brain.personality)
+                        },
                         ultra_aggressive: !tank.human && tank.brain.ultra_aggressive,
                     }
                 })
@@ -1096,14 +1195,19 @@ mod personality_or_player {
 
     use super::BotPersonality;
 
-    pub fn serialize<S: Serializer>(value: &Option<BotPersonality>, serializer: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(
+        value: &Option<BotPersonality>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         match value {
             Some(personality) => personality.serialize(serializer),
             None => serializer.serialize_str("player"),
         }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<BotPersonality>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<BotPersonality>, D::Error> {
         let name = String::deserialize(deserializer)?;
         if name == "player" {
             return Ok(None);
