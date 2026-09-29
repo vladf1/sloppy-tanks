@@ -3,16 +3,15 @@
 use super::ammunition::{AMMO_RESPAWN_SECONDS, can_collect_ammo, has_advanced_ammo, refill_ammo, select_ammo};
 use super::data::{LASER_DEFENSE, SHIELD_CAPACITY, pickup, weapon};
 use super::simulation::Simulation;
-use super::types::{AmmoSelection, PickupKind, SimEvent, SimEventType};
+use super::types::{AmmoSelection, Pickup, PickupKind, SimEvent, SimEventType};
 
-/// Give `pickup_index`'s crate to the tank if it can use it. Returns whether it was taken.
-pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, pickup_index: usize) -> bool {
+/// Give the crate to the tank if it can use it. Returns whether it was taken.
+pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, supply: &mut Pickup) -> bool {
     let tank = &simulation.tanks[tank_index];
-    let crate_ = &simulation.pickups[pickup_index];
-    if !crate_.available || !tank.alive {
+    if !supply.available || !tank.alive {
         return false;
     }
-    let kind = crate_.kind;
+    let kind = supply.kind;
     if kind == PickupKind::Repair && tank.hp >= simulation.max_health(tank) {
         return false;
     }
@@ -24,18 +23,17 @@ pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, pickup_ind
     }
     let records = simulation.records(tank);
     let max_health = simulation.max_health(tank);
-    let crate_ = &mut simulation.pickups[pickup_index];
-    crate_.available = false;
+    supply.available = false;
     if records {
         simulation.combat_record.pickups += 1;
     }
-    crate_.cooldown = if kind == PickupKind::Laser {
+    supply.cooldown = if kind == PickupKind::Laser {
         LASER_DEFENSE.respawn
     } else {
         AMMO_RESPAWN_SECONDS
     };
-    crate_.cooldown_duration = crate_.cooldown;
-    let (x, z) = (crate_.x, crate_.z);
+    supply.cooldown_duration = supply.cooldown;
+    let (x, z) = (supply.x, supply.z);
     let stats = pickup(kind);
     let duration = stats.duration * simulation.power_up_duration_multiplier;
     let tank = &mut simulation.tanks[tank_index];

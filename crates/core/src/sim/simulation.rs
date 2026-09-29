@@ -770,9 +770,13 @@ impl Simulation {
             for (i, position) in tank_positions.iter().enumerate() {
                 if let Some(position) = position
                     && distance(*position, at) < SIMULATION_RULES.pickup_radius
-                    && collect_pickup(self, i, p)
                 {
-                    break;
+                    let mut supply = self.pickups[p].clone();
+                    let taken = collect_pickup(self, i, &mut supply);
+                    self.pickups[p] = supply;
+                    if taken {
+                        break;
+                    }
                 }
             }
         }
@@ -915,6 +919,48 @@ impl Simulation {
     /// A small cosmetic physics fragment.
     pub fn fragment(&mut self, x: f64, z: f64, color: u32, size: f64, shape: FragmentShape, lifetime_scale: f64) {
         create_fragment(self, x, z, color, size, shape, lifetime_scale);
+    }
+
+    /// Damage a tank through the shared damage path (see `damage::damage_tank`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn damage_tank(
+        &mut self,
+        tank_index: usize,
+        amount: f64,
+        owner: u32,
+        team: Team,
+        owner_life: Option<u32>,
+        source: Option<super::types::DamageSource>,
+    ) {
+        super::damage::damage_tank(self, tank_index, amount, owner, team, owner_life, source);
+    }
+
+    /// Damage a cover through the shared damage path (see `damage::damage_cover`).
+    pub fn damage_cover(
+        &mut self,
+        cover_index: usize,
+        amount: f64,
+        owner: u32,
+        team: Team,
+        owner_life: Option<u32>,
+        impact: Option<Point3>,
+    ) {
+        super::damage::damage_cover(self, cover_index, amount, owner, team, owner_life, impact);
+    }
+
+    /// A blast damaging tanks, cover and mines (see `damage::explode`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn explode(
+        &mut self,
+        position: Vec2,
+        radius: f64,
+        damage: f64,
+        owner: u32,
+        team: Team,
+        owner_life: Option<u32>,
+        cause: super::types::DamageCause,
+    ) {
+        super::damage::explode(self, position, radius, damage, owner, team, owner_life, cause);
     }
 
     /// Remove a body with its colliders, and forget its debris-contact metadata.
