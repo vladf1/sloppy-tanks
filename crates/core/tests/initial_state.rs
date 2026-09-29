@@ -1,6 +1,7 @@
 //! Construction parity with the TypeScript simulation: the same seed and setup must build
 //! the same roster, names, spawns, cover, pickups and navigation grid, and leave the seeded
-//! stream in the same state. `fixtures/initial-state.ts` generates the reference.
+//! stream in the same state. The reference was recorded from the TypeScript engine (baseline
+//! `35afd91`) by `fixtures/initial-state.ts`, which left with that engine (see Git history).
 
 use serde_json::Value;
 use sloppy_core::sim::extra_levels::extra_level;

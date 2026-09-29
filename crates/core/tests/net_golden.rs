@@ -1,8 +1,9 @@
 //! Wire compatibility with the TypeScript host: the same scripted room
 //! (`fixtures/net-golden-script.json`) must produce the same message sequence on every
 //! connection, identical lobby/control/welcome/pong/error/reset messages, and baselines
-//! and snapshots with the same JSON paths and value types. `fixtures/net-golden.ts`
-//! records the TypeScript reference into `fixtures/net-golden.json`.
+//! and snapshots with the same JSON paths and value types. `fixtures/net-golden.json` was
+//! recorded from the TypeScript host (baseline `35afd91`) by `fixtures/net-golden.ts`, which
+//! left with that engine (see Git history).
 
 mod net_support;
 

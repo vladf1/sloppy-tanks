@@ -6,16 +6,46 @@ import { build, type Metafile, type Plugin } from "esbuild";
 const CLIENT = "src/net/client.ts";
 const ROOM_BROWSER = "src/net/room-browser.ts";
 // The Rust engine (`NetGame`) runs the connection, replication, interpolation, input and
-// drawing. Anything reaching these makes opening a room download the TypeScript engine,
-// its physics or Three.js; scripts/multiplayer-loading-check.mjs checks the real Vite
-// chunks in a browser.
-const ENGINE_CODE = new RegExp(
-  [
-    String.raw`^src/game/(simulation|physics-browser|presentation|renderer|render-state)\.ts$`,
-    String.raw`/(three|@dimforge)/`,
-    String.raw`^src/net/(render-timeline|interpolation|playout-clock|scene-codec|replication|match-host|multiplayer-simulation|player-controls|fixed-step-clock|input-cadence|transport-delay|schema|protocol|connection)\.ts$`,
-  ].join("|"),
-);
+// drawing. The room page is only this DOM shell around it; anything else it reaches would
+// be game logic creeping back into TypeScript or a library download on joining a room.
+// scripts/multiplayer-loading-check.mjs checks the real Vite chunks in a browser.
+const SHELL = new Set([
+  "src/touch-controls.css",
+  ...[
+    "ammo-options",
+    "audio",
+    "button-input",
+    "cockpit",
+    "controls",
+    "engine-api",
+    "game-options",
+    "join-screen",
+    "map-options",
+    "map-picker",
+    "nerd-stats",
+    "play-modes",
+    "round-recap",
+    "task-yield",
+    "touch-controls",
+    "touch-input",
+    "touch-mode",
+    "ui-markup",
+  ].map((name) => `src/game/${name}.ts`),
+  "src/net/multiplayer.css",
+  ...[
+    "client",
+    "network-stats",
+    "network-ui",
+    "pending-join",
+    "player-name",
+    "room-browser",
+    "room-list",
+    "room-protocol",
+    "server-address",
+  ].map((name) => `src/net/${name}.ts`),
+]);
+/** Audio is the one library a room page loads. */
+const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?howler[@\\/]/;
 /** The engine build is generated (`pnpm run wasm`); the test only needs its import. */
 const generatedEngine: Plugin = {
   name: "generated-engine",
@@ -63,12 +93,12 @@ async function staticGraph(entry: string): Promise<Metafile["inputs"]> {
 }
 
 for (const entry of [CLIENT, ROOM_BROWSER]) {
-  test(`${entry} imports none of the TypeScript engine, physics or Three.js`, async () => {
+  test(`${entry} reaches only the room page shell and the Rust engine`, async () => {
     const inputs = await staticGraph(entry);
     const modules = Object.keys(inputs);
     assert.ok(modules.includes("src/net/room-protocol.ts"), "The client graph was walked");
     const leaks = modules
-      .filter((id) => ENGINE_CODE.test(id))
+      .filter((id) => !SHELL.has(id) && !LIBRARIES.test(id))
       .map((id) => importChain(inputs, entry, id).join(" -> "));
     assert.deepEqual(leaks, []);
   });

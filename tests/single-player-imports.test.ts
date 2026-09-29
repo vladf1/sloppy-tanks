@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { build, type Metafile } from "esbuild";
 
 const ENTRY = "src/main.ts";
-// Single player runs the Rust engine. These shell modules are all it may load; the
-// TypeScript engine (simulation, presentation, Three.js, Rapier JS) must stay out.
+// Single player runs the Rust engine. These DOM shell modules are all it may load: game
+// rules, simulation and rendering belong in the engine, not back in TypeScript.
 const SHELL = new Set([
   "src/main.ts",
   "src/game.ts",
@@ -37,7 +37,8 @@ const SHELL = new Set([
     "ui-markup",
   ].map((name) => `src/game/${name}.ts`),
 ]);
-const ENGINE_LIBRARIES = /[\\/](three|@dimforge)[\\/]/;
+/** Audio, and the development-only tuning panel, are the libraries single player loads. */
+const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?(howler|tweakpane|@tweakpane)[@\\/]/;
 
 /** The import path from the entry, for a readable failure. */
 function importChain(inputs: Metafile["inputs"], target: string): string[] {
@@ -58,7 +59,7 @@ function importChain(inputs: Metafile["inputs"], target: string): string[] {
   return chain;
 }
 
-test("single player reaches only the shell and the Rust engine, never the TypeScript engine", async () => {
+test("single player reaches only the shell and the Rust engine", async () => {
   const { metafile } = await build({
     absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
     entryPoints: [ENTRY],
@@ -87,7 +88,7 @@ test("single player reaches only the shell and the Rust engine, never the TypeSc
   const modules = Object.keys(metafile.inputs);
   assert.ok(modules.includes("src/game.ts"), "The game entry was walked");
   const leaks = modules
-    .filter((id) => (id.startsWith("src/") && !SHELL.has(id)) || ENGINE_LIBRARIES.test(id))
+    .filter((id) => !SHELL.has(id) && !LIBRARIES.test(id))
     .map((id) => importChain(metafile.inputs, id).join(" -> "));
   assert.deepEqual(leaks, []);
 });

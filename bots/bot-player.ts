@@ -1,7 +1,8 @@
 /**
  * A traffic-test player that speaks the public room protocol like a browser tab but never
  * reads the map: it drives in random directions, sweeps its turret and fires at nothing.
- * Platform-free so the same class runs in the Durable Object and against MatchHost in tests.
+ * Platform-free so the same class runs in the Durable Object and against the Rust server in
+ * `tests/traffic-bots.test.ts`.
  */
 
 export const BOT_NAME_PREFIX = "bot-";

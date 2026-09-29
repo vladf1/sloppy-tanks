@@ -1,7 +1,8 @@
 //! Per-tick trace of a seeded autoplay match, for comparing against the TypeScript engine:
 //! `cargo run -p sloppy-core --release --example trace -- <seed> <map|solo|mp> <ticks>`.
-//! Its TypeScript twin is `crates/core/tests/fixtures/trace.ts`; the two print identical lines
-//! until the physics engines' contact responses first differ.
+//! Its TypeScript twin, `crates/core/tests/fixtures/trace.ts`, left with that engine; run it
+//! from Git history in a baseline checkout (`35afd91`). The two print identical lines until
+//! the physics engines' contact responses first differ.
 
 use std::collections::BTreeMap;
 
