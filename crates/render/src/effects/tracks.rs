@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 
 use glam::{Mat4, Vec3};
-use sloppy_core::sim::arena::spawn_positions;
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::math::angle_delta;
-use sloppy_core::sim::{RenderState, Team, VehicleKind};
+use sloppy_core::sim::{RenderState, VehicleKind};
 
 use super::pool::{PoolBuffer, record};
+use super::spawn_pad_decks::SpawnPadDecks;
 
 // Thirty boosted scouts can leave about 70,000 marks during the 24-second fade.
 // Reserve that lifetime budget so busy scenes do not stop drawing new trails.
@@ -26,10 +26,7 @@ pub const HUMVEE_TRACK_STRENGTH: f32 = 0.18;
 const TELEPORT_DISTANCE: f64 = 5.0;
 const TELEPORT_TURN: f64 = 0.8;
 const AIRBORNE_HEIGHT: f64 = 1.25;
-const MARK_HEIGHT: f32 = 0.075;
-/// Quarry pads stand proud of the dirt, so prints on them ride on top.
-const PAD_MARK_HEIGHT: f32 = 0.16;
-const PAD_RADIUS: f64 = 2.75;
+const MARK_HEIGHT: f64 = 0.075;
 
 #[derive(Clone, Copy, Debug)]
 struct Pose {
@@ -45,6 +42,8 @@ pub struct TrackTrails {
     /// The trail clock (simulation seconds) the shader fades marks against.
     pub clock: f64,
     poses: HashMap<u32, Pose>,
+    /// Spawn pads stand proud of the ground, so prints on them ride on their decks.
+    pads: SpawnPadDecks,
     // Expiry order is a ring; render slots stay dense so the draw count excludes
     // dead marks. `slots[queue]` is a mark's slot, `queue_indices[slot]` its queue.
     oldest: usize,
@@ -58,6 +57,7 @@ impl Default for TrackTrails {
             records: PoolBuffer::new(TRACK_CAPACITY),
             clock: 0.0,
             poses: HashMap::new(),
+            pads: SpawnPadDecks::default(),
             oldest: 0,
             slots: vec![0; TRACK_CAPACITY],
             queue_indices: vec![0; TRACK_CAPACITY],
@@ -67,19 +67,6 @@ impl Default for TrackTrails {
 
 fn birth(records: &PoolBuffer, slot: usize) -> f64 {
     f64::from(records.records()[slot].data[0])
-}
-
-fn mark_height(state: &RenderState, x: f64, z: f64) -> f32 {
-    if state.map_theme == "quarry" {
-        for team in [Team::Blue, Team::Red] {
-            for p in spawn_positions(team, state.map_scale) {
-                if (x - p.x).hypot(z - p.z) < PAD_RADIUS {
-                    return PAD_MARK_HEIGHT;
-                }
-            }
-        }
-    }
-    MARK_HEIGHT
 }
 
 impl TrackTrails {
@@ -101,6 +88,7 @@ impl TrackTrails {
     pub fn update(&mut self, state: &RenderState, alpha: f64) {
         let elapsed = state.elapsed;
         self.clock = elapsed;
+        self.pads.sync(state);
         // Retire only expired entries, not a scan of every live mark each frame.
         // Moving the last live slot into each hole keeps a single compact draw.
         while !self.records.is_empty() {
@@ -180,7 +168,8 @@ impl TrackTrails {
 
     fn lay(&mut self, state: &RenderState, x: f64, z: f64, angle: f64, scale: f64, humvee: bool) {
         let (width, length) = if humvee { (0.18, 0.3) } else { (0.48, 0.16) };
-        let world = Mat4::from_translation(Vec3::new(x as f32, mark_height(state, x, z), z as f32))
+        let y = self.pads.decal_height(x, z, 0.0, MARK_HEIGHT);
+        let world = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32))
             * Mat4::from_rotation_y(angle as f32)
             * Mat4::from_scale(Vec3::new(
                 (width * scale) as f32,
@@ -244,16 +233,16 @@ mod tests {
     }
 
     #[test]
-    fn quarry_prints_ride_on_top_of_spawn_pads() {
-        for theme in ["quarry", "village"] {
+    fn prints_ride_on_top_of_every_themes_spawn_pads() {
+        for theme in ["quarry", "village", "harbor", "stress-test"] {
             let mut s = state(VehicleKind::Balanced);
             s.map_theme = theme.into();
             s.tanks[0].heading = std::f64::consts::FRAC_PI_2;
             place(&mut s, -58.0, -23.0);
             let mut trails = TrackTrails::default();
             let dt = 1.0 / 60.0;
-            for _ in 0..120 {
-                if s.tanks[0].position.x >= -48.0 {
+            for _ in 0..240 {
+                if s.tanks[0].position.x >= -44.0 {
                     break;
                 }
                 s.elapsed += dt;
@@ -261,21 +250,29 @@ mod tests {
                 place(&mut s, x, -23.0);
                 trails.update(&s, 1.0);
             }
-            let (mut pad, mut dirt) = (0, 0);
+            let decks = SpawnPadDecks::new(theme, 1.0);
+            let (mut pad, mut ground) = (0, 0);
             for slot in 0..trails.len() {
                 let p = origin(&trails.records, slot);
-                let on_pad = f64::from(p.x + 53.0).hypot(f64::from(p.z + 23.0)) < PAD_RADIUS;
-                let expected = if on_pad && theme == "quarry" {
-                    pad += 1;
-                    PAD_MARK_HEIGHT
-                } else {
-                    dirt += 1;
-                    MARK_HEIGHT
-                };
-                assert!((p.y - expected).abs() < 1e-6, "{theme} print at {}", p.y);
+                let y = f64::from(p.y);
+                match decks.top(f64::from(p.x), f64::from(p.z)) {
+                    Some(deck) => {
+                        pad += 1;
+                        assert!(
+                            y > deck + 0.015 && y < deck + 0.03,
+                            "{theme} print {y} on {deck}"
+                        );
+                    }
+                    None => {
+                        ground += 1;
+                        assert!((y - MARK_HEIGHT).abs() < 1e-6, "{theme} print at {y}");
+                    }
+                }
             }
-            assert!(dirt > 0);
-            assert_eq!(pad > 0, theme == "quarry");
+            assert!(
+                pad > 10 && ground > 10,
+                "{theme}: {pad} on the pad, {ground} off it"
+            );
         }
     }
 

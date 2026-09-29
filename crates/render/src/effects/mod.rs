@@ -20,6 +20,7 @@ pub mod projectiles;
 pub mod quarry_dust;
 pub mod random;
 pub mod registry;
+pub mod spawn_pad_decks;
 pub mod track_dust;
 pub mod track_gravel;
 pub mod tracks;
@@ -137,6 +138,7 @@ impl EffectSystems {
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, time: f64) {
         self.pickups.update(state, alpha, dt);
         self.tracks.update(state, alpha);
+        self.particles.explosions.pads.sync(state);
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
         self.flash.intensity *= (-dt * FLASH_FADE_RATE).exp() as f32;

@@ -9,6 +9,7 @@ use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::pool::{PoolBuffer, record, smoothstep};
 use super::random::CosmeticRandom;
+use super::spawn_pad_decks::SpawnPadDecks;
 use crate::color::hex_to_linear;
 
 pub const MAX_EXPLOSIONS: usize = 24;
@@ -19,7 +20,11 @@ pub const PUFFS_PER_BLAST: usize = 8;
 const BURNOUT_LIFETIME: f64 = 2.7;
 /// Rings show for the first part of a blast only.
 const RING_SECONDS: f64 = 0.55;
-const RING_HEIGHT: f32 = 0.07;
+const RING_HEIGHT: f64 = 0.07;
+/// A ring spreads from `RING_START` to `RING_START + RING_SPREAD` metres (times
+/// the blast scale); it clears every spawn pad deck it can reach.
+const RING_START: f64 = 0.65;
+const RING_SPREAD: f64 = 3.6;
 /// Puffs are slightly flattened unless a profile stretches its fire.
 const PUFF_HEIGHT: f64 = 0.86;
 
@@ -196,6 +201,8 @@ pub struct ExplosionEffects {
     barrel_sequence: usize,
     pub puffs: PoolBuffer,
     pub rings: PoolBuffer,
+    /// The current map's spawn pads, which rings on or beside them ride over.
+    pub pads: SpawnPadDecks,
 }
 
 impl Default for ExplosionEffects {
@@ -207,6 +214,7 @@ impl Default for ExplosionEffects {
             barrel_sequence: 0,
             puffs: PoolBuffer::new(MAX_EXPLOSIONS * PUFFS_PER_BLAST),
             rings: PoolBuffer::new(MAX_EXPLOSIONS),
+            pads: SpawnPadDecks::default(),
         }
     }
 }
@@ -447,8 +455,11 @@ impl ExplosionEffects {
             }
         }
         if t < RING_SECONDS {
-            let radius = ((0.65 + 3.6 * (1.0 - (-t * 5.0).exp())) * s) as f32;
-            let world = Mat4::from_translation(Vec3::new(b.x as f32, RING_HEIGHT, b.z as f32))
+            let radius = ((RING_START + RING_SPREAD * (1.0 - (-t * 5.0).exp())) * s) as f32;
+            // One height for the ring's whole spread, so it never steps mid-blast.
+            let reach = (RING_START + RING_SPREAD) * s;
+            let y = self.pads.decal_height(b.x, b.z, reach, RING_HEIGHT) as f32;
+            let world = Mat4::from_translation(Vec3::new(b.x as f32, y, b.z as f32))
                 * Mat4::from_scale(Vec3::new(radius * 2.0, 1.0, radius * 2.0));
             self.rings.push(record(
                 world,
@@ -496,6 +507,41 @@ mod tests {
         effects.update(EXPLOSION_LIFETIME);
         assert_eq!(effects.puffs.len(), 0);
         assert_eq!(effects.rings.len(), 0);
+    }
+
+    #[test]
+    fn rings_ride_over_the_spawn_pads_they_reach_for_their_whole_spread() {
+        for theme in ["village", "harbor", "quarry"] {
+            let mut random = CosmeticRandom::default();
+            let mut effects = ExplosionEffects {
+                pads: SpawnPadDecks::new(theme, 1.0),
+                ..ExplosionEffects::default()
+            };
+            // On a blue pad, and in the open centre of the arena.
+            for (x, z) in [(-53.0, 0.0), (0.0, 30.0)] {
+                effects.event(
+                    &SimEvent {
+                        size: Some(4.5),
+                        ..SimEvent::at(SimEventType::Explosion, x, z)
+                    },
+                    &mut random,
+                );
+            }
+            let deck = effects.pads.top(-53.0, 0.0).expect("pad deck");
+            let mut heights = Vec::new();
+            for _ in 0..8 {
+                effects.update(0.06);
+                assert_eq!(effects.rings.len(), 2);
+                let on_pad = y(&effects.rings, 0);
+                assert!(f64::from(on_pad) > deck + 0.015, "{theme} ring {on_pad}");
+                heights.push(on_pad);
+                assert!((f64::from(y(&effects.rings, 1)) - RING_HEIGHT).abs() < 1e-6);
+            }
+            assert!(
+                heights.iter().all(|&h| h == heights[0]),
+                "{theme} ring steps"
+            );
+        }
     }
 
     #[test]
