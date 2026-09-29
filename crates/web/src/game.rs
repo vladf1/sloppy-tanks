@@ -110,7 +110,9 @@ pub mod frame_slot {
     pub const RENDER_MS: usize = 8;
     /// 1 while first person is enabled (the page captures the pointer).
     pub const FIRST_PERSON: usize = 9;
-    pub const LENGTH: usize = 10;
+    /// This frame's capped delta in seconds (the HUD advances its timers by it).
+    pub const DT: usize = 10;
+    pub const LENGTH: usize = 11;
 }
 
 fn js_error(message: impl Into<String>) -> JsValue {
@@ -499,6 +501,7 @@ impl Game {
         result[frame_slot::SIM_MS] = self.times.sim_ms as f32;
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
         result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
+        result[frame_slot::DT] = dt as f32;
         self.frame_index += 1;
         Ok(result)
     }

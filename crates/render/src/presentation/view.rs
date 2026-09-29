@@ -513,6 +513,8 @@ pub struct Presentation {
     sample_models: Vec<ModelId>,
     random: CosmeticRandom,
     scratch: Vec<u32>,
+    /// Ids present this frame, for dropping views of departed entities.
+    live: std::collections::HashSet<u32>,
 }
 
 impl Presentation {
@@ -578,6 +580,7 @@ impl Presentation {
             sample_models: Vec::new(),
             random,
             scratch: Vec::new(),
+            live: std::collections::HashSet::new(),
         };
         presentation
             .flags
@@ -1454,11 +1457,10 @@ impl Presentation {
         }
         // Tanks that left the roster (never in single player, but in rooms).
         self.scratch.clear();
-        self.scratch.extend(
-            self.tanks
-                .keys()
-                .filter(|id| !state.tanks.iter().any(|tank| tank.id == **id)),
-        );
+        self.live.clear();
+        self.live.extend(state.tanks.iter().map(|tank| tank.id));
+        self.scratch
+            .extend(self.tanks.keys().filter(|id| !self.live.contains(*id)));
         for id in self.scratch.drain(..) {
             if let Some(view) = self.tanks.remove(&id) {
                 self.renderer.remove_instance(view.instance);
@@ -1752,11 +1754,10 @@ impl Presentation {
 
     fn update_fragments(&mut self, state: &RenderState) {
         self.scratch.clear();
-        self.scratch.extend(
-            self.fragments
-                .keys()
-                .filter(|id| !state.fragments.iter().any(|f| f.id == **id)),
-        );
+        self.live.clear();
+        self.live.extend(state.fragments.iter().map(|f| f.id));
+        self.scratch
+            .extend(self.fragments.keys().filter(|id| !self.live.contains(*id)));
         for id in self.scratch.drain(..) {
             if let Some(view) = self.fragments.remove(&id) {
                 self.renderer.remove_instance(view.instance);
@@ -1885,11 +1886,10 @@ impl Presentation {
 
     fn update_mines(&mut self, state: &RenderState) {
         self.scratch.clear();
-        self.scratch.extend(
-            self.mines
-                .keys()
-                .filter(|id| !state.mines.iter().any(|mine| mine.id == **id)),
-        );
+        self.live.clear();
+        self.live.extend(state.mines.iter().map(|mine| mine.id));
+        self.scratch
+            .extend(self.mines.keys().filter(|id| !self.live.contains(*id)));
         for id in self.scratch.drain(..) {
             if let Some(view) = self.mines.remove(&id) {
                 self.renderer.remove_instance(view.instance);

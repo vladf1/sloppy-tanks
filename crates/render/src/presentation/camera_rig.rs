@@ -369,4 +369,21 @@ mod tests {
         rig.zoom_by(100.0);
         assert_eq!(rig.zoom, CAMERA.max_zoom);
     }
+
+    #[test]
+    fn touch_aim_follows_the_stick_around_the_tank() {
+        let mut rig = CameraRig::default();
+        rig.set_aspect(1024.0 / 768.0);
+        rig.update(&viewer(-20.0, 10.0), 1.0, 0.0, false, true);
+        let client = Vec2::new(1024.0, 768.0);
+        let tank = DVec3::new(-20.0, 0.0, 10.0);
+        let right = rig.touch_aim(tank, Vec2::new(1.0, 0.0), client);
+        assert!(
+            right.x > -20.0 + 3.0 && (right.z - 10.0).abs() < 1.5,
+            "{right:?}"
+        );
+        // Stick up (negative y) aims up the screen, away from the camera.
+        let up = rig.touch_aim(tank, Vec2::new(0.0, -1.0), client);
+        assert!(up.z < 10.0 - 3.0, "{up:?}");
+    }
 }
