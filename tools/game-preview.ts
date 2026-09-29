@@ -63,7 +63,11 @@ function bindInput(): void {
       if (!event.repeat) toggleView = true;
       return;
     }
-    if (event.code.startsWith("Arrow") || /^Key[WASD]$/.test(event.code) || event.code === "Space") {
+    if (
+      event.code.startsWith("Arrow") ||
+      /^Key[WASD]$/.test(event.code) ||
+      event.code === "Space"
+    ) {
       event.preventDefault();
       keys.add(event.code);
     }
