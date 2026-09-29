@@ -10,6 +10,8 @@
       }
       canvas {
         display: block;
+        width: 100vw;
+        height: 100vh;
       }
       aside {
         position: fixed;
@@ -45,50 +47,56 @@
       <output>Loading…</output>
     </aside>
     <script type="module">
-      import RAPIER from "@dimforge/rapier3d-simd-compat";
-      import { Simulation } from "../src/game/simulation";
-      import { Presentation } from "../src/game/presentation";
-      import { stepProjectiles } from "../src/game/projectiles";
-      import { loadTankSurface } from "../src/game/tank-surfaces";
-      await RAPIER.init();
-      await loadTankSurface();
-      const sim = new Simulation(731);
-      const view = await Presentation.create(document.querySelector("canvas"));
+      // Interactive destruction showcase on the engine: one of every destructible cover
+      // on the quarry floor, shells, blasts, a landing wreck and a drum chain, drawn
+      // from a fixed camera. The rules behind it are the engine's tests.
+      import { choose, draw, fixtureGame, prepare, read } from "./engine-fixture";
+      const game = await fixtureGame(document.querySelector("canvas"), { seed: 731 });
       const output = document.querySelector("output");
-      let tooth, turret, hedgehog;
+      const CAMERA = { position: [17, 22, 30], target: [0, 1, 0] };
+      /** A shooter id no tank has. */
+      const NOBODY = 999999;
+      let tooth;
+      let hedgehog;
+      let wreck;
       function add(kind, x, z, w, h, d, color = 0x92734e) {
-        return sim.addCover({
-          kind,
-          x,
-          z,
-          w,
-          h,
-          d,
-          color,
-          hp: kind === "teeth" || kind === "hedgehog" ? Infinity : 40,
-        });
+        return game.debug_add_cover(
+          JSON.stringify({
+            kind,
+            x,
+            z,
+            w,
+            h,
+            d,
+            color,
+            // Dragon’s teeth and hedgehogs never break: no hit points.
+            hp: kind === "teeth" || kind === "hedgehog" ? null : 40,
+          }),
+        );
       }
       function advance(n) {
-        for (let i = 0; i < n; i++) sim.step();
-        for (const event of sim.events.splice(0)) view.event(event);
-        output.textContent = `${sim.fragments.length}/${sim.maxFragments} pieces · ${sim.world.bodies.len()} bodies · concrete x=${tooth.x.toFixed(2)}, speed=${Math.hypot(...Object.values(tooth.body.linvel())).toFixed(2)} · nav ${sim.nav.version}`;
+        game.debug_step(n, 0, 0);
+        const state = read.state(game);
+        const covers = new Map(read.covers(game).map((cover) => [cover.id, cover]));
+        const concrete = covers.get(tooth);
+        const steel = covers.get(hedgehog);
+        output.textContent =
+          `${state.fragments} pieces · ${state.bodies} bodies · ` +
+          `concrete x=${concrete?.x.toFixed(2)} · steel x=${steel?.x.toFixed(2)}`;
       }
-      function reset() {
-        sim.mapMode = "quarry";
-        sim.reset(2);
-        for (const c of sim.covers) sim.world.removeRigidBody(c.body);
-        sim.covers = [];
-        sim.movableCovers = [];
-        sim.coverByCollider.clear();
-        sim.pickups = [];
-        for (const t of sim.tanks) {
-          t.body.setTranslation({ x: 50, y: 0.65, z: 50 }, true);
-          t.previous = { x: 50, z: 50 };
-          t.brain.decision = 999;
-          t.brain.goal = { x: 50, z: 50 };
-          t.protection = 999;
-          t.cooldown = 999;
+      async function reset() {
+        if (!(await choose(game, { mapMode: "quarry" }))) {
+          game.restart();
+          await prepare(game);
         }
+        game.debug_set_autoplay(false);
+        game.debug_clear_arena(new Uint32Array());
+        const { human } = read.state(game);
+        game.debug_place_tank(human.id, 50, 50, NaN);
+        game.debug_set_tank(
+          human.id,
+          JSON.stringify({ protection: 999, cooldown: 999, frozen: true }),
+        );
         add("cargo", -8, 0, 2.4, 2.3, 2.5);
         add("timber", -3, 0, 3, 2.8, 0.8);
         add("tree", 3, 0, 2.5, 7, 2.5, 0x389b58);
@@ -96,73 +104,73 @@
         hedgehog = add("hedgehog", 8, 6, 2.32, 2.16, 2.56);
         add("drum", -6, 7, 1.2, 1.7, 1.2, 0xc8763c);
         add("tower", 3, -9, 6.5, 8.5, 5.5, 0xb29663);
-        sim.nav.rebuild(sim.covers);
-        sim.world.step();
-        view.reset(sim);
-        sim.start();
-        turret = undefined;
+        game.start();
+        wreck = undefined;
         advance(0);
       }
       document.querySelector("#reset").onclick = reset;
       document.querySelector("#break").onclick = () => {
-        for (const c of [...sim.covers]) if (c.destructible) sim.damageCover(c, 999, 999, 0);
+        for (const cover of read.covers(game)) {
+          if (cover.alive && cover.id !== tooth && cover.id !== hedgehog) {
+            game.debug_damage_cover(cover.id, 999);
+          }
+        }
         advance(20);
       };
       document.querySelector("#step").onclick = () => advance(60);
       document.querySelector("#shot").onclick = () => {
-        sim.shots.push({
-          id: sim.nextId++,
-          owner: 999,
-          team: 0,
-          x: tooth.x - 2,
-          z: tooth.z,
-          vx: 25,
-          vz: 0,
-          life: 2,
-          damage: 40,
-          bounces: 0,
-          piercing: 0,
-          weapon: "standard",
-        });
-        stepProjectiles(sim, 0.2);
-        advance(8);
+        const concrete = read.covers(game).find((cover) => cover.id === tooth);
+        game.debug_add_shot(
+          JSON.stringify({
+            x: concrete.x - 2,
+            z: concrete.z,
+            vx: 25,
+            vz: 0,
+            team: 0,
+            owner: NOBODY,
+            weapon: "standard",
+            damage: 40,
+            life: 2,
+          }),
+        );
+        advance(20);
       };
       document.querySelector("#blast").onclick = () => {
-        sim.explode({ x: tooth.x - 1, z: tooth.z }, 5, 100, 999, 0);
+        const concrete = read.covers(game).find((cover) => cover.id === tooth);
+        game.debug_explode(concrete.x - 1, concrete.z, 5, 100);
         advance(25);
       };
       document.querySelector("#steel").onclick = () => {
-        sim.explode({ x: hedgehog.x - 1, z: hedgehog.z }, 5, 80, 999, 0);
+        const steel = read.covers(game).find((cover) => cover.id === hedgehog);
+        game.debug_explode(steel.x - 1, steel.z, 5, 80);
         advance(25);
-        output.textContent += ` · steel x=${hedgehog.x.toFixed(2)}, speed=${Math.hypot(...Object.values(hedgehog.body.linvel())).toFixed(2)}`;
       };
       document.querySelector("#wreck").onclick = () => {
-        const t = sim.addTank(1, false, "balanced", 0);
-        t.body.setTranslation({ x: 0, y: 0.65, z: 7 }, true);
-        t.previous = { x: 0, z: 7 };
-        t.protection = 0;
-        sim.damageTank(t, 1000, 999, 0);
-        t.respawn = 999;
-        turret = sim.fragments.find((f) => f.part?.startsWith("turret"));
+        const tank = game.debug_add_tank(1, "balanced");
+        game.debug_place_tank(tank, 0, 7, NaN);
+        game.debug_set_tank(tank, JSON.stringify({ protection: 0, shield: 0 }));
+        game.debug_damage_tank(tank, 1000, NOBODY, 0);
+        game.debug_set_tank(tank, JSON.stringify({ respawn: 999 }));
         advance(240);
+        const turret = read
+          .state(game)
+          .fragmentViews.find((fragment) => fragment.part?.startsWith("turret"));
+        wreck = turret?.id;
       };
       document.querySelector("#chain").onclick = () => {
-        if (!turret || !turret.body.isValid()) return;
-        const p = turret.body.translation();
-        const drum = add("drum", p.x + 1.4, p.z, 1.2, 1.7, 1.2, 0xc8763c);
-        sim.damageCover(drum, 999, 999, 0);
+        const turret = read.view(game).fragments.find((fragment) => fragment.id === wreck);
+        if (!turret) return;
+        const [x, , z] = turret.position;
+        const drum = add("drum", x + 1.4, z, 1.2, 1.7, 1.2, 0xc8763c);
+        game.debug_damage_cover(drum, 999);
         advance(15);
       };
-      reset();
-      function draw() {
-        view.render(sim, 1, 1 / 60, true);
-        view.camera.position.set(17, 22, 30);
-        view.camera.lookAt(0, 1, 0);
-        view.renderer.render(view.scene, view.camera);
-        requestAnimationFrame(draw);
+      await reset();
+      function frame() {
+        draw(game, 1 / 60, true, CAMERA);
+        requestAnimationFrame(frame);
       }
-      requestAnimationFrame(draw);
-      addEventListener("resize", () => view.resize());
+      requestAnimationFrame(frame);
     </script>
   </body>
 </html>

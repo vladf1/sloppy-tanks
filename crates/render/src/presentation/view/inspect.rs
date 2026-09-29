@@ -79,6 +79,8 @@ pub struct FragmentInspection {
 #[derive(Clone, Debug, Default)]
 pub struct ViewInspection {
     pub reticle: ReticleInspection,
+    /// The theme whose scenery shows.
+    pub theme: Option<&'static str>,
     pub player_ring: bool,
     pub tanks: Vec<TankInspection>,
     pub covers: Vec<CoverInspection>,
@@ -235,6 +237,7 @@ impl Presentation {
         inspection.covers.sort_by_key(|cover| cover.id);
         inspection.pickups.sort_by_key(|pickup| pickup.id);
         inspection.fragments.sort_by_key(|fragment| fragment.id);
+        inspection.theme = self.theme.map(|theme| theme.name());
         inspection.mines = self.mines.len();
         inspection.branches = self.branches.len();
         inspection.pickup_effects = self.pickup_effects.len();

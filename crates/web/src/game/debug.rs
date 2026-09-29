@@ -152,7 +152,9 @@ struct CoverSpec {
     w: f64,
     d: f64,
     h: f64,
-    hp: f64,
+    /// Null (or missing) for indestructible cover.
+    #[serde(default)]
+    hp: Option<f64>,
     color: u32,
 }
 
@@ -342,7 +344,7 @@ impl Game {
             w: spec.w,
             d: spec.d,
             h: spec.h,
-            hp: spec.hp,
+            hp: spec.hp.unwrap_or(f64::INFINITY),
             color: spec.color,
             timber_join: None,
             timber_bays: None,
@@ -571,6 +573,7 @@ impl Game {
                 "ready": reticle.ready, "reloading": reticle.reloading,
                 "scale": reticle.scale, "position": v3(reticle.position),
             },
+            "theme": inspection.theme,
             "playerRing": inspection.player_ring,
             "tanks": inspection.tanks.iter().map(|tank| json!({
                 "id": tank.id, "shown": tank.shown, "barShown": tank.bar_shown,

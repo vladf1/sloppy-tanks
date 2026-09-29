@@ -12,6 +12,8 @@
         background: #a9997b;
       }
       canvas {
+        width: 100vw;
+        height: 100vh;
         display: block;
         touch-action: none;
         cursor: grab;
@@ -57,74 +59,81 @@
       <button id="reset-view" type="button">Reset view</button>
     </aside>
     <script type="module">
-      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-      import RAPIER from "@dimforge/rapier3d-simd-compat";
-      import { loadTankSurface } from "../src/game/tank-surfaces";
-      import { Presentation } from "../src/game/presentation";
-      import { Simulation } from "../src/game/simulation";
-
-      await RAPIER.init();
-      await loadTankSurface();
-      const simulation = new Simulation(123);
-      for (const cover of simulation.covers) simulation.world.removeRigidBody(cover.body);
-      simulation.covers = [];
-      simulation.movableCovers = [];
-      simulation.coverByCollider.clear();
-      simulation.pickups = [];
-      const hunters = simulation.tanks.filter((tank) => tank.kind === "humvee");
-      const heavy = simulation.tanks.find((tank) => tank.kind === "heavy");
-      const show = [...hunters, heavy].filter(Boolean);
-      const poses = [
-        [-3.4, 0, 0.05],
-        [3.4, 0, -0.05],
-        [0, -6, Math.PI],
+      // The HUNTER TOW humvee beside a Big Rig, drawn by the engine in a cleared arena
+      // with an orbit camera: drag to orbit, scroll to zoom, right-drag to pan.
+      import { draw, fixtureGame, read } from "./engine-fixture";
+      const canvas = document.querySelector("canvas");
+      const game = await fixtureGame(canvas, { seed: 123 });
+      game.debug_set_autoplay(false);
+      game.debug_clear_arena(new Uint32Array());
+      // The player's own tank waits out of sight.
+      const player = read.state(game).human;
+      game.debug_place_tank(player.id, 60, 60, NaN);
+      const shown = [
+        [game.debug_add_tank(1, "humvee"), -3.4, 0, 0.35, 0.05],
+        [game.debug_add_tank(1, "humvee"), 3.4, 0, -0.35, -0.05],
+        [game.debug_add_tank(0, "heavy"), 0, -6, -0.35, Math.PI],
       ];
-      for (const tank of simulation.tanks) {
-        const index = show.indexOf(tank);
-        tank.alive = index >= 0;
-        if (index < 0) continue;
-        const [x, z, aim] = poses[index];
-        tank.hp = simulation.maxHealth(tank);
-        tank.protection = 0;
-        tank.heading = index ? -0.35 : 0.35;
-        tank.aim = aim;
-        tank.body.setTranslation({ x, y: 0.65, z }, true);
-        tank.body.setRotation(
-          { x: 0, y: Math.sin(tank.heading / 2), z: 0, w: Math.cos(tank.heading / 2) },
-          true,
-        );
-        tank.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        tank.previous = { x, z };
+      for (const [id, x, z, heading, aim] of shown) {
+        game.debug_place_tank(id, x, z, heading);
+        game.debug_set_tank(id, JSON.stringify({ aim, protection: 0, frozen: true }));
       }
-      simulation.match.phase = "paused";
+      game.start();
+      game.pause();
 
-      const view = await Presentation.create(document.querySelector("canvas"));
-      view.reset(simulation);
-      view.render(simulation, 1, 0, false);
-      for (const bar of view.bars.values()) bar.visible = false;
-      // Keep the inspection camera separate from the gameplay follow camera.
-      const camera = view.camera.clone();
-      camera.position.set(8, 9, 13);
-      const controls = new OrbitControls(camera, view.renderer.domElement);
-      controls.target.set(0, 0.7, 0.5);
-      controls.enableDamping = true;
-      controls.minDistance = 4;
-      controls.maxDistance = 45;
-      controls.maxPolarAngle = Math.PI / 2 - 0.03;
-      controls.update();
-      controls.saveState();
-      document.querySelector("#reset-view").addEventListener("click", () => controls.reset());
-      function draw() {
-        controls.update();
-        view.renderer.render(view.scene, camera);
-        requestAnimationFrame(draw);
-      }
-      draw();
-      addEventListener("resize", () => {
-        view.resize();
-        camera.aspect = view.camera.aspect;
-        camera.updateProjectionMatrix();
+      // Orbit camera about a target, in spherical coordinates.
+      const TARGET = [0, 0.7, 0.5];
+      const START = { distance: Math.hypot(8, 8.3, 12.5), yaw: Math.atan2(8, 12.5), pitch: 0.55 };
+      const LIMITS = { min: 4, max: 45, pitch: Math.PI / 2 - 0.03 };
+      let orbit = { ...START, target: [...TARGET] };
+      document.querySelector("#reset-view").addEventListener("click", () => {
+        orbit = { ...START, target: [...TARGET] };
       });
+      let drag;
+      canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+      canvas.addEventListener("pointerdown", (event) => {
+        drag = { x: event.clientX, y: event.clientY, pan: event.button === 2 };
+        canvas.setPointerCapture(event.pointerId);
+      });
+      canvas.addEventListener("pointerup", () => (drag = undefined));
+      canvas.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        drag.x = event.clientX;
+        drag.y = event.clientY;
+        if (drag.pan) {
+          const scale = orbit.distance / innerHeight;
+          orbit.target[0] -= Math.cos(orbit.yaw) * dx * scale;
+          orbit.target[2] += Math.sin(orbit.yaw) * dx * scale;
+          orbit.target[1] += dy * scale;
+        } else {
+          orbit.yaw -= dx * 0.005;
+          orbit.pitch = Math.min(LIMITS.pitch, Math.max(0.05, orbit.pitch + dy * 0.005));
+        }
+      });
+      canvas.addEventListener(
+        "wheel",
+        (event) => {
+          event.preventDefault();
+          orbit.distance = Math.min(
+            LIMITS.max,
+            Math.max(LIMITS.min, orbit.distance * Math.exp(event.deltaY * 0.001)),
+          );
+        },
+        { passive: false },
+      );
+      function frame() {
+        const { distance, yaw, pitch, target } = orbit;
+        const position = [
+          target[0] + distance * Math.cos(pitch) * Math.sin(yaw),
+          target[1] + distance * Math.sin(pitch),
+          target[2] + distance * Math.cos(pitch) * Math.cos(yaw),
+        ];
+        draw(game, 1 / 60, false, { position, target });
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
     </script>
   </body>
 </html>

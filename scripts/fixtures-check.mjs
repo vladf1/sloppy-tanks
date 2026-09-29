@@ -1,6 +1,7 @@
 // Run the self-checking fixtures in tests/*.browser.html and require their PASS verdict:
 // solo reinforcement rendering, map switches and water reflections, and suspension
-// with a turret that follows the hull's tilt.
+// with a turret that follows the hull's tilt. The fixtures run the engine's `Game` on
+// their own canvas and arrange it through its debug hooks (`tests/engine-fixture.ts`).
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { gameUrl, launchGame } from "./browser-helpers.mjs";
