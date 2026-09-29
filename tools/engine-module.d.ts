@@ -13,6 +13,7 @@ declare module "*/generated/engine/engine.js" {
     resize(width: number, height: number): void;
     set_camera(position: Float32Array, target: Float32Array): void;
     set_opacity(name: string, opacity: number): void;
+    pose_joint(name: string, copy: number, joint: string, yaw: number): boolean;
     set_visible(name: string, visible: boolean): void;
     frame(time: number): void;
     stats(): string;

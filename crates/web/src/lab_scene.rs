@@ -148,6 +148,12 @@ pub struct ObjectSpec {
     pub is_static: bool,
     /// InstancedMesh translations relative to the object.
     pub instances: Option<Vec<[f64; 3]>>,
+    /// Child parts; a named child is a movable joint, an unnamed one is rigid.
+    #[serde(default)]
+    pub children: Vec<ObjectSpec>,
+    /// More instances of the same model, as translations of `position`.
+    #[serde(default)]
+    pub copies: Vec<[f64; 3]>,
 }
 
 fn one3() -> [f64; 3] {
@@ -513,6 +519,7 @@ pub fn object_node(spec: &ObjectSpec) -> Node {
             })
             .collect()
     });
+    node.children = spec.children.iter().map(object_node).collect();
     node
 }
 

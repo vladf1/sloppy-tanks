@@ -32,6 +32,8 @@ try {
     await page.locator(`#${id}`).screenshot({ path: `${output}${id}.png` });
   }
   await page.screenshot({ path: `${output}page.png` });
+  // Joint overrides: turn the second tank's turret in both renderers.
+  await page.evaluate(() => window.renderLab.poseJoint("tank", 1, "turret", 1.2));
   // The game's default overhead pose (presentation.ts, zoom 34): shadows and PBR.
   // Three's harbor water skips its reflection when the view shows no open water
   // (`waterInView`) and keeps the last one, so compare this pose first.

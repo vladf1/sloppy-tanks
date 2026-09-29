@@ -75,6 +75,10 @@ interface ObjectSpec {
   receiveShadow?: boolean;
   static?: boolean;
   instances?: Vec3[];
+  /** Named children are movable joints; unnamed ones are rigid parts. */
+  children?: ObjectSpec[];
+  /** More instances of the same model at these offsets. */
+  copies?: Vec3[];
 }
 
 const TEAM_BLUE = 0x008cff;
@@ -289,6 +293,59 @@ const SCENE = {
       instances: [0, 1, 2, 3, 4, 5].map((i): Vec3 => [i * 1.3, (i % 2) * 0.8, (i % 3) * 0.4]),
       ...lit,
       static: true,
+    },
+    // A jointed model drawn three times: painted rigid parts merge per joint, and
+    // the copies share each merged mesh in one instanced draw.
+    {
+      name: "tank",
+      geometry: { type: "box", width: 2.6, height: 0.7, depth: 1.8 },
+      material: { color: 0x4b5d3a, metalness: 0.05, roughness: 0.65 },
+      position: [-9, 0.65, -13],
+      rotation: [0, 0.3, 0],
+      copies: [
+        [4, 0, 0],
+        [8, 0, 1],
+      ],
+      ...lit,
+      children: [
+        ...[-0.95, 0.95].map((z): ObjectSpec => ({
+          name: "",
+          geometry: { type: "box", width: 2.9, height: 0.55, depth: 0.45 },
+          material: { color: 0x2b2b2b, metalness: 0.05, roughness: 0.65 },
+          position: [0, -0.2, z],
+          ...lit,
+        })),
+        {
+          name: "turret",
+          geometry: { type: "box", width: 1.5, height: 0.55, depth: 1.3 },
+          material: { color: 0x5a6e45, metalness: 0.05, roughness: 0.65 },
+          position: [-0.1, 0.62, 0],
+          rotation: [0, 0.5, 0],
+          ...lit,
+          children: [
+            {
+              name: "barrel",
+              geometry: { type: "box", width: 1.9, height: 0.16, depth: 0.16 },
+              material: { color: 0x2b2b2b, metalness: 0.05, roughness: 0.65 },
+              position: [1.5, 0.05, 0],
+              ...lit,
+            },
+            {
+              name: "",
+              geometry: { type: "box", width: 0.5, height: 0.2, depth: 0.5 },
+              material: {
+                color: TEAM_BLUE,
+                metalness: 0.05,
+                roughness: 0.65,
+                emissive: TEAM_BLUE,
+                emissiveIntensity: 0.04,
+              },
+              position: [-0.3, 0.35, 0],
+              ...lit,
+            },
+          ],
+        },
+      ],
     },
     {
       name: "column",
@@ -512,7 +569,8 @@ async function createThree() {
   const flash = new THREE.PointLight(point.color, point.intensity, point.distance, point.decay);
   flash.position.set(...point.position);
   scene.add(flash);
-  for (const object of SCENE.objects) {
+  const byName = new Map<string, THREE.Object3D[]>();
+  function build(object: ObjectSpec): THREE.Mesh {
     const geometry = threeGeometry(object.geometry);
     const material = threeMaterial(object.material);
     let mesh: THREE.Mesh;
@@ -529,7 +587,22 @@ async function createThree() {
     mesh.rotation.copy(euler(object.rotation));
     mesh.castShadow = object.castShadow ?? false;
     mesh.receiveShadow = object.receiveShadow ?? false;
-    scene.add(mesh);
+    mesh.name = object.name;
+    for (const child of object.children ?? []) {
+      mesh.add(build(child));
+    }
+    return mesh;
+  }
+  for (const object of SCENE.objects) {
+    const mesh = build(object);
+    const copies = [mesh];
+    for (const offset of object.copies ?? []) {
+      const copy = mesh.clone();
+      copy.position.add(new THREE.Vector3(...offset));
+      copies.push(copy);
+    }
+    byName.set(object.name, copies);
+    scene.add(...copies);
   }
   const waterSpec = SCENE.water;
   const water = new WaterSurface(
@@ -559,6 +632,10 @@ async function createThree() {
     setCamera(position: Vec3, target: Vec3) {
       camera.position.set(...position);
       camera.lookAt(...target);
+    },
+    poseJoint(name: string, copy: number, joint: string, yaw: number) {
+      const node = byName.get(name)?.[copy]?.getObjectByName(joint);
+      if (node) node.rotation.y += yaw;
     },
     resize(width: number, height: number) {
       renderer.setSize(width, height, false);
@@ -676,6 +753,11 @@ async function main() {
       three.setCamera(position, target);
     },
     setOpacity: (name: string, opacity: number) => rust.set_opacity(name, opacity),
+    /** Traverse a joint (for example a tank turret) in both renderers. */
+    poseJoint(name: string, copy: number, joint: string, yaw: number) {
+      if (!rust.pose_joint(name, copy, joint, yaw)) throw new Error(`No joint ${name}/${joint}`);
+      three.poseJoint(name, copy, joint, yaw);
+    },
     /** Resize both drawing buffers (the CSS size stays fixed). */
     resize(width: number, height: number) {
       for (const canvas of [rustCanvas, threeCanvas, diffCanvas]) {

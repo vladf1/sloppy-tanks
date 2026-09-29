@@ -7,7 +7,7 @@ use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::scene::Node;
 use sloppy_render::camera::{PerspectiveCamera, ShadowCamera};
 use sloppy_render::gpu::{
-    Environment, Fog, InstanceId, Lifetime, PointLight, Renderer, RendererOptions, SunShadow,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, RendererOptions, SunShadow,
     WaterSettings,
 };
 use wasm_bindgen::prelude::*;
@@ -18,6 +18,7 @@ use crate::lab_scene::{SceneSpec, object_node, water_mesh};
 pub struct RenderLab {
     renderer: Renderer,
     objects: Vec<(String, InstanceId)>,
+    models: Vec<(InstanceId, ModelId)>,
 }
 
 fn js_error(message: impl Into<String>) -> JsValue {
@@ -38,6 +39,7 @@ impl RenderLab {
         Ok(RenderLab {
             renderer,
             objects: Vec::new(),
+            models: Vec::new(),
         })
     }
 
@@ -47,6 +49,7 @@ impl RenderLab {
             serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
         self.renderer.reset_round();
         self.objects.clear();
+        self.models.clear();
         self.renderer.set_environment(Environment {
             background: spec.background,
             fog: spec.fog.as_ref().map(|fog| Fog {
@@ -118,8 +121,13 @@ impl RenderLab {
             root.rotation = glam::DQuat::IDENTITY;
             root.scale = glam::DVec3::ONE;
             let model = self.renderer.add_model(&root, Lifetime::Round);
-            if let Some(instance) = self.renderer.add_instance(model, world, Lifetime::Round) {
-                self.objects.push((object.name.clone(), instance));
+            let copies = std::iter::once([0.0; 3]).chain(object.copies.iter().copied());
+            for offset in copies {
+                let placed = Mat4::from_translation(glam::DVec3::from(offset).as_vec3()) * world;
+                if let Some(instance) = self.renderer.add_instance(model, placed, Lifetime::Round) {
+                    self.objects.push((object.name.clone(), instance));
+                    self.models.push((instance, model));
+                }
             }
         }
         if !scenery.children.is_empty() {
@@ -171,6 +179,24 @@ impl RenderLab {
                 self.renderer.set_opacity(*id, opacity);
             }
         }
+    }
+
+    /// Turn a joint of the `copy`-th instance of an object about Y by `yaw`
+    /// radians on top of its rest pose (a turret traverse).
+    pub fn pose_joint(&mut self, name: &str, copy: usize, joint: &str, yaw: f32) -> bool {
+        let Some((_, id)) = self.objects.iter().filter(|(object, _)| object == name).nth(copy) else {
+            return false;
+        };
+        let Some(&(_, model)) = self.models.iter().find(|(instance, _)| instance == id) else {
+            return false;
+        };
+        let Some(node) = self.renderer.model_node(model, joint) else {
+            return false;
+        };
+        let rest = self.renderer.model_nodes(model)[node].rest;
+        self.renderer
+            .set_node_transform(*id, node, Some(rest * Mat4::from_rotation_y(yaw)));
+        true
     }
 
     pub fn set_visible(&mut self, name: &str, visible: bool) {
