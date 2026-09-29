@@ -46,3 +46,8 @@ Rapier 0.36 (Rust) replaces Rapier JS 0.20; physics differences are a deliberate
   TS shell on the Game API; multiplayer client bindings; remove Three.js/TS engine and
   Node server; final verification. Toolchain PATH must put rustup first:
   `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
+- Presentation + Game API finished on branch `worktree-agent-a75d18446fab95167`
+  (commits fe54bd9..0aeefe1), not merged yet: its `effects/mod.rs` is a stub that the
+  merged effects port replaces; `presentation/model_catalog.rs` still returns placeholder
+  models and must be wired to `models::{build_scenery, cover_model, tree_model, ...}`.
+  Release wasm 2.76 MB raw / 0.98 MB gzip; shadow pass ~150 draws (needs cross-model batching).
