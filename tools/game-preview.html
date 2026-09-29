@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Game preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #17212b;
+        --panel: rgb(16 28 38 / 0.82);
+        --text: #e8eef3;
+        --muted: #9fb2c2;
+        --error: #ff7c73;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--page);
+        color: var(--text);
+        font:
+          13px/1.4 system-ui,
+          sans-serif;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+      }
+      #status {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        max-width: min(560px, calc(100vw - 24px));
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--muted);
+        white-space: pre-wrap;
+        pointer-events: none;
+      }
+      body[data-state="error"] #status {
+        color: var(--error);
+      }
+      body[data-state="playing"] #status {
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body data-state="loading">
+    <canvas id="game" tabindex="0" aria-label="Sloppy Tanks (Rust preview)"></canvas>
+    <div id="status" role="status">Loading…</div>
+    <script type="module" src="./game-preview.ts"></script>
+  </body>
+</html>

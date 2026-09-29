@@ -37,5 +37,33 @@ declare module "*/generated/engine/engine.js" {
     error(): string | undefined;
     free(): void;
   }
+  export class Game {
+    static create(canvas: HTMLCanvasElement, configJson: string): Promise<Game>;
+    set_options(optionsJson: string): boolean;
+    prepare_step(budget: number): Float64Array;
+    start(): void;
+    resume(): void;
+    pause(): void;
+    restart(): void;
+    end_battle(): void;
+    frame(now: number, input: Float32Array): Float32Array;
+    drain_events(): string;
+    hud_json(): string;
+    stats_json(): string;
+    resize(cssWidth: number, cssHeight: number, pixelRatio: number, exact: boolean): void;
+    toggle_first_person(): boolean;
+    set_speed(key: string, value: number): number;
+    error(): string | undefined;
+    debug_json(): string;
+    debug_snapshot(): string;
+    debug_set_autoplay(value: boolean): boolean;
+    debug_set_overview(value: boolean): void;
+    debug_set_auto_rounds(value: boolean): boolean;
+    debug_set_zoom(zoom: number): number;
+    debug_collapse(): void;
+    debug_stress(): void;
+    debug_soak(seconds: number): string;
+    free(): void;
+  }
   export default function init(options: { module_or_path: string | URL }): Promise<unknown>;
 }

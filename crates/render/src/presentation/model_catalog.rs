@@ -30,7 +30,7 @@ use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::timber_layout::{TimberPart, timber_damage_stage};
 use sloppy_core::sim::{CoverKind, FragmentShape};
 
-use super::models::{arena_floor, water_plane};
+use super::models::{arena_floor, spawn_pads, water_plane};
 use super::theme::Theme;
 
 /// A cover's drawable model.
@@ -248,6 +248,8 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
             put(&mut root, floor, 0.0, 0.008, 0.0);
         }
     }
+    // Every themed scenery builds its own spawn pads (`createSpawnPads`).
+    root.children.push(spawn_pads(1.0));
     if theme != Theme::Harbor {
         let mut surround = Node::mesh(
             Arc::new(flat_plane(360.0)),
