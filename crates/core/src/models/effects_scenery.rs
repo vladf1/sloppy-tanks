@@ -16,8 +16,16 @@
 //!   t * t * (3 - 2 * t)`, including when `e0 > e1` (implement it explicitly).
 //! - Unless stated, effects keep the material's standard lighting (sun, sky fill,
 //!   shadows, fog, tone mapping) and its fixed-function fields (side,
-//!   transparency, depth) from `Material`; an effect replaces only the stated
-//!   stages.
+//!   transparency, depth, polygon offset) from `Material`; an effect replaces only
+//!   the stated stages.
+//! - Secondary textures are the material's `extra_textures`, named [`GRIT`] or
+//!   [`SOIL`]; each effect lists the ones it samples, in slot order.
+//! - Per-instance attributes are `Attribute::per_instance` mesh attributes; the
+//!   renderer packs them in mesh attribute order into the instance's four floats
+//!   of effect data (`instance_data`).
+//! - RGBA vertex colors carry their alpha in the mesh's
+//!   [`VERTEX_ALPHA`](crate::geometry::VERTEX_ALPHA) attribute; with vertex colors
+//!   the renderer multiplies the base alpha by it.
 //!
 //! ## Shared helper: `derivativeBump(height, scale)`
 //! Screen-space bump (Mikkelsen's surface gradient) from a height already
@@ -50,12 +58,12 @@
 //! The baked quarry soil ([`QUARRY_SOIL_TEXTURE`]) under a world position:
 //! `S(vec2(position.x / 210 + 0.5, 0.5 - position.z / 210))`.
 
-/// Per-vertex alpha (`item_size` 1) of meshes whose Three.js color attribute had
-/// four components: the village road shoulders and quarry rock footings fade out
-/// through it. When a material has `vertex_colors`, the renderer multiplies the
-/// fragment alpha by this attribute (as the RGBA vertex color's alpha did). The
-/// RGB part stays in `Mesh::colors`.
-pub const VERTEX_ALPHA: &str = "vertex-alpha";
+/// Secondary texture: the packed-dirt grit tile `G` of `quarryGrit`
+/// ([`GRIT_TEXTURE`]).
+pub const GRIT: &str = "grit";
+/// Secondary texture: the baked quarry soil `S` of `soilAt`
+/// ([`QUARRY_SOIL_TEXTURE`]).
+pub const SOIL: &str = "soil";
 
 /// Planar-reflecting water (`water-surface.ts`): the village creek and the harbor
 /// basin. Unlit (`Shading::Basic`), opaque, fogged and tone mapped. `map` is the
@@ -113,8 +121,8 @@ pub const WATER: &str = "water";
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only
 /// effect on an instanced, double-sided standard material (roughness 1, white;
-/// the per-instance color multiplies the diffuse). No params. Instance-rate
-/// attribute [`WIND_ORIGIN`] (vec2, the tuft's world x/z). After the instance
+/// the per-instance color multiplies the diffuse). No params. Per-instance
+/// attribute [`WIND_ORIGIN`] (vec2, the tuft's world x/z; `instance_data.xy`). After the instance
 /// transform (so `p` is the instanced model-space position, which is world space
 /// here), before the model-view projection:
 /// ```text
@@ -125,16 +133,17 @@ pub const WATER: &str = "water";
 /// Normals are not changed. Tufts receive but do not cast shadows.
 pub const MEADOW_SWAY: &str = "meadow-sway";
 
-/// Instance-rate attribute of [`MEADOW_SWAY`]: one vec2 per instance, stored in
-/// `Mesh::attributes` (`data.len() == instances * 2`).
+/// Per-instance attribute of [`MEADOW_SWAY`]: one vec2 per instance
+/// (`data.len() == instances * 2`).
 pub const WIND_ORIGIN: &str = "windOrigin";
 
 /// GPU-animated chimney wisps (`village-atmosphere.ts`): camera-facing,
 /// screen-sized quads. Unlit, transparent (normal blending), no depth write, no
 /// fog, tone mapped; never frustum culled. No params. The mesh is a unit plane
 /// (`positionGeometry.xy` in ±0.5, `uv`) drawn once per instance (the drawable's
-/// instance count; instance matrices are identity and unused), with instance-rate
-/// attributes [`SMOKE_ORIGIN`] (vec3, world) and [`SMOKE_PHASE`] (float).
+/// instance count; instance matrices are identity and unused), with per-instance
+/// attributes [`SMOKE_ORIGIN`] (vec3, world; `instance_data.xyz`) and
+/// [`SMOKE_PHASE`] (float; `instance_data.w`).
 /// ```text
 /// // vertex
 /// t = fract(time * 0.065 + phase)                 // pass to the fragment
@@ -149,16 +158,16 @@ pub const WIND_ORIGIN: &str = "windOrigin";
 /// ```
 /// `viewportSize` is the render target size in physical pixels.
 pub const CHIMNEY_SMOKE: &str = "chimney-smoke";
-/// Instance-rate vec3 attribute of [`CHIMNEY_SMOKE`] (192 slots).
+/// Per-instance vec3 attribute of [`CHIMNEY_SMOKE`] (192 slots).
 pub const SMOKE_ORIGIN: &str = "smokeOrigin";
-/// Instance-rate float attribute of [`CHIMNEY_SMOKE`] (192 slots).
+/// Per-instance float attribute of [`CHIMNEY_SMOKE`] (192 slots).
 pub const SMOKE_PHASE: &str = "phase";
 
 /// Baked soil with world-space grit (`quarry-terrain.ts` `soilMaterial`): the
 /// quarry floor, spoil heaps, talus, the haul ramp and scree fans. Standard PBR,
 /// roughness 1, metalness 0, opaque, vertex colors. No params. `map` is the soil
 /// bake `S` ([`QUARRY_SOIL_TEXTURE`]), sampled at the mesh `uv` (which maps world
-/// x/z onto it).
+/// x/z onto it). Extra texture 0: [`GRIT`].
 /// ```text
 /// baked  = S(uv)
 /// stony  = (baked.a - 0.5) * 2
@@ -172,8 +181,8 @@ pub const QUARRY_SOIL: &str = "quarry-soil";
 /// rock, bench, butte and rubble mesh. Standard PBR, roughness 0.95, metalness 0,
 /// opaque, vertex colors. No params. `map` is the sandstone photo `T`
 /// (`textures/quarry/sandstone.webp`, sRGB, mirrored repeat, 4x anisotropy)
-/// sampled triplanar in world space (the mesh UVs are unused); `soilAt` also
-/// samples [`QUARRY_SOIL_TEXTURE`].
+/// sampled triplanar in world space (the mesh UVs are unused). Extra texture 0:
+/// [`SOIL`], for `soilAt`.
 /// ```text
 /// weights = pow(abs(normalWorld), 6); blend = weights / max(weights.x + weights.y + weights.z, 0.0001)
 /// p = positionWorld; q = p / 6.5
@@ -204,14 +213,13 @@ pub const QUARRY_SOIL: &str = "quarry-soil";
 pub const SANDSTONE: &str = "sandstone";
 
 /// Sand drifted around rock cover (`quarry-surfaces.ts` `sandstoneFooting`).
-/// Standard PBR, roughness 1, vertex colors with [`VERTEX_ALPHA`], transparent,
-/// no depth write, receives shadows only; geometric normals. `map` is the soil
-/// bake (for `soilAt`).
-/// Params: 0. polygon offset factor (-1), 1. polygon offset units (-1) — the
-/// depth bias that keeps the drift above the coplanar floor.
+/// Standard PBR, roughness 1, RGBA vertex colors, transparent, no depth write,
+/// polygon offset (-1, -1) to stay above the coplanar floor, receives shadows
+/// only; geometric normals. No params. `map` is the soil bake (for `soilAt`).
+/// Extra texture 0: [`GRIT`].
 /// ```text
 /// diffuse = vec4(soilAt(positionWorld).rgb * quarryGrit(0.7, 0).color * 1.05, 1)
-///         * vec4(vertexColor.rgb, vertexAlpha)
+///         * vec4(vertexColor.rgb, vertexAlpha)      // RGBA vertex color
 /// ```
 pub const SAND_DRIFT: &str = "sand-drift";
 

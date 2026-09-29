@@ -69,6 +69,10 @@ pub struct TextureRef {
     pub srgb: bool,
     pub anisotropy: u8,
     pub mipmaps: bool,
+    /// Three's `flipY`: upload the image's top row at `v = 1`, so UV (0, 0) is its
+    /// bottom-left corner. True for images and canvases (Three's default); false
+    /// keeps the stored row order of a former DataTexture (row 0 at `v = 0`).
+    pub flip_y: bool,
 }
 
 impl TextureRef {
@@ -81,6 +85,7 @@ impl TextureRef {
             srgb: true,
             anisotropy: 1,
             mipmaps: true,
+            flip_y: true,
         }
     }
 }
@@ -109,6 +114,9 @@ pub struct Material {
     pub emissive: Color,
     pub emissive_intensity: f32,
     pub map: Option<TextureRef>,
+    /// Multiplies the emissive color (Three `emissiveMap`, sampled with the mesh UVs
+    /// through its own repeat and offset).
+    pub emissive_map: Option<TextureRef>,
     pub bump_map: Option<TextureRef>,
     pub bump_scale: f32,
     pub vertex_colors: bool,
@@ -124,9 +132,17 @@ pub struct Material {
     pub blending: Blending,
     pub depth_test: bool,
     pub depth_write: bool,
+    /// Three's `polygonOffset` as `(factor, units)`: a depth bias in the main pass
+    /// (WebGPU `depthBiasSlopeScale = factor`, `depthBias = units`), for decals and
+    /// drifts drawn over coplanar ground.
+    pub polygon_offset: Option<(f32, f32)>,
     pub tone_mapped: bool,
     pub fog: bool,
     pub effect: Effect,
+    /// Secondary textures a custom [`Effect`] samples besides `map`, by name, bound
+    /// in this order to the effect's extra texture slots (at most two). The
+    /// effect's documentation names them; standard shading ignores them.
+    pub extra_textures: Vec<(&'static str, TextureRef)>,
 }
 
 impl Default for Material {
@@ -140,6 +156,7 @@ impl Default for Material {
             emissive: Color(0x000000),
             emissive_intensity: 1.0,
             map: None,
+            emissive_map: None,
             bump_map: None,
             bump_scale: 1.0,
             vertex_colors: false,
@@ -153,9 +170,11 @@ impl Default for Material {
             blending: Blending::Normal,
             depth_test: true,
             depth_write: true,
+            polygon_offset: None,
             tone_mapped: true,
             fog: true,
             effect: Effect::None,
+            extra_textures: Vec::new(),
         }
     }
 }
@@ -181,7 +200,9 @@ impl Material {
     }
 }
 
-/// Per-instance transform and optional color of an InstancedMesh.
+/// Per-instance transform and optional color of an InstancedMesh. Per-instance
+/// custom data lives in the mesh's [`Attribute::per_instance`] attributes, one item
+/// per instance in this list's order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
     pub matrix: DMat4,

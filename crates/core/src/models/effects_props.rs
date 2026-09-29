@@ -81,15 +81,13 @@ pub const WRECK_AGING: &str = "wreck-aging";
 /// shadow pass.
 pub const DEBRIS_FADE: &str = "debris-fade";
 
-/// Pickup surfaces (`pickup-visuals.ts`). Params: `[emissive_from_map]` (1 for the
-/// pictogram faces, 0 for crate hardware).
+/// Pickup surfaces (`pickup-visuals.ts`). Params: none.
 ///
 /// Frame uniform `pickup_opacity` (TS `setPickupOpacity`: 1 in the overhead view,
 /// the first-person pickup opacity otherwise), shared by every pickup material.
 /// Alpha = material opacity * `pickup_opacity` (the materials are transparent).
-/// When `emissive_from_map` is 1, emissive radiance = emissive color *
-/// emissive intensity * the sRGB-decoded `map` sample (Three's `emissiveMap` set to
-/// the same atlas as `map`); otherwise the usual constant emissive.
+/// The pictogram faces glow through their `emissive_map` (the atlas, as in
+/// Three); everything else is standard shading.
 pub const PICKUP_SURFACE: &str = "pickup-surface";
 
 /// Seconds after death over which a wreck darkens fully.

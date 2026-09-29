@@ -117,11 +117,7 @@ pub fn village_vegetation() -> Node {
         }
     }
     let mut tuft_mesh = tuft_geometry();
-    tuft_mesh.set_attribute(Attribute {
-        name: WIND_ORIGIN,
-        item_size: 2,
-        data: origins,
-    });
+    tuft_mesh.set_attribute(Attribute::instance(WIND_ORIGIN, 2, origins));
     let grass = Material {
         side: Side::Double,
         effect: Effect::Custom {

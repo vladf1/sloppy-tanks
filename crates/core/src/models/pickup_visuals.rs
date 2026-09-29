@@ -85,7 +85,7 @@ fn hardware_material() -> Arc<Material> {
         transparent: true,
         effect: Effect::Custom {
             name: PICKUP_SURFACE,
-            params: vec![0.0],
+            params: Vec::new(),
         },
         ..Material::default()
     })
@@ -94,23 +94,27 @@ fn hardware_material() -> Arc<Material> {
 /// The shared face material: the atlas as color and emissive map, glowing faintly
 /// and skipping tone mapping so the pictograms stay crisp.
 fn face_material() -> Arc<Material> {
-    MATERIALS.get_or_insert(1, || Material {
-        map: Some(TextureRef {
+    MATERIALS.get_or_insert(1, || {
+        let atlas = TextureRef {
             wrap: Wrap::Clamp,
             anisotropy: 4,
             ..TextureRef::file(PICKUP_ATLAS_PATH)
-        }),
-        roughness: 0.55,
-        metalness: 0.15,
-        emissive: Color(0xffffff),
-        emissive_intensity: FACE_EMISSIVE_INTENSITY,
-        tone_mapped: false,
-        transparent: true,
-        effect: Effect::Custom {
-            name: PICKUP_SURFACE,
-            params: vec![1.0],
-        },
-        ..Material::default()
+        };
+        Material {
+            map: Some(atlas.clone()),
+            emissive_map: Some(atlas),
+            roughness: 0.55,
+            metalness: 0.15,
+            emissive: Color(0xffffff),
+            emissive_intensity: FACE_EMISSIVE_INTENSITY,
+            tone_mapped: false,
+            transparent: true,
+            effect: Effect::Custom {
+                name: PICKUP_SURFACE,
+                params: Vec::new(),
+            },
+            ..Material::default()
+        }
     })
 }
 

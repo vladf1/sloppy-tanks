@@ -1,10 +1,9 @@
 //! Port of `ground-surfaces.ts`: the dry-grass and packed-dirt ground materials,
 //! world-aligned ground UVs and the feathered village road strips.
 
-use crate::geometry::{Attribute, Mesh};
+use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
 use crate::scene::{Material, TextureRef, Wrap};
 
-use super::effects_scenery::VERTEX_ALPHA;
 use super::village_roads::ROAD_SHOULDER;
 
 pub use crate::sim::maps::GroundKind;
@@ -88,11 +87,7 @@ pub fn road_geometry(w: f64, d: f64, x: f64, z: f64) -> Mesh {
     }
     let mut mesh = Mesh::from_f64(&positions, &[], &uvs, Some(indices));
     mesh.colors = vec![[1.0; 3]; 16];
-    mesh.set_attribute(Attribute {
-        name: VERTEX_ALPHA,
-        item_size: 1,
-        data: alpha,
-    });
+    mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
     mesh.compute_vertex_normals();
     mesh
 }

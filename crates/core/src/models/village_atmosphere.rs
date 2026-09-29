@@ -36,18 +36,18 @@ pub struct SmokeCover<'a> {
 /// call [`set_chimney_smoke`] on reset. Never frustum culled.
 pub fn village_atmosphere() -> Node {
     let mut quad = plane_geometry(1.0, 1.0);
-    quad.set_attribute(Attribute {
-        name: SMOKE_ORIGIN,
-        item_size: 3,
-        data: vec![0.0; WISP_CAPACITY * 3],
-    });
-    quad.set_attribute(Attribute {
-        name: SMOKE_PHASE,
-        item_size: 1,
-        data: (0..WISP_CAPACITY)
+    quad.set_attribute(Attribute::instance(
+        SMOKE_ORIGIN,
+        3,
+        vec![0.0; WISP_CAPACITY * 3],
+    ));
+    quad.set_attribute(Attribute::instance(
+        SMOKE_PHASE,
+        1,
+        (0..WISP_CAPACITY)
             .map(|i| ((i % 8) as f64 / 8.0 + (i / 8) as f64 * 0.013) as f32)
             .collect(),
-    });
+    ));
     let material = Material {
         transparent: true,
         depth_write: false,

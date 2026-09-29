@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::geometry::{Mesh, rounded_box_geometry};
-use crate::scene::{Material, Node, TextureRef, Wrap};
+use crate::scene::{Material, Node, Side, TextureRef, Wrap};
 
 use super::model_primitives::{Cache, shadowed};
 
@@ -15,12 +15,10 @@ pub const CONCRETE_TEXTURE: &str = "textures/walls/weathered-concrete.webp";
 
 static GEOMETRIES: Cache<[u64; 3], Mesh> = Cache::new();
 
-/// The shared concrete material: the photo is both albedo and bump.
-///
-/// The TypeScript also set `shadowSide = FrontSide` (walls cast from their
-/// sun-facing side: the default back-face depth let the bias light a sliver of
-/// ground along each wall's shaded foot). `Material` has no shadow-side field yet;
-/// the renderer should cast this material's shadows with front faces.
+/// The shared concrete material: the photo is both albedo and bump. Walls cast
+/// shadows from their sun-facing side (`shadowSide = FrontSide`): the default
+/// back-face depth let the bias light a sliver of ground along each wall's
+/// shaded foot.
 pub fn concrete_material() -> Arc<Material> {
     static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
     MATERIAL
@@ -34,6 +32,7 @@ pub fn concrete_material() -> Arc<Material> {
                 map: Some(texture.clone()),
                 bump_map: Some(texture),
                 bump_scale: 0.035,
+                shadow_side: Some(Side::Front),
                 ..Material::standard(0xffffff, 0.0, 0.95)
             })
         })

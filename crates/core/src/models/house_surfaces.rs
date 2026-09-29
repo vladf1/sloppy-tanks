@@ -1,10 +1,7 @@
 //! Port of `house-surfaces.ts`: board siding and shingle materials with world-scale
 //! UVs, shared by village houses, the watermill, crates and timber props.
 //!
-//! The tiles were once DataTextures and keep that row order (`flipY = false`).
-//! `TextureRef` has no flip flag, so the maps express it as the equivalent UV
-//! transform `v' = 1 - v` (repeat `[1, -1]`, offset `[0, 1]`); with repeat wrapping
-//! this samples exactly what the unflipped upload did.
+//! The tiles were once DataTextures and keep that row order (`flip_y = false`).
 
 use std::sync::Arc;
 
@@ -46,9 +43,8 @@ impl HouseSurface {
 pub fn house_texture(kind: HouseSurface) -> TextureRef {
     TextureRef {
         wrap: Wrap::Repeat,
-        repeat: [1.0, -1.0],
-        offset: [0.0, 1.0],
         anisotropy: SURFACE_ANISOTROPY,
+        flip_y: false,
         ..TextureRef::file(kind.texture_path())
     }
 }

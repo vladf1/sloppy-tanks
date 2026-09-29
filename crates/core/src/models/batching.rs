@@ -28,13 +28,14 @@ struct VertexMaterialKey {
     map: Option<TextureRef>,
     bump_map: Option<TextureRef>,
     bump_scale: f32,
+    polygon_offset: Option<(f32, f32)>,
 }
 
 static VERTEX_MATERIALS: Mutex<Vec<(VertexMaterialKey, Arc<Material>)>> = Mutex::new(Vec::new());
 
 /// `vertexMaterial(source)`: the shared vertex-color clone for opaque standard
 /// paint, or the source itself for anything else (unlit, transparent, cut-out,
-/// already vertex-colored, or a custom effect).
+/// already vertex-colored, emissive-mapped, or a custom effect).
 pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if source.shading != Shading::Standard
         || source.effect != Effect::None
@@ -42,6 +43,7 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
         || source.opacity != 1.0
         || source.alpha_test != 0.0
         || source.vertex_colors
+        || source.emissive_map.is_some()
     {
         return source.clone();
     }
@@ -58,6 +60,7 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
         map: source.map.clone(),
         bump_map: source.bump_map.clone(),
         bump_scale: source.bump_scale,
+        polygon_offset: source.polygon_offset,
     };
     let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
     if let Some((_, material)) = materials.iter().find(|(k, _)| *k == key) {

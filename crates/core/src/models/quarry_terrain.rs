@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::geometry::{Mesh, plane_geometry_segments};
 use crate::scene::{Effect, Material, Node, TextureRef, TextureSource, Wrap};
 
-use super::effects_scenery::{QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
+use super::effects_scenery::{GRIT, GRIT_TEXTURE, QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
 use super::quarry_soil::{ACCUM_CELLS, QUARRY_TERRAIN_EXTENT};
 use crate::geometry::math::js_hypot;
 use crate::sim::math::Random;
@@ -78,6 +78,16 @@ pub fn quarry_soil_texture() -> TextureRef {
     }
 }
 
+/// The packed-dirt tile the quarry effects sample as world-space grit ([`GRIT`]):
+/// sRGB, mirrored repeat, mipmapped, 8x anisotropy.
+pub fn quarry_grit_texture() -> TextureRef {
+    TextureRef {
+        wrap: Wrap::Mirror,
+        anisotropy: 8,
+        ..TextureRef::file(GRIT_TEXTURE)
+    }
+}
+
 /// `soilMaterial()`: baked soil (sampled at the mesh UVs, which map world x/z onto
 /// the bake) times world-space grit, with grit relief. Soil meshes all carry vertex
 /// colors, so plain soil shares its shader with the tinted spoil and ramp.
@@ -89,6 +99,7 @@ pub fn soil_material() -> Material {
             name: QUARRY_SOIL,
             params: Vec::new(),
         },
+        extra_textures: vec![(GRIT, quarry_grit_texture())],
         ..Material::standard(0xffffff, 0.0, 1.0)
     }
 }

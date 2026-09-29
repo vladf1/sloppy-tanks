@@ -43,7 +43,7 @@ pub use bounds::{Aabb, node_bounds};
 pub use curve3::{CatmullRomCurve3, CatmullRomKind};
 pub use extrude::{ExtrudeOptions, extrude_geometry, shape_geometry};
 pub use lathe::lathe_geometry;
-pub use mesh::{Attribute, Mesh, merge_geometries, narrow, widen};
+pub use mesh::{Attribute, Mesh, VERTEX_ALPHA, merge_geometries, narrow, widen};
 pub use polyhedron::{
     icosahedron_geometry, octahedron_geometry, polyhedron_geometry, tetrahedron_geometry,
 };

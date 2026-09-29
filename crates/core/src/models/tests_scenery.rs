@@ -25,8 +25,9 @@ use std::fmt::Write as _;
 
 use glam::DMat4;
 
-use super::effects_scenery::{CHIMNEY_SMOKE, QUARRY_SOIL, SAND_DRIFT, VERTEX_ALPHA, WATER};
+use super::effects_scenery::{CHIMNEY_SMOKE, QUARRY_SOIL, SAND_DRIFT, WATER};
 use super::*;
+use crate::geometry::VERTEX_ALPHA;
 use crate::scene::{Effect, Material, Node, Shading, Side, TextureRef, TextureSource};
 use crate::sim::quarry_rock_shape::quarry_rock_shape;
 
@@ -606,6 +607,34 @@ fn quarry_rock_shape_and_spawn_pads() {
     let pieces = quarry_spawn_pad_pieces(Team::Red);
     assert_eq!(pieces.len(), 18);
     assert!(pieces.iter().all(|p| p.y + p.h / 2.0 < 1.2));
+}
+
+/// Material and attribute features Three expressed directly, which the scene
+/// contract carries instead of UV tricks or effect parameters.
+#[test]
+fn materials_carry_three_features() {
+    let house = house_texture(HouseSurface::Siding);
+    assert!(!house.flip_y);
+    assert_eq!((house.repeat, house.offset), ([1.0, 1.0], [0.0, 0.0]));
+    assert_eq!(concrete_material().shadow_side, Some(Side::Front));
+    let drift = sand_drift_material();
+    assert_eq!(drift.polygon_offset, Some((-1.0, -1.0)));
+    assert_eq!(drift.extra_textures[0].0, effects_scenery::GRIT);
+    assert_eq!(
+        sandstone_material().extra_textures[0].0,
+        effects_scenery::SOIL
+    );
+    let ammo = pickup_cube(crate::sim::types::PickupKind::Rocket);
+    let face = ammo.children[0].drawable.as_ref().unwrap();
+    assert!(face.material.emissive_map.is_some());
+    assert_eq!(face.material.emissive_map, face.material.map);
+    let village = VillageScenery::new();
+    let smoke = village.root.find(CHIMNEY_SMOKE_NODE).unwrap();
+    let mesh = &smoke.drawable.as_ref().unwrap().mesh;
+    assert!(mesh.attributes.iter().all(|a| a.per_instance));
+    let footing = sandstone_footing(14.0, 8.0, 37);
+    let alpha = footing.drawable.as_ref().unwrap().mesh.vertex_alpha();
+    assert_eq!(alpha.map(<[f32]>::len), Some(48));
 }
 
 /// Printed by the reference script (see the module docs), compacted.

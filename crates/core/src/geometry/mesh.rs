@@ -7,13 +7,50 @@ use super::math::{
     transform_point,
 };
 
-/// One vertex attribute beyond the standard set, read only by the effect shader that
-/// names it (for example a foliage sway weight). `item_size` floats per vertex.
+/// Name of the per-vertex alpha attribute (`item_size` 1) of meshes whose Three.js
+/// color attribute had four components, such as the village road shoulders and
+/// quarry rock footings. The RGB part stays in [`Mesh::colors`]; with
+/// `Material::vertex_colors` the renderer multiplies the fragment alpha by it, as
+/// the RGBA vertex color did. Meshes without it are opaque (alpha 1).
+pub const VERTEX_ALPHA: &str = "vertex-alpha";
+
+/// One attribute beyond the standard set, read only by the effect shader that
+/// names it (for example a foliage sway weight), with `item_size` floats per item.
+///
+/// A per-vertex attribute has one item per position. A per-instance attribute
+/// (Three's `InstancedBufferAttribute`) has one item per entry of the drawable's
+/// `instances` (it may hold more, for spare capacity): the renderer packs a mesh's
+/// per-instance attributes, in [`Mesh::attributes`] order, into the four floats of
+/// each instance's effect data, so they total at most four floats.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Attribute {
     pub name: &'static str,
     pub item_size: u8,
     pub data: Vec<f32>,
+    /// One item per instance rather than per vertex.
+    pub per_instance: bool,
+}
+
+impl Attribute {
+    /// A per-vertex attribute.
+    pub fn vertex(name: &'static str, item_size: u8, data: Vec<f32>) -> Self {
+        Self {
+            name,
+            item_size,
+            data,
+            per_instance: false,
+        }
+    }
+
+    /// A per-instance attribute (see the type docs).
+    pub fn instance(name: &'static str, item_size: u8, data: Vec<f32>) -> Self {
+        Self {
+            name,
+            item_size,
+            data,
+            per_instance: true,
+        }
+    }
 }
 
 /// A triangle list in model units (metres). `normals`, `uvs` and `colors` are either
@@ -88,6 +125,13 @@ impl Mesh {
         self.attributes
             .iter()
             .find(|attribute| attribute.name == name)
+    }
+
+    /// The [`VERTEX_ALPHA`] values, when the mesh has RGBA vertex colors.
+    pub fn vertex_alpha(&self) -> Option<&[f32]> {
+        self.attribute(VERTEX_ALPHA)
+            .filter(|attribute| !attribute.per_instance)
+            .map(|attribute| attribute.data.as_slice())
     }
 
     /// `BufferGeometry.setAttribute` for a custom attribute: replaces one of the
@@ -179,10 +223,11 @@ impl Mesh {
                 .attributes
                 .iter()
                 .map(|attribute| {
+                    if attribute.per_instance {
+                        return attribute.clone();
+                    }
                     let size = usize::from(attribute.item_size);
                     Attribute {
-                        name: attribute.name,
-                        item_size: attribute.item_size,
                         data: indices
                             .iter()
                             .flat_map(|&i| {
@@ -190,6 +235,7 @@ impl Mesh {
                                 attribute.data[start..start + size].iter().copied()
                             })
                             .collect(),
+                        ..attribute.clone()
                     }
                 })
                 .collect(),

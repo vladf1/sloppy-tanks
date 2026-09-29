@@ -8,12 +8,12 @@ use std::sync::{Arc, OnceLock};
 use glam::DVec3;
 
 use crate::geometry::math::{compose, js_sign, normalize, quat_from_euler, transform_point};
-use crate::geometry::{Attribute, Mesh, icosahedron_geometry, widen};
+use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, icosahedron_geometry, widen};
 use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
-use super::effects_scenery::{SAND_DRIFT, SANDSTONE, VERTEX_ALPHA};
+use super::effects_scenery::{GRIT, SAND_DRIFT, SANDSTONE, SOIL};
 use super::model_primitives::{Cache, shadowed};
-use super::quarry_terrain::quarry_soil_texture;
+use super::quarry_terrain::{quarry_grit_texture, quarry_soil_texture};
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_shape;
 
@@ -40,6 +40,7 @@ pub fn sandstone_material() -> Arc<Material> {
                     name: SANDSTONE,
                     params: Vec::new(),
                 },
+                extra_textures: vec![(SOIL, quarry_soil_texture())],
                 ..Material::standard(0xffffff, 0.0, 0.95)
             })
         })
@@ -187,10 +188,13 @@ pub fn sand_drift_material() -> Arc<Material> {
                 vertex_colors: true,
                 transparent: true,
                 depth_write: false,
+                // Keeps the drift above the coplanar floor.
+                polygon_offset: Some((-1.0, -1.0)),
                 effect: Effect::Custom {
                     name: SAND_DRIFT,
-                    params: vec![-1.0, -1.0],
+                    params: Vec::new(),
                 },
+                extra_textures: vec![(GRIT, quarry_grit_texture())],
                 ..Material::standard(0xffffff, 0.0, 1.0)
             })
         })
@@ -199,7 +203,7 @@ pub fn sand_drift_material() -> Arc<Material> {
 
 /// `sandstoneFooting(w, d, variant)`: a low, feathered sand apron around a rock's
 /// footprint; cosmetic sediment, never tall enough to imply cover. Its outer ring
-/// fades out through [`VERTEX_ALPHA`]. Receives shadows only.
+/// fades out through its [`VERTEX_ALPHA`]. Receives shadows only.
 pub fn sandstone_footing(w: f64, d: f64, variant: u32) -> Node {
     let key = ([w, d].map(f64::to_bits), variant);
     let mesh = FOOTINGS.get_or_insert(key, || {
@@ -242,11 +246,7 @@ pub fn sandstone_footing(w: f64, d: f64, variant: u32) -> Node {
         }
         let mut geometry = Mesh::from_f64(&positions, &[], &uvs, Some(indices));
         geometry.colors = colors;
-        geometry.set_attribute(Attribute {
-            name: VERTEX_ALPHA,
-            item_size: 1,
-            data: alpha,
-        });
+        geometry.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
         geometry.compute_vertex_normals();
         geometry
     });

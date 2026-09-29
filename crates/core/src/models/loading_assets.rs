@@ -3,25 +3,11 @@
 //! from its built node tree, so the page can fetch (or generate) them before the
 //! first frame.
 
-use crate::scene::{Effect, Node, TextureSource};
-
-use super::effects_scenery::{
-    GRIT_TEXTURE, QUARRY_SOIL, QUARRY_SOIL_TEXTURE, SAND_DRIFT, SANDSTONE,
-};
-
-/// Textures a custom effect samples beyond its material's `map` and `bump_map`.
-fn effect_textures(effect: &Effect) -> &'static [TextureSource] {
-    const GRIT: &[TextureSource] = &[TextureSource::File(GRIT_TEXTURE)];
-    const SOIL: &[TextureSource] = &[TextureSource::Generated(QUARRY_SOIL_TEXTURE)];
-    match effect {
-        Effect::Custom { name, .. } if *name == QUARRY_SOIL || *name == SAND_DRIFT => GRIT,
-        Effect::Custom { name, .. } if *name == SANDSTONE => SOIL,
-        _ => &[],
-    }
-}
+use crate::scene::{Node, TextureSource};
 
 /// Every texture drawn by `root` (visible or not), in first-use order without
-/// duplicates: material maps, bump maps and effect inputs. File sources are paths
+/// duplicates: material maps, bump maps, emissive maps and effect inputs
+/// (`extra_textures`). File sources are paths
 /// under `public/`; generated ones are baked in Rust or drawn by the browser (see
 /// `effects_scenery::generated_texture` and `canvas_texture`).
 pub fn node_textures(root: &Node) -> Vec<TextureSource> {
@@ -36,11 +22,12 @@ pub fn node_textures(root: &Node) -> Vec<TextureSource> {
             return;
         };
         let material = &drawable.material;
-        for texture in [&material.map, &material.bump_map].into_iter().flatten() {
+        let maps = [&material.map, &material.bump_map, &material.emissive_map];
+        for texture in maps.into_iter().flatten() {
             add(&texture.source);
         }
-        for source in effect_textures(&material.effect) {
-            add(source);
+        for (_, texture) in &material.extra_textures {
+            add(&texture.source);
         }
     });
     textures

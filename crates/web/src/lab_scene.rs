@@ -30,6 +30,8 @@ pub struct TextureSpec {
     pub anisotropy: u8,
     #[serde(default = "yes")]
     pub mipmaps: bool,
+    #[serde(default = "yes")]
+    pub flip_y: bool,
 }
 
 fn default_wrap() -> String {
@@ -69,6 +71,7 @@ pub struct MaterialSpec {
     #[serde(default = "one")]
     pub emissive_intensity: f32,
     pub map: Option<TextureSpec>,
+    pub emissive_map: Option<TextureSpec>,
     pub bump_map: Option<TextureSpec>,
     #[serde(default = "one")]
     pub bump_scale: f32,
@@ -94,7 +97,19 @@ pub struct MaterialSpec {
     pub depth_test: bool,
     #[serde(default = "yes")]
     pub fog: bool,
+    /// Three's polygon offset as `[factor, units]`.
+    pub polygon_offset: Option<[f32; 2]>,
     pub effect: Option<EffectSpec>,
+    /// Secondary textures for the effect, bound in order.
+    #[serde(default)]
+    pub extra_textures: Vec<NamedTextureSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedTextureSpec {
+    pub name: String,
+    pub texture: TextureSpec,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -258,6 +273,7 @@ pub fn texture(spec: &TextureSpec) -> TextureRef {
         srgb: spec.srgb,
         anisotropy: spec.anisotropy,
         mipmaps: spec.mipmaps,
+        flip_y: spec.flip_y,
     }
 }
 
@@ -274,6 +290,7 @@ pub fn material(spec: &MaterialSpec) -> Material {
         emissive: Color(spec.emissive),
         emissive_intensity: spec.emissive_intensity,
         map: spec.map.as_ref().map(texture),
+        emissive_map: spec.emissive_map.as_ref().map(texture),
         bump_map: spec.bump_map.as_ref().map(texture),
         bump_scale: spec.bump_scale,
         vertex_colors: spec.vertex_colors,
@@ -295,6 +312,7 @@ pub fn material(spec: &MaterialSpec) -> Material {
         },
         depth_test: spec.depth_test,
         depth_write: spec.depth_write,
+        polygon_offset: spec.polygon_offset.map(|[factor, units]| (factor, units)),
         tone_mapped: true,
         fog: spec.fog,
         effect: spec
@@ -304,6 +322,11 @@ pub fn material(spec: &MaterialSpec) -> Material {
                 name: leak(&effect.name),
                 params: effect.params.clone(),
             }),
+        extra_textures: spec
+            .extra_textures
+            .iter()
+            .map(|extra| (leak(&extra.name), texture(&extra.texture)))
+            .collect(),
     }
 }
 
