@@ -243,6 +243,10 @@ export async function startMultiplayer(
     controls.clear();
     const open = game.resume(performance.now());
     ui.setMenu(open);
+    // A click right after RESUME takes the pointer back in first person.
+    if (lastResult.length) {
+      controls.holdPointer(lastResult[FRAME.firstPerson] === 1, open);
+    }
     pump();
   }
   const controls = new Controls(ui.canvas, pause, (amount) => (zoom += amount), activeInput, false);
@@ -460,20 +464,16 @@ export async function startMultiplayer(
   };
   const loop = (now: number) => {
     requestAnimationFrame(loop);
-    // Any menu (including ones the server opens) and disconnects free the pointer;
-    // a death keeps it captured for the respawn. Mouse travel while input is off is
-    // dropped so the turret never jumps.
-    if (lastResult.length) {
-      controls.holdPointer(
-        lastResult[FRAME.firstPerson] === 1,
-        lastResult[FRAME.pointerFree] === 1,
-      );
-    }
     controls.takeInput(input);
     input[INPUT.zoom] = zoom;
     zoom = 0;
     const result = game.frame(now, input);
     lastResult = result;
+    // Any menu (including ones the server opens) and disconnects free the pointer;
+    // a death keeps it captured for the respawn. Mouse travel while input is off is
+    // dropped so the turret never jumps. Held after the frame, so RESUME and V set
+    // it at once and no stale frame overrides them.
+    controls.holdPointer(result[FRAME.firstPerson] === 1, result[FRAME.pointerFree] === 1);
     pump();
     if (result[FRAME.drawn]) {
       hudDt += result[FRAME.dt];

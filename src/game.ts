@@ -201,10 +201,17 @@ export async function prepareGame(
     settings(key, saved(key, "1"));
   }
 
+  // Whether the last frame steered in first person (toggling the view sets it too).
+  let firstPerson = false;
+  /** Pause, results and the round menu need the cursor; a death keeps it captured.
+   * Applied as soon as the phase changes, so a click right after RESUME already
+   * takes the pointer back instead of waiting for the next frame. */
+  const holdPointer = () => controls.holdPointer(firstPerson, phase !== "playing");
   const updateHud = (dt: number) => {
     ui.update(readHud(), dt);
     phase = hud!.match.phase;
     alive = hud!.human.alive;
+    holdPointer();
   };
   function pause(): void {
     if (phase === "playing") {
@@ -326,8 +333,8 @@ export async function prepareGame(
     },
   });
   const toggleView = () => {
-    const firstPerson = game.toggle_first_person();
-    controls.holdPointer(firstPerson);
+    firstPerson = game.toggle_first_person();
+    holdPointer();
     controls.capturePointer();
   };
   controls.toggleView = toggleView;
@@ -402,8 +409,8 @@ export async function prepareGame(
       counters.frames++;
       phase = PHASES[result[FRAME.phase]] ?? "ready";
       alive = result[FRAME.humanAlive] === 1;
-      // Pause, results and the round menu need the cursor; a death keeps it captured.
-      controls.holdPointer(result[FRAME.firstPerson] === 1, phase !== "playing");
+      firstPerson = result[FRAME.firstPerson] === 1;
+      holdPointer();
       if (result[FRAME.clearInput]) {
         controls.clear();
       }

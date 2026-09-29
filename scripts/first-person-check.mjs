@@ -5,6 +5,25 @@ const output = "artifacts/performance/first-person";
 mkdirSync(output, { recursive: true });
 const { browser, page, errors } = await launchGame();
 const turn = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+// Hold the game's `loop` animation callback on demand, so a check can act between
+// two engine frames.
+await page.addInitScript(() => {
+  const requestFrame = window.requestAnimationFrame.bind(window);
+  let held;
+  window.holdLoop = () => (held ??= []);
+  window.releaseLoop = () => {
+    const callbacks = held ?? [];
+    held = undefined;
+    for (const callback of callbacks) requestFrame(callback);
+  };
+  window.requestAnimationFrame = (callback) => {
+    if (held && callback.name === "loop") {
+      held.push(callback);
+      return 0;
+    }
+    return requestFrame(callback);
+  };
+});
 try {
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
@@ -99,24 +118,35 @@ try {
   await page.waitForTimeout(300);
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "paused");
-  await page.locator("#resume").click();
-  await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
-
-  // A death keeps the pointer captured, so the respawn needs no click or new lock notice.
-  // The pause menu hides as play resumes, and the next frame wants the pointer again;
-  // click the arena, not the menu, after that frame.
-  await page.waitForFunction(
-    () => getComputedStyle(document.querySelector("#overlay")).display === "none",
-  );
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
-  await page.mouse.click(800, 450);
+  // RESUME hides the pause menu and wants the pointer again at once: a physical click
+  // on the arena before the next engine frame takes it back and does not fire.
+  await page.evaluate(async () => {
+    window.holdLoop();
+    // The frame already requested runs once more before the loop is held.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const heldFrames = await page.evaluate(() => window.sloppy.frames);
+  const resume = await page.locator("#resume").boundingBox();
+  await page.mouse.click(resume.x + resume.width / 2, resume.y + resume.height / 2);
+  assert.equal(await phase(), "playing");
+  await page.mouse.move(800, 450);
+  await page.mouse.down();
+  const fired = await page.evaluate(() => window.sloppy.controls.fire);
+  await page.mouse.up();
   if (locked) {
     await page.waitForFunction(
       () => document.pointerLockElement === document.querySelector("#game"),
     );
+    assert.equal(fired, false, "the click that takes the pointer back does not fire");
   }
+  assert.equal(
+    await page.evaluate(() => window.sloppy.frames),
+    heldFrames,
+    "the click after RESUME lands before the next engine frame",
+  );
+  await page.evaluate(() => window.releaseLoop());
+
+  // A death keeps the pointer captured, so the respawn needs no click or new lock notice.
   const destroy = () =>
     page.evaluate(() => {
       window.engine.setHuman({ shieldPoints: 0 });
