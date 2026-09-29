@@ -1,7 +1,7 @@
 // The game in WebKit (Safari's engine) with WebGPU: Battle Setup becomes ready on the
 // village and the quarry with a sane count of distinct pipelines, a physical click on
-// GO starts the round, and keyboard driving and a mouse shot reach the simulation,
-// without page, console or GPU errors.
+// GO starts the round, and keyboard driving and a mouse shot reach the simulation at
+// the display's frame rate, without page, console or GPU errors.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { webkit } from "playwright";
@@ -13,6 +13,12 @@ mkdirSync(output, { recursive: true });
 const MAX_PIPELINES = 150;
 /** Preparing a warm arena takes about a second; a cold shader cache takes longer. */
 const READY_TIMEOUT_MS = 120_000;
+/** How long W is held while frames are counted. */
+const DRIVE_MS = 1500;
+/** Frames per second the drive must reach. The vsync-capped headless WebKit renders
+ * 60; WebKit's WebGPU frame pacer drops a canvas whose command buffers cost more than
+ * a display frame to 30 or 24, as it did when the whole frame shared one buffer. */
+const MIN_DRIVE_FPS = 45;
 
 const browser = await webkit.launch({ headless });
 const errors = [];
@@ -79,25 +85,32 @@ try {
         window.sloppy.view.time > 0,
     );
     const before = await page.evaluate(() => window.sloppy.sim.human);
-    const framesBefore = await page.evaluate(() => window.sloppy.frames);
     await page.mouse.move(900, 300);
+    const driveStart = await page.evaluate(() => ({
+      frames: window.sloppy.frames,
+      time: performance.now(),
+    }));
     await page.keyboard.down("w");
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(DRIVE_MS);
     await page.keyboard.up("w");
+    const driveEnd = await page.evaluate(() => ({
+      frames: window.sloppy.frames,
+      time: performance.now(),
+    }));
+    const driveFps =
+      ((driveEnd.frames - driveStart.frames) * 1000) / (driveEnd.time - driveStart.time);
     await page.mouse.down();
     await page.waitForFunction(() => window.sloppy.sim.shotsFired > 0, null, { timeout: 5000 });
     await page.mouse.up();
     const after = await page.evaluate(() => ({
       human: window.sloppy.sim.human,
       shots: window.sloppy.sim.shotsFired,
-      frames: window.sloppy.frames,
       gpuError: window.sloppy.error(),
       stats: window.engine.stats(),
     }));
     const moved = Math.hypot(after.human.x - before.x, after.human.z - before.z);
     assert.ok(moved > 1, `W drives the tank: ${moved.toFixed(2)} m`);
-    // Headless WebKit paces animation frames unevenly (15-30 per second here).
-    assert.ok(after.frames - framesBefore > 10, `frames ran: ${after.frames - framesBefore}`);
+    assert.ok(driveFps >= MIN_DRIVE_FPS, `frames per second while driving: ${driveFps.toFixed(1)}`);
     assert.equal(after.gpuError, null);
     assert.equal(after.stats.latePipelines, 0, "no pipeline compiled while playing");
     await page.screenshot({ path: `${output}/${map}.png` });
@@ -107,7 +120,7 @@ try {
       pipelines: prepared.stats.pipelines,
       moved: Number(moved.toFixed(2)),
       shots: after.shots,
-      frames: after.frames - framesBefore,
+      driveFps: Number(driveFps.toFixed(1)),
     };
     results.userAgent = prepared.userAgent;
     await context.close();

@@ -56,7 +56,7 @@ allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 | `destruction-check.mjs`            | Timber stages and breach, tree stumps and falling crowns, distinct tower rubble with its textures, debris sink and fade                                                                                |
 | `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, water reflections) and suspension fixtures                                                                                                               |
 | `multiplayer-simulation-check.mjs` | Two room seats driven through `PlayerControls`, each drawn from its own viewer (camera, models, bars); isolated speed sliders and literal player names                                                 |
-| `webkit-startup-check.mjs`         | WebKit: ready menu on the village and quarry with at most 150 distinct pipelines, a physical GO click, W driving and a mouse shot, no page, console or GPU errors or late pipelines                    |
+| `webkit-startup-check.mjs`         | WebKit: ready menu on the village and quarry with at most 150 distinct pipelines, a physical GO click, W driving at 45+ fps and a mouse shot, no page, console or GPU errors or late pipelines         |
 | `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                     |
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
