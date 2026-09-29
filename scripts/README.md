@@ -18,30 +18,42 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.m
 ```
 
 `pnpm run check:browser` runs every check below except `touch-loading-check`, one
-after another, in about two minutes. Run it for startup, menu, input or rendering
+after another, in a few minutes. Run it for startup, menu, input or rendering
 changes. Browser checks keep only what needs a browser (real pointer, wheel,
-keyboard and touch input, DOM and CSS, sounds, GPU rendering); rules that plain
-simulation or Three.js objects can show belong in `tests/*.test.ts`.
+keyboard and touch input, DOM and CSS, sounds, GPU rendering); rules the simulation
+or presentation can show natively belong in the Rust tests (`cargo test`) or
+`tests/*.test.ts`.
 
 Shared setup lives in `browser-helpers.mjs`: `launchGame()` opens Chrome with the
 shared headless flag, `startRound()` starts rounds through the real Battle Setup
 menu (the startup overlay otherwise swallows pointer and wheel input), and
-`freezeLoop()` holds only the game's own `loop` callback so a check advances exact
-frames while Three.js's animation callbacks keep running.
+`freezeLoop()` holds the game's one `loop` animation callback, which hands the packed
+input to `Game.frame`, so a check advances exact engine frames.
+
+Checks read and arrange the engine through the dev-only `window.sloppy` (see
+`docs/rust-rewrite.md`) and the `Game.debug_*` fixture hooks
+(`crates/web/src/game/debug.rs`): an emptied arena, placed and patched tanks, damage
+through the shared damage paths, pickups, shells, mines, fixed simulation steps, still
+frames from a fixed camera, a pixel probe and two room seats. `launchGame()` installs
+`window.engine` in every page: `state()` (simulation and camera), `view()` (what every
+entity's view showed in the last frame: reticle rings, health-bar chevrons, cover
+stages and stumps, pickup podiums, debris opacity, laser beams, effect counts),
+`covers()`, `stats()` (renderer counters: draws, pipelines, late pipelines,
+allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 
 | Script                             | Verifies                                                                                                                                                                                               |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; stable WebGPU buffers across destructive resets                                                                                             |
+| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; rubble without late pipelines; stable renderer allocations and live WebGPU buffers across destructive resets and mines                      |
 | `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, first Esc frees the cursor and a second pauses, death keeps the pointer, Esc then a physical respawn choice, overhead restore |
 | `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                               |
 | `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                         |
 | `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                 |
 | `touch-controls-check.mjs`         | Thumb sticks and simultaneous fingers, zoom, pause, touch preference and portrait hit-testing                                                                                                          |
 | `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                   |
-| `render-bundles-check.mjs`         | Cached draws match ordinary draws on all maps with moving and switched cameras                                                                                                                         |
-| `destruction-check.mjs`            | Timber stages and breach, tree stumps and falling crowns, tower rubble textures, debris sink and fade                                                                                                  |
+| `render-cameras-check.mjs`         | Every map through moving, overview, first-person, zoomed and fixed cameras: no late or new pipelines, and a still frame matches pixel for pixel after a detour through other views                     |
+| `destruction-check.mjs`            | Timber stages and breach, tree stumps and falling crowns, distinct tower rubble with its textures, debris sink and fade                                                                                |
 | `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, water reflections) and suspension fixtures                                                                                                               |
-| `multiplayer-simulation-check.mjs` | Two independently controlled seats, viewer cameras/bars, isolated speed sliders and literal player names                                                                                               |
+| `multiplayer-simulation-check.mjs` | Two room seats driven through `PlayerControls`, each drawn from its own viewer (camera, models, bars); isolated speed sliders and literal player names                                                 |
 | `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                     |
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
@@ -55,9 +67,41 @@ node scripts/touch-loading-check.mjs
 The dev server also serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
 `tools/tank-surface-check.html`, plus a link to the game with `?extralevels`, whose
-Battle Setup offers the Stress Grid and Scrap Yard. Fixtures with a pass/fail
-verdict show it in a `#result` element starting with `PASS` or `FAIL`, which
-`fixtures-check.mjs` reads.
+Battle Setup offers the Stress Grid and Scrap Yard. Each fixture runs the engine's
+`Game` on its own canvas (`tests/engine-fixture.ts`) and arranges it through the
+debug hooks: `reinforcements` (120 Solo Assault kills, bounded views, reset and team
+mode), `maps` (inspection poses, crate stages, map switches, and both waters
+reflecting a probe box in the framebuffer), `suspension` (acceleration, braking and
+turning lean, a turret riding the hull's tilt), `humvee` (an orbit view of the TOW
+humvee) and `destruction` (an interactive showcase of every destructible). Fixtures
+with a pass/fail verdict show it in a `#result` element starting with `PASS` or
+`FAIL`, which `fixtures-check.mjs` reads.
+
+## Labs
+
+The render lab, effects lab and tank previews use the labs build of the engine
+(`RenderLab`, `EffectsLab`; the `labs` feature of `sloppy-web`), which the game never
+loads: build it with `pnpm run wasm -- --labs` (into `src/generated/engine-labs/`),
+then open the page on the dev server.
+
+| Page or script                                          | Shows or checks                                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `tools/render-lab.html`, `tools/render-lab-check.mjs`   | A calibration scene (PBR, fog, ACES, shadows, water, effects, joints, fades), reloads, culling, picking |
+| `tools/effects-lab.html`, `tools/effects-lab-check.mjs` | A scripted scene with every effect and munition; bounded pools, no late pipelines, reset                |
+| `tools/tank-surface-check.html`                         | The tank previews at card and gameplay scale                                                            |
+| `tools/game-preview.html`                               | Single player on the game engine without menus (the normal build)                                       |
+
+The labs compare the engine with reference frames of the same scenes drawn by the
+game's former Three.js r185 renderer, captured before Three.js left the project. They
+are too large to commit (about 0.9 MB as lossless WebP), so they live in the ignored
+`artifacts/references/labs/` (`render-{default,overhead,close,resized}.png`,
+`effects-{village,quarry,quarry-close}.png`, with the capture's own numbers in
+`reports.json`); keep a copy. Without them the labs draw and report the engine only
+and the difference panel stays blank. With them `render-lab-check.mjs` requires each
+pose's mean error to stay within `RENDER_LAB_TOLERANCE` (default 1.0 of 255;
+calibrated at 0.16 default, 0.25 overhead, 0.15 close-up, 0.15 resized) and
+`effects-lab-check.mjs` within `EFFECTS_LAB_TOLERANCE` (default 4; calibrated at 1.86
+village, 2.08 quarry, 4.22 close-up, where the two sides' cosmetic randomness differs).
 
 ## Multiplayer experiments
 
@@ -65,17 +109,16 @@ These checks default to the Vite URL `http://127.0.0.1:5173/sloppy-tanks/`; set
 `SLOPPY_URL` for another. Room codes, the Chrome launch, physical clicks and
 WebSocket-frame recording are shared in `multiplayer-helpers.mjs`. Server rules
 (seats, idle watchdog, humans-only, reconnect, host transfer, expiry) are covered by
-`tests/match-host.test.ts`, `tests/room-session.test.ts` and
-`tests/player-controls.test.ts`; these checks cover what only a browser or a real
-socket shows.
+the engine's tests (`crates/core/tests/net_match_host.rs`, `net_player_controls.rs`,
+`crates/server/tests/`); these checks cover what only a browser or a real socket
+shows. Checks that follow a room's state apply its frames with `state-mirror.mjs`,
+which also asserts the snapshot stream stays contiguous.
 
 `pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
 multiplayer requests, sockets or UI in single-player, server or traffic-bot code in
-any browser chunk, and any download but the engine Wasm, the TypeScript simulation or
-Rapier JS/WASM when opening a room. `tests/multiplayer-client-imports.test.ts` guards
-the same import boundary in `pnpm test` (no TypeScript engine, replication, schema
-readers, physics or Three.js from the room page or room list) and prints the
-offending import chain.
+any browser chunk, and any download of a TypeScript simulation or Rapier JS/WASM when
+opening a room: rooms run on the engine Wasm. `tests/multiplayer-client-imports.test.ts`
+guards the import boundary in `pnpm test` and prints the offending import chain.
 It also checks that a room link opens Battle Setup rather than a room page, that
 multiplayer's extracted stylesheet loads only once a room is entered, that inactive
 menu actions stay hidden, and that the menu fits desktop viewports.
@@ -139,7 +182,7 @@ running server, and is outside CI.
 Do not deploy or restart a watched server during a run: that resets rooms.
 
 The client's projectile and lifecycle display timing is covered by
-`tests/network-timeline.test.ts`; use human playtests to judge control feel.
+`crates/core/tests/net_timing.rs`; use human playtests to judge control feel.
 Raw results, failures and screenshots belong under
 `artifacts/performance/multiplayer/`. Automated timings do not establish player
 comfort or account billing capacity; impact-to-feedback excludes projectile flight.
@@ -150,16 +193,15 @@ These are manual evidence, not regression gates. Keep them out of `pnpm run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
 
-| Command                                               | Measures                                                                          |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `node scripts/profile.mjs before` / `after`           | Matched runtime comparison with CPU profiles                                      |
-| `node scripts/frame-pacing-check.mjs`                 | First gameplay frame and seeded combat on every map, without discarding a warm-up |
-| `pnpm run benchmark:loading -- <label>`               | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
-| `node --import tsx scripts/destruction-benchmark.ts`  | Headless destruction physics cost for a fixed wreck and blast scenario            |
-| `node --import tsx scripts/capture-benchmark.ts`      | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
-| `node --import tsx scripts/simulation-benchmark.ts`   | Headless seeded autoplay tick time and `World.step` share on one map              |
-| `pnpm run validate`                                   | Ten seeded headless matches and reset checks                                      |
-| `node scripts/benchmarks/host-download-benchmark.mjs` | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
+| Command                                                             | Measures                                                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `node scripts/profile.mjs before` / `after`                         | Matched runtime comparison with CPU profiles                                      |
+| `node scripts/frame-pacing-check.mjs`                               | First gameplay frame and seeded combat on every map, without discarding a warm-up |
+| `pnpm run benchmark:loading -- <label>`                             | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
+| `cargo run --release -p sloppy-core --example capture_benchmark`    | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
+| `cargo run --release -p sloppy-core --example simulation_benchmark` | Headless seeded autoplay tick time on one map                                     |
+| `pnpm run validate`                                                 | Ten seeded headless matches and reset checks                                      |
+| `node scripts/benchmarks/host-download-benchmark.mjs`               | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
@@ -169,17 +211,12 @@ time on an otherwise idle machine, and report sample counts with outliers.
   `artifacts/performance/loading/<label>/` and keep each snapshot unchanged while
   measuring. Compare first content, menu appearance, final download and
   main-thread blocking separately.
-- `destruction-benchmark.ts` takes an output path (default
-  `artifacts/performance/destruction-benchmark.json`); compare a baseline and a
-  candidate run.
-- `capture-benchmark.ts` seeds each standard map and the Scrap Yard with one
-  idle player, warms up 1200 ticks, then times 400 intervals of three steps and
-  a snapshot. It takes an output path (default
-  `artifacts/performance/capture-benchmark.json`).
-- `simulation-benchmark.ts` takes a map id, a seed and optionally `count`; it
-  warms up 600 ticks, times 3600 and prints JSON. `count` tallies rapier.js calls
-  per tick instead of timing. For an engine change, run a base-commit worktree
-  and the candidate alternately over several maps and seeds.
+- `capture_benchmark` seeds each standard map and both extra levels with one idle
+  player, warms up 1200 ticks, then times 400 intervals of three steps and a
+  snapshot. It takes an output path after `--`.
+- `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
+  ticks, times 3600 and prints JSON. For an engine change, run a base-commit
+  worktree and the candidate alternately over several maps and seeds.
 - `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 
@@ -188,9 +225,18 @@ guarantees for other devices.
 
 ## Assets, build and deployment
 
-- Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`,
-  `render-tank-previews.ts`) run through the pnpm
-  commands in the root README's Assets section. `encode-webp.ts` is their shared
-  lossless encoder.
+- Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
+  run through the pnpm commands in the root README's Assets section.
+  `encode-webp.ts` is their shared lossless encoder, and `asset-data.ts` holds the
+  colors, labels and pickup atlas layout they paint with (the engine's own copies
+  are in `crates/core`; change both together).
+- `generate-previews.mjs` renders the tank selection previews from the game's vehicle
+  models with the labs engine (`tools/tank-previews.html`; run `pnpm run wasm --
+--labs` first) and packs `public/previews/tanks.webp`. `SLOPPY_PREVIEWS_OUT` writes
+  a candidate elsewhere for comparison. The renderer has no orthographic camera or
+  transparent canvas, so a narrow perspective camera far away frames the view and
+  each tank is drawn over black and over white to recover its coverage. The
+  checked-in sheet is still the Three.js rendering: the engine's differs by about 13
+  of 255 on tank pixels (brighter sides), so it has not been regenerated.
 - `startup-html.ts` inlines the Battle Setup menu into `index.html`, and
   `dev-site.ts` plus `deploy-dev.mjs` build and publish the dev site.
