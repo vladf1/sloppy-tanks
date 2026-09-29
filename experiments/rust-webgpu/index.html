@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="data:," />
+    <title>Drop Yard · Rust / WebGPU lab</title>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="./"
+        ><span class="mark">▧</span> SLOPPY LABS <span class="divider">/</span>
+        <span class="muted">EXPERIMENT 001</span></a
+      ><span class="badge">RUST + WEBGPU</span>
+    </header>
+    <main>
+      <aside>
+        <div class="eyebrow">A SMALL PHYSICS PLAYGROUND</div>
+        <h1>Drop<br />Yard<span>.</span></h1>
+        <p class="intro">A stack of blocks.<br />A little momentum.<br />See what gives.</p>
+        <section class="controls" aria-label="Simulation controls">
+          <button id="launch" class="primary" disabled>Launch a block <span>↗</span></button>
+          <div class="button-row">
+            <button id="pause" disabled>Pause</button
+            ><button id="reset" disabled>Reset scene</button>
+          </div>
+        </section>
+        <dl class="stats">
+          <div>
+            <dt>Dynamic bodies</dt>
+            <dd id="bodies">—</dd>
+          </div>
+          <div>
+            <dt>Awake</dt>
+            <dd id="awake">—</dd>
+          </div>
+          <div>
+            <dt>Physics step</dt>
+            <dd>60 <small>Hz</small></dd>
+          </div>
+          <div>
+            <dt>Frame rate</dt>
+            <dd id="fps">—</dd>
+          </div>
+        </dl>
+        <div class="instructions">
+          <p><kbd>DRAG</kbd> Orbit the scene</p>
+          <p><kbd>SCROLL</kbd> Zoom in / out</p>
+          <p><kbd>SPACE</kbd> Launch a block</p>
+          <p><kbd>R</kbd> Reset the experiment</p>
+        </div>
+        <p class="footnote">An isolated sketch.<br />No game code or assets involved.</p>
+      </aside>
+      <section class="viewport" aria-label="Physics scene">
+        <canvas
+          id="scene"
+          tabindex="0"
+          aria-label="Interactive 3D block physics scene. Drag to orbit; scroll to zoom."
+        ></canvas>
+        <div class="scene-label">
+          <span class="dot"></span> <span id="state">INITIALIZING</span>
+        </div>
+        <div class="scene-corner">01 <span>/ RIGID BODIES</span></div>
+        <div id="loading" role="status">
+          <div class="loader"></div>
+          <h2>Opening the yard</h2>
+          <p id="status">Loading the Rust module…</p>
+        </div>
+        <div class="scene-hint">
+          24 BLOCKS <span>·</span> GRAVITY −9.81 m/s² <span>·</span> REAL COLLISIONS
+        </div>
+      </section>
+    </main>
+    <footer>
+      <span><span class="dot"></span> LOCAL EXPERIMENT</span
+      ><span
+        >Rapier physics <span class="divider">/</span> WGSL shaders
+        <span class="divider">/</span> No Three.js</span
+      >
+    </footer>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

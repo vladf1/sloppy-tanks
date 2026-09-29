@@ -1,0 +1,12 @@
+{
+  "name": "rust-webgpu-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "node build.mjs",
+    "dev": "node build.mjs && pnpm -C ../.. exec vite --config experiments/rust-webgpu/vite.config.mjs",
+    "build": "node build.mjs && pnpm -C ../.. exec vite build --config experiments/rust-webgpu/vite.config.mjs",
+    "test": "node build.mjs test",
+    "check:browser": "node check-browser.mjs"
+  }
+}
