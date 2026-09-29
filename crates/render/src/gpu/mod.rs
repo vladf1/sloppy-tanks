@@ -50,7 +50,7 @@ use crate::model::{
     prepare_scenery,
 };
 use crate::shader::{PipelineKey, ShaderKey};
-use crate::shadow_merge::{ShadowGroup, merge_shadows};
+use crate::shadow_merge::{MergeKind, ShadowGroup, merge_shadows};
 use context::{ColorTarget, Context, DEPTH_FORMAT};
 use pipelines::{Pipelines, SAMPLE_COUNT, shadow_merged_index};
 use pools::PoolEntry;
@@ -384,6 +384,8 @@ struct ShadowMesh {
     index_count: u32,
     /// Index into `Pipelines::shadow_merged`.
     pipeline: usize,
+    /// Cutout groups: the material (store index) whose map and cutoff apply.
+    material: Option<u32>,
     /// World bounds (scenery only; models cull per instance).
     bounds: Sphere,
     bytes: u64,
@@ -650,23 +652,32 @@ fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     })
 }
 
-/// Whether a material's shadow can come from a merged, depth-only caster: no
-/// alpha test and no effect that moves vertices or dithers the shadow.
-fn shadow_mergeable(effects: &EffectRegistry, material: &sloppy_core::scene::Material) -> bool {
-    if material.alpha_test > 0.0 {
-        return false;
-    }
-    match &material.effect {
-        sloppy_core::scene::Effect::None => true,
-        sloppy_core::scene::Effect::Custom { name, .. } => effects
-            .id(name)
-            .and_then(|id| effects.get(id))
-            .is_none_or(|effect| {
-                !effect.has_vertex()
-                    && !effect.has_world()
-                    && !effect.has_clip()
-                    && !effect.shadow_fade
-            }),
+/// How a material's shadow can come from a merged caster: depth only, or an
+/// alpha-tested card; never with an effect that moves vertices, dithers the
+/// shadow or (for cards) could change the cut-out alpha.
+fn shadow_merge_kind(
+    effects: &EffectRegistry,
+    material: &sloppy_core::scene::Material,
+) -> MergeKind {
+    let effect = match &material.effect {
+        sloppy_core::scene::Effect::None => None,
+        sloppy_core::scene::Effect::Custom { name, .. } => {
+            effects.id(name).and_then(|id| effects.get(id))
+        }
+    };
+    let moves = effect.is_some_and(|effect| {
+        effect.has_vertex() || effect.has_world() || effect.has_clip() || effect.shadow_fade
+    });
+    if moves {
+        MergeKind::Separate
+    } else if material.alpha_test > 0.0 {
+        if effect.is_some() {
+            MergeKind::Separate
+        } else {
+            MergeKind::Cutout
+        }
+    } else {
+        MergeKind::Opaque
     }
 }
 
@@ -1163,7 +1174,7 @@ impl Renderer {
             let effects = &self.effects;
             merge_shadows(
                 &prepared,
-                |index| shadow_mergeable(effects, &prepared.parts[index].material),
+                |index| shadow_merge_kind(effects, &prepared.parts[index].material),
                 scenery,
                 SHADOW_MERGE_CELL,
             )
@@ -1233,7 +1244,20 @@ impl Renderer {
             .groups
             .into_iter()
             .filter(|group| !group.indices.is_empty())
-            .map(|group| upload_shadow_mesh(&device, &group))
+            .map(|group| {
+                let material = group.cutout.as_ref().map(|material| {
+                    let index = self.materials.get_or_create(
+                        &device,
+                        &self.layouts,
+                        &mut self.textures,
+                        &self.effects,
+                        material,
+                    );
+                    self.materials.get_mut(index).users += 1;
+                    index
+                });
+                upload_shadow_mesh(&device, &group, material)
+            })
             .collect();
         let skeleton = PreparedModel {
             nodes: prepared.nodes,
@@ -1322,6 +1346,9 @@ impl Renderer {
         for mesh in &entry.shadow {
             mesh.vertex.destroy();
             mesh.index.destroy();
+            if let Some(material) = mesh.material {
+                self.materials.get_mut(material).users -= 1;
+            }
         }
         if entry.scenery {
             self.static_dirty = true;
@@ -1608,7 +1635,7 @@ impl Renderer {
         }
         // One draw per merged shadow pipeline in use, reading static records.
         self.merged_draws.clear();
-        let mut warmed = [false; 3];
+        let mut warmed = [false; 6];
         for (index, model) in self.models.iter() {
             for (group, mesh) in model.shadow.iter().enumerate() {
                 if !std::mem::replace(&mut warmed[mesh.pipeline], true) {
@@ -2308,6 +2335,9 @@ impl Renderer {
                         pass.set_pipeline(&self.pipelines.shadow_merged[mesh.pipeline]);
                         pipeline = mesh.pipeline;
                     }
+                    if let Some(material) = mesh.material {
+                        pass.set_bind_group(1, &self.materials.get(material).bind_group, &[]);
+                    }
                     pass.set_vertex_buffer(0, mesh.vertex.slice(..));
                     pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, draw.first..draw.first + draw.count);
@@ -2540,7 +2570,11 @@ impl DrawContext<'_> {
     }
 }
 
-fn upload_shadow_mesh(device: &wgpu::Device, group: &ShadowGroup) -> ShadowMesh {
+fn upload_shadow_mesh(
+    device: &wgpu::Device,
+    group: &ShadowGroup,
+    material: Option<u32>,
+) -> ShadowMesh {
     let vertex = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("shadow merged vertices"),
         contents: bytemuck::cast_slice(&group.vertices),
@@ -2555,9 +2589,11 @@ fn upload_shadow_mesh(device: &wgpu::Device, group: &ShadowGroup) -> ShadowMesh 
         vertex,
         index,
         index_count: group.indices.len() as u32,
-        pipeline: shadow_merged_index(group.side),
+        pipeline: shadow_merged_index(group.side, material.is_some()),
+        material,
         bounds: group.bounds,
-        bytes: (group.vertices.len() * 16 + group.indices.len() * 4) as u64,
+        bytes: (group.vertices.len() * size_of::<crate::shadow_merge::ShadowVertex>()
+            + group.indices.len() * 4) as u64,
     }
 }
 

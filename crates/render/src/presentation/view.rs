@@ -374,6 +374,9 @@ struct TreeView {
 
 struct CoverView {
     instance: InstanceId,
+    /// The cover's joint when it lives in the round's combined static-cover
+    /// model (hidden instead of removed); `None` for its own instance.
+    joint: Option<usize>,
     key: String,
     stage: u32,
     hits: usize,
@@ -386,6 +389,8 @@ struct CoverView {
 struct CoverModelEntry {
     model: ModelId,
     users: u32,
+    /// A cover inside the combined static-cover model, which outlives it.
+    combined: bool,
     /// Where the model was built; other covers sharing it are offset from here.
     origin: DVec3,
     source: Arc<Node>,
@@ -781,9 +786,7 @@ impl Presentation {
         self.flash = 0.0;
         self.renderer.set_point_light(FLASH_LIGHT, None);
         self.effects.reset(&mut self.renderer, state);
-        for cover in &state.covers {
-            self.add_cover(cover);
-        }
+        self.add_covers(&state.covers);
         for tank in &state.tanks {
             self.add_tank(tank);
         }
@@ -961,6 +964,7 @@ impl Presentation {
                 CoverModelEntry {
                     model,
                     users: 1,
+                    combined: false,
                     origin: DVec3::new(built.x, 0.0, built.z),
                     source: Arc::new(root),
                     tree,
@@ -979,7 +983,9 @@ impl Presentation {
             entry.users -= 1;
             if entry.users == 0 {
                 let entry = self.cover_models.remove(key).expect("present");
-                self.renderer.remove_model(entry.model);
+                if !entry.combined {
+                    self.renderer.remove_model(entry.model);
+                }
             }
         }
     }
@@ -990,39 +996,20 @@ impl Presentation {
         let entry = &self.cover_models[&key];
         let model = entry.model;
         let scale = entry.source.scale.as_vec3();
-        let tree = entry.tree.as_ref().map(|parts| {
-            let nodes = self.renderer.model_nodes(model);
-            let joints: Vec<usize> = nodes
-                .iter()
-                .enumerate()
-                .filter(|(_, node)| TreeParts::is_branch(&node.name))
-                .map(|(index, _)| index)
-                .collect();
-            TreeView {
-                crown: joint_index(&self.renderer, model, parts.crown),
-                cut: joint_index(&self.renderer, model, parts.cut_surface),
-                branches: parts
-                    .branches
-                    .iter()
-                    .zip(joints)
-                    .map(|(branch, joint)| BranchView {
-                        joint,
-                        drop_stage: branch.drop_stage,
-                        crown_child: branch.crown_child,
-                        shown: true,
-                    })
-                    .collect(),
-                branch_stage: 0,
-            }
-        });
+        let nodes = self.renderer.model_nodes(model);
+        let tree = entry
+            .tree
+            .as_ref()
+            .map(|parts| tree_view(nodes, parts, 0..nodes.len()));
         let instance = self
             .renderer
             .add_instance(model, world, Lifetime::Round)
             .expect("cover model");
-        if let Some(old) = self.covers.insert(
+        self.replace_cover(
             cover.id,
             CoverView {
                 instance,
+                joint: None,
                 key,
                 stage,
                 hits: cover.timber_hits.len(),
@@ -1031,9 +1018,102 @@ impl Presentation {
                 world,
                 tree,
             },
-        ) {
-            self.renderer.remove_instance(old.instance);
+        );
+    }
+
+    /// Install a cover's view, retiring the look it replaces.
+    fn replace_cover(&mut self, id: u32, view: CoverView) {
+        if let Some(old) = self.covers.insert(id, view) {
+            match old.joint {
+                Some(joint) => self.renderer.set_node_visible(old.instance, joint, false),
+                None => self.renderer.remove_instance(old.instance),
+            }
             self.release_cover_model(&old.key);
+        }
+    }
+
+    /// The round's covers. Static covers with a look of their own join one
+    /// combined model (a joint each), so their shadows merge into a couple of
+    /// draws; covers sharing a look stay instanced, movable ones get their own
+    /// instance. A combined cover that changes its look moves out to its own.
+    fn add_covers(&mut self, covers: &[RenderCover]) {
+        let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
+        let mut looks: HashMap<String, usize> = HashMap::new();
+        for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
+            *looks.entry(cover_key(cover, stage(cover))).or_default() += 1;
+        }
+        let (combined, own): (Vec<&RenderCover>, Vec<&RenderCover>) =
+            covers.iter().partition(|cover| {
+                cover.motion.is_none() && looks[&cover_key(cover, stage(cover))] == 1
+            });
+        if combined.len() > 1 {
+            self.add_combined_covers(&combined);
+        } else {
+            for cover in &combined {
+                self.add_cover(cover);
+            }
+        }
+        for cover in own {
+            self.add_cover(cover);
+        }
+    }
+
+    fn add_combined_covers(&mut self, covers: &[&RenderCover]) {
+        let mut root = Node::group("static-covers");
+        let mut built = Vec::with_capacity(covers.len());
+        for cover in covers {
+            let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
+            let CoverModel {
+                root: model, tree, ..
+            } = model_catalog::cover_model(cover, stage);
+            self.textures.request_scenery(&mut self.renderer, &model);
+            let mut joint = Node::group(combined_joint(cover.id));
+            joint.children.push(model.clone());
+            root.children.push(joint);
+            built.push((*cover, stage, Arc::new(model), tree));
+        }
+        let model = self.renderer.add_model(&root, Lifetime::Round);
+        let instance = self
+            .renderer
+            .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+            .expect("combined cover model");
+        for (cover, stage, source, tree) in built {
+            let nodes = self.renderer.model_nodes(model);
+            let name = combined_joint(cover.id);
+            let joint = joint_index(&self.renderer, model, &name);
+            let end = nodes[joint + 1..]
+                .iter()
+                .position(|node| node.name.starts_with(COMBINED_JOINT))
+                .map_or(nodes.len(), |offset| joint + 1 + offset);
+            let tree_view = tree
+                .as_ref()
+                .map(|parts| tree_view(nodes, parts, joint..end));
+            let key = format!("combined/{}", cover.id);
+            self.cover_models.insert(
+                key.clone(),
+                CoverModelEntry {
+                    model,
+                    users: 1,
+                    combined: true,
+                    origin: DVec3::new(cover.x, 0.0, cover.z),
+                    source,
+                    tree,
+                },
+            );
+            self.replace_cover(
+                cover.id,
+                CoverView {
+                    instance,
+                    joint: Some(joint),
+                    key,
+                    stage,
+                    hits: cover.timber_hits.len(),
+                    movable: false,
+                    scale: Vec3::ONE,
+                    world: Mat4::IDENTITY,
+                    tree: tree_view,
+                },
+            );
         }
     }
 
@@ -1629,8 +1709,11 @@ impl Presentation {
                 self.renderer
                     .set_node_visible(view.instance, tree.cut, stump);
             }
-            self.renderer
-                .set_visible(view.instance, cover.alive || stump);
+            let shown = cover.alive || stump;
+            match view.joint {
+                Some(joint) => self.renderer.set_node_visible(view.instance, joint, shown),
+                None => self.renderer.set_visible(view.instance, shown),
+            }
         }
         for (cover, joint, crown_child) in shed {
             self.shed_branch(cover, joint, crown_child);
@@ -1656,13 +1739,9 @@ impl Presentation {
         };
         let nodes = self.renderer.model_nodes(entry.model);
         let world = joint_world(nodes, &[], view.world, joint);
-        let crown = entry
-            .tree
-            .as_ref()
-            .and_then(|tree| nodes.iter().position(|node| node.name == tree.crown))
-            .map_or(view.world, |crown| {
-                joint_world(nodes, &[], view.world, crown)
-            });
+        let crown = view.tree.as_ref().map_or(view.world, |tree| {
+            joint_world(nodes, &[], view.world, tree.crown)
+        });
         let mut branch = source.clone();
         branch.position = DVec3::ZERO;
         branch.rotation = glam::DQuat::IDENTITY;
@@ -1973,6 +2052,47 @@ impl Presentation {
             self.renderer
                 .set_node_visible(view.instance, view.light, mine.arm > 0.0 || blink);
         }
+    }
+}
+
+/// Joint names of covers in the combined static-cover model.
+const COMBINED_JOINT: &str = "cover:";
+
+fn combined_joint(id: u32) -> String {
+    format!("{COMBINED_JOINT}{id}")
+}
+
+/// A tree's damage joints among `nodes[range]` (its model, or its cover joint's
+/// span in the combined model; joints of one tree are contiguous, crown order).
+fn tree_view(
+    nodes: &[crate::model::ModelNode],
+    parts: &TreeParts,
+    range: std::ops::Range<usize>,
+) -> TreeView {
+    let find = |name: &str| {
+        range
+            .clone()
+            .find(|&index| nodes[index].name == name)
+            .unwrap_or_else(|| panic!("tree joint {name}"))
+    };
+    let joints = range
+        .clone()
+        .filter(|&index| TreeParts::is_branch(&nodes[index].name));
+    TreeView {
+        crown: find(parts.crown),
+        cut: find(parts.cut_surface),
+        branches: parts
+            .branches
+            .iter()
+            .zip(joints)
+            .map(|(branch, joint)| BranchView {
+                joint,
+                drop_stage: branch.drop_stage,
+                crown_child: branch.crown_child,
+                shown: true,
+            })
+            .collect(),
+        branch_stage: 0,
     }
 }
 

@@ -7,21 +7,39 @@
 //! transforms), so joints still move, hide (a zero record) and instance: one
 //! draw covers every instance of a model. Static scenery bakes its world
 //! transforms in and uses the identity record (slot 0) per spatial cell.
+//!
+//! Alpha-tested cards (foliage) merge too, per material: their vertices keep
+//! UVs and the merged draw binds the material to discard below its cutoff.
+
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
-use sloppy_core::scene::Side;
+use glam::{Mat4, Vec2, Vec3};
+use sloppy_core::scene::{Material, Side};
 
 use crate::camera::Sphere;
 use crate::material::shadow_side;
 use crate::model::{MeshData, PartMesh, PreparedModel, PreparedPart};
 
-/// A merged shadow vertex (16 bytes): mesh-space position and its record slot.
+/// A merged shadow vertex (24 bytes): mesh-space position, its record slot and
+/// UV (read only by alpha-tested groups).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ShadowVertex {
     pub position: [f32; 3],
     pub slot: u32,
+    pub uv: [f32; 2],
+}
+
+/// How a part's shadow may merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeKind {
+    /// Keeps its own shadow draw.
+    Separate,
+    /// Depth only.
+    Opaque,
+    /// Alpha-tested against its material's map (grouped per material).
+    Cutout,
 }
 
 /// One merged caster mesh for a cull side.
@@ -33,6 +51,8 @@ pub struct ShadowGroup {
     pub indices: Vec<u32>,
     /// Scenery: world bounds of the group; models: unused (culled per instance).
     pub bounds: Sphere,
+    /// The alpha-tested material all of the group's cards share.
+    pub cutout: Option<Arc<Material>>,
 }
 
 /// A model's shadow merge.
@@ -52,19 +72,21 @@ impl ShadowMerge {
     }
 }
 
-/// Positions and triangle indices of a part's mesh.
-fn part_geometry<'a>(
-    part: &'a PreparedPart,
-    meshes: &'a [MeshData],
-) -> (Vec<Vec3>, std::borrow::Cow<'a, [u32]>) {
+type Geometry<'a> = (Vec<Vec3>, Vec<Vec2>, std::borrow::Cow<'a, [u32]>);
+
+/// Positions, UVs and triangle indices of a part's mesh.
+fn part_geometry<'a>(part: &'a PreparedPart, meshes: &'a [MeshData]) -> Geometry<'a> {
     match &part.mesh {
         PartMesh::Shared(mesh) => {
             let positions = mesh.positions.iter().map(|p| Vec3::from(*p)).collect();
+            let uvs = (0..mesh.positions.len())
+                .map(|i| mesh.uvs.get(i).map_or(Vec2::ZERO, |uv| Vec2::from(*uv)))
+                .collect();
             let indices = match &mesh.indices {
                 Some(indices) => std::borrow::Cow::Borrowed(indices.as_slice()),
                 None => std::borrow::Cow::Owned((0..mesh.positions.len() as u32).collect()),
             };
-            (positions, indices)
+            (positions, uvs, indices)
         }
         PartMesh::Owned(index) => {
             let data = &meshes[*index];
@@ -73,8 +95,10 @@ fn part_geometry<'a>(
                 .iter()
                 .map(|v| Vec3::from(v.position))
                 .collect();
+            let uvs = data.vertices.iter().map(|v| Vec2::from(v.uv)).collect();
             (
                 positions,
+                uvs,
                 std::borrow::Cow::Borrowed(data.indices.as_slice()),
             )
         }
@@ -88,14 +112,14 @@ pub fn caster_side(part: &PreparedPart) -> Side {
         .unwrap_or_else(|| shadow_side(part.material.side))
 }
 
-/// Merge the eligible parts of a prepared model. `eligible(part_index)` says
-/// which parts may merge (opaque casters without alpha test or vertex effects,
-/// and on movable models only non-instanced parts). `scenery` bakes world
+/// Merge the eligible parts of a prepared model. `kind(part_index)` says how a
+/// part may merge (see [`MergeKind`]; on movable models only non-instanced
+/// parts merge). `scenery` bakes world
 /// transforms (and InstancedMesh placements) into the vertices, grouped per
 /// `cell_size` cell; otherwise vertices stay in mesh space with a slot per part.
 pub fn merge_shadows(
     model: &PreparedModel,
-    eligible: impl Fn(usize) -> bool,
+    kind: impl Fn(usize) -> MergeKind,
     scenery: bool,
     cell_size: f32,
 ) -> ShadowMerge {
@@ -103,17 +127,24 @@ pub fn merge_shadows(
         merged: vec![false; model.parts.len()],
         ..ShadowMerge::default()
     };
-    // Groups keyed by (side, cell), in first-use order.
-    let mut keys: Vec<(Side, (i32, i32))> = Vec::new();
+    // Groups keyed by (side, cell, cutout material), in first-use order.
+    let mut keys: Vec<(Side, (i32, i32), usize)> = Vec::new();
     let mut bounds: Vec<Option<Sphere>> = Vec::new();
     for (index, part) in model.parts.iter().enumerate() {
-        if !part.cast_shadow || !eligible(index) {
+        let merge_kind = if part.cast_shadow {
+            kind(index)
+        } else {
+            MergeKind::Separate
+        };
+        if merge_kind == MergeKind::Separate {
             continue;
         }
+        let cutout = (merge_kind == MergeKind::Cutout).then(|| part.material.clone());
+        let material_key = cutout.as_ref().map_or(0, |m| Arc::as_ptr(m) as usize);
         if !scenery && part.instances.is_some() {
             continue;
         }
-        let (positions, indices) = part_geometry(part, &model.meshes);
+        let (positions, uvs, indices) = part_geometry(part, &model.meshes);
         if indices.is_empty() {
             continue;
         }
@@ -151,7 +182,7 @@ pub fn merge_shadows(
             } else {
                 (0, 0)
             };
-            let key = (side, cell);
+            let key = (side, cell, material_key);
             let group = match keys.iter().position(|k| *k == key) {
                 Some(group) => group,
                 None => {
@@ -159,6 +190,7 @@ pub fn merge_shadows(
                     bounds.push(None);
                     merge.groups.push(ShadowGroup {
                         side,
+                        cutout: cutout.clone(),
                         ..ShadowGroup::default()
                     });
                     merge.groups.len() - 1
@@ -166,10 +198,13 @@ pub fn merge_shadows(
             };
             let target = &mut merge.groups[group];
             let base = target.vertices.len() as u32;
-            target.vertices.extend(moved.iter().map(|p| ShadowVertex {
-                position: p.to_array(),
-                slot,
-            }));
+            target
+                .vertices
+                .extend(moved.iter().zip(&uvs).map(|(p, uv)| ShadowVertex {
+                    position: p.to_array(),
+                    slot,
+                    uv: uv.to_array(),
+                }));
             target.indices.extend(indices.iter().map(|i| base + i));
             bounds[group] = Some(bounds[group].map_or(sphere, |b| b.union(&sphere)));
         }
@@ -232,16 +267,26 @@ mod tests {
         root.children.push(turret);
         let mut interner = MaterialInterner::default();
         let model = prepare_model(&root, &mut interner, &no_attributes);
-        let eligible = |index: usize| model.parts[index].material.alpha_test == 0.0;
-        let merge = merge_shadows(&model, eligible, false, 0.0);
+        let kind = |index: usize| {
+            if model.parts[index].material.alpha_test == 0.0 {
+                MergeKind::Opaque
+            } else {
+                MergeKind::Separate
+            }
+        };
+        let merge = merge_shadows(&model, kind, false, 0.0);
         // Front-sided casters share one group (their back faces); double-sided
         // ones get their own; the alpha-tested card keeps its own shadow draw.
         assert_eq!(merge.groups.len(), 2);
         assert_eq!(merge.slots.len(), model.parts.len() - 1);
         assert_eq!(merge.merged.iter().filter(|m| !**m).count(), 1);
+        // As a cutout it merges into a group of its own material.
+        let cutouts = merge_shadows(&model, |_| MergeKind::Cutout, false, 0.0);
+        assert!(cutouts.groups.iter().all(|g| g.cutout.is_some()));
+        assert_eq!(cutouts.slots.len(), model.parts.len());
         let back = merge.groups.iter().find(|g| g.side == Side::Back).unwrap();
         let slots: std::collections::BTreeSet<u32> = back.vertices.iter().map(|v| v.slot).collect();
-        assert!(slots.len() >= 1);
+        assert!(!slots.is_empty());
         assert_eq!(back.indices.len() % 3, 0);
     }
 
@@ -260,7 +305,7 @@ mod tests {
             &no_attributes,
             SceneryOptions::default(),
         );
-        let merge = merge_shadows(&scenery, |_| true, true, 60.0);
+        let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 60.0);
         assert_eq!(merge.groups.len(), 2);
         assert!(merge.slots.is_empty());
         let far = merge

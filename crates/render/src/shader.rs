@@ -16,6 +16,7 @@ pub const WATER_WGSL: &str = include_str!("shaders/water.wgsl");
 pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
+pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Pass {
@@ -265,6 +266,11 @@ pub fn shadow_merged_source() -> String {
     format!("{}{}", COMMON_WGSL, SHADOW_MERGED_WGSL)
 }
 
+/// The merged alpha-tested shadow-caster shader.
+pub fn shadow_cutout_source() -> String {
+    format!("{}{}", COMMON_WGSL, SHADOW_CUTOUT_WGSL)
+}
+
 /// The water shader: frame declarations plus the water template.
 pub fn water_source() -> String {
     format!("{}{}", COMMON_WGSL, WATER_WGSL)
@@ -344,6 +350,7 @@ mod tests {
     fn fixed_shaders_are_valid_wgsl() {
         validate("water", &water_source());
         validate("shadow merged", &shadow_merged_source());
+        validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
     }

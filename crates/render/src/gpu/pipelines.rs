@@ -12,7 +12,8 @@ use crate::gpu::context::{DEPTH_FORMAT, HDR_FORMAT};
 use crate::gpu::resources::Layouts;
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_merged_source, water_source,
+    BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
+    shadow_merged_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -28,21 +29,25 @@ const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
     4 => Float32x4,
     5 => Float32x4,
 ];
-const SHADOW_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+const SHADOW_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Uint32,
+    3 => Float32x2,
 ];
 const SHADOW_BASE_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 
 /// Merged shadow-caster pipelines by drawn side (see `shadow_merge.rs`).
 pub const SHADOW_MERGED_SIDES: [Side; 3] = [Side::Front, Side::Back, Side::Double];
 
-pub fn shadow_merged_index(side: Side) -> usize {
-    match side {
+/// The merged shadow pipeline for a drawn side; cutout pipelines follow the
+/// depth-only ones.
+pub fn shadow_merged_index(side: Side, cutout: bool) -> usize {
+    let side = match side {
         Side::Front => 0,
         Side::Back => 1,
         Side::Double => 2,
-    }
+    };
+    side + if cutout { SHADOW_MERGED_SIDES.len() } else { 0 }
 }
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -88,7 +93,8 @@ pub struct Pipelines {
     surface_layout: wgpu::PipelineLayout,
     pub water: wgpu::RenderPipeline,
     pub output: wgpu::RenderPipeline,
-    /// Depth-only merged casters, indexed by [`shadow_merged_index`].
+    /// Merged casters, depth-only then alpha-tested, indexed by
+    /// [`shadow_merged_index`].
     pub shadow_merged: Vec<wgpu::RenderPipeline>,
     /// Pipelines created since the counter was last read (warm-up progress).
     pub created: u32,
@@ -186,15 +192,37 @@ impl Pipelines {
             label: Some("shadow merged"),
             source: wgpu::ShaderSource::Wgsl(shadow_merged_source().into()),
         });
-        let shadow_merged = SHADOW_MERGED_SIDES
-            .iter()
-            .map(|&side| {
+        let cutout_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow cutout"),
+            source: wgpu::ShaderSource::Wgsl(shadow_cutout_source().into()),
+        });
+        let shadow_merged = [false, true]
+            .into_iter()
+            .flat_map(|cutout| SHADOW_MERGED_SIDES.iter().map(move |&side| (cutout, side)))
+            .map(|(cutout, side)| {
+                let module = if cutout {
+                    &cutout_module
+                } else {
+                    &merged_module
+                };
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("shadow merged"),
-                    layout: Some(&merged_layout),
+                    label: Some(if cutout {
+                        "shadow cutout"
+                    } else {
+                        "shadow merged"
+                    }),
+                    layout: Some(if cutout {
+                        &surface_layout
+                    } else {
+                        &merged_layout
+                    }),
                     vertex: wgpu::VertexState {
-                        module: &merged_module,
-                        entry_point: Some("vs_shadow_merged"),
+                        module,
+                        entry_point: Some(if cutout {
+                            "vs_shadow_cutout"
+                        } else {
+                            "vs_shadow_merged"
+                        }),
                         compilation_options: Default::default(),
                         buffers: &[
                             Some(wgpu::VertexBufferLayout {
@@ -221,7 +249,12 @@ impl Pipelines {
                         bias: Default::default(),
                     }),
                     multisample: Default::default(),
-                    fragment: None,
+                    fragment: cutout.then(|| wgpu::FragmentState {
+                        module,
+                        entry_point: Some("fs_shadow_cutout"),
+                        compilation_options: Default::default(),
+                        targets: &[],
+                    }),
                     multiview_mask: None,
                     cache: None,
                 })
@@ -235,7 +268,7 @@ impl Pipelines {
             water,
             output,
             shadow_merged,
-            created: 3 + SHADOW_MERGED_SIDES.len() as u32,
+            created: 3 + 2 * SHADOW_MERGED_SIDES.len() as u32,
         }
     }
 
@@ -350,6 +383,6 @@ impl Pipelines {
     }
 
     pub fn module_count(&self) -> usize {
-        self.modules.len() + 3
+        self.modules.len() + 4
     }
 }
