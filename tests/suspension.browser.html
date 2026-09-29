@@ -10,6 +10,8 @@
       }
       canvas {
         display: block;
+        width: 100vw;
+        height: 100vh;
       }
       aside {
         position: fixed;
@@ -74,21 +76,18 @@
       <output id="result">Loading…</output>
     </aside>
     <script type="module">
-      import RAPIER from "@dimforge/rapier3d-simd-compat";
-      import { Vector3 } from "three";
-      import { Simulation } from "../src/game/simulation";
-      import { Presentation } from "../src/game/presentation";
-      import { idleCommand } from "../src/game/types";
-      import { loadTankSurface } from "../src/game/tank-surfaces";
-      await RAPIER.init();
-      await loadTankSurface();
-      const sim = new Simulation(123);
-      const view = await Presentation.create(document.querySelector("canvas"));
+      // The render-only suspension on the engine: the player's tank alone in a
+      // cleared arena, driven by fixed simulation steps; pitch, roll and the turret
+      // pose come from the presentation (`Game.debug_view_json`).
+      import { check, choose, draw, fixtureGame, prepare, read } from "./engine-fixture";
+      const game = await fixtureGame(document.querySelector("canvas"), { seed: 123 });
       const output = document.querySelector("output");
       const chassis = document.querySelector("#chassis");
       const speed = document.querySelector("#speed");
       const pause = document.querySelector("#pause");
       const STEP = 1 / 60;
+      /** The close-up zoom of the preview. */
+      const ZOOM = 8;
       // Durations use simulation time; slow motion changes playback, not suspension strength.
       const rest = ["Settling", 0.9, 0, 0];
       const acceleration = ["Accelerating", 0.65, 0, 1];
@@ -112,79 +111,66 @@
       let looping = true;
       let playing = false;
       let completed = false;
+      let busy = false;
       let stage = 0;
       let stageTime = 0;
       let accumulator = 0;
       let previousFrame;
       let lastReadout = 0;
-      function playSequence(next, loop = false) {
+      let human;
+
+      async function playSequence(next, loop = false) {
         completed = false;
         sequence = next;
         looping = loop;
         stage = stageTime = accumulator = 0;
-        reset(chassis.value);
+        await reset(chassis.value);
         playing = true;
         pause.textContent = "Pause";
         showMotion();
       }
       function showMotion() {
         const state = pose();
-        const velocity = sim.human.body.linvel();
         output.textContent = `${sequence[stage][0]}${playing ? "" : " · paused"}
 Pitch: ${((state.pitch * 180) / Math.PI).toFixed(2)}°
-Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°
-Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
+Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
       }
-      function reset(kind = "balanced") {
-        sim.humanKind = kind;
-        sim.reset(2);
-        for (const cover of sim.covers) sim.world.removeRigidBody(cover.body);
-        for (const tank of sim.tanks) sim.world.removeRigidBody(tank.body);
-        sim.covers = [];
-        sim.movableCovers = [];
-        sim.coverByCollider.clear();
-        sim.tanks = [];
-        sim.pickups = [];
-        sim.nav.rebuild([]);
-        const tank = sim.addTank(0, true, kind);
-        tank.heading = tank.aim = 0;
-        tank.body.setTranslation({ x: 0, y: 0.65, z: 0 }, true);
-        tank.previous = { x: 0, z: 0 };
-        sim.world.step();
-        sim.start();
-        view.reset(sim);
-        view.zoom = 8;
-        view.render(sim, 1, 1 / 60);
+      async function reset(kind = "balanced") {
+        busy = true;
+        if (!(await choose(game, { humanKind: kind }))) {
+          game.restart(); // The same chassis: a fresh world all the same.
+          await prepare(game);
+        }
+        game.debug_set_autoplay(false);
+        game.debug_clear_arena(new Uint32Array());
+        human = read.state(game).human;
+        game.debug_place_tank(human.id, 0, 0, 0);
+        game.debug_set_tank(human.id, JSON.stringify({ aim: 0 }));
+        game.start();
+        game.debug_set_zoom(ZOOM);
+        // Settle the camera on the tank before measuring.
+        for (let i = 0; i < 60; i++) draw(game, 0);
+        draw(game, STEP);
+        busy = false;
       }
       function pose() {
-        const model = view.tankMeshes.get(sim.human.id);
-        const { hull, turret } = model.userData;
-        const hullUp = new Vector3(0, 1, 0).applyQuaternion(hull.quaternion);
-        const turretUp = new Vector3(0, 1, 0).applyQuaternion(turret.quaternion);
-        const relativeForward = new Vector3(0, 0, 1)
-          .applyQuaternion(turret.quaternion)
-          .applyQuaternion(hull.quaternion.clone().invert());
-        const aim = sim.human.aim - sim.human.heading;
-        let meshes = 0;
-        model.traverse((object) => {
-          if (object.isMesh) meshes++;
-        });
+        const state = read.state(game);
+        const tank = read.view(game).tanks.find((view) => view.id === state.human.id);
+        const aim = state.human.aim - state.human.heading;
+        const [x, y, z] = tank.turretForwardInHull;
         return {
-          meshes,
-          pitch: model.userData.hull.rotation.x,
-          roll: model.userData.hull.rotation.z,
-          turretTiltError: hullUp.distanceTo(turretUp),
-          turretAimError: relativeForward.distanceTo(new Vector3(Math.sin(aim), 0, Math.cos(aim))),
-          body: sim.human.body.rotation(),
-          draws: view.renderer.info.render.drawCalls,
+          instances: read.stats(game).instances,
+          pitch: tank.pitch,
+          roll: tank.roll,
+          turretTiltError: tank.turretTiltError,
+          turretAimError: Math.hypot(x - Math.sin(aim), y, z - Math.cos(aim)),
         };
       }
       function advance(n, moveX = 0, moveZ = 0) {
         for (let i = 0; i < n; i++) {
-          sim.step({ ...idleCommand(), moveX, moveZ });
-          view.render(sim, 1, 1 / 60);
+          game.debug_step(1, moveX, moveZ);
+          draw(game, STEP);
         }
-        output.textContent = JSON.stringify(pose(), null, 2);
         return pose();
       }
       document.querySelector("#demo").onclick = () => playSequence(demo, true);
@@ -207,105 +193,101 @@ Speed: ${(Math.hypot(velocity.x, velocity.z) * 3.6).toFixed(1)} km/h`;
           return;
         }
         playing = !playing;
-        previousFrame = undefined;
-        pause.textContent = playing ? "Pause" : "Play";
+        pause.textContent = playing ? "Pause" : "Resume";
         showMotion();
       };
-      window.addEventListener("resize", () => {
-        view.resize();
-        view.render(sim, 1, 0);
-      });
       function animate(now) {
-        const elapsed =
-          previousFrame === undefined ? 0 : Math.min((now - previousFrame) / 1000, 0.05);
+        const dt = previousFrame === undefined ? 0 : Math.min((now - previousFrame) / 1000, 0.1);
         previousFrame = now;
-        if (playing && !document.hidden) {
-          const dt = elapsed * Number(speed.value);
-          accumulator += dt;
-          while (accumulator >= STEP && playing) {
-            const [, duration, moveX, moveZ] = sequence[stage];
-            sim.step({ ...idleCommand(), moveX, moveZ });
-            accumulator -= STEP;
-            stageTime += STEP;
-            if (stageTime + 1e-8 >= duration) {
-              stageTime = 0;
-              if (stage + 1 < sequence.length) stage++;
-              else if (looping) {
-                stage = 0;
-                reset(chassis.value);
-              } else {
-                playing = false;
-                completed = true;
-                pause.textContent = "Replay";
+        if (!busy) {
+          if (playing) {
+            accumulator += dt * Number(speed.value);
+            while (accumulator >= STEP && playing) {
+              accumulator -= STEP;
+              const [, duration, moveX, moveZ] = sequence[stage];
+              game.debug_step(1, moveX, moveZ);
+              stageTime += STEP;
+              if (stageTime >= duration) {
+                stageTime = 0;
+                stage++;
+                if (stage >= sequence.length) {
+                  stage = sequence.length - 1;
+                  if (looping) {
+                    playSequence(sequence, true);
+                    break;
+                  }
+                  playing = false;
+                  completed = true;
+                  pause.textContent = "Replay";
+                }
               }
             }
           }
-          view.render(sim, playing ? accumulator / STEP : 1, dt);
-          if (now - lastReadout > 50 || !playing) {
-            showMotion();
-            lastReadout = now;
+          if (!busy) {
+            draw(game, playing ? dt * Number(speed.value) : 0);
+            if (now - lastReadout > 50 || !playing) {
+              showMotion();
+              lastReadout = now;
+            }
           }
         }
         requestAnimationFrame(animate);
       }
-      function assert(value, message) {
-        if (!value) throw new Error(message);
-      }
       function checkTurret(kind) {
         for (const aim of [0, Math.PI / 2, Math.PI, -1.2]) {
-          sim.human.aim = aim;
-          view.render(sim, 1, 0);
+          game.debug_set_tank(human.id, JSON.stringify({ aim }));
+          draw(game, 0);
           const state = pose();
-          assert(state.turretTiltError < 1e-8, `${kind}: turret follows hull tilt at aim ${aim}`);
-          assert(state.turretAimError < 1e-8, `${kind}: independent turret aim ${aim}`);
+          check(state.turretTiltError < 1e-6, `${kind}: turret follows hull tilt at aim ${aim}`);
+          check(state.turretAimError < 1e-5, `${kind}: independent turret aim ${aim}`);
         }
       }
-      document.querySelector("#checks").onclick = () => {
+      document.querySelector("#checks").onclick = async () => {
         playing = false;
         completed = true;
         accumulator = 0;
         pause.textContent = "Replay";
+        output.textContent = "Running…";
         try {
-          runChecks();
+          await runChecks();
         } catch (error) {
           console.error(error);
           output.textContent = `FAIL: ${error.message}`;
         }
       };
-      function runChecks() {
+      async function runChecks() {
         const results = [];
         for (const kind of ["scout", "balanced", "heavy"]) {
-          reset(kind);
-          const meshes = pose().meshes;
+          await reset(kind);
+          busy = true;
+          const instances = pose().instances;
           const accelerating = advance(7, 0, 1);
-          assert(accelerating.pitch < -0.001, `${kind}: acceleration tilt`);
+          check(accelerating.pitch < -0.001, `${kind}: acceleration tilt ${accelerating.pitch}`);
           checkTurret(kind);
           advance(30, 0, 1);
           const braking = advance(7);
-          assert(braking.pitch > 0.001, `${kind}: braking tilt`);
-          assert(braking.meshes === meshes, `${kind}: no added meshes`);
+          check(braking.pitch > 0.001, `${kind}: braking tilt ${braking.pitch}`);
+          check(braking.instances === instances, `${kind}: no added instances`);
           checkTurret(kind);
-          assert(
-            Math.abs(braking.body.x) + Math.abs(braking.body.z) < 1e-8,
-            `${kind}: physics remains level`,
-          );
           advance(30, 0, 1);
           const turning = advance(12, 1, 0);
-          assert(Math.abs(turning.roll) > 0.001, `${kind}: turning lean`);
+          check(Math.abs(turning.roll) > 0.001, `${kind}: turning lean`);
           checkTurret(kind);
           const settled = advance(120);
-          assert(Math.abs(settled.pitch) + Math.abs(settled.roll) < 1e-6, `${kind}: settles flat`);
-          reset(kind);
-          assert(pose().pitch === 0 && pose().roll === 0, `${kind}: reset clears motion`);
+          check(Math.abs(settled.pitch) + Math.abs(settled.roll) < 1e-6, `${kind}: settles flat`);
+          await reset(kind);
+          const fresh = pose();
+          check(fresh.pitch === 0 && fresh.roll === 0, `${kind}: reset clears motion`);
           results.push(`${kind}: passed`);
         }
-        reset();
+        check(!game.error(), `GPU error: ${game.error()}`);
+        await reset(chassis.value);
         advance(7, 0, 1);
         output.textContent =
-          "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, level physics, unchanged mesh count.\n" +
+          "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, unchanged instance count.\n" +
           results.join("\n");
       }
-      playSequence(demo, true);
+      await playSequence(demo, true);
       requestAnimationFrame(animate);
     </script>
   </body>

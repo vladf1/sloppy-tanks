@@ -12,9 +12,9 @@
 //! - `debug_place_tank(id, x, z, heading)`: teleport a tank at rest (`heading` NaN
 //!   keeps it).
 //! - `debug_set_tank(id, patch)`: `{ hp, xp, protection, shield, shieldPoints,
-//!   rapid, speed, laser, cooldown, mineCooldown, selectedAmmo, ammo, kills, deaths,
-//!   damageDealt, bestLifeKills, highestRank, name, frozen }`; `frozen` stops a bot
-//!   deciding and locks it in place.
+//!   rapid, speed, laser, cooldown, mineCooldown, aim, respawn, selectedAmmo, ammo,
+//!   kills, deaths, damageDealt, bestLifeKills, highestRank, name, frozen }`; `frozen`
+//!   stops a bot deciding and locks it in place.
 //! - `debug_add_tank(team, kind) -> id`, `debug_add_cover(spec) -> id`.
 //! - `debug_damage_tank(id, amount, owner, ownerTeam)` and
 //!   `debug_damage_cover(id, amount)` go through the shared damage helpers; an owner
@@ -22,8 +22,9 @@
 //! - `debug_set_sim(patch)`: `{ elapsed, gameMode, reinforcementDelay, match: {
 //!   phase, time, scores, winner }, combatRecord: {...} }`.
 //! - `debug_set_pickups(pickups)`, `debug_add_shot(shot)`, `debug_add_mine(x, z,
-//!   team, arm)`, `debug_set_fragment_life(life)`, `debug_reinforce()`, `debug_rig_rng(below)` (the next gameplay draw
-//!   is below `below`).
+//!   team, arm)`, `debug_set_fragment_life(life)`, `debug_explode(x, z, radius,
+//!   damage)`, `debug_reinforce()`, `debug_rig_rng(below)` (the next gameplay draw is
+//!   below `below`).
 //! - `debug_step(ticks, moveX, moveZ)`: fixed simulation steps with the human's
 //!   command, without drawing; `debug_render(alpha, dt, overview, camera)` draws one
 //!   frame, from `camera = [px, py, pz, tx, ty, tz]` when given.
@@ -31,7 +32,7 @@
 //!   `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
 //! - `debug_view_json()`: `Presentation::inspect` as JSON; `debug_covers_json()`: the
 //!   simulation's covers.
-//! - `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
+//! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
@@ -50,8 +51,8 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::math::{Quat4, Vec2};
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::{
-    AmmoInventory, CoverKind, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment, Shot, Team,
-    VehicleCommand, VehicleKind, Weapon,
+    AmmoInventory, CoverKind, DamageCause, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment,
+    Shot, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
@@ -61,6 +62,8 @@ use super::{Game, js_error};
 
 /// A bot that should hold still waits this long before deciding anything.
 const FROZEN_BRAIN_SECONDS: f64 = 999.0;
+/// A shooter id no tank has: damage it deals credits nobody.
+const NOBODY: u32 = 999_999;
 /// Room fixture: fixed steps simulated, and how often each seat sends input.
 const SEAT_TICKS: u64 = 90;
 const SEAT_INPUT_EVERY_TICKS: u64 = 3;
@@ -88,6 +91,8 @@ struct TankPatch {
     laser: Option<f64>,
     cooldown: Option<f64>,
     mine_cooldown: Option<f64>,
+    aim: Option<f64>,
+    respawn: Option<f64>,
     selected_ammo: Option<Weapon>,
     ammo: Option<AmmoInventory>,
     kills: Option<u32>,
@@ -263,6 +268,8 @@ impl Game {
             laser,
             cooldown,
             mine_cooldown,
+            aim,
+            respawn,
             selected_ammo,
             ammo,
             kills,
@@ -457,6 +464,19 @@ impl Game {
     }
 
     /// Solo Assault's reinforcement check, as the next tick would run it.
+    /// A blast credited to nobody on blue, through the shared explosion path.
+    pub fn debug_explode(&mut self, x: f64, z: f64, radius: f64, damage: f64) {
+        self.sim.explode(
+            Vec2::new(x, z),
+            radius,
+            damage,
+            NOBODY,
+            Team::Blue,
+            None,
+            DamageCause::Explosion,
+        );
+    }
+
     pub fn debug_reinforce(&mut self) {
         self.sim.reinforce_solo();
     }
@@ -615,6 +635,18 @@ impl Game {
     }
 
     /// Enable or skip the water's reflection pass (the reflection check's baseline).
+    pub fn debug_water_json(&self) -> String {
+        match self.view.renderer.water_settings() {
+            Some(water) => json!({
+                "height": water.height,
+                "reflection": water.reflection,
+                "calmExtent": water.calm_extent,
+            })
+            .to_string(),
+            None => "null".into(),
+        }
+    }
+
     pub fn debug_set_water_reflection(&mut self, enabled: bool) {
         self.view.renderer.set_water_reflection(enabled);
     }

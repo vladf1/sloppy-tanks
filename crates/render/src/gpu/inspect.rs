@@ -21,6 +21,11 @@ pub struct InstanceState {
 }
 
 impl Renderer {
+    /// The current water's settings, if the scene has water.
+    pub fn water_settings(&self) -> Option<&super::WaterSettings> {
+        self.water.as_ref().map(|water| &water.settings)
+    }
+
     /// The state of a live instance, or `None` once it was removed.
     pub fn instance_state(&self, id: InstanceId) -> Option<InstanceState> {
         let instance = self.instances.get(id.index, id.generation)?;
