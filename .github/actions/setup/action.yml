@@ -1,0 +1,38 @@
+name: Set up the build toolchains
+description: >-
+  Node and pnpm, the Rust toolchain pinned in rust-toolchain.toml (with its wasm32 and
+  musl targets), the matching wasm-bindgen CLI, and the Cargo caches.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: |
+          pnpm-lock.yaml
+          tools/lint/pnpm-lock.yaml
+    # rustup reads the channel, components and targets from rust-toolchain.toml.
+    - name: Install the pinned Rust toolchain
+      shell: bash
+      run: |
+        rustup toolchain install
+        rustup show active-toolchain
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: sloppy-tanks
+        cache-bin: false
+    # The CLI must match the wasm-bindgen crate pin in Cargo.toml.
+    - name: Cache wasm-bindgen-cli
+      id: wasm-bindgen
+      uses: actions/cache@v5
+      with:
+        path: ~/.cargo/bin/wasm-bindgen
+        key: wasm-bindgen-cli-0.2.129-${{ runner.os }}-${{ runner.arch }}
+    - name: Install wasm-bindgen-cli
+      if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen
+    - run: pnpm install --frozen-lockfile
+      shell: bash
