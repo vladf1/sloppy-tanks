@@ -6,3 +6,4 @@ pub mod random;
 pub mod rate_limit;
 pub mod room_catalog;
 pub mod room_list;
+pub mod websocket;
