@@ -9,6 +9,8 @@
 //! fn effect_vertex(v: ptr<function, EffectVertex>) { ... }
 //! // World space, after it (billboards, world-aligned sway).
 //! fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) { ... }
+//! // Clip space, after the view projection (screen-sized sprites, vertexNode).
+//! fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) { ... }
 //! // Before alpha test, lighting and fog (colorNode, opacityNode, normalNode,
 //! // roughness/metalness/emissive nodes). The shadow pass runs it too.
 //! fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { ... }
@@ -20,6 +22,8 @@
 //! `extra0`/`extra1`. Shader variants are assembled per material and cached by
 //! variant key, so an effect costs one pipeline per distinct material setup.
 
+use sloppy_core::models::{effects_props, effects_scenery};
+
 /// One registered effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectDefinition {
@@ -29,6 +33,9 @@ pub struct EffectDefinition {
     pub wgsl: &'static str,
     /// Mesh attributes bound to `extra0` and `extra1`, in order (at most two).
     pub attributes: &'static [&'static str],
+    /// The shadow pass dithers the caster away with the instance opacity, like
+    /// the renderer's faded instances (`debris-fade.ts`).
+    pub shadow_fade: bool,
 }
 
 impl EffectDefinition {
@@ -37,6 +44,9 @@ impl EffectDefinition {
     }
     pub fn has_world(&self) -> bool {
         self.wgsl.contains("fn effect_world(")
+    }
+    pub fn has_clip(&self) -> bool {
+        self.wgsl.contains("fn effect_clip(")
     }
     pub fn has_surface(&self) -> bool {
         self.wgsl.contains("fn effect_surface(")
@@ -50,6 +60,7 @@ pub const WAVE: EffectDefinition = EffectDefinition {
     name: "wave",
     wgsl: include_str!("../shaders/effects/wave.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// A glowing band that scrolls up the surface and thins its opacity (surface
@@ -59,6 +70,7 @@ pub const PULSE: EffectDefinition = EffectDefinition {
     name: "pulse",
     wgsl: include_str!("../shaders/effects/pulse.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// Explosion smoke and fire (`explosion-effects.ts` puffs): a camera-facing quad
@@ -68,6 +80,7 @@ pub const PUFF: EffectDefinition = EffectDefinition {
     name: "puff",
     wgsl: include_str!("../shaders/effects/puff.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// A blast's scorched ground ring. `instance_data` = (age s, phase rad). No params.
@@ -75,6 +88,7 @@ pub const BLAST_RING: EffectDefinition = EffectDefinition {
     name: "blast-ring",
     wgsl: include_str!("../shaders/effects/blast_ring.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// Fading tread marks (`tracks.ts`). `instance_data` = (birth s, strength);
@@ -83,6 +97,7 @@ pub const TRACK_MARK: EffectDefinition = EffectDefinition {
     name: "track-mark",
     wgsl: include_str!("../shaders/effects/track_mark.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
@@ -91,12 +106,101 @@ pub const DUST: EffectDefinition = EffectDefinition {
     name: "dust",
     wgsl: include_str!("../shaders/effects/dust.wgsl"),
     attributes: &[],
+    shadow_fade: false,
 };
 
-/// Effects available before any registration: the lab samples and the game's
-/// runtime effect looks.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 6] =
-    [WAVE, PULSE, PUFF, BLAST_RING, TRACK_MARK, DUST];
+// ------------------------------------------------------------------ model effects
+// The `Effect::Custom` names of `sloppy_core::models::effects_props` and
+// `effects_scenery`, with the semantics documented there.
+
+const fn model_effect(name: &'static str, wgsl: &'static str) -> EffectDefinition {
+    EffectDefinition {
+        name,
+        wgsl,
+        attributes: &[],
+        shadow_fade: false,
+    }
+}
+
+/// Burnt wreck darkening of base and emissive color (`wreck-aging.ts`).
+pub const WRECK_AGING: EffectDefinition = model_effect(
+    effects_props::WRECK_AGING,
+    include_str!("../shaders/effects/wreck_aging.wgsl"),
+);
+
+/// Fading debris: instance opacity in color, a dithered shadow (`debris-fade.ts`).
+pub const DEBRIS_FADE: EffectDefinition = EffectDefinition {
+    shadow_fade: true,
+    ..model_effect(
+        effects_props::DEBRIS_FADE,
+        include_str!("../shaders/effects/debris_fade.wgsl"),
+    )
+};
+
+/// Pickup materials faded by the pickup opacity (`pickup-visuals.ts`).
+pub const PICKUP_SURFACE: EffectDefinition = model_effect(
+    effects_props::PICKUP_SURFACE,
+    include_str!("../shaders/effects/pickup_surface.wgsl"),
+);
+
+/// Meadow tufts swaying in the wind (`village-vegetation.ts`).
+pub const MEADOW_SWAY: EffectDefinition = model_effect(
+    effects_scenery::MEADOW_SWAY,
+    include_str!("../shaders/effects/meadow_sway.wgsl"),
+);
+
+/// Screen-sized chimney wisps (`village-atmosphere.ts`).
+pub const CHIMNEY_SMOKE: EffectDefinition = model_effect(
+    effects_scenery::CHIMNEY_SMOKE,
+    include_str!("../shaders/effects/chimney_smoke.wgsl"),
+);
+
+/// Baked quarry soil with world-space grit (`quarry-terrain.ts`).
+pub const QUARRY_SOIL: EffectDefinition = model_effect(
+    effects_scenery::QUARRY_SOIL,
+    concat!(
+        include_str!("../shaders/effects/quarry_common.wgsl"),
+        include_str!("../shaders/effects/quarry_soil.wgsl"),
+    ),
+);
+
+/// Triplanar layered sandstone (`quarry-surfaces.ts`).
+pub const SANDSTONE: EffectDefinition = model_effect(
+    effects_scenery::SANDSTONE,
+    concat!(
+        include_str!("../shaders/effects/quarry_common.wgsl"),
+        include_str!("../shaders/effects/sandstone.wgsl"),
+    ),
+);
+
+/// Sand drifted around rock cover (`quarry-surfaces.ts`).
+pub const SAND_DRIFT: EffectDefinition = model_effect(
+    effects_scenery::SAND_DRIFT,
+    concat!(
+        include_str!("../shaders/effects/quarry_common.wgsl"),
+        include_str!("../shaders/effects/sand_drift.wgsl"),
+    ),
+);
+
+/// Effects available before any registration: the lab samples, the game's
+/// runtime effect looks and the model effects. The planar-reflecting water
+/// (`effects_scenery::WATER`) is the renderer's own water pass instead.
+pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
+    WAVE,
+    PULSE,
+    PUFF,
+    BLAST_RING,
+    TRACK_MARK,
+    DUST,
+    WRECK_AGING,
+    DEBRIS_FADE,
+    PICKUP_SURFACE,
+    MEADOW_SWAY,
+    CHIMNEY_SMOKE,
+    QUARRY_SOIL,
+    SANDSTONE,
+    SAND_DRIFT,
+];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.
 #[derive(Clone, Debug)]
@@ -175,28 +279,36 @@ mod tests {
     fn every_builtin_effect_is_valid_wgsl() {
         let registry = EffectRegistry::default();
         for (id, effect) in registry.iter() {
-            for (lit, vertex_colors, side) in [
-                (false, false, Side::Front),
-                (true, true, Side::Front),
-                (false, false, Side::Double),
+            for (lit, vertex_colors, side, map) in [
+                (false, false, Side::Front, false),
+                (true, true, Side::Front, true),
+                (true, true, Side::Front, false),
+                (false, false, Side::Double, true),
             ] {
                 let key = ShaderKey {
                     pass: Pass::Main,
                     lit,
+                    map,
                     vertex_colors,
                     fog: true,
+                    receive_shadow: lit,
                     side,
                     effect: id,
                     ..ShaderKey::default()
                 };
                 validate(effect.name, &shader_source(&key, &registry));
             }
-            let shadow = ShaderKey {
-                pass: Pass::Shadow,
-                effect: id,
-                ..ShaderKey::default()
-            };
-            validate(effect.name, &shader_source(&shadow, &registry));
+            for alpha_test in [false, true] {
+                let shadow = ShaderKey {
+                    pass: Pass::Shadow,
+                    map: alpha_test,
+                    alpha_test,
+                    shadow_fade: effect.shadow_fade,
+                    effect: id,
+                    ..ShaderKey::default()
+                };
+                validate(effect.name, &shader_source(&shadow, &registry));
+            }
         }
         assert_eq!(registry.iter().count(), BUILTIN_EFFECTS.len());
     }

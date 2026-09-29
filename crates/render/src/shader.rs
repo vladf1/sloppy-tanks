@@ -246,6 +246,9 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
     if !effect.is_some_and(|e| e.has_world()) {
         code += "fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {}\n";
     }
+    if !effect.is_some_and(|e| e.has_clip()) {
+        code += "fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {}\n";
+    }
     if !effect.is_some_and(|e| e.has_surface()) {
         code += "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
     }

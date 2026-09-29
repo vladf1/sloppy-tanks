@@ -75,6 +75,10 @@ struct EffectFragment {
     instance_data: vec4f,
     view_direction: vec3f,
     front_facing: bool,
+    // Interpolated RGBA vertex color (white without vertex colors, and in the
+    // shadow pass), and the instance tint (rgb) and opacity (a).
+    vertex_color: vec4f,
+    tint: vec4f,
 }
 
 // Cofactor form of the inverse transpose; the sign keeps mirrored instances lit

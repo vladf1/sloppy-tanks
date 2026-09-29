@@ -32,6 +32,9 @@ const TRACK_COLOR: u32 = 0x283222;
 const TRACK_OPACITY: f32 = 0.38;
 const GRAVEL_COLOR: u32 = 0xb09c7b;
 const LASER_MOUNT_COLOR: u32 = 0x263b4c;
+/// Ground decals (tread marks, blast rings) pull toward the camera to stay above
+/// the coplanar floor (Three `polygonOffset` factor -1, units -1).
+const DECAL_POLYGON_OFFSET: (f32, f32) = (-1.0, -1.0);
 
 fn custom(name: &'static str) -> Effect {
     Effect::Custom {
@@ -84,6 +87,7 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         transparent: true,
         opacity: TRACK_OPACITY,
         depth_write: false,
+        polygon_offset: Some(DECAL_POLYGON_OFFSET),
         effect: custom(TRACK_MARK.name),
         ..Material::basic(TRACK_COLOR)
     };
@@ -207,7 +211,10 @@ pub fn pool_descs() -> Vec<PoolDesc> {
     pools.push(PoolDesc::new(
         "blast rings",
         ground_quad(),
-        soft_billboard(BLAST_RING.name),
+        Material {
+            polygon_offset: Some(DECAL_POLYGON_OFFSET),
+            ..soft_billboard(BLAST_RING.name)
+        },
         MAX_EXPLOSIONS,
     ));
     pools.push(PoolDesc::new(

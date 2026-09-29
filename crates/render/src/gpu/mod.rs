@@ -174,6 +174,9 @@ pub struct PointLight {
 
 pub const MAX_POINT_LIGHTS: usize = 4;
 
+/// Half-extent of the arena apron that hides the water (`waterInView`).
+const CALM_EXTENT: f32 = 62.0;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WaterShore {
     /// Harbor: shallows begin `half_size` metres from the origin on either axis.
@@ -201,6 +204,10 @@ pub struct WaterSettings {
     pub reflection: bool,
     /// Reflection target edge in pixels (the original Water used 512).
     pub reflection_size: u32,
+    /// Skip the reflection while the view's four corner rays all land on the
+    /// plane within this half-extent (only the apron is in view,
+    /// `WaterSurface.waterInView`); 0 always reflects.
+    pub calm_extent: f32,
 }
 
 impl WaterSettings {
@@ -219,6 +226,7 @@ impl WaterSettings {
             shore: WaterShore::Basin { half_size: 62.0 },
             reflection: true,
             reflection_size: 512,
+            calm_extent: CALM_EXTENT,
         }
     }
 
@@ -237,6 +245,7 @@ impl WaterSettings {
             shore: WaterShore::Creek,
             reflection: true,
             reflection_size: 512,
+            calm_extent: CALM_EXTENT,
         }
     }
 }
@@ -984,7 +993,8 @@ impl Renderer {
                     side,
                     ..(**source).clone()
                 };
-                let shadow_shader = ShaderKey::shadow(source, gpu.effect, extra, faded);
+                let dithered = faded || self.effects.get(gpu.effect).is_some_and(|e| e.shadow_fade);
+                let shadow_shader = ShaderKey::shadow(source, gpu.effect, extra, dithered);
                 let entry = ClassEntry {
                     key,
                     pool,
@@ -1765,6 +1775,7 @@ impl Renderer {
             && self.culls[MAIN_VIEW]
                 .frustum
                 .intersects_sphere(&water.bounds)
+            && water_in_view(&camera, &water.settings)
             && let Some((view, projection)) = self.mirror()
         {
             let world = view.inverse();
@@ -2120,6 +2131,21 @@ impl Renderer {
             + width as u64 * height as u64 * 4;
         stats
     }
+}
+
+/// `WaterSurface.waterInView`: whether any view corner ray misses the calm
+/// square of the water plane (or the plane itself), so open water shows.
+fn water_in_view(camera: &PerspectiveCamera, settings: &WaterSettings) -> bool {
+    if settings.calm_extent <= 0.0 {
+        return true;
+    }
+    [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+        .into_iter()
+        .any(|(x, y)| {
+            camera
+                .pick_ground(Vec2::new(x, y), settings.height)
+                .is_none_or(|hit| hit.x.abs().max(hit.z.abs()) > settings.calm_extent)
+        })
 }
 
 fn scene_pass<'a>(

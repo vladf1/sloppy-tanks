@@ -23,6 +23,7 @@ fn vs_shadow(input: VertexIn, @builtin(instance_index) index: u32) -> ShadowOut 
     effect_world(&w, v);
     var out: ShadowOut;
     out.clip = frame.view_projection * vec4f(w.position, 1.0);
+    effect_clip(&out.clip, w, v);
     out.world = w.position;
     out.uv = v.uv;
     out.tint = instance.tint;
@@ -54,6 +55,8 @@ fn fs_shadow(input: ShadowOut, @builtin(front_facing) front_facing: bool) {
     fragment.instance_data = input.data;
     fragment.view_direction = vec3f(0.0, 1.0, 0.0);
     fragment.front_facing = front_facing;
+    fragment.vertex_color = vec4f(1.0);
+    fragment.tint = input.tint;
     effect_surface(&surface, fragment);
     if ALPHA_TEST {
         if surface.opacity <= material.surface.z {

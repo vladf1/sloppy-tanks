@@ -29,6 +29,7 @@ fn vs_main(input: VertexIn, @builtin(instance_index) index: u32) -> VertexOut {
     effect_world(&w, v);
     var out: VertexOut;
     out.clip = frame.view_projection * vec4f(w.position, 1.0);
+    effect_clip(&out.clip, w, v);
     out.world = w.position;
     out.normal = w.normal;
     out.uv = v.uv;
@@ -244,6 +245,8 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     fragment.instance_data = input.data;
     fragment.view_direction = view_direction;
     fragment.front_facing = front_facing;
+    fragment.vertex_color = select(vec4f(1.0), input.color, VERTEX_COLORS);
+    fragment.tint = input.tint;
     effect_surface(&surface, fragment);
     let alpha_width = fwidth(surface.opacity);
 
