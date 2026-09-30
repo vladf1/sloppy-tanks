@@ -56,6 +56,7 @@ use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, SceneryOptions, prepare_model,
     prepare_scenery,
 };
+use crate::reflection_cull::WaterFootprint;
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
     MergeKind, ShadowGroup, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
@@ -562,6 +563,7 @@ struct Water {
     waiting: bool,
     generation: u64,
     bounds: Sphere,
+    footprint: WaterFootprint,
 }
 
 struct ViewCull {
@@ -1015,7 +1017,9 @@ impl Renderer {
         let mut bounds = self.meshes.get(mesh).bounds;
         bounds.center.y += settings.height;
         let (bind_group, waiting) = self.water_group(&normals, &uniform, &target);
+        let footprint = WaterFootprint::new(&settings.mesh, settings.height, settings.calm_extent);
         self.water = Some(Water {
+            footprint,
             settings,
             mesh,
             normals,
@@ -2058,6 +2062,7 @@ impl Renderer {
         };
         self.reflection_active = false;
         self.culls[REFLECTION_VIEW].active = false;
+        let mut reflection_shadow_view = None;
         if let Some(water) = &self.water
             && water.settings.reflection
             && self.culls[MAIN_VIEW]
@@ -2065,15 +2070,21 @@ impl Renderer {
                 .intersects_sphere(&water.bounds)
             && water_in_view(&camera, &water.settings)
             && let Some((view, projection)) = self.mirror()
+            && let Some(bounds) = water.footprint.reflection_bounds(
+                &camera,
+                water.settings.distortion_scale,
+                water.settings.reflection_size,
+            )
         {
             let world = view.inverse();
             // Cull with the plain projection: the oblique near plane also skews
             // the far plane, which would reject most of the reflected scene.
             let _ = projection;
             let plain = self.camera().projection() * view;
+            reflection_shadow_view = Some(Frustum::from_view_projection(&plain));
             self.culls[REFLECTION_VIEW] = ViewCull {
                 active: true,
-                frustum: Frustum::from_view_projection(&plain),
+                frustum: bounds.frustum(plain),
                 origin: world.w_axis.truncate(),
                 forward: -world.z_axis.truncate(),
             };
@@ -2082,11 +2093,7 @@ impl Renderer {
         self.shadow_reach = ShadowReach {
             light: self.culls[SHADOW_VIEW].forward,
             floor: self.sun_shadow.receiver_floor,
-            views: [
-                Some(self.culls[MAIN_VIEW].frustum),
-                self.reflection_active
-                    .then_some(self.culls[REFLECTION_VIEW].frustum),
-            ],
+            views: [Some(self.culls[MAIN_VIEW].frustum), reflection_shadow_view],
         };
     }
 

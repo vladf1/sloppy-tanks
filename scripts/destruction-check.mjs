@@ -199,6 +199,8 @@ try {
   await page.evaluate(() => {
     const { sloppy, engine } = window;
     const game = sloppy.game;
+    // Wreck trajectories and debris-budget pruning use the seeded stream.
+    game.debug_configure(4242, 12, 0);
     sloppy.start(); // A fresh arena, then only the pieces under test.
     game.debug_clear_arena(new Uint32Array());
     game.debug_place_tank(engine.state().human.id, 0, 40, NaN);
