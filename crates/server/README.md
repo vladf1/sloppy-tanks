@@ -130,8 +130,13 @@ server.
 ```sh
 pnpm run server:provision  # first time, or after editing deploy/vps/*; then deploys
 pnpm run server:provision:dev  # only the dev server's unit, Caddy config and 8443 rule; then deploys it
-pnpm run server:deploy     # pnpm run check, build the musl binary, upload, restart, wait for /health
+pnpm run server:deploy     # server:deploy-check, build the musl binary, upload, restart, wait for /health
 ```
+
+`server:deploy-check` is the deploy gate: rustfmt, then clippy and tests for only the
+crates in the binary (`sloppy-core`, `sloppy-server`). The page, Wasm and
+renderer checks do not reach the server, and `pnpm run check` still runs all of
+them in CI for every pull request and push to `main`.
 
 `pnpm run deploy:dev` deploys the dev server first (`deploy-vps.mjs --dev`), waits
 until its `/health` reports the checkout's content version, then uploads the dev
