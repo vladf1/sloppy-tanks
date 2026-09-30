@@ -133,7 +133,7 @@ pnpm run server:provision:dev  # only the dev server's unit, Caddy config and 84
 pnpm run server:deploy     # server:deploy-check, build the musl binary, upload, restart, wait for /health
 ```
 
-`server:deploy-check` is the deploy gate: rustfmt, then clippy and tests for only the
+`server:deploy-check` is the deploy gate: rustfmt, clippy and tests for only the
 crates in the binary (`sloppy-core`, `sloppy-server`). The page, Wasm and
 renderer checks do not reach the server, and `pnpm run check` still runs all of
 them in CI for every pull request and push to `main`.
