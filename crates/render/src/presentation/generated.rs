@@ -26,6 +26,10 @@ pub const SOIL_ROWS_PER_STEP: usize = 128;
 pub struct SoilBake {
     rows: usize,
     pixels: Vec<u8>,
+    /// Handed back by the page after its workers failed: it stays here, or the
+    /// page, which offers the bake before every preparation step, would hand it
+    /// to failing workers again and again and the arena would never be ready.
+    returned: bool,
 }
 
 impl SoilBake {
@@ -101,7 +105,12 @@ impl GeneratedTextures {
     /// Hand a bake that has not started to the page, which runs `bake_texture(key)`
     /// off the main thread and returns the pixels through [`Self::supply`].
     pub fn claim_bake(&mut self) -> Option<&'static str> {
-        if self.elsewhere.is_some() || self.soil.as_ref().is_none_or(|bake| bake.rows > 0) {
+        if self.elsewhere.is_some()
+            || self
+                .soil
+                .as_ref()
+                .is_none_or(|bake| bake.rows > 0 || bake.returned)
+        {
             return None;
         }
         self.soil = None;
@@ -113,7 +122,10 @@ impl GeneratedTextures {
     pub fn release_bake(&mut self, key: &str) {
         if self.elsewhere == Some(key) {
             self.elsewhere = None;
-            self.soil = Some(SoilBake::default());
+            self.soil = Some(SoilBake {
+                returned: true,
+                ..SoilBake::default()
+            });
         }
     }
 
@@ -298,6 +310,7 @@ mod tests {
         textures.claim_bake();
         textures.release_bake(QUARRY_SOIL_TEXTURE);
         assert!(textures.busy() && !textures.baking_elsewhere());
+        assert_eq!(textures.claim_bake(), None, "handed back");
         textures.soil.as_mut().unwrap().step(SOIL_ROWS_PER_STEP);
         assert_eq!(textures.claim_bake(), None, "half-baked here");
         assert!(GeneratedTextures::default().claim_bake().is_none());
