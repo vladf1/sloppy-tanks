@@ -80,7 +80,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
 pnpm run wasm           # release Wasm and its glue into src/generated/engine/
 pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
-pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace --release)
+pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
 pnpm run validate       # ten seeded full matches and reset checks
 pnpm run build          # production output in dist/ (builds the Wasm first)
 pnpm run lint:fix       # safe ESLint fixes
@@ -189,7 +189,9 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 ## Deployment
 
-A GitHub Pages workflow publishes on pushes to `main`, after `pnpm run check` passes.
+A GitHub Pages workflow publishes on pushes to `main`, after the quality gate passes: the
+pull-request check workflow's parallel jobs, which together run everything in
+`pnpm run check` and build the site.
 It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, the
 repository's Pages custom domain (a Namecheap CNAME to `vladf1.github.io`). The old
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and

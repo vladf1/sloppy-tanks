@@ -263,8 +263,11 @@ offline.
 - Production is GitHub Pages at the custom domain `sloppy-tanks.fridman.me`; its
   workflow builds with `DEPLOY_BASE=/`, and `fridman.me/sloppy-tanks/` redirects
   there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
-  The workflow runs `pnpm run check`, so a lint/type/build failure blocks the
-  deploy.
+  The workflow runs the same parallel jobs as the pull-request check
+  (`.github/workflows/check.yml`, each running one of the scripts
+  `pnpm run check` chains), so a lint/type/build/test failure blocks the
+  deploy. Add a new gate step to one of those scripts, not to `check` itself,
+  or CI will skip it.
 - Treat historical artifacts, frame rates, CDN measurements, and deployment
   results as evidence from a particular environment and time. Re-measure live
   state before making current host or performance claims.

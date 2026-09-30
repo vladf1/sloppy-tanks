@@ -1,12 +1,75 @@
+# The quality gate, `pnpm run check`, split into parallel jobs. Each job runs one of
+# the scripts `check` chains, so the two cannot drift apart. Pull requests run it
+# directly; the Pages workflow calls it with the production site settings and deploys
+# only after every job here passes.
 name: Code quality
+
 on:
   pull_request:
+  workflow_call:
+    inputs:
+      deploy-base:
+        description: Build the site with this DEPLOY_BASE and upload it as the Pages artifact.
+        type: string
+        default: ""
+      multiplayer-url:
+        description: VITE_MULTIPLAYER_URL for the Pages build.
+        type: string
+        default: ""
+
 permissions:
   contents: read
+
 jobs:
-  check:
+  site:
+    name: Site (format, Wasm, types, Vite, lint)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      - run: pnpm run check
+        with:
+          cargo-cache: site
+          wasm-bindgen: "true"
+      - if: ${{ !inputs.deploy-base }}
+        run: pnpm run check:site
+      - if: inputs.deploy-base
+        run: pnpm run check:site
+        env:
+          DEPLOY_BASE: ${{ inputs.deploy-base }}
+          VITE_MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}
+      - if: inputs.deploy-base
+        uses: actions/configure-pages@v6
+      - if: inputs.deploy-base
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  clippy:
+    name: Rust format and clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: clippy
+      - run: pnpm run check:rust-lint
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: rust-tests
+      - run: pnpm run test:rust
+
+  server:
+    name: Server build and page-shell tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: server
+      - run: pnpm run check:server

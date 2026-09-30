@@ -1,7 +1,16 @@
 name: Set up the build toolchains
 description: >-
   Node and pnpm, the Rust toolchain pinned in rust-toolchain.toml (with its wasm32 and
-  musl targets), the matching wasm-bindgen CLI, and the Cargo caches.
+  musl targets), optionally the matching wasm-bindgen CLI, and this job's Cargo cache.
+inputs:
+  cargo-cache:
+    description: >-
+      Name of this job's Cargo cache. Jobs that compile different profiles or targets
+      keep separate caches; a pull request job restores the one its job saved on main.
+    required: true
+  wasm-bindgen:
+    description: Install the wasm-bindgen CLI, which only the Wasm engine build needs.
+    default: "false"
 runs:
   using: composite
   steps:
@@ -19,19 +28,23 @@ runs:
       run: |
         rustup toolchain install
         rustup show active-toolchain
+    # Caches from main are visible to every pull request, so main's deploy run, which
+    # runs these same jobs, keeps them warm. A run saves only when it missed an exact
+    # key (a Cargo.lock, manifest or toolchain change).
     - uses: Swatinem/rust-cache@v2
       with:
-        shared-key: sloppy-tanks
+        shared-key: ${{ inputs.cargo-cache }}
         cache-bin: false
     # The CLI must match the wasm-bindgen crate pin in Cargo.toml.
     - name: Cache wasm-bindgen-cli
+      if: inputs.wasm-bindgen == 'true'
       id: wasm-bindgen
       uses: actions/cache@v5
       with:
         path: ~/.cargo/bin/wasm-bindgen
         key: wasm-bindgen-cli-0.2.129-${{ runner.os }}-${{ runner.arch }}
     - name: Install wasm-bindgen-cli
-      if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+      if: inputs.wasm-bindgen == 'true' && steps.wasm-bindgen.outputs.cache-hit != 'true'
       shell: bash
       run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen
     - run: pnpm install --frozen-lockfile
