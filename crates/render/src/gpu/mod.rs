@@ -57,7 +57,9 @@ use crate::model::{
     prepare_scenery,
 };
 use crate::shader::{PipelineKey, ShaderKey};
-use crate::shadow_merge::{MergeKind, ShadowGroup, merge_shadows};
+use crate::shadow_merge::{
+    MergeKind, ShadowGroup, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
+};
 use context::{ColorTarget, Context, DEPTH_FORMAT};
 use pipelines::{Pipelines, SAMPLE_COUNT, shadow_merged_index};
 use pools::PoolEntry;
@@ -398,6 +400,7 @@ struct PartEntry {
     instances: Option<Vec<InstanceData>>,
     /// Its shadow draws from the model's merged casters (unless faded).
     merged_shadow: bool,
+    fixed_shadow: bool,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -601,6 +604,12 @@ pub struct Renderer {
     main_target: ColorTarget,
     shadow_map: wgpu::Texture,
     shadow_view: wgpu::TextureView,
+    static_shadow_map: wgpu::Texture,
+    static_shadow_view: wgpu::TextureView,
+    static_shadow_dirty: bool,
+    cache_static_shadow: bool,
+    static_shadow_draws: Vec<Draw>,
+    static_merged_draws: Vec<MergedDraw>,
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
@@ -662,7 +671,10 @@ fn depth_texture(device: &wgpu::Device, label: &str, size: u32) -> wgpu::Texture
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
 }
@@ -676,37 +688,6 @@ fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
-}
-
-/// How a material's shadow can come from a merged caster: depth only, or an
-/// alpha-tested card; never with an effect that moves vertices, dithers the
-/// shadow or (for cards) could change the cut-out alpha, unless the effect
-/// declares a still shadow (foliage sway).
-fn shadow_merge_kind(
-    effects: &EffectRegistry,
-    material: &sloppy_core::scene::Material,
-) -> MergeKind {
-    let effect = match &material.effect {
-        sloppy_core::scene::Effect::None => None,
-        sloppy_core::scene::Effect::Custom { name, .. } => {
-            effects.id(name).and_then(|id| effects.get(id))
-        }
-    };
-    let still = effect.is_some_and(|effect| effect.still_shadow);
-    let moves = effect.is_some_and(|effect| {
-        effect.has_vertex() || effect.has_world() || effect.has_clip() || effect.shadow_fade
-    });
-    if moves && !still {
-        MergeKind::Separate
-    } else if material.alpha_test > 0.0 {
-        if effect.is_some() && !still {
-            MergeKind::Separate
-        } else {
-            MergeKind::Cutout
-        }
-    } else {
-        MergeKind::Opaque
-    }
 }
 
 fn water_normals() -> TextureRef {
@@ -732,6 +713,7 @@ impl Renderer {
         let textures = TextureStore::new(device, &ctx.queue, options.asset_base);
         let sun_shadow = SunShadow::default();
         let shadow_map = depth_texture(device, "sun shadow map", sun_shadow.map_size);
+        let static_shadow_map = depth_texture(device, "fixed scenery shadow", sun_shadow.map_size);
         let dummy_depth =
             depth_texture(device, "shadow pass placeholder", 1).create_view(&Default::default());
         let lut = device.create_texture_with_data(
@@ -795,6 +777,12 @@ impl Renderer {
             pools: Slab::default(),
             shadow_view: shadow_map.create_view(&Default::default()),
             shadow_map,
+            static_shadow_view: static_shadow_map.create_view(&Default::default()),
+            static_shadow_map,
+            static_shadow_dirty: true,
+            cache_static_shadow: false,
+            static_shadow_draws: Vec::new(),
+            static_merged_draws: Vec::new(),
             dummy_depth,
             shadow_sampler,
             lut_view: lut.create_view(&Default::default()),
@@ -960,12 +948,20 @@ impl Renderer {
     pub fn set_sun_shadow(&mut self, shadow: SunShadow) {
         if shadow.map_size != self.sun_shadow.map_size {
             self.shadow_map.destroy();
+            self.static_shadow_map.destroy();
+            self.static_shadow_map = depth_texture(
+                &self.ctx.device,
+                "fixed scenery shadow",
+                shadow.map_size.max(1),
+            );
+            self.static_shadow_view = self.static_shadow_map.create_view(&Default::default());
             self.shadow_map =
                 depth_texture(&self.ctx.device, "sun shadow map", shadow.map_size.max(1));
             self.shadow_view = self.shadow_map.create_view(&Default::default());
             self.rebuild_view_groups();
         }
         self.sun_shadow = shadow;
+        self.static_shadow_dirty = true;
     }
 
     pub fn set_point_light(&mut self, index: usize, light: Option<PointLight>) {
@@ -1265,6 +1261,8 @@ impl Renderer {
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances.clone(),
                 merged_shadow: merge.merged[prepared_index],
+                fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
+                    != MergeKind::Separate,
             });
         }
         let shadow_slots = merge.slots.iter().map(|&index| entry_of[index]).collect();
@@ -1392,6 +1390,9 @@ impl Renderer {
     ) -> Option<InstanceId> {
         let entry = self.models.get_mut(model.index, model.generation)?;
         entry.instances += 1;
+        if entry.scenery {
+            self.static_dirty = true;
+        }
         let joints = entry.skeleton.nodes.len();
         let node_visible = entry
             .skeleton
@@ -1460,6 +1461,14 @@ impl Renderer {
     }
 
     fn instance_mut(&mut self, id: InstanceId) -> Option<&mut InstanceEntry> {
+        if self
+            .instances
+            .get(id.index, id.generation)
+            .and_then(|instance| self.models.at(instance.model))
+            .is_some_and(|model| model.scenery)
+        {
+            self.static_dirty = true;
+        }
         self.instances.get_mut(id.index, id.generation)
     }
 
@@ -1534,6 +1543,9 @@ impl Renderer {
             let list = part.instances.get_or_insert_with(Vec::new);
             list.clear();
             list.extend_from_slice(instances);
+            if entry.scenery {
+                self.static_dirty = true;
+            }
         }
     }
 
@@ -1743,6 +1755,8 @@ impl Renderer {
         self.encode_output(&mut encoder, &probe_view);
         self.ctx.queue.submit([encoder.finish()]);
         probe.destroy();
+        // Warm-up uses representative draws, not the complete fixed scenery.
+        self.static_shadow_dirty = true;
         for draws in &mut self.views {
             draws.clear();
         }
@@ -1754,6 +1768,7 @@ impl Renderer {
 
     fn update_textures(&mut self) {
         if self.textures.drain(&self.ctx.device, &self.ctx.queue) {
+            self.static_shadow_dirty = true;
             self.materials
                 .refresh(&self.ctx.device, &self.layouts, &mut self.textures);
             if let Some(water) = self.water.take() {
@@ -1798,6 +1813,35 @@ impl Renderer {
             return;
         }
         self.static_dirty = false;
+        self.static_shadow_dirty = true;
+        let triangles = self
+            .instances
+            .iter()
+            .filter_map(|(_, instance)| {
+                self.models.at(instance.model).filter(|model| model.scenery)
+            })
+            .map(|model| {
+                let merged: u64 = model
+                    .shadow
+                    .iter()
+                    .map(|mesh| u64::from(mesh.index_count / 3))
+                    .sum();
+                let separate: u64 = model
+                    .parts
+                    .iter()
+                    .filter(|part| part.cast_shadow && part.fixed_shadow && !part.merged_shadow)
+                    .map(|part| {
+                        let class = self.classes[part.class as usize]
+                            .as_ref()
+                            .expect("live class");
+                        u64::from(self.meshes.get(class.key.mesh).index_count / 3)
+                            * part.instances.as_ref().map_or(1, |list| list.len() as u64)
+                    })
+                    .sum();
+                merged + separate
+            })
+            .sum();
+        self.cache_static_shadow = cache_scenery_shadows(triangles);
         self.static_records.truncate(1);
         let instance_ids: Vec<u32> = self.instances.iter().map(|(index, _)| index).collect();
         for index in instance_ids {
@@ -2056,11 +2100,16 @@ impl Renderer {
             joint_visible,
             culls,
             shadow_reach,
+            static_shadow_dirty,
+            cache_static_shadow,
+            static_shadow_draws,
             merged_records,
             merged_items,
             ..
         } = self;
         builder.clear();
+        static_shadow_draws.clear();
+        self.static_merged_draws.clear();
         merged_records.clear();
         merged_items.clear();
         for (_, instance) in instances.iter() {
@@ -2104,6 +2153,11 @@ impl Renderer {
                     cull.active
                         && (view != SHADOW_VIEW
                             || (part.cast_shadow && !(merged && part.merged_shadow)))
+                        && !(view == SHADOW_VIEW
+                            && *cache_static_shadow
+                            && model.scenery
+                            && part.fixed_shadow
+                            && !faded)
                         && (view != REFLECTION_VIEW || instance.reflected)
                         && (!part.frustum_culled
                             || (cull.frustum.intersects_sphere(sphere)
@@ -2113,6 +2167,23 @@ impl Renderer {
                     (sphere.center - culls[view].origin).dot(culls[view].forward)
                 };
                 if let Some(Some(range)) = instance.static_ranges.get(part_index) {
+                    if *cache_static_shadow
+                        && *static_shadow_dirty
+                        && model.scenery
+                        && part.fixed_shadow
+                        && !faded
+                        && part.cast_shadow
+                        && !part.merged_shadow
+                        && culls[SHADOW_VIEW].active
+                        && (!part.frustum_culled
+                            || culls[SHADOW_VIEW].frustum.intersects_sphere(&range.bounds))
+                    {
+                        static_shadow_draws.push(Draw {
+                            class: class_index,
+                            first_instance: range.first,
+                            instance_count: range.count,
+                        });
+                    }
                     for view in 0..VIEW_COUNT {
                         if in_view(view, &range.bounds) {
                             builder.push_range(
@@ -2173,9 +2244,13 @@ impl Renderer {
             if merged {
                 let shadow = &culls[SHADOW_VIEW].frustum;
                 if model.scenery {
+                    if *cache_static_shadow && !*static_shadow_dirty {
+                        continue;
+                    }
                     for (group, mesh) in model.shadow.iter().enumerate() {
+                        // Fixed scenery must cover every camera, including future views.
                         if shadow.intersects_sphere(&mesh.bounds)
-                            && shadow_reach.reaches(&mesh.bounds)
+                            && (*cache_static_shadow || shadow_reach.reaches(&mesh.bounds))
                         {
                             merged_items.push(MergedItem {
                                 pipeline: mesh.pipeline,
@@ -2223,6 +2298,19 @@ impl Renderer {
         let base = self.static_records.len() as u32;
         self.builder.finish(base, &mut self.views);
         self.finish_merged(base + self.builder.records.len() as u32);
+        self.merged_draws.retain(|draw| {
+            if self.cache_static_shadow
+                && self
+                    .models
+                    .at(draw.model)
+                    .is_some_and(|model| model.scenery)
+            {
+                self.static_merged_draws.push(*draw);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// Group merged shadow items into instanced draws (by pipeline, model and
@@ -2395,8 +2483,55 @@ impl Renderer {
             materials: &self.materials,
             pipelines: &self.pipelines,
             pools: &self.pools,
+            models: &self.models,
             frame_groups: &self.view_groups,
         };
+        let rebuild_static =
+            self.cache_static_shadow && self.static_shadow_dirty && self.sun_shadow.enabled;
+        let mut static_count = 0;
+        if rebuild_static {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fixed scenery shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.static_shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.view_groups[SHADOW_VIEW], &[]);
+            static_count += draws.encode(&mut pass, &self.static_shadow_draws, SHADOW_VIEW, stats);
+            static_count += draws.encode_merged(
+                &mut pass,
+                &self.static_merged_draws,
+                &self.shadow_base_buffer,
+                stats,
+            );
+        }
+        if self.sun_shadow.enabled && self.cache_static_shadow {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.static_shadow_map,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::DepthOnly,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.shadow_map,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::DepthOnly,
+                },
+                self.shadow_map.size(),
+            );
+            self.static_shadow_dirty = false;
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow"),
@@ -2404,7 +2539,11 @@ impl Renderer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.shadow_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: if self.sun_shadow.enabled && self.cache_static_shadow {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(1.0)
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -2420,34 +2559,13 @@ impl Renderer {
                 SHADOW_VIEW,
                 stats,
             );
-            if !self.merged_draws.is_empty() {
-                pass.set_bind_group(0, &self.view_groups[SHADOW_VIEW], &[]);
-                pass.set_vertex_buffer(1, self.shadow_base_buffer.slice(..));
-                let mut pipeline = usize::MAX;
-                for draw in &self.merged_draws {
-                    let Some(mesh) = self
-                        .models
-                        .at(draw.model)
-                        .and_then(|model| model.shadow.get(draw.group as usize))
-                    else {
-                        continue;
-                    };
-                    if mesh.pipeline != pipeline {
-                        pass.set_pipeline(&self.pipelines.fixed().shadow_merged[mesh.pipeline]);
-                        pipeline = mesh.pipeline;
-                    }
-                    if let Some(material) = mesh.material {
-                        pass.set_bind_group(1, &self.materials.get(material).bind_group, &[]);
-                    }
-                    pass.set_vertex_buffer(0, mesh.vertex.slice(..));
-                    pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, draw.first..draw.first + draw.count);
-                    count += 1;
-                    stats.draw_calls += 1;
-                    stats.triangles += (mesh.index_count / 3) as u64 * draw.count as u64;
-                }
-            }
-            stats.shadow_draw_calls = count;
+            count += draws.encode_merged(
+                &mut pass,
+                &self.merged_draws,
+                &self.shadow_base_buffer,
+                stats,
+            );
+            stats.shadow_draw_calls = count + static_count;
             stats.shadow_triangles = stats.triangles;
         }
         stats.reflection_draw_calls = 0;
@@ -2541,7 +2659,7 @@ impl Renderer {
                 .water
                 .as_ref()
                 .map_or(0, |w| w.target.bytes(SAMPLE_COUNT))
-            + shadow * shadow * 4
+            + shadow * shadow * 8
             + self.instance_capacity as u64 * RECORD_SIZE
             + self.pool_bytes()
             + self
@@ -2607,10 +2725,47 @@ struct DrawContext<'a> {
     materials: &'a MaterialStore,
     pipelines: &'a Pipelines,
     pools: &'a Slab<PoolEntry>,
+    models: &'a Slab<ModelEntry>,
     frame_groups: &'a [wgpu::BindGroup],
 }
 
 impl DrawContext<'_> {
+    fn encode_merged(
+        &self,
+        pass: &mut wgpu::RenderPass,
+        draws: &[MergedDraw],
+        bases: &wgpu::Buffer,
+        stats: &mut RenderStats,
+    ) -> u32 {
+        pass.set_bind_group(0, &self.frame_groups[SHADOW_VIEW], &[]);
+        pass.set_vertex_buffer(1, bases.slice(..));
+        let mut pipeline = usize::MAX;
+        let mut count = 0;
+        for draw in draws {
+            let Some(mesh) = self
+                .models
+                .at(draw.model)
+                .and_then(|model| model.shadow.get(draw.group as usize))
+            else {
+                continue;
+            };
+            if mesh.pipeline != pipeline {
+                pass.set_pipeline(&self.pipelines.fixed().shadow_merged[mesh.pipeline]);
+                pipeline = mesh.pipeline;
+            }
+            if let Some(material) = mesh.material {
+                pass.set_bind_group(1, &self.materials.get(material).bind_group, &[]);
+            }
+            pass.set_vertex_buffer(0, mesh.vertex.slice(..));
+            pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, draw.first..draw.first + draw.count);
+            count += 1;
+            stats.draw_calls += 1;
+            stats.triangles += (mesh.index_count / 3) as u64 * draw.count as u64;
+        }
+        count
+    }
+
     /// Encode draws, skipping redundant state changes. Returns the draw count.
     /// The caller binds the view's frame group; pool draws swap in their own
     /// instance buffer and the frame group is restored afterwards.
