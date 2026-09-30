@@ -72,13 +72,16 @@ was not ported.
 
 ## Quality gate
 
-`pnpm run check` (also CI, `.github/workflows/`) runs Prettier and `cargo fmt`
-checks, the Wasm build, `tsc` for the shell/tests/scripts/tools and bots, the Vite
-build, ESLint, clippy with `-D warnings` (workspace natively with all targets,
-`sloppy-render` and `sloppy-web` on wasm32, and `sloppy-web` with `labs`), the
-native server build, `pnpm test` and `cargo test --workspace --release`. CI
-installs the pinned toolchain through rustup and a cached wasm-bindgen-cli
-0.2.129 (`.github/actions/setup`).
+`pnpm run check` runs Prettier and `cargo fmt` checks, the Wasm build, `tsc` for
+the shell/tests/scripts/tools and bots, the Vite build, ESLint, clippy with
+`-D warnings` (workspace natively with all targets, `sloppy-render` and `sloppy-web`
+on wasm32, and `sloppy-web` with `labs`), the native server build, `pnpm test` and
+`cargo test --workspace` (dev profile, dependencies optimized). CI
+(`.github/workflows/check.yml`) runs the same scripts as four parallel jobs: site,
+Rust format and clippy, Rust tests, and server with the page-shell tests. It
+installs the pinned toolchain through rustup and a cached wasm-bindgen-cli 0.2.129
+(`.github/actions/setup`), with one Cargo cache per job that main's deploy run keeps
+warm for pull requests.
 
 ## Download size
 

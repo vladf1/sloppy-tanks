@@ -13,26 +13,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    env:
-      # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need a
-      # matching `pnpm run server:deploy`, or players are told to reload.
-      VITE_MULTIPLAYER_URL: wss://sloppy-tanks-server.fridman.me
+  # The whole quality gate (check.yml), whose site job also builds the Pages artifact
+  # in parallel with the Rust jobs. Running it on main also saves the Cargo caches
+  # that pull requests restore.
+  check:
+    uses: ./.github/workflows/check.yml
+    with:
       # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
       # its root; fridman.me/sloppy-tanks/ redirects there.
-      DEPLOY_BASE: /
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - run: pnpm run check
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: dist
+      deploy-base: /
+      # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need a
+      # matching `pnpm run server:deploy`, or players are told to reload.
+      multiplayer-url: wss://sloppy-tanks-server.fridman.me
 
   deploy:
-    needs: build
+    needs: check
     runs-on: ubuntu-24.04
     permissions:
       pages: write
