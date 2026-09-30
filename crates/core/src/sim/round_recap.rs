@@ -41,14 +41,6 @@ impl Metric {
         Metric::CoverDestroyed,
         Metric::Pickups,
     ];
-    pub const FEATURED: [Metric; 5] = [
-        Metric::Kills,
-        Metric::Damage,
-        Metric::LongestLife,
-        Metric::BestLife,
-        Metric::Rank,
-    ];
-
     /// The key used in saved personal bests (the TS property name).
     pub const fn key(self) -> &'static str {
         match self {

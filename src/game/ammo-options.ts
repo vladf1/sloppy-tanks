@@ -41,7 +41,3 @@ export const AMMO_OPTIONS = [
 
 export type AmmoWeapon = (typeof AMMO_OPTIONS)[number]["weapon"];
 export const AMMO_ORDER: readonly AmmoWeapon[] = AMMO_OPTIONS.map((option) => option.weapon);
-
-export function ammoOption(weapon: string) {
-  return AMMO_OPTIONS.find((option) => option.weapon === weapon);
-}

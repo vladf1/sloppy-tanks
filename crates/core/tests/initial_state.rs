@@ -7,7 +7,7 @@ use serde_json::Value;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::level_rules::single_player_rules;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::{GameMode, Simulation, SimulationSetup, VehicleCommand};
+use sloppy_core::sim::{GameMode, Simulation, SimulationSetup};
 
 fn round(value: f64) -> f64 {
     sloppy_core::sim::math::js_round(value * 1e6) / 1e6
@@ -50,7 +50,7 @@ fn construction_matches_typescript() {
         let seed = expected["seed"].as_f64().unwrap();
         let label = expected["label"].as_str().unwrap();
         let context = format!("seed {seed} {label}");
-        let mut s = Simulation::new(seed, setup_for(label));
+        let s = Simulation::new(seed, setup_for(label));
         assert_eq!(
             s.human_team.index() as u64,
             expected["humanTeam"].as_u64().unwrap(),
@@ -159,25 +159,6 @@ fn construction_matches_typescript() {
             expected["navHash"].as_u64().unwrap(),
             "{context}"
         );
-        // The first ticks' draws depend on physics only through settled spawn poses; report
-        // (rather than fail on) divergence, which Rapier 0.36 may legitimately cause.
-        s.start();
-        let mut after = Vec::new();
-        for tick in 1..=30 {
-            s.step(VehicleCommand::idle(), true);
-            if tick == 1 || tick == 5 || tick == 30 {
-                after.push(s.rng.state);
-            }
-        }
-        let wanted: Vec<f64> = expected["rngAfter"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_f64().unwrap())
-            .collect();
-        if after != wanted {
-            eprintln!("{context}: RNG state after 1/5/30 ticks {after:?}, TypeScript {wanted:?}");
-        }
         checked += 1;
     }
     assert_eq!(checked, 18);

@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, Side, TextureRef, Wrap};
+use sloppy_core::scene::{Blending, Node, Side, TextureRef};
 use wgpu::util::DeviceExt;
 
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
@@ -2696,22 +2696,5 @@ fn upload_shadow_mesh(
         bounds: group.bounds,
         bytes: (group.vertices.len() * size_of::<crate::shadow_merge::ShadowVertex>()
             + group.indices.len() * 4) as u64,
-    }
-}
-
-/// Wrap mode helper for callers building texture references.
-pub fn texture(
-    path: &'static str,
-    wrap: Wrap,
-    repeat: [f32; 2],
-    srgb: bool,
-    anisotropy: u8,
-) -> TextureRef {
-    TextureRef {
-        wrap,
-        repeat,
-        srgb,
-        anisotropy,
-        ..TextureRef::file(path)
     }
 }

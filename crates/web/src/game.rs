@@ -1172,7 +1172,7 @@ impl Game {
             let player_hit = matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
                 && event.owner == Some(human_id)
                 && event.team != Some(human_team);
-            self.view.event(&self.state, event, player_hit);
+            self.view.event(event, player_hit);
             let own = event.id == Some(human_id);
             let damage_angle = (own
                 && matches!(event.kind, SimEventType::Hurt | SimEventType::Death))

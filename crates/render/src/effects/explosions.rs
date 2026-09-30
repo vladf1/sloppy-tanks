@@ -14,7 +14,6 @@ use crate::color::hex_to_linear;
 
 pub const MAX_EXPLOSIONS: usize = 24;
 pub const EXPLOSION_LIFETIME: f64 = 1.15;
-pub const TANK_EXPLOSION_LIFETIME: f64 = 2.1;
 pub const PUFFS_PER_BLAST: usize = 8;
 /// A burnout's thin smoke outlasts a normal blast.
 const BURNOUT_LIFETIME: f64 = 2.7;
@@ -590,7 +589,7 @@ mod tests {
         shell.update(shell_cleanup);
         assert_eq!(shell.puffs.len(), 0);
         assert_eq!(tank.puffs.len(), 5);
-        tank.update(TANK_EXPLOSION_LIFETIME);
+        tank.update(2.1);
         assert_eq!(tank.puffs.len(), 0);
     }
 

@@ -121,9 +121,7 @@ pub use pickup_visuals::{
 };
 pub use quarry_barriers::{dragon_tooth, steel_hedgehog};
 pub use timber_model::{add_timber_parts, timber_part_model};
-pub use tree_debris::{
-    FALLING_BRANCH_LIFETIME, MAX_FALLING_BRANCHES, fading_material, falling_branch_model,
-};
+pub use tree_debris::{fading_material, falling_branch_model};
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeModel, TreeShape, branch_drop_stage, set_tree_damage,
     set_tree_destroyed, tree_branch_stage, tree_model, tree_part, trunk_fragment,
@@ -150,10 +148,9 @@ pub use harbor_vessels::{HarborFleet, harbor_beam};
 pub use harbor_water::{HARBOR_WATER_HEIGHT, harbor_water};
 pub use loading_assets::node_textures;
 pub use quarry_benches::{
-    ButteSpot, ScreeSpot, StockpileSpot, TalusStrip, quarry_bench, quarry_butte,
-    quarry_butte_footprint, quarry_butte_spot, quarry_scree_spots, quarry_stockpile_geometry,
-    quarry_stockpile_reach, quarry_stockpile_spot, quarry_talus_geometry, quarry_talus_point,
-    quarry_talus_strips,
+    ButteSpot, ScreeSpot, StockpileSpot, TalusStrip, quarry_bench, quarry_butte, quarry_butte_spot,
+    quarry_scree_spots, quarry_stockpile_geometry, quarry_stockpile_reach, quarry_stockpile_spot,
+    quarry_talus_geometry, quarry_talus_point, quarry_talus_strips,
 };
 pub use quarry_machinery::{quarry_dump_truck, quarry_excavator};
 pub use quarry_ramp::{
@@ -171,7 +168,6 @@ pub use quarry_terrain::{
 pub use scenery::{
     MapTheme, SHADOW_DEPTH, Scenery, ShadowBox, build_scenery, create_arena_floor,
     create_spawn_pads, custom_floor, custom_spawn_pads, default_sun_shadow, fit_sun_shadow,
-    lighting,
 };
 pub use village_atmosphere::{
     SMOKE_SOURCES, SmokeCover, WISPS_PER_SOURCE, set_chimney_smoke, village_atmosphere,

@@ -193,11 +193,6 @@ pub fn apply_quaternion(v: DVec3, q: DQuat) -> DVec3 {
     )
 }
 
-/// `Vector3.applyEuler(new Euler(x, y, z))` in the default `XYZ` order.
-pub fn apply_euler(v: DVec3, x: f64, y: f64, z: f64) -> DVec3 {
-    apply_quaternion(v, quat_from_euler(x, y, z))
-}
-
 /// `Matrix4.compose(position, quaternion, scale)`.
 pub fn compose(position: DVec3, rotation: DQuat, scale: DVec3) -> DMat4 {
     let (x, y, z, w) = (rotation.x, rotation.y, rotation.z, rotation.w);

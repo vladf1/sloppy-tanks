@@ -20,7 +20,7 @@ use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
 };
 use sloppy_core::scene::{Blending, Effect, Material, Node, Side};
-use sloppy_core::sim::data::{MINE_RADIUS, SHIELD_CAPACITY, pickup};
+use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
@@ -225,11 +225,6 @@ pub fn tank_bar(team: Team) -> Node {
         bar.children.push(node);
     }
     bar
-}
-
-/// The fraction of a protection meter; the shield's capacity is fixed.
-pub fn shield_fraction(points: f64) -> f64 {
-    (points / SHIELD_CAPACITY).clamp(0.0, 1.0)
 }
 
 fn reticle_material(color: u32, opacity: f32) -> Arc<Material> {

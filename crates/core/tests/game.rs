@@ -74,18 +74,13 @@ fn reused_navigation_searches_recover_from_unreachable_goals_and_changed_topolog
     let mut nav = Navigation::new();
     let from = Vec2::new(-40.0, -40.0);
     let to = Vec2::new(40.0, 40.0);
-    let first = nav.find(from, to);
-    let saved = first.clone();
+    let saved = nav.find(from, to);
     nav.blocked.fill(1);
     assert_eq!(nav.find(from, to), Vec::<Vec2>::new());
     nav.rebuild(&[], None);
     assert_eq!(nav.find(to, from), Navigation::new().find(to, from));
     assert_eq!(nav.find(from, to), saved);
     assert_eq!(nav.find(from, from), Vec::<Vec2>::new());
-    assert_eq!(
-        first, saved,
-        "later searches cannot mutate a bot's existing path"
-    );
 }
 
 #[test]
@@ -236,7 +231,7 @@ fn endless_team_matches_ignore_both_the_score_limit_and_match_timer() {
 }
 
 #[test]
-fn complete_reset_restores_counts_cover_pickups_scores_nav_and_rng() {
+fn complete_reset_restores_counts_pickups_and_scores() {
     let mut s = game();
     let counts = s.snapshot().counts;
     let h = human(&s);

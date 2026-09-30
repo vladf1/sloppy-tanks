@@ -157,16 +157,16 @@ impl EffectsLab {
     }
 
     /// One simulation event (TS `SimEvent` JSON); `player_hit` as in the game.
-    pub fn event(&mut self, json: &str, player_hit: bool) -> Result<(), JsValue> {
+    pub fn event(&mut self, json: &str, _player_hit: bool) -> Result<(), JsValue> {
         let event: SimEvent =
             serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
-        self.effects
-            .event(&mut self.renderer, &self.state, &event, player_hit);
+        self.effects.event(&event);
         Ok(())
     }
 
     pub fn reset(&mut self) {
         self.effects.reset(&mut self.renderer, &self.state);
+        self.effects.sync_flash_light(&mut self.renderer);
     }
 
     /// Advance effects by `dt` and draw at `time` (seconds).
@@ -189,6 +189,7 @@ impl EffectsLab {
         }
         self.effects
             .update(&mut self.renderer, &self.state, alpha, dt, time);
+        self.effects.sync_flash_light(&mut self.renderer);
         self.renderer.render(time as f32).map_err(js_error)
     }
 

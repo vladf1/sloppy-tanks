@@ -198,7 +198,7 @@ pub struct SavedSeat {
 }
 
 pub struct ClientConfig {
-    /// The server's WebSocket origin, such as `ws://127.0.0.1:8787` (see `server_address`).
+    /// The server's WebSocket origin, such as `ws://127.0.0.1:8787`.
     pub server_url: String,
     pub room: String,
     pub saved_seat: Option<SavedSeat>,

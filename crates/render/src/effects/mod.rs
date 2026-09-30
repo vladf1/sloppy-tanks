@@ -32,7 +32,6 @@ pub use pool::{PoolBuffer, PoolDesc};
 pub use random::CosmeticRandom;
 pub use registry::*;
 
-use explosions::ExplosionEffects;
 use laser::LaserVisuals;
 use particles::ParticleEffects;
 use pickups::PickupEffects;
@@ -91,10 +90,6 @@ pub struct EffectSystems {
 }
 
 impl EffectSystems {
-    pub fn explosions(&self) -> &ExplosionEffects {
-        &self.particles.explosions
-    }
-
     pub fn reset(&mut self) {
         self.particles.reset();
         self.tracks.reset();
@@ -107,9 +102,7 @@ impl EffectSystems {
     }
 
     /// The visual response to one simulation event (`presentation.ts` `event`).
-    /// `player_hit` feeds the reticle, which presentation owns; effects look the
-    /// same whoever caused them.
-    pub fn event(&mut self, event: &SimEvent, _player_hit: bool) {
+    pub fn event(&mut self, event: &SimEvent) {
         use SimEventType as T;
         // Contact telemetry and notices have no visual response.
         if matches!(event.kind, T::DebrisImpact | T::Notice) {
@@ -237,15 +230,9 @@ mod browser {
             self.sync(renderer);
         }
 
-        /// One simulation event; `player_hit` marks hurt/death events the viewer caused.
-        pub fn event(
-            &mut self,
-            _renderer: &mut Renderer,
-            _state: &RenderState,
-            event: &SimEvent,
-            player_hit: bool,
-        ) {
-            self.systems.event(event, player_hit);
+        /// The visual response to one simulation event.
+        pub fn event(&mut self, event: &SimEvent) {
+            self.systems.event(event);
         }
 
         /// Once per rendered frame after entity poses are updated; `alpha`
@@ -301,7 +288,11 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-            let flash = systems.flash;
+        }
+
+        /// Labs use the pooled effects' flash; game presentation owns its light.
+        pub fn sync_flash_light(&self, renderer: &mut Renderer) {
+            let flash = self.systems.flash;
             renderer.set_point_light(
                 FLASH_LIGHT,
                 (flash.intensity > FLASH_CUTOFF).then_some(PointLight {
@@ -351,35 +342,35 @@ mod tests {
     fn events_route_like_presentation() {
         let mut systems = EffectSystems::default();
         let mut hurt = SimEvent::at(SimEventType::Hurt, 0.0, 0.0);
-        systems.event(&hurt, false);
+        systems.event(&hurt);
         assert!(
             systems.particles.particles.is_empty(),
             "hurt without a tank id"
         );
         hurt.id = Some(1);
         hurt.size = Some(10.0);
-        systems.event(&hurt, true);
+        systems.event(&hurt);
         assert_eq!(systems.particles.particles.len(), 12);
-        systems.event(&SimEvent::at(SimEventType::Respawn, 0.0, 0.0), false);
-        systems.event(&SimEvent::at(SimEventType::Notice, 0.0, 0.0), false);
-        systems.event(&SimEvent::at(SimEventType::DebrisImpact, 0.0, 0.0), false);
+        systems.event(&SimEvent::at(SimEventType::Respawn, 0.0, 0.0));
+        systems.event(&SimEvent::at(SimEventType::Notice, 0.0, 0.0));
+        systems.event(&SimEvent::at(SimEventType::DebrisImpact, 0.0, 0.0));
         assert_eq!(systems.particles.particles.len(), 12);
         let mut promotion = SimEvent::at(SimEventType::Promotion, 2.0, 3.0);
         promotion.id = Some(1);
         promotion.color = Some(0xffcf54);
-        systems.event(&promotion, false);
+        systems.event(&promotion);
         assert_eq!(systems.pickups.len(), 1);
         assert_eq!(systems.flash.intensity, 0.0);
         let mut blast = SimEvent::at(SimEventType::Explosion, 5.0, -4.0);
         blast.size = Some(4.0);
-        systems.event(&blast, false);
+        systems.event(&blast);
         assert_eq!(systems.flash.intensity, FLASH_INTENSITY);
         assert_eq!(systems.flash.position, Vec3::new(5.0, 3.0, -4.0));
         let mut drum = SimEvent::at(SimEventType::Destroy, 0.0, 0.0);
         drum.cover_kind = Some(CoverKind::Drum);
-        systems.event(&drum, false);
+        systems.event(&drum);
         assert_eq!(
-            systems.explosions().active(),
+            systems.particles.explosions.active(),
             1,
             "drums blast via their explosion"
         );
@@ -440,11 +431,11 @@ mod tests {
             ] {
                 let mut event = SimEvent::at(kind, frame as f64 % 50.0, 0.0);
                 event.size = Some(4.0);
-                systems.event(&event, false);
+                systems.event(&event);
             }
             let mut laser = SimEvent::at(SimEventType::Laser, 3.0, 3.0);
             laser.from = Some(Point3::ZERO);
-            systems.event(&laser, false);
+            systems.event(&laser);
             systems.update(&state, 1.0, dt, state.elapsed);
             let stats = systems.stats();
             peak.instances = peak.instances.max(stats.instances);

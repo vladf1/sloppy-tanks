@@ -8,7 +8,7 @@
 //! class, and its draws bind a copy of the view's frame group whose instance
 //! buffer is the pool's; they sort among the scene's other draws by render order
 //! and, when transparent, by the depth of the scene origin (Three sorted an
-//! InstancedMesh by its object position). Empty or hidden pools cost no draws.
+//! InstancedMesh by its object position). Empty pools cost no draws.
 
 use glam::Vec3;
 
@@ -33,7 +33,6 @@ pub(super) struct PoolEntry {
     pub capacity: u32,
     /// Instances drawn (the pool's live record count at the last sync).
     pub count: u32,
-    pub visible: bool,
     pub lifetime: Lifetime,
     pub buffer: wgpu::Buffer,
     /// The frame bind group per view, with this pool's buffer as `instances`.
@@ -75,7 +74,6 @@ impl Renderer {
             reflected: desc.reflected,
             capacity,
             count: 0,
-            visible: true,
             lifetime,
             buffer,
             groups,
@@ -126,12 +124,6 @@ impl Renderer {
         });
     }
 
-    pub fn set_pool_visible(&mut self, id: PoolId, visible: bool) {
-        if let Some(entry) = self.pools.get_mut(id.index, id.generation) {
-            entry.visible = visible;
-        }
-    }
-
     /// Overwrite the effect params (16 floats) the pool's material uniform
     /// carries, for per-frame effect clocks. The GPU material is shared by every
     /// user of an equal material, so pools that animate params use a material
@@ -145,13 +137,6 @@ impl Renderer {
                 bytemuck::cast_slice(&params),
             );
         }
-    }
-
-    /// Instances drawn by a pool, after the last sync.
-    pub fn pool_count(&self, id: PoolId) -> u32 {
-        self.pools
-            .get(id.index, id.generation)
-            .map_or(0, |entry| entry.count)
     }
 
     pub(super) fn frame_groups(&self, instances: &wgpu::Buffer) -> Vec<wgpu::BindGroup> {
@@ -173,7 +158,7 @@ impl Renderer {
         }
     }
 
-    /// Queue the visible, non-empty pools into this frame's draw lists.
+    /// Queue the non-empty pools into this frame's draw lists.
     pub(super) fn push_pool_draws(&mut self) {
         let Self {
             pools,
@@ -183,7 +168,7 @@ impl Renderer {
             ..
         } = self;
         for (_, pool) in pools.iter() {
-            if !pool.visible || pool.count == 0 {
+            if pool.count == 0 {
                 continue;
             }
             let transparent = classes[pool.class as usize]
@@ -234,10 +219,7 @@ impl Renderer {
         self.pools
             .iter()
             .fold((0, 0), |(pools, instances), (_, pool)| {
-                (
-                    pools + 1,
-                    instances + if pool.visible { pool.count } else { 0 },
-                )
+                (pools + 1, instances + pool.count)
             })
     }
 
