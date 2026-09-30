@@ -18,6 +18,7 @@ use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::scene::{Material, Side};
 
 use crate::camera::Sphere;
+use crate::effects::EffectRegistry;
 use crate::material::shadow_side;
 use crate::model::{MeshData, PartMesh, PreparedModel, PreparedPart};
 
@@ -70,6 +71,44 @@ impl ShadowMerge {
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty()
     }
+}
+
+/// How a material's shadow can come from a merged caster: depth only, or an
+/// alpha-tested card; never with an effect that moves vertices, dithers the
+/// shadow or (for cards) could change the cut-out alpha, unless the effect
+/// declares a still shadow (foliage sway).
+pub fn shadow_merge_kind(
+    effects: &EffectRegistry,
+    material: &sloppy_core::scene::Material,
+) -> MergeKind {
+    let effect = match &material.effect {
+        sloppy_core::scene::Effect::None => None,
+        sloppy_core::scene::Effect::Custom { name, .. } => {
+            effects.id(name).and_then(|id| effects.get(id))
+        }
+    };
+    let still = effect.is_some_and(|effect| effect.still_shadow);
+    let moves = effect.is_some_and(|effect| {
+        effect.has_vertex() || effect.has_world() || effect.has_clip() || effect.shadow_fade
+    });
+    if moves && !still {
+        MergeKind::Separate
+    } else if material.alpha_test > 0.0 {
+        if effect.is_some() && !still {
+            MergeKind::Separate
+        } else {
+            MergeKind::Cutout
+        }
+    } else {
+        MergeKind::Opaque
+    }
+}
+
+/// A depth copy has a fixed bandwidth cost; small static sets are cheaper to
+/// redraw. Small sets keep the existing view culling and avoid copying unused depth.
+pub fn cache_scenery_shadows(triangles: u64) -> bool {
+    const MIN_CACHED_TRIANGLES: u64 = 131_072;
+    triangles >= MIN_CACHED_TRIANGLES
 }
 
 type Geometry<'a> = (Vec<Vec3>, Vec<Vec2>, std::borrow::Cow<'a, [u32]>);
@@ -232,6 +271,39 @@ mod tests {
     use sloppy_core::geometry::box_geometry;
     use sloppy_core::scene::{Material, Node};
     use std::sync::Arc;
+
+    #[test]
+    fn cache_requires_a_substantial_fixed_set() {
+        assert!(!cache_scenery_shadows(17_000));
+        assert!(!cache_scenery_shadows(131_071));
+        assert!(!cache_scenery_shadows(90_748));
+        assert!(cache_scenery_shadows(131_072));
+        assert!(cache_scenery_shadows(170_000));
+    }
+
+    #[test]
+    fn fixed_casters_exclude_animated_or_alpha_changing_effects() {
+        use crate::effects::registry::{PULSE, WAVE};
+        use sloppy_core::scene::Effect;
+        let mut effects = EffectRegistry::default();
+        effects.register(WAVE);
+        effects.register(PULSE);
+        let mut material = Material::default();
+        assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Opaque);
+        material.alpha_test = 0.5;
+        assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Cutout);
+        material.effect = Effect::Custom {
+            name: PULSE.name,
+            params: vec![0.0; 16],
+        };
+        assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Separate);
+        material.alpha_test = 0.0;
+        material.effect = Effect::Custom {
+            name: WAVE.name,
+            params: vec![0.0; 16],
+        };
+        assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Separate);
+    }
 
     fn no_attributes(_: &Material) -> &'static [&'static str] {
         &[]
