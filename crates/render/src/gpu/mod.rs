@@ -43,7 +43,7 @@ use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Blending, Node, Side, TextureRef, Wrap};
 use wgpu::util::DeviceExt;
 
-use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, Sphere, mirror_view};
+use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
     Draw, DrawListBuilder, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT,
@@ -143,6 +143,10 @@ pub struct SunShadow {
     pub normal_bias: f32,
     /// PCF filter radius in texels (Three `shadow.radius`).
     pub radius: f32,
+    /// No surface that receives the shadow lies below this height, so a caster
+    /// matters only when its shadow reaches a view above it ([`ShadowReach`]).
+    /// Negative infinity draws every caster in the box.
+    pub receiver_floor: f32,
 }
 
 /// `SHADOW_DEPTH` in scenery.ts.
@@ -164,6 +168,7 @@ impl Default for SunShadow {
             bias: -0.0002,
             normal_bias: 0.05,
             radius: 1.0,
+            receiver_floor: f32::NEG_INFINITY,
         }
     }
 }
@@ -615,6 +620,7 @@ pub struct Renderer {
     joint_visible: Vec<bool>,
     culls: [ViewCull; VIEW_COUNT],
     reflection_active: bool,
+    shadow_reach: ShadowReach,
     /// Merged shadow casters this frame: records, items, draws and their bases.
     merged_records: Vec<InstanceRecord>,
     merged_items: Vec<MergedItem>,
@@ -809,6 +815,7 @@ impl Renderer {
                 ViewCull::inactive(),
             ],
             reflection_active: false,
+            shadow_reach: ShadowReach::everywhere(),
             merged_records: Vec::new(),
             merged_items: Vec::new(),
             merged_draws: Vec::new(),
@@ -2021,6 +2028,15 @@ impl Renderer {
             };
             self.reflection_active = true;
         }
+        self.shadow_reach = ShadowReach {
+            light: self.culls[SHADOW_VIEW].forward,
+            floor: self.sun_shadow.receiver_floor,
+            views: [
+                Some(self.culls[MAIN_VIEW].frustum),
+                self.reflection_active
+                    .then_some(self.culls[REFLECTION_VIEW].frustum),
+            ],
+        };
     }
 
     fn build_draws(&mut self) {
@@ -2032,6 +2048,7 @@ impl Renderer {
             joints,
             joint_visible,
             culls,
+            shadow_reach,
             merged_records,
             merged_items,
             ..
@@ -2081,7 +2098,9 @@ impl Renderer {
                         && (view != SHADOW_VIEW
                             || (part.cast_shadow && !(merged && part.merged_shadow)))
                         && (view != REFLECTION_VIEW || instance.reflected)
-                        && (!part.frustum_culled || cull.frustum.intersects_sphere(sphere))
+                        && (!part.frustum_culled
+                            || (cull.frustum.intersects_sphere(sphere)
+                                && (view != SHADOW_VIEW || shadow_reach.reaches(sphere))))
                 };
                 let depth = |view: usize, sphere: &Sphere| {
                     (sphere.center - culls[view].origin).dot(culls[view].forward)
@@ -2148,7 +2167,9 @@ impl Renderer {
                 let shadow = &culls[SHADOW_VIEW].frustum;
                 if model.scenery {
                     for (group, mesh) in model.shadow.iter().enumerate() {
-                        if shadow.intersects_sphere(&mesh.bounds) {
+                        if shadow.intersects_sphere(&mesh.bounds)
+                            && shadow_reach.reaches(&mesh.bounds)
+                        {
                             merged_items.push(MergedItem {
                                 pipeline: mesh.pipeline,
                                 model: instance.model,
@@ -2173,7 +2194,10 @@ impl Renderer {
                         merged_records.push(record);
                     }
                     match sphere {
-                        Some(sphere) if shadow.intersects_sphere(&sphere) => {
+                        Some(sphere)
+                            if shadow.intersects_sphere(&sphere)
+                                && shadow_reach.reaches(&sphere) =>
+                        {
                             for (group, mesh) in model.shadow.iter().enumerate() {
                                 merged_items.push(MergedItem {
                                     pipeline: mesh.pipeline,

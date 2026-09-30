@@ -186,6 +186,65 @@ impl Frustum {
             .iter()
             .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= -sphere.radius)
     }
+
+    /// Whether `sphere`, moved in a straight line by `sweep`, may touch the
+    /// frustum on the way. Conservative: a plane rejects it only when both ends
+    /// of the sweep lie wholly outside that plane.
+    pub fn intersects_swept_sphere(&self, sphere: &Sphere, sweep: Vec3) -> bool {
+        let end = sphere.center + sweep;
+        self.planes.iter().all(|plane| {
+            let distance = |point: Vec3| plane.xyz().dot(point) + plane.w;
+            distance(sphere.center).max(distance(end)) >= -sphere.radius
+        })
+    }
+}
+
+/// Added to a caster's radius by [`ShadowReach::reaches`]: a receiver reads the
+/// shadow map a normal bias and a filter footprint away from itself, a few
+/// texels of about 7 cm, so a shadow that ends just outside a view still counts.
+const SHADOW_REACH_MARGIN: f32 = 0.5;
+
+/// Where the sun's shadows can show this frame. A caster matters only when its
+/// bounds, swept along the light down to the lowest surface that receives a
+/// shadow, reach a view that samples the shadow map; the rest of the arena's
+/// casters would fill shadow-map texels no drawn pixel reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowReach {
+    /// Unit direction the sunlight travels.
+    pub light: Vec3,
+    /// No receiving surface lies below this height (`SunShadow::receiver_floor`).
+    pub floor: f32,
+    /// The views that sample the shadow map: the main view and, while it draws,
+    /// the water reflection.
+    pub views: [Option<Frustum>; 2],
+}
+
+impl ShadowReach {
+    /// Every caster reaches (no views known yet, or no floor).
+    pub fn everywhere() -> Self {
+        Self {
+            light: Vec3::NEG_Y,
+            floor: f32::NEG_INFINITY,
+            views: [None, None],
+        }
+    }
+
+    pub fn reaches(&self, sphere: &Sphere) -> bool {
+        // A sun at or below the horizon never meets the floor: keep every caster.
+        if self.light.y >= -1e-3 || !self.floor.is_finite() {
+            return true;
+        }
+        // The sphere's top is the last of its points to fall to the floor.
+        let travel = ((sphere.center.y + sphere.radius - self.floor) / -self.light.y).max(0.0);
+        let padded = Sphere {
+            center: sphere.center,
+            radius: sphere.radius + SHADOW_REACH_MARGIN,
+        };
+        self.views
+            .iter()
+            .flatten()
+            .any(|view| view.intersects_swept_sphere(&padded, self.light * travel))
+    }
 }
 
 /// The sun's orthographic shadow camera (Three `DirectionalLight.shadow.camera`):
@@ -383,6 +442,61 @@ mod tests {
         assert!(frustum.intersects_sphere(&sphere(200.0, 0.0, 0.0, 190.0)));
         assert!(!frustum.intersects_sphere(&sphere(0.0, 0.0, -600.0, 5.0)));
         assert!(!frustum.intersects_sphere(&sphere(0.0, 60.0, 40.0, 1.0)));
+    }
+
+    #[test]
+    fn swept_spheres_count_anywhere_along_the_sweep() {
+        let camera = game_camera();
+        let frustum = Frustum::from_view_projection(&camera.view_projection());
+        let outside = Sphere {
+            center: Vec3::new(200.0, 0.0, 0.0),
+            radius: 1.0,
+        };
+        assert!(!frustum.intersects_swept_sphere(&outside, Vec3::ZERO));
+        assert!(!frustum.intersects_swept_sphere(&outside, Vec3::new(50.0, 0.0, 0.0)));
+        // Ending inside, or passing straight through, both touch the view.
+        assert!(frustum.intersects_swept_sphere(&outside, Vec3::new(-200.0, 0.0, 0.0)));
+        assert!(frustum.intersects_swept_sphere(&outside, Vec3::new(-400.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn shadow_reach_keeps_casters_whose_shadow_lands_in_a_view() {
+        let camera = game_camera();
+        let view = Frustum::from_view_projection(&camera.view_projection());
+        let reach = ShadowReach {
+            light: Vec3::new(1.0, -1.0, 0.0).normalize(),
+            floor: -10.0,
+            views: [Some(view), None],
+        };
+        let at = |x: f32, y: f32| Sphere {
+            center: Vec3::new(x, y, 0.0),
+            radius: 1.0,
+        };
+        assert!(reach.reaches(&at(0.0, 1.0)));
+        // Off the left of the view, but tall enough that its shadow falls into it.
+        assert!(!view.intersects_sphere(&at(-60.0, 40.0)));
+        assert!(reach.reaches(&at(-60.0, 40.0)));
+        // Off the right: its shadow falls farther right still.
+        assert!(!reach.reaches(&at(60.0, 1.0)));
+        // A second view (the reflection) keeps what it sees.
+        let reflected = ShadowReach {
+            views: [Some(view), Some(view_from(Vec3::new(60.0, 20.0, 20.0)))],
+            ..reach
+        };
+        assert!(reflected.reaches(&at(60.0, 1.0)));
+        // No floor, or a sun at the horizon, keeps everything.
+        assert!(ShadowReach::everywhere().reaches(&at(60.0, 1.0)));
+        let level = ShadowReach {
+            light: Vec3::X,
+            ..reach
+        };
+        assert!(level.reaches(&at(60.0, 1.0)));
+    }
+
+    fn view_from(position: Vec3) -> Frustum {
+        let mut camera = game_camera();
+        camera.look_at(position, Vec3::new(60.0, 0.0, 0.0));
+        Frustum::from_view_projection(&camera.view_projection())
     }
 
     #[test]

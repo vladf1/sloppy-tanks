@@ -82,6 +82,7 @@ impl RenderLab {
             bias: spec.shadow.bias,
             normal_bias: spec.shadow.normal_bias,
             radius: 1.0,
+            receiver_floor: f32::NEG_INFINITY,
         });
         self.renderer.set_point_light(
             0,
