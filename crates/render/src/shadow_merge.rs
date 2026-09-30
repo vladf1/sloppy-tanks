@@ -165,15 +165,15 @@ pub fn merge_shadows(
         merge.merged[index] = true;
         let side = caster_side(part);
         for placement in placements {
-            let moved: Vec<Vec3> = if scenery {
-                positions
-                    .iter()
-                    .map(|p| placement.transform_point3(*p))
-                    .collect()
-            } else {
-                positions.clone()
+            // Transformed on the fly, twice, rather than into a copy of the part.
+            let moved = |p: &Vec3| {
+                if scenery {
+                    placement.transform_point3(*p)
+                } else {
+                    *p
+                }
             };
-            let sphere = Sphere::from_points(moved.iter().copied());
+            let sphere = Sphere::from_points(positions.iter().map(moved));
             let cell = if scenery && cell_size > 0.0 {
                 (
                     (sphere.center.x / cell_size).floor() as i32,
@@ -198,13 +198,21 @@ pub fn merge_shadows(
             };
             let target = &mut merge.groups[group];
             let base = target.vertices.len() as u32;
+            target.vertices.reserve(positions.len());
+            target.indices.reserve(indices.len());
             target
                 .vertices
-                .extend(moved.iter().zip(&uvs).map(|(p, uv)| ShadowVertex {
-                    position: p.to_array(),
-                    slot,
-                    uv: uv.to_array(),
-                }));
+                .extend(
+                    positions
+                        .iter()
+                        .map(moved)
+                        .zip(&uvs)
+                        .map(|(p, uv)| ShadowVertex {
+                            position: p.to_array(),
+                            slot,
+                            uv: uv.to_array(),
+                        }),
+                );
             target.indices.extend(indices.iter().map(|i| base + i));
             bounds[group] = Some(bounds[group].map_or(sphere, |b| b.union(&sphere)));
         }

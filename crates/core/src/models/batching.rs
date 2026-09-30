@@ -80,10 +80,18 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
 type PaintedPart = (Node, Option<Color>);
 
 /// A part's geometry de-indexed and moved into its parent's frame, with its paint
-/// as a vertex color when the batch uses a vertex-color material.
-fn baked_part(node: &Node, mesh: &Mesh, paint: Option<Color>) -> Mesh {
-    let mut baked = mesh.to_non_indexed();
-    baked.apply_matrix4(&compose(node.position, node.rotation, node.scale));
+/// as a vertex color when the batch uses a vertex-color material. A non-indexed
+/// mesh only this part holds is taken rather than copied: merged scenery (the quarry
+/// walls) runs to hundreds of thousands of vertices.
+fn baked_part(node: Node, paint: Option<Color>) -> Mesh {
+    let transform = compose(node.position, node.rotation, node.scale);
+    let mesh = node.drawable.expect("batched parts are meshes").mesh;
+    let mut baked = match Arc::try_unwrap(mesh) {
+        Ok(mesh) if mesh.indices.is_none() => mesh,
+        Ok(mesh) => mesh.to_non_indexed(),
+        Err(shared) => shared.to_non_indexed(),
+    };
+    baked.apply_matrix4(&transform);
     if let Some(Color(hex)) = paint {
         let [r, g, b] = hex_to_linear(hex);
         baked.colors = vec![[r as f32, g as f32, b as f32]; baked.positions.len()];
@@ -133,11 +141,8 @@ pub fn batch(group: &mut Node) {
     group.children = kept;
     for (material, parts) in batches {
         let baked: Vec<Mesh> = parts
-            .iter()
-            .map(|(node, paint)| {
-                let drawable = node.drawable.as_ref().expect("batched parts are meshes");
-                baked_part(node, &drawable.mesh, *paint)
-            })
+            .into_iter()
+            .map(|(node, paint)| baked_part(node, paint))
             .collect();
         // Like mergeGeometries, parts with mismatched attributes produce nothing.
         if let Some(merged) = merge_geometries(&baked.iter().collect::<Vec<_>>()) {

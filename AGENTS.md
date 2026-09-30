@@ -202,6 +202,13 @@ a slow run.
   instanced call, identical covers share models, static scenery is baked per
   material and cell, and shadow casters merge per model. Do not turn a model
   part or an entity into its own draw or its own Wasm/JS crossing.
+- Wasm linear memory never shrinks, so the page keeps its peak heap for good.
+  Fill GPU buffers with `queue.write_buffer`, not `create_buffer_init` or
+  `mapped_at_creation` (the browser backend stages the whole mapped range in a
+  Wasm-side copy); stream large meshes in chunks; hand generated pixels to the
+  GPU as JS `ImageData`; size merged geometry up front and move, not clone,
+  parts a merge consumes. Check a map's `WebAssembly.Memory` size after loading
+  it when changing scenery or upload paths.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.

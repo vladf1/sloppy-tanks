@@ -377,8 +377,25 @@ pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
     if parts.iter().any(|mesh| layout(mesh) != expected) {
         return None;
     }
+    // Sized up front: merged scenery reaches hundreds of thousands of vertices,
+    // and growing by doubling would copy it repeatedly and keep the slack.
+    let vertices: usize = parts.iter().map(|mesh| mesh.vertex_count()).sum();
+    fn sized<T>(template: &[T], vertices: usize) -> Vec<T> {
+        Vec::with_capacity(if template.is_empty() { 0 } else { vertices })
+    }
     let mut merged = Mesh {
-        indices: template.indices.is_some().then(Vec::new),
+        positions: Vec::with_capacity(vertices),
+        normals: sized(&template.normals, vertices),
+        uvs: sized(&template.uvs, vertices),
+        colors: sized(&template.colors, vertices),
+        indices: template.indices.as_ref().map(|_| {
+            Vec::with_capacity(
+                parts
+                    .iter()
+                    .map(|mesh| mesh.indices.as_ref().map_or(0, Vec::len))
+                    .sum(),
+            )
+        }),
         ..Mesh::default()
     };
     for mesh in &parts {
@@ -392,7 +409,12 @@ pub fn merge_geometries(meshes: &[&Mesh]) -> Option<Mesh> {
         merged.colors.extend_from_slice(&mesh.colors);
     }
     for attribute in &template.attributes {
-        let mut data = Vec::new();
+        let mut data = Vec::with_capacity(
+            parts
+                .iter()
+                .map(|mesh| mesh.attribute(attribute.name).map_or(0, |a| a.data.len()))
+                .sum(),
+        );
         for mesh in &parts {
             let source = mesh.attribute(attribute.name)?;
             if source.item_size != attribute.item_size {
@@ -445,5 +467,21 @@ mod tests {
         assert_eq!(merged, colored);
         let only_empty = merge_geometries(&[&empty, &empty]).expect("nothing to merge");
         assert_eq!(only_empty.vertex_count(), 0);
+    }
+
+    #[test]
+    fn merged_meshes_are_allocated_at_their_size() {
+        // Merged scenery is large and kept for the page's lifetime: no growth slack.
+        let mut part = triangle(0.0).to_non_indexed();
+        part.indices = Some(vec![0, 1, 2]);
+        part.set_attribute(Attribute::vertex("origin", 3, vec![0.5; 9]));
+        let parts: Vec<Mesh> = (0..37).map(|_| part.clone()).collect();
+        let merged = merge_geometries(&parts.iter().collect::<Vec<_>>()).expect("same layout");
+        assert_eq!(merged.positions.capacity(), 37 * 3);
+        assert_eq!(merged.normals.capacity(), 37 * 3);
+        assert_eq!(merged.uvs.capacity(), 37 * 3);
+        assert_eq!(merged.colors.capacity(), 0);
+        assert_eq!(merged.indices.as_ref().map(Vec::capacity), Some(37 * 3));
+        assert_eq!(merged.attributes[0].data.capacity(), 37 * 9);
     }
 }

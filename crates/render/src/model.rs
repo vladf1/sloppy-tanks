@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::ops::Range;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
@@ -66,40 +67,66 @@ impl MeshData {
         paint: Option<[f32; 3]>,
     ) {
         let base = self.vertices.len() as u32;
-        let normal_matrix = transform.map(|m| Mat3::from_mat4(*m).inverse().transpose());
-        let alpha = mesh.vertex_alpha();
-        for (i, position) in mesh.positions.iter().enumerate() {
-            let mut position = Vec3::from(*position);
-            let mut normal = mesh.normals.get(i).map_or(Vec3::Y, |n| Vec3::from(*n));
-            if let (Some(matrix), Some(normal_matrix)) = (transform, normal_matrix) {
-                position = matrix.transform_point3(position);
-                normal = (normal_matrix * normal).normalize_or_zero();
-            }
-            let [r, g, b] =
-                paint.unwrap_or_else(|| mesh.colors.get(i).copied().unwrap_or([1.0; 3]));
-            let a = alpha.and_then(|alpha| alpha.get(i)).copied().unwrap_or(1.0);
-            self.vertices.push(Vertex {
-                position: position.into(),
-                normal: normal.into(),
-                uv: mesh.uvs.get(i).copied().unwrap_or_default(),
-                color: [r, g, b, a],
-            });
-            for name in attributes {
-                let mut value = [0.0; 4];
-                if let Some(attribute) = mesh.attribute(name).filter(|a| !a.per_instance) {
-                    let size = attribute.item_size as usize;
-                    for (k, slot) in value.iter_mut().enumerate().take(size.min(4)) {
-                        *slot = attribute.data.get(i * size + k).copied().unwrap_or(0.0);
-                    }
-                }
-                self.extra.push(value);
-            }
-        }
+        let count = mesh.positions.len();
+        self.vertices.reserve(count);
+        self.extra.reserve(count * attributes.len());
+        self.indices
+            .reserve(mesh.indices.as_ref().map_or(count, Vec::len));
+        push_vertices(
+            &mut self.vertices,
+            &mut self.extra,
+            mesh,
+            attributes,
+            0..count,
+            transform,
+            paint,
+        );
         match &mesh.indices {
             Some(indices) => self.indices.extend(indices.iter().map(|i| base + i)),
             None => self
                 .indices
                 .extend(base..base + mesh.positions.len() as u32),
+        }
+    }
+}
+
+/// Convert vertices `range` of `mesh` to the upload layout, moved by `transform`
+/// and painted with `paint` when given, with their `attributes` vec4s.
+fn push_vertices(
+    vertices: &mut Vec<Vertex>,
+    extra: &mut Vec<[f32; 4]>,
+    mesh: &Mesh,
+    attributes: &[&str],
+    range: Range<usize>,
+    transform: Option<&Mat4>,
+    paint: Option<[f32; 3]>,
+) {
+    let normal_matrix = transform.map(|m| Mat3::from_mat4(*m).inverse().transpose());
+    let alpha = mesh.vertex_alpha();
+    for i in range {
+        let mut position = Vec3::from(mesh.positions[i]);
+        let mut normal = mesh.normals.get(i).map_or(Vec3::Y, |n| Vec3::from(*n));
+        if let (Some(matrix), Some(normal_matrix)) = (transform, normal_matrix) {
+            position = matrix.transform_point3(position);
+            normal = (normal_matrix * normal).normalize_or_zero();
+        }
+        let [r, g, b] = paint.unwrap_or_else(|| mesh.colors.get(i).copied().unwrap_or([1.0; 3]));
+        let a = alpha.and_then(|alpha| alpha.get(i)).copied().unwrap_or(1.0);
+        vertices.push(Vertex {
+            position: position.into(),
+            normal: normal.into(),
+            uv: mesh.uvs.get(i).copied().unwrap_or_default(),
+            color: [r, g, b, a],
+        });
+        for name in attributes {
+            let mut value = [0.0; 4];
+            if let Some(attribute) = mesh.attribute(name).filter(|a| !a.per_instance) {
+                let size = attribute.item_size as usize;
+                for (k, slot) in value.iter_mut().enumerate().take(size.min(4)) {
+                    *slot = attribute.data.get(i * size + k).copied().unwrap_or(0.0);
+                }
+            }
+            extra.push(value);
         }
     }
 }
@@ -112,6 +139,28 @@ pub fn mesh_data(mesh: &Mesh, attributes: &[&str]) -> MeshData {
     };
     data.append(mesh, attributes, None, None);
     data.finish()
+}
+
+/// Vertices `range` of an unmodified shared mesh as [`mesh_data`] lays them out,
+/// with their effect attribute vec4s, so a large mesh can go to the GPU in pieces
+/// instead of through one full-size copy.
+pub fn shared_vertices(
+    mesh: &Mesh,
+    attributes: &[&str],
+    range: Range<usize>,
+) -> (Vec<Vertex>, Vec<[f32; 4]>) {
+    let mut vertices = Vec::with_capacity(range.len());
+    let mut extra = Vec::with_capacity(range.len() * attributes.len());
+    push_vertices(
+        &mut vertices,
+        &mut extra,
+        mesh,
+        attributes,
+        range,
+        None,
+        None,
+    );
+    (vertices, extra)
 }
 
 /// One InstancedMesh instance relative to its part.
@@ -696,6 +745,29 @@ mod tests {
         );
         assert_eq!(instance_attribute_data(&quad(), 0), None);
         assert_eq!(mesh_data(&quad(), &[]).vertices[0].color, [1.0; 4]);
+    }
+
+    #[test]
+    fn shared_vertices_stream_the_whole_upload_in_pieces() {
+        use sloppy_core::geometry::{Attribute, VERTEX_ALPHA, sphere_geometry};
+        let mut mesh = sphere_geometry(1.0, 12, 8);
+        let count = mesh.positions.len();
+        mesh.colors = (0..count)
+            .map(|i| [i as f32 / count as f32, 0.5, 0.25])
+            .collect();
+        let alpha = (0..count).map(|i| (i % 3) as f32 / 2.0).collect();
+        mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
+        let origin = (0..count * 3).map(|i| i as f32).collect();
+        mesh.set_attribute(Attribute::vertex("origin", 3, origin));
+        let whole = mesh_data(&mesh, &["origin"]);
+        let (mut vertices, mut extra) = (Vec::new(), Vec::new());
+        for start in (0..count).step_by(17) {
+            let (v, e) = shared_vertices(&mesh, &["origin"], start..(start + 17).min(count));
+            vertices.extend(v);
+            extra.extend(e);
+        }
+        assert_eq!(vertices, whole.vertices);
+        assert_eq!(extra, whole.extra);
     }
 
     #[test]

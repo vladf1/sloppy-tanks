@@ -140,10 +140,17 @@ impl RenderLab {
     }
 
     /// RGBA8 pixels for `TextureSource::Generated(name)`, rows top to bottom.
-    pub fn set_generated_texture(&mut self, name: &str, width: u32, height: u32, rgba: Vec<u8>) {
+    pub fn set_generated_texture(
+        &mut self,
+        name: &str,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> Result<(), JsValue> {
         let name: &'static str = Box::leak(name.to_owned().into_boxed_str());
-        self.renderer
-            .set_generated_texture(name, width, height, rgba);
+        let image = sloppy_render::gpu::image_data(width, height, &rgba)?;
+        self.renderer.set_generated_texture(name, image);
+        Ok(())
     }
 
     pub fn textures_pending(&self) -> u32 {

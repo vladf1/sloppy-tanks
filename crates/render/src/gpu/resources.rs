@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Effect, Material, TextureRef};
 use wgpu::util::DeviceExt;
@@ -190,27 +191,39 @@ pub struct MeshStore {
     released: bool,
 }
 
-fn buffer(
+/// A buffer holding `contents`. It is written through the queue rather than mapped
+/// at creation: the browser backend stages a mapped range in a Wasm-side copy of the
+/// whole buffer, and linear memory never shrinks, so a large scenery mesh would
+/// leave the heap that much bigger for the rest of the page.
+pub fn buffer_with_contents(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     label: &str,
     contents: &[u8],
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
     // Pad so empty meshes still get a valid, 4-byte aligned buffer.
-    let mut padded;
-    let contents = if !contents.len().is_multiple_of(4) || contents.is_empty() {
-        padded = contents.to_vec();
-        padded.resize(contents.len().div_ceil(4).max(1) * 4, 0);
-        &padded[..]
-    } else {
-        contents
-    };
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let aligned = contents.len() / 4 * 4;
+    let size = contents.len().div_ceil(4).max(1) * 4;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
-        contents,
-        usage,
-    })
+        size: size as u64,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    if aligned > 0 {
+        queue.write_buffer(&buffer, 0, &contents[..aligned]);
+    }
+    if aligned < contents.len() {
+        let mut tail = [0; 4];
+        tail[..contents.len() - aligned].copy_from_slice(&contents[aligned..]);
+        queue.write_buffer(&buffer, aligned as u64, &tail);
+    }
+    buffer
 }
+
+/// Vertices converted per write when a shared mesh streams to the GPU.
+const UPLOAD_CHUNK_VERTICES: usize = 16 * 1024;
 
 impl MeshStore {
     fn insert(&mut self, mesh: GpuMesh) -> u32 {
@@ -226,22 +239,25 @@ impl MeshStore {
         }
     }
 
-    fn upload(device: &wgpu::Device, data: &MeshData) -> GpuMesh {
-        let vertex = buffer(
+    fn upload(device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshData) -> GpuMesh {
+        let vertex = buffer_with_contents(
             device,
+            queue,
             "mesh vertices",
             bytemuck::cast_slice(&data.vertices),
             wgpu::BufferUsages::VERTEX,
         );
-        let index = buffer(
+        let index = buffer_with_contents(
             device,
+            queue,
             "mesh indices",
             bytemuck::cast_slice(&data.indices),
             wgpu::BufferUsages::INDEX,
         );
         let extra = (data.extra_attributes > 0).then(|| {
-            buffer(
+            buffer_with_contents(
                 device,
+                queue,
                 "mesh effect attributes",
                 bytemuck::cast_slice(&data.extra),
                 wgpu::BufferUsages::VERTEX,
@@ -263,10 +279,87 @@ impl MeshStore {
         }
     }
 
+    /// Stream an unmodified shared mesh to the GPU a chunk of vertices at a time:
+    /// the quarry's merged walls alone would need a 20 MB upload copy in linear
+    /// memory, which never shrinks. Indices go straight from the mesh.
+    fn upload_shared(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &Mesh,
+        attributes: &[&str],
+    ) -> GpuMesh {
+        let count = mesh.positions.len();
+        let empty = |label, size: usize, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size.max(4) as u64,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let vertex_size = size_of::<Vertex>();
+        let extra_size = attributes.len() * size_of::<[f32; 4]>();
+        let vertex = empty(
+            "mesh vertices",
+            count * vertex_size,
+            wgpu::BufferUsages::VERTEX,
+        );
+        let extra = (!attributes.is_empty()).then(|| {
+            empty(
+                "mesh effect attributes",
+                count * extra_size,
+                wgpu::BufferUsages::VERTEX,
+            )
+        });
+        let index = match &mesh.indices {
+            Some(indices) => buffer_with_contents(
+                device,
+                queue,
+                "mesh indices",
+                bytemuck::cast_slice(indices),
+                wgpu::BufferUsages::INDEX,
+            ),
+            None => empty("mesh indices", count * 4, wgpu::BufferUsages::INDEX),
+        };
+        for start in (0..count).step_by(UPLOAD_CHUNK_VERTICES) {
+            let range = start..(start + UPLOAD_CHUNK_VERTICES).min(count);
+            let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range.clone());
+            queue.write_buffer(
+                &vertex,
+                (start * vertex_size) as u64,
+                bytemuck::cast_slice(&vertices),
+            );
+            if let Some(extra) = &extra {
+                queue.write_buffer(
+                    extra,
+                    (start * extra_size) as u64,
+                    bytemuck::cast_slice(&extras),
+                );
+            }
+            if mesh.indices.is_none() {
+                let indices: Vec<u32> = (range.start as u32..range.end as u32).collect();
+                queue.write_buffer(&index, (start * 4) as u64, bytemuck::cast_slice(&indices));
+            }
+        }
+        let index_count = mesh.indices.as_ref().map_or(count, Vec::len);
+        GpuMesh {
+            vertex,
+            index,
+            extra,
+            index_count: index_count as u32,
+            extra_attributes: attributes.len() as u8,
+            bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
+            bytes: (count * (vertex_size + extra_size) + index_count * 4) as u64,
+            source: None,
+            users: 0,
+        }
+    }
+
     /// The GPU mesh for a shared `Arc<Mesh>`, uploading it on first use.
     pub fn shared(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         mesh: &Arc<Mesh>,
         attributes: &'static [&'static str],
     ) -> u32 {
@@ -274,7 +367,7 @@ impl MeshStore {
         if let Some(&index) = self.shared.get(&key) {
             return index;
         }
-        let mut gpu = Self::upload(device, &crate::model::mesh_data(mesh, attributes));
+        let mut gpu = Self::upload_shared(device, queue, mesh, attributes);
         gpu.source = Some((mesh.clone(), attributes.to_vec()));
         let index = self.insert(gpu);
         self.shared.insert(key, index);
@@ -282,8 +375,8 @@ impl MeshStore {
     }
 
     /// Upload merged geometry owned by one model; release it with `release`.
-    pub fn owned(&mut self, device: &wgpu::Device, data: &MeshData) -> u32 {
-        let gpu = Self::upload(device, data);
+    pub fn owned(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshData) -> u32 {
+        let gpu = Self::upload(device, queue, data);
         self.insert(gpu)
     }
 

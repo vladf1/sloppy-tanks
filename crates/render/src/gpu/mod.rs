@@ -32,6 +32,7 @@ mod textures;
 
 pub use inspect::InstanceState;
 pub use pools::PoolId;
+pub use textures::image_data;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,7 +61,7 @@ use crate::shadow_merge::{MergeKind, ShadowGroup, merge_shadows};
 use context::{ColorTarget, Context, DEPTH_FORMAT};
 use pipelines::{Pipelines, SAMPLE_COUNT, shadow_merged_index};
 use pools::PoolEntry;
-use resources::{Layouts, MaterialStore, MeshStore};
+use resources::{Layouts, MaterialStore, MeshStore, buffer_with_contents};
 use textures::TextureStore;
 
 /// Whether a resource survives `reset_round`.
@@ -990,7 +991,9 @@ impl Renderer {
             return;
         };
         let device = &self.ctx.device;
-        let mesh = self.meshes.shared(device, &settings.mesh, &[]);
+        let mesh = self
+            .meshes
+            .shared(device, &self.ctx.queue, &settings.mesh, &[]);
         self.meshes.get_mut(mesh).users += 1;
         let normals = water_normals();
         self.textures.request(&normals);
@@ -1059,16 +1062,10 @@ impl Renderer {
         }
     }
 
-    /// Supply pixels for `TextureSource::Generated(name)` (RGBA8, rows top to
-    /// bottom). Materials using it pick it up on the next frame.
-    pub fn set_generated_texture(
-        &mut self,
-        name: &'static str,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) {
-        self.textures.set_generated(name, width, height, rgba);
+    /// Supply pixels for `TextureSource::Generated(name)` (rows top to bottom;
+    /// see [`image_data`]). Materials using it pick it up on the next frame.
+    pub fn set_generated_texture(&mut self, name: &'static str, image: web_sys::ImageData) {
+        self.textures.set_generated(name, image);
     }
 
     /// Textures still loading; wait for 0 before the warm-up frame.
@@ -1184,6 +1181,7 @@ impl Renderer {
 
     fn register(&mut self, prepared: PreparedModel, lifetime: Lifetime, scenery: bool) -> ModelId {
         let device = self.ctx.device.clone();
+        let queue = self.ctx.queue.clone();
         let merge = {
             let effects = &self.effects;
             merge_shadows(
@@ -1197,7 +1195,7 @@ impl Renderer {
         let owned: Vec<u32> = prepared
             .meshes
             .iter()
-            .map(|data| self.meshes.owned(&device, data))
+            .map(|data| self.meshes.owned(&device, &queue, data))
             .collect();
         let mut parts = Vec::with_capacity(prepared.parts.len());
         for (prepared_index, part) in prepared.parts.iter().enumerate() {
@@ -1210,7 +1208,7 @@ impl Renderer {
             );
             let attributes = self.effects.attributes(self.materials.get(material).effect);
             let mesh = match &part.mesh {
-                PartMesh::Shared(mesh) => self.meshes.shared(&device, mesh, attributes),
+                PartMesh::Shared(mesh) => self.meshes.shared(&device, &queue, mesh, attributes),
                 PartMesh::Owned(index) => owned[*index],
             };
             if self.meshes.get(mesh).index_count == 0 {
@@ -1270,7 +1268,7 @@ impl Renderer {
                     self.materials.get_mut(index).users += 1;
                     index
                 });
-                upload_shadow_mesh(&device, &group, material)
+                upload_shadow_mesh(&device, &queue, &group, material)
             })
             .collect();
         let skeleton = PreparedModel {
@@ -2647,19 +2645,24 @@ impl DrawContext<'_> {
 
 fn upload_shadow_mesh(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     group: &ShadowGroup,
     material: Option<u32>,
 ) -> ShadowMesh {
-    let vertex = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("shadow merged vertices"),
-        contents: bytemuck::cast_slice(&group.vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let index = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("shadow merged indices"),
-        contents: bytemuck::cast_slice(&group.indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let vertex = buffer_with_contents(
+        device,
+        queue,
+        "shadow merged vertices",
+        bytemuck::cast_slice(&group.vertices),
+        wgpu::BufferUsages::VERTEX,
+    );
+    let index = buffer_with_contents(
+        device,
+        queue,
+        "shadow merged indices",
+        bytemuck::cast_slice(&group.indices),
+        wgpu::BufferUsages::INDEX,
+    );
     ShadowMesh {
         vertex,
         index,

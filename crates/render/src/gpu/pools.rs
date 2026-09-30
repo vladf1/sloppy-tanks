@@ -54,7 +54,9 @@ impl Renderer {
             &material,
         );
         let attributes = self.effects.attributes(self.materials.get(material).effect);
-        let mesh = self.meshes.shared(&device, &desc.mesh, attributes);
+        let mesh = self
+            .meshes
+            .shared(&device, &self.ctx.queue, &desc.mesh, attributes);
         let capacity = desc.capacity.max(1);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(desc.label),

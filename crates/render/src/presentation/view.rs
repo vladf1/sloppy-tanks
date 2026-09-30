@@ -928,7 +928,7 @@ impl Presentation {
     }
 
     /// The pixels of a claimed bake; `false` when the key was no longer awaited.
-    pub fn supply_texture(&mut self, key: &str, rgba: Vec<u8>) -> Result<bool, String> {
+    pub fn supply_texture(&mut self, key: &str, rgba: &js_sys::Uint8Array) -> Result<bool, String> {
         self.textures.supply(&mut self.renderer, key, rgba)
     }
 

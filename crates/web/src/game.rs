@@ -386,7 +386,12 @@ impl Game {
     }
 
     /// The pixels of a claimed bake; `false` when the arena no longer waits for them.
-    pub fn supply_texture(&mut self, key: &str, rgba: Vec<u8>) -> Result<bool, JsValue> {
+    /// They reach the GPU from JS memory, never copied into this instance's heap.
+    pub fn supply_texture(
+        &mut self,
+        key: &str,
+        rgba: &js_sys::Uint8Array,
+    ) -> Result<bool, JsValue> {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 

@@ -1,14 +1,15 @@
 //! Generated textures scenery names by key (`TextureSource::Generated`): the
 //! quarry soil, baked in Rust, and the signs and harbor labels, drawn by the
 //! browser's Canvas 2D (its fonts) from `effects_scenery::canvas_texture` and read
-//! back as RGBA.
+//! back as an `ImageData`.
 //!
 //! The soil takes about 0.6 s of Wasm, so the page claims it
 //! ([`GeneratedTextures::claim_bake`]) and bakes it in a worker running the engine's
 //! `bake_texture` while the main thread builds the arena and its pipelines; the
-//! pixels come back through [`GeneratedTextures::supply`]. A page that claims
-//! nothing (the labs), or whose worker fails, bakes it here in row bands between
-//! preparation steps instead.
+//! pixels come back through [`GeneratedTextures::supply`] and go to the GPU from JS
+//! memory, never copied into this instance's heap. A page that claims nothing (the
+//! labs), or whose worker fails, bakes it here in row bands between preparation
+//! steps instead.
 
 use std::collections::HashSet;
 
@@ -130,7 +131,7 @@ impl GeneratedTextures {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use super::*;
-    use crate::gpu::Renderer;
+    use crate::gpu::{Renderer, image_data};
     use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture, canvas_texture};
     use wasm_bindgen::JsCast;
 
@@ -146,9 +147,7 @@ mod browser {
                     self.soil = Some(SoilBake::default());
                 } else if let Some(canvas) = canvas_texture(key) {
                     match draw_canvas(&canvas) {
-                        Ok(rgba) => {
-                            renderer.set_generated_texture(key, canvas.width, canvas.height, rgba)
-                        }
+                        Ok(image) => renderer.set_generated_texture(key, image),
                         Err(error) => web_sys::console::error_1(
                             &format!("canvas texture {key}: {error:?}").into(),
                         ),
@@ -163,16 +162,25 @@ mod browser {
             &mut self,
             renderer: &mut Renderer,
             key: &str,
-            rgba: Vec<u8>,
+            rgba: &js_sys::Uint8Array,
         ) -> Result<bool, String> {
             let size = QUARRY_SOIL_SIZE as u32;
-            if rgba.len() != (size * size * 4) as usize {
-                return Err(format!("{key}: {} bytes baked", rgba.len()));
+            if rgba.length() != size * size * 4 {
+                return Err(format!("{key}: {} bytes baked", rgba.length()));
             }
+            // A view of the same bytes, not a copy.
+            let pixels = js_sys::Uint8ClampedArray::new_with_byte_offset_and_length(
+                &rgba.buffer(),
+                rgba.byte_offset(),
+                rgba.length(),
+            );
+            let image =
+                web_sys::ImageData::new_with_js_u8_clamped_array_and_sh(&pixels, size, size)
+                    .map_err(|error| format!("{key}: {error:?}"))?;
             let Some(key) = self.take_supplied(key) else {
                 return Ok(false);
             };
-            renderer.set_generated_texture(key, size, size, rgba);
+            renderer.set_generated_texture(key, image);
             Ok(true)
         }
 
@@ -182,7 +190,12 @@ mod browser {
                 && let Some(pixels) = bake.step(rows)
             {
                 let size = QUARRY_SOIL_SIZE as u32;
-                renderer.set_generated_texture(QUARRY_SOIL_TEXTURE, size, size, pixels);
+                match image_data(size, size, &pixels) {
+                    Ok(image) => renderer.set_generated_texture(QUARRY_SOIL_TEXTURE, image),
+                    Err(error) => web_sys::console::error_1(
+                        &format!("{QUARRY_SOIL_TEXTURE}: {error:?}").into(),
+                    ),
+                }
                 self.soil = None;
             }
         }
@@ -190,7 +203,7 @@ mod browser {
 
     /// Replay the Canvas 2D steps on a fresh, transparent `OffscreenCanvas` and
     /// read back its RGBA rows (top first, straight alpha).
-    fn draw_canvas(canvas: &CanvasTexture) -> Result<Vec<u8>, wasm_bindgen::JsValue> {
+    fn draw_canvas(canvas: &CanvasTexture) -> Result<web_sys::ImageData, wasm_bindgen::JsValue> {
         let surface = web_sys::OffscreenCanvas::new(canvas.width, canvas.height)?;
         let context: web_sys::OffscreenCanvasRenderingContext2d = surface
             .get_context("2d")?
@@ -245,8 +258,7 @@ mod browser {
                 }
             }
         }
-        let image = context.get_image_data(0.0, 0.0, canvas.width as f64, canvas.height as f64)?;
-        Ok(image.data().0)
+        context.get_image_data(0.0, 0.0, canvas.width as f64, canvas.height as f64)
     }
 }
 

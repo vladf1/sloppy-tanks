@@ -1,8 +1,9 @@
 //! Textures: `public/` files fetched and decoded by the browser
-//! (`createImageBitmap`) and copied with `copyExternalImageToTexture`, plus pixels
-//! generated at runtime. Uploads flip Y like Three's `flipY` (unless the reference
-//! clears `flip_y`), so UV (0,0) is the image's bottom-left; mip levels are
-//! rendered from the level above.
+//! (`createImageBitmap`), plus pixels generated at runtime, which arrive as a JS
+//! `ImageData`; both are copied with `copyExternalImageToTexture`, so generated
+//! pixels never need a copy in the engine's linear memory (which never shrinks).
+//! Uploads flip Y like Three's `flipY` (unless the reference clears `flip_y`), so
+//! UV (0,0) is the image's bottom-left; mip levels are rendered from the level above.
 //! Until a texture arrives, materials sample a white placeholder.
 
 use std::cell::RefCell;
@@ -58,11 +59,12 @@ struct TextureEntry {
 
 enum Pixels {
     Bitmap(web_sys::ImageBitmap),
-    Raw {
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    },
+    Image(web_sys::ImageData),
+}
+
+/// RGBA8 rows (top first) as the `ImageData` a generated texture uploads from.
+pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<web_sys::ImageData, JsValue> {
+    web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(rgba), width, height)
 }
 
 struct Loaded {
@@ -244,7 +246,7 @@ async fn fetch_bitmap(url: &str) -> Result<web_sys::ImageBitmap, JsValue> {
 pub struct TextureStore {
     entries: HashMap<TextureKey, TextureEntry>,
     loaded: Rc<RefCell<Vec<Loaded>>>,
-    generated: HashMap<&'static str, (u32, u32, Vec<u8>)>,
+    generated: HashMap<&'static str, web_sys::ImageData>,
     samplers: HashMap<SamplerKey, wgpu::Sampler>,
     placeholder: wgpu::TextureView,
     mipmaps: MipmapGenerator,
@@ -325,28 +327,19 @@ impl TextureStore {
                 });
             }
             TextureSource::Generated(name) => {
-                if let Some((width, height, rgba)) = self.generated.get(name) {
+                if let Some(image) = self.generated.get(name) {
                     self.loaded.borrow_mut().push(Loaded {
                         key,
-                        result: Ok(Pixels::Raw {
-                            width: *width,
-                            height: *height,
-                            rgba: rgba.clone(),
-                        }),
+                        result: Ok(Pixels::Image(image.clone())),
                     });
                 }
             }
         }
     }
 
-    /// Provide (or replace) runtime-generated RGBA8 pixels, rows top to bottom
-    /// like a canvas. Every variant of the key re-uploads on the next frame.
-    pub fn set_generated(&mut self, name: &'static str, width: u32, height: u32, rgba: Vec<u8>) {
-        assert_eq!(
-            rgba.len(),
-            (width * height * 4) as usize,
-            "RGBA8 pixel count"
-        );
+    /// Provide (or replace) runtime-generated pixels, rows top to bottom like a
+    /// canvas. Every variant of the key re-uploads on the next frame.
+    pub fn set_generated(&mut self, name: &'static str, image: web_sys::ImageData) {
         let keys: Vec<_> = self
             .entries
             .keys()
@@ -356,14 +349,10 @@ impl TextureStore {
         for key in keys {
             self.loaded.borrow_mut().push(Loaded {
                 key,
-                result: Ok(Pixels::Raw {
-                    width,
-                    height,
-                    rgba: rgba.clone(),
-                }),
+                result: Ok(Pixels::Image(image.clone())),
             });
         }
-        self.generated.insert(name, (width, height, rgba));
+        self.generated.insert(name, image);
     }
 
     /// Upload everything that finished loading. Returns true when any texture
@@ -388,7 +377,7 @@ impl TextureStore {
                 Ok(pixels) => {
                     let (width, height) = match &pixels {
                         Pixels::Bitmap(bitmap) => (bitmap.width(), bitmap.height()),
-                        Pixels::Raw { width, height, .. } => (*width, *height),
+                        Pixels::Image(image) => (image.width(), image.height()),
                     };
                     let levels = if key.mipmaps {
                         32 - width.max(height).max(1).leading_zeros()
@@ -420,49 +409,30 @@ impl TextureStore {
                             | wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
                     });
-                    match pixels {
+                    let source = match &pixels {
                         Pixels::Bitmap(bitmap) => {
-                            queue.copy_external_image_to_texture(
-                                &wgpu::CopyExternalImageSourceInfo {
-                                    source: wgpu::ExternalImageSource::ImageBitmap(bitmap.clone()),
-                                    origin: wgpu::Origin2d::ZERO,
-                                    flip_y: key.flip_y,
-                                },
-                                wgpu::CopyExternalImageDestInfo {
-                                    texture: &texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
-                                    color_space: wgpu::PredefinedColorSpace::Srgb,
-                                    premultiplied_alpha: false,
-                                },
-                                size,
-                            );
-                            bitmap.close();
+                            wgpu::ExternalImageSource::ImageBitmap(bitmap.clone())
                         }
-                        Pixels::Raw { rgba, .. } => {
-                            // Flip rows like Three's flipY upload of a canvas.
-                            let row = (width * 4) as usize;
-                            let flipped = if key.flip_y {
-                                let mut flipped = Vec::with_capacity(rgba.len());
-                                for y in (0..height as usize).rev() {
-                                    flipped.extend_from_slice(&rgba[y * row..(y + 1) * row]);
-                                }
-                                flipped
-                            } else {
-                                rgba
-                            };
-                            queue.write_texture(
-                                texture.as_image_copy(),
-                                &flipped,
-                                wgpu::TexelCopyBufferLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(width * 4),
-                                    rows_per_image: None,
-                                },
-                                size,
-                            );
-                        }
+                        Pixels::Image(image) => wgpu::ExternalImageSource::ImageData(image.clone()),
+                    };
+                    queue.copy_external_image_to_texture(
+                        &wgpu::CopyExternalImageSourceInfo {
+                            source,
+                            origin: wgpu::Origin2d::ZERO,
+                            flip_y: key.flip_y,
+                        },
+                        wgpu::CopyExternalImageDestInfo {
+                            texture: &texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                            color_space: wgpu::PredefinedColorSpace::Srgb,
+                            premultiplied_alpha: false,
+                        },
+                        size,
+                    );
+                    if let Pixels::Bitmap(bitmap) = pixels {
+                        bitmap.close();
                     }
                     self.mipmaps.generate(device, queue, &texture, key.srgb);
                     if let Some(old) = entry.texture.take() {
