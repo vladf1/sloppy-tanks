@@ -15,6 +15,10 @@ pub const SHADOW_DEPTH: f32 = 219.5;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_BIAS: f32 = -0.0002;
 pub const SHADOW_NORMAL_BIAS: f32 = 0.05;
+/// No map shows a surface that receives the sun's shadow below this height (the
+/// deepest, the village creek bed, is under 5 m down), so the renderer skips
+/// casters whose shadows could only land outside the views.
+pub const SHADOW_RECEIVER_FLOOR: f32 = -10.0;
 /// The quarry's fitted shadow box: the arena square and the apron props beside
 /// its wall, heights from its floor cuts to its machinery.
 const QUARRY_SHADOW_HALF: f32 = 68.0;

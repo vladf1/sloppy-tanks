@@ -419,6 +419,49 @@ mod tests {
         assert!(scenery(Theme::Custom).is_none());
     }
 
+    /// The renderer drops shadow casters by where their shadow can fall above
+    /// `SHADOW_RECEIVER_FLOOR`; a receiving surface below it would lose shadows.
+    #[test]
+    fn shadow_receivers_stay_above_the_receiver_floor() {
+        fn lowest_receiver(node: &Node, parent: DMat4) -> f64 {
+            let world = parent * node.local_matrix();
+            let own = node
+                .drawable
+                .as_ref()
+                .filter(|drawable| drawable.receive_shadow)
+                .map_or(f64::INFINITY, |drawable| {
+                    let placements = match &drawable.instances {
+                        Some(list) => list.iter().map(|item| world * item.matrix).collect(),
+                        None => vec![world],
+                    };
+                    placements
+                        .iter()
+                        .flat_map(|matrix| {
+                            drawable.mesh.positions.iter().map(|&[x, y, z]| {
+                                matrix
+                                    .transform_point3(DVec3::new(x.into(), y.into(), z.into()))
+                                    .y
+                            })
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                });
+            node.children
+                .iter()
+                .map(|child| lowest_receiver(child, world))
+                .fold(own, f64::min)
+        }
+        let floor = f64::from(super::super::theme::SHADOW_RECEIVER_FLOOR);
+        for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
+            let mut model = scenery(theme).expect("scenery");
+            // Ships bob and crane loads sway: sample the animation.
+            for step in 0..40 {
+                model.scenery.update(f64::from(step) * 0.7);
+                let lowest = lowest_receiver(model.scenery.root(), DMat4::IDENTITY);
+                assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
+            }
+        }
+    }
+
     #[test]
     fn identical_covers_share_keys() {
         let drum = |x: f64| RenderCover {
