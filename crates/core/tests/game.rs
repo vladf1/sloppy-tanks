@@ -231,19 +231,36 @@ fn endless_team_matches_ignore_both_the_score_limit_and_match_timer() {
 }
 
 #[test]
-fn complete_reset_restores_counts_pickups_and_scores() {
+fn complete_reset_restores_counts_cover_pickups_scores_nav_and_rng() {
     let mut s = game();
     let counts = s.snapshot().counts;
+    let covers = |s: &Simulation| {
+        s.covers
+            .iter()
+            .map(|cover| (cover.kind, cover.alive, cover.hp))
+            .collect::<Vec<_>>()
+    };
+    let initial_covers = covers(&s);
+    let blocked = s.nav.blocked.clone();
+    let rng = s.rng.state;
     let h = human(&s);
     let (id, team) = (s.tanks[h].id, s.human_team);
     // Collapsing towers append rubble; like the TS copy, only the original covers are hit.
     for c in 0..s.covers.len() {
         s.damage_cover(c, 999.0, id, team, None, None);
     }
+    assert_ne!(covers(&s), initial_covers, "the round destroyed cover");
+    assert_ne!(s.nav.blocked, blocked, "destruction reopened navigation");
     s.shots_fired = 100;
     s.match_state.scores = [20, 10];
     s.reset(None);
     assert_eq!(s.snapshot().counts, counts);
+    assert_eq!(covers(&s), initial_covers);
+    assert_eq!(s.nav.blocked, blocked);
+    assert_eq!(
+        s.rng.state, rng,
+        "reset reseeds and replays construction draws"
+    );
     assert_eq!(s.match_state.scores, [0, 0]);
     assert_eq!(s.destroyed, 0);
     assert!(

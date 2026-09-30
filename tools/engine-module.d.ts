@@ -78,7 +78,7 @@ declare module "*/generated/engine-labs/engine.js" {
     static create(canvas: HTMLCanvasElement, assetBase: string): Promise<EffectsLab>;
     set_seed(seed: number): void;
     set_state(json: string): void;
-    event(json: string, playerHit: boolean): void;
+    event(json: string): void;
     reset(): void;
     frame(alpha: number, dt: number, time: number): void;
     prepare_step(budget: number): Uint32Array;

@@ -589,7 +589,11 @@ mod tests {
         shell.update(shell_cleanup);
         assert_eq!(shell.puffs.len(), 0);
         assert_eq!(tank.puffs.len(), 5);
-        tank.update(2.1);
+        let longest_tank_blast = TANK_BLASTS
+            .iter()
+            .map(|profile| profile.lifetime)
+            .fold(0.0, f64::max);
+        tank.update(longest_tank_blast);
         assert_eq!(tank.puffs.len(), 0);
     }
 
