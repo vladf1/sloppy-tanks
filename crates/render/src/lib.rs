@@ -12,6 +12,7 @@ pub mod effects;
 pub mod material;
 pub mod model;
 pub mod presentation;
+pub mod reflection_cull;
 pub mod shader;
 pub mod shadow_merge;
 
