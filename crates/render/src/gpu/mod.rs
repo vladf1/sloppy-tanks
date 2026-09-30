@@ -291,6 +291,9 @@ pub struct RenderStats {
     pub triangles: u64,
     pub shadow_draw_calls: u32,
     pub reflection_draw_calls: u32,
+    pub shadow_triangles: u64,
+    pub reflection_triangles: u64,
+    pub main_triangles: u64,
     /// Instance records written this frame.
     pub instance_records: u32,
     pub pipelines: u32,
@@ -2445,8 +2448,10 @@ impl Renderer {
                 }
             }
             stats.shadow_draw_calls = count;
+            stats.shadow_triangles = stats.triangles;
         }
         stats.reflection_draw_calls = 0;
+        stats.reflection_triangles = 0;
         if let (true, Some(water)) = (reflection, &self.water) {
             let mut pass = scene_pass(encoder, "water reflection", &water.target, clear);
             pass.set_bind_group(0, &self.view_groups[REFLECTION_VIEW], &[]);
@@ -2454,6 +2459,7 @@ impl Renderer {
             let count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, stats)
                 + draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, stats);
             stats.reflection_draw_calls = count;
+            stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
         }
         {
             let mut pass = scene_pass(encoder, "main view", &self.main_target, clear);
@@ -2471,6 +2477,8 @@ impl Renderer {
                 stats.triangles += mesh.index_count as u64 / 3;
             }
             draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
+            stats.main_triangles =
+                stats.triangles - stats.shadow_triangles - stats.reflection_triangles;
         }
     }
 

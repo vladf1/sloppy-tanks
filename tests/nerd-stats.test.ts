@@ -79,6 +79,9 @@ function fixture(network = false) {
   const room: NetworkStatsSource = {
     drawCalls: 42,
     triangles: 123456,
+    shadowTriangles: 23000,
+    reflectionTriangles: 40000,
+    mainTriangles: 60456,
     meshes: 9,
     textures: 11,
     scene: {
@@ -112,6 +115,9 @@ function fixture(network = false) {
     colliders: 4,
     drawCalls: 42,
     triangles: 123456,
+    shadowTriangles: 23000,
+    reflectionTriangles: 40000,
+    mainTriangles: 60456,
     meshes: 9,
     textures: 11,
     gpuBytes: 3 * 1048576,
@@ -230,7 +236,7 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 21);
+    assert.equal(bodies.length, 22);
     const renderRows = sections
       .find((section) => section.querySelector("summary")?.textContent === "Render")!
       .querySelectorAll("pre")
@@ -269,6 +275,8 @@ test("panel has one open section per group with the expected rows", () => {
       "1 / 8",
       "Draw calls / frame",
       "Triangles / frame",
+      "Shadow / reflection / main triangles",
+      "23,000 / 40,000 / 60,456",
     ]) {
       assert.ok(text.includes(row), `missing row content: ${row}`);
     }

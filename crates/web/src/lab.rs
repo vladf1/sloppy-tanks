@@ -276,6 +276,7 @@ impl RenderLab {
         format!(
             concat!(
                 "{{\"drawCalls\":{},\"triangles\":{},\"shadowDrawCalls\":{},\"reflectionDrawCalls\":{},",
+                "\"shadowTriangles\":{},\"reflectionTriangles\":{},\"mainTriangles\":{},",
                 "\"instanceRecords\":{},\"pipelines\":{},\"shaderModules\":{},\"latePipelines\":{},",
                 "\"meshes\":{},\"materials\":{},\"textures\":{},\"texturesPending\":{},\"buffers\":{},",
                 "\"models\":{},\"instances\":{},\"drawClasses\":{},\"gpuBytes\":{}}}"
@@ -284,6 +285,9 @@ impl RenderLab {
             s.triangles,
             s.shadow_draw_calls,
             s.reflection_draw_calls,
+            s.shadow_triangles,
+            s.reflection_triangles,
+            s.main_triangles,
             s.instance_records,
             s.pipelines,
             s.shader_modules,

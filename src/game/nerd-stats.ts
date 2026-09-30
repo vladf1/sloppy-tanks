@@ -32,6 +32,13 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
         "Triangles submitted per rendered frame.",
       ],
       [
+        "Shadow / reflection / main triangles",
+        [stats.shadowTriangles, stats.reflectionTriangles, stats.mainTriangles]
+          .map((count) => count.toLocaleString())
+          .join(" / "),
+        "Triangles submitted to each scene pass per rendered frame.",
+      ],
+      [
         "GPU geometries",
         stats.meshes,
         "Distinct mesh buffers currently uploaded to the GPU. Changes on map load, not per frame.",

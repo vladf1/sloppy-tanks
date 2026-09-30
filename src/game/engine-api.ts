@@ -241,6 +241,9 @@ export interface EngineStats {
   triangles: number;
   shadowDrawCalls: number;
   reflectionDrawCalls: number;
+  shadowTriangles: number;
+  reflectionTriangles: number;
+  mainTriangles: number;
   pipelines: number;
   latePipelines: number;
   meshes: number;

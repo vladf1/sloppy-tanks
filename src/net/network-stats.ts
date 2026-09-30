@@ -4,6 +4,9 @@ import type { StatsSections } from "../game/nerd-stats";
 export interface NetworkStatsSource {
   drawCalls: number;
   triangles: number;
+  shadowTriangles: number;
+  reflectionTriangles: number;
+  mainTriangles: number;
   meshes: number;
   textures: number;
   scene?: {
@@ -98,6 +101,13 @@ export function networkStatsSections(
           "Triangles / frame",
           stats.triangles.toLocaleString(),
           "Triangles submitted per rendered frame.",
+        ],
+        [
+          "Shadow / reflection / main triangles",
+          [stats.shadowTriangles, stats.reflectionTriangles, stats.mainTriangles]
+            .map((count) => count.toLocaleString())
+            .join(" / "),
+          "Triangles submitted to each scene pass per rendered frame.",
         ],
         [
           "GPU geometries",
