@@ -56,11 +56,13 @@ export async function contentSources() {
 }
 
 /** Clients and the server must match on this: the shared sources, the crates they
- * compile with (Rapier, glam, serde) and the compiler that builds both. */
+ * compile with (Rapier, glam, serde) and the compiler that builds both. The tree is
+ * resolved for every target, so the hash is the same on whichever machine builds it
+ * (x86 hosts otherwise add platform-only crates such as `safe_arch`). */
 export async function contentVersion() {
   return hashFiles(
     [...(await contentSources()), "rust-toolchain.toml"],
-    dependencyTree("sloppy-core"),
+    dependencyTree("sloppy-core", "all"),
   );
 }
 
