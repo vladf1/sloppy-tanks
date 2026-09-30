@@ -40,14 +40,15 @@ use quarry_dust::QuarryDust;
 use track_dust::TrackDust;
 use tracks::TrackTrails;
 
-/// The explosion flash (`presentation.ts` `flash`): a warm point light.
+use crate::presentation::view_settings::FEEDBACK;
+
+/// The explosion flash (`presentation.ts` `flash`): a warm point light that game
+/// presentation and the effects lab both draw from `EffectSystems::flash`.
 pub const FLASH_COLOR: u32 = 0xffc178;
 pub const FLASH_INTENSITY: f32 = 45.0;
 pub const FLASH_DISTANCE: f32 = 20.0;
 pub const FLASH_DECAY: f32 = 2.0;
 const FLASH_HEIGHT: f32 = 3.0;
-/// `FEEDBACK.flashDecay`: intensity falls by e every 1/12 s.
-const FLASH_FADE_RATE: f64 = 12.0;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
 
@@ -134,7 +135,7 @@ impl EffectSystems {
         self.particles.explosions.pads.sync(state);
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
-        self.flash.intensity *= (-dt * FLASH_FADE_RATE).exp() as f32;
+        self.flash.intensity *= (-dt * FEEDBACK.flash_decay).exp() as f32;
         self.projectiles.update(&state.shots, time, alpha);
         self.laser.update(state, alpha, dt);
         self.particles.update(dt, time);
@@ -203,7 +204,7 @@ mod browser {
     /// The point-light slot the explosion flash uses.
     pub const FLASH_LIGHT: usize = 0;
     /// Below this the light is switched off rather than shading every pixel.
-    const FLASH_CUTOFF: f32 = 0.05;
+    const FLASH_CUTOFF: f32 = 0.01;
 
     /// The effect systems bound to renderer pools (created once, kept across rounds).
     pub struct Effects {
@@ -288,11 +289,7 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-        }
-
-        /// Labs use the pooled effects' flash; game presentation owns its light.
-        pub fn sync_flash_light(&self, renderer: &mut Renderer) {
-            let flash = self.systems.flash;
+            let flash = systems.flash;
             renderer.set_point_light(
                 FLASH_LIGHT,
                 (flash.intensity > FLASH_CUTOFF).then_some(PointLight {

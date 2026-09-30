@@ -22,8 +22,8 @@ use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
-    CoverKind, DeathStyle, FragmentShape, MatchPhase, PickupKind, RenderState, SimEvent,
-    SimEventType, Team, VehicleKind, WreckPart,
+    CoverKind, FragmentShape, MatchPhase, PickupKind, RenderState, SimEvent, SimEventType, Team,
+    VehicleKind, WreckPart,
 };
 
 use super::camera_rig::{CameraRig, ViewerPose};
@@ -47,8 +47,8 @@ use crate::color::hex_to_linear;
 use crate::effects::Effects;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::gpu::{
-    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, PrepareProgress, Renderer,
-    SunShadow, WaterSettings,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PrepareProgress, Renderer, SunShadow,
+    WaterSettings,
 };
 
 mod inspect;
@@ -67,13 +67,6 @@ const RECOIL_TRAVEL: f64 = 0.2;
 /// Track tread scroll: metres of scroll per metre driven, and its wrap length.
 const TRACK_SCROLL: f64 = 0.4;
 const TRACK_PERIOD: f64 = 0.25;
-/// The explosion flash (`presentation.ts` `flash`).
-const FLASH_LIGHT: usize = 0;
-const FLASH_COLOR: u32 = 0xffc178;
-const FLASH_INTENSITY: f32 = 45.0;
-const FLASH_DISTANCE: f32 = 20.0;
-const FLASH_DECAY: f32 = 2.0;
-const FLASH_HEIGHT: f32 = 3.0;
 /// Pickup gems bob and spin above their pads.
 const GEM_HEIGHT: f64 = 1.2;
 const GEM_BOB: f64 = 0.18;
@@ -532,8 +525,6 @@ pub struct Presentation {
     hit_confirm_until: f64,
     spawn_cue: f64,
     player_was_alive: bool,
-    flash: f32,
-    flash_position: Vec3,
     samples: Vec<InstanceId>,
     sample_models: Vec<ModelId>,
     random: CosmeticRandom,
@@ -603,8 +594,6 @@ impl Presentation {
             hit_confirm_until: 0.0,
             spawn_cue: 0.0,
             player_was_alive: false,
-            flash: 0.0,
-            flash_position: Vec3::ZERO,
             samples: Vec::new(),
             sample_models: Vec::new(),
             random,
@@ -804,8 +793,6 @@ impl Presentation {
         self.hit_until.clear();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
-        self.flash = 0.0;
-        self.renderer.set_point_light(FLASH_LIGHT, None);
         self.effects.reset(&mut self.renderer, state);
         self.add_covers(&state.covers);
         for tank in &state.tanks {
@@ -1234,12 +1221,6 @@ impl Presentation {
         if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
         }
-        // Fiery blasts light the scene; burnouts smoulder without a flash.
-        let fiery = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
-        if fiery && event.death_style != Some(DeathStyle::Burnout) {
-            self.flash_position = Vec3::new(event.x as f32, FLASH_HEIGHT, event.z as f32);
-            self.flash = FLASH_INTENSITY;
-        }
     }
 
     /// Screen angle of damage for the HUD's direction indicator.
@@ -1329,17 +1310,6 @@ impl Presentation {
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer
             .set_transform(self.reticle.instance, self.crosshair);
-        self.flash *= (-dt * FEEDBACK.flash_decay).exp() as f32;
-        self.renderer.set_point_light(
-            FLASH_LIGHT,
-            (self.flash > 0.01).then_some(PointLight {
-                position: self.flash_position,
-                color: FLASH_COLOR,
-                intensity: self.flash,
-                distance: FLASH_DISTANCE,
-                decay: FLASH_DECAY,
-            }),
-        );
         self.renderer.set_camera(self.rig.camera);
         self.renderer.render(self.time as f32)
     }

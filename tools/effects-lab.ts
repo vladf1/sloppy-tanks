@@ -199,7 +199,7 @@ async function main() {
     for (const { at, event } of SCHEDULE) {
       const due = to >= from ? at > from && at <= to : at > from || at <= to;
       if (due) {
-        rust.event(JSON.stringify(event), false);
+        rust.event(JSON.stringify(event));
       }
     }
     rust.frame(1, dt, t);
@@ -227,7 +227,7 @@ async function main() {
       return api.stats();
     },
     trigger(event: SimEvent) {
-      rust.event(JSON.stringify(event), false);
+      rust.event(JSON.stringify(event));
     },
     setCamera(position: Vec3, target: Vec3) {
       rust.set_camera(new Float32Array(position), new Float32Array(target));
