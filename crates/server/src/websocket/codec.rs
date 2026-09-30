@@ -76,10 +76,6 @@ impl Codec {
         }
     }
 
-    pub fn compresses(&self) -> bool {
-        self.deflate.is_some()
-    }
-
     /// Takes the next complete event out of `buffer`; `Ok(None)` when more bytes are needed.
     pub fn decode(&mut self, buffer: &mut BytesMut) -> Result<Option<Event>, ProtocolError> {
         loop {
@@ -237,10 +233,6 @@ impl Codec {
             }
             _ => self.encode_frame(0x80 | OP_TEXT, text.as_bytes(), output),
         }
-    }
-
-    pub fn encode_binary(&mut self, data: &[u8], output: &mut BytesMut) {
-        self.encode_frame(0x80 | OP_BINARY, data, output);
     }
 
     pub fn encode_close(&mut self, code: Option<u16>, reason: &str, output: &mut BytesMut) {

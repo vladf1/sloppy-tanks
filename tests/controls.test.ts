@@ -175,7 +175,8 @@ test("Q/E and number keys queue exactly one selection without consuming held fir
     f.emit(f.win, "keydown", { code });
     const input = frame(f.controls);
     assert.deepEqual([input.ammoStep, input.ammoSlot, input.fire], [step, slot, 1], code);
-    assert.deepEqual([frame(f.controls).ammoStep, frame(f.controls).ammoSlot], [0, 0]);
+    const consumed = frame(f.controls);
+    assert.deepEqual([consumed.ammoStep, consumed.ammoSlot], [0, 0]);
     f.emit(f.win, "keydown", { code, repeat: true });
     const repeated = frame(f.controls);
     assert.deepEqual([repeated.ammoStep, repeated.ammoSlot], [0, 0]);

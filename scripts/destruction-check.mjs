@@ -6,7 +6,14 @@
 // keeps screenshots of every stage.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { chooseMap, freezeLoop, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
+import {
+  chooseMap,
+  freezeLoop,
+  gameUrl,
+  launchGame,
+  seedGame,
+  startRound,
+} from "./browser-helpers.mjs";
 
 const out = "artifacts/performance/destruction";
 mkdirSync(out, { recursive: true });
@@ -23,6 +30,8 @@ page.on("request", (request) => {
 const draw = (camera = []) => page.evaluate((camera) => window.engine.draw(camera), camera);
 try {
   await freezeLoop(page);
+  // This fixture needs a shattered tank, rather than the seed-dependent intact burnout.
+  await seedGame(page, 12345);
   await page.goto(gameUrl);
   await chooseMap(page, "village");
   await startRound(page);

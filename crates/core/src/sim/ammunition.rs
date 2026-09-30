@@ -21,17 +21,6 @@ pub const PROJECTILE_ORDER: [Weapon; 6] = [
     Weapon::Tow,
 ];
 
-pub const fn ammo_help(kind: Weapon) -> &'static str {
-    match kind {
-        Weapon::Standard => "Unlimited shells · stops at walls",
-        Weapon::Spread => "Three shells per volley · best up close",
-        Weapon::Rocket => "Accelerates in flight · explosive blast · can hurt you",
-        Weapon::Ricochet => "High damage · bounces up to three times",
-        Weapon::Piercing => "Passes through one enemy shell · stops at tanks and cover",
-        Weapon::Tow => "Fast anti-tank missile · bot-only vehicle weapon",
-    }
-}
-
 pub const AMMO_RESPAWN_SECONDS: f64 = 13.0;
 pub const AMMO_SCROLL_INTERVAL_MS: f64 = 120.0;
 

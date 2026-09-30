@@ -11,8 +11,9 @@ class StubElement {
   id = "";
   children: StubElement[] = [];
   textContent = "";
+  type = "";
   title = "";
-  hidden = true;
+  hidden = false;
   open = false;
   attributes = new Map<string, string>();
   listeners = new Map<string, Listener[]>();
@@ -20,13 +21,6 @@ class StubElement {
 
   constructor(tagName = "DIV") {
     this.tagName = tagName;
-  }
-
-  set innerHTML(_html: string) {
-    const button = new StubElement("BUTTON");
-    const container = new StubElement("DIV");
-    container.id = "nerd-stats-details";
-    this.children = [button, container];
   }
 
   private descendants(): StubElement[] {
@@ -159,11 +153,19 @@ function fixture(network = false) {
   assert.ok(created.length > 0);
   const panel = created[0];
   assert.equal(panel.tagName, "ASIDE");
+  assert.equal(root.children[0], panel);
+  assert.equal(panel.id, "nerd-stats");
+  assert.equal(panel.attributes.get("aria-label"), "Game statistics");
   const button = panel.querySelector("button");
   const container = panel.querySelector("#nerd-stats-details");
   assert.ok(button);
   assert.ok(container);
-  void stats;
+  assert.equal(button.type, "button");
+  assert.equal(button.textContent, "Stats for nerds");
+  assert.equal(button.attributes.get("aria-expanded"), "false");
+  assert.equal(button.attributes.get("aria-controls"), container.id);
+  assert.equal(button.attributes.get("aria-keyshortcuts"), "N");
+  assert.equal(container.hidden, true);
   return {
     panel,
     button,
@@ -185,6 +187,7 @@ test("network stats use received scene counts and never require a client physics
     assert.equal(f.reads, 0, "closed diagnostics do not sample the source");
     f.button.click();
     assert.equal(f.reads, 1);
+    assert.equal(f.button.attributes.get("aria-expanded"), "true");
     const titles = f.container
       .querySelectorAll("details")
       .map((section) => section.querySelector("summary")?.textContent);
@@ -203,6 +206,8 @@ test("network stats use received scene counts and never require a client physics
     f.stats.frame(501, 1, 2);
     assert.equal(f.reads, 2);
     f.button.click();
+    assert.equal(f.container.hidden, true);
+    assert.equal(f.button.attributes.get("aria-expanded"), "false");
     f.stats.frame(1001, 1, 2);
     assert.equal(f.reads, 2);
   } finally {

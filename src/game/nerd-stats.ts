@@ -111,11 +111,17 @@ export class NerdStats {
     this.element = document.createElement("aside");
     this.element.id = "nerd-stats";
     this.element.setAttribute("aria-label", "Game statistics");
-    this.element.innerHTML =
-      '<button type="button" aria-expanded="false" aria-controls="nerd-stats-details" aria-keyshortcuts="N">Stats for nerds</button><div id="nerd-stats-details" hidden></div>';
+    this.button = document.createElement("button");
+    this.button.type = "button";
+    this.button.setAttribute("aria-expanded", "false");
+    this.button.setAttribute("aria-controls", "nerd-stats-details");
+    this.button.setAttribute("aria-keyshortcuts", "N");
+    this.button.textContent = "Stats for nerds";
+    this.details = document.createElement("div");
+    this.details.id = "nerd-stats-details";
+    this.details.hidden = true;
+    this.element.append(this.button, this.details);
     root.append(this.element);
-    this.button = this.element.querySelector("button")!;
-    this.details = this.element.querySelector("#nerd-stats-details")!;
     for (const title of this.network ? NETWORK_SECTIONS : SINGLE_PLAYER_SECTIONS) {
       const section = document.createElement("details");
       section.open = title !== "Configuration";
@@ -163,11 +169,6 @@ export class NerdStats {
       toggle();
     });
     document.addEventListener("visibilitychange", () => this.reset());
-  }
-
-  /** Whether the panel is open, so the caller can skip gathering rows otherwise. */
-  get expanded(): boolean {
-    return this.open;
   }
 
   private reset(): void {

@@ -48,7 +48,6 @@ export const MAP_OPTIONS = [
 export type MapOption = (typeof MAP_OPTIONS)[number];
 export type MapId = MapOption["id"];
 export type ExtraLevelId = Extract<MapOption, { extra: true }>["id"];
-export type StandardMapId = Exclude<MapId, ExtraLevelId>;
 
 export const MAP_IDS: readonly MapId[] = MAP_OPTIONS.map((map) => map.id);
 

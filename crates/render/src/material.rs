@@ -142,14 +142,6 @@ impl MaterialInterner {
             !bucket.is_empty()
         });
     }
-
-    pub fn len(&self) -> usize {
-        self.by_hash.values().map(Vec::len).sum()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// Culling and depth-only faces per Three: a front-side material casts from its

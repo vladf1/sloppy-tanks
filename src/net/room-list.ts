@@ -9,7 +9,6 @@ import {
 } from "./room-protocol";
 
 export const MAX_LISTED_ROOMS = 256;
-export const ROOM_LIST_TTL_MS = 45_000;
 const ROOM_SEATS = 8;
 const DIFFICULTIES: readonly Difficulty[] = ["easy", "normal", "hard"];
 const PHASES: readonly RoomPhase[] = ["lobby", "playing", "results"];

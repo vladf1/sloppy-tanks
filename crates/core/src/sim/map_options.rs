@@ -42,8 +42,6 @@ pub struct MapOption {
     pub id: MapId,
     pub name: &'static str,
     pub description: &'static str,
-    pub icon: &'static str,
-    pub tint: &'static str,
     /// Offered only with `?extralevels`; brings its own arena, roster and rules.
     pub extra: bool,
     /// Tanks per team for an extra level's roster.
@@ -57,8 +55,6 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::Village,
         name: "Pine Village",
         description: "A quiet little village. Bring the noise.",
-        icon: "village",
-        tint: "#2f7d4f",
         extra: false,
         team_tanks: None,
     },
@@ -66,8 +62,6 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::Harbor,
         name: "Harbor Havoc",
         description: "Salt air. Hot steel. Dockside mayhem.",
-        icon: "harbor",
-        tint: "#2c6fa8",
         extra: false,
         team_tanks: None,
     },
@@ -75,8 +69,6 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::Quarry,
         name: "Dusty Dig",
         description: "Open ground. Weathered stone. Dig your own shortcut.",
-        icon: "quarry",
-        tint: "#a8733a",
         extra: false,
         team_tanks: None,
     },
@@ -84,8 +76,6 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::StressTest,
         name: "Stress Grid",
         description: "30 tanks · 75 destructibles · permanent buildings and barriers",
-        icon: "stress",
-        tint: "#6a5ea8",
         extra: true,
         team_tanks: Some(15),
     },
@@ -93,16 +83,10 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::Superstress,
         name: "Scrap Yard",
         description: "Compact yard · 30 tanks · cover rebuilds and debris lingers",
-        icon: "yard",
-        tint: "#8a5a44",
         extra: true,
         team_tanks: Some(15),
     },
 ];
-
-pub fn map_option(id: &str) -> Option<&'static MapOption> {
-    MAP_OPTIONS.iter().find(|option| option.id.as_str() == id)
-}
 
 pub fn map_option_for(id: MapId) -> &'static MapOption {
     MAP_OPTIONS
@@ -113,12 +97,4 @@ pub fn map_option_for(id: MapId) -> &'static MapOption {
 
 pub fn is_extra_level(id: MapId) -> bool {
     map_option_for(id).extra
-}
-
-/// Battle Setup offers the extra levels only on a page opened with `?extralevels`.
-pub fn shows_extra_levels(search: &str) -> bool {
-    search
-        .trim_start_matches('?')
-        .split('&')
-        .any(|pair| pair.split('=').next() == Some("extralevels"))
 }

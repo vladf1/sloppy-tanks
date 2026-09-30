@@ -323,23 +323,6 @@ pub struct ShadowBox {
     pub far: f64,
 }
 
-/// `createLighting`'s fixed settings (presentation overrides colors, sun position
-/// and intensities per theme on reset).
-pub mod lighting {
-    pub const BACKGROUND: u32 = 0x59bbed;
-    pub const FOG_NEAR: f64 = 150.0;
-    pub const FOG_FAR: f64 = 260.0;
-    pub const FILL_SKY: u32 = 0xbdd5f5;
-    pub const FILL_GROUND: u32 = 0x75859b;
-    pub const FILL_INTENSITY: f64 = 1.65;
-    pub const SUN_COLOR: u32 = 0xffd59b;
-    pub const SUN_INTENSITY: f64 = 2.8;
-    pub const SUN_POSITION: [f64; 3] = [-45.0, 85.0, 25.0];
-    pub const SHADOW_MAP_SIZE: u32 = 2048;
-    pub const SHADOW_NORMAL_BIAS: f64 = 0.05;
-    pub const SHADOW_BIAS: f64 = -0.0002;
-}
-
 /// `defaultSunShadow`: the original square sun shadow box shared by the village
 /// and harbor.
 pub fn default_sun_shadow() -> ShadowBox {

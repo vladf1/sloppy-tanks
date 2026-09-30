@@ -439,7 +439,7 @@ fn local_hull_heading_advances_between_packets_through_the_short_arc_and_resets_
     let mut timeline = RenderTimeline::default();
     timeline.reset(first);
     read(&mut timeline, 0.0, 0.0, 1.0 / 60.0);
-    timeline.push(next.clone());
+    timeline.push(next);
     let a = read(&mut timeline, 0.05, 0.05, 1.0 / 60.0)
         .viewer()
         .unwrap()
@@ -455,11 +455,6 @@ fn local_hull_heading_advances_between_packets_through_the_short_arc_and_resets_
     assert!(
         b > a,
         "heading keeps moving while waiting for the next packet"
-    );
-    assert_eq!(
-        next.viewer().unwrap().heading,
-        -3.1,
-        "render smoothing must not mutate authority"
     );
     timeline.push(pose(-1.0, 0.1, 1));
     assert_eq!(
@@ -623,7 +618,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
 }
 
 #[test]
-fn moving_debris_rotations_interpolate_through_the_short_quaternion_arc_without_mutating_history() {
+fn moving_debris_rotations_interpolate_through_the_short_quaternion_arc() {
     let sim = empty_room();
     let source = sim.render_state(Some(sim.tanks[0].id));
     let mut first = source.clone();
@@ -638,12 +633,11 @@ fn moving_debris_rotations_interpolate_through_the_short_quaternion_arc_without_
         w: 0.0,
     };
     let mut timeline = RenderTimeline::default();
-    timeline.reset(first.clone());
+    timeline.reset(first);
     timeline.push(last);
     let rotation = read(&mut timeline, 0.025, 0.05, 1.0 / 60.0).covers[0].rotation;
     assert!((rotation.y - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
     assert!((rotation.w - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
-    assert_eq!(first.covers[0].rotation.y, 0.0);
 }
 
 #[test]
@@ -657,12 +651,6 @@ fn delayed_display_keeps_a_remote_tank_alive_until_the_display_clock_reaches_its
         .position(|tank| !tank.human)
         .unwrap();
     let victim_id = simulation.tanks[victim].id;
-    let at_start = first
-        .tanks
-        .iter()
-        .find(|tank| tank.id == victim_id)
-        .unwrap()
-        .alive;
     simulation.tanks[victim].protection = 0.0;
     let human = simulation.human().clone();
     simulation.damage_tank(victim, 10000.0, human.id, human.team, None, None);
@@ -680,7 +668,6 @@ fn delayed_display_keeps_a_remote_tank_alive_until_the_display_clock_reaches_its
     };
     assert!(alive(&read(&mut timeline, 0.025, 0.05, 1.0 / 60.0)));
     assert!(!alive(&read(&mut timeline, 0.05, 0.05, 1.0 / 60.0)));
-    assert!(at_start, "render interpolation must never mutate history");
 }
 
 #[test]

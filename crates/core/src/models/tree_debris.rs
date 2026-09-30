@@ -9,11 +9,6 @@ use glam::DMat4;
 use crate::geometry::math::decompose;
 use crate::scene::{Material, Node};
 
-/// At most this many boughs fall at once; the oldest is removed first.
-pub const MAX_FALLING_BRANCHES: usize = 32;
-/// Seconds a shed bough lasts before it is removed.
-pub const FALLING_BRANCH_LIFETIME: f64 = 6.0;
-
 /// A material copy that can fade: transparent without depth writes. Presentation
 /// owns the copy and animates its `opacity` (TS `materials` per branch).
 pub fn fading_material(source: &Material) -> Material {

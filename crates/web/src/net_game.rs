@@ -574,7 +574,7 @@ impl NetGame {
         let drawn = match client.frame(now, &local) {
             Some(frame) => {
                 for displayed in frame.events {
-                    view.event(frame.state, &displayed.event, displayed.player_hit);
+                    view.event(&displayed.event, displayed.player_hit);
                     let hurt = matches!(
                         displayed.event.kind,
                         SimEventType::Hurt | SimEventType::Death

@@ -23,15 +23,22 @@ test("afterPaint waits for the next frame and a task after it, or a timer when n
     await nextTask();
     assert.equal(painted, false, "nothing runs before the frame");
     frames.shift()!();
+    await Promise.resolve();
+    assert.equal(painted, false, "the frame callback's microtasks run before painting");
     await paint;
+    assert.equal(painted, true);
 
     // A hidden tab never runs the frame callback.
     let waited = false;
     const hidden = afterPaint().then(() => (waited = true));
     await nextTask();
     assert.equal(waited, false);
-    mock.timers.tick(100);
+    mock.timers.tick(99);
+    await Promise.resolve();
+    assert.equal(waited, false, "the fallback waits for its full timeout");
+    mock.timers.tick(1);
     await hidden;
+    assert.equal(waited, true);
   } finally {
     mock.timers.reset();
     if (original) host.requestAnimationFrame = original;

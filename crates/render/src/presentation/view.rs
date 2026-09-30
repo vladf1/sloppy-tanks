@@ -1204,7 +1204,7 @@ impl Presentation {
     // -------------------------------------------------------------- events
 
     /// One simulation event; `player_hit` marks hurt/death events the viewer caused.
-    pub fn event(&mut self, state: &RenderState, event: &SimEvent, player_hit: bool) {
+    pub fn event(&mut self, event: &SimEvent, player_hit: bool) {
         // Contact telemetry is for future material-specific sounds and effects.
         if matches!(
             event.kind,
@@ -1212,8 +1212,7 @@ impl Presentation {
         ) {
             return;
         }
-        self.effects
-            .event(&mut self.renderer, state, event, player_hit);
+        self.effects.event(event);
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }

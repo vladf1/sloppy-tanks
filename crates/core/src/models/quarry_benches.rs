@@ -310,24 +310,6 @@ const BUTTE_SLABS: [[f64; 6]; 6] = [
     [3.4, 1.8, 3.0, 0.3, 14.0, -0.2],
 ];
 
-/// `quarryButteFootprint(spot)`: world-space footprint corners of the slabs, for
-/// placement checks.
-pub fn quarry_butte_footprint(spot: &ButteSpot) -> Vec<[f64; 2]> {
-    let mut corners = Vec::with_capacity(BUTTE_SLABS.len() * 4);
-    for (i, [w, _, d, dx, _, dz]) in BUTTE_SLABS.iter().enumerate() {
-        let a = spot.rot_y + i as f64 * 0.22;
-        let (c, s) = (a.cos(), a.sin());
-        for ex in [-1.0, 1.0] {
-            for ez in [-1.0, 1.0] {
-                let lx = (ex * (w / 2.0) + dx) * spot.scale;
-                let lz = (ez * (d / 2.0) + dz) * spot.scale;
-                corners.push([spot.x + lx * c + lz * s, spot.z - lx * s + lz * c]);
-            }
-        }
-    }
-    corners
-}
-
 /// `quarryButte(scale, rotY)` (`quarry-sentinel-butte`): stacked offset slabs with an
 /// eroded cap, merged into one batch so the landmark costs one draw.
 pub fn quarry_butte(scale: f64, rot_y: f64) -> Node {

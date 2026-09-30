@@ -20,7 +20,7 @@
 //! - [`network_timeline`], [`render_timeline`], [`playout_clock`]: delayed, interpolated
 //!   display of remote state with a smoothed local hull.
 //! - [`input_cadence`]: when input goes out; [`transport_delay`]: development latency.
-//! - [`client_setup`]: server address, player name and pending-join rules.
+//! - [`client_setup`]: pending-join validation and serialization.
 
 pub mod client;
 pub mod client_setup;
