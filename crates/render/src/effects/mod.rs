@@ -21,6 +21,7 @@ pub mod projectiles;
 pub mod quarry_dust;
 pub mod random;
 pub mod registry;
+pub mod rocket_smoke;
 pub mod spawn_pad_decks;
 pub mod track_dust;
 pub mod track_gravel;
@@ -39,6 +40,7 @@ use particles::ParticleEffects;
 use pickups::PickupEffects;
 use projectiles::ProjectileVisuals;
 use quarry_dust::QuarryDust;
+use rocket_smoke::RocketSmoke;
 use track_dust::TrackDust;
 use tracks::TrackTrails;
 
@@ -89,6 +91,7 @@ pub struct EffectSystems {
     pub track_dust: TrackDust,
     pub quarry_dust: QuarryDust,
     pub projectiles: ProjectileVisuals,
+    pub rocket_smoke: RocketSmoke,
     pub laser: LaserVisuals,
     pub pickups: PickupEffects,
     pub flash: Flash,
@@ -102,6 +105,7 @@ impl EffectSystems {
         self.track_dust.reset();
         self.quarry_dust.reset();
         self.projectiles.reset();
+        self.rocket_smoke.reset();
         self.laser.reset();
         self.pickups.reset();
         self.flash = Flash::default();
@@ -148,6 +152,8 @@ impl EffectSystems {
         self.quarry_dust.update(state, dt, &mut self.random);
         self.flash.intensity *= (-dt * FEEDBACK.flash_decay).exp() as f32;
         self.projectiles.update(&state.shots, time, alpha);
+        self.rocket_smoke
+            .update(&state.shots, alpha, dt, &mut self.random);
         self.laser.update(state, alpha, dt);
         self.particles.update(dt, time);
         self.leaves.update(dt, &mut self.random);
@@ -166,6 +172,7 @@ impl EffectSystems {
                 visit(exhaust);
             }
         }
+        visit(&mut self.rocket_smoke.records);
         visit(&mut self.laser.halo);
         visit(&mut self.laser.core);
         visit(&mut self.laser.mount);

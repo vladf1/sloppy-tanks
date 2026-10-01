@@ -23,6 +23,7 @@ use super::pool::PoolDesc;
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
 use super::registry::{BLAST_RING, DUST, PUFF, TRACK_MARK};
+use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
@@ -149,6 +150,12 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             ));
         }
     }
+    pools.push(pool(
+        "rocket smoke",
+        &dust_quad,
+        &dust,
+        ROCKET_SMOKE_CAPACITY,
+    ));
 
     let laser = pickup(PickupKind::Laser).color;
     let beam = |color: u32, opacity: f32| Material {
