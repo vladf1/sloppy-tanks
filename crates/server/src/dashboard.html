@@ -1032,6 +1032,7 @@
           `content ${server.contentVersion}`,
           `protocol ${server.protocolVersion}`,
           server.runtime,
+          server.environment,
           `updated ${clock(reading.atMs)}`,
         ].join(" · ");
         document.title = `${reading.players} players · Sloppy Tanks server`;

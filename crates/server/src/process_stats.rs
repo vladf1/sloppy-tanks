@@ -178,9 +178,70 @@ pub fn host_memory() -> (u64, u64) {
     (0, 0)
 }
 
+/// Where the process runs, for the dashboard, such as "Docker container · Linux 7.0.0".
+/// Docker and Podman put a marker file at a container's root. A container shares its
+/// host's kernel, while the server image holds no OS files, so only a host shows its
+/// distribution.
+pub fn environment() -> String {
+    let container = if std::path::Path::new("/.dockerenv").exists() {
+        Some("Docker container")
+    } else if std::path::Path::new("/run/.containerenv").exists() {
+        Some("Podman container")
+    } else {
+        None
+    };
+    let read = |path| std::fs::read_to_string(path).ok();
+    describe_environment(
+        container,
+        read("/etc/os-release").as_deref(),
+        read("/proc/sys/kernel/osrelease").as_deref(),
+    )
+}
+
+fn describe_environment(
+    container: Option<&str>,
+    os_release: Option<&str>,
+    kernel_release: Option<&str>,
+) -> String {
+    let mut parts = vec![container.unwrap_or("no container").to_string()];
+    let distribution = os_release
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+        })
+        .map(|name| name.trim_matches('"').to_string());
+    parts.extend(distribution);
+    parts.push(match kernel_release {
+        Some(release) => format!("Linux {}", release.trim()),
+        None => std::env::consts::OS.to_string(),
+    });
+    parts.join(" · ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn describes_a_container_by_its_marker_and_kernel() {
+        assert_eq!(
+            describe_environment(Some("Docker container"), None, Some("7.0.0-14-generic\n")),
+            "Docker container · Linux 7.0.0-14-generic"
+        );
+    }
+
+    #[test]
+    fn describes_a_host_with_its_distribution() {
+        let os_release = "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nID=ubuntu\n";
+        assert_eq!(
+            describe_environment(None, Some(os_release), Some("7.0.0-14-generic\n")),
+            "no container · Ubuntu 26.04.1 LTS · Linux 7.0.0-14-generic"
+        );
+        assert_eq!(
+            describe_environment(None, None, None),
+            format!("no container · {}", std::env::consts::OS)
+        );
+    }
 
     #[test]
     fn process_figures_are_plausible() {
