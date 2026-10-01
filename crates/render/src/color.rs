@@ -13,7 +13,11 @@ pub fn srgb_to_linear(channel: f32) -> f32 {
 
 /// An authored `0xRRGGBB` color in linear sRGB, like `new THREE.Color(hex)`.
 pub fn hex_to_linear(hex: u32) -> [f32; 3] {
-    let channel = |shift: u32| srgb_to_linear(((hex >> shift) & 0xff) as f32 / 255.0);
+    // Presentation decodes tints and light colors every frame; `powf` is a
+    // software routine in Wasm, so each byte value is decoded once.
+    static BYTES: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+    let bytes = BYTES.get_or_init(|| std::array::from_fn(|i| srgb_to_linear(i as f32 / 255.0)));
+    let channel = |shift: u32| bytes[((hex >> shift) & 0xff) as usize];
     [channel(16), channel(8), channel(0)]
 }
 

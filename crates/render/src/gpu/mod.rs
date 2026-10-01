@@ -475,6 +475,8 @@ struct StaticRange {
 
 struct InstanceEntry {
     model: u32,
+    /// Its model is baked scenery (`ModelEntry::scenery`).
+    scenery: bool,
     lifetime: Lifetime,
     world: Mat4,
     visible: bool,
@@ -1410,8 +1412,10 @@ impl Renderer {
             .iter()
             .map(|node| node.visible)
             .collect();
+        let scenery = entry.scenery;
         let (index, generation) = self.instances.insert(InstanceEntry {
             model: model.index,
+            scenery,
             lifetime,
             world,
             visible: true,
@@ -1471,15 +1475,10 @@ impl Renderer {
     }
 
     fn instance_mut(&mut self, id: InstanceId) -> Option<&mut InstanceEntry> {
-        if self
-            .instances
-            .get(id.index, id.generation)
-            .and_then(|instance| self.models.at(instance.model))
-            .is_some_and(|model| model.scenery)
-        {
-            self.static_dirty = true;
-        }
-        self.instances.get_mut(id.index, id.generation)
+        let instance = self.instances.get_mut(id.index, id.generation)?;
+        // Scenery bakes its instance state into the static records.
+        self.static_dirty |= instance.scenery;
+        Some(instance)
     }
 
     pub fn set_transform(&mut self, id: InstanceId, world: Mat4) {
@@ -2331,8 +2330,9 @@ impl Renderer {
     /// Group merged shadow items into instanced draws (by pipeline, model and
     /// group) and lay out their record bases; dynamic records start at `dynamic`.
     fn finish_merged(&mut self, dynamic: u32) {
+        // Depth-only casters: order within one instanced draw changes nothing.
         self.merged_items
-            .sort_by_key(|item| (item.pipeline, item.model, item.group));
+            .sort_unstable_by_key(|item| (item.pipeline, item.model, item.group));
         self.shadow_bases.clear();
         self.merged_draws.clear();
         for item in &self.merged_items {
