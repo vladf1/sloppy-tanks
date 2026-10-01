@@ -182,10 +182,12 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         .count();
     let budget = simulation.shots.len() * (COMBAT.contacts_per_shot + defenses) + 1;
     let mut event = 0;
+    let mut tank_positions = Vec::with_capacity(simulation.tanks.len());
     while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget
     {
         let (next, time) = find_next_contact(
             simulation,
+            &mut tank_positions,
             remaining,
             dt - remaining,
             if sweep_tank_motion { dt } else { 0.0 },
@@ -271,8 +273,10 @@ impl Contact {
 }
 
 /// Query without moving entities; equal-time contacts preserve the original priority order.
+/// `tank_positions` is scratch space reused across the queries of one tick.
 fn find_next_contact(
     simulation: &Simulation,
+    tank_positions: &mut Vec<Option<Point3>>,
     limit: f64,
     elapsed: f64,
     tank_frame_delta: f64,
@@ -281,11 +285,14 @@ fn find_next_contact(
     let mut next = None;
     let mut time = limit;
     // Nothing moves during the query, so each hull is read once rather than once per shell.
-    let tank_positions: Vec<Option<Point3>> = simulation
-        .tanks
-        .iter()
-        .map(|tank| tank.alive.then(|| simulation.body_translation(tank.body)))
-        .collect();
+    // A resolved contact can destroy a tank, so the positions are read again for every query.
+    tank_positions.clear();
+    tank_positions.extend(
+        simulation
+            .tanks
+            .iter()
+            .map(|tank| tank.alive.then(|| simulation.body_translation(tank.body))),
+    );
     let shell_shape = Ball::new(SHELL_HIT_RADIUS as f32);
     for (si, shot) in simulation.shots.iter().enumerate() {
         if shot.life <= time {
@@ -318,13 +325,17 @@ fn find_next_contact(
                 stop_at_penetration: true,
                 compute_impact_geometry_on_penetration: true,
             };
-            if let Some((collider, hit)) = simulation.world.cast_shape(
-                &Pose::from_translation(vector(shot.x, shot.combat_y(), shot.z)),
-                vector(shot.vx, 0.0, shot.vz),
-                &shell_shape,
-                options,
-                query_filter(group::DEBRIS_QUERY),
-            ) && hit.time_of_impact as f64 <= time
+            // Only a fragment's collider counts as a debris contact, so without fragments the
+            // cast cannot change the result.
+            if !simulation.fragments.is_empty()
+                && let Some((collider, hit)) = simulation.world.cast_shape(
+                    &Pose::from_translation(vector(shot.x, shot.combat_y(), shot.z)),
+                    vector(shot.vx, 0.0, shot.vz),
+                    &shell_shape,
+                    options,
+                    query_filter(group::DEBRIS_QUERY),
+                )
+                && hit.time_of_impact as f64 <= time
                 && let Some(fragment) = simulation.fragments.iter().position(|fragment| {
                     simulation.world.bodies[fragment.body].colliders().first() == Some(&collider)
                 })
