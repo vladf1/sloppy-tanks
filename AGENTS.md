@@ -299,8 +299,8 @@ offline.
   `crates/core` sources, the crates they resolve to and `rust-toolchain.toml`
   (list them with `node scripts/content-version.mjs`); `crates/render`,
   `crates/web` and the page shell are outside it. The VPS runs both servers as
-  Docker images: CI pushes one per server build and, after the Pages deploy, moves
-  `:production` to main's. Production then needs `pnpm run server:update`
+  container images under Podman (Docker is the fallback runtime): CI pushes one
+  per server build and, after the Pages deploy, moves `:production` to main's. Production then needs `pnpm run server:update`
   unless auto-update is on (`server:status` shows it); ask before running it.
   `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or

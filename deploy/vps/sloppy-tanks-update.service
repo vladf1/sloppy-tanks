@@ -1,7 +1,7 @@
 [Unit]
 Description=Follow the production server image on :production (auto-update)
+# Docker's daemon when the server runs under Docker; Podman has none to wait for.
 After=docker.service
-Requires=docker.service
 
 [Service]
 Type=oneshot

@@ -1,0 +1,32 @@
+# Installed to /etc/containers/systemd/ by provision.sh and provision-dev.sh; Quadlet
+# turns it into sloppy-tanks-dev.service. As sloppy-tanks.container; the dev copy shares
+# the one-vCPU host with production, so it stays small.
+[Unit]
+Description=Sloppy Tanks dev multiplayer server (the dev site's rooms)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=sloppy-tanks-dev
+# Image= comes from sloppy-tanks-dev.container.d/image.conf (sloppy-tanks-update).
+Pull=never
+Network=host
+EnvironmentFile=/etc/sloppy-tanks-dev.env
+ReadOnly=true
+ReadOnlyTmpfs=false
+DropCapability=ALL
+NoNewPrivileges=true
+Memory=250m
+PodmanArgs=--memory-swap 250m
+PidsLimit=256
+Ulimit=nofile=65536:65536
+LogDriver=passthrough
+StopTimeout=10
+
+[Service]
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

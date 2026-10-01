@@ -10,7 +10,7 @@ export const VPS_SSH_OPTIONS = [
   "-o",
   "StrictHostKeyChecking=accept-new",
 ];
-/** The server's Docker image in the GitHub Container Registry. CI pushes it and moves
+/** The server's container image in the GitHub Container Registry. CI pushes it and moves
  * :production; the VPS pulls it (deploy/vps/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 /** Public WebSocket URL of the production VPS server. */
