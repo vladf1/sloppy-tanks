@@ -13,7 +13,7 @@ use glam::DVec3;
 
 use super::humvee_model::humvee_model;
 use super::model_primitives::{
-    Cache, box_part, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
+    Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
     Assembly, ROOF_RISE, assembly, gun_rise, muzzle_z, ring_radius, tube_radius,
@@ -22,11 +22,12 @@ use super::tank_kit::Coat;
 use super::tank_surfaces::{Finish, apply_tank_surface, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
-use crate::geometry::{
-    CylinderGeometry, ExtrudeOptions, Mesh, Path, Shape, extrude_geometry, plane_geometry,
-    ring_geometry,
-};
+use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
 use crate::scene::{Material, Node};
+
+#[path = "tank_running_gear.rs"]
+mod running_gear;
+use running_gear::running_gear;
 
 /// Wreck paint and the shared dark/steel trim colors.
 pub(crate) const WRECK_PAINT: u32 = 0x3c4650;
@@ -37,7 +38,6 @@ pub(crate) const WRECK_STEEL: u32 = 0x37424c;
 pub(crate) const SHADE_FACTOR: f64 = 0.62;
 const GLASS_TINT: u32 = 0x8adeec;
 const MARKING_WHITE: u32 = 0xdce7ee;
-const HEADLIGHT: u32 = 0xd9e6df;
 /// Machine guns and cable: dark blued steel.
 const GUNMETAL: u32 = 0x2b3134;
 /// Olive-drab canvas of tarps, bags and the mantlet's dust cover.
@@ -51,43 +51,6 @@ pub(crate) fn shade_of(color: u32) -> u32 {
 }
 
 static MODELS: Cache<(VehicleKind, Team, bool, bool), Node> = Cache::new();
-
-static BELT: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-static TRACK_PAD: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-
-/// The stadium-shaped track belt, extruded across the track width along x.
-fn belt_geometry() -> Arc<Mesh> {
-    BELT.get_or_init(|| {
-        let mut outline = Path::new();
-        outline
-            .move_to(-0.9, -0.33)
-            .line_to(0.9, -0.33)
-            .absarc(0.9, 0.0, 0.33, -PI / 2.0, PI / 2.0, false)
-            .line_to(-0.9, 0.33)
-            .absarc(-0.9, 0.0, 0.33, PI / 2.0, PI * 1.5, false);
-        let options = ExtrudeOptions {
-            depth: 0.54,
-            bevel_enabled: false,
-            curve_segments: 6,
-            ..ExtrudeOptions::default()
-        };
-        let mut mesh = extrude_geometry(&[Shape::new(outline)], &options);
-        mesh.translate(0.0, 0.0, -0.27).rotate_y(PI / 2.0);
-        Arc::new(mesh)
-    })
-    .clone()
-}
-
-/// Rubber pads only need an exposed face; their backing is the solid track shoe.
-fn track_pad_geometry() -> Arc<Mesh> {
-    TRACK_PAD
-        .get_or_init(|| {
-            let mut mesh = plane_geometry(1.0, 1.0);
-            mesh.rotate_x(PI / 2.0);
-            Arc::new(mesh)
-        })
-        .clone()
-}
 
 /// The turret-ring well's wall: an open cylinder turned inside out. Reversed
 /// triangles and normals face the wall inward, so it draws with ordinary
@@ -275,108 +238,6 @@ fn turret_ring_well(hull: &mut Node, deck: f64, opening: f64, ring_radius: f64) 
     put(hull, wall, 0.0, (roof_y + floor_y) / 2.0, -0.12);
     let floor = cylinder_part(opening, 0.02, 0x293238, 24);
     put(hull, floor, 0.0, floor_y - 0.01, -0.12);
-}
-
-/// Belt, road wheels, treads, shoes, skirts and a headlight on one side.
-fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis, side: f64) {
-    let (length, deck, shade, steel) = (c.length, c.deck, c.shade, c.steel);
-    let track_x = side * (c.overall_width / 2.0 - 0.23);
-    let belt_stretch = length / 2.46;
-    let mut belt = shadowed(belt_geometry(), paint(DARK));
-    belt.scale = DVec3::new(0.7, 1.12, belt_stretch);
-    put(hull, belt, track_x, 0.19, 0.0);
-    let wheels = if c.scout || c.heavy { 6 } else { 7 };
-    for j in 0..wheels {
-        let z = -length * 0.37 + (f64::from(j) * length * 0.74) / f64::from(wheels - 1);
-        let radius = if c.scout { 0.3 } else { 0.34 };
-        let wheel = rotated(cylinder_part(radius, 0.055, shade, 10), 0.0, 0.0, PI / 2.0);
-        put(hull, wheel, track_x + side * 0.1925, 0.18, z);
-        let hub = rotated(cylinder_part(0.1, 0.04, steel, 8), 0.0, 0.0, PI / 2.0);
-        put(hull, hub, track_x + side * 0.205, 0.18, z);
-    }
-    for j in 0..18 {
-        let tread = box_part(0.42, 0.03, 0.075, steel, 0.0);
-        put(
-            track_group,
-            tread,
-            track_x,
-            0.565,
-            -length * 0.44 + f64::from(j) * length * 0.052,
-        );
-    }
-    // Lower shoes and their rubber pads break up the otherwise smooth belt bottom.
-    // Keep them on the hull: the top tread group's small scrolling motion must not
-    // slide these shoes away from the curved ends of the track.
-    for j in 0..14 {
-        let z = -length * 0.35 + (f64::from(j) * length * 0.7) / 13.0;
-        let shoe = box_part(0.41, 0.035, length * 0.044, steel, 0.0);
-        put(hull, shoe, track_x, -0.177, z);
-        let mut pad = shadow_receiver(track_pad_geometry(), paint(DARK));
-        pad.scale = DVec3::new(0.28, 1.0, length * 0.03);
-        put(hull, pad, track_x, -0.197, z);
-    }
-    for end in [-1.0, 1.0] {
-        for j in 1..4 {
-            let angle = (f64::from(j) * PI) / 4.0;
-            let pitch = (-end * 1.12 * angle.sin()).atan2(belt_stretch * angle.cos());
-            let tread = rotated(
-                box_part(0.41, 0.035, length * 0.038, steel, 0.0),
-                pitch,
-                0.0,
-                0.0,
-            );
-            put(
-                hull,
-                tread,
-                track_x,
-                0.19 - 0.375 * angle.cos(),
-                end * (0.9 + 0.335 * angle.sin()) * belt_stretch,
-            );
-        }
-    }
-    put(
-        hull,
-        box_part(0.46, 0.07, length, c.color, 0.0),
-        track_x,
-        deck,
-        0.0,
-    );
-    // Booker: short modular skirts. Abrams: long panels. Type 99: heavy blocks.
-    let panels = if c.scout {
-        4
-    } else if c.heavy {
-        5
-    } else {
-        3
-    };
-    for j in 0..panels {
-        let skirt = box_part(
-            if c.heavy { 0.12 } else { 0.07 },
-            if c.heavy { 0.3 } else { 0.26 },
-            length / f64::from(panels) - 0.04,
-            if c.heavy && j % 2 == 1 {
-                shade
-            } else {
-                c.color
-            },
-            0.0,
-        );
-        put(
-            hull,
-            skirt,
-            track_x + side * if c.heavy { 0.17 } else { 0.19 },
-            deck - 0.17,
-            -length / 2.0 + ((f64::from(j) + 0.5) * length) / f64::from(panels),
-        );
-    }
-    let headlight = box_part(0.16, 0.11, 0.1, HEADLIGHT, 0.0);
-    put(
-        hull,
-        headlight,
-        side * 0.65,
-        deck - 0.1,
-        length / 2.0 - 0.05,
-    );
 }
 
 /// The turret with its armor, roof equipment, barrel and team marking.
