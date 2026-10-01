@@ -99,10 +99,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      # The server build hash includes the crate tree, which content-version.mjs reads
-      # with cargo.
+      # Cargo compiles the server binary the image copies, and the server build hash
+      # includes the crate tree, which content-version.mjs reads with cargo.
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
+      # The image builds on main keep this warm, so a server change recompiles only
+      # the workspace crates.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: server-image
+          cache-bin: false
       - name: Log in to the GitHub Container Registry
         if: env.PUSH == 'true'
         run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin

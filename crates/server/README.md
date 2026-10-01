@@ -43,9 +43,9 @@ there before changing either.
 
 `pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
-The build stage runs natively and cross-compiles as above, with cache mounts for
-crates and compiled dependencies, and the image holds only the static binary,
-listening on `0.0.0.0:8787`. Try it with `docker run --rm -p 8787:8787
+It cross-compiles with `--vps` as above in the normal Cargo target directory, so
+compiled dependencies are reused locally and from CI's Cargo cache, and the image
+only copies in the static binary, listening on `0.0.0.0:8787`. Try it with `docker run --rm -p 8787:8787
 sloppy-tanks-server` and `ALLOWED_ORIGINS` as needed. The VPS runs these images
 (see [VPS deployment](#vps-deployment)).
 

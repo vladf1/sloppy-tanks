@@ -1,13 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
 
-/** Build the multiplayer server's linux/amd64 Docker image from `Dockerfile`. It stamps
- * the same content version and server build as `scripts/build-server.mjs`, computed
- * here so the hashing has one implementation, and compiles with the Rust version
- * rust-toolchain.toml pins.
+/** Build the multiplayer server's linux/amd64 Docker image from `Dockerfile`. The binary
+ * comes from `scripts/build-server.mjs --vps`, built in the normal Cargo target directory
+ * so its compiled dependencies are reused, and the image only copies it in. The image
+ * labels carry the same content version and server build the binary stamps.
  *
  * Every image is tagged with its server build, so one build has one image wherever it
  * came from. Locally it is `sloppy-tanks-server:<build>` and `:latest`. CI passes
@@ -37,9 +36,6 @@ function git(...args) {
 
 const name = option("--registry")[0] ?? LOCAL_IMAGE;
 const push = process.argv.includes("--push");
-const toolchain = await readFile(new URL("../rust-toolchain.toml", import.meta.url), "utf8");
-const rustVersion = toolchain.match(/^channel\s*=\s*"([^"]+)"/m)?.[1];
-if (!rustVersion) throw new Error("rust-toolchain.toml has no channel");
 const version = await contentVersion();
 const build = await serverBuild();
 const commit = git("rev-parse", "HEAD") + (git("status", "--porcelain") ? "-dirty" : "");
@@ -57,12 +53,12 @@ if (published) {
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 } else {
+  const binary = run("node", ["scripts/build-server.mjs", "--vps"]);
+  if (binary.status !== 0) process.exit(binary.status ?? 1);
   const result = run("docker", [
     "build",
     "--platform",
     "linux/amd64",
-    "--build-arg",
-    `RUST_VERSION=${rustVersion}`,
     "--build-arg",
     `SLOPPY_CONTENT_VERSION=${version}`,
     "--build-arg",
