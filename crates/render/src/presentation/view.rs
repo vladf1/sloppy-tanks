@@ -2192,6 +2192,7 @@ fn environment(look: &ThemeLook) -> Environment {
         sun_position: look.sun_position,
         sun_target: Vec3::ZERO,
         exposure: look.exposure,
+        reflections: look.reflections,
     }
 }
 

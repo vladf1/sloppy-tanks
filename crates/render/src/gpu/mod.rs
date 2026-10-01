@@ -108,6 +108,9 @@ pub struct Environment {
     pub sun_target: Vec3,
     /// Tone-mapping exposure (Three `toneMappingExposure`).
     pub exposure: f32,
+    /// Strength of the sky's specular reflection on lit surfaces; 0 keeps
+    /// Three's hemisphere-only fill, which the labs' reference frames use.
+    pub reflections: f32,
 }
 
 impl Default for Environment {
@@ -128,6 +131,7 @@ impl Default for Environment {
             sun_position: Vec3::new(-45.0, 68.0, 25.0),
             sun_target: Vec3::ZERO,
             exposure: 1.0,
+            reflections: 0.0,
         }
     }
 }
@@ -1883,7 +1887,7 @@ impl Renderer {
             fog_range,
             sky_color: rgb4(
                 hex_to_linear_scaled(env.sky_color, env.hemisphere_intensity),
-                0.0,
+                env.reflections,
             ),
             ground_color: rgb4(
                 hex_to_linear_scaled(env.ground_color, env.hemisphere_intensity),

@@ -162,9 +162,55 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, pixel: vec2f, geometry_rou
         }
     }
     let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
-    let indirect = hemisphere * diffuse * RECIPROCAL_PI;
+    var indirect = hemisphere * diffuse * RECIPROCAL_PI;
+    // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
+    // terrain and buildings keep the hemisphere fill their themes were tuned with.
+    let reflections = frame.sky_color.w * (1.0 - smoothstep(GLOSSY_UNTIL, MATTE_FROM, s.roughness));
+    if reflections > 0.0 {
+        // Split-sum environment specular with Three's multiscatter terms
+        // (`computeMultiscattering`): the reflected sky takes the energy it
+        // reflects away from the diffuse fill, so grazing paint gains a sheen
+        // and metals stop going dark outside the sun's highlight.
+        let dot_nv = clamp(dot(n, v), 0.0, 1.0);
+        let scale_bias = dfg(roughness, dot_nv);
+        let single = specular * scale_bias.x + scale_bias.y;
+        let single_energy = scale_bias.x + scale_bias.y;
+        let missing_energy = 1.0 - single_energy;
+        let average_fresnel = specular + (1.0 - specular) * 0.047619;
+        let multi = single * average_fresnel / (1.0 - missing_energy * average_fresnel) * missing_energy;
+        let radiance = environment_radiance(reflect(-v, n), roughness);
+        let scattered = single + multi;
+        let kept = 1.0 - reflections * max(max(scattered.r, scattered.g), scattered.b);
+        indirect = indirect * kept
+            + reflections * (single * radiance + multi * hemisphere * RECIPROCAL_PI);
+    }
     return reflected.diffuse + indirect + reflected.specular + s.emissive;
 }
+
+// The sky a surface reflects, prefiltered analytically instead of from a cube
+// map: the visible sky (the fog color, which is the background) at the horizon
+// fading to the hemisphere fill's sky overhead, and the fill's ground below. A
+// rougher lobe sees a softer horizon. The sun is left out: the direct GGX term
+// already draws its highlight.
+fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
+    let up = direction.y;
+    let lobe = roughness * roughness;
+    let zenith = frame.sky_color.rgb * RECIPROCAL_PI;
+    var horizon = zenith;
+    if frame.fog_color.w > 0.5 {
+        horizon = frame.fog_color.rgb;
+    }
+    let sky = mix(horizon, zenith, sqrt(clamp(up, 0.0, 1.0)));
+    let ground = frame.ground_color.rgb * RECIPROCAL_PI;
+    let horizon_width = HORIZON_SHARPEST + lobe;
+    return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
+}
+
+// Half-width in direction Y of a mirror's horizon blend.
+const HORIZON_SHARPEST: f32 = 0.03;
+// Material roughness over which sky reflections fade out.
+const GLOSSY_UNTIL: f32 = 0.45;
+const MATTE_FROM: f32 = 0.6;
 
 @fragment
 fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4f {

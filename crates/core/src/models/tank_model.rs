@@ -16,7 +16,7 @@ use super::model_primitives::{
     Cache, TEAM_COLORS, box_part, cylinder_part, material, paint, put, rotated, shadow_receiver,
     shadowed,
 };
-use super::tank_surfaces::apply_tank_surface;
+use super::tank_surfaces::{Finish, apply_tank_surface};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{
@@ -286,7 +286,18 @@ fn tracked_model(kind: VehicleKind, team: Team, wreck: bool, open_turret_ring: b
     root.children.push(hull(&chassis, open_turret_ring));
     root.children.push(turret(&chassis, team));
     root.scale = DVec3::splat(kind.scale());
-    apply_tank_surface(&mut root, &[chassis.color, chassis.shade, chassis.steel]);
+    let finish = if wreck {
+        Finish::Wrecked
+    } else {
+        Finish::Fresh {
+            steel: chassis.steel,
+        }
+    };
+    apply_tank_surface(
+        &mut root,
+        &[chassis.color, chassis.shade, chassis.steel],
+        finish,
+    );
     root
 }
 

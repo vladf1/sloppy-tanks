@@ -158,6 +158,7 @@ async function main(): Promise<void> {
   } while (!progress[3]);
   const readyMs = performance.now() - started;
   if (params.has("zoom")) game.debug_set_zoom(Number(params.get("zoom")));
+  if (params.has("reflections")) game.debug_set_reflections(Number(params.get("reflections")));
   game.start();
   if (params.has("fp")) game.toggle_first_person();
   addEventListener("resize", () => game.resize(innerWidth, innerHeight, devicePixelRatio, false));

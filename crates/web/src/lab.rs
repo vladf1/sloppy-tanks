@@ -67,6 +67,7 @@ impl RenderLab {
             sun_position: Vec3::from(spec.sun.position),
             sun_target: Vec3::from(spec.sun.target),
             exposure: spec.exposure,
+            reflections: 0.0,
         });
         let sun = Vec3::from(spec.sun.position);
         self.renderer.set_sun_shadow(SunShadow {

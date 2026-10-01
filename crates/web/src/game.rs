@@ -923,6 +923,14 @@ impl Game {
         self.view.rig.zoom
     }
 
+    /// Sky reflection strength (0 off) until the next map's theme resets it,
+    /// for comparing the lighting within one page.
+    pub fn debug_set_reflections(&mut self, strength: f32) {
+        let mut environment = *self.view.renderer.environment();
+        environment.reflections = strength.max(0.0);
+        self.view.renderer.set_environment(environment);
+    }
+
     /// Topple every tower and drum.
     pub fn debug_collapse(&mut self) {
         let human = self.sim.human();

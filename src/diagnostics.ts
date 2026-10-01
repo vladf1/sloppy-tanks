@@ -163,6 +163,7 @@ export function createDebug(
     },
     autoRounds: (value = true) => game.debug_set_auto_rounds(value),
     zoom: (value: number) => game.debug_set_zoom(value),
+    reflections: (value: number) => game.debug_set_reflections(value),
     firstPerson: () => game.toggle_first_person(),
     record(): void {
       recorder.record();

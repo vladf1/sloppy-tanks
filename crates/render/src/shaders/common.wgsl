@@ -22,7 +22,8 @@ struct Frame {
     fog_color: vec4f,
     // x near, y far (Three linear `Fog`).
     fog_range: vec4f,
-    // Hemisphere light colors × intensity.
+    // Hemisphere light colors × intensity; sky_color.w is the strength of the
+    // sky's specular reflection (0 off).
     sky_color: vec4f,
     ground_color: vec4f,
     // Unit vector toward the sun.
