@@ -7,8 +7,13 @@ import WebSocket from "ws";
 import { BotPlayer, openSeats, randomRoomCode, type ServerInfo } from "../bots/bot-player";
 
 // The traffic bots drive the real multiplayer server: `pnpm run server:build` (part of
-// `pnpm run check`) builds this binary.
-const SERVER = fileURLToPath(new URL("../target/server/sloppy-server", import.meta.url));
+// `pnpm run check`) builds this binary. CI sets SLOPPY_SERVER_VPS so that is the static
+// musl binary its server image ships.
+const SERVER_PATH =
+  process.env.SLOPPY_SERVER_VPS === "1"
+    ? "../target/x86_64-unknown-linux-musl/server/sloppy-server"
+    : "../target/server/sloppy-server";
+const SERVER = fileURLToPath(new URL(SERVER_PATH, import.meta.url));
 // One of the server's default local origins, as a Vite tab would send.
 const ORIGIN = "http://127.0.0.1:5173";
 const STEP_MS = 50;

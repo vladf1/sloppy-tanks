@@ -18,7 +18,7 @@ jobs:
   # that pull requests restore.
   check:
     uses: ./.github/workflows/check.yml
-    # The server-image job pushes to the GitHub Container Registry.
+    # The server job pushes its image to the GitHub Container Registry.
     permissions:
       contents: read
       packages: write

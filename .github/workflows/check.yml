@@ -1,7 +1,7 @@
 # The quality gate, `pnpm run check`, split into parallel jobs. Each job runs one of
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the Pages workflow calls it with the production site settings and deploys
-# only after every job here passes. Beside the gate, the server-image job publishes the
+# only after every job here passes. Beside its gate script, the server job publishes the
 # multiplayer server's Docker image, which the Pages workflow promotes to :production.
 name: Code quality
 
@@ -20,7 +20,7 @@ on:
     outputs:
       server-image:
         description: The server image this commit built or found, tagged with its server build.
-        value: ${{ jobs.server-image.outputs.image }}
+        value: ${{ jobs.server.outputs.image }}
 
 permissions:
   contents: read
@@ -69,22 +69,13 @@ jobs:
           cargo-cache: rust-tests
       - run: pnpm run test:rust
 
+  # Builds the static musl server binary once: the page-shell tests drive it, and the
+  # server image (Dockerfile) copies it in. The image is pushed as <server build>, plus
+  # pr-<number> for a pull request, or main and sha-<commit> for main. A server build the
+  # registry already holds is only retagged. Nothing here moves :production or touches a
+  # server; fork pull requests, which cannot push, only build.
   server:
-    name: Server build and page-shell tests
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          cargo-cache: server
-      - run: pnpm run check:server
-
-  # Builds the server image (Dockerfile) and pushes it as <server build>, plus pr-<number>
-  # for a pull request, or main and sha-<commit> for main. A server build the registry
-  # already holds is only retagged. Nothing here moves :production or touches a server;
-  # fork pull requests, which cannot push, only build.
-  server-image:
-    name: Server image
+    name: Server build, page-shell tests and image
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -92,23 +83,15 @@ jobs:
     outputs:
       image: ${{ steps.image.outputs.image }}
     env:
+      SLOPPY_SERVER_VPS: "1"
       SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server
       PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/setup
         with:
-          node-version: 24
-      # Cargo compiles the server binary the image copies, and the server build hash
-      # includes the crate tree, which content-version.mjs reads with cargo.
-      - name: Install the pinned Rust toolchain
-        run: rustup toolchain install
-      # The image builds on main keep this warm, so a server change recompiles only
-      # the workspace crates.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: server-image
-          cache-bin: false
+          cargo-cache: server-image
+      - run: pnpm run check:server
       - name: Log in to the GitHub Container Registry
         if: env.PUSH == 'true'
         run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin

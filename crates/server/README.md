@@ -120,8 +120,9 @@ time CI or the registry cannot.
 
 ### Images and tags
 
-The `server-image` job in `.github/workflows/check.yml` builds the image and pushes
-it to `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
+The `server` job in `.github/workflows/check.yml` builds the binary once, runs the
+page-shell tests against it, then builds the image and pushes it to
+`ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
 | Tag             | Moved by                                   | Meaning                                       |
 | --------------- | ------------------------------------------ | --------------------------------------------- |
