@@ -146,10 +146,11 @@ auto() {
   if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
     max=$MAX_WAIT_CONTENT_SECONDS
   fi
-  # A server that does not answer has nobody to protect.
+  # The top-level count: each room in /stats has a "players" field too. A server that
+  # does not answer has nobody to protect.
   local players
   players=$(curl -fsS --max-time 5 "http://127.0.0.1:$port/stats" 2>/dev/null |
-    grep -o '"players":[0-9]*' | cut -d: -f2 || true)
+    python3 -c 'import json, sys; print(int(json.load(sys.stdin)["players"]))' 2>/dev/null || true)
   players=${players:-0}
   local waited=$((now - first))
   if ((players > 0 && waited < max)); then
