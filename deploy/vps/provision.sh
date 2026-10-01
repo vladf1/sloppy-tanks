@@ -6,19 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export DEBIAN_FRONTEND=noninteractive
 
+# Caddy's former apt repository fails apt-get update (install-caddy.sh says why).
+rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 apt-get update
-apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring ufw
+apt-get install -y ca-certificates curl ufw
 
-# Ubuntu's own caddy package trails the version this repo targets.
-if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ]; then
-  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key |
-    gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
-    >/etc/apt/sources.list.d/caddy-stable.list
-fi
-apt-get update
-apt-get install -y caddy
-
+. ./install-caddy.sh
 . ./install-docker.sh
 
 install -m 644 sloppy-tanks.env /etc/sloppy-tanks.env

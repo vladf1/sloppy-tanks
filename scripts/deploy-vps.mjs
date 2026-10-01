@@ -86,6 +86,7 @@ if (process.argv.includes("--provision")) {
       ]
     : [
         "provision.sh",
+        "install-caddy.sh",
         ...docker,
         "Caddyfile",
         "sloppy-tanks.service",

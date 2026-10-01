@@ -135,7 +135,7 @@ connects to the VPS. Fork pull requests build the image without pushing.
 
 `deploy/vps/` holds the Ubuntu setup:
 
-- `provision.sh` installs Caddy (official repo) and Docker (`install-docker.sh`),
+- `provision.sh` installs Caddy (a pinned release, `install-caddy.sh`) and Docker (`install-docker.sh`),
   and allows only SSH, 80, 443 and 8443 through `ufw`. `daemon.json` turns off
   Docker's bridge network and firewall rules: the containers use host networking,
   so the servers keep their loopback listeners behind Caddy, see real client

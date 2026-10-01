@@ -8,6 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export DEBIAN_FRONTEND=noninteractive
 command -v caddy >/dev/null || { echo "Caddy is missing; run the full provision.sh first" >&2; exit 1; }
+# Caddy's former apt repository fails apt-get update (install-caddy.sh says why); the
+# installed Caddy keeps running.
+rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 apt-get update
 . ./install-docker.sh
 install -m 644 sloppy-tanks-dev.env /etc/sloppy-tanks-dev.env
