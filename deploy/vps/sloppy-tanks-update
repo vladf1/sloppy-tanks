@@ -64,6 +64,21 @@ describe() {
 }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 
+# Every load or pull leaves an image tagged with its build, which a plain prune (untagged
+# images only) never frees. Untag the server images that no service runs or could roll
+# back to (both services share the image store), keeping :production for a pending
+# auto-update, then prune what is left untagged.
+remove_old_images() {
+  local keep ref id
+  keep=$(cat "$STATE"/*.image "$STATE"/*.previous 2>/dev/null | sed -n 's/^IMAGE=//p')
+  docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
+    while read -r ref id; do
+      if [[ $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
+      if ! grep -qxF "$id" <<<"$keep"; then docker image rm "$ref" >/dev/null || true; fi
+    done
+  docker image prune --force >/dev/null
+}
+
 # /health reports the stamps of the process that answers, so a match means the new
 # container, not the one it replaced, is serving.
 healthy() {
@@ -98,7 +113,7 @@ switch_to() {
   systemctl restart "$unit"
   if healthy "$new"; then
     echo "$unit runs $(describe "$new")"
-    docker image prune --force >/dev/null
+    remove_old_images
     return 0
   fi
   echo "$unit did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
