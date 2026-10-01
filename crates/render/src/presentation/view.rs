@@ -9,8 +9,8 @@ use std::sync::Arc;
 use glam::{DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, aged_wreck_material, custom_floor, custom_spawn_pads, flags_model, part,
-    pickup_cube, tank_model, tank_visual_muzzle, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, custom_floor, custom_spawn_pads, flags_model,
+    part, pickup_cube, tank_model, tank_visual_muzzle, tree_foliage, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -19,7 +19,8 @@ use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
-use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
+use sloppy_core::sim::timber_layout::{TimberPart, TimberWall, timber_parts};
+use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, MatchPhase, PickupKind, RenderState, SimEvent, SimEventType, Team,
@@ -45,6 +46,7 @@ use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT
 use super::{CosmeticRandom, PRESENTATION_EFFECTS};
 use crate::color::hex_to_linear;
 use crate::effects::Effects;
+use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PrepareProgress, Renderer, SunShadow,
@@ -73,12 +75,25 @@ const GEM_BOB: f64 = 0.18;
 /// Pickup glow proportions around the collecting tank.
 const GLOW_SCALE: Vec3 = Vec3::new(1.65, 1.25, 1.9);
 const GLOW_HEIGHT: f32 = 1.1;
-/// Felling boughs (`tree-debris.ts`).
+/// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
+/// second slows the fall and the tumble. Landed, they lie until the debris cleanup
+/// sinks them out of sight.
 const MAX_BRANCHES: usize = 32;
-const BRANCH_LIFETIME: f64 = 6.0;
+const BRANCH_LIFETIME: f64 = 9.0;
 const BRANCH_GRAVITY: f64 = 9.8;
+const BRANCH_DRAG: f32 = 1.6;
+const BRANCH_TUMBLE: f32 = 1.8;
 const BRANCH_REST: f32 = 0.03;
-const BRANCH_SINK: f64 = 0.6;
+/// A shell hit shudders a tree's crown about the top of its stump: peak lean
+/// (rad), decay time (s), swing rate (rad/s), and when it is still again (s).
+const TREE_SHUDDER: [f64; 4] = [0.04, 0.5, 9.0, 2.5];
+/// How far from a tree's trunk a shell impact still counts as hitting it.
+const TREE_HIT_REACH: f64 = 2.5;
+/// A timber impact this close to a loose member's surface scars it, up to this
+/// many scars per member (each one rebuilds the member's small model).
+const DEBRIS_HIT_REACH: f32 = 0.15;
+const MAX_DEBRIS_MARKS: usize = 8;
+const DEBRIS_MARK_SIZE: f64 = 0.8;
 /// Debris sinks by its height plus this margin while it fades.
 const SINK_MARGIN: f32 = 0.03;
 /// Harbor water plane edge and heights come from `WaterSettings`.
@@ -372,6 +387,13 @@ struct TreeView {
     cut: usize,
     branches: Vec<BranchView>,
     branch_stage: u32,
+    /// The crown joint's authored transform, and the height it shudders about.
+    crown_rest: Mat4,
+    pivot: f32,
+    /// What the crown sheds when hit or felled.
+    leaves: LeafCrown,
+    /// The horizontal axis and start time of the shudder from the last hit.
+    shudder: Option<(Vec3, f64)>,
 }
 
 struct CoverView {
@@ -409,6 +431,13 @@ struct FragmentView {
     instance: InstanceId,
     look: FragmentLook,
     sink: Option<f32>,
+    /// It fades while it sinks; a felled crown only sinks, so its alpha-tested
+    /// foliage never turns into a blended sheet.
+    fades: bool,
+    /// A loose timber member and the scars shells have left on it since it fell.
+    timber: Option<TimberPart>,
+    /// The body's last pose, to find where a shell struck the piece.
+    pose: (Vec3, Quat),
 }
 
 struct PickupView {
@@ -444,6 +473,8 @@ struct FallingBranch {
     life: f64,
     landed: bool,
     resting_y: f32,
+    /// How far it sinks to leave sight once landed.
+    sink: f32,
 }
 
 struct SceneryView {
@@ -1046,7 +1077,7 @@ impl Presentation {
         let tree = entry
             .tree
             .as_ref()
-            .map(|parts| tree_view(nodes, parts, 0..nodes.len()));
+            .map(|parts| tree_view(nodes, parts, 0..nodes.len(), cover));
         let instance = self
             .renderer
             .add_instance(model, world, Lifetime::Round)
@@ -1133,7 +1164,7 @@ impl Presentation {
                 .map_or(nodes.len(), |offset| joint + 1 + offset);
             let tree_view = tree
                 .as_ref()
-                .map(|parts| tree_view(nodes, parts, joint..end));
+                .map(|parts| tree_view(nodes, parts, joint..end, cover));
             let key = format!("combined/{}", cover.id);
             self.cover_models.insert(
                 key.clone(),
@@ -1200,6 +1231,12 @@ impl Presentation {
             return;
         }
         self.effects.event(event);
+        if event.cover_kind == Some(CoverKind::Tree) {
+            self.tree_event(event);
+        }
+        if event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::Timber) {
+            self.scar_timber_debris(event);
+        }
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
@@ -1221,6 +1258,104 @@ impl Presentation {
         if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
         }
+    }
+
+    /// A shell hit shudders a tree's crown and shakes leaves loose; a felled tree
+    /// sheds leaves as it goes over. Impacts name no cover, so the hit tree is the
+    /// nearest one within reach.
+    fn tree_event(&mut self, event: &SimEvent) {
+        let tree = match event.kind {
+            SimEventType::Destroy => event
+                .id
+                .and_then(|id| self.covers.get_mut(&id))
+                .and_then(|view| view.tree.as_mut()),
+            SimEventType::Impact => self
+                .covers
+                .values_mut()
+                .filter_map(|view| view.tree.as_mut())
+                .map(|tree| {
+                    let distance = (tree.leaves.x - event.x).hypot(tree.leaves.z - event.z);
+                    (distance, tree)
+                })
+                .filter(|(distance, _)| *distance <= TREE_HIT_REACH)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, tree)| tree),
+            _ => None,
+        };
+        let Some(tree) = tree else {
+            return;
+        };
+        self.effects.shed_leaves(event, &tree.leaves);
+        if event.kind == SimEventType::Impact {
+            // The crown leans away from the shell first.
+            let push = Vec3::new(
+                (tree.leaves.x - event.x) as f32,
+                0.0,
+                (tree.leaves.z - event.z) as f32,
+            )
+            .normalize_or(Vec3::X);
+            tree.shudder = Some((Vec3::Y.cross(push).normalize_or(Vec3::X), self.time));
+        }
+    }
+
+    /// A shell that strikes a loose timber member leaves a scar on it, like the
+    /// standing wall's. The simulation only marks standing walls (their members are
+    /// gameplay data), so loose members are marked here from the impact, which every
+    /// viewer receives: the struck member is the one whose surface is nearest.
+    fn scar_timber_debris(&mut self, event: &SimEvent) {
+        let Some(height) = event.height else {
+            return;
+        };
+        let point = Vec3::new(event.x as f32, height as f32, event.z as f32);
+        let struck = self
+            .fragments
+            .iter()
+            .filter_map(|(&id, view)| {
+                let part = view.timber.as_ref()?;
+                let (position, rotation) = view.pose;
+                let local = rotation.inverse() * (point - position);
+                let half = Vec3::new(part.w as f32, part.h as f32, part.d as f32) / 2.0;
+                let outside = (local.abs() - half).max(Vec3::ZERO).length();
+                (outside <= DEBRIS_HIT_REACH && part.marks.len() < MAX_DEBRIS_MARKS)
+                    .then_some((outside, id, local))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, id, local)) = struck else {
+            return;
+        };
+        let view = self.fragments.get_mut(&id).expect("struck fragment");
+        let Some(part) = view.timber.as_mut() else {
+            return;
+        };
+        let mark = part.loose_mark(
+            f64::from(local.x),
+            f64::from(local.y),
+            f64::from(local.z),
+            DEBRIS_MARK_SIZE,
+        );
+        part.marks.push(mark);
+        let node = model_catalog::timber_part_model(part);
+        let bounds = node_bounds(&node, DMat4::IDENTITY);
+        let model = self.renderer.add_model(&node, Lifetime::Round);
+        let Some(instance) = self
+            .renderer
+            .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+        else {
+            self.renderer.remove_model(model);
+            return;
+        };
+        self.renderer.remove_instance(view.instance);
+        if let FragmentLook::Owned(old, _) = view.look {
+            self.renderer.remove_model(old);
+        }
+        view.instance = instance;
+        view.look = FragmentLook::Owned(model, bounds);
+        // The next fragment update poses the new instance.
+        let (position, rotation) = view.pose;
+        self.renderer.set_transform(
+            instance,
+            Mat4::from_rotation_translation(rotation, position),
+        );
     }
 
     /// Screen angle of damage for the HUD's direction indicator.
@@ -1739,6 +1874,23 @@ impl Presentation {
                         }
                     }
                 }
+                if let Some((axis, start)) = tree.shudder {
+                    let [lean, decay, rate, settled] = TREE_SHUDDER;
+                    let age = self.time - start;
+                    let pose = (age < settled && cover.alive).then(|| {
+                        let angle = lean * (-age / decay).exp() * (age * rate).sin();
+                        let pivot = Vec3::Y * tree.pivot;
+                        tree.crown_rest
+                            * Mat4::from_translation(pivot)
+                            * Mat4::from_axis_angle(axis, angle as f32)
+                            * Mat4::from_translation(-pivot)
+                    });
+                    if pose.is_none() {
+                        tree.shudder = None;
+                    }
+                    self.renderer
+                        .set_node_transform(view.instance, tree.crown, pose);
+                }
                 self.renderer
                     .set_node_visible(view.instance, tree.crown, !stump);
                 self.renderer
@@ -1816,6 +1968,7 @@ impl Presentation {
             life: BRANCH_LIFETIME,
             landed: false,
             resting_y: 0.0,
+            sink: 0.0,
         });
     }
 
@@ -1833,8 +1986,9 @@ impl Presentation {
             index += 1;
             if !branch.landed {
                 branch.velocity.y -= (BRANCH_GRAVITY * dt) as f32;
+                branch.velocity *= (-BRANCH_DRAG * dt32).exp();
                 branch.position += branch.velocity * dt32;
-                let turn = branch.spin * dt32 * 3.0;
+                let turn = branch.spin * dt32 * BRANCH_TUMBLE;
                 branch.rotation = (branch.rotation
                     * Quat::from_rotation_x(turn.x)
                     * Quat::from_rotation_y(turn.y)
@@ -1850,11 +2004,14 @@ impl Presentation {
                     branch.position.y += BRANCH_REST - bottom;
                     branch.resting_y = branch.position.y;
                     branch.landed = true;
+                    branch.sink = world_height(&branch.bounds, &world) + SINK_MARGIN;
                 }
             }
-            let cleanup = debris_cleanup_progress(branch.life);
+            // Sinking out of sight instead of fading keeps the alpha-tested leaves
+            // opaque (a blended copy draws them as a ghostly sheet).
+            let cleanup = debris_cleanup_progress(branch.life) as f32;
             if branch.landed {
-                branch.position.y = branch.resting_y - (cleanup * BRANCH_SINK) as f32;
+                branch.position.y = branch.resting_y - cleanup * branch.sink;
             }
             self.renderer.set_transform(
                 branch.instance,
@@ -1864,8 +2021,6 @@ impl Presentation {
                     branch.position,
                 ),
             );
-            self.renderer
-                .set_opacity(branch.instance, (1.0 - cleanup) as f32);
         }
     }
 
@@ -1954,6 +2109,7 @@ impl Presentation {
             let view = self.fragments.get_mut(&fragment.id).expect("fragment view");
             let rotation = quat(fragment.rotation);
             let mut position = vec3(fragment.position);
+            view.pose = (position, rotation);
             match view.look {
                 FragmentLook::Piece => {
                     let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
@@ -2014,7 +2170,9 @@ impl Presentation {
                     }
                 }
             }
-            self.renderer.set_opacity(view.instance, 1.0 - cleanup);
+            if view.fades {
+                self.renderer.set_opacity(view.instance, 1.0 - cleanup);
+            }
         }
     }
 
@@ -2065,6 +2223,9 @@ impl Presentation {
             instance,
             look,
             sink: None,
+            fades: fragment.tree_cover_id.is_none(),
+            timber: fragment.timber_part.clone(),
+            pose: (vec3(fragment.position), quat(fragment.rotation)),
         })
     }
 
@@ -2121,18 +2282,27 @@ fn tree_view(
     nodes: &[crate::model::ModelNode],
     parts: &TreeParts,
     range: std::ops::Range<usize>,
+    cover: &RenderCover,
 ) -> TreeView {
+    let shape = TreeShape {
+        x: cover.x,
+        z: cover.z,
+        w: cover.w,
+        d: cover.d,
+        h: cover.h,
+    };
     let find = |name: &str| {
         range
             .clone()
             .find(|&index| nodes[index].name == name)
             .unwrap_or_else(|| panic!("tree joint {name}"))
     };
+    let crown = find(parts.crown);
     let joints = range
         .clone()
         .filter(|&index| TreeParts::is_branch(&nodes[index].name));
     TreeView {
-        crown: find(parts.crown),
+        crown,
         cut: find(parts.cut_surface),
         branches: parts
             .branches
@@ -2146,6 +2316,14 @@ fn tree_view(
             })
             .collect(),
         branch_stage: 0,
+        crown_rest: nodes[crown].rest,
+        pivot: tree_proportions(shape.x, shape.z, shape.w, shape.d, shape.h).stump_height as f32,
+        leaves: LeafCrown {
+            x: cover.x,
+            z: cover.z,
+            foliage: tree_foliage(&shape),
+        },
+        shudder: None,
     }
 }
 

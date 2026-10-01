@@ -20,6 +20,10 @@ use super::model_primitives::{DEFAULT_ROUGHNESS, box_part, cylinder_part, materi
 /// [`VillageScenery::update`]: super::village_scenery::VillageScenery::update
 pub const WATERWHEEL: &str = "turning-waterwheel";
 const TIMBER: u32 = 0x725236;
+/// The waterwheel's hub relative to the mill: far enough out over the creek that
+/// its paddles dip into the water (the mill stands 0.25 m below the valley floor).
+const WHEEL_OFFSET: f64 = -13.6;
+const WHEEL_HUB: f64 = 1.1;
 
 /// `beam(group, a, b, width, color)`: a square timber between two points.
 fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
@@ -239,9 +243,17 @@ fn watermill() -> Node {
             6.45,
         );
     }
-    // Decorative axle runs through the mill wall to the stream-facing wheel.
-    let axle = rotated(cylinder_part(0.27, 6.4, 0x514a3d, 10), FRAC_PI_2, 0.0, 0.0);
-    put(&mut building, axle, -8.0, 1.3, -5.7);
+    // The axle runs from the mill wall out over the bank to the wheel, which turns
+    // in the creek between two stone piers (the creek's water line is about 11.4 m
+    // out from the mill's centre, its bed 4 m below the floor).
+    let (start, end) = (-3.0, WHEEL_OFFSET - 1.4);
+    let axle = rotated(
+        cylinder_part(0.27, start - end, 0x514a3d, 10),
+        FRAC_PI_2,
+        0.0,
+        0.0,
+    );
+    put(&mut building, axle, -8.0, WHEEL_HUB, (start + end) / 2.0);
     put(
         &mut building,
         concrete_wall(2.4, 2.5, 3.0),
@@ -249,6 +261,16 @@ fn watermill() -> Node {
         -0.3,
         -4.9,
     );
+    for (z, bottom) in [(WHEEL_OFFSET + 1.6, -3.4), (WHEEL_OFFSET - 1.6, -4.1)] {
+        let top = WHEEL_HUB - 0.25;
+        put(
+            &mut building,
+            concrete_wall(1.3, top - bottom, 1.1),
+            -8.0,
+            (top + bottom) / 2.0,
+            z,
+        );
+    }
     put(
         &mut building,
         siding_box(3.2, 2.7, 3.4, 0x88683f),
@@ -290,7 +312,7 @@ fn watermill() -> Node {
     batch(&mut building);
     batch(&mut wheel);
     put(&mut group, building, 0.0, 0.0, 0.0);
-    put(&mut group, wheel, -8.0, 1.3, -9.4);
+    put(&mut group, wheel, -8.0, WHEEL_HUB, WHEEL_OFFSET);
     group
 }
 

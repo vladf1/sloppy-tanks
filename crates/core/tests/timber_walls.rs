@@ -16,7 +16,7 @@ use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::{
-    TimberPartKind, TimberWall, timber_damage_stage, timber_parts,
+    TimberFace, TimberPartKind, TimberWall, timber_damage_stage, timber_parts,
 };
 use sloppy_core::sim::{CoverKind, DamageCause, Shot, SimEventType, Simulation, Team, Weapon};
 use support::clear_arena;
@@ -355,5 +355,40 @@ fn detached_timber_beams_land_across_one_another_and_remain_stacked() {
     assert!(allows(group::TIMBER_DEBRIS, group::TANK));
     for excluded in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
         assert!(!allows(group::TIMBER_DEBRIS, excluded));
+    }
+}
+
+#[test]
+fn a_loose_member_takes_each_hit_on_the_face_it_struck_with_a_fresh_seed() {
+    let wall = TimberWall {
+        x: -2.0,
+        z: 13.0,
+        w: 4.0,
+        d: 0.9,
+        h: 2.8,
+        color: 0xa66f46,
+        hits: &[],
+        join: None,
+    };
+    let mut beam = timber_parts(&wall, 0)
+        .into_iter()
+        .find(|part| part.kind == TimberPartKind::Beam)
+        .unwrap();
+    let (w, h, d) = (beam.w, beam.h, beam.d);
+    let cases = [
+        ((0.3, 0.05, d / 2.0), TimberFace::Front, (0.3, 0.05)),
+        ((-0.4, -0.1, -d / 2.0), TimberFace::Back, (-0.4, -0.1)),
+        ((0.2, h / 2.0, 0.1), TimberFace::Top, (0.2, 0.1)),
+        ((0.2, -h / 2.0, -0.1), TimberFace::Bottom, (0.2, -0.1)),
+        ((w / 2.0, 0.1, 0.2), TimberFace::Right, (0.2, 0.1)),
+        ((-w / 2.0, 0.1, 0.2), TimberFace::Left, (0.2, 0.1)),
+    ];
+    let mut seeds = Vec::new();
+    for ((x, y, z), face, (mark_x, mark_y)) in cases {
+        let mark = beam.loose_mark(x, y, z, 0.8);
+        assert_eq!((mark.face, mark.x, mark.y), (face, mark_x, mark_y));
+        assert!(!seeds.contains(&mark.seed), "each scar looks different");
+        seeds.push(mark.seed);
+        beam.marks.push(mark);
     }
 }

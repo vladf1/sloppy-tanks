@@ -16,12 +16,14 @@ use sloppy_core::sim::data::pickup;
 
 use super::explosions::{MAX_EXPLOSIONS, PUFFS_PER_BLAST};
 use super::laser::LASER_CAPACITY;
+use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::MAX_PARTICLES;
 use super::pickups::MAX_PICKUP_EFFECTS;
 use super::pool::PoolDesc;
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
 use super::registry::{BLAST_RING, DUST, PUFF, TRACK_MARK};
+use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
@@ -148,6 +150,12 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             ));
         }
     }
+    pools.push(pool(
+        "rocket smoke",
+        &dust_quad,
+        &dust,
+        ROCKET_SMOKE_CAPACITY,
+    ));
 
     let laser = pickup(PickupKind::Laser).color;
     let beam = |color: u32, opacity: f32| Material {
@@ -208,6 +216,19 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         Material::basic(0xffffff),
         MAX_PARTICLES,
     ));
+    // Lit like the crowns they fell from; the instance tint is the leaf's color.
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "leaves",
+            leaf_mesh(),
+            Material {
+                side: Side::Double,
+                ..Material::standard(0xffffff, 0.0, 0.9)
+            },
+            MAX_LEAVES,
+        )
+    });
     pools.push(PoolDesc::new(
         "blast rings",
         ground_quad(),

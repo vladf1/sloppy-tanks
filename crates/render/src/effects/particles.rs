@@ -1,4 +1,4 @@
-//! Chips, sparks, leaves and embers (`particle-effects.ts`): one bounded instanced
+//! Chips, sparks and embers (`particle-effects.ts`): one bounded instanced
 //! draw of small icosahedra, plus the pooled blasts it forwards events to.
 
 use glam::Vec3;
@@ -16,7 +16,6 @@ const MIN_HEIGHT: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleShape {
-    Leaf,
     Splinter,
 }
 
@@ -47,10 +46,11 @@ struct Style {
     lift: f64,
 }
 
+/// Bark and wood chips from the trunk; the crown's leaves are `leaves.rs`.
 const TREE_HIT: Style = Style {
-    count: 18,
+    count: 7,
     life: [0.45, 0.35],
-    size: [0.1, 0.12],
+    size: [0.05, 0.06],
     speed: 3.8,
     scatter: 0.55,
     height: 0.7,
@@ -103,6 +103,8 @@ const IMPACT: Style = Style {
 };
 
 const TIMBER_COLORS: [u32; 4] = [0x805336, 0xb47a49, 0xc99a65, 0x947958];
+/// Dark bark and pale fresh wood torn from a trunk.
+const TREE_CHIP_COLORS: [u32; 3] = [0x6b5038, 0x8a6a4a, 0xc9a978];
 const EXPLOSION_COLORS: [u32; 6] = [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250];
 const HURT_COLORS: [u32; 3] = [0xffffff, 0xffcb58, 0xffcb58];
 const EMBER_COLORS: [u32; 2] = [0xffde82, 0xffa238];
@@ -196,13 +198,7 @@ impl ParticleEffects {
             if timber {
                 TIMBER_COLORS[i % TIMBER_COLORS.len()]
             } else if tree {
-                // Twelve entries: every fourth a bark chip, the rest leaves.
-                let j = i % 12;
-                if j.is_multiple_of(4) {
-                    0x98633e
-                } else {
-                    [0x175e3b, 0x2c9452, accent.unwrap_or(0x389b58)][j % 3]
-                }
+                TREE_CHIP_COLORS[i % TREE_CHIP_COLORS.len()]
             } else if pickup {
                 if i.is_multiple_of(4) {
                     0xffffff
@@ -218,7 +214,7 @@ impl ParticleEffects {
             }
         };
         let life_scale = if tree {
-            3.0
+            1.6
         } else if timber {
             2.0
         } else {
@@ -234,11 +230,7 @@ impl ParticleEffects {
             };
             let x = event.x + (random.next_f64() - 0.5) * style.scatter;
             let y = if chip_hit && tree {
-                if i.is_multiple_of(4) {
-                    0.7 + random.next_f64() * 0.4
-                } else {
-                    event.height.unwrap_or(5.0) * (0.45 + random.next_f64() * 0.35)
-                }
+                0.7 + random.next_f64() * 0.4
             } else {
                 style.height
             };
@@ -247,7 +239,7 @@ impl ParticleEffects {
             let vy = if tank_death {
                 (if burnout { 1.5 } else { 3.5 }) + random.next_f64() * 2.8
             } else {
-                style.lift + random.next_f64() * if tree { 5.0 } else { speed }
+                style.lift + random.next_f64() * speed
             };
             let vz = (random.next_f64() - 0.5) * speed;
             let size = if fiery {
@@ -255,17 +247,7 @@ impl ParticleEffects {
             } else {
                 style.size[0] + random.next_f64() * style.size[1]
             };
-            let shape = if timber {
-                Some(ParticleShape::Splinter)
-            } else if tree {
-                Some(if i.is_multiple_of(4) {
-                    ParticleShape::Splinter
-                } else {
-                    ParticleShape::Leaf
-                })
-            } else {
-                None
-            };
+            let shape = (timber || tree).then_some(ParticleShape::Splinter);
             let hex = if fiery {
                 EMBER_COLORS[i % 2]
             } else {
@@ -312,7 +294,6 @@ impl ParticleEffects {
                 Some(shape) => {
                     let spin = i as f32;
                     let stretch = match shape {
-                        ParticleShape::Leaf => Vec3::new(1.5, 0.25, 0.8),
                         ParticleShape::Splinter => Vec3::new(0.4, 2.4, 0.4),
                     };
                     (
@@ -421,15 +402,10 @@ mod tests {
     }
 
     /// `cover-hit-effects.test.ts`, particle part: hits chip, a fatal hit bursts.
+    /// A tree's leaves are the leaf fall's (`leaves.rs`), not particles.
     #[test]
     fn cover_hits_chip_trees_timber_and_cargo() {
         let mut random = CosmeticRandom::constant(0.5);
-        let leaves = |p: &ParticleEffects| {
-            p.particles
-                .iter()
-                .filter(|q| q.shape == Some(ParticleShape::Leaf))
-                .count()
-        };
         let chips = |p: &ParticleEffects| {
             p.particles
                 .iter()
@@ -440,16 +416,12 @@ mod tests {
             let mut hit = ParticleEffects::default();
             hit.event(&with_cover(SimEventType::Impact, cover), &mut random);
             assert!(chips(&hit) > 0, "{cover:?} hit chips");
-            assert_eq!(
-                leaves(&hit) > 0,
-                cover == CoverKind::Tree,
-                "{cover:?} leaves"
-            );
+            assert_eq!(chips(&hit), hit.particles.len());
             let mut destroyed = ParticleEffects::default();
             destroyed.event(&with_cover(SimEventType::Destroy, cover), &mut random);
             if cover == CoverKind::Tree {
                 assert_eq!(
-                    leaves(&destroyed) + chips(&destroyed),
+                    destroyed.particles.len(),
                     0,
                     "falling tree parts replace the burst"
                 );

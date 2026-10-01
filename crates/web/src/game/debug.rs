@@ -595,7 +595,7 @@ impl Game {
             "fragments": inspection.fragments.iter().map(|fragment| json!({
                 "id": fragment.id, "look": fragment.look, "shown": fragment.shown,
                 "opacity": fragment.opacity, "position": v3(fragment.position),
-                "scale": v3(fragment.scale),
+                "scale": v3(fragment.scale), "timberMarks": fragment.timber_marks,
             })).collect::<Vec<_>>(),
             "mines": inspection.mines,
             "branches": inspection.branches,

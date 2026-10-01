@@ -36,6 +36,9 @@ pub struct EffectDefinition {
     /// The shadow pass dithers the caster away with the instance opacity, like
     /// the renderer's faded instances (`debris-fade.ts`).
     pub shadow_fade: bool,
+    /// The vertex motion is a small cosmetic sway that leaves the cut-out alpha
+    /// alone, so the caster may still merge into its model's still shadow.
+    pub still_shadow: bool,
 }
 
 impl EffectDefinition {
@@ -61,6 +64,7 @@ pub const WAVE: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/wave.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// A glowing band that scrolls up the surface and thins its opacity (surface
@@ -71,6 +75,7 @@ pub const PULSE: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/pulse.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// Explosion smoke and fire (`explosion-effects.ts` puffs): a camera-facing quad
@@ -81,6 +86,7 @@ pub const PUFF: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/puff.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// A blast's scorched ground ring. `instance_data` = (age s, phase rad). No params.
@@ -89,6 +95,7 @@ pub const BLAST_RING: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/blast_ring.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// Fading tread marks (`tracks.ts`). `instance_data` = (birth s, strength);
@@ -98,6 +105,7 @@ pub const TRACK_MARK: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/track_mark.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
@@ -107,6 +115,7 @@ pub const DUST: EffectDefinition = EffectDefinition {
     wgsl: include_str!("../shaders/effects/dust.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 // ------------------------------------------------------------------ model effects
@@ -119,6 +128,7 @@ const fn model_effect(name: &'static str, wgsl: &'static str) -> EffectDefinitio
         wgsl,
         attributes: &[],
         shadow_fade: false,
+        still_shadow: false,
     }
 }
 
@@ -148,6 +158,15 @@ pub const MEADOW_SWAY: EffectDefinition = model_effect(
     effects_scenery::MEADOW_SWAY,
     include_str!("../shaders/effects/meadow_sway.wgsl"),
 );
+
+/// Tree crowns swaying in the wind, shaded as rounded masses.
+pub const FOLIAGE: EffectDefinition = EffectDefinition {
+    still_shadow: true,
+    ..model_effect(
+        effects_scenery::FOLIAGE,
+        include_str!("../shaders/effects/foliage.wgsl"),
+    )
+};
 
 /// Screen-sized chimney wisps (`village-atmosphere.ts`).
 pub const CHIMNEY_SMOKE: EffectDefinition = model_effect(
@@ -185,7 +204,7 @@ pub const SAND_DRIFT: EffectDefinition = model_effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
     WAVE,
     PULSE,
     PUFF,
@@ -196,6 +215,7 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
     DEBRIS_FADE,
     PICKUP_SURFACE,
     MEADOW_SWAY,
+    FOLIAGE,
     CHIMNEY_SMOKE,
     QUARRY_SOIL,
     SANDSTONE,

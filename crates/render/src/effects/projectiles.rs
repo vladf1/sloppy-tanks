@@ -21,9 +21,22 @@ use crate::color::hex_to_linear;
 pub const PROJECTILE_CAPACITY: usize = 600;
 /// Ricochet discs spin in flight (rad/s).
 const RICOCHET_SPIN: f64 = 12.0;
-/// Rocket flames flicker along their length.
-const FLAME_FLICKER_RATE: f64 = 47.0;
-const FLAME_FLICKER: f64 = 0.08;
+/// Rocket flames flicker along their length (two beating rates) and a little in
+/// width.
+const FLAME_FLICKER_RATE: [f64; 2] = [47.0, 29.0];
+const FLAME_FLICKER: f64 = 0.22;
+const FLAME_PULSE: f64 = 0.1;
+/// The flame's colours from root to tip, in linear HDR: the frame's ACES tone
+/// mapping bleaches bright saturated colours toward cream, so these are the
+/// inputs it maps to sRGB #ffd060, #ff9a28, #ff5c14 and #c0280a.
+const FLAME_STOPS: [[f32; 3]; 4] = [
+    [2.185, 0.54, 0.008],
+    [1.434, 0.198, 0.0],
+    [1.174, 0.06, 0.0],
+    [0.44, 0.037, 0.003],
+];
+/// Where the flame leaves the motor, behind the munition's centre (model units).
+const FLAME_ROOT: f64 = 0.5;
 
 /// Preserve the original shell scale: rocket body is ~0.94 m, standard ~0.70 m.
 pub fn model_scale(kind: Weapon) -> f64 {
@@ -103,16 +116,25 @@ fn four_fins(parts: &mut Vec<(Mesh, u32)>, color: u32) {
     }
 }
 
-/// A flame cone that runs from a hot core to an orange tip.
+/// The motor's flame: a plume from the nozzle, white-hot at its root through
+/// yellow and orange to a red tip, unlit so it glows.
 fn rocket_exhaust() -> Mesh {
-    let mut cone = point(0.16, 0.64, 0.0);
-    cone.rotate_y(PI).translate(0.0, 0.0, -0.82);
+    const ROOT: f64 = FLAME_ROOT;
+    const LENGTH: f64 = 1.05;
+    let mut cone = point(0.21, LENGTH, 0.0);
+    cone.rotate_y(PI)
+        .translate(0.0, 0.0, -(ROOT + LENGTH / 2.0));
     let mut mesh = painted(vec![(cone, 0xff671c)]);
-    let hot = hex_to_linear(0xfff2b0);
-    let tip = hex_to_linear(0xff671c);
+    let stops = FLAME_STOPS;
     for (color, position) in mesh.colors.iter_mut().zip(&mesh.positions) {
-        let t = ((-position[2] - 0.5) / 0.64).clamp(0.0, 1.0);
-        *color = [0, 1, 2].map(|i| hot[i] + (tip[i] - hot[i]) * t);
+        // Hot colour gives way to orange early: the root is the cone's widest part.
+        let t = ((-f64::from(position[2]) - ROOT) / LENGTH)
+            .clamp(0.0, 1.0)
+            .sqrt()
+            * 3.0;
+        let (from, to) = (stops[(t as usize).min(2)], stops[(t as usize + 1).min(3)]);
+        let k = (t - t.floor()) as f32;
+        *color = [0, 1, 2].map(|i| from[i] + (to[i] - from[i]) * k);
     }
     mesh
 }
@@ -303,10 +325,20 @@ impl ProjectileVisuals {
             }];
             batch.team.push(record(world, team, [0.0; 4]));
             if let Some(exhaust) = &mut batch.exhaust {
-                // A short attached flame, with no persistent trail.
+                // An attached flame; `rocket_smoke` lays the trail behind it.
+                let phase = f64::from(shot.id);
                 let flicker = 1.0 - FLAME_FLICKER
-                    + FLAME_FLICKER * (time * FLAME_FLICKER_RATE + f64::from(shot.id)).sin();
-                let flame = world * Mat4::from_scale(Vec3::new(1.0, 1.0, flicker as f32));
+                    + FLAME_FLICKER
+                        * 0.5
+                        * ((time * FLAME_FLICKER_RATE[0] + phase).sin()
+                            + (time * FLAME_FLICKER_RATE[1] + phase * 1.7).sin());
+                let pulse = 1.0 + FLAME_PULSE * (time * FLAME_FLICKER_RATE[1] + phase).cos();
+                // Scaled about the nozzle, so the flame stays attached to it.
+                let nozzle = Vec3::new(0.0, 0.0, -(FLAME_ROOT * model_scale(shot.weapon)) as f32);
+                let flame = world
+                    * Mat4::from_translation(nozzle)
+                    * Mat4::from_scale(Vec3::new(pulse as f32, pulse as f32, flicker as f32))
+                    * Mat4::from_translation(-nozzle);
                 exhaust.push(record(flame, [1.0; 4], [0.0; 4]));
             }
         }

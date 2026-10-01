@@ -125,8 +125,9 @@ pub use quarry_barriers::{dragon_tooth, steel_hedgehog};
 pub use timber_model::{add_timber_parts, timber_part_model};
 pub use tree_debris::{fading_material, falling_branch_model};
 pub use tree_models::{
-    TREE_FAMILIES, TreeDetail, TreeModel, TreeShape, branch_drop_stage, set_tree_damage,
-    set_tree_destroyed, tree_branch_stage, tree_model, tree_part, trunk_fragment,
+    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeModel, TreeShape, branch_drop_stage,
+    set_tree_damage, set_tree_destroyed, tree_branch_stage, tree_foliage, tree_model, tree_part,
+    trunk_fragment,
 };
 
 // Surfaces.
