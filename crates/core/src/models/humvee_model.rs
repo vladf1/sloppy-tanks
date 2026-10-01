@@ -9,11 +9,9 @@ use std::sync::{Arc, OnceLock};
 
 use glam::{DVec2, DVec3};
 
-use super::model_primitives::{
-    TEAM_COLORS, box_part, cylinder_part, material, paint, put, rotated, shadowed,
-};
+use super::model_primitives::{box_part, cylinder_part, material, paint, put, rotated, shadowed};
 use super::tank_model::{DARK, STEEL, WRECK_PAINT, WRECK_STEEL, shade_of};
-use super::tank_surfaces::{Finish, apply_tank_surface};
+use super::tank_surfaces::{Finish, apply_tank_surface, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::{ExtrudeOptions, Mesh, Path, Shape, extrude_geometry, lathe_geometry, widen};
 use crate::scene::Node;
@@ -162,7 +160,7 @@ pub fn humvee_model(team: Team, wreck: bool) -> Node {
     let base = if wreck {
         WRECK_PAINT
     } else {
-        TEAM_COLORS[team.index()]
+        vehicle_paint(team)
     };
     let palette = Palette {
         base,

@@ -13,10 +13,9 @@ use glam::{DVec2, DVec3};
 
 use super::humvee_model::humvee_model;
 use super::model_primitives::{
-    Cache, TEAM_COLORS, box_part, cylinder_part, material, paint, put, rotated, shadow_receiver,
-    shadowed,
+    Cache, box_part, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
-use super::tank_surfaces::{Finish, apply_tank_surface};
+use super::tank_surfaces::{Finish, apply_tank_surface, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{
@@ -248,7 +247,7 @@ fn tracked_model(kind: VehicleKind, team: Team, wreck: bool, open_turret_ring: b
     let color = if wreck {
         WRECK_PAINT
     } else {
-        TEAM_COLORS[team.index()]
+        vehicle_paint(team)
     };
     // Dimensions include the tracks and skirts, not just the center armor slab.
     // Hull length/overall width: compact scout ~1.94, Abrams/Type 99 ~2.17.

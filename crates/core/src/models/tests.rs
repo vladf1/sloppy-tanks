@@ -118,10 +118,11 @@ fn painted_parts_use_the_wear_texture() {
     let model = tank_model(VehicleKind::Balanced, Team::Red);
     let hull = model.find(part::HULL).unwrap();
     let armor = hull.children[1].drawable.as_ref().unwrap();
-    assert_eq!(armor.material.color.0, TEAM_COLORS[1]);
+    // Service paint, not the glowing team color: lit and tone mapped like the scene.
+    assert_eq!(armor.material.color.0, tank_surfaces::VEHICLE_PAINT[1]);
     assert_eq!(armor.material.map, Some(armor_wear_texture()));
-    assert_eq!(armor.material.emissive_intensity, 0.04);
-    assert!(!armor.material.tone_mapped);
+    assert_eq!(armor.material.emissive.0, 0);
+    assert!(armor.material.tone_mapped);
     // Dark belts keep plain paint.
     let belts: Vec<_> = hull
         .children
@@ -154,37 +155,32 @@ fn wreck_batches_match_typescript() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (168, 0x07919fd3, 0x539f3c63, 0xd4cf4796, 0xca7383bd),
-            (162, 0x02c459a9, 0x982f7ac8, 0x173b500c, 0x5952a13b),
+            (330, 0x89e26e8b, 0x148509e6, 0x6bcab93b, 0x9b0caac1),
             (144, 0xc83dc956, 0x637e9bc5, 0xa2def1b1, 0x5f692175),
             (144, 0x65e4ec2d, 0x162a9a1f, 0x951bbe05, 0x16256455),
             (288, 0xb74a9aad, 0x56200137, 0x94d4f49d, 0xa2f91ec5),
             (1164, 0x267beaf3, 0x369ad59d, 0x68eb05fd, 0xaff0a1f9),
-            (432, 0x64623bc3, 0x430c9c25, 0x2050cd45, 0xde6140f5),
+            (720, 0x9d44e44b, 0x8aaf1ba5, 0xc66c8245, 0xda229af5),
             (4212, 0xa87f8283, 0xb4c680e5, 0x9340fee5, 0x62a10515),
-            (1440, 0x11bbb7f5, 0x640e8855, 0x9d04ab85, 0xf94d2b25),
-            (288, 0xfff0c33d, 0x3450cd45, 0x5ae0d2c5, 0xb41f18e5),
+            (1440, 0x11bbb7f5, 0x640e8855, 0x9d04ab85, 0xd41fae65),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (336, 0xb6150b77, 0x02efb3d5, 0x764482b9, 0xfcba86b5),
+            (336, 0xb6150b77, 0x02efb3d5, 0x764482b9, 0xd0b183f5),
             (612, 0x2358862f, 0x352956d5, 0x4bcd793d, 0xebff7e55),
-            (360, 0x83f6f58f, 0xf8bbf425, 0x56cce965, 0xf82b7cfd),
+            (432, 0xb111ba67, 0x63755605, 0xbfdfe6a5, 0xb3d85f15),
             (432, 0xfc583479, 0x3d3fb12b, 0x3622ed91, 0x80d06ce5),
-            (72, 0x67425a9d, 0xa8a41ba5, 0x155c3305, 0x27a8e1a5),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (336, 0x0ce7fb59, 0x8ee27015, 0x37f89fd6, 0xfcba86b5),
-            (168, 0xf5d81a4a, 0x56d59baa, 0x12460adf, 0x808c1425),
+            (504, 0xf7f58686, 0x009a16be, 0xa4d9ef60, 0xabf42d1d),
             (1416, 0x21e2ba23, 0x7a2f20ad, 0xf484bf5d, 0xff32dea5),
-            (108, 0x5975abd1, 0xa0200615, 0x46a41ba5, 0x4e25a7d1),
+            (540, 0x6fc4b1b1, 0xdf927955, 0x2d081b25, 0x6c23d009),
             (5328, 0xcab46963, 0x8aa77ff7, 0x681ca991, 0x93854485),
-            (1728, 0x9f54f938, 0xfa8d9df5, 0x248f9d6d, 0xbcdf7005),
-            (432, 0x4e6e96b5, 0xfaac1d05, 0x2050cd45, 0x75c09d05),
+            (1728, 0x9f54f938, 0xfa8d9df5, 0x248f9d6d, 0x5506ee85),
             (396, 0x839f42b8, 0x83f48e77, 0x5274fdc5, 0xc4592e41),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
             (144, 0x0d5a82ae, 0xa782a24b, 0x6d704989, 0xb9c39b85),
-            (288, 0x3c1d28be, 0x859f8565, 0xdf896aad, 0xb78cc2a5),
+            (288, 0x3c1d28be, 0x859f8565, 0xdf896aad, 0x5dd4d8e5),
             (144, 0x6198b2f4, 0xa782a24b, 0x6d704989, 0x924eb995),
         ]),
     ];
