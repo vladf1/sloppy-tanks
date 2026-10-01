@@ -65,7 +65,9 @@ pub struct Flash {
 /// Live effect counts, for tests and "Stats for nerds".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectStats {
+    /// Chips, sparks, embers and falling leaves: every exported "particles" count.
     pub particles: u32,
+    /// The falling leaves among them.
     pub leaves: u32,
     pub blasts: u32,
     pub puffs: u32,
@@ -190,7 +192,7 @@ impl EffectSystems {
         self.for_each_pool(|pool| instances += pool.len() as u32);
         let explosions = &self.particles.explosions;
         EffectStats {
-            particles: self.particles.particles.len() as u32,
+            particles: (self.particles.particles.len() + self.leaves.len()) as u32,
             leaves: self.leaves.len() as u32,
             blasts: explosions.active() as u32,
             puffs: explosions.puffs.len() as u32,
@@ -359,6 +361,30 @@ mod tests {
                 assert!(registry.id(name).is_some(), "{name}");
             }
         }
+    }
+
+    #[test]
+    fn falling_leaves_count_among_the_exported_particles() {
+        let mut systems = EffectSystems::default();
+        let mut hit = SimEvent::at(SimEventType::Impact, 0.0, 0.0);
+        hit.cover_kind = Some(sloppy_core::sim::CoverKind::Tree);
+        systems.event(&hit);
+        let chips = systems.particles.particles.len();
+        let crown = leaves::Crown {
+            x: 0.0,
+            z: 0.0,
+            foliage: sloppy_core::models::TreeFoliage {
+                conifer: false,
+                color: 0x6a8a3c,
+                bottom: 2.5,
+                top: 5.5,
+                radius: 1.1,
+            },
+        };
+        systems.shed_leaves(&hit, &crown);
+        let stats = systems.stats();
+        assert!(stats.leaves > 0);
+        assert_eq!(stats.particles as usize, chips + stats.leaves as usize);
     }
 
     #[test]
