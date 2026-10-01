@@ -1060,8 +1060,13 @@ h2 {
   grid-column: 1 / -1;
 }
 .start .tank-preview {
-  height: 84px;
-  margin: 0 0 2px;
+  /* Taller than its slot: the tank may tuck under the name and spec lines. */
+  height: 118px;
+  margin: -20px 0 -12px;
+}
+.start .vehicle :is(strong, small, .spec) {
+  position: relative;
+  z-index: 1;
 }
 .setup-panels {
   display: grid;

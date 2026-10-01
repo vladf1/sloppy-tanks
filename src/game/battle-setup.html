@@ -63,13 +63,14 @@
     <div class="setup-label">
       <span id="tank-label">TANK</span><small>Yours in single player and multiplayer</small>
     </div>
-    <!-- Frame each sprite around its visible bounds, not its transparent canvas. -->
+    <!-- Frame each sprite around its visible bounds, not its transparent canvas: one
+         560×300 window centred on each tank keeps the chassis sizes comparable. -->
     <div class="vehicles">
       <button class="vehicle" data-kind="scout" aria-pressed="false">
         <strong>SKIPPER</strong><small>Light scout</small>
         <svg
           class="tank-preview"
-          viewBox="23.5 11.5 640 400"
+          viewBox="64 38 560 300"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="SKIPPER tank"
@@ -85,7 +86,7 @@
         <strong>BRUISER</strong><small>Balanced tank</small>
         <svg
           class="tank-preview"
-          viewBox="35.5 4.5 640 400"
+          viewBox="75.5 31 560 300"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="BRUISER tank"
@@ -101,7 +102,7 @@
         <strong>BIG RIG</strong><small>Heavy tank</small>
         <svg
           class="tank-preview"
-          viewBox="18.5 7.5 640 400"
+          viewBox="58.5 32.5 560 300"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="BIG RIG tank"
