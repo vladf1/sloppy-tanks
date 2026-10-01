@@ -940,6 +940,12 @@ impl Renderer {
     }
 
     pub fn set_environment(&mut self, environment: Environment) {
+        // The sun places the shadow camera that the fixed scenery cache used.
+        if environment.sun_position != self.environment.sun_position
+            || environment.sun_target != self.environment.sun_target
+        {
+            self.static_shadow_dirty = true;
+        }
         self.environment = environment;
     }
 
@@ -1821,6 +1827,8 @@ impl Renderer {
         let triangles = self
             .instances
             .iter()
+            // Themes hide other maps' shared scenery; only shown sets cast.
+            .filter(|(_, instance)| instance.visible)
             .filter_map(|(_, instance)| {
                 self.models.at(instance.model).filter(|model| model.scenery)
             })
