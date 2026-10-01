@@ -168,54 +168,69 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
 }
 
 /// One impact scar: a two-tone chip and a forked crack, clipped to the face.
+/// Front and back faces carry `x` along the width and `y` up the height, ends `x`
+/// across the depth, and the top and bottom (loose boards lying on the ground)
+/// `x` along the width and `y` across the depth.
 fn add_mark(group: &mut Node, p: &TimberPart, mark_index: usize, mark: &TimberMark) {
     let mut rng = Random::new(f64::from(mark.seed));
     let end = matches!(mark.face, TimberFace::Left | TimberFace::Right);
-    let sign = if matches!(mark.face, TimberFace::Left | TimberFace::Back) {
+    let cap = matches!(mark.face, TimberFace::Top | TimberFace::Bottom);
+    let sign = if matches!(
+        mark.face,
+        TimberFace::Left | TimberFace::Back | TimberFace::Bottom
+    ) {
         -1.0
     } else {
         1.0
     };
     let span = if end { p.d } else { p.w };
+    let rise = if cap { p.d } else { p.h };
     let x = clamp(mark.x, -span / 2.0 + 0.01, span / 2.0 - 0.01);
     // Keep the scar close to impact while avoiding a half-mark clipped along a seam.
-    let margin = (p.h * 0.3).min(0.13 * mark.size);
-    let y = clamp(mark.y, -p.h / 2.0 + margin, p.h / 2.0 - margin);
+    let margin = (rise * 0.3).min(0.13 * mark.size);
+    let y = clamp(mark.y, -rise / 2.0 + margin, rise / 2.0 - margin);
     let mut plane = |points: &[[f64; 2]], color: u32, layer: f64| {
         // Clip scars at the piece edges; no cracks floating beyond the wood.
         let outline: Vec<DVec2> = points
             .iter()
             .map(|point| {
-                DVec2::new(
-                    (if end { -sign } else { sign })
-                        * clamp(x + point[0], -span / 2.0 + 0.005, span / 2.0 - 0.005),
-                    clamp(y + point[1], -p.h / 2.0 + 0.005, p.h / 2.0 - 0.005),
-                )
+                let u = clamp(x + point[0], -span / 2.0 + 0.005, span / 2.0 - 0.005);
+                let v = clamp(y + point[1], -rise / 2.0 + 0.005, rise / 2.0 - 0.005);
+                if cap {
+                    // Turning the plane onto the top maps its v to -z, onto the bottom to +z.
+                    DVec2::new(u, -sign * v)
+                } else {
+                    DVec2::new((if end { -sign } else { sign }) * u, v)
+                }
             })
             .collect();
         let mut mesh = shape_geometry(&[Shape::from_points(&outline)], 12);
-        mesh.rotate_y(if end {
-            (sign * PI) / 2.0
-        } else if sign < 0.0 {
-            PI
+        if cap {
+            mesh.rotate_x(-sign * PI / 2.0);
         } else {
-            0.0
-        });
+            mesh.rotate_y(if end {
+                (sign * PI) / 2.0
+            } else if sign < 0.0 {
+                PI
+            } else {
+                0.0
+            });
+        }
         let offset = 0.003 + mark_index as f64 * 0.001 + layer * 0.001;
+        let lift = |half: f64| sign * (half + offset);
+        let (px, py, pz) = if end {
+            (lift(p.w / 2.0), 0.0, 0.0)
+        } else if cap {
+            (0.0, lift(p.h / 2.0), 0.0)
+        } else {
+            (0.0, 0.0, lift(p.d / 2.0))
+        };
         put(
             group,
             Node::mesh(std::sync::Arc::new(mesh), material(color, 0.05, 0.65)),
-            if end {
-                sign * (p.w / 2.0 + offset)
-            } else {
-                0.0
-            },
-            0.0,
-            if end {
-                0.0
-            } else {
-                sign * (p.d / 2.0 + offset)
-            },
+            px,
+            py,
+            pz,
         );
     };
     let width = 0.19 * mark.size * rng.range(0.85, 1.15);

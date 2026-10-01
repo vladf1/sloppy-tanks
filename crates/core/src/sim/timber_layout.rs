@@ -37,6 +37,9 @@ pub enum TimberFace {
     Back,
     Left,
     Right,
+    /// The upper and lower faces, which only loose debris boards expose to fire.
+    Top,
+    Bottom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -112,6 +115,46 @@ impl Clone for TimberPart {
         self.damage = source.damage;
         self.damage_seed = source.damage_seed;
         self.marks.clone_from(&source.marks);
+    }
+}
+
+impl TimberPart {
+    /// The scar a hit at `(x, y, z)` in the member's own frame (centred, unrotated)
+    /// leaves on a loose member: on the face whose plane it lies nearest, in that
+    /// face's coordinates. Its seed follows the marks already there, so repeated
+    /// hits on one board each look different.
+    pub fn loose_mark(&self, x: f64, y: f64, z: f64, size: f64) -> TimberMark {
+        let reach = |value: f64, extent: f64| value.abs() / (extent / 2.0).max(1e-6);
+        let (along, up, across) = (reach(x, self.w), reach(y, self.h), reach(z, self.d));
+        let (face, mark_x, mark_y) = if along >= up && along >= across {
+            let face = if x < 0.0 {
+                TimberFace::Left
+            } else {
+                TimberFace::Right
+            };
+            (face, z, y)
+        } else if up >= across {
+            let face = if y < 0.0 {
+                TimberFace::Bottom
+            } else {
+                TimberFace::Top
+            };
+            (face, x, z)
+        } else {
+            let face = if z < 0.0 {
+                TimberFace::Back
+            } else {
+                TimberFace::Front
+            };
+            (face, x, y)
+        };
+        TimberMark {
+            x: mark_x,
+            y: mark_y,
+            face,
+            size,
+            seed: self.damage_seed ^ (self.marks.len() as i32 + 101).wrapping_mul(0x45d9f3b),
+        }
     }
 }
 

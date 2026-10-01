@@ -74,6 +74,8 @@ pub struct FragmentInspection {
     pub opacity: f32,
     pub position: Vec3,
     pub scale: Vec3,
+    /// Scars on a loose timber member (`None` for other debris).
+    pub timber_marks: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -231,6 +233,7 @@ impl Presentation {
                 opacity: state.opacity,
                 position,
                 scale,
+                timber_marks: view.timber.as_ref().map(|part| part.marks.len()),
             });
         }
         inspection.tanks.sort_by_key(|tank| tank.id);

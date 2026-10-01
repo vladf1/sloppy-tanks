@@ -19,7 +19,7 @@ use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
-use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
+use sloppy_core::sim::timber_layout::{TimberPart, TimberWall, timber_parts};
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
@@ -89,6 +89,11 @@ const BRANCH_REST: f32 = 0.03;
 const TREE_SHUDDER: [f64; 4] = [0.04, 0.5, 9.0, 2.5];
 /// How far from a tree's trunk a shell impact still counts as hitting it.
 const TREE_HIT_REACH: f64 = 2.5;
+/// A timber impact this close to a loose member's surface scars it, up to this
+/// many scars per member (each one rebuilds the member's small model).
+const DEBRIS_HIT_REACH: f32 = 0.15;
+const MAX_DEBRIS_MARKS: usize = 8;
+const DEBRIS_MARK_SIZE: f64 = 0.8;
 /// Debris sinks by its height plus this margin while it fades.
 const SINK_MARGIN: f32 = 0.03;
 /// Harbor water plane edge and heights come from `WaterSettings`.
@@ -429,6 +434,10 @@ struct FragmentView {
     /// It fades while it sinks; a felled crown only sinks, so its alpha-tested
     /// foliage never turns into a blended sheet.
     fades: bool,
+    /// A loose timber member and the scars shells have left on it since it fell.
+    timber: Option<TimberPart>,
+    /// The body's last pose, to find where a shell struck the piece.
+    pose: (Vec3, Quat),
 }
 
 struct PickupView {
@@ -1225,6 +1234,9 @@ impl Presentation {
         if event.cover_kind == Some(CoverKind::Tree) {
             self.tree_event(event);
         }
+        if event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::Timber) {
+            self.scar_timber_debris(event);
+        }
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
@@ -1284,6 +1296,66 @@ impl Presentation {
             .normalize_or(Vec3::X);
             tree.shudder = Some((Vec3::Y.cross(push).normalize_or(Vec3::X), self.time));
         }
+    }
+
+    /// A shell that strikes a loose timber member leaves a scar on it, like the
+    /// standing wall's. The simulation only marks standing walls (their members are
+    /// gameplay data), so loose members are marked here from the impact, which every
+    /// viewer receives: the struck member is the one whose surface is nearest.
+    fn scar_timber_debris(&mut self, event: &SimEvent) {
+        let Some(height) = event.height else {
+            return;
+        };
+        let point = Vec3::new(event.x as f32, height as f32, event.z as f32);
+        let struck = self
+            .fragments
+            .iter()
+            .filter_map(|(&id, view)| {
+                let part = view.timber.as_ref()?;
+                let (position, rotation) = view.pose;
+                let local = rotation.inverse() * (point - position);
+                let half = Vec3::new(part.w as f32, part.h as f32, part.d as f32) / 2.0;
+                let outside = (local.abs() - half).max(Vec3::ZERO).length();
+                (outside <= DEBRIS_HIT_REACH && part.marks.len() < MAX_DEBRIS_MARKS)
+                    .then_some((outside, id, local))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, id, local)) = struck else {
+            return;
+        };
+        let view = self.fragments.get_mut(&id).expect("struck fragment");
+        let Some(part) = view.timber.as_mut() else {
+            return;
+        };
+        let mark = part.loose_mark(
+            f64::from(local.x),
+            f64::from(local.y),
+            f64::from(local.z),
+            DEBRIS_MARK_SIZE,
+        );
+        part.marks.push(mark);
+        let node = model_catalog::timber_part_model(part);
+        let bounds = node_bounds(&node, DMat4::IDENTITY);
+        let model = self.renderer.add_model(&node, Lifetime::Round);
+        let Some(instance) = self
+            .renderer
+            .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+        else {
+            self.renderer.remove_model(model);
+            return;
+        };
+        self.renderer.remove_instance(view.instance);
+        if let FragmentLook::Owned(old, _) = view.look {
+            self.renderer.remove_model(old);
+        }
+        view.instance = instance;
+        view.look = FragmentLook::Owned(model, bounds);
+        // The next fragment update poses the new instance.
+        let (position, rotation) = view.pose;
+        self.renderer.set_transform(
+            instance,
+            Mat4::from_rotation_translation(rotation, position),
+        );
     }
 
     /// Screen angle of damage for the HUD's direction indicator.
@@ -2037,6 +2109,7 @@ impl Presentation {
             let view = self.fragments.get_mut(&fragment.id).expect("fragment view");
             let rotation = quat(fragment.rotation);
             let mut position = vec3(fragment.position);
+            view.pose = (position, rotation);
             match view.look {
                 FragmentLook::Piece => {
                     let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
@@ -2151,6 +2224,8 @@ impl Presentation {
             look,
             sink: None,
             fades: fragment.tree_cover_id.is_none(),
+            timber: fragment.timber_part.clone(),
+            pose: (vec3(fragment.position), quat(fragment.rotation)),
         })
     }
 

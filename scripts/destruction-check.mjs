@@ -76,6 +76,41 @@ try {
   // instead of keeping them until the round resets.
   results.unusedMeshes = await page.evaluate(() => window.sloppy.stats().unusedMeshes);
   assert.equal(results.unusedMeshes, 0, "superseded cover meshes are freed");
+
+  // The breached bay's loose members scar where a shell strikes them, like the wall did.
+  results.debrisScar = await page.evaluate(() => {
+    const { sloppy, engine } = window;
+    const game = sloppy.game;
+    for (let i = 0; i < 120; i++) {
+      game.debug_step(1, 0, 0);
+      game.debug_render(1, 1 / 60, false, new Float32Array());
+    }
+    const pieces = () => engine.view().fragments.filter((f) => Number.isInteger(f.timberMarks));
+    // The tallest piece stands high enough for a shell at combat height to strike it.
+    const target = pieces().sort((a, b) => b.position[1] - a.position[1])[0];
+    const [x, , z] = target.position;
+    game.debug_add_shot(
+      JSON.stringify({
+        x,
+        z: z + 3,
+        vx: 0,
+        vz: -40,
+        team: 1,
+        owner: 9999,
+        weapon: "standard",
+        damage: 10,
+        life: 1,
+      }),
+    );
+    for (let i = 0; i < 5; i++) {
+      game.debug_step(1, 0, 0);
+      game.debug_render(1, 1 / 60, false, new Float32Array());
+    }
+    const after = pieces().find((f) => f.id === target.id);
+    return { pieces: pieces().length, before: target.timberMarks, after: after?.timberMarks };
+  });
+  assert.ok(results.debrisScar.pieces > 0, JSON.stringify(results.debrisScar));
+  assert.equal(results.debrisScar.after, results.debrisScar.before + 1, "a loose member scars");
   await page.screenshot({ path: `${out}/timber-breach.png` });
 
   // Trees: felling keeps the same model with its stump, hides the crown, and the

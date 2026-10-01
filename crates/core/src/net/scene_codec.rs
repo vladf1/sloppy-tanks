@@ -125,11 +125,13 @@ pub const GROUNDS: [(&str, GroundKind); 2] = [
     ("dry-grass", GroundKind::DryGrass),
     ("packed-dirt", GroundKind::PackedDirt),
 ];
-pub const TIMBER_FACES: [(&str, TimberFace); 4] = [
+pub const TIMBER_FACES: [(&str, TimberFace); 6] = [
     ("front", TimberFace::Front),
     ("back", TimberFace::Back),
     ("left", TimberFace::Left),
     ("right", TimberFace::Right),
+    ("top", TimberFace::Top),
+    ("bottom", TimberFace::Bottom),
 ];
 pub const TIMBER_PART_KINDS: [(&str, TimberPartKind); 2] = [
     ("beam", TimberPartKind::Beam),
