@@ -9,6 +9,18 @@ const game = fileURLToPath(new URL("../src/game.ts", import.meta.url));
 const multiplayer = fileURLToPath(new URL("../src/net/client.ts", import.meta.url));
 const roomBrowser = fileURLToPath(new URL("../src/net/room-browser.ts", import.meta.url));
 
+/**
+ * A parser-blocking script right after Battle Setup that opens the tab a
+ * `?multiplayer` or room link asks for. The startup module is deferred, so without
+ * this the browser can paint the markup's single-player tab first. It mirrors
+ * `initialPlayMode` and `showPlayMode` in `src/game/play-modes.ts`, which then
+ * apply the same state again.
+ */
+function initialTabScript(): string {
+  const configured = JSON.stringify(Boolean(process.env.VITE_MULTIPLAYER_URL));
+  return `<script>(()=>{const p=new URLSearchParams(location.search);if(!(${configured}||["localhost","127.0.0.1"].includes(location.hostname))||!(p.has("multiplayer")||p.has("room")))return;const s=document.querySelector("#startup-overlay .start");if(!s)return;s.dataset.play="multiplayer";for(const t of s.querySelectorAll('[role="tab"][data-play]')){const on=t.dataset.play==="multiplayer";t.setAttribute("aria-selected",String(on));t.tabIndex=on?0:-1;const panel=document.getElementById(t.getAttribute("aria-controls"));if(panel)panel.hidden=!on}})()</script>`;
+}
+
 /** Deliver the authored HTML, CSS and small controller in a single response. */
 export function startupHtml(base: string): Plugin {
   let building = false;
@@ -41,7 +53,8 @@ export function startupHtml(base: string): Plugin {
           // Replacer functions insert text literally; a replacement string would read `$&`.
           html = html.replace(
             "<!-- battle-setup -->",
-            () => `<div id="startup-overlay" data-state="loading">${setup}</div>`,
+            () =>
+              `<div id="startup-overlay" data-state="loading">${setup}</div>${initialTabScript()}`,
           );
         }
         if (!html.includes("<!-- startup-script -->")) return html;

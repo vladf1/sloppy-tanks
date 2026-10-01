@@ -24,6 +24,8 @@ pub const SHADOW_RECEIVER_FLOOR: f32 = -10.0;
 const QUARRY_SHADOW_HALF: f32 = 68.0;
 const QUARRY_SHADOW_LOW: f32 = -2.0;
 const QUARRY_SHADOW_HIGH: f32 = 9.0;
+/// Every theme reflects its sky at full strength (see `environment_radiance`).
+const REFLECTIONS: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {
@@ -67,6 +69,7 @@ pub struct ThemeLook {
     pub fill_ground: u32,
     pub fill_intensity: f32,
     pub exposure: f32,
+    pub reflections: f32,
     pub shadow: ShadowCamera,
 }
 
@@ -125,6 +128,7 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         fill_ground: pick(0x8a7b68, 0x63778e, 0x75859b),
         fill_intensity: if quarry { 1.1 } else { 1.65 },
         exposure: 1.0,
+        reflections: REFLECTIONS,
         shadow,
     }
 }

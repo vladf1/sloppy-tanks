@@ -75,14 +75,14 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_models_match_typescript_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 195, 6414, 3304, 130, 22, 9, 36),
-        (VehicleKind::Scout, 1, 196, 6438, 3316, 130, 23, 9, 36),
-        (VehicleKind::Balanced, 0, 201, 6734, 3500, 132, 31, 4, 36),
-        (VehicleKind::Balanced, 1, 202, 6758, 3512, 132, 32, 4, 36),
-        (VehicleKind::Heavy, 0, 205, 6654, 3424, 138, 29, 4, 36),
-        (VehicleKind::Heavy, 1, 206, 6678, 3436, 138, 30, 4, 36),
-        (VehicleKind::Humvee, 0, 364, 13220, 7276, 141, 9, 5, 212),
-        (VehicleKind::Humvee, 1, 364, 13220, 7276, 141, 9, 5, 212),
+        (VehicleKind::Scout, 0, 197, 23392, 7868, 159, 9, 3, 28),
+        (VehicleKind::Scout, 1, 197, 23428, 7880, 159, 9, 3, 28),
+        (VehicleKind::Balanced, 0, 226, 24556, 8256, 181, 9, 4, 34),
+        (VehicleKind::Balanced, 1, 226, 24592, 8268, 181, 9, 4, 34),
+        (VehicleKind::Heavy, 0, 213, 25072, 8428, 168, 9, 4, 34),
+        (VehicleKind::Heavy, 1, 213, 25108, 8440, 168, 9, 4, 34),
+        (VehicleKind::Humvee, 0, 30, 43644, 14548, 11, 6, 4, 4),
+        (VehicleKind::Humvee, 1, 30, 43644, 14548, 11, 6, 4, 4),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
@@ -102,10 +102,10 @@ fn vehicle_models_match_typescript_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (198, 6740, 3522)),
-        (VehicleKind::Balanced, (204, 7060, 3718)),
-        (VehicleKind::Heavy, (208, 6980, 3642)),
-        (VehicleKind::Humvee, (364, 13220, 7276)),
+        (VehicleKind::Scout, (200, 23718, 8086)),
+        (VehicleKind::Balanced, (229, 24882, 8474)),
+        (VehicleKind::Heavy, (216, 25398, 8646)),
+        (VehicleKind::Humvee, (30, 43644, 14548)),
     ];
     for (kind, expected) in open {
         let model = tank_model_variant(kind, Team::Blue, false, true);
@@ -118,19 +118,20 @@ fn painted_parts_use_the_wear_texture() {
     let model = tank_model(VehicleKind::Balanced, Team::Red);
     let hull = model.find(part::HULL).unwrap();
     let armor = hull.children[1].drawable.as_ref().unwrap();
-    assert_eq!(armor.material.color.0, TEAM_COLORS[1]);
+    // Service paint, not the glowing team color: lit and tone mapped like the scene.
+    assert_eq!(armor.material.color.0, tank_surfaces::VEHICLE_PAINT[1]);
     assert_eq!(armor.material.map, Some(armor_wear_texture()));
-    assert_eq!(armor.material.emissive_intensity, 0.04);
-    assert!(!armor.material.tone_mapped);
-    // Dark belts keep plain paint.
-    let belts: Vec<_> = hull
+    assert_eq!(armor.material.emissive.0, 0);
+    assert!(armor.material.tone_mapped);
+    // Track links (vertex-colored steel and rubber) keep plain, unworn materials.
+    let links: Vec<_> = hull
         .children
         .iter()
         .filter_map(|child| child.drawable.as_ref())
-        .filter(|drawable| drawable.mesh.vertex_count() == 300)
+        .filter(|drawable| drawable.material.vertex_colors)
         .collect();
-    assert_eq!(belts.len(), 2);
-    assert!(belts.iter().all(|belt| belt.material.map.is_none()));
+    assert!(links.len() > 40);
+    assert!(links.iter().all(|link| link.material.map.is_none()));
 }
 
 fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
@@ -146,42 +147,66 @@ fn float_hash<const N: usize>(values: &[[f32; N]]) -> u32 {
     fnv(values.iter().flatten().map(|v| v.to_bits()))
 }
 
-/// Per batched mesh: vertex count and position, normal, UV and color hashes.
-type BatchSummary = (usize, u32, u32, u32, u32);
+/// Normals come from trigonometry whose last bits differ between platforms'
+/// math libraries (macOS and glibc), which can flip an `f32` rounding, so they are
+/// summarised by a weighted sum that a tolerance compares instead of a bit hash.
+fn normal_checksum(normals: &[[f32; 3]]) -> f64 {
+    normals
+        .iter()
+        .enumerate()
+        .map(|(i, [x, y, z])| {
+            (i % 7 + 1) as f64 * (f64::from(*x) + 2.0 * f64::from(*y) + 3.0 * f64::from(*z))
+        })
+        .sum()
+}
+const NORMAL_CHECKSUM_TOLERANCE: f64 = 1e-3;
+
+/// Per batched mesh: vertex count, position hash, normal checksum, UV and color hashes.
+type BatchSummary = (usize, u32, f64, u32, u32);
 
 #[test]
 fn wreck_batches_match_typescript() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (168, 0x07919fd3, 0x539f3c63, 0xd4cf4796, 0xca7383bd),
-            (162, 0x02c459a9, 0x982f7ac8, 0x173b500c, 0x5952a13b),
-            (144, 0xc83dc956, 0x637e9bc5, 0xa2def1b1, 0x5f692175),
-            (144, 0x65e4ec2d, 0x162a9a1f, 0x951bbe05, 0x16256455),
-            (288, 0xb74a9aad, 0x56200137, 0x94d4f49d, 0xa2f91ec5),
-            (1164, 0x267beaf3, 0x369ad59d, 0x68eb05fd, 0xaff0a1f9),
-            (3492, 0xd5a3db61, 0xefe1d855, 0xf29bda65, 0xf8683545),
-            (2592, 0x1a22b1dd, 0xeb940885, 0x58fadd85, 0x7a375725),
-            (288, 0xfff0c33d, 0x3450cd45, 0x5ae0d2c5, 0xb41f18e5),
+            (1302, 0x3a8a211f, 3144.6345, 0x70779971, 0x8992e097),
+            (1584, 0x7905bdd9, -39.7440, 0x6072eca1, 0x7e0f5405),
+            (276, 0xff2c0d56, 158.3686, 0x87edbdcb, 0x72c7fce1),
+            (72, 0xe4723595, 39.2321, 0x35c99581, 0xfffc251d),
+            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0xc9566961),
+            (72, 0x89e75edd, 16.8157, 0x7938d925, 0x0c45cab5),
+            (144, 0x44a5e11e, 1140.0000, 0xa2def1b1, 0x5f692175),
+            (144, 0x5ca3de75, 17.7027, 0x951bbe05, 0x16256455),
+            (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xa2f91ec5),
+            (8736, 0x1b037e68, -1430.3482, 0xbc43a5f1, 0x451582ad),
+            (4308, 0xd6ace17a, 4.6853, 0x384deb19, 0x5a5a6451),
+            (1344, 0x781e9945, -75.5077, 0x314b8499, 0x883731e5),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (624, 0xc1a17dd3, 0x05fae775, 0xb0a72081, 0xb6991535),
-            (684, 0x50a16b3d, 0x35147895, 0xb0146df5, 0xf56e338d),
-            (432, 0xfc583479, 0x3d3fb12b, 0x3622ed91, 0x80d06ce5),
-            (72, 0x67425a9d, 0xa8a41ba5, 0x155c3305, 0x27a8e1a5),
+            (4560, 0x7b5fde4a, 1209.6605, 0x84d726eb, 0xdb0237b5),
+            (468, 0x74e31910, -19.0127, 0x96734335, 0x80f71295),
+            (936, 0xb40fca71, -27.4347, 0xe9946e96, 0x9aef1fdd),
+            (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x25856219),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (336, 0x0ce7fb59, 0x8ee27015, 0x37f89fd6, 0xfcba86b5),
-            (168, 0xf5d81a4a, 0x56d59baa, 0x12460adf, 0x808c1425),
-            (1416, 0x21e2ba23, 0x7a2f20ad, 0xf484bf5d, 0xff32dea5),
-            (3276, 0x48ccf29f, 0x18411815, 0x20dc02a5, 0x7aeb3bf1),
-            (3888, 0x23974e90, 0xf6a1e6e7, 0xc364c4f9, 0xb1155445),
-            (432, 0x4e6e96b5, 0xfaac1d05, 0x2050cd45, 0x75c09d05),
-            (396, 0x839f42b8, 0x83f48e77, 0x5274fdc5, 0xc4592e41),
+            (4260, 0xc974c3c3, 4734.8233, 0x875d170f, 0xa935769d),
+            (2892, 0x422d45d6, 107.4076, 0xd9b7c4dc, 0x5bbf7c35),
+            (1104, 0xadcd0191, 2345.8737, 0xd074ac58, 0x8afc8a8d),
+            (564, 0x4bb34e4d, 0.1359, 0xdd844d2d, 0x003fa771),
+            (468, 0xd7e1d79b, -68.8245, 0x14350951, 0x8715f7c9),
+            (60, 0xf347d68e, 34.0727, 0x1ef2798c, 0xf543efd9),
+            (72, 0xf81a202d, 16.9247, 0xa3ee9e1d, 0x0c45cab5),
+            (8532, 0x409d8605, -1834.6751, 0x0fd93d1d, 0x0e491cb5),
+            (4308, 0x26bf1eb1, 1.9575, 0xcd8a7719, 0xa568df15),
+            (744, 0x6f365b09, 17.1411, 0x5ca996b5, 0x1ceaa305),
+            (456, 0xcbf8aaa7, 710.5988, 0x5ff550b2, 0x701aa04d),
+            (144, 0x83237b42, 5.1699, 0x6d704989, 0x924eb995),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (432, 0xca48c069, 0x3d3fb12b, 0x3622ed91, 0x3f684765),
-            (144, 0x6198b2f4, 0xa782a24b, 0x6d704989, 0x924eb995),
+            (480, 0x9816bc91, -12.2110, 0x3dd99165, 0x7bfc68e5),
+            (816, 0xb6e9fb17, 617.1525, 0x1a284e7b, 0xff88b805),
+            (36, 0xd1ad26bd, 6.0000, 0x13c61651, 0x022a75b9),
+            (144, 0x4c0b62a7, 5.1699, 0x6d704989, 0x924eb995),
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {
@@ -196,12 +221,20 @@ fn wreck_batches_match_typescript() {
                 (
                     mesh.vertex_count(),
                     float_hash(&mesh.positions),
-                    float_hash(&mesh.normals),
+                    normal_checksum(&mesh.normals),
                     float_hash(&mesh.uvs),
                     float_hash(&mesh.colors),
                 )
             })
             .collect();
-        assert_eq!(actual, batches, "{kind:?}/{team}/{wreck_part:?}");
+        let matches = actual.len() == batches.len()
+            && actual.iter().zip(batches).all(|(a, e)| {
+                (a.0, a.1, a.3, a.4) == (e.0, e.1, e.3, e.4)
+                    && (a.2 - e.2).abs() < NORMAL_CHECKSUM_TOLERANCE
+            });
+        assert!(
+            matches,
+            "{kind:?}/{team}/{wreck_part:?}: {actual:?} vs {batches:?}"
+        );
     }
 }

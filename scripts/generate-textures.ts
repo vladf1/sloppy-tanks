@@ -138,13 +138,14 @@ for (const kind of ["siding", "shingles"] as const) {
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
       const broad = Math.sin((x / size) * Math.PI * 6) * Math.cos((y / size) * Math.PI * 4);
-      const value = Math.min(255, Math.round(237 + broad * 15 + (random() - 0.5) * 12));
+      const value = Math.min(255, Math.round(240 + broad * 7 + (random() - 0.5) * 10));
       const i = (y * size + x) * 4;
       image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
       image.data[i + 3] = 255;
     }
   c.putImageData(image, 0, 0);
-  // Broad rubbed paint survives mipmapping when a tank is only 40–80px wide.
+  // Soft rubbed and dusty patches survive mipmapping when a tank is only 40–80px
+  // wide; panel seams come from the model geometry, not the paint.
   for (let i = 0; i < 28; i++) {
     const x = random() * size,
       y = random() * size;
@@ -152,35 +153,10 @@ for (const kind of ["siding", "shingles"] as const) {
     for (const ox of [-size, 0, size])
       for (const oy of [-size, 0, size]) {
         const wash = c.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, radius);
-        wash.addColorStop(0, "#77777765");
+        wash.addColorStop(0, "#7777773a");
         wash.addColorStop(1, "#77777700");
         c.fillStyle = wash;
         c.fillRect(x + ox - radius, y + oy - radius, radius * 2, radius * 2);
-      }
-  }
-  // Recessed plate joins and bolts give the paint readable manufactured detail.
-  c.lineJoin = "round";
-  for (const [x, y, w, h] of [
-    [20, 22, 220, 198],
-    [258, 22, 234, 198],
-    [20, 238, 472, 254],
-  ]) {
-    c.strokeStyle = "#929292";
-    c.lineWidth = 4;
-    c.strokeRect(x, y, w, h);
-    c.strokeStyle = "#ffffff";
-    c.lineWidth = 2;
-    c.strokeRect(x + 3, y + 3, w - 6, h - 6);
-    for (const bx of [x + 13, x + w - 13])
-      for (const by of [y + 13, y + h - 13]) {
-        c.fillStyle = "#8a8a8a";
-        c.beginPath();
-        c.arc(bx, by, 4, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = "#ffffff";
-        c.beginPath();
-        c.arc(bx - 1, by - 1, 2, 0, Math.PI * 2);
-        c.fill();
       }
   }
   // Mix fine scratches with larger chipped streaks, wrapping across tile edges.

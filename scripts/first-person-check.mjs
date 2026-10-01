@@ -155,6 +155,13 @@ try {
   const heavy = page.locator("#overlay .respawn [data-kind='heavy']");
   await destroy();
   await heavy.waitFor({ state: "visible" });
+  // Destroyed, the view stays in the turret instead of flying overhead and back.
+  assert.deepEqual(
+    await page.evaluate(() => [window.sloppy.view.inFirstPerson, window.sloppy.view.camera.fov]),
+    [true, 58],
+    "a destroyed player keeps the first-person view",
+  );
+  await page.screenshot({ path: `${output}/destroyed.png` });
   await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
   await page.waitForFunction(() => window.sloppy.view.inFirstPerson, null, { timeout: 2000 });
   assert.deepEqual(

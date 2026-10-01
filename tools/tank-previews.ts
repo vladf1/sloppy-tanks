@@ -15,6 +15,9 @@ import { loadLabsEngine } from "./labs-engine";
 export const PREVIEW_WIDTH = 640;
 export const PREVIEW_HEIGHT = 400;
 export const PREVIEW_KINDS = ["scout", "balanced", "heavy"] as const;
+/** Each preview renders at this multiple of its size and is downsampled, so the
+ * tank's edges stay smooth on the cards' dark background. */
+const SUPERSAMPLE = 2;
 const PREPARE_BUDGET = 8;
 /** Half the orthographic view's height (metres), and its look-at pose. */
 const HALF_HEIGHT = 2.1875;
@@ -66,6 +69,8 @@ const SCENE = {
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
   exposure: 1,
+  // The game's sky reflection, so card paint and steel shade as they do in a round.
+  reflections: 1,
   camera: camera(),
   objects: [],
 };
@@ -82,7 +87,7 @@ function frame(canvas: HTMLCanvasElement): Uint8ClampedArray {
 
 /** Coverage and color from one frame over black and one over white. */
 function matte(black: Uint8ClampedArray, white: Uint8ClampedArray): ImageData {
-  const image = new ImageData(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+  const image = new ImageData(PREVIEW_WIDTH * SUPERSAMPLE, PREVIEW_HEIGHT * SUPERSAMPLE);
   // The backgrounds as drawn (tone mapping changes white), from a corner pixel.
   const backgroundBlack = [black[0], black[1], black[2]];
   const backgroundWhite = [white[0], white[1], white[2]];
@@ -105,14 +110,14 @@ function matte(black: Uint8ClampedArray, white: Uint8ClampedArray): ImageData {
 export async function renderTankPreviews(): Promise<Record<string, string>> {
   const { RenderLab } = await loadLabsEngine();
   const canvas = document.createElement("canvas");
-  canvas.width = PREVIEW_WIDTH;
-  canvas.height = PREVIEW_HEIGHT;
-  canvas.style.cssText = `width:${PREVIEW_WIDTH}px;height:${PREVIEW_HEIGHT}px;position:fixed;left:-9999px`;
+  canvas.width = PREVIEW_WIDTH * SUPERSAMPLE;
+  canvas.height = PREVIEW_HEIGHT * SUPERSAMPLE;
+  canvas.style.cssText = `width:${canvas.width}px;height:${canvas.height}px;position:fixed;left:-9999px`;
   document.body.append(canvas);
   const lab = await RenderLab.create(canvas, import.meta.env.BASE_URL);
   try {
     lab.load_scene(JSON.stringify(SCENE));
-    lab.resize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+    lab.resize(canvas.width, canvas.height);
     const names: string[] = [];
     for (const team of [0, 1]) {
       for (const kind of PREVIEW_KINDS) {
@@ -122,9 +127,12 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       }
     }
     for (;;) {
-      const [compiled, remaining] = lab.prepare_step(PREPARE_BUDGET);
+      const [compiled, remaining, compiling] = lab.prepare_step(PREPARE_BUDGET);
       if (remaining === 0) break;
-      if (compiled === 0) throw new Error("Pipeline preparation made no progress");
+      // Pipelines compiling on the browser's background threads are progress too.
+      if (compiled === 0 && compiling === 0) {
+        throw new Error("Pipeline preparation made no progress");
+      }
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     while (lab.textures_pending() > 0) {
@@ -134,9 +142,14 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
     if (failures.length) throw new Error(`Textures failed: ${failures.join(", ")}`);
     lab.warm_up();
     const previews: Record<string, string> = {};
+    const large = document.createElement("canvas");
+    large.width = canvas.width;
+    large.height = canvas.height;
     const output = document.createElement("canvas");
     output.width = PREVIEW_WIDTH;
     output.height = PREVIEW_HEIGHT;
+    const context = output.getContext("2d")!;
+    context.imageSmoothingQuality = "high";
     for (const name of names) {
       for (const other of names) lab.set_visible(other, other === name);
       lab.set_background(0x000000);
@@ -145,7 +158,9 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       lab.set_background(0xffffff);
       lab.frame(0);
       const white = frame(canvas);
-      output.getContext("2d")!.putImageData(matte(black, white), 0, 0);
+      large.getContext("2d")!.putImageData(matte(black, white), 0, 0);
+      context.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+      context.drawImage(large, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
       previews[name] = output.toDataURL("image/png");
     }
     const error = lab.error();

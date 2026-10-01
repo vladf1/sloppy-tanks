@@ -247,6 +247,9 @@ pub struct SceneSpec {
     pub shadow: ShadowSpec,
     pub point_light: Option<PointLightSpec>,
     pub exposure: f32,
+    /// Sky reflection strength; absent (0) in the Three.js calibration scenes.
+    #[serde(default)]
+    pub reflections: f32,
     pub camera: CameraSpec,
     pub water: Option<WaterSpec>,
     pub objects: Vec<ObjectSpec>,

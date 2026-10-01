@@ -39,7 +39,9 @@ mod model_primitives;
 
 // Vehicles.
 mod humvee_model;
+mod tank_details;
 mod tank_dimensions;
+mod tank_kit;
 mod tank_model;
 mod tank_surfaces;
 mod wreck_model;

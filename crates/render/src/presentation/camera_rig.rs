@@ -57,6 +57,12 @@ pub struct CameraRig {
     pub seat_blend: f64,
     /// A new round starts in the chosen view rather than flying into it.
     pub snap_seat: bool,
+    /// The last turret eye the camera sat in. A player destroyed in first person
+    /// keeps watching from it until the respawn, which seats the camera in the
+    /// new tank directly instead of flying overhead and back.
+    held_eye: Option<Vec3>,
+    /// Progress (0..1) of the destroyed player's step out of the wreck.
+    destroyed_step: f64,
     /// The drawn camera's world rotation.
     pub rotation: Quat,
     /// World X/Z of screen right, for stereo panning.
@@ -84,6 +90,8 @@ impl Default for CameraRig {
             seat_wanted: false,
             seat_blend: 0.0,
             snap_seat: true,
+            held_eye: None,
+            destroyed_step: 0.0,
             rotation: Quat::IDENTITY,
             listener_right: (1.0, 0.0),
             wreck_view: WreckView {
@@ -100,6 +108,10 @@ impl Default for CameraRig {
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
+}
+
+fn smoothstep(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Three's `Euler(x, y, 0, "YXZ")` as a quaternion.
@@ -152,8 +164,11 @@ impl CameraRig {
         let zoom = if overview { OVERVIEW_ZOOM } else { self.zoom };
         let eye = self.follow + DVec3::new(0.0, zoom * OVERHEAD_HEIGHT, zoom * OVERHEAD_BACK);
         self.overhead.look_at(eye.as_vec3(), self.follow.as_vec3());
-        // Destroyed, the player watches the field from above until the respawn.
-        self.seat_wanted = self.first_person.enabled && !overview && viewer.alive;
+        // Destroyed in first person, the player keeps the seat's view; one who
+        // switches to first person while destroyed waits for the respawn.
+        let seated_while_destroyed = !viewer.alive && self.held_eye.is_some();
+        self.seat_wanted =
+            self.first_person.enabled && !overview && (viewer.alive || seated_while_destroyed);
         if self.snap_seat || overview || !has_model {
             self.snap_seat = false;
             self.seat_blend = if self.seat_wanted { 1.0 } else { 0.0 };
@@ -162,6 +177,14 @@ impl CameraRig {
             let direction = if self.seat_wanted { step } else { -step };
             self.seat_blend = (self.seat_blend + direction).clamp(0.0, 1.0);
         }
+        if self.seat_blend == 0.0 {
+            self.held_eye = None;
+        }
+        self.destroyed_step = if seated_while_destroyed && self.seat_wanted {
+            (self.destroyed_step + dt / FIRST_PERSON.destroyed_step_seconds).min(1.0)
+        } else {
+            0.0
+        };
         self.in_first_person = self.seat_blend == 1.0;
         self.camera.fov_y_degrees = lerp(
             CAMERA.field_of_view,
@@ -180,9 +203,11 @@ impl CameraRig {
             let overhead_pitch = (gaze.y as f64).asin();
             let overhead_yaw = (-gaze.x as f64).atan2(-gaze.z as f64);
             let turn = seat_turn(self.seat_blend);
+            let step = smoothstep(self.destroyed_step);
+            let seat_pitch = lerp(FIRST_PERSON.pitch, FIRST_PERSON.destroyed_pitch, step);
             self.rotation = yaw_pitch(
                 overhead_yaw + angle_delta(overhead_yaw, yaw + std::f64::consts::PI) * turn,
-                lerp(overhead_pitch, FIRST_PERSON.pitch, turn),
+                lerp(overhead_pitch, seat_pitch, turn),
             );
             let listener_yaw = if turn < 0.5 {
                 std::f64::consts::PI
@@ -190,8 +215,18 @@ impl CameraRig {
                 yaw
             };
             self.listener_right = (-listener_yaw.cos(), listener_yaw.sin());
-            // Until `place_eye` runs, stay at the overhead position.
-            self.orient(self.overhead.position);
+            // Until `place_eye` runs, stay at the overhead position. A destroyed
+            // tank has no turret to seat the camera in: it steps back and up from
+            // the last eye, out of the wreck, still facing the look.
+            match self.held_eye {
+                Some(eye) if !viewer.alive => {
+                    let back = Vec3::new(-(yaw.sin() as f32), 0.0, -(yaw.cos() as f32));
+                    let offset = back * FIRST_PERSON.destroyed_back as f32
+                        + Vec3::Y * FIRST_PERSON.destroyed_rise as f32;
+                    self.orient(eye + offset * step as f32);
+                }
+                _ => self.orient(self.overhead.position),
+            }
         } else {
             self.camera.position = self.overhead.position;
             self.camera.target = self.overhead.target;
@@ -230,6 +265,7 @@ impl CameraRig {
         let eye = turret.transform_point3(Vec3::new(0.0, eye.height as f32, eye.forward as f32));
         let flight = seat_flight(self.seat_blend) as f32;
         self.orient(self.overhead.position.lerp(eye, flight));
+        self.held_eye = Some(eye);
         Some(eye)
     }
 
@@ -353,11 +389,45 @@ mod tests {
         let forward = (rig.camera.target - rig.camera.position).normalize();
         assert!(forward.z > 0.99 && forward.y < 0.0, "{forward:?}");
         assert!((rig.camera.fov_y_degrees - 58.0).abs() < 1e-4);
-        // Death returns the camera overhead without a flight after a snap.
+        // Destroyed, the player stays in first person, steps back and up out of
+        // the wreck along the look, and can still look around.
         let mut dead = viewer(0.0, 0.0);
         dead.alive = false;
-        rig.snap_seat = true;
-        rig.update(&dead, 1.0, 0.016, false, true);
+        rig.first_person.yaw = std::f64::consts::FRAC_PI_2;
+        for _ in 0..30 {
+            rig.update(&dead, 1.0, 0.04, false, true);
+        }
+        assert!(rig.in_first_person);
+        let stepped = eye
+            + Vec3::new(
+                -FIRST_PERSON.destroyed_back as f32,
+                FIRST_PERSON.destroyed_rise as f32,
+                0.0,
+            );
+        assert!(
+            rig.camera.position.distance(stepped) < 1e-4,
+            "{:?}",
+            rig.camera.position
+        );
+        let forward = (rig.camera.target - rig.camera.position).normalize();
+        assert!(forward.x > 0.8 && forward.y < -0.4, "{forward:?}");
+        // The respawned tank seats the camera directly, with no flight.
+        let respawned = Mat4::from_translation(Vec3::new(30.0, 0.25, -12.0));
+        rig.update(&viewer(30.0, -12.0), 1.0, 0.016, false, true);
+        let eye = rig.place_eye(&respawned, VehicleKind::Balanced).unwrap();
+        assert!(rig.in_first_person);
+        assert!(rig.camera.position.distance(eye) < 1e-5);
+    }
+
+    #[test]
+    fn switching_to_first_person_while_destroyed_waits_for_the_respawn() {
+        let mut rig = CameraRig::default();
+        let mut dead = viewer(0.0, 0.0);
+        dead.alive = false;
+        rig.update(&dead, 1.0, 0.0, false, true);
+        rig.first_person.toggle(0.0);
+        rig.update(&dead, 1.0, 0.5, false, true);
+        assert!(!rig.seat_wanted);
         assert_eq!(rig.seat_blend, 0.0);
     }
 
