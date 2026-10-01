@@ -1,5 +1,6 @@
 //! The multiplayer server binary: settings from the environment, a multi-threaded Tokio
-//! runtime, and a graceful reset of every room on SIGTERM or SIGINT.
+//! runtime, and a graceful reset of every room on SIGTERM (what `docker stop` sends) or
+//! SIGINT.
 
 use std::process::ExitCode;
 
