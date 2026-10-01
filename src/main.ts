@@ -60,13 +60,16 @@ function preloadImages(options: GameOptions): void {
           "textures/houses/shingles.webp",
           "textures/trees/birch.webp",
           "textures/trees/leaf-sprigs.webp",
+          "textures/wood/timber.webp",
         ]
       : []),
     ...(options.mapMode === "harbor"
       ? ["textures/harbor/dock.webp", "textures/harbor/steel.webp", "textures/water/normals.webp"]
       : []),
     ...(options.mapMode === "quarry" ? ["textures/quarry/sandstone.webp"] : []),
-    ...(isExtraLevel(options.mapMode) ? ["textures/ground/dry-grass.webp"] : []),
+    ...(isExtraLevel(options.mapMode)
+      ? ["textures/ground/dry-grass.webp", "textures/wood/timber.webp"]
+      : []),
   ]) {
     const link = document.createElement("link");
     link.rel = "preload";

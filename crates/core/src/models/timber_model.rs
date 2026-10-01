@@ -2,16 +2,21 @@
 //! and straps. The members and where hits land are gameplay data
 //! ([`crate::sim::timber_layout`]): the simulation turns the same members into
 //! physical debris.
+//!
+//! Members are sawn boards: their long faces sample a plank row of the timber
+//! atlas at true scale with the grain along the member, their ends an end-grain
+//! cell, and the member's paint only tints the wood.
 
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 
 use super::batching::batch;
-use super::model_primitives::{box_part, material, put};
-use crate::geometry::math::quat_from_euler;
-use crate::geometry::{Shape, shape_geometry};
-use crate::scene::Node;
+use super::model_primitives::{Cache, box_part, material, put, shadowed};
+use crate::geometry::math::{hex_to_linear, linear_to_hex, quat_from_euler};
+use crate::geometry::{Mesh, Shape, shape_geometry};
+use crate::scene::{Color, Material, Node, TextureRef};
 use crate::sim::math::{Random, clamp};
 use crate::sim::timber_layout::{TimberFace, TimberMark, TimberPart, TimberPartKind};
 
@@ -21,13 +26,120 @@ const CHIP_CORE_COLOR: u32 = 0x805334;
 const CRACK_LIP_COLOR: u32 = 0xb98a55;
 const CRACK_COLOR: u32 = 0x503421;
 
+/// The timber atlas (`scripts/generate-wood-texture.ts`): [`GRAIN_ROWS`] rows of
+/// flat-sawn plank faces, each tileable along the grain, over a row of
+/// [`END_CELLS`] end-grain cells.
+pub const TIMBER_TEXTURE: &str = "textures/wood/timber.webp";
+const GRAIN_ROWS: usize = 3;
+const END_CELLS: usize = 4;
+/// Metres of board the atlas width spans along the grain, and one row across it.
+const GRAIN_SPAN: f64 = 2.4;
+const ROW_SPAN: f64 = 0.6;
+/// The share of a row or cell left clear at its edges, so mipmaps stay inside it.
+const ATLAS_INSET: f64 = 0.02;
+/// The average sRGB colour of the atlas's plank faces. A member's tint is its
+/// paint divided by it, so the textured wood averages the paint it replaces:
+/// posts stay darker than beams, and beams keep their alternating tones.
+const PLANK_AVERAGE: u32 = 0xcaa378;
+
+static WOOD: Cache<u32, Material> = Cache::new();
+
+/// The textured wood of a member painted `color`; batching bakes the tint into
+/// vertex colours, so every member shares one material and draw setup.
+fn wood(color: u32) -> Arc<Material> {
+    WOOD.get_or_insert(color, || {
+        let map = TextureRef {
+            anisotropy: 8,
+            ..TextureRef::file(TIMBER_TEXTURE)
+        };
+        let (paint, plank) = (hex_to_linear(color), hex_to_linear(PLANK_AVERAGE));
+        let tint = [0, 1, 2].map(|i| (paint[i] / plank[i]).min(1.0));
+        Material {
+            map: Some(map.clone()),
+            bump_map: Some(map),
+            bump_scale: 0.03,
+            color: Color(linear_to_hex(tint)),
+            roughness: 0.82,
+            metalness: 0.0,
+            ..Material::default()
+        }
+    })
+}
+
+/// A member's box with the grain along the longer of its width (beams) and height
+/// (posts). Long faces map one plank row at true scale, starting at a seeded point
+/// along the board; the two ends map one end-grain cell. `seed` picks the row, the
+/// start, the cell and a mirror, so neighbouring members never repeat.
+fn member_mesh(size: DVec3, seed: i32) -> Mesh {
+    let mut rng = Random::new(f64::from(seed));
+    let row = (rng.next() * GRAIN_ROWS as f64).floor() as usize;
+    let start = rng.next();
+    let cell = (rng.next() * END_CELLS as f64).floor() as usize;
+    let mirror = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+    let grain = if size.x >= size.y { 0 } else { 1 };
+    let half = size / 2.0;
+    let rows = (GRAIN_ROWS + 1) as f64;
+    // The image's top row is at v = 1 (flipped like Three's textures).
+    let row_center = 1.0 - (row as f64 + 0.5) / rows;
+    let mut positions = Vec::with_capacity(72);
+    let mut normals = Vec::with_capacity(72);
+    let mut uvs = Vec::with_capacity(48);
+    let mut indices = Vec::with_capacity(36);
+    for axis in 0..3 {
+        let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+        for sign in [-1.0, 1.0] {
+            let base = (positions.len() / 3) as u32;
+            for (sa, sb) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                let mut p = DVec3::ZERO;
+                p[axis] = sign * half[axis];
+                p[a] = sa * half[a];
+                p[b] = sb * half[b];
+                let uv = if axis == grain {
+                    // End grain, stretched over the end face.
+                    let other =
+                        |i: usize| (p[i] / size[i] + 0.5) * (1.0 - 2.0 * ATLAS_INSET) + ATLAS_INSET;
+                    let (u, v) = if grain == 0 {
+                        (other(2), other(1))
+                    } else {
+                        (other(0), other(2))
+                    };
+                    [(cell as f64 + u) / END_CELLS as f64, v / rows]
+                } else {
+                    let across = if a == grain { b } else { a };
+                    let fit = (ROW_SPAN * (1.0 - 2.0 * ATLAS_INSET) / size[across]).min(1.0);
+                    [
+                        start + p[grain] / GRAIN_SPAN,
+                        row_center + mirror * p[across] / ROW_SPAN * fit / rows,
+                    ]
+                };
+                positions.extend_from_slice(&[p.x, p.y, p.z]);
+                let mut normal = [0.0; 3];
+                normal[axis] = sign;
+                normals.extend_from_slice(&normal);
+                uvs.extend_from_slice(&uv);
+            }
+            // (a, b, axis) is right-handed, so the corners run counter-clockwise
+            // seen from outside on the positive face.
+            if sign > 0.0 {
+                indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            } else {
+                indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+            }
+        }
+    }
+    Mesh::from_f64(&positions, &normals, &uvs, Some(indices))
+}
+
 /// `timberPartModel(p)`: a batched member with its chips and cracks, reused for
 /// standing walls and detached pieces.
 pub fn timber_part_model(p: &TimberPart) -> Node {
     let mut group = Node::default();
     put(
         &mut group,
-        box_part(p.w, p.h, p.d, p.color, 0.0),
+        shadowed(
+            Arc::new(member_mesh(DVec3::new(p.w, p.h, p.d), p.damage_seed)),
+            wood(p.color),
+        ),
         0.0,
         0.0,
         0.0,
