@@ -66,11 +66,12 @@
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
 use glam::Vec2;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon, has_ammo};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{SCORE_LIMIT, STEP, TEAM_NAMES, vehicle};
+use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::game_options::{GameOptions, game_choices, initial_game_options};
 use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
@@ -79,11 +80,12 @@ use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::round_recap::{
     Metric, RecordStorage, StorageUnavailable, combat_feats, recap_stats, save_personal_bests,
 };
+use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    CoverKind, FragmentShape, GameMode, MatchPhase, RenderState, Shot, SimEvent, SimEventType,
-    Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
+    CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEvent,
+    SimEventType, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::gpu::{Renderer, RendererOptions};
 use sloppy_render::presentation::Presentation;
@@ -133,10 +135,95 @@ fn js_error(message: impl Into<String>) -> JsValue {
     js_sys::Error::new(&message.into()).into()
 }
 
+thread_local! {
+    // Looked up once: each frame reads the clock several times.
+    static PERFORMANCE: Option<web_sys::Performance> =
+        web_sys::window().and_then(|window| window.performance());
+}
+
 fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|window| window.performance())
-        .map_or(0.0, |performance| performance.now())
+    PERFORMANCE.with(|performance| performance.as_ref().map_or(0.0, |p| p.now()))
+}
+
+/// `Game.hud_json`: the page HUD's view of the match and the human's tank.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Hud<'a> {
+    #[serde(rename = "match")]
+    match_state: &'a Match,
+    elapsed: f64,
+    game_mode: GameMode,
+    endless_match: bool,
+    map_mode: MapId,
+    map_name: String,
+    difficulty: Difficulty,
+    human_team: Team,
+    score_limit: u32,
+    team_names: [&'static str; 2],
+    active_enemies: usize,
+    speed_tuning: &'a SpeedTuning,
+    human: HudHuman<'a>,
+    scoreboard: Vec<HudScore<'a>>,
+    recap: Option<&'a Value>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HudHuman<'a> {
+    id: u32,
+    name: &'a str,
+    kind: VehicleKind,
+    vehicle_name: &'static str,
+    team: Team,
+    alive: bool,
+    hp: f64,
+    max_hp: f64,
+    health_ratio: f64,
+    health_color: u32,
+    xp: f64,
+    rank: usize,
+    rank_name: &'static str,
+    rank_damage: f64,
+    rank_fire_rate: f64,
+    rank_health: f64,
+    rank_repair: f64,
+    repair_delay: f64,
+    selected_ammo: Weapon,
+    equipped: Weapon,
+    ammo: Vec<HudAmmo>,
+    cooldown: f64,
+    mine_cooldown: f64,
+    protection: f64,
+    shield: f64,
+    shield_points: f64,
+    rapid: f64,
+    speed: f64,
+    laser: f64,
+    respawn: f64,
+    kills: u32,
+    deaths: u32,
+    self_repair: bool,
+}
+
+#[derive(Serialize)]
+struct HudAmmo {
+    weapon: Weapon,
+    count: Option<f64>,
+    selected: bool,
+    available: bool,
+}
+
+#[derive(Serialize)]
+struct HudScore<'a> {
+    id: u32,
+    name: &'a str,
+    team: Team,
+    kind: VehicleKind,
+    human: bool,
+    alive: bool,
+    kills: u32,
+    deaths: u32,
+    rank: usize,
 }
 
 fn phase_code(phase: MatchPhase) -> f32 {
@@ -606,30 +693,32 @@ impl Game {
         let stats = &RANKS[rank];
         let health = health_bar_state(tank.hp, max_hp, tank.team);
         let selected = equipped_weapon(tank);
-        let ammo: Vec<Value> = AMMO_ORDER
+        let ammo = AMMO_ORDER
             .iter()
-            .map(|&weapon| {
-                json!({
-                    "weapon": weapon,
-                    "count": weapon.special().map(|kind| tank.ammo.get(kind)),
-                    "selected": weapon == selected,
-                    "available": has_ammo(tank, weapon),
-                })
+            .map(|&weapon| HudAmmo {
+                weapon,
+                count: weapon.special().map(|kind| tank.ammo.get(kind)),
+                selected: weapon == selected,
+                available: has_ammo(tank, weapon),
             })
             .collect();
         let self_repair = tank.alive
             && stats.repair > 0.0
             && tank.hp < max_hp
             && sim.elapsed - tank.last_combat >= REPAIR_DELAY;
-        let scoreboard: Vec<Value> = sim
+        let scoreboard = sim
             .tanks
             .iter()
-            .map(|t| {
-                json!({
-                    "id": t.id, "name": t.name, "team": t.team, "kind": t.kind,
-                    "human": t.human, "alive": t.alive, "kills": t.kills,
-                    "deaths": t.deaths, "rank": rank_index(t.xp),
-                })
+            .map(|t| HudScore {
+                id: t.id,
+                name: &t.name,
+                team: t.team,
+                kind: t.kind,
+                human: t.human,
+                alive: t.alive,
+                kills: t.kills,
+                deaths: t.deaths,
+                rank: rank_index(t.xp),
             })
             .collect();
         let recap = if sim.match_state.phase == MatchPhase::Results {
@@ -637,58 +726,59 @@ impl Game {
         } else {
             None
         };
-        json!({
-            "match": sim.match_state,
-            "elapsed": sim.elapsed,
-            "gameMode": sim.game_mode,
-            "endlessMatch": sim.endless_match,
-            "mapMode": sim.map_mode,
-            "mapName": sim.map_name(),
-            "difficulty": sim.difficulty,
-            "humanTeam": sim.human_team,
-            "scoreLimit": SCORE_LIMIT,
-            "teamNames": TEAM_NAMES,
-            "activeEnemies": sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
-            "speedTuning": sim.speed_tuning,
-            "human": {
-                "id": tank.id,
-                "name": tank.name,
-                "kind": tank.kind,
-                "vehicleName": vehicle(tank.kind).name,
-                "team": tank.team,
-                "alive": tank.alive,
-                "hp": tank.hp,
-                "maxHp": max_hp,
-                "healthRatio": health.ratio,
-                "healthColor": health.color,
-                "xp": tank.xp,
-                "rank": rank,
-                "rankName": stats.name,
-                "rankDamage": stats.damage,
-                "rankFireRate": stats.fire_rate,
-                "rankHealth": stats.health,
-                "rankRepair": stats.repair,
-                "repairDelay": REPAIR_DELAY,
-                "selectedAmmo": tank.selected_ammo,
-                "equipped": selected,
-                "ammo": ammo,
-                "cooldown": tank.cooldown,
-                "mineCooldown": tank.mine_cooldown,
-                "protection": tank.protection,
-                "shield": tank.shield,
-                "shieldPoints": tank.shield_points,
-                "rapid": tank.rapid,
-                "speed": tank.speed,
-                "laser": tank.laser,
-                "respawn": tank.respawn,
-                "kills": tank.kills,
-                "deaths": tank.deaths,
-                "selfRepair": self_repair,
+        let hud = Hud {
+            match_state: &sim.match_state,
+            elapsed: sim.elapsed,
+            game_mode: sim.game_mode,
+            endless_match: sim.endless_match,
+            map_mode: sim.map_mode,
+            map_name: sim.map_name(),
+            difficulty: sim.difficulty,
+            human_team: sim.human_team,
+            score_limit: SCORE_LIMIT,
+            team_names: TEAM_NAMES,
+            active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
+            speed_tuning: &sim.speed_tuning,
+            human: HudHuman {
+                id: tank.id,
+                name: &tank.name,
+                kind: tank.kind,
+                vehicle_name: vehicle(tank.kind).name,
+                team: tank.team,
+                alive: tank.alive,
+                hp: tank.hp,
+                max_hp,
+                health_ratio: health.ratio,
+                health_color: health.color,
+                xp: tank.xp,
+                rank,
+                rank_name: stats.name,
+                rank_damage: stats.damage,
+                rank_fire_rate: stats.fire_rate,
+                rank_health: stats.health,
+                rank_repair: stats.repair,
+                repair_delay: REPAIR_DELAY,
+                selected_ammo: tank.selected_ammo,
+                equipped: selected,
+                ammo,
+                cooldown: tank.cooldown,
+                mine_cooldown: tank.mine_cooldown,
+                protection: tank.protection,
+                shield: tank.shield,
+                shield_points: tank.shield_points,
+                rapid: tank.rapid,
+                speed: tank.speed,
+                laser: tank.laser,
+                respawn: tank.respawn,
+                kills: tank.kills,
+                deaths: tank.deaths,
+                self_repair,
             },
-            "scoreboard": scoreboard,
-            "recap": recap,
-        })
-        .to_string()
+            scoreboard,
+            recap,
+        };
+        // Written straight to text: the page reads this every few frames.
+        serde_json::to_string(&hud).unwrap_or_default()
     }
 
     /// Stats for nerds, as JSON.

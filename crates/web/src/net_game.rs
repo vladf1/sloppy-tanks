@@ -111,10 +111,14 @@ fn js_error(message: impl Into<String>) -> JsValue {
     js_sys::Error::new(&message.into()).into()
 }
 
+thread_local! {
+    // Looked up once: each frame reads the clock several times.
+    static PERFORMANCE: Option<web_sys::Performance> =
+        web_sys::window().and_then(|window| window.performance());
+}
+
 fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|window| window.performance())
-        .map_or(0.0, |performance| performance.now())
+    PERFORMANCE.with(|performance| performance.as_ref().map_or(0.0, |p| p.now()))
 }
 
 fn record(json: &str) -> Result<Map<String, Value>, JsValue> {
