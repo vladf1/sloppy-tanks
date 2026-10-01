@@ -81,8 +81,8 @@ fn vehicle_models_match_typescript_counts() {
         (VehicleKind::Balanced, 1, 202, 6758, 3512, 132, 32, 4, 36),
         (VehicleKind::Heavy, 0, 205, 6654, 3424, 138, 29, 4, 36),
         (VehicleKind::Heavy, 1, 206, 6678, 3436, 138, 30, 4, 36),
-        (VehicleKind::Humvee, 0, 364, 13220, 7276, 141, 9, 5, 212),
-        (VehicleKind::Humvee, 1, 364, 13220, 7276, 141, 9, 5, 212),
+        (VehicleKind::Humvee, 0, 30, 43644, 14548, 11, 6, 4, 4),
+        (VehicleKind::Humvee, 1, 30, 43644, 14548, 11, 6, 4, 4),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
@@ -105,7 +105,7 @@ fn vehicle_models_match_typescript_counts() {
         (VehicleKind::Scout, (198, 6740, 3522)),
         (VehicleKind::Balanced, (204, 7060, 3718)),
         (VehicleKind::Heavy, (208, 6980, 3642)),
-        (VehicleKind::Humvee, (364, 13220, 7276)),
+        (VehicleKind::Humvee, (30, 43644, 14548)),
     ];
     for (kind, expected) in open {
         let model = tank_model_variant(kind, Team::Blue, false, true);
@@ -165,10 +165,10 @@ fn wreck_batches_match_typescript() {
             (1440, 0x11bbb7f5, 0x640e8855, 0x9d04ab85, 0xd41fae65),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (336, 0xb6150b77, 0x02efb3d5, 0x764482b9, 0xd0b183f5),
-            (612, 0x2358862f, 0x352956d5, 0x4bcd793d, 0xebff7e55),
-            (432, 0xb111ba67, 0x63755605, 0xbfdfe6a5, 0xb3d85f15),
-            (432, 0xfc583479, 0x3d3fb12b, 0x3622ed91, 0x80d06ce5),
+            (4560, 0x7b5fde4a, 0x1e53e955, 0x84d726eb, 0x8efa2f55),
+            (468, 0x74e31910, 0xdad78ac5, 0x96734335, 0x80f71295),
+            (936, 0xb40fca71, 0xd159cf07, 0xe9946e96, 0x9aef1fdd),
+            (348, 0x4b30ac35, 0xe40decbb, 0xa2ea73b1, 0x25856219),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
             (504, 0xf7f58686, 0x009a16be, 0xa4d9ef60, 0xabf42d1d),
