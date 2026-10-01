@@ -1,6 +1,6 @@
 //! Conservative reflection culling to the texels visible water can sample.
 
-use crate::camera::{Frustum, PerspectiveCamera};
+use crate::camera::{Frustum, PerspectiveCamera, Sphere};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sloppy_core::geometry::Mesh;
 
@@ -14,6 +14,9 @@ const CLIP_PLANES: [Vec4; 6] = [
     Vec4::new(0.0, 0.0, -1.0, 1.0),
 ];
 const WATER_DISTANCE_FLOOR: f32 = 0.001;
+/// Added to a polygon's bounding radius before the frustum pre-test, so float
+/// rounding never rejects a polygon that clipping would keep a sliver of.
+const PRETEST_MARGIN: f32 = 0.01;
 
 /// A rectangle in reflection NDC; only the cull query uses its projection crop.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,6 +43,8 @@ impl ReflectionBounds {
 /// the per-frame projection and frustum clipping reuse stack storage.
 pub struct WaterFootprint {
     polygons: Vec<Vec<Vec4>>,
+    /// Each polygon's bounds: most lie outside the view and skip clipping.
+    bounds: Vec<Sphere>,
     height: f32,
 }
 impl WaterFootprint {
@@ -74,7 +79,26 @@ impl WaterFootprint {
                 }
             }
         }
-        Self { polygons, height }
+        let bounds = polygons
+            .iter()
+            .map(|polygon| {
+                let center = polygon.iter().map(|point| point.truncate()).sum::<Vec3>()
+                    / polygon.len() as f32;
+                let radius = polygon
+                    .iter()
+                    .map(|point| point.truncate().distance(center))
+                    .fold(0.0, f32::max);
+                Sphere {
+                    center,
+                    radius: radius + PRETEST_MARGIN,
+                }
+            })
+            .collect();
+        Self {
+            polygons,
+            bounds,
+            height,
+        }
     }
     pub fn reflection_bounds(
         &self,
@@ -83,9 +107,13 @@ impl WaterFootprint {
         reflection_size: u32,
     ) -> Option<ReflectionBounds> {
         let matrix = camera.view_projection();
+        let view = Frustum::from_view_projection(&matrix);
         let mut min = Vec2::splat(f32::INFINITY);
         let mut max = Vec2::splat(f32::NEG_INFINITY);
-        for polygon in &self.polygons {
+        for (polygon, bounds) in self.polygons.iter().zip(&self.bounds) {
+            if !view.intersects_sphere(bounds) {
+                continue;
+            }
             let mut points = [Vec4::ZERO; CLIP_CAPACITY];
             let mut scratch = points;
             let mut count = polygon.len();
@@ -219,6 +247,50 @@ mod tests {
         let camera = camera(Vec3::new(0.0, 8.0, 100.0), Vec3::new(0.0, 8.0, 120.0));
         assert_eq!(water.reflection_bounds(&camera, 1.8, 512), None);
     }
+    #[test]
+    fn skipping_polygons_outside_the_view_keeps_the_bounds() {
+        // A creek-like strip of small triangles, mostly outside any one view.
+        let mut positions = Vec::new();
+        for step in 0..120 {
+            let x = -150.0 + step as f32 * 2.5;
+            let z = 30.0 * (x * 0.03).sin();
+            positions.extend([
+                [x, 0.0, z - 4.0],
+                [x + 2.5, 0.0, z - 4.0],
+                [x, 0.0, z + 4.0],
+            ]);
+            positions.extend([
+                [x + 2.5, 0.0, z - 4.0],
+                [x + 2.5, 0.0, z + 4.0],
+                [x, 0.0, z + 4.0],
+            ]);
+        }
+        let mesh = Mesh {
+            positions,
+            ..Mesh::default()
+        };
+        let water = WaterFootprint::new(&mesh, -2.0, 40.0);
+        let mut everything = WaterFootprint::new(&mesh, -2.0, 40.0);
+        for bounds in &mut everything.bounds {
+            bounds.radius = f32::INFINITY;
+        }
+        let mut compared = 0;
+        for step in 0..64 {
+            let angle = step as f32 * 0.37;
+            let eye = Vec3::new(
+                90.0 * angle.cos(),
+                20.0 + (step % 5) as f32 * 9.0,
+                90.0 * angle.sin(),
+            );
+            let target = Vec3::new(30.0 * (angle * 1.7).sin(), 0.0, 20.0 * angle.cos());
+            let view = camera(eye, target);
+            let expected = everything.reflection_bounds(&view, 0.65, 512);
+            assert_eq!(water.reflection_bounds(&view, 0.65, 512), expected);
+            compared += expected.is_some() as usize;
+        }
+        assert!(compared > 16, "most poses see water");
+    }
+
     #[test]
     fn distortion_expands_the_rectangle_and_close_water_keeps_everything() {
         let water = WaterFootprint::new(&water(), 0.0, 0.0);
