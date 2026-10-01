@@ -1301,11 +1301,13 @@ impl Presentation {
             dt as f32,
             self.time,
         );
-        // A destroyed player in first person watches from above without aiming,
-        // and neither reticle fits the view while the camera flies between them.
+        // A destroyed player in first person keeps the view without aiming, and
+        // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;
+        let viewer_alive = state.viewer().is_some_and(|viewer| viewer.alive);
         self.crosshair_visible = state.match_state.phase == MatchPhase::Playing
-            && (rig.in_first_person || (!rig.first_person.enabled && rig.seat_blend == 0.0));
+            && ((rig.in_first_person && viewer_alive)
+                || (!rig.first_person.enabled && rig.seat_blend == 0.0));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer
