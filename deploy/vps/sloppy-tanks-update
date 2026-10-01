@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Switches a multiplayer server service to a Docker image and keeps its pinned-image
+# Switches a multiplayer server service to a container image and keeps its pinned-image
 # state. provision.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
 # scripts call it over SSH and sloppy-tanks-update.timer runs `production auto`.
 #
@@ -9,10 +9,13 @@
 #   sloppy-tanks-update SERVICE resume        let auto-update follow :production again
 #   sloppy-tanks-update production auto       the timer's check (see auto below)
 #   sloppy-tanks-update SERVICE status
+#   sloppy-tanks-update SERVICE adopt         provisioning: start on the pin after a runtime switch
 #
 # SERVICE is production (sloppy-tanks) or dev (sloppy-tanks-dev). The unit runs the image
 # ID in /var/lib/sloppy-tanks/SERVICE.image, so a crash or reboot restarts exactly what was
-# running, and only this script changes it, restarting in the same step. Anything but
+# running, and only this script changes it, restarting in the same step. A service whose
+# Quadlet unit is installed runs under Podman, which reads the pin from a drop-in this
+# script writes beside it; otherwise Docker's unit reads the pin file itself. Anything but
 # `pull` of :production leaves a hold that auto-update respects until `resume` or such a
 # pull.
 set -euo pipefail
@@ -30,7 +33,7 @@ MAX_WAIT_SERVER_ONLY_SECONDS=14400
 MAX_WAIT_CONTENT_SECONDS=600
 
 usage() {
-  echo "usage: sloppy-tanks-update production|dev pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
+  echo "usage: sloppy-tanks-update production|dev pull [REF]|local IMAGE|rollback|resume|auto|status|adopt" >&2
   exit 2
 }
 service=${1:-}
@@ -41,6 +44,12 @@ case $service in
   *) usage ;;
 esac
 port=$(sed -n 's/^PORT=//p' "/etc/$unit.env")
+quadlet=/etc/containers/systemd/$unit.container
+if [[ -f $quadlet ]]; then
+  runtime=podman other=docker
+else
+  runtime=docker other=podman
+fi
 image_file=$STATE/$service.image
 previous_file=$STATE/$service.previous
 hold_file=$STATE/$service.hold
@@ -57,26 +66,41 @@ fi
 
 pinned() { [[ -f $1 ]] && sed -n 's/^IMAGE=//p' "$1" || true; }
 pin() { printf 'IMAGE=%s\n' "$2" >"$1.new" && mv -f "$1.new" "$1"; }
-label() { docker image inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
-image_id() { docker image inspect --format '{{.Id}}' "$1"; }
+label() { $runtime image inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
+# Docker prints IDs with their sha256: prefix and Podman without; both accept either.
+image_id() {
+  local id
+  id=$($runtime image inspect --format '{{.Id}}' "$1") && echo "sha256:${id#sha256:}"
+}
 describe() {
   echo "${1:0:19} (build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
 }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 
+# Podman's Quadlet unit takes the pinned image from a drop-in, which systemd sees only
+# after regenerating the unit. Docker's unit reads the pin file when it starts.
+use_pin() {
+  [[ $runtime == podman ]] || return 0
+  mkdir -p "$quadlet.d"
+  printf '[Container]\nImage=%s\n' "$1" >"$quadlet.d/image.conf.new"
+  mv -f "$quadlet.d/image.conf.new" "$quadlet.d/image.conf"
+  systemctl daemon-reload
+}
+
 # Every load or pull leaves an image tagged with its build, which a plain prune (untagged
 # images only) never frees. Untag the server images that no service runs or could roll
 # back to (both services share the image store), keeping :production for a pending
-# auto-update, then prune what is left untagged.
+# auto-update, then prune what is left untagged. Podman lists every name of a matching
+# image, so only the registry's tags are considered.
 remove_old_images() {
   local keep ref id
-  keep=$(cat "$STATE"/*.image "$STATE"/*.previous 2>/dev/null | sed -n 's/^IMAGE=//p')
-  docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
+  keep=$({ cat "$STATE"/*.image "$STATE"/*.previous 2>/dev/null || true; } | sed -n 's/^IMAGE=//p')
+  $runtime image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
-      if [[ $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
-      if ! grep -qxF "$id" <<<"$keep"; then docker image rm "$ref" >/dev/null || true; fi
+      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
+      if ! grep -qxF "$id" <<<"$keep"; then $runtime image rm "$ref" >/dev/null || true; fi
     done
-  docker image prune --force >/dev/null
+  $runtime image prune --force >/dev/null
 }
 
 # /health reports the stamps of the process that answers, so a match means the new
@@ -105,10 +129,11 @@ switch_to() {
   fi
   if [[ -n $current && $current != "$new" ]]; then
     pin "$previous_file" "$current"
-    docker tag "$current" "$PINNED:$service-previous"
+    $runtime tag "$current" "$PINNED:$service-previous"
   fi
   pin "$image_file" "$new"
-  docker tag "$new" "$PINNED:$service-current"
+  $runtime tag "$new" "$PINNED:$service-current"
+  use_pin "$new"
   echo "Restarting $unit on $(describe "$new")"
   systemctl restart "$unit"
   if healthy "$new"; then
@@ -119,10 +144,11 @@ switch_to() {
   echo "$unit did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
   if [[ -n $current && $current != "$new" ]]; then
     pin "$image_file" "$current"
-    docker tag "$current" "$PINNED:$service-current"
+    $runtime tag "$current" "$PINNED:$service-current"
+    use_pin "$current"
     if [[ -n $previous ]]; then
       pin "$previous_file" "$previous"
-      docker tag "$previous" "$PINNED:$service-previous"
+      $runtime tag "$previous" "$PINNED:$service-previous"
     fi
     systemctl restart "$unit"
     if healthy "$current"; then
@@ -142,7 +168,7 @@ auto() {
     echo "Holding: $(cat "$hold_file")"
     return 0
   fi
-  docker pull --quiet "$REGISTRY:production" >/dev/null
+  $runtime pull --quiet "$REGISTRY:production" >/dev/null
   local new current now first=0 pending=""
   new=$(image_id "$REGISTRY:production")
   current=$(pinned "$image_file")
@@ -180,7 +206,7 @@ status() {
   local current previous
   current=$(pinned "$image_file")
   previous=$(pinned "$previous_file")
-  echo "service:  $unit ($(systemctl is-active "$unit" || true))"
+  echo "service:  $unit ($(systemctl is-active "$unit" || true), $runtime)"
   echo "running:  ${current:+$(describe "$current")}"
   echo "previous: ${previous:+$(describe "$previous")}"
   if [[ -f $hold_file ]]; then echo "hold:     $(cat "$hold_file")"; fi
@@ -194,10 +220,51 @@ status() {
   fi
 }
 
+# Provisioning, after it installed the service's unit: start on the pinned image. When
+# the service just switched runtime, the current and previous images come over from the
+# other runtime's store by their retention tags, and the pins are re-resolved, since
+# Docker and Podman give one image different IDs. A pin the other runtime no longer has
+# is dropped; the deploy after provisioning pins a fresh image.
+adopt() {
+  local kind file pin_id tag loaded
+  for kind in current previous; do
+    if [[ $kind == current ]]; then file=$image_file; else file=$previous_file; fi
+    pin_id=$(pinned "$file")
+    [[ -n $pin_id ]] || continue
+    tag=$PINNED:$service-$kind
+    if [[ $(runtime=$runtime image_id "$tag" 2>/dev/null) == "$pin_id" ]]; then continue; fi
+    if ! command -v "$other" >/dev/null || [[ $(runtime=$other image_id "$tag" 2>/dev/null) != "$pin_id" ]]; then
+      echo "Neither $runtime nor $other has the $kind image of $unit ($pin_id); dropping its pin" >&2
+      rm -f "$file"
+      continue
+    fi
+    echo "Copying the $kind image of $unit from $other to $runtime"
+    loaded=$($other save "$tag" | $runtime load | sed -n 's/^Loaded image[^:]*: //p' | tail -n 1)
+    # Each runtime names a loaded archive its own way (localhost/..., docker.io/library/...).
+    $runtime tag "$loaded" "$tag"
+    if [[ $loaded != "$tag" && ! ($runtime == podman && $loaded == "localhost/$tag") ]]; then
+      $runtime image rm "$loaded" >/dev/null
+    fi
+    pin "$file" "$(image_id "$tag")"
+  done
+  local current
+  current=$(pinned "$image_file")
+  [[ -n $current ]] || return 0
+  use_pin "$current"
+  echo "Restarting $unit on $(describe "$current") under $runtime"
+  systemctl restart "$unit"
+  if ! healthy "$current"; then
+    echo "$unit did not report $(describe "$current") within ${HEALTH_TIMEOUT_SECONDS}s; see journalctl -u $unit" >&2
+    return 1
+  fi
+  echo "$unit runs $(describe "$current")"
+  remove_old_images
+}
+
 case $command in
   pull)
     ref=${3:-$REGISTRY:production}
-    docker pull --quiet "$ref" >/dev/null
+    $runtime pull --quiet "$ref" >/dev/null
     new=$(image_id "$ref")
     # Only following :production releases a hold; any other image is a pin. A failed
     # switch exits here (set -e) and leaves the hold as it was.
@@ -221,5 +288,6 @@ case $command in
     ;;
   auto) auto ;;
   status) status ;;
+  adopt) adopt ;;
   *) usage ;;
 esac

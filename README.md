@@ -198,7 +198,7 @@ address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run buil
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server. It does not deploy that
-server, but after the site deploys it points the server's Docker image tag
+server, but after the site deploys it points the server's container image tag
 `:production` at the commit's image; the dev site uses a separate server (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
