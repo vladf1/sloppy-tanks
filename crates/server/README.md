@@ -37,7 +37,9 @@ TypeScript traffic bots.
 Cargo profile (optimized, unwinding, so one room's panic ends only that room).
 `node scripts/build-server.mjs --vps` cross-compiles the static
 `x86_64-unknown-linux-musl` binary the VPS runs; Rust's bundled `rust-lld` links
-it (`.cargo/config.toml`), so macOS needs no cross toolchain.
+it (`.cargo/config.toml`), so macOS needs no cross toolchain. It targets x86-64-v3
+(AVX2, BMI2) without FMA, which would change seeded physics results; read the comment
+there before changing either.
 
 `pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).

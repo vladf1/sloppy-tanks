@@ -6,3 +6,8 @@ rustflags = ["-C", "target-feature=+simd128"]
 # The VPS server is a static musl binary linked by Rust's bundled lld, so building it
 # on macOS needs no cross toolchain (the server has no C dependencies).
 linker = "rust-lld"
+# AVX2 and BMI2 (x86-64-v3) made a room's tick 4-7% faster on the VPS's EPYC, and every
+# x86 server CPU since about 2013 has them. FMA must stay off: fused multiply-adds round
+# differently, and with them seeded matches diverged from the baseline (and so from the
+# browser's Wasm) within 100-1000 ticks on every map; without them traces match exactly.
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=-fma"]
