@@ -114,8 +114,7 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 ## VPS deployment
 
 The VPS runs each server as a container under Podman, which systemd supervises
-through a Quadlet unit; Docker remains a tested fallback runtime ([Container
-runtime](#container-runtime)). CI builds the images; the server pulls them by hand
+through a Quadlet unit. CI builds the images; the server pulls them by hand
 or automatically, and an SSH deploy from a checkout covers the dev server and any
 time CI or the registry cannot.
 
@@ -139,13 +138,13 @@ connects to the VPS. Fork pull requests build the image without pushing.
 
 `deploy/vps/` holds the Ubuntu setup:
 
-- `provision.sh` installs Caddy (a pinned release, `install-caddy.sh`) and the
-  container runtime with the updater (`install-runtime.sh`), and allows only SSH,
-  80, 443 and 8443 through `ufw`. The containers use host networking, so the
+- `provision.sh` installs Caddy (a pinned release, `install-caddy.sh`) and Podman
+  from Ubuntu's archive with the updater (`install-podman.sh`), and allows only
+  SSH, 80, 443 and 8443 through `ufw`. The containers use host networking, so the
   servers keep their loopback listeners behind Caddy, see real client addresses,
-  and the runtime publishes no ports around `ufw`. `provision-dev.sh` installs the
-  runtime, the dev unit, Caddy's config and the 8443 rule, leaving the production
-  unit as it is.
+  and Podman publishes no ports around `ufw`. `provision-dev.sh` installs Podman,
+  the dev unit, Caddy's config and the 8443 rule, leaving the production unit as
+  it is.
 - `sloppy-tanks.container` and `sloppy-tanks-dev.container` are Quadlet units in
   `/etc/containers/systemd/`, from which systemd generates `sloppy-tanks.service`
   and `sloppy-tanks-dev.service`. They run the image with the env file
@@ -156,14 +155,14 @@ connects to the VPS. Fork pull requests build the image without pushing.
   `/var/lib/sloppy-tanks/{production,dev}.image`, which the updater copies into
   the drop-in `<unit>.container.d/image.conf`, so a crash or reboot restarts
   exactly what was running and never needs the registry. Podman has no daemon:
-  besides each server, only a small `conmon` process per container stays running.
+  besides each server, only a small `conmon` process per container stays running,
+  which leaves more of the 949 MB host free than Docker's daemons did.
 - `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that
   changes a pin. It pins the new image, restarts the service and waits up to 60
   seconds for `/health` to report the image's content version and server build
   (its labels); otherwise it restores the previous image. It keeps the current and
   previous image of each service (tagged `sloppy-tanks-pinned:<service>-current`
-  and `-previous`) and prunes the rest. It runs each service under the runtime
-  whose unit is installed.
+  and `-previous`) and prunes the rest.
 - `sloppy-tanks-update.timer` is production's auto-update, off until enabled.
 - The `Caddyfile` sets up automatic Let's Encrypt TLS for
   `sloppy-tanks-server.fridman.me`, an A record in the fridman.me DNS at
@@ -182,7 +181,7 @@ pnpm run server:auto-update on|off    # production follows :production by itself
 pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
 pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
 pnpm run server:provision             # first time, or after editing deploy/vps/*; then deploys
-pnpm run server:provision:dev         # the runtime and the dev unit only; then deploys the dev server
+pnpm run server:provision:dev         # Podman and the dev unit only; then deploys the dev server
 ```
 
 With auto-update on, the timer checks `:production` every two minutes. A new image
@@ -197,14 +196,12 @@ it changes only on `deploy:dev`, `server:deploy --dev` or `server:update --dev`.
 
 `server:deploy` builds the image on this machine with Docker
 (`server:build-docker-image`), streams it to the VPS with
-`docker save | ssh podman load` (`docker load` under the fallback) and switches to
-it, so it needs neither GitHub nor the registry. It first runs
-`server:deploy-check` (rustfmt, clippy and tests for only `sloppy-core` and
-`sloppy-server`), and for production it refuses a checkout that is not a clean
-`origin/main`; `--force` overrides that. A service still on the former binary unit
-(before provisioning moves it to a container) gets the static musl binary as
-before. After provisioning, the deploy is skipped when the service already runs
-the checkout's build.
+`docker save | ssh podman load` and switches to it, so it needs neither GitHub
+nor the registry. It first runs `server:deploy-check` (rustfmt, clippy and tests
+for only `sloppy-core` and `sloppy-server`), and for production it refuses a
+checkout that is not a clean `origin/main`; `--force` overrides that. After
+provisioning, the deploy is skipped when the service already runs the checkout's
+build.
 
 `pnpm run deploy:dev` deploys the dev server first (`deploy-vps.mjs --dev`), waits
 until its `/health` reports the checkout's content version, then uploads the dev
@@ -226,36 +223,6 @@ then run `ssh-keygen -R sloppy-tanks-server.fridman.me` so the scripts accept
 the new host key. Caddy obtains the certificate once the record reaches the new
 server. `SLOPPY_SERVER_URL` points the deploy scripts' final `/health` check at
 another address, such as a test machine's tunnelled port.
-
-### Container runtime
-
-Podman runs the servers because it saves memory on the 949 MB host: Docker keeps
-its daemon, containerd and a `docker run` client per service resident, while
-Podman leaves one small `conmon` per container. Both run the same images from the
-registry, with the same settings.
-
-Provisioning picks the runtime. Without `--runtime` a host keeps the one its
-services use (a new host gets Podman); with it, provisioning switches the services
-it installs: both for `server:provision`, the dev server for `server:provision:dev`.
-A switch stops each service, copies its current and previous image from the other
-runtime's store by their `sloppy-tanks-pinned` tags (Docker and Podman give one
-image different IDs, so the pins are re-resolved), starts it on the same build and
-checks `/health`, so it needs no registry and rollback still works. Each service is
-down for a few seconds and its rooms end. Once no service uses Docker, its daemons
-are stopped and disabled; `docker.io` stays installed for the fallback.
-
-To return both servers to Docker, and later back to Podman:
-
-```sh
-pnpm run server:provision --runtime docker   # Docker units; starts Docker's daemons again
-pnpm run server:provision --runtime podman   # Quadlet units; stops Docker's daemons
-```
-
-`server:status` names each service's runtime. Production provisioning needs a
-clean `origin/main` checkout (or `--force`), as a deploy does. To remove Docker
-for good once Podman has proven itself, run `apt-get purge docker.io containerd`
-and `rm -rf /var/lib/docker /var/lib/containerd /etc/docker` on the VPS; the
-fallback then installs it again.
 
 ## Monitoring
 

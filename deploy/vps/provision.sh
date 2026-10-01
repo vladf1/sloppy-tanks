@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent setup of the self-hosted multiplayer server on Ubuntu. Run as root from a
 # directory holding this script and the other files in deploy/vps/;
-# `node scripts/deploy-vps.mjs --provision` uploads them and runs it. The optional
-# argument, podman or docker, switches both servers to that container runtime
-# (install-runtime.sh); without it they keep the one they use.
+# `node scripts/deploy-vps.mjs --provision` uploads them and runs it.
 set -euo pipefail
 cd "$(dirname "$0")"
 export DEBIAN_FRONTEND=noninteractive
@@ -14,7 +12,7 @@ apt-get update
 apt-get install -y ca-certificates curl ufw
 
 . ./install-caddy.sh
-. ./install-runtime.sh
+. ./install-podman.sh
 
 install -m 644 sloppy-tanks.env /etc/sloppy-tanks.env
 install -m 644 sloppy-tanks-dev.env /etc/sloppy-tanks-dev.env
@@ -25,9 +23,8 @@ systemctl daemon-reload
 # The auto-update timer stays as it is: `pnpm run server:auto-update on|off` owns it.
 systemctl enable caddy
 systemctl reload-or-restart caddy
-start_service production sloppy-tanks
-start_service dev sloppy-tanks-dev
-stop_unused_docker
+start_service sloppy-tanks
+start_service sloppy-tanks-dev
 
 # Caddy needs 80 for the Let's Encrypt HTTP challenge, 443 for wss and 8443 for the dev server.
 ufw allow OpenSSH

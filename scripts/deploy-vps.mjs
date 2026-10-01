@@ -11,10 +11,8 @@ import {
 /** Build the server on this machine and deploy it over SSH: the dev server's normal
  * deploy, and production's fallback when CI or the registry cannot serve
  * (`pnpm run server:update` pulls CI's image instead). It builds the image with the local
- * Docker, loads it into the VPS's container runtime (Podman, or Docker as the fallback)
- * and has deploy/vps/sloppy-tanks-update switch to it, which sets a hold so auto-update
- * does not replace it. A service still on the former binary unit gets the static binary
- * as before, until provisioning moves it to a container.
+ * Docker, loads it into Podman on the VPS and has deploy/vps/sloppy-tanks-update switch
+ * to it, which sets a hold so auto-update does not replace it.
  * `--force` deploys production from a checkout that is not a clean origin/main. */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 60000;
@@ -36,14 +34,12 @@ const target = dev
       name: "dev",
       service: "sloppy-tanks-dev",
       updater: "dev",
-      dir: "/opt/sloppy-tanks-dev",
       url: VPS_DEV_MULTIPLAYER_URL,
     }
   : {
       name: "production",
       service: "sloppy-tanks",
       updater: "production",
-      dir: "/opt/sloppy-tanks",
       url: VPS_MULTIPLAYER_URL,
     };
 
@@ -64,44 +60,28 @@ if (!dev && !process.argv.includes("--force")) {
   }
 }
 
-// --provision installs the container runtime, Caddy, the updater, the systemd units and
-// environment files first. With --dev it installs only the runtime, the updater, the dev
-// unit, its environment, Caddy's config and the 8443 firewall rule. `--runtime podman`
-// or `--runtime docker` switches the provisioned servers to that runtime; without it
-// they keep the one they use (deploy/vps/install-runtime.sh).
+// --provision installs Podman, Caddy, the updater, the Quadlet units and environment
+// files first. With --dev it installs only Podman, the updater, the dev unit, its
+// environment, Caddy's config and the 8443 firewall rule.
 const provision = process.argv.includes("--provision");
-const runtimeIndex = process.argv.indexOf("--runtime");
-const runtime = runtimeIndex === -1 ? "" : process.argv[runtimeIndex + 1];
-if (runtimeIndex !== -1 && !(provision && ["podman", "docker"].includes(runtime))) {
-  console.error("--runtime takes podman or docker, together with --provision");
-  process.exit(1);
-}
 if (provision) {
   console.log(`Provisioning the ${target.name} server on ${VPS_SSH}`);
   ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
-  const runtimes = [
-    "install-runtime.sh",
+  const podman = [
     "install-podman.sh",
-    "install-docker.sh",
-    "daemon.json",
     "sloppy-tanks-update",
     "sloppy-tanks-update.service",
     "sloppy-tanks-update.timer",
   ];
-  const devFiles = [
-    "sloppy-tanks-dev.container",
-    "sloppy-tanks-dev.service",
-    "sloppy-tanks-dev.env",
-  ];
+  const devFiles = ["sloppy-tanks-dev.container", "sloppy-tanks-dev.env"];
   const files = dev
-    ? ["provision-dev.sh", ...runtimes, "Caddyfile", ...devFiles]
+    ? ["provision-dev.sh", ...podman, "Caddyfile", ...devFiles]
     : [
         "provision.sh",
         "install-caddy.sh",
-        ...runtimes,
+        ...podman,
         "Caddyfile",
         "sloppy-tanks.container",
-        "sloppy-tanks.service",
         "sloppy-tanks.env",
         ...devFiles,
       ];
@@ -110,7 +90,7 @@ if (provision) {
     ...files.map((file) => `deploy/vps/${file}`),
     `${VPS_SSH}:/root/sloppy-tanks-provision/`,
   ]);
-  ssh(`bash /root/sloppy-tanks-provision/${files[0]} ${runtime}`);
+  ssh(`bash /root/sloppy-tanks-provision/${files[0]}`);
 }
 
 const version = await contentVersion();
@@ -119,11 +99,11 @@ console.log(
   `Deploying the ${target.name} multiplayer server (content ${version}, build ${build}) to ${VPS_SSH}`,
 );
 
-/** Stream `docker save` here into `podman load` or `docker load` on the VPS. */
-function loadImageOnServer(image, runtime) {
+/** Stream `docker save` here into `podman load` on the VPS. */
+function loadImageOnServer(image) {
   return new Promise((resolve, reject) => {
     const save = spawn("docker", ["save", image], { stdio: ["ignore", "pipe", "inherit"] });
-    const load = spawn("ssh", [...SSH_OPTIONS, "-C", VPS_SSH, `${runtime} load`], {
+    const load = spawn("ssh", [...SSH_OPTIONS, "-C", VPS_SSH, "podman load"], {
       stdio: [save.stdout, "inherit", "inherit"],
     });
     let pending = 2;
@@ -134,7 +114,7 @@ function loadImageOnServer(image, runtime) {
     // "exit", not "close": save's output belongs to the ssh process, so its streams
     // never close on this side.
     save.on("exit", done("docker save"));
-    load.on("exit", done(`${runtime} load over SSH`));
+    load.on("exit", done("podman load over SSH"));
   });
 }
 
@@ -152,49 +132,26 @@ const readHealth = () =>
 // the previous process before a restart completes.
 const isCurrent = (status) => status.contentVersion === version && status.serverBuild === build;
 
-// Which unit runs the service: Podman's Quadlet unit, Docker's or the former binary one.
-const unit = spawnSync(
-  "ssh",
-  [
+// Provisioning restarts a pinned service on its image. When that already is this build,
+// a deploy would only restart it again and leave a hold.
+if (provision) {
+  const pinned = spawnSync("ssh", [
     ...SSH_OPTIONS,
     VPS_SSH,
-    `if [ -f /etc/containers/systemd/${target.service}.container ]; then echo podman; ` +
-      `elif grep -qs 'docker run' /etc/systemd/system/${target.service}.service; then echo docker; ` +
-      `else echo binary; fi; test -f /var/lib/sloppy-tanks/${target.updater}.image && echo pinned`,
-  ],
-  { encoding: "utf8" },
-);
-if (unit.status !== 0 && !unit.stdout) process.exit(unit.status ?? 1);
-const [runtimeOnServer, pinned] = unit.stdout.trim().split("\n");
-
-// Provisioning restarts a pinned service on its image, carried over when the runtime
-// changed. When that already is this build, a deploy would only restart it again and
-// leave a hold.
-if (provision && runtimeOnServer !== "binary" && pinned && isCurrent(await readHealth())) {
-  console.log(`The ${target.name} server already runs build ${build} under ${runtimeOnServer}`);
-  process.exit(0);
-}
-
-if (runtimeOnServer !== "binary") {
-  const image = `${SERVER_IMAGE}:${build}`;
-  run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
-  await loadImageOnServer(image, runtimeOnServer);
-  // Restarts the service and checks /health locally, rolling back if it fails.
-  ssh(`sloppy-tanks-update ${target.updater} local ${image}`);
-} else {
-  // The former binary unit: a static musl binary, the host needs no runtime.
-  run("node", ["scripts/build-server.mjs", "--vps"]);
-  run("scp", [
-    ...SSH_OPTIONS,
-    "target/x86_64-unknown-linux-musl/server/sloppy-server",
-    `${VPS_SSH}:${target.dir}/sloppy-server.new`,
+    `test -f /var/lib/sloppy-tanks/${target.updater}.image`,
   ]);
-  // Rename in place so a crash-restart never runs a partially copied binary. The restart
-  // resets live rooms; clients receive room-reset from the graceful shutdown.
-  ssh(
-    `cd ${target.dir} && chmod 755 sloppy-server.new && mv -f sloppy-server.new sloppy-server && systemctl restart ${target.service}`,
-  );
+  if (pinned.status === 0 && isCurrent(await readHealth())) {
+    console.log(`The ${target.name} server already runs build ${build}`);
+    process.exit(0);
+  }
 }
+
+const image = `${SERVER_IMAGE}:${build}`;
+run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
+await loadImageOnServer(image);
+// Restarts the service and checks /health locally, rolling back if it fails. The restart
+// resets live rooms; clients receive room-reset from the graceful shutdown.
+ssh(`sloppy-tanks-update ${target.updater} local ${image}`);
 
 const deadline = Date.now() + HEALTH_TIMEOUT_MS;
 for (;;) {

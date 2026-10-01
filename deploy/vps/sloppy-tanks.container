@@ -1,7 +1,5 @@
 # Installed to /etc/containers/systemd/ by provision.sh. Quadlet turns it into
 # sloppy-tanks.service, which runs the server under Podman with no daemon beside it.
-# Docker's sloppy-tanks.service is the fallback (crates/server/README.md, "Container
-# runtime").
 [Unit]
 Description=Sloppy Tanks multiplayer server
 Wants=network-online.target
@@ -17,8 +15,8 @@ Pull=never
 # with the real peer address, and leaves no ports to publish past the firewall.
 Network=host
 EnvironmentFile=/etc/sloppy-tanks.env
-# As Docker's flags: a read-only root without Podman's extra tmpfs mounts, no
-# capabilities, and a memory cap without swap.
+# A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
+# cap without swap.
 ReadOnly=true
 ReadOnlyTmpfs=false
 DropCapability=ALL
