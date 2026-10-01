@@ -155,7 +155,7 @@ fn wreck_batches_match_typescript() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (1302, 0x3a8a211f, 0xa9a70f0e, 0x70779971, 0x79bae59b),
+            (1302, 0x3a8a211f, 0xa9a70f0e, 0x70779971, 0x8992e097),
             (1584, 0x7905bdd9, 0x2708b445, 0x6072eca1, 0x7e0f5405),
             (276, 0xff2c0d56, 0x58dab095, 0x87edbdcb, 0x72c7fce1),
             (72, 0xe4723595, 0xf5ae0c53, 0x35c99581, 0xfffc251d),
@@ -165,17 +165,17 @@ fn wreck_batches_match_typescript() {
             (144, 0x5ca3de75, 0x162a9a1f, 0x951bbe05, 0x16256455),
             (288, 0xd47a0c0d, 0x56200137, 0x94d4f49d, 0xa2f91ec5),
             (8736, 0x1b037e68, 0xbac3961c, 0xbc43a5f1, 0x451582ad),
-            (4308, 0xd6ace17a, 0x0dbb1a7b, 0x384deb19, 0x877e9a21),
-            (1344, 0x781e9945, 0x3175a535, 0x314b8499, 0x07e5b035),
+            (4308, 0xd6ace17a, 0x0dbb1a7b, 0x384deb19, 0x5a5a6451),
+            (1344, 0x781e9945, 0x3175a535, 0x314b8499, 0x883731e5),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 0x1e53e955, 0x84d726eb, 0x8efa2f55),
+            (4560, 0x7b5fde4a, 0x1e53e955, 0x84d726eb, 0xdb0237b5),
             (468, 0x74e31910, 0xdad78ac5, 0x96734335, 0x80f71295),
             (936, 0xb40fca71, 0xd159cf07, 0xe9946e96, 0x9aef1fdd),
             (348, 0x4b30ac35, 0xe40decbb, 0xa2ea73b1, 0x25856219),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (4260, 0xc974c3c3, 0x455307df, 0x875d170f, 0x12d74ca9),
+            (4260, 0xc974c3c3, 0x455307df, 0x875d170f, 0xa935769d),
             (2892, 0x422d45d6, 0x1862c43b, 0xd9b7c4dc, 0x5bbf7c35),
             (1104, 0xadcd0191, 0x43c96e7f, 0xd074ac58, 0x8afc8a8d),
             (564, 0x4bb34e4d, 0x691baff3, 0xdd844d2d, 0x003fa771),
@@ -183,13 +183,13 @@ fn wreck_batches_match_typescript() {
             (60, 0xf347d68e, 0x9525485d, 0x1ef2798c, 0xf543efd9),
             (72, 0xf81a202d, 0x8f9161e5, 0xa3ee9e1d, 0x0c45cab5),
             (8532, 0x409d8605, 0x08c58fd9, 0x0fd93d1d, 0x0e491cb5),
-            (4308, 0x26bf1eb1, 0x8df1db32, 0xcd8a7719, 0x5ea4ade1),
-            (744, 0x6f365b09, 0x0b1a0325, 0x5ca996b5, 0x38ea080d),
+            (4308, 0x26bf1eb1, 0x8df1db32, 0xcd8a7719, 0xa568df15),
+            (744, 0x6f365b09, 0x0b1a0325, 0x5ca996b5, 0x1ceaa305),
             (456, 0xcbf8aaa7, 0x290c9454, 0x5ff550b2, 0x701aa04d),
             (144, 0x83237b42, 0xa782a24b, 0x6d704989, 0x924eb995),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x9816bc91, 0x918e3fbb, 0x3dd99165, 0x88b38325),
+            (480, 0x9816bc91, 0x918e3fbb, 0x3dd99165, 0x7bfc68e5),
             (816, 0xb6e9fb17, 0xb7f6ddc8, 0x1a284e7b, 0xff88b805),
             (36, 0xd1ad26bd, 0x347a9e35, 0x13c61651, 0x022a75b9),
             (144, 0x4c0b62a7, 0xa782a24b, 0x6d704989, 0x924eb995),

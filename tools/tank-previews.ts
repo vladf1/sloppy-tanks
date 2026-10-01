@@ -66,6 +66,8 @@ const SCENE = {
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
   exposure: 1,
+  // The game's sky reflection, so card paint and steel shade as they do in a round.
+  reflections: 1,
   camera: camera(),
   objects: [],
 };
@@ -122,9 +124,12 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       }
     }
     for (;;) {
-      const [compiled, remaining] = lab.prepare_step(PREPARE_BUDGET);
+      const [compiled, remaining, compiling] = lab.prepare_step(PREPARE_BUDGET);
       if (remaining === 0) break;
-      if (compiled === 0) throw new Error("Pipeline preparation made no progress");
+      // Pipelines compiling on the browser's background threads are progress too.
+      if (compiled === 0 && compiling === 0) {
+        throw new Error("Pipeline preparation made no progress");
+      }
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     while (lab.textures_pending() > 0) {

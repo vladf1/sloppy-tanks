@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use super::Team;
 use crate::scene::{Material, Node, Shading, TextureRef};
 
-/// Service paint per team: muted slate blue and oxide red that keep each
-/// team's hue under the sun without reading as toy plastic. The saturated
-/// `TEAM_COLORS` stay on markings, flags, bars and projectiles.
-pub const VEHICLE_PAINT: [u32; 2] = [0x46617c, 0x8f3329];
+/// Service paint per team: halfway between the saturated `TEAM_COLORS` and a
+/// muted slate blue / oxide red, so tanks stay bright and team-coded without
+/// reading as toy plastic. Unlike the team colors it is lit and tone mapped
+/// like the scene; the team colors stay on markings, flags, bars and projectiles.
+pub const VEHICLE_PAINT: [u32; 2] = [0x2376bd, 0xc73133];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
