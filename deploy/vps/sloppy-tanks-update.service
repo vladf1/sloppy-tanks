@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow the production server image on :production (auto-update)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sloppy-tanks-update production auto

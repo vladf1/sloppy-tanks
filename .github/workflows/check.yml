@@ -1,7 +1,8 @@
 # The quality gate, `pnpm run check`, split into parallel jobs. Each job runs one of
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the Pages workflow calls it with the production site settings and deploys
-# only after every job here passes.
+# only after every job here passes. Beside the gate, the server-image job publishes the
+# multiplayer server's Docker image, which the Pages workflow promotes to :production.
 name: Code quality
 
 on:
@@ -16,6 +17,10 @@ on:
         description: VITE_MULTIPLAYER_URL for the Pages build.
         type: string
         default: ""
+    outputs:
+      server-image:
+        description: The server image this commit built or found, tagged with its server build.
+        value: ${{ jobs.server-image.outputs.image }}
 
 permissions:
   contents: read
@@ -73,3 +78,48 @@ jobs:
         with:
           cargo-cache: server
       - run: pnpm run check:server
+
+  # Builds the server image (Dockerfile) and pushes it as <server build>, plus pr-<number>
+  # for a pull request, or main and sha-<commit> for main. A server build the registry
+  # already holds is only retagged. Nothing here moves :production or touches a server;
+  # fork pull requests, which cannot push, only build.
+  server-image:
+    name: Server image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    env:
+      SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server
+      PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # The server build hash includes the crate tree, which content-version.mjs reads
+      # with cargo.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Log in to the GitHub Container Registry
+        if: env.PUSH == 'true'
+        run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+      - name: Build and push the server image
+        id: image
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            tags=(--tag "pr-$PR_NUMBER")
+          else
+            tags=(--tag main --tag "sha-${GITHUB_SHA::12}")
+          fi
+          push=()
+          if [ "$PUSH" = true ]; then push=(--push); fi
+          node scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}"
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}

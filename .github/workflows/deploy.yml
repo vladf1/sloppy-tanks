@@ -18,12 +18,17 @@ jobs:
   # that pull requests restore.
   check:
     uses: ./.github/workflows/check.yml
+    # The server-image job pushes to the GitHub Container Registry.
+    permissions:
+      contents: read
+      packages: write
     with:
       # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
       # its root; fridman.me/sloppy-tanks/ redirects there.
       deploy-base: /
-      # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need a
-      # matching `pnpm run server:deploy`, or players are told to reload.
+      # The shared VPS game server (scripts/vps-host.mjs). Game changes on main need the
+      # server to run this commit's image (promote-server below), or players are told
+      # to reload.
       multiplayer-url: wss://sloppy-tanks-server.fridman.me
 
   deploy:
@@ -39,3 +44,21 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  # After the site is live, point :production at this commit's server image. The VPS
+  # pulls it on `pnpm run server:update`, or by itself when auto-update is on
+  # (crates/server/README.md); nothing here connects to the server.
+  promote-server:
+    needs: [check, deploy]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Point :production at this commit's server image
+        run: |
+          echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          docker buildx imagetools create --tag ghcr.io/vladf1/sloppy-tanks-server:production "$IMAGE"
+        env:
+          IMAGE: ${{ needs.check.outputs.server-image }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}

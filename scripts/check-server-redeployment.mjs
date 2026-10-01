@@ -46,14 +46,16 @@ console.log(`live     ${describe(live)}`);
 const compatible = live.version === local.version && live.contentVersion === local.contentVersion;
 if (!compatible) {
   console.log(
-    "Redeploy needed: once this is on main, run `pnpm run server:deploy` from main.\n" +
-      "Until then, clients built from here are asked to reload and cannot join.",
+    "Redeploy needed: once this is on main and CI has promoted its image, run\n" +
+      "`pnpm run server:update` (auto-update does it by itself; `server:deploy` from main\n" +
+      "is the SSH fallback). Until then, clients built from here are asked to reload.",
   );
   process.exitCode = 1;
 } else if (live.serverBuild !== local.serverBuild) {
   console.log(
-    "Redeploy needed for server-only changes: once this is on main, run\n" +
-      "`pnpm run server:deploy` from main. Clients built from here can already join.",
+    "Redeploy needed for server-only changes: once this is on main and CI has promoted\n" +
+      "its image, run `pnpm run server:update` (or let auto-update). Clients built from\n" +
+      "here can already join.",
   );
   process.exitCode = 1;
 } else {

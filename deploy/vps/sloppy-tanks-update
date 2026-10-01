@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Switches a multiplayer server service to a Docker image and keeps its pinned-image
+# state. provision.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
+# scripts call it over SSH and sloppy-tanks-update.timer runs `production auto`.
+#
+#   sloppy-tanks-update SERVICE pull [REF]    pull REF (default :production) and switch now
+#   sloppy-tanks-update SERVICE local IMAGE   switch to an image already loaded here (SSH deploy)
+#   sloppy-tanks-update SERVICE rollback      switch back to the previous image
+#   sloppy-tanks-update SERVICE resume        let auto-update follow :production again
+#   sloppy-tanks-update production auto       the timer's check (see auto below)
+#   sloppy-tanks-update SERVICE status
+#
+# SERVICE is production (sloppy-tanks) or dev (sloppy-tanks-dev). The unit runs the image
+# ID in /var/lib/sloppy-tanks/SERVICE.image, so a crash or reboot restarts exactly what was
+# running, and only this script changes it, restarting in the same step. Anything but
+# `pull` of :production leaves a hold that auto-update respects until `resume` or such a
+# pull.
+set -euo pipefail
+
+REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
+STATE=/var/lib/sloppy-tanks
+# Local tags that keep the running and previous images from being pruned.
+PINNED=sloppy-tanks-pinned
+LABELS=me.fridman.sloppy-tanks
+HEALTH_TIMEOUT_SECONDS=60
+# Auto-update waits for rooms to empty, but not forever. A server-only change can wait out
+# a room's four-hour lifetime; after a content change the live site already sends new
+# visitors a reload message, so it waits only briefly.
+MAX_WAIT_SERVER_ONLY_SECONDS=14400
+MAX_WAIT_CONTENT_SECONDS=600
+
+usage() {
+  echo "usage: sloppy-tanks-update production|dev pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
+  exit 2
+}
+service=${1:-}
+command=${2:-}
+case $service in
+  production) unit=sloppy-tanks ;;
+  dev) unit=sloppy-tanks-dev ;;
+  *) usage ;;
+esac
+port=$(sed -n 's/^PORT=//p' "/etc/$unit.env")
+image_file=$STATE/$service.image
+previous_file=$STATE/$service.previous
+hold_file=$STATE/$service.hold
+pending_file=$STATE/$service.pending
+mkdir -p "$STATE"
+
+# One change at a time per service. The timer skips a check while another runs.
+exec 9>"/run/lock/sloppy-tanks-update-$service.lock"
+if [[ $command == auto ]]; then
+  flock --nonblock 9 || exit 0
+else
+  flock 9
+fi
+
+pinned() { [[ -f $1 ]] && sed -n 's/^IMAGE=//p' "$1" || true; }
+pin() { printf 'IMAGE=%s\n' "$2" >"$1.new" && mv -f "$1.new" "$1"; }
+label() { docker image inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
+image_id() { docker image inspect --format '{{.Id}}' "$1"; }
+describe() {
+  echo "${1:0:19} (build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
+}
+hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
+
+# /health reports the stamps of the process that answers, so a match means the new
+# container, not the one it replaced, is serving.
+healthy() {
+  local build content body
+  build=$(label "$1" $LABELS.server-build)
+  content=$(label "$1" $LABELS.content-version)
+  for ((waited = 0; waited < HEALTH_TIMEOUT_SECONDS; waited += 2)); do
+    body=$(curl -fsS --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null | tr -d ' \n' || true)
+    if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+switch_to() {
+  local new=$1 current previous
+  current=$(pinned "$image_file")
+  previous=$(pinned "$previous_file")
+  if [[ $new == "$current" ]] && systemctl is-active --quiet "$unit"; then
+    echo "$unit already runs $(describe "$new")"
+    return 0
+  fi
+  if [[ -n $current && $current != "$new" ]]; then
+    pin "$previous_file" "$current"
+    docker tag "$current" "$PINNED:$service-previous"
+  fi
+  pin "$image_file" "$new"
+  docker tag "$new" "$PINNED:$service-current"
+  echo "Restarting $unit on $(describe "$new")"
+  systemctl restart "$unit"
+  if healthy "$new"; then
+    echo "$unit runs $(describe "$new")"
+    docker image prune --force >/dev/null
+    return 0
+  fi
+  echo "$unit did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+  if [[ -n $current && $current != "$new" ]]; then
+    pin "$image_file" "$current"
+    docker tag "$current" "$PINNED:$service-current"
+    if [[ -n $previous ]]; then
+      pin "$previous_file" "$previous"
+      docker tag "$previous" "$PINNED:$service-previous"
+    fi
+    systemctl restart "$unit"
+    if healthy "$current"; then
+      echo "Rolled back to $(describe "$current")" >&2
+    else
+      echo "The previous image is not healthy either; see journalctl -u $unit" >&2
+    fi
+  fi
+  return 1
+}
+
+# The timer's check. It follows :production unless a hold is set, and restarts only when
+# nobody holds a seat or the pending image has waited its maximum.
+auto() {
+  [[ $service == production ]] || { echo "auto-update follows production only" >&2; exit 2; }
+  if [[ -f $hold_file ]]; then
+    echo "Holding: $(cat "$hold_file")"
+    return 0
+  fi
+  docker pull --quiet "$REGISTRY:production" >/dev/null
+  local new current now first=0 pending=""
+  new=$(image_id "$REGISTRY:production")
+  current=$(pinned "$image_file")
+  if [[ $new == "$current" ]]; then
+    rm -f "$pending_file"
+    return 0
+  fi
+  now=$(date +%s)
+  if [[ -f $pending_file ]]; then read -r pending first <"$pending_file" || true; fi
+  if [[ $pending != "$new" ]]; then
+    first=$now
+    echo "$new $now" >"$pending_file"
+    echo "New production image $(describe "$new")"
+  fi
+  local max=$MAX_WAIT_SERVER_ONLY_SECONDS
+  if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
+    max=$MAX_WAIT_CONTENT_SECONDS
+  fi
+  # A server that does not answer has nobody to protect.
+  local players
+  players=$(curl -fsS --max-time 5 "http://127.0.0.1:$port/stats" 2>/dev/null |
+    grep -o '"players":[0-9]*' | cut -d: -f2 || true)
+  players=${players:-0}
+  local waited=$((now - first))
+  if ((players > 0 && waited < max)); then
+    echo "Waiting: $players playing, ${waited}s of ${max}s"
+    return 0
+  fi
+  rm -f "$pending_file"
+  switch_to "$new"
+}
+
+status() {
+  local current previous
+  current=$(pinned "$image_file")
+  previous=$(pinned "$previous_file")
+  echo "service:  $unit ($(systemctl is-active "$unit" || true))"
+  echo "running:  ${current:+$(describe "$current")}"
+  echo "previous: ${previous:+$(describe "$previous")}"
+  if [[ -f $hold_file ]]; then echo "hold:     $(cat "$hold_file")"; fi
+  if [[ $service == production ]]; then
+    echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true)"
+    if [[ -f $pending_file ]]; then
+      local pending first
+      read -r pending first <"$pending_file" || true
+      echo "pending:  $(describe "$pending") since $(date -u -d "@$first" +%FT%TZ)"
+    fi
+  fi
+}
+
+case $command in
+  pull)
+    ref=${3:-$REGISTRY:production}
+    docker pull --quiet "$ref" >/dev/null
+    new=$(image_id "$ref")
+    # Only following :production releases a hold; any other image is a pin. A failed
+    # switch exits here (set -e) and leaves the hold as it was.
+    switch_to "$new"
+    if [[ $ref == "$REGISTRY:production" ]]; then rm -f "$hold_file" "$pending_file"; else hold "Pulled $ref" "$new"; fi
+    ;;
+  local)
+    new=$(image_id "${3:?local needs an image}")
+    switch_to "$new"
+    hold "SSH deploy" "$new"
+    ;;
+  rollback)
+    previous=$(pinned "$previous_file")
+    [[ -n $previous ]] || { echo "No previous image for $unit" >&2; exit 1; }
+    switch_to "$previous"
+    hold "Rollback" "$previous"
+    ;;
+  resume)
+    rm -f "$hold_file"
+    echo "Auto-update follows :production again (if enabled)"
+    ;;
+  auto) auto ;;
+  status) status ;;
+  *) usage ;;
+esac

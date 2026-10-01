@@ -39,6 +39,14 @@ Cargo profile (optimized, unwinding, so one room's panic ends only that room).
 `x86_64-unknown-linux-musl` binary the VPS runs; Rust's bundled `rust-lld` links
 it (`.cargo/config.toml`), so macOS needs no cross toolchain.
 
+`pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
+Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
+The build stage runs natively and cross-compiles as above, with cache mounts for
+crates and compiled dependencies, and the image holds only the static binary,
+listening on `0.0.0.0:8787`. Try it with `docker run --rm -p 8787:8787
+sloppy-tanks-server` and `ALLOWED_ORIGINS` as needed. The VPS runs these images
+(see [VPS deployment](#vps-deployment)).
+
 Both builds stamp the content version the browser engine also carries
 (`scripts/content-version.mjs`): a hash of `crates/core` sources, their resolved
 crate tree and `rust-toolchain.toml`. Mismatched clients are rejected with a
@@ -103,21 +111,98 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## VPS deployment
 
+The VPS runs each server as a Docker container that systemd supervises. CI builds
+the images; the server pulls them by hand or automatically, and an SSH deploy from
+a checkout covers the dev server and any time CI or the registry cannot.
+
+### Images and tags
+
+The `server-image` job in `.github/workflows/check.yml` builds the image and pushes
+it to `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
+
+| Tag             | Moved by                                   | Meaning                                       |
+| --------------- | ------------------------------------------ | --------------------------------------------- |
+| `<serverBuild>` | never                                      | One image per server build (`/health`'s hash) |
+| `pr-<number>`   | each pull request push                     | That pull request's latest server             |
+| `main`, `sha-…` | each push to `main`                        | Main's latest server, and per commit          |
+| `production`    | the Pages workflow, after the site deploys | What production should run                    |
+
+A commit that leaves the server build alone (page, renderer or docs changes) only
+retags the existing image. Pull requests never move `production`, and nothing in CI
+connects to the VPS. Fork pull requests build the image without pushing.
+
+### On the VPS
+
 `deploy/vps/` holds the Ubuntu setup:
 
-- `provision.sh` installs Caddy (official repo), creates the `sloppy` service
-  user, and allows only SSH, 80, 443 and 8443 through `ufw`. The server is a static
-  binary and needs no runtime.
-- The systemd unit (`/opt/sloppy-tanks/sloppy-server`, sandboxed, `MemoryMax`)
-  and `/etc/sloppy-tanks.env` configure the service. The dev site's server is a
-  second unit, `sloppy-tanks-dev` (`/opt/sloppy-tanks-dev/`, loopback port 8788,
-  `/etc/sloppy-tanks-dev.env` with the dev origins and a smaller `MAX_ROOMS` and
-  `MemoryMax`); `provision-dev.sh` installs only it, Caddy's config and the 8443 rule.
+- `provision.sh` installs Caddy (official repo) and Docker (`install-docker.sh`),
+  and allows only SSH, 80, 443 and 8443 through `ufw`. `daemon.json` turns off
+  Docker's bridge network and firewall rules: the containers use host networking,
+  so the servers keep their loopback listeners behind Caddy, see real client
+  addresses, and Docker publishes no ports around `ufw`. `provision-dev.sh`
+  installs Docker, the dev unit, Caddy's config and the 8443 rule, leaving the
+  production unit as it is.
+- `sloppy-tanks.service` and `sloppy-tanks-dev.service` run `docker run` with the
+  env file (`/etc/sloppy-tanks.env`, `/etc/sloppy-tanks-dev.env`: port 8788, the
+  dev origins and a smaller `MAX_ROOMS`), a read-only root, no capabilities and a
+  memory cap (700 MB, 250 MB for dev). Each runs the image ID pinned in
+  `/var/lib/sloppy-tanks/{production,dev}.image`, so a crash or reboot restarts
+  exactly what was running and never needs the registry.
+- `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that
+  changes a pin. It pins the new image, restarts the service and waits up to 60
+  seconds for `/health` to report the image's content version and server build
+  (its labels); otherwise it restores the previous image. It keeps the current and
+  previous image of each service and prunes the rest.
+- `sloppy-tanks-update.timer` is production's auto-update, off until enabled.
 - The `Caddyfile` sets up automatic Let's Encrypt TLS for
   `sloppy-tanks-server.fridman.me`, an A record in the fridman.me DNS at
   Namecheap, and refuses `/stats`. Port 8443 of the same hostname, with the same
   certificate, forwards to the dev server. The deploy scripts reach the host by the same
   name.
+
+### Deploying
+
+```sh
+pnpm run server:update                # pull :production and switch now
+pnpm run server:update --image pr-12  # pull another tag (or full image name) and pin it
+pnpm run server:update --dev --image pr-12   # try a pull request's server on the dev server
+pnpm run server:rollback              # switch back to the previous image (--dev for dev)
+pnpm run server:auto-update on|off    # production follows :production by itself, or not
+pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
+pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
+pnpm run server:provision             # first time, or after editing deploy/vps/*; then deploys
+pnpm run server:provision:dev         # Docker and the dev unit only; then deploys the dev server
+```
+
+With auto-update on, the timer checks `:production` every two minutes. A new image
+waits until nobody holds a seat (the `players` count in `/stats`), or at most four
+hours for a server-only change and ten minutes after a content change, when the new
+site is already sending visitors a reload message. Anything other than following
+`:production` leaves a hold: an SSH deploy, a rollback or pulling another tag pins
+that image, and auto-update skips its checks until `server:auto-update resume` or
+`server:update`. `server:status` shows the pinned and previous image, any hold or
+pending update and auto-update's latest checks. The dev server never auto-updates;
+it changes only on `deploy:dev`, `server:deploy --dev` or `server:update --dev`.
+
+`server:deploy` builds the image on this machine (`server:build-docker-image`),
+streams it to the VPS with `docker save | ssh docker load` and switches to it, so
+it needs neither GitHub nor the registry. It first runs `server:deploy-check`
+(rustfmt, clippy and tests for only `sloppy-core` and `sloppy-server`), and for
+production it refuses a checkout that is not a clean `origin/main`; `--force`
+overrides that. A service still on the former binary unit (before provisioning
+moves it to Docker) gets the static musl binary as before.
+
+`pnpm run deploy:dev` deploys the dev server first (`deploy-vps.mjs --dev`), waits
+until its `/health` reports the checkout's content version, then uploads the dev
+site; it never restarts production's server. It refuses
+to upload a build without the multiplayer entry.
+
+A restart or deploy ends every live room. `docker stop` sends `SIGTERM`; the
+graceful handler sends `room-reset` and close code 1012, so players see the
+room-ended message. After a crash, clients reconnect by themselves and find a fresh
+lobby. Stop load tests before deploying.
+
+### Hosting
 
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH
 as root. The scripts trust a new host's key on first contact and refuse a
@@ -125,35 +210,18 @@ changed one. To move to another server or provider, provision it with
 `SLOPPY_VPS_SSH=root@<new ip> pnpm run server:provision`, repoint the A record,
 then run `ssh-keygen -R sloppy-tanks-server.fridman.me` so the scripts accept
 the new host key. Caddy obtains the certificate once the record reaches the new
-server.
+server. `SLOPPY_SERVER_URL` points the deploy scripts' final `/health` check at
+another address, such as a test machine's tunnelled port.
 
-```sh
-pnpm run server:provision  # first time, or after editing deploy/vps/*; then deploys
-pnpm run server:provision:dev  # only the dev server's unit, Caddy config and 8443 rule; then deploys it
-pnpm run server:deploy     # server:deploy-check, build the musl binary, upload, restart, wait for /health
-```
-
-`server:deploy-check` is the deploy gate: rustfmt, clippy and tests for only the
-crates in the binary (`sloppy-core`, `sloppy-server`). The page, Wasm and
-renderer checks do not reach the server, and `pnpm run check` still runs all of
-them in CI for every pull request and push to `main`.
-
-`pnpm run deploy:dev` deploys the dev server first (`deploy-vps.mjs --dev`), waits
-until its `/health` reports the checkout's content version, then uploads the dev
-site; it never restarts production's server. It refuses
-to upload a build without the multiplayer entry.
-
-A restart or deploy ends every live room. The graceful `SIGTERM`/`SIGINT`
-handler sends `room-reset` and close code 1012, so players see the room-ended
-message. After a crash, clients reconnect by themselves and find a fresh lobby.
-Stop load tests before deploying.
+Docker's daemon, containerd and each service's attached client add memory on the
+949 MB host; check `free -m` after provisioning.
 
 ## Monitoring
 
 ```sh
 pnpm run server:logs    # follow the journal: room lifecycle lines and minute summaries
 pnpm run server:stats   # /stats JSON over SSH
-pnpm run server:status  # systemctl status for the game server and Caddy
+pnpm run server:status  # systemctl status for the game server and Caddy, and its image state
 # the same for the dev server: node scripts/vps.mjs logs|stats|status --dev
 # exit 1 when the live server needs a redeploy: clients are refused, or only
 # server code changed; --dev checks the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
