@@ -15,7 +15,6 @@ const HULL_CLEARANCE: f64 = 1.35;
 const REBUILD_PADDING: f64 = 2.0;
 const NEAREST_SEARCH_RADIUS: i64 = 9;
 const DIRECTIONS: [(i64, i64); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-const UNREACHED: i32 = i32::MAX;
 
 /// An axis-aligned planar footprint; w/d are full dimensions.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,13 +36,24 @@ impl From<&Cover> for Footprint {
     }
 }
 
+/// One cell's part in a search. Each field is current only while its stamp (`reached`, or
+/// `closed` for the closed flag) equals the navigation's `search`, so a new search starts
+/// without clearing the grid.
+#[derive(Clone, Copy, Default)]
+struct SearchCell {
+    reached: u32,
+    closed: u32,
+    cost: i32,
+    parent: u32,
+    /// The order in which the search first reached this cell.
+    order: u32,
+}
+
 pub struct Navigation {
     pub blocked: Vec<u8>,
-    costs: Vec<i32>,
-    parent: Vec<i32>,
-    closed: Vec<u8>,
-    /// Discovery order of each cell in the current search, and the cell at each order.
-    order: Vec<u32>,
+    cells: Vec<SearchCell>,
+    search: u32,
+    /// The cell at each discovery order of the current search.
     discovered: Vec<u32>,
     /// Min-heap of `estimate * CELLS + discovery order`; see `find`.
     open: Vec<u64>,
@@ -62,10 +72,8 @@ impl Navigation {
     pub fn new() -> Self {
         Self {
             blocked: vec![0; CELLS],
-            costs: vec![UNREACHED; CELLS],
-            parent: vec![-1; CELLS],
-            closed: vec![0; CELLS],
-            order: vec![0; CELLS],
+            cells: vec![SearchCell::default(); CELLS],
+            search: 0,
             discovered: vec![0; CELLS],
             open: Vec::new(),
             obstacles: Vec::new(),
@@ -181,9 +189,12 @@ impl Navigation {
         self.paths += 1;
         let start = self.nearest(self.index(from));
         let goal = self.nearest(self.index(to));
-        self.costs.fill(UNREACHED);
-        self.parent.fill(-1);
-        self.closed.fill(0);
+        self.search = self.search.wrapping_add(1);
+        if self.search == 0 {
+            self.cells.fill(SearchCell::default());
+            self.search = 1;
+        }
+        let search = self.search;
         self.open.clear();
         let goal_x = (goal % GRID_SIZE) as i64;
         let goal_z = (goal / GRID_SIZE) as i64;
@@ -193,26 +204,31 @@ impl Navigation {
         // A cheaper route to an open cell pushes a smaller estimate with the cell's original
         // discovery order, so the outdated entry always pops after the cell has closed.
         let mut discoveries = 0u32;
-        let mut reach = |nav: &mut Navigation, cell: usize, cost: i32| {
-            if nav.costs[cell] == UNREACHED {
-                nav.order[cell] = discoveries;
+        let mut reach = |nav: &mut Navigation, cell: usize, cost: i32, parent: usize| {
+            let state = &mut nav.cells[cell];
+            if state.reached != search {
+                state.reached = search;
+                state.order = discoveries;
                 nav.discovered[discoveries as usize] = cell as u32;
                 discoveries += 1;
             }
-            nav.costs[cell] = cost;
+            state.cost = cost;
+            state.parent = parent as u32;
             push_heap(
                 &mut nav.open,
-                (cost as i64 + heuristic(cell)) as u64 * CELLS as u64 + nav.order[cell] as u64,
+                (cost as i64 + heuristic(cell)) as u64 * CELLS as u64 + state.order as u64,
             );
         };
-        reach(self, start, 0);
+        reach(self, start, 0, start);
         let mut reached = start;
         while let Some(key) = pop_heap(&mut self.open) {
             let current = self.discovered[(key % CELLS as u64) as usize] as usize;
-            if self.closed[current] != 0 {
+            let state = &mut self.cells[current];
+            if state.closed == search {
                 continue;
             }
-            self.closed[current] = 1;
+            state.closed = search;
+            let cost = state.cost + 1;
             if current == goal {
                 reached = current;
                 break;
@@ -226,13 +242,15 @@ impl Navigation {
                     continue;
                 }
                 let next = (nz * GRID_SIZE as i64 + nx) as usize;
-                if self.blocked[next] != 0 || self.closed[next] != 0 {
+                if self.blocked[next] != 0 {
                     continue;
                 }
-                let cost = self.costs[current] + 1;
-                if cost < self.costs[next] {
-                    self.parent[next] = current as i32;
-                    reach(self, next, cost);
+                let neighbor = &self.cells[next];
+                if neighbor.closed == search {
+                    continue;
+                }
+                if neighbor.reached != search || cost < neighbor.cost {
+                    reach(self, next, cost, current);
                 }
             }
         }
@@ -242,7 +260,7 @@ impl Navigation {
         let mut path = Vec::new();
         while reached != start {
             path.push(self.point(reached));
-            reached = self.parent[reached] as usize;
+            reached = self.cells[reached].parent as usize;
         }
         path.reverse();
         path
@@ -292,4 +310,32 @@ fn pop_heap(heap: &mut Vec<u64>) -> Option<u64> {
         heap[i] = last;
     }
     Some(top)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routes_survive_the_search_stamp_wrapping_around() {
+        let mut fresh = Navigation::new();
+        let mut wrapping = Navigation::new();
+        for z in 20..60 {
+            fresh.blocked[z * GRID_SIZE + 40] = 1;
+            wrapping.blocked[z * GRID_SIZE + 40] = 1;
+        }
+        wrapping.search = u32::MAX - 1;
+        let routes = [
+            (Vec2::new(-20.0, 0.0), Vec2::new(20.0, 0.0)),
+            (Vec2::new(20.0, 5.0), Vec2::new(-20.0, -5.0)),
+            (Vec2::new(-20.0, 0.0), Vec2::new(20.0, 0.0)),
+            (Vec2::new(0.0, -50.0), Vec2::new(5.0, 50.0)),
+        ];
+        for (from, to) in routes {
+            let expected = fresh.find(from, to);
+            assert!(!expected.is_empty());
+            assert_eq!(wrapping.find(from, to), expected);
+        }
+        assert!(wrapping.search < 4, "the stamp wrapped during the routes");
+    }
 }
