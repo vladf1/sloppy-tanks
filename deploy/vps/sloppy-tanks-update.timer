@@ -1,0 +1,11 @@
+# Auto-update: off until `pnpm run server:auto-update on` enables this timer.
+[Unit]
+Description=Check for a new production server image every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15
+
+[Install]
+WantedBy=timers.target

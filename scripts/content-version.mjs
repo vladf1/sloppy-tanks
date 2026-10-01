@@ -80,6 +80,11 @@ export async function serverBuild() {
       ".cargo/config.toml",
       "rust-toolchain.toml",
       "scripts/build-server.mjs",
+      // CI names server images by this hash and skips builds the registry already holds,
+      // so the image recipe, its build context and the arguments it gets must change it too.
+      "Dockerfile",
+      ".dockerignore",
+      "scripts/build-server-image.mjs",
     ],
     dependencyTree("sloppy-server", "x86_64-unknown-linux-musl"),
   );

@@ -1,30 +1,26 @@
 [Unit]
 Description=Sloppy Tanks dev multiplayer server (the dev site's rooms)
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=simple
-User=sloppy
-Group=sloppy
-EnvironmentFile=/etc/sloppy-tanks-dev.env
-ExecStart=/opt/sloppy-tanks-dev/sloppy-server
+# The image ID sloppy-tanks-update pinned. The service starts once a deploy has pinned one.
+EnvironmentFile=/var/lib/sloppy-tanks/dev.image
+# As sloppy-tanks.service; the dev copy shares the one-vCPU host with production, so it
+# stays small.
+ExecStartPre=-/usr/bin/docker rm --force sloppy-tanks-dev
+ExecStart=/usr/bin/docker run --rm --name sloppy-tanks-dev --network host \
+  --env-file /etc/sloppy-tanks-dev.env \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --memory 250m --memory-swap 250m --pids-limit 256 --ulimit nofile=65536:65536 \
+  ${IMAGE}
+# SIGTERM resets rooms and waits up to a second for clients to finish closing.
+ExecStop=/usr/bin/docker stop --time 10 sloppy-tanks-dev
 Restart=always
 RestartSec=2
-# SIGTERM resets rooms and waits up to a second for clients to finish closing.
-TimeoutStopSec=10
-# The dev copy shares the one-vCPU host with production; keep it small.
-MemoryMax=250M
-LimitNOFILE=65536
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target

@@ -1028,11 +1028,12 @@
         renderRooms(reading.roomList);
         renderFacts(reading);
         $("meta").textContent = [
-          `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
           `content ${server.contentVersion}`,
           `protocol ${server.protocolVersion}`,
           server.runtime,
+          server.environment,
           `updated ${clock(reading.atMs)}`,
+          `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
         ].join(" · ");
         document.title = `${reading.players} players · Sloppy Tanks server`;
       }

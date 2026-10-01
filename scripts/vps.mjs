@@ -8,7 +8,12 @@ const service = dev ? "sloppy-tanks-dev" : "sloppy-tanks";
 const COMMANDS = {
   logs: `journalctl -u ${service} -f -n 50 --output cat`,
   stats: `curl -s http://127.0.0.1:${dev ? 8788 : 8787}/stats`,
-  status: `systemctl status ${service} caddy --no-pager`,
+  // The image state and, for production, auto-update's latest checks. Hosts still on the
+  // binary unit have no updater yet.
+  status:
+    `systemctl status ${service} caddy --no-pager; ` +
+    `command -v sloppy-tanks-update >/dev/null && sloppy-tanks-update ${dev ? "dev" : "production"} status` +
+    (dev ? "" : " && journalctl -u sloppy-tanks-update -n 5 --no-pager --output cat"),
 };
 const name = process.argv[2];
 if (!(name in COMMANDS)) {

@@ -105,6 +105,7 @@ impl Dashboard {
                 "protocolVersion": PROTOCOL_VERSION,
                 "serverBuild": SERVER_BUILD,
                 "runtime": concat!("Rust server ", env!("CARGO_PKG_VERSION")),
+                "environment": process_stats::environment(),
                 "startedAtMs": monitor.started_ms(),
                 "maxRooms": self.max_rooms,
                 "cpus": process_stats::cpu_count(),

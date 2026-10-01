@@ -298,9 +298,15 @@ offline.
   production's server. Client and server must agree on a content hash of the
   `crates/core` sources, the crates they resolve to and `rust-toolchain.toml`
   (list them with `node scripts/content-version.mjs`); `crates/render`,
-  `crates/web` and the page shell are outside it. After such changes reach
-  `main`, production needs `pnpm run server:deploy` from `main`; ask before
-  running it. `pnpm run server:check-if-redeployment-required` (add `--dev` for
+  `crates/web` and the page shell are outside it. The VPS runs both servers as
+  Docker images: CI pushes one per server build and, after the Pages deploy, moves
+  `:production` to main's. Production then needs `pnpm run server:update`
+  unless auto-update is on (`server:status` shows it); ask before running it.
+  `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
+  registry cannot serve. Never run `server:auto-update`, `server:rollback` or
+  `server:update` for production without being asked. The dev server only changes
+  on `deploy:dev` or an explicit `--dev` command.
+  `pnpm run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content
   hash) apart from server-only changes (`serverBuild`: `crates/server`, its

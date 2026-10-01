@@ -1,29 +1,27 @@
 [Unit]
 Description=Sloppy Tanks multiplayer server
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=simple
-User=sloppy
-Group=sloppy
-EnvironmentFile=/etc/sloppy-tanks.env
-ExecStart=/opt/sloppy-tanks/sloppy-server
+# The image ID sloppy-tanks-update pinned. The service starts once a deploy has pinned one.
+EnvironmentFile=/var/lib/sloppy-tanks/production.image
+# Host networking keeps the listener on loopback (HOST in the env file) behind Caddy,
+# with the real peer address, and leaves Docker no ports to publish past the firewall.
+# The flags stand in for the systemd sandbox, which would confine only the docker client.
+ExecStartPre=-/usr/bin/docker rm --force sloppy-tanks
+ExecStart=/usr/bin/docker run --rm --name sloppy-tanks --network host \
+  --env-file /etc/sloppy-tanks.env \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --memory 700m --memory-swap 700m --pids-limit 256 --ulimit nofile=65536:65536 \
+  ${IMAGE}
+# SIGTERM resets rooms and waits up to a second for clients to finish closing.
+ExecStop=/usr/bin/docker stop --time 10 sloppy-tanks
 Restart=always
 RestartSec=2
-# SIGTERM resets rooms and waits up to a second for clients to finish closing.
-TimeoutStopSec=10
-MemoryMax=700M
-LimitNOFILE=65536
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStopSec=15
 
 [Install]
 WantedBy=multi-user.target

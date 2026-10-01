@@ -1,0 +1,10 @@
+# The server image compiles only the Cargo workspace. Everything else (node_modules,
+# target, public assets, the page shell) stays out of the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!.cargo/config.toml
+!crates/
+crates/*/tests/
+crates/core/examples/

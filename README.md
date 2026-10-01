@@ -198,16 +198,18 @@ address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run buil
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server. It does not deploy that
-server; the dev site uses a separate one (below). A client only plays on a server
-built from the same shared sources: the `crates/core` files and the crates they
-compile with, listed by `node scripts/content-version.mjs`, and
-`pnpm run server:check-if-redeployment-required` says whether the live server
+server, but after the site deploys it points the server's Docker image tag
+`:production` at the commit's image; the dev site uses a separate server (below). A
+client only plays on a server built from the same shared sources: the `crates/core`
+files and the crates they compile with, listed by `node scripts/content-version.mjs`,
+and `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout. After merging changes to any of them, run
-`pnpm run server:deploy` from `main`; until then, players on the production site are
-asked to reload and cannot join. Server-only changes (`crates/server`, its
-dependencies and build settings) keep clients compatible but still need that deploy
-to take effect; client-only files (`crates/render`, `crates/web`, the page shell)
-never do.
+`pnpm run server:update` (or let auto-update pull it); until then, players on the
+production site are asked to reload and cannot join. Server-only changes
+(`crates/server`, its dependencies and build settings) keep clients compatible but
+still need that update to take effect; client-only files (`crates/render`,
+`crates/web`, the page shell) never do. See `crates/server/README.md` for the
+updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the engine download.
 
