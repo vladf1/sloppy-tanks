@@ -1060,13 +1060,34 @@ h2 {
   grid-column: 1 / -1;
 }
 .start .tank-preview {
-  /* Taller than its slot: the tank may tuck under the name and spec lines. */
+  /* Taller than its slot: the tank may tuck under the name line. */
+  position: relative;
   height: 118px;
-  margin: -20px 0 -12px;
+  margin: -24px 0 -8px;
 }
 .start .vehicle :is(strong, small, .spec) {
   position: relative;
   z-index: 1;
+}
+.start .vehicle .spec {
+  border-top: 0;
+}
+/* A soft pool of light behind each tank blends the sprite into the card instead of
+   cutting it out against flat blue; the chosen card's pool is brighter. */
+.start .vehicle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(ellipse 34% 20% at 50% 74%, #02101d73, transparent 100%),
+    radial-gradient(ellipse 62% 58% at 50% 56%, #8fc4f236, #8fc4f212 60%, transparent 100%);
+  pointer-events: none;
+}
+.start .vehicle.selected::before {
+  background:
+    radial-gradient(ellipse 34% 20% at 50% 74%, #02101d80, transparent 100%),
+    radial-gradient(ellipse 62% 58% at 50% 56%, #b5dcff40, #b5dcff12 60%, transparent 100%);
 }
 .setup-panels {
   display: grid;
