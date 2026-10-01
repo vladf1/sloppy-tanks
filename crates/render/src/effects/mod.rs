@@ -12,6 +12,7 @@
 
 pub mod explosions;
 pub mod laser;
+pub mod leaves;
 pub mod looks;
 pub mod particles;
 pub mod pickups;
@@ -33,6 +34,7 @@ pub use random::CosmeticRandom;
 pub use registry::*;
 
 use laser::LaserVisuals;
+use leaves::LeafFall;
 use particles::ParticleEffects;
 use pickups::PickupEffects;
 use projectiles::ProjectileVisuals;
@@ -62,6 +64,7 @@ pub struct Flash {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectStats {
     pub particles: u32,
+    pub leaves: u32,
     pub blasts: u32,
     pub puffs: u32,
     pub blast_rings: u32,
@@ -81,6 +84,7 @@ pub struct EffectStats {
 pub struct EffectSystems {
     pub random: CosmeticRandom,
     pub particles: ParticleEffects,
+    pub leaves: LeafFall,
     pub tracks: TrackTrails,
     pub track_dust: TrackDust,
     pub quarry_dust: QuarryDust,
@@ -93,6 +97,7 @@ pub struct EffectSystems {
 impl EffectSystems {
     pub fn reset(&mut self) {
         self.particles.reset();
+        self.leaves.reset();
         self.tracks.reset();
         self.track_dust.reset();
         self.quarry_dust.reset();
@@ -128,6 +133,12 @@ impl EffectSystems {
         }
     }
 
+    /// Leaves shaken from `crown` by a tree hit or felling, once presentation knows
+    /// which tree the event belongs to.
+    pub fn shed_leaves(&mut self, event: &SimEvent, crown: &leaves::Crown) {
+        self.leaves.event(event, Some(crown), &mut self.random);
+    }
+
     /// Advance one rendered frame, in the order `presentation.ts` `render` used.
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, time: f64) {
         self.pickups.update(state, alpha, dt);
@@ -139,6 +150,7 @@ impl EffectSystems {
         self.projectiles.update(&state.shots, time, alpha);
         self.laser.update(state, alpha, dt);
         self.particles.update(dt, time);
+        self.leaves.update(dt, &mut self.random);
     }
 
     /// Every pool buffer, in `looks::pool_descs` order.
@@ -161,6 +173,7 @@ impl EffectSystems {
         visit(&mut self.pickups.rings);
         visit(&mut self.pickups.glows);
         visit(&mut self.particles.records);
+        visit(&mut self.leaves.records);
         visit(&mut self.particles.explosions.rings);
         visit(&mut self.particles.explosions.puffs);
     }
@@ -171,6 +184,7 @@ impl EffectSystems {
         let explosions = &self.particles.explosions;
         EffectStats {
             particles: self.particles.particles.len() as u32,
+            leaves: self.leaves.len() as u32,
             blasts: explosions.active() as u32,
             puffs: explosions.puffs.len() as u32,
             blast_rings: explosions.rings.len() as u32,
@@ -234,6 +248,11 @@ mod browser {
         /// The visual response to one simulation event.
         pub fn event(&mut self, event: &SimEvent) {
             self.systems.event(event);
+        }
+
+        /// Leaves shaken from `crown` by a tree hit or felling.
+        pub fn shed_leaves(&mut self, event: &SimEvent, crown: &super::leaves::Crown) {
+            self.systems.shed_leaves(event, crown);
         }
 
         /// Once per rendered frame after entity poses are updated; `alpha`

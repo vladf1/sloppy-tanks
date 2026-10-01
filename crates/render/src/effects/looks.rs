@@ -16,6 +16,7 @@ use sloppy_core::sim::data::pickup;
 
 use super::explosions::{MAX_EXPLOSIONS, PUFFS_PER_BLAST};
 use super::laser::LASER_CAPACITY;
+use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::MAX_PARTICLES;
 use super::pickups::MAX_PICKUP_EFFECTS;
 use super::pool::PoolDesc;
@@ -208,6 +209,19 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         Material::basic(0xffffff),
         MAX_PARTICLES,
     ));
+    // Lit like the crowns they fell from; the instance tint is the leaf's color.
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "leaves",
+            leaf_mesh(),
+            Material {
+                side: Side::Double,
+                ..Material::standard(0xffffff, 0.0, 0.9)
+            },
+            MAX_LEAVES,
+        )
+    });
     pools.push(PoolDesc::new(
         "blast rings",
         ground_quad(),

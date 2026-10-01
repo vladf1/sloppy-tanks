@@ -133,6 +133,19 @@ pub const WATER: &str = "water";
 /// Normals are not changed. Tufts receive but do not cast shadows.
 pub const MEADOW_SWAY: &str = "meadow-sway";
 
+/// Tree foliage cards (cover tree crowns, shed boughs and felled crowns): an
+/// alpha-tested, double-sided standard material whose vertex normals point out of
+/// the crown. No params. After the instance transform, the cards sway with the
+/// square of their height `h` above the instance origin and flutter a little:
+/// ```text
+/// sway    = (sin(time * 0.9 + phase) * 0.6 + sin(time * 1.7 + phase * 1.3) * 0.25) * 0.0025 * h * h
+/// flutter = sin(time * 6 + dot(p, (3.1, 2.3, 2.7))) * 0.01 * min(h, 1)
+/// ```
+/// with `phase` from the world x/z, so neighbouring trees sway out of step. Back
+/// faces keep the outward normal instead of flipping it, so a crown shades as one
+/// rounded mass from either side of a card. The merged shadow ignores the sway.
+pub const FOLIAGE: &str = "foliage";
+
 /// Per-instance attribute of [`MEADOW_SWAY`]: one vec2 per instance
 /// (`data.len() == instances * 2`).
 pub const WIND_ORIGIN: &str = "windOrigin";

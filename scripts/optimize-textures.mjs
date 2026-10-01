@@ -8,8 +8,10 @@ const textures = [
   ["quarry/sandstone.webp", "quarry/sandstone.webp", 75, 768],
   ["tanks/armor-wear.webp", "tanks/armor-wear.webp", 85],
   ["trees/conifer-spray.webp", "trees/conifer-spray.webp", 90],
+  // Leaf colour bled under the cut-out is kept (`-exact`) so mipmaps stay green.
+  ["trees/leaf-sprigs.webp", "trees/leaf-sprigs.webp", 90, 512, ["-exact"]],
 ];
-for (const [source, target, quality, size] of textures) {
+for (const [source, target, quality, size, flags = []] of textures) {
   execFileSync(
     "cwebp",
     [
@@ -23,6 +25,7 @@ for (const [source, target, quality, size] of textures) {
       "-metadata",
       "none",
       ...(size ? ["-resize", String(size), String(size)] : []),
+      ...flags,
       `assets/texture-sources/${source}`,
       "-o",
       `public/textures/${target}`,

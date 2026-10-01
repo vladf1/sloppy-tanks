@@ -677,7 +677,8 @@ fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
 
 /// How a material's shadow can come from a merged caster: depth only, or an
 /// alpha-tested card; never with an effect that moves vertices, dithers the
-/// shadow or (for cards) could change the cut-out alpha.
+/// shadow or (for cards) could change the cut-out alpha, unless the effect
+/// declares a still shadow (foliage sway).
 fn shadow_merge_kind(
     effects: &EffectRegistry,
     material: &sloppy_core::scene::Material,
@@ -688,13 +689,14 @@ fn shadow_merge_kind(
             effects.id(name).and_then(|id| effects.get(id))
         }
     };
+    let still = effect.is_some_and(|effect| effect.still_shadow);
     let moves = effect.is_some_and(|effect| {
         effect.has_vertex() || effect.has_world() || effect.has_clip() || effect.shadow_fade
     });
-    if moves {
+    if moves && !still {
         MergeKind::Separate
     } else if material.alpha_test > 0.0 {
-        if effect.is_some() {
+        if effect.is_some() && !still {
             MergeKind::Separate
         } else {
             MergeKind::Cutout

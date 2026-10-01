@@ -42,6 +42,7 @@ pub const FLAG_CLOTH: EffectDefinition = EffectDefinition {
     wgsl: include_str!("shaders/flag_cloth.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// The pickup refill arc growing back segment by segment.
@@ -50,6 +51,7 @@ pub const PICKUP_REFILL: EffectDefinition = EffectDefinition {
     wgsl: include_str!("shaders/pickup_refill.wgsl"),
     attributes: &[],
     shadow_fade: false,
+    still_shadow: false,
 };
 
 /// Effects presentation registers before building its models.

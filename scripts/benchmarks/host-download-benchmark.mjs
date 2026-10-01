@@ -36,7 +36,7 @@ const texturePaths = [
   "textures/trees/bark.webp",
   "textures/trees/birch.webp",
   "textures/trees/conifer-spray.webp",
-  "textures/trees/leaves.webp",
+  "textures/trees/leaf-sprigs.webp",
   "textures/trees/rings.webp",
   "textures/walls/weathered-concrete.webp",
   "textures/water/normals.webp",

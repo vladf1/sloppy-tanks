@@ -59,7 +59,7 @@ function preloadImages(options: GameOptions): void {
           "textures/water/normals.webp",
           "textures/houses/shingles.webp",
           "textures/trees/birch.webp",
-          "textures/trees/leaves.webp",
+          "textures/trees/leaf-sprigs.webp",
         ]
       : []),
     ...(options.mapMode === "harbor"
