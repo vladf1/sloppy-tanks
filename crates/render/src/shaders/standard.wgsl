@@ -157,8 +157,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, pixel: vec2f, geometry_rou
         if dot(light.color.rgb, vec3f(1.0)) > 0.0 {
             let offset = light.position.xyz - world;
             let distance = length(offset);
-            let color = light.color.rgb * distance_attenuation(distance, light.position.w, light.color.w);
-            add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
+            // Past the cutoff the attenuation window is exactly zero: skip the BRDF.
+            let cutoff = light.position.w;
+            if cutoff <= 0.0 || distance < cutoff {
+                let color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w);
+                add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
+            }
         }
     }
     let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
