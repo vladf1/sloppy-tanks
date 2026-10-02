@@ -2,6 +2,7 @@ import { engineModule, loadEngine, NetGame } from "../engine";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
+import { savedVolume } from "../game/settings-dialog";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
@@ -173,6 +174,10 @@ export async function startMultiplayer(
     },
     ammo(weapon) {
       game.select_ammo(weapon);
+    },
+    touchMode: (): string => touch.preference,
+    setTouchMode(mode: string): void {
+      touch.setPreference(mode);
     },
     volume(value) {
       audio.volume(value);
@@ -554,7 +559,7 @@ export async function startMultiplayer(
     { once: true },
   );
   requestAnimationFrame(loop);
-  audio.volume(Number(localStorage.getItem("sloppy-volume") ?? 0.6));
+  audio.volume(savedVolume());
   audio.start();
   game.connect(choiceJson, performance.now());
   pump();

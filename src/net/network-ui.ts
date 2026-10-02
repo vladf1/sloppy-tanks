@@ -1,4 +1,5 @@
 import { hudMarkup } from "../game/ui-markup";
+import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
 import type { EngineEvent, MatchState, PlayerVehicleKind, Team, Weapon } from "../game/engine-api";
@@ -83,6 +84,9 @@ export interface NetworkActions {
   setup(notice: string): void;
   ammo(weapon: Weapon): void;
   volume(value: number): void;
+  /** The touch preference Settings shows, and the one they save. */
+  touchMode(): string;
+  setTouchMode(mode: string): void;
 }
 /** The heading of each connection end, and the retry it offers besides Battle Setup. */
 const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
@@ -110,10 +114,10 @@ const CONTROLS_HELP = [
   "Esc: menu",
 ];
 const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network-title">
-  <header class="network-head">
-    <div class="network-room"><span class="eyebrow">ROOM <b class="room-code"></b></span><button id="copy-room" class="text-button" type="button">Copy invite link</button></div>
-    <div class="network-title-row"><h2 id="network-title"></h2><div id="network-score" class="network-score" aria-label="Final score" hidden><span id="final-blue"></span> : <span id="final-red"></span></div></div>
-    <p id="network-hint"></p>
+  <header class="dialog-head">
+    <div class="dialog-eyebrow"><span class="eyebrow">ROOM <b class="room-code"></b></span><button id="copy-room" class="text-button" type="button">Copy invite link</button></div>
+    <div class="dialog-title"><h2 id="network-title"></h2><div id="network-score" class="dialog-score" aria-label="Final score" hidden><span id="final-blue" class="blue"></span> : <span id="final-red" class="red"></span></div></div>
+    <p id="network-hint" class="dialog-lede"></p>
     <p id="network-message" role="status"></p>
   </header>
   <section class="network-next" aria-labelledby="next-label">
@@ -145,20 +149,18 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
   <div class="network-actions">
     <button id="start-match" class="primary" type="button" hidden>START BATTLE</button>
     <button id="network-resume" class="primary" type="button" hidden>RESUME</button>
-    <button id="network-end" class="secondary" type="button" hidden>END BATTLE</button>
+    <button id="network-end" class="secondary danger" type="button" hidden>END BATTLE</button>
     <button id="leave-room" class="secondary" type="button">LEAVE ROOM</button>
   </div>
   <p id="network-leave-note" class="network-note" hidden>You're the last player here, so leaving closes the room.</p>
-  <div class="network-local" hidden>
-    <label>Touch controls<select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
-    <label>Sound<input id="network-volume" type="range" min="0" max="1" step="0.05" /></label>
-  </div>
   <p class="network-help">${CONTROLS_HELP.map((item) => `<span>${item}</span>`).join(" ")}</p>
 </section>
 <section class="menu network-connection" role="alertdialog" aria-labelledby="connection-title" aria-describedby="connection-message" hidden>
-  <span class="eyebrow">ROOM <b class="room-code"></b></span>
-  <h2 id="connection-title"></h2>
-  <p id="connection-message"></p>
+  <header class="dialog-head">
+    <div class="dialog-eyebrow"><span class="eyebrow">ROOM <b class="room-code"></b></span></div>
+    <div class="dialog-title"><h2 id="connection-title"></h2></div>
+    <p id="connection-message" class="dialog-lede"></p>
+  </header>
   <div class="startup-track" aria-hidden="true"><span></span></div>
   <div class="network-actions">
     <button id="connection-retry" class="primary" type="button"></button>
@@ -208,7 +210,27 @@ export class NetworkUI {
     players.setAttribute("aria-label", "Players and kills");
     this.root.querySelector("#hud")!.append(players);
     this.root.querySelector("#feed")!.setAttribute("aria-live", "polite");
-    this.input("network-volume").value = localStorage.getItem("sloppy-volume") ?? "0.6";
+    // Settings open only during play (the corner button hides behind menus): they hand
+    // the tank to a bot while the battle keeps playing, and closing them takes it back.
+    let resumeAfterSettings = false;
+    new SettingsDialog(root, "MULTIPLAYER", {
+      touchMode: () => this.actions.touchMode(),
+      setTouchMode: (mode) => this.actions.setTouchMode(mode),
+      setVolume: (value) => this.actions.volume(value),
+      opened: () => {
+        resumeAfterSettings =
+          this.lastLobby?.phase === "playing" && this.link === "live" && !this.menu;
+        if (resumeAfterSettings) {
+          this.actions.pause();
+        }
+      },
+      closed: () => {
+        if (resumeAfterSettings && this.menu) {
+          this.actions.resume();
+        }
+        resumeAfterSettings = false;
+      },
+    });
     this.on("start-match", () => this.actions.start());
     this.on("network-end", () => {
       this.endedRound = this.lastLobby?.roundId;
@@ -268,9 +290,6 @@ export class NetworkUI {
         );
       });
     }
-    this.input("network-volume").addEventListener("input", () =>
-      this.actions.volume(Number(this.input("network-volume").value)),
-    );
     this.on("copy-room", () => {
       void navigator.clipboard
         .writeText(location.href)
@@ -414,9 +433,6 @@ export class NetworkUI {
     // Between battles, leaving the room is how you get back to Battle Setup.
     this.button("leave-room").textContent = playing ? "LEAVE ROOM" : "BATTLE SETUP";
     this.element("network-leave-note").hidden = !alone;
-    this.root
-      .querySelectorAll<HTMLElement>(".network-local")
-      .forEach((node) => (node.hidden = !playing));
     this.renderPlayers(lobby, playerId);
     this.renderRoster(lobby, playerId, playing);
     this.renderScoreboard(lobby, playerId);
@@ -647,6 +663,9 @@ export class NetworkUI {
     this.panel.querySelector<HTMLElement>(".network-menu")!.hidden = dropped;
     this.panel.querySelector<HTMLElement>(".network-connection")!.hidden = !dropped;
     this.panel.style.display = dropped || !playing || this.menu ? "grid" : "none";
+    this.root
+      .querySelector("#hud")!
+      .classList.toggle("menu-open", dropped || !playing || this.menu);
     this.element("network-players").hidden = !playing || this.menu || dropped;
   }
   setMenu(open: boolean): void {

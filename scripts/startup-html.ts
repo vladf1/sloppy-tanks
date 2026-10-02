@@ -46,9 +46,8 @@ export function startupHtml(base: string): Plugin {
           const setup = markup
             .replaceAll("%BASE_URL%", base)
             .replace(
-              /<!-- map-choice:(\w+):([\w-]+):(cards|tiles) -->/g,
-              (_comment, name: string, label: string, style: string) =>
-                mapChoiceMarkup(name, label, style === "tiles"),
+              /<!-- map-choice:(\w+):([\w-]+) -->/g,
+              (_comment, name: string, label: string) => mapChoiceMarkup(name, label),
             );
           // Replacer functions insert text literally; a replacement string would read `$&`.
           html = html.replace(

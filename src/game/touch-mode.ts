@@ -15,7 +15,6 @@ export class TouchModeController {
   private enabled = false;
   private view: TouchControls | undefined;
   private loading = false;
-  private lastPhase = "";
 
   constructor(
     private readonly root: HTMLElement,
@@ -30,23 +29,21 @@ export class TouchModeController {
       /* Settings remain usable without storage. */
     }
     this.mode = saved === "on" || saved === "off" ? saved : "auto";
-    root.addEventListener("change", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLSelectElement) || target.id !== "touch-mode") {
-        return;
-      }
-      if (target.value !== "auto" && target.value !== "on" && target.value !== "off") {
-        return;
-      }
-      this.mode = target.value;
-      try {
-        localStorage.setItem("sloppy-touch", this.mode);
-      } catch {
-        /* Session-only preference. */
-      }
-      this.controls.clear();
-      this.applyMode();
-    });
+    this.applyMode();
+  }
+
+  /** Settings saved a preference: "auto", "on" or "off". */
+  setPreference(mode: string): void {
+    if ((mode !== "auto" && mode !== "on" && mode !== "off") || mode === this.mode) {
+      return;
+    }
+    this.mode = mode;
+    try {
+      localStorage.setItem("sloppy-touch", this.mode);
+    } catch {
+      /* Session-only preference. */
+    }
+    this.controls.clear();
     this.applyMode();
   }
 
@@ -82,8 +79,7 @@ export class TouchModeController {
           console.error("Touch controls could not load", error);
           const toast = this.root.querySelector<HTMLElement>("#toast");
           if (toast) {
-            toast.textContent =
-              "Touch controls could not load. Toggle them On in the pause menu to retry.";
+            toast.textContent = "Touch controls could not load. Turn them On in Settings to retry.";
             toast.classList.add("visible");
           }
         })
@@ -93,20 +89,13 @@ export class TouchModeController {
     }
   }
 
-  /** Call after each HUD read: a phase change may have rebuilt the pause menu, whose
-   * selector then shows the preference, and the overlay follows the HUD state. */
+  /** The saved preference: "auto", "on" or "off". */
+  get preference(): TouchMode {
+    return this.mode;
+  }
+
+  /** Call after each HUD read: the touch overlay follows the HUD state. */
   update(): void {
-    const phase = this.simulation.match.phase;
-    // UI rebuilds the pause menu only on phase transitions. Do not query DOM every frame.
-    if (phase !== this.lastPhase) {
-      this.lastPhase = phase;
-      if (phase === "paused") {
-        const selector = this.root.querySelector<HTMLSelectElement>("#touch-mode");
-        if (selector) {
-          selector.value = this.mode;
-        }
-      }
-    }
     if (this.enabled) {
       this.view?.update();
     }

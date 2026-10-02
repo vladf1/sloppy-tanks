@@ -59,18 +59,19 @@ try {
     "touch asset requests:",
     downloads.length,
   );
-  await page.locator("#pause").click();
+  await page.locator("#settings-open").click();
   await page.locator("#touch-mode").selectOption("on");
+  assert.equal(downloads.length, 0, "Settings change nothing until Save");
+  await page.locator(".settings-save").click();
   await page.waitForFunction(() => document.querySelector(".touch-controls"));
   assert.ok(downloads.some((url) => url.endsWith(".js")));
   assert.ok(downloads.some((url) => url.endsWith(".css")));
-  await page.locator("#resume").click();
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   const assetsAfterEnable = downloads.length;
   for (let i = 0; i < 3; i++) {
-    await page.locator("#pause").click();
+    await page.locator("#settings-open").click();
     await page.locator("#touch-mode").selectOption("off");
-    await page.locator("#resume").click();
+    await page.locator(".settings-save").click();
     assert.equal(await page.locator(".touch-controls").isVisible(), false);
     const mutations = await page.evaluate(async () => {
       let count = 0;
@@ -92,11 +93,11 @@ try {
       return count;
     });
     assert.equal(mutations, 0, "Off stops updates even after touch UI was created");
-    await page.locator("#pause").click();
-    // The rebuilt pause menu shows the saved preference at once.
+    await page.locator("#settings-open").click();
+    // Settings show the saved preference at once.
     assert.equal(await page.locator("#touch-mode").inputValue(), "off");
     await page.locator("#touch-mode").selectOption("on");
-    await page.locator("#resume").click();
+    await page.locator(".settings-save").click();
     await page.locator(".touch-controls").waitFor({ state: "visible" });
     assert.equal(await page.locator(".touch-controls").count(), 1);
   }
@@ -126,10 +127,13 @@ try {
   await delayedPage.goto(url);
   await startRound(delayedPage);
   await delayedPage.locator("#game").waitFor({ state: "visible" });
-  await delayedPage.locator("#pause").click();
+  await delayedPage.locator("#settings-open").click();
   await delayedPage.locator("#touch-mode").selectOption("on");
+  await delayedPage.locator(".settings-save").click();
   await pending;
+  await delayedPage.locator("#settings-open").click();
   await delayedPage.locator("#touch-mode").selectOption("off");
+  await delayedPage.locator(".settings-save").click();
   const finished = delayedPage.waitForEvent("requestfinished", (request) =>
     /\/touch-controls[^/]*\.js$/.test(request.url()),
   );
@@ -139,8 +143,9 @@ try {
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
   assert.equal(await delayedPage.locator(".touch-controls").count(), 0);
+  await delayedPage.locator("#settings-open").click();
   await delayedPage.locator("#touch-mode").selectOption("on");
-  await delayedPage.locator("#resume").click();
+  await delayedPage.locator(".settings-save").click();
   await delayedPage.locator(".touch-controls").waitFor({ state: "visible" });
   console.log("Deferred download: Off prevents construction; subsequent On still works.");
   await delayed.close();

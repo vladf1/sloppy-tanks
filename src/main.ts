@@ -3,7 +3,7 @@ import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
-import { isExtraLevel, showsExtraLevels } from "./game/map-options";
+import { isExtraLevel, mapOption, showsExtraLevels } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import type { RoomSelection } from "./net/pending-join";
 import type { PlayerVehicleKind } from "./game/engine-api";
@@ -90,6 +90,12 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     localStorage.getItem("sloppy-difficulty"),
     localStorage.getItem("sloppy-map"),
   );
+  // A player back from a room keeps the map Battle Setup showed them, over a link's
+  // `?map=`, so GO and a new room play the map the restored menu shows.
+  const restoredMap = mapOption(view?.map ?? null)?.id;
+  if (restoredMap && (showsExtraLevels(location.search) || !isExtraLevel(restoredMap))) {
+    options.mapMode = restoredMap;
+  }
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;
   }

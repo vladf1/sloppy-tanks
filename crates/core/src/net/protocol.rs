@@ -17,7 +17,9 @@
 //! Client messages carry `type` and `roundId` (the socket already names the room):
 //! `join` (see [`JoinRequest`]), `input` (see `player_controls`), `ping {t, observedTick}`,
 //! `choose {kind, team?}`, `settings {mapMode, difficulty, humansOnly, roundMinutes?}`,
-//! `start`, `end`, `suspend`, `resume`, `resync`, `leave`.
+//! `start`, `end`, `suspend {watch?}`, `resume`, `resync`, `leave`. `suspend` hands the
+//! seat's tank to a bot or idles it; with `watch` (the in-battle menu) the seat keeps
+//! receiving snapshots and acknowledges them with its pings.
 
 use serde_json::Value;
 

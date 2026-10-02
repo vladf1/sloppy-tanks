@@ -23,41 +23,6 @@
   </svg>
   <header class="setup-header">
     <h1 id="setup-title">BATTLE SETUP</h1>
-    <div class="play-tabs" role="tablist" aria-label="How to play">
-      <button
-        id="tab-single"
-        class="play-tab"
-        type="button"
-        role="tab"
-        aria-selected="true"
-        aria-controls="single-panel"
-        data-play="single"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
-        </svg>
-        <span><b>Single player</b><small>You versus the bots</small></span>
-      </button>
-      <button
-        id="tab-multiplayer"
-        class="play-tab"
-        type="button"
-        role="tab"
-        aria-selected="false"
-        aria-controls="multiplayer-panel"
-        data-play="multiplayer"
-        tabindex="-1"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="9" cy="8" r="3.5" />
-          <path d="M2 20c0-3.9 3.1-6.2 7-6.2s7 2.3 7 6.2" />
-          <circle cx="17" cy="7" r="3" />
-          <path d="M16.5 12.6c3.2.2 5.5 2.3 5.5 5.9" />
-        </svg>
-        <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
-      </button>
-    </div>
   </header>
   <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
     <div class="setup-label">
@@ -116,148 +81,206 @@
       </button>
     </div>
   </div>
-  <!-- Both panels share one grid cell, so switching tabs never moves the tabs or tanks. -->
-  <div class="setup-panels">
-    <div id="single-panel" class="setup-panel" role="tabpanel" aria-labelledby="tab-single">
-      <div class="setup-section battle-choice" role="radiogroup" aria-labelledby="battle-label">
-        <div class="setup-label"><span id="battle-label">BATTLE</span></div>
-        <div class="choice-cards">
-          <label class="choice-card"
-            ><input type="radio" name="gameMode" value="team" checked /><svg
-              class="choice-icon"
-              style="--tint: #3b67a0"
-            >
-              <use href="#icon-team" /></svg
-            ><span><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span></label
-          ><label class="choice-card"
-            ><input type="radio" name="gameMode" value="solo" /><svg
-              class="choice-icon"
-              style="--tint: #9a4d3c"
-            >
-              <use href="#icon-solo" /></svg
-            ><span><b>Solo Assault</b><small>Survive endless enemies</small></span></label
-          >
-        </div>
-      </div>
-      <div
-        class="setup-section difficulty-setting"
-        role="radiogroup"
-        aria-labelledby="difficulty-label"
-      >
-        <div class="setup-label"><span id="difficulty-label">DIFFICULTY</span></div>
-        <div class="segmented">
-          <label class="segment" data-tip="Slightly more forgiving enemies · 10% less enemy damage"
-            ><input
-              type="radio"
-              name="difficulty"
-              value="easy"
-              aria-description="Slightly more forgiving enemies · 10% less enemy damage"
-            /><span>Easy</span></label
-          ><label class="segment" data-tip="The original combat balance"
-            ><input
-              type="radio"
-              name="difficulty"
-              value="normal"
-              checked
-              aria-description="The original combat balance"
-            /><span>Normal</span></label
-          ><label class="segment" data-tip="Faster, sharper enemies · 15% more enemy damage"
-            ><input
-              type="radio"
-              name="difficulty"
-              value="hard"
-              aria-description="Faster, sharper enemies · 15% more enemy damage"
-            /><span>Hard</span></label
-          >
-        </div>
-      </div>
-      <div class="setup-section map-choice">
-        <div class="setup-label"><span id="map-label">MAP</span></div>
-        <!-- map-choice:mapMode:map-label:cards -->
-      </div>
-      <div class="startup-progress">
-        <div class="startup-progress-copy">
-          <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
-          <span class="startup-hint">Pick your loadout while we get ready.</span>
-        </div>
-        <div class="startup-track" aria-hidden="true"><span></span></div>
-      </div>
-      <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
+  <div class="setup-section map-choice">
+    <div class="setup-label">
+      <span id="map-label">MAP</span
+      ><small class="multiplayer-note">For a new room · Rooms you join keep their own</small>
     </div>
-    <div
-      id="multiplayer-panel"
-      class="setup-panel"
-      role="tabpanel"
-      aria-labelledby="tab-multiplayer"
-      hidden
-    >
-      <div class="setup-section driver-name">
-        <div class="setup-label"><label for="player-name">YOUR NAME</label></div>
-        <input
-          id="player-name"
-          maxlength="24"
-          autocomplete="nickname"
-          spellcheck="false"
-          placeholder="Tank driver"
-        />
+    <!-- map-choice:mapMode:map-label -->
+  </div>
+  <!-- Everything above the tabs is shared by both modes and never moves; the tabs sit
+       on the tray they switch. Both panels share one grid cell and end in the same row:
+       a status well and the one yellow action. -->
+  <div class="setup-tray">
+    <div class="play-tabs" role="tablist" aria-label="How to play">
+      <button
+        id="tab-single"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="single-panel"
+        data-play="single"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+        </svg>
+        <span><b>Single player</b><small>You versus the bots</small></span>
+      </button>
+      <button
+        id="tab-multiplayer"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="multiplayer-panel"
+        data-play="multiplayer"
+        tabindex="-1"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="9" cy="8" r="3.5" />
+          <path d="M2 20c0-3.9 3.1-6.2 7-6.2s7 2.3 7 6.2" />
+          <circle cx="17" cy="7" r="3" />
+          <path d="M16.5 12.6c3.2.2 5.5 2.3 5.5 5.9" />
+        </svg>
+        <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
+      </button>
+    </div>
+    <div class="setup-panels">
+      <div id="single-panel" class="setup-panel" role="tabpanel" aria-labelledby="tab-single">
+        <div class="setup-section battle-choice" role="radiogroup" aria-labelledby="battle-label">
+          <div class="setup-label"><span id="battle-label">BATTLE</span></div>
+          <div class="choice-cards">
+            <label class="choice-card"
+              ><input type="radio" name="gameMode" value="team" checked /><svg
+                class="choice-icon"
+                style="--tint: #3b67a0"
+              >
+                <use href="#icon-team" /></svg
+              ><span><b>Team Battle</b><small>6 vs 6 · Respawns · First to 100</small></span></label
+            ><label class="choice-card"
+              ><input type="radio" name="gameMode" value="solo" /><svg
+                class="choice-icon"
+                style="--tint: #9a4d3c"
+              >
+                <use href="#icon-solo" /></svg
+              ><span><b>Solo Assault</b><small>Survive endless enemies</small></span></label
+            >
+          </div>
+        </div>
+        <div
+          class="setup-section difficulty-setting"
+          role="radiogroup"
+          aria-labelledby="difficulty-label"
+        >
+          <div class="setup-label"><span id="difficulty-label">DIFFICULTY</span></div>
+          <div class="segmented">
+            <label class="segment"
+              ><input type="radio" name="difficulty" value="easy" /><span
+                ><b>Easy</b><small>Forgiving enemies · 10% less enemy damage</small></span
+              ></label
+            ><label class="segment"
+              ><input type="radio" name="difficulty" value="normal" checked /><span
+                ><b>Normal</b><small>The original combat balance</small></span
+              ></label
+            ><label class="segment"
+              ><input type="radio" name="difficulty" value="hard" /><span
+                ><b>Hard</b><small>Sharper enemies · 15% more enemy damage</small></span
+              ></label
+            >
+          </div>
+        </div>
+        <div class="startup-progress">
+          <div class="startup-progress-copy">
+            <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
+            <span class="startup-hint">Pick your loadout while we get ready.</span>
+          </div>
+          <div class="startup-track" aria-hidden="true"><span></span></div>
+        </div>
+        <button id="start" class="primary" type="button" aria-label="GO! Start round">GO!</button>
       </div>
       <div
-        class="setup-section team-choice"
-        role="radiogroup"
-        aria-labelledby="team-label"
-        title="Auto picks the team with fewer human players"
+        id="multiplayer-panel"
+        class="setup-panel"
+        role="tabpanel"
+        aria-labelledby="tab-multiplayer"
+        hidden
       >
-        <div class="setup-label"><span id="team-label">TEAM</span></div>
-        <div class="segmented">
-          <label class="segment"
-            ><input type="radio" name="playerTeam" value="auto" checked /><span>Auto</span></label
-          ><label class="segment team-blue"
-            ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
-          ><label class="segment team-red"
-            ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+        <div class="setup-section room-browse">
+          <div class="setup-label">
+            <span class="rooms-heading"
+              ><span id="rooms-label">ROOMS <span id="room-count">0</span></span
+              ><button
+                id="refresh-rooms"
+                class="icon-button"
+                type="button"
+                aria-label="Refresh rooms"
+                title="Refresh rooms"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+                  <path d="M19.5 4.5v4h-4" />
+                </svg></button
+            ></span>
+          </div>
+          <!-- The new room is the first choice in the list: its rules sit in its row, and
+               the action button joins or creates whichever row is chosen. -->
+          <div class="room-list-body" role="group" aria-labelledby="rooms-label">
+            <div class="room-row new-room">
+              <label class="new-room-choice"
+                ><input id="new-room" type="radio" name="room-choice" value="" checked /><span
+                  ><strong>New room on <span class="new-room-map">Pine Village</span></strong
+                  ><small>Up to 8 players · Invite friends with its link</small></span
+                ></label
+              >
+              <div class="room-rules">
+                <label class="room-length"
+                  ><input
+                    id="create-round-minutes"
+                    type="number"
+                    min="1"
+                    max="99"
+                    step="1"
+                    required
+                    value="20"
+                    aria-label="Match length in minutes"
+                  /><span>min</span></label
+                >
+                <label
+                  class="room-bots-choice"
+                  data-tip="No bots fill the teams; empty seats stay empty"
+                  ><input id="create-humans-only" type="checkbox" checked /><span
+                    >Humans only</span
+                  ></label
+                >
+              </div>
+            </div>
+            <div id="room-list"></div>
+          </div>
+        </div>
+        <div class="setup-section driver-name">
+          <div class="setup-label"><label for="player-name">YOUR NAME</label></div>
+          <input
+            id="player-name"
+            maxlength="24"
+            autocomplete="nickname"
+            spellcheck="false"
+            placeholder="Tank driver"
+          />
+          <div
+            class="team-choice"
+            role="radiogroup"
+            aria-labelledby="team-label"
+            title="Auto picks the team with fewer human players"
           >
+            <div class="setup-label"><span id="team-label">TEAM</span></div>
+            <div class="segmented">
+              <label class="segment team-auto"
+                ><input type="radio" name="playerTeam" value="auto" checked /><span
+                  >Auto</span
+                ></label
+              ><label class="segment team-blue"
+                ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
+              ><label class="segment team-red"
+                ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+              >
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="setup-section room-browse">
-        <div class="setup-label">
-          <span id="rooms-label">OPEN ROOMS <span id="room-count">0</span></span
-          ><button id="refresh-rooms" class="text-button" type="button">↻ Refresh</button>
+        <!-- Like single player's progress well: what is happening, what to do next, and a
+             bar that sweeps while the list loads or a room joins. -->
+        <div class="startup-progress room-status" data-state="loading">
+          <div class="startup-progress-copy">
+            <span id="rooms-message" role="status">Looking for rooms…</span
+            ><span id="rooms-hint" class="startup-hint">Pick your tank and map meanwhile.</span>
+          </div>
+          <div class="startup-track" aria-hidden="true"><span></span></div>
         </div>
-        <div class="room-list-body">
-          <p id="rooms-message" role="status">Looking for rooms…</p>
-          <div id="room-list" role="radiogroup" aria-labelledby="rooms-label"></div>
-          <div class="startup-track room-joining" aria-hidden="true"><span></span></div>
-        </div>
-        <div class="room-actions">
-          <span>Up to 8 players per room</span
+        <div class="room-action">
+          <button id="create-room" class="primary" type="button" disabled>CREATE ROOM</button
           ><button id="join-room" class="primary" type="button" disabled>JOIN ROOM</button>
         </div>
-      </div>
-      <div class="setup-section room-create">
-        <div class="setup-label"><span id="new-room-label">NEW ROOM</span></div>
-        <!-- map-choice:roomMap:new-room-label:tiles -->
-        <div class="room-rules">
-          <label class="room-length"
-            >Match length<span
-              ><input
-                id="create-round-minutes"
-                type="number"
-                min="1"
-                max="99"
-                step="1"
-                required
-                value="20"
-              />
-              min</span
-            ></label
-          >
-          <label class="room-bots-choice" data-tip="No bots fill the teams; empty seats stay empty"
-            ><input id="create-humans-only" type="checkbox" checked /><span
-              >Humans only</span
-            ></label
-          >
-        </div>
-        <button id="create-room" class="primary" type="button" disabled>CREATE ROOM</button>
       </div>
     </div>
   </div>

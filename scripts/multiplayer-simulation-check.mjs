@@ -50,21 +50,41 @@ try {
   });
   assert.equal(await page.locator("#feed img").count(), 0);
   assert.match(await page.locator("#feed").innerText(), /YOU.*<img src=x onerror=alert\(1\)>/);
-  await page.locator("#pause").click();
+  // Battle speeds live in Settings, which pause the battle while open.
+  await page.locator("#settings-open").click();
   await advance();
+  assert.equal(await page.evaluate(() => window.sloppy.hud().match.phase), "paused");
   await page.locator("#tank-speed").focus();
   await page.keyboard.press("Home");
   for (let i = 0; i < 20; i++) await page.keyboard.press("ArrowRight");
   await page.locator("#bullet-speed").focus();
   await page.keyboard.press("Home");
+  const unsaved = await page.evaluate(() => window.sloppy.hud().speedTuning);
+  assert.deepEqual(unsaved, { "tank-speed": 1, "bullet-speed": 1 }, "nothing changes until Save");
+  await page.locator(".settings-save").click();
+  await advance();
   const tuning = await page.evaluate(() => window.sloppy.hud().speedTuning);
   assert.deepEqual(tuning, { "tank-speed": 1.5, "bullet-speed": 0.5 });
-  await page.locator("#resume").click();
-  await advance();
-  await page.locator("#pause").click();
+  assert.equal(await page.evaluate(() => window.sloppy.hud().match.phase), "playing");
+  await page.locator("#settings-open").click();
   await advance();
   assert.equal(await page.locator("#tank-speed").inputValue(), "1.5");
   assert.equal(await page.locator("#bullet-speed").inputValue(), "0.5");
+  await page.locator("#tank-speed").focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Escape");
+  await advance();
+  assert.equal(await page.locator("#settings").isVisible(), false, "Esc closes Settings");
+  assert.equal(
+    await page.evaluate(() => window.sloppy.hud().speedTuning["tank-speed"]),
+    1.5,
+    "Esc cancels",
+  );
+  assert.equal(
+    await page.evaluate(() => window.sloppy.hud().match.phase),
+    "playing",
+    "Esc in Settings closes them without opening the pause menu",
+  );
 
   // The room keeps default speeds whatever this page's sliders say.
   const result = await page.evaluate(() => JSON.parse(window.sloppy.game.debug_seats(4242)));

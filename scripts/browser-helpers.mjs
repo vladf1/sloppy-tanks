@@ -119,11 +119,11 @@ export async function startRound(page, { touch = false } = {}) {
 
 /**
  * Choose a map in Battle Setup with pointer clicks, as a player does: a button in the row
- * of standard maps, or the dropdown that replaces it with `?extralevels`. `name` is
- * "mapMode" for single player or "roomMap" for a new room.
+ * of standard maps, or the dropdown that replaces it with `?extralevels`. Single player
+ * and a new room share the "mapMode" choice.
  * @param {import("playwright").Page} page
  * @param {string} map
- * @param {"mapMode" | "roomMap"} [name]
+ * @param {string} [name]
  */
 export async function chooseMap(page, map, name = "mapMode") {
   const dropdown = page.locator(`.map-picker[data-name="${name}"] .map-picker-button`);

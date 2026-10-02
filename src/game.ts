@@ -135,6 +135,11 @@ export async function prepareGame(
         if (done) {
           return;
         }
+        // A rebuild that reuses every pipeline and texture still waits for its warm-up
+        // frames; that is not loading, so the menu keeps showing it is ready.
+        if (total === 0 && remaining === 0 && texturesPending === 0) {
+          continue;
+        }
         reportShaders(
           remaining > 0
             ? `Shaders loaded: ${total} of ${total + remaining}`
@@ -214,7 +219,6 @@ export async function prepareGame(
     phase = hud!.match.phase;
     alive = hud!.human.alive;
     holdPointer();
-    // A rebuilt pause menu shows the touch preference at once.
     touchControls.update();
   };
   function pause(): void {
@@ -330,6 +334,8 @@ export async function prepareGame(
     },
     pause,
     setting: settings,
+    touchMode: () => touchControls.preference,
+    setTouchMode: (mode) => touchControls.setPreference(mode),
     selectAmmo(weapon) {
       if (phase === "playing" && alive) {
         controls.ammoSelection = weapon;

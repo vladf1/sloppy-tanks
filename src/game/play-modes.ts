@@ -1,6 +1,5 @@
 import { showTankTeam, type GameOptions } from "./game-options";
 import { isExtraLevel, mapOption } from "./map-options";
-import { bindMapChoice } from "./map-picker";
 import type { RoomBrowser } from "../net/room-browser";
 import type { RoomSelection } from "../net/pending-join";
 import type { RoomLink } from "../net/room-browser";
@@ -10,8 +9,8 @@ import type { RoomLink } from "../net/room-browser";
 export type PlayMode = "single" | "multiplayer";
 
 export interface PlayModeHandlers {
-  /** The tank and single-player team the setup currently shows. */
-  choices(): Pick<GameOptions, "humanKind" | "humanTeam">;
+  /** The tank, map and single-player team the setup currently shows. */
+  choices(): Pick<GameOptions, "humanKind" | "humanTeam" | "mapMode">;
   /** Runs whenever the single-player tab is shown. */
   single(): void;
   /** A room was chosen; `reload` enters it through a fresh page. */
@@ -51,6 +50,15 @@ function rememberPlayMode(mode: PlayMode): void {
 function removeMultiplayerTab(setup: HTMLElement): void {
   setup.querySelector(".play-tabs")?.remove();
   setup.querySelector("#multiplayer-panel")?.remove();
+}
+
+/** Name the shared map in the new room's row of the room list. */
+export function showNewRoomMap(setup: HTMLElement): void {
+  const value = setup.querySelector<HTMLElement>('.map-picker[data-name="mapMode"]')?.dataset.value;
+  const name = setup.querySelector(".new-room-map");
+  if (name && value) {
+    name.textContent = mapOption(value)?.name ?? value;
+  }
 }
 
 /** Show one tab's panel, following the WAI-ARIA tabs pattern. */
@@ -115,9 +123,11 @@ export function bindPlayModes(
     handlers.single();
     return { close() {} };
   }
-  bindMapChoice(panel, "roomMap", (value) => {
-    const map = mapOption(value);
-    if (map && isExtraLevel(map.id)) {
+  // The new room plays the shared map; game options take each choice before this runs.
+  showNewRoomMap(setup);
+  setup.querySelector(".map-choice")!.addEventListener("change", () => {
+    showNewRoomMap(setup);
+    if (isExtraLevel(handlers.choices().mapMode)) {
       // An extra level is for its crowd of bots; a player can still tick Humans only.
       panel.querySelector<HTMLInputElement>("#create-humans-only")!.checked = false;
     }
@@ -138,7 +148,7 @@ export function bindPlayModes(
       return new lobby.RoomBrowser(
         panel,
         address,
-        () => handlers.choices().humanKind,
+        () => handlers.choices(),
         (selection) => handlers.enterRoom(selection, () => lobby.joinAfterReload(selection)),
         link,
       );
@@ -151,8 +161,9 @@ export function bindPlayModes(
       })
       .catch((error: unknown) => {
         console.error("Room list could not load", error);
-        panel.querySelector("#rooms-message")!.textContent =
-          "Multiplayer could not load. Reload to try again.";
+        panel.querySelector<HTMLElement>(".room-status")!.dataset.state = "error";
+        panel.querySelector("#rooms-message")!.textContent = "Multiplayer could not load";
+        panel.querySelector("#rooms-hint")!.textContent = "Reload to try again.";
       });
   };
   const show = (mode: PlayMode) => {

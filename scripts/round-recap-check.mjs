@@ -124,7 +124,7 @@ try {
   assert.equal(await page.locator(".recap-detail").count(), 11);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
-    const actions = document.querySelector(".recap-actions").getBoundingClientRect();
+    const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();
     return (
       actions.bottom <= innerHeight &&
       document.querySelector("#overlay").scrollHeight <= innerHeight

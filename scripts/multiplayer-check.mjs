@@ -334,9 +334,10 @@ try {
   );
   assert.equal((await state(bob)).player, beforeDrop.player, "Automatic reconnect retains seat");
   assert.equal(await bob.locator(".network-connection").isVisible(), false);
-  await bob.locator("#pause").click();
+  // Settings mid-battle hand the tank to a bot; closing them takes it back.
+  await bob.locator("#settings-open").click();
   await bob.locator("#touch-mode").selectOption("on");
-  await bob.locator("#network-resume").click();
+  await bob.locator(".settings-save").click();
   await bob.locator(".touch-controls").waitFor({ state: "visible" });
   await driver(bob, "human");
   const session = await bob.context().newCDPSession(bob),

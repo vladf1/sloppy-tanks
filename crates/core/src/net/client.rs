@@ -24,7 +24,7 @@
 //! 5. Each animation frame, call [`frame`](NetworkClient::frame) with the local controls
 //!    ([`LocalInput`]). It returns the [`RenderState`] to draw (the same type local play
 //!    draws) and the events whose display time arrived, and sends input at the browser's
-//!    cadence. `None` means nothing new to draw (arena not ready, menu-only, hidden page).
+//!    cadence. `None` means nothing new to draw (arena not ready, hidden page).
 //! 6. Drain [`take_notices`](NetworkClient::take_notices) for the UI: status lines,
 //!    notices, the lobby, round results, the end of the connection, and two requests to
 //!    the renderer: [`ClientNotice::PrepareArena`] (build and warm the arena for
@@ -842,7 +842,6 @@ impl NetworkClient {
                     if let Some(control) = &self.control
                         && self.ready_round == self.round_id
                         && !self.hidden
-                        && !self.menu
                     {
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
                             self.timeline.push(
@@ -1081,14 +1080,22 @@ impl NetworkClient {
         self.send("start", now_ms, |_| {});
     }
 
-    /// Opens the in-battle menu; a bot (or idle, humans-only) drives meanwhile.
+    /// Opens the in-battle menu; a bot (or idle, humans-only) drives meanwhile and the
+    /// battle keeps playing behind the menu.
     pub fn pause(&mut self, now_ms: f64) {
         if self.phase != RoomPhase::Playing || self.menu || self.joining {
             return;
         }
         self.menu = true;
         self.clear_input();
-        self.send("suspend", now_ms, |_| {});
+        self.watch(now_ms);
+    }
+
+    /// Hand the tank over but keep the snapshot stream, so the menu shows a live battle.
+    fn watch(&mut self, now_ms: f64) {
+        self.send("suspend", now_ms, |writer| {
+            writer.boolean("watch", true);
+        });
     }
 
     /// Closes the menu and asks for the tank back with a fresh baseline.
@@ -1152,6 +1159,11 @@ impl NetworkClient {
             self.active = false;
         } else if self.phase == RoomPhase::Playing && !self.menu {
             self.resume(now_ms);
+        } else if self.phase == RoomPhase::Playing {
+            // Back behind an open menu: watch again from a fresh baseline, which also
+            // reactivates the display when no snapshot went missing meanwhile.
+            self.watch(now_ms);
+            self.request_full(now_ms);
         }
     }
 
@@ -1171,28 +1183,25 @@ impl NetworkClient {
         {
             return None;
         }
-        let mut events = Vec::new();
-        if !self.menu {
-            let (state, displayed) = self.timeline.read(now_ms, self.rtt_ms, dt);
-            match &mut self.display {
-                Some(display) => display.clone_from(state),
-                None => self.display = Some(state.clone()),
-            }
-            let display = self.display.as_ref().expect("just set");
-            let viewer_id = display.viewer_id;
-            let viewer_team = display.viewer().map(|viewer| viewer.team);
-            events = displayed
-                .into_iter()
-                .map(|event| FrameEvent {
-                    player_hit: matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
-                        && event.owner == Some(viewer_id)
-                        && event.team != viewer_team,
-                    own: event.id == Some(viewer_id),
-                    event,
-                })
-                .collect();
+        // The battle keeps playing behind the in-battle menu too.
+        let (state, displayed) = self.timeline.read(now_ms, self.rtt_ms, dt);
+        match &mut self.display {
+            Some(display) => display.clone_from(state),
+            None => self.display = Some(state.clone()),
         }
-        self.display.as_ref()?;
+        let display = self.display.as_ref().expect("just set");
+        let viewer_id = display.viewer_id;
+        let viewer_team = display.viewer().map(|viewer| viewer.team);
+        let events = displayed
+            .into_iter()
+            .map(|event| FrameEvent {
+                player_hit: matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
+                    && event.owner == Some(viewer_id)
+                    && event.team != viewer_team,
+                own: event.id == Some(viewer_id),
+                event,
+            })
+            .collect();
         self.collect(now_ms, input);
         Some(ClientFrame {
             state: self.display.as_ref().expect("checked above"),
