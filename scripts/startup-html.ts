@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { build, minify, type Plugin } from "vite";
 import { mapChoiceMarkup } from "./map-picker-markup.ts";
+import { buildLabel, pageBuild } from "./page-health.ts";
 
 const entry = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const game = fileURLToPath(new URL("../src/game.ts", import.meta.url));
@@ -45,6 +46,7 @@ export function startupHtml(base: string): Plugin {
           );
           const setup = markup
             .replaceAll("%BASE_URL%", base)
+            .replace("%BUILD_LABEL%", buildLabel(pageBuild()))
             .replace(
               /<!-- map-choice:(\w+):([\w-]+) -->/g,
               (_comment, name: string, label: string) => mapChoiceMarkup(name, label),

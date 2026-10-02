@@ -30,6 +30,9 @@ jobs:
       # server to run this commit's image (promote-server below), or players are told
       # to reload.
       multiplayer-url: wss://sloppy-tanks-server.fridman.me
+      # The build number players and /health see: this workflow's run number, which
+      # GitHub increments on every run (a re-run keeps it).
+      build-number: ${{ github.run_number }}
 
   deploy:
     needs: check

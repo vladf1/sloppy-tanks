@@ -66,7 +66,9 @@ image_id() {
   id=$(podman image inspect --format '{{.Id}}' "$1") && echo "sha256:${id#sha256:}"
 }
 describe() {
-  echo "${1:0:19} (build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
+  local release
+  release=$(label "$1" $LABELS.release)
+  echo "${1:0:19} (${release:+v$release, }server build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
 }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 

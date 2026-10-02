@@ -2,16 +2,40 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
 import { protocolVersion } from "./content-version.mjs";
+import { releaseVersion } from "./release-version.mjs";
 
 /**
  * `health/index.html`: the page's build as JSON, the static counterpart of the
  * multiplayer server's `/health`. Static hosts serve it at `/health` (after a redirect
  * to `/health/` on GitHub Pages) as `text/html`, which JSON readers ignore. The
- * page can join a server only when `version` and `contentVersion` match its.
+ * page can join a server only when `version` (the protocol) and `contentVersion` match
+ * its; `release` is the version players see.
  */
 // HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
 // a string value carries a style element that keeps it. Browsers show it as `""`.
 const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
+
+export interface PageBuild {
+  /** `1.1.0.628` on main, with the Pages workflow's run number (`SLOPPY_BUILD_NUMBER`). */
+  release: string;
+  commit: string;
+  dirty: boolean;
+}
+
+/** What this checkout builds: its release version and commit. */
+export function pageBuild(): PageBuild {
+  const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  return {
+    release: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
+    commit: git("rev-parse", "--short", "HEAD"),
+    dirty: Boolean(git("status", "--porcelain")),
+  };
+}
+
+/** Battle Setup's footer line: `v1.1.0.628 · 696497f`, `+` marking local changes. */
+export function buildLabel({ release, commit, dirty }: PageBuild): string {
+  return `v${release} · ${commit}${dirty ? "+" : ""}`;
+}
 
 export function pageHealth(): Plugin {
   return {
@@ -26,12 +50,13 @@ export function pageHealth(): Plugin {
       if (!contentVersion) {
         this.error("No content version stamp: run `pnpm run wasm` first");
       }
-      const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
+      const { release, commit, dirty } = pageBuild();
       const health = {
+        release,
         version: await protocolVersion(),
         contentVersion,
-        commit: git("rev-parse", "--short", "HEAD"),
-        dirty: Boolean(git("status", "--porcelain")),
+        commit,
+        dirty,
         builtAt: new Date().toISOString(),
         style: PRESERVE_FORMATTING,
       };

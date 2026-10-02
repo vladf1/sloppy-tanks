@@ -17,6 +17,12 @@ on:
         description: VITE_MULTIPLAYER_URL for the Pages build.
         type: string
         default: ""
+      build-number:
+        description: >-
+          The Pages workflow's run number, which the page and the server image report as
+          their build. Pull requests have none.
+        type: string
+        default: ""
     outputs:
       server-image:
         description: The server image this commit built or found, tagged with its server build.
@@ -42,6 +48,7 @@ jobs:
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
           VITE_MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}
+          SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       - if: inputs.deploy-base
         uses: actions/configure-pages@v6
       - if: inputs.deploy-base
@@ -72,7 +79,8 @@ jobs:
   # Builds the static musl server binary once: the page-shell tests drive it, and the
   # server image (Dockerfile) copies it in. The image is pushed as <server build>, plus
   # pr-<number> for a pull request, or main and sha-<commit> for main. A server build the
-  # registry already holds is only retagged. Nothing here moves :production or touches a
+  # registry already holds is only retagged, after main's first build of it stamps its
+  # build number (scripts/build-server-image.mjs). Nothing here moves :production or touches a
   # server; fork pull requests, which cannot push, only build.
   server:
     name: Server build, page-shell tests and image
@@ -108,7 +116,10 @@ jobs:
           fi
           push=()
           if [ "$PUSH" = true ]; then push=(--push); fi
-          node scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}"
+          number=()
+          if [ -n "$BUILD_NUMBER" ]; then number=(--build-number "$BUILD_NUMBER"); fi
+          node scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}" "${number[@]}"
         env:
           EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BUILD_NUMBER: ${{ inputs.build-number }}

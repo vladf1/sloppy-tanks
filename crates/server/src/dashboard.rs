@@ -15,6 +15,7 @@ use http_body::{Body, Frame};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use crate::config::BuildInfo;
 use crate::monitor::{
     HISTORY_READINGS, LiveReading, MonitorEvent, READING_INTERVAL_MS, ServerMonitor,
 };
@@ -71,16 +72,18 @@ pub struct Dashboard {
     latest: Option<Value>,
     sent_event_id: u64,
     max_rooms: usize,
+    build: BuildInfo,
     closed: bool,
 }
 
 impl Dashboard {
-    pub fn new(max_rooms: usize) -> Self {
+    pub fn new(max_rooms: usize, build: BuildInfo) -> Self {
         Self {
             viewers: Vec::new(),
             latest: None,
             sent_event_id: 0,
             max_rooms,
+            build,
             closed: false,
         }
     }
@@ -104,7 +107,10 @@ impl Dashboard {
                 "contentVersion": CONTENT_VERSION,
                 "protocolVersion": PROTOCOL_VERSION,
                 "serverBuild": SERVER_BUILD,
-                "runtime": concat!("Rust server ", env!("CARGO_PKG_VERSION")),
+                "release": self.build.release,
+                "commit": self.build.commit,
+                // The crate version never changes; `release` is the version that does.
+                "runtime": "Rust server",
                 "environment": process_stats::environment(),
                 "startedAtMs": monitor.started_ms(),
                 "maxRooms": self.max_rooms,
