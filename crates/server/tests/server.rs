@@ -303,6 +303,9 @@ async fn reports_health_with_the_content_version_at_the_root_too() {
         health.body.starts_with("{\n  \"version\": 1,"),
         "fields keep the TypeScript order"
     );
+    let slashed = get(&base, "/health/", &[]).await;
+    assert_eq!(slashed.status, 200);
+    assert_eq!(slashed.body, health.body);
     let root = get(&base, "/", &[]).await;
     let dashboard = get(&base, "/dashboard", &[]).await;
     assert_eq!(root.status, 200);
