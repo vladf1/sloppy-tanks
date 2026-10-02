@@ -326,8 +326,7 @@ offline.
 - The release version is `MAJOR.MINOR.PATCH.BUILD` (`scripts/release-version.mjs`):
   `version` in package.json, bumped by hand, plus the Pages workflow's
   `github.run_number`, so only main's deploys have the fourth part. `/health` reports
-  it as `release`; `version` there stays the protocol number clients and the traffic
-  bots read. The server image carries the release of the first main build that
+  it as `version`, beside `protocol`, the number clients and the traffic bots read. The server image carries the release of the first main build that
   shipped its server build; later builds only retag it, so the VPS does not restart
   for commits that leave the server unchanged.
 - After publishing, check the game, test directory, representative fixtures,

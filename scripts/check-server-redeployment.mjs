@@ -31,7 +31,7 @@ async function readHealth(url) {
 
 const health = new URL("/health", endpoint.replace(/^ws/, "http"));
 const local = {
-  version: await protocolVersion(),
+  protocol: await protocolVersion(),
   contentVersion: await contentVersion(),
   serverBuild: await serverBuild(),
 };
@@ -43,8 +43,8 @@ try {
   process.exit(2);
 }
 const describe = (side) =>
-  (side.release ? `v${side.release}, ` : "") +
-  `protocol ${side.version}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}` +
+  (side.version ? `v${side.version}, ` : "") +
+  `protocol ${side.protocol}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}` +
   (side.commit ? `, commit ${side.commit}${side.dirty ? " (local changes)" : ""}` : "") +
   (side.builtAt ? `, built ${side.builtAt}` : "");
 console.log(`checkout ${describe(local)}`);
@@ -54,16 +54,16 @@ if (pageUrl) {
   try {
     const page = await readHealth(pageHealth);
     console.log(
-      `page     ${page.release ? `v${page.release}, ` : ""}protocol ${page.version}, content ${page.contentVersion}, commit ${page.commit}${page.dirty ? " (local changes)" : ""}, built ${page.builtAt}`,
+      `page     ${page.version ? `v${page.version}, ` : ""}protocol ${page.protocol}, content ${page.contentVersion}, commit ${page.commit}${page.dirty ? " (local changes)" : ""}, built ${page.builtAt}`,
     );
-    if (page.version !== live.version || page.contentVersion !== live.contentVersion) {
+    if (page.protocol !== live.protocol || page.contentVersion !== live.contentVersion) {
       console.log(`Warning: ${pageUrl} cannot join this server's rooms until both match.`);
     }
   } catch (error) {
     console.log(`page     unknown: could not read ${pageHealth}: ${error.message}`);
   }
 }
-const compatible = live.version === local.version && live.contentVersion === local.contentVersion;
+const compatible = live.protocol === local.protocol && live.contentVersion === local.contentVersion;
 if (!compatible) {
   console.log(
     "Redeploy needed: once this is on main and CI has promoted its image, run\n" +

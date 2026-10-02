@@ -218,7 +218,7 @@ client only plays on a server built from the same shared sources: the `crates/co
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
-build at `/health`: release version, protocol (`version`), content version, commit,
+build at `/health`: release version (`version`), protocol, content version, commit,
 local-change state and build time, and the server also its server build. The release
 version is `MAJOR.MINOR.PATCH.BUILD`, such as `1.1.0.628`: `version` in package.json,
 bumped by hand, and the Pages workflow's run number, which GitHub increments on every

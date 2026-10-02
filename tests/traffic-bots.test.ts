@@ -68,7 +68,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 test("traffic bots create a room on the Rust server, drive with accepted input and stay connected", async () => {
   const health = (await (await fetch(`http://${base}/health`)).json()) as Record<string, unknown>;
   const info: ServerInfo = {
-    version: Number(health.version),
+    version: Number(health.protocol),
     contentVersion: String(health.contentVersion),
   };
   const room = randomRoomCode();

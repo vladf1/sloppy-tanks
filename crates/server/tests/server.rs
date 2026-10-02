@@ -292,16 +292,16 @@ async fn reports_health_with_the_content_version_at_the_root_too() {
     assert_eq!(health.headers["content-type"], "application/json");
     let body: Value = serde_json::from_str(&health.body).unwrap();
     assert_eq!(body["contentVersion"], CONTENT_VERSION);
-    assert_eq!(body["version"], PROTOCOL_VERSION);
+    assert_eq!(body["protocol"], PROTOCOL_VERSION);
     let mut keys: Vec<&String> = body.as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["contentVersion", "serverBuild", "version"]);
+    assert_eq!(keys, ["contentVersion", "protocol", "serverBuild"]);
     assert!(
         health.body.ends_with("\n}\n"),
         "pretty-printed with a trailing newline"
     );
     assert!(
-        health.body.starts_with("{\n  \"version\": 1,"),
+        health.body.starts_with("{\n  \"protocol\": 1,"),
         "fields keep the TypeScript order"
     );
     let slashed = get(&base, "/health/", &[]).await;
@@ -332,7 +332,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
         .unwrap();
     let health = get(&server.local_addr().to_string(), "/health", &[]).await;
     let body: Value = serde_json::from_str(&health.body).unwrap();
-    assert_eq!(body["release"], "1.1.0.628");
+    assert_eq!(body["version"], "1.1.0.628");
     assert_eq!(body["commit"], "27e68e8");
     assert_eq!(body["dirty"], false);
     assert_eq!(body["builtAt"], "2026-10-02T14:02:23.799Z");

@@ -353,7 +353,7 @@ export class BotSwarm extends DurableObject<Env> {
   private async health(): Promise<ServerInfo> {
     const response = await fetch(this.env.SERVER_URL + "/health");
     const health = (await response.json()) as Record<string, unknown>;
-    return { version: Number(health.version), contentVersion: String(health.contentVersion) };
+    return { version: Number(health.protocol), contentVersion: String(health.contentVersion) };
   }
 
   private async listRooms(): Promise<RoomListingSummary[]> {

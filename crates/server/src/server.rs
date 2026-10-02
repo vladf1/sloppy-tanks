@@ -416,11 +416,11 @@ fn room_path(path: &str) -> Option<&str> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Health<'a> {
-    /// The version players see, `1.1.0.628`; `version` stays the protocol number that
-    /// clients and the traffic bots read.
+    /// The release version players see, `1.1.0.628`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    release: Option<&'a str>,
-    version: u32,
+    version: Option<&'a str>,
+    /// The protocol number joins must present, which clients and the traffic bots read.
+    protocol: u32,
     content_version: &'static str,
     server_build: &'static str,
     // The same fields as the page's `/health`, when the image recorded them.
@@ -455,8 +455,8 @@ async fn route(
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
             let build = &shared.options.build;
             let health = Health {
-                release: build.release.as_deref(),
-                version: PROTOCOL_VERSION,
+                version: build.release.as_deref(),
+                protocol: PROTOCOL_VERSION,
                 content_version: CONTENT_VERSION,
                 server_build: SERVER_BUILD,
                 commit: build.commit.as_deref(),
