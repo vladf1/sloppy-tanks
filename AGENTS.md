@@ -235,7 +235,7 @@ line-of-sight and tank steering when changing cover geometry.
 
 Extra levels are maps with their own arena, roster and rules, offered in Battle
 Setup's map dropdowns (marked EXTRA, in their own group) only on a page opened
-with `?extralevels`. Each is a map option with `extra: true`
+with `?debug`. Each is a map option with `extra: true`
 (`crates/core/src/sim/map_options.rs`, mirrored for the menu in
 `src/game/map-options.ts`) and a setup in `sim/extra_levels.rs` (`extra_level`).
 Single player plays one as an endless team battle (`single_player_rules`);
@@ -243,7 +243,7 @@ switching back applies the standard rules, so every rule a level sets needs a
 standard value there. A room plays one like any map: the host picks it,
 `create_multiplayer_simulation` applies the same setup with the room's round
 rules, and plain `/rooms` (which the traffic bots read) leaves those rooms out
-while Battle Setup asks for `/rooms?extralevels`. Room clients learn a level
+while Battle Setup asks for `/rooms?debug`. Room clients learn a level
 from the replicated scene (`map.theme`, `map.scale`).
 
 The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 75

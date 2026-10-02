@@ -16,7 +16,7 @@ pub const SERVER_BUILD: &str = match option_env!("SLOPPY_SERVER_BUILD") {
     None => "dev",
 };
 
-/// Maps listed only on `/rooms?extralevels` (`isExtraLevel` in `src/game/map-options.ts`).
+/// Maps listed only on `/rooms?debug` (`isExtraLevel` in `src/game/map-options.ts`).
 pub const EXTRA_LEVEL_MAPS: [&str; 2] = ["stress-test", "superstress"];
 
 pub fn is_extra_level(map_mode: &str) -> bool {

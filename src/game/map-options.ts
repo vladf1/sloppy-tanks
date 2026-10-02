@@ -22,7 +22,7 @@ export const MAP_OPTIONS = [
     icon: "quarry",
     tint: "#a8733a",
   },
-  // Extra levels are offered only with `?extralevels`. Each brings its own arena, bot
+  // Extra levels are offered only with `?debug`. Each brings its own arena, bot
   // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); this menu
   // list mirrors `crates/core/src/sim/map_options.rs`.
   {
@@ -59,7 +59,7 @@ export function isExtraLevel(id: MapId): id is ExtraLevelId {
   return "extra" in mapOption(id)!;
 }
 
-/** Battle Setup offers the extra levels only on a page opened with `?extralevels`. */
+/** Battle Setup offers the extra levels only on a page opened with `?debug`. */
 export function showsExtraLevels(search: string): boolean {
-  return new URLSearchParams(search).has("extralevels");
+  return new URLSearchParams(search).has("debug");
 }

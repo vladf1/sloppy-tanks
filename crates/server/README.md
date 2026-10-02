@@ -84,8 +84,8 @@ A room on an extra level (the Stress Grid or the Scrap Yard) fills that level's
 roster with bots (30 tanks, where players are nearly invulnerable, power-ups
 last ten times longer and ammo crates hold ten times as much). Its host picks it
 like any map. Plain `/rooms` lists only rooms on standard maps; Battle Setup asks
-for `/rooms?extralevels` and shows the others only on a page opened with
-`?extralevels`, or when following that room's link. A Scrap Yard room sends
+for `/rooms?debug` and shows the others only on a page opened with
+`?debug`, or when following that room's link. A Scrap Yard room sends
 roughly five times a standard room's snapshot bandwidth.
 
 Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy; level

@@ -256,7 +256,7 @@ try {
       },
     });
   });
-  await blockedStorage.page.goto(url + "?extralevels");
+  await blockedStorage.page.goto(url + "?debug");
   await ready(blockedStorage.page);
   assert.equal(await chosenMap(blockedStorage.page), "village");
   await blockedStorage.page.locator('input[value="solo"]').check();
@@ -287,7 +287,7 @@ try {
   results.retry = "passed";
   console.log("Failed-download retry passed.");
 
-  // Extra levels appear, marked, only with ?extralevels, and a link can start one directly.
+  // Extra levels appear, marked, only with ?debug, and a link can start one directly.
   // Without them the standard maps stay a row of buttons.
   const plain = await fresh();
   await plain.page.goto(url + "?map=superstress");
@@ -304,7 +304,7 @@ try {
     ["superstress", "SCRAP YARD"],
   ]) {
     const automatic = await fresh();
-    await automatic.page.goto(`${url}?extralevels&map=${level}&autoplay`);
+    await automatic.page.goto(`${url}?debug&map=${level}&autoplay`);
     await playing(automatic.page);
     assert.equal(await automatic.page.locator("#startup-overlay").count(), 0);
     const { tanks, map, mode, endless } = await automatic.page.evaluate(() => ({
@@ -318,7 +318,7 @@ try {
   }
   // Extra levels force team play; a standard map restores the player's preferred mode.
   const extra = await fresh();
-  await extra.page.goto(url + "?extralevels");
+  await extra.page.goto(url + "?debug");
   await ready(extra.page);
   assert.equal(await extra.page.locator(".map-row").first().isVisible(), false);
   await extra.page.locator('input[value="solo"]').check();
