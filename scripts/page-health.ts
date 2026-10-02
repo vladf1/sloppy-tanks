@@ -37,34 +37,59 @@ export function buildLabel({ release, commit, dirty }: PageBuild): string {
   return `v${release} · ${commit}${dirty ? "+" : ""}`;
 }
 
+/** The page's `/health` body; `builtAt` is when the build ran or the dev server started. */
+async function healthBody(builtAt: string): Promise<string> {
+  // The hash the Wasm build stamped into this engine, not one recomputed from the
+  // sources, which may have changed since `pnpm run wasm`.
+  const contentVersion = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(
+    readFileSync("src/generated/engine/content-version.js", "utf8"),
+  )?.[1];
+  if (!contentVersion) {
+    throw new Error("No content version stamp: run `pnpm run wasm` first");
+  }
+  const { release, commit, dirty } = pageBuild();
+  const health = {
+    release,
+    version: await protocolVersion(),
+    contentVersion,
+    commit,
+    dirty,
+    builtAt,
+    style: PRESERVE_FORMATTING,
+  };
+  return `${JSON.stringify(health, null, 2)}\n`;
+}
+
+/** Emits `health/index.html` in builds and answers `health` and `health/` on the dev
+ * server, where the page would otherwise fall back to the game's `index.html`. */
 export function pageHealth(): Plugin {
+  let base = "/";
   return {
     name: "page-health",
-    apply: "build",
-    async generateBundle() {
-      // The hash the Wasm build stamped into this engine, not one recomputed from the
-      // sources, which may have changed since `pnpm run wasm`.
-      const contentVersion = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(
-        readFileSync("src/generated/engine/content-version.js", "utf8"),
-      )?.[1];
-      if (!contentVersion) {
-        this.error("No content version stamp: run `pnpm run wasm` first");
-      }
-      const { release, commit, dirty } = pageBuild();
-      const health = {
-        release,
-        version: await protocolVersion(),
-        contentVersion,
-        commit,
-        dirty,
-        builtAt: new Date().toISOString(),
-        style: PRESERVE_FORMATTING,
-      };
-      this.emitFile({
-        type: "asset",
-        fileName: "health/index.html",
-        source: `${JSON.stringify(health, null, 2)}\n`,
+    configResolved(config) {
+      base = config.base;
+    },
+    configureServer(server) {
+      const started = new Date().toISOString();
+      server.middlewares.use((request, response, next) => {
+        const path = request.url?.split("?")[0];
+        if (path !== `${base}health` && path !== `${base}health/`) return next();
+        // Read on each request, so it follows `pnpm run wasm` and new commits.
+        healthBody(started).then((body) => {
+          response.setHeader("Content-Type", "text/html; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store");
+          response.end(body);
+        }, next);
       });
+    },
+    async generateBundle() {
+      let source: string;
+      try {
+        source = await healthBody(new Date().toISOString());
+      } catch (error) {
+        this.error(error instanceof Error ? error.message : String(error));
+      }
+      this.emitFile({ type: "asset", fileName: "health/index.html", source });
     },
   };
 }
