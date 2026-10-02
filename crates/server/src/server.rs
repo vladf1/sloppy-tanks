@@ -109,7 +109,7 @@ struct Shared {
     terminate: watch::Sender<bool>,
 }
 
-/// The multiplayer host: `/health`, `/rooms`, the `/room/CODE` WebSocket, the public
+/// The multiplayer host: `/health` (and `/health/`), `/rooms`, the `/room/CODE` WebSocket, the public
 /// `/dashboard` and the loopback-only `/stats`.
 pub struct MultiplayerServer {
     shared: Arc<Shared>,
@@ -434,7 +434,8 @@ async fn route(
         ("Vary", "Origin"),
     ];
     match path.as_str() {
-        "/health" => {
+        // `/health/` too, matching the static page's `/health/` that GitHub Pages redirects to.
+        "/health" | "/health/" => {
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
             let health = Health {
                 version: PROTOCOL_VERSION,

@@ -13,7 +13,7 @@ function run(command, args) {
 
 // Fixed destination: never infer a Pages project or branch from the checkout.
 const info = JSON.parse(
-  readFileSync(new URL("../dist-dev/build-info.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../dist-dev/health/index.html", import.meta.url), "utf8"),
 );
 // The dev site must always offer multiplayer. The link is compiled into the
 // inline startup script only when the build has a multiplayer server URL.

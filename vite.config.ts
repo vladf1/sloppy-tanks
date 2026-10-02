@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
+import { pageHealth } from "./scripts/page-health.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
@@ -10,6 +11,7 @@ export default defineConfig({
   server: { port: Number(process.env.PORT) || undefined },
   plugins: [
     startupHtml(base),
+    pageHealth(),
     {
       // Start the engine binary's one real request in <head>, in parallel with the
       // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari

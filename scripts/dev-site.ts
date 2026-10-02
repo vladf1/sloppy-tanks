@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
 
@@ -32,11 +31,6 @@ const devLinks = [
 ];
 
 export function devSite(): Plugin {
-  const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
-  const dirty = Boolean(
-    execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim(),
-  );
-  const builtAt = new Date().toISOString();
   return {
     name: "dev-site",
     transformIndexHtml: {
@@ -54,11 +48,6 @@ export function devSite(): Plugin {
       },
     },
     generateBundle() {
-      this.emitFile({
-        type: "asset",
-        fileName: "build-info.json",
-        source: JSON.stringify({ builtAt, commit, dirty }, null, 2),
-      });
       this.emitFile({
         type: "asset",
         fileName: "_headers",

@@ -96,7 +96,7 @@ try {
   assert.ok(directory.ok());
   assert.ok((await first.locator('a[href*="tests/"]').count()) > 3);
   for (const path of [
-    "build-info.json",
+    "health/",
     "tests/reinforcements.browser.html",
     "tools/tank-surface-check.html",
   ]) {

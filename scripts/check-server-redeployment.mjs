@@ -1,5 +1,4 @@
-import { contentVersion, serverBuild } from "./content-version.mjs";
-import { readFile } from "node:fs/promises";
+import { contentVersion, protocolVersion, serverBuild } from "./content-version.mjs";
 import { VPS_DEV_MULTIPLAYER_URL, VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
@@ -7,34 +6,38 @@ import { VPS_DEV_MULTIPLAYER_URL, VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
  * clients built from here can join, and the server build catches server-only changes
  * (server/, bundled dependencies, build settings) that leave clients compatible.
  * Exit 0: nothing to deploy; 1: redeploy needed; 2: the server did not answer.
- * `--dev` checks the dev site's server; SLOPPY_SERVER_URL checks another, such as a local one. */
+ * It also reports whether the live page that uses this server can join it; a page that
+ * cannot is a warning, since the page deploy may simply not have caught up yet.
+ * `--dev` checks the dev site and its server; SLOPPY_SERVER_URL checks another server,
+ * such as a local one, and SLOPPY_PAGE_URL the page beside it. */
 const HEALTH_TIMEOUT_MS = 10_000;
+const PRODUCTION_PAGE_URL = "https://sloppy-tanks.fridman.me/";
+const DEV_PAGE_URL = "https://sloppy-tanks-dev.fridman.me/";
+const dev = process.argv.includes("--dev");
 const endpoint =
-  process.env.SLOPPY_SERVER_URL ??
-  (process.argv.includes("--dev") ? VPS_DEV_MULTIPLAYER_URL : VPS_MULTIPLAYER_URL);
+  process.env.SLOPPY_SERVER_URL ?? (dev ? VPS_DEV_MULTIPLAYER_URL : VPS_MULTIPLAYER_URL);
+const pageUrl =
+  process.env.SLOPPY_PAGE_URL ??
+  (process.env.SLOPPY_SERVER_URL ? undefined : dev ? DEV_PAGE_URL : PRODUCTION_PAGE_URL);
+
+async function readHealth(url) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
 const health = new URL("/health", endpoint.replace(/^ws/, "http"));
-// The protocol version is a constant of the shared Rust core both builds compile.
-const protocolSource = await readFile(
-  new URL("../crates/core/src/net/protocol.rs", import.meta.url),
-  "utf8",
-);
-const PROTOCOL_VERSION = Number(
-  /pub const PROTOCOL_VERSION: u32 = (\d+);/.exec(protocolSource)?.[1],
-);
-if (!Number.isInteger(PROTOCOL_VERSION))
-  throw new Error("PROTOCOL_VERSION not found in protocol.rs");
 const local = {
-  version: PROTOCOL_VERSION,
+  version: await protocolVersion(),
   contentVersion: await contentVersion(),
   serverBuild: await serverBuild(),
 };
 let live;
 try {
-  const response = await fetch(health, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-  });
-  live = await response.json();
+  live = await readHealth(health);
 } catch (error) {
   console.error(`Could not read ${health}: ${error.message}`);
   process.exit(2);
@@ -43,6 +46,20 @@ const describe = (side) =>
   `protocol ${side.version}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}`;
 console.log(`checkout ${describe(local)}`);
 console.log(`live     ${describe(live)}`);
+if (pageUrl) {
+  const pageHealth = new URL("health/", pageUrl);
+  try {
+    const page = await readHealth(pageHealth);
+    console.log(
+      `page     protocol ${page.version}, content ${page.contentVersion}, commit ${page.commit}${page.dirty ? " (local changes)" : ""}, built ${page.builtAt}`,
+    );
+    if (page.version !== live.version || page.contentVersion !== live.contentVersion) {
+      console.log(`Warning: ${pageUrl} cannot join this server's rooms until both match.`);
+    }
+  } catch (error) {
+    console.log(`page     unknown: could not read ${pageHealth}: ${error.message}`);
+  }
+}
 const compatible = live.version === local.version && live.contentVersion === local.contentVersion;
 if (!compatible) {
   console.log(
