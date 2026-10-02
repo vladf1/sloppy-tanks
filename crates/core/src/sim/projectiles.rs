@@ -216,7 +216,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         } else {
             1.0
         };
-        if resolve_contact(simulation, next, fraction)
+        if resolve_contact(simulation, next, fraction, dt - remaining)
             && let Some(index) = simulation.shots.iter().position(|shot| shot.id == shot_id)
         {
             simulation.shots.remove(index);
@@ -432,8 +432,14 @@ fn remove_shot(simulation: &mut Simulation, id: u32) {
     }
 }
 
-/// Apply one contact. Return whether its primary shot should be removed.
-fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) -> bool {
+/// Apply one contact `elapsed` seconds into the sweep. Return whether its primary shot
+/// should be removed.
+fn resolve_contact(
+    simulation: &mut Simulation,
+    next: Contact,
+    fraction: f64,
+    elapsed: f64,
+) -> bool {
     let shot = simulation.shots[next.shot()].clone();
     let shot_color = weapon(shot.weapon).color;
     let mut remove = true;
@@ -443,6 +449,8 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
             simulation.shots[si].laser_checked_by.push(tank_id);
             remove = simulation.rng.next() < LASER_DEFENSE.chance;
             if remove {
+                // Offsets within this sweep line up with next tick's decrement by STEP.
+                simulation.tanks[ti].laser_recharge = elapsed + LASER_DEFENSE.recharge;
                 let tank = &simulation.tanks[ti];
                 let end = simulation.body_translation(tank.body);
                 let mut laser = SimEvent::at(SimEventType::Laser, shot.x, shot.z);

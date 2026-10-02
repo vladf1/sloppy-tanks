@@ -216,6 +216,8 @@ pub struct LaserDefense {
     pub duration: f64,
     pub range: f64,
     pub threat_radius: f64,
+    /// Seconds after a zap before the same tank can zap another shell.
+    pub recharge: f64,
     pub initial_delay: f64,
     pub respawn: f64,
 }
@@ -225,6 +227,7 @@ pub const LASER_DEFENSE: LaserDefense = LaserDefense {
     duration: 20.0,
     range: 7.0,
     threat_radius: 3.0,
+    recharge: 0.2,
     initial_delay: 25.0,
     respawn: 45.0,
 };

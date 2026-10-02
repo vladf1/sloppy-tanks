@@ -407,6 +407,8 @@ pub struct Tank {
     pub rapid: f64,
     pub speed: f64,
     pub laser: f64,
+    /// Seconds until the laser defense can zap again, counted from this tick's projectile sweep.
+    pub laser_recharge: f64,
     pub cooldown: f64,
     pub mine_cooldown: f64,
     pub aim: f64,

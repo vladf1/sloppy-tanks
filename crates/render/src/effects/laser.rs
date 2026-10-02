@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 
 use glam::{Mat4, Quat, Vec3};
+use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::tank_dimensions::tank_muzzle;
 use sloppy_core::sim::{MatchPhase, RenderState, SimEvent, SimEventType};
 
@@ -21,6 +22,9 @@ const DEFAULT_TARGET_HEIGHT: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug)]
 struct Beam {
+    /// The firing tank; while it is alive the beam leaves its lens as drawn this frame.
+    tank: Option<u32>,
+    /// Where the beam started in the simulation, for a tank that is gone.
     from: Vec3,
     to: Vec3,
     life: f64,
@@ -72,6 +76,7 @@ impl LaserVisuals {
             self.beams.pop_front();
         }
         self.beams.push_back(Beam {
+            tank: event.id,
             from: Vec3::new(from.x as f32, from.y as f32, from.z as f32),
             to: Vec3::new(
                 event.x as f32,
@@ -99,7 +104,11 @@ impl LaserVisuals {
             beam.life > 0.0
         });
         for beam in &self.beams {
-            let direction = beam.to - beam.from;
+            let from = beam
+                .tank
+                .and_then(|id| state.tanks.iter().find(|tank| tank.id == id && tank.alive))
+                .map_or(beam.from, |tank| lens_position(tank, alpha));
+            let direction = beam.to - from;
             let length = direction.length();
             if length < 1e-6 {
                 continue;
@@ -108,7 +117,7 @@ impl LaserVisuals {
             let world = Mat4::from_scale_rotation_translation(
                 Vec3::new(thickness, length, thickness),
                 Quat::from_rotation_arc(Vec3::Y, direction / length),
-                (beam.from + beam.to) * 0.5,
+                (from + beam.to) * 0.5,
             );
             self.halo.push(record(world, [1.0; 4], [0.0; 4]));
             self.core.push(record(world, [1.0; 4], [0.0; 4]));
@@ -117,12 +126,7 @@ impl LaserVisuals {
             if !tank.alive || tank.laser <= 0.0 || self.lens.is_full() {
                 continue;
             }
-            let position = tank.position;
-            let lens = Vec3::new(
-                (tank.previous.x + (position.x - tank.previous.x) * alpha) as f32,
-                (position.y - HULL_OFFSET + tank_muzzle(tank.kind).y + LENS_RISE) as f32,
-                (tank.previous.z + (position.z - tank.previous.z) * alpha) as f32,
-            );
+            let lens = lens_position(tank, alpha);
             self.lens
                 .push(record(Mat4::from_translation(lens), [1.0; 4], [0.0; 4]));
             let mount = lens - Vec3::Y * MOUNT_DROP;
@@ -132,11 +136,21 @@ impl LaserVisuals {
     }
 }
 
+/// The lens above a tank at its interpolated pose.
+fn lens_position(tank: &RenderTank, alpha: f64) -> Vec3 {
+    let position = tank.position;
+    Vec3::new(
+        (tank.previous.x + (position.x - tank.previous.x) * alpha) as f32,
+        (position.y - HULL_OFFSET + tank_muzzle(tank.kind).y + LENS_RISE) as f32,
+        (tank.previous.z + (position.z - tank.previous.z) * alpha) as f32,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sloppy_core::sim::Point3;
-    use sloppy_core::sim::render_state::RenderTank;
+    use sloppy_core::sim::math::Vec2;
 
     fn laser(from: Point3, x: f64, z: f64) -> SimEvent {
         SimEvent {
@@ -194,5 +208,36 @@ mod tests {
         state.tanks[0].laser = 0.0;
         visuals.update(&state, 1.0, 0.01);
         assert!(visuals.lens.is_empty() && visuals.mount.is_empty());
+    }
+
+    #[test]
+    fn a_beam_leaves_its_moving_tank_and_stays_on_the_zapped_shell() {
+        let mut state = RenderState::default();
+        state.match_state.phase = MatchPhase::Playing;
+        state.tanks.push(RenderTank {
+            id: 7,
+            alive: true,
+            laser: 5.0,
+            ..RenderTank::default()
+        });
+        let mut visuals = LaserVisuals::default();
+        let mut event = laser(Point3::new(0.0, 1.5, 0.0), 0.0, 7.0);
+        event.id = Some(7);
+        visuals.event(&event);
+        // The tank drives 2 m sideways while the beam is still flashing.
+        state.tanks[0].previous = Vec2::new(2.0, 0.0);
+        state.tanks[0].position = Point3::new(2.0, 0.65, 0.0);
+        visuals.update(&state, 1.0, 0.01);
+        let world = Mat4::from_cols_array(&visuals.core.records()[0].world);
+        let ends = [
+            world.transform_point3(Vec3::new(0.0, 0.5, 0.0)),
+            world.transform_point3(Vec3::new(0.0, -0.5, 0.0)),
+        ];
+        let lens = lens_position(&state.tanks[0], 1.0);
+        assert!(ends.iter().any(|p| p.distance(lens) < 1e-4), "{ends:?}");
+        assert!(
+            ends.iter()
+                .any(|p| p.distance(Vec3::new(0.0, 1.2, 7.0)) < 1e-4)
+        );
     }
 }

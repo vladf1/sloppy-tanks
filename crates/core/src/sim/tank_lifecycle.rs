@@ -146,6 +146,7 @@ pub fn spawn_tank(
         rapid: 0.0,
         speed: 0.0,
         laser: 0.0,
+        laser_recharge: 0.0,
         cooldown: 0.0,
         mine_cooldown: 0.0,
         aim: if team == Team::Blue {
@@ -248,6 +249,7 @@ pub fn respawn_tank(simulation: &mut Simulation, tank_index: usize, position: Op
     tank.rapid = 0.0;
     tank.speed = 0.0;
     tank.laser = 0.0;
+    tank.laser_recharge = 0.0;
     tank.cooldown = 0.0;
     tank.mine_cooldown = 0.0;
     tank.previous = p;
