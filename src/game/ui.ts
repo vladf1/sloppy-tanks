@@ -4,6 +4,7 @@ import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-optio
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { DamageCause, EngineEvent, HudState } from "./engine-api";
 import { hudMarkup, menuMarkup } from "./ui-markup";
+import { SettingsDialog } from "./settings-dialog";
 const DAMAGE_LABELS: Record<DamageCause, string> = {
   standard: "Standard shell",
   spread: "Spread shot",
@@ -27,6 +28,9 @@ export interface UIActions {
   endBattle(): void;
   pause(): void;
   setting(key: string, value: number): void;
+  /** The touch preference Settings shows, and the one they save. */
+  touchMode(): string;
+  setTouchMode(mode: string): void;
   selectAmmo(weapon: AmmoWeapon): void;
 }
 
@@ -84,6 +88,31 @@ export class UI {
         actions.pause();
         this.lastPhase = "";
       }
+    });
+    // Settings open only during play (the corner button hides behind menus): they pause
+    // the battle, and closing them carries it on.
+    let resumeAfterSettings = false;
+    new SettingsDialog(root, "SINGLE PLAYER", {
+      touchMode: () => actions.touchMode(),
+      setTouchMode: (mode) => actions.setTouchMode(mode),
+      setVolume: (value) => actions.setting("volume", value),
+      speeds: {
+        get: () => this.state?.speedTuning,
+        set: (key, value) => actions.setting(key, value),
+      },
+      opened: () => {
+        resumeAfterSettings = this.state?.match.phase === "playing";
+        if (resumeAfterSettings) {
+          actions.pause();
+          this.lastPhase = "";
+        }
+      },
+      closed: () => {
+        if (resumeAfterSettings && this.state?.match.phase === "paused") {
+          actions.resume();
+        }
+        resumeAfterSettings = false;
+      },
     });
     const fullscreen = root.querySelector<HTMLButtonElement>("#fullscreen")!;
     fullscreen.hidden = !document.fullscreenEnabled;
@@ -156,16 +185,6 @@ export class UI {
     this.overlay.querySelector("#resume")?.addEventListener("click", () => actions.resume());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
     this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
-    for (const key of ["volume", "tank-speed", "bullet-speed"]) {
-      this.overlay.querySelector<HTMLInputElement>("#" + key)?.addEventListener("input", (e) => {
-        const value = +(e.target as HTMLInputElement).value;
-        actions.setting(key, value);
-        const output = this.overlay.querySelector(`#${key}-value`);
-        if (output) {
-          output.textContent = `${Math.round(value * 100)}%`;
-        }
-      });
-    }
   }
   /** A new round, or a Battle Setup world, starts with no feedback from the last. */
   private syncRound(round: number): void {

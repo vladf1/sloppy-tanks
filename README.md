@@ -63,12 +63,13 @@ one.
 | Shift + scroll     | Zoom                                                     |
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
+| ⚙ button           | Settings: touch controls, sound and battle speeds        |
 
 In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc frees the cursor and a second Esc pauses), WASD steers relative to where you look, the compass above the ammo strip shows which way the hull points, and pickups turn see-through. On touchscreens the right stick turns the view. While destroyed, you watch from above and the pointer stays captured for the respawn; press Esc to pick another tank.
 
 Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
-On iPads and touchscreens, two thumb sticks appear automatically. Drag the left stick to drive (shorter drags move slower); drag the right stick to aim and push beyond its yellow ring to fire. Release to stop firing while keeping your aim direction. Tap ✹ to drop one mine, tap an ammo slot to select it, and use − / + to zoom. The mine button shows its cooldown. Pause with Ⅱ to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
+On iPads and touchscreens, two thumb sticks appear automatically. Drag the left stick to drive (shorter drags move slower); drag the right stick to aim and push beyond its yellow ring to fire. Release to stop firing while keeping your aim direction. Tap ✹ to drop one mine, tap an ammo slot to select it, and use − / + to zoom. The mine button shows its cooldown. Open Settings with the gear in the top right corner to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
@@ -114,13 +115,16 @@ The development build exposes `window.sloppy` for diagnostics; `?tweak` opens th
 
 Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
 and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); both use the same
-game server. Battle Setup has two tabs: **Single player** and **Multiplayer**.
-Both share the tank cards, so the tank you pick is the one you drive online.
-The Multiplayer tab lists open rooms (it polls only while shown). Your saved name
+game server. Battle Setup's tank and map choices sit above its two tabs,
+**Single player** and **Multiplayer**, and stay put when you switch: the tank you
+pick is the one you drive online, and the map is the one a new room plays.
+The Multiplayer tab lists open rooms (it polls only while shown) below a **New room**
+row that holds the new room's match length and Humans only choice. Your saved name
 is prefilled; first-time players get a random bot name they can edit. **Auto**
 picks the team with fewer human seats (including reconnect reservations); choosing
-Blue or Red repaints the tank previews. Choose a room and **Join room**, or pick a
-map under **New room** and **Create room** to start playing immediately. Battle
+Blue or Red repaints the tank previews. The button where single player has **GO!**
+reads **Create room** for the new room, which starts playing immediately, or
+**Join room** once you choose an open room. Battle
 Setup stays up with the room's progress while the arena loads and draws its first
 frames, then the battle replaces it; a page that has already built a single-player
 arena reloads into the room behind the same setup.
@@ -130,7 +134,9 @@ room page, or a join that gives up, returns there too, with the reason shown in 
 room list; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
 
-The in-game menu shows the room's rules as text. Between rounds it leads with the
+Online the battle keeps playing behind the in-game menu and Settings: while either
+is open a bot drives your tank (in humans-only rooms it idles), and closing them
+takes it back. The in-game menu shows the room's rules as text. Between rounds it leads with the
 last round's result; everyone stays in the room, so **Play again** keeps the group
 and its teams together, while **Battle Setup** leaves the room (closing it if you
 were the last player). The host can unfold **Change rules**, and anyone can change

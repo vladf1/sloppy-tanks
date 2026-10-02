@@ -27,6 +27,7 @@ const SHELL = new Set([
     "nerd-stats",
     "play-modes",
     "round-recap",
+    "settings-dialog",
     "start-menu",
     "startup-error",
     "task-yield",

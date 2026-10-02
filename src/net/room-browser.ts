@@ -6,7 +6,7 @@ import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
-import type { VehicleKind } from "../game/engine-api";
+import type { GameOptions } from "../game/game-options";
 
 // Battle Setup loads this module alone before any other multiplayer code.
 export { serverAddress } from "./server-address";
@@ -33,12 +33,14 @@ export interface RoomLink {
  * hands the chosen room to `enter` once. */
 export class RoomBrowser {
   private readonly list: HTMLElement;
+  private readonly status: HTMLElement;
   private readonly message: HTMLElement;
+  private readonly hint: HTMLElement;
   private readonly name: HTMLInputElement;
   private readonly join: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
+  private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
-  private readonly roomMap: HTMLElement;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
   private readonly extraLevels = showsExtraLevels(location.search);
   private readonly linkedRoom?: string;
@@ -56,16 +58,19 @@ export class RoomBrowser {
   constructor(
     private readonly panel: HTMLElement,
     address: URL,
-    private readonly tank: () => VehicleKind,
+    /** The shared tank and map; a new room plays the map. */
+    private readonly choices: () => Pick<GameOptions, "humanKind" | "mapMode">,
     private readonly enter: (selection: RoomSelection) => void,
     private link?: RoomLink,
   ) {
     this.list = this.element("#room-list");
+    this.status = this.element(".room-status");
     this.message = this.element("#rooms-message");
+    this.hint = this.element("#rooms-hint");
     this.name = this.element("#player-name");
     this.join = this.element("#join-room");
     this.refresh = this.element("#refresh-rooms");
-    this.roomMap = this.element('.map-picker[data-name="roomMap"]');
+    this.newRoom = this.element("#new-room");
     this.linkedRoom = link?.room;
     this.endpoint = new URL("/rooms", address);
     this.endpoint.protocol = address.protocol === "wss:" ? "https:" : "http:";
@@ -74,12 +79,20 @@ export class RoomBrowser {
     this.name.value ||= preferredPlayerName();
     // A setup copied from an earlier menu may still show that menu's rooms.
     this.render();
-    this.message.textContent = "Looking for rooms…";
+    this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
     this.refresh.addEventListener("click", () => void this.poll());
     this.join.addEventListener("click", () => this.joinSelected());
     const create = this.element<HTMLButtonElement>("#create-room");
     create.addEventListener("click", () => this.createRoom());
     create.disabled = false;
+    this.newRoom.addEventListener("change", () => this.choose(""));
+    // Editing the new room's rules chooses the new room.
+    this.element(".room-rules").addEventListener("focusin", () => {
+      if (!this.newRoom.checked) {
+        this.newRoom.checked = true;
+        this.choose("");
+      }
+    });
     window.addEventListener("pagehide", this.leave);
   }
 
@@ -131,12 +144,7 @@ export class RoomBrowser {
       radio.value = room.room;
       radio.checked = this.selected === room.room;
       radio.disabled = !this.available(room);
-      radio.addEventListener("change", () => {
-        this.selected = room.room;
-        this.join.disabled = false;
-        this.notice = "";
-        this.message.textContent = "Choose a room to join the battle.";
-      });
+      radio.addEventListener("change", () => this.choose(room.room));
       const details = document.createElement("span");
       const title = document.createElement("strong");
       title.append(mapOption(room.mapMode)?.name ?? room.mapMode);
@@ -168,8 +176,39 @@ export class RoomBrowser {
       this.list.append(row);
     }
     this.join.disabled = !this.selected;
+    this.newRoom.checked = !this.selected;
     if (focused && this.selected) {
       this.list.querySelector<HTMLInputElement>(`input[value="${this.selected}"]`)?.focus();
+    }
+  }
+
+  /** `room` is an open room's code, or "" for the new room. */
+  private choose(room: string): void {
+    this.selected = room;
+    this.join.disabled = !room;
+    this.notice = "";
+    this.showPrompt();
+  }
+
+  /** The status well's line, its hint and its bar: "loading" sweeps, "ready" is full. */
+  private showStatus(state: "loading" | "ready" | "error", message: string, hint = ""): void {
+    this.status.dataset.state = state;
+    this.message.textContent = message;
+    this.hint.textContent = hint;
+  }
+
+  /** What the action button will do, or the notice that brought the player here. */
+  private showPrompt(): void {
+    if (this.notice) {
+      this.showStatus("ready", this.notice);
+    } else if (this.selected) {
+      this.showStatus("ready", `Ready to join room ${this.selected}`, "Hit JOIN ROOM to play.");
+    } else {
+      this.showStatus(
+        "ready",
+        "Ready to create a room",
+        this.rooms.length ? "Or pick an open room to join." : "Share its link to invite friends.",
+      );
     }
   }
 
@@ -195,7 +234,7 @@ export class RoomBrowser {
           cache: "no-store",
         });
         if (!response.ok) {
-          throw new Error("Rooms unavailable. Try Refresh in a moment.");
+          throw new Error("Rooms unavailable");
         }
         this.rooms = readRoomList(await response.json()).filter(
           (room) =>
@@ -208,11 +247,7 @@ export class RoomBrowser {
             .querySelector(".room-row:has(input:checked)")
             ?.scrollIntoView({ block: "nearest" });
         }
-        this.message.textContent =
-          this.notice ||
-          (this.rooms.length
-            ? "Choose a room to join the battle."
-            : "No rooms yet.\nStart a new room and invite your friends.");
+        this.showPrompt();
       } catch (error) {
         if (controller.signal.aborted && !timedOut) {
           // Hidden mid-request; if the tab is back already, ask again at once.
@@ -220,11 +255,18 @@ export class RoomBrowser {
         } else {
           this.rooms = [];
           this.render();
-          this.message.textContent = timedOut
-            ? "Room list timed out. Try Refresh."
-            : error instanceof Error
-              ? error.message
-              : "Rooms unavailable. Try Refresh in a moment.";
+          // fetch() rejects with a TypeError when the server cannot be reached at all.
+          this.showStatus(
+            "error",
+            timedOut
+              ? "Room list timed out"
+              : error instanceof TypeError
+                ? "Can't reach the game server"
+                : error instanceof Error
+                  ? error.message
+                  : "Rooms unavailable",
+            "Trying again in a moment.",
+          );
         }
       } finally {
         clearTimeout(timeout);
@@ -267,7 +309,7 @@ export class RoomBrowser {
     }
     rememberPlayerName(name);
     const side = this.checked("playerTeam");
-    const kind = this.tank();
+    const kind = this.choices().humanKind;
     if (!isPlayerKind(kind)) {
       return undefined;
     }
@@ -298,7 +340,7 @@ export class RoomBrowser {
       length.focus();
       return;
     }
-    const map = mapOption(this.roomMap.dataset.value ?? "");
+    const map = mapOption(this.choices().mapMode);
     const roundMinutes = Number(length.value);
     if (!map || !isRoundMinutes(roundMinutes)) {
       return;

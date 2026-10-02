@@ -25,57 +25,14 @@
   padding: 24px 28px;
   text-align: left;
 }
-.network-room {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-.multiplayer .eyebrow {
-  margin: 0;
-}
-.multiplayer .eyebrow b {
-  color: #f5faff;
-}
-.network-head h2,
-.network-connection h2 {
-  margin: 8px 0 0;
-  font-size: 40px;
-  letter-spacing: 0.5px;
-}
-.network-head p,
-.network-connection p {
-  margin: 8px 0 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
-}
 #network-message {
+  margin: 0;
   color: var(--accent);
+  font-size: 13px;
   font-weight: 600;
 }
 #network-message:empty {
   display: none;
-}
-.network-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  column-gap: 16px;
-}
-.network-score {
-  font:
-    800 34px/1 Impact,
-    sans-serif;
-  letter-spacing: 2px;
-  color: #eef6fb;
-}
-#final-blue {
-  color: var(--blue);
-}
-#final-red {
-  color: var(--red);
 }
 .network-summary {
   margin: 0;
@@ -94,7 +51,7 @@
 }
 /* During a battle the rules sit under the heading; between battles the next battle's
    rules follow the results and teams, just above the actions. */
-.network-menu > :is(.network-actions, .network-note, .network-local, .network-help) {
+.network-menu > :is(.network-actions, .network-note, .network-help) {
   order: 2;
 }
 .network-menu:not([data-phase="playing"]) > .network-next {
@@ -137,8 +94,7 @@
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
 }
-.network-fields label,
-.network-local label {
+.network-fields label {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -298,29 +254,6 @@
 .network-actions .primary {
   flex-basis: 100%;
 }
-.network-actions .secondary {
-  padding: 13px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-}
-.network-actions .secondary:hover {
-  border-color: #c9d6b8;
-  color: #fff;
-}
-.network-local {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--rule);
-}
-.network-local input[type="range"] {
-  width: 100%;
-  height: 42px;
-  margin: 0;
-  accent-color: var(--accent);
-}
 .network-help {
   margin: 0;
   text-wrap: balance;
@@ -339,15 +272,6 @@
 .multiplayer .network-connection {
   max-width: 480px;
   gap: 14px;
-  text-align: center;
-}
-.network-connection h2 {
-  font-size: 36px;
-}
-.network-connection p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
 }
 .network-connection .startup-track {
   margin: 2px 0;

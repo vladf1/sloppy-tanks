@@ -346,6 +346,55 @@ fn pause_hands_the_tank_to_a_bot_and_resume_takes_it_back_with_a_fresh_baseline(
 }
 
 #[test]
+fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream() {
+    let mut net = Network::new();
+    let alice = net.add(None);
+    net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
+    net.run(300.0);
+    let shown_time = |net: &Network| net.peers[alice].client.display().unwrap().match_state.time;
+    let now = net.now;
+    net.peers[alice].client.pause(now);
+    let (time, frames) = (shown_time(&net), net.peers[alice].frames);
+    // Longer than the host waits for an unacknowledged stream: pings acknowledge it.
+    net.run(4000.0);
+    assert!(net.peers[alice].client.menu_open());
+    assert_eq!(net.tank_driver(alice), Driver::Bot);
+    assert!(
+        net.peers[alice].client.connected,
+        "the watching seat stays connected"
+    );
+    assert!(
+        net.peers[alice].frames > frames + 200,
+        "frames keep drawing"
+    );
+    assert!(
+        time - shown_time(&net) > 3.0,
+        "the shown match clock keeps running"
+    );
+    // A hidden page gets no stream; shown again behind the menu, it watches once more.
+    let now = net.now;
+    net.peers[alice].client.set_hidden(true, now);
+    net.run(1000.0);
+    let frames = net.peers[alice].frames;
+    net.run(1000.0);
+    assert_eq!(
+        net.peers[alice].frames, frames,
+        "a hidden page draws nothing"
+    );
+    let now = net.now;
+    net.peers[alice].client.set_hidden(false, now);
+    net.run(1000.0);
+    let time = shown_time(&net);
+    net.run(1000.0);
+    assert!(
+        time - shown_time(&net) > 0.5,
+        "the battle plays behind the menu again"
+    );
+    assert!(net.peers[alice].client.menu_open());
+    assert_eq!(net.tank_driver(alice), Driver::Bot);
+}
+
+#[test]
 fn a_dropped_socket_reconnects_within_the_grace_and_keeps_its_seat() {
     let mut net = Network::new();
     let alice = net.add(None);

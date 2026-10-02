@@ -175,7 +175,7 @@ export async function waitForRoomBrowser(page) {
   await page.waitForFunction(() => document.querySelector("#player-name")?.value);
 }
 
-/** Pick a map for a new room from Battle Setup's multiplayer tab. */
+/** Pick a map for a new room: the multiplayer tab shares Battle Setup's map choice. */
 export async function chooseRoomMap(page, map) {
-  await chooseMap(page, map, "roomMap");
+  await chooseMap(page, map);
 }

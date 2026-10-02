@@ -1,6 +1,6 @@
 import { showTank, showTankTeam, shownTankTeam } from "./game-options";
 import { setMapChoice } from "./map-picker";
-import { showPlayMode } from "./play-modes";
+import { showNewRoomMap, showPlayMode } from "./play-modes";
 
 /** Battle Setup's choices, kept across a reload into a room or back out of one.
  * Display only: the join itself uses the validated choice from `net/pending-join.ts`. */
@@ -16,8 +16,8 @@ export interface SetupView {
   team?: string;
   kind?: string;
   previewTeam?: 0 | 1;
-  /** The new room's map picker value. */
-  roomMap?: string;
+  /** The shared map picker value, which a new room plays. */
+  map?: string;
   roundMinutes?: string;
   humansOnly?: boolean;
 }
@@ -27,11 +27,10 @@ const SETUP_VIEW_KEY = "sloppy-setup-view";
 const INERT_WHILE_JOINING = [
   ".play-tabs",
   ".tank-setting",
+  ".map-choice",
   ".driver-name",
-  ".team-choice",
   "#refresh-rooms",
-  ".room-actions",
-  ".room-create",
+  ".new-room",
 ].join();
 
 /** A room's link. It opens Battle Setup with the room selected, or the room itself
@@ -82,8 +81,8 @@ export function restoreChoices(setup: HTMLElement, view: Partial<SetupView>): vo
     setup.querySelector<HTMLInputElement>("#player-name")!.value = view.name;
   }
   check("playerTeam", view.team);
-  if (typeof view.roomMap === "string") {
-    setMapChoice(setup, "roomMap", view.roomMap);
+  if (typeof view.map === "string" && setMapChoice(setup, "mapMode", view.map)) {
+    showNewRoomMap(setup);
   }
   if (typeof view.roundMinutes === "string") {
     setup.querySelector<HTMLInputElement>("#create-round-minutes")!.value = view.roundMinutes;
@@ -100,16 +99,17 @@ function captureSetup(setup: HTMLElement): Omit<SetupView, "room" | "joining"> {
     team: value('input[name="playerTeam"]:checked'),
     kind: setup.querySelector<HTMLElement>("[data-kind].selected")?.dataset.kind,
     previewTeam: shownTankTeam(setup),
-    roomMap: setup.querySelector<HTMLElement>('.map-picker[data-name="roomMap"]')?.dataset.value,
+    map: setup.querySelector<HTMLElement>('.map-picker[data-name="mapMode"]')?.dataset.value,
     roundMinutes: value("#create-round-minutes"),
     humansOnly: setup.querySelector<HTMLInputElement>("#create-humans-only")?.checked,
   };
 }
 
 /** Battle Setup while a chosen room loads out of sight. It stays on screen, reporting
- * progress in the room list, until the room page can draw its first frame. */
+ * progress in the status well, until the room page can draw its first frame. */
 export class JoinScreen {
   private readonly message: HTMLElement;
+  private readonly hint: HTMLElement;
 
   /** A room chosen on this page. With `reloading`, the room page shows this setup too. */
   static start(setup: HTMLElement, room: string, creating: boolean, reloading: boolean) {
@@ -140,13 +140,14 @@ export class JoinScreen {
   private constructor(
     private readonly setup: HTMLElement,
     private readonly room: string,
-    private readonly creating: boolean,
+    creating: boolean,
   ) {
     setup.dataset.joining = "";
     setup.querySelectorAll<HTMLElement>(INERT_WHILE_JOINING).forEach((part) => {
       part.inert = true;
     });
-    // One lit button, as on the page that chose the room: the one that was pressed.
+    // The action shows the chosen row's button: the one that was pressed.
+    setup.querySelector<HTMLInputElement>("#new-room")!.checked = creating;
     const pressed = setup.querySelector<HTMLButtonElement>(
       creating ? "#create-room" : "#join-room",
     )!;
@@ -156,12 +157,15 @@ export class JoinScreen {
     pressed.setAttribute("aria-busy", "true");
     other.disabled = true;
     setup.querySelector("#room-list")!.replaceChildren();
+    setup.querySelector<HTMLElement>(".room-status")!.dataset.state = "loading";
     this.message = setup.querySelector("#rooms-message")!;
+    this.message.textContent = `${creating ? "Creating" : "Joining"} room ${room}`;
+    this.hint = setup.querySelector("#rooms-hint")!;
     this.status("Connecting to room…");
   }
 
   status(text: string): void {
-    this.message.textContent = `${this.creating ? "Creating" : "Joining"} room ${this.room}\n${text}`;
+    this.hint.textContent = text;
   }
 
   /** The room page is showing; Battle Setup is no longer needed. */

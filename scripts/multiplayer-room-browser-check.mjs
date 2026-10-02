@@ -99,8 +99,13 @@ try {
     document.querySelector("#rooms-message")?.textContent.includes("isn't open"),
   );
   assert.equal(await bob.page.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
-  assert.equal(await bob.page.locator('input[name="room-choice"]:checked').count(), 0);
+  assert.equal(
+    await bob.page.locator('input[name="room-choice"]:checked').getAttribute("id"),
+    "new-room",
+    "A missing room leaves the new room chosen",
+  );
   assert.equal(await bob.page.locator("#join-room").isDisabled(), true);
+  assert.equal(await bob.page.locator("#create-room").isVisible(), true);
   const directoryURL = new URL(base);
   directoryURL.searchParams.set("multiplayer", "");
   await bob.page.goto(directoryURL.href);
@@ -251,8 +256,9 @@ try {
     "An extra level fills its roster with bots by default",
   );
   assert.equal(
-    await alice.page.locator(".room-create .map-picker-current .level-badge").textContent(),
-    "EXTRA",
+    await alice.page.locator(".new-room-map").textContent(),
+    "Scrap Yard",
+    "The new room names the shared map",
   );
   await click(alice.page, "#create-room");
   await until(

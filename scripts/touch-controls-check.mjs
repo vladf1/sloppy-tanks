@@ -98,12 +98,24 @@ try {
   await page.locator("#resume").waitFor({ state: "visible" });
   assert.equal((await state()).x, 0, "pause clears captured movement");
   await touch("touchEnd", 1);
+  assert.equal(
+    await page.locator("#settings-open").isVisible(),
+    false,
+    "Settings never open over the pause menu",
+  );
+  await page.locator("#resume").tap();
+  // Settings pause the battle and carry it on once closed; Cancel keeps the preference.
+  await page.locator("#settings-open").tap();
   await page.locator("#touch-mode").selectOption("off");
-  await page.locator("#resume").tap();
+  await page.locator(".settings-cancel").tap();
+  assert.equal(await page.locator(".touch-controls").isVisible(), true, "Cancel changes nothing");
+  await page.locator("#settings-open").tap();
+  await page.locator("#touch-mode").selectOption("off");
+  await page.locator(".settings-save").tap();
   await page.locator(".touch-controls").waitFor({ state: "hidden" });
-  await page.locator("#pause").tap();
+  await page.locator("#settings-open").tap();
   await page.locator("#touch-mode").selectOption("on");
-  await page.locator("#resume").tap();
+  await page.locator(".settings-save").tap();
   await page.locator(".touch-controls").waitFor({ state: "visible" });
 
   await touch("touchStart", 1, drive.x, drive.y);

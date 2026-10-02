@@ -88,7 +88,8 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     seed,
     location.search,
     localStorage.getItem("sloppy-difficulty"),
-    localStorage.getItem("sloppy-map"),
+    // A player back from a room keeps the map Battle Setup showed them.
+    view?.map ?? localStorage.getItem("sloppy-map"),
   );
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;

@@ -179,6 +179,24 @@ canvas#game {
   display: flex;
   gap: 8px;
 }
+/* The corner toolbar belongs to play: any dialog, Settings included, hides all of it. */
+#hud:is(.paused, .menu-open) .hud-actions,
+body:has(#settings[open]) .hud-actions {
+  visibility: hidden;
+}
+#settings-open {
+  display: grid;
+  place-items: center;
+  padding: 8px 10px;
+}
+#settings-open svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
 .quiet {
   border: 1px solid #f0e9ce66;
   border-radius: 6px;
@@ -437,7 +455,8 @@ canvas#game {
 }
 /* Plain text with a hanging dot, not a nested flex row: WebKit leaves the
    dot out of such a row's intrinsic width and wraps the last word. */
-#startup-status {
+#startup-status,
+#rooms-message {
   position: relative;
   padding-left: 15px;
   color: #ffcf38;
@@ -504,7 +523,8 @@ canvas#game {
     opacity: 0.65;
   }
 }
-#startup-status::before {
+#startup-status::before,
+#rooms-message::before {
   content: "";
   position: absolute;
   left: 0;
@@ -614,17 +634,26 @@ h2 {
 .respawn .tank-preview {
   height: 110px;
 }
+/* Menu buttons share one flat shape: the main action is yellow and the others are an
+   outline of the same size and type, so a row of them reads as one set. */
+.primary,
+.secondary {
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1.2;
+  transition:
+    background 0.1s,
+    box-shadow 0.1s,
+    color 0.1s;
+}
 .primary {
-  border: none;
-  border-radius: 5px;
   background: #ffcf38;
   color: #162d46;
-  font-weight: 800;
-  font-size: 13px;
-  letter-spacing: 1px;
-  padding: 17px 25px;
-  box-shadow: 0 4px #bc9e60;
-  transition: background 0.1s;
 }
 .primary:hover {
   background: #ffe2a0;
@@ -637,52 +666,85 @@ h2 {
   margin-top: 24px;
 }
 .compact {
-  max-width: 520px;
-  text-align: center;
-  padding: 38px;
+  max-width: 480px;
+  padding: 24px 28px;
 }
-.compact p {
-  color: #c4cbb2;
-  font-size: 13px;
-  line-height: 1.8;
+/* Every dialog opens the same way: a label line (with a link beside it when there is
+   one), the title (with the score beside it after a battle) and a sentence under it. */
+.dialog-head {
+  display: grid;
+  gap: 6px;
+  text-align: left;
 }
-.compact button {
-  display: block;
-  width: 100%;
-  margin-top: 16px;
-}
-.compact label {
+.dialog-eyebrow {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
+  gap: 12px;
+}
+.dialog-head .eyebrow {
+  margin: 0;
+}
+.dialog-eyebrow b {
+  color: #f5faff;
+}
+.dialog-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 16px;
+}
+.dialog-title h2 {
+  margin: 0;
+  font-size: 40px;
+  line-height: 0.95;
+  letter-spacing: 0.5px;
+}
+.dialog-score {
+  font:
+    800 34px/1 Impact,
+    sans-serif;
+  letter-spacing: 2px;
+  color: #eef6fb;
+}
+.dialog-score .blue {
+  color: #79c5ef;
+}
+.dialog-score .red {
+  color: #ff8a79;
+}
+.dialog-lede {
+  margin: 0;
+  color: #c4dfef;
   font-size: 13px;
+  line-height: 1.5;
 }
-.compact input {
-  accent-color: #ffcf38;
-  width: 55%;
-}
-.speed-tuning output {
-  display: block;
-  color: #ffcf38;
-  font-variant-numeric: tabular-nums;
-}
-.speed-tuning small {
-  color: #a9c5a9;
-  font-size: 11px;
+.dialog-help {
+  margin: 16px 0 0;
+  color: #9fbcd2;
+  font-size: 12px;
+  line-height: 1.7;
 }
 .secondary {
-  color: #d8ddc1;
-  background: none;
-  border: 1px solid #80967a;
-  border-radius: 5px;
-  padding: 12px;
+  background: transparent;
+  box-shadow: inset 0 0 0 2px #8bb9dc59;
+  color: #e6f1f9;
 }
-.result-score {
-  font:
-    800 80px Impact,
-    sans-serif;
-  color: #ffcf38;
+.secondary:hover {
+  background: #b7d7ed14;
+  box-shadow: inset 0 0 0 2px #b7d7edaa;
+  color: #fff;
+}
+/* Actions that throw progress away, such as ending a battle, are red. */
+.secondary.danger {
+  box-shadow: inset 0 0 0 2px #ff6f5e99;
+  color: #ffb2a7;
+}
+.secondary.danger:hover {
+  background: #ff6f5e24;
+  box-shadow: inset 0 0 0 2px #ff6f5e;
+  color: #fff;
 }
 .respawn p {
   font-size: 13px;
@@ -723,9 +785,6 @@ h2 {
   }
   h1 {
     font-size: 44px;
-  }
-  .primary {
-    padding: 14px;
   }
   .quiet span {
     display: none;
@@ -925,8 +984,11 @@ h2 {
 
 /* Battle setup: one dialog for single player and multiplayer. Sections are labelled
    rows on a three-column grid that the tank cards define; selectable choices are
-   cards like the tanks, and only lists and status use a recessed well. */
+   cards like the tanks, and only lists and status use a recessed well. The tank and
+   map rows are shared and never move; below them the play tabs sit on the tray they
+   switch, and both trays end in the same status well and yellow action. */
 .menu.start {
+  --tray: #1b3c5f;
   --card: #21486c;
   --card-hover: #2b6189;
   --card-selected: #28618a;
@@ -936,9 +998,9 @@ h2 {
   --label: #a6dfff;
   --muted: #9fbcd2;
   display: grid;
-  gap: 18px;
+  gap: 14px;
   max-width: 1000px;
-  padding: 24px 28px 20px;
+  padding: 22px 28px 20px;
 }
 .icon-sprite {
   position: absolute;
@@ -946,34 +1008,29 @@ h2 {
   height: 0;
   overflow: hidden;
 }
-.setup-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
 .setup-header h1 {
-  font-size: clamp(32px, 4vw, 52px);
+  font-size: clamp(32px, 4vw, 44px);
   letter-spacing: 1px;
 }
+/* Folder tabs: the chosen one is the tray's own colour, so it reads as the tray's lid. */
+.setup-tray {
+  display: grid;
+  margin-top: 2px;
+}
 .play-tabs {
-  flex: 0 1 500px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border-radius: 12px;
-  background: var(--well);
+  gap: 6px;
 }
 .play-tab {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 10px 14px;
+  padding: 15px 16px;
   border: 0;
-  border-radius: 9px;
-  background: transparent;
+  border-radius: 12px 12px 0 0;
+  background: #10273f;
   color: #a8bfd1;
   text-align: left;
 }
@@ -985,7 +1042,12 @@ h2 {
   stroke-width: 1.8;
   stroke-linecap: round;
 }
+/* Each tab's title and tagline share one line, keeping the strip low. */
 .play-tab span {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   min-width: 0;
 }
 .play-tab b {
@@ -997,18 +1059,16 @@ h2 {
   text-transform: uppercase;
 }
 .play-tab small {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .play-tab:hover {
   background: #17344f;
   color: #f0f8ff;
 }
 .play-tab[aria-selected="true"] {
-  background: var(--card-selected);
+  background: var(--tray);
   color: #fff;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 3px var(--accent);
 }
 .play-tab[aria-selected="true"] svg {
   stroke: var(--accent);
@@ -1091,79 +1151,92 @@ h2 {
 }
 .setup-panels {
   display: grid;
+  padding: 14px 14px 14px;
+  border-radius: 0 0 14px 14px;
+  background: var(--tray);
 }
 /* Both tabs sit on the tank cards' three columns and share one cell, so the taller
-   panel sizes both; the hidden one keeps its space rather than collapsing. */
+   panel sizes both; the hidden one keeps its space rather than collapsing. Each has a
+   choice row and an action row: a status well under the first two columns and the
+   yellow button under the third, in the same place on both tabs. */
 .setup-panel {
   grid-area: 1 / 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px 12px;
+  grid-template-rows: 1fr auto;
+  gap: 14px 22px;
   min-width: 0;
 }
 .setup-panel[hidden] {
   display: grid;
   visibility: hidden;
 }
-#single-panel {
-  grid-template-rows: auto auto 1fr;
-}
-#multiplayer-panel {
-  grid-template-rows: auto 1fr;
-}
 .battle-choice,
-.driver-name,
 .room-browse {
   grid-column: span 2;
-}
-.map-choice {
-  grid-column: 1 / -1;
 }
 .choice-cards {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
 }
+/* The battle formats are tall posters beside the stacked difficulty levels. */
+.battle-choice .choice-cards {
+  flex: 1;
+}
+.battle-choice .choice-card {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+.battle-choice .choice-icon {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 9px;
+}
+.battle-choice .choice-card b {
+  font-size: 18px;
+}
 .choice-card,
-.room-map,
 .segment {
   position: relative;
   cursor: pointer;
 }
 /* Every Battle Setup choice looks like the play tabs: its options sit in one dark well,
    and the chosen one lifts out of it with a brighter fill and a yellow ring. */
-.start :is(.vehicles, .choice-cards, .segmented, .room-maps, .map-picker) {
+.start :is(.vehicles, .choice-cards, .segmented, .room-list-body, .map-picker) {
   gap: 4px;
   padding: 4px;
   border-radius: 12px;
   background: var(--well);
 }
 /* Hover and selection switch at once, so a click shows its result on the next frame. */
-.start :is(.vehicle, .choice-card, .segment, .room-map, .room-row) {
+.start :is(.vehicle, .choice-card, .segment, .room-row) {
   border: 0;
   border-radius: 9px;
   background: transparent;
   transition: none;
 }
-.start :is(.vehicle, .choice-card, .segment, .room-map, .room-row):hover {
+.start :is(.vehicle, .choice-card, .segment, .room-row):hover {
   background: #17344f;
 }
 .start .vehicle.selected,
-.start :is(.choice-card, .segment, .room-map, .room-row):has(input:checked),
+.start :is(.choice-card, .segment):has(input:checked),
+.start .room-row:has(input[name="room-choice"]:checked),
 .map-picker-button,
 .map-picker-option[aria-selected="true"] {
   background: var(--card-selected);
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 .choice-card:has(input:focus-visible),
-.room-map:has(input:focus-visible),
 .segment:has(input:focus-visible) {
   outline: 3px solid #fff;
   outline-offset: 3px;
 }
 /* The transparent input covers its card, so a click lands on the radio itself. */
 .choice-card input,
-.room-map input,
 .segment input {
   position: absolute;
   inset: 0;
@@ -1329,23 +1402,6 @@ h2 {
   margin-left: 8px;
   vertical-align: 1px;
 }
-/* The new room's narrow column shows only each map's name until the list opens. */
-.room-create .map-picker-button {
-  min-height: 52px;
-  padding: 7px 10px 7px 8px;
-  gap: 8px;
-}
-.room-create .map-picker-current {
-  gap: 10px;
-}
-.room-create .map-picker-current small {
-  display: none;
-}
-.room-create .map-picker-current .choice-icon {
-  flex-basis: 30px;
-  height: 30px;
-  padding: 6px;
-}
 .segmented {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
@@ -1360,25 +1416,56 @@ h2 {
   font-weight: 700;
   text-align: center;
 }
-/* Difficulty fills its row, so its buttons match the Battle cards beside it. */
+/* Difficulty stacks its levels with their effects spelled out, matching the height of
+   the Battle cards beside it and of the name and team on the multiplayer tab. */
 .difficulty-setting .segmented {
   flex: 1;
+  grid-auto-flow: row;
 }
-.team-blue span::before,
-.team-red span::before {
+.difficulty-setting .segment {
+  justify-items: start;
+  min-height: 0;
+  padding: 5px 12px;
+  text-align: left;
+}
+.difficulty-setting .segment b {
+  font-size: 14px;
+}
+.difficulty-setting .segment small {
+  display: block;
+  margin-top: 1px;
+  color: #c4dfef;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+}
+/* Team choices are full-height cards like the map and battle choices: a swatch of the
+   side above its name, Auto's split between the two. */
+.team-choice .segment {
+  min-height: 72px;
+}
+.team-choice .segment span {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+}
+.team-choice .segment span::before {
   content: "";
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  margin-right: 7px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #4ea3ff;
+  box-shadow: 0 0 0 3px #ffffff1a;
 }
-.team-red span::before {
+.team-choice .team-red span::before {
   background: #ff6f5e;
+}
+.team-choice .team-auto span::before {
+  background: linear-gradient(90deg, #4ea3ff 50%, #ff6f5e 50%);
 }
 .start .startup-progress {
   grid-column: span 2;
+  box-sizing: border-box;
   align-self: end;
   display: grid;
   align-content: center;
@@ -1388,11 +1475,18 @@ h2 {
   border: 0;
   background: var(--well);
 }
+/* The yellow action has the status well's exact height and edges. */
 .start #start {
   align-self: end;
   min-height: 58px;
   padding: 10px 24px;
   font-size: 30px;
+}
+.multiplayer-note {
+  display: none;
+}
+.start[data-play="multiplayer"] .multiplayer-note {
+  display: inline;
 }
 .vehicle:focus-visible,
 .play-tab:focus-visible,
@@ -1431,6 +1525,42 @@ h2 {
   text-align: center;
   letter-spacing: 0;
 }
+.rooms-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A small round arrow beside the count. Negative margins keep it from making the
+   label row taller than its neighbours. */
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -5px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: #b7d7ed14;
+  color: #b6cedf;
+}
+.icon-button:hover:not(:disabled) {
+  background: #b7d7ed2a;
+  color: #fff0c1;
+}
+.icon-button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .text-button {
   padding: 0;
   border: 0;
@@ -1443,42 +1573,47 @@ h2 {
 .text-button:hover:not(:disabled) {
   color: #fff0c1;
 }
+/* With the extra levels, the dropdown replaces the row of standard maps. */
+.map-row[hidden],
+.map-picker[hidden] {
+  display: none;
+}
+/* The room list: the new room, then the open rooms, one radio group in one well. */
+.room-browse {
+  min-height: 0;
+}
 .room-list-body {
-  position: relative;
+  display: flex;
   flex: 1;
-  min-height: 124px;
-  border-radius: 8px;
-  background: var(--well);
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
 }
-#rooms-message {
-  margin: 0;
-  padding: 10px 12px 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-line;
-}
-.room-list-body:has(#room-list:empty) #rooms-message {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  padding: 16px;
-  text-align: center;
-  font-size: 13px;
-}
+/* Taller screens show more rooms; the tray grows, and the single-player tab with it. */
 #room-list {
   display: grid;
-  gap: 6px;
-  max-height: 164px;
+  flex: 1 1 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 2px;
+  min-height: clamp(0px, 100vh - 800px, 120px);
   overflow: auto;
-  padding: 8px;
+}
+#room-list:empty {
+  align-content: center;
+}
+#multiplayer-panel:has(.room-status[data-state="ready"]) #room-list:empty::before {
+  content: "No open rooms yet";
+  padding: 10px;
+  color: #6f8ea6;
+  font-size: 12px;
+  text-align: center;
 }
 .room-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 10px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 .room-row:has(input:disabled) {
@@ -1488,141 +1623,87 @@ h2 {
 .start .room-row:has(input:disabled):hover {
   background: transparent;
 }
-.room-row:has(input:focus-visible) {
+.room-row:has(input[type="radio"]:focus-visible) {
   outline: 3px solid #fff;
   outline-offset: 2px;
 }
-.room-row input {
+.room-row input[type="radio"] {
   flex: 0 0 auto;
   margin: 0;
   accent-color: var(--accent);
-}
-.room-row strong,
-.room-row small {
-  display: block;
 }
 .room-row strong {
   font-size: 14px;
 }
 .room-row small {
-  margin-top: 4px;
   color: #b6cedf;
   font-size: 11px;
   line-height: 1.4;
 }
-.room-actions {
+/* An open room is one line, its details trimmed before its map and player count. */
+#room-list .room-row > span {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 11px;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
-.room-browse .primary,
-.room-create .primary {
-  min-height: 44px;
-  padding: 10px 22px;
-  box-shadow: 0 3px #bc9e60;
+#room-list .room-row strong {
+  flex: none;
   white-space: nowrap;
 }
-.room-browse .primary:disabled,
-.room-create .primary:disabled {
-  background: #b7d7ed14;
-  box-shadow: none;
-  color: #7795ab;
-  cursor: default;
+#room-list .room-row small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* One yellow action at a time: a selected room makes Join the main choice. */
-.start:has(input[name="room-choice"]:checked) #create-room:not(:disabled) {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--accent);
-  color: var(--accent);
-}
-.start:has(input[name="room-choice"]:checked) #create-room:not(:disabled):hover {
-  background: #ffcf381a;
-}
-/* A chosen room loads behind Battle Setup: the room list reports progress and
-   the pressed button stays lit until the arena can draw. */
-.room-joining {
-  display: none;
-}
-.start[data-joining] .room-joining {
+.new-room small {
   display: block;
-  position: absolute;
-  top: calc(50% + 30px);
-  left: 30%;
-  right: 30%;
-  margin: 0;
+  margin-top: 2px;
 }
-.start[data-joining] #rooms-message {
-  color: #ffcf38;
-  font-weight: 600;
-}
-.start[data-joining] #room-count {
-  visibility: hidden;
-}
-.room-create {
-  gap: 10px;
-}
-.room-create .setup-label {
-  margin-bottom: -2px;
-}
-.room-create .primary {
-  margin-top: auto;
-}
-.room-maps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-.room-map {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  padding: 8px 4px 7px;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
-  text-align: center;
-}
-.room-map .choice-icon {
+/* The new room's row carries its rules; they fade while an open room is chosen. */
+.new-room {
   flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 6px;
+  justify-content: space-between;
+  border-bottom: 1px dashed #8bb9dc2e;
+  border-radius: 9px 9px 0 0;
 }
-/* With the extra levels, the dropdown replaces the row of standard maps. */
-.map-row[hidden],
-.map-picker[hidden] {
-  display: none;
+.new-room-choice {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.new-room-map {
+  color: var(--accent);
 }
 .room-rules {
   display: flex;
-  flex-wrap: wrap;
+  flex: none;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 12px;
+  gap: 14px;
+}
+.new-room:not(:has(#new-room:checked)) .room-rules {
+  opacity: 0.55;
 }
 .room-length,
 .room-bots-choice {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
 .room-length > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   color: #b6cedf;
   font-weight: 600;
 }
 .start .room-length input {
   width: 52px;
-  height: 36px;
+  height: 32px;
   padding: 0 8px;
 }
 .room-bots-choice input {
@@ -1630,6 +1711,69 @@ h2 {
   height: 17px;
   margin: 0;
   accent-color: var(--accent);
+}
+/* Name and team stack in the column where single player keeps its difficulty, at their
+   standard height: name level with the room list's top and team with its bottom. */
+.driver-name .team-choice {
+  margin-top: auto;
+  padding-top: 14px;
+}
+/* The multiplayer status well follows its own state, not the single-player arena's:
+   yellow and sweeping while the list loads or a room joins, green once the list is in. */
+#rooms-message {
+  white-space: pre-line;
+}
+#multiplayer-panel .room-status .startup-track span {
+  width: 38%;
+  background: linear-gradient(90deg, transparent, #ffcf38, #ffe79b);
+  animation: startup-sweep 1.4s ease-in-out infinite;
+}
+#multiplayer-panel .room-status[data-state="ready"] .startup-track span {
+  width: 100%;
+  animation: none;
+  background: #8cdda0;
+}
+#multiplayer-panel .room-status[data-state="error"] .startup-track span {
+  width: 100%;
+  animation: none;
+  background: #ffb2a7;
+}
+.room-status[data-state="ready"] #rooms-message {
+  color: #a2e6b0;
+}
+.room-status[data-state="ready"] #rooms-message::before {
+  box-shadow: 0 0 0 3px #a2e6b020;
+}
+.room-status[data-state="error"] #rooms-message {
+  color: #ffb2a7;
+}
+.room-status[data-state="error"] #rooms-message::before {
+  box-shadow: 0 0 0 3px #ffb2a720;
+}
+/* One action: Create for the new room, Join for an open room. */
+.room-action {
+  display: grid;
+  align-self: end;
+}
+.room-action .primary {
+  min-height: 58px;
+  padding: 10px 18px;
+  font-size: 20px;
+  white-space: nowrap;
+}
+.room-action .primary:disabled {
+  background: #b7d7ed14;
+  color: #7795ab;
+  cursor: default;
+}
+#multiplayer-panel:has(#new-room:checked) #join-room,
+#multiplayer-panel:not(:has(#new-room:checked)) #create-room {
+  display: none;
+}
+/* A chosen room loads behind Battle Setup: the status well reports progress and
+   the pressed button stays lit until the arena can draw. */
+.start[data-joining] :is(#room-count, #refresh-rooms) {
+  visibility: hidden;
 }
 /* Short explanations appear on hover or keyboard focus instead of reflowing the menu. */
 [data-tip] {
@@ -1659,11 +1803,6 @@ h2 {
   transition: opacity 0.12s;
 }
 /* Edge tips align with their control so they never widen the page. */
-.segment:first-child[data-tip]::after {
-  left: 0;
-  transform: none;
-}
-.segment:last-child[data-tip]::after,
 .room-bots-choice[data-tip]::after {
   right: 0;
   left: auto;
@@ -1685,19 +1824,21 @@ h2 {
 }
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
 @media (max-height: 770px) {
-  .start .menu-footer {
+  .start .menu-footer,
+  .setup-header {
     display: none;
+  }
+  .menu.start {
+    gap: 12px;
+  }
+  .play-tab {
+    padding-block: 13px;
+  }
+  .start .tank-preview {
+    height: 90px;
   }
 }
 @media (max-width: 860px) {
-  .setup-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 14px;
-  }
-  .play-tabs {
-    flex-basis: auto;
-  }
   .choice-cards .choice-icon {
     display: none;
   }
@@ -1734,45 +1875,19 @@ h2 {
 
 .menu.results {
   max-width: 820px;
-  padding: 18px 24px 20px;
-  text-align: center;
+  padding: 20px 28px;
   /* Sit above true centre so the report clears the bottom HUD and reads as centred. */
   margin-bottom: 10vh;
 }
 #overlay:has(.results) {
   align-items: safe center;
 }
-.results .eyebrow {
-  margin-bottom: 4px;
-}
-.results-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  flex-wrap: wrap;
-  column-gap: 20px;
-}
-.results h2 {
-  font-size: 40px;
-  margin: 0;
-}
-.results .result-score {
-  font-size: 40px;
-  line-height: 1;
-  letter-spacing: 2px;
-}
-.results > p {
-  margin: 4px 0 12px;
-  font-size: 13px;
-  color: #c4dfef;
-}
-.results > p:empty {
-  display: none;
+.results .dialog-head {
+  margin-bottom: 14px;
 }
 .recap-feats {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
   gap: 6px;
   margin-bottom: 10px;
 }
@@ -1797,6 +1912,7 @@ h2 {
   margin: 0;
 }
 .recap-stat {
+  text-align: center;
   background: #091d32a8;
   border: 1px solid #a6dfff24;
   border-radius: 8px;
@@ -1869,23 +1985,16 @@ h2 {
 .recap-note b {
   color: #ffda78;
 }
-.recap-actions {
+/* A dialog's buttons share its bottom row, the main action first. */
+.menu-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   margin-top: 22px;
 }
-.recap-actions button {
+.menu-actions button {
   flex: 1 1 160px;
-}
-.results .recap-actions button {
-  margin-top: 0;
-  font-family: inherit;
-  font-size: 17px;
-  font-weight: 800;
-  line-height: 1.2;
-  letter-spacing: 0.5px;
-  padding: 12px 20px;
+  margin: 0;
 }
 @media (max-width: 760px) {
   .recap-stats {
@@ -1893,21 +2002,71 @@ h2 {
   }
 }
 
-.touch-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.touch-setting select {
-  min-height: 44px;
-  padding: 8px;
+/* Settings: a modal over the battle, the same width and header as the pause menu. Each
+   row is a label and its control, sliders with their value beside them; single player
+   adds its battle speeds. */
+.settings {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 24px 28px;
+  border: 1px solid #f2eac42c;
+  border-radius: 14px;
+  background: #142e4df2;
+  box-shadow: 0 30px 100px #0008;
   color: #f5faff;
-  background: #18344f;
-  border: 1px solid #94b9d3;
-  border-radius: 6px;
+  font:
+    14px system-ui,
+    sans-serif;
+}
+.settings::backdrop {
+  background: #06101bb3;
+  backdrop-filter: blur(2px);
+}
+.setting-rows {
+  margin-top: 12px;
+}
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 44px;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  border-bottom: 1px solid #8bb9dc1f;
+  font-weight: 600;
+}
+.setting-row select {
+  grid-column: 2 / -1;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #92b4cf40;
+  border-radius: 7px;
+  background: #0c2239;
+  color: #f5faff;
   font: inherit;
 }
-.touch-help {
-  display: none;
+.setting-row input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: #ffcf38;
+}
+.setting-row output {
+  color: #ffcf38;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.setting-group-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 20px;
+  color: #a6dfff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+.setting-group-label small {
+  color: #9fbcd2;
+  font-weight: 400;
+  letter-spacing: 0;
 }

@@ -81,6 +81,9 @@ struct Seat {
     controls: Option<PlayerControls>,
     control_key: Option<String>,
     suspended: bool,
+    /// A suspended seat whose player still watches the battle behind the in-battle
+    /// menu: it keeps receiving snapshots and acknowledging them with its pings.
+    watching: bool,
 }
 
 struct Client {
@@ -453,6 +456,7 @@ impl MatchHost {
             }
             "suspend" => {
                 self.seats[seat].suspended = true;
+                self.seats[seat].watching = message.get("watch") == Some(&Value::Bool(true));
                 if let (Some(simulation), Some(controls)) =
                     (self.simulation.as_mut(), self.seats[seat].controls.as_mut())
                 {
@@ -462,6 +466,7 @@ impl MatchHost {
             }
             "resume" => {
                 self.seats[seat].suspended = false;
+                self.seats[seat].watching = false;
                 if let (Some(simulation), Some(controls)) =
                     (self.simulation.as_mut(), self.seats[seat].controls.as_mut())
                 {
@@ -620,6 +625,7 @@ impl MatchHost {
                     controls: None,
                     control_key: None,
                     suspended: false,
+                    watching: false,
                 });
                 let seat = self.seats.len() - 1;
                 if self.simulation.is_some() {
@@ -640,6 +646,7 @@ impl MatchHost {
                 entry.player.connected = true;
                 entry.disconnected_ms = None;
                 entry.suspended = false;
+                entry.watching = false;
                 entry.control_key = None;
                 if let (Some(simulation), Some(controls)) =
                     (self.simulation.as_mut(), entry.controls.as_mut())
@@ -937,9 +944,10 @@ impl MatchHost {
             .clients
             .iter()
             .filter(|(_, client)| {
+                // A hidden or preparing seat gets no stream to acknowledge; a watching one does.
                 let suspended = self
                     .seat_index(&client.player_id)
-                    .is_some_and(|seat| self.seats[seat].suspended);
+                    .is_some_and(|seat| self.seats[seat].suspended && !self.seats[seat].watching);
                 now_ms.saturating_sub(client.last_seen_ms) > CLIENT_TIMEOUT_MS
                     || (!suspended
                         && tick.saturating_sub(client.observed_tick) > MAX_UNACKNOWLEDGED_TICKS)
@@ -1095,8 +1103,9 @@ impl MatchHost {
             let Some(seat) = self.seat_index(&client.player_id) else {
                 continue;
             };
-            // Hidden/menu clients receive a fresh baseline on resume, not an accumulating stream.
-            if self.seats[seat].suspended {
+            // Hidden or preparing clients receive a fresh baseline on resume, not an
+            // accumulating stream; a client watching behind its menu keeps the stream.
+            if self.seats[seat].suspended && !self.seats[seat].watching {
                 continue;
             }
             let ack = self.seats[seat]

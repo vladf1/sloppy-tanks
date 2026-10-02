@@ -12,19 +12,16 @@ function mapLabel(map: MapOption): string {
   );
 }
 
-/** The standard maps as a row of radio buttons: full cards, or compact `tiles` for the
- * new room's narrow column. */
-function mapRowMarkup(name: string, labelledBy: string, tiles: boolean): string {
+/** The standard maps as a row of radio cards. */
+function mapRowMarkup(name: string, labelledBy: string): string {
   const standard = MAP_OPTIONS.filter((map) => !("extra" in map));
   const item = (map: MapOption, index: number) =>
-    `<label class="${tiles ? "room-map" : "choice-card"}"><input type="radio" name="${name}" value="${map.id}"${index === 0 ? " checked" : ""} />` +
+    `<label class="choice-card"><input type="radio" name="${name}" value="${map.id}"${index === 0 ? " checked" : ""} />` +
     mapIcon(map) +
-    (tiles
-      ? `<span>${map.name}</span>`
-      : `<span><b>${map.name}</b><small>${map.description}</small></span>`) +
+    `<span><b>${map.name}</b><small>${map.description}</small></span>` +
     `</label>`;
   return (
-    `<div class="map-row ${tiles ? "room-maps" : "choice-cards"}" role="radiogroup" aria-labelledby="${labelledBy}">` +
+    `<div class="map-row choice-cards" role="radiogroup" aria-labelledby="${labelledBy}">` +
     standard.map(item).join("") +
     `</div>`
   );
@@ -54,6 +51,6 @@ function mapPickerMarkup(name: string, labelledBy: string): string {
 /** One map choice, built into Battle Setup's markup at build time so the menu paints
  * complete; `src/game/map-picker.ts` keeps its row and dropdown in step. `name` is the
  * choice it edits and `labelledBy` its section label's id. */
-export function mapChoiceMarkup(name: string, labelledBy: string, tiles: boolean): string {
-  return mapRowMarkup(name, labelledBy, tiles) + mapPickerMarkup(name, labelledBy);
+export function mapChoiceMarkup(name: string, labelledBy: string): string {
+  return mapRowMarkup(name, labelledBy) + mapPickerMarkup(name, labelledBy);
 }

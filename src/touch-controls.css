@@ -162,9 +162,6 @@
 .touch-enabled #overlay {
   z-index: 3;
 }
-.touch-enabled .touch-help {
-  display: block;
-}
 @media (max-width: 850px) {
   .touch-enabled .brand {
     display: none;
