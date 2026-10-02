@@ -1160,8 +1160,10 @@ impl NetworkClient {
         } else if self.phase == RoomPhase::Playing && !self.menu {
             self.resume(now_ms);
         } else if self.phase == RoomPhase::Playing {
-            // Back behind an open menu: watch again; a gap in the stream asks for a baseline.
+            // Back behind an open menu: watch again from a fresh baseline, which also
+            // reactivates the display when no snapshot went missing meanwhile.
             self.watch(now_ms);
+            self.request_full(now_ms);
         }
     }
 

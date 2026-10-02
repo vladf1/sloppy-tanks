@@ -392,6 +392,17 @@ fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream()
     );
     assert!(net.peers[alice].client.menu_open());
     assert_eq!(net.tank_driver(alice), Driver::Bot);
+    // Hidden and shown again before a snapshot goes missing: the display still resumes.
+    let now = net.now;
+    net.peers[alice].client.set_hidden(true, now);
+    net.peers[alice].client.set_hidden(false, now);
+    net.run(1000.0);
+    let time = shown_time(&net);
+    net.run(1000.0);
+    assert!(
+        time - shown_time(&net) > 0.5,
+        "a quick hide and show still plays behind the menu"
+    );
 }
 
 #[test]
