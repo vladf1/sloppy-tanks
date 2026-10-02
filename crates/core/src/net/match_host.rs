@@ -79,7 +79,7 @@ struct Seat {
     connection: Option<ConnectionId>,
     disconnected_ms: Option<u64>,
     controls: Option<PlayerControls>,
-    control_key: Option<String>,
+    control_key: Option<Control>,
     suspended: bool,
     /// A suspended seat whose player still watches the battle behind the in-battle
     /// menu: it keeps receiving snapshots and acknowledging them with its pings.
@@ -760,7 +760,9 @@ impl MatchHost {
         };
         let tank = &simulation.tanks[tank_index];
         if let Some(player) = &tank.player_id {
-            self.owners.insert((tank.id, tank.life), player.clone());
+            self.owners
+                .entry((tank.id, tank.life))
+                .or_insert_with(|| player.clone());
         }
     }
 
@@ -849,8 +851,7 @@ impl MatchHost {
         let Some(simulation) = self.simulation.as_mut() else {
             return;
         };
-        let raw = std::mem::take(&mut simulation.events);
-        for event in raw {
+        for event in simulation.events.drain(..) {
             if event.kind == SimEventType::Death {
                 if let Some(victim) = self
                     .seats
@@ -889,8 +890,12 @@ impl MatchHost {
                 .push(TimedEvent::write(self.cursor, tick as f64, &event));
         }
         for seat in 0..self.seats.len() {
-            let player = self.seats[seat].player.clone();
-            self.set_participant(player);
+            let player = &self.seats[seat].player;
+            // Most ticks leave the scoreboard unchanged; keep its owned strings until
+            // a score or seat change actually needs a new participant record.
+            if !self.participants.iter().any(|entry| entry == player) {
+                self.set_participant(player.clone());
+            }
             let Some(tank_id) = self.seats[seat].controls.as_ref().map(|c| c.tank_id) else {
                 continue;
             };
@@ -1008,18 +1013,26 @@ impl MatchHost {
         if let Some(hook) = self.tick_hook.as_mut() {
             hook(simulation, tick);
         }
-        let moves = simulation
+        let mut moves = simulation
             .projectile_moves
             .as_mut()
             .map(std::mem::take)
             .unwrap_or_default();
-        for projectile in moves {
+        for projectile in moves.drain(..) {
             self.trace(
                 tick,
                 &projectile.shot,
                 projectile.seconds,
                 projectile.offset,
             );
+        }
+        // Keep the trace capture capacity for the next tick's projectile sweeps.
+        if let Some(stored) = self
+            .simulation
+            .as_mut()
+            .and_then(|simulation| simulation.projectile_moves.as_mut())
+        {
+            *stored = moves;
         }
         self.drain_events(tick);
         // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
@@ -1144,19 +1157,27 @@ impl MatchHost {
             return;
         };
         let tank = &simulation.tanks[index];
-        let text = Control {
+        if entry.control_key.as_ref().is_some_and(|previous| {
+            previous.room_epoch == self.room_epoch
+                && previous.round_id == self.round_id
+                && previous.tank_id == tank.id
+                && previous.life == tank.life
+                && previous.control_epoch == controls.control_epoch
+                && previous.driver == tank.driver
+        }) {
+            return;
+        }
+        let control = Control {
             room_epoch: self.room_epoch.clone(),
             round_id: self.round_id,
             tank_id: tank.id,
             life: tank.life,
             control_epoch: controls.control_epoch,
             driver: tank.driver,
-        }
-        .to_json();
-        if self.seats[seat].control_key.as_deref() != Some(text.as_str()) {
-            self.seats[seat].control_key = Some(text.clone());
-            self.send(connection, text);
-        }
+        };
+        let text = control.to_json();
+        self.seats[seat].control_key = Some(control);
+        self.send(connection, text);
     }
 
     fn send_full_limited(

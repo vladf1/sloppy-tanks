@@ -907,3 +907,79 @@ fn wire_messages_keep_the_typescript_key_order() {
     );
     let _ = MatchPhase::Playing;
 }
+
+#[test]
+fn scoreboard_updates_after_idle_ticks_disconnect_and_reconnect() {
+    let mut h = harness();
+    h.join(
+        "alice",
+        json!({ "team": 0, "create": { "mapMode": "village", "difficulty": "normal", "humansOnly": true } }),
+    );
+    h.join("bob", json!({ "team": 1 }));
+    let welcome = h.latest("alice", "welcome");
+    for _ in 0..10 {
+        h.advance();
+    }
+    let alice_index = h.tank_of("alice");
+    let alice = h.sim().tanks[alice_index].clone();
+    let bob = h.tank_of("bob");
+    h.sim().tanks[bob].protection = 0.0;
+    h.sim()
+        .damage_tank(bob, 10000.0, alice.id, alice.team, Some(alice.life), None);
+    h.advance();
+    h.disconnect("alice");
+    h.advance();
+    h.join(
+        "alice-return",
+        json!({ "token": welcome["token"], "roomEpoch": welcome["roomEpoch"] }),
+    );
+    h.advance();
+    h.action("bob", "end", json!({}));
+    let lobby = h.latest("bob", "lobby");
+    let scoreboard = lobby["scoreboard"].as_array().unwrap();
+    let alice = scoreboard
+        .iter()
+        .find(|player| player["name"] == "alice")
+        .unwrap();
+    let bob = scoreboard
+        .iter()
+        .find(|player| player["name"] == "bob")
+        .unwrap();
+    assert_eq!(alice["kills"], 1);
+    assert_eq!(alice["connected"], true);
+    assert_eq!(bob["deaths"], 1);
+}
+
+#[test]
+fn control_messages_follow_life_driver_and_round_changes_without_idle_repeats() {
+    let mut h = harness();
+    h.join(
+        "alice",
+        json!({ "create": { "humansOnly": true, "mapMode": "village", "difficulty": "normal" } }),
+    );
+    let controls = h.count("alice", "control");
+    for _ in 0..10 {
+        h.advance();
+    }
+    assert_eq!(h.count("alice", "control"), controls);
+    let life = h.latest("alice", "control")["life"].as_u64().unwrap();
+    let tank = h.tank_of("alice");
+    h.sim().tanks[tank].protection = 0.0;
+    let tank_id = h.sim().tanks[tank].id;
+    h.sim()
+        .damage_tank(tank, 10000.0, tank_id, Team::Red, None, None);
+    h.sim().respawn(tank, None);
+    h.advance();
+    assert_eq!(h.count("alice", "control"), controls + 1);
+    assert_eq!(h.latest("alice", "control")["life"], life + 1);
+    h.action("alice", "suspend", json!({}));
+    assert_eq!(h.latest("alice", "control")["driver"], "idle");
+    h.action("alice", "resume", json!({}));
+    assert_eq!(h.latest("alice", "control")["driver"], "human");
+    h.action("alice", "end", json!({}));
+    h.action("alice", "start", json!({}));
+    assert_eq!(h.latest("alice", "control")["roundId"], 2);
+    let controls = h.count("alice", "control");
+    h.advance();
+    assert_eq!(h.count("alice", "control"), controls);
+}

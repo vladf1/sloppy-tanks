@@ -26,7 +26,6 @@ import { afterPaint, nextPrepareStep } from "./game/task-yield";
 import { startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
-const HUD_UPDATE_EVERY_FRAMES = 4;
 /** Pipelines compiled per preparation call; the menu stays responsive between calls. */
 const PREPARE_BUDGET = 4;
 /** How often the loop asks the renderer whether the GPU reported an error. */
@@ -157,6 +156,7 @@ export async function prepareGame(
   let phase: Phase = "ready";
   let alive = true;
   let hud: HudState | undefined;
+  let hudDt = 0;
   const readHud = () => (hud = JSON.parse(game.hud_json()) as HudState);
   const stats = new NerdStats(
     root,
@@ -306,6 +306,7 @@ export async function prepareGame(
     root.hidden = false;
     root.classList.remove("menu-ready");
     controls.clear();
+    hudDt = 0;
     game.start();
     audio().start();
     canvas.focus();
@@ -447,8 +448,10 @@ export async function prepareGame(
         controls.aimWaitsForClick,
       );
       stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
-        updateHud(result[FRAME.dt] * HUD_UPDATE_EVERY_FRAMES);
+        updateHud(hudDt);
+        hudDt = 0;
       }
       recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
     }

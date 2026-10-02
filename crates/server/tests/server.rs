@@ -995,3 +995,83 @@ async fn tungstenite_sees_closing_codes_from_the_room() {
     assert_eq!(close, Some((1008, "invalid-message".into())));
     server.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn simultaneous_upgrades_share_one_address_reservation() {
+    let lines = Lines::default();
+    let mut options = options(&lines);
+    options.max_sockets_per_ip = 1;
+    options.max_rooms = 32;
+    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let ready = Arc::new(tokio::sync::Barrier::new(33));
+    let mut clients = Vec::new();
+    for index in 0..32 {
+        let ready = ready.clone();
+        clients.push(tokio::spawn(async move {
+            let mut stream = TcpStream::connect(address).await.unwrap();
+            let room = format!(
+                "AAAAAA{}{}",
+                (b'A' + index / 26) as char,
+                (b'A' + index % 26) as char
+            );
+            let request = format!(
+                "GET /room/{room} HTTP/1.1\r\nHost: {address}\r\nOrigin: {ORIGIN}\r\n\
+                 Upgrade: websocket\r\nConnection: Upgrade\r\n\
+                 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                 Sec-WebSocket-Version: 13\r\n\r\n"
+            );
+            ready.wait().await;
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            let mut buffer = [0; 1024];
+            while !response.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = tokio::time::timeout(WAIT, stream.read(&mut buffer))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(count > 0, "connection closed before its handshake response");
+                response.extend_from_slice(&buffer[..count]);
+            }
+            let status = parse_response(std::str::from_utf8(&response).unwrap()).status;
+            (status, stream)
+        }));
+    }
+    ready.wait().await;
+    let mut sockets = Vec::new();
+    let mut accepted = 0;
+    for client in clients {
+        let (status, stream) = client.await.unwrap();
+        assert!(matches!(status, 101 | 429), "unexpected status {status}");
+        accepted += usize::from(status == 101);
+        // Every accepted connection stays open until all handshakes have completed.
+        sockets.push(stream);
+    }
+    drop(sockets);
+    server.close().await;
+    assert_eq!(accepted, 1, "simultaneous connections exceeded the IP cap");
+}
+
+#[tokio::test]
+async fn refused_handshake_releases_its_address_reservation() {
+    let lines = Lines::default();
+    let mut options = options(&lines);
+    options.max_sockets_per_ip = 1;
+    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+        .await
+        .unwrap();
+    let base = server.local_addr().to_string();
+    let refused = open(
+        &base,
+        "RETRY222",
+        &[("Sec-WebSocket-Extensions", "permessage-deflate; =broken")],
+    )
+    .await;
+    assert_eq!(refused.status(), 400);
+    let accepted = open(&base, "RETRY222", &[]).await;
+    assert_eq!(accepted.status(), 101);
+    drop(accepted);
+    server.close().await;
+}

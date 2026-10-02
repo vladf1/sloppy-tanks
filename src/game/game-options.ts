@@ -57,6 +57,18 @@ export function initialGameOptions(
   };
 }
 
+/** Storage is optional: browser privacy settings must not prevent Battle Setup. */
+export function loadGameOptions(seed: number, search: string): GameOptions {
+  return initialGameOptions(
+    seed,
+    search,
+    savedPreference("difficulty"),
+    savedPreference("map"),
+    savedPreference("tank"),
+    savedPreference("game-mode"),
+  );
+}
+
 export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
   return (
     a.humanKind === b.humanKind &&

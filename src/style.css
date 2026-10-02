@@ -1488,6 +1488,10 @@ h2 {
 .start[data-play="multiplayer"] .multiplayer-note {
   display: inline;
 }
+.play-tab:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 .vehicle:focus-visible,
 .play-tab:focus-visible,
 #start:focus-visible {

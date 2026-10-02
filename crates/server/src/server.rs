@@ -600,16 +600,10 @@ fn upgrade(
             return refuse(429, "Too many room connections; try again shortly");
         }
     }
-    let open_from_ip = shared
-        .sockets_by_ip
-        .lock()
-        .expect("sockets by ip")
-        .get(&ip)
-        .copied()
-        .unwrap_or(0);
-    if open_from_ip >= shared.options.max_sockets_per_ip {
-        return refuse(429, "Too many open connections from this address");
-    }
+    let address = match reserve_address(shared, &ip) {
+        Ok(address) => address,
+        Err(refusal) => return refusal.response(),
+    };
     if let Err(refusal) = room_capacity(
         shared,
         &shared.registry.lock().expect("room registry"),
@@ -690,15 +684,11 @@ fn upgrade(
         Ok(reservation) => reservation,
         Err(refusal) => return refusal.response(),
     };
-    *shared
-        .sockets_by_ip
-        .lock()
-        .expect("sockets by ip")
-        .entry(ip.clone())
-        .or_default() += 1;
     let upgraded = hyper::upgrade::on(request);
     let shared = shared.clone();
     tokio::spawn(async move {
+        // Cancellation and every early return release this address's reserved slot.
+        let _address = address;
         match upgraded.await {
             Ok(upgraded) => {
                 let codec = Codec::new(Role::Server, deflate.as_ref(), MAX_FRAME_BYTES);
@@ -720,7 +710,6 @@ fn upgrade(
                 }
             }
         }
-        release_address(&shared, &ip);
     });
     response.body(empty_body()).expect("valid response")
 }
@@ -792,12 +781,34 @@ fn reserve(shared: &Shared, code: &str, handle: &SocketHandle) -> Result<Reserva
     }
 }
 
-fn release_address(shared: &Shared, ip: &str) {
+/// A connection slot is reserved in the same critical section that checks its limit.
+/// Dropping it also covers refused handshakes and cancelled upgrade tasks.
+struct AddressReservation {
+    shared: Arc<Shared>,
+    ip: String,
+}
+
+fn reserve_address(shared: &Arc<Shared>, ip: &str) -> Result<AddressReservation, Refusal> {
     let mut by_ip = shared.sockets_by_ip.lock().expect("sockets by ip");
-    if let Some(open) = by_ip.get_mut(ip) {
-        *open -= 1;
-        if *open == 0 {
-            by_ip.remove(ip);
+    let open = by_ip.get(ip).copied().unwrap_or(0);
+    if open >= shared.options.max_sockets_per_ip {
+        return Err(Refusal(429, "Too many open connections from this address"));
+    }
+    *by_ip.entry(ip.to_string()).or_default() += 1;
+    Ok(AddressReservation {
+        shared: shared.clone(),
+        ip: ip.to_string(),
+    })
+}
+
+impl Drop for AddressReservation {
+    fn drop(&mut self) {
+        let mut by_ip = self.shared.sockets_by_ip.lock().expect("sockets by ip");
+        if let Some(open) = by_ip.get_mut(&self.ip) {
+            *open -= 1;
+            if *open == 0 {
+                by_ip.remove(&self.ip);
+            }
         }
     }
 }

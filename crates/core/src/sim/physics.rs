@@ -88,6 +88,19 @@ impl ContactForces {
         )
     }
 
+    /// Return the drained storage after consuming it. Preserve any events that arrived
+    /// meanwhile, even though normal simulation steps collect and consume synchronously.
+    pub(crate) fn recycle(&self, mut drained: Vec<ContactForce>) {
+        drained.clear();
+        let mut events = self
+            .events
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if events.is_empty() {
+            *events = drained;
+        }
+    }
+
     pub fn clear(&self) {
         self.events
             .lock()
@@ -125,4 +138,30 @@ impl EventHandler for ContactForces {
     }
 
     fn handle_soft_body_tear_event(&self, _soft_bodies: &SoftBodySet, _event: &SoftBodyTearEvent) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recycling_contact_storage_keeps_newly_collected_events() {
+        let forces = ContactForces::default();
+        let bodies = RigidBodySet::new();
+        let colliders = ColliderSet::new();
+        let pair = ContactPair::default();
+        forces.handle_contact_force_event(1.0 / 60.0, &bodies, &colliders, &pair, 10.0);
+        let drained = forces.drain();
+        assert_eq!(drained.len(), 1);
+        forces.handle_contact_force_event(1.0 / 60.0, &bodies, &colliders, &pair, 20.0);
+        forces.recycle(drained);
+        let remaining = forces.drain();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].total_force_magnitude, 20.0);
+        forces.recycle(remaining);
+        assert!(
+            forces.drain().is_empty(),
+            "recycling does not repeat old contacts"
+        );
+    }
 }

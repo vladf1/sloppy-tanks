@@ -1,4 +1,4 @@
-import { initialGameOptions, type GameOptions } from "./game/game-options";
+import { loadGameOptions, type GameOptions } from "./game/game-options";
 import { savedPreference, preferredGameMode } from "./game/player-preferences";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
@@ -85,14 +85,7 @@ function preloadImages(options: GameOptions): void {
  * that room or could not join it, and why. */
 function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void {
   const seed = Math.floor(Math.random() * 1000000);
-  const options = initialGameOptions(
-    seed,
-    location.search,
-    savedPreference("difficulty"),
-    savedPreference("map"),
-    savedPreference("tank"),
-    savedPreference("game-mode"),
-  );
+  const options = loadGameOptions(seed, location.search);
   // A player back from a room keeps the map Battle Setup showed them, over a link's
   // `?map=`, so GO and a new room play the map the restored menu shows.
   const restoredMap = mapOption(view?.map ?? null)?.id;
@@ -132,7 +125,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
       });
     return;
   }
-  const menu = new StartMenu(root, options, load);
+  const menu = new StartMenu(root, options, load, () => playModes.close());
   const setup = menu.overlay.querySelector<HTMLElement>(".start")!;
   if (view) {
     restoreChoices(setup, view);
@@ -153,7 +146,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
       });
     });
   };
-  bindPlayModes(
+  const playModes = bindPlayModes(
     setup,
     initialPlayMode(location.search),
     {

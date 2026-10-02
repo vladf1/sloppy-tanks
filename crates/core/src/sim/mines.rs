@@ -37,8 +37,12 @@ pub fn place_mine(simulation: &mut Simulation, tank_index: usize) {
 pub fn step_mines(simulation: &mut Simulation, dt: f64) {
     // A detonation can recursively remove other mines. Iterate stable identities, not
     // mutable indices.
-    let ids: Vec<u32> = simulation.mines.iter().map(|mine| mine.id).collect();
-    for id in ids {
+    simulation.mine_update_ids.clear();
+    simulation
+        .mine_update_ids
+        .extend(simulation.mines.iter().map(|mine| mine.id));
+    for cursor in 0..simulation.mine_update_ids.len() {
+        let id = simulation.mine_update_ids[cursor];
         let Some(index) = simulation.mines.iter().position(|mine| mine.id == id) else {
             continue;
         };

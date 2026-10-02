@@ -254,7 +254,8 @@ pub fn hit_projectile_debris(
 /// for sleeping contacts; presentation may map material/force to dust or sound.
 pub fn drain_debris_contacts(simulation: &mut Simulation) {
     let mut count = 0;
-    for event in simulation.contact_forces.drain() {
+    let contacts = simulation.contact_forces.drain();
+    for event in &contacts {
         if count >= IMPACTS_PER_TICK {
             continue;
         }
@@ -287,4 +288,5 @@ pub fn drain_debris_contacts(simulation: &mut Simulation) {
             break;
         }
     }
+    simulation.contact_forces.recycle(contacts);
 }

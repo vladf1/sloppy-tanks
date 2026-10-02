@@ -28,6 +28,7 @@ use sloppy_core::sim::{
 };
 
 use super::camera_rig::{CameraRig, ViewerPose};
+use super::fragment_counts::FragmentCounts;
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::hud::{HealthColor, health_bar_state, protection_meters, spawn_pulse};
 use super::model_catalog::{
@@ -2098,7 +2099,7 @@ impl Presentation {
                 }
             }
         }
-        let mut pieces: HashMap<FragmentShape, usize> = HashMap::new();
+        let mut pieces = FragmentCounts::default();
         for fragment in &state.fragments {
             if !self.fragments.contains_key(&fragment.id) {
                 match self.fragment_view(fragment) {
@@ -2116,11 +2117,10 @@ impl Presentation {
             match view.look {
                 FragmentLook::Piece => {
                     let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
-                    let count = pieces.entry(shape).or_default();
-                    *count += 1;
+                    let count = pieces.add(shape);
                     // The piece pool is sized for the largest debris budget.
                     self.renderer
-                        .set_visible(view.instance, *count <= FRAGMENT_CAPACITY);
+                        .set_visible(view.instance, count <= FRAGMENT_CAPACITY);
                     let size = fragment.size as f32;
                     let scale = fragment
                         .dimensions

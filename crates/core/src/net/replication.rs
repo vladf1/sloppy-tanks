@@ -114,6 +114,9 @@ fn write_changes(previous: Option<&WireRecord>, next: &WireRecord, out: &mut Str
         out.push_str(next.text());
         return true;
     };
+    if previous.text() == next.text() {
+        return false;
+    }
     let mut any = false;
     let mut add = |out: &mut String, key: &str, value: &str| {
         out.push(if any { ',' } else { '{' });
@@ -122,19 +125,16 @@ fn write_changes(previous: Option<&WireRecord>, next: &WireRecord, out: &mut Str
         out.push(':');
         out.push_str(value);
     };
-    let before: Vec<(&str, &str)> = previous.fields().collect();
     let mut cursor = 0;
     for (key, value) in next.fields() {
         // Records of a kind share one field order, so the match is usually at the cursor.
-        let found = before[cursor..]
-            .iter()
-            .position(|(name, _)| *name == key)
-            .map(|offset| cursor + offset)
-            .or_else(|| before.iter().position(|(name, _)| *name == key));
+        let found = previous
+            .find_field(key, cursor)
+            .or_else(|| previous.find_field(key, 0));
         let same = match found {
-            Some(index) => {
+            Some((index, previous_value)) => {
                 cursor = index + 1;
-                before[index].1 == value
+                previous_value == value
             }
             None => false,
         };
@@ -142,7 +142,7 @@ fn write_changes(previous: Option<&WireRecord>, next: &WireRecord, out: &mut Str
             add(out, key, value);
         }
     }
-    for (key, _) in &before {
+    for (key, _) in previous.fields() {
         if next.get(key).is_none() {
             add(out, key, "null");
         }
@@ -161,6 +161,7 @@ pub struct StateStream {
     round_id: u64,
     previous: Option<Scene>,
     index: [HashMap<u32, usize>; 6],
+    current_ids: HashSet<u32>,
 }
 
 impl StateStream {
@@ -171,6 +172,7 @@ impl StateStream {
             round_id,
             previous: None,
             index: Default::default(),
+            current_ids: HashSet::new(),
         }
     }
 
@@ -267,9 +269,14 @@ impl StateStream {
                 updates.push('}');
             }
             if let Some(before) = before {
-                let current: HashSet<u32> = records.iter().map(|record| record.id).collect();
+                self.current_ids.clear();
+                self.current_ids
+                    .extend(records.iter().map(|record| record.id));
                 let mut first = true;
-                for record in before.iter().filter(|record| !current.contains(&record.id)) {
+                for record in before
+                    .iter()
+                    .filter(|record| !self.current_ids.contains(&record.id))
+                {
                     if first {
                         removed.push(if removed.is_empty() { '{' } else { ',' });
                         write_str(&mut removed, ENTITY_TYPES[kind]);

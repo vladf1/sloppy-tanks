@@ -8,6 +8,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod events;
 pub mod hud;
 pub mod lab_scene;
 
