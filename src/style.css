@@ -2253,3 +2253,11 @@ html.phone,
 .phone .hull-compass {
   bottom: max(16px, env(safe-area-inset-bottom));
 }
+/* The narrowest phones have no room to centre the score between the corners: it
+   moves to the left edge, clear of ◎ and pause. */
+@media (max-width: 360px) {
+  .phone #hud .scoreboard {
+    left: max(12px, env(safe-area-inset-left));
+    transform: none;
+  }
+}

@@ -198,6 +198,13 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => innerWidth === 390);
   await checkLayout(390, 844);
+  // The narrowest phones (320 CSS px) still fit the score beside ◎ and pause.
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.waitForFunction(() => innerWidth === 320);
+  await checkLayout(320, 568);
+  await page.screenshot({ path: `${output}/narrow.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => innerWidth === 390);
   await page.screenshot({ path: `${output}/portrait.png` });
 
   await page.setViewportSize({ width: 844, height: 390 });
