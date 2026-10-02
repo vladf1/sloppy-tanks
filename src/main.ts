@@ -50,7 +50,7 @@ function preloadImages(options: GameOptions): void {
     "textures/houses/brick.webp",
     "textures/houses/stone.webp",
   ];
-  const buildings = options.mapMode === "village" || options.mapMode === "stress-test";
+  const buildings = ["village", "stress-test", "superstress"].includes(options.mapMode);
   // Start scene image downloads alongside the engine request, before the engine's
   // scenery discovers them. Small late requests otherwise delay warm-up. The engine
   // fetches textures with fetch(), so these preloads are fetch-destination requests

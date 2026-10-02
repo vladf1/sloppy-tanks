@@ -273,9 +273,18 @@ pub fn damage_cover(
         // One authored support object; its destruction leaves two flank foundations and an
         // open middle.
         for side in [-1.0, 1.0] {
+            let rubble_x = x + side * TOWER_BASE.offset;
+            let seed = Some((simulation.rng.next() * 4_294_967_296.0).floor());
+            // A tower that rebuilt in place reuses the rubble its last collapse left, so
+            // repeated collapses never grow the cover list.
+            if let Some(index) = simulation.tower_rubble(rubble_x, z, false) {
+                simulation.covers[index].debris_seed = seed;
+                simulation.restore_cover(index);
+                continue;
+            }
             let mut rubble = CoverDef::new(
                 CoverKind::Rubble,
-                x + side * TOWER_BASE.offset,
+                rubble_x,
                 z,
                 TOWER_BASE.width,
                 TOWER_BASE.depth,
@@ -283,7 +292,7 @@ pub fn damage_cover(
                 f64::INFINITY,
                 color,
             );
-            rubble.debris_seed = Some((simulation.rng.next() * 4_294_967_296.0).floor());
+            rubble.debris_seed = seed;
             simulation.add_cover(&rubble);
         }
         let region = moved_cover_region(&simulation.covers[cover_index]);

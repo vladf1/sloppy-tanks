@@ -13,6 +13,7 @@ use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::superstress_level::{
     REBUILD_SECONDS, SUPERSTRESS_MAP, SUPERSTRESS_SCALE, superstress_level, superstress_rules,
 };
+use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, SimEventType, Simulation, SimulationSetup, VehicleCommand,
 };
@@ -87,8 +88,13 @@ fn the_yard_is_dense_half_turn_symmetric_and_has_only_cover_that_rebuilds_in_pla
             .count(),
         4
     );
-    // A collapsing tower adds separate rubble covers, which a rebuild could never reclaim.
-    assert!(destructible.iter().all(|c| c.kind != CoverKind::Tower));
+    for kind in [CoverKind::House, CoverKind::Tower] {
+        assert_eq!(
+            destructible.iter().filter(|c| c.kind == kind).count(),
+            2,
+            "two {kind:?}s, both breakable so they rebuild"
+        );
+    }
     let keys: HashSet<String> = layout.iter().map(|c| key(c.kind, c.x, c.z)).collect();
     assert_eq!(
         keys.len(),
@@ -267,12 +273,90 @@ fn a_seeded_superstress_brawl_keeps_rebuilding_its_cover_and_stays_inside_its_bo
     }
     assert!(sim.destroyed > 15, "only {} covers fell", sim.destroyed);
     assert!(restored.len() > 5, "only {} covers rebuilt", restored.len());
-    assert_eq!(sim.covers.len(), cover_count);
+    // Only a tower's first collapse adds covers: the two rubble footings it reuses.
+    let towers = sim
+        .covers
+        .iter()
+        .filter(|c| c.kind == CoverKind::Tower)
+        .count();
+    assert!(sim.covers.len() <= cover_count + 2 * towers);
     for tank in sim.tanks.iter().filter(|t| t.alive) {
         let p = sim.body_translation(tank.body);
         assert!(
             p.x.abs().max(p.z.abs()) < YARD,
             "tanks stay inside the fence"
+        );
+    }
+}
+
+#[test]
+fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
+    let mut sim = superstress(731.0);
+    let tower = sim
+        .covers
+        .iter()
+        .position(|c| c.kind == CoverKind::Tower)
+        .unwrap();
+    let (x, z) = (sim.covers[tower].x, sim.covers[tower].z);
+    let footings = |sim: &Simulation, alive: bool| -> Vec<usize> {
+        [-1.0, 1.0]
+            .iter()
+            .filter_map(|side| sim.tower_rubble(x + side * TOWER_BASE.offset, z, alive))
+            .collect()
+    };
+    for tank in 0..sim.tanks.len() {
+        set_tank_translation(&mut sim, tank, -30.0, 0.0);
+    }
+    let h = human(&sim);
+    let (id, team) = (sim.tanks[h].id, sim.tanks[h].team);
+    let mut covers = None;
+    for cycle in 0..2 {
+        sim.damage_cover(tower, 9999.0, id, team, None, None);
+        assert!(!sim.covers[tower].alive);
+        let rubble = footings(&sim, true);
+        assert_eq!(
+            rubble.len(),
+            2,
+            "cycle {cycle}: the collapse leaves both footings"
+        );
+        for &r in &rubble {
+            let at = Vec2::new(sim.covers[r].x, sim.covers[r].z);
+            assert_eq!(
+                sim.nav.blocked[sim.nav.index(at)],
+                1,
+                "rubble blocks routes"
+            );
+        }
+        // The second collapse reuses the first one's rubble records.
+        let count = *covers.get_or_insert(sim.covers.len());
+        assert_eq!(sim.covers.len(), count, "cycle {cycle}: no new covers");
+
+        superstress_rules(&mut sim);
+        sim.elapsed += REBUILD_SECONDS;
+        superstress_rules(&mut sim);
+        assert!(sim.covers[tower].alive, "cycle {cycle}: the tower rebuilt");
+        assert!(
+            footings(&sim, true).is_empty(),
+            "its rubble is cleared away"
+        );
+        for &r in &rubble {
+            let cover = &sim.covers[r];
+            assert!(!cover.alive);
+            assert!(
+                !sim.world.bodies.contains(cover.body),
+                "no rubble body is left"
+            );
+            assert!(!sim.cover_by_collider.values().any(|&c| c == r));
+        }
+        let at = Vec2::new(x, z);
+        assert_eq!(
+            sim.nav.blocked[sim.nav.index(at)],
+            1,
+            "the tower blocks routes again"
+        );
+        assert_eq!(
+            sim.cover_by_collider.get(&sim.covers[tower].collider),
+            Some(&tower)
         );
     }
 }
