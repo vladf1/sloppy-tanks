@@ -70,7 +70,7 @@ export async function prepareGame(
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
       ...(isPhone()
-        ? { firstPerson: false, zoom: PHONE_ZOOM, hideReticle: true }
+        ? { firstPerson: savedCameraPreferences().firstPerson, zoom: PHONE_ZOOM, hideReticle: true }
         : savedCameraPreferences()),
     });
   } catch (error) {
@@ -220,8 +220,10 @@ export async function prepareGame(
   let firstPerson = false;
   /** Pause, results and the round menu need the cursor; a death keeps it captured.
    * Applied as soon as the phase changes, so a click right after RESUME already
-   * takes the pointer back instead of waiting for the next frame. */
-  const holdPointer = () => controls.holdPointer(firstPerson, phase !== "playing");
+   * takes the pointer back instead of waiting for the next frame. Phones turn the
+   * view with a finger, which a pointer lock would freeze in place. */
+  const mouseLook = !isPhone();
+  const holdPointer = () => controls.holdPointer(firstPerson && mouseLook, phase !== "playing");
   const updateHud = (dt: number) => {
     ui.update(readHud(), dt);
     phase = hud!.match.phase;

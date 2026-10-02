@@ -58,7 +58,7 @@ try {
   );
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   await expectVisible(
-    [".touch-drive", "#pause", ".scoreboard", "#score0", "#time", "#score1"],
+    [".touch-drive", "#pause", "#view-mode", ".scoreboard", "#score0", "#time", "#score1"],
     [
       ".touch-aim",
       ".touch-fire",
@@ -98,7 +98,7 @@ try {
   };
   /** The controls and score are on screen and apart, and the controls take touches. */
   const checkLayout = async (width, height) => {
-    const selectors = [".touch-drive", "#pause", ".scoreboard"];
+    const selectors = [".touch-drive", "#view-mode", "#pause", ".scoreboard"];
     const rects = await Promise.all(selectors.map(box));
     rects.forEach((rect, i) => {
       assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
@@ -113,7 +113,7 @@ try {
       });
     });
     // The scoreboard only shows; the controls take touches.
-    for (const selector of [".touch-drive", "#pause"]) {
+    for (const selector of [".touch-drive", "#view-mode", "#pause"]) {
       const point = await center(selector);
       assert.equal(
         await page.evaluate(
@@ -163,6 +163,38 @@ try {
   await touch("touchEnd", 1);
   assert.deepEqual(await state(), { x: 0, fire: false });
 
+  // First person: ◎ seats the camera in the turret, a sideways drag on the arena
+  // turns the view while that finger fires, and the gun sight shows.
+  const firstPerson = () => page.evaluate(() => window.sloppy.view.firstPerson);
+  const toggleView = await center("#view-mode");
+  await touch("touchStart", 4, toggleView.x, toggleView.y);
+  await touch("touchEnd", 4);
+  await page.waitForFunction(() => window.sloppy.view.firstPerson.enabled);
+  const yaw = (await firstPerson()).yaw;
+  await touch("touchStart", 2, 420, 200);
+  for (let x = 440; x <= 620; x += 20) await touch("touchMove", 2, x, 200);
+  assert.equal((await state()).fire, true, "the turning finger fires");
+  const turned = (await firstPerson()).yaw;
+  assert.ok(Math.abs(turned - yaw) > 0.3, `a drag turns the view: ${yaw} → ${turned}`);
+  await page.waitForTimeout(1000);
+  assert.equal(
+    await page.evaluate(() => window.engine.view().reticle.visible),
+    true,
+    "the first-person gun sight shows",
+  );
+  await expectVisible(["#cockpit", ".hull-compass"], [".aim-hint"]);
+  await page.screenshot({ path: `${output}/first-person.png` });
+  await touch("touchEnd", 2);
+  await touch("touchStart", 4, toggleView.x, toggleView.y);
+  await touch("touchEnd", 4);
+  await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);
+  await page.waitForTimeout(1200);
+  assert.equal(
+    await page.evaluate(() => window.engine.view().reticle.visible),
+    false,
+    "overhead draws no reticle",
+  );
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => innerWidth === 390);
   await checkLayout(390, 844);
@@ -193,7 +225,7 @@ try {
   await page.screenshot({ path: `${output}/results.png` });
   assert.deepEqual(errors, []);
   console.log(
-    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, landscape and portrait hit-testing, mid-screen notices, short pause and results passed.",
+    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results passed.",
   );
 } finally {
   await browser.close();

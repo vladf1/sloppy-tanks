@@ -155,18 +155,24 @@ export class TouchControls {
   }
 
   /** Phones aim and fire by touching the arena: the turret turns toward the finger,
-   * which may stay down and slide, and fires until it lifts. */
+   * which may stay down and slide, and fires until it lifts. In first person the
+   * finger's sideways travel turns the view instead, like mouse look. */
   private bindArenaFire(canvas: HTMLCanvasElement): void {
     const touching = (event: PointerEvent) =>
       event.pointerType === "touch" && this.enabled && this.controls.active();
+    let lastX = 0;
     canvas.addEventListener("pointerdown", (event) => {
       // Only the finger that owns the shot aims; a second one cannot pull the turret.
       if (touching(event) && this.controls.touch.begin("arena", event.pointerId)) {
+        lastX = event.clientX;
         this.controls.aimAt(event.clientX, event.clientY);
       }
     });
     canvas.addEventListener("pointermove", (event) => {
       if (touching(event) && this.controls.touch.pointers.arena === event.pointerId) {
+        // The engine reads look travel only in first person and the point only overhead.
+        this.controls.look += event.clientX - lastX;
+        lastX = event.clientX;
         this.controls.aimAt(event.clientX, event.clientY);
       }
     });
