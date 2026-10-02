@@ -69,6 +69,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
+    "@eslint/compat": "2.1.1",
     "@eslint/js": "10.0.1",
     "@napi-rs/canvas": "^1.0.8",
     "@tweakpane/core": "2.0.5",
