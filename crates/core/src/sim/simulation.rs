@@ -774,6 +774,7 @@ impl Simulation {
             tank.rapid = 0f64.max(tank.rapid - STEP);
             tank.speed = 0f64.max(tank.speed - STEP);
             tank.laser = 0f64.max(tank.laser - STEP);
+            tank.laser_recharge = 0f64.max(tank.laser_recharge - STEP);
             tank.recoil =
                 0f64.max(tank.recoil - STEP * SIMULATION_RULES.recoil_recovery_per_second);
             let c = match commands {

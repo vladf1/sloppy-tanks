@@ -1,4 +1,4 @@
-//! The laser defense pickup: a chance to zap incoming enemy shells.
+//! The laser defense pickup: a chance to zap incoming enemy shells, one zap per recharge.
 
 use super::data::LASER_DEFENSE;
 use super::math::Vec2;
@@ -57,13 +57,26 @@ pub fn laser_contact_time(
     if discriminant < 0.0 {
         return None;
     }
-    let time = if c <= 0.0 {
+    let entry = if c <= 0.0 {
         0.0
     } else {
         (-approach - discriminant.sqrt()) / speed2
     };
-    if time < 0.0 || time > limit {
+    if entry < 0.0 {
         return None;
+    }
+    // A recharging laser takes its one chance when ready, if the shell is still inbound
+    // and in range, so two shells arriving together cannot both be zapped.
+    let time = entry.max(tank.laser_recharge - elapsed);
+    if time > limit {
+        return None;
+    }
+    if time > entry {
+        let still_inbound = approach + speed2 * time < 0.0;
+        let exit = (-approach + discriminant.sqrt()) / speed2;
+        if !still_inbound || time > exit {
+            return None;
+        }
     }
     simulation
         .visible(

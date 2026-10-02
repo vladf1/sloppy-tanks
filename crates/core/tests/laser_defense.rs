@@ -194,6 +194,8 @@ fn seeded_sampling_stays_near_fifty_percent_instead_of_becoming_guaranteed_over_
         }
         s.shots.clear();
         s.events.clear();
+        // Each shell is a separate encounter, after the laser has recharged.
+        s.tanks[0].laser_recharge = 0.0;
     }
     assert!(blocked > 450 && blocked < 550, "{blocked}/1000");
 }
@@ -436,4 +438,49 @@ fn bots_seek_an_available_laser_when_useful_and_leave_it_while_theirs_is_fresh()
     s.tanks[0].brain.decision = 0.0;
     bot_command(&mut s, 0, STEP);
     assert_eq!(s.tanks[0].brain.pickup_target, 0);
+}
+
+/// Sweep projectiles for `ticks` ticks, counting the recharge down as `Simulation::step` does.
+fn sweep(s: &mut Simulation, ticks: usize) {
+    for _ in 0..ticks {
+        s.tanks[0].laser_recharge = 0f64.max(s.tanks[0].laser_recharge - STEP);
+        step_projectiles(s, STEP, false);
+    }
+}
+
+#[test]
+fn a_zap_recharges_before_the_next_so_two_shells_together_cannot_both_be_stopped() {
+    let mut s = fixture();
+    s.rng = zapping_rng();
+    let before = s.rng.clone();
+    for x in [0.0, 0.6] {
+        incoming(&mut s, Weapon::Standard, |shot| {
+            shot.x = x;
+            shot.vz = 40.0;
+        });
+    }
+    sweep(&mut s, 30);
+    assert_eq!(draws_since(&before, &s.rng), 1);
+    assert_eq!(laser_events(&s), 1);
+    assert_eq!(s.tanks[0].hp, 60.0);
+}
+
+#[test]
+fn a_shell_arriving_during_the_recharge_gets_its_chance_once_the_laser_is_ready() {
+    let mut s = fixture();
+    s.rng = zapping_rng();
+    incoming(&mut s, Weapon::Standard, |_| {});
+    incoming(&mut s, Weapon::Standard, |shot| shot.z = -8.0);
+    sweep(&mut s, 30);
+    assert!(s.shots.is_empty());
+    assert_eq!(s.tanks[0].hp, 100.0);
+    let beams: Vec<_> = s
+        .events
+        .iter()
+        .filter(|e| e.kind == SimEventType::Laser)
+        .collect();
+    assert_eq!(beams.len(), 2);
+    // The trailing shell entered range 0.05 s in but was zapped at the 0.2 s recharge.
+    let expected = -8.0 + 20.0 * LASER_DEFENSE.recharge;
+    assert!((beams[1].z - expected).abs() < 1e-6, "{}", beams[1].z);
 }

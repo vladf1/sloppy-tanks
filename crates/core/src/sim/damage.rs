@@ -111,6 +111,7 @@ pub fn damage_tank(
     let tank = &mut simulation.tanks[tank_index];
     tank.alive = false;
     tank.laser = 0.0;
+    tank.laser_recharge = 0.0;
     clear_ammo(tank);
     tank.deaths += 1;
     tank.life += 1;
