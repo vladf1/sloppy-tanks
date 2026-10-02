@@ -38,6 +38,7 @@ use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::{respawn_tank, spawn_tank};
+use super::tower_layout::TOWER_BASE;
 use super::types::{
     Cover, CoverKind, CoverMotion, Driver, Fragment, FragmentShape, Match, MatchPhase, Mine,
     Pickup, PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand,
@@ -548,6 +549,15 @@ impl Simulation {
         if self.covers[index].alive {
             return;
         }
+        if self.covers[index].kind == CoverKind::Tower {
+            // The tower stands back on its footings in place of their rubble.
+            let (x, z) = (self.covers[index].x, self.covers[index].z);
+            for side in [-1.0, 1.0] {
+                if let Some(rubble) = self.tower_rubble(x + side * TOWER_BASE.offset, z, true) {
+                    self.retire_cover(rubble);
+                }
+            }
+        }
         // A felled tree keeps its body as the stump footprint.
         let old_body = self.covers[index].body;
         if self.world.bodies.contains(old_body) {
@@ -569,6 +579,28 @@ impl Simulation {
         self.covers[index].body = body;
         self.covers[index].collider = colliders[0];
         self.register_cover(index, &colliders);
+        let region = Footprint::from(&self.covers[index]);
+        self.nav.rebuild(&self.covers, Some(region));
+    }
+
+    /// The rubble cover a collapsed tower left on the footing at `x, z`, standing or
+    /// cleared away.
+    pub fn tower_rubble(&self, x: f64, z: f64, alive: bool) -> Option<usize> {
+        self.covers
+            .iter()
+            .position(|c| c.kind == CoverKind::Rubble && c.alive == alive && c.x == x && c.z == z)
+    }
+
+    /// Take a standing cover out of the world without destroying it: no debris, events
+    /// or score. A rebuilt watchtower clears the rubble its collapse left this way.
+    fn retire_cover(&mut self, index: usize) {
+        let body = self.covers[index].body;
+        let colliders = self.world.bodies[body].colliders().to_vec();
+        for collider in colliders {
+            self.cover_by_collider.remove(&collider);
+        }
+        self.remove_body(body);
+        self.covers[index].alive = false;
         let region = Footprint::from(&self.covers[index]);
         self.nav.rebuild(&self.covers, Some(region));
     }
