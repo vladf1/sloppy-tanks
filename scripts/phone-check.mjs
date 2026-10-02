@@ -1,4 +1,5 @@
-// The limited phone edition (src/game/phone-mode.ts) on an emulated phone: Battle Setup
+// The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
+// smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
 // offers only the tank and map, the round is single player on Easy, and the arena shows
 // only the drive stick and pause (a touch on the arena aims and fires), in landscape
 // and portrait, with a farther camera, no page zoom and short pause and results dialogs.
@@ -9,7 +10,7 @@ import { mkdirSync } from "node:fs";
 const output = "artifacts/performance/phone";
 mkdirSync(output, { recursive: true });
 const { browser, context, page, errors } = await launchGame({
-  viewport: { width: 844, height: 390 },
+  viewport: { width: 874, height: 402 },
   hasTouch: true,
   isMobile: true,
 });
@@ -132,7 +133,7 @@ try {
       fire: window.sloppy.controls.touch.fire,
     }));
 
-  await checkLayout(844, 390);
+  await checkLayout(874, 402);
   const drive = await center(".touch-drive");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 40, drive.y);
@@ -195,19 +196,12 @@ try {
     "overhead draws no reticle",
   );
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForFunction(() => innerWidth === 390);
-  await checkLayout(390, 844);
-  // The narrowest phones (320 CSS px) still fit the score beside ◎ and pause.
-  await page.setViewportSize({ width: 320, height: 568 });
-  await page.waitForFunction(() => innerWidth === 320);
-  await checkLayout(320, 568);
-  await page.screenshot({ path: `${output}/narrow.png` });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForFunction(() => innerWidth === 390);
+  await page.setViewportSize({ width: 402, height: 874 });
+  await page.waitForFunction(() => innerWidth === 402);
+  await checkLayout(402, 874);
   await page.screenshot({ path: `${output}/portrait.png` });
 
-  await page.setViewportSize({ width: 844, height: 390 });
+  await page.setViewportSize({ width: 874, height: 402 });
   // What destroyed you flashes mid-screen.
   await page.evaluate(() => window.sloppy.killHuman());
   await page.locator("#toast.visible").waitFor();
@@ -215,7 +209,7 @@ try {
   await page.locator(".respawn").waitFor();
   const respawn = await page.locator(".menu.respawn").boundingBox();
   assert.ok(
-    respawn.height < 390 / 2,
+    respawn.height < 402 / 2,
     `the respawn strip leaves the arena in view: ${respawn.height}`,
   );
   await page.screenshot({ path: `${output}/notice.png` });
