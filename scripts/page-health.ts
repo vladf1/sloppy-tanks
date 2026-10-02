@@ -9,6 +9,10 @@ import { protocolVersion } from "./content-version.mjs";
  * to `/health/` on GitHub Pages) as `text/html`, which JSON readers ignore. The
  * page can join a server only when `version` and `contentVersion` match its.
  */
+// HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
+// a string value carries a style element that keeps it. Browsers show it as `""`.
+const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
+
 export function pageHealth(): Plugin {
   return {
     name: "page-health",
@@ -29,6 +33,7 @@ export function pageHealth(): Plugin {
         commit: git("rev-parse", "--short", "HEAD"),
         dirty: Boolean(git("status", "--porcelain")),
         builtAt: new Date().toISOString(),
+        style: PRESERVE_FORMATTING,
       };
       this.emitFile({
         type: "asset",
