@@ -949,3 +949,37 @@ fn scoreboard_updates_after_idle_ticks_disconnect_and_reconnect() {
     assert_eq!(alice["connected"], true);
     assert_eq!(bob["deaths"], 1);
 }
+
+#[test]
+fn control_messages_follow_life_driver_and_round_changes_without_idle_repeats() {
+    let mut h = harness();
+    h.join(
+        "alice",
+        json!({ "create": { "humansOnly": true, "mapMode": "village", "difficulty": "normal" } }),
+    );
+    let controls = h.count("alice", "control");
+    for _ in 0..10 {
+        h.advance();
+    }
+    assert_eq!(h.count("alice", "control"), controls);
+    let life = h.latest("alice", "control")["life"].as_u64().unwrap();
+    let tank = h.tank_of("alice");
+    h.sim().tanks[tank].protection = 0.0;
+    let tank_id = h.sim().tanks[tank].id;
+    h.sim()
+        .damage_tank(tank, 10000.0, tank_id, Team::Red, None, None);
+    h.sim().respawn(tank, None);
+    h.advance();
+    assert_eq!(h.count("alice", "control"), controls + 1);
+    assert_eq!(h.latest("alice", "control")["life"], life + 1);
+    h.action("alice", "suspend", json!({}));
+    assert_eq!(h.latest("alice", "control")["driver"], "idle");
+    h.action("alice", "resume", json!({}));
+    assert_eq!(h.latest("alice", "control")["driver"], "human");
+    h.action("alice", "end", json!({}));
+    h.action("alice", "start", json!({}));
+    assert_eq!(h.latest("alice", "control")["roundId"], 2);
+    let controls = h.count("alice", "control");
+    h.advance();
+    assert_eq!(h.count("alice", "control"), controls);
+}

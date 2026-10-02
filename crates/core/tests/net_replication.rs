@@ -649,3 +649,22 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
         "Seeded matches exercise optional wire fields; missing {missing:?}"
     );
 }
+
+#[test]
+fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
+    let mut sim = room(MapId::Village, &one_player());
+    sim.covers[0].debris_seed = None;
+    let cover_id = sim.covers[0].id.to_string();
+    let mut stream = StateStream::new("room", 1);
+    stream.full(&Scene::capture(&sim), 0, 0);
+    for (index, seed) in [Some(12.0), None, Some(34.0)].into_iter().enumerate() {
+        sim.covers[0].debris_seed = seed;
+        let mut scene = Scene::capture(&sim);
+        let frame = parse(&stream.snapshot(&mut scene, index as u64 + 1, &[], &[]));
+        assert_same(
+            &frame["updates"],
+            &json!({"covers": {&cover_id: {"debrisSeed": seed}}}),
+            "only the optional field changes",
+        );
+    }
+}

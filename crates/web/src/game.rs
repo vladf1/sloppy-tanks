@@ -65,6 +65,8 @@
 //!   `debug_stress_burst`).
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
+use crate::events::{PendingEvent, drain_events};
+
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -84,8 +86,8 @@ use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEvent,
-    SimEventType, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
+    CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEventType,
+    Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::gpu::{Renderer, RendererOptions};
 use sloppy_render::presentation::Presentation;
@@ -301,13 +303,6 @@ impl RecordStorage for BrowserStorage {
         let storage = self.0.as_ref().ok_or(StorageUnavailable)?;
         storage.set_item(key, value).map_err(|_| StorageUnavailable)
     }
-}
-
-struct PendingEvent {
-    event: SimEvent,
-    player_hit: bool,
-    own: bool,
-    damage_angle: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -656,29 +651,7 @@ impl Game {
     /// Pending events for audio and HUD, as JSON.
     pub fn drain_events(&mut self) -> String {
         let (x, z) = self.human_position();
-        let (right_x, right_z) = self.view.rig.listener_right;
-        let events: Vec<Value> = self
-            .events
-            .drain(..)
-            .map(|pending| {
-                let mut value = serde_json::to_value(&pending.event).unwrap_or(Value::Null);
-                if let Value::Object(fields) = &mut value {
-                    fields.insert("playerHit".into(), pending.player_hit.into());
-                    fields.insert("own".into(), pending.own.into());
-                    fields.insert(
-                        "damageAngle".into(),
-                        pending.damage_angle.map_or(Value::Null, Value::from),
-                    );
-                }
-                value
-            })
-            .collect();
-        json!({
-            "listener": { "x": x, "z": z },
-            "listenerRight": { "x": right_x, "z": right_z },
-            "events": events,
-        })
-        .to_string()
+        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
     }
 
     /// Everything the page HUD and menus show, as JSON.
@@ -1268,30 +1241,28 @@ impl Game {
         }
         let human = self.sim.human();
         let (human_id, human_team) = (human.id, human.team);
-        let events = std::mem::take(&mut self.sim.events);
-        for event in &events {
+        let mut events = std::mem::take(&mut self.sim.events);
+        for event in events.drain(..) {
             let player_hit = matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
                 && event.owner == Some(human_id)
                 && event.team != Some(human_team);
-            self.view.event(event, player_hit);
+            self.view.event(&event, player_hit);
             let own = event.id == Some(human_id);
             let damage_angle = (own
                 && matches!(event.kind, SimEventType::Hurt | SimEventType::Death))
-            .then(|| self.view.damage_angle(event))
+            .then(|| self.view.damage_angle(&event))
             .flatten();
             if self.events.len() >= MAX_PENDING_EVENTS {
                 self.events.remove(0);
             }
             self.events.push(PendingEvent {
-                event: event.clone(),
+                event,
                 player_hit,
                 own,
                 damage_angle,
             });
         }
         // Keep the simulation's allocation for the next tick.
-        let mut events = events;
-        events.clear();
         if self.sim.events.is_empty() {
             self.sim.events = events;
         }

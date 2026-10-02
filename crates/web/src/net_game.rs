@@ -47,6 +47,8 @@
 //!   `leave`, `select_ammo`, `set_menu`, `set_hidden`, `stop` (`pagehide`),
 //!   `toggle_first_person`, `resize`.
 
+use crate::events::{PendingEvent, drain_events};
+
 use glam::{DVec3, Vec2};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -60,7 +62,7 @@ use sloppy_core::net::protocol::{
 use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::map_options::map_option_for;
 use sloppy_core::sim::simulation::SpeedTuning;
-use sloppy_core::sim::{GameMode, MatchPhase, RenderState, SimEvent, SimEventType, Weapon};
+use sloppy_core::sim::{GameMode, MatchPhase, RenderState, SimEventType, Weapon};
 use sloppy_render::gpu::{Renderer, RendererOptions};
 use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
@@ -182,13 +184,6 @@ struct PendingArena {
     round_id: u64,
     room_epoch: String,
     state: RenderState,
-}
-
-struct PendingEvent {
-    event: SimEvent,
-    player_hit: bool,
-    own: bool,
-    damage_angle: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -622,29 +617,7 @@ impl NetGame {
                         (viewer.previous.x, viewer.previous.z)
                     }
                 });
-        let (right_x, right_z) = self.view.rig.listener_right;
-        let events: Vec<Value> = self
-            .events
-            .drain(..)
-            .map(|pending| {
-                let mut value = serde_json::to_value(&pending.event).unwrap_or(Value::Null);
-                if let Value::Object(fields) = &mut value {
-                    fields.insert("playerHit".into(), pending.player_hit.into());
-                    fields.insert("own".into(), pending.own.into());
-                    fields.insert(
-                        "damageAngle".into(),
-                        pending.damage_angle.map_or(Value::Null, Value::from),
-                    );
-                }
-                value
-            })
-            .collect();
-        json!({
-            "listener": { "x": x, "z": z },
-            "listenerRight": { "x": right_x, "z": right_z },
-            "events": events,
-        })
-        .to_string()
+        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
     }
 
     /// The HUD for the displayed scene, in `Game.hud_json()`'s shape, or `null` before

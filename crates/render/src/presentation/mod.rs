@@ -14,6 +14,8 @@
 
 pub mod camera_rig;
 pub mod first_person;
+#[cfg(any(target_arch = "wasm32", test))]
+mod fragment_counts;
 pub mod generated;
 pub mod hud;
 pub mod input;

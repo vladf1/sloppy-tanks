@@ -207,6 +207,16 @@ impl WireRecord {
             .map(|span| (span.key, &self.text[span.start as usize..span.end as usize]))
     }
 
+    /// Search the existing field spans without materializing another field index.
+    pub(super) fn find_field(&self, key: &str, start: usize) -> Option<(usize, &str)> {
+        let index = start
+            + self.fields[start..]
+                .iter()
+                .position(|span| span.key == key)?;
+        let span = &self.fields[index];
+        Some((index, &self.text[span.start as usize..span.end as usize]))
+    }
+
     pub fn get(&self, key: &str) -> Option<&str> {
         self.fields
             .iter()

@@ -210,7 +210,11 @@ pub struct Simulation {
     pub cover_by_collider: HashMap<ColliderHandle, usize>,
     pub shots: Vec<Shot>,
     pub mines: Vec<Mine>,
+    /// Stable mine order while detonations can recursively remove entries.
+    pub(crate) mine_update_ids: Vec<u32>,
     pub pickups: Vec<Pickup>,
+    /// Every crate sees the same post-physics tank positions, with storage reused per tick.
+    pickup_tank_positions: Vec<Option<Vec2>>,
     pub fragments: Vec<Fragment>,
     /// Drained by consumers; capped at `SIMULATION_RULES.max_pending_events` each tick.
     pub events: Vec<SimEvent>,
@@ -271,7 +275,9 @@ impl Simulation {
             cover_by_collider: HashMap::new(),
             shots: Vec::new(),
             mines: Vec::new(),
+            mine_update_ids: Vec::new(),
             pickups: Vec::new(),
+            pickup_tank_positions: Vec::new(),
             fragments: Vec::new(),
             events: Vec::new(),
             nav: Navigation::new(),
@@ -400,7 +406,9 @@ impl Simulation {
         self.cover_by_collider.clear();
         self.shots.clear();
         self.mines.clear();
+        self.mine_update_ids.clear();
         self.pickups.clear();
+        self.pickup_tank_positions.clear();
         self.fragments.clear();
         self.events.clear();
         self.elapsed = 0.0;
@@ -815,14 +823,12 @@ impl Simulation {
             repair_veteran(self, i, STEP);
         }
         // Collecting changes stats, never positions, so each hull is read once for every crate.
-        let tank_positions: Vec<Option<Vec2>> = self
-            .tanks
-            .iter()
-            .map(|tank| {
+        self.pickup_tank_positions.clear();
+        self.pickup_tank_positions
+            .extend(self.tanks.iter().map(|tank| {
                 tank.alive
                     .then(|| from_vector(self.world.bodies[tank.body].translation()).planar())
-            })
-            .collect();
+            }));
         for p in 0..self.pickups.len() {
             let pickup = &mut self.pickups[p];
             if !pickup.available {
@@ -833,9 +839,9 @@ impl Simulation {
                 continue;
             }
             let at = Vec2::new(pickup.x, pickup.z);
-            for (i, position) in tank_positions.iter().enumerate() {
-                if let Some(position) = position
-                    && distance(*position, at) < SIMULATION_RULES.pickup_radius
+            for i in 0..self.pickup_tank_positions.len() {
+                if let Some(position) = self.pickup_tank_positions[i]
+                    && distance(position, at) < SIMULATION_RULES.pickup_radius
                 {
                     let mut supply = self.pickups[p].clone();
                     let taken = collect_pickup(self, i, &mut supply);
