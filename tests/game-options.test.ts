@@ -17,8 +17,8 @@ test("extra levels are chosen from links or memory only on a page offering them"
     initialGameOptions(1, search, null, lastMap).mapMode;
   assert.equal(map("?map=superstress", "quarry"), "quarry");
   assert.equal(map("", "stress-test"), "village");
-  assert.equal(map("?extralevels&map=superstress", "quarry"), "superstress");
-  assert.equal(map("?extralevels", "stress-test"), "stress-test");
+  assert.equal(map("?debug&map=superstress", "quarry"), "superstress");
+  assert.equal(map("?debug", "stress-test"), "stress-test");
 });
 
 test("Battle Setup uses link/default choices when browser storage is blocked", () => {
@@ -53,8 +53,8 @@ test("returning players keep their tank, standard battle format, map and difficu
 test("extra levels force team battle while a stored Solo Assault returns on standard maps", () => {
   const options = (search: string) =>
     initialGameOptions(1, search, "easy", "superstress", "scout", "solo");
-  assert.equal(options("?extralevels").gameMode, "team");
-  assert.equal(options("?extralevels&map=harbor").gameMode, "solo");
+  assert.equal(options("?debug").gameMode, "team");
+  assert.equal(options("?debug&map=harbor").gameMode, "solo");
   assert.equal(options("").gameMode, "solo");
 });
 

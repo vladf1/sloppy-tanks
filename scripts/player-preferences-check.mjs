@@ -138,7 +138,7 @@ try {
   observations.final = await saved();
   assert.equal(await page.evaluate(() => window.sloppy.error()), null);
   const extraLevels = new URL(base);
-  extraLevels.searchParams.set("extralevels", "");
+  extraLevels.searchParams.set("debug", "");
   await page.goto(extraLevels.href);
   await chooseMap(page, "stress-test");
   assert.equal(await page.locator('input[name="gameMode"][value="team"]').isChecked(), true);

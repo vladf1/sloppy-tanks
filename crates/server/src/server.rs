@@ -550,7 +550,7 @@ async fn route(
                 .query()
                 .unwrap_or("")
                 .split('&')
-                .any(|pair| pair.split('=').next() == Some("extralevels"));
+                .any(|pair| pair.split('=').next() == Some("debug"));
             let rooms = shared
                 .catalog
                 .lock()

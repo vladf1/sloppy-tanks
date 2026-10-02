@@ -42,13 +42,13 @@ pub struct MapOption {
     pub id: MapId,
     pub name: &'static str,
     pub description: &'static str,
-    /// Offered only with `?extralevels`; brings its own arena, roster and rules.
+    /// Offered only with `?debug`; brings its own arena, roster and rules.
     pub extra: bool,
     /// Tanks per team for an extra level's roster.
     pub team_tanks: Option<usize>,
 }
 
-// Extra levels are offered only with `?extralevels`. Each brings its own arena, bot
+// Extra levels are offered only with `?debug`. Each brings its own arena, bot
 // roster and rules from `extra_levels`, which the browser loads once one is chosen.
 pub const MAP_OPTIONS: [MapOption; 5] = [
     MapOption {

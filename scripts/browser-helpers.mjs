@@ -119,7 +119,7 @@ export async function startRound(page, { touch = false } = {}) {
 
 /**
  * Choose a map in Battle Setup with pointer clicks, as a player does: a button in the row
- * of standard maps, or the dropdown that replaces it with `?extralevels`. Single player
+ * of standard maps, or the dropdown that replaces it with `?debug`. Single player
  * and a new room share the "mapMode" choice.
  * @param {import("playwright").Page} page
  * @param {string} map

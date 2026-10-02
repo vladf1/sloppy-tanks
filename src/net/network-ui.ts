@@ -477,7 +477,7 @@ export class NetworkUI {
       this.set("final-red", String(match.scores[1]));
     }
   }
-  /** The host's map list adds the extra levels on a page opened with `?extralevels`, or
+  /** The host's map list adds the extra levels on a page opened with `?debug`, or
    * while the room plays one, so the current map always shows. */
   private offerExtraLevels(playingOne: boolean): void {
     const select = this.input("room-map");

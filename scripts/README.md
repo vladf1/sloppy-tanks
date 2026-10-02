@@ -69,7 +69,7 @@ node scripts/touch-loading-check.mjs
 
 The dev server also serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
-`tools/tank-surface-check.html`, plus a link to the game with `?extralevels`, whose
+`tools/tank-surface-check.html`, plus a link to the game with `?debug`, whose
 Battle Setup offers the Stress Grid and Scrap Yard. Each fixture runs the engine's
 `Game` on its own canvas (`tests/engine-fixture.ts`) and arranges it through the
 debug hooks: `reinforcements` (120 Solo Assault kills, bounded views, reset and team

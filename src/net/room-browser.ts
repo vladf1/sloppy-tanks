@@ -75,7 +75,7 @@ export class RoomBrowser {
     this.endpoint = new URL("/rooms", address);
     this.endpoint.protocol = address.protocol === "wss:" ? "https:" : "http:";
     // The plain list, which the traffic bots read too, leaves extra-level rooms out.
-    this.endpoint.searchParams.set("extralevels", "");
+    this.endpoint.searchParams.set("debug", "");
     this.name.value ||= preferredPlayerName();
     // A setup copied from an earlier menu may still show that menu's rooms.
     this.render();

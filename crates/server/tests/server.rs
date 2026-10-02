@@ -461,7 +461,7 @@ async fn extra_level_rooms_are_listed_only_when_asked_for() {
             .collect()
     };
     assert!(codes(rooms(&base, "").await).is_empty());
-    assert_eq!(codes(rooms(&base, "?extralevels").await), ["YARDROOM"]);
+    assert_eq!(codes(rooms(&base, "?debug").await), ["YARDROOM"]);
     player.send(r#"{"type":"leave","roundId":1}"#).await;
     player.closed().await;
     eventually("the room to end", || server.room_codes().is_empty()).await;

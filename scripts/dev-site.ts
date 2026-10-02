@@ -24,7 +24,7 @@ export const devPages = [
 /** Links into the game itself, listed beside the pages above; they need no build input. */
 const devLinks = [
   {
-    href: "/?extralevels",
+    href: "/?debug",
     title: "Extra levels",
     detail: "Battle Setup with the Stress Grid and Scrap Yard stress levels",
   },

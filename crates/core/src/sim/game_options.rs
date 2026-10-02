@@ -20,7 +20,7 @@ pub struct GameOptions {
 
 /// A link's `?map=` wins; otherwise the player's last map is the one prepared behind the
 /// menu, so a returning player's GO needs no rebuild. Extra levels are offered only with
-/// `?extralevels`.
+/// `?debug`.
 pub fn initial_game_options(
     seed: f64,
     requested_map: Option<&str>,

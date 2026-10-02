@@ -242,9 +242,9 @@ try {
   await bob.page.keyboard.press("ArrowRight");
   await bob.page.locator("#multiplayer-panel:not([hidden])").waitFor();
   await until(() => bob.listRequests > pausedPolls, "The multiplayer tab polls again");
-  // Extra levels: offered and listed only with ?extralevels, yet a room link works anywhere.
+  // Extra levels: offered and listed only with ?debug, yet a room link works anywhere.
   const extraLevels = new URL(base);
-  extraLevels.searchParams.set("extralevels", "");
+  extraLevels.searchParams.set("debug", "");
   extraLevels.searchParams.set("multiplayer", "");
   await alice.page.goto(extraLevels.href);
   await waitForRoomBrowser(alice.page);
