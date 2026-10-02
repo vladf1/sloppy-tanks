@@ -146,6 +146,8 @@ test("touch joins the packed input and one-shot actions are sent once", () => {
   f.controls.touch.begin("aim", 2);
   f.controls.touch.move("drive", 1, 0.56, 0);
   f.controls.touch.move("aim", 2, 1, 0);
+  // The aim stick only aims; a held FIRE button fires.
+  f.controls.touch.begin("fire", 3);
   f.controls.mine = true;
   f.controls.ammoSelection = "rocket";
   const first = frame(f.controls);
