@@ -58,9 +58,7 @@ impl RenderTimeline {
 
     pub fn push(&mut self, state: RenderState) {
         self.samples.push_back(state);
-        if self.samples.len() > MAX_SAMPLES {
-            self.samples.pop_front();
-        }
+        self.samples.retain_back(MAX_SAMPLES);
     }
 
     pub fn is_empty(&self) -> bool {
