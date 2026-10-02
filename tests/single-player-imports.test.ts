@@ -26,6 +26,7 @@ const SHELL = new Set([
     "map-options",
     "map-picker",
     "nerd-stats",
+    "phone-mode",
     "play-modes",
     "player-preferences",
     "round-recap",

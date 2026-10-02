@@ -2,7 +2,8 @@ import "../touch-controls.css";
 import { bindPress } from "./button-input";
 import type { Controls } from "./controls";
 import type { TouchState } from "./touch-mode";
-import { FIRE_START, type StickKind } from "./touch-input";
+import type { StickKind } from "./touch-input";
+import { isPhone } from "./phone-mode";
 
 const STICK_RADIUS = 58;
 const ANCHOR_SHIFT = 22;
@@ -11,6 +12,7 @@ const ANCHOR_SHIFT = 22;
 export class TouchControls {
   private readonly layer: HTMLElement;
   private readonly mine: HTMLButtonElement;
+  private readonly fire: HTMLButtonElement;
   private readonly sticks: Record<StickKind, HTMLElement>;
   private readonly origins = { drive: { x: 0, y: 0 }, aim: { x: 0, y: 0 } };
   private enabled = false;
@@ -28,12 +30,14 @@ export class TouchControls {
       "beforeend",
       `<div class="touch-controls" hidden>
       <div class="touch-stick touch-drive" role="group" aria-label="Drive joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>DRIVE</span></div>
-      <div class="touch-stick touch-aim" role="group" aria-label="Aim and fire joystick"><div class="stick-base"><i class="fire-ring"></i><i class="stick-knob"></i></div><span>AIM · PUSH TO FIRE</span></div>
+      <div class="touch-stick touch-aim" role="group" aria-label="Aim joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>AIM</span></div>
+      <button class="touch-fire" type="button" aria-label="Fire">FIRE</button>
       <button class="touch-mine" type="button" aria-label="Drop mine"><span>✹</span><small>MINE</small></button>
       </div>`,
     );
     this.layer = root.querySelector(".touch-controls")!;
     this.mine = this.layer.querySelector(".touch-mine")!;
+    this.fire = this.layer.querySelector(".touch-fire")!;
     this.sticks = {
       drive: this.layer.querySelector(".touch-drive")!,
       aim: this.layer.querySelector(".touch-aim")!,
@@ -41,7 +45,19 @@ export class TouchControls {
     for (const kind of ["drive", "aim"] as const) {
       this.bindStick(kind);
     }
-    this.controls.touch.changed = () => this.syncReleasedSticks();
+    this.bindFire();
+    const canvas = root.querySelector<HTMLCanvasElement>("#game");
+    if (isPhone() && canvas) {
+      this.bindArenaFire(canvas);
+      // A held finger otherwise brings up iOS's magnifier (or a long-press menu) over
+      // the arena; pointer events, which the game reads, still arrive.
+      for (const element of [canvas, this.layer]) {
+        element.addEventListener("touchstart", (event) => event.preventDefault(), {
+          passive: false,
+        });
+      }
+    }
+    this.controls.touch.changed = () => this.syncReleasedControls();
     bindPress(this.mine, () => {
       if (this.controls.active() && !this.mine.disabled) {
         this.controls.mine = true;
@@ -94,9 +110,7 @@ export class TouchControls {
       this.controls.touch.move(kind, event.pointerId, x, y);
       const scale = STICK_RADIUS / Math.max(1, Math.hypot(x, y));
       knob.style.transform = `translate(${x * scale}px, ${y * scale}px)`;
-      element.classList.toggle("firing", kind === "aim" && this.controls.touch.fire);
     };
-    element.style.setProperty("--fire-diameter", `${STICK_RADIUS * FIRE_START * 2}px`);
     element.addEventListener("pointerdown", (event) => {
       if (!this.enabled || !this.controls.active() || event.button !== 0) {
         return;
@@ -121,7 +135,50 @@ export class TouchControls {
     }
   }
 
-  private syncReleasedSticks(): void {
+  /** Fire while held: aim with the stick, then thumb across to fire along that aim. */
+  private bindFire(): void {
+    const button = this.fire;
+    button.addEventListener("pointerdown", (event) => {
+      if (!this.enabled || !this.controls.active() || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      if (!this.controls.touch.begin("fire", event.pointerId)) {
+        return;
+      }
+      button.setPointerCapture(event.pointerId);
+      button.classList.add("held");
+    });
+    for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+      button.addEventListener(name, (event) => this.controls.touch.end("fire", event.pointerId));
+    }
+  }
+
+  /** Phones aim and fire by touching the arena: the turret turns toward the finger,
+   * which may stay down and slide, and fires until it lifts. */
+  private bindArenaFire(canvas: HTMLCanvasElement): void {
+    const touching = (event: PointerEvent) =>
+      event.pointerType === "touch" && this.enabled && this.controls.active();
+    canvas.addEventListener("pointerdown", (event) => {
+      if (touching(event)) {
+        this.controls.aimAt(event.clientX, event.clientY);
+        this.controls.touch.begin("arena", event.pointerId);
+      }
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (touching(event) && this.controls.touch.pointers.arena === event.pointerId) {
+        this.controls.aimAt(event.clientX, event.clientY);
+      }
+    });
+    for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+      canvas.addEventListener(name, (event) => this.controls.touch.end("arena", event.pointerId));
+    }
+  }
+
+  private syncReleasedControls(): void {
+    if (this.controls.touch.pointers.fire === null) {
+      this.fire.classList.remove("held");
+    }
     for (const kind of ["drive", "aim"] as const) {
       if (this.controls.touch.pointers[kind] !== null) {
         continue;
@@ -130,7 +187,7 @@ export class TouchControls {
       if (!element.classList.contains("held")) {
         continue;
       }
-      element.classList.remove("held", "firing");
+      element.classList.remove("held");
       element.querySelector<HTMLElement>(".stick-base")!.style.transform = "";
       element.querySelector<HTMLElement>(".stick-knob")!.style.transform = "";
     }

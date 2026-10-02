@@ -6,6 +6,7 @@ import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
 import { isExtraLevel, mapOption, showsExtraLevels } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
+import { isPhone } from "./game/phone-mode";
 import type { RoomSelection } from "./net/pending-join";
 import type { PlayerVehicleKind } from "./game/engine-api";
 import "./style.css";
@@ -106,6 +107,12 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   }
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;
+  }
+  if (isPhone()) {
+    // Battle Setup on a phone offers only the tank and map; the saved desktop
+    // choices stay untouched for the player's other devices.
+    options.gameMode = "team";
+    options.difficulty = "easy";
   }
   const autoStart = new URLSearchParams(location.search).has("autoplay");
   const load = async (onStage: (stage: string) => void = () => {}) => {

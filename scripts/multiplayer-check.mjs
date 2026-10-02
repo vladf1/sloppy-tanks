@@ -361,11 +361,14 @@ try {
   };
   const drive = await center(".touch-drive"),
     aim = await center(".touch-aim"),
+    fire = await center(".touch-fire"),
     mine = await center(".touch-mine");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x - 55, drive.y);
   await touch("touchStart", 2, aim.x, aim.y);
   await touch("touchMove", 2, aim.x, aim.y - 55);
+  await touch("touchEnd", 2);
+  await touch("touchStart", 2, fire.x, fire.y);
   await touch("touchStart", 3, mine.x, mine.y);
   await touch("touchEnd", 3);
   await bob.waitForFunction(() => window.sloppyMultiplayer.display.viewer.mineCooldown > 0);

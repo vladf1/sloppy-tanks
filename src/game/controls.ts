@@ -124,14 +124,11 @@ export class Controls {
       if (e.pointerType === "touch") {
         return;
       }
-      this.touch.aiming = false;
       // A freed cursor can reach the HUD buttons without spinning the view.
       if (!this.aimWaitsForClick) {
         this.look += e.movementX ?? 0;
       }
-      const r = canvas.getBoundingClientRect();
-      this.nx = ((e.clientX - r.left) / r.width) * 2 - 1;
-      this.ny = 1 - ((e.clientY - r.top) / r.height) * 2;
+      this.aimAt(e.clientX, e.clientY);
     });
     canvas.addEventListener("pointerdown", (e) => {
       if (e.pointerType === "touch" || !this.active()) {
@@ -235,6 +232,13 @@ export class Controls {
       // Unsupported or refused locks still turn with ordinary mouse motion.
       Promise.resolve(this.canvas.requestPointerLock?.()).catch(() => {});
     }
+  }
+  /** Aim at a point on the canvas, as the mouse does (phones aim by touching it). */
+  aimAt(clientX: number, clientY: number): void {
+    this.touch.aiming = false;
+    const r = this.canvas.getBoundingClientRect();
+    this.nx = ((clientX - r.left) / r.width) * 2 - 1;
+    this.ny = 1 - ((clientY - r.top) / r.height) * 2;
   }
   takeLook(): number {
     const look = this.look;
