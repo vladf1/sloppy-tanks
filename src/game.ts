@@ -18,6 +18,7 @@ import {
   type Phase,
 } from "./game/engine-api";
 import { sameGameOptions, type GameOptions } from "./game/game-options";
+import { savedCameraPreferences, saveCameraPreferences } from "./game/player-preferences";
 import { isExtraLevel, showsExtraLevels } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import type { PreparedGame } from "./game/start-menu";
@@ -65,6 +66,7 @@ export async function prepareGame(
       cssWidth: innerWidth,
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
+      ...savedCameraPreferences(),
     });
   } catch (error) {
     root.remove();
@@ -344,6 +346,7 @@ export async function prepareGame(
   });
   const toggleView = () => {
     firstPerson = game.toggle_first_person();
+    saveCameraPreferences(game);
     holdPointer();
     controls.capturePointer();
   };
@@ -406,6 +409,9 @@ export async function prepareGame(
       let result: Float32Array;
       try {
         result = game.frame(now, input);
+        if (input[INPUT.zoom] !== 0 || input[INPUT.toggleView] !== 0) {
+          saveCameraPreferences(game);
+        }
         if (counters.frames % ERROR_CHECK_EVERY_FRAMES === 0) {
           const error = game.error();
           if (error) {

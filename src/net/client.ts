@@ -3,6 +3,11 @@ import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { savedVolume } from "../game/settings-dialog";
+import {
+  savedCameraPreferences,
+  saveCameraPreferences,
+  savePreference,
+} from "../game/player-preferences";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
@@ -131,6 +136,8 @@ export async function startMultiplayer(
   const ui = new NetworkUI(root, room, {
     choose(choice) {
       game.choose(choice.team ?? -1, choice.kind, performance.now());
+      selectedChoice.kind = choice.kind;
+      savePreference("tank", choice.kind);
       pump();
     },
     settings(mapMode, difficulty, humansOnly, roundMinutes) {
@@ -218,6 +225,7 @@ export async function startMultiplayer(
         cssWidth: width,
         cssHeight: height,
         pixelRatio: devicePixelRatio,
+        ...savedCameraPreferences(),
       }),
     );
   } catch (error) {
@@ -261,6 +269,7 @@ export async function startMultiplayer(
       return;
     }
     controls.holdPointer(game.toggle_first_person());
+    saveCameraPreferences(game);
     controls.capturePointer();
   };
   controls.toggleView = toggleView;
@@ -497,6 +506,9 @@ export async function startMultiplayer(
     let result: Float32Array;
     try {
       result = game.frame(now, input);
+      if (input[INPUT.zoom] !== 0 || input[INPUT.toggleView] !== 0) {
+        saveCameraPreferences(game);
+      }
       // Most GPU errors arrive asynchronously, so the engine records them for polling.
       if (frames++ % ERROR_CHECK_EVERY_FRAMES === 0) {
         const error = game.error();

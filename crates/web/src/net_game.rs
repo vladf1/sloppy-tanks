@@ -22,7 +22,8 @@
 //! ```
 //!
 //! - `create(canvas, config)`: `{ server, room, savedSeat?: {token, roomEpoch}, latency?,
-//!   jitter?, stall?, seed?, assetBase, cssWidth?, cssHeight?, pixelRatio? }`. `server` is
+//!   jitter?, stall?, seed?, assetBase, cssWidth?, cssHeight?, pixelRatio?,
+//!   firstPerson?, zoom? }`. `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
 //!   transport-delay URL parameters (omit them in production).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
@@ -46,6 +47,8 @@
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
 //!   `leave`, `select_ammo`, `set_menu`, `set_hidden`, `stop` (`pagehide`),
 //!   `toggle_first_person`, `resize`.
+//! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
+//!   and clamped overhead zoom, for the page to save after a camera input.
 
 use glam::{DVec3, Vec2};
 use serde::Deserialize;
@@ -150,6 +153,8 @@ struct NetConfig {
     css_width: Option<f64>,
     css_height: Option<f64>,
     pixel_ratio: Option<f64>,
+    first_person: bool,
+    zoom: Option<f64>,
 }
 
 impl NetConfig {
@@ -249,7 +254,9 @@ impl NetGame {
         )
         .await
         .map_err(js_error)?;
-        let view = Presentation::new(renderer, seed.to_bits());
+        let mut view = Presentation::new(renderer, seed.to_bits());
+        view.rig
+            .restore_preferences(config.first_person, config.zoom);
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),
@@ -435,6 +442,10 @@ impl NetGame {
             self.view.rig.first_person.toggle(viewer.aim);
         }
         self.view.rig.first_person.enabled
+    }
+
+    pub fn camera_preferences(&self) -> Vec<f64> {
+        self.view.rig.preferences().to_vec()
     }
 
     pub fn resize(&mut self, css_width: f64, css_height: f64, pixel_ratio: f64, exact: bool) {

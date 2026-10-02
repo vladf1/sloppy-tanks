@@ -1,4 +1,5 @@
 import { initialGameOptions, type GameOptions } from "./game/game-options";
+import { savedPreference, preferredGameMode } from "./game/player-preferences";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
@@ -87,14 +88,19 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   const options = initialGameOptions(
     seed,
     location.search,
-    localStorage.getItem("sloppy-difficulty"),
-    localStorage.getItem("sloppy-map"),
+    savedPreference("difficulty"),
+    savedPreference("map"),
+    savedPreference("tank"),
+    savedPreference("game-mode"),
   );
   // A player back from a room keeps the map Battle Setup showed them, over a link's
   // `?map=`, so GO and a new room play the map the restored menu shows.
   const restoredMap = mapOption(view?.map ?? null)?.id;
   if (restoredMap && (showsExtraLevels(location.search) || !isExtraLevel(restoredMap))) {
     options.mapMode = restoredMap;
+    options.gameMode = isExtraLevel(restoredMap)
+      ? "team"
+      : preferredGameMode(savedPreference("game-mode"));
   }
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;
