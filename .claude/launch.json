@@ -12,6 +12,15 @@
       "autoPort": true
     },
     {
+      "name": "tunnel",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH exec pnpm run tunnel"
+      ],
+      "port": 4179
+    },
+    {
       "name": "game-server",
       "runtimeExecutable": "./target/server/sloppy-server",
       "runtimeArgs": [],

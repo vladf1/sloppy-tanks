@@ -32,6 +32,8 @@ so run `pnpm run wasm` again after changing a crate.
 
 Rendering requires WebGPU, HTTPS or localhost, and a browser/GPU that supports it. There is no WebGL fallback. **Stats for nerds** shows rendering diagnostics.
 
+To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
+
 ## Play
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
