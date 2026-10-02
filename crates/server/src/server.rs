@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::config::BuildInfo;
 use crate::dashboard::{Dashboard, PAGE, PAGE_HEADERS};
 use crate::host::HostFactory;
 use crate::monitor::{
@@ -69,6 +70,8 @@ pub struct ServerOptions {
     pub max_sockets_per_ip: usize,
     /// Room lifecycle and summary lines; the binary prints them (the systemd journal).
     pub log: Log,
+    /// The commit and build time `/health` reports beside the build stamps.
+    pub build: BuildInfo,
 }
 
 impl ServerOptions {
@@ -79,6 +82,7 @@ impl ServerOptions {
             max_rooms: DEFAULT_MAX_ROOMS,
             max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
             log: Arc::new(|line| println!("{line}")),
+            build: BuildInfo::default(),
         }
     }
 }
@@ -410,10 +414,17 @@ fn room_path(path: &str) -> Option<&str> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Health {
+struct Health<'a> {
     version: u32,
     content_version: &'static str,
     server_build: &'static str,
+    // The same fields as the page's `/health`, when the image recorded them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dirty: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    built_at: Option<&'a str>,
 }
 
 async fn route(
@@ -437,10 +448,14 @@ async fn route(
         // `/health/` too, matching the static page's `/health/` that GitHub Pages redirects to.
         "/health" | "/health/" => {
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
+            let build = &shared.options.build;
             let health = Health {
                 version: PROTOCOL_VERSION,
                 content_version: CONTENT_VERSION,
                 server_build: SERVER_BUILD,
+                commit: build.commit.as_deref(),
+                dirty: build.commit.as_ref().map(|_| build.dirty),
+                built_at: build.built_at.as_deref(),
             };
             let body = serde_json::to_string_pretty(&health).expect("health serializes") + "\n";
             reply(200, Reply::Json(body), &[])

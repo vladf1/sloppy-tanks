@@ -218,10 +218,11 @@ client only plays on a server built from the same shared sources: the `crates/co
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
-build at `/health`: the server's protocol, content version and server build, and the
-page's protocol, content version, commit, local-change state and build time
-(<https://sloppy-tanks.fridman.me/health>, a static `health/index.html` that GitHub
-Pages serves after a redirect to `/health/`). After merging changes to any of them, run
+build at `/health`: protocol, content version, commit, local-change state and build
+time, and the server also its server build. The page's is a static `health/index.html`
+that GitHub Pages serves after a redirect to `/health/`
+(<https://sloppy-tanks.fridman.me/health>). The server's commit and time are those of
+its image, which predate main when later commits left the server unchanged. After merging changes to any of them, run
 `pnpm run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
