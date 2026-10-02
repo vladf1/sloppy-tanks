@@ -43,7 +43,9 @@ try {
   process.exit(2);
 }
 const describe = (side) =>
-  `protocol ${side.version}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}`;
+  `protocol ${side.version}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}` +
+  (side.commit ? `, commit ${side.commit}${side.dirty ? " (local changes)" : ""}` : "") +
+  (side.builtAt ? `, built ${side.builtAt}` : "");
 console.log(`checkout ${describe(local)}`);
 console.log(`live     ${describe(live)}`);
 if (pageUrl) {

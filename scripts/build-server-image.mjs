@@ -65,6 +65,8 @@ if (published) {
     `SLOPPY_SERVER_BUILD=${build}`,
     "--build-arg",
     `GIT_COMMIT=${commit}`,
+    "--build-arg",
+    `BUILT_AT=${new Date().toISOString()}`,
     ...[image, ...extraTags].flatMap((tag) => ["--tag", tag]),
     ...(push ? ["--push"] : []),
     ".",

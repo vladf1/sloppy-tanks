@@ -4,6 +4,38 @@
 const LOCAL_ORIGIN_PORTS: [u16; 5] = [5173, 5174, 5175, 4179, 4180];
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8787;
+/// Commits show abbreviated, like the page's `/health`.
+const SHORT_COMMIT_LENGTH: usize = 7;
+
+/// What the server image was built from, for `/health`. The image sets it as
+/// environment (`Dockerfile`) rather than the binary embedding it, so a new commit
+/// that leaves the server unchanged does not recompile it. A local run has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BuildInfo {
+    pub commit: Option<String>,
+    /// The tree had uncommitted changes (`SLOPPY_COMMIT` ends in `-dirty`).
+    pub dirty: bool,
+    pub built_at: Option<String>,
+}
+
+impl BuildInfo {
+    /// Reads `SLOPPY_COMMIT` (a full hash, `-dirty` when the tree had local changes)
+    /// and `SLOPPY_BUILT_AT`; the image sets them empty when it was built without them.
+    pub fn from_env(lookup: &impl Fn(&str) -> Option<String>) -> Self {
+        let present = |name| lookup(name).filter(|text: &String| !text.is_empty());
+        let stamp = present("SLOPPY_COMMIT");
+        let (hash, dirty) = match stamp.as_deref().map(|text| text.strip_suffix("-dirty")) {
+            Some(Some(hash)) => (Some(hash), true),
+            Some(None) => (stamp.as_deref(), false),
+            None => (None, false),
+        };
+        Self {
+            commit: hash.map(|hash| hash.chars().take(SHORT_COMMIT_LENGTH).collect()),
+            dirty,
+            built_at: present("SLOPPY_BUILT_AT"),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -15,6 +47,7 @@ pub struct Settings {
     pub max_rooms: Option<usize>,
     /// Take the client IP from the last `X-Forwarded-For` hop (the local reverse proxy).
     pub trust_proxy: bool,
+    pub build: BuildInfo,
 }
 
 pub fn local_origins() -> Vec<String> {
@@ -30,8 +63,8 @@ pub fn local_origins() -> Vec<String> {
 }
 
 impl Settings {
-    /// Reads `HOST`, `PORT`, `ALLOWED_ORIGINS`, `MAX_ROOMS` and `TRUST_PROXY`. A typo must
-    /// stop startup, not silently turn a limit off.
+    /// Reads `HOST`, `PORT`, `ALLOWED_ORIGINS`, `MAX_ROOMS`, `TRUST_PROXY` and the
+    /// [`BuildInfo`] stamps. A typo must stop startup, not silently turn a limit off.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let host = lookup("HOST").unwrap_or_else(|| DEFAULT_HOST.to_string());
         let port = match lookup("PORT") {
@@ -68,6 +101,7 @@ impl Settings {
             },
             max_rooms,
             trust_proxy,
+            build: BuildInfo::from_env(&lookup),
         })
     }
 }
@@ -127,5 +161,28 @@ mod tests {
         assert!(settings(&[("MAX_ROOMS", "0")]).is_err());
         assert!(settings(&[("MAX_ROOMS", "ten")]).is_err());
         assert!(settings(&[("PORT", "http")]).is_err());
+    }
+
+    #[test]
+    fn reads_the_image_build_stamps() {
+        assert_eq!(settings(&[]).unwrap().build, BuildInfo::default());
+        let clean = settings(&[
+            ("SLOPPY_COMMIT", "27e68e8f7c62b742b2efb24987016bf08778e9d9"),
+            ("SLOPPY_BUILT_AT", "2026-10-02T14:02:23.799Z"),
+        ])
+        .unwrap()
+        .build;
+        assert_eq!(clean.commit.as_deref(), Some("27e68e8"));
+        assert!(!clean.dirty);
+        assert_eq!(clean.built_at.as_deref(), Some("2026-10-02T14:02:23.799Z"));
+        let dirty = settings(&[
+            ("SLOPPY_COMMIT", "27e68e8f7c62-dirty"),
+            ("SLOPPY_BUILT_AT", ""),
+        ])
+        .unwrap()
+        .build;
+        assert_eq!(dirty.commit.as_deref(), Some("27e68e8"));
+        assert!(dirty.dirty);
+        assert_eq!(dirty.built_at, None);
     }
 }

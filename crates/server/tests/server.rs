@@ -8,6 +8,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use sloppy_server::config::BuildInfo;
 use sloppy_server::dashboard::MAX_DASHBOARD_VIEWERS;
 use sloppy_server::host::{ConnectionId, HostOptions, HostOutput, RoomHost};
 use sloppy_server::lobby_host::LobbyHost;
@@ -313,6 +314,26 @@ async fn reports_health_with_the_content_version_at_the_root_too() {
         root.body, dashboard.body,
         "the bare address shows the dashboard"
     );
+    server.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reports_the_image_build_stamps_like_the_page() {
+    let lines = Lines::default();
+    let mut options = options(&lines);
+    options.build = BuildInfo {
+        commit: Some("27e68e8".into()),
+        dirty: false,
+        built_at: Some("2026-10-02T14:02:23.799Z".into()),
+    };
+    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+        .await
+        .unwrap();
+    let health = get(&server.local_addr().to_string(), "/health", &[]).await;
+    let body: Value = serde_json::from_str(&health.body).unwrap();
+    assert_eq!(body["commit"], "27e68e8");
+    assert_eq!(body["dirty"], false);
+    assert_eq!(body["builtAt"], "2026-10-02T14:02:23.799Z");
     server.close().await;
 }
 
