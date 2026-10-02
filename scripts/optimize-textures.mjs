@@ -11,6 +11,10 @@ const textures = [
   // Leaf colour bled under the cut-out is kept (`-exact`) so mipmaps stay green.
   ["trees/leaf-sprigs.webp", "trees/leaf-sprigs.webp", 90, 512, ["-exact"]],
   ["wood/timber.webp", "wood/timber.webp", 82],
+  ["houses/clapboard.webp", "houses/clapboard.webp", 82, 512],
+  ["houses/brick.webp", "houses/brick.webp", 80, 512],
+  ["houses/stone.webp", "houses/stone.webp", 80, 512],
+  ["houses/shingles.webp", "houses/shingles.webp", 80, 512],
 ];
 for (const [source, target, quality, size, flags = []] of textures) {
   execFileSync(

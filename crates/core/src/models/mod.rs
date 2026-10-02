@@ -49,7 +49,6 @@ mod wreck_model;
 // Cover, trees and props.
 mod barrel_debris;
 mod barrel_surfaces;
-mod cottage_details;
 mod cover_model;
 pub mod effects_props;
 mod flags;
@@ -57,13 +56,16 @@ mod harbor_models;
 mod pickup_visuals;
 mod quarry_barriers;
 mod timber_model;
+mod tower_model;
 mod tree_debris;
 mod tree_models;
 
 // Surfaces shared by cover and scenery.
+mod building_kit;
 mod concrete_surfaces;
 mod ground_surfaces;
 mod harbor_surfaces;
+mod house_model;
 mod house_surfaces;
 mod quarry_surfaces;
 mod water_surface;

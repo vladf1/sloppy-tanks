@@ -11,15 +11,14 @@ use glam::DVec3;
 
 use super::barrel_surfaces::explosive_barrel;
 use super::concrete_surfaces::concrete_wall;
-use super::cottage_details::cottage_details;
 use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
-use super::house_surfaces::{shingle_roof, siding_box, siding_gable};
-use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, put, rotated};
+use super::house_model::house;
+use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
 use super::timber_model::add_timber_parts;
+use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
-use crate::geometry::math::{js_round, scale_hex_color};
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
@@ -27,7 +26,6 @@ use crate::sim::render_state::RenderCover;
 use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberPart, TimberWall, timber_damage_stage, timber_parts,
 };
-use crate::sim::tower_layout::TOWER_BASE;
 use crate::sim::types::CoverKind;
 
 /// The cover fields the models read (`Pick<Cover, "kind" | "x" | ... >`).
@@ -96,31 +94,6 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     }
 }
 
-const TOWER_POST: u32 = 0x887454;
-const TOWER_BRACE: u32 = 0x96734c;
-const TOWER_DECK: u32 = 0x887d59;
-const TOWER_ROOF: u32 = 0x197451;
-
-fn tower_foundation(group: &mut Node, x: f64) {
-    put(
-        group,
-        concrete_wall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
-        x,
-        TOWER_BASE.height / 2.0,
-        0.0,
-    );
-}
-
-/// Turn the long axis of the boards upright for continuous vertical wood grain.
-fn tower_post(height: f64) -> Node {
-    rotated(
-        siding_box(height, 0.35, 0.35, TOWER_POST),
-        0.0,
-        0.0,
-        PI / 2.0,
-    )
-}
-
 /// `coverModel(c, detail, damageStage)`.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> CoverModel {
     let mut model = CoverModel {
@@ -167,7 +140,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
             model.damage_stage = damage_stage;
             cargo_stack(group, crate_shape(c), damage_stage);
         }
-        CoverKind::House => house(group, c),
+        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, c.color),
         CoverKind::Timber => {
             model.damage_stage = damage_stage;
             model.timber_hit_count = c.timber_hits.len();
@@ -200,8 +173,8 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
                 0.0,
             );
         }
-        CoverKind::Tower => tower(group, c),
-        CoverKind::Rubble => rubble(group, c),
+        CoverKind::Tower => tower(group, c.color),
+        CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
         CoverKind::Tree => unreachable!("trees return early"),
         CoverKind::Concrete | CoverKind::Boundary => {
             let block = if c.kind == CoverKind::Boundary {
@@ -286,336 +259,4 @@ fn rock(group: &mut Node, c: &CoverShape) {
         })
         .collect();
     put(group, sandstone_rubble(&chips), 0.0, 0.0, 0.0);
-}
-
-/// A clapboard cottage with framed windows, shutters, door, gable roof, chimney and
-/// window boxes.
-fn house(group: &mut Node, c: &CoverShape) {
-    let (w, d, h) = (c.w, c.d, c.h);
-    let wall = h * 0.68;
-    let mut add = |node: Node, x: f64, y: f64, z: f64| put(group, node, x, y, z);
-    add(
-        box_part(w + 0.2, 0.22, d + 0.2, 0xa1977c, 0.0),
-        0.0,
-        0.11,
-        0.0,
-    );
-    add(siding_box(w, wall, d, c.color), 0.0, wall / 2.0, 0.0);
-    // Pale corner boards and a stone sill frame the clapboard walls.
-    for x in [-1.0, 1.0] {
-        for z in [-1.0, 1.0] {
-            add(
-                box_part(0.14, wall, 0.14, 0xd4be95, 0.0),
-                (x * w) / 2.0,
-                wall / 2.0,
-                (z * d) / 2.0,
-            );
-        }
-    }
-    for side in [-1.0, 1.0] {
-        add(
-            box_part(w + 0.16, 0.16, 0.12, 0x856447, 0.0),
-            0.0,
-            0.28,
-            (side * d) / 2.0,
-        );
-        add(
-            box_part(0.12, 0.16, d + 0.16, 0x856447, 0.0),
-            (side * w) / 2.0,
-            0.28,
-            0.0,
-        );
-    }
-    for side in [-1.0, 1.0] {
-        for x in [-w * 0.29, w * 0.29] {
-            let face = side * (d / 2.0 + 0.025);
-            add(
-                box_part(1.24, 1.16, 0.1, 0xe5cea1, 0.0),
-                x,
-                wall * 0.59,
-                face,
-            );
-            add(
-                box_part(1.36, 0.1, 0.25, 0xc8b087, 0.0),
-                x,
-                wall * 0.59 - 0.6,
-                side * (d / 2.0 + 0.09),
-            );
-            for shutter in [-1.0, 1.0] {
-                add(
-                    box_part(0.22, 1.05, 0.1, 0x4d6650, 0.0),
-                    x + shutter * 0.75,
-                    wall * 0.59,
-                    side * (d / 2.0 + 0.06),
-                );
-                for y in [-0.3, 0.0, 0.3] {
-                    add(
-                        box_part(0.24, 0.035, 0.11, 0x334a3c, 0.0),
-                        x + shutter * 0.75,
-                        wall * 0.59 + y,
-                        side * (d / 2.0 + 0.08),
-                    );
-                }
-            }
-            add(
-                box_part(1.05, 0.97, 0.07, 0xffd94e, 0.0),
-                x,
-                wall * 0.59,
-                side * (d / 2.0 + 0.045),
-            );
-            add(
-                box_part(0.075, 0.97, 0.085, 0x875534, 0.0),
-                x,
-                wall * 0.59,
-                side * (d / 2.0 + 0.09),
-            );
-            add(
-                box_part(1.05, 0.075, 0.085, 0x875534, 0.0),
-                x,
-                wall * 0.59,
-                side * (d / 2.0 + 0.09),
-            );
-        }
-        add(
-            box_part(0.07, 1.05, 1.1, 0xffd94e, 0.0),
-            side * (w / 2.0 + 0.05),
-            wall * 0.58,
-            0.0,
-        );
-    }
-    for side in [-1.0, 1.0] {
-        add(
-            box_part(0.08, 1.22, 1.28, 0xe5cea1, 0.0),
-            side * (w / 2.0 + 0.01),
-            wall * 0.58,
-            0.0,
-        );
-        add(
-            box_part(0.1, 1.05, 0.07, 0x875534, 0.0),
-            side * (w / 2.0 + 0.09),
-            wall * 0.58,
-            0.0,
-        );
-        add(
-            box_part(0.1, 0.07, 1.1, 0x875534, 0.0),
-            side * (w / 2.0 + 0.09),
-            wall * 0.58,
-            0.0,
-        );
-        add(
-            box_part(0.25, 0.1, 1.36, 0xc8b087, 0.0),
-            side * (w / 2.0 + 0.07),
-            wall * 0.58 - 0.65,
-            0.0,
-        );
-    }
-    add(
-        box_part(1.03, 1.72, 0.11, 0xe5cea1, 0.0),
-        0.0,
-        0.88,
-        d / 2.0 + 0.015,
-    );
-    add(
-        box_part(1.2, 0.18, 0.62, 0x9a9585, 0.0),
-        0.0,
-        0.14,
-        d / 2.0 + 0.2,
-    );
-    add(
-        box_part(0.82, 1.55, 0.1, 0x64452f, 0.0),
-        0.0,
-        0.85,
-        d / 2.0 + 0.06,
-    );
-    add(
-        box_part(0.1, 0.1, 0.12, 0xffd24a, 0.0),
-        0.24,
-        0.83,
-        d / 2.0 + 0.12,
-    );
-    for y in [0.5, 1.15] {
-        add(
-            box_part(0.6, 0.42, 0.035, 0x805b3d, 0.0),
-            0.0,
-            y,
-            d / 2.0 + 0.12,
-        );
-    }
-    // Gentle paint weathering varies per cottage without splitting material batches.
-    let roof_base = if c.z.abs() > 35.0 { 0xcc493c } else { 0x167857 };
-    let roof_color = scale_hex_color(
-        roof_base,
-        0.9 + 0.12 * (0.5 + 0.5 * (c.x * 3.7 + c.z * 1.9).sin()),
-    );
-    add(
-        siding_gable(w + 0.6, h - wall, d + 0.6, roof_color),
-        0.0,
-        wall,
-        0.0,
-    );
-    add(
-        shingle_roof(w + 0.6, h - wall, d + 0.6, roof_color),
-        0.0,
-        wall,
-        0.0,
-    );
-    for side in [-1.0, 1.0] {
-        add(
-            box_part(0.16, 0.15, d + 0.7, 0xe0c79d, 0.0),
-            (side * (w + 0.6)) / 2.0,
-            wall,
-            0.0,
-        );
-    }
-    let ridge_end = (d + 0.6) / 2.0;
-    let mut z = -(d + 0.6) / 2.0;
-    while z < ridge_end {
-        add(
-            box_part(0.22, 0.11, 0.46f64.min(ridge_end - z), 0x334a40, 0.0),
-            0.0,
-            h + 0.04,
-            z + 0.23,
-        );
-        z += 0.48;
-    }
-    add(
-        box_part(0.74, 0.14, 0.74, 0x705a4d, 0.0),
-        -w * 0.25,
-        h + 0.19,
-        -d * 0.2,
-    );
-    add(
-        box_part(0.43, 0.015, 0.43, 0x302c29, 0.0),
-        -w * 0.25,
-        h + 0.27,
-        -d * 0.2,
-    );
-    let mut y = h - 0.75;
-    while y < h + 0.12 {
-        add(
-            box_part(0.59, 0.026, 0.59, 0xd3b095, 0.0),
-            -w * 0.25,
-            y,
-            -d * 0.2,
-        );
-        y += 0.22;
-    }
-    add(
-        box_part(0.58, 1.0, 0.58, 0xbc5c3e, 0.0),
-        -w * 0.25,
-        h - 0.36,
-        -d * 0.2,
-    );
-    cottage_details(group, w, d, h, c.x, c.z);
-}
-
-/// A braced timber lookout on two concrete foundations with a ladder.
-fn tower(group: &mut Node, c: &CoverShape) {
-    for side in [-1.0, 1.0] {
-        let x = side * TOWER_BASE.offset;
-        tower_foundation(group, x);
-        for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
-            put(group, tower_post(4.3), x, TOWER_BASE.height + 2.15, z);
-        }
-        // Cross bracing terminates at the same posts that survive the collapse.
-        for direction in [-1.0, 1.0] {
-            let brace = rotated(
-                siding_box(0.18, 4.35, 0.18, TOWER_BRACE),
-                direction * (2.0 * TOWER_BASE.post_z).atan2(3.8),
-                0.0,
-                0.0,
-            );
-            put(group, brace, x, 2.85, 0.0);
-        }
-    }
-    put(group, siding_box(6.0, 0.35, 5.0, TOWER_DECK), 0.0, 5.0, 0.0);
-    put(group, siding_box(5.7, 2.15, 4.7, c.color), 0.0, 6.15, 0.0);
-    for z in [-2.4, 2.4] {
-        put(
-            group,
-            box_part(4.0, 0.65, 0.08, 0x164e79, DEFAULT_BOX_RADIUS),
-            0.0,
-            6.4,
-            z,
-        );
-    }
-    put(
-        group,
-        siding_gable(6.5, 1.2, 5.5, TOWER_ROOF),
-        0.0,
-        7.25,
-        0.0,
-    );
-    put(
-        group,
-        shingle_roof(6.5, 1.2, 5.5, TOWER_ROOF),
-        0.0,
-        7.25,
-        0.0,
-    );
-    for x in [2.2, 3.1] {
-        put(group, tower_post(4.9), x, 2.45, 2.15);
-    }
-    for i in 0..9 {
-        put(
-            group,
-            siding_box(0.9, 0.08, 0.18, 0xe2cc93),
-            2.65,
-            0.4 + f64::from(i) * 0.55,
-            2.15,
-        );
-    }
-}
-
-/// One surviving tower foundation with cut posts and a scatter of boards, stable per
-/// collapse through `debris_seed`.
-fn rubble(group: &mut Node, c: &CoverShape) {
-    tower_foundation(group, 0.0);
-    let mut rng = Random::new(
-        c.debris_seed
-            .unwrap_or_else(|| js_round(c.x * 73_856_093.0 + c.z * 19_349_663.0)),
-    );
-    fn choose<T: Copy>(rng: &mut Random, values: &[T]) -> T {
-        values[(rng.next() * values.len() as f64).floor() as usize]
-    }
-    for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
-        // Cut posts keep their original position, section and grain direction.
-        let height = choose(&mut rng, &[0.12, 0.2, 0.28, 0.34]);
-        put(
-            group,
-            tower_post(height),
-            0.0,
-            TOWER_BASE.height + height / 2.0,
-            z,
-        );
-        if rng.next() < 0.7 {
-            let rz = rng.range(-0.4, 0.4);
-            let splinter = rotated(siding_box(0.09, 0.12, 0.16, 0xc5a073), 0.0, 0.0, rz);
-            let x = rng.range(-0.1, 0.1);
-            put(group, splinter, x, TOWER_BASE.height + height - 0.01, z);
-        }
-    }
-    // Discrete sizes reuse cached geometry; each foundation gets its own scatter.
-    let count = choose(&mut rng, &[2, 3, 4]);
-    for i in 0..count {
-        let width = choose(&mut rng, &[0.16, 0.3, 0.55]);
-        let length = choose(&mut rng, &[0.7, 1.1, 1.5]);
-        let yaw = rng.range(-0.55, 0.55);
-        let color = choose(&mut rng, &[c.color, TOWER_DECK, TOWER_BRACE]);
-        let board = rotated(siding_box(width, 0.09, length, color), 0.0, yaw, 0.0);
-        // Keep the pile inside its foundation, preserving the opened center route.
-        let room_x = ((TOWER_BASE.width - width * yaw.cos() - length * yaw.sin().abs()) / 2.0
-            - 0.02)
-            .max(0.0);
-        let room_z = (TOWER_BASE.depth - length * yaw.cos() - width * yaw.sin().abs()) / 2.0 - 0.02;
-        let x = rng.range(-room_x, room_x);
-        let z = rng.range(-room_z, room_z);
-        put(
-            group,
-            board,
-            x,
-            TOWER_BASE.height + 0.045 + f64::from(i) * 0.055,
-            z,
-        );
-    }
 }

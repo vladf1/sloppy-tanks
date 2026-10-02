@@ -130,6 +130,12 @@ fn member_mesh(size: DVec3, seed: i32) -> Mesh {
     Mesh::from_f64(&positions, &normals, &uvs, Some(indices))
 }
 
+/// A sawn member of `size` (grain along the longer of x and y) painted `color`,
+/// for framing outside the timber walls: the watchtower's posts, braces and deck.
+pub(super) fn timber_member(size: DVec3, seed: i32, color: u32) -> Node {
+    shadowed(Arc::new(member_mesh(size, seed)), wood(color))
+}
+
 /// `timberPartModel(p)`: a batched member with its chips and cracks, reused for
 /// standing walls and detached pieces.
 pub fn timber_part_model(p: &TimberPart) -> Node {
