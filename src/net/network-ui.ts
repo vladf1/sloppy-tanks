@@ -1,8 +1,16 @@
 import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
+import { deathCause, effectsLabel, rankTitle } from "../game/hud-feedback";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
-import type { EngineEvent, MatchState, PlayerVehicleKind, Team, Weapon } from "../game/engine-api";
+import type {
+  EngineEvent,
+  HumanState,
+  MatchState,
+  PlayerVehicleKind,
+  Team,
+  Weapon,
+} from "../game/engine-api";
 import {
   DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,
@@ -16,43 +24,12 @@ import {
 } from "./room-protocol";
 import "./multiplayer.css";
 
-/** One ammo slot of the HUD record (`Game.hud_json()` / `NetGame.hud_json()`). */
-export interface HudAmmo {
-  weapon: Weapon;
-  /** Rounds left; null for the unlimited standard shell. */
-  count: number | null;
-  selected: boolean;
-  available: boolean;
-}
 /** The engine's HUD record for the viewer's tank and the scoreboard. The engine works
  * out health colours, ranks and ammo, so the page only displays them. */
 export interface Hud {
   match: MatchState;
   elapsed: number;
-  human: {
-    id: number;
-    name: string;
-    kind: PlayerVehicleKind;
-    vehicleName: string;
-    team: Team;
-    alive: boolean;
-    hp: number;
-    maxHp: number;
-    healthRatio: number;
-    healthColor: number;
-    rankName: string;
-    ammo: HudAmmo[];
-    mineCooldown: number;
-    protection: number;
-    shield: number;
-    shieldPoints: number;
-    rapid: number;
-    speed: number;
-    laser: number;
-    respawn: number;
-    kills: number;
-    deaths: number;
-  };
+  human: HumanState;
   scoreboard: { id: number; name: string; team: Team; kills: number; deaths: number }[];
 }
 /** A displayed event with the viewer-relative flags (`drain_events()`). */
@@ -177,6 +154,7 @@ export class NetworkUI {
   private feed: { text: string; time: number }[] = [];
   private toastTime = 0;
   private hurtTime = 0;
+  private deathCause = "";
   private isJoined = false;
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
@@ -198,7 +176,11 @@ export class NetworkUI {
     root.innerHTML =
       '<canvas id="game" tabindex="0" aria-label="Multiplayer tank arena"></canvas>' +
       hudMarkup() +
-      '<div id="network-status" role="status"></div><div id="network-respawn" hidden></div>';
+      `<div id="network-status" role="status"></div>
+      <div id="network-respawn" hidden>
+        <h2 id="network-respawn-count"></h2>
+        <p id="network-death-cause" role="status"></p>
+      </div>`;
     this.canvas = root.querySelector("canvas")!;
     this.panel = root.querySelector("#overlay")!;
     this.panel.innerHTML = MENU_MARKUP;
@@ -677,6 +659,10 @@ export class NetworkUI {
     this.feed = [];
     this.toastTime = 0;
     this.hurtTime = 0;
+    this.deathCause = "";
+    this.set("network-death-cause", "");
+    this.root.querySelector<HTMLElement>("#network-respawn")!.hidden = true;
+    this.root.querySelector(".status")!.classList.remove("critical-health");
     this.root.querySelector("#feed")!.replaceChildren();
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
@@ -694,7 +680,11 @@ export class NetworkUI {
       this.addFeed(name(event.owner) + "  ▸  " + name(event.id));
     }
     if (event.id === viewerId) {
-      if (event.label) {
+      if (event.type === "death") {
+        this.deathCause = deathCause(event, hud.scoreboard);
+        this.set("toast", "");
+        this.toastTime = 0;
+      } else if (event.label) {
         this.set("toast", event.label);
         this.toastTime = 2;
       }
@@ -704,6 +694,9 @@ export class NetworkUI {
         this.hurtTime = 1.2;
       }
       if (event.type === "respawn") {
+        this.deathCause = "";
+        this.set("network-death-cause", "");
+        this.toastTime = 0;
         this.hurtTime = 0;
       }
     }
@@ -730,6 +723,9 @@ export class NetworkUI {
     this.set("hp", String(Math.max(0, Math.ceil(tank.hp))));
     this.set("vehicle-name", tank.vehicleName);
     this.set("rank", tank.rankName.toUpperCase());
+    const rank = this.root.querySelector<HTMLElement>("#rank")!;
+    rank.dataset.rank = String(tank.rank);
+    rank.title = rankTitle(tank);
     const bar = this.root.querySelector<HTMLElement>("#hpbar")!;
     bar.style.width = tank.healthRatio * 100 + "%";
     bar.style.backgroundColor = "#" + tank.healthColor.toString(16).padStart(6, "0");
@@ -745,21 +741,17 @@ export class NetworkUI {
       "mine",
       tank.mineCooldown > 0 ? "MINE " + tank.mineCooldown.toFixed(1) + "s" : "MINE READY · RMB",
     );
-    this.set(
-      "effects",
-      [
-        tank.protection > 0 ? "SPAWN SHIELD" : "",
-        tank.shield > 0 ? "SHIELD " + Math.ceil(tank.shieldPoints) + " HP" : "",
-        tank.rapid > 0 ? "RAPID" : "",
-        tank.speed > 0 ? "BOOST" : "",
-        tank.laser > 0 ? "LASER DEFENSE" : "",
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    );
+    this.set("effects", effectsLabel(tank));
+    this.root
+      .querySelector(".status")!
+      .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
+    this.root
+      .querySelector("#hud")!
+      .classList.toggle("paused", this.menu || !connected || match.phase !== "playing");
     const respawn = this.root.querySelector<HTMLElement>("#network-respawn")!;
-    respawn.hidden = tank.alive || this.menu || match.phase !== "playing";
-    respawn.textContent = "Respawn in " + Math.ceil(tank.respawn);
+    respawn.hidden = tank.alive || this.menu || !connected || match.phase !== "playing";
+    this.set("network-respawn-count", "Respawn in " + Math.ceil(tank.respawn));
+    this.set("network-death-cause", this.deathCause);
     this.toastTime -= dt;
     this.root.querySelector("#toast")!.classList.toggle("visible", this.toastTime > 0);
     this.hurtTime -= dt;

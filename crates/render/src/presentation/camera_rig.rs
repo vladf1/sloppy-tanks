@@ -132,7 +132,27 @@ impl CameraRig {
     }
 
     pub fn zoom_by(&mut self, amount: f64) {
-        self.zoom = (self.zoom + amount).clamp(CAMERA.min_zoom, CAMERA.max_zoom);
+        self.set_zoom(self.zoom + amount);
+    }
+
+    /// Saved preferences and user input share the renderer's camera limits.
+    pub fn set_zoom(&mut self, zoom: f64) {
+        if zoom.is_finite() {
+            self.zoom = zoom.clamp(CAMERA.min_zoom, CAMERA.max_zoom);
+        }
+    }
+
+    pub fn restore_preferences(&mut self, first_person: bool, zoom: Option<f64>) {
+        self.first_person.enabled = first_person;
+        if let Some(zoom) = zoom {
+            self.set_zoom(zoom);
+        }
+        self.snap_seat = true;
+    }
+
+    /// The chosen view stays enabled while death or a menu changes the drawn camera.
+    pub fn preferences(&self) -> [f64; 2] {
+        [f64::from(u8::from(self.first_person.enabled)), self.zoom]
     }
 
     /// Pose the overhead camera, advance the seat flight and orient the drawn
@@ -438,6 +458,26 @@ mod tests {
         assert_eq!(rig.zoom, CAMERA.min_zoom);
         rig.zoom_by(100.0);
         assert_eq!(rig.zoom, CAMERA.max_zoom);
+    }
+
+    #[test]
+    fn saved_camera_preferences_use_renderer_limits_and_keep_the_chosen_view() {
+        let mut rig = CameraRig::default();
+        rig.restore_preferences(true, Some(-100.0));
+        assert_eq!(rig.preferences(), [1.0, CAMERA.min_zoom]);
+        rig.restore_preferences(true, Some(100.0));
+        assert_eq!(rig.preferences(), [1.0, CAMERA.max_zoom]);
+        for malformed in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            rig.restore_preferences(true, Some(malformed));
+            assert_eq!(rig.preferences(), [1.0, CAMERA.max_zoom]);
+        }
+        let mut dead = viewer(0.0, 0.0);
+        dead.alive = false;
+        rig.update(&dead, 1.0, 0.0, false, true);
+        assert!(!rig.seat_wanted);
+        assert_eq!(rig.preferences(), [1.0, CAMERA.max_zoom]);
+        rig.restore_preferences(false, None);
+        assert_eq!(rig.preferences(), [0.0, CAMERA.max_zoom]);
     }
 
     #[test]

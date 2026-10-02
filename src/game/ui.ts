@@ -2,21 +2,10 @@ import { bindPress } from "./button-input";
 import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
-import type { DamageCause, EngineEvent, HudState } from "./engine-api";
+import type { EngineEvent, HudState } from "./engine-api";
+import { deathCause, effectsLabel, rankTitle } from "./hud-feedback";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
-const DAMAGE_LABELS: Record<DamageCause, string> = {
-  standard: "Standard shell",
-  spread: "Spread shot",
-  rocket: "Rocket blast",
-  tow: "TOW missile",
-  ricochet: "Ricochet shell",
-  piercing: "Piercing shell",
-  mine: "Mine explosion",
-  drum: "Exploding barrel",
-  interception: "Shell collision blast",
-  explosion: "Explosion",
-};
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Ready when you are";
 
@@ -225,17 +214,7 @@ export class UI {
         }
       }
       if (event.type === "death") {
-        const killer = state.scoreboard.find((tank) => tank.id === event.owner);
-        const cause = event.damageSource
-          ? DAMAGE_LABELS[event.damageSource.cause]
-          : "Unknown weapon";
-        const weapon = `${/^[aeiou]/i.test(cause) ? "an" : "a"} ${cause.toLowerCase()}`;
-        this.deathCause =
-          event.owner === event.id
-            ? `You destroyed yourself with ${weapon}.`
-            : killer
-              ? `${killer.name} killed you with ${weapon}.`
-              : `You were destroyed by ${weapon}.`;
+        this.deathCause = deathCause(event, state.scoreboard);
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
       if (event.type === "respawn") {
@@ -312,10 +291,7 @@ export class UI {
     set("rank", tank.rankName.toUpperCase());
     const rankLabel = document.getElementById("rank")!;
     rankLabel.dataset.rank = String(rank);
-    rankLabel.title =
-      rank === 0
-        ? "Earn XP from enemy hull damage and kills. Ranks reset on respawn."
-        : `+${Math.round((tank.rankDamage - 1) * 100)}% damage · +${Math.round((tank.rankFireRate - 1) * 100)}% fire rate · +${Math.round((tank.rankHealth - 1) * 100)}% hull${tank.rankRepair ? ` · repairs ${tank.rankRepair * 100}% hull/s after ${tank.repairDelay}s out of combat` : ""}`;
+    rankLabel.title = rankTitle(tank);
     AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
       const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
       const selected = !!slotState?.selected;
@@ -335,21 +311,7 @@ export class UI {
       "mine",
       tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
     );
-    set(
-      "effects",
-      [
-        tank.protection > 0 ? "SPAWN SHIELD" : null,
-        tank.shield > 0
-          ? `◇ SHIELD ${Math.ceil(tank.shieldPoints)} HP · ${Math.ceil(tank.shield)}s`
-          : null,
-        tank.rapid > 0 ? `» RAPID ${Math.ceil(tank.rapid)}s` : null,
-        tank.speed > 0 ? `ϟ BOOST ${Math.ceil(tank.speed)}s` : null,
-        tank.laser > 0 ? `✧ LASER DEFENSE ${Math.ceil(tank.laser)}s` : null,
-        tank.selfRepair ? "SELF-REPAIR" : null,
-      ]
-        .filter(Boolean)
-        .join("  "),
-    );
+    set("effects", effectsLabel(tank));
     set("respawn-count", String(Math.ceil(tank.respawn)));
     this.hud
       .querySelector(".status")!

@@ -316,7 +316,7 @@ try {
     assert.deepEqual([tanks, map, mode, endless], [30, name, "team", true]);
     await automatic.context.close();
   }
-  // Choosing an extra level fixes the battle format; a standard map frees it again.
+  // Extra levels force team play; a standard map restores the player's preferred mode.
   const extra = await fresh();
   await extra.page.goto(url + "?extralevels");
   await ready(extra.page);
@@ -330,12 +330,17 @@ try {
   await extra.page.waitForFunction(() => window.sloppy?.sim.mapName === "SCRAP YARD");
   await chooseMap(extra.page, "harbor");
   assert.equal(await extra.page.locator('input[value="solo"]').isDisabled(), false);
+  assert.equal(await extra.page.locator('input[value="solo"]').isChecked(), true);
   await extra.page.waitForFunction(() => window.sloppy.sim.mapName === "HARBOR HAVOC");
   const standard = await extra.page.evaluate(() => ({
     tanks: window.sloppy.sim.tanks.length,
+    mode: window.sloppy.sim.gameMode,
     endless: window.sloppy.sim.endlessMatch,
   }));
-  assert.deepEqual(standard, { tanks: 12, endless: false });
+  assert.deepEqual(standard, { tanks: 7, mode: "solo", endless: false });
+  await extra.page.locator('input[value="team"]').check();
+  await extra.page.waitForFunction(() => window.sloppy.sim.tanks.length === 12);
+  assert.equal(await extra.page.evaluate(() => window.sloppy.sim.endlessMatch), false);
   await extra.context.close();
   results.automaticStarts = "passed";
   console.log("Autoplay and extra-level startup passed.");

@@ -63,6 +63,7 @@ pub fn human_json(tank: &RenderTank, elapsed: f64) -> Value {
         "rankFireRate": stats.fire_rate,
         "rankHealth": stats.health,
         "rankRepair": stats.repair,
+        "repairDelay": REPAIR_DELAY,
         "selectedAmmo": tank.selected_ammo,
         "equipped": equipped,
         "ammo": ammo,
@@ -126,6 +127,7 @@ mod tests {
         let human = human_json(&tank, 0.0);
         assert_eq!(human["equipped"], json!("rocket"));
         assert_eq!(human["healthRatio"], json!(0.5));
+        assert_eq!(human["repairDelay"], json!(REPAIR_DELAY));
         assert_eq!(human["ammo"][2]["count"], json!(2.0));
     }
 }

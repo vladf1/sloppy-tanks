@@ -1,4 +1,5 @@
 import { loadGameOptions, type GameOptions } from "./game/game-options";
+import { savedPreference, preferredGameMode } from "./game/player-preferences";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
@@ -90,6 +91,9 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   const restoredMap = mapOption(view?.map ?? null)?.id;
   if (restoredMap && (showsExtraLevels(location.search) || !isExtraLevel(restoredMap))) {
     options.mapMode = restoredMap;
+    options.gameMode = isExtraLevel(restoredMap)
+      ? "team"
+      : preferredGameMode(savedPreference("game-mode"));
   }
   if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
     options.humanKind = view.kind as PlayerVehicleKind;

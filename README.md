@@ -41,6 +41,11 @@ Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 - **Maps:** Pine Village, Harbor Havoc and Dusty Dig.
 - **Difficulty:** Easy, Normal or Hard; fixed for the round and saved locally.
 
+Your tank, single-player mode, map and difficulty are remembered in this browser.
+The overhead/first-person view and overhead zoom are remembered too, and shared
+between single player and multiplayer. Playing an extra level or an online team
+battle keeps your preferred single-player mode for the next standard map.
+
 Map links accept `?map=village`, `?map=harbor` or `?map=quarry`.
 
 Opening the game with `?extralevels` adds two stress levels, marked **EXTRA**, to
@@ -133,6 +138,9 @@ in-game menu: a room link opens Battle Setup with that room selected. Reloading 
 room page, or a join that gives up, returns there too, with the reason shown in the
 room list; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
+
+The online HUD shows power-up time remaining, highlights critically low hull,
+and explains who destroyed you and which weapon caused it during respawn.
 
 Online the battle keeps playing behind the in-game menu and Settings: while either
 is open a bot drives your tank (in humans-only rooms it idles), and closing them

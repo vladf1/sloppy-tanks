@@ -37,3 +37,47 @@ test("Battle Setup uses link/default choices when browser storage is blocked", (
     else Reflect.deleteProperty(globalThis, "localStorage");
   }
 });
+
+test("returning players keep their tank, standard battle format, map and difficulty", () => {
+  const options = initialGameOptions(1, "", "hard", "harbor", "heavy", "solo");
+  assert.equal(options.humanKind, "heavy");
+  assert.equal(options.gameMode, "solo");
+  assert.equal(options.mapMode, "harbor");
+  assert.equal(options.difficulty, "hard");
+  const defaults = initialGameOptions(1, "", "invalid", null, "humvee", "invalid");
+  assert.equal(defaults.humanKind, "balanced");
+  assert.equal(defaults.gameMode, "team");
+  assert.equal(defaults.difficulty, "normal");
+});
+
+test("extra levels force team battle while a stored Solo Assault returns on standard maps", () => {
+  const options = (search: string) =>
+    initialGameOptions(1, search, "easy", "superstress", "scout", "solo");
+  assert.equal(options("?extralevels").gameMode, "team");
+  assert.equal(options("?extralevels&map=harbor").gameMode, "solo");
+  assert.equal(options("").gameMode, "solo");
+});
+
+test("Battle Setup loads all saved choices through the shared preference reader", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const stored = new Map([
+    ["sloppy-difficulty", "hard"],
+    ["sloppy-map", "harbor"],
+    ["sloppy-tank", "heavy"],
+    ["sloppy-game-mode", "solo"],
+  ]);
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: (key: string) => stored.get(key) ?? null },
+  });
+  try {
+    assert.deepEqual(
+      loadGameOptions(7, ""),
+      initialGameOptions(7, "", "hard", "harbor", "heavy", "solo"),
+    );
+    assert.equal(loadGameOptions(7, "?map=quarry").mapMode, "quarry");
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
