@@ -8,8 +8,8 @@ import { releaseVersion } from "./release-version.mjs";
  * `health/index.html`: the page's build as JSON, the static counterpart of the
  * multiplayer server's `/health`. Static hosts serve it at `/health` (after a redirect
  * to `/health/` on GitHub Pages) as `text/html`, which JSON readers ignore. The
- * page can join a server only when `version` (the protocol) and `contentVersion` match
- * its; `release` is the version players see.
+ * page can join a server only when `protocol` and `contentVersion` match its; `version`
+ * is the release version players see.
  */
 // HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
 // a string value carries a style element that keeps it. Browsers show it as `""`.
@@ -49,8 +49,8 @@ async function healthBody(builtAt: string): Promise<string> {
   }
   const { release, commit, dirty } = pageBuild();
   const health = {
-    release,
-    version: await protocolVersion(),
+    version: release,
+    protocol: await protocolVersion(),
     contentVersion,
     commit,
     dirty,
