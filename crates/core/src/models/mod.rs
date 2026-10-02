@@ -49,7 +49,6 @@ mod wreck_model;
 // Cover, trees and props.
 mod barrel_debris;
 mod barrel_surfaces;
-mod cottage_details;
 mod cover_model;
 pub mod effects_props;
 mod flags;
@@ -57,13 +56,16 @@ mod harbor_models;
 mod pickup_visuals;
 mod quarry_barriers;
 mod timber_model;
+mod tower_model;
 mod tree_debris;
 mod tree_models;
 
 // Surfaces shared by cover and scenery.
+mod building_kit;
 mod concrete_surfaces;
 mod ground_surfaces;
 mod harbor_surfaces;
+mod house_model;
 mod house_surfaces;
 mod quarry_surfaces;
 mod water_surface;
@@ -123,6 +125,7 @@ pub use pickup_visuals::{
 };
 pub use quarry_barriers::{dragon_tooth, steel_hedgehog};
 pub use timber_model::{add_timber_parts, timber_part_model};
+pub use tower_model::tower_piece_model;
 pub use tree_debris::{fading_material, falling_branch_model};
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeModel, TreeShape, branch_drop_stage,

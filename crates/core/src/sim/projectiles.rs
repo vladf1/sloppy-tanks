@@ -630,10 +630,13 @@ fn resolve_contact(
         } => {
             let cover = simulation.cover_by_collider.get(&collider).copied();
             if let Some(ci) = cover {
-                if simulation.covers[ci].kind == CoverKind::Timber {
+                if matches!(
+                    simulation.covers[ci].kind,
+                    CoverKind::Timber | CoverKind::Tower
+                ) {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {
-                        simulation.covers[ci].timber_kick =
+                        simulation.covers[ci].kick =
                             Some(Vec2::new(shot.vx / speed, shot.vz / speed));
                     }
                 }

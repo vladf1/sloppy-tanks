@@ -2179,11 +2179,16 @@ impl Presentation {
         }
     }
 
-    /// A physical debris view: an instanced piece, a wreck part, a timber member
-    /// or a falling crown.
+    /// A physical debris view: an instanced piece, a wreck part, a timber member,
+    /// a watchtower piece or a falling crown.
     fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
             let node = model_catalog::timber_part_model(part);
+            let bounds = node_bounds(&node, DMat4::IDENTITY);
+            let model = self.renderer.add_model(&node, Lifetime::Round);
+            (model, FragmentLook::Owned(model, bounds))
+        } else if let Some(piece) = fragment.tower_piece {
+            let node = model_catalog::tower_piece_model(piece, fragment.color);
             let bounds = node_bounds(&node, DMat4::IDENTITY);
             let model = self.renderer.add_model(&node, Lifetime::Round);
             (model, FragmentLook::Owned(model, bounds))

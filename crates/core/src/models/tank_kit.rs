@@ -1,12 +1,14 @@
-//! A builder that merges the static parts of a tank assembly (hull, turret or
-//! gun) into one flat-shaded mesh per finish, so armor plates, hatches, sights
-//! and stowage cost one instanced draw per finish rather than one per part.
+//! A builder that merges the static parts of an assembly (a tank's hull, turret
+//! or gun, a building) into one flat-shaded mesh per finish, so armor plates,
+//! hatches, window frames and trim cost one draw per finish rather than one per
+//! part.
 //!
 //! Parts are added in the assembly's frame (metres, x left, y up, z forward).
 //! Solids are lofted through closed rings of points; their faces are oriented
 //! away from the ring centroid, so callers only describe convex solids.
 
 use std::f64::consts::PI;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use glam::{DMat4, DVec2, DVec3};
@@ -61,22 +63,32 @@ impl Coat {
         Coat::Marking,
         Coat::TailLight,
     ];
-
-    fn index(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|coat| *coat == self)
-            .expect("ALL lists every coat")
-    }
 }
 
-/// Merged meshes of one assembly, in [`Coat::ALL`] order, empty coats left out.
-pub(super) type KitMeshes = Vec<(Coat, Arc<Mesh>)>;
+fn finish_index<C: Finishes>(finish: C) -> usize {
+    C::ALL
+        .iter()
+        .position(|listed| *listed == finish)
+        .expect("ALL lists every finish")
+}
 
-/// Per-coat triangle soups: positions and normals, three vertices per triangle.
-#[derive(Default)]
-pub(super) struct Kit {
-    buffers: [Vec<(DVec3, DVec3)>; Coat::ALL.len()],
+/// The finishes one kind of assembly is painted with, in output order.
+pub(super) trait Finishes: Copy + PartialEq + 'static {
+    const ALL: &'static [Self];
+}
+
+impl Finishes for Coat {
+    const ALL: &'static [Self] = &Coat::ALL;
+}
+
+/// Merged meshes of one assembly, in [`Finishes::ALL`] order, empty finishes left
+/// out.
+pub(super) type KitMeshes<C = Coat> = Vec<(C, Arc<Mesh>)>;
+
+/// Per-finish triangle soups: positions and normals, three vertices per triangle.
+pub(super) struct Kit<C: Finishes = Coat> {
+    buffers: Vec<Vec<(DVec3, DVec3)>>,
+    finishes: PhantomData<C>,
 }
 
 /// A rigid placement: translate to `at` after rotating by Euler angles (XYZ).
@@ -169,14 +181,17 @@ fn transform_point(matrix: &DMat4, p: DVec3) -> DVec3 {
     matrix.transform_point3(p)
 }
 
-impl Kit {
+impl<C: Finishes> Kit<C> {
     pub(super) fn new() -> Self {
-        Self::default()
+        Self {
+            buffers: vec![Vec::new(); C::ALL.len()],
+            finishes: PhantomData,
+        }
     }
 
     /// One triangle with explicit vertex normals; reversed if its winding
     /// disagrees with them.
-    fn triangle(&mut self, coat: Coat, mut p: [DVec3; 3], mut n: [DVec3; 3]) {
+    fn triangle(&mut self, coat: C, mut p: [DVec3; 3], mut n: [DVec3; 3]) {
         let face = (p[1] - p[0]).cross(p[2] - p[0]);
         if face.length_squared() < MIN_AREA {
             return;
@@ -185,12 +200,12 @@ impl Kit {
             p.swap(1, 2);
             n.swap(1, 2);
         }
-        let buffer = &mut self.buffers[coat.index()];
+        let buffer = &mut self.buffers[finish_index(coat)];
         buffer.extend(p.into_iter().zip(n));
     }
 
     /// A flat triangle facing away from `inside`.
-    fn flat(&mut self, coat: Coat, p: [DVec3; 3], inside: DVec3) {
+    fn flat(&mut self, coat: C, p: [DVec3; 3], inside: DVec3) {
         let face = (p[1] - p[0]).cross(p[2] - p[0]);
         if face.length_squared() < MIN_AREA {
             return;
@@ -204,7 +219,7 @@ impl Kit {
     /// ends. `skip` leaves out one side quad (band, edge) for a custom face.
     pub(super) fn solid_skipping(
         &mut self,
-        coat: Coat,
+        coat: C,
         rings: &[Vec<DVec3>],
         skip: Option<(usize, usize)>,
     ) {
@@ -229,12 +244,12 @@ impl Kit {
         }
     }
 
-    pub(super) fn solid(&mut self, coat: Coat, rings: &[Vec<DVec3>]) {
+    pub(super) fn solid(&mut self, coat: C, rings: &[Vec<DVec3>]) {
         self.solid_skipping(coat, rings, None);
     }
 
     /// A single-sided quad (two triangles) facing along `facing`.
-    pub(super) fn quad(&mut self, coat: Coat, corners: [DVec3; 4], facing: DVec3) {
+    pub(super) fn quad(&mut self, coat: C, corners: [DVec3; 4], facing: DVec3) {
         let normal = facing.normalize();
         let [a, b, c, d] = corners;
         self.triangle(coat, [a, b, c], [normal; 3]);
@@ -244,7 +259,7 @@ impl Kit {
     /// A horizontal rectangle at height `y` facing up, with a round hole.
     pub(super) fn plate_with_hole(
         &mut self,
-        coat: Coat,
+        coat: C,
         corners: [DVec2; 2],
         y: f64,
         hole_center: DVec2,
@@ -271,8 +286,33 @@ impl Kit {
         }
     }
 
+    /// A flat face in `placement`'s local xy plane, facing local +z: `outline`
+    /// with `holes` cut through it (both simple polygons).
+    pub(super) fn face_with_holes(
+        &mut self,
+        coat: C,
+        outline: &[DVec2],
+        holes: &[Vec<DVec2>],
+        placement: DMat4,
+    ) {
+        let mut contour = outline.to_vec();
+        let mut holes = holes.to_vec();
+        let triangles = triangulate_shape(&mut contour, &mut holes);
+        let points: Vec<DVec2> = contour
+            .iter()
+            .chain(holes.iter().flatten())
+            .copied()
+            .collect();
+        let normal = placement.transform_vector3(DVec3::Z).normalize();
+        for [a, b, c] in triangles {
+            let p = [points[a], points[b], points[c]]
+                .map(|p| transform_point(&placement, DVec3::new(p.x, p.y, 0.0)));
+            self.triangle(coat, p, [normal; 3]);
+        }
+    }
+
     /// A box of `size` centred on the placement's origin.
-    pub(super) fn block(&mut self, coat: Coat, size: DVec3, placement: DMat4) {
+    pub(super) fn block(&mut self, coat: C, size: DVec3, placement: DMat4) {
         let h = size / 2.0;
         let outline =
             [(-h.x, -h.z), (h.x, -h.z), (h.x, h.z), (-h.x, h.z)].map(|(x, z)| DVec2::new(x, z));
@@ -285,13 +325,13 @@ impl Kit {
     }
 
     /// `block` placed at a point with Euler angles.
-    pub(super) fn block_at(&mut self, coat: Coat, size: DVec3, at: DVec3, euler: DVec3) {
+    pub(super) fn block_at(&mut self, coat: C, size: DVec3, at: DVec3, euler: DVec3) {
         self.block(coat, size, pose(at, euler));
     }
 
     /// A box whose top and bottom edges are chamfered by `bevel`, catching a
     /// highlight along the lid and keeping soft loads from looking boxed.
-    pub(super) fn chamfer_block(&mut self, coat: Coat, size: DVec3, bevel: f64, placement: DMat4) {
+    pub(super) fn chamfer_block(&mut self, coat: C, size: DVec3, bevel: f64, placement: DMat4) {
         let h = size / 2.0;
         let outline = cut_rectangle(h.x, h.z, 0.0)
             .into_iter()
@@ -315,7 +355,7 @@ impl Kit {
     /// A surface of revolution about local +z through a (radius, z) profile, with
     /// smooth normals around the axis and hard edges between profile segments.
     /// Profile points run from back to front; a radius of zero closes an end.
-    pub(super) fn turned(&mut self, coat: Coat, profile: &[DVec2], sides: u32, placement: DMat4) {
+    pub(super) fn turned(&mut self, coat: C, profile: &[DVec2], sides: u32, placement: DMat4) {
         let rotation = placement;
         for pair in profile.windows(2) {
             let (a, b) = (pair[0], pair[1]);
@@ -361,7 +401,7 @@ impl Kit {
     }
 
     /// A closed cylinder of `radius` from `from` to `to`.
-    pub(super) fn rod(&mut self, coat: Coat, radius: f64, from: DVec3, to: DVec3, sides: u32) {
+    pub(super) fn rod(&mut self, coat: C, radius: f64, from: DVec3, to: DVec3, sides: u32) {
         let length = (to - from).length();
         let profile = [(0.0, 0.0), (radius, 0.0), (radius, length), (0.0, length)]
             .map(|(r, z)| DVec2::new(r, z));
@@ -369,15 +409,22 @@ impl Kit {
     }
 
     /// An upright closed cylinder standing on `base`.
-    pub(super) fn post(&mut self, coat: Coat, radius: f64, height: f64, base: DVec3, sides: u32) {
+    pub(super) fn post(&mut self, coat: C, radius: f64, height: f64, base: DVec3, sides: u32) {
         self.rod(coat, radius, base, base + DVec3::Y * height, sides);
     }
 
     /// Merge every coat into one non-indexed mesh with planar UVs projected along
     /// each triangle's dominant axis.
-    pub(super) fn finish(self) -> KitMeshes {
+    pub(super) fn finish(self) -> KitMeshes<C> {
+        self.finish_scaled(|_| UV_PER_METRE)
+    }
+
+    /// [`Self::finish`] with each finish's own texture density (repeats per metre),
+    /// for finishes whose texture has a real-world scale (siding, brick, stone).
+    pub(super) fn finish_scaled(self, uv_per_metre: impl Fn(C) -> f64) -> KitMeshes<C> {
         let mut meshes = Vec::new();
-        for (coat, buffer) in Coat::ALL.into_iter().zip(self.buffers) {
+        for (&coat, buffer) in C::ALL.iter().zip(self.buffers) {
+            let scale = uv_per_metre(coat);
             if buffer.is_empty() {
                 continue;
             }
@@ -395,10 +442,8 @@ impl Kit {
                     };
                     mesh.positions.push([p.x as f32, p.y as f32, p.z as f32]);
                     mesh.normals.push([n.x as f32, n.y as f32, n.z as f32]);
-                    mesh.uvs.push([
-                        (u * UV_PER_METRE + 0.5) as f32,
-                        (v * UV_PER_METRE + 0.5) as f32,
-                    ]);
+                    mesh.uvs
+                        .push([(u * scale + 0.5) as f32, (v * scale + 0.5) as f32]);
                 }
             }
             meshes.push((coat, Arc::new(mesh)));

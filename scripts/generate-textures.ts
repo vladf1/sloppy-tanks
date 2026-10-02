@@ -95,26 +95,25 @@ for (const kind of Object.keys(names) as (keyof typeof names)[]) {
   await save(`pickups/${kind}.webp`, canvas, pickupSources);
 }
 
-for (const kind of ["siding", "shingles"] as const) {
+// Board siding of crates, sheds and the watermill. The cottages' shingles and
+// clapboard come from generate-house-textures.ts.
+{
   const size = 256,
     pixels = new Uint8Array(size * size * 4);
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
       const row = Math.floor(y / 32),
         offset = y % 32;
-      const width = kind === "shingles" ? 64 : 128;
+      const width = 128;
       const column = Math.floor((x + ((row % 2) * width) / 2) / width);
       const seam = (x + ((row % 2) * width) / 2) % width;
       const variation = ((column * 37 + row * 19) % 23) - 11;
-      const grain =
-        kind === "siding"
-          ? Math.sin(x * 0.12 + Math.sin(y * 0.7) * 2) * 4
-          : ((x * 13 + y * 23) % 9) - 4;
+      const grain = Math.sin(x * 0.12 + Math.sin(y * 0.7) * 2) * 4;
       let value = 225 + variation + grain;
       if (offset < 3) value = 125;
       else if (offset < 5) value = 250;
       else if (offset > 28) value -= 24;
-      if (seam < 2) value -= kind === "shingles" ? 65 : 25;
+      if (seam < 2) value -= 25;
       const i = (y * size + x) * 4;
       pixels[i] = pixels[i + 1] = pixels[i + 2] = Math.max(0, Math.min(255, value));
       pixels[i + 3] = 255;
@@ -124,7 +123,7 @@ for (const kind of ["siding", "shingles"] as const) {
   const image = c.createImageData(size, size);
   image.data.set(pixels);
   c.putImageData(image, 0, 0);
-  await save(`houses/${kind}.webp`, canvas);
+  await save("houses/siding.webp", canvas);
 }
 
 // Neutral paint wear multiplies team paint without introducing another hue.

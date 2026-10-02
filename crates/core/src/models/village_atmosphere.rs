@@ -10,6 +10,7 @@ use crate::geometry::{Attribute, plane_geometry};
 use crate::scene::{Effect, Instance, Material, Node};
 
 use super::effects_scenery::{CHIMNEY_SMOKE, SMOKE_ORIGIN, SMOKE_PHASE};
+use super::house_model::chimney_flue;
 
 /// Chimneys that can smoke at once, and wisps per chimney.
 pub const SMOKE_SOURCES: usize = 24;
@@ -75,7 +76,10 @@ pub fn set_chimney_smoke(smoke: &mut Node, covers: &[SmokeCover]) {
             covers
                 .iter()
                 .filter(|c| c.kind == "house" && !c.destructible)
-                .map(|c| [c.x - c.w * 0.25, c.h + 0.3, c.z - c.d * 0.2]),
+                .map(|c| {
+                    let flue = chimney_flue(c.w, c.d, c.h);
+                    [c.x + flue.x, flue.y, c.z + flue.z]
+                }),
         )
         .collect();
     let drawable = smoke.drawable.as_mut().expect("smoke mesh");

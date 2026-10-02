@@ -42,6 +42,15 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
 }
 
 function preloadImages(options: GameOptions): void {
+  // Surfaces of the cottages and watchtowers, on the maps that build them. Kept local:
+  // this module's startup code runs before its later top-level constants exist.
+  const buildingTextures = [
+    "textures/houses/shingles.webp",
+    "textures/houses/clapboard.webp",
+    "textures/houses/brick.webp",
+    "textures/houses/stone.webp",
+  ];
+  const buildings = options.mapMode === "village" || options.mapMode === "stress-test";
   // Start scene image downloads alongside the engine request, before the engine's
   // scenery discovers them. Small late requests otherwise delay warm-up. The engine
   // fetches textures with fetch(), so these preloads are fetch-destination requests
@@ -58,7 +67,6 @@ function preloadImages(options: GameOptions): void {
           "textures/ground/dry-grass.webp",
           "textures/trees/conifer-spray.webp",
           "textures/water/normals.webp",
-          "textures/houses/shingles.webp",
           "textures/trees/birch.webp",
           "textures/trees/leaf-sprigs.webp",
           "textures/wood/timber.webp",
@@ -71,6 +79,7 @@ function preloadImages(options: GameOptions): void {
     ...(isExtraLevel(options.mapMode)
       ? ["textures/ground/dry-grass.webp", "textures/wood/timber.webp"]
       : []),
+    ...(buildings ? buildingTextures : []),
   ]) {
     const link = document.createElement("link");
     link.rel = "preload";

@@ -12,6 +12,7 @@ use super::math::{Point3, Quat4, Vec2};
 use super::simulation::Simulation;
 use super::simulation_rules::SIMULATION_RULES;
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
+use super::tower_layout::TowerPiece;
 use super::types::{
     AmmoInventory, CoverKind, CoverMotion, Fragment, FragmentShape, Match, Mine, Pickup, Shot,
     Tank, Team, VehicleKind, Weapon, WreckPart,
@@ -181,6 +182,7 @@ pub struct RenderFragment {
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
     pub timber_part: Option<TimberPart>,
+    pub tower_piece: Option<TowerPiece>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub created_at: Option<f64>,
@@ -390,6 +392,7 @@ impl Simulation {
         view.material = fragment.material;
         view.source_kind = fragment.source_kind;
         view.timber_part.clone_from(&fragment.timber_part);
+        view.tower_piece = fragment.tower_piece;
         view.tree_cover_id = fragment.tree_cover_id;
         view.tree_center_y = fragment.tree_center_y;
         view.created_at = fragment.created_at;

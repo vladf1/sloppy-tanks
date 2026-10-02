@@ -333,6 +333,10 @@ pub mod group {
     pub const PUSHABLE_DEBRIS: u32 = SOLID_DEBRIS;
     pub const TIMBER_DEBRIS: u32 = SOLID_DEBRIS;
     pub const WRECK: u32 = SOLID_DEBRIS;
+    /// A collapsing watchtower's thin brace frames: still debris to shells and
+    /// tanks, but they skip other debris so the falling deck crushes through
+    /// them instead of resting on them.
+    pub const CRUSHED_FRAME: u32 = 0x0508_0407;
 }
 
 #[cfg(test)]

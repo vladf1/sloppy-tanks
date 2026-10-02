@@ -22,6 +22,7 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::tank_destruction::tank_burnout;
 use sloppy_core::sim::timber_layout::TimberPartKind;
+use sloppy_core::sim::tower_layout::TowerPiece;
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::{
     CoverKind, DamageCause, Fragment, FragmentShape, Shot, SimEventType, Simulation, Team,
@@ -503,7 +504,13 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
             &[DrumShell, DrumShell, DrumShell, DrumLid],
             33,
         ),
-        (CoverKind::Tower, &[Panel, Beam, Panel, Beam], 112),
+        (
+            CoverKind::Tower,
+            &[
+                Beam, Beam, Beam, Beam, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam,
+            ],
+            112,
+        ),
     ];
     for (kind, shapes, old_draws) in cases {
         let mut s = arena();
@@ -527,6 +534,11 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
                 first_collider_groups(&s, f.body),
                 if kind == CoverKind::Timber {
                     group::TIMBER_DEBRIS
+                } else if matches!(
+                    f.tower_piece,
+                    Some(TowerPiece::BackBracing | TowerPiece::FrontBracing)
+                ) {
+                    group::CRUSHED_FRAME
                 } else {
                     group::PUSHABLE_DEBRIS
                 }
@@ -1353,4 +1365,73 @@ fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concr
     let mass = |body: RigidBodyHandle| s.world.bodies[body].mass();
     assert!(mass(hull_body) > mass(wood_body));
     assert!(mass(concrete_body) > mass(hull_body));
+}
+
+#[test]
+fn a_destroyed_watchtower_comes_apart_into_its_parts_and_topples_away_from_the_hit() {
+    let mut s = arena();
+    let c = s.add_cover(&CoverDef::new(
+        CoverKind::Tower,
+        0.0,
+        0.0,
+        6.0,
+        5.0,
+        7.5,
+        180.0,
+        0xbd864a,
+    ));
+    s.nav.rebuild(&s.covers, None);
+    s.world.step();
+    // A shell from the west knocks it over to the east.
+    s.covers[c].kick = Some(Vec2::new(1.0, 0.0));
+    s.damage_cover(c, 1000.0, 999, Team::Blue, None, None);
+    let pieces: Vec<TowerPiece> = s.fragments.iter().filter_map(|f| f.tower_piece).collect();
+    assert_eq!(pieces, TowerPiece::ALL, "every part falls once, in order");
+    for f in &s.fragments {
+        let piece = f.tower_piece.unwrap();
+        let bounds = piece.bounds();
+        let at = s.body_translation(f.body);
+        assert!(
+            (at.x - bounds.center[0]).abs() < 1e-5
+                && (at.y - bounds.center[1]).abs() < 1e-5
+                && (at.z - bounds.center[2]).abs() < 1e-5,
+            "{piece:?} starts where it stood"
+        );
+        let size = f.dimensions.unwrap();
+        assert_eq!([size.x, size.y, size.z], bounds.size, "{piece:?}");
+    }
+    let body = |piece: TowerPiece| {
+        s.fragments
+            .iter()
+            .find(|f| f.tower_piece == Some(piece))
+            .unwrap()
+            .body
+    };
+    let (roof, bent) = (body(TowerPiece::Roof), body(TowerPiece::WestBent));
+    let roof_start = s.body_translation(roof);
+    assert!(linvel(&s, roof).x > 0.5, "the top tips along the hit");
+    assert!(linvel(&s, roof).y < 0.0, "rather than launching upward");
+    assert!(
+        s.world.bodies[bent].angvel().z > 0.5,
+        "the legs' feet swing out along the fall"
+    );
+    let mut highest = roof_start.y;
+    for _ in 0..150 {
+        tick(&mut s, STEP);
+        highest = highest.max(s.body_translation(roof).y);
+    }
+    let roof_end = s.body_translation(roof);
+    assert!(highest <= roof_start.y + 0.05, "the roof never rises");
+    assert!(
+        roof_end.x > roof_start.x + 1.0,
+        "the roof lands east of where it stood"
+    );
+    assert!(roof_end.y < 3.0, "the roof is down within 2.5 seconds");
+    for f in &s.fragments {
+        assert!(
+            s.body_translation(f.body).y < 3.0,
+            "{:?} came down: nothing is left standing",
+            f.tower_piece
+        );
+    }
 }
