@@ -152,6 +152,12 @@ try {
   await touch("touchStart", 2, 724, 170);
   assert.ok((await state()).x > 0.4, "drives while firing");
   assert.equal((await state()).fire, true);
+  await touch("touchStart", 3, 120, 170);
+  assert.ok(
+    await page.evaluate(() => window.sloppy.controls.nx > 0),
+    "a second arena finger does not pull the aim away from the firing one",
+  );
+  await touch("touchEnd", 3);
   await page.screenshot({ path: `${output}/landscape.png` });
   await touch("touchEnd", 2);
   await touch("touchEnd", 1);

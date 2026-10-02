@@ -160,9 +160,9 @@ export class TouchControls {
     const touching = (event: PointerEvent) =>
       event.pointerType === "touch" && this.enabled && this.controls.active();
     canvas.addEventListener("pointerdown", (event) => {
-      if (touching(event)) {
+      // Only the finger that owns the shot aims; a second one cannot pull the turret.
+      if (touching(event) && this.controls.touch.begin("arena", event.pointerId)) {
         this.controls.aimAt(event.clientX, event.clientY);
-        this.controls.touch.begin("arena", event.pointerId);
       }
     });
     canvas.addEventListener("pointermove", (event) => {
