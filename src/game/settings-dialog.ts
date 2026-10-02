@@ -9,7 +9,7 @@ const SPEED_LABELS: Record<SpeedKey, string> = {
 const DEFAULT_VOLUME = 0.6;
 
 /** The HUD's corner button that opens the dialog. */
-export const SETTINGS_BUTTON = `<button id="settings-open" class="quiet" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.3 2h3.4l.6 2.7 1.7.9 2.6-1 2.4 2.4-1 2.6.9 1.7 2.7.6v3.4l-2.7.6-.9 1.7 1 2.6-2.4 2.4-2.6-1-1.7.9-.6 2.7h-3.4l-.6-2.7-1.7-.9-2.6 1-2.4-2.4 1-2.6-.9-1.7L2 13.7v-3.4l2.7-.6.9-1.7-1-2.6L7 3l2.6 1 1.7-.9z" /><circle cx="12" cy="12" r="3.2" /></svg></button>`;
+export const SETTINGS_BUTTON = `<button id="settings-open" class="quiet" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.23 4.61L10.8 1.87h2.4l.57 2.74 2.2.91 2.34-1.53 1.7 1.7-1.53 2.34.91 2.2 2.74.57v2.4l-2.74.57-.91 2.2 1.53 2.34-1.7 1.7-2.34-1.53-2.2.91-.57 2.74h-2.4l-.57-2.74-2.2-.91-2.34 1.53-1.7-1.7 1.53-2.34-.91-2.2-2.74-.57v-2.4l2.74-.57.91-2.2-1.53-2.34 1.7-1.7 2.34 1.53z" /><circle cx="12" cy="12" r="3.2" /></svg></button>`;
 
 /** The saved sound level, shared by single player and rooms. */
 export function savedVolume(): number {
