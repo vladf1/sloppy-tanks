@@ -543,9 +543,7 @@ impl ServerMonitor {
         self.read_cpu = cpu;
         self.read_busy = busy;
         self.history.push_back(point.clone());
-        if self.history.len() > HISTORY_READINGS {
-            self.history.pop_front();
-        }
+        self.history.retain_back(HISTORY_READINGS);
         LiveReading { point, room_list }
     }
 
@@ -640,9 +638,7 @@ impl ServerMonitor {
             room: room.to_string(),
             message,
         });
-        if self.events.len() > RECENT_EVENTS {
-            self.events.pop_front();
-        }
+        self.events.retain_back(RECENT_EVENTS);
     }
 
     fn summarize(&self, stats: &ServerStats) {

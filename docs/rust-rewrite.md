@@ -21,7 +21,7 @@ touch controls, audio and the room page's DOM. The Node server (`server/`), the
 TypeScript engine and its Node tests, `three`, `@types/three`,
 `@dimforge/rapier3d-simd` and `@dimforge/rapier3d-simd-compat` are gone.
 
-Toolchain: Rust 1.98.1 (`rust-toolchain.toml`), `wasm32-unknown-unknown`,
+Toolchain: Rust 1.99.0 (`rust-toolchain.toml`), `wasm32-unknown-unknown`,
 `x86_64-unknown-linux-musl`, wasm-bindgen CLI 0.2.129. Rapier 0.36 (Rust)
 replaces Rapier JS 0.20; physics differences are a deliberate version change.
 `pnpm run wasm:labs` builds the development labs into
