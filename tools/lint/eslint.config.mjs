@@ -1,23 +1,16 @@
 import { fileURLToPath } from "node:url";
+import { includeIgnoreFile } from "@eslint/compat";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 import globals from "globals";
 
 export default tseslint.config(
+  // Whatever Git ignores (build outputs at any depth, generated code, caches) is never
+  // source, so a stale output left in a checkout cannot fail the lint.
+  includeIgnoreFile(fileURLToPath(new URL("../../.gitignore", import.meta.url))),
   {
-    ignores: [
-      "dist/**",
-      "dist-dev/**",
-      "bots/.wrangler/**",
-      ".claude/**",
-      "artifacts/**",
-      "node_modules/**",
-      "public/**",
-      "scripts/benchmarks/**",
-      "src/generated/**",
-      "target/**",
-    ],
+    ignores: [".claude/**", "public/**", "scripts/benchmarks/**"],
   },
   js.configs.recommended,
   {
