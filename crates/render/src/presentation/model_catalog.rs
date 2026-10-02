@@ -5,6 +5,7 @@
 //!   `physicalCoverModel` in `presentation.ts`; trees name their crown, cut face
 //!   and shedding boughs ([`TreeParts`]).
 //! - [`timber_part_model`] ← `models::timber_part_model(part)`.
+//! - [`tower_piece_model`] ← `models::tower_piece_model(piece, color)`.
 //! - [`surface_debris_piece`] ← `siding_box` / `trunk_fragment` (`presentation.ts`
 //!   debris meshes).
 //! - [`scenery`] ← `models::build_scenery(theme)`, split into what bakes static,
@@ -23,6 +24,7 @@ use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::timber_layout::TimberPart;
+use sloppy_core::sim::tower_layout::TowerPiece;
 use sloppy_core::sim::{CoverKind, FragmentShape};
 
 pub use sloppy_core::models::{cover_damage_stage, tree_branch_stage};
@@ -150,6 +152,11 @@ fn tree_parts(root: &Node) -> TreeParts {
 /// fragment body pose places it).
 pub fn timber_part_model(part: &TimberPart) -> Node {
     core_models::timber_part_model(part)
+}
+
+/// A falling watchtower piece, drawn as the part of the tower it was.
+pub fn tower_piece_model(piece: TowerPiece, color: u32) -> Node {
+    core_models::tower_piece_model(piece, color)
 }
 
 /// The textured debris pieces (`presentation.ts`): `sidingBox(1.5, 0.18, 0.45)`

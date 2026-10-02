@@ -10,6 +10,7 @@ use super::debris_physics::DebrisMaterial;
 use super::humvee_tactics::HumveeTactics;
 pub use super::math::{Point3, Quat4, Vec2};
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
+use super::tower_layout::TowerPiece;
 
 /// Serialized as 0 (blue) or 1 (red), like the TS `0 | 1` team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -528,7 +529,9 @@ pub struct Cover {
     /// Bounded, persistent impact marks in local wall coordinates.
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    pub timber_kick: Option<Vec2>,
+    /// Direction of the last hit on a timber wall or the watchtower, which its
+    /// pieces are thrown or topple along when it breaks.
+    pub kick: Option<Vec2>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
     pub fallen_at: Option<f64>,
@@ -648,6 +651,8 @@ pub struct Fragment {
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
     pub timber_part: Option<TimberPart>,
+    /// The watchtower part this piece is drawn as.
+    pub tower_piece: Option<TowerPiece>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
@@ -672,6 +677,7 @@ impl Fragment {
             material: None,
             source_kind: None,
             timber_part: None,
+            tower_piece: None,
             tree_cover_id: None,
             tree_center_y: None,
             expires_at: None,

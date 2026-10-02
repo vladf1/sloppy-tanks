@@ -54,7 +54,7 @@ fn nav_cover(def: &CoverDef) -> Cover {
         debris_seed: def.debris_seed,
         timber_hits: Vec::new(),
         timber_join: def.timber_join,
-        timber_kick: None,
+        kick: None,
         motion: None,
         fallen_at: None,
     }

@@ -380,11 +380,11 @@ pub fn explode(
             && distance(position, Vec2::new(cover.x, cover.z))
                 < radius + cover.w.max(cover.d) * COMBAT.cover_blast_allowance
         {
-            if cover.kind == CoverKind::Timber {
+            if matches!(cover.kind, CoverKind::Timber | CoverKind::Tower) {
                 let dx = cover.x - position.x;
                 let dz = cover.z - position.z;
                 let length = dx.hypot(dz);
-                cover.timber_kick = (length > 0.001).then(|| Vec2::new(dx / length, dz / length));
+                cover.kick = (length > 0.001).then(|| Vec2::new(dx / length, dz / length));
             }
             damage_cover(
                 simulation,

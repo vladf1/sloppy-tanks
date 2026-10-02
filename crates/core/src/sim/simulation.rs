@@ -529,7 +529,7 @@ impl Simulation {
             debris_seed: def.debris_seed,
             timber_hits: Vec::new(),
             timber_join: def.timber_join,
-            timber_kick: None,
+            kick: None,
             motion: None,
             fallen_at: None,
         };
@@ -563,7 +563,7 @@ impl Simulation {
         cover.hp = cover.max_hp;
         cover.alive = true;
         cover.timber_hits.clear();
-        cover.timber_kick = None;
+        cover.kick = None;
         let (kind, x, z, w, d, h) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
         let (body, colliders) = self.cover_body(kind, x, z, w, d, h);
         self.covers[index].body = body;

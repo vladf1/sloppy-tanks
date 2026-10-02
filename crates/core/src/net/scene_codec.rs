@@ -32,6 +32,7 @@ use crate::sim::simulation_rules::FRAGMENT_CAPACITY;
 use crate::sim::timber_layout::{
     TimberFace, TimberHit, TimberJoin, TimberMark, TimberPart, TimberPartKind,
 };
+use crate::sim::tower_layout::TowerPiece;
 use crate::sim::types::{
     AmmoInventory, Cover, CoverKind, DamageCause, DamageSource, DeathStyle, Fragment,
     FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank, Team,
@@ -85,6 +86,21 @@ pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
     ("metal", DebrisMaterial::Metal),
     ("concrete", DebrisMaterial::Concrete),
 ];
+pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
+    ("west-bent", TowerPiece::WestBent),
+    ("east-bent", TowerPiece::EastBent),
+    ("back-bracing", TowerPiece::BackBracing),
+    ("front-bracing", TowerPiece::FrontBracing),
+    ("west-deck", TowerPiece::WestDeck),
+    ("east-deck", TowerPiece::EastDeck),
+    ("front-wall", TowerPiece::FrontWall),
+    ("back-wall", TowerPiece::BackWall),
+    ("west-wall", TowerPiece::WestWall),
+    ("east-wall", TowerPiece::EastWall),
+    ("roof", TowerPiece::Roof),
+    ("ladder", TowerPiece::Ladder),
+];
+
 pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
     ("armor", FragmentShape::Armor),
     ("wheel", FragmentShape::Wheel),
@@ -493,6 +509,9 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     }
     if let Some(part) = &fragment.timber_part {
         w.value("timberPart", |out| write_timber_part(out, part));
+    }
+    if let Some(piece) = fragment.tower_piece {
+        w.string("towerPiece", name(&TOWER_PIECES, piece));
     }
     if let Some(tree) = fragment.tree_cover_id {
         w.int("treeCoverId", u64::from(tree));
@@ -1026,6 +1045,9 @@ pub fn read_fragment(source: &Record) -> ReadResult<RenderFragment> {
             optional(v, |v| choice(v, &COVER_KINDS))
         })?,
         timber_part: field(source, "timberPart", |v| optional(v, read_timber_part))?,
+        tower_piece: field(source, "towerPiece", |v| {
+            optional(v, |v| choice(v, &TOWER_PIECES))
+        })?,
         tree_cover_id: field(source, "treeCoverId", |v| optional(v, id32))?,
         tree_center_y: field(source, "treeCenterY", |v| optional(v, number))?,
         created_at: field(source, "createdAt", |v| optional(v, number))?,
@@ -1330,6 +1352,7 @@ pub const ENTITY_FIELDS: [&[&str]; 6] = [
         "material",
         "sourceKind",
         "timberPart",
+        "towerPiece",
         "treeCoverId",
         "treeCenterY",
         "createdAt",
