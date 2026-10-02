@@ -334,14 +334,13 @@ fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
                 z = position.z + from.cos() * distance;
                 aim = (position.x - x).atan2(position.z - z) + random.range(-0.7, 0.7);
             }
-            // The TypeScript probe used owner -1: an id no tank has.
             let probe = ShotProbe {
                 x,
                 y: None,
                 z,
                 vx: aim.sin() * speed,
                 vz: aim.cos() * speed,
-                owner: u32::MAX,
+                ignored: None,
             };
             let tank = &s.tanks[target];
             let expected = unbounded_hit_time(&s, &probe, tank, limit, elapsed, frame_delta);
@@ -666,6 +665,46 @@ fn a_reflected_shell_points_toward_its_bounce_not_the_original_shooter() {
     let source = hit.damage_source.unwrap();
     assert_eq!(source.cause, DamageCause::Ricochet);
     assert!(source.origin.x > hit.x);
+}
+
+#[test]
+fn a_ricochet_stops_harmlessly_at_its_shooter_and_teammates() {
+    // Fired from the shooter's hull centre, so the outbound leg starts inside it.
+    for (target, start_x) in [(PLAYER, 0.0), (ALLY, 3.0)] {
+        let mut s = squad();
+        let z = s.body_translation(s.tanks[target].body).z;
+        s.add_cover(&CoverDef::new(
+            CoverKind::Concrete,
+            5.0,
+            z,
+            1.0,
+            10.0,
+            3.0,
+            f64::INFINITY,
+            0,
+        ));
+        s.world.step();
+        let (player_id, player_team) = (s.tanks[PLAYER].id, s.tanks[PLAYER].team);
+        let mut p = incoming(&mut s, Weapon::Ricochet, player_id, player_team);
+        p.x = start_x;
+        p.z = z;
+        p.bounces = 1;
+        s.shots = vec![p];
+        let (hp, shield) = (s.tanks[target].hp, s.tanks[target].shield_points);
+        step_projectiles(&mut s, 0.4, false);
+        assert_eq!(count(&s, SimEventType::Ricochet), 1, "target {target}");
+        assert_eq!(
+            s.shots.len(),
+            0,
+            "the reflected shell stops at target {target}"
+        );
+        assert_eq!(count(&s, SimEventType::Impact), 2, "target {target}");
+        assert_eq!(count(&s, SimEventType::Hurt), 0, "target {target}");
+        assert_eq!(
+            (s.tanks[target].hp, s.tanks[target].shield_points),
+            (hp, shield)
+        );
+    }
 }
 
 #[test]

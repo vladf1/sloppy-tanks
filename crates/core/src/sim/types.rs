@@ -556,6 +556,9 @@ pub struct Shot {
     pub vz: f64,
     pub damage: f64,
     pub bounces: u32,
+    /// Set by the first bounce. Until then the shell passes through the tank that fired it,
+    /// whose hull it starts beside; a reflected shell can strike its shooter.
+    pub ricocheted: bool,
     pub life: f64,
     pub weapon: Weapon,
     /// One shell interception for a fresh piercing round, zero otherwise.

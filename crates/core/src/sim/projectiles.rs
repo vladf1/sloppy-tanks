@@ -579,7 +579,8 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                     shot.owner_life,
                     DamageCause::Rocket,
                 );
-            } else {
+            } else if simulation.tanks[ti].id != shot.owner {
+                // A shell that ricochets back stops at its shooter, harmless like at an ally.
                 let position = simulation.body_translation(simulation.tanks[ti].body);
                 let speed = match shot.vx.hypot(shot.vz) {
                     0.0 => 1.0,
@@ -657,6 +658,7 @@ fn resolve_contact(simulation: &mut Simulation, next: Contact, fraction: f64) ->
                     bounced.vx -= 2.0 * dot * normal.x;
                     bounced.vz -= 2.0 * dot * normal.z;
                     bounced.bounces -= 1;
+                    bounced.ricocheted = true;
                     bounced.x += normal.x * COMBAT.bounce_clearance;
                     bounced.z += normal.z * COMBAT.bounce_clearance;
                     let mut ricochet = SimEvent::at(SimEventType::Ricochet, bounced.x, bounced.z);

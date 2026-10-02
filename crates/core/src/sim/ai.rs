@@ -41,7 +41,7 @@ pub fn friendly_blocks_shot(
             z: position.z,
             vx: (aim + offset).sin(),
             vz: (aim + offset).cos(),
-            owner: tank.id,
+            ignored: Some(tank.id),
         };
         let mut nearest = range;
         let mut blocked = false;

@@ -26,7 +26,8 @@ pub struct ShotProbe {
     pub z: f64,
     pub vx: f64,
     pub vz: f64,
-    pub owner: u32,
+    /// The tank this lane passes through: the shooter, until its shell ricochets.
+    pub ignored: Option<u32>,
 }
 
 impl From<&Shot> for ShotProbe {
@@ -37,7 +38,7 @@ impl From<&Shot> for ShotProbe {
             z: shot.z,
             vx: shot.vx,
             vz: shot.vz,
-            owner: shot.owner,
+            ignored: (!shot.ricocheted).then_some(shot.owner),
         }
     }
 }
@@ -85,7 +86,7 @@ pub fn tank_hit_time(
     frame_delta: f64,
     translation: Option<Point3>,
 ) -> Option<f64> {
-    if !tank.alive || tank.id == shot.owner {
+    if !tank.alive || shot.ignored == Some(tank.id) {
         return None;
     }
     let end = translation.unwrap_or_else(|| simulation.body_translation(tank.body));

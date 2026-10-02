@@ -85,7 +85,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
         z: position.z,
         vx: direction.x,
         vz: direction.z,
-        owner: id,
+        ignored: Some(id),
     };
     for target in &simulation.tanks {
         if let Some(hit) = tank_hit_time(simulation, &probe, target, spawn_distance, 0.0, 0.0, None)
@@ -123,6 +123,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             vz: angle.cos() * stats.speed * bullet_speed,
             damage: stats.damage * rank_stats(xp).damage,
             bounces: stats.bounces,
+            ricocheted: false,
             // Rockets accelerate during flight; all rounds share the expiry limit.
             life: COMBAT.projectile_lifetime,
             weapon: fired,
