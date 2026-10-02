@@ -1,6 +1,12 @@
 import type { Difficulty, GameMode, Team, VehicleKind } from "./engine-api";
 import { isExtraLevel, mapOption, showsExtraLevels, type MapId } from "./map-options";
 import { bindMapChoice, setMapChoice } from "./map-picker";
+import {
+  preferredGameMode,
+  preferredTank,
+  savedPreference,
+  savePreference,
+} from "./player-preferences";
 
 /** Battle Setup's choices, as the engine's `Game.set_options` takes them. */
 export interface GameOptions {
@@ -32,6 +38,8 @@ export function initialGameOptions(
   search: string,
   difficulty: string | null,
   lastMap: string | null = null,
+  lastTank: string | null = null,
+  lastGameMode: string | null = null,
 ): GameOptions {
   const requestedMap = new URLSearchParams(search).get("map");
   const extraLevels = showsExtraLevels(search);
@@ -39,11 +47,12 @@ export function initialGameOptions(
     const option = mapOption(id);
     return option && (extraLevels || !isExtraLevel(option.id)) ? option.id : undefined;
   };
+  const mapMode = map(requestedMap) ?? map(lastMap) ?? "village";
   return {
-    humanKind: "balanced",
+    humanKind: preferredTank(lastTank),
     humanTeam: firstSeededDraw(seed) < 0.5 ? 0 : 1,
-    gameMode: "team",
-    mapMode: map(requestedMap) ?? map(lastMap) ?? "village",
+    gameMode: isExtraLevel(mapMode) ? "team" : preferredGameMode(lastGameMode),
+    mapMode,
     difficulty: parseDifficulty(difficulty),
   };
 }
@@ -118,9 +127,14 @@ export function shownTankTeam(overlay: HTMLElement): GameOptions["humanTeam"] {
 
 /** Both the lightweight startup menu and later rounds edit the same choices. */
 export function bindGameOptions(overlay: HTMLElement, options: GameOptions): void {
+  // Extra levels force team play without replacing the player's standard-map choice.
+  let standardGameMode = isExtraLevel(options.mapMode)
+    ? preferredGameMode(savedPreference("game-mode"))
+    : options.gameMode;
   overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((button) => {
     button.addEventListener("click", () => {
       options.humanKind = button.dataset.kind as VehicleKind;
+      savePreference("tank", options.humanKind);
       showTank(overlay, options.humanKind);
     });
   });
@@ -129,9 +143,11 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
       input.addEventListener("change", () => {
         if (key === "difficulty") {
           options.difficulty = parseDifficulty(input.value);
-          localStorage.setItem("sloppy-difficulty", options.difficulty);
+          savePreference("difficulty", options.difficulty);
         } else {
-          options.gameMode = input.value as GameOptions["gameMode"];
+          standardGameMode = preferredGameMode(input.value);
+          options.gameMode = standardGameMode;
+          savePreference("game-mode", standardGameMode);
         }
       });
     });
@@ -143,13 +159,11 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
       return;
     }
     options.mapMode = mapMode;
-    localStorage.setItem("sloppy-map", mapMode);
-    if (isExtraLevel(mapMode)) {
-      options.gameMode = "team";
-      overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
-        input.checked = input.value === "team";
-      });
-    }
+    savePreference("map", mapMode);
+    options.gameMode = isExtraLevel(mapMode) ? "team" : standardGameMode;
+    overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
+      input.checked = input.value === options.gameMode;
+    });
     showBattleFormat(overlay, mapMode);
   });
 }

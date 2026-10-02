@@ -809,6 +809,9 @@ impl Presentation {
     /// Rebuild every entity view for a new round (`reset()`).
     pub fn reset(&mut self, state: &RenderState) {
         self.rig.snap_seat = true;
+        if let Some(viewer) = state.viewer() {
+            self.rig.first_person.yaw = viewer.aim;
+        }
         self.apply_theme(state);
         self.renderer.reset_round();
         self.tanks.clear();

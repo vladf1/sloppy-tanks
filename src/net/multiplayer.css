@@ -333,12 +333,33 @@
 }
 #network-respawn {
   position: fixed;
-  inset: 40% 0 auto;
+  top: 40%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 48px);
+  padding: 20px 28px;
+  border: 1px solid #eef4d12a;
+  border-radius: 8px;
+  background: #122b47eb;
+  box-shadow: 0 5px 20px #0a162755;
   text-align: center;
   color: #fff0d2;
-  font: bold 28px sans-serif;
   pointer-events: none;
   text-shadow: 0 2px 5px black;
+}
+#network-respawn-count {
+  margin: 0;
+  font: bold 28px sans-serif;
+}
+#network-death-cause {
+  margin: 10px 0 0;
+  color: #ffcfab;
+  font: 14px/1.4 sans-serif;
+  overflow-wrap: anywhere;
+}
+#network-death-cause:empty {
+  display: none;
 }
 @media (max-width: 520px) {
   .multiplayer .network-menu,

@@ -148,6 +148,18 @@ diagnostics exist only in dev builds.
 `multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
 seats and viewer isolation without a server.
 
+With Vite and the local server running, `player-feedback-check.mjs` checks the
+online HUD's power-up timers, critical hull and death explanation using controlled
+HUD fixtures over a rendered room. `player-preferences-check.mjs` checks saved
+tank, mode, camera and zoom through page reloads, another round, and single-player
+to multiplayer transitions. Both write desktop screenshots and results under
+`artifacts/performance/player-ux/`:
+
+```sh
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/player-feedback-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/player-preferences-check.mjs
+```
+
 `node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
 names, responsive room listings, immediate creation on the selected map, Auto
 teams, live player kills, join notifications, configurable match duration, late join,

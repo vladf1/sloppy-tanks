@@ -21,7 +21,7 @@
 //!
 //! - `Game.create(canvas, config_json)`: config `{ seed?, assetBase, map?,
 //!   lastMap?, difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?,
-//!   autoplay?, cssWidth?, cssHeight?, pixelRatio? }`. Choices follow
+//!   autoplay?, cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom? }`. Choices follow
 //!   `initialGameOptions`; the arena is reset and preparation begins.
 //! - `set_options(options_json) -> bool`: Battle Setup choices `{ humanKind,
 //!   humanTeam, gameMode, mapMode, difficulty }` (`GameOptions`, camelCase). When
@@ -56,6 +56,8 @@
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
 //!   the CSS size times the pixel ratio, capped at 1.5 unless `exact`.
 //! - `toggle_first_person() -> bool`: V / the view button while playing.
+//! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
+//!   and clamped overhead zoom, for the page to save after a camera input.
 //! - `set_human_kind(kind)`: the respawn menu's tank, keeping the world.
 //! - `set_speed(key, value) -> f64`: "tank-speed" or "bullet-speed" scale.
 //! - `debug_*`: the dev `window.sloppy` hooks (`debug_json`, `debug_snapshot`,
@@ -270,6 +272,8 @@ struct GameConfig {
     css_width: Option<f64>,
     css_height: Option<f64>,
     pixel_ratio: Option<f64>,
+    first_person: bool,
+    zoom: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -389,6 +393,8 @@ impl Game {
         .await
         .map_err(js_error)?;
         let mut view = Presentation::new(renderer, seed.to_bits());
+        view.rig
+            .restore_preferences(config.first_person, config.zoom);
         let setup = options_setup(&options)
             .merged(level_rules(options.map_mode))
             .merged(SimulationSetup {
@@ -875,6 +881,10 @@ impl Game {
         self.view.rig.first_person.enabled
     }
 
+    pub fn camera_preferences(&self) -> Vec<f64> {
+        self.view.rig.preferences().to_vec()
+    }
+
     /// The tank the human respawns in, chosen from the respawn menu mid-round. The
     /// world is kept; Battle Setup's next `set_options` sees the same choice.
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), JsValue> {
@@ -1012,7 +1022,7 @@ impl Game {
     }
 
     pub fn debug_set_zoom(&mut self, zoom: f64) -> f64 {
-        self.view.rig.zoom = zoom.clamp(CAMERA.min_zoom, CAMERA.max_zoom);
+        self.view.rig.set_zoom(zoom);
         self.view.rig.zoom
     }
 
