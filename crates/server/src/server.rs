@@ -186,6 +186,7 @@ impl MultiplayerServer {
         };
         let (terminate, _) = watch::channel(false);
         let max_rooms = options.max_rooms;
+        let build = options.build.clone();
         let shared = Arc::new(Shared {
             options,
             clock,
@@ -203,7 +204,7 @@ impl MultiplayerServer {
             open_sockets: AtomicUsize::new(0),
             wire: Arc::default(),
             monitor,
-            dashboard: Mutex::new(Dashboard::new(max_rooms)),
+            dashboard: Mutex::new(Dashboard::new(max_rooms, build)),
             stopping: AtomicBool::new(false),
             terminate,
         });
@@ -415,6 +416,10 @@ fn room_path(path: &str) -> Option<&str> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Health<'a> {
+    /// The version players see, `1.1.0.628`; `version` stays the protocol number that
+    /// clients and the traffic bots read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release: Option<&'a str>,
     version: u32,
     content_version: &'static str,
     server_build: &'static str,
@@ -450,6 +455,7 @@ async fn route(
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
             let build = &shared.options.build;
             let health = Health {
+                release: build.release.as_deref(),
                 version: PROTOCOL_VERSION,
                 content_version: CONTENT_VERSION,
                 server_build: SERVER_BUILD,

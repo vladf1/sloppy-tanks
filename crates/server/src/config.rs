@@ -12,6 +12,9 @@ const SHORT_COMMIT_LENGTH: usize = 7;
 /// that leaves the server unchanged does not recompile it. A local run has none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BuildInfo {
+    /// The release version (`SLOPPY_RELEASE`, such as `1.1.0.628`) of the first main build
+    /// that shipped this server; later builds that leave the server unchanged keep it.
+    pub release: Option<String>,
     pub commit: Option<String>,
     /// The tree had uncommitted changes (`SLOPPY_COMMIT` ends in `-dirty`).
     pub dirty: bool,
@@ -19,8 +22,9 @@ pub struct BuildInfo {
 }
 
 impl BuildInfo {
-    /// Reads `SLOPPY_COMMIT` (a full hash, `-dirty` when the tree had local changes)
-    /// and `SLOPPY_BUILT_AT`; the image sets them empty when it was built without them.
+    /// Reads `SLOPPY_RELEASE`, `SLOPPY_COMMIT` (a full hash, `-dirty` when the tree had
+    /// local changes) and `SLOPPY_BUILT_AT`; the image sets them empty when it was built
+    /// without them.
     pub fn from_env(lookup: &impl Fn(&str) -> Option<String>) -> Self {
         let present = |name| lookup(name).filter(|text: &String| !text.is_empty());
         let stamp = present("SLOPPY_COMMIT");
@@ -30,6 +34,7 @@ impl BuildInfo {
             None => (None, false),
         };
         Self {
+            release: present("SLOPPY_RELEASE"),
             commit: hash.map(|hash| hash.chars().take(SHORT_COMMIT_LENGTH).collect()),
             dirty,
             built_at: present("SLOPPY_BUILT_AT"),
@@ -167,22 +172,26 @@ mod tests {
     fn reads_the_image_build_stamps() {
         assert_eq!(settings(&[]).unwrap().build, BuildInfo::default());
         let clean = settings(&[
+            ("SLOPPY_RELEASE", "1.1.0.628"),
             ("SLOPPY_COMMIT", "27e68e8f7c62b742b2efb24987016bf08778e9d9"),
             ("SLOPPY_BUILT_AT", "2026-10-02T14:02:23.799Z"),
         ])
         .unwrap()
         .build;
+        assert_eq!(clean.release.as_deref(), Some("1.1.0.628"));
         assert_eq!(clean.commit.as_deref(), Some("27e68e8"));
         assert!(!clean.dirty);
         assert_eq!(clean.built_at.as_deref(), Some("2026-10-02T14:02:23.799Z"));
         let dirty = settings(&[
             ("SLOPPY_COMMIT", "27e68e8f7c62-dirty"),
             ("SLOPPY_BUILT_AT", ""),
+            ("SLOPPY_RELEASE", ""),
         ])
         .unwrap()
         .build;
         assert_eq!(dirty.commit.as_deref(), Some("27e68e8"));
         assert!(dirty.dirty);
         assert_eq!(dirty.built_at, None);
+        assert_eq!(dirty.release, None);
     }
 }

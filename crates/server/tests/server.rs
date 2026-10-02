@@ -322,6 +322,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
     let lines = Lines::default();
     let mut options = options(&lines);
     options.build = BuildInfo {
+        release: Some("1.1.0.628".into()),
         commit: Some("27e68e8".into()),
         dirty: false,
         built_at: Some("2026-10-02T14:02:23.799Z".into()),
@@ -331,6 +332,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
         .unwrap();
     let health = get(&server.local_addr().to_string(), "/health", &[]).await;
     let body: Value = serde_json::from_str(&health.body).unwrap();
+    assert_eq!(body["release"], "1.1.0.628");
     assert_eq!(body["commit"], "27e68e8");
     assert_eq!(body["dirty"], false);
     assert_eq!(body["builtAt"], "2026-10-02T14:02:23.799Z");

@@ -1028,13 +1028,17 @@
         renderRooms(reading.roomList);
         renderFacts(reading);
         $("meta").textContent = [
+          server.release ? `v${server.release}` : null,
+          server.commit ? `commit ${server.commit}` : null,
           `content ${server.contentVersion}`,
           `protocol ${server.protocolVersion}`,
           server.runtime,
           server.environment,
           `updated ${clock(reading.atMs)}`,
           `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
-        ].join(" · ");
+        ]
+          .filter(Boolean)
+          .join(" · ");
         document.title = `${reading.players} players · Sloppy Tanks server`;
       }
 

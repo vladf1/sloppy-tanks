@@ -218,11 +218,16 @@ client only plays on a server built from the same shared sources: the `crates/co
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
-build at `/health`: protocol, content version, commit, local-change state and build
-time, and the server also its server build. The page's is a static `health/index.html`
-that GitHub Pages serves after a redirect to `/health/`
-(<https://sloppy-tanks.fridman.me/health>). The server's commit and time are those of
-its image, which predate main when later commits left the server unchanged. After merging changes to any of them, run
+build at `/health`: release version, protocol (`version`), content version, commit,
+local-change state and build time, and the server also its server build. The release
+version is `MAJOR.MINOR.PATCH.BUILD`, such as `1.1.0.628`: `version` in package.json,
+bumped by hand, and the Pages workflow's run number, which GitHub increments on every
+deploy from main (local and pull request builds have only the first three parts).
+Battle Setup shows it with the commit. The page's `/health` is a static
+`health/index.html` that GitHub Pages serves after a redirect to `/health/`
+(<https://sloppy-tanks.fridman.me/health>). The server's release, commit and time are
+those of the first main build that shipped its server build, so they predate the
+page's when later commits left the server unchanged. After merging changes to any of them, run
 `pnpm run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but

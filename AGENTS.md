@@ -320,9 +320,16 @@ offline.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and
   behavior; asset generators are automation tools, not test pages.
-- Keep dev pages free of build footers and navigation overlays; build time,
-  commit, and local-change state belong in `/health` only (`scripts/page-health.ts`,
-  on production too).
+- Keep dev pages free of build footers and navigation overlays. The game's Battle
+  Setup shows one build line (release version and commit); build time and the rest
+  belong in `/health` (`scripts/page-health.ts`, on production too).
+- The release version is `MAJOR.MINOR.PATCH.BUILD` (`scripts/release-version.mjs`):
+  `version` in package.json, bumped by hand, plus the Pages workflow's
+  `github.run_number`, so only main's deploys have the fourth part. `/health` reports
+  it as `release`; `version` there stays the protocol number clients and the traffic
+  bots read. The server image carries the release of the first main build that
+  shipped its server build; later builds only retag it, so the VPS does not restart
+  for commits that leave the server unchanged.
 - After publishing, check the game, test directory, representative fixtures,
   and build metadata through the public URL. A successful upload is not a
   browser check. Dev responses request `noindex`; this is a public site, not
