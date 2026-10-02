@@ -11,6 +11,7 @@ const checks = [
   "map-start-check.mjs",
   "hud-feedback-check.mjs",
   "touch-controls-check.mjs",
+  "phone-check.mjs",
   "round-recap-check.mjs",
   "render-cameras-check.mjs",
   "destruction-check.mjs",

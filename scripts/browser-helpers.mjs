@@ -15,11 +15,13 @@ export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-t
  * (`installEngineHelpers`) in every page. Page errors from every
  * page in the context are collected in `errors`; `consoleErrors` also collects
  * console.error output (shader compilation failures are only reported there).
- * @param {{ viewport?: { width: number, height: number }, hasTouch?: boolean, consoleErrors?: boolean }} [options]
+ * `isMobile` emulates a phone: its screen is the viewport and its pointer is coarse.
+ * @param {{ viewport?: { width: number, height: number }, hasTouch?: boolean, isMobile?: boolean, consoleErrors?: boolean }} [options]
  */
 export async function launchGame({
   viewport = { width: 1600, height: 900 },
   hasTouch = false,
+  isMobile = false,
   consoleErrors = false,
 } = {}) {
   const browser = await chromium.launch({
@@ -27,7 +29,13 @@ export async function launchGame({
     headless,
     args: ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
   });
-  const context = await browser.newContext({ viewport, hasTouch, deviceScaleFactor: 1 });
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch,
+    isMobile,
+    deviceScaleFactor: 1,
+  });
   await installEngineHelpers(context);
   const errors = [];
   context.on("page", (page) => {

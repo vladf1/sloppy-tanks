@@ -58,30 +58,32 @@ try {
   await touch("touchMove", 2, aim.x, aim.y - 25);
   let input = await state();
   assert.ok(input.x > 0.4 && input.x < 0.7, "analog drive");
-  assert.equal(input.fire, false, "inner ring only aims");
   assert.equal(input.aimY, -1);
   await touch("touchMove", 2, aim.x, aim.y - 55);
-  assert.equal((await state()).fire, true);
+  assert.equal((await state()).fire, false, "the aim stick only aims");
+  const fire = await center(".touch-fire");
+  await touch("touchStart", 3, fire.x, fire.y);
+  assert.equal((await state()).fire, true, "holding FIRE fires");
   const mine = await center(".touch-mine");
-  await touch("touchStart", 3, mine.x, mine.y);
-  await touch("touchEnd", 3);
+  await touch("touchStart", 4, mine.x, mine.y);
+  await touch("touchEnd", 4);
   await page.waitForFunction(() => window.sloppy.sim.human.mineCooldown > 0);
   assert.equal((await state()).fire, true, "mine tap does not cancel shooting");
   await page.evaluate(() => window.sloppy.giveAmmo(10));
   const ammo = await center("#ammo-rocket");
-  await touch("touchStart", 3, ammo.x, ammo.y);
-  await touch("touchEnd", 3);
+  await touch("touchStart", 4, ammo.x, ammo.y);
+  await touch("touchEnd", 4);
   assert.equal((await state()).fire, true, "ammo tap does not cancel shooting");
   await page.waitForFunction(() => window.sloppy.sim.human.selectedAmmo === "rocket");
   await page.screenshot({ path: `${output}/landscape.png` });
   await touch("touchEnd", 1);
-  input = await state();
-  assert.equal(input.x, 0);
-  assert.equal(input.fire, true);
   await touch("touchEnd", 2);
   input = await state();
-  assert.equal(input.fire, false);
+  assert.equal(input.x, 0);
+  assert.equal(input.fire, true, "releasing the sticks keeps firing");
   assert.equal(input.aiming, true, "release retains aim");
+  await touch("touchEnd", 3);
+  assert.equal((await state()).fire, false);
 
   const zoom = await page.evaluate(() => window.sloppy.view.zoom);
   // Zoom reaches the engine with the next frame's input.
@@ -125,18 +127,23 @@ try {
   await touch("touchEnd", 1);
   await page.screenshot({ path: `${output}/portrait.png` });
   const portraitAim = await center(".touch-aim");
+  const portraitFire = await center(".touch-fire");
   await touch("touchStart", 4, portraitAim.x, portraitAim.y);
   await touch("touchMove", 4, portraitAim.x + 55, portraitAim.y);
+  await touch("touchStart", 5, portraitFire.x, portraitFire.y);
   assert.equal((await state()).fire, true);
   await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
   fingers.clear();
   await page.waitForFunction(() => !window.sloppy.controls.touch.fire);
-  assert.equal((await state()).pointers.aim, null, "OS touch cancellation releases capture");
+  const released = (await state()).pointers;
+  assert.equal(released.aim, null, "OS touch cancellation releases capture");
+  assert.equal(released.fire, null, "OS touch cancellation releases FIRE");
   // Safe targets remain on-screen and do not overlap the thumb pads.
   for (const selector of [
     "#pause",
     "#zoom-in",
     "#ammo-standard",
+    ".touch-fire",
     ".touch-mine",
     ".touch-drive",
     ".touch-aim",
@@ -157,7 +164,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    "Touch controls: multi-touch driving/aim/fire, third-finger mine/ammo, zoom, pause, preference, rotation and portrait hit-testing passed.",
+    "Touch controls: multi-touch driving/aim, held FIRE, extra-finger mine/ammo, zoom, pause, preference, rotation and portrait hit-testing passed.",
   );
 } finally {
   await browser.close();

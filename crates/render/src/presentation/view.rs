@@ -534,6 +534,8 @@ pub struct Presentation {
     pub time: f64,
     pub crosshair_visible: bool,
     pub crosshair: Mat4,
+    /// Phones aim with a thumb stick and never show the reticle.
+    pub hide_reticle: bool,
     theme: Option<Theme>,
     library: Library,
     reticle: ReticleModel,
@@ -604,6 +606,7 @@ impl Presentation {
             time: 0.0,
             crosshair_visible: false,
             crosshair: Mat4::IDENTITY,
+            hide_reticle: false,
             theme: None,
             library: Library::default(),
             reticle,
@@ -1444,7 +1447,8 @@ impl Presentation {
         // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;
         let viewer_alive = state.viewer().is_some_and(|viewer| viewer.alive);
-        self.crosshair_visible = state.match_state.phase == MatchPhase::Playing
+        self.crosshair_visible = !self.hide_reticle
+            && state.match_state.phase == MatchPhase::Playing
             && ((rig.in_first_person && viewer_alive)
                 || (!rig.first_person.enabled && rig.seat_blend == 0.0));
         self.renderer

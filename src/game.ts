@@ -21,6 +21,7 @@ import { sameGameOptions, type GameOptions } from "./game/game-options";
 import { savedCameraPreferences, saveCameraPreferences } from "./game/player-preferences";
 import { isExtraLevel, showsExtraLevels } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import { isPhone } from "./game/phone-mode";
 import type { PreparedGame } from "./game/start-menu";
 import { afterPaint, nextPrepareStep } from "./game/task-yield";
 import { startTextureBake } from "./game/texture-bake";
@@ -32,6 +33,9 @@ const PREPARE_BUDGET = 4;
 const ERROR_CHECK_EVERY_FRAMES = 30;
 /** `window.sloppy.exactResolution()` renders at this size whatever the window. */
 const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
+/** Phones have no zoom buttons and a small screen, so their overhead camera starts
+ * farther out than the renderer's default (34) to show more of the arena. */
+const PHONE_ZOOM = 40;
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -65,7 +69,9 @@ export async function prepareGame(
       cssWidth: innerWidth,
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
-      ...savedCameraPreferences(),
+      ...(isPhone()
+        ? { firstPerson: false, zoom: PHONE_ZOOM, hideReticle: true }
+        : savedCameraPreferences()),
     });
   } catch (error) {
     root.remove();

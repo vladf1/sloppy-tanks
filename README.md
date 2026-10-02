@@ -32,6 +32,8 @@ so run `pnpm run wasm` again after changing a crate.
 
 Rendering requires WebGPU, HTTPS or localhost, and a browser/GPU that supports it. There is no WebGL fallback. **Stats for nerds** shows rendering diagnostics.
 
+To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
+
 ## Play
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
@@ -74,7 +76,9 @@ In first person the camera sits on your turret: the mouse turns it (click the ar
 
 Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
-On iPads and touchscreens, two thumb sticks appear automatically. Drag the left stick to drive (shorter drags move slower); drag the right stick to aim and push beyond its yellow ring to fire. Release to stop firing while keeping your aim direction. Tap ✹ to drop one mine, tap an ammo slot to select it, and use − / + to zoom. The mine button shows its cooldown. Open Settings with the gear in the top right corner to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
+On iPads and touchscreens, two thumb sticks appear automatically. Drag the left stick to drive (shorter drags move slower); drag the right stick to aim, and hold the yellow FIRE button to fire along that aim; releasing the stick keeps your aim direction. Tap ✹ to drop one mine, tap an ammo slot to select it, and use − / + to zoom. The mine button shows its cooldown. Open Settings with the gear in the top right corner to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
+
+Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank and the map, rounds are Team Battles on Easy, and the arena shows nothing but the drive stick, a small scoreboard, pause and the mid-screen notices. Touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Phones start with a farther camera, draw no aiming reticle, and neither zoom the page nor show the long-press magnifier. There is no multiplayer, aim stick, FIRE or mine button, ammo strip or Settings on a phone.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 

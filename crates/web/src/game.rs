@@ -21,8 +21,9 @@
 //!
 //! - `Game.create(canvas, config_json)`: config `{ seed?, assetBase, map?,
 //!   lastMap?, difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?,
-//!   autoplay?, cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom? }`. Choices follow
-//!   `initialGameOptions`; the arena is reset and preparation begins.
+//!   autoplay?, cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?,
+//!   hideReticle? }`. Choices follow `initialGameOptions`; the arena is reset and
+//!   preparation begins.
 //! - `set_options(options_json) -> bool`: Battle Setup choices `{ humanKind,
 //!   humanTeam, gameMode, mapMode, difficulty }` (`GameOptions`, camelCase). When
 //!   they differ, the arena rebuilds with the map's level rules (extra levels
@@ -276,6 +277,7 @@ struct GameConfig {
     pixel_ratio: Option<f64>,
     first_person: bool,
     zoom: Option<f64>,
+    hide_reticle: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -390,6 +392,7 @@ impl Game {
         let mut view = Presentation::new(renderer, seed.to_bits());
         view.rig
             .restore_preferences(config.first_person, config.zoom);
+        view.hide_reticle = config.hide_reticle;
         let setup = options_setup(&options)
             .merged(level_rules(options.map_mode))
             .merged(SimulationSetup {

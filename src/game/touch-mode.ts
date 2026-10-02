@@ -2,6 +2,7 @@ import type { Controls } from "./controls";
 import type { Phase } from "./engine-api";
 import type { TouchControls } from "./touch-controls";
 import type { TouchMode } from "./touch-input";
+import { isPhone } from "./phone-mode";
 /** What the touch overlay shows: the mine button's cooldown and whether to show at all. */
 export interface TouchState {
   readonly human: { readonly mineCooldown: number };
@@ -28,7 +29,8 @@ export class TouchModeController {
     } catch {
       /* Settings remain usable without storage. */
     }
-    this.mode = saved === "on" || saved === "off" ? saved : "auto";
+    // A phone has no other controls, and no Settings to change this.
+    this.mode = isPhone() ? "on" : saved === "on" || saved === "off" ? saved : "auto";
     this.applyMode();
   }
 
