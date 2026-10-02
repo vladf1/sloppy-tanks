@@ -74,6 +74,9 @@ export class UI {
     startButton.disabled = false;
     startButton.removeAttribute("aria-busy");
     startButton.textContent = "GO!";
+    this.battleSetup.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((tab) => {
+      tab.disabled = false;
+    });
     root.insertAdjacentHTML("beforeend", hudMarkup());
     this.overlay = root.querySelector("#overlay")!;
     this.hud = root.querySelector("#hud")!;

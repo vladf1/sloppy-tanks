@@ -17,7 +17,8 @@ use crate::websocket::{Codec, Event};
 
 /// Queued output after which a reader is too slow to follow 20 Hz snapshots; the socket
 /// is closed with 4002. Counted like `ws`'s `bufferedAmount`: compressed frames not yet
-/// taken by the kernel plus messages not yet compressed.
+/// taken by the kernel plus messages not yet compressed. A final close frame may add
+/// at most one control frame beyond this budget.
 pub const MAX_BUFFERED_BYTES: usize = 2_000_000;
 /// Time a closing handshake may take before the connection is cut (`ws`'s closeTimeout).
 pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -34,6 +35,18 @@ struct SocketState {
     closing: AtomicBool,
 }
 
+impl SocketState {
+    fn reserve(&self, bytes: usize) -> bool {
+        self.queued
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
+                queued
+                    .checked_add(bytes)
+                    .filter(|total| *total <= MAX_BUFFERED_BYTES)
+            })
+            .is_ok()
+    }
+}
+
 /// What a room holds for a socket. Sending never blocks the room: messages queue for the
 /// socket's task, which compresses and writes them.
 #[derive(Clone)]
@@ -47,13 +60,15 @@ impl RoomSocket for SocketHandle {
         if self.state.closing.load(Ordering::Relaxed) {
             return Ok(());
         }
-        if self.state.queued.load(Ordering::Relaxed) > MAX_BUFFERED_BYTES {
+        if !self.state.reserve(text.len()) {
             self.close(4002, "Slow reader");
             return Ok(());
         }
-        self.state.queued.fetch_add(text.len(), Ordering::Relaxed);
         // A finished connection task has already reported its close to the room.
-        let _ = self.sender.send(Outbound::Text(text));
+        let bytes = text.len();
+        if self.sender.send(Outbound::Text(text)).is_err() {
+            self.state.queued.fetch_sub(bytes, Ordering::Relaxed);
+        }
         Ok(())
     }
 
@@ -135,15 +150,39 @@ where
     let mut peer_close: Option<u16> = None;
     let mut close_deadline: Option<Instant> = None;
     let mut outbound_open = true;
-    // Adds what `encode` appends to the queued-output figure the room checks.
-    let append = |pending: &mut BytesMut, encode: &mut dyn FnMut(&mut BytesMut)| {
-        let before = pending.len();
-        encode(pending);
-        state
-            .queued
-            .fetch_add(pending.len() - before, Ordering::Relaxed);
-    };
+    let mut close_requested: Option<(Option<u16>, String)> = None;
+    // Text already reserved its uncompressed bytes at admission; control replies reserve
+    // their full frame here. Adjust atomically against messages the room may be queuing.
+    let append =
+        |pending: &mut BytesMut, reserved: usize, encode: &mut dyn FnMut(&mut BytesMut)| {
+            let before = pending.len();
+            encode(pending);
+            let encoded = pending.len() - before;
+            if encoded > reserved && !state.reserve(encoded - reserved) {
+                pending.truncate(before);
+                state.queued.fetch_sub(reserved, Ordering::Relaxed);
+                return false;
+            }
+            if reserved > encoded {
+                state
+                    .queued
+                    .fetch_sub(reserved - encoded, Ordering::Relaxed);
+            }
+            true
+        };
     let ending = loop {
+        if let Some((code, reason)) = close_requested.take() {
+            state.closing.store(true, Ordering::Relaxed);
+            // Keep already encoded output intact (it can end in a partially written
+            // frame), and allow only this final control frame beyond the queue budget.
+            let before = pending.len();
+            codec.encode_close(code, &reason, &mut pending);
+            state
+                .queued
+                .fetch_add(pending.len() - before, Ordering::Relaxed);
+            close_sent = true;
+            close_deadline.get_or_insert_with(|| Instant::now() + CLOSE_TIMEOUT);
+        }
         if close_sent && peer_close.is_some() && pending.is_empty() {
             break Ending::Closed(peer_close.unwrap_or(1005));
         }
@@ -152,6 +191,26 @@ where
             biased;
             () = stopped(&mut terminate) => break Ending::Terminated,
             () = sleep_until_some(deadline), if deadline.is_some() => break Ending::Dropped,
+            command = receiver.recv(), if outbound_open && !close_sent => match command {
+                Some(Outbound::Text(text)) => {
+                    if !append(&mut pending, text.len(), &mut |out| codec.encode_text(&text, out)) {
+                        close_requested = Some((Some(4002), "Slow reader".into()));
+                    }
+                }
+                Some(Outbound::Close(code, reason)) => {
+                    close_requested = Some((Some(code), reason));
+                }
+                None => outbound_open = false,
+            },
+            written = writer.write(&pending), if !pending.is_empty() => match written {
+                Ok(0) | Err(_) => break Ending::Dropped,
+                Ok(count) => {
+                    pending.advance(count);
+                    state.queued.fetch_sub(count, Ordering::Relaxed);
+                }
+            },
+            // Service room output, closes and ready writes before taking another batch
+            // from a busy reader. A stalled writer may still receive the peer's close.
             read = reader.read_buf(&mut input), if peer_close.is_none() => {
                 match read {
                     Ok(0) | Err(_) => break Ending::Dropped,
@@ -172,8 +231,11 @@ where
                             }
                         }
                         Ok(Some(Event::Ping(payload))) => {
-                            if !close_sent {
-                                append(&mut pending, &mut |out| codec.encode_pong(&payload, out));
+                            if !close_sent
+                                && !append(&mut pending, 0, &mut |out| codec.encode_pong(&payload, out))
+                            {
+                                close_requested = Some((Some(4002), "Slow reader".into()));
+                                break;
                             }
                         }
                         Ok(Some(Event::Pong)) => {}
@@ -181,9 +243,7 @@ where
                             peer_close = Some(code.unwrap_or(1005));
                             if !close_sent {
                                 // Echo the peer's close, as ws does, after any queued output.
-                                state.closing.store(true, Ordering::Relaxed);
-                                append(&mut pending, &mut |out| codec.encode_close(code, &reason, out));
-                                close_sent = true;
+                                close_requested = Some((code, reason));
                             }
                             close_deadline.get_or_insert_with(|| Instant::now() + CLOSE_TIMEOUT);
                             break;
@@ -198,25 +258,6 @@ where
                     break Ending::Failed;
                 }
             }
-            command = receiver.recv(), if outbound_open && !close_sent => match command {
-                Some(Outbound::Text(text)) => {
-                    append(&mut pending, &mut |out| codec.encode_text(&text, out));
-                    state.queued.fetch_sub(text.len(), Ordering::Relaxed);
-                }
-                Some(Outbound::Close(code, reason)) => {
-                    append(&mut pending, &mut |out| codec.encode_close(Some(code), &reason, out));
-                    close_sent = true;
-                    close_deadline.get_or_insert_with(|| Instant::now() + CLOSE_TIMEOUT);
-                }
-                None => outbound_open = false,
-            },
-            written = writer.write(&pending), if !pending.is_empty() => match written {
-                Ok(0) | Err(_) => break Ending::Dropped,
-                Ok(count) => {
-                    pending.advance(count);
-                    state.queued.fetch_sub(count, Ordering::Relaxed);
-                }
-            },
         }
     };
     state.closing.store(true, Ordering::Relaxed);

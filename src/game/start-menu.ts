@@ -21,6 +21,7 @@ export class StartMenu {
     root: HTMLElement,
     readonly options: GameOptions,
     private readonly load: (onStage: (stage: string) => void) => Promise<PreparedGame>,
+    private readonly started: () => void = () => {},
   ) {
     this.overlay = root.querySelector<HTMLDivElement>("#startup-overlay")!;
     this.button = this.overlay.querySelector<HTMLButtonElement>("#start")!;
@@ -72,6 +73,10 @@ export class StartMenu {
       return;
     }
     this.starting = true;
+    // GO commits to single player; the arena choices can still change while it loads.
+    this.overlay.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((tab) => {
+      tab.disabled = true;
+    });
     this.button.disabled = true;
     this.button.textContent = "WAIT";
     this.button.setAttribute("aria-busy", "true");
@@ -81,6 +86,7 @@ export class StartMenu {
     try {
       const game = await this.prepare();
       await game.start(this.options);
+      this.started();
       this.overlay.remove();
     } catch (error) {
       if (!this.failed) {
@@ -126,6 +132,9 @@ export class StartMenu {
       "The arena could not load. Please try again.",
     );
     this.button.disabled = false;
+    this.overlay.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((tab) => {
+      tab.disabled = false;
+    });
     this.button.removeAttribute("aria-busy");
     this.button.textContent = "TRY AGAIN";
     this.button.setAttribute("aria-label", "Try loading the arena again");

@@ -55,6 +55,13 @@ try {
     await delayed.page.locator("#startup-status").textContent(),
     /round|Downloading|Building|Preparing/,
   );
+  // GO commits to this mode while the last arena choices can still change.
+  const multiplayerTab = delayed.page.locator("#tab-multiplayer");
+  assert.equal(await multiplayerTab.isDisabled(), true);
+  const modeBox = await multiplayerTab.boundingBox();
+  assert.ok(modeBox);
+  await delayed.page.mouse.click(modeBox.x + modeBox.width / 2, modeBox.y + modeBox.height / 2);
+  assert.equal(await delayed.page.locator(".start").getAttribute("data-play"), "single");
   // A last-minute choice during the queued start must reach the actual round.
   await chooseMap(delayed.page, "quarry");
   assert.equal(await delayed.page.locator("canvas").count(), 0);
@@ -76,6 +83,11 @@ try {
     round: 3,
     canvases: 1,
   });
+  // A setup cloned while early GO disabled the tabs must unlock them next round.
+  await delayed.page.keyboard.press("Escape");
+  await delayed.page.locator("#end-battle").click();
+  await delayed.page.locator("#restart").click();
+  assert.equal(await delayed.page.locator("#tab-multiplayer").isEnabled(), true);
   await delayed.context.close();
 
   // Hold GPU preparation too: every pipeline compiles in the background
@@ -234,6 +246,30 @@ try {
   assert.equal(await chosenMap(changed.page), "harbor");
   assert.equal(await changed.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   await changed.context.close();
+
+  // Denied storage reads and writes still allow defaults, current choices and GO.
+  const blockedStorage = await fresh();
+  await blockedStorage.page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new DOMException("Storage blocked", "SecurityError");
+      },
+    });
+  });
+  await blockedStorage.page.goto(url + "?extralevels");
+  await ready(blockedStorage.page);
+  assert.equal(await chosenMap(blockedStorage.page), "village");
+  await blockedStorage.page.locator('input[value="solo"]').check();
+  await blockedStorage.page.locator('input[value="hard"]').check();
+  await chooseMap(blockedStorage.page, "stress-test");
+  assert.equal(await blockedStorage.page.locator('input[value="solo"]').isDisabled(), true);
+  assert.equal(await blockedStorage.page.locator('input[value="team"]').isChecked(), true);
+  await startRound(blockedStorage.page);
+  await playing(blockedStorage.page);
+  assert.equal(await blockedStorage.page.evaluate(() => window.sloppy.sim.mapMode), "stress-test");
+  assert.equal(await blockedStorage.page.evaluate(() => window.sloppy.sim.difficulty), "hard");
+  await blockedStorage.context.close();
+  results.blockedStorage = "startup, changes, extra-level format and GO passed";
 
   console.log("Delayed loading, prepared arena reuse, gameplay, and new rounds passed.");
   const failure = await fresh();

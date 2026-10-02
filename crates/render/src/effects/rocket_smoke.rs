@@ -46,11 +46,17 @@ pub struct Puff {
     grow: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Trail {
+    position: Vec3,
+    seen: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct RocketSmoke {
     pub puffs: Vec<Puff>,
     /// Where each missile in flight last laid a puff, by shot id.
-    trails: HashMap<u32, Vec3>,
+    trails: HashMap<u32, Trail>,
     pub records: PoolBuffer,
 }
 
@@ -98,7 +104,9 @@ impl RocketSmoke {
         }
         self.puffs.retain(|puff| puff.age < puff.life);
         let behind = (1.0 - alpha.clamp(0.0, 1.0)) * STEP;
-        let trails = std::mem::take(&mut self.trails);
+        for trail in self.trails.values_mut() {
+            trail.seen = false;
+        }
         for shot in shots {
             let spacing = match shot.weapon {
                 Weapon::Rocket => ROCKET_SPACING,
@@ -115,9 +123,10 @@ impl RocketSmoke {
                 shot.visual_y.or(shot.y).unwrap_or(1.0) as f32,
                 (shot.z - shot.vz * behind) as f32,
             ) + back * (NOZZLE * model_scale(shot.weapon)) as f32;
-            let mut last = trails
+            let mut last = self
+                .trails
                 .get(&shot.id)
-                .copied()
+                .map(|trail| trail.position)
                 .unwrap_or(nozzle - back * spacing as f32);
             // Puffs every `spacing` metres from the last one up to the nozzle.
             let mut gap = last.distance(nozzle);
@@ -126,8 +135,17 @@ impl RocketSmoke {
                 gap -= spacing as f32;
                 self.lay(last, back, random);
             }
-            self.trails.insert(shot.id, last);
+            self.trails.insert(
+                shot.id,
+                Trail {
+                    position: last,
+                    seen: true,
+                },
+            );
         }
+        // Keep the allocation and surviving trails; spent or stopped missiles
+        // must not leave history behind for the next frame.
+        self.trails.retain(|_, trail| trail.seen);
         self.records.clear();
         let flame = hex_to_linear(FLAME_COLOR);
         let smoke = hex_to_linear(SMOKE_COLOR);
@@ -216,6 +234,39 @@ mod tests {
             smoke.update(&[], 1.0, STEP, &mut random);
         }
         assert!(smoke.is_empty() && smoke.records.is_empty());
+    }
+
+    #[test]
+    fn trail_history_reuses_storage_and_drops_spent_or_stopped_missiles() {
+        let mut random = CosmeticRandom::seeded(5);
+        let mut smoke = RocketSmoke::default();
+        let volley = [
+            missile(1, Weapon::Rocket, 0.0),
+            missile(2, Weapon::Tow, 0.0),
+        ];
+        smoke.update(&volley, 1.0, STEP, &mut random);
+        let capacity = smoke.trails.capacity();
+        let continuing = smoke.trails[&1].position;
+
+        let stopped = RenderShot {
+            vx: 0.0,
+            ..missile(2, Weapon::Tow, 1.0)
+        };
+        smoke.update(&[volley[0], stopped], 1.0, STEP, &mut random);
+        assert_eq!(smoke.trails.len(), 1);
+        assert_eq!(smoke.trails[&1].position, continuing);
+        assert_eq!(smoke.trails.capacity(), capacity);
+
+        smoke.update(&[], 1.0, STEP, &mut random);
+        assert!(smoke.trails.is_empty());
+        assert_eq!(
+            smoke.trails.capacity(),
+            capacity,
+            "reuse storage between volleys"
+        );
+        assert!(!smoke.puffs.is_empty(), "spent missiles leave fading smoke");
+        smoke.reset();
+        assert!(smoke.trails.is_empty() && smoke.puffs.is_empty() && smoke.records.is_empty());
     }
 
     #[test]

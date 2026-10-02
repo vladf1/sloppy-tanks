@@ -760,7 +760,9 @@ impl MatchHost {
         };
         let tank = &simulation.tanks[tank_index];
         if let Some(player) = &tank.player_id {
-            self.owners.insert((tank.id, tank.life), player.clone());
+            self.owners
+                .entry((tank.id, tank.life))
+                .or_insert_with(|| player.clone());
         }
     }
 
@@ -889,8 +891,12 @@ impl MatchHost {
                 .push(TimedEvent::write(self.cursor, tick as f64, &event));
         }
         for seat in 0..self.seats.len() {
-            let player = self.seats[seat].player.clone();
-            self.set_participant(player);
+            let player = &self.seats[seat].player;
+            // Most ticks leave the scoreboard unchanged; keep its owned strings until
+            // a score or seat change actually needs a new participant record.
+            if !self.participants.iter().any(|entry| entry == player) {
+                self.set_participant(player.clone());
+            }
             let Some(tank_id) = self.seats[seat].controls.as_ref().map(|c| c.tank_id) else {
                 continue;
             };

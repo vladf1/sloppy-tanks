@@ -16,6 +16,42 @@ try {
   await freezeLoop(page);
   await page.goto(gameUrl);
   await startRound(page);
+  // HUD feedback must consume elapsed time, including frames between HUD refreshes.
+  const hudTiming = await page.evaluate(async () => {
+    const { UI } = await import(new URL("src/game/ui.ts", location.href).href);
+    const { FRAME } = await import(new URL("src/game/engine-api.ts", location.href).href);
+    const originalUpdate = UI.prototype.update;
+    const game = window.sloppy.game;
+    const originalFrame = game.frame;
+    let frameSeconds = 0;
+    let hudSeconds = 0;
+    let hudDue = false;
+    game.frame = function (...args) {
+      const result = originalFrame.apply(this, args);
+      frameSeconds += result[FRAME.dt];
+      hudDue = result[FRAME.hudDue] === 1;
+      return result;
+    };
+    UI.prototype.update = function (state, dt) {
+      hudSeconds += dt;
+      return originalUpdate.call(this, state, dt);
+    };
+    try {
+      do {
+        window.advanceFrame(16);
+      } while (!hudDue);
+      frameSeconds = hudSeconds = 0;
+      for (const ms of [16, 16, 16, 100, 16, 16, 16, 100]) window.advanceFrame(ms);
+      return { frameSeconds, hudSeconds };
+    } finally {
+      game.frame = originalFrame;
+      UI.prototype.update = originalUpdate;
+    }
+  });
+  assert.ok(Math.abs(hudTiming.frameSeconds - 0.296) < 0.00001);
+  assert.ok(Math.abs(hudTiming.hudSeconds - hudTiming.frameSeconds) < 0.00001);
+  checks.push("HUD feedback follows 296 ms of uneven frames, including both 100 ms frames");
+
   // One cleared arena: the player at the origin facing a frozen enemy 7 m north.
   const ids = await page.evaluate(() => {
     const { sloppy, engine } = window;

@@ -105,9 +105,11 @@ impl TrackTrails {
             }
             self.oldest = (self.oldest + 1) % TRACK_CAPACITY;
         }
+        // Humans-only rooms remove departed tanks from the roster outright.
+        self.poses
+            .retain(|id, _| state.tanks.iter().any(|tank| tank.id == *id && tank.alive));
         for tank in &state.tanks {
             if !tank.alive {
-                self.poses.remove(&tank.id);
                 continue;
             }
             let position = tank.position;
@@ -230,6 +232,44 @@ mod tests {
     fn origin(records: &PoolBuffer, slot: usize) -> Vec3 {
         let w = &records.records()[slot].world;
         Vec3::new(w[12], w[13], w[14])
+    }
+
+    #[test]
+    fn departed_tanks_release_history_without_erasing_their_marks() {
+        let mut state = state(VehicleKind::Balanced);
+        let mut trails = TrackTrails::default();
+        step(&mut trails, &mut state, 0.0);
+        step(&mut trails, &mut state, 1.0);
+        let marks = trails.records.records().to_vec();
+        assert!(!marks.is_empty());
+
+        for id in 2..=100 {
+            state.tanks[0].id = id;
+            trails.update(&state, 1.0);
+            assert_eq!(trails.poses.len(), 1, "only the current tank keeps history");
+            assert!(trails.poses.contains_key(&id));
+        }
+        state.tanks.clear();
+        trails.update(&state, 1.0);
+        assert!(trails.poses.is_empty());
+        assert_eq!(
+            trails.records.records(),
+            marks,
+            "departed tanks' marks still fade normally"
+        );
+
+        state.tanks.push(RenderTank {
+            id: 1,
+            alive: true,
+            ..RenderTank::default()
+        });
+        trails.update(&state, 1.0);
+        state.tanks[0].alive = false;
+        trails.update(&state, 1.0);
+        assert!(trails.poses.is_empty(), "dead tanks also release history");
+        state.elapsed = TRACK_LIFETIME;
+        trails.update(&state, 1.0);
+        assert!(trails.records.is_empty());
     }
 
     #[test]

@@ -48,6 +48,27 @@ export function initialGameOptions(
   };
 }
 
+/** Storage is optional: browser privacy settings must not prevent Battle Setup. */
+export function loadGameOptions(seed: number, search: string): GameOptions {
+  let difficulty: string | null = null;
+  let map: string | null = null;
+  try {
+    difficulty = localStorage.getItem("sloppy-difficulty");
+    map = localStorage.getItem("sloppy-map");
+  } catch {
+    /* Use the link or defaults for this visit. */
+  }
+  return initialGameOptions(seed, search, difficulty, map);
+}
+
+function rememberOption(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* Choices still apply for this visit. */
+  }
+}
+
 export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
   return (
     a.humanKind === b.humanKind &&
@@ -129,7 +150,7 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
       input.addEventListener("change", () => {
         if (key === "difficulty") {
           options.difficulty = parseDifficulty(input.value);
-          localStorage.setItem("sloppy-difficulty", options.difficulty);
+          rememberOption("sloppy-difficulty", options.difficulty);
         } else {
           options.gameMode = input.value as GameOptions["gameMode"];
         }
@@ -143,7 +164,7 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
       return;
     }
     options.mapMode = mapMode;
-    localStorage.setItem("sloppy-map", mapMode);
+    rememberOption("sloppy-map", mapMode);
     if (isExtraLevel(mapMode)) {
       options.gameMode = "team";
       overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
