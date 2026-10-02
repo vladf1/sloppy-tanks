@@ -321,7 +321,8 @@ offline.
   suitable HTML entries there and smoke-test their deployed assets and
   behavior; asset generators are automation tools, not test pages.
 - Keep dev pages free of build footers and navigation overlays; build time,
-  commit, and local-change state belong in `/build-info.json` only.
+  commit, and local-change state belong in `/health` only (`scripts/page-health.ts`,
+  on production too).
 - After publishing, check the game, test directory, representative fixtures,
   and build metadata through the public URL. A successful upload is not a
   browser check. Dev responses request `noindex`; this is a public site, not

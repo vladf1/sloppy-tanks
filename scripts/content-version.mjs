@@ -55,6 +55,14 @@ export async function contentSources() {
   );
 }
 
+/** The network protocol version, a constant of the shared Rust core both builds compile. */
+export async function protocolVersion() {
+  const source = await readFile(new URL("crates/core/src/net/protocol.rs", root), "utf8");
+  const version = Number(/pub const PROTOCOL_VERSION: u32 = (\d+);/.exec(source)?.[1]);
+  if (!Number.isInteger(version)) throw new Error("PROTOCOL_VERSION not found in protocol.rs");
+  return version;
+}
+
 /** Clients and the server must match on this: the shared sources, the crates they
  * compile with (Rapier, glam, serde) and the compiler that builds both. The tree is
  * resolved for every target, so the hash is the same on whichever machine builds it

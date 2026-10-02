@@ -217,7 +217,11 @@ server, but after the site deploys it points the server's container image tag
 client only plays on a server built from the same shared sources: the `crates/core`
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
-matches this checkout. After merging changes to any of them, run
+matches this checkout and warns when the live page cannot join it. Both report their
+build at `/health`: the server's protocol, content version and server build, and the
+page's protocol, content version, commit, local-change state and build time
+(<https://sloppy-tanks.fridman.me/health>, a static `health/index.html` that GitHub
+Pages serves after a redirect to `/health/`). After merging changes to any of them, run
 `pnpm run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
@@ -246,8 +250,8 @@ production multiplayer is never affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
-The provider URL is <https://sloppy-tanks-dev.pages.dev/>. The `/build-info.json`
-endpoint records the UTC build time, commit, and whether local changes were present.
+The provider URL is <https://sloppy-tanks-dev.pages.dev/>. Its `/health`
+reports the same build details as production's, including whether local changes were present.
 The build goes to `dist-dev/` with the `/` base; production builds and deployments
 stay separate. The Namecheap CNAME `sloppy-tanks-dev` points to
 `sloppy-tanks-dev.pages.dev`; Cloudflare must associate a custom domain before its
