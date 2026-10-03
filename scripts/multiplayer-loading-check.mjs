@@ -115,13 +115,17 @@ try {
       `Multiplayer loads ${file}`,
     );
   }
-  // The room page runs on the engine Wasm; Rapier's JS build and binary stay out.
+  // The room page runs on the engine Wasm, one build of it (WebGPU, or the WebGL2
+  // fallback where this browser has no WebGPU); Rapier's JS build and binary stay out.
   const binaries = networkRequests
     .map((url) => new URL(url).pathname)
     .filter((path) => path.endsWith(".wasm"));
+  const builds = new Set(
+    binaries.map((path) => path.match(/\/(engine(?:-webgl)?)_bg-[\w-]+\.wasm$/)?.[1]),
+  );
   assert.ok(
-    binaries.length > 0 && binaries.every((path) => /\/engine_bg-[\w-]+\.wasm$/.test(path)),
-    `Multiplayer downloads only the engine Wasm: ${binaries.join(", ")}`,
+    binaries.length > 0 && builds.size === 1 && !builds.has(undefined),
+    `Multiplayer downloads only one engine Wasm: ${binaries.join(", ")}`,
   );
   // Entering the room takes over the page's early <head> download (src/engine.ts)
   // instead of fetching the engine again.

@@ -1,4 +1,4 @@
-import { engineModule, loadEngine, NetGame } from "../engine";
+import { createNetGame, engineModule, loadEngine, type NetGame } from "../engine";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
@@ -103,11 +103,11 @@ export async function startMultiplayer(
   }
   // The shared loader takes over the page's early download and compiles the binary
   // once, whether single player already loaded it or this room page is the first.
-  await loadEngine();
+  const engine = await loadEngine();
   const pending = selection ? undefined : takePendingJoin();
   const choiceJson = selection
     ? JSON.stringify(selection.choice)
-    : NetGame.pending_join(pending, room);
+    : engine.NetGame.pending_join(pending, room);
   if (!choiceJson) {
     setup.fail("Choose your tank and join the room again.");
     return;
@@ -214,7 +214,7 @@ export async function startMultiplayer(
   let game: NetGame;
   try {
     const [width, height] = cssSize();
-    game = await NetGame.create(
+    game = await createNetGame(
       ui.canvas,
       JSON.stringify({
         server,

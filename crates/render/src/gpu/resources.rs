@@ -108,16 +108,7 @@ pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(2, Comparison),
     texture_entry(3, true),
     sampler_entry(4, Filtering),
-    wgpu::BindGroupLayoutEntry {
-        binding: 5,
-        visibility: wgpu::ShaderStages::VERTEX,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    },
+    super::instance_store::INSTANCE_ENTRY,
 ];
 
 /// A uniform block and two filtered textures (the water).
