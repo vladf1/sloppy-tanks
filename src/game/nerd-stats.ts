@@ -41,7 +41,7 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
       [
         "GPU geometries",
         stats.meshes,
-        "Distinct mesh buffers currently uploaded to the GPU. Changes on map load, not per frame.",
+        "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
       ],
       [
         "GPU textures",
@@ -50,8 +50,8 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
       ],
       [
         "GPU memory",
-        `${(stats.gpuBytes / 1048576).toFixed(1)} MB`,
-        "Estimated GPU memory for meshes, textures, render targets, the shadow map and instances.",
+        `${(stats.gpuBytes / 1048576).toFixed(1)} MB (${(stats.meshSlackBytes / 1048576).toFixed(1)} MB page slack)`,
+        "Estimated GPU memory for mesh pages, textures, render targets, the shadow map and instances. Page slack is mesh page space no mesh uses.",
       ],
     ],
     Battle: [
@@ -141,7 +141,7 @@ export class NerdStats {
     }
     this.details.title = this.network
       ? "CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame."
-      : "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries and textures are allocated buffers; they change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
+      : "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries, textures and memory change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
     const toggle = () => {
       if (!this.active()) {
         return;

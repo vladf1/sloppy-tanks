@@ -253,6 +253,8 @@ export interface EngineStats {
   buffers: number;
   instances: number;
   gpuBytes: number;
+  /** Mesh page bytes no mesh uses, included in `gpuBytes`. */
+  meshSlackBytes: number;
   bodies: number;
   fixedBodies: number;
   dynamicBodies: number;

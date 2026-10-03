@@ -819,6 +819,7 @@ impl Game {
             "instances": render.instances,
             "drawClasses": render.draw_classes,
             "gpuBytes": render.gpu_bytes,
+            "meshSlackBytes": render.mesh_slack_bytes,
             "bodies": counts.bodies,
             "colliders": counts.colliders,
             "shots": counts.shots,

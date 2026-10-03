@@ -683,6 +683,11 @@ impl MeshStore {
         self.plan.capacity_bytes()
     }
 
+    /// Page bytes no mesh uses: holes, and the free tails of general pages.
+    pub fn slack_bytes(&self) -> u64 {
+        self.plan.capacity_bytes() - self.plan.live_bytes()
+    }
+
     pub fn buffers(&self) -> usize {
         self.plan.buffer_count()
     }

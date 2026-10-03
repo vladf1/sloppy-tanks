@@ -30,6 +30,7 @@ pub fn presentation_stats(view: &Presentation) -> Map<String, Value> {
         "instances": render.instances,
         "drawClasses": render.draw_classes,
         "gpuBytes": render.gpu_bytes,
+        "meshSlackBytes": render.mesh_slack_bytes,
         "view": {
             "tanks": counts.tanks,
             "covers": counts.covers,

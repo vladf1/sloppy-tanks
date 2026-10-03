@@ -18,7 +18,10 @@
 //!   by `Arc` identity outlive resets while their `Arc` is still held elsewhere.
 //! - Meshes have no buffers of their own: they share vertex and index pages
 //!   (`crate::mesh_pages`, `resources.rs`) with absolute indices, so every draw
-//!   passes `base_vertex` 0. Draws bind a page's written prefix, never all of it.
+//!   passes `base_vertex` 0 and a pass rebinds only when the page changes. Draws
+//!   bind a page's written prefix, never all of it. A general page left empty is
+//!   destroyed at the next `reset_round` or frame collection, a batch or own page
+//!   with its last mesh.
 //! - Pipelines are cached forever. `prepare_step` compiles the scene's variants
 //!   on the browser's background threads (`precompile.rs`); call it until nothing
 //!   remains, then `warm_up`, before the first gameplay frame. A variant first met
@@ -55,7 +58,7 @@ use crate::draw_list::{
 };
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::{MaterialInterner, is_transparent};
-use crate::mesh_pages::MeshRange;
+use crate::mesh_pages::{MeshRange, NO_PAGE};
 use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, SceneryOptions, prepare_model,
     prepare_scenery,
@@ -319,6 +322,8 @@ pub struct RenderStats {
     pub draw_classes: u32,
     /// Estimated GPU bytes: mesh pages, textures, attachments, shadow map, instances.
     pub gpu_bytes: u64,
+    /// Mesh page bytes no mesh uses (included in `gpu_bytes`).
+    pub mesh_slack_bytes: u64,
     /// Instance pools registered, and the instances they drew last frame.
     pub pools: u32,
     pub pool_instances: u32,
@@ -432,6 +437,9 @@ enum MergedBase {
 #[derive(Clone, Copy)]
 struct MergedItem {
     pipeline: usize,
+    /// The caster's mesh pages, so draws from one page go together.
+    vertex_page: u16,
+    index_page: u16,
     model: u32,
     group: u32,
     base: MergedBase,
@@ -2295,6 +2303,8 @@ impl Renderer {
                         {
                             merged_items.push(MergedItem {
                                 pipeline: mesh.pipeline,
+                                vertex_page: mesh.range.vertex_page,
+                                index_page: mesh.range.index_page,
                                 model: instance.model,
                                 group: group as u32,
                                 base: MergedBase::Static(0),
@@ -2324,6 +2334,8 @@ impl Renderer {
                             for (group, mesh) in model.shadow.iter().enumerate() {
                                 merged_items.push(MergedItem {
                                     pipeline: mesh.pipeline,
+                                    vertex_page: mesh.range.vertex_page,
+                                    index_page: mesh.range.index_page,
                                     model: instance.model,
                                     group: group as u32,
                                     base: MergedBase::Dynamic(first as u32),
@@ -2354,12 +2366,20 @@ impl Renderer {
         });
     }
 
-    /// Group merged shadow items into instanced draws (by pipeline, model and
-    /// group) and lay out their record bases; dynamic records start at `dynamic`.
+    /// Group merged shadow items into instanced draws (by pipeline, mesh page, model
+    /// and group) and lay out their record bases; dynamic records start at `dynamic`.
     fn finish_merged(&mut self, dynamic: u32) {
-        // Depth-only casters: order within one instanced draw changes nothing.
-        self.merged_items
-            .sort_unstable_by_key(|item| (item.pipeline, item.model, item.group));
+        // Depth-only casters: order changes nothing. A group's pages follow from its
+        // model and group, so each group's items stay together.
+        self.merged_items.sort_unstable_by_key(|item| {
+            (
+                item.pipeline,
+                item.vertex_page,
+                item.index_page,
+                item.model,
+                item.group,
+            )
+        });
         self.shadow_bases.clear();
         self.merged_draws.clear();
         for item in &self.merged_items {
@@ -2710,6 +2730,7 @@ impl Renderer {
             + self.instance_capacity as u64 * RECORD_SIZE
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;
+        stats.mesh_slack_bytes = self.meshes.slack_bytes();
         stats
     }
 }
@@ -2760,6 +2781,49 @@ fn scene_pass<'a>(
     })
 }
 
+/// The mesh pages a pass has bound, so consecutive draws from one page skip the
+/// rebinding. Each encode starts from none bound: other draws between them (the
+/// water, merged shadows on slot 1) may have changed the bindings. Opaque draws
+/// follow class index order, and classes are created in about the order their
+/// meshes are placed, so they mostly draw from one page after another; class slots
+/// freed by a reset or by destruction are reused in reverse, which interleaves pages
+/// a little more as rounds go by.
+struct BoundPages {
+    vertex: u16,
+    index: u16,
+}
+
+impl Default for BoundPages {
+    fn default() -> Self {
+        Self {
+            vertex: NO_PAGE,
+            index: NO_PAGE,
+        }
+    }
+}
+
+impl BoundPages {
+    /// Bind the pages of `range` that are not bound yet. A surface page's effect
+    /// vec4s go to slot 1; merged shadows keep their record bases there instead.
+    fn bind(&mut self, pass: &mut wgpu::RenderPass, meshes: &MeshStore, range: MeshRange) {
+        if range.vertex_page != self.vertex {
+            let (vertices, extra) = meshes.vertex_buffers(range.vertex_page);
+            pass.set_vertex_buffer(0, vertices);
+            if let Some(extra) = extra {
+                pass.set_vertex_buffer(1, extra);
+            }
+            self.vertex = range.vertex_page;
+        }
+        if range.index_page != self.index {
+            pass.set_index_buffer(
+                meshes.index_buffer(range.index_page),
+                wgpu::IndexFormat::Uint32,
+            );
+            self.index = range.index_page;
+        }
+    }
+}
+
 struct DrawContext<'a> {
     classes: &'a [Option<ClassEntry>],
     meshes: &'a MeshStore,
@@ -2781,6 +2845,7 @@ impl DrawContext<'_> {
         pass.set_bind_group(0, &self.frame_groups[SHADOW_VIEW], &[]);
         pass.set_vertex_buffer(1, bases.slice(..));
         let mut pipeline = usize::MAX;
+        let mut pages = BoundPages::default();
         let mut count = 0;
         for draw in draws {
             let Some(mesh) = self
@@ -2799,11 +2864,7 @@ impl DrawContext<'_> {
                 pass.set_bind_group(1, &self.materials.get(material).bind_group, &[]);
             }
             let range = mesh.range;
-            pass.set_vertex_buffer(0, self.meshes.vertex_buffers(range.vertex_page).0);
-            pass.set_index_buffer(
-                self.meshes.index_buffer(range.index_page),
-                wgpu::IndexFormat::Uint32,
-            );
+            pages.bind(pass, self.meshes, range);
             pass.draw_indexed(range.indices(), 0, draw.first..draw.first + draw.count);
             count += 1;
             stats.draw_calls += 1;
@@ -2825,7 +2886,7 @@ impl DrawContext<'_> {
         let shadow = view == SHADOW_VIEW;
         let mut last_pipeline = u32::MAX;
         let mut last_material = u32::MAX;
-        let mut last_mesh = u32::MAX;
+        let mut pages = BoundPages::default();
         let mut bound_pool: Option<u32> = None;
         let mut count = 0;
         for draw in draws {
@@ -2856,18 +2917,7 @@ impl DrawContext<'_> {
                 pass.set_bind_group(1, &self.materials.get(class.key.material).bind_group, &[]);
                 last_material = class.key.material;
             }
-            if class.key.mesh != last_mesh {
-                let (vertices, extra) = self.meshes.vertex_buffers(range.vertex_page);
-                pass.set_vertex_buffer(0, vertices);
-                if let Some(extra) = extra {
-                    pass.set_vertex_buffer(1, extra);
-                }
-                pass.set_index_buffer(
-                    self.meshes.index_buffer(range.index_page),
-                    wgpu::IndexFormat::Uint32,
-                );
-                last_mesh = class.key.mesh;
-            }
+            pages.bind(pass, self.meshes, range);
             for pipeline in back.into_iter().chain([pipeline]) {
                 if pipeline != last_pipeline {
                     pass.set_pipeline(self.pipelines.get(pipeline));

@@ -112,7 +112,7 @@ export function networkStatsSections(
         [
           "GPU geometries",
           stats.meshes,
-          "Distinct geometry buffers currently uploaded to the GPU. Changes on map load, not per frame.",
+          "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
         ],
         [
           "GPU textures",
