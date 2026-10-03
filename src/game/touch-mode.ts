@@ -96,6 +96,12 @@ export class TouchModeController {
     return this.mode;
   }
 
+  /** Whether the touch overlay plays the game: a finger then aims, fires and, in first
+   * person, turns the view. */
+  get active(): boolean {
+    return this.enabled;
+  }
+
   /** Call after each HUD read: the touch overlay follows the HUD state. */
   update(): void {
     if (this.enabled) {

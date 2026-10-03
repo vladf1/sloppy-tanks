@@ -359,16 +359,18 @@ try {
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
     );
   };
+  // Touch plays as on phones: drive with the stick, aim and fire with a finger on the
+  // arena, tap the mine button.
   const drive = await center(".touch-drive"),
-    aim = await center(".touch-aim"),
-    fire = await center(".touch-fire"),
-    mine = await center(".touch-mine");
+    mine = await center(".touch-mine"),
+    arena = await bob.locator("#game").boundingBox();
+  assert.equal(await bob.locator(".touch-aim").isVisible(), false, "no aim stick");
+  assert.equal(await bob.locator(".touch-fire").isVisible(), false, "no FIRE button");
+  const target = { x: arena.x + arena.width * 0.7, y: arena.y + arena.height * 0.35 };
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x - 55, drive.y);
-  await touch("touchStart", 2, aim.x, aim.y);
-  await touch("touchMove", 2, aim.x, aim.y - 55);
-  await touch("touchEnd", 2);
-  await touch("touchStart", 2, fire.x, fire.y);
+  await touch("touchStart", 2, target.x, target.y);
+  await touch("touchMove", 2, target.x + 1, target.y);
   await touch("touchStart", 3, mine.x, mine.y);
   await touch("touchEnd", 3);
   await bob.waitForFunction(() => window.sloppyMultiplayer.display.viewer.mineCooldown > 0);
@@ -377,10 +379,28 @@ try {
   await touch("touchEnd", 1);
   await touch("touchEnd", 2);
   assert.equal(await bob.evaluate(() => window.sloppyMultiplayer.controls.touch.fire), false);
+  // First person in a room: ◎ takes no pointer lock (it would freeze the finger), and
+  // the drive stick's sideways push turns the view.
+  const view = () => bob.evaluate(() => window.sloppyMultiplayer.view);
+  const toggle = await center("#view-mode");
+  await touch("touchStart", 4, toggle.x, toggle.y);
+  await touch("touchEnd", 4);
+  await bob.waitForFunction(() => window.sloppyMultiplayer.view.firstPerson);
+  assert.equal(await bob.evaluate(() => document.pointerLockElement), null);
+  const yaw = (await view()).yaw;
+  await touch("touchStart", 1, drive.x, drive.y);
+  await touch("touchMove", 1, drive.x + 60, drive.y);
+  await bob.waitForTimeout(800);
+  const turned = (await view()).yaw;
+  await touch("touchEnd", 1);
+  assert.ok(Math.abs(turned - yaw) > 0.8, `the stick turns the view in a room: ${yaw} → ${turned}`);
+  await touch("touchStart", 4, toggle.x, toggle.y);
+  await touch("touchEnd", 4);
+  await bob.waitForFunction(() => !window.sloppyMultiplayer.view.firstPerson);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ idle: observations.idle, response: observations.response }));
   console.log(
-    "Two-browser multiplayer: create on Battle Setup, join by room link, humans-only sync, idle input, movement, fire, mine, idle menu and hidden tab, reload, late join and leave, results, restored bots on another map, automatic reconnect and real multi-touch passed.",
+    "Two-browser multiplayer: create on Battle Setup, join by room link, humans-only sync, idle input, movement, fire, mine, idle menu and hidden tab, reload, late join and leave, results, restored bots on another map, automatic reconnect, and real multi-touch (stick, arena fire, mine, first-person turning) passed.",
   );
 } finally {
   for (const [i, page] of pages.entries()) {

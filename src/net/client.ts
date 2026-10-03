@@ -259,16 +259,19 @@ export async function startMultiplayer(
     ui.setMenu(open);
     // A click right after RESUME takes the pointer back in first person.
     if (lastResult.length) {
-      controls.holdPointer(lastResult[FRAME.firstPerson] === 1, open);
+      controls.holdPointer(locksPointer(lastResult[FRAME.firstPerson] === 1), open);
     }
     pump();
   }
   const controls = new Controls(ui.canvas, pause, (amount) => (zoom += amount), activeInput, false);
+  /** First person locks the pointer for mouse look; with touch controls a finger and
+   * the drive stick turn the view, which a pointer lock would freeze in place. */
+  const locksPointer = (firstPerson: boolean) => firstPerson && !touch.active;
   const toggleView = () => {
     if (phase !== "playing" || ui.menu) {
       return;
     }
-    controls.holdPointer(game.toggle_first_person());
+    controls.holdPointer(locksPointer(game.toggle_first_person()));
     saveCameraPreferences(game);
     controls.capturePointer();
   };
@@ -500,6 +503,8 @@ export async function startMultiplayer(
       return;
     }
     requestAnimationFrame(loop);
+    // With touch controls in first person, the drive stick's sideways push turns.
+    controls.stickTurns = touch.active && lastResult[FRAME.firstPerson] === 1;
     controls.takeInput(input);
     input[INPUT.zoom] = zoom;
     zoom = 0;
@@ -525,7 +530,10 @@ export async function startMultiplayer(
     // a death keeps it captured for the respawn. Mouse travel while input is off is
     // dropped so the turret never jumps. Held after the frame, so RESUME and V set
     // it at once and no stale frame overrides them.
-    controls.holdPointer(result[FRAME.firstPerson] === 1, result[FRAME.pointerFree] === 1);
+    controls.holdPointer(
+      locksPointer(result[FRAME.firstPerson] === 1),
+      result[FRAME.pointerFree] === 1,
+    );
     pump();
     if (result[FRAME.drawn]) {
       hudDt += result[FRAME.dt];

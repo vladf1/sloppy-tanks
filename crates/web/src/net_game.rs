@@ -769,6 +769,7 @@ impl NetGame {
             "view": {
                 "zoom": rig.zoom,
                 "firstPerson": rig.first_person.enabled,
+                "yaw": rig.first_person.yaw,
                 "canvas": self.view.renderer.size(),
             },
         })
