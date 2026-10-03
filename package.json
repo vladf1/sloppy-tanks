@@ -36,7 +36,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc --project bots/tsconfig.json --noEmit",
     "rust:fmt": "cargo fmt --all --check",
-    "rust:clippy": "cargo clippy --locked --workspace --all-targets -- -D warnings && cargo clippy --locked --target wasm32-unknown-unknown -p sloppy-render -p sloppy-web -- -D warnings && cargo clippy --locked --target wasm32-unknown-unknown -p sloppy-web --features labs -- -D warnings",
+    "rust:clippy": "cargo clippy --locked --workspace --all-targets -- -D warnings && cargo clippy --locked --target wasm32-unknown-unknown -p sloppy-render -p sloppy-web -- -D warnings && cargo clippy --locked --target wasm32-unknown-unknown -p sloppy-web --features labs -- -D warnings && cargo clippy --locked --target wasm32-unknown-unknown -p sloppy-web --no-default-features --features webgl -- -D warnings",
     "test:rust": "cargo test --locked --workspace",
     "check": "pnpm run check:site && pnpm run check:rust-lint && pnpm run check:server && pnpm run test:rust",
     "check:site": "pnpm run format:check && pnpm run build && pnpm run lint",

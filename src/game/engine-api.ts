@@ -237,6 +237,8 @@ export interface EngineStats {
   fps: number;
   simMs: number;
   renderMs: number;
+  /** The engine build's browser API: "WebGPU", or "WebGL" for the fallback. */
+  graphicsApi: string;
   drawCalls: number;
   triangles: number;
   shadowDrawCalls: number;

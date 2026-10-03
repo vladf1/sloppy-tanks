@@ -4,7 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Sloppy Tanks WebGPU renderer: wgpu with handwritten WGSL"
+description = "Sloppy Tanks WebGPU (and WebGL2 fallback) renderer: wgpu with handwritten WGSL"
+
+[features]
+default = ["webgpu"]
+webgpu = ["wgpu/webgpu"]
+# The WebGL2 fallback: wgpu's GL backend, with the instance records in a texture
+# because WebGL2 has no storage buffers (`gpu/instance_store.rs`). Wins over
+# `webgpu` when both are enabled.
+webgl = ["wgpu/webgl"]
 
 [dependencies]
 sloppy-core.workspace = true
@@ -24,6 +32,7 @@ web-sys = { workspace = true, features = [
   "Blob",
   "ImageBitmap",
   "ImageBitmapOptions",
+  "ImageOrientation",
   "PremultiplyAlpha",
   "ColorSpaceConversion",
   "OffscreenCanvas",
@@ -32,5 +41,6 @@ web-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
-# Validates every generated WGSL variant natively; browsers still compile the result.
-naga = { version = "=30.0.1", features = ["wgsl-in"] }
+# Validates every generated WGSL variant natively, and translates it to the GLSL ES
+# the WebGL build hands the browser; browsers still compile the result.
+naga = { version = "=30.0.1", features = ["wgsl-in", "glsl-out"] }
