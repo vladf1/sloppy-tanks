@@ -45,9 +45,7 @@ export default defineConfig({
         handler(_html, context) {
           const binaries = Object.keys(context.bundle ?? {});
           const webgpu = binaries.find((name) => /(^|\/)engine_bg-[\w-]+\.wasm$/.test(name));
-          const webgl = binaries.find((name) =>
-            /(^|\/)engine-webgl_bg-[\w-]+\.wasm$/.test(name),
-          );
+          const webgl = binaries.find((name) => /(^|\/)engine-webgl_bg-[\w-]+\.wasm$/.test(name));
           return webgpu && webgl && context.filename.endsWith("index.html")
             ? [
                 {
