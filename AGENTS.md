@@ -237,8 +237,11 @@ a slow run.
   `cfg(feature = "webgl")` in the renderer: instance records live in an RGBA32F
   texture rather than a storage buffer (`gpu/instance_store.rs`, `instance_at` in
   WGSL), pipelines compile synchronously (`precompile.rs` has no device), the
-  fixed scenery's shadow is redrawn rather than kept by a depth copy, bitmaps are
-  flipped at decode, and the device is polled for callbacks. Keep both building:
+  cached fixed-scenery shadow reaches the shadow map through a full-screen depth
+  pass rather than a texture copy (`gpu/depth_copy.rs`), bitmaps are flipped at
+  decode, and the device is polled for callbacks. WebGL may simplify an effect, but
+  must not give up a performance optimization such as a cache or batching: its
+  devices are the weaker ones. Keep both building:
   `pnpm run rust:clippy` lints both and `scripts/webgl-check.mjs` plays the
   fallback. Shaders are handwritten WGSL; custom model effects register
   an `EffectDefinition`. The native `shader`/`registry` tests validate every

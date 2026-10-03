@@ -25,6 +25,8 @@ pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
+/// The WebGL build's depth copy (`gpu/depth_copy.rs`).
+pub const DEPTH_COPY_WGSL: &str = include_str!("shaders/depth_copy.wgsl");
 
 /// Where the vertex stage reads instance records (`gpu/instance_store.rs`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -472,6 +474,7 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
+        validate("depth copy", DEPTH_COPY_WGSL);
     }
 
     #[test]
@@ -507,6 +510,7 @@ mod tests {
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
         translate_for_webgl("output", OUTPUT_WGSL);
         translate_for_webgl("mipmap", MIPMAP_WGSL);
+        translate_for_webgl("depth copy", DEPTH_COPY_WGSL);
     }
 
     #[test]
