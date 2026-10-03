@@ -4,11 +4,19 @@
 // GL or engine errors. Without `?webgl` the page must pick the build this browser
 // supports by itself (WebGPU when it has an adapter, else WebGL) and download only
 // that one. Where WebGPU has an adapter, a WebGPU device that fails must fall back
-// to WebGL on the same canvas.
+// to WebGL on the same canvas, and the two engines must draw the same still frame of
+// the quarry (whose fixed scenery shadow is cached) closely alike.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { chooseMap, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
+import {
+  chooseMap,
+  freezeLoop,
+  gameUrl,
+  launchGame,
+  seedGame,
+  startRound,
+} from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/webgl";
 const WIDTH = 1280;
@@ -17,14 +25,25 @@ const HEIGHT = 720;
  * an arena's programs; hardware takes seconds. */
 const LOADING_TIMEOUT_MS = 300_000;
 const MAPS = ["village", "harbor", "quarry"];
+/** The still frame both engines draw: the quarry's floor and cliffs from above. */
+const STILL_POSE = [-40, 70, 40, 0, 0, 0];
+/** WebGL may look simpler, but not different: mean channel difference out of 255,
+ * and the share of pixels whose largest channel difference exceeds 48. Loose on
+ * purpose; a broken cached shadow (the whole floor in shadow) measured 53 and 0.73. */
+const STILL_MEAN_TOLERANCE = 16;
+const STILL_LARGE_TOLERANCE = 0.15;
 mkdirSync(output, { recursive: true });
 
-/** Share of sampled pixels that differ clearly from the frame's mean color. */
-async function detail(png) {
+async function pixels(png) {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const context = canvas.getContext("2d");
   context.drawImage(await loadImage(png), 0, 0);
-  const data = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+  return context.getImageData(0, 0, WIDTH, HEIGHT).data;
+}
+
+/** Share of sampled pixels that differ clearly from the frame's mean color. */
+async function detail(png) {
+  const data = await pixels(png);
   const samples = [];
   for (let i = 0; i < data.length; i += 4 * 97) {
     samples.push([data[i], data[i + 1], data[i + 2]]);
@@ -101,6 +120,45 @@ function assertDrew(result, name) {
   assert.ok(result.detail > 0.2, `${name}: the frame shows the arena (${result.detail})`);
 }
 
+/** The quarry drawn once, still, from `STILL_POSE` by the engine `search` picks. */
+async function stillQuarry(search, name) {
+  const { page } = await newPage();
+  await seedGame(page, 424242);
+  await freezeLoop(page);
+  const url = new URL(gameUrl);
+  url.search = `?autoplay&map=quarry${search}`;
+  await page.goto(url.href);
+  await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+  const api = await page.evaluate((pose) => {
+    for (const element of document.querySelectorAll("#overlay, #hud, #fps, #loading")) {
+      element.style.display = "none";
+    }
+    window.engine.draw(pose);
+    window.engine.draw(pose);
+    return window.engine.stats().graphicsApi;
+  }, STILL_POSE);
+  const png = await page.screenshot({ path: `${output}/${name}.png` });
+  await page.close();
+  return { api, image: await pixels(png), detail: await detail(png) };
+}
+
+/** Mean channel difference, and the share of pixels differing by more than 48. */
+function difference(a, b) {
+  let total = 0;
+  let large = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    let peak = 0;
+    for (let c = 0; c < 3; c++) {
+      const delta = Math.abs(a[i + c] - b[i + c]);
+      total += delta;
+      peak = Math.max(peak, delta);
+    }
+    if (peak > 48) large++;
+  }
+  const count = a.length / 4;
+  return { mean: total / (count * 3), large: large / count };
+}
+
 const onlyWebgl = (binaries) => binaries.every((name) => /^engine-webgl_bg[-.]/.test(name));
 
 try {
@@ -116,11 +174,16 @@ try {
     await page.close();
   }
 
-  const { page, binaries } = await newPage();
-  await open(page, "");
-  const webgpu = await page.evaluate(async () =>
+  // Ask for an adapter on a page of its own: once the game holds one, Chrome may
+  // not hand out another.
+  const { page: probe } = await newPage();
+  await probe.goto(new URL("test-pages.html", gameUrl).href);
+  const webgpu = await probe.evaluate(async () =>
     Boolean(await navigator.gpu?.requestAdapter().catch(() => null)),
   );
+  await probe.close();
+  const { page, binaries } = await newPage();
+  await open(page, "");
   const { graphicsApi } = await page.evaluate(() => JSON.parse(window.sloppy.game.stats_json()));
   console.log(JSON.stringify({ webgpuAdapter: webgpu, graphicsApi, binaries }));
   assert.equal(graphicsApi, webgpu ? "WebGPU" : "WebGL");
@@ -145,6 +208,23 @@ try {
     assert.equal(result.graphicsApi, "WebGL");
     assertDrew(result, "device fallback");
     await page.close();
+  }
+  if (webgpu) {
+    const webgl = await stillQuarry("&webgl", "still-quarry-webgl");
+    const native = await stillQuarry("", "still-quarry-webgpu");
+    assert.deepEqual([webgl.api, native.api], ["WebGL", "WebGPU"]);
+    assert.ok(webgl.detail > 0.2, `the WebGL still frame shows the arena (${webgl.detail})`);
+    if (native.detail > 0.2) {
+      const diff = difference(webgl.image, native.image);
+      console.log(JSON.stringify({ stillQuarry: diff }));
+      assert.ok(diff.mean < STILL_MEAN_TOLERANCE, `WebGL frame differs: ${JSON.stringify(diff)}`);
+      assert.ok(diff.large < STILL_LARGE_TOLERANCE, `WebGL frame differs: ${JSON.stringify(diff)}`);
+    } else {
+      // Software WebGPU in headless Chrome (SwiftShader) presents nothing to capture.
+      console.log("This browser's WebGPU frames cannot be captured; frames not compared.");
+    }
+  } else {
+    console.log("No WebGPU adapter: the WebGL and WebGPU frames are not compared.");
   }
   assert.deepEqual(errors, []);
   console.log("PASS");
