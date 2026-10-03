@@ -16,6 +16,9 @@
 //! - `Lifetime::Round` models, instances and scenery are released by
 //!   `reset_round`; `Lifetime::Shared` ones persist. GPU meshes and materials keyed
 //!   by `Arc` identity outlive resets while their `Arc` is still held elsewhere.
+//! - Meshes have no buffers of their own: they share vertex and index pages
+//!   (`crate::mesh_pages`, `resources.rs`) with absolute indices, so every draw
+//!   passes `base_vertex` 0. Draws bind a page's written prefix, never all of it.
 //! - Pipelines are cached forever. `prepare_step` compiles the scene's variants
 //!   on the browser's background threads (`precompile.rs`); call it until nothing
 //!   remains, then `warm_up`, before the first gameplay frame. A variant first met
@@ -52,6 +55,7 @@ use crate::draw_list::{
 };
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::{MaterialInterner, is_transparent};
+use crate::mesh_pages::MeshRange;
 use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, SceneryOptions, prepare_model,
     prepare_scenery,
@@ -59,12 +63,12 @@ use crate::model::{
 use crate::reflection_cull::WaterFootprint;
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
-    MergeKind, ShadowGroup, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
+    MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
 };
 use context::{ColorTarget, Context, DEPTH_FORMAT};
 use pipelines::{Pipelines, SAMPLE_COUNT, shadow_merged_index};
 use pools::PoolEntry;
-use resources::{Layouts, MaterialStore, MeshStore, buffer_with_contents};
+use resources::{Layouts, MaterialStore, MeshStore};
 use textures::TextureStore;
 
 /// Whether a resource survives `reset_round`.
@@ -313,7 +317,7 @@ pub struct RenderStats {
     pub models: u32,
     pub instances: u32,
     pub draw_classes: u32,
-    /// Estimated GPU bytes: meshes, textures, attachments, shadow map, instances.
+    /// Estimated GPU bytes: mesh pages, textures, attachments, shadow map, instances.
     pub gpu_bytes: u64,
     /// Instance pools registered, and the instances they drew last frame.
     pub pools: u32,
@@ -406,16 +410,14 @@ struct PartEntry {
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
 struct ShadowMesh {
-    vertex: wgpu::Buffer,
-    index: wgpu::Buffer,
-    index_count: u32,
+    /// Its `ShadowVertex` vertices and absolute indices in the mesh pages.
+    range: MeshRange,
     /// Index into `Pipelines::shadow_merged`.
     pipeline: usize,
     /// Cutout groups: the material (store index) whose map and cutoff apply.
     material: Option<u32>,
     /// World bounds (scenery only; models cull per instance).
     bounds: Sphere,
-    bytes: u64,
 }
 
 /// Where a merged shadow draw's records start.
@@ -1203,10 +1205,19 @@ impl Renderer {
         }
     }
 
-    fn register(&mut self, prepared: PreparedModel, lifetime: Lifetime, scenery: bool) -> ModelId {
+    fn register(
+        &mut self,
+        mut prepared: PreparedModel,
+        lifetime: Lifetime,
+        scenery: bool,
+    ) -> ModelId {
         let device = self.ctx.device.clone();
         let queue = self.ctx.queue.clone();
-        let merge = {
+        let ShadowMerge {
+            groups,
+            slots,
+            merged,
+        } = {
             let effects = &self.effects;
             merge_shadows(
                 &prepared,
@@ -1215,11 +1226,19 @@ impl Renderer {
                 SHADOW_MERGE_CELL,
             )
         };
+        let groups: Vec<ShadowGroup> = groups
+            .into_iter()
+            .filter(|group| !group.indices.is_empty())
+            .collect();
+        // The whole model is known before anything uploads, so a large one gets batch
+        // pages of its own.
+        let reservation = self.meshes.reserve(&device, &prepared.meshes, &groups);
         let mut entry_of = vec![None; prepared.parts.len()];
         let owned: Vec<u32> = prepared
             .meshes
-            .iter()
-            .map(|data| self.meshes.owned(&device, &queue, data))
+            .iter_mut()
+            .zip(reservation.owned)
+            .map(|(data, placement)| self.meshes.owned(&device, &queue, data, placement))
             .collect();
         let mut parts = Vec::with_capacity(prepared.parts.len());
         for (prepared_index, part) in prepared.parts.iter().enumerate() {
@@ -1235,7 +1254,7 @@ impl Renderer {
                 PartMesh::Shared(mesh) => self.meshes.shared(&device, &queue, mesh, attributes),
                 PartMesh::Owned(index) => owned[*index],
             };
-            if self.meshes.get(mesh).index_count == 0 {
+            if self.meshes.get(mesh).range.is_empty() {
                 continue;
             }
             let class = self.class(
@@ -1272,17 +1291,16 @@ impl Renderer {
                 frustum_culled: part.frustum_culled,
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances.clone(),
-                merged_shadow: merge.merged[prepared_index],
+                merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
             });
         }
-        let shadow_slots = merge.slots.iter().map(|&index| entry_of[index]).collect();
-        let shadow = merge
-            .groups
+        let shadow_slots = slots.iter().map(|&index| entry_of[index]).collect();
+        let shadow = groups
             .into_iter()
-            .filter(|group| !group.indices.is_empty())
-            .map(|group| {
+            .zip(reservation.shadow)
+            .map(|(mut group, placement)| {
                 let material = group.cutout.as_ref().map(|material| {
                     let index = self.materials.get_or_create(
                         &device,
@@ -1294,7 +1312,12 @@ impl Renderer {
                     self.materials.get_mut(index).users += 1;
                     index
                 });
-                upload_shadow_mesh(&device, &queue, &group, material)
+                ShadowMesh {
+                    range: self.meshes.shadow(&device, &queue, &mut group, placement),
+                    pipeline: shadow_merged_index(group.side, material.is_some()),
+                    material,
+                    bounds: group.bounds,
+                }
             })
             .collect();
         let skeleton = PreparedModel {
@@ -1382,8 +1405,7 @@ impl Renderer {
             self.meshes.release(mesh);
         }
         for mesh in &entry.shadow {
-            mesh.vertex.destroy();
-            mesh.index.destroy();
+            self.meshes.free_range(mesh.range);
             if let Some(material) = mesh.material {
                 self.materials.get_mut(material).users -= 1;
             }
@@ -1559,7 +1581,9 @@ impl Renderer {
     }
 
     /// Release everything created with `Lifetime::Round`, then free GPU meshes and
-    /// materials that nothing uses and no caller still holds.
+    /// materials that nothing uses and no caller still holds, and destroy the general
+    /// mesh pages that left empty, so the next round starts from the pages that still
+    /// hold meshes.
     pub fn reset_round(&mut self) {
         self.release_round_pools();
         let round: Vec<u32> = self
@@ -1590,6 +1614,9 @@ impl Renderer {
             }
             self.release_model(index);
         }
+        // General pages this empties stay for the next round's uploads, which
+        // follow at once (`View::reset`); the next frame's `collect_released` trims
+        // the ones those leave empty.
         self.meshes.collect_unused();
         self.materials.collect_unused();
         self.interner.retain_used();
@@ -1835,7 +1862,7 @@ impl Renderer {
                 let merged: u64 = model
                     .shadow
                     .iter()
-                    .map(|mesh| u64::from(mesh.index_count / 3))
+                    .map(|mesh| u64::from(mesh.range.index_count / 3))
                     .sum();
                 let separate: u64 = model
                     .parts
@@ -1845,7 +1872,7 @@ impl Renderer {
                         let class = self.classes[part.class as usize]
                             .as_ref()
                             .expect("live class");
-                        u64::from(self.meshes.get(class.key.mesh).index_count / 3)
+                        u64::from(self.meshes.get(class.key.mesh).range.index_count / 3)
                             * part.instances.as_ref().map_or(1, |list| list.len() as u64)
                     })
                     .sum();
@@ -2599,15 +2626,20 @@ impl Renderer {
             pass.set_bind_group(0, &self.view_groups[MAIN_VIEW], &[]);
             let view = &self.views[MAIN_VIEW];
             draws.encode(&mut pass, &view.opaque, MAIN_VIEW, stats);
-            if let Some(water) = &self.water {
-                let mesh = self.meshes.get(water.mesh);
+            if let Some(water) = &self.water
+                && let range = self.meshes.get(water.mesh).range
+                && !range.is_empty()
+            {
                 pass.set_pipeline(&self.pipelines.fixed().water);
                 pass.set_bind_group(1, &water.bind_group, &[]);
-                pass.set_vertex_buffer(0, mesh.vertex.slice(..));
-                pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                pass.set_vertex_buffer(0, self.meshes.vertex_buffers(range.vertex_page).0);
+                pass.set_index_buffer(
+                    self.meshes.index_buffer(range.index_page),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(range.indices(), 0, 0..1);
                 stats.draw_calls += 1;
-                stats.triangles += mesh.index_count as u64 / 3;
+                stats.triangles += range.index_count as u64 / 3;
             }
             draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
             stats.main_triangles =
@@ -2654,8 +2686,8 @@ impl Renderer {
         stats.models = self.models.len() as u32;
         stats.instances = self.instances.len() as u32;
         stats.draw_classes = self.classes.iter().flatten().count() as u32;
-        // Mesh buffers, material uniforms, 3 view uniforms, instance buffer,
-        // output and water uniforms.
+        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output
+        // and water uniforms.
         let (pools, pool_instances) = self.pool_totals();
         stats.pools = pools;
         stats.pool_instances = pool_instances;
@@ -2677,12 +2709,6 @@ impl Renderer {
             + shadow * shadow * 8
             + self.instance_capacity as u64 * RECORD_SIZE
             + self.pool_bytes()
-            + self
-                .models
-                .iter()
-                .flat_map(|(_, model)| &model.shadow)
-                .map(|mesh| mesh.bytes)
-                .sum::<u64>()
             + width as u64 * height as u64 * 4;
         stats
     }
@@ -2761,6 +2787,7 @@ impl DrawContext<'_> {
                 .models
                 .at(draw.model)
                 .and_then(|model| model.shadow.get(draw.group as usize))
+                .filter(|mesh| !mesh.range.is_empty())
             else {
                 continue;
             };
@@ -2771,12 +2798,16 @@ impl DrawContext<'_> {
             if let Some(material) = mesh.material {
                 pass.set_bind_group(1, &self.materials.get(material).bind_group, &[]);
             }
-            pass.set_vertex_buffer(0, mesh.vertex.slice(..));
-            pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.index_count, 0, draw.first..draw.first + draw.count);
+            let range = mesh.range;
+            pass.set_vertex_buffer(0, self.meshes.vertex_buffers(range.vertex_page).0);
+            pass.set_index_buffer(
+                self.meshes.index_buffer(range.index_page),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.draw_indexed(range.indices(), 0, draw.first..draw.first + draw.count);
             count += 1;
             stats.draw_calls += 1;
-            stats.triangles += (mesh.index_count / 3) as u64 * draw.count as u64;
+            stats.triangles += (range.index_count / 3) as u64 * draw.count as u64;
         }
         count
     }
@@ -2801,6 +2832,11 @@ impl DrawContext<'_> {
             let Some(class) = &self.classes[draw.class as usize] else {
                 continue;
             };
+            // An empty mesh has no page to bind and nothing to draw.
+            let range = self.meshes.get(class.key.mesh).range;
+            if range.is_empty() {
+                continue;
+            }
             if class.pool != bound_pool {
                 let group = match class.pool {
                     Some(pool) => match self.pools.at(pool) {
@@ -2820,13 +2856,16 @@ impl DrawContext<'_> {
                 pass.set_bind_group(1, &self.materials.get(class.key.material).bind_group, &[]);
                 last_material = class.key.material;
             }
-            let mesh = self.meshes.get(class.key.mesh);
             if class.key.mesh != last_mesh {
-                pass.set_vertex_buffer(0, mesh.vertex.slice(..));
-                if let Some(extra) = &mesh.extra {
-                    pass.set_vertex_buffer(1, extra.slice(..));
+                let (vertices, extra) = self.meshes.vertex_buffers(range.vertex_page);
+                pass.set_vertex_buffer(0, vertices);
+                if let Some(extra) = extra {
+                    pass.set_vertex_buffer(1, extra);
                 }
-                pass.set_index_buffer(mesh.index.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_index_buffer(
+                    self.meshes.index_buffer(range.index_page),
+                    wgpu::IndexFormat::Uint32,
+                );
                 last_mesh = class.key.mesh;
             }
             for pipeline in back.into_iter().chain([pipeline]) {
@@ -2835,12 +2874,12 @@ impl DrawContext<'_> {
                     last_pipeline = pipeline;
                 }
                 pass.draw_indexed(
-                    0..mesh.index_count,
+                    range.indices(),
                     0,
                     draw.first_instance..draw.first_instance + draw.instance_count,
                 );
                 count += 1;
-                stats.triangles += (mesh.index_count / 3) as u64 * draw.instance_count as u64;
+                stats.triangles += (range.index_count / 3) as u64 * draw.instance_count as u64;
             }
         }
         if bound_pool.is_some() {
@@ -2848,37 +2887,5 @@ impl DrawContext<'_> {
         }
         stats.draw_calls += count;
         count
-    }
-}
-
-fn upload_shadow_mesh(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    group: &ShadowGroup,
-    material: Option<u32>,
-) -> ShadowMesh {
-    let vertex = buffer_with_contents(
-        device,
-        queue,
-        "shadow merged vertices",
-        bytemuck::cast_slice(&group.vertices),
-        wgpu::BufferUsages::VERTEX,
-    );
-    let index = buffer_with_contents(
-        device,
-        queue,
-        "shadow merged indices",
-        bytemuck::cast_slice(&group.indices),
-        wgpu::BufferUsages::INDEX,
-    );
-    ShadowMesh {
-        vertex,
-        index,
-        index_count: group.indices.len() as u32,
-        pipeline: shadow_merged_index(group.side, material.is_some()),
-        material,
-        bounds: group.bounds,
-        bytes: (group.vertices.len() * size_of::<crate::shadow_merge::ShadowVertex>()
-            + group.indices.len() * 4) as u64,
     }
 }

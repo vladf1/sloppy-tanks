@@ -817,8 +817,9 @@ impl Presentation {
         if let Some(viewer) = state.viewer() {
             self.rig.first_person.yaw = viewer.aim;
         }
-        self.apply_theme(state);
-        self.renderer.reset_round();
+        // The old round's views go before its renderer resources: cover models hold
+        // their source meshes, which `reset_round` can then free at once, before this
+        // round and a new theme upload into the mesh pages they leave.
         self.tanks.clear();
         self.covers.clear();
         self.cover_models.clear();
@@ -829,6 +830,8 @@ impl Presentation {
         self.branches.clear();
         self.samples.clear();
         self.sample_models.clear();
+        self.renderer.reset_round();
+        self.apply_theme(state);
         self.hit_until.clear();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
