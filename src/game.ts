@@ -388,11 +388,19 @@ export async function prepareGame(
     zoom,
   );
   let exactResolution = false;
+  // Render at the canvas's displayed size, which can differ from the window's (mobile
+  // toolbars, a rotation still settling), so the picture is never stretched.
   const resize = () =>
     exactResolution
       ? game.resize(EXACT_RESOLUTION.width, EXACT_RESOLUTION.height, 1, true)
-      : game.resize(innerWidth, innerHeight, devicePixelRatio, false);
+      : game.resize(
+          canvas.clientWidth || innerWidth,
+          canvas.clientHeight || innerHeight,
+          devicePixelRatio,
+          false,
+        );
   window.addEventListener("resize", resize);
+  new ResizeObserver(resize).observe(canvas);
   const recorder = new FrameRecorder(game, canvas);
   const counters = { frames: 0, events: 0 };
   const input = new Float32Array(INPUT.length);
@@ -412,6 +420,7 @@ export async function prepareGame(
     const frameMs = Math.max(0, now - last);
     last = Math.max(last, now);
     if (active && !document.hidden) {
+      controls.stickTurns = !mouseLook && firstPerson;
       controls.takeInput(input);
       input[INPUT.zoom] = pendingZoom;
       pendingZoom = 0;

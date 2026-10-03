@@ -186,6 +186,17 @@ try {
   await expectVisible(["#cockpit", ".hull-compass"], [".aim-hint"]);
   await page.screenshot({ path: `${output}/first-person.png` });
   await touch("touchEnd", 2);
+  // The drive stick's sideways push turns the view continuously; it never strafes.
+  const beforeStick = (await firstPerson()).yaw;
+  await touch("touchStart", 1, drive.x, drive.y);
+  await touch("touchMove", 1, drive.x + 60, drive.y);
+  await page.waitForTimeout(800);
+  const afterStick = (await firstPerson()).yaw;
+  assert.ok(
+    Math.abs(afterStick - beforeStick) > 0.8,
+    `holding the stick sideways keeps turning: ${beforeStick} → ${afterStick}`,
+  );
+  await touch("touchEnd", 1);
   await touch("touchStart", 4, toggleView.x, toggleView.y);
   await touch("touchEnd", 4);
   await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);
@@ -199,6 +210,12 @@ try {
   await page.setViewportSize({ width: 402, height: 874 });
   await page.waitForFunction(() => innerWidth === 402);
   await checkLayout(402, 874);
+  // The picture is drawn at the canvas's displayed shape, so circles stay round.
+  const canvasShape = await page.evaluate(() => {
+    const canvas = document.querySelector("#game");
+    return canvas.width / canvas.height - canvas.clientWidth / canvas.clientHeight;
+  });
+  assert.ok(Math.abs(canvasShape) < 0.01, `the portrait canvas is not stretched: ${canvasShape}`);
   await page.screenshot({ path: `${output}/portrait.png` });
 
   await page.setViewportSize({ width: 874, height: 402 });
