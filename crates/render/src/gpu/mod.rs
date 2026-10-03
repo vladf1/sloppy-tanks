@@ -22,6 +22,8 @@
 //!   while drawing compiles synchronously and counts as a late pipeline.
 
 mod context;
+#[cfg(feature = "webgl")]
+mod depth_copy;
 mod inspect;
 mod instance_store;
 mod lut;
@@ -617,6 +619,9 @@ pub struct Renderer {
     cache_static_shadow: bool,
     static_shadow_draws: Vec<Draw>,
     static_merged_draws: Vec<MergedDraw>,
+    /// WebGL's stand-in for copying the cached shadow into the shadow map.
+    #[cfg(feature = "webgl")]
+    depth_copy: depth_copy::DepthCopy,
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
@@ -779,6 +784,11 @@ impl Renderer {
             shadow_view: shadow_map.create_view(&Default::default()),
             shadow_map,
             static_shadow_view: static_shadow_map.create_view(&Default::default()),
+            #[cfg(feature = "webgl")]
+            depth_copy: depth_copy::DepthCopy::new(
+                device,
+                &static_shadow_map.create_view(&Default::default()),
+            ),
             static_shadow_map,
             static_shadow_dirty: true,
             cache_static_shadow: false,
@@ -961,6 +971,9 @@ impl Renderer {
                 shadow.map_size.max(1),
             );
             self.static_shadow_view = self.static_shadow_map.create_view(&Default::default());
+            #[cfg(feature = "webgl")]
+            self.depth_copy
+                .retarget(&self.ctx.device, &self.static_shadow_view);
             self.shadow_map =
                 depth_texture(&self.ctx.device, "sun shadow map", shadow.map_size.max(1));
             self.shadow_view = self.shadow_map.create_view(&Default::default());
@@ -1844,9 +1857,7 @@ impl Renderer {
                 merged + separate
             })
             .sum();
-        // The cache is a depth-texture copy, which WebGL2 cannot do; that build
-        // redraws the fixed scenery's shadow every frame.
-        self.cache_static_shadow = !cfg!(feature = "webgl") && cache_scenery_shadows(triangles);
+        self.cache_static_shadow = cache_scenery_shadows(triangles);
         self.static_records.truncate(1);
         let instance_ids: Vec<u32> = self.instances.iter().map(|(index, _)| index).collect();
         for index in instance_ids {
@@ -2514,7 +2525,9 @@ impl Renderer {
                 stats,
             );
         }
-        if self.sun_shadow.enabled && self.cache_static_shadow {
+        let copy_static = self.sun_shadow.enabled && self.cache_static_shadow;
+        // WebGL draws the copy at the start of the sun shadow pass instead.
+        if copy_static && !cfg!(feature = "webgl") {
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.static_shadow_map,
@@ -2530,6 +2543,8 @@ impl Renderer {
                 },
                 self.shadow_map.size(),
             );
+        }
+        if copy_static {
             self.static_shadow_dirty = false;
         }
         {
@@ -2539,7 +2554,7 @@ impl Renderer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.shadow_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: if self.sun_shadow.enabled && self.cache_static_shadow {
+                        load: if copy_static && !cfg!(feature = "webgl") {
                             wgpu::LoadOp::Load
                         } else {
                             wgpu::LoadOp::Clear(1.0)
@@ -2552,6 +2567,10 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            #[cfg(feature = "webgl")]
+            if copy_static {
+                self.depth_copy.encode(&mut pass);
+            }
             pass.set_bind_group(0, &self.view_groups[SHADOW_VIEW], &[]);
             let mut count = draws.encode(
                 &mut pass,
