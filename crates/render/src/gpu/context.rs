@@ -112,9 +112,27 @@ impl Context {
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
             validation.set(format!("{api} error: {error}"));
         }));
-        let mut config = surface
-            .get_default_config(&adapter, width, height)
-            .ok_or_else(|| format!("No supported {api} canvas configuration"))?;
+        let mut config = match surface.get_default_config(&adapter, width, height) {
+            Some(config) => config,
+            // Every WebGPU canvas takes rgba8unorm, so WebGPU never fails here, once
+            // it has claimed the canvas; the page could not fall back on it any more.
+            None if !cfg!(feature = "webgl") => wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                color_space: Default::default(),
+                width,
+                height,
+                present_mode: wgpu::PresentMode::Fifo,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                view_formats: vec![],
+            },
+            None => {
+                return Err(format!(
+                    "{api} canvas unavailable: no supported configuration"
+                ));
+            }
+        };
         // The output pass encodes sRGB itself (Three's sRGBTransferOETF), so the
         // canvas keeps its preferred non-sRGB format.
         config.format = config.format.remove_srgb_suffix();
