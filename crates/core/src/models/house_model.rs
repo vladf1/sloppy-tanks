@@ -613,7 +613,14 @@ fn lantern(kit: &mut Kit<Surface>, frame: DMat4, u: f64, y: f64) {
 
 /// The roof deck (soffits, rake undersides and the eave ends), fascia boards,
 /// bargeboards on both gables and a drip edge under the shingle eave.
+///
+/// The deck has no top face. The shingle courses cover all of it with their heads
+/// only `HEAD_LIFT` above it, a few depth-buffer steps from the overhead camera, so
+/// a top face would show through the course heads as pale streaks wherever it won
+/// the depth test.
 fn roof_deck(kit: &mut Kit<Surface>, roof: &Roof) {
+    /// The section's side from the ridge top down to the eave top.
+    const DECK_TOP: (usize, usize) = (0, 2);
     let (xe, ye, zr, t) = (roof.eave_x, roof.eave_y, roof.rake_z, roof.thick);
     for side in [-1.0, 1.0] {
         let section = |z: f64| {
@@ -624,7 +631,7 @@ fn roof_deck(kit: &mut Kit<Surface>, roof: &Roof) {
                 DVec3::new(side * xe, ye + t, z),
             ]
         };
-        kit.solid(Surface::Trim, &[section(-zr), section(zr)]);
+        kit.solid_skipping(Surface::Trim, &[section(-zr), section(zr)], Some(DECK_TOP));
         // Fascia on the eave ends, standing below the soffit.
         kit.block(
             Surface::Trim,
