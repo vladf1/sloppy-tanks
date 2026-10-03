@@ -7,7 +7,9 @@
 // A second build renders with WebGL2 instead of WebGPU (`sloppy-web`'s `webgl`
 // feature) into `src/generated/engine-webgl/engine-webgl.js` and `engine-webgl_bg.wasm`;
 // src/engine.ts loads it only where WebGPU is unavailable. Its own file names keep its
-// binary apart from the WebGPU one in the bundle.
+// binary apart from the WebGPU one in the bundle. The two builds run at once, the WebGL
+// one in its own target directory (`target/webgl`): most of each is a final link-time
+// optimization that uses one core.
 //
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
 // Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
@@ -22,7 +24,7 @@
 // `sloppy-web`) and writes their glue to `src/generated/engine-labs/` instead, so a lab
 // build never replaces the production engine that the game, `pnpm run build` and the dev
 // server load.
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
@@ -32,61 +34,69 @@ const labs = process.argv.includes("--labs");
 const outDir = labs ? "src/generated/engine-labs" : "src/generated/engine";
 const version = await contentVersion();
 
-/** Build `sloppy-web` with `features` and write its glue as `outName` in `dir`. */
-function engineSteps(features, dir, outName) {
-  return [
-    [
-      "cargo",
-      [
-        "build",
-        "--locked",
-        "--release",
-        "--target",
-        "wasm32-unknown-unknown",
-        "-p",
-        "sloppy-web",
-        ...features,
-      ],
-    ],
-    [
-      "wasm-bindgen",
-      [
-        "target/wasm32-unknown-unknown/release/sloppy_web.wasm",
-        "--target",
-        "web",
-        "--out-dir",
-        dir,
-        "--out-name",
-        outName,
-      ],
-    ],
-  ];
+/** Run `command` from the repository root; rejects unless it succeeds. */
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, SLOPPY_CONTENT_VERSION: version },
+    });
+    child.on("error", (error) =>
+      reject(
+        new Error(
+          `${command}: ${error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.129.`,
+        ),
+      ),
+    );
+    child.on("exit", (status) =>
+      status === 0 ? resolve() : reject(new Error(`${command} exited with ${status}`)),
+    );
+  });
 }
 
-const steps = labs
-  ? engineSteps(["--features", "labs"], outDir, "engine")
+/** Build `sloppy-web` with `features` in `targetDir`, then write its glue as `outName`
+ * in `dir`. */
+async function buildEngine({ features, targetDir, dir, outName }) {
+  await run("cargo", [
+    "build",
+    "--locked",
+    "--release",
+    "--target",
+    "wasm32-unknown-unknown",
+    "--target-dir",
+    targetDir,
+    "-p",
+    "sloppy-web",
+    ...features,
+  ]);
+  await run("wasm-bindgen", [
+    `${targetDir}/wasm32-unknown-unknown/release/sloppy_web.wasm`,
+    "--target",
+    "web",
+    "--out-dir",
+    dir,
+    "--out-name",
+    outName,
+  ]);
+}
+
+const engines = labs
+  ? [{ features: ["--features", "labs"], targetDir: "target", dir: outDir, outName: "engine" }]
   : [
-      ...engineSteps([], outDir, "engine"),
-      ...engineSteps(
-        ["--no-default-features", "--features", "webgl"],
-        "src/generated/engine-webgl",
-        "engine-webgl",
-      ),
+      { features: [], targetDir: "target", dir: outDir, outName: "engine" },
+      {
+        features: ["--no-default-features", "--features", "webgl"],
+        targetDir: "target/webgl",
+        dir: "src/generated/engine-webgl",
+        outName: "engine-webgl",
+      },
     ];
-for (const [command, args] of steps) {
-  const result = spawnSync(command, args, {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, SLOPPY_CONTENT_VERSION: version },
-  });
-  if (result.error) {
-    console.error(
-      `${command}: ${result.error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.129.`,
-    );
-  }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
+const results = await Promise.allSettled(engines.map(buildEngine));
+const failure = results.find((result) => result.status === "rejected");
+if (failure) {
+  console.error(failure.reason.message);
+  process.exit(1);
 }
 const stamp = fileURLToPath(new URL(`../${outDir}/content-version`, import.meta.url));
 await writeFile(
