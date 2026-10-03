@@ -71,6 +71,21 @@ async function enter(page, name, team, action) {
   await page.locator(`input[name="playerTeam"][value="${team}"]`).check();
   await click(page, action);
   await page.waitForFunction(() => window.sloppyMultiplayer?.connection.connected);
+  // `SLOPPY_URL=...?webgl` plays the rooms on the WebGL engine; it must load nothing else.
+  if (url.searchParams.has("webgl")) {
+    const binaries = await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .map((entry) => entry.name)
+        // Vite's `?import&url` modules of both engines only name their URLs.
+        .filter((name) => name.includes(".wasm") && !name.includes("?import")),
+    );
+    assert.ok(
+      binaries.some((name) => name.includes("engine-webgl")) &&
+        !binaries.some((name) => /\/engine\/engine_bg/.test(name)),
+      `the room plays on the WebGL engine: ${binaries.join(", ")}`,
+    );
+  }
 }
 /** The host creates a humans-only room on Battle Setup; its battle starts at once. */
 async function create(name, team) {
@@ -83,6 +98,11 @@ async function create(name, team) {
   await enter(page, name, team, "#create-room");
   roomLink = page.url();
   assert.match(roomLink, /[?&]room=/, "The room page carries its shareable link");
+  if (url.searchParams.has("webgl")) {
+    const link = new URL(roomLink);
+    link.searchParams.set("webgl", "");
+    roomLink = link.href;
+  }
   return page;
 }
 /** Friends open the room link: Battle Setup selects the room, then they join. */
