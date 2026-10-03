@@ -2,7 +2,7 @@
 //! marks, shells in flight) drawn as one instanced call each, without culling,
 //! like the former `InstancedMesh` + `frustumCulled = false` pools.
 //!
-//! Each pool owns a GPU storage buffer sized to its capacity. It never moves or
+//! Each pool owns a GPU record store sized to its capacity. It never moves or
 //! grows, so only the ranges an effect changed are uploaded (`sync_pool`), and a
 //! mark written once (a tread print) is uploaded once. A pool has its own draw
 //! class, and its draws bind a copy of the view's frame group whose instance
@@ -12,6 +12,7 @@
 
 use glam::Vec3;
 
+use super::instance_store::InstanceStore;
 use super::{Lifetime, RECORD_SIZE, Renderer};
 use crate::draw_list::{InstanceRecord, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::effects::pool::{PoolBuffer, PoolDesc};
@@ -34,7 +35,7 @@ pub(super) struct PoolEntry {
     /// Instances drawn (the pool's live record count at the last sync).
     pub count: u32,
     pub lifetime: Lifetime,
-    pub buffer: wgpu::Buffer,
+    pub records: InstanceStore,
     /// The frame bind group per view, with this pool's buffer as `instances`.
     pub groups: Vec<wgpu::BindGroup>,
 }
@@ -57,13 +58,8 @@ impl Renderer {
             .meshes
             .shared(&device, &self.ctx.queue, &desc.mesh, attributes);
         let capacity = desc.capacity.max(1);
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(desc.label),
-            size: capacity as u64 * RECORD_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let groups = self.frame_groups(&buffer);
+        let records = InstanceStore::new(&device, desc.label, capacity);
+        let groups = self.frame_groups(&records);
         // Reserve the slot first: the class key names the pool it draws.
         let (index, generation) = self.pools.insert(PoolEntry {
             label: desc.label,
@@ -75,7 +71,7 @@ impl Renderer {
             capacity,
             count: 0,
             lifetime,
-            buffer,
+            records,
             groups,
         });
         let class =
@@ -97,7 +93,7 @@ impl Renderer {
         }
         let entry = self.pools.remove(id.index).expect("checked");
         self.release_class(entry.class, entry.cast_shadow);
-        entry.buffer.destroy();
+        entry.records.destroy();
     }
 
     /// Upload the records an effect changed and set the drawn count.
@@ -110,17 +106,13 @@ impl Renderer {
         let capacity = entry.capacity as usize;
         entry.count = records.len().min(capacity) as u32;
         let queue = &self.ctx.queue;
-        let buffer = &entry.buffer;
+        let store = &entry.records;
         records.take_dirty(|first, slice: &[InstanceRecord]| {
             let end = (first as usize + slice.len()).min(capacity);
             let Some(count) = end.checked_sub(first as usize).filter(|&n| n > 0) else {
                 return;
             };
-            queue.write_buffer(
-                buffer,
-                first as u64 * RECORD_SIZE,
-                bytemuck::cast_slice(&slice[..count]),
-            );
+            store.write(queue, first, &slice[..count]);
         });
     }
 
@@ -139,7 +131,7 @@ impl Renderer {
         }
     }
 
-    pub(super) fn frame_groups(&self, instances: &wgpu::Buffer) -> Vec<wgpu::BindGroup> {
+    pub(super) fn frame_groups(&self, instances: &InstanceStore) -> Vec<wgpu::BindGroup> {
         (0..VIEW_COUNT)
             .map(|view| self.frame_group(view, instances))
             .collect()
@@ -150,7 +142,7 @@ impl Renderer {
         for index in indices {
             let groups = {
                 let entry = self.pools.at(index).expect("live pool");
-                self.frame_groups(&entry.buffer)
+                self.frame_groups(&entry.records)
             };
             if let Some(entry) = self.pools.slots[index as usize].1.as_mut() {
                 entry.groups = groups;

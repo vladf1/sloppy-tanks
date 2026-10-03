@@ -25,6 +25,39 @@ pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
+/// The WebGL build's depth copy (`gpu/depth_copy.rs`).
+pub const DEPTH_COPY_WGSL: &str = include_str!("shaders/depth_copy.wgsl");
+
+/// Where the vertex stage reads instance records (`gpu/instance_store.rs`): each
+/// source defines the frame group's binding 5 and `instance_at`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceSource {
+    /// WebGPU: a storage buffer.
+    Storage,
+    /// WebGL2, which has no storage buffers: an RGBA32F texture.
+    Texture,
+}
+
+impl InstanceSource {
+    /// The source this build's backend uses.
+    pub const BUILD: Self = if cfg!(feature = "webgl") {
+        Self::Texture
+    } else {
+        Self::Storage
+    };
+
+    fn wgsl(self) -> &'static str {
+        match self {
+            Self::Storage => include_str!("shaders/instances_storage.wgsl"),
+            Self::Texture => include_str!("shaders/instances_texture.wgsl"),
+        }
+    }
+}
+
+/// The frame declarations with this build's instance records.
+fn frame_wgsl(source: InstanceSource) -> String {
+    format!("{COMMON_WGSL}{}", source.wgsl())
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Pass {
@@ -261,6 +294,10 @@ fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
 /// The complete WGSL for a surface or shadow variant, reduced to the code its flags
 /// enable (`specialize.rs`).
 pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
+    shader_source_for(key, effects, InstanceSource::BUILD)
+}
+
+fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: InstanceSource) -> String {
     let flags = flags(key);
     let mut code = String::with_capacity(24 * 1024);
     for (name, value) in flags {
@@ -274,7 +311,7 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
     } else {
         0
     });
-    code += COMMON_WGSL;
+    code += &frame_wgsl(source);
     code += MATERIAL_WGSL;
     if let Some(effect) = effect {
         code += effect.wgsl;
@@ -301,23 +338,80 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
 
 /// The merged shadow-caster shader (`shadow_merge.rs`).
 pub fn shadow_merged_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_MERGED_WGSL}"), &[])
+    fixed_source(SHADOW_MERGED_WGSL, InstanceSource::BUILD)
 }
 
 /// The merged alpha-tested shadow-caster shader.
 pub fn shadow_cutout_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_CUTOUT_WGSL}"), &[])
+    fixed_source(SHADOW_CUTOUT_WGSL, InstanceSource::BUILD)
 }
 
 /// The water shader: frame declarations plus the water template.
 pub fn water_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{WATER_WGSL}"), &[])
+    fixed_source(WATER_WGSL, InstanceSource::BUILD)
+}
+
+fn fixed_source(template: &str, source: InstanceSource) -> String {
+    specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
+}
+
+/// Checks the WebGL build's shaders natively; the effect tests use them too.
+#[cfg(test)]
+pub(crate) mod webgl_check {
+    use super::*;
+
+    /// Translate every entry point as wgpu's WebGL2 backend does (GLSL ES 3.00).
+    pub fn translate_for_webgl(label: &str, code: &str) {
+        use naga::back::glsl;
+        let module = naga::front::wgsl::parse_str(code)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        let options = glsl::Options {
+            version: glsl::Version::Embedded {
+                version: 300,
+                is_webgl: true,
+            },
+            writer_flags: glsl::WriterFlags::ADJUST_COORDINATE_SPACE
+                | glsl::WriterFlags::FORCE_POINT_SIZE,
+            ..glsl::Options::default()
+        };
+        for entry in &module.entry_points {
+            let pipeline = glsl::PipelineOptions {
+                shader_stage: entry.stage,
+                entry_point: entry.name.clone(),
+                multiview: None,
+            };
+            let mut out = String::new();
+            glsl::Writer::new(
+                &mut out,
+                &module,
+                &info,
+                &options,
+                &pipeline,
+                naga::proc::BoundsCheckPolicies::default(),
+            )
+            .and_then(|mut writer| writer.write())
+            .unwrap_or_else(|error| panic!("{label} {}: {error}", entry.name));
+        }
+    }
+
+    /// A surface or shadow variant as the WebGL build assembles and translates it.
+    pub fn translate_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
+        let code = shader_source_for(key, effects, InstanceSource::Texture);
+        translate_for_webgl(&format!("{label} {key:?}"), &code);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use sloppy_core::scene::TextureRef;
 
+    use super::webgl_check::{translate_for_webgl, translate_variant};
     use super::*;
 
     fn validate(label: &str, code: &str) {
@@ -380,6 +474,52 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
+        validate("depth copy", DEPTH_COPY_WGSL);
+    }
+
+    #[test]
+    fn every_variant_translates_for_webgl() {
+        let effects = EffectRegistry::default();
+        let texture = InstanceSource::Texture;
+        for bits in 0..(1u32 << 4) {
+            let bit = |i: u32| bits & (1 << i) != 0;
+            for effect in 0..=2u16 {
+                let key = ShaderKey {
+                    pass: Pass::Main,
+                    lit: bit(0),
+                    alpha_test: bit(1),
+                    alpha_to_coverage: bit(1) && bit(2),
+                    receive_shadow: bit(0) && bit(3),
+                    effect,
+                    extra_attributes: 2,
+                    shadow_fade: false,
+                };
+                translate_variant("surface", &key, &effects);
+                let shadow = ShaderKey {
+                    pass: Pass::Shadow,
+                    alpha_test: bit(1),
+                    shadow_fade: bit(2),
+                    effect,
+                    ..ShaderKey::default()
+                };
+                translate_variant("shadow", &shadow, &effects);
+            }
+        }
+        translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
+        translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
+        translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
+        translate_for_webgl("output", OUTPUT_WGSL);
+        translate_for_webgl("mipmap", MIPMAP_WGSL);
+        translate_for_webgl("depth copy", DEPTH_COPY_WGSL);
+    }
+
+    #[test]
+    fn instance_texture_rows_match_the_store() {
+        let declaration = format!(
+            "const RECORDS_PER_ROW: u32 = {}u;",
+            crate::draw_list::RECORDS_PER_ROW
+        );
+        assert!(InstanceSource::Texture.wgsl().contains(&declaration));
     }
 
     #[test]

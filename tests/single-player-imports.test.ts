@@ -82,10 +82,13 @@ test("single player reaches only the shell and the Rust engine", async () => {
         // its own boundary in multiplayer-client-imports.test.ts.
         name: "external",
         setup(build) {
-          build.onResolve({ filter: /generated\/engine\/|(^|\/)net\/|\?url$/ }, (args) => ({
-            path: args.path,
-            external: true,
-          }));
+          build.onResolve(
+            { filter: /generated\/engine(-webgl)?\/|(^|\/)net\/|\?url$/ },
+            (args) => ({
+              path: args.path,
+              external: true,
+            }),
+          );
         },
       },
     ],

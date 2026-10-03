@@ -14,7 +14,7 @@ struct ShadowOut {
 
 @vertex
 fn vs_shadow(input: VertexIn, @builtin(instance_index) index: u32) -> ShadowOut {
-    let instance = instances[index];
+    let instance = instance_at(index);
     var v = effect_input(input, instance);
     effect_vertex(&v);
     var w: EffectWorld;

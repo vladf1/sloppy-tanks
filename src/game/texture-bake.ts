@@ -6,8 +6,12 @@ export interface TextureBaker {
 }
 
 /** The engine binary a bake worker instantiates: the page's compiled module, or its
- * URL for the worker to download and compile itself. */
-export type EngineSource = WebAssembly.Module | string;
+ * URL for the worker to download and compile itself; and whether it is the WebGL
+ * build, whose glue the worker must instantiate it with. */
+export interface EngineSource {
+  module: WebAssembly.Module | string;
+  webgl: boolean;
+}
 
 /** Most workers one bake splits into; each bakes a band of rows. */
 const MAX_BAKE_WORKERS = 4;
@@ -21,9 +25,12 @@ export function bakeWorkers(cores = navigator.hardwareConcurrency || 2): number 
  * instance of the engine (`bake_texture`). */
 function bakeBand(engine: EngineSource, key: string, band: number, bands: number) {
   return new Promise<Uint8Array>((resolve, reject) => {
-    const worker = new Worker(new URL("./texture-bake-worker.ts", import.meta.url), {
-      type: "module",
-    });
+    // Each build's glue has its own worker, so a WebGPU page never loads WebGL code.
+    const worker = engine.webgl
+      ? new Worker(new URL("./texture-bake-worker-webgl.ts", import.meta.url), {
+          type: "module",
+        })
+      : new Worker(new URL("./texture-bake-worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = ({ data }: MessageEvent<Uint8Array | string>) => {
       worker.terminate();
       if (data instanceof Uint8Array) {
@@ -36,7 +43,7 @@ function bakeBand(engine: EngineSource, key: string, band: number, bands: number
       worker.terminate();
       reject(new Error(event.message));
     };
-    worker.postMessage({ engine, key, band, bands });
+    worker.postMessage({ engine: engine.module, key, band, bands });
   });
 }
 

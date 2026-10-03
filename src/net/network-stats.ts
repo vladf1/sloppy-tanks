@@ -2,6 +2,7 @@ import type { StatsSections } from "../game/nerd-stats";
 
 /** The part of `NetGame.stats_json()` a room's Stats for nerds panel reads. */
 export interface NetworkStatsSource {
+  graphicsApi: string;
   drawCalls: number;
   triangles: number;
   shadowTriangles: number;
@@ -96,6 +97,11 @@ export function networkStatsSections(
         ],
       ],
       Render: [
+        [
+          "Graphics API",
+          stats.graphicsApi,
+          "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
+        ],
         ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
         [
           "Triangles / frame",

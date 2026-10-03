@@ -9,6 +9,7 @@ pub fn presentation_stats(view: &Presentation) -> Map<String, Value> {
     let render = view.renderer.stats();
     let counts = view.stats();
     let value = json!({
+        "graphicsApi": sloppy_render::GRAPHICS_API,
         "drawCalls": render.draw_calls,
         "triangles": render.triangles,
         "shadowDrawCalls": render.shadow_draw_calls,

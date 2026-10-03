@@ -279,6 +279,7 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shader::webgl_check::translate_variant;
     use crate::shader::{Pass, ShaderKey, shader_source};
 
     fn validate(label: &str, code: &str) {
@@ -308,6 +309,7 @@ mod tests {
                     ..ShaderKey::default()
                 };
                 validate(effect.name, &shader_source(&key, &registry));
+                translate_variant(effect.name, &key, &registry);
             }
             for alpha_test in [false, true] {
                 let shadow = ShaderKey {
@@ -318,6 +320,7 @@ mod tests {
                     ..ShaderKey::default()
                 };
                 validate(effect.name, &shader_source(&shadow, &registry));
+                translate_variant(effect.name, &shadow, &registry);
             }
         }
         assert_eq!(registry.iter().count(), BUILTIN_EFFECTS.len());

@@ -18,6 +18,12 @@ pub struct InstanceRecord {
     pub data: [f32; 4],
 }
 
+/// The WebGL build keeps records in an RGBA32F texture (`gpu/instance_store.rs`,
+/// `instances_texture.wgsl`): one texel per vec4 of a record, this many records
+/// per texture row.
+pub const RECORD_TEXELS: u32 = (size_of::<InstanceRecord>() / 16) as u32;
+pub const RECORDS_PER_ROW: u32 = 256;
+
 impl InstanceRecord {
     pub fn new(world: &Mat4, tint: [f32; 4], data: [f32; 4]) -> Self {
         Self {

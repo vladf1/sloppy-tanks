@@ -17,6 +17,7 @@ const checks = [
   "destruction-check.mjs",
   "fixtures-check.mjs",
   "multiplayer-simulation-check.mjs",
+  "webgl-check.mjs",
   "webkit-startup-check.mjs",
 ];
 
