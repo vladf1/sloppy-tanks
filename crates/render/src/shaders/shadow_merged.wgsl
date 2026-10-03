@@ -10,6 +10,6 @@ fn vs_shadow_merged(
     @location(1) slot: u32,
     @location(2) base: u32,
 ) -> @builtin(position) vec4f {
-    let world = instances[base + slot].world;
+    let world = instance_at(base + slot).world;
     return frame.view_projection * (world * vec4f(position, 1.0));
 }

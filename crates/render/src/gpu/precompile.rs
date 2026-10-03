@@ -13,6 +13,10 @@
 //! browser's pipeline and shader caches now answer at once. The mapping below mirrors
 //! wgpu 30's `backend/webgpu.rs`: a descriptor that differs only costs the stall
 //! again, since the pipeline drawn with is always wgpu's own.
+//!
+//! WebGL has no asynchronous pipeline creation, so the `webgl` build's precompiler
+//! has no device: every pipeline counts as compiled at once, and wgpu builds it when
+//! asked.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -143,7 +147,7 @@ impl Background {
             .iter()
             .map(|(spec, source)| ((*spec).clone(), precompiler.module(spec.label, source)))
             .collect();
-        let done = Rc::new(Cell::new(false));
+        let done = Rc::new(Cell::new(precompiler.device.is_none()));
         let held = Rc::new(RefCell::new(Vec::new()));
         let (finished, compiled) = (done.clone(), held.clone());
         // Issued now: a spawned task would only start once the page yields, after the
@@ -162,6 +166,23 @@ impl Background {
     }
 }
 
+/// The browser `GPUDevice` behind wgpu's, which the `webgl` build does not have.
+fn raw_device(device: &wgpu::Device) -> Option<RawDevice> {
+    #[cfg(feature = "webgl")]
+    {
+        let _ = device;
+        None
+    }
+    #[cfg(not(feature = "webgl"))]
+    Some(
+        device
+            .as_webgpu()
+            .expect("the renderer runs on the browser's WebGPU")
+            .unchecked_ref::<RawDevice>()
+            .clone(),
+    )
+}
+
 struct Queue<K> {
     /// Keys ever queued (a key compiles once per page).
     started: HashSet<K>,
@@ -174,20 +195,16 @@ struct Queue<K> {
 /// Compiles pipelines on the GPU process's background threads, at most
 /// [`CONCURRENCY`] at a time, keyed by `K`.
 pub struct Precompiler<K> {
-    device: RawDevice,
+    /// `None` in the WebGL build.
+    device: Option<RawDevice>,
     layouts: RefCell<HashMap<LayoutKind, JsValue>>,
     queue: Rc<RefCell<Queue<K>>>,
 }
 
 impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     pub fn new(device: &wgpu::Device) -> Self {
-        let device = device
-            .as_webgpu()
-            .expect("the renderer runs on the browser's WebGPU")
-            .unchecked_ref::<RawDevice>()
-            .clone();
         Self {
-            device,
+            device: raw_device(device),
             layouts: RefCell::default(),
             queue: Rc::new(RefCell::new(Queue {
                 started: HashSet::new(),
@@ -200,13 +217,20 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
 
     /// A browser module for one pipeline (`pipelines.rs` says why not shared).
     pub fn module(&self, label: &str, source: &str) -> RawModule {
+        let Some(device) = &self.device else {
+            return RawModule(JsValue::NULL);
+        };
         let descriptor = object(&[("label", label.into()), ("code", source.into())]);
-        RawModule(self.device.create_shader_module(&descriptor))
+        RawModule(device.create_shader_module(&descriptor))
     }
 
     /// Queue `key` for compiling unless it was queued before.
     pub fn start(&self, key: K, spec: &PipelineSpec, module: &RawModule) {
         if !self.queue.borrow_mut().started.insert(key) {
+            return;
+        }
+        if self.device.is_none() {
+            self.queue.borrow_mut().finished.insert(key, JsValue::NULL);
             return;
         }
         match self.descriptor(spec, module) {
@@ -244,10 +268,11 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     fn pump(&self) {
+        let Some(device) = &self.device else { return };
         let mut queue = self.queue.borrow_mut();
         while queue.running < CONCURRENCY && queue.running < queue.waiting.len() {
             queue.running += 1;
-            let (shared, device) = (self.queue.clone(), self.device.clone());
+            let (shared, device) = (self.queue.clone(), device.clone());
             wasm_bindgen_futures::spawn_local(async move {
                 loop {
                     let job = shared.borrow_mut().waiting.pop_front();
@@ -273,10 +298,10 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         specs: &[(&PipelineSpec, &RawModule)],
     ) -> impl Future<Output = Vec<JsValue>> + 'static {
         let mut promises = Vec::with_capacity(specs.len());
-        for (spec, module) in specs {
+        for (spec, module) in specs.iter().filter(|_| self.device.is_some()) {
             match self.descriptor(spec, module) {
                 Ok(descriptor) => {
-                    promises.push(self.device.create_render_pipeline_async(&descriptor))
+                    promises.push(self.raw().create_render_pipeline_async(&descriptor))
                 }
                 Err(error) => web_sys::console::warn_1(
                     &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
@@ -297,6 +322,13 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
+    /// The browser device; only the WebGPU build compiles in the background.
+    fn raw(&self) -> &RawDevice {
+        self.device
+            .as_ref()
+            .expect("background compiles run on WebGPU")
+    }
+
     fn layout(&self, kind: LayoutKind) -> Result<JsValue, String> {
         if let Some(layout) = self.layouts.borrow().get(&kind) {
             return Ok(layout.clone());
@@ -310,11 +342,11 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                     .map(bind_group_layout_entry)
                     .collect::<Result<Array, _>>()?;
                 let descriptor = object(&[("entries", entries.into())]);
-                Ok(self.device.create_bind_group_layout(&descriptor))
+                Ok(self.raw().create_bind_group_layout(&descriptor))
             })
             .collect::<Result<Array, String>>()?;
         let layout = self
-            .device
+            .raw()
             .create_pipeline_layout(&object(&[("bindGroupLayouts", groups.into())]));
         self.layouts.borrow_mut().insert(kind, layout.clone());
         Ok(layout)

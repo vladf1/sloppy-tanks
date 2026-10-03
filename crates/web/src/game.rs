@@ -798,6 +798,7 @@ impl Game {
             "fps": if self.times.average_ms > 0.0 { 1000.0 / self.times.average_ms } else { 0.0 },
             "simMs": self.times.sim_ms,
             "renderMs": self.times.render_ms,
+            "graphicsApi": sloppy_render::GRAPHICS_API,
             "drawCalls": render.draw_calls,
             "triangles": render.triangles,
             "shadowDrawCalls": render.shadow_draw_calls,

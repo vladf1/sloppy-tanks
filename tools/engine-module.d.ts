@@ -44,6 +44,9 @@ declare module "*/generated/engine/engine.js" {
   }): Promise<unknown>;
 }
 
+// The WebGL2 build has the same API as the WebGPU one (src/engine.ts types it so).
+declare module "*/generated/engine-webgl/engine-webgl.js";
+
 declare module "*/generated/engine-labs/engine.js" {
   export class RenderLab {
     static create(canvas: HTMLCanvasElement, assetBase: string): Promise<RenderLab>;

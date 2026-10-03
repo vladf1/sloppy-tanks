@@ -21,7 +21,7 @@ struct VertexOut {
 
 @vertex
 fn vs_main(input: VertexIn, @builtin(instance_index) index: u32) -> VertexOut {
-    let instance = instances[index];
+    let instance = instance_at(index);
     var v = effect_input(input, instance);
     effect_vertex(&v);
     var w: EffectWorld;

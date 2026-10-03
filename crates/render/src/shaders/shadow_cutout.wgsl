@@ -27,7 +27,7 @@ fn vs_shadow_cutout(
     @location(2) base: u32,
     @location(3) uv: vec2f,
 ) -> CutoutOut {
-    let world = instances[base + slot].world;
+    let world = instance_at(base + slot).world;
     var out: CutoutOut;
     out.clip = frame.view_projection * (world * vec4f(position, 1.0));
     out.uv = uv;

@@ -4,6 +4,11 @@
 // initialize with `init({ module_or_path: wasmUrl })`. Vite does not compile Rust:
 // rerun this after Rust or WGSL edits.
 //
+// A second build renders with WebGL2 instead of WebGPU (`sloppy-web`'s `webgl`
+// feature) into `src/generated/engine-webgl/engine-webgl.js` and `engine-webgl_bg.wasm`;
+// src/engine.ts loads it only where WebGPU is unavailable. Its own file names keep its
+// binary apart from the WebGPU one in the bundle.
+//
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
 // Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
 // matching the `wasm-bindgen` crate pin.
@@ -26,33 +31,48 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const labs = process.argv.includes("--labs");
 const outDir = labs ? "src/generated/engine-labs" : "src/generated/engine";
 const version = await contentVersion();
-const steps = [
-  [
-    "cargo",
+
+/** Build `sloppy-web` with `features` and write its glue as `outName` in `dir`. */
+function engineSteps(features, dir, outName) {
+  return [
     [
-      "build",
-      "--locked",
-      "--release",
-      "--target",
-      "wasm32-unknown-unknown",
-      "-p",
-      "sloppy-web",
-      ...(labs ? ["--features", "labs"] : []),
+      "cargo",
+      [
+        "build",
+        "--locked",
+        "--release",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        "sloppy-web",
+        ...features,
+      ],
     ],
-  ],
-  [
-    "wasm-bindgen",
     [
-      "target/wasm32-unknown-unknown/release/sloppy_web.wasm",
-      "--target",
-      "web",
-      "--out-dir",
-      outDir,
-      "--out-name",
-      "engine",
+      "wasm-bindgen",
+      [
+        "target/wasm32-unknown-unknown/release/sloppy_web.wasm",
+        "--target",
+        "web",
+        "--out-dir",
+        dir,
+        "--out-name",
+        outName,
+      ],
     ],
-  ],
-];
+  ];
+}
+
+const steps = labs
+  ? engineSteps(["--features", "labs"], outDir, "engine")
+  : [
+      ...engineSteps([], outDir, "engine"),
+      ...engineSteps(
+        ["--no-default-features", "--features", "webgl"],
+        "src/generated/engine-webgl",
+        "engine-webgl",
+      ),
+    ];
 for (const [command, args] of steps) {
   const result = spawnSync(command, args, {
     cwd: root,

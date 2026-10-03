@@ -6,6 +6,22 @@ import { startupHtml } from "./scripts/startup-html.ts";
 
 const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
 
+/** The inline <head> script: `window.sloppyGraphics` and `window.sloppyEngineBinary`
+ * (declared in src/engine.ts). */
+function engineDownloadScript(webgpuUrl: string, webglUrl: string): string {
+  return [
+    "(()=>{",
+    "const g=/[?&]webgl(=|&|$)/.test(location.search)?null:navigator.gpu;",
+    "const a=new AbortController();",
+    `const w=g&&fetch(${JSON.stringify(webgpuUrl)},{signal:a.signal});`,
+    'const api=g?g.requestAdapter().then(d=>d?"webgpu":"webgl",()=>"webgl"):Promise.resolve("webgl");',
+    `const b=api.then(k=>k==="webgpu"?w:(a.abort(),fetch(${JSON.stringify(webglUrl)})));`,
+    "w&&w.catch(()=>{});b.catch(()=>{});",
+    "window.sloppyGraphics=api;window.sloppyEngineBinary=b;",
+    "})();",
+  ].join("");
+}
+
 export default defineConfig({
   base,
   // Preview launchers assign a free port through PORT; Vite does not read it itself.
@@ -18,19 +34,25 @@ export default defineConfig({
       // Start the engine binary's one real request in <head>, in parallel with the
       // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari
       // never hands a <link rel=preload as=fetch> response to a later fetch(), so a
-      // preload link would download the binary twice there.
+      // preload link would download the binary twice there. The script also picks the
+      // build, as src/engine.ts does: WebGPU when the browser has an adapter, else the
+      // WebGL fallback. Waiting for the adapter would delay the common case, so a
+      // browser with `navigator.gpu` starts the WebGPU download at once and aborts it
+      // if no adapter comes.
       name: "engine-download",
       transformIndexHtml: {
         order: "post",
         handler(_html, context) {
-          const binary = Object.keys(context.bundle ?? {}).find((name) =>
-            /(^|\/)engine_bg-[\w-]+\.wasm$/.test(name),
+          const binaries = Object.keys(context.bundle ?? {});
+          const webgpu = binaries.find((name) => /(^|\/)engine_bg-[\w-]+\.wasm$/.test(name));
+          const webgl = binaries.find((name) =>
+            /(^|\/)engine-webgl_bg-[\w-]+\.wasm$/.test(name),
           );
-          return binary && context.filename.endsWith("index.html")
+          return webgpu && webgl && context.filename.endsWith("index.html")
             ? [
                 {
                   tag: "script",
-                  children: `window.sloppyEngineBinary=fetch(${JSON.stringify(`${base}${binary}`)});window.sloppyEngineBinary.catch(()=>{});`,
+                  children: engineDownloadScript(`${base}${webgpu}`, `${base}${webgl}`),
                   injectTo: "head",
                 },
               ]

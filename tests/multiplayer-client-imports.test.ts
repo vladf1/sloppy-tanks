@@ -57,7 +57,7 @@ const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?howler[@\\/]/;
 const generatedEngine: Plugin = {
   name: "generated-engine",
   setup(context) {
-    context.onResolve({ filter: /generated\/engine\/|\?url$/ }, ({ path }) => ({
+    context.onResolve({ filter: /generated\/engine(-webgl)?\/|\?url$/ }, ({ path }) => ({
       path,
       external: true,
     }));
@@ -119,6 +119,8 @@ test("the room page runs on the Rust engine build through the shared loader", as
   assert.deepEqual(external(CLIENT), []);
   assert.ok(inputs[CLIENT].imports.some((item) => item.path === "src/engine.ts"));
   assert.deepEqual(external("src/engine.ts").sort(), [
+    "./generated/engine-webgl/engine-webgl.js",
+    "./generated/engine-webgl/engine-webgl_bg.wasm?url",
     "./generated/engine/engine.js",
     "./generated/engine/engine_bg.wasm?url",
   ]);
