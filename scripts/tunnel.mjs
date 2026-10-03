@@ -5,16 +5,27 @@
 // Restart after source changes: the tunnel serves the build, not the dev server.
 //
 // Opened locally (the `tunnel` launch entry's preview), the root page shows the
-// public link; visitors through the tunnel go straight to the game.
+// public link; visitors through the tunnel go straight to the game. Quick tunnels
+// can lose their hostname while cloudflared keeps running, so a watchdog checks the
+// link through public DNS and opens a new tunnel (with a new link) when it is gone.
 import { spawn, spawnSync } from "node:child_process";
+import { Resolver } from "node:dns/promises";
 import { createReadStream, statSync } from "node:fs";
 import { createServer } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { extname, join, relative, resolve } from "node:path";
 
 const port = Number(process.env.PORT) || 4179;
 const BASE = "/sloppy-tanks/";
 const TUNNEL_HOST = /https:\/\/[\w-]+\.trycloudflare\.com/;
 const LINK_PAGE_REFRESH_SECONDS = 2;
+/** The link page refreshes this often once it has a link, to pick up a replacement. */
+const LINK_PAGE_RECHECK_SECONDS = 15;
+const WATCHDOG_INTERVAL_MS = 30_000;
+/** A new hostname takes a while to reach public DNS before the watchdog judges it. */
+const WATCHDOG_GRACE_MS = 60_000;
+const WATCHDOG_FAILURES_BEFORE_RESTART = 2;
+const WATCHDOG_REQUEST_TIMEOUT_MS = 15_000;
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -44,11 +55,12 @@ function linkPage() {
   const body = link
     ? `<p>Open on your phone:</p><p><a href="${link}">${link}</a></p>
        <button onclick="navigator.clipboard.writeText('${link}').then(()=>this.textContent='Copied')">Copy link</button>
-       <p class="note">The link changes on every run and stops with the tunnel. Restart after source changes.</p>`
+       <p class="note">The link changes on every run, or if Cloudflare drops it (this page
+       follows). It stops with the tunnel. Restart after source changes.</p>`
     : `<p>Waiting for Cloudflare to assign a link…</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    ${link ? "" : `<meta http-equiv="refresh" content="${LINK_PAGE_REFRESH_SECONDS}">`}
+    <meta http-equiv="refresh" content="${link ? LINK_PAGE_RECHECK_SECONDS : LINK_PAGE_REFRESH_SECONDS}">
     <title>Sloppy Tanks tunnel</title><style>
     body{margin:0;min-height:100vh;display:grid;place-content:center;gap:4px;padding:16px;
       font:16px system-ui,sans-serif;background:#0d1b2a;color:#e8f2fa;text-align:center}
@@ -101,20 +113,82 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`Link page: http://localhost:${port}/`);
 });
 
-const tunnel = spawn(
-  "cloudflared",
-  ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"],
-  { stdio: ["ignore", "ignore", "pipe"] },
-);
-tunnel.stderr.setEncoding("utf8").on("data", (text) => {
-  const host = !link && text.match(TUNNEL_HOST)?.[0];
-  if (host) {
-    link = `${host}${BASE}`;
-    console.log(`\nOn your phone: ${link}\n(Ctrl-C stops the link.)`);
+let tunnel;
+let linkSince = 0;
+let failures = 0;
+let stopping = false;
+
+function startTunnel() {
+  link = "";
+  failures = 0;
+  tunnel = spawn(
+    "cloudflared",
+    ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"],
+    {
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  tunnel.stderr.setEncoding("utf8").on("data", (text) => {
+    const host = !link && text.match(TUNNEL_HOST)?.[0];
+    if (host) {
+      link = `${host}${BASE}`;
+      linkSince = Date.now();
+      console.log(`\nOn your phone: ${link}\n(Ctrl-C stops the link.)`);
+    }
+    for (const line of text.split("\n")) {
+      if (/\bERR\b/.test(line)) console.error(line);
+    }
+  });
+  tunnel.on("exit", (code) => {
+    if (stopping) return;
+    console.error(`cloudflared stopped (${code}); opening a new tunnel.`);
+    startTunnel();
+  });
+}
+
+/** Whether the public link still resolves (through Cloudflare's DNS, which this
+ * machine's cache cannot mask) and serves the game. */
+async function linkWorks() {
+  const host = new URL(link).hostname;
+  const resolver = new Resolver({ timeout: WATCHDOG_REQUEST_TIMEOUT_MS });
+  resolver.setServers(["1.1.1.1", "8.8.8.8"]);
+  try {
+    const [address] = await resolver.resolve4(host);
+    if (!address) return false;
+    // Connect to that address; this machine's resolver may still cache a miss.
+    const status = await new Promise((resolve, reject) => {
+      const request = httpsRequest(link, {
+        method: "HEAD",
+        timeout: WATCHDOG_REQUEST_TIMEOUT_MS,
+        lookup: (_host, options, callback) =>
+          options.all ? callback(null, [{ address, family: 4 }]) : callback(null, address, 4),
+      });
+      request.on("response", (response) => resolve(response.statusCode));
+      request.on("timeout", () => request.destroy(new Error("timeout")));
+      request.on("error", reject);
+      request.end();
+    });
+    return status === 200;
+  } catch {
+    return false;
   }
-});
+}
+
+setInterval(async () => {
+  if (!link || Date.now() - linkSince < WATCHDOG_GRACE_MS) return;
+  if (await linkWorks()) {
+    failures = 0;
+    return;
+  }
+  failures += 1;
+  if (failures >= WATCHDOG_FAILURES_BEFORE_RESTART) {
+    console.error(`${link} stopped answering; opening a new tunnel.`);
+    tunnel.kill();
+  }
+}, WATCHDOG_INTERVAL_MS);
 
 const stop = (code = 0) => {
+  stopping = true;
   tunnel.kill();
   server.close();
   process.exit(code);
@@ -124,7 +198,4 @@ server.on("error", (error) => {
   console.error(`The static server stopped: ${error.message}`);
   stop(1);
 });
-tunnel.on("exit", (code) => {
-  console.error(`cloudflared stopped (${code}).`);
-  stop(code ?? 1);
-});
+startTunnel();

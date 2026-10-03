@@ -20,10 +20,13 @@ button {
   font: inherit;
   cursor: pointer;
 }
+/* The visible viewport (dvh), not the largest one: iOS Safari's 100vh ignores its
+   toolbars, which stretched the picture vertically. */
 canvas#game {
   display: block;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   outline: none;
   cursor: crosshair;
 }
@@ -2156,8 +2159,9 @@ html.phone,
   min-height: 48px;
   padding: 6px 10px;
 }
-.phone #hud > :not(.hud-actions, .scoreboard, #toast),
-.phone .hud-actions > :not(#pause),
+.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit),
+.phone .hud-actions > :not(#pause, #view-mode),
+.phone #cockpit .aim-hint,
 .phone #nerd-stats {
   display: none;
 }
@@ -2246,4 +2250,9 @@ html.phone,
 }
 .phone #overlay:has(.respawn) {
   padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+/* First person on a phone keeps the periscope frame; the hull compass sits low in
+   the middle, between the drive stick and the thumb that turns the view. */
+.phone .hull-compass {
+  bottom: max(16px, env(safe-area-inset-bottom));
 }

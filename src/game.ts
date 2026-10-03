@@ -70,7 +70,7 @@ export async function prepareGame(
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
       ...(isPhone()
-        ? { firstPerson: false, zoom: PHONE_ZOOM, hideReticle: true }
+        ? { firstPerson: savedCameraPreferences().firstPerson, zoom: PHONE_ZOOM, hideReticle: true }
         : savedCameraPreferences()),
     });
   } catch (error) {
@@ -220,8 +220,10 @@ export async function prepareGame(
   let firstPerson = false;
   /** Pause, results and the round menu need the cursor; a death keeps it captured.
    * Applied as soon as the phase changes, so a click right after RESUME already
-   * takes the pointer back instead of waiting for the next frame. */
-  const holdPointer = () => controls.holdPointer(firstPerson, phase !== "playing");
+   * takes the pointer back instead of waiting for the next frame. Phones turn the
+   * view with a finger, which a pointer lock would freeze in place. */
+  const mouseLook = !isPhone();
+  const holdPointer = () => controls.holdPointer(firstPerson && mouseLook, phase !== "playing");
   const updateHud = (dt: number) => {
     ui.update(readHud(), dt);
     phase = hud!.match.phase;
@@ -386,11 +388,19 @@ export async function prepareGame(
     zoom,
   );
   let exactResolution = false;
+  // Render at the canvas's displayed size, which can differ from the window's (mobile
+  // toolbars, a rotation still settling), so the picture is never stretched.
   const resize = () =>
     exactResolution
       ? game.resize(EXACT_RESOLUTION.width, EXACT_RESOLUTION.height, 1, true)
-      : game.resize(innerWidth, innerHeight, devicePixelRatio, false);
+      : game.resize(
+          canvas.clientWidth || innerWidth,
+          canvas.clientHeight || innerHeight,
+          devicePixelRatio,
+          false,
+        );
   window.addEventListener("resize", resize);
+  new ResizeObserver(resize).observe(canvas);
   const recorder = new FrameRecorder(game, canvas);
   const counters = { frames: 0, events: 0 };
   const input = new Float32Array(INPUT.length);
@@ -410,6 +420,7 @@ export async function prepareGame(
     const frameMs = Math.max(0, now - last);
     last = Math.max(last, now);
     if (active && !document.hidden) {
+      controls.stickTurns = !mouseLook && firstPerson;
       controls.takeInput(input);
       input[INPUT.zoom] = pendingZoom;
       pendingZoom = 0;

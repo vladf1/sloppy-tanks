@@ -39,6 +39,9 @@ export class Controls {
   wheelAmmo = 0;
   /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
   look = 0;
+  /** Phones in first person: the drive stick's sideways push turns the view, as the
+   * aim stick does on tablets, and only its forward push drives (no strafing). */
+  stickTurns = false;
   /** Called on V; the owner decides whether the view may change. */
   toggleView = () => {};
   /** While first person steers, clicks on the arena capture the pointer. */
@@ -278,6 +281,11 @@ export class Controls {
     out[INPUT.touchAimY] = touch.aimY;
     out[INPUT.aimStickHeld] = touch.pointers.aim === null ? 0 : 1;
     out[INPUT.lookPixels] = this.takeLook();
+    if (this.stickTurns) {
+      out[INPUT.touchMoveX] = 0;
+      out[INPUT.touchAimX] = touch.moveX;
+      out[INPUT.aimStickHeld] = touch.moveX ? 1 : 0;
+    }
     this.mine = false;
     this.ammoSelection = undefined;
     this.wheelAmmo = 0;

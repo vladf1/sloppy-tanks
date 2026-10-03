@@ -1,4 +1,5 @@
-// The limited phone edition (src/game/phone-mode.ts) on an emulated phone: Battle Setup
+// The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
+// smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
 // offers only the tank and map, the round is single player on Easy, and the arena shows
 // only the drive stick and pause (a touch on the arena aims and fires), in landscape
 // and portrait, with a farther camera, no page zoom and short pause and results dialogs.
@@ -9,7 +10,7 @@ import { mkdirSync } from "node:fs";
 const output = "artifacts/performance/phone";
 mkdirSync(output, { recursive: true });
 const { browser, context, page, errors } = await launchGame({
-  viewport: { width: 844, height: 390 },
+  viewport: { width: 874, height: 402 },
   hasTouch: true,
   isMobile: true,
 });
@@ -58,7 +59,7 @@ try {
   );
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   await expectVisible(
-    [".touch-drive", "#pause", ".scoreboard", "#score0", "#time", "#score1"],
+    [".touch-drive", "#pause", "#view-mode", ".scoreboard", "#score0", "#time", "#score1"],
     [
       ".touch-aim",
       ".touch-fire",
@@ -98,7 +99,7 @@ try {
   };
   /** The controls and score are on screen and apart, and the controls take touches. */
   const checkLayout = async (width, height) => {
-    const selectors = [".touch-drive", "#pause", ".scoreboard"];
+    const selectors = [".touch-drive", "#view-mode", "#pause", ".scoreboard"];
     const rects = await Promise.all(selectors.map(box));
     rects.forEach((rect, i) => {
       assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
@@ -113,7 +114,7 @@ try {
       });
     });
     // The scoreboard only shows; the controls take touches.
-    for (const selector of [".touch-drive", "#pause"]) {
+    for (const selector of [".touch-drive", "#view-mode", "#pause"]) {
       const point = await center(selector);
       assert.equal(
         await page.evaluate(
@@ -132,7 +133,7 @@ try {
       fire: window.sloppy.controls.touch.fire,
     }));
 
-  await checkLayout(844, 390);
+  await checkLayout(874, 402);
   const drive = await center(".touch-drive");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 40, drive.y);
@@ -163,12 +164,61 @@ try {
   await touch("touchEnd", 1);
   assert.deepEqual(await state(), { x: 0, fire: false });
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForFunction(() => innerWidth === 390);
-  await checkLayout(390, 844);
+  // First person: ◎ seats the camera in the turret, a sideways drag on the arena
+  // turns the view while that finger fires, and the gun sight shows.
+  const firstPerson = () => page.evaluate(() => window.sloppy.view.firstPerson);
+  const toggleView = await center("#view-mode");
+  await touch("touchStart", 4, toggleView.x, toggleView.y);
+  await touch("touchEnd", 4);
+  await page.waitForFunction(() => window.sloppy.view.firstPerson.enabled);
+  const yaw = (await firstPerson()).yaw;
+  await touch("touchStart", 2, 420, 200);
+  for (let x = 440; x <= 620; x += 20) await touch("touchMove", 2, x, 200);
+  assert.equal((await state()).fire, true, "the turning finger fires");
+  const turned = (await firstPerson()).yaw;
+  assert.ok(Math.abs(turned - yaw) > 0.3, `a drag turns the view: ${yaw} → ${turned}`);
+  await page.waitForTimeout(1000);
+  assert.equal(
+    await page.evaluate(() => window.engine.view().reticle.visible),
+    true,
+    "the first-person gun sight shows",
+  );
+  await expectVisible(["#cockpit", ".hull-compass"], [".aim-hint"]);
+  await page.screenshot({ path: `${output}/first-person.png` });
+  await touch("touchEnd", 2);
+  // The drive stick's sideways push turns the view continuously; it never strafes.
+  const beforeStick = (await firstPerson()).yaw;
+  await touch("touchStart", 1, drive.x, drive.y);
+  await touch("touchMove", 1, drive.x + 60, drive.y);
+  await page.waitForTimeout(800);
+  const afterStick = (await firstPerson()).yaw;
+  assert.ok(
+    Math.abs(afterStick - beforeStick) > 0.8,
+    `holding the stick sideways keeps turning: ${beforeStick} → ${afterStick}`,
+  );
+  await touch("touchEnd", 1);
+  await touch("touchStart", 4, toggleView.x, toggleView.y);
+  await touch("touchEnd", 4);
+  await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);
+  await page.waitForTimeout(1200);
+  assert.equal(
+    await page.evaluate(() => window.engine.view().reticle.visible),
+    false,
+    "overhead draws no reticle",
+  );
+
+  await page.setViewportSize({ width: 402, height: 874 });
+  await page.waitForFunction(() => innerWidth === 402);
+  await checkLayout(402, 874);
+  // The picture is drawn at the canvas's displayed shape, so circles stay round.
+  const canvasShape = await page.evaluate(() => {
+    const canvas = document.querySelector("#game");
+    return canvas.width / canvas.height - canvas.clientWidth / canvas.clientHeight;
+  });
+  assert.ok(Math.abs(canvasShape) < 0.01, `the portrait canvas is not stretched: ${canvasShape}`);
   await page.screenshot({ path: `${output}/portrait.png` });
 
-  await page.setViewportSize({ width: 844, height: 390 });
+  await page.setViewportSize({ width: 874, height: 402 });
   // What destroyed you flashes mid-screen.
   await page.evaluate(() => window.sloppy.killHuman());
   await page.locator("#toast.visible").waitFor();
@@ -176,7 +226,7 @@ try {
   await page.locator(".respawn").waitFor();
   const respawn = await page.locator(".menu.respawn").boundingBox();
   assert.ok(
-    respawn.height < 390 / 2,
+    respawn.height < 402 / 2,
     `the respawn strip leaves the arena in view: ${respawn.height}`,
   );
   await page.screenshot({ path: `${output}/notice.png` });
@@ -193,7 +243,7 @@ try {
   await page.screenshot({ path: `${output}/results.png` });
   assert.deepEqual(errors, []);
   console.log(
-    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, landscape and portrait hit-testing, mid-screen notices, short pause and results passed.",
+    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results passed.",
   );
 } finally {
   await browser.close();
