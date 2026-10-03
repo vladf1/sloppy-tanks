@@ -1,6 +1,6 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom `wgpu` renderer draws with handwritten WGSL on WebGPU, and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
+A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom `wgpu` renderer draws with handwritten WGSL on WebGPU (or WebGL2 where WebGPU is unavailable), and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 
@@ -41,10 +41,11 @@ Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a cr
 missed the cache.
 
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
-serves the release Wasm from `src/generated/engine/`; it does not compile Rust,
+serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
+`src/generated/engine-webgl/`); it does not compile Rust,
 so run `pnpm run wasm` again after changing a crate.
 
-Rendering requires WebGPU, HTTPS or localhost, and a browser/GPU that supports it. There is no WebGL fallback. **Stats for nerds** shows rendering diagnostics.
+Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** shows the graphics API in use and rendering diagnostics.
 
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
@@ -117,7 +118,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | Crate / directory | Target        | Owns                                                                                     |
 | ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
 | `crates/core`     | native + Wasm | Simulation, rules, bots, maps (`sim/`), meshes and models, multiplayer protocol (`net/`) |
-| `crates/render`   | Wasm          | The WebGPU renderer, WGSL shaders, presentation, effects and cameras                     |
+| `crates/render`   | Wasm          | The WebGPU/WebGL2 renderer, WGSL shaders, presentation, effects and cameras              |
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
@@ -255,7 +256,7 @@ updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the engine download.
 
-The build separates the interactive menu from the engine and audio. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. The engine (Rust simulation and WebGPU renderer) is one WebAssembly file, emitted as a separate hashed asset and requested from the page's head so it downloads while the menu loads. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
+The build separates the interactive menu from the engine and audio. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. The engine (Rust simulation and WebGPU renderer) is one WebAssembly file, emitted as a separate hashed asset and requested from the page's head so it downloads while the menu loads. A second file holds the WebGL2 build, which the head script requests instead only when the browser gives no WebGPU adapter. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
 
 ### Local dev deployment
 

@@ -28,12 +28,13 @@ One implementation of the game, in Rust, shared by the browser and the server:
   maps and levels on Rapier; `geometry/` and `models/` meshes and model trees
   that the simulation measures and the renderer draws; `net/` protocol,
   replication, match host and client connection state.
-- `crates/render` (Wasm): the `wgpu` WebGPU renderer, WGSL shaders
+- `crates/render` (Wasm): the `wgpu` WebGPU (and WebGL2 fallback) renderer, WGSL shaders
   (`src/shaders/`, `src/presentation/shaders/`), presentation, effects, cameras
   and input commands. Pure CPU parts compile natively and carry its tests.
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
   and `NetGame` a room page, one coarse call per frame; the `labs` feature adds
-  the development `RenderLab` and `EffectsLab`.
+  the development `RenderLab` and `EffectsLab`, and `webgl` (without the default
+  `webgpu`) makes the WebGL2 fallback engine.
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
   controls, audio and the room page's DOM. Game rules, simulation, rendering,
@@ -227,10 +228,22 @@ a slow run.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.
-- Rendering is WebGPU-only (`wgpu` with `Backends::BROWSER_WEBGPU`); there is
-  no WebGL fallback. Shaders are handwritten WGSL; custom model effects register
+- Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
+  fallback: a second engine build (`--no-default-features --features webgl`,
+  `src/generated/engine-webgl/`) on wgpu's GL backend. `src/engine.ts` loads it
+  only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
+  so a WebGPU page never downloads WebGL code. Both builds draw the same scene
+  with the same shaders and passes; WebGL2's gaps stay behind
+  `cfg(feature = "webgl")` in the renderer: instance records live in an RGBA32F
+  texture rather than a storage buffer (`gpu/instance_store.rs`, `instance_at` in
+  WGSL), pipelines compile synchronously (`precompile.rs` has no device), the
+  fixed scenery's shadow is redrawn rather than kept by a depth copy, bitmaps are
+  flipped at decode, and the device is polled for callbacks. Keep both building:
+  `pnpm run rust:clippy` lints both and `scripts/webgl-check.mjs` plays the
+  fallback. Shaders are handwritten WGSL; custom model effects register
   an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga, but a browser can still reject a pipeline: inspect console
+  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
+  still reject a pipeline: inspect console
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
   MSAA counts between pipelines and attachments.

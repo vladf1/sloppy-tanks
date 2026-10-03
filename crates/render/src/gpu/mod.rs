@@ -29,6 +29,7 @@
 
 mod context;
 mod inspect;
+mod instance_store;
 mod lut;
 mod pipelines;
 mod pools;
@@ -36,6 +37,7 @@ mod precompile;
 mod resources;
 mod textures;
 
+pub use context::GRAPHICS_API;
 pub use inspect::InstanceState;
 pub use pools::PoolId;
 pub use textures::image_data;
@@ -69,6 +71,7 @@ use crate::shadow_merge::{
     MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
 };
 use context::{ColorTarget, Context, DEPTH_FORMAT};
+use instance_store::InstanceStore;
 use pipelines::{Pipelines, SAMPLE_COUNT, shadow_merged_index};
 use pools::PoolEntry;
 use resources::{Layouts, MaterialStore, MeshStore};
@@ -631,8 +634,7 @@ pub struct Renderer {
     reflection_sampler: wgpu::Sampler,
     view_uniforms: [wgpu::Buffer; VIEW_COUNT],
     view_groups: Vec<wgpu::BindGroup>,
-    instance_buffer: wgpu::Buffer,
-    instance_capacity: u32,
+    instance_records: InstanceStore,
     static_records: Vec<InstanceRecord>,
     static_dirty: bool,
     output_uniform: wgpu::Buffer,
@@ -766,12 +768,7 @@ impl Renderer {
         });
         let view_uniforms =
             [0, 1, 2].map(|_| uniform_buffer(device, "frame", size_of::<FrameUniform>() as u64));
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instances"),
-            size: INITIAL_INSTANCE_CAPACITY as u64 * RECORD_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let instance_records = InstanceStore::new(device, "instances", INITIAL_INSTANCE_CAPACITY);
         let main_target = ColorTarget::new(device, "main view", width, height, SAMPLE_COUNT);
         let output_uniform = uniform_buffer(device, "output", 16);
         let output_group = Self::output_group(device, &layouts, &main_target, &output_uniform);
@@ -804,8 +801,7 @@ impl Renderer {
             reflection_sampler: linear_clamp("water reflection"),
             view_uniforms,
             view_groups: Vec::new(),
-            instance_buffer,
-            instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            instance_records,
             static_records: vec![InstanceRecord::IDENTITY],
             static_dirty: true,
             output_uniform,
@@ -865,12 +861,12 @@ impl Renderer {
     }
 
     fn rebuild_view_groups(&mut self) {
-        self.view_groups = self.frame_groups(&self.instance_buffer);
+        self.view_groups = self.frame_groups(&self.instance_records);
         self.rebuild_pool_groups();
     }
 
     /// The frame bind group of a view with `instances` as its instance records.
-    fn frame_group(&self, view: usize, instances: &wgpu::Buffer) -> wgpu::BindGroup {
+    fn frame_group(&self, view: usize, instances: &InstanceStore) -> wgpu::BindGroup {
         let shadow = if view == SHADOW_VIEW {
             &self.dummy_depth
         } else {
@@ -904,7 +900,7 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: instances.as_entire_binding(),
+                        resource: instances.binding(),
                     },
                 ],
             })
@@ -1729,6 +1725,11 @@ impl Renderer {
     }
 
     pub fn gpu_idle(&self) -> bool {
+        // WebGPU runs wgpu's callbacks from the browser's event loop; on WebGL they
+        // run only when the device is polled.
+        if cfg!(feature = "webgl") {
+            let _ = self.ctx.device.poll(wgpu::PollType::Poll);
+        }
         self.gpu_idle.load(Ordering::Acquire)
     }
 
@@ -1830,24 +1831,15 @@ impl Renderer {
     }
 
     fn ensure_capacity(&mut self, records: u32) {
-        if records <= self.instance_capacity {
+        if records <= self.instance_records.capacity() {
             return;
         }
         let capacity = records.next_power_of_two();
-        self.instance_buffer.destroy();
-        self.instance_buffer = self.ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instances"),
-            size: capacity as u64 * RECORD_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.instance_capacity = capacity;
+        self.instance_records.destroy();
+        self.instance_records = InstanceStore::new(&self.ctx.device, "instances", capacity);
         // The static records are current (uploaded earlier this frame); keep them.
-        self.ctx.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.static_records),
-        );
+        self.instance_records
+            .write(&self.ctx.queue, 0, &self.static_records);
         self.rebuild_view_groups();
     }
 
@@ -1887,7 +1879,9 @@ impl Renderer {
                 merged + separate
             })
             .sum();
-        self.cache_static_shadow = cache_scenery_shadows(triangles);
+        // The cache is a depth-texture copy, which WebGL2 cannot do; that build
+        // redraws the fixed scenery's shadow every frame.
+        self.cache_static_shadow = !cfg!(feature = "webgl") && cache_scenery_shadows(triangles);
         self.static_records.truncate(1);
         let instance_ids: Vec<u32> = self.instances.iter().map(|(index, _)| index).collect();
         for index in instance_ids {
@@ -1930,11 +1924,8 @@ impl Renderer {
                 .static_ranges = ranges;
         }
         self.ensure_capacity(self.static_records.len() as u32);
-        self.ctx.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&self.static_records),
-        );
+        self.instance_records
+            .write(&self.ctx.queue, 0, &self.static_records);
     }
 
     fn frame_uniform(
@@ -2470,18 +2461,12 @@ impl Renderer {
         let dynamic = base + self.builder.records.len() as u32;
         self.ensure_capacity(dynamic + self.merged_records.len() as u32);
         if !self.builder.records.is_empty() {
-            self.ctx.queue.write_buffer(
-                &self.instance_buffer,
-                base as u64 * RECORD_SIZE,
-                bytemuck::cast_slice(&self.builder.records),
-            );
+            self.instance_records
+                .write(&self.ctx.queue, base, &self.builder.records);
         }
         if !self.merged_records.is_empty() {
-            self.ctx.queue.write_buffer(
-                &self.instance_buffer,
-                dynamic as u64 * RECORD_SIZE,
-                bytemuck::cast_slice(&self.merged_records),
-            );
+            self.instance_records
+                .write(&self.ctx.queue, dynamic, &self.merged_records);
         }
         self.upload_shadow_bases();
         self.write_view_uniforms();
@@ -2727,7 +2712,7 @@ impl Renderer {
                 .as_ref()
                 .map_or(0, |w| w.target.bytes(SAMPLE_COUNT))
             + shadow * shadow * 8
-            + self.instance_capacity as u64 * RECORD_SIZE
+            + self.instance_records.bytes()
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;
         stats.mesh_slack_bytes = self.meshes.slack_bytes();

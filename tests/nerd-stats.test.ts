@@ -77,6 +77,7 @@ function fixture(network = false) {
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
   // A room's `NetGame.stats_json()`: the received scene and the network timeline.
   const room: NetworkStatsSource = {
+    graphicsApi: "WebGPU",
     drawCalls: 42,
     triangles: 123456,
     shadowTriangles: 23000,
@@ -115,6 +116,7 @@ function fixture(network = false) {
     dynamicBodies: 4,
     sleepingBodies: 1,
     colliders: 4,
+    graphicsApi: "WebGPU",
     drawCalls: 42,
     triangles: 123456,
     shadowTriangles: 23000,
@@ -251,7 +253,7 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 22);
+    assert.equal(bodies.length, 23);
     const renderRows = sections
       .find((section) => section.querySelector("summary")?.textContent === "Render")!
       .querySelectorAll("pre")
@@ -268,6 +270,7 @@ test("panel has one open section per group with the expected rows", () => {
       return row.title;
     };
     assert.ok(tipOf("Draw calls / frame").includes("per rendered frame"));
+    assert.ok(tipOf("Graphics API").includes("WebGL"));
     assert.ok(tipOf("GPU geometries").includes("uploaded to the GPU"));
     assert.ok(tipOf("GPU textures").includes("uploaded to the GPU"));
     const text = bodies.map((body) => body.textContent).join("\n");
@@ -288,6 +291,8 @@ test("panel has one open section per group with the expected rows", () => {
       "Awake / sleeping",
       "3 / 1",
       "1 / 8",
+      "Graphics API",
+      "WebGPU",
       "Draw calls / frame",
       "Triangles / frame",
       "Shadow / reflection / main triangles",

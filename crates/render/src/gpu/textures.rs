@@ -227,7 +227,11 @@ impl MipmapGenerator {
     }
 }
 
-async fn fetch_bitmap(url: &str) -> Result<web_sys::ImageBitmap, JsValue> {
+/// WebGL cannot flip an `ImageBitmap` while uploading it, so that build decodes
+/// files the reference flips upside down instead (`fetch_bitmap`).
+const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
+
+async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
     let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
         .await?
@@ -239,6 +243,9 @@ async fn fetch_bitmap(url: &str) -> Result<web_sys::ImageBitmap, JsValue> {
     let options = web_sys::ImageBitmapOptions::new();
     options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
     options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
+    if flip_y && FLIP_BITMAPS_ON_DECODE {
+        options.set_image_orientation(web_sys::ImageOrientation::FlipY);
+    }
     let bitmap = window.create_image_bitmap_with_blob_and_image_bitmap_options(&blob, &options)?;
     JsFuture::from(bitmap).await?.dyn_into()
 }
@@ -319,7 +326,7 @@ impl TextureStore {
                 let url = format!("{}{}", self.asset_base, path);
                 let loaded = self.loaded.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let result = fetch_bitmap(&url)
+                    let result = fetch_bitmap(&url, key.flip_y)
                         .await
                         .map(Pixels::Bitmap)
                         .map_err(|error| format!("{url}: {}", js_message(&error)));
@@ -364,6 +371,7 @@ impl TextureStore {
         }
         let loaded: Vec<_> = self.loaded.borrow_mut().drain(..).collect();
         let changed = !loaded.is_empty();
+        let mut uploaded = Vec::new();
         for Loaded { key, result } in loaded {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
@@ -409,17 +417,21 @@ impl TextureStore {
                             | wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
                     });
-                    let source = match &pixels {
-                        Pixels::Bitmap(bitmap) => {
-                            wgpu::ExternalImageSource::ImageBitmap(bitmap.clone())
-                        }
-                        Pixels::Image(image) => wgpu::ExternalImageSource::ImageData(image.clone()),
+                    let (source, flip_y) = match &pixels {
+                        Pixels::Bitmap(bitmap) => (
+                            wgpu::ExternalImageSource::ImageBitmap(bitmap.clone()),
+                            key.flip_y && !FLIP_BITMAPS_ON_DECODE,
+                        ),
+                        Pixels::Image(image) => (
+                            wgpu::ExternalImageSource::ImageData(image.clone()),
+                            key.flip_y,
+                        ),
                     };
                     queue.copy_external_image_to_texture(
                         &wgpu::CopyExternalImageSourceInfo {
                             source,
                             origin: wgpu::Origin2d::ZERO,
-                            flip_y: key.flip_y,
+                            flip_y,
                         },
                         wgpu::CopyExternalImageDestInfo {
                             texture: &texture,
@@ -432,7 +444,7 @@ impl TextureStore {
                         size,
                     );
                     if let Pixels::Bitmap(bitmap) = pixels {
-                        bitmap.close();
+                        uploaded.push(bitmap);
                     }
                     self.mipmaps.generate(device, queue, &texture, key.srgb);
                     if let Some(old) = entry.texture.take() {
@@ -444,6 +456,14 @@ impl TextureStore {
                     entry.state = TextureState::Ready;
                 }
             }
+        }
+        // WebGL copies an external image when the queue next submits rather than
+        // at once, so flush the copies before releasing their bitmaps.
+        if cfg!(feature = "webgl") && !uploaded.is_empty() {
+            queue.submit([]);
+        }
+        for bitmap in uploaded {
+            bitmap.close();
         }
         if changed {
             self.generation += 1;
