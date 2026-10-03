@@ -2,7 +2,8 @@
 //! uploaded once, keyed by pointer identity (the store keeps a clone, so the
 //! pointer cannot be reused while the entry lives). Entries used only by released
 //! round resources are freed on `reset_round` once no caller still holds the
-//! `Arc` — the Rust form of disposing only `userData.owned` resources.
+//! `Arc` — the Rust form of disposing only `userData.owned` resources. Meshes live
+//! in shared mesh pages (`crate::mesh_pages`), not buffers of their own.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,8 +18,13 @@ use crate::camera::Sphere;
 use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
 use crate::gpu::textures::TextureStore;
-use crate::model::{MeshData, Vertex};
+use crate::mesh_pages::{
+    MeshPlacement, MeshRange, MeshSize, PageFamily, PagePlanner, Placement, rebase_indices,
+    stream_shared_indices,
+};
+use crate::model::MeshData;
 use crate::shader::MaterialFeatures;
+use crate::shadow_merge::ShadowGroup;
 
 /// Bind group layouts shared by every pipeline.
 pub struct Layouts {
@@ -159,29 +165,43 @@ impl Layouts {
 }
 
 pub struct GpuMesh {
-    pub vertex: wgpu::Buffer,
-    pub index: wgpu::Buffer,
-    pub extra: Option<wgpu::Buffer>,
-    pub index_count: u32,
+    /// Where its vertices and absolute indices live in the mesh pages.
+    pub range: MeshRange,
     pub extra_attributes: u8,
     pub bounds: Sphere,
-    pub bytes: u64,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
     source: Option<(Arc<Mesh>, Vec<&'static str>)>,
     /// Live draw classes using this mesh.
     pub users: u32,
 }
 
-impl GpuMesh {
+/// A mesh page's buffers: its vertices or indices, and for a surface page with
+/// effect vec4s those, in the same vertex numbering. Draws bind them only through
+/// [`MeshStore::vertex_buffers`] and [`MeshStore::index_buffer`], which bind the
+/// written prefix, never a `slice(..)` of the whole page.
+struct PageBuffers {
+    main: wgpu::Buffer,
+    extra: Option<wgpu::Buffer>,
+}
+
+impl PageBuffers {
     fn destroy(&self) {
-        self.vertex.destroy();
-        self.index.destroy();
+        self.main.destroy();
         if let Some(extra) = &self.extra {
             extra.destroy();
         }
     }
 }
 
+/// Batch placements for a registration's owned meshes and merged shadow groups, in
+/// their order.
+pub struct Reservation {
+    pub owned: Vec<MeshPlacement>,
+    pub shadow: Vec<MeshPlacement>,
+}
+
+/// GPU meshes: entries with their bounds and users, stored in shared mesh pages
+/// (`crate::mesh_pages`).
 #[derive(Default)]
 pub struct MeshStore {
     slots: Vec<Option<GpuMesh>>,
@@ -189,41 +209,21 @@ pub struct MeshStore {
     shared: HashMap<(usize, Vec<&'static str>), u32>,
     /// A shared mesh lost its last draw class since the last collection.
     released: bool,
+    /// Which page each mesh's vertices and indices live in, and where.
+    plan: PagePlanner,
+    /// Each page's buffers, by page id.
+    pages: Vec<Option<PageBuffers>>,
 }
 
-/// A buffer holding `contents`. It is written through the queue rather than mapped
-/// at creation: the browser backend stages a mapped range in a Wasm-side copy of the
-/// whole buffer, and linear memory never shrinks, so a large scenery mesh would
-/// leave the heap that much bigger for the rest of the page.
-pub fn buffer_with_contents(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    label: &str,
-    contents: &[u8],
-    usage: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    // Pad so empty meshes still get a valid, 4-byte aligned buffer.
-    let aligned = contents.len() / 4 * 4;
-    let size = contents.len().div_ceil(4).max(1) * 4;
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: size as u64,
-        usage: usage | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    if aligned > 0 {
-        queue.write_buffer(&buffer, 0, &contents[..aligned]);
-    }
-    if aligned < contents.len() {
-        let mut tail = [0; 4];
-        tail[..contents.len() - aligned].copy_from_slice(&contents[aligned..]);
-        queue.write_buffer(&buffer, aligned as u64, &tail);
-    }
-    buffer
-}
+/// Vertices converted per write when a shared mesh streams to the GPU. The converted
+/// chunk is a passing heap allocation (384 KiB of vertices, plus effect vec4s), small
+/// enough to fit the free space loading leaves rather than grow the Wasm memory, which
+/// keeps any growth for good.
+const UPLOAD_CHUNK_VERTICES: usize = 8 * 1024;
 
-/// Vertices converted per write when a shared mesh streams to the GPU.
-const UPLOAD_CHUNK_VERTICES: usize = 16 * 1024;
+/// Indices rebased per write when a shared mesh streams to the GPU: 16 KiB on the
+/// stack, so the rebase takes no heap at all.
+const UPLOAD_CHUNK_INDICES: usize = 4 * 1024;
 
 impl MeshStore {
     fn insert(&mut self, mesh: GpuMesh) -> u32 {
@@ -239,123 +239,235 @@ impl MeshStore {
         }
     }
 
-    fn upload(device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshData) -> GpuMesh {
-        let vertex = buffer_with_contents(
-            device,
-            queue,
-            "mesh vertices",
-            bytemuck::cast_slice(&data.vertices),
-            wgpu::BufferUsages::VERTEX,
-        );
-        let index = buffer_with_contents(
-            device,
-            queue,
-            "mesh indices",
-            bytemuck::cast_slice(&data.indices),
-            wgpu::BufferUsages::INDEX,
-        );
-        let extra = (data.extra_attributes > 0).then(|| {
-            buffer_with_contents(
-                device,
-                queue,
-                "mesh effect attributes",
-                bytemuck::cast_slice(&data.extra),
-                wgpu::BufferUsages::VERTEX,
-            )
-        });
-        let bytes = (data.vertices.len() * size_of::<Vertex>()
-            + data.indices.len() * 4
-            + data.extra.len() * 16) as u64;
-        GpuMesh {
-            vertex,
-            index,
-            extra,
-            index_count: data.indices.len() as u32,
-            extra_attributes: data.extra_attributes,
-            bounds: data.bounds,
-            bytes,
-            source: None,
-            users: 0,
-        }
-    }
-
-    /// Stream an unmodified shared mesh to the GPU a chunk of vertices at a time:
-    /// the quarry's merged walls alone would need a 20 MB upload copy in linear
-    /// memory, which never shrinks. Indices go straight from the mesh.
-    fn upload_shared(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        mesh: &Mesh,
-        attributes: &[&str],
-    ) -> GpuMesh {
-        let count = mesh.positions.len();
-        let empty = |label, size: usize, usage| {
+    /// Create the buffers of a page the planner just added. Pages are filled only
+    /// through the queue, never mapped at creation: the browser backend stages a
+    /// mapped range in a Wasm-side copy of the whole buffer, and linear memory never
+    /// shrinks.
+    fn create_page(&mut self, device: &wgpu::Device, page: u16) {
+        let info = self.plan.page(page);
+        let family = info.family;
+        let capacity = u64::from(info.capacity());
+        let (label, usage) = match family {
+            PageFamily::Surface { .. } => ("mesh vertex page", wgpu::BufferUsages::VERTEX),
+            PageFamily::Shadow => ("shadow vertex page", wgpu::BufferUsages::VERTEX),
+            PageFamily::Index => ("mesh index page", wgpu::BufferUsages::INDEX),
+        };
+        let buffer = |label, stride: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: size.max(4) as u64,
+                size: capacity * stride,
                 usage: usage | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
         };
-        let vertex_size = size_of::<Vertex>();
-        let extra_size = attributes.len() * size_of::<[f32; 4]>();
-        let vertex = empty(
-            "mesh vertices",
-            count * vertex_size,
-            wgpu::BufferUsages::VERTEX,
-        );
-        let extra = (!attributes.is_empty()).then(|| {
-            empty(
-                "mesh effect attributes",
-                count * extra_size,
-                wgpu::BufferUsages::VERTEX,
-            )
-        });
-        let index = match &mesh.indices {
-            Some(indices) => buffer_with_contents(
-                device,
-                queue,
-                "mesh indices",
-                bytemuck::cast_slice(indices),
-                wgpu::BufferUsages::INDEX,
-            ),
-            None => empty("mesh indices", count * 4, wgpu::BufferUsages::INDEX),
+        let buffers = PageBuffers {
+            main: buffer(label, family.stride()),
+            extra: (family.extra_stride() > 0)
+                .then(|| buffer("mesh effect attribute page", family.extra_stride())),
         };
-        for start in (0..count).step_by(UPLOAD_CHUNK_VERTICES) {
-            let range = start..(start + UPLOAD_CHUNK_VERTICES).min(count);
-            let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range.clone());
-            queue.write_buffer(
-                &vertex,
-                (start * vertex_size) as u64,
-                bytemuck::cast_slice(&vertices),
-            );
-            if let Some(extra) = &extra {
-                queue.write_buffer(
-                    extra,
-                    (start * extra_size) as u64,
-                    bytemuck::cast_slice(&extras),
-                );
-            }
-            if mesh.indices.is_none() {
-                let indices: Vec<u32> = (range.start as u32..range.end as u32).collect();
-                queue.write_buffer(&index, (start * 4) as u64, bytemuck::cast_slice(&indices));
-            }
+        let slot = page as usize;
+        if self.pages.len() <= slot {
+            self.pages.resize_with(slot + 1, || None);
         }
-        let index_count = mesh.indices.as_ref().map_or(count, Vec::len);
-        GpuMesh {
-            vertex,
-            index,
-            extra,
-            index_count: index_count as u32,
-            extra_attributes: attributes.len() as u8,
-            bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
-            bytes: (count * (vertex_size + extra_size) + index_count * 4) as u64,
-            source: None,
-            users: 0,
+        self.pages[slot] = Some(buffers);
+    }
+
+    fn page_buffers(&self, page: u16) -> &PageBuffers {
+        self.pages[page as usize].as_ref().expect("live mesh page")
+    }
+
+    /// Where `count` elements of `family` go: the reserved batch placement, whose
+    /// page [`reserve`](Self::reserve) created, or a general or own page now.
+    fn place(
+        &mut self,
+        device: &wgpu::Device,
+        family: PageFamily,
+        count: u32,
+        reserved: Option<Placement>,
+    ) -> Placement {
+        if let Some(placement) = reserved {
+            return placement;
+        }
+        let placement = self.plan.place(family, count);
+        if placement.new_page {
+            self.create_page(device, placement.page);
+        }
+        placement
+    }
+
+    /// Give a registration's owned meshes and merged shadow groups the batch pages
+    /// `PagePlanner::reserve` decides on, creating them; the meshes then upload into
+    /// their placements in order.
+    pub fn reserve(
+        &mut self,
+        device: &wgpu::Device,
+        owned: &[MeshData],
+        shadow: &[ShadowGroup],
+    ) -> Reservation {
+        // Every mesh in upload order: owned meshes, then shadow groups.
+        let sizes: Vec<MeshSize> = owned
+            .iter()
+            .map(|data| MeshSize {
+                family: PageFamily::Surface {
+                    extra: data.extra_attributes,
+                },
+                vertices: data.vertices.len() as u32,
+                indices: data.indices.len() as u32,
+            })
+            .chain(shadow.iter().map(|group| MeshSize {
+                family: PageFamily::Shadow,
+                vertices: group.vertices.len() as u32,
+                indices: group.indices.len() as u32,
+            }))
+            .collect();
+        let mut placements = self.plan.reserve(&sizes);
+        let created: Vec<u16> = placements
+            .iter()
+            .flat_map(|placement| [placement.vertex, placement.index])
+            .flatten()
+            .filter(|placement| placement.new_page)
+            .map(|placement| placement.page)
+            .collect();
+        for page in created {
+            self.create_page(device, page);
+        }
+        let shadow = placements.split_off(owned.len());
+        Reservation {
+            owned: placements,
+            shadow,
         }
     }
 
-    /// The GPU mesh for a shared `Arc<Mesh>`, uploading it on first use.
+    /// Place and write one mesh: `vertices`, and `extra` (its effect vec4s), at its
+    /// vertex range, and `indices`, made absolute in place, at its index range. A
+    /// mesh without vertices or indices gets [`MeshRange::EMPTY`] and draws nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        family: PageFamily,
+        vertices: &[u8],
+        extra: &[u8],
+        indices: &mut [u32],
+        reserved: MeshPlacement,
+    ) -> MeshRange {
+        let size = MeshSize {
+            family,
+            vertices: (vertices.len() as u64 / family.stride()) as u32,
+            indices: indices.len() as u32,
+        };
+        if !size.is_drawable() {
+            return MeshRange::EMPTY;
+        }
+        let vertex_count = size.vertices;
+        debug_assert_eq!(
+            extra.len() as u64,
+            u64::from(vertex_count) * family.extra_stride()
+        );
+        let vertex = self.place(device, family, vertex_count, reserved.vertex);
+        let index = self.place(
+            device,
+            PageFamily::Index,
+            indices.len() as u32,
+            reserved.index,
+        );
+        rebase_indices(indices, vertex.first);
+        let page = self.page_buffers(vertex.page);
+        let at = u64::from(vertex.first);
+        queue.write_buffer(&page.main, at * family.stride(), vertices);
+        if let Some(buffer) = &page.extra {
+            queue.write_buffer(buffer, at * family.extra_stride(), extra);
+        }
+        queue.write_buffer(
+            &self.page_buffers(index.page).main,
+            u64::from(index.first) * 4,
+            bytemuck::cast_slice(indices),
+        );
+        MeshRange {
+            vertex_page: vertex.page,
+            first_vertex: vertex.first,
+            vertex_count,
+            index_page: index.page,
+            first_index: index.first,
+            index_count: indices.len() as u32,
+        }
+    }
+
+    /// Stream an unmodified shared mesh to its pages a chunk at a time: the quarry's
+    /// merged walls alone would need a 20 MB upload copy in linear memory, which
+    /// never shrinks. Its indices are rebased a chunk at a time on the stack.
+    fn upload_shared(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &Mesh,
+        attributes: &[&str],
+    ) -> MeshRange {
+        let vertex_count = mesh.positions.len() as u32;
+        let family = PageFamily::Surface {
+            extra: attributes.len() as u8,
+        };
+        let size = MeshSize {
+            family,
+            vertices: vertex_count,
+            indices: mesh
+                .indices
+                .as_ref()
+                .map_or(vertex_count, |indices| indices.len() as u32),
+        };
+        if !size.is_drawable() {
+            return MeshRange::EMPTY;
+        }
+        let index_count = size.indices;
+        let vertex = self.place(device, family, vertex_count, None);
+        let index = self.place(device, PageFamily::Index, index_count, None);
+        let page = self.page_buffers(vertex.page);
+        for start in (0..vertex_count as usize).step_by(UPLOAD_CHUNK_VERTICES) {
+            let range = start..(start + UPLOAD_CHUNK_VERTICES).min(vertex_count as usize);
+            let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range);
+            let at = u64::from(vertex.first) + start as u64;
+            queue.write_buffer(
+                &page.main,
+                at * family.stride(),
+                bytemuck::cast_slice(&vertices),
+            );
+            if let Some(extra) = &page.extra {
+                queue.write_buffer(
+                    extra,
+                    at * family.extra_stride(),
+                    bytemuck::cast_slice(&extras),
+                );
+            }
+        }
+        let indices = &self.pages[index.page as usize]
+            .as_ref()
+            .expect("live mesh page")
+            .main;
+        stream_shared_indices(
+            mesh.indices.as_deref(),
+            vertex_count,
+            vertex.first,
+            &mut [0; UPLOAD_CHUNK_INDICES],
+            |offset, chunk| {
+                let at = u64::from(index.first + offset) * 4;
+                queue.write_buffer(indices, at, bytemuck::cast_slice(chunk));
+            },
+        );
+        MeshRange {
+            vertex_page: vertex.page,
+            first_vertex: vertex.first,
+            vertex_count,
+            index_page: index.page,
+            first_index: index.first,
+            index_count,
+        }
+    }
+
+    /// The GPU mesh for a shared `Arc<Mesh>`, uploading it on first use. It goes to
+    /// general pages, or an own page when large, never to a registration's batch
+    /// pages: deduplicated by `Arc` identity, it can outlive the model that
+    /// registered it.
     pub fn shared(
         &mut self,
         device: &wgpu::Device,
@@ -367,17 +479,123 @@ impl MeshStore {
         if let Some(&index) = self.shared.get(&key) {
             return index;
         }
-        let mut gpu = Self::upload_shared(device, queue, mesh, attributes);
-        gpu.source = Some((mesh.clone(), attributes.to_vec()));
-        let index = self.insert(gpu);
+        let range = self.upload_shared(device, queue, mesh, attributes);
+        let index = self.insert(GpuMesh {
+            range,
+            extra_attributes: attributes.len() as u8,
+            bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
+            source: Some((mesh.clone(), attributes.to_vec())),
+            users: 0,
+        });
         self.shared.insert(key, index);
         index
     }
 
-    /// Upload merged geometry owned by one model; release it with `release`.
-    pub fn owned(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &MeshData) -> u32 {
-        let gpu = Self::upload(device, queue, data);
-        self.insert(gpu)
+    /// Upload merged geometry owned by one model, at its reserved placement if it has
+    /// one; release it with `release`. Its indices are rebased in place.
+    pub fn owned(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &mut MeshData,
+        reserved: MeshPlacement,
+    ) -> u32 {
+        let family = PageFamily::Surface {
+            extra: data.extra_attributes,
+        };
+        let range = self.upload(
+            device,
+            queue,
+            family,
+            bytemuck::cast_slice(&data.vertices),
+            bytemuck::cast_slice(&data.extra),
+            &mut data.indices,
+            reserved,
+        );
+        self.insert(GpuMesh {
+            range,
+            extra_attributes: data.extra_attributes,
+            bounds: data.bounds,
+            source: None,
+            users: 0,
+        })
+    }
+
+    /// Upload a model's merged shadow group, at its reserved placement if it has
+    /// one; free it with [`free_range`](Self::free_range). Its indices are rebased in
+    /// place.
+    pub fn shadow(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        group: &mut ShadowGroup,
+        reserved: MeshPlacement,
+    ) -> MeshRange {
+        self.upload(
+            device,
+            queue,
+            PageFamily::Shadow,
+            bytemuck::cast_slice(&group.vertices),
+            &[],
+            &mut group.indices,
+            reserved,
+        )
+    }
+
+    /// Free a mesh's ranges at once: nothing in the frame being built draws it, and
+    /// frames in flight finish before a later write reuses the range (queue order).
+    /// A batch or own page that empties is destroyed.
+    pub fn free_range(&mut self, range: MeshRange) {
+        if range.is_empty() {
+            return;
+        }
+        let ranges = [
+            (range.vertex_page, range.first_vertex, range.vertex_count),
+            (range.index_page, range.first_index, range.index_count),
+        ];
+        for (page, first, count) in ranges {
+            if self.plan.free(page, first, count) {
+                let buffers = self.pages[page as usize].take().expect("live mesh page");
+                buffers.destroy();
+            }
+        }
+    }
+
+    /// Destroy the general pages no mesh uses (`PagePlanner::trim`).
+    fn trim_pages(&mut self) {
+        for page in self.plan.trim() {
+            let buffers = self.pages[page as usize].take().expect("live mesh page");
+            buffers.destroy();
+        }
+    }
+
+    /// A vertex page's buffers to bind: only the prefix written so far. Every placed
+    /// range is written before anything can draw from it and a freed range keeps its
+    /// old contents, so the prefix holds every mesh in the page and is always
+    /// initialized. Binding the never-written tail as well would gain nothing, and
+    /// where wgpu-core tracks buffer initialization it would zero-fill that tail
+    /// before the pass.
+    pub fn vertex_buffers(
+        &self,
+        page: u16,
+    ) -> (wgpu::BufferSlice<'_>, Option<wgpu::BufferSlice<'_>>) {
+        let info = self.plan.page(page);
+        let written = u64::from(info.written());
+        let buffers = self.page_buffers(page);
+        (
+            buffers.main.slice(..written * info.family.stride()),
+            buffers
+                .extra
+                .as_ref()
+                .map(|extra| extra.slice(..written * info.family.extra_stride())),
+        )
+    }
+
+    /// An index page to bind: only its written prefix, as in
+    /// [`vertex_buffers`](Self::vertex_buffers).
+    pub fn index_buffer(&self, page: u16) -> wgpu::BufferSlice<'_> {
+        let written = u64::from(self.plan.page(page).written());
+        self.page_buffers(page).main.slice(..written * 4)
     }
 
     pub fn get(&self, index: u32) -> &GpuMesh {
@@ -400,16 +618,21 @@ impl MeshStore {
         }
     }
 
-    /// Free the shared meshes released since the last call that no caller holds.
+    /// Free the shared meshes released since the last call that no caller holds,
+    /// then destroy the general pages left empty (`PagePlanner::trim`). The renderer
+    /// collects once a frame, before it builds draws, so a page emptied and refilled
+    /// within one frame (a model rebuilt in place, or a round reset's old and new
+    /// round) stays.
     pub fn collect_released(&mut self) {
         if std::mem::take(&mut self.released) {
             self.collect_unused();
         }
+        self.trim_pages();
     }
 
     pub fn release(&mut self, index: u32) {
         if let Some(mesh) = self.slots[index as usize].take() {
-            mesh.destroy();
+            self.free_range(mesh.range);
             if let Some((source, attributes)) = mesh.source {
                 self.shared
                     .remove(&(Arc::as_ptr(&source) as usize, attributes));
@@ -454,16 +677,19 @@ impl MeshStore {
             .count()
     }
 
+    /// GPU bytes of the mesh pages (merged shadows included): their capacity, which
+    /// is what they allocate.
     pub fn bytes(&self) -> u64 {
-        self.slots.iter().flatten().map(|mesh| mesh.bytes).sum()
+        self.plan.capacity_bytes()
+    }
+
+    /// Page bytes no mesh uses: holes, and the free tails of general pages.
+    pub fn slack_bytes(&self) -> u64 {
+        self.plan.capacity_bytes() - self.plan.live_bytes()
     }
 
     pub fn buffers(&self) -> usize {
-        self.slots
-            .iter()
-            .flatten()
-            .map(|mesh| 2 + mesh.extra.is_some() as usize)
-            .sum()
+        self.plan.buffer_count()
     }
 }
 

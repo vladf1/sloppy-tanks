@@ -210,6 +210,16 @@ a slow run.
   GPU as JS `ImageData`; size merged geometry up front and move, not clone,
   parts a merge consumes. Check a map's `WebAssembly.Memory` size after loading
   it when changing scenery or upload paths.
+- Meshes have no GPU buffers of their own: they share vertex and index pages
+  (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
+  in the vertex page, so every draw passes `base_vertex` 0 and a pass rebinds only
+  when the page changes. Bind a page only through `MeshStore::vertex_buffers` and
+  `index_buffer`, which bind its written prefix, where every mesh lives. Batch and
+  own pages go with their last mesh, and a general page once a frame's collection
+  finds it empty, so a reset's new round first refills the general pages the old
+  one emptied. `View::reset` drops the old round's views before `reset_round`:
+  cover models hold their source meshes, and a round that uploads before those
+  are freed lands in new pages while the old ones empty a frame later.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.

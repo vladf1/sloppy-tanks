@@ -1,8 +1,8 @@
 //! Per-frame draw lists. Visible part instances are collected per view with their
-//! instance record, then sorted like Three's render lists: opaque draws by render
+//! instance record, then ordered like Three's render lists: opaque draws by render
 //! order and draw class (so every instance sharing a mesh and material becomes one
-//! instanced draw), transparent draws by render order and then back to front, one
-//! draw each. All buffers are reused between frames.
+//! instanced draw) in a linear pass, transparent draws by render order and then back
+//! to front, one draw each. All buffers are reused between frames.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -93,6 +93,9 @@ pub struct DrawListBuilder {
     transparent: [Vec<Item>; VIEW_COUNT],
     /// This frame's dynamic records, laid out so each draw's range is contiguous.
     pub records: Vec<InstanceRecord>,
+    /// Scratch for ordering opaque items ([`sort_opaque`]).
+    counts: Vec<u32>,
+    sorted: Vec<Item>,
 }
 
 impl DrawListBuilder {
@@ -163,11 +166,7 @@ impl DrawListBuilder {
         for (view, draws) in views.iter_mut().enumerate() {
             draws.clear();
             let opaque = &mut self.opaque[view];
-            let rank = |item: &Item| match item.source {
-                Source::Record(index) => index,
-                Source::Range { .. } => u32::MAX,
-            };
-            opaque.sort_unstable_by_key(|item| (item.render_order, item.class, rank(item)));
+            sort_opaque(opaque, &mut self.sorted, &mut self.counts);
             for item in opaque.iter() {
                 match item.source {
                     Source::Range { first, count } => draws.opaque.push(Draw {
@@ -230,6 +229,59 @@ impl DrawListBuilder {
     }
 }
 
+/// Where an opaque item sorts within its render order: each class's records, then
+/// its persistent ranges, class after class.
+fn bucket(item: &Item) -> usize {
+    2 * item.class as usize + matches!(item.source, Source::Range { .. }) as usize
+}
+
+/// A record's place within its bucket: records in record (push) order; ranges last.
+fn rank(item: &Item) -> u32 {
+    match item.source {
+        Source::Record(index) => index,
+        Source::Range { .. } => u32::MAX,
+    }
+}
+
+/// Put a view's opaque items in draw order: by render order, then by class, each
+/// class's records in push order before its ranges (in push order too), so a class's
+/// records are contiguous and become one instanced draw. With one render order, the
+/// usual case, that is a counting sort over the class buckets: linear in the items,
+/// where a comparison sort of thousands of items a frame showed in WebGPU CPU
+/// profiles of the Stress Grid. A list that mixes render orders (no opaque draw sets
+/// one today) takes a stable comparison sort to the same order.
+fn sort_opaque(items: &mut [Item], sorted: &mut Vec<Item>, counts: &mut Vec<u32>) {
+    let Some(&first) = items.first() else {
+        return;
+    };
+    if items
+        .iter()
+        .any(|item| item.render_order != first.render_order)
+    {
+        items.sort_by_key(|item| (item.render_order, bucket(item), rank(item)));
+        return;
+    }
+    let buckets = items.iter().map(bucket).max().map_or(0, |last| last + 1);
+    counts.clear();
+    counts.resize(buckets + 1, 0);
+    for item in items.iter() {
+        counts[bucket(item) + 1] += 1;
+    }
+    for i in 1..counts.len() {
+        counts[i] += counts[i - 1];
+    }
+    sorted.clear();
+    sorted.resize(items.len(), first);
+    for item in items.iter() {
+        let at = &mut counts[bucket(item)];
+        sorted[*at as usize] = *item;
+        *at += 1;
+    }
+    // Copied back rather than swapped, so each view's list keeps only its own
+    // capacity (Wasm memory never shrinks).
+    items.copy_from_slice(sorted);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +292,12 @@ mod tests {
             [1.0; 4],
             [0.0; 4],
         )
+    }
+
+    fn draws(list: &[Draw]) -> Vec<(u32, u32, u32)> {
+        list.iter()
+            .map(|d| (d.class, d.first_instance, d.instance_count))
+            .collect()
     }
 
     #[test]
@@ -311,5 +369,95 @@ mod tests {
         builder.clear();
         builder.finish(0, &mut views);
         assert!(views[MAIN_VIEW].is_empty());
+    }
+
+    #[test]
+    fn opaque_records_keep_push_order_before_ranges() {
+        // One render order takes the counting sort; a range pushed before its class's
+        // records still draws after them, and records stay in push order.
+        let mut builder = DrawListBuilder::default();
+        let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
+        builder.push_range(MAIN_VIEW, 0, false, 0, 0.0, 0, 8);
+        for (i, class) in [1, 0, 1, 0].into_iter().enumerate() {
+            let r = builder.record(record(i as f32));
+            builder.push(MAIN_VIEW, class, false, 0, 0.0, r);
+        }
+        builder.finish(20, &mut views);
+        assert_eq!(
+            draws(&views[MAIN_VIEW].opaque),
+            [(0, 20, 2), (0, 0, 8), (1, 22, 2)]
+        );
+        let xs: Vec<_> = builder.records.iter().map(|r| r.world[12]).collect();
+        assert_eq!(xs, [1.0, 3.0, 0.0, 2.0]);
+    }
+
+    #[test]
+    fn mixed_render_orders_sort_by_order_then_class() {
+        // The comparison sort a mixed list takes keeps the counting sort's order
+        // within each render order, several ranges of a class in push order included.
+        let mut builder = DrawListBuilder::default();
+        let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
+        builder.push_range(MAIN_VIEW, 2, false, 0, 0.0, 0, 50);
+        builder.push_range(MAIN_VIEW, 1, false, 0, 0.0, 100, 7);
+        builder.push_range(MAIN_VIEW, 2, false, 0, 0.0, 60, 30);
+        let items = [(2, 0), (1, 0), (2, -1), (0, 1), (1, 0), (2, -1)];
+        for (i, (class, order)) in items.into_iter().enumerate() {
+            let r = builder.record(record(i as f32));
+            builder.push(MAIN_VIEW, class, false, order, 0.0, r);
+        }
+        builder.finish(200, &mut views);
+        assert_eq!(
+            draws(&views[MAIN_VIEW].opaque),
+            [
+                (2, 200, 2),
+                (1, 202, 2),
+                (1, 100, 7),
+                (2, 204, 1),
+                (2, 0, 50),
+                (2, 60, 30),
+                (0, 205, 1)
+            ]
+        );
+        let xs: Vec<_> = builder.records.iter().map(|r| r.world[12]).collect();
+        assert_eq!(xs, [2.0, 5.0, 1.0, 4.0, 0.0, 3.0]);
+    }
+
+    #[test]
+    fn opaque_order_matches_a_stable_comparison_sort() {
+        // Both paths: one render order (the counting sort) and mixed render orders
+        // (the comparison sort), with many ranges per class.
+        let mut random = crate::effects::random::CosmeticRandom::seeded(7);
+        let mut pick = |n: f64| (random.next_f64() * n) as u32;
+        // What an item is: its class, whether it is a range, and its record or first.
+        let identity = |item: &Item| match item.source {
+            Source::Record(index) => (item.class, false, index),
+            Source::Range { first, .. } => (item.class, true, first),
+        };
+        let (mut sorted, mut counts) = (Vec::new(), Vec::new());
+        for round in 0..20 {
+            let orders = if round % 2 == 0 { 1.0 } else { 3.0 };
+            let mut items: Vec<Item> = (0..300)
+                .map(|index| Item {
+                    render_order: pick(orders) as i32 - 1,
+                    class: pick(40.0),
+                    depth: 0.0,
+                    source: if pick(10.0) == 0 {
+                        Source::Range {
+                            first: index,
+                            count: 1,
+                        }
+                    } else {
+                        Source::Record(index)
+                    },
+                })
+                .collect();
+            // Stable, so several ranges of one class keep their push order too.
+            let mut expected = items.clone();
+            expected.sort_by_key(|item| (item.render_order, bucket(item), rank(item)));
+            sort_opaque(&mut items, &mut sorted, &mut counts);
+            let got: Vec<_> = items.iter().map(identity).collect();
+            let expected: Vec<_> = expected.iter().map(identity).collect();
+            assert_eq!(got, expected);
+        }
     }
 }

@@ -66,8 +66,9 @@
     <script type="module">
       // The standard maps on the engine: inspection poses, cover damage stages, and two
       // checks: repeated map switches rebuild the right scenery and every cover's view
-      // without growing GPU resources, and both waters reflect a probe box in the
-      // actual framebuffer while the dry arena center skips the reflection pass.
+      // without growing GPU resources or keeping the mesh pages another map needed, and
+      // both waters reflect a probe box in the actual framebuffer while the dry arena
+      // center skips the reflection pass.
       import {
         canvasPixel,
         check,
@@ -197,6 +198,11 @@
       });
 
       const frame = () => new Promise(requestAnimationFrame);
+      /** Mesh page space no mesh uses after a map loads: holes and the newest general
+       * pages' free tails, which three general vertex pages
+       * (`crates/render/src/mesh_pages.rs`) leave room for. The pages another map
+       * needed must go. */
+      const MAX_MESH_SLACK_BYTES = 24 * 2 ** 20;
       /** Renderer allocations that must return to the same totals on every visit. */
       const resources = () => {
         const { meshes, materials, textures, buffers, models, gpuBytes } = read.stats(game);
@@ -208,6 +214,7 @@
         pose = undefined;
         const failures = [];
         let baseline;
+        let slack = 0;
         for (let round = 0; round < 4; round++) {
           for (const mode of ["village", "quarry", "harbor"]) {
             await loadMap(mode);
@@ -225,6 +232,11 @@
             ) {
               failures.push(`Cover views differ from the covers: ${mode}`);
             }
+            const { meshSlackBytes } = read.stats(game);
+            slack = Math.max(slack, meshSlackBytes);
+            if (meshSlackBytes > MAX_MESH_SLACK_BYTES) {
+              failures.push(`${mode}: ${meshSlackBytes} bytes of mesh pages unused`);
+            }
           }
           const current = resources();
           if (round === 1) baseline = current;
@@ -236,7 +248,7 @@
         overview = true;
         result.textContent = failures.length
           ? `FAIL: ${failures.join("; ")}`
-          : `PASS: 12 map switches, cover views match, stable GPU resources (${baseline})`;
+          : `PASS: 12 map switches, cover views match, stable GPU resources (${baseline}), at most ${(slack / 2 ** 20).toFixed(1)} MiB of mesh pages unused`;
       });
 
       /** Draw still frames until the draw count stops changing (pipelines may settle). */

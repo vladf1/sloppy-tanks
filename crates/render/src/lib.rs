@@ -2,14 +2,16 @@
 //! handwritten WGSL, and never moves simulation state.
 //!
 //! Pure CPU parts (color management, cameras and picking, model preparation and
-//! batching, draw-list building, shader assembly) compile natively and carry the
-//! unit tests. The `gpu` module is browser-only (`wgpu` on WebGPU).
+//! batching, mesh page placement, draw-list building, shader assembly) compile
+//! natively and carry the unit tests. The `gpu` module is browser-only (`wgpu` on
+//! WebGPU).
 
 pub mod camera;
 pub mod color;
 pub mod draw_list;
 pub mod effects;
 pub mod material;
+pub mod mesh_pages;
 pub mod model;
 pub mod presentation;
 pub mod reflection_cull;
