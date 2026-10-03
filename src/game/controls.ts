@@ -39,8 +39,8 @@ export class Controls {
   wheelAmmo = 0;
   /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
   look = 0;
-  /** Phones in first person: the drive stick's sideways push turns the view, as the
-   * aim stick does on tablets, and only its forward push drives (no strafing). */
+  /** Touch controls in first person: the drive stick's sideways push turns the view, as
+   * the engine's aim-stick turn would, and only its forward push drives (no strafing). */
   stickTurns = false;
   /** Called on V; the owner decides whether the view may change. */
   toggleView = () => {};

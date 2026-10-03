@@ -58,7 +58,7 @@
   border-color: #e6f4ffcc;
 }
 /* Fire sits up and in from the aim stick, where the right thumb lands when it leaves
-   the stick; the mine button sits directly above the stick. */
+   the stick. Neither is shown at the moment (see the end of this file). */
 .touch-fire {
   position: absolute;
   right: max(196px, calc(env(safe-area-inset-right) + 172px));
@@ -82,10 +82,12 @@
   box-shadow: 0 0 18px #ffcf5499;
   transform: scale(0.94);
 }
+/* The mine button takes the bottom-right corner the aim stick used to hold, level
+   with the drive stick's centre, which keeps it clear of Stats for nerds below. */
 .touch-mine {
   position: absolute;
-  right: max(79px, calc(env(safe-area-inset-right) + 55px));
-  bottom: max(212px, calc(env(safe-area-inset-bottom) + 184px));
+  right: max(24px, env(safe-area-inset-right));
+  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 55px);
   width: 66px;
   height: 66px;
   border-radius: 50%;
@@ -134,12 +136,14 @@
   min-height: 48px;
   touch-action: manipulation;
 }
+/* The weapon HUD sits on the bottom edge between the drive stick and the mine button,
+   centred in that gap up to its full width, so it never covers the arena's middle. */
 .touch-enabled .bottom {
-  left: 50%;
-  right: auto;
+  left: calc(max(24px, env(safe-area-inset-left)) + 188px);
+  right: calc(max(24px, env(safe-area-inset-right)) + 78px);
   bottom: max(22px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  width: min(440px, calc(100% - 430px));
+  max-width: 440px;
+  margin-inline: auto;
 }
 .touch-enabled .combat-status {
   width: 100%;
@@ -178,16 +182,9 @@
     left: 14px;
     transform: none;
   }
-  .touch-enabled .bottom {
-    width: min(390px, calc(100% - 32px));
-    bottom: max(245px, calc(env(safe-area-inset-bottom) + 220px));
-  }
 }
-@media (max-width: 850px) and (max-height: 600px) {
-  .touch-enabled .bottom {
-    width: calc(100% - 390px);
-    bottom: 22px;
-  }
+/* Narrow or short screens tighten the weapon HUD to fit beside the stick. */
+@media (max-width: 760px), (max-height: 600px) {
   .touch-enabled .combat-status {
     padding: 5px;
   }
@@ -204,10 +201,6 @@
 }
 
 @media (orientation: portrait) and (min-width: 700px) {
-  .touch-enabled .bottom {
-    width: min(440px, calc(100% - 416px));
-    bottom: max(28px, env(safe-area-inset-bottom));
-  }
   .touch-enabled .combat-status {
     padding: 6px;
     gap: 4px;
@@ -232,8 +225,14 @@
   }
 }
 
-/* Phones (src/game/phone-mode.ts) aim and fire by touching the arena, so only the
-   drive stick remains. */
+/* Every touch device aims and fires by touching the arena (touch-controls.ts), so the
+   aim stick and FIRE button stay hidden. */
+.touch-enabled :is(.touch-aim, .touch-fire) {
+  display: none;
+}
+
+/* Phones (src/game/phone-mode.ts) keep only the drive stick: their limited edition has
+   no mines. */
 .phone .touch-stick {
   bottom: max(12px, env(safe-area-inset-bottom));
   width: 150px;
@@ -245,6 +244,6 @@
 .phone .touch-drive {
   left: max(12px, env(safe-area-inset-left));
 }
-.phone :is(.touch-aim, .touch-fire, .touch-mine, .touch-stick > span) {
+.phone :is(.touch-mine, .touch-stick > span) {
   display: none;
 }

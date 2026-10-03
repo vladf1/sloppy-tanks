@@ -3,7 +3,6 @@ import { bindPress } from "./button-input";
 import type { Controls } from "./controls";
 import type { TouchState } from "./touch-mode";
 import type { StickKind } from "./touch-input";
-import { isPhone } from "./phone-mode";
 
 const STICK_RADIUS = 58;
 const ANCHOR_SHIFT = 22;
@@ -47,7 +46,7 @@ export class TouchControls {
     }
     this.bindFire();
     const canvas = root.querySelector<HTMLCanvasElement>("#game");
-    if (isPhone() && canvas) {
+    if (canvas) {
       this.bindArenaFire(canvas);
       // A held finger otherwise brings up iOS's magnifier (or a long-press menu) over
       // the arena; pointer events, which the game reads, still arrive.
@@ -154,9 +153,9 @@ export class TouchControls {
     }
   }
 
-  /** Phones aim and fire by touching the arena: the turret turns toward the finger,
-   * which may stay down and slide, and fires until it lifts. In first person the
-   * finger's sideways travel turns the view instead, like mouse look. */
+  /** Touch players aim and fire by touching the arena: the turret turns toward the
+   * finger, which may stay down and slide, and fires until it lifts. In first person
+   * the finger's sideways travel turns the view instead, like mouse look. */
   private bindArenaFire(canvas: HTMLCanvasElement): void {
     const touching = (event: PointerEvent) =>
       event.pointerType === "touch" && this.enabled && this.controls.active();

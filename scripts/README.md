@@ -50,7 +50,7 @@ allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 | `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                               |
 | `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                         |
 | `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                 |
-| `touch-controls-check.mjs`         | Thumb sticks, held FIRE and simultaneous fingers, zoom, pause, touch preference and portrait hit-testing                                                                                               |
+| `touch-controls-check.mjs`         | Tablet and car-screen touch: drive stick, arena aim and fire, mine and ammo taps while firing, first person, zoom, pause, preference and layout at four sizes                                          |
 | `phone-check.mjs`                  | Emulated phone: tank and map only in Battle Setup, an Easy team battle, sticks, FIRE and pause only, landscape and portrait hit-testing                                                                |
 | `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                   |
 | `render-cameras-check.mjs`         | Every map through moving, overview, first-person, zoomed and fixed cameras: no late or new pipelines, and a still frame matches pixel for pixel after a detour through other views                     |
@@ -137,7 +137,7 @@ second without losing the seat, and that movement, aim, held fire and a single m
 keep the active cadence. It also measures button-to-visible movement and shot
 feedback, then covers the idle menu and hidden tab, a reload that rejoins the same
 seat from Battle Setup, late join and leave, results, restored bots on another map,
-automatic reconnect and physical multi-touch driving, fire and mines.
+automatic reconnect and physical multi-touch: driving, arena fire, mines and first-person turning.
 `SLOPPY_LATENCY=50` (also 100/150) adds round-trip delay, `SLOPPY_JITTER=30` adds up
 to 30 ms of variable delay, and `SLOPPY_STALL=200` holds about one message in fifty
 and queues later ones behind it, like TCP head-of-line blocking. They set the dev

@@ -220,10 +220,10 @@ export async function prepareGame(
   let firstPerson = false;
   /** Pause, results and the round menu need the cursor; a death keeps it captured.
    * Applied as soon as the phase changes, so a click right after RESUME already
-   * takes the pointer back instead of waiting for the next frame. Phones turn the
-   * view with a finger, which a pointer lock would freeze in place. */
-  const mouseLook = !isPhone();
-  const holdPointer = () => controls.holdPointer(firstPerson && mouseLook, phase !== "playing");
+   * takes the pointer back instead of waiting for the next frame. With touch
+   * controls a finger turns the view, which a pointer lock would freeze in place. */
+  const holdPointer = () =>
+    controls.holdPointer(firstPerson && !touchControls.active, phase !== "playing");
   const updateHud = (dt: number) => {
     ui.update(readHud(), dt);
     phase = hud!.match.phase;
@@ -420,7 +420,7 @@ export async function prepareGame(
     const frameMs = Math.max(0, now - last);
     last = Math.max(last, now);
     if (active && !document.hidden) {
-      controls.stickTurns = !mouseLook && firstPerson;
+      controls.stickTurns = touchControls.active && firstPerson;
       controls.takeInput(input);
       input[INPUT.zoom] = pendingZoom;
       pendingZoom = 0;

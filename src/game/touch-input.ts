@@ -1,6 +1,7 @@
 export type StickKind = "drive" | "aim";
-/** A finger-owned touch control: the two sticks, the held fire button and, on
- * phones, a finger on the arena, which aims there and fires while it is down. */
+/** A finger-owned touch control: the drive stick, a finger on the arena, which aims
+ * there and fires while it is down, and the aim stick and held fire button, which no
+ * layout shows at the moment (`touch-controls.css`). */
 export type TouchKind = StickKind | "fire" | "arena";
 export type TouchMode = "auto" | "on" | "off";
 export const STICK_DEADZONE = 0.12;
