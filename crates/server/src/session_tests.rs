@@ -13,11 +13,13 @@ use crate::lobby_host::LobbyHost;
 use crate::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
 use crate::room_list::RoomListing;
 use crate::session::*;
+use crate::tcp_path::TcpReading;
 
 #[derive(Default)]
 struct SocketLog {
     sent: Vec<Value>,
     closed: Option<(u16, String)>,
+    tcp: Option<TcpReading>,
 }
 
 #[derive(Clone, Default)]
@@ -54,6 +56,9 @@ impl RoomSocket for FakeSocket {
             .borrow_mut()
             .closed
             .get_or_insert((code, reason.to_string()));
+    }
+    fn tcp(&self) -> Option<TcpReading> {
+        self.0.borrow().tcp
     }
 }
 
@@ -175,6 +180,57 @@ fn counts_messages_by_type_and_starts_each_sample_from_zero() {
 }
 
 #[test]
+fn samples_the_tcp_figures_of_joined_sockets_and_logs_each_on_leaving() {
+    let mut harness = Harness::new();
+    let reading = |rtt_us, sent, retransmitted| {
+        Some(TcpReading {
+            rtt_us: Some(rtt_us),
+            data_segments_sent: sent,
+            retransmitted_segments: retransmitted,
+        })
+    };
+    let (near, near_id) = harness.open();
+    let (far, far_id) = harness.open();
+    let (fresh, fresh_id) = harness.open();
+    let (waiting, _) = harness.open();
+    near.0.borrow_mut().tcp = reading(20_000, 900, 1);
+    far.0.borrow_mut().tcp = reading(150_000, 100, 4);
+    // Read before the kernel timed a round trip: its segments count, its latency does not.
+    fresh.0.borrow_mut().tcp = Some(TcpReading {
+        rtt_us: None,
+        data_segments_sent: 10,
+        retransmitted_segments: 1,
+    });
+    waiting.0.borrow_mut().tcp = reading(999_000, 50, 50);
+    harness.send(near_id, &join("near"));
+    harness.send(far_id, &join("far"));
+    harness.send(fresh_id, &join("fresh"));
+    let sample = harness.room.sample().unwrap();
+    assert_eq!(
+        sample.rtt_ms,
+        [20.0, 150.0],
+        "only measured, seated players count"
+    );
+    assert_eq!(sample.data_segments_sent, 1010);
+    assert_eq!(sample.retransmitted_segments, 6);
+    assert_eq!((sample.input_lapses, sample.match_input_lapses), (0, 0));
+    harness.room.closed(far_id, Some(1001));
+    assert!(
+        harness
+            .events
+            .lock()
+            .unwrap()
+            .activity
+            .contains(&RoomActivity::Left {
+                players: 2,
+                code: Some(1001),
+                tcp: reading(150_000, 100, 4),
+            })
+    );
+    harness.room.reset("test");
+}
+
+#[test]
 fn refuses_sockets_past_the_pending_connection_cap() {
     let mut harness = Harness::new();
     for _ in 0..MAX_PENDING_CONNECTIONS {
@@ -241,7 +297,8 @@ fn times_out_sockets_that_never_join_but_keeps_joined_ones() {
     assert!(activity.contains(&RoomActivity::Closed {
         players: 1,
         code: 1008,
-        reason: "Join timed out".into()
+        reason: "Join timed out".into(),
+        tcp: None,
     }));
     harness.room.reset("test");
 }
@@ -318,6 +375,7 @@ fn a_dropped_connection_keeps_its_seat_through_the_grace_then_the_room_expires()
     let left = RoomActivity::Left {
         players: 0,
         code: Some(1006),
+        tcp: None,
     };
     assert!(harness.events.lock().unwrap().activity.contains(&left));
     assert_eq!(

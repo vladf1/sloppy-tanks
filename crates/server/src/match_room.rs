@@ -90,4 +90,8 @@ impl RoomHost for MatchRoom {
     fn debt_ms(&self) -> f64 {
         self.host.debt_ms()
     }
+
+    fn input_lapses(&self) -> u64 {
+        self.host.input_lapses()
+    }
 }

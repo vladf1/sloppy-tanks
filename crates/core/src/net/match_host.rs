@@ -215,6 +215,7 @@ pub struct MatchHost {
     active_ms: u64,
     scene: Scene,
     out: Vec<HostEvent>,
+    input_lapses: u64,
 }
 
 type Handled = Result<(), String>;
@@ -252,6 +253,7 @@ impl MatchHost {
             active_ms: options.now_ms,
             scene: Scene::default(),
             out: Vec::new(),
+            input_lapses: 0,
         }
     }
 
@@ -277,6 +279,13 @@ impl MatchHost {
     /// Reserved seats, including players inside their reconnect grace.
     pub fn reserved(&self) -> usize {
         self.seats.len()
+    }
+
+    /// Input lapses over every seat and round of this match, for monitoring: held
+    /// movement or fire that ran out before the player's next input arrived (see
+    /// [`PlayerControls::take_lapses`]).
+    pub fn input_lapses(&self) -> u64 {
+        self.input_lapses
     }
 
     /// The events produced since the last call, in order.
@@ -1003,10 +1012,12 @@ impl MatchHost {
         }
         let mut commands: BTreeMap<u32, VehicleCommand> = BTreeMap::new();
         for seat in &mut self.seats {
-            if let Some(controls) = seat.controls.as_mut()
-                && let Some(command) = controls.command(simulation, tick, now_ms as f64)
-            {
-                commands.insert(controls.tank_id, command);
+            if let Some(controls) = seat.controls.as_mut() {
+                let command = controls.command(simulation, tick, now_ms as f64);
+                self.input_lapses += controls.take_lapses();
+                if let Some(command) = command {
+                    commands.insert(controls.tank_id, command);
+                }
             }
         }
         simulation.step_with(&commands);

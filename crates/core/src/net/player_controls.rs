@@ -59,6 +59,14 @@ pub struct ControlInput {
     pub actions: Vec<Action>,
 }
 
+impl ControlInput {
+    /// Whether the tank visibly stops when this input's lease runs out. Aim alone does
+    /// not: an idle command keeps the turret where it points.
+    fn drives(&self) -> bool {
+        self.move_x != 0.0 || self.move_z != 0.0 || self.fire
+    }
+}
+
 fn rounded(value: f64, scale: f64) -> f64 {
     json::wire_round(value, scale)
 }
@@ -213,6 +221,10 @@ pub struct PlayerControls {
     actions: VecDeque<(Action, f64)>,
     suspended: bool,
     bot_takeover: bool,
+    /// Input lapses not yet collected by [`take_lapses`](Self::take_lapses).
+    lapses: u64,
+    /// The current held input already lapsed; fresh input re-arms the count.
+    lapsed: bool,
 }
 
 impl PlayerControls {
@@ -243,7 +255,17 @@ impl PlayerControls {
             actions: VecDeque::new(),
             suspended: false,
             bot_takeover,
+            lapses: 0,
+            lapsed: false,
         })
+    }
+
+    /// Input lapses since the previous call: held movement or fire whose lease ran out
+    /// before fresh input arrived, so the tank stopped while the player still held the
+    /// controls. A stalled upload (TCP head-of-line blocking) or a frozen page causes it;
+    /// suspension and disconnects do not count.
+    pub fn take_lapses(&mut self) -> u64 {
+        std::mem::take(&mut self.lapses)
     }
 
     pub fn suspended(&self) -> bool {
@@ -299,6 +321,7 @@ impl PlayerControls {
         self.last_seq = input.seq;
         self.last_received_ms = now_ms;
         self.input = Some(input);
+        self.lapsed = false;
         true
     }
 
@@ -326,6 +349,10 @@ impl PlayerControls {
         }
         self.expire_actions(now_ms);
         let leased = now_ms - self.last_received_ms < INPUT_LEASE_MS;
+        if !leased && !self.lapsed && self.input.as_ref().is_some_and(ControlInput::drives) {
+            self.lapsed = true;
+            self.lapses += 1;
+        }
         let held = self
             .input
             .as_ref()

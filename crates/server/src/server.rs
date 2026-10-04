@@ -310,7 +310,7 @@ async fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
 
 async fn serve_connection(shared: Arc<Shared>, stream: tokio::net::TcpStream, peer: SocketAddr) {
     let bytes = ConnectionBytes::new(shared.wire.clone());
-    let io = TokioIo::new(CountingIo::new(stream, bytes.clone()));
+    let io = TokioIo::new(CountingIo::tcp(stream, bytes.clone()));
     let service = {
         let shared = shared.clone();
         service_fn(move |request| {
@@ -711,6 +711,7 @@ fn upgrade(
     // Node admitted the socket in the same turn as the handshake, so the next request
     // already saw the new room and the address's socket. Reserve both before answering.
     let (handle, output) = socket::socket_pair();
+    let handle = handle.measured_by(bytes.clone());
     let reservation = match reserve(shared, &code, &handle) {
         Ok(reservation) => reservation,
         Err(refusal) => return refusal.response(),
@@ -953,6 +954,7 @@ async fn gather(shared: &Shared) -> MonitorInput {
         samples,
         sockets: shared.open_sockets.load(Ordering::Relaxed) as u32,
         wire: shared.wire.total(),
+        segments: shared.wire.segments(),
     }
 }
 

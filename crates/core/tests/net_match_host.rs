@@ -203,6 +203,33 @@ fn input(control_epoch: &Value, seq: u64, observed: u64, extra: Value) -> Value 
 }
 
 #[test]
+fn the_host_counts_held_input_that_lapses_before_the_next_input_arrives() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let tick = h.host.tick();
+    h.action(
+        "alice",
+        "input",
+        input(&epoch, 1, tick, json!({ "moveX": 1 })),
+    );
+    h.advance();
+    assert_eq!(h.host.input_lapses(), 0);
+    // Pings keep arriving, but only input renews the lease.
+    for _ in 0..5 {
+        h.advance();
+    }
+    assert_eq!(h.host.input_lapses(), 1);
+    let tick = h.host.tick();
+    h.action("alice", "input", input(&epoch, 2, tick, json!({})));
+    for _ in 0..10 {
+        h.advance();
+    }
+    assert_eq!(h.host.input_lapses(), 1, "released controls never lapse");
+}
+
+#[test]
 fn a_shell_in_straight_flight_is_one_trace_segment_per_frame() {
     let mut h = harness();
     h.join("alice", json!({}));

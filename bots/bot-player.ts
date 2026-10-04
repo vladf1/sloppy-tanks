@@ -9,7 +9,9 @@ export const BOT_NAME_PREFIX = "bot-";
 export const ROOM_SEATS = 8;
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_CODE_LENGTH = 8;
-// Matches the browser's InputCadence: 20 Hz while driving or firing, 1 Hz refresh when idle.
+// Matches the browser's InputCadence: 20 Hz while driving or firing, 1 Hz refresh when idle,
+// and a release goes out at the active rate (the server would otherwise count the held
+// input it keeps until then as a lapse).
 const ACTIVE_INPUT_MS = 50;
 const IDLE_INPUT_MS = 1000;
 const PING_MS = 1000;
@@ -120,6 +122,8 @@ export class BotPlayer {
   private control?: { tankId: number; controlEpoch: number; driver: string };
   private phaseSinceMs = 0;
   private lastInputMs = -Infinity;
+  /** The last input sent drove or fired, so the next one releases it promptly. */
+  private sentActive = false;
   private lastPingMs = -Infinity;
   private lastResumeMs = -Infinity;
   private maneuverUntilMs = 0;
@@ -278,11 +282,13 @@ export class BotPlayer {
       Math.sin(this.aim + this.turretSpeed * elapsed),
       Math.cos(this.aim + this.turretSpeed * elapsed),
     );
-    const active = this.moveX !== 0 || this.moveZ !== 0 || this.fire || this.actions.length;
-    if (nowMs - this.lastInputMs < (active ? ACTIVE_INPUT_MS : IDLE_INPUT_MS)) {
+    const active = this.moveX !== 0 || this.moveZ !== 0 || this.fire || this.actions.length > 0;
+    const interval = active || this.sentActive ? ACTIVE_INPUT_MS : IDLE_INPUT_MS;
+    if (nowMs - this.lastInputMs < interval) {
       return;
     }
     this.lastInputMs = nowMs;
+    this.sentActive = active;
     this.stats.inputs++;
     this.message("input", {
       controlEpoch: this.control.controlEpoch,

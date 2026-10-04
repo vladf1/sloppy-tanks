@@ -43,7 +43,8 @@
 //! - `drain_events()` and `hud_json()` have the shapes of `Game.drain_events()` and
 //!   `Game.hud_json()` (`recap` is always null; the room lobby has the results).
 //! - `stats_json(now)`: `Game.stats_json()`'s renderer rows, the displayed scene's counts
-//!   and a `network` block (RTT, updates, playout buffer, ticks, input seq/ack).
+//!   and a `network` block (RTT, updates, playout buffer, late batches, ticks, input
+//!   seq/ack).
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
 //!   `leave`, `select_ammo`, `set_menu`, `set_hidden`, `stop` (`pagehide`),
 //!   `toggle_first_person`, `resize`.
@@ -706,6 +707,8 @@ impl NetGame {
                 "inputSeq": network.input_seq,
                 "inputAck": network.input_ack,
                 "connected": network.connected,
+                "lateBatches": network.late_batches,
+                "longestBatchGapMs": network.longest_batch_gap_ms,
             }),
         );
         Value::Object(stats).to_string()

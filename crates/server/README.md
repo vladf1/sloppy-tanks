@@ -243,10 +243,28 @@ pnpm run server:check-if-redeployment-required
 
 The log has one line per event: a room is created, a player joins, disconnects
 or leaves, the server closes a socket (with its close code and reason), or a
-room ends (with the reason and room age). While any room is active, a summary is
-logged each minute: rooms, players, sockets, traffic, CPU, memory, runtime lag,
-and one line per room (map, phase, players, time, score, tick cost and debt,
-traffic). An idle server logs one final summary and then stays quiet.
+room ends (with the reason and room age). On Linux, a line about a room socket
+ending also gives its TCP round trip and how many of the data segments sent to
+that player were retransmitted (`| rtt 85 ms, 6 of 800 segments resent`). While
+any room is active, a summary is logged each minute: rooms, players, sockets,
+traffic, player round trips, retransmits and input lapses, CPU, memory, runtime
+lag, and one line per room (map, phase, players, time, score, tick cost and
+debt, traffic, round trips, retransmits and input lapses). An idle server logs
+one final summary and then stays quiet.
+
+The network figures show how often players' connections stall. TCP delivers in
+order, so one lost segment holds up every snapshot behind it until the resend
+arrives (head-of-line blocking). Each room socket reads the kernel's `TCP_INFO`
+(lowest round trip, data segments sent and retransmitted) about once a second
+while it writes and once more as it closes; other systems report zeros. The
+lowest round trip is the path's latency: the kernel's smoothed estimate also
+counts the browser's delayed acknowledgements, tens of milliseconds while the
+traffic flows mostly towards the player. An
+input lapse is a player's held movement or fire running out because their next
+input arrived more than 250 ms late, a stalled upload or a frozen page, so the
+tank stopped while they still held the controls. The room page's Stats for
+nerds shows the client's side: late batches, snapshot batches that arrived over
+150 ms after the previous one.
 
 `GET /stats` returns the same figures as JSON for the last 10 seconds, summed
 from the monitor's one-second readings, plus totals since start. It is public,
@@ -257,9 +275,15 @@ timer's) samples on demand; others get 503. Traffic figures count
 characters of JSON, which equals bytes for ASCII; `wire` figures are socket bytes
 after compression, including WebSocket frame and handshake bytes.
 `tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
-`debtMs` that keeps rising means the room is falling behind real time. Memory
-comes from a counting global allocator; `gcMs` stays 0 (there is no garbage
-collector) and remains only for the record's shape.
+`debtMs` that keeps rising means the room is falling behind real time.
+`rttP50Ms`/`rttMaxMs` are the median and highest of the room sockets' lowest TCP
+round trips,
+`retransmitPercent` the share of the window's data segments that were
+retransmissions (in room rows: since each seated player connected), and
+`inputLapses` the input lapses in the window (in room rows: this match so far);
+`totals` keeps the segment and lapse counts since start. Memory comes from a
+counting global allocator; `gcMs` stays 0 (there is no garbage collector) and
+remains only for the record's shape.
 
 ### Dashboard
 
@@ -269,8 +293,10 @@ server's at https://sloppy-tanks-server.fridman.me:8443/dashboard, or
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before
 compression, players and rooms, messages per second by type in each direction,
-the slowest room tick against its 50 ms budget, one row per room, recent room
-events and host load, with charts of the last five minutes. Message types are
+the slowest room tick against its 50 ms budget, player round trips and
+retransmits, one row per room (with its players' round trips, retransmits and
+input lapses), recent room events and host load, with charts of the last five
+minutes. Message types are
 read from the start of each message without parsing it, and names outside the
 protocol count as `other`. `src/dashboard.html` is plain HTML and script
 compiled into the binary; its charts load uPlot from jsDelivr, pinned by version

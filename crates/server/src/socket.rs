@@ -13,7 +13,9 @@ use tokio::time::Instant;
 use crate::host::ConnectionId;
 use crate::room_task::RoomCommand;
 use crate::session::{RoomSocket, SendFailed};
+use crate::tcp_path::TcpReading;
 use crate::websocket::{Codec, Event};
+use crate::wire::ConnectionBytes;
 
 /// Queued output after which a reader is too slow to follow 20 Hz snapshots; the socket
 /// is closed with 4002. Counted like `ws`'s `bufferedAmount`: compressed frames not yet
@@ -53,6 +55,17 @@ impl SocketState {
 pub struct SocketHandle {
     sender: mpsc::UnboundedSender<Outbound>,
     state: Arc<SocketState>,
+    connection: Option<Arc<ConnectionBytes>>,
+}
+
+impl SocketHandle {
+    /// Lets the room read the TCP figures `connection` records (see [`RoomSocket::tcp`]).
+    pub fn measured_by(self, connection: Arc<ConnectionBytes>) -> Self {
+        Self {
+            connection: Some(connection),
+            ..self
+        }
+    }
 }
 
 impl RoomSocket for SocketHandle {
@@ -78,6 +91,10 @@ impl RoomSocket for SocketHandle {
         }
         let _ = self.sender.send(Outbound::Close(code, reason.to_string()));
     }
+
+    fn tcp(&self) -> Option<TcpReading> {
+        self.connection.as_ref()?.tcp()
+    }
 }
 
 /// The connection's end of a [`SocketHandle`].
@@ -93,6 +110,7 @@ pub fn socket_pair() -> (SocketHandle, SocketOutput) {
         SocketHandle {
             sender,
             state: state.clone(),
+            connection: None,
         },
         SocketOutput { receiver, state },
     )

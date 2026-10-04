@@ -169,6 +169,12 @@ pub trait RoomHost: Send + 'static {
     /// Elapsed time the fixed-step clock still owes the simulation, in milliseconds. A
     /// value that keeps rising means the room is falling behind real time.
     fn debt_ms(&self) -> f64;
+
+    /// Held movement or fire that ran out before the player's next input arrived, over
+    /// this match so far, for monitoring.
+    fn input_lapses(&self) -> u64 {
+        0
+    }
 }
 
 /// Creates a fresh host whenever a room code gets its first socket, or a socket arrives

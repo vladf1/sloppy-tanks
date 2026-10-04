@@ -71,6 +71,9 @@ const FIRST_RETRY_MS: f64 = 500.0;
 const MAX_BATCH_FRAMES: usize = 8;
 /// A bot-driven seat asks for its tank back at most this often.
 const RESUME_RETRY_MS: f64 = 1000.0;
+/// A snapshot batch arriving this long after the previous one (three host intervals,
+/// so at least two batches were held up) counts as late in the network statistics.
+const LATE_BATCH_MS: f64 = 150.0;
 const MAX_FRAME_SECONDS: f64 = 0.1;
 
 /// Why a connection stopped retrying. Each cause offers its own way back into a game.
@@ -257,6 +260,12 @@ pub struct NetworkStats {
     pub input_seq: i64,
     pub input_ack: i64,
     pub connected: bool,
+    /// Snapshot batches that arrived over [`LATE_BATCH_MS`] after the previous one: the
+    /// stream stalled in transit (TCP holds every later message while it resends a lost
+    /// one) or the page itself froze.
+    pub late_batches: u64,
+    /// The longest wait between consecutive batches this page session.
+    pub longest_batch_gap_ms: f64,
 }
 
 struct Socket {
@@ -312,6 +321,11 @@ pub struct NetworkClient {
     baselines: u32,
     received_updates: u64,
     last_snapshot_ms: f64,
+    /// When the stream's previous full state or batch arrived; `None` while no stream is
+    /// expected (hidden page, closed socket).
+    last_batch_ms: Option<f64>,
+    late_batches: u64,
+    longest_batch_gap_ms: f64,
     applied_input: i64,
     actions: Vec<ClientAction>,
     notices: Vec<ClientNotice>,
@@ -368,6 +382,9 @@ impl NetworkClient {
             baselines: 0,
             received_updates: 0,
             last_snapshot_ms: 0.0,
+            last_batch_ms: None,
+            late_batches: 0,
+            longest_batch_gap_ms: 0.0,
             applied_input: 0,
             actions: Vec::new(),
             notices: Vec::new(),
@@ -448,6 +465,8 @@ impl NetworkClient {
             input_seq: self.seq,
             input_ack: self.applied_input,
             connected: self.connected,
+            late_batches: self.late_batches,
+            longest_batch_gap_ms: self.longest_batch_gap_ms,
         }
     }
 
@@ -553,6 +572,7 @@ impl NetworkClient {
         }
         self.socket = None;
         self.connected = false;
+        self.last_batch_ms = None;
         if let Some(delay) = self.delay.as_mut() {
             delay.clear();
         }
@@ -806,6 +826,7 @@ impl NetworkClient {
             }
             "full" => {
                 self.last_snapshot_ms = now_ms;
+                self.last_batch_ms = Some(now_ms);
                 self.applied_input = 0;
                 let value = Value::Object(message);
                 self.mirror
@@ -824,6 +845,13 @@ impl NetworkClient {
             "snapshot" => {
                 self.applied_input = id(message.get("ack"))? as i64;
                 self.last_snapshot_ms = now_ms;
+                if let Some(previous) = self.last_batch_ms.replace(now_ms) {
+                    let gap = now_ms - previous;
+                    self.longest_batch_gap_ms = self.longest_batch_gap_ms.max(gap);
+                    if gap > LATE_BATCH_MS {
+                        self.late_batches += 1;
+                    }
+                }
                 let frames = match message.get("snapshots") {
                     Some(Value::Array(frames)) if frames.len() <= MAX_BATCH_FRAMES => frames,
                     _ => return Err("Invalid frame batch".into()),
@@ -1157,6 +1185,7 @@ impl NetworkClient {
         if hidden {
             self.send("suspend", now_ms, |_| {});
             self.active = false;
+            self.last_batch_ms = None;
         } else if self.phase == RoomPhase::Playing && !self.menu {
             self.resume(now_ms);
         } else if self.phase == RoomPhase::Playing {

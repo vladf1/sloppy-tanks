@@ -36,6 +36,10 @@ struct Network {
     /// Host connection → (peer, socket).
     routes: BTreeMap<u64, (usize, u32)>,
     next_host_tick: f64,
+    /// Until then the host's messages queue up, as behind a TCP resend, and then arrive
+    /// together.
+    stalled_until: f64,
+    held: Vec<HostEvent>,
 }
 
 fn choice(name: &str, create: Option<RoomSettings>) -> JoinChoice {
@@ -76,6 +80,8 @@ impl Network {
             next_connection: 0,
             routes: BTreeMap::new(),
             next_host_tick: 50.0,
+            stalled_until: 0.0,
+            held: Vec::new(),
         }
     }
 
@@ -112,8 +118,13 @@ impl Network {
                 self.respond(index, &notices);
                 self.peers[index].notices.extend(notices);
             }
-            let events = self.host.take_events();
+            let mut events = self.host.take_events();
             busy |= !events.is_empty();
+            if self.now < self.stalled_until {
+                self.held.append(&mut events);
+            } else {
+                events.splice(0..0, std::mem::take(&mut self.held));
+            }
             for event in events {
                 self.deliver(event);
             }
@@ -314,6 +325,38 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
     let viewer = display.viewer().unwrap();
     assert!((viewer.position.x - moved.x).hypot(viewer.position.z - moved.z) < 3.0);
     assert_eq!(viewer.aim, 0.3, "own aim shows at once");
+}
+
+#[test]
+fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
+    let mut net = Network::new();
+    let alice = net.add(None);
+    net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
+    net.run(1000.0);
+    let stats = net.peers[alice].client.stats(net.now);
+    // Batches leave every 50 ms and the page reads them on its next 60 Hz frame.
+    assert_eq!(stats.late_batches, 0, "{stats:?}");
+    assert!(stats.longest_batch_gap_ms < 70.0, "{stats:?}");
+    // A lost packet holds up the stream for 200 ms; then everything arrives at once.
+    net.stalled_until = net.now + 200.0;
+    net.run(1000.0);
+    let stats = net.peers[alice].client.stats(net.now);
+    assert_eq!(stats.late_batches, 1, "{stats:?}");
+    assert!(
+        (200.0..270.0).contains(&stats.longest_batch_gap_ms),
+        "{stats:?}"
+    );
+    // A hidden page and the menu change what is sent, not how late it is.
+    let now = net.now;
+    net.peers[alice].client.set_hidden(true, now);
+    net.run(2000.0);
+    let now = net.now;
+    net.peers[alice].client.set_hidden(false, now);
+    net.run(1000.0);
+    let now = net.now;
+    net.peers[alice].client.pause(now);
+    net.run(1000.0);
+    assert_eq!(net.peers[alice].client.stats(net.now).late_batches, 1);
 }
 
 #[test]
