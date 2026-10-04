@@ -469,8 +469,11 @@ async fn extra_level_rooms_are_listed_only_when_asked_for() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn serves_stats_only_to_direct_local_requests() {
+async fn serves_stats_publicly_and_samples_early_only_for_direct_local_requests() {
     let (server, base, _) = start().await;
+    let proxied = &[("X-Forwarded-For", "203.0.113.7")];
+    let early = get(&base, "/stats", proxied).await;
+    assert_eq!(early.status, 503, "no sample is due yet");
     let direct = get(&base, "/stats", &[]).await;
     assert_eq!(direct.status, 200);
     assert_eq!(direct.headers["cache-control"], "no-store");
@@ -479,8 +482,12 @@ async fn serves_stats_only_to_direct_local_requests() {
     assert!(stats["roomList"].is_array());
     assert!(stats["loopDelayP99Ms"].is_number());
     assert!(stats["totals"]["wireSentMB"].is_number());
-    let proxied = get(&base, "/stats", &[("X-Forwarded-For", "203.0.113.7")]).await;
-    assert_eq!(proxied.status, 404);
+    let public = get(&base, "/stats", proxied).await;
+    assert_eq!(
+        public.status, 200,
+        "the direct request's sample is now the latest"
+    );
+    assert_eq!(public.body, direct.body);
     server.close().await;
 }
 
