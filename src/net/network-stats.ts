@@ -87,8 +87,13 @@ export function networkStatsSections(
         ],
         [
           "Late batches",
-          `${network.lateBatches} (longest gap ${Math.round(network.longestBatchGapMs)} ms)`,
+          network.lateBatches,
           "Snapshot batches that arrived over 150 ms after the previous one (they leave every 50 ms) during this page session. The connection held them up, for example while TCP resent a lost packet, or the page itself froze.",
+        ],
+        [
+          "Longest batch gap",
+          `${Math.round(network.longestBatchGapMs)} ms`,
+          "The longest wait between consecutive snapshot batches during this page session; about 50 ms while the stream flows.",
         ],
         ["Server tick", network.serverTick, "Latest authoritative simulation tick received."],
         [

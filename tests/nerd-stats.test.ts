@@ -208,7 +208,18 @@ test("network stats use received scene counts and never require a client physics
       .join("\n");
     assert.ok(text.includes("RTT") && text.includes("42 ms"));
     assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
-    assert.ok(text.includes("Late batches") && text.includes("3 (longest gap 412 ms)"));
+    assert.ok(
+      text.includes("Late batches") &&
+        text.includes("Longest batch gap") &&
+        text.includes("412 ms"),
+    );
+    const network = f.container
+      .querySelectorAll("details")
+      .find((section) => section.querySelector("summary")?.textContent === "Network");
+    for (const row of network?.querySelectorAll("pre") ?? []) {
+      // The expanded panel is 32 characters wide; longer rows are cut off.
+      assert.ok((row.textContent ?? "").length <= 32, `"${row.textContent}" fits the panel`);
+    }
     assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
     assert.ok(text.includes("Update CPU / frame"));
     assert.ok(!text.includes("Sim CPU / frame"));
