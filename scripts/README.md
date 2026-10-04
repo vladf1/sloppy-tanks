@@ -146,6 +146,14 @@ the added delay preserves message order. Stats for nerds shows the adaptive play
 buffer and the share of frames that ran past the newest snapshot. Browser
 diagnostics exist only in dev builds.
 
+Those parameters delay messages inside the client, so TCP never loses anything;
+Chrome DevTools' packet loss setting only affects WebRTC. For real loss on a Mac,
+`sudo scripts/network/lossy-network.sh on [percent]` (2 by default) drops that share
+of the packets from `sloppy-tanks-server.fridman.me` (ports 443 and 8443) below TCP,
+using a `pf` anchor and a `dnctl` pipe; `status` shows them and `off` removes both
+and reloads `/etc/pf.conf`. The server then resends, and the dashboard's Resent
+figure, the room's input lapses and Stats for nerds' Late batches should all rise.
+
 `multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
 seats and viewer isolation without a server.
 
