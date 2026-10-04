@@ -505,6 +505,30 @@ async fn serves_stats_publicly_and_samples_early_only_for_direct_local_requests(
     server.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_proxied_socket_is_not_measured_on_its_own_connection() {
+    let (server, base, lines) = start().await;
+    // The proxy forwards a player whose socket is not on this host (no proxy holds it
+    // here), so nothing is measured: the server's own socket only reaches the proxy.
+    let forwarded = [
+        ("X-Forwarded-For", "203.0.113.7"),
+        ("X-Client-Port", "40000"),
+    ];
+    let mut player = open(&base, "PROXROOM", &forwarded).await.client();
+    player.send(&join("far")).await;
+    player.next("welcome").await;
+    drop(player);
+    eventually("the drop to be logged", || {
+        lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line == "room PROXROOM player disconnected (code 1006) (0 connected)")
+    })
+    .await;
+    server.close().await;
+}
+
 /// An open `/dashboard/stream`, read one Server-Sent Event at a time. HTTP/1.0 keeps
 /// the body free of chunk framing.
 struct Viewer {

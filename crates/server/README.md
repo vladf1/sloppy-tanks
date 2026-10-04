@@ -254,9 +254,16 @@ one final summary and then stays quiet.
 
 The network figures show how often players' connections stall. TCP delivers in
 order, so one lost segment holds up every snapshot behind it until the resend
-arrives (head-of-line blocking). Each room socket reads the kernel's `TCP_INFO`
-(lowest round trip, data segments sent and retransmitted) about once a second
-while it writes and once more as it closes; other systems report zeros. The
+arrives (head-of-line blocking). The figures are the kernel's `TCP_INFO` (lowest
+round trip, data segments sent and retransmitted) for the TCP connection to the
+player, read on Linux only; other systems report zeros. Behind a proxy on the same
+host, such as Caddy on the VPS, the server's own socket only reaches the proxy, so
+when it trusts its proxy and a room socket's upgrade carries `X-Client-Port` (the
+player's source port, beside `X-Forwarded-For`), the monitor finds the proxy's
+socket to that address and port in the kernel's list of the host's TCP sockets
+(netlink `sock_diag`, what `ss` reads) once a second. A connection without that
+header reads its own socket about once a second while it writes and once more as
+it closes. A proxy on another machine leaves the figures empty. The
 lowest round trip is the path's latency: the kernel's smoothed estimate also
 counts the browser's delayed acknowledgements, tens of milliseconds while the
 traffic flows mostly towards the player. An

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -111,10 +111,12 @@ struct Shared {
     dashboard: Mutex<Dashboard>,
     stopping: AtomicBool,
     terminate: watch::Sender<bool>,
+    /// The last reading of proxied connections failed; logged once until one succeeds.
+    proxied_unreadable: AtomicBool,
 }
 
 /// The multiplayer host: `/health` (and `/health/`), `/rooms`, the `/room/CODE` WebSocket, the public
-/// `/dashboard` and the loopback-only `/stats`.
+/// `/dashboard` and `/stats`.
 pub struct MultiplayerServer {
     shared: Arc<Shared>,
     address: SocketAddr,
@@ -207,6 +209,7 @@ impl MultiplayerServer {
             dashboard: Mutex::new(Dashboard::new(max_rooms, build)),
             stopping: AtomicBool::new(false),
             terminate,
+            proxied_unreadable: AtomicBool::new(false),
         });
         let tasks = vec![
             tokio::spawn(accept_loop(shared.clone(), listener)),
@@ -395,6 +398,22 @@ fn client_ip(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> String {
         }
     }
     peer.ip().to_string()
+}
+
+/// The player's address and source port as a proxy on this host forwards them
+/// (`X-Forwarded-For`, `X-Client-Port`), when the server trusts its proxy.
+fn forwarded_client(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> Option<SocketAddr> {
+    if !shared.options.trust_proxy {
+        return None;
+    }
+    let port = header_text(headers, "x-client-port")
+        .rsplit(',')
+        .next()?
+        .trim()
+        .parse()
+        .ok()?;
+    let ip: IpAddr = client_ip(shared, headers, peer).parse().ok()?;
+    Some(SocketAddr::new(ip.to_canonical(), port))
 }
 
 fn is_upgrade(headers: &HeaderMap) -> bool {
@@ -712,6 +731,9 @@ fn upgrade(
     // already saw the new room and the address's socket. Reserve both before answering.
     let (handle, output) = socket::socket_pair();
     let handle = handle.measured_by(bytes.clone());
+    if let Some(client) = forwarded_client(shared, headers, peer) {
+        bytes.forwarded_from(client);
+    }
     let reservation = match reserve(shared, &code, &handle) {
         Ok(reservation) => reservation,
         Err(refusal) => return refusal.response(),
@@ -929,6 +951,17 @@ async fn admit(
 
 /// Samples every room (oldest first) plus the socket and wire counters.
 async fn gather(shared: &Shared) -> MonitorInput {
+    // Before the rooms sample their sockets, so they see this reading.
+    match shared.wire.measure_proxied() {
+        Ok(()) => shared.proxied_unreadable.store(false, Ordering::Relaxed),
+        Err(error) => {
+            if !shared.proxied_unreadable.swap(true, Ordering::Relaxed) {
+                (shared.options.log)(&format!(
+                    "cannot read proxied players' TCP figures: {error}"
+                ));
+            }
+        }
+    }
     let mut rooms: Vec<RoomHandle> = shared
         .registry
         .lock()
