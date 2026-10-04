@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 use crate::monitor::{TcpSegments, WireBytes};
-use crate::tcp_path::{self, TcpReading};
+use crate::tcp_path::{self, TcpReading, UNMEASURED_RTT_US};
 
 /// How often a busy room socket reads its TCP figures: once per monitor reading.
 const TCP_READING_INTERVAL: Duration = Duration::from_secs(1);
@@ -53,6 +53,7 @@ pub struct ConnectionBytes {
     tracked: AtomicBool,
     totals: Arc<WireTotals>,
     measured: AtomicBool,
+    /// [`UNMEASURED_RTT_US`] while the kernel has not timed a round trip.
     rtt_us: AtomicU32,
     data_segments_sent: AtomicU64,
     retransmitted_segments: AtomicU64,
@@ -66,7 +67,7 @@ impl ConnectionBytes {
             tracked: AtomicBool::new(false),
             totals,
             measured: AtomicBool::new(false),
-            rtt_us: AtomicU32::new(0),
+            rtt_us: AtomicU32::new(UNMEASURED_RTT_US),
             data_segments_sent: AtomicU64::new(0),
             retransmitted_segments: AtomicU64::new(0),
         })
@@ -76,7 +77,7 @@ impl ConnectionBytes {
     /// (or always, off Linux).
     pub fn tcp(&self) -> Option<TcpReading> {
         self.measured.load(Ordering::Relaxed).then(|| TcpReading {
-            rtt_us: self.rtt_us.load(Ordering::Relaxed),
+            rtt_us: tcp_path::measured_rtt(self.rtt_us.load(Ordering::Relaxed)),
             data_segments_sent: self.data_segments_sent.load(Ordering::Relaxed),
             retransmitted_segments: self.retransmitted_segments.load(Ordering::Relaxed),
         })
@@ -99,7 +100,10 @@ impl ConnectionBytes {
             reading.retransmitted_segments.saturating_sub(retransmitted),
             Ordering::Relaxed,
         );
-        self.rtt_us.store(reading.rtt_us, Ordering::Relaxed);
+        self.rtt_us.store(
+            reading.rtt_us.unwrap_or(UNMEASURED_RTT_US),
+            Ordering::Relaxed,
+        );
         self.measured.store(true, Ordering::Relaxed);
     }
 

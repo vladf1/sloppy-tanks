@@ -68,14 +68,16 @@ pub fn duration(ms: u64) -> String {
     }
 }
 
-/// ` | rtt 85 ms, 31 of 7812 segments resent`: the connection's TCP figures, if measured.
+/// ` | rtt 85 ms, 31 of 7812 segments resent`: the connection's TCP figures, if measured
+/// (without the round trip before the kernel has timed one).
 fn tcp_note(tcp: &Option<TcpReading>) -> String {
     tcp.map_or_else(String::new, |reading| {
+        let rtt = reading
+            .rtt_ms()
+            .map_or_else(String::new, |rtt_ms| format!("rtt {} ms, ", rtt_ms.round()));
         format!(
-            " | rtt {} ms, {} of {} segments resent",
-            reading.rtt_ms().round(),
-            reading.retransmitted_segments,
-            reading.data_segments_sent
+            " | {rtt}{} of {} segments resent",
+            reading.retransmitted_segments, reading.data_segments_sent
         )
     })
 }
@@ -1110,7 +1112,7 @@ mod tests {
                 players: 0,
                 code: Some(1006),
                 tcp: Some(TcpReading {
-                    rtt_us: 85_400,
+                    rtt_us: Some(85_400),
                     data_segments_sent: 800,
                     retransmitted_segments: 6,
                 }),

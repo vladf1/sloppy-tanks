@@ -184,23 +184,35 @@ fn samples_the_tcp_figures_of_joined_sockets_and_logs_each_on_leaving() {
     let mut harness = Harness::new();
     let reading = |rtt_us, sent, retransmitted| {
         Some(TcpReading {
-            rtt_us,
+            rtt_us: Some(rtt_us),
             data_segments_sent: sent,
             retransmitted_segments: retransmitted,
         })
     };
     let (near, near_id) = harness.open();
     let (far, far_id) = harness.open();
+    let (fresh, fresh_id) = harness.open();
     let (waiting, _) = harness.open();
     near.0.borrow_mut().tcp = reading(20_000, 900, 1);
     far.0.borrow_mut().tcp = reading(150_000, 100, 4);
+    // Read before the kernel timed a round trip: its segments count, its latency does not.
+    fresh.0.borrow_mut().tcp = Some(TcpReading {
+        rtt_us: None,
+        data_segments_sent: 10,
+        retransmitted_segments: 1,
+    });
     waiting.0.borrow_mut().tcp = reading(999_000, 50, 50);
     harness.send(near_id, &join("near"));
     harness.send(far_id, &join("far"));
+    harness.send(fresh_id, &join("fresh"));
     let sample = harness.room.sample().unwrap();
-    assert_eq!(sample.rtt_ms, [20.0, 150.0], "only seated players count");
-    assert_eq!(sample.data_segments_sent, 1000);
-    assert_eq!(sample.retransmitted_segments, 5);
+    assert_eq!(
+        sample.rtt_ms,
+        [20.0, 150.0],
+        "only measured, seated players count"
+    );
+    assert_eq!(sample.data_segments_sent, 1010);
+    assert_eq!(sample.retransmitted_segments, 6);
     assert_eq!((sample.input_lapses, sample.match_input_lapses), (0, 0));
     harness.room.closed(far_id, Some(1001));
     assert!(
@@ -210,7 +222,7 @@ fn samples_the_tcp_figures_of_joined_sockets_and_logs_each_on_leaving() {
             .unwrap()
             .activity
             .contains(&RoomActivity::Left {
-                players: 1,
+                players: 2,
                 code: Some(1001),
                 tcp: reading(150_000, 100, 4),
             })

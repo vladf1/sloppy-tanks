@@ -181,8 +181,8 @@ pub struct RoomSample {
     /// Messages sent and accepted per message type.
     pub sent_messages: MessageCounts,
     pub received_messages: MessageCounts,
-    /// The lowest TCP round trip of each joined socket the transport measures, in
-    /// milliseconds.
+    /// The lowest TCP round trip of each joined socket whose round trip the transport
+    /// has measured, in milliseconds.
     pub rtt_ms: Vec<f64>,
     /// Data segments sent to those sockets since each connected, and how many were
     /// retransmissions.
@@ -412,7 +412,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             received_bytes: load.received_bytes,
             sent_messages: load.sent_messages,
             received_messages: load.received_messages,
-            rtt_ms: tcp.iter().map(TcpReading::rtt_ms).collect(),
+            rtt_ms: tcp.iter().filter_map(TcpReading::rtt_ms).collect(),
             data_segments_sent: tcp.iter().map(|reading| reading.data_segments_sent).sum(),
             retransmitted_segments: tcp
                 .iter()

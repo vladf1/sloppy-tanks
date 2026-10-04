@@ -12,8 +12,9 @@ pub struct TcpReading {
     /// The lowest round trip the kernel measured over the last few minutes, in
     /// microseconds: the path's latency. The smoothed estimate would also count the
     /// client's delayed acknowledgements, which add up to tens of milliseconds while
-    /// traffic flows mostly towards the client.
-    pub rtt_us: u32,
+    /// traffic flows mostly towards the client. `None` until the kernel has timed a
+    /// round trip.
+    pub rtt_us: Option<u32>,
     /// Data segments sent to the client, retransmissions included.
     pub data_segments_sent: u64,
     /// Segments sent again because the client did not acknowledge them in time.
@@ -21,13 +22,23 @@ pub struct TcpReading {
 }
 
 impl TcpReading {
-    pub fn rtt_ms(&self) -> f64 {
-        f64::from(self.rtt_us) / 1000.0
+    pub fn rtt_ms(&self) -> Option<f64> {
+        self.rtt_us.map(|rtt_us| f64::from(rtt_us) / 1000.0)
     }
 
     pub fn retransmit_percent(&self) -> f64 {
         percent(self.retransmitted_segments, self.data_segments_sent)
     }
+}
+
+/// The kernel's lowest round trip before its first sample (`~0U`). The handshake
+/// usually gives one, but not when the SYN-ACK was resent to a client without TCP
+/// timestamps, so a room socket's first reading can still carry it.
+pub const UNMEASURED_RTT_US: u32 = u32::MAX;
+
+/// The kernel's lowest round trip, unless it has not timed one yet.
+pub fn measured_rtt(min_rtt_us: u32) -> Option<u32> {
+    (min_rtt_us != UNMEASURED_RTT_US).then_some(min_rtt_us)
 }
 
 /// `part` as a percentage of `whole`; zero when nothing was sent.
@@ -63,7 +74,7 @@ pub fn read(fd: RawFd) -> Option<TcpReading> {
         return None;
     }
     Some(TcpReading {
-        rtt_us: info.tcpi_min_rtt,
+        rtt_us: measured_rtt(info.tcpi_min_rtt),
         data_segments_sent: u64::from(info.tcpi_data_segs_out),
         retransmitted_segments: u64::from(info.tcpi_total_retrans),
     })
@@ -81,13 +92,20 @@ mod tests {
     #[test]
     fn retransmits_are_a_share_of_the_data_segments_sent() {
         let reading = TcpReading {
-            rtt_us: 85_400,
+            rtt_us: Some(85_400),
             data_segments_sent: 800,
             retransmitted_segments: 6,
         };
-        assert_eq!(reading.rtt_ms(), 85.4);
+        assert_eq!(reading.rtt_ms(), Some(85.4));
         assert_eq!(reading.retransmit_percent(), 0.75);
         assert_eq!(TcpReading::default().retransmit_percent(), 0.0);
+    }
+
+    #[test]
+    fn the_kernels_initial_minimum_is_no_round_trip() {
+        assert_eq!(measured_rtt(u32::MAX), None);
+        assert_eq!(measured_rtt(0), Some(0), "loopback");
+        assert_eq!(measured_rtt(85_400), Some(85_400));
     }
 
     #[cfg(target_os = "linux")]
