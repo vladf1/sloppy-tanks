@@ -217,9 +217,11 @@ a slow run.
   it when changing scenery or upload paths.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
-  in the vertex page, so every draw passes `base_vertex` 0 and a pass rebinds only
-  when the page changes. Bind a page only through `MeshStore::vertex_buffers` and
-  `index_buffer`, which bind its written prefix, where every mesh lives. Batch and
+  in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
+  pass rebinds only when the page changes. Bind a page only through
+  `MeshStore::vertex_buffers` and `index_buffer`, which bind its written prefix,
+  where every mesh lives: a `slice(..)` of a page makes wgpu clear its unwritten
+  tail, on WebGL through a page-sized vector of zeros in the Wasm heap. Batch and
   own pages go with their last mesh, and a general page once a frame's collection
   finds it empty, so a reset's new round first refills the general pages the old
   one emptied. `View::reset` drops the old round's views before `reset_round`:
@@ -239,7 +241,9 @@ a slow run.
   WGSL), pipelines compile synchronously (`precompile.rs` has no device), the
   cached fixed-scenery shadow reaches the shadow map through a full-screen depth
   pass rather than a texture copy (`gpu/depth_copy.rs`), bitmaps are flipped at
-  decode, and the device is polled for callbacks. WebGL may simplify an effect, but
+  decode, the device is polled for callbacks, and opaque draws are grouped by
+  pipeline, mesh page, pool and material (`GROUP_DRAWS_BY_STATE`), so depth ties
+  can resolve differently than on WebGPU. WebGL may simplify an effect, but
   must not give up a performance optimization such as a cache or batching: its
   devices are the weaker ones. Keep both building:
   `pnpm run rust:clippy` lints both and `scripts/webgl-check.mjs` plays the

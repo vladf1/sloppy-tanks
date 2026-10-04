@@ -3,10 +3,11 @@
 //!
 //! Meshes with one vertex layout share vertex pages, and every mesh's indices share
 //! index pages. Indices are written absolute (already offset by the mesh's first
-//! vertex in its page), so every draw passes `base_vertex` 0 and a mesh's draw is
-//! just an index range in its index page. Consecutive draws from one page keep their
-//! vertex and index bindings, where a buffer per mesh made every mesh switch two or
-//! three WebGPU commands (`setVertexBuffer`, `setIndexBuffer`).
+//! vertex in its page), so every draw passes `base_vertex` 0, which WebGL2 lacks, and
+//! a mesh's draw is just an index range in its index page. Consecutive draws from one
+//! page keep their vertex and index bindings, where a buffer per mesh made every mesh
+//! switch two or three WebGPU commands (`setVertexBuffer`, `setIndexBuffer`), and
+//! through wgpu's GL backend a re-specification of every vertex attribute.
 //!
 //! This module is pure bookkeeping, so it compiles natively and carries the tests:
 //! a first-fit [`RangeAllocator`] per page, the [`PagePlanner`] that picks pages and
@@ -14,9 +15,11 @@
 //! (`gpu/resources.rs`) owns the buffers and mirrors the planner's pages.
 //!
 //! Pages never grow, move or copy: a fixed page holds one copy of its data, where a
-//! buffer that doubles would briefly hold two. Freed ranges are reused as soon as the
-//! mesh is freed. Earlier frames may still be in flight then, which queue order makes
-//! safe: WebGPU runs `writeBuffer` after the submissions before it.
+//! buffer that doubles would briefly hold two, and on WebGL index data can only be
+//! copied between index buffers. Freed ranges are reused as soon as the mesh is
+//! freed. Earlier frames may still be in flight then, which queue order makes safe:
+//! WebGPU runs `writeBuffer` after the submissions before it, and GL runs commands in
+//! order.
 
 use std::ops::Range;
 
@@ -46,10 +49,11 @@ pub const BATCH_PAGE_MIN_BYTES: u64 = GENERAL_VERTEX_PAGE_BYTES / 2;
 /// The same for a registration's indices: half a general index page.
 pub const BATCH_INDEX_PAGE_MIN_BYTES: u64 = GENERAL_INDEX_PAGE_BYTES / 2;
 
-/// The largest batch page, well below WebGPU's default 256 MiB `max_buffer_size`
-/// (`context.rs` asks for the default limits). Batches split at this size; a mesh
-/// never straddles pages, and one larger than this gets an exact page of its own,
-/// like the buffer it had before pages.
+/// The largest batch page. It stays below the 128 MiB per-resource floor of D3D11,
+/// which ANGLE uses for WebGL on Windows, and WebGPU's default 256 MiB
+/// `max_buffer_size` (`context.rs` asks for the default limits). Batches split at
+/// this size; a mesh never straddles pages, and one larger than this gets an exact
+/// page of its own, like the buffer it had before pages.
 pub const MAX_PAGE_BYTES: u64 = 64 * MIB;
 
 /// The page of an empty mesh range, which binds nothing and draws nothing.

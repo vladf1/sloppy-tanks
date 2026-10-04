@@ -57,8 +57,8 @@ use wgpu::util::DeviceExt;
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
-    Draw, DrawListBuilder, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT,
-    ViewDraws,
+    Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW,
+    VIEW_COUNT, ViewDraws, order_classes,
 };
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::{MaterialInterner, is_transparent};
@@ -383,6 +383,18 @@ struct ClassKey {
 
 const NO_POOL: u32 = u32::MAX;
 
+/// Whether opaque draws are grouped by the GPU state their class binds
+/// (`draw_list::order_classes`) instead of following class index order. The WebGL
+/// engine groups them: through wgpu's GL backend every pipeline, mesh page, frame
+/// group or material change costs from one to tens of WebGL calls. The WebGPU engine
+/// keeps index order: there grouping saved the browser's GPU process a little but
+/// cost the main thread a little more per frame, and index order keeps its depth ties
+/// as they were. Classes are created in about the order their meshes are placed, so
+/// index order mostly draws from one mesh page after another; class slots freed by a
+/// reset or by destruction are reused in reverse, which interleaves pages a little
+/// more as rounds go by.
+const GROUP_DRAWS_BY_STATE: bool = cfg!(feature = "webgl");
+
 /// A mesh + material + pipeline combination that instances batch under.
 struct ClassEntry {
     key: ClassKey,
@@ -394,12 +406,36 @@ struct ClassEntry {
     /// faces, like Three's two-pass `DoubleSide` transparency.
     back_key: Option<PipelineKey>,
     shadow_key: PipelineKey,
+    /// `Pipelines::rank` of the main and shadow keys: classes are created before
+    /// their pipelines compile, and draw lists sort by these.
+    main_rank: u32,
+    shadow_rank: u32,
+    /// The mesh pages of its mesh, fixed for the mesh's life.
+    vertex_page: u16,
+    index_page: u16,
     main: Option<u32>,
     back: Option<u32>,
     shadow: Option<u32>,
     /// Parts using this class that cast shadows.
     casters: u32,
     users: u32,
+}
+
+impl ClassEntry {
+    /// What its opaque draws bind in `view`, by which the draw lists sort them.
+    fn draw_state(&self, view: usize) -> DrawState {
+        DrawState {
+            pipeline: if view == SHADOW_VIEW {
+                self.shadow_rank
+            } else {
+                self.main_rank
+            },
+            vertex_page: u32::from(self.vertex_page),
+            pool: self.key.pool,
+            material: self.key.material,
+            index_page: u32::from(self.index_page),
+        }
+    }
 }
 
 struct PartEntry {
@@ -616,6 +652,14 @@ pub struct Renderer {
     classes: Vec<Option<ClassEntry>>,
     class_index: HashMap<ClassKey, u32>,
     free_classes: Vec<u32>,
+    /// Each class's position in opaque draw order (`GROUP_DRAWS_BY_STATE`): for the
+    /// main and reflection views, which bind its main pipeline, and for the shadow
+    /// view. Recomputed only after classes come or go.
+    class_order: [Vec<u32>; 2],
+    class_order_dirty: bool,
+    /// Scratch for `class_order`.
+    class_states: Vec<Option<DrawState>>,
+    class_by_state: Vec<u32>,
     models: Slab<ModelEntry>,
     instances: Slab<InstanceEntry>,
     pools: Slab<PoolEntry>,
@@ -788,6 +832,10 @@ impl Renderer {
             classes: Vec::new(),
             class_index: HashMap::new(),
             free_classes: Vec::new(),
+            class_order: Default::default(),
+            class_order_dirty: false,
+            class_states: Vec::new(),
+            class_by_state: Vec::new(),
             models: Slab::default(),
             instances: Slab::default(),
             pools: Slab::default(),
@@ -1143,6 +1191,7 @@ impl Renderer {
             Some(&index) => index,
             None => {
                 let gpu = self.materials.get(material);
+                let range = self.meshes.get(mesh).range;
                 let extra = self.meshes.get(mesh).extra_attributes;
                 let source = &gpu.material;
                 let transparent = is_transparent(source) || faded;
@@ -1158,17 +1207,23 @@ impl Renderer {
                 let dithered = faded || self.effects.get(gpu.effect).is_some_and(|e| e.shadow_fade);
                 let shadow_shader =
                     ShaderKey::shadow(source, gpu.effect, extra, dithered, &self.effects);
+                let main = if two_pass {
+                    main_key(&face(Side::Front))
+                } else {
+                    main_key(source)
+                };
+                let shadow = PipelineKey::shadow(shadow_shader, source);
                 let entry = ClassEntry {
                     key,
                     pool,
                     transparent,
-                    main_key: if two_pass {
-                        main_key(&face(Side::Front))
-                    } else {
-                        main_key(source)
-                    },
+                    main_key: main,
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
-                    shadow_key: PipelineKey::shadow(shadow_shader, source),
+                    shadow_key: shadow,
+                    main_rank: self.pipelines.rank(&main),
+                    shadow_rank: self.pipelines.rank(&shadow),
+                    vertex_page: range.vertex_page,
+                    index_page: range.index_page,
                     main: None,
                     back: None,
                     shadow: None,
@@ -1188,6 +1243,7 @@ impl Renderer {
                     }
                 };
                 self.class_index.insert(key, index);
+                self.class_order_dirty = true;
                 index
             }
         };
@@ -1219,6 +1275,7 @@ impl Renderer {
             self.meshes.remove_user(class.key.mesh);
             self.materials.get_mut(class.key.material).users -= 1;
             self.free_classes.push(index);
+            self.class_order_dirty = true;
         }
     }
 
@@ -2351,7 +2408,10 @@ impl Renderer {
         }
         self.push_pool_draws();
         let base = self.static_records.len() as u32;
-        self.builder.finish(base, &mut self.views);
+        self.update_class_order();
+        let [main, shadow] = &self.class_order;
+        self.builder
+            .finish(base, &mut self.views, [main, main, shadow]);
         self.finish_merged(base + self.builder.records.len() as u32);
         self.merged_draws.retain(|draw| {
             if self.cache_static_shadow
@@ -2366,6 +2426,29 @@ impl Renderer {
                 true
             }
         });
+    }
+
+    /// Recompute where each class goes in opaque draw order after classes came or
+    /// went (`class_order`).
+    fn update_class_order(&mut self) {
+        if !self.class_order_dirty {
+            return;
+        }
+        self.class_order_dirty = false;
+        for (order, view) in self.class_order.iter_mut().zip([MAIN_VIEW, SHADOW_VIEW]) {
+            if !GROUP_DRAWS_BY_STATE {
+                order.clear();
+                order.extend(0..self.classes.len() as u32);
+                continue;
+            }
+            self.class_states.clear();
+            self.class_states.extend(
+                self.classes
+                    .iter()
+                    .map(|class| class.as_ref().map(|class| class.draw_state(view))),
+            );
+            order_classes(&self.class_states, &mut self.class_by_state, order);
+        }
     }
 
     /// Group merged shadow items into instanced draws (by pipeline, mesh page, model
@@ -2787,11 +2870,7 @@ fn scene_pass<'a>(
 
 /// The mesh pages a pass has bound, so consecutive draws from one page skip the
 /// rebinding. Each encode starts from none bound: other draws between them (the
-/// water, merged shadows on slot 1) may have changed the bindings. Opaque draws
-/// follow class index order, and classes are created in about the order their
-/// meshes are placed, so they mostly draw from one page after another; class slots
-/// freed by a reset or by destruction are reused in reverse, which interleaves pages
-/// a little more as rounds go by.
+/// water, merged shadows on slot 1) may have changed the bindings.
 struct BoundPages {
     vertex: u16,
     index: u16,
