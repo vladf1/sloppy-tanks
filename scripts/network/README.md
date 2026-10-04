@@ -25,16 +25,20 @@ sudo scripts/network/lossy-network.sh status  # the rule and the pipe, if any
 sudo scripts/network/lossy-network.sh off     # remove both
 ```
 
-`on` adds a `sloppy-lossy` anchor to the system's own `pf` rules and a `dnctl`
-dummynet pipe with that packet loss rate. The anchor sends packets from
-`sloppy-tanks-server.fridman.me` on ports 443 (production) and 8443 (the dev server)
-to this Mac through the pipe. Nothing else is affected, and connections already open
-start losing packets at once, so the game does not need a reload. Reloading the
-rules prints macOS's standard `pfctl: Use of -f option` warning.
+`on` loads one rule into `com.apple/sloppy-lossy`, a child of the
+`dummynet-anchor "com.apple/*"` that macOS's own `/etc/pf.conf` declares, and
+creates `dnctl` dummynet pipe 4242 with that packet loss rate. The rule sends
+packets from `sloppy-tanks-server.fridman.me` on ports 443 (production) and 8443
+(the dev server) to this Mac through the pipe. Nothing else is affected: the active
+ruleset, including a VPN's or Internet Sharing's rules, is never reloaded, and
+connections already open start losing packets at once, so the game does not need a
+reload. The percentage must be above 0 and at most 100. `on` refuses to run when
+that anchor is missing or another tool already uses pipe 4242; running it again
+changes the rate.
 
-`off` flushes the anchor, deletes the pipe, reloads `/etc/pf.conf` and releases the
-script's hold on `pf`, which stays enabled only if something else enabled it (macOS
-often has). Running `off` again is harmless.
+`off` flushes the anchor, deletes the pipe and releases the script's hold on `pf`,
+which stays enabled only if something else enabled it (macOS often has). It touches
+nothing when packet loss is not on.
 
 Dropping the server's packets also drops its acknowledgements of the player's input,
 so uploads stall too. While it is on, expect:
