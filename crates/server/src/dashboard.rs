@@ -1,8 +1,8 @@
 //! The public, read-only `/dashboard` page and its Server-Sent Events stream of the
 //! monitor's one-second readings.
 //!
-//! A room code is the key to join a room, so codes are masked here; full codes stay in
-//! the loopback-only `/stats` and the journal. Nothing identifies players.
+//! A room code is the key to join a room, so codes are masked here; full codes are in
+//! `/stats`, `/rooms` and the journal. Nothing identifies players.
 
 use std::convert::Infallible;
 use std::pin::Pin;

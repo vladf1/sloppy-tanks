@@ -467,17 +467,26 @@ async fn route(
             reply(200, Reply::Json(body), &[])
         }
         "/stats" => {
-            // Operator view with every room code, including unlisted ones: only a direct
-            // local request qualifies. Caddy also refuses the path, and proxied requests
-            // carry X-Forwarded-For.
-            let local = LOCAL_ADDRESSES.contains(&peer.ip().to_string().as_str());
-            if !local || headers.contains_key("x-forwarded-for") {
-                return reply(404, Reply::Text("Not found"), &[]);
-            }
+            // Public, like the dashboard: its full room codes add only rooms whose players
+            // are all reconnecting to what `/rooms` lists. Before the first sample only a
+            // direct local request (the update timer's) samples on demand, since every
+            // sample takes the rooms' counters and ends the monitor's window early.
+            // Proxied requests carry X-Forwarded-For.
             let latest = shared.monitor.lock().expect("monitor").latest.clone();
             let stats = match latest {
                 Some(stats) => stats,
-                None => sample(shared).await,
+                None if LOCAL_ADDRESSES.contains(&peer.ip().to_string().as_str())
+                    && !headers.contains_key("x-forwarded-for") =>
+                {
+                    sample(shared).await
+                }
+                None => {
+                    return reply(
+                        503,
+                        Reply::Text("No reading yet; try again shortly"),
+                        &[("Retry-After", "10")],
+                    );
+                }
             };
             let json = serde_json::to_string(&stats).expect("stats serialize");
             reply(200, Reply::Json(json), &[("Cache-Control", "no-store")])

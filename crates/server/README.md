@@ -171,7 +171,7 @@ connects to the VPS. Fork pull requests build the image without pushing.
 - `sloppy-tanks-update.timer` is production's auto-update, off until enabled.
 - The `Caddyfile` sets up automatic Let's Encrypt TLS for
   `sloppy-tanks-server.fridman.me`, an A record in the fridman.me DNS at
-  Namecheap, and refuses `/stats`. Port 8443 of the same hostname, with the same
+  Namecheap. Port 8443 of the same hostname, with the same
   certificate, forwards to the dev server. The deploy scripts reach the host by the same
   name.
 
@@ -249,9 +249,11 @@ and one line per room (map, phase, players, time, score, tick cost and debt,
 traffic). An idle server logs one final summary and then stays quiet.
 
 `GET /stats` returns the same figures as JSON for the last 10 seconds, summed
-from the monitor's one-second readings, plus totals since start. It lists every
-room code, including unlisted rooms, so it answers only direct loopback requests
-without `X-Forwarded-For`, and Caddy also refuses the path. Traffic figures count
+from the monitor's one-second readings, plus totals since start. It is public,
+like the dashboard, and lists full room codes; `/rooms` lists them too, except
+for rooms whose players are all reconnecting. Until the first sample, 10 s after
+start, only a direct loopback request without `X-Forwarded-For` (the update
+timer's) samples on demand; others get 503. Traffic figures count
 characters of JSON, which equals bytes for ASCII; `wire` figures are socket bytes
 after compression, including WebSocket frame and handshake bytes.
 `tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a

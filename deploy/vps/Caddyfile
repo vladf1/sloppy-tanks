@@ -1,14 +1,11 @@
 # sloppy-tanks-server.fridman.me is an A record at Namecheap, so moving providers means
 # updating that record. Caddy obtains its certificate and forwards WebSocket upgrades as-is.
 sloppy-tanks-server.fridman.me {
-	# Operator stats list every room code; read them over SSH (pnpm run server:stats).
-	respond /stats 404
 	reverse_proxy 127.0.0.1:8787
 }
 
 # The dev site's server (sloppy-tanks-dev.service) on another port of the same hostname,
 # so it shares the certificate and needs no DNS record of its own.
 sloppy-tanks-server.fridman.me:8443 {
-	respond /stats 404
 	reverse_proxy 127.0.0.1:8788
 }
