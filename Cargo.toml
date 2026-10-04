@@ -86,6 +86,13 @@ opt-level = 3
 opt-level = 3
 
 
+# Debug builds keep only line tables: panic backtraces still name file and line, while
+# full debug info made Linux test builds link 2-3x slower and the target dir 4x larger.
+[profile.dev]
+debug = "line-tables-only"
+
 # Physics tests run natively in debug; optimize dependencies so seeded matches finish quickly.
+# Dependencies carry no debug info; their frames still show function names.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
