@@ -119,6 +119,17 @@ try {
   };
 
   await checkLayout(1024, 768);
+  // A long press on the top bar, the score or the weapon strip selects no text.
+  for (const selector of ["#zoom-in", "#pause", ".scoreboard", "#ammo-standard"]) {
+    assert.equal(
+      await page.evaluate(
+        (selector) => getComputedStyle(document.querySelector(selector)).userSelect,
+        selector,
+      ),
+      "none",
+      `${selector} text is not selectable`,
+    );
+  }
   const drive = await center(".touch-drive");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 35, drive.y);
