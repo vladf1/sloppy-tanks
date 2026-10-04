@@ -23,9 +23,21 @@ export default defineConfig({
       transformIndexHtml: {
         order: "post",
         handler(_html, context) {
-          const binary = Object.keys(context.bundle ?? {}).find((name) =>
-            /(^|\/)engine_bg-[\w-]+\.wasm$/.test(name),
-          );
+          // By the source each binary was built from: the dev build also bundles the
+          // labs engine (src/generated/engine-labs/engine_bg.wasm) for its test pages,
+          // whose file name looks just like the game's.
+          const emitted = (source: string) => {
+            const files = Object.values(context.bundle ?? {}).filter(
+              (output) =>
+                output.type === "asset" &&
+                output.originalFileNames.some((name) => name.endsWith(source)),
+            );
+            if (files.length > 1) {
+              throw new Error(`More than one bundled ${source}`);
+            }
+            return files[0]?.fileName;
+          };
+          const binary = emitted("src/generated/engine/engine_bg.wasm");
           return binary && context.filename.endsWith("index.html")
             ? [
                 {
