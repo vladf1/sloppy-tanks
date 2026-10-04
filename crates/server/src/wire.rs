@@ -1,12 +1,14 @@
 //! Bytes through room connections after compression, including frame and handshake
-//! bytes (Node read the room sockets' TCP counters), and each room socket's TCP round
-//! trip and retransmissions.
+//! bytes (Node read the room sockets' TCP counters), and each room connection's TCP round
+//! trip and retransmissions: on the server's own socket, or on the proxy's socket to the
+//! player when a proxy on this host forwards it.
 
 use std::io;
+use std::net::SocketAddr;
 use std::os::fd::{AsRawFd, RawFd};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -26,6 +28,8 @@ pub struct WireTotals {
     received: AtomicU64,
     data_segments_sent: AtomicU64,
     retransmitted_segments: AtomicU64,
+    /// Connections measured on a proxy's socket, read together once per monitor reading.
+    proxied: Mutex<Vec<Weak<ConnectionBytes>>>,
 }
 
 impl WireTotals {
@@ -42,6 +46,35 @@ impl WireTotals {
             retransmitted: self.retransmitted_segments.load(Ordering::Relaxed),
         }
     }
+
+    /// Takes a reading of every proxied room connection from the kernel's list of the
+    /// host's TCP sockets: one list for all of them, not one per connection. A connection
+    /// that closed since keeps its previous reading.
+    pub fn measure_proxied(&self) -> io::Result<()> {
+        let connections: Vec<Arc<ConnectionBytes>> = {
+            let mut proxied = self.proxied.lock().expect("proxied connections");
+            proxied.retain(|connection| connection.strong_count() > 0);
+            proxied
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter(|connection| connection.tracked.load(Ordering::Relaxed))
+                .collect()
+        };
+        if connections.is_empty() {
+            return Ok(());
+        }
+        let readings = tcp_path::read_by_peer()?;
+        for connection in connections {
+            if let Some(reading) = connection
+                .client
+                .get()
+                .and_then(|client| readings.get(client))
+            {
+                connection.record(*reading);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One TCP connection's bytes and, once it is a room socket, its latest TCP reading.
@@ -52,6 +85,9 @@ pub struct ConnectionBytes {
     received: AtomicU64,
     tracked: AtomicBool,
     totals: Arc<WireTotals>,
+    /// The player's address and source port when a proxy on this host forwards the
+    /// connection; its socket to them is the one measured.
+    client: OnceLock<SocketAddr>,
     measured: AtomicBool,
     /// [`UNMEASURED_RTT_US`] while the kernel has not timed a round trip.
     rtt_us: AtomicU32,
@@ -66,6 +102,7 @@ impl ConnectionBytes {
             received: AtomicU64::new(0),
             tracked: AtomicBool::new(false),
             totals,
+            client: OnceLock::new(),
             measured: AtomicBool::new(false),
             rtt_us: AtomicU32::new(UNMEASURED_RTT_US),
             data_segments_sent: AtomicU64::new(0),
@@ -83,8 +120,21 @@ impl ConnectionBytes {
         })
     }
 
+    /// Measures the connection on the proxy's socket to `client` from now on: the server's
+    /// own socket only reaches the proxy.
+    pub fn forwarded_from(self: &Arc<Self>, client: SocketAddr) {
+        if self.client.set(client).is_ok() {
+            self.totals
+                .proxied
+                .lock()
+                .expect("proxied connections")
+                .push(Arc::downgrade(self));
+        }
+    }
+
     /// Keeps `reading` as the latest and adds what it counted since the previous one to
-    /// the totals. The connection's own I/O is the only writer.
+    /// the totals. Each connection has one writer: its own I/O, or the monitor for a
+    /// proxied one.
     fn record(&self, reading: TcpReading) {
         let sent = self
             .data_segments_sent
@@ -150,9 +200,9 @@ impl<T> CountingIo<T> {
     }
 
     /// Reads the socket's TCP figures once it is a room socket, at most once per
-    /// interval unless `force` is set.
+    /// interval unless `force` is set. A proxied connection is measured elsewhere.
     fn measure(&mut self, force: bool) {
-        let Some(socket) = self.socket else {
+        let Some(socket) = self.socket.filter(|_| self.bytes.client.get().is_none()) else {
             return;
         };
         let now = Instant::now();
@@ -239,5 +289,39 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for CountingIo<T> {
 
     fn poll_shutdown(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(context)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::io::{Read, Write};
+
+    use super::*;
+
+    #[test]
+    fn a_proxied_connection_is_measured_on_the_proxys_socket_to_the_player() {
+        // A loopback pair stands in for the proxy's socket to the player.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut player = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut proxy, _) = listener.accept().unwrap();
+        proxy.write_all(b"snapshot").unwrap();
+        let mut received = [0; 8];
+        player.read_exact(&mut received).unwrap();
+        let totals = Arc::new(WireTotals::default());
+        let connection = ConnectionBytes::new(totals.clone());
+        connection.forwarded_from(player.local_addr().unwrap());
+        totals.measure_proxied().unwrap();
+        assert_eq!(connection.tcp(), None, "only room sockets are measured");
+        connection.track();
+        totals.measure_proxied().unwrap();
+        let reading = connection.tcp().expect("the proxy's socket to the player");
+        assert!(reading.data_segments_sent >= 1, "{reading:?}");
+        assert_eq!(totals.segments().sent, reading.data_segments_sent);
+        drop(connection);
+        totals.measure_proxied().unwrap();
+        assert!(
+            totals.proxied.lock().unwrap().is_empty(),
+            "closed connections leave"
+        );
     }
 }
