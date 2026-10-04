@@ -42,10 +42,16 @@ export class Controls {
   /** Touch controls in first person: the drive stick's sideways push turns the view, as
    * the engine's aim-stick turn would, and only its forward push drives (no strafing). */
   stickTurns = false;
+  /** Touch controls are on: a finger turns the first-person view, which a pointer lock
+   * would freeze in place. A mouse on the same device (a touch laptop, a tablet with a
+   * mouse) still looks with the lock, so the last press decides. */
+  touchLook: () => boolean = () => false;
   /** Called on V; the owner decides whether the view may change. */
   toggleView = () => {};
   /** While first person steers, clicks on the arena capture the pointer. */
-  private pointerWanted = false;
+  private lockWanted = false;
+  /** Whether the last press on the page was a finger. */
+  private fingerLast = false;
   /** Set once the browser grants a lock; until then mouse look works uncaptured. */
   private lockWorks = false;
   /** When the browser, not the game, last released the pointer (Esc or a window switch). */
@@ -59,6 +65,17 @@ export class Controls {
     public active: () => boolean = () => true,
     pauseWhenHidden = true,
   ) {
+    // Captured first, so a press already counts for the view toggle or capture it starts.
+    window.addEventListener(
+      "pointerdown",
+      (e) => {
+        this.fingerLast = e.pointerType === "touch";
+        if (this.fingerLooks) {
+          this.releasePointer();
+        }
+      },
+      true,
+    );
     window.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
         // The browser spends Esc on releasing a captured pointer, so in first person
@@ -213,10 +230,16 @@ export class Controls {
    * their lock notice again; Esc frees it to pick another tank. Leaving first
    * person or opening a menu releases it for the menu's buttons. */
   holdPointer(firstPerson: boolean, menuOpen = false): void {
-    this.pointerWanted = firstPerson && !menuOpen && this.active();
-    if (!firstPerson || menuOpen) {
+    this.lockWanted = firstPerson && !menuOpen && this.active();
+    if (!firstPerson || menuOpen || this.fingerLooks) {
       this.releasePointer();
     }
+  }
+  private get fingerLooks(): boolean {
+    return this.fingerLast && this.touchLook();
+  }
+  private get pointerWanted(): boolean {
+    return this.lockWanted && !this.fingerLooks;
   }
   /** First person steers with a free cursor where the browser grants locks: the
    * view holds still and the next arena click captures the pointer. */

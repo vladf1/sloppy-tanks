@@ -180,6 +180,35 @@ test("phone first person turns with the stick's sideways push instead of strafin
   f.dispose();
 });
 
+test("with touch controls on, first person locks the pointer for a mouse but not a finger", () => {
+  const f = fixture();
+  let locks = 0,
+    exits = 0;
+  Object.assign(f.canvas, { requestPointerLock: () => locks++ });
+  Object.assign(f.doc, { pointerLockElement: null, exitPointerLock: () => exits++ });
+  const press = (pointerType: string) => {
+    f.emit(f.win, "pointerdown", { pointerType });
+    f.emit(f.canvas, "pointerdown", { pointerType, button: 0 });
+  };
+  f.controls.touchLook = () => true;
+  f.controls.holdPointer(true);
+  press("touch");
+  f.controls.capturePointer();
+  assert.equal(locks, 0, "a finger turns the view without a lock");
+  // A touch laptop's mouse: the click that follows the finger takes the lock at once.
+  press("mouse");
+  assert.equal(locks, 1, "a mouse click locks for mouse look");
+  Object.assign(f.doc, { pointerLockElement: f.canvas });
+  press("touch");
+  assert.equal(exits, 1, "a finger frees a mouse's lock");
+  Object.assign(f.doc, { pointerLockElement: null });
+  f.controls.touchLook = () => false;
+  press("touch");
+  f.controls.capturePointer();
+  assert.equal(locks, 2, "with touch controls off a tap still locks, as before");
+  f.dispose();
+});
+
 test("Q/E and number keys queue exactly one selection without consuming held fire", () => {
   const f = fixture();
   f.controls.fire = true;

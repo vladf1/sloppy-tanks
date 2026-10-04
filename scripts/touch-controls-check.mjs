@@ -210,6 +210,17 @@ try {
     `holding the stick sideways keeps turning: ${beforeStick} → ${afterStick}`,
   );
   await touch("touchEnd", 1);
+  // A mouse on the same touch screen (a touch laptop) still looks with the pointer
+  // lock, and the next finger frees it again.
+  await page.mouse.click(520, 300);
+  await page.waitForFunction(
+    () => document.pointerLockElement === document.querySelector("#game"),
+    null,
+    { timeout: 3000 },
+  );
+  await touch("touchStart", 2, 520, 300);
+  await touch("touchEnd", 2);
+  await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 3000 });
   await touch("touchStart", 4, toggleView.x, toggleView.y);
   await touch("touchEnd", 4);
   await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);

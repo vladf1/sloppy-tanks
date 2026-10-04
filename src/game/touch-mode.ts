@@ -31,6 +31,7 @@ export class TouchModeController {
     }
     // A phone has no other controls, and no Settings to change this.
     this.mode = isPhone() ? "on" : saved === "on" || saved === "off" ? saved : "auto";
+    controls.touchLook = () => this.enabled;
     this.applyMode();
   }
 
