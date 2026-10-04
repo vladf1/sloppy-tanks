@@ -124,6 +124,10 @@
   font-size: 20px;
   padding: 8px 12px;
 }
+/* The first-person view sits in the turret and has no zoom. */
+#hud.first-person .touch-zoom {
+  display: none;
+}
 .touch-enabled #game {
   touch-action: none;
 }
