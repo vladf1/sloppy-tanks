@@ -1,7 +1,8 @@
 // The WebGL2 fallback engine. `?webgl` asks for it on any browser: on every standard
 // map the page must download only the WebGL build, start a round through Battle
 // Setup, drive and fire, and draw the arena (shadows included) without page, console,
-// GL or engine errors. Without `?webgl` the page must pick the build this browser
+// GL or engine errors, and without wgpu clearing an index buffer through a vector of
+// zeros in the Wasm heap. Without `?webgl` the page must pick the build this browser
 // supports by itself (WebGPU when it has an adapter, else WebGL) and download only
 // that one. Where WebGPU has an adapter, a WebGPU device that fails must fall back
 // to WebGL on the same canvas, and the two engines must draw the same still frame of
@@ -32,6 +33,12 @@ const STILL_POSE = [-40, 70, 40, 0, 0, 0];
  * purpose; a broken cached shadow (the whole floor in shadow) measured 53 and 0.73. */
 const STILL_MEAN_TOLERANCE = 16;
 const STILL_LARGE_TOLERANCE = 0.15;
+/** wgpu clears the never-written part of a bound buffer before a pass, and on WebGL an
+ * index buffer by uploading zeros from a vector in the engine's Wasm heap, which keeps
+ * that size for good. Mesh pages bind only their written prefix
+ * (`MeshStore::index_buffer`), so no index upload this large is all zeros; smaller
+ * ones are left out, since a tiny mesh's own indices can be. */
+const ZERO_INDEX_UPLOAD_BYTES = 1024;
 mkdirSync(output, { recursive: true });
 
 async function pixels(png) {
@@ -57,6 +64,22 @@ const { browser, context, errors } = await launchGame({
   viewport: { width: WIDTH, height: HEIGHT },
   consoleErrors: true,
 });
+// Count the bytes of index uploads that are all zeros: wgpu's clears.
+await context.addInitScript((minimum) => {
+  window.zeroIndexUploadBytes = 0;
+  const upload = WebGL2RenderingContext.prototype.bufferSubData;
+  WebGL2RenderingContext.prototype.bufferSubData = function (target, offset, data, ...rest) {
+    if (
+      target === WebGL2RenderingContext.ELEMENT_ARRAY_BUFFER &&
+      ArrayBuffer.isView(data) &&
+      data.byteLength >= minimum
+    ) {
+      const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      if (bytes.every((byte) => byte === 0)) window.zeroIndexUploadBytes += bytes.length;
+    }
+    return upload.call(this, target, offset, data, ...rest);
+  };
+}, ZERO_INDEX_UPLOAD_BYTES);
 
 /** A page whose engine downloads land in `binaries` (file names, in order). */
 async function newPage() {
@@ -109,6 +132,7 @@ async function play(page, name) {
     detail: await detail(shot),
     engineError: await page.evaluate(() => window.sloppy.game.error() ?? null),
     human: await page.evaluate(() => Boolean(window.engine.state().human)),
+    zeroIndexUploadBytes: await page.evaluate(() => window.zeroIndexUploadBytes),
   };
 }
 
@@ -118,6 +142,11 @@ function assertDrew(result, name) {
   assert.ok(result.drawCalls > 20, `${name}: the arena draws (${result.drawCalls} draw calls)`);
   assert.ok(result.shadowDrawCalls > 0, `${name}: the sun casts shadows`);
   assert.ok(result.detail > 0.2, `${name}: the frame shows the arena (${result.detail})`);
+  assert.equal(
+    result.zeroIndexUploadBytes,
+    0,
+    `${name}: wgpu cleared index buffer bytes through a vector of zeros`,
+  );
 }
 
 /** The quarry drawn once, still, from `STILL_POSE` by the engine `search` picks. */
