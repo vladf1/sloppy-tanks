@@ -1,8 +1,10 @@
 //! Per-frame draw lists. Visible part instances are collected per view with their
 //! instance record, then ordered like Three's render lists: opaque draws by render
-//! order and draw class (so every instance sharing a mesh and material becomes one
-//! instanced draw) in a linear pass, transparent draws by render order and then back
-//! to front, one draw each. All buffers are reused between frames.
+//! order and draw class in a linear pass, in an order the renderer gives the classes
+//! (index order, or grouped by the GPU state they bind: [`order_classes`]), so every
+//! instance sharing a mesh and material becomes one instanced draw; transparent draws
+//! by render order and then back to front, one draw each. All buffers are reused
+//! between frames.
 
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -81,6 +83,42 @@ enum Source {
     Record(u32),
     /// A persistent range (static instanced scenery).
     Range { first: u32, count: u32 },
+}
+
+/// The GPU state an opaque draw of a class binds, compared in the order of what
+/// costs most to switch. Ordering classes by it lets consecutive draws skip
+/// pipeline, mesh page, frame group and material changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DrawState {
+    /// A stable rank of the class's pipeline in the view; the pipeline itself may
+    /// still be compiling when the lists are sorted.
+    pub pipeline: u32,
+    /// The vertex page of its mesh (`crate::mesh_pages`): through wgpu's GL backend a
+    /// page switch re-specifies every vertex attribute.
+    pub vertex_page: u32,
+    /// The instance pool whose frame group it binds (`u32::MAX`: the view's own).
+    pub pool: u32,
+    pub material: u32,
+    /// The index page of its mesh, last: switching it is a single binding.
+    pub index_page: u32,
+}
+
+/// Each class's position when classes are listed by the state they bind (`states`,
+/// indexed by class; free slots are `None` and go last), then by index. Opaque draws
+/// follow these positions. Recompute it only when classes come or go: the sort is
+/// over classes, not per frame. `by_state` is scratch.
+pub fn order_classes(states: &[Option<DrawState>], by_state: &mut Vec<u32>, order: &mut Vec<u32>) {
+    by_state.clear();
+    by_state.extend(0..states.len() as u32);
+    by_state.sort_unstable_by_key(|&class| {
+        let state = states[class as usize];
+        (state.is_none(), state.unwrap_or_default(), class)
+    });
+    order.clear();
+    order.resize(states.len(), 0);
+    for (position, &class) in by_state.iter().enumerate() {
+        order[class as usize] = position as u32;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,12 +205,27 @@ impl DrawListBuilder {
 
     /// Sort every view and emit draws. Dynamic records start at `base` in the GPU
     /// instance buffer; `self.records` holds them in draw order afterwards.
-    pub fn finish(&mut self, base: u32, views: &mut [ViewDraws; VIEW_COUNT]) {
+    /// `order[view]` gives each class's position in that view (its index, or
+    /// [`order_classes`]); every class pushed this frame must have one.
+    ///
+    /// Within a render order, opaque draws follow their class's position. Opaque
+    /// materials write depth with a less-equal test, so the order only decides depth
+    /// ties, which the later draw wins. Coplanar layers, and parts closer together
+    /// than the depth buffer resolves at the camera's distance, tie under any order,
+    /// the class index included: freed classes are reused in reverse after a round
+    /// reset. A part that must cover another needs depth between them, no hidden face
+    /// beneath it (the cottage roof deck has no top face) or a render order of its own.
+    pub fn finish(
+        &mut self,
+        base: u32,
+        views: &mut [ViewDraws; VIEW_COUNT],
+        order: [&[u32]; VIEW_COUNT],
+    ) {
         self.records.clear();
         for (view, draws) in views.iter_mut().enumerate() {
             draws.clear();
             let opaque = &mut self.opaque[view];
-            sort_opaque(opaque, &mut self.sorted, &mut self.counts);
+            sort_opaque(opaque, &mut self.sorted, &mut self.counts, order[view]);
             for item in opaque.iter() {
                 match item.source {
                     Source::Range { first, count } => draws.opaque.push(Draw {
@@ -236,9 +289,9 @@ impl DrawListBuilder {
 }
 
 /// Where an opaque item sorts within its render order: each class's records, then
-/// its persistent ranges, class after class.
-fn bucket(item: &Item) -> usize {
-    2 * item.class as usize + matches!(item.source, Source::Range { .. }) as usize
+/// its persistent ranges, class after class in `order`'s positions.
+fn bucket(item: &Item, order: &[u32]) -> usize {
+    2 * order[item.class as usize] as usize + matches!(item.source, Source::Range { .. }) as usize
 }
 
 /// A record's place within its bucket: records in record (push) order; ranges last.
@@ -249,14 +302,16 @@ fn rank(item: &Item) -> u32 {
     }
 }
 
-/// Put a view's opaque items in draw order: by render order, then by class, each
-/// class's records in push order before its ranges (in push order too), so a class's
-/// records are contiguous and become one instanced draw. With one render order, the
-/// usual case, that is a counting sort over the class buckets: linear in the items,
-/// where a comparison sort of thousands of items a frame showed in WebGPU CPU
-/// profiles of the Stress Grid. A list that mixes render orders (no opaque draw sets
-/// one today) takes a stable comparison sort to the same order.
-fn sort_opaque(items: &mut [Item], sorted: &mut Vec<Item>, counts: &mut Vec<u32>) {
+/// Put a view's opaque items in draw order: by render order, then by their class's
+/// position in `order`, each class's records in push order before its ranges (in push
+/// order too), so a class's records are contiguous and become one instanced draw.
+/// With one render order, the usual case, that is a counting sort over the class
+/// buckets: linear in the items, where a comparison sort of thousands of items a
+/// frame showed in WebGPU CPU profiles of the Stress Grid. A list that mixes render
+/// orders (no opaque draw sets one today) takes a stable comparison sort to the same
+/// order.
+fn sort_opaque(items: &mut [Item], sorted: &mut Vec<Item>, counts: &mut Vec<u32>, order: &[u32]) {
+    let bucket = |item: &Item| bucket(item, order);
     let Some(&first) = items.first() else {
         return;
     };
@@ -267,7 +322,7 @@ fn sort_opaque(items: &mut [Item], sorted: &mut Vec<Item>, counts: &mut Vec<u32>
         items.sort_by_key(|item| (item.render_order, bucket(item), rank(item)));
         return;
     }
-    let buckets = items.iter().map(bucket).max().map_or(0, |last| last + 1);
+    let buckets = items.iter().map(&bucket).max().map_or(0, |last| last + 1);
     counts.clear();
     counts.resize(buckets + 1, 0);
     for item in items.iter() {
@@ -300,6 +355,31 @@ mod tests {
         )
     }
 
+    /// Every class binds the same state: opaque draws go by class.
+    fn same_state(_view: usize, _class: u32) -> DrawState {
+        DrawState::default()
+    }
+
+    /// Each view's class positions for `classes` live classes that bind
+    /// `state(view, class)`.
+    fn orders(classes: u32, state: impl Fn(usize, u32) -> DrawState) -> [Vec<u32>; VIEW_COUNT] {
+        std::array::from_fn(|view| {
+            let states: Vec<_> = (0..classes).map(|class| Some(state(view, class))).collect();
+            let mut order = Vec::new();
+            order_classes(&states, &mut Vec::new(), &mut order);
+            order
+        })
+    }
+
+    fn finish(
+        builder: &mut DrawListBuilder,
+        base: u32,
+        views: &mut [ViewDraws; VIEW_COUNT],
+        orders: &[Vec<u32>; VIEW_COUNT],
+    ) {
+        builder.finish(base, views, [&orders[0], &orders[1], &orders[2]]);
+    }
+
     fn draws(list: &[Draw]) -> Vec<(u32, u32, u32)> {
         list.iter()
             .map(|d| (d.class, d.first_instance, d.instance_count))
@@ -316,7 +396,7 @@ mod tests {
             builder.push(SHADOW_VIEW, class, false, 0, 0.0, r);
         }
         builder.push_range(MAIN_VIEW, 1, false, 0, 0.0, 0, 500);
-        builder.finish(10, &mut views);
+        finish(&mut builder, 10, &mut views, &orders(512, same_state));
         assert_eq!(
             views[MAIN_VIEW].opaque,
             [
@@ -344,6 +424,154 @@ mod tests {
         assert_eq!(builder.records[1].world[12], 3.0);
     }
 
+    /// Main view: odd classes use pipeline 0 and even ones pipeline 1; class 4 draws
+    /// from pool 7. The shadow view has its own pipelines: every class shares
+    /// pipeline 0 except class 1.
+    fn two_pipelines(view: usize, class: u32) -> DrawState {
+        let material = [5, 9, 2, 9, 9, 5][class as usize];
+        let pipeline = if view == SHADOW_VIEW {
+            u32::from(class == 1)
+        } else {
+            1 - class % 2
+        };
+        DrawState {
+            pipeline,
+            pool: if class == 4 { 7 } else { u32::MAX },
+            material,
+            ..DrawState::default()
+        }
+    }
+
+    #[test]
+    fn opaque_draws_group_by_pipeline_pool_and_material() {
+        let mut builder = DrawListBuilder::default();
+        let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
+        for (i, class) in [5, 0, 3, 1, 2, 3, 0, 1, 5, 2].into_iter().enumerate() {
+            let r = builder.record(record(i as f32));
+            builder.push(MAIN_VIEW, class, false, 0, 0.0, r);
+            builder.push(SHADOW_VIEW, class, false, 0, 0.0, r);
+        }
+        // A pool's range, and an earlier render order that still goes first.
+        builder.push_range(MAIN_VIEW, 4, false, 0, 0.0, 0, 50);
+        let r = builder.record(record(10.0));
+        builder.push(MAIN_VIEW, 0, false, -1, 0.0, r);
+        finish(&mut builder, 100, &mut views, &orders(6, two_pipelines));
+        // Pipeline 0: material 5 (class 5), material 9 (classes 1, 3); pipeline 1: the
+        // pool (class 4), material 2 (class 2), material 5 (class 0). Each class stays
+        // one instanced draw over contiguous records.
+        assert_eq!(
+            draws(&views[MAIN_VIEW].opaque),
+            [
+                (0, 100, 1),
+                (5, 101, 2),
+                (1, 103, 2),
+                (3, 105, 2),
+                (4, 0, 50),
+                (2, 107, 2),
+                (0, 109, 2),
+            ]
+        );
+        // Records follow draw order: class 1 drew instances 3 and 7.
+        assert_eq!(builder.records[0].world[12], 10.0);
+        assert_eq!(builder.records[3].world[12], 3.0);
+        assert_eq!(builder.records[4].world[12], 7.0);
+        assert_eq!(
+            draws(&views[SHADOW_VIEW].opaque),
+            [
+                (2, 111, 2),
+                (0, 113, 2),
+                (5, 115, 2),
+                (3, 117, 2),
+                (1, 119, 2),
+            ]
+        );
+        assert_eq!(builder.records.len(), 21);
+    }
+
+    #[test]
+    fn opaque_draws_group_by_mesh_page_right_after_the_pipeline() {
+        // Classes 0-5 in pipelines [0, 0, 1, 0, 0, 1], vertex pages [2, 1, 1, 2, 1, 0],
+        // materials [3, 4, 3, 3, 3, 4] and index pages [0, 1, 0, 0, 0, 0].
+        let state = |_view: usize, class: u32| {
+            let class = class as usize;
+            DrawState {
+                pipeline: [0, 0, 1, 0, 0, 1][class],
+                vertex_page: [2, 1, 1, 2, 1, 0][class],
+                pool: u32::MAX,
+                material: [3, 4, 3, 3, 3, 4][class],
+                index_page: [0, 1, 0, 0, 0, 0][class],
+            }
+        };
+        let mut builder = DrawListBuilder::default();
+        let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
+        for (i, class) in [0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0].into_iter().enumerate() {
+            let r = builder.record(record(i as f32));
+            builder.push(MAIN_VIEW, class, false, 0, 0.0, r);
+        }
+        // An earlier render order still goes first, whatever its page.
+        let r = builder.record(record(11.0));
+        builder.push(MAIN_VIEW, 5, false, -1, 0.0, r);
+        // Transparent draws keep depth order, switching pages back and forth.
+        for (class, depth) in [(5, 1.0), (0, 2.0), (5, 3.0)] {
+            let r = builder.record(record(depth));
+            builder.push(MAIN_VIEW, class, true, 0, depth, r);
+        }
+        finish(&mut builder, 0, &mut views, &orders(6, state));
+        // Pipeline 0: page 1 (material 3: class 4; material 4: class 1), then page 2
+        // (material 3: classes 0 and 3, by index); pipeline 1: page 0 (class 5), then
+        // page 1 (class 2). Each class stays one draw over contiguous records.
+        assert_eq!(
+            draws(&views[MAIN_VIEW].opaque),
+            [
+                (5, 0, 1),
+                (4, 1, 2),
+                (1, 3, 2),
+                (0, 5, 2),
+                (3, 7, 2),
+                (5, 9, 1),
+                (2, 10, 2),
+            ]
+        );
+        let transparent: Vec<u32> = views[MAIN_VIEW]
+            .transparent
+            .iter()
+            .map(|d| d.class)
+            .collect();
+        assert_eq!(transparent, [5, 0, 5]);
+        // The index page only breaks ties: within one pipeline, vertex page and
+        // material, a class on a later index page goes after the others.
+        let mut order = Vec::new();
+        let with_index_page = |index_page| {
+            Some(DrawState {
+                index_page,
+                ..DrawState::default()
+            })
+        };
+        order_classes(
+            &[with_index_page(1), with_index_page(0), with_index_page(1)],
+            &mut Vec::new(),
+            &mut order,
+        );
+        assert_eq!(order, [1, 0, 2]);
+    }
+
+    #[test]
+    fn classes_order_by_state_then_index_with_free_slots_last() {
+        let state = |pipeline| {
+            Some(DrawState {
+                pipeline,
+                ..DrawState::default()
+            })
+        };
+        let mut order = Vec::new();
+        order_classes(
+            &[state(2), None, state(1), state(2), state(1)],
+            &mut Vec::new(),
+            &mut order,
+        );
+        assert_eq!(order, [2, 4, 0, 3, 1]);
+    }
+
     #[test]
     fn transparent_draws_sort_by_order_then_back_to_front() {
         let mut builder = DrawListBuilder::default();
@@ -352,7 +580,7 @@ mod tests {
             let r = builder.record(record(depth));
             builder.push(MAIN_VIEW, class, true, order, depth, r);
         }
-        builder.finish(0, &mut views);
+        finish(&mut builder, 0, &mut views, &orders(512, same_state));
         let classes: Vec<_> = views[MAIN_VIEW]
             .transparent
             .iter()
@@ -365,7 +593,7 @@ mod tests {
             let r = builder.record(record(depth));
             builder.push(MAIN_VIEW, class, true, order, depth, r);
         }
-        builder.finish(0, &mut views);
+        finish(&mut builder, 0, &mut views, &orders(512, same_state));
         let draws: Vec<_> = views[MAIN_VIEW]
             .transparent
             .iter()
@@ -373,7 +601,7 @@ mod tests {
             .collect();
         assert_eq!(draws, [(5, 2), (6, 1), (5, 1)]);
         builder.clear();
-        builder.finish(0, &mut views);
+        finish(&mut builder, 0, &mut views, &orders(512, same_state));
         assert!(views[MAIN_VIEW].is_empty());
     }
 
@@ -388,7 +616,7 @@ mod tests {
             let r = builder.record(record(i as f32));
             builder.push(MAIN_VIEW, class, false, 0, 0.0, r);
         }
-        builder.finish(20, &mut views);
+        finish(&mut builder, 20, &mut views, &orders(512, same_state));
         assert_eq!(
             draws(&views[MAIN_VIEW].opaque),
             [(0, 20, 2), (0, 0, 8), (1, 22, 2)]
@@ -411,7 +639,7 @@ mod tests {
             let r = builder.record(record(i as f32));
             builder.push(MAIN_VIEW, class, false, order, 0.0, r);
         }
-        builder.finish(200, &mut views);
+        finish(&mut builder, 200, &mut views, &orders(512, same_state));
         assert_eq!(
             draws(&views[MAIN_VIEW].opaque),
             [
@@ -440,6 +668,8 @@ mod tests {
             Source::Range { first, .. } => (item.class, true, first),
         };
         let (mut sorted, mut counts) = (Vec::new(), Vec::new());
+        // Classes in reverse positions, so the order is not just the class index.
+        let order: Vec<u32> = (0..40).rev().collect();
         for round in 0..20 {
             let orders = if round % 2 == 0 { 1.0 } else { 3.0 };
             let mut items: Vec<Item> = (0..300)
@@ -459,8 +689,8 @@ mod tests {
                 .collect();
             // Stable, so several ranges of one class keep their push order too.
             let mut expected = items.clone();
-            expected.sort_by_key(|item| (item.render_order, bucket(item), rank(item)));
-            sort_opaque(&mut items, &mut sorted, &mut counts);
+            expected.sort_by_key(|item| (item.render_order, bucket(item, &order), rank(item)));
+            sort_opaque(&mut items, &mut sorted, &mut counts, &order);
             let got: Vec<_> = items.iter().map(identity).collect();
             let expected: Vec<_> = expected.iter().map(identity).collect();
             assert_eq!(got, expected);

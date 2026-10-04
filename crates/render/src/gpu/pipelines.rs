@@ -317,6 +317,9 @@ pub struct Pipelines {
     sources: HashMap<ShaderKey, String>,
     pipelines: Vec<wgpu::RenderPipeline>,
     index: HashMap<PipelineKey, u32>,
+    /// Every key ever named, numbered on first sight and kept like the pipelines:
+    /// draw lists group draws by pipeline before it has compiled ([`Self::rank`]).
+    ranks: HashMap<PipelineKey, u32>,
     surface_layout: wgpu::PipelineLayout,
     water_layout: wgpu::PipelineLayout,
     output_layout: wgpu::PipelineLayout,
@@ -375,6 +378,7 @@ impl Pipelines {
             sources: HashMap::new(),
             pipelines: Vec::new(),
             index: HashMap::new(),
+            ranks: HashMap::new(),
             surface_layout,
             water_layout,
             output_layout,
@@ -440,6 +444,13 @@ impl Pipelines {
 
     pub fn find(&self, key: &PipelineKey) -> Option<u32> {
         self.index.get(key).copied()
+    }
+
+    /// A number for `key`, the same for the page's lifetime and known before the
+    /// pipeline exists, by which opaque draws sort (`DrawState::pipeline`).
+    pub fn rank(&mut self, key: &PipelineKey) -> u32 {
+        let next = self.ranks.len() as u32;
+        *self.ranks.entry(*key).or_insert(next)
     }
 
     pub fn get(&self, index: u32) -> &wgpu::RenderPipeline {

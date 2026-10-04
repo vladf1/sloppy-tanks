@@ -169,7 +169,8 @@ pub struct GpuMesh {
 /// A mesh page's buffers: its vertices or indices, and for a surface page with
 /// effect vec4s those, in the same vertex numbering. Draws bind them only through
 /// [`MeshStore::vertex_buffers`] and [`MeshStore::index_buffer`], which bind the
-/// written prefix, never a `slice(..)` of the whole page.
+/// written prefix: never `slice(..)` a page for a draw, or wgpu clears its unwritten
+/// tail first, on WebGL through a page-sized vector of zeros in the Wasm heap.
 struct PageBuffers {
     main: wgpu::Buffer,
     extra: Option<wgpu::Buffer>,
@@ -563,9 +564,10 @@ impl MeshStore {
     /// A vertex page's buffers to bind: only the prefix written so far. Every placed
     /// range is written before anything can draw from it and a freed range keeps its
     /// old contents, so the prefix holds every mesh in the page and is always
-    /// initialized. Binding the never-written tail as well would gain nothing, and
-    /// where wgpu-core tracks buffer initialization it would zero-fill that tail
-    /// before the pass.
+    /// initialized. Binding the never-written tail as well would make wgpu zero-fill
+    /// it before the pass, and on WebGL an index page cannot be cleared on the GPU:
+    /// wgpu-hal would upload a CPU vector of zeros as large as the page, and the Wasm
+    /// heap would keep that size for good.
     pub fn vertex_buffers(
         &self,
         page: u16,
