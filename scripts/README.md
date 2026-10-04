@@ -146,6 +146,11 @@ the added delay preserves message order. Stats for nerds shows the adaptive play
 buffer and the share of frames that ran past the newest snapshot. Browser
 diagnostics exist only in dev builds.
 
+Those parameters delay messages inside the client, so TCP never loses anything, and
+Chrome DevTools' packet loss only affects WebRTC. For real loss below TCP on a Mac,
+`sudo scripts/network/lossy-network.sh on` drops 2% of the packets from the server
+([details](network/README.md)).
+
 `multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
 seats and viewer isolation without a server.
 
