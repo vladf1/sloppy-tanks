@@ -178,6 +178,9 @@ try {
     null,
     "touch first person never locks the pointer",
   );
+  // The turret view has no zoom, so − and + leave the top bar.
+  await page.locator("#zoom-in").waitFor({ state: "hidden" });
+  assert.equal(await page.locator("#zoom-out").isVisible(), false, "no zoom in first person");
   const yaw = (await firstPerson()).yaw;
   await touch("touchStart", 2, 420, 300);
   for (let x = 440; x <= 620; x += 20) await touch("touchMove", 2, x, 300);
@@ -199,6 +202,8 @@ try {
   await touch("touchStart", 4, toggleView.x, toggleView.y);
   await touch("touchEnd", 4);
   await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);
+  await page.locator("#zoom-in").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#zoom-out").isVisible(), true, "zoom is back overhead");
 
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 55, drive.y);
