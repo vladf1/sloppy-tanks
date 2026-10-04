@@ -30,6 +30,8 @@ export interface NetworkStatsSource {
     inputSeq: number;
     inputAck: number;
     connected: boolean;
+    lateBatches: number;
+    longestBatchGapMs: number;
   };
 }
 
@@ -82,6 +84,11 @@ export function networkStatsSections(
           "Underrun",
           `${(network.underrun * 100).toFixed(1)} %`,
           "Share of recent frames drawn past the newest snapshot. Sustained values mean visible stutter.",
+        ],
+        [
+          "Late batches",
+          `${network.lateBatches} (longest gap ${Math.round(network.longestBatchGapMs)} ms)`,
+          "Snapshot batches that arrived over 150 ms after the previous one (they leave every 50 ms) during this page session. The connection held them up, for example while TCP resent a lost packet, or the page itself froze.",
         ],
         ["Server tick", network.serverTick, "Latest authoritative simulation tick received."],
         [

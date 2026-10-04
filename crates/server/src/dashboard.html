@@ -422,6 +422,21 @@
                   Out KB/s
                 </th>
                 <th data-tip="Input received from this room’s players per second.">In KB/s</th>
+                <th
+                  data-tip="This room’s players’ TCP round trips, median and slowest: the lowest the server’s kernel measured on each connection, which is the path’s latency."
+                >
+                  RTT
+                </th>
+                <th
+                  data-tip="Share of the data sent to this room’s players since they connected that had to be sent again. Each lost packet holds up the snapshots behind it."
+                >
+                  Resent
+                </th>
+                <th
+                  data-tip="Times in this match a player’s held movement or fire ran out because their next input arrived over 250 ms late, so the tank stopped."
+                >
+                  Lapses
+                </th>
               </tr>
             </thead>
             <tbody id="rooms"></tbody>
@@ -475,6 +490,11 @@
           "Messages received from players per second. input carries controls; ping measures latency; join and leave enter and exit rooms; other is lobby actions such as settings, start, choose and resync.",
         hostLoad:
           "Processes running or waiting for a CPU on the whole machine, averaged over a minute. Above the CPU count means the host is overloaded.",
+        rtt: "TCP round trip to the players, median and slowest: on each room connection, the lowest round trip the server's kernel measured, which is the path's latency (its running average would also count the browser's delayed acknowledgements). The game warns players above 120 ms.",
+        resent:
+          "Share of the data segments sent to players that had to be sent again because the player did not acknowledge them in time. TCP delivers in order, so each loss holds up every snapshot behind it until the resend arrives.",
+        lapses:
+          "Times a player's held movement or fire ran out because their next input arrived over 250 ms late (a stalled upload or a frozen page), so the tank stopped while they still held the controls.",
       };
       const element = (tag, className, text) => {
         const node = document.createElement(tag);
@@ -601,6 +621,14 @@
           value: (r) => `${fixed(r.wireSentKBps)} KB/s`,
           note: (r) => `JSON ${fixed(r.sentKBps)} KB/s`,
         },
+        {
+          label: "Player round trip",
+          hint: HINTS.rtt,
+          value: (r) => `${fixed(r.rttP50Ms, 0)} ms`,
+          note: (r) => `slowest ${fixed(r.rttMaxMs, 0)} ms`,
+          level: (r) => level(r.rttP50Ms, 120, 250),
+          flag: "Laggy",
+        },
       ];
       for (const tile of TILES) {
         tile.node = element("article", "card tile");
@@ -684,6 +712,25 @@
             { key: "wireReceivedKBps", label: "In wire" },
             { key: "receivedKBps", label: "In JSON" },
           ],
+        },
+        {
+          title: "Player round trip",
+          hint: HINTS.rtt,
+          unit: "ms",
+          floor: 50,
+          digits: 0,
+          series: [
+            { key: "rttP50Ms", label: "Median" },
+            { key: "rttMaxMs", label: "Slowest" },
+          ],
+        },
+        {
+          title: "Resent to players",
+          hint: HINTS.resent,
+          unit: "%",
+          floor: 1,
+          digits: 2,
+          series: [{ key: "retransmitPercent", label: "Resent" }],
         },
         {
           title: "Players and rooms",
@@ -932,7 +979,7 @@
         const body = $("rooms");
         if (!rooms.length) {
           const cell = element("td", "empty", "No live rooms.");
-          cell.colSpan = 13;
+          cell.colSpan = 16;
           const row = element("tr");
           row.append(cell);
           body.replaceChildren(row);
@@ -955,6 +1002,9 @@
               [`${fixed(room.debtMs)} ms`],
               [fixed(room.sentKBps)],
               [fixed(room.receivedKBps)],
+              [`${fixed(room.rttP50Ms, 0)} / ${fixed(room.rttMaxMs, 0)} ms`],
+              [`${fixed(room.retransmitPercent, 2)}%`],
+              [room.inputLapses],
             ])
               row.append(element("td", className, String(text)));
             return row;
@@ -992,6 +1042,12 @@
           ["Sent on the wire", megabytes(reading.totals.wireSentMB)],
           ["Sent before compression", megabytes(reading.totals.sentMB)],
           ["Received on the wire", megabytes(reading.totals.wireReceivedMB)],
+          [
+            "Resent to players",
+            `${reading.totals.retransmittedSegments} of ${reading.totals.dataSegmentsSent} segments`,
+            HINTS.resent,
+          ],
+          ["Input lapses", reading.totals.inputLapses, HINTS.lapses],
           [
             "Host load (1 min)",
             `${fixed(reading.hostLoad, 2)} on ${server.cpus} CPU`,

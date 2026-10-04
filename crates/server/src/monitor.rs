@@ -10,6 +10,7 @@ use serde::Serialize;
 use crate::process_stats;
 use crate::room_list::RoomPhase;
 use crate::session::{MessageCounts, RoomActivity, RoomSample};
+use crate::tcp_path::{TcpReading, percent};
 
 /// How often the monitor takes a live reading for the dashboard.
 pub const READING_INTERVAL_MS: u64 = 1000;
@@ -67,25 +68,45 @@ pub fn duration(ms: u64) -> String {
     }
 }
 
+/// ` | rtt 85 ms, 31 of 7812 segments resent`: the connection's TCP figures, if measured.
+fn tcp_note(tcp: &Option<TcpReading>) -> String {
+    tcp.map_or_else(String::new, |reading| {
+        format!(
+            " | rtt {} ms, {} of {} segments resent",
+            reading.rtt_ms().round(),
+            reading.retransmitted_segments,
+            reading.data_segments_sent
+        )
+    })
+}
+
 fn describe(event: &RoomActivity) -> String {
     match event {
         RoomActivity::Created => "created".into(),
         RoomActivity::Joined { players } => format!("player joined ({players} connected)"),
-        RoomActivity::Left { players, code } => match code {
-            Some(code) => format!("player disconnected (code {code}) ({players} connected)"),
-            None => format!("player disconnected ({players} connected)"),
+        RoomActivity::Left { players, code, tcp } => match code {
+            Some(code) => format!(
+                "player disconnected (code {code}) ({players} connected){}",
+                tcp_note(tcp)
+            ),
+            None => format!("player disconnected ({players} connected){}", tcp_note(tcp)),
         },
         RoomActivity::Closed {
             players,
             code: 1000,
+            tcp,
             ..
-        } => format!("player left ({players} connected)"),
+        } => format!("player left ({players} connected){}", tcp_note(tcp)),
         RoomActivity::Closed {
             players,
             code,
             reason,
+            tcp,
         } => {
-            format!("server closed a socket: {code} {reason} ({players} connected)")
+            format!(
+                "server closed a socket: {code} {reason} ({players} connected){}",
+                tcp_note(tcp)
+            )
         }
     }
 }
@@ -139,6 +160,14 @@ pub struct RoomLoad {
     pub sent_kbps: f64,
     #[serde(rename = "receivedKBps")]
     pub received_kbps: f64,
+    /// The joined players' lowest TCP round trips (zero where unmeasured).
+    pub rtt_p50_ms: f64,
+    pub rtt_max_ms: f64,
+    /// Share of the data segments sent to the joined players since they connected that
+    /// were retransmissions.
+    pub retransmit_percent: f64,
+    /// Input lapses in this match so far.
+    pub input_lapses: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -154,6 +183,9 @@ pub struct Totals {
     pub wire_sent_mb: f64,
     #[serde(rename = "wireReceivedMB")]
     pub wire_received_mb: f64,
+    pub data_segments_sent: u64,
+    pub retransmitted_segments: u64,
+    pub input_lapses: u64,
 }
 
 /// `/stats`: the last ten seconds summed from one-second readings, plus totals.
@@ -174,6 +206,15 @@ pub struct ServerStats {
     pub wire_sent_kbps: f64,
     #[serde(rename = "wireReceivedKBps")]
     pub wire_received_kbps: f64,
+    /// Room sockets' lowest TCP round trips at the sample.
+    pub rtt_p50_ms: f64,
+    pub rtt_max_ms: f64,
+    /// Share of the data segments sent to room sockets in the window that were
+    /// retransmissions.
+    pub retransmit_percent: f64,
+    /// Held movement or fire that ran out before the player's next input arrived, in
+    /// the window.
+    pub input_lapses: u64,
     pub cpu_percent: f64,
     #[serde(rename = "rssMB")]
     pub rss_mb: f64,
@@ -225,6 +266,13 @@ pub struct LivePoint {
     pub wire_sent_kbps: f64,
     #[serde(rename = "wireReceivedKBps")]
     pub wire_received_kbps: f64,
+    /// Room sockets' lowest TCP round trips.
+    pub rtt_p50_ms: f64,
+    pub rtt_max_ms: f64,
+    /// Share of this second's data segments to room sockets that were retransmissions.
+    pub retransmit_percent: f64,
+    /// Input lapses in this second.
+    pub input_lapses: u64,
     /// Messages per second by type.
     pub sent_messages: BTreeMap<&'static str, f64>,
     pub received_messages: BTreeMap<&'static str, f64>,
@@ -258,12 +306,21 @@ pub struct WireBytes {
     pub received: u64,
 }
 
+/// TCP data segments sent to room sockets since the server started, and how many were
+/// retransmissions (Linux only; zero elsewhere).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcpSegments {
+    pub sent: u64,
+    pub retransmitted: u64,
+}
+
 /// What the server gathers from its rooms and sockets for one reading.
 #[derive(Clone, Debug, Default)]
 pub struct MonitorInput {
     pub samples: Vec<RoomSample>,
     pub sockets: u32,
     pub wire: WireBytes,
+    pub segments: TcpSegments,
 }
 
 /// Intervals measured by the runtime lag probe (see `server::run_lag_probe`), kept
@@ -321,14 +378,44 @@ struct Counts {
     received_bytes: u64,
     wire_sent_bytes: u64,
     wire_received_bytes: u64,
+    segments: TcpSegments,
+    input_lapses: u64,
 }
 
 #[derive(Default)]
-struct WindowBytes {
+struct WindowCounts {
     sent: u64,
     received: u64,
     wire_sent: u64,
     wire_received: u64,
+    segments: TcpSegments,
+    input_lapses: u64,
+}
+
+impl TcpSegments {
+    fn since(self, earlier: TcpSegments) -> TcpSegments {
+        TcpSegments {
+            sent: self.sent.saturating_sub(earlier.sent),
+            retransmitted: self.retransmitted.saturating_sub(earlier.retransmitted),
+        }
+    }
+
+    fn add(&mut self, more: TcpSegments) {
+        self.sent += more.sent;
+        self.retransmitted += more.retransmitted;
+    }
+
+    fn retransmit_percent(self) -> f64 {
+        round(percent(self.retransmitted, self.sent), 2)
+    }
+}
+
+/// Nearest-rank median and maximum of round trips, rounded; zeros without any.
+fn rtt_figures(rtt_ms: &mut [f64]) -> (f64, f64) {
+    (
+        round(percentile(rtt_ms, 50.0), 1),
+        round(percentile(rtt_ms, 100.0), 1),
+    )
 }
 
 /// Reads room and process load every second for the dashboard, sums ten readings into
@@ -348,11 +435,12 @@ pub struct ServerMonitor {
     read_cpu: u64,
     read_busy: Duration,
     read_wire: WireBytes,
+    read_segments: TcpSegments,
     sampled_ms: u64,
     sample_cpu: u64,
     /// Load per room and in total since the last sample, summed from readings.
     window: HashMap<String, RoomWindow>,
-    window_bytes: WindowBytes,
+    window_counts: WindowCounts,
     samples_since_summary: u32,
     active_since_summary: bool,
     counts: Counts,
@@ -376,10 +464,11 @@ impl ServerMonitor {
             read_cpu: cpu,
             read_busy: Duration::ZERO,
             read_wire: WireBytes::default(),
+            read_segments: TcpSegments::default(),
             sampled_ms: now,
             sample_cpu: cpu,
             window: HashMap::new(),
-            window_bytes: WindowBytes::default(),
+            window_counts: WindowCounts::default(),
             samples_since_summary: 0,
             active_since_summary: false,
             counts: Counts::default(),
@@ -434,6 +523,9 @@ impl ServerMonitor {
             received_mb: total_megabytes(self.counts.received_bytes),
             wire_sent_mb: total_megabytes(self.counts.wire_sent_bytes),
             wire_received_mb: total_megabytes(self.counts.wire_received_bytes),
+            data_segments_sent: self.counts.segments.sent,
+            retransmitted_segments: self.counts.segments.retransmitted,
+            input_lapses: self.counts.input_lapses,
         }
     }
 
@@ -455,12 +547,17 @@ impl ServerMonitor {
         let (busy, workers) = (self.busy)();
         let wire_sent = input.wire.sent.saturating_sub(self.read_wire.sent);
         let wire_received = input.wire.received.saturating_sub(self.read_wire.received);
+        let segments = input.segments.since(self.read_segments);
         let mut sent_messages = MessageCounts::new();
         let mut received_messages = MessageCounts::new();
         let (mut sent, mut received, mut tick_max_ms) = (0u64, 0u64, 0f64);
+        let mut input_lapses = 0;
+        let mut rtt_ms: Vec<f64> = Vec::new();
         for room in &input.samples {
             sent += room.sent_bytes;
             received += room.received_bytes;
+            input_lapses += room.input_lapses;
+            rtt_ms.extend(&room.rtt_ms);
             add_counts(&mut sent_messages, &room.sent_messages);
             add_counts(&mut received_messages, &room.received_messages);
             tick_max_ms = tick_max_ms.max(room.tick_max_ms);
@@ -471,14 +568,19 @@ impl ServerMonitor {
             window.tick_total_ms += room.tick_avg_ms * f64::from(room.ticks);
             window.tick_max_ms = window.tick_max_ms.max(room.tick_max_ms);
         }
-        self.window_bytes.sent += sent;
-        self.window_bytes.received += received;
-        self.window_bytes.wire_sent += wire_sent;
-        self.window_bytes.wire_received += wire_received;
+        self.window_counts.sent += sent;
+        self.window_counts.received += received;
+        self.window_counts.wire_sent += wire_sent;
+        self.window_counts.wire_received += wire_received;
+        self.window_counts.segments.add(segments);
+        self.window_counts.input_lapses += input_lapses;
         self.counts.sent_bytes += sent;
         self.counts.received_bytes += received;
         self.counts.wire_sent_bytes += wire_sent;
         self.counts.wire_received_bytes += wire_received;
+        self.counts.segments.add(segments);
+        self.counts.input_lapses += input_lapses;
+        let (rtt_p50_ms, rtt_max_ms) = rtt_figures(&mut rtt_ms);
         let mut lag = self.lag.take_reading();
         let lag_ms = |value: f64| round((value - LOOP_DELAY_RESOLUTION_MS).max(0.0), 1);
         let (p50, p90, p99, max) = if lag.is_empty() {
@@ -512,6 +614,10 @@ impl ServerMonitor {
             received_kbps: kilobytes(received, seconds),
             wire_sent_kbps: kilobytes(wire_sent, seconds),
             wire_received_kbps: kilobytes(wire_received, seconds),
+            rtt_p50_ms,
+            rtt_max_ms,
+            retransmit_percent: segments.retransmit_percent(),
+            input_lapses,
             sent_messages: per_second(&sent_messages, seconds),
             received_messages: per_second(&received_messages, seconds),
             tick_max_ms: round(tick_max_ms, 2),
@@ -520,26 +626,38 @@ impl ServerMonitor {
         let room_list = input
             .samples
             .into_iter()
-            .map(|room| RoomLoad {
-                debt_ms: round(room.debt_ms, 1),
-                tick_avg_ms: round(room.tick_avg_ms, 2),
-                tick_max_ms: round(room.tick_max_ms, 2),
-                sent_kbps: kilobytes(room.sent_bytes, seconds),
-                received_kbps: kilobytes(room.received_bytes, seconds),
-                room: room.room,
-                map_mode: room.map_mode,
-                phase: room.phase,
-                players: room.players,
-                seats: room.seats,
-                sockets: room.sockets,
-                time_left: room.time_left,
-                scores: room.scores,
-                age_seconds: room.age_seconds,
-                tick: room.tick,
+            .map(|mut room| {
+                let (rtt_p50_ms, rtt_max_ms) = rtt_figures(&mut room.rtt_ms);
+                RoomLoad {
+                    rtt_p50_ms,
+                    rtt_max_ms,
+                    retransmit_percent: TcpSegments {
+                        sent: room.data_segments_sent,
+                        retransmitted: room.retransmitted_segments,
+                    }
+                    .retransmit_percent(),
+                    input_lapses: room.match_input_lapses,
+                    debt_ms: round(room.debt_ms, 1),
+                    tick_avg_ms: round(room.tick_avg_ms, 2),
+                    tick_max_ms: round(room.tick_max_ms, 2),
+                    sent_kbps: kilobytes(room.sent_bytes, seconds),
+                    received_kbps: kilobytes(room.received_bytes, seconds),
+                    room: room.room,
+                    map_mode: room.map_mode,
+                    phase: room.phase,
+                    players: room.players,
+                    seats: room.seats,
+                    sockets: room.sockets,
+                    time_left: room.time_left,
+                    scores: room.scores,
+                    age_seconds: room.age_seconds,
+                    tick: room.tick,
+                }
             })
             .collect();
         self.read_ms = now;
         self.read_wire = input.wire;
+        self.read_segments = input.segments;
         self.read_cpu = cpu;
         self.read_busy = busy;
         self.history.push_back(point.clone());
@@ -560,10 +678,14 @@ impl ServerMonitor {
             rooms: reading.point.rooms,
             players: reading.point.players,
             sockets: reading.point.sockets,
-            sent_kbps: kilobytes(self.window_bytes.sent, seconds),
-            received_kbps: kilobytes(self.window_bytes.received, seconds),
-            wire_sent_kbps: kilobytes(self.window_bytes.wire_sent, seconds),
-            wire_received_kbps: kilobytes(self.window_bytes.wire_received, seconds),
+            sent_kbps: kilobytes(self.window_counts.sent, seconds),
+            received_kbps: kilobytes(self.window_counts.received, seconds),
+            wire_sent_kbps: kilobytes(self.window_counts.wire_sent, seconds),
+            wire_received_kbps: kilobytes(self.window_counts.wire_received, seconds),
+            rtt_p50_ms: reading.point.rtt_p50_ms,
+            rtt_max_ms: reading.point.rtt_max_ms,
+            retransmit_percent: self.window_counts.segments.retransmit_percent(),
+            input_lapses: self.window_counts.input_lapses,
             cpu_percent: cpu_percent(self.read_cpu.saturating_sub(self.sample_cpu), seconds),
             rss_mb: reading.point.rss_mb,
             heap_used_mb: reading.point.heap_used_mb,
@@ -606,7 +728,7 @@ impl ServerMonitor {
         self.sampled_ms = at_ms;
         self.sample_cpu = self.read_cpu;
         self.window.clear();
-        self.window_bytes = WindowBytes::default();
+        self.window_counts = WindowCounts::default();
         self.latest = Some(stats.clone());
         if stats.rooms > 0 {
             self.active_since_summary = true;
@@ -643,13 +765,18 @@ impl ServerMonitor {
 
     fn summarize(&self, stats: &ServerStats) {
         (self.log)(&format!(
-            "stats: {} rooms, {} players, {} sockets | out {} KB/s, in {} KB/s | cpu {}% | \
+            "stats: {} rooms, {} players, {} sockets | out {} KB/s, in {} KB/s | \
+             rtt p50 {} ms, max {} ms, resent {}%, input lapses {} | cpu {}% | \
              rss {} MB, heap {}/{} MB | loop delay p99 {} ms, max {} ms",
             stats.rooms,
             stats.players,
             stats.sockets,
             stats.sent_kbps,
             stats.received_kbps,
+            stats.rtt_p50_ms,
+            stats.rtt_max_ms,
+            stats.retransmit_percent,
+            stats.input_lapses,
             stats.cpu_percent,
             stats.rss_mb,
             stats.heap_used_mb,
@@ -659,7 +786,8 @@ impl ServerMonitor {
         ));
         for room in &stats.room_list {
             (self.log)(&format!(
-                "  {} {} {} {}/{} players {} left {}-{} | tick avg {} ms, max {} ms, debt {} ms | out {} KB/s",
+                "  {} {} {} {}/{} players {} left {}-{} | tick avg {} ms, max {} ms, debt {} ms | out {} KB/s | \
+                 rtt p50 {} ms, max {} ms, resent {}%, input lapses {}",
                 room.room,
                 room.map_mode,
                 room.phase.as_str(),
@@ -671,7 +799,11 @@ impl ServerMonitor {
                 room.tick_avg_ms,
                 room.tick_max_ms,
                 room.debt_ms,
-                room.sent_kbps
+                room.sent_kbps,
+                room.rtt_p50_ms,
+                room.rtt_max_ms,
+                room.retransmit_percent,
+                room.input_lapses
             ));
         }
     }
@@ -702,6 +834,11 @@ mod tests {
             received_bytes: 1024,
             sent_messages: [("snapshot", 20), ("lobby", 1)].into(),
             received_messages: [("input", 30)].into(),
+            rtt_ms: vec![120.0, 40.0, 85.4],
+            data_segments_sent: 1000,
+            retransmitted_segments: 5,
+            input_lapses: 1,
+            match_input_lapses: 4,
         }
     }
 
@@ -709,7 +846,7 @@ mod tests {
         MonitorInput {
             samples,
             sockets,
-            wire: WireBytes::default(),
+            ..MonitorInput::default()
         }
     }
 
@@ -796,6 +933,7 @@ mod tests {
                 sent: 20 * 1024,
                 received: 2 * 1024,
             },
+            segments: TcpSegments::default(),
         });
         let expected: BTreeMap<&str, f64> =
             [("snapshot", 40.0), ("lobby", 1.0), ("pong", 1.0)].into();
@@ -816,11 +954,68 @@ mod tests {
                 sent: 30 * 1024,
                 received: 2 * 1024,
             },
+            segments: TcpSegments::default(),
         });
         assert_eq!(
             next.point.wire_sent_kbps, 10.0,
             "readings take the difference of running totals"
         );
+    }
+
+    #[test]
+    fn reports_round_trips_retransmits_and_input_lapses_per_room_and_server() {
+        let (now, clock) = manual_clock(1_000_000);
+        let mut monitor = ServerMonitor::new(clock, Box::new(|_| {}));
+        let quiet = RoomSample {
+            room: "IJKLMNOP".into(),
+            rtt_ms: vec![30.0],
+            data_segments_sent: 0,
+            retransmitted_segments: 0,
+            input_lapses: 0,
+            match_input_lapses: 0,
+            ..room()
+        };
+        let mut segments = TcpSegments::default();
+        for second in 1..=10 {
+            now.fetch_add(1000, Ordering::Relaxed);
+            segments.sent += 400;
+            segments.retransmitted += if second == 1 { 2 } else { 0 };
+            let reading = monitor.tick(MonitorInput {
+                samples: vec![room(), quiet.clone()],
+                sockets: 4,
+                wire: WireBytes::default(),
+                segments,
+            });
+            assert_eq!(
+                reading.point.input_lapses, 1,
+                "lapses since the last reading"
+            );
+            if second == 1 {
+                assert_eq!(reading.point.retransmit_percent, 0.5);
+                assert_eq!(reading.point.rtt_p50_ms, 40.0);
+                assert_eq!(reading.point.rtt_max_ms, 120.0);
+                let busy = &reading.room_list[0];
+                assert_eq!((busy.rtt_p50_ms, busy.rtt_max_ms), (85.4, 120.0));
+                assert_eq!(busy.retransmit_percent, 0.5, "since each player connected");
+                assert_eq!(busy.input_lapses, 4, "the match so far");
+                assert_eq!(reading.room_list[1].retransmit_percent, 0.0);
+            } else {
+                assert_eq!(reading.point.retransmit_percent, 0.0);
+            }
+        }
+        let stats = monitor.latest.clone().expect("ten readings make a sample");
+        assert_eq!(
+            stats.retransmit_percent, 0.05,
+            "2 of 4000 segments in the window"
+        );
+        assert_eq!(stats.input_lapses, 10);
+        assert_eq!(stats.rtt_max_ms, 120.0);
+        assert_eq!(stats.totals.data_segments_sent, 4000);
+        assert_eq!(stats.totals.retransmitted_segments, 2);
+        assert_eq!(stats.totals.input_lapses, 10);
+        let json = serde_json::to_value(&stats).unwrap();
+        assert_eq!(json["roomList"][0]["rttP50Ms"], 85.4);
+        assert_eq!(json["retransmitPercent"], 0.05);
     }
 
     #[test]
@@ -914,6 +1109,11 @@ mod tests {
             &RoomActivity::Left {
                 players: 0,
                 code: Some(1006),
+                tcp: Some(TcpReading {
+                    rtt_us: 85_400,
+                    data_segments_sent: 800,
+                    retransmitted_segments: 6,
+                }),
             },
         );
         monitor.activity(
@@ -922,6 +1122,7 @@ mod tests {
                 players: 0,
                 code: 1000,
                 reason: "Left room".into(),
+                tcp: None,
             },
         );
         monitor.activity(
@@ -930,6 +1131,7 @@ mod tests {
                 players: 0,
                 code: 1008,
                 reason: "Join timed out".into(),
+                tcp: None,
             },
         );
         monitor.ended(room, "expired", 1_800_000);
@@ -938,7 +1140,7 @@ mod tests {
             [
                 "room ABCDEFGH created",
                 "room ABCDEFGH player joined (1 connected)",
-                "room ABCDEFGH player disconnected (code 1006) (0 connected)",
+                "room ABCDEFGH player disconnected (code 1006) (0 connected) | rtt 85 ms, 6 of 800 segments resent",
                 "room ABCDEFGH player left (0 connected)",
                 "room ABCDEFGH server closed a socket: 1008 Join timed out (0 connected)",
                 "room ABCDEFGH ended: expired after 30m 0s",

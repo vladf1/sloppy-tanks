@@ -45,6 +45,20 @@ async fn start() -> (MultiplayerServer, String, Lines) {
     (server, base, lines)
 }
 
+/// Whether `line` is the lifecycle line `expected`, which on Linux ends with the room
+/// socket's TCP round trip and retransmissions.
+fn logged_with_tcp(line: &str, expected: &str) -> bool {
+    match line.strip_prefix(expected) {
+        Some("") => !cfg!(target_os = "linux"),
+        Some(note) => {
+            cfg!(target_os = "linux")
+                && note.starts_with(" | rtt ")
+                && note.ends_with(" segments resent")
+        }
+        None => false,
+    }
+}
+
 async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = tokio::time::Instant::now() + WAIT;
     while !check() {
@@ -942,11 +956,12 @@ async fn closes_a_slow_reader_with_4002() {
         "the backlog was cut short after {received} messages"
     );
     eventually("the close to be logged", || {
-        lines
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|line| line == "room SLOWROOM player disconnected (code 4002) (0 connected)")
+        lines.lock().unwrap().iter().any(|line| {
+            logged_with_tcp(
+                line,
+                "room SLOWROOM player disconnected (code 4002) (0 connected)",
+            )
+        })
     })
     .await;
     server.close().await;
@@ -969,7 +984,10 @@ async fn a_protocol_violation_drops_the_socket_and_logs_1011() {
     }
     eventually("the failure to be logged", || {
         lines.lock().unwrap().iter().any(|line| {
-            line == "room BADFRAME server closed a socket: 1011 Socket failed (0 connected)"
+            logged_with_tcp(
+                line,
+                "room BADFRAME server closed a socket: 1011 Socket failed (0 connected)",
+            )
         })
     })
     .await;

@@ -106,6 +106,42 @@ fn input_holds_until_its_lease_expires_then_idles_and_eventually_hands_control_t
 }
 
 #[test]
+fn held_input_that_outlives_its_lease_counts_one_lapse_until_fresh_input_arrives() {
+    let (mut sim, tank) = alice_room();
+    let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();
+    let epoch = controls.control_epoch;
+    assert!(controls.accept(&sim, &input(epoch, 1, json!({})), 0, 0.0));
+    controls.command(&mut sim, 1, 249.0);
+    assert_eq!(controls.take_lapses(), 0, "inside the lease");
+    controls.command(&mut sim, 15, 250.0);
+    controls.command(&mut sim, 16, 300.0);
+    assert_eq!(
+        controls.take_lapses(),
+        1,
+        "one lapse per stalled hold, not per tick"
+    );
+    controls.command(&mut sim, 17, 400.0);
+    assert_eq!(controls.take_lapses(), 0);
+    assert!(controls.accept(&sim, &input(epoch, 2, json!({})), 0, 500.0));
+    controls.command(&mut sim, 30, 800.0);
+    assert_eq!(controls.take_lapses(), 1, "fresh input re-arms the count");
+
+    let neutral = json!({ "moveX": 0, "fire": false });
+    assert!(controls.accept(&sim, &input(epoch, 3, neutral), 0, 1000.0));
+    controls.command(&mut sim, 60, 1500.0);
+    assert_eq!(
+        controls.take_lapses(),
+        0,
+        "an idle refresh only holds aim, so its lease may run out"
+    );
+
+    assert!(controls.accept(&sim, &input(epoch, 4, json!({})), 0, 2000.0));
+    controls.suspend(&mut sim);
+    controls.command(&mut sim, 90, 2500.0);
+    assert_eq!(controls.take_lapses(), 0, "a suspended seat does not lapse");
+}
+
+#[test]
 fn ordered_actions_survive_coalesced_inputs_run_once_and_stale_clicks_expire_independently() {
     let (mut sim, tank) = alice_room();
     let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();

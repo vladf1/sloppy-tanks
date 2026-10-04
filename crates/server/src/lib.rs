@@ -24,6 +24,7 @@ pub mod room_task;
 pub mod server;
 pub mod session;
 pub mod socket;
+pub mod tcp_path;
 pub mod websocket;
 pub mod wire;
 

@@ -105,6 +105,8 @@ function fixture(network = false) {
       inputSeq: 10,
       inputAck: 9,
       connected: true,
+      lateBatches: 3,
+      longestBatchGapMs: 412.4,
     },
   };
   const engine = {
@@ -206,6 +208,7 @@ test("network stats use received scene counts and never require a client physics
       .join("\n");
     assert.ok(text.includes("RTT") && text.includes("42 ms"));
     assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
+    assert.ok(text.includes("Late batches") && text.includes("3 (longest gap 412 ms)"));
     assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
     assert.ok(text.includes("Update CPU / frame"));
     assert.ok(!text.includes("Sim CPU / frame"));

@@ -15,6 +15,7 @@ use crate::host::{ConnectionId, HostAction, HostFactory, HostOptions, HostOutput
 use crate::protocol::{CONTENT_VERSION, MAX_CLIENT_MESSAGE_BYTES};
 use crate::random;
 use crate::room_list::{RoomListing, RoomPhase};
+use crate::tcp_path::TcpReading;
 
 /// Open sockets per room, joined or not.
 pub const MAX_PENDING_CONNECTIONS: usize = 16;
@@ -104,6 +105,11 @@ pub trait RoomSocket {
     fn send(&self, text: String) -> Result<(), SendFailed>;
     /// Starts the closing handshake. Later calls are ignored.
     fn close(&self, code: u16, reason: &str);
+    /// The connection's TCP round trip and retransmissions so far, where the transport
+    /// measures them.
+    fn tcp(&self) -> Option<TcpReading> {
+        None
+    }
 }
 
 /// Seat and socket changes a runtime may log; they never affect room behaviour.
@@ -114,16 +120,18 @@ pub enum RoomActivity {
         players: u32,
     },
     /// The client's transport closed; `code` is the close code it sent, 1005 without
-    /// one, or 1006 when the connection dropped.
+    /// one, or 1006 when the connection dropped. `tcp` is the connection's final reading.
     Left {
         players: u32,
         code: Option<u16>,
+        tcp: Option<TcpReading>,
     },
     /// The server closed the socket.
     Closed {
         players: u32,
         code: u16,
         reason: String,
+        tcp: Option<TcpReading>,
     },
 }
 
@@ -173,6 +181,16 @@ pub struct RoomSample {
     /// Messages sent and accepted per message type.
     pub sent_messages: MessageCounts,
     pub received_messages: MessageCounts,
+    /// The lowest TCP round trip of each joined socket the transport measures, in
+    /// milliseconds.
+    pub rtt_ms: Vec<f64>,
+    /// Data segments sent to those sockets since each connected, and how many were
+    /// retransmissions.
+    pub data_segments_sent: u64,
+    pub retransmitted_segments: u64,
+    /// Input lapses since the previous sample, and over the whole match.
+    pub input_lapses: u64,
+    pub match_input_lapses: u64,
 }
 
 struct SocketEntry<S> {
@@ -215,6 +233,8 @@ pub struct RoomSession<F: HostFactory, S: RoomSocket> {
     last_listed_ms: u64,
     ended: bool,
     load: Load,
+    /// The host's input lapses at the previous sample.
+    sampled_lapses: u64,
 }
 
 impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
@@ -238,6 +258,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             last_listed_ms: 0,
             ended: false,
             load: Load::default(),
+            sampled_lapses: 0,
         }
     }
 
@@ -281,6 +302,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             }));
             self.failure = None;
             self.host_created_ms = now;
+            self.sampled_lapses = 0;
             self.events.activity(RoomActivity::Created);
         }
         let id = ConnectionId(NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed));
@@ -332,7 +354,9 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             && entry.joined
         {
             let players = self.players();
-            self.events.activity(RoomActivity::Left { players, code });
+            let tcp = entry.socket.tcp();
+            self.events
+                .activity(RoomActivity::Left { players, code, tcp });
         }
     }
 
@@ -356,6 +380,15 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         let host = self.host.as_ref()?;
         let entry = host.directory_entry(&self.room);
         let load = std::mem::take(&mut self.load);
+        let tcp: Vec<TcpReading> = self
+            .sockets
+            .values()
+            .filter(|socket| socket.joined)
+            .filter_map(|socket| socket.socket.tcp())
+            .collect();
+        let match_input_lapses = host.input_lapses();
+        let input_lapses = match_input_lapses.saturating_sub(self.sampled_lapses);
+        self.sampled_lapses = match_input_lapses;
         Some(RoomSample {
             room: self.room.clone(),
             map_mode: entry.map_mode,
@@ -379,6 +412,14 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             received_bytes: load.received_bytes,
             sent_messages: load.sent_messages,
             received_messages: load.received_messages,
+            rtt_ms: tcp.iter().map(TcpReading::rtt_ms).collect(),
+            data_segments_sent: tcp.iter().map(|reading| reading.data_segments_sent).sum(),
+            retransmitted_segments: tcp
+                .iter()
+                .map(|reading| reading.retransmitted_segments)
+                .sum(),
+            input_lapses,
+            match_input_lapses,
         })
     }
 
@@ -511,6 +552,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             players,
             code,
             reason: reason.to_string(),
+            tcp: entry.socket.tcp(),
         });
         entry.socket.close(code, reason);
     }
