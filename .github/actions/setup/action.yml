@@ -30,10 +30,14 @@ runs:
         rustup show active-toolchain
     # Caches from main are visible to every pull request, so main's deploy run, which
     # runs these same jobs, keeps them warm. A run saves only when it missed an exact
-    # key (a Cargo.lock, manifest or toolchain change).
+    # key (a Cargo.lock, manifest or toolchain change). The action leaves [profile]
+    # sections out of its key, so `key` adds the root manifest and Cargo config: a profile
+    # or rustflags change would otherwise restore stale builds, rebuild every crate, and
+    # never save.
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: ${{ inputs.cargo-cache }}
+        key: ${{ hashFiles('Cargo.toml', '.cargo/config.toml') }}
         cache-bin: false
     # The CLI must match the wasm-bindgen crate pin in Cargo.toml.
     - name: Cache wasm-bindgen-cli
