@@ -96,8 +96,8 @@ pub struct Gl {
     pub anisotropy: bool,
     /// `KHR_parallel_shader_compile`: programs link in the background.
     pub parallel_compile: bool,
-    /// Keeps the context-loss listener alive.
-    _lost: Closure<dyn FnMut(web_sys::Event)>,
+    /// The context-loss listener, removed on drop.
+    lost: Closure<dyn FnMut(web_sys::Event)>,
 }
 
 /// The renderer's handle on [`Gl`]. Cheap to clone.
@@ -167,17 +167,6 @@ impl Gpu {
         };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        unsafe {
-            // Shaders flip clip-space Y (`ADJUST_COORDINATE_SPACE`), which reverses the
-            // winding WebGPU's counter-clockwise front faces have on screen.
-            gl.front_face(glow::CW);
-            // WebGPU neither dithers nor converts uploads' color spaces.
-            gl.disable(glow::DITHER);
-            gl.pixel_store_i32(
-                web_sys::WebGl2RenderingContext::UNPACK_COLORSPACE_CONVERSION_WEBGL,
-                glow::NONE as i32,
-            );
-        }
         let state = State {
             program: None,
             vertex_array: None,
@@ -192,14 +181,9 @@ impl Gpu {
             viewport: [0, 0, width as i32, height as i32],
             clear_color: [0.0; 4],
             flip_y: false,
-            // Recorded as on so the first `set_raster` below turns depth testing off,
-            // as it already is, and depth writes, which start on.
-            raster: Raster {
-                depth_func: Some(glow::LESS),
-                depth_write: true,
-                ..Raster::PLAIN
-            },
+            raster: Raster::PLAIN,
         };
+        apply_initial_state(&gl, &state);
         let gl = Gl {
             gl,
             raw,
@@ -209,11 +193,66 @@ impl Gpu {
             max_size: max_texture.min(max_renderbuffer).max(1) as u32,
             anisotropy,
             parallel_compile,
-            _lost: on_lost,
+            lost: on_lost,
         };
-        // From GL's initial state (depth test off, depth writes on) to the record's.
-        gl.set_raster(&Raster::PLAIN);
         Ok((Self(Rc::new(gl)), Canvas { width, height }))
+    }
+}
+
+/// Set the context to the cache's first record, whatever earlier users of the canvas
+/// left bound or enabled, and the state the backend never changes afterwards.
+fn apply_initial_state(gl: &glow::Context, state: &State) {
+    unsafe {
+        gl.use_program(None);
+        gl.bind_vertex_array(None);
+        gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        gl.bind_buffer(glow::COPY_WRITE_BUFFER, None);
+        for point in 0..block::COUNT as u32 {
+            gl.bind_buffer_base(glow::UNIFORM_BUFFER, point, None);
+        }
+        for unit in (0..unit::COUNT as u32).rev() {
+            gl.active_texture(glow::TEXTURE0 + unit);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.bind_sampler(unit, None);
+        }
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        let [x, y, width, height] = state.viewport;
+        gl.viewport(x, y, width, height);
+        gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        gl.pixel_store_bool(web_sys::WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL, false);
+        for capability in [
+            glow::CULL_FACE,
+            glow::DEPTH_TEST,
+            glow::BLEND,
+            glow::POLYGON_OFFSET_FILL,
+            glow::SAMPLE_ALPHA_TO_COVERAGE,
+            glow::SCISSOR_TEST,
+            glow::STENCIL_TEST,
+            // WebGPU does not dither.
+            glow::DITHER,
+        ] {
+            gl.disable(capability);
+        }
+        gl.depth_mask(false);
+        gl.color_mask(true, true, true, true);
+        gl.blend_equation(glow::FUNC_ADD);
+        // Shaders flip clip-space Y (`ADJUST_COORDINATE_SPACE`), which reverses the
+        // winding WebGPU's counter-clockwise front faces have on screen.
+        gl.front_face(glow::CW);
+        // WebGPU does not convert uploads' color spaces either.
+        gl.pixel_store_i32(
+            web_sys::WebGl2RenderingContext::UNPACK_COLORSPACE_CONVERSION_WEBGL,
+            glow::NONE as i32,
+        );
+    }
+}
+
+impl Drop for Gl {
+    fn drop(&mut self) {
+        let _ = self.canvas.remove_event_listener_with_callback(
+            "webglcontextlost",
+            self.lost.as_ref().unchecked_ref(),
+        );
     }
 }
 
