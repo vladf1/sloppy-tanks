@@ -1,9 +1,10 @@
 // Destruction as drawn by the real renderer: timber damage stages and breach, rooted
-// tree stumps with falling crowns, tower rubble, and debris that sinks and
-// fades. Damage, events, particles, navigation and physics are covered by the engine's
-// tests (cover_hit_effects, tree damage, timber_walls, destruction_physics,
-// debris_cleanup); this check reads what each view shows (`Game.debug_view_json`) and
-// keeps screenshots of every stage.
+// tree stumps with falling crowns, tower rubble, and debris that sinks and fades.
+// Damage, events, particles, navigation, physics and rubble materials are covered by
+// the engine's tests (cover_hit_effects, tree damage, timber_walls,
+// destruction_physics, debris_cleanup, tower_rubble_wears_concrete_and_timber); this
+// check reads what each view shows (`Game.debug_view_json`) and keeps screenshots of
+// every stage.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
@@ -172,7 +173,6 @@ try {
         visible: views.get(c.id).shown,
         colorMatches: c.color === tower.color,
       })),
-      texturesPending: sloppy.stats().texturesPending,
     };
   }, tower);
   assert.equal(results.tower.towerVisible, false);

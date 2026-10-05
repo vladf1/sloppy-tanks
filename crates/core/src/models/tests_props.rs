@@ -356,6 +356,35 @@ fn tree_damage_sheds_boughs_by_stage() {
     assert!(tree.find(tree_part::CUT_SURFACE).unwrap().visible);
 }
 
+/// Tower rubble keeps the tower's concrete footing and timber, never its clapboard
+/// cabin. A browser can't tell this from texture downloads: village houses load the
+/// same files.
+#[test]
+fn tower_rubble_wears_concrete_and_timber() {
+    let shape = |kind| CoverShape {
+        kind,
+        x: -10.2,
+        z: 28.0,
+        w: 1.3,
+        d: 3.0,
+        h: 1.25,
+        color: 0xbd8a4a,
+        debris_seed: Some(7.0),
+        timber_hits: Vec::new(),
+        timber_join: None,
+    };
+    let textures = |kind| node_textures(&cover_model(&shape(kind), TreeDetail::Full, 0).node);
+    let tower = textures(CoverKind::Tower);
+    assert!(tower.contains(&TextureSource::File(building_kit::CLAPBOARD_TEXTURE)));
+    assert_eq!(
+        textures(CoverKind::Rubble),
+        [
+            TextureSource::File(CONCRETE_TEXTURE),
+            TextureSource::File(timber_model::TIMBER_TEXTURE),
+        ]
+    );
+}
+
 #[test]
 fn falling_branches_fade_without_depth_writes() {
     let tree = tree_model(
