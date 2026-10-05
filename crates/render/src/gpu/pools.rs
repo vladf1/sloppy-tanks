@@ -13,7 +13,7 @@
 use glam::Vec3;
 
 use super::instance_store::InstanceStore;
-use super::{Lifetime, RECORD_SIZE, Renderer};
+use super::{Lifetime, Renderer};
 use crate::draw_list::{InstanceRecord, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::effects::pool::{PoolBuffer, PoolDesc};
 
@@ -199,10 +199,12 @@ impl Renderer {
         }
     }
 
+    /// What the pools' stores allocate: on WebGL a store rounds its capacity up to
+    /// whole texture rows, so this can exceed the pools' capacities.
     pub(super) fn pool_bytes(&self) -> u64 {
         self.pools
             .iter()
-            .map(|(_, pool)| pool.capacity as u64 * RECORD_SIZE)
+            .map(|(_, pool)| pool.records.bytes())
             .sum()
     }
 
