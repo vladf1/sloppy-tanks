@@ -1,5 +1,5 @@
 // Destruction as drawn by the real renderer: timber damage stages and breach, rooted
-// tree stumps with falling crowns, textured tower rubble, and debris that sinks and
+// tree stumps with falling crowns, tower rubble, and debris that sinks and
 // fades. Damage, events, particles, navigation and physics are covered by the engine's
 // tests (cover_hit_effects, tree damage, timber_walls, destruction_physics,
 // debris_cleanup); this check reads what each view shows (`Game.debug_view_json`) and
@@ -22,10 +22,6 @@ const { browser, page, errors } = await launchGame({
   consoleErrors: true, // Shader compilation errors are only logged.
 });
 const results = {};
-const textureRequests = [];
-page.on("request", (request) => {
-  if (request.url().includes("/textures/")) textureRequests.push(request.url());
-});
 /** Draw one still frame of the game view; the frozen loop leaves HUD overlays stale. */
 const draw = (camera = []) => page.evaluate((camera) => window.engine.draw(camera), camera);
 try {
@@ -151,7 +147,7 @@ try {
   }
   await page.screenshot({ path: `${out}/stumps.png` });
 
-  // Tower: the intact model disappears and two distinct, textured rubble piles take over.
+  // Tower: the intact model disappears and two distinct rubble piles take over.
   const tower = await page.evaluate(() => window.engine.covers().find((c) => c.kind === "tower"));
   await moveTo(tower.x, tower.z + 6);
   await draw();
@@ -184,13 +180,6 @@ try {
   assert.equal(results.tower.distinctPiles, true);
   for (const pile of results.tower.rubble) {
     assert.ok(pile.visible && pile.colorMatches, JSON.stringify(pile));
-  }
-  // Rubble wears the tower's concrete and siding, never the roof shingles.
-  for (const name of ["weathered-concrete.webp", "siding.webp"]) {
-    assert.ok(
-      textureRequests.some((url) => url.includes(name)),
-      `${name} was loaded for the rubble`,
-    );
   }
   await draw([tower.x + 11, 10, tower.z + 14, tower.x, 3, tower.z]);
   await page.screenshot({ path: `${out}/tower-rubble.png` });

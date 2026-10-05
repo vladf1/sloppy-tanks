@@ -877,7 +877,6 @@ mod tests {
             tick_max_ms: if index % 2 == 1 { 12.0 } else { 3.0 },
             ..room()
         };
-        let mut heard = Vec::new();
         for index in 0..9 {
             now.fetch_add(1000, Ordering::Relaxed);
             let reading = monitor.tick(input(vec![second(index)], 3));
@@ -885,10 +884,9 @@ mod tests {
                 reading.room_list[0].tick_max_ms,
                 if index % 2 == 1 { 12.0 } else { 3.0 }
             );
-            heard.push(reading);
         }
         now.fetch_add(1000, Ordering::Relaxed);
-        heard.push(monitor.tick(input(vec![second(9)], 3)));
+        monitor.tick(input(vec![second(9)], 3));
         let stats = monitor
             .latest
             .clone()
@@ -900,7 +898,6 @@ mod tests {
             "ten readings of 100 KB, to the nearest KB"
         );
         assert_eq!(stats.window_seconds, 10.0);
-        assert_eq!(heard.len(), 10, "a sample is also a reading");
         assert_eq!(monitor.history().len(), 10);
         let point = serde_json::to_value(&monitor.history()[0]).unwrap();
         assert!(point.get("roomList").is_none(), "history keeps totals only");
