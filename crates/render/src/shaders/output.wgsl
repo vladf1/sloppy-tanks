@@ -2,7 +2,9 @@
 // tone mapping and sRGB transfer, written to the (non-sRGB) canvas texture.
 
 struct Output {
-    // x exposure
+    // x exposure; the HDR row of a fragment is y + z × its framebuffer row: 0 and 1
+    // where the target's rows run top-down like the HDR target's (WebGPU), height and
+    // -1 on WebGL's bottom-up canvas.
     settings: vec4f,
 }
 
@@ -45,6 +47,7 @@ fn srgb_encode(color: vec3f) -> vec3f {
 
 @fragment
 fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let color = textureLoad(hdr, vec2i(position.xy), 0).rgb;
+    let row = output.settings.y + output.settings.z * position.y;
+    let color = textureLoad(hdr, vec2i(i32(position.x), i32(row)), 0).rgb;
     return vec4f(srgb_encode(aces_filmic(color, output.settings.x)), 1.0);
 }

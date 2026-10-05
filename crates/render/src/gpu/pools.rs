@@ -12,9 +12,9 @@
 
 use glam::Vec3;
 
-use super::instance_store::InstanceStore;
+use super::backend::{FrameGroups, InstanceStore};
 use super::{Lifetime, Renderer};
-use crate::draw_list::{InstanceRecord, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::draw_list::{InstanceRecord, REFLECTION_VIEW, SHADOW_VIEW};
 use crate::effects::pool::{PoolBuffer, PoolDesc};
 
 /// A registered pool; stale ids are ignored.
@@ -36,30 +36,24 @@ pub(super) struct PoolEntry {
     pub count: u32,
     pub lifetime: Lifetime,
     pub records: InstanceStore,
-    /// The frame bind group per view, with this pool's buffer as `instances`.
-    pub groups: Vec<wgpu::BindGroup>,
+    /// The frame bindings per view, with this pool's records as `instances`.
+    pub groups: FrameGroups,
 }
 
 impl Renderer {
     /// Register a pool. Its pipelines join the prepare/warm-up set at once, so
     /// the first effect never compiles mid-round.
     pub fn add_pool(&mut self, desc: &PoolDesc, lifetime: Lifetime) -> PoolId {
-        let device = self.ctx.device.clone();
+        let gpu = &self.gpu;
         let material = self.interner.intern(&desc.material);
-        let material = self.materials.get_or_create(
-            &device,
-            &self.layouts,
-            &mut self.textures,
-            &self.effects,
-            &material,
-        );
+        let material =
+            self.materials
+                .get_or_create(gpu, &mut self.textures, &self.effects, &material);
         let attributes = self.effects.attributes(self.materials.get(material).effect);
-        let mesh = self
-            .meshes
-            .shared(&device, &self.ctx.queue, &desc.mesh, attributes);
+        let mesh = self.meshes.shared(gpu, &desc.mesh, attributes);
         let capacity = desc.capacity.max(1);
-        let records = InstanceStore::new(&device, desc.label, capacity);
-        let groups = self.frame_groups(&records);
+        let records = InstanceStore::new(gpu, desc.label, capacity);
+        let groups = self.frame.frame_groups(gpu, &records);
         // Reserve the slot first: the class key names the pool it draws.
         let (index, generation) = self.pools.insert(PoolEntry {
             label: desc.label,
@@ -91,9 +85,9 @@ impl Renderer {
         if self.pools.get(id.index, id.generation).is_none() {
             return;
         }
+        // Dropping the entry destroys its records.
         let entry = self.pools.remove(id.index).expect("checked");
         self.release_class(entry.class, entry.cast_shadow);
-        entry.records.destroy();
     }
 
     /// Upload the records an effect changed and set the drawn count.
@@ -105,14 +99,14 @@ impl Renderer {
         // A pool buffer and its GPU buffer share one capacity.
         let capacity = entry.capacity as usize;
         entry.count = records.len().min(capacity) as u32;
-        let queue = &self.ctx.queue;
+        let gpu = &self.gpu;
         let store = &entry.records;
         records.take_dirty(|first, slice: &[InstanceRecord]| {
             let end = (first as usize + slice.len()).min(capacity);
             let Some(count) = end.checked_sub(first as usize).filter(|&n| n > 0) else {
                 return;
             };
-            store.write(queue, first, &slice[..count]);
+            store.write(gpu, first, &slice[..count]);
         });
     }
 
@@ -123,29 +117,15 @@ impl Renderer {
     pub fn set_pool_params(&mut self, id: PoolId, params: [[f32; 4]; 4]) {
         if let Some(entry) = self.pools.get(id.index, id.generation) {
             let material = self.materials.get(entry.material);
-            self.ctx.queue.write_buffer(
-                &material.uniform,
-                super::resources::MATERIAL_PARAMS_OFFSET,
-                bytemuck::cast_slice(&params),
-            );
+            material.binding.write_params(&self.gpu, &params);
         }
     }
 
-    pub(super) fn frame_groups(&self, instances: &InstanceStore) -> Vec<wgpu::BindGroup> {
-        (0..VIEW_COUNT)
-            .map(|view| self.frame_group(view, instances))
-            .collect()
-    }
-
+    /// Rebind every pool's frame groups after the frame's own resources changed.
     pub(super) fn rebuild_pool_groups(&mut self) {
-        let indices: Vec<u32> = self.pools.iter().map(|(index, _)| index).collect();
-        for index in indices {
-            let groups = {
-                let entry = self.pools.at(index).expect("live pool");
-                self.frame_groups(&entry.records)
-            };
-            if let Some(entry) = self.pools.slots[index as usize].1.as_mut() {
-                entry.groups = groups;
+        for (_, entry) in self.pools.slots.iter_mut() {
+            if let Some(entry) = entry {
+                entry.groups = self.frame.frame_groups(&self.gpu, &entry.records);
             }
         }
     }
