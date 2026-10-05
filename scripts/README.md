@@ -19,6 +19,14 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.mjs
 ```
 
+Checks play on the WebGPU engine where the browser has it. `SLOPPY_WEBGL=1` hides
+WebGPU from their pages, so the same checks run on the WebGL2 engine through the
+page's own fallback:
+
+```sh
+SLOPPY_WEBGL=1 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
+```
+
 `pnpm run check:browser` runs every check below except `touch-loading-check`, one
 after another, in a few minutes. Run it for startup, menu, input or rendering
 changes. Browser checks keep only what needs a browser (real pointer, wheel,
