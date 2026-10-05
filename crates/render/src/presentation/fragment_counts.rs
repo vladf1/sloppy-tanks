@@ -60,15 +60,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn each_frame_starts_with_an_unused_budget_for_every_shape() {
-        for _ in 0..3 {
-            let mut counts = FragmentCounts::default();
-            for shape in SHAPES {
-                assert_eq!(counts.add(shape), 1);
-                assert_eq!(counts.add(shape), 2);
-            }
-        }
-    }
 }

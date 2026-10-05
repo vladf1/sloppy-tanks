@@ -404,6 +404,10 @@ mod tests {
         assert_eq!(cover_damage_stage(CoverKind::Cargo, 100.0, 100.0), 0);
         assert_eq!(cover_damage_stage(CoverKind::Cargo, 50.0, 100.0), 1);
         assert_eq!(cover_damage_stage(CoverKind::Cargo, 30.0, 100.0), 2);
+        assert_eq!(cover_damage_stage(CoverKind::Timber, 100.0, 100.0), 0);
+        assert_eq!(cover_damage_stage(CoverKind::Timber, 60.0, 100.0), 1);
+        assert_eq!(cover_damage_stage(CoverKind::Timber, 30.0, 100.0), 2);
+        assert_eq!(cover_damage_stage(CoverKind::Timber, 10.0, 100.0), 3);
         assert_eq!(cover_damage_stage(CoverKind::House, 1.0, 100.0), 0);
         assert_eq!(tree_branch_stage(1.0), 0);
         assert_eq!(tree_branch_stage(0.5), 1);

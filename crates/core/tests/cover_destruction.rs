@@ -4,6 +4,7 @@
 
 mod support;
 
+use sloppy_core::models::cover_damage_stage;
 use sloppy_core::sim::arena::{CoverDef, spawn_positions};
 use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::debris_physics::DebrisMaterial;
@@ -16,17 +17,9 @@ use sloppy_core::sim::{
 };
 use support::clear_arena;
 
-/// The TS `coverDamageStage` from the cover model: cargo shows two damage stages.
-fn cover_damage_stage(cover: &Cover) -> u32 {
-    match cover.kind {
-        CoverKind::Cargo if cover.hp >= cover.max_hp => 0,
-        CoverKind::Cargo if cover.hp > cover.max_hp * 0.35 => 1,
-        CoverKind::Cargo => 2,
-        CoverKind::Timber => {
-            sloppy_core::sim::timber_layout::timber_damage_stage(cover.hp, cover.max_hp)
-        }
-        _ => 0,
-    }
+/// The damage stage the renderer draws for `cover`.
+fn stage(cover: &Cover) -> u32 {
+    cover_damage_stage(cover.kind, cover.hp, cover.max_hp)
 }
 
 fn at(cover: &Cover) -> Vec2 {
@@ -221,13 +214,13 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
     let handle = sim.covers[cargo].collider;
     let cargo_at = at(&sim.covers[cargo]);
     let (id, team) = (sim.human().id, sim.human_team);
-    assert_eq!(cover_damage_stage(&sim.covers[cargo]), 0);
+    assert_eq!(stage(&sim.covers[cargo]), 0);
     assert_eq!(sim.nav.blocked[sim.nav.index(cargo_at)], 1);
     sim.damage_cover(cargo, 40.0, id, team, None, None);
     assert!(sim.covers[cargo].alive);
-    assert_eq!(cover_damage_stage(&sim.covers[cargo]), 1);
+    assert_eq!(stage(&sim.covers[cargo]), 1);
     sim.damage_cover(cargo, 40.0, id, team, None, None);
-    assert_eq!(cover_damage_stage(&sim.covers[cargo]), 2);
+    assert_eq!(stage(&sim.covers[cargo]), 2);
     assert!(sim.covers[cargo].alive);
     assert!(
         sim.cover_by_collider.contains_key(&handle),

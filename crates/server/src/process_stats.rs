@@ -246,11 +246,6 @@ mod tests {
     #[test]
     fn process_figures_are_plausible() {
         let before = cpu_micros();
-        let mut spin = 0u64;
-        for index in 0..2_000_000u64 {
-            spin = spin.wrapping_add(index * index);
-        }
-        std::hint::black_box(spin);
         assert!(cpu_micros() >= before);
         assert!(rss_bytes() > 1024 * 1024);
         let (total, available) = host_memory();

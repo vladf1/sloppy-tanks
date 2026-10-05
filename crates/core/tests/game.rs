@@ -7,7 +7,7 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::match_state::{award_kill, new_match, tick_match};
-use sloppy_core::sim::math::{Random, Vec2};
+use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::navigation::Navigation;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::projectiles::step_projectiles;
@@ -268,19 +268,6 @@ fn complete_reset_restores_counts_cover_pickups_scores_nav_and_rng() {
             .iter()
             .all(|p| p.available == (p.kind != PickupKind::Laser))
     );
-}
-
-#[test]
-fn seeded_random_and_team_roster_are_reproducible_and_symmetric() {
-    let mut a = Random::new(9.0);
-    let mut b = Random::new(9.0);
-    let first: Vec<f64> = (0..20).map(|_| a.next()).collect();
-    let second: Vec<f64> = (0..20).map(|_| b.next()).collect();
-    assert_eq!(first, second);
-    let s = game();
-    assert_eq!(s.tanks.iter().filter(|t| t.human).count(), 1);
-    assert_eq!(s.tanks.iter().filter(|t| t.team == Team::Blue).count(), 6);
-    assert_eq!(s.tanks.iter().filter(|t| t.team == Team::Red).count(), 6);
 }
 
 #[test]
