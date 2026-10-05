@@ -1,6 +1,6 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom `wgpu` renderer draws with handwritten WGSL on WebGPU (or WebGL2 where WebGPU is unavailable), and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
+A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom renderer draws handwritten WGSL through WebGPU (`wgpu`), or WebGL2 (`glow`) where WebGPU is unavailable, and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 

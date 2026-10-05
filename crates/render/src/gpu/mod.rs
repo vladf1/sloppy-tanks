@@ -772,6 +772,11 @@ impl Renderer {
         let textures = TextureStore::new(&gpu, options.asset_base);
         let sun_shadow = SunShadow::default();
         let frame = Frame::new(&gpu, canvas, sun_shadow.map_size, INITIAL_INSTANCE_CAPACITY);
+        // A target the browser cannot draw into fails here, where the page can tell
+        // an unavailable API from other errors.
+        if let Some(error) = gpu.error() {
+            return Err(error);
+        }
         Ok(Renderer {
             pipelines,
             ranks: HashMap::new(),

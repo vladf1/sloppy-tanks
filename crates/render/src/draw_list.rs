@@ -20,7 +20,7 @@ pub struct InstanceRecord {
     pub data: [f32; 4],
 }
 
-/// The WebGL build keeps records in an RGBA32F texture (`gpu/instance_store.rs`,
+/// The WebGL build keeps records in an RGBA32F texture (`gpu/webgl/resources.rs`,
 /// `instances_texture.wgsl`): one texel per vec4 of a record, this many records
 /// per texture row.
 pub const RECORD_TEXELS: u32 = (size_of::<InstanceRecord>() / 16) as u32;
@@ -93,8 +93,8 @@ pub struct DrawState {
     /// A stable rank of the class's pipeline in the view; the pipeline itself may
     /// still be compiling when the lists are sorted.
     pub pipeline: u32,
-    /// The vertex page of its mesh (`crate::mesh_pages`): through wgpu's GL backend a
-    /// page switch re-specifies every vertex attribute.
+    /// The vertex page of its mesh (`crate::mesh_pages`): a page switch rebinds the
+    /// vertex buffers (WebGPU) or the page's vertex array (WebGL).
     pub vertex_page: u32,
     /// The instance pool whose frame group it binds (`u32::MAX`: the view's own).
     pub pool: u32,

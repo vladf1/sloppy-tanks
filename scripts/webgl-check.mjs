@@ -1,7 +1,7 @@
 // The WebGL2 fallback engine. `?webgl` asks for it on any browser: on every standard
 // map the page must download only the WebGL build, start a round through Battle
 // Setup, drive and fire, and draw the arena (shadows included) without page, console,
-// GL or engine errors, and without wgpu clearing an index buffer through a vector of
+// GL or engine errors, and without clearing an index buffer through a vector of
 // zeros in the Wasm heap. Without `?webgl` the page must pick the build this browser
 // supports by itself (WebGPU when it has an adapter, else WebGL) and download only
 // that one. Where WebGPU has an adapter, a WebGPU device that fails must fall back
@@ -33,11 +33,11 @@ const STILL_POSE = [-40, 70, 40, 0, 0, 0];
  * purpose; a broken cached shadow (the whole floor in shadow) measured 53 and 0.73. */
 const STILL_MEAN_TOLERANCE = 16;
 const STILL_LARGE_TOLERANCE = 0.15;
-/** wgpu clears the never-written part of a bound buffer before a pass, and on WebGL an
- * index buffer by uploading zeros from a vector in the engine's Wasm heap, which keeps
- * that size for good. Mesh pages bind only their written prefix
- * (`MeshStore::index_buffer`), so no index upload this large is all zeros; smaller
- * ones are left out, since a tiny mesh's own indices can be. */
+/** A zeroed index buffer must come from the browser (`bufferData` with a size), never
+ * from an upload of zeros out of a vector in the engine's Wasm heap, which would keep
+ * that size for good (wgpu's GL backend once cleared unwritten buffer tails that way).
+ * No index upload this large is all zeros; smaller ones are left out, since a tiny
+ * mesh's own indices can be. */
 const ZERO_INDEX_UPLOAD_BYTES = 1024;
 mkdirSync(output, { recursive: true });
 
@@ -145,7 +145,7 @@ function assertDrew(result, name) {
   assert.equal(
     result.zeroIndexUploadBytes,
     0,
-    `${name}: wgpu cleared index buffer bytes through a vector of zeros`,
+    `${name}: index buffer bytes were cleared through a vector of zeros`,
   );
 }
 
