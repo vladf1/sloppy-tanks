@@ -611,7 +611,7 @@ pub(super) const PICKUP_CASES: &[(PickupKind, Summary)] = &[
     (PickupKind::Laser, (1, 24, 12, 0x2aac1510)),
 ];
 
-pub(super) const FLAGS: Summary = (3, 290, 416, 0xaa10e350);
+pub(super) const FLAGS: Summary = (3, 290, 416, 0xf4a0e350);
 
 pub(super) const BARREL_SCRAPS: [u32; 2] = [0x1f004bc3, 0x365b8543];
 

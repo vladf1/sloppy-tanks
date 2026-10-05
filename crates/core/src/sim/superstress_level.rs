@@ -3,7 +3,7 @@
 //! debris that lingers until the budget needs room. Level behaviour lives here and reaches the game only through
 //! `Simulation::after_step`, `restore_cover` and the map's scale.
 
-use super::arena::CoverDef;
+use super::arena::{BOUNDARY_THICKNESS, CoverDef};
 use super::data::ARENA;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::map_options::MapId;
@@ -140,8 +140,12 @@ fn superstress_layout() -> Vec<CoverDef> {
             0x7b7162,
         )
     };
-    yard.pair(wall(YARD + 0.5, 0.0, 1.0, YARD * 2.0 + 2.0));
-    yard.pair(wall(0.0, YARD + 0.5, YARD * 2.0 + 2.0, 1.0));
+    let (centre, length) = (
+        YARD + BOUNDARY_THICKNESS / 2.0,
+        YARD * 2.0 + BOUNDARY_THICKNESS * 2.0,
+    );
+    yard.pair(wall(centre, 0.0, BOUNDARY_THICKNESS, length));
+    yard.pair(wall(0.0, centre, length, BOUNDARY_THICKNESS));
 
     // The laser pickup sits in a powder-keg plaza inside a ring of timber with open corners.
     yard.put(Piece::Drum, 10.0, 0.0);

@@ -12,6 +12,8 @@ use std::sync::OnceLock;
 use crate::geometry::math::{js_hypot, lerp, smoothstep};
 use crate::sim::math::Random;
 
+use super::quarry_terrain::QUARRY_BANK_TOP;
+
 /// Side of the square quarry terrain and soil bake, in metres.
 pub const QUARRY_TERRAIN_EXTENT: f64 = 210.0;
 /// Side of the soil bake, in pixels (about 10 cm per pixel).
@@ -155,7 +157,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, z: f64, out: &mut [u
         // Beyond the wall the ground falls to the machinery apron: loose fill on
         // the embankment, then a working floor of darker quarry fines.
         let reach = x.abs().max(z.abs());
-        let apron = smoothstep(reach, 60.2, 61.5);
+        let apron = smoothstep(reach, QUARRY_BANK_TOP + 0.2, QUARRY_BANK_TOP + 1.5);
         let fill = apron * (1.0 - smoothstep(reach, 65.0, 67.5));
         let fine = rng.range(-5.0, 5.0) * 0.6;
         let aggregate = if rng.next() > 0.975 {

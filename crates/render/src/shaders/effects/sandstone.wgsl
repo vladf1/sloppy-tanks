@@ -39,7 +39,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let up = quarry_smoothstep(0.5, 0.92, n.y);
     let patchy = sin(p.x * 0.37 + sin(p.z * 0.29) * 1.7) * sin(p.z * 0.41 - p.x * 0.13) * 0.5 + 0.5;
     rock = mix(rock, ground * (dot(relief, LUMA) * 0.3 + 0.75), up * mix(0.2, 0.7, patchy));
-    let floor_y = -min(max(max(abs(p.x), abs(p.z)) - 60.0, 0.0) * 0.3, 1.8);
+    // `quarry_ground_drop`: flat to the wall's outer face (62 m), down 1.8 m by 66 m.
+    let floor_y = -min(max(max(abs(p.x), abs(p.z)) - 62.0, 0.0) * 0.45, 1.8);
     let foot = 1.0 - quarry_smoothstep(0.02, 0.75, p.y - floor_y);
     rock = mix(rock, ground * 0.9, foot * 0.6);
     (*s).color = rock * f.vertex_color.rgb * material.color.rgb * f.tint.rgb;

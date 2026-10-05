@@ -23,6 +23,23 @@ pub struct CoverDef {
     pub debris_seed: Option<f64>,
 }
 
+/// Outer walls are this thick, grown outward from the arena edge so most of a gun
+/// barrel reaching over a hull pressed against one ends inside the wall rather than
+/// poking out the far side.
+pub const BOUNDARY_THICKNESS: f64 = 2.0;
+
+/// A side's two outer walls, the one across X first, around a square yard of half size
+/// `half` whose edge they stand on.
+pub fn boundary_walls(side: f64, half: f64, h: f64, color: u32) -> [CoverDef; 2] {
+    let centre = side * (half + BOUNDARY_THICKNESS / 2.0);
+    let length = half * 2.0 + BOUNDARY_THICKNESS * 2.0;
+    let wall = |x, z, w, d| CoverDef::new(CoverKind::Boundary, x, z, w, d, h, f64::INFINITY, color);
+    [
+        wall(centre, 0.0, BOUNDARY_THICKNESS, length),
+        wall(0.0, centre, length, BOUNDARY_THICKNESS),
+    ]
+}
+
 impl CoverDef {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
@@ -56,26 +73,7 @@ fn authored_layout() -> Vec<CoverDef> {
     let infinite = f64::INFINITY;
     let cover = CoverDef::new;
     for s in [-1.0, 1.0] {
-        result.push(cover(
-            CoverKind::Boundary,
-            s * (ARENA + 0.5),
-            0.0,
-            1.0,
-            ARENA * 2.0 + 2.0,
-            2.2,
-            infinite,
-            0xa68c68,
-        ));
-        result.push(cover(
-            CoverKind::Boundary,
-            0.0,
-            s * (ARENA + 0.5),
-            ARENA * 2.0 + 2.0,
-            1.0,
-            2.2,
-            infinite,
-            0xa68c68,
-        ));
+        result.extend(boundary_walls(s, ARENA, 2.2, 0xa68c68));
         for z in [-45.0, -9.0, 9.0, 45.0] {
             result.push(cover(
                 CoverKind::Tree,

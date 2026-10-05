@@ -13,14 +13,15 @@ use super::model_primitives::{TEAM_COLORS, cylinder_part};
 use super::{Team, model_primitives::Cache};
 use crate::geometry::plane_geometry_segments;
 use crate::scene::{Color, Effect, Instance, Material, Node, Side};
-use crate::sim::arena::spawn_positions;
+use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
+use crate::sim::data::ARENA;
 
 /// Node names of the flag instanced meshes.
 pub const FLAG_POLE: &str = "flag-pole";
 pub const FLAG_CLOTH_NODE: &str = "flag-cloth";
 
-/// Flags stand at this x on each team's side, one per spawn row.
-const FLAG_X: f64 = 62.0;
+/// Flags stand on the middle of the boundary wall on each team's side, one per spawn row.
+const FLAG_X: f64 = ARENA + BOUNDARY_THICKNESS / 2.0;
 const POLE_COLOR: u32 = 0x59656a;
 const POLE_Y: f64 = 2.4;
 const CLOTH_Y: f64 = 4.6;
@@ -28,7 +29,7 @@ const CLOTH_Y: f64 = 4.6;
 /// around its instance origin (the TypeScript's fixed bounding sphere).
 pub const FLAG_CLOTH_BOUNDS_RADIUS: f64 = 2.0;
 
-/// The x and z of each of a team's flags (TS `spawnPositions(team)` with x = ±62).
+/// The x and z of each of a team's flags (TS `spawnPositions(team)` with x = ±`FLAG_X`).
 pub fn flag_positions(team: Team) -> [(f64, f64); 5] {
     let x = if team == Team::Blue { -FLAG_X } else { FLAG_X };
     spawn_positions(team, 1.0).map(|spawn| (x, spawn.z))

@@ -1,7 +1,7 @@
 //! The Stress Grid: an intentional workload of 30 tanks and 75 destructibles for finding
 //! body, navigation, destruction and resource-growth regressions. Do not weaken it.
 
-use super::arena::CoverDef;
+use super::arena::{CoverDef, boundary_walls};
 use super::data::ARENA;
 use super::map_options::MapId;
 use super::maps::{ArenaMap, GroundKind};
@@ -15,34 +15,14 @@ pub const STRESS_POWER_UP_MULTIPLIER: f64 = 10.0;
 pub const STRESS_AMMO_CRATE_MULTIPLIER: f64 = 10.0;
 
 fn stress_test_layout() -> Vec<CoverDef> {
-    let mut covers = Vec::new();
+    // A hard square perimeter keeps every body and chain reaction inside the test yard.
+    let mut covers: Vec<CoverDef> = [-1.0, 1.0]
+        .into_iter()
+        .flat_map(|side| boundary_walls(side, ARENA, 2.2, 0x7b7162))
+        .collect();
     let infinite = f64::INFINITY;
     let mut add =
         |kind, x, z, w, d, h, hp, color| covers.push(CoverDef::new(kind, x, z, w, d, h, hp, color));
-
-    // A hard square perimeter keeps every body and chain reaction inside the test yard.
-    for side in [-1.0, 1.0] {
-        add(
-            CoverKind::Boundary,
-            side * (ARENA + 0.5),
-            0.0,
-            1.0,
-            ARENA * 2.0 + 2.0,
-            2.2,
-            infinite,
-            0x7b7162,
-        );
-        add(
-            CoverKind::Boundary,
-            0.0,
-            side * (ARENA + 0.5),
-            ARENA * 2.0 + 2.0,
-            1.0,
-            2.2,
-            infinite,
-            0x7b7162,
-        );
-    }
 
     // Dense symmetric quadrants exercise draw calls, pathfinding, collisions and every major
     // destruction path while leaving the centre cross and team spawn strips driveable.

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use crate::geometry::Mesh;
 use crate::geometry::math::{js_round, smoothstep};
 use crate::scene::{Material, Node};
-use crate::sim::arena::spawn_positions;
+use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
+use crate::sim::data::ARENA;
 use crate::sim::math::Random;
 use crate::sim::types::{Team, Vec2};
 
@@ -30,7 +31,7 @@ use super::quarry_scree::quarry_scree;
 use super::quarry_site_details::quarry_site_details;
 use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
 use super::quarry_surfaces::{RubbleStone, sandstone_rock, sandstone_rubble};
-use super::quarry_terrain::quarry_terrain;
+use super::quarry_terrain::{QUARRY_BANK_TOP, quarry_ground_drop, quarry_terrain};
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
 const APRON: f64 = -1.8;
@@ -334,7 +335,7 @@ impl QuarryScenery {
             rock.set_rotation_euler(0.0, rng.range(-1.0, 1.0), 0.0);
             let x = rng.range(-61.0, 61.0);
             let z = side * rng.range(64.0, 70.0);
-            let y = 0.008 - 1.8f64.min((z.abs() - 60.0) * 0.3);
+            let y = 0.008 - quarry_ground_drop(x, z);
             put(&mut geology, rock, x, y, z);
         }
         flank_boulders(&mut geology);
@@ -479,7 +480,7 @@ fn flank_boulders(geology: &mut Node) {
         let d = flank_rng.range(1.2, 2.4);
         let mut rock = sandstone_rock(w, h, d, variant);
         rock.set_rotation_euler(0.0, flank_rng.range(-PI, PI), 0.0);
-        let y = 0.008 - 1.8f64.min((x.abs() - 60.0) * 0.3) - 0.14;
+        let y = 0.008 - quarry_ground_drop(x, z) - 0.14;
         put(geology, rock, x, y, z);
         placed += 1;
     }
@@ -499,13 +500,13 @@ fn boundary_dressing(equipment: &mut Node) {
             }
             let lean = 0.05 * (x * 2.3 + side).sin();
             let stake = rotated(box_part(0.13, 1.8, 0.13, 0xb6aea0, 0.0), 0.0, 0.0, lean);
-            put(equipment, stake, x, 0.8, side * 61.2);
+            put(equipment, stake, x, 0.8, side * (QUARRY_BANK_TOP + 0.2));
             put(
                 equipment,
                 box_part(0.17, 0.32, 0.17, 0xa55e3f, 0.0),
                 x - lean * 0.65,
                 1.45,
-                side * 61.2,
+                side * (QUARRY_BANK_TOP + 0.2),
             );
         }
         // Short yellow/black hazard bands: a lone dark panel on the shaded face read
@@ -523,38 +524,42 @@ fn boundary_dressing(equipment: &mut Node) {
                 );
             }
         }
-        // A buried concrete footing closes the gap where the apron starts falling
-        // away under the wall's outer half.
+        // A buried concrete footing closes the gap where the bank starts falling away
+        // at the wall's outer face.
+        let footing_length = QUARRY_BANK_TOP * 2.0 + 0.8;
+        let footing = QUARRY_BANK_TOP - 0.3;
         put(
             equipment,
-            concrete_wall(1.4, 0.55, 122.8),
-            side * 60.7,
+            concrete_wall(1.4, 0.55, footing_length),
+            side * footing,
             -0.27,
             0.0,
         );
         put(
             equipment,
-            concrete_wall(122.8, 0.55, 1.4),
+            concrete_wall(footing_length, 0.55, 1.4),
             0.0,
             -0.27,
-            side * 60.7,
+            side * footing,
         );
         // Precast segment joints score both faces of the boundary wall every four metres.
+        let (wall_centre, joint_depth) =
+            (ARENA + BOUNDARY_THICKNESS / 2.0, BOUNDARY_THICKNESS + 0.02);
         for step in 0..=29 {
             let t = -58.0 + f64::from(step) * 4.0;
             put(
                 equipment,
-                box_part(0.05, 1.16, 1.02, 0x8c877d, 0.0),
-                side * 60.5,
+                box_part(0.05, 1.16, joint_depth, 0x8c877d, 0.0),
+                side * wall_centre,
                 0.58,
                 t,
             );
             put(
                 equipment,
-                box_part(1.02, 1.16, 0.05, 0x8c877d, 0.0),
+                box_part(joint_depth, 1.16, 0.05, 0x8c877d, 0.0),
                 t,
                 0.58,
-                side * 60.5,
+                side * wall_centre,
             );
         }
     }
