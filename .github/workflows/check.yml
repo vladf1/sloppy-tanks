@@ -99,7 +99,40 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: server-image
+      # Kache restores the optimized server binary (about 50 s to link) when its inputs are
+      # unchanged; the Cargo cache keeps only dependencies. The store is keyed by the server
+      # build, so it is saved once per new server and an exact hit saves nothing. GC bounds
+      # what the next save carries, since no Kache daemon runs here to do it.
+      - name: Fingerprint the server build
+        id: server-build
+        run: >-
+          node --input-type=module -e "import { serverBuild } from './scripts/content-version.mjs';
+          console.log('hash=' + (await serverBuild()))" >> "$GITHUB_OUTPUT"
+      - name: Restore the Kache store
+        id: kache-store
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/kache
+          key: kache-server-build-${{ steps.server-build.outputs.hash }}
+          restore-keys: kache-server-build-
+      - uses: kunobi-ninja/kache-action@v1
+        with:
+          version: 1.0.0
+          cache-dir: ${{ runner.temp }}/kache
+          github-cache: false
+          cache-executables: true
+          max-size: 150MiB
+          pr-comment: false
       - run: pnpm run check:server
+      - name: Trim the Kache store
+        if: steps.kache-store.outputs.cache-hit != 'true'
+        run: '"$RUSTC_WRAPPER" gc --max-age 7d'
+      - name: Save the Kache store
+        if: steps.kache-store.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/kache
+          key: ${{ steps.kache-store.outputs.cache-primary-key }}
       - name: Log in to the GitHub Container Registry
         if: env.PUSH == 'true'
         run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
