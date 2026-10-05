@@ -15,10 +15,10 @@ use std::collections::HashMap;
 use glow::HasContext;
 use sloppy_core::scene::Side;
 
-use super::context::{Blend, Cull, Gpu, Raster, block, unit};
+use super::context::{Blend, Cull, Gpu, Raster};
 use crate::effects::EffectRegistry;
 use crate::gpu::SHADOW_MERGED_SIDES;
-use crate::shader::glsl::{self, Binding};
+use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
     shadow_merged_source, water_source,
@@ -34,28 +34,6 @@ const FAILED_VERTEX: &str = "#version 300 es\nvoid main(void) { gl_Position = ve
 /// The uniform naga adds to `gl_InstanceID` for WGSL's `instance_index`
 /// (`naga::back::glsl::FIRST_INSTANCE_BINDING`): WebGL2 has no base instance.
 const FIRST_INSTANCE: &str = "naga_vs_first_instance";
-
-/// The uniform block point of a WGSL uniform's binding.
-fn block_point(binding: Binding) -> Option<u32> {
-    match binding {
-        (0, 0) => Some(block::FRAME),
-        (1, 0) => Some(block::MATERIAL),
-        (0, 1) => Some(block::OUTPUT),
-        _ => None,
-    }
-}
-
-/// The texture unit of a WGSL texture's binding.
-fn texture_unit(binding: Binding) -> Option<u32> {
-    match binding {
-        (0, 0) => Some(unit::SOURCE),
-        (0, 1) => Some(unit::SHADOW_MAP),
-        (0, 3) => Some(unit::DFG_LUT),
-        (0, 5) => Some(unit::INSTANCES),
-        (1, binding @ (1 | 3 | 5 | 7 | 9)) => Some(unit::MATERIAL + (binding - 1) / 2),
-        _ => None,
-    }
-}
 
 /// A linked program.
 pub struct Program {

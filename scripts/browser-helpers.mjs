@@ -11,6 +11,12 @@ export const headless = !process.env.SLOPPY_HEADED;
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
 /**
+ * SLOPPY_WEBGL=1 runs checks on the WebGL2 engine: their pages see no WebGPU, so they
+ * fall back to WebGL by themselves, as a browser without WebGPU does.
+ */
+export const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
+
+/**
  * Launch installed Chrome with one desktop context and page, with `window.engine`
  * (`installEngineHelpers`) in every page. Page errors from every
  * page in the context are collected in `errors`; `consoleErrors` also collects
@@ -83,10 +89,16 @@ export async function freezeLoop(page) {
  * `Game.debug_*` fixture hooks (`crates/web/src/game/debug.rs`) that parse their
  * JSON. `engine.state()` is the simulation and camera (`debug_json`), `engine.view()`
  * what every entity's view showed in the last frame, `engine.covers()` the covers and
- * `engine.stats()` the renderer counters. Use it once `window.sloppy` exists.
+ * `engine.stats()` the renderer counters. Use it once `window.sloppy` exists. With
+ * `webglOnly` its pages also see no WebGPU.
  * @param {import("playwright").BrowserContext | import("playwright").Page} target
  */
 export async function installEngineHelpers(target) {
+  if (webglOnly) {
+    await target.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "gpu", { get: () => undefined });
+    });
+  }
   await target.addInitScript(() => {
     const game = () => window.sloppy.game;
     window.engine = {

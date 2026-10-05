@@ -26,7 +26,7 @@ pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
 
-/// Where the vertex stage reads instance records (`gpu/instance_store.rs`): each
+/// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstanceSource {
@@ -364,6 +364,58 @@ pub mod glsl {
     /// A WGSL `(group, binding)`.
     pub type Binding = (u32, u32);
 
+    /// Texture units, fixed per `(group, binding)` of the WGSL that samples them, so a
+    /// material switch touches only the material's units.
+    pub mod unit {
+        /// Group 0 binding 1: the sun shadow map (comparison sampler).
+        pub const SHADOW_MAP: u32 = 0;
+        /// Group 0 binding 3: the DFG lookup table.
+        pub const DFG_LUT: u32 = 1;
+        /// Group 0 binding 5: the instance records (`texelFetch`, no sampler).
+        pub const INSTANCES: u32 = 2;
+        /// Group 1 bindings 1, 3, 5, 7 and 9: a material's map, bump, emissive and two
+        /// effect textures; the water's normals and reflection; a cutout caster's map.
+        pub const MATERIAL: u32 = 3;
+        /// Group 0 binding 0 of the output and mipmap programs: the texture they read.
+        pub const SOURCE: u32 = 8;
+        /// Uploads and texture setup; no program samples it.
+        pub const UPLOAD: u32 = 9;
+        pub const COUNT: usize = 10;
+    }
+
+    /// Uniform buffer binding points, fixed per `(group, binding)`.
+    pub mod block {
+        /// Group 0 binding 0: the view's `Frame`.
+        pub const FRAME: u32 = 0;
+        /// Group 1 binding 0: the material's (or the water's) uniform.
+        pub const MATERIAL: u32 = 1;
+        /// Group 0 binding 1 of the output program.
+        pub const OUTPUT: u32 = 2;
+        pub const COUNT: usize = 3;
+    }
+
+    /// The texture unit of a WGSL texture's binding.
+    pub fn texture_unit(binding: Binding) -> Option<u32> {
+        match binding {
+            (0, 0) => Some(unit::SOURCE),
+            (0, 1) => Some(unit::SHADOW_MAP),
+            (0, 3) => Some(unit::DFG_LUT),
+            (0, 5) => Some(unit::INSTANCES),
+            (1, binding @ (1 | 3 | 5 | 7 | 9)) => Some(unit::MATERIAL + (binding - 1) / 2),
+            _ => None,
+        }
+    }
+
+    /// The uniform block point of a WGSL uniform's binding.
+    pub fn block_point(binding: Binding) -> Option<u32> {
+        match binding {
+            (0, 0) => Some(block::FRAME),
+            (1, 0) => Some(block::MATERIAL),
+            (0, 1) => Some(block::OUTPUT),
+            _ => None,
+        }
+    }
+
     /// One translated stage and what it declares, by WGSL binding: ES 3.00 has no
     /// `layout(binding)`, so the backend binds uniform blocks and samplers by name.
     pub struct Stage {
@@ -457,8 +509,26 @@ pub(crate) mod webgl_check {
             .iter()
             .map(|e| e.name.as_str())
             .collect();
-        if let Err(error) = glsl::translate(label, code, &entries) {
-            panic!("{error}");
+        let stages =
+            glsl::translate(label, code, &entries).unwrap_or_else(|error| panic!("{error}"));
+        // The WebGL backend binds every block and sampler by its WGSL binding; one it
+        // has no point or unit for would read nothing, and two bindings on one unit
+        // would read each other's texture.
+        let mut units = std::collections::HashMap::new();
+        for stage in &stages {
+            for (name, binding) in &stage.blocks {
+                assert!(
+                    glsl::block_point(*binding).is_some(),
+                    "{label}: uniform block {name} at {binding:?} has no WebGL point"
+                );
+            }
+            for (name, binding) in &stage.samplers {
+                let unit = glsl::texture_unit(*binding).unwrap_or_else(|| {
+                    panic!("{label}: sampler {name} at {binding:?} has no WebGL unit")
+                });
+                let other = *units.entry(unit).or_insert(*binding);
+                assert_eq!(other, *binding, "{label}: two textures on unit {unit}");
+            }
         }
     }
 

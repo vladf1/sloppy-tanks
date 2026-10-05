@@ -6,8 +6,8 @@
 //! vertex in its page), so every draw passes `base_vertex` 0, which WebGL2 lacks, and
 //! a mesh's draw is just an index range in its index page. Consecutive draws from one
 //! page keep their vertex and index bindings, where a buffer per mesh made every mesh
-//! switch two or three WebGPU commands (`setVertexBuffer`, `setIndexBuffer`), and
-//! through wgpu's GL backend a re-specification of every vertex attribute.
+//! switch two or three WebGPU commands (`setVertexBuffer`, `setIndexBuffer`), or on
+//! WebGL a vertex array and element buffer binding.
 //!
 //! This module is pure bookkeeping, so it compiles natively and carries the tests:
 //! a first-fit [`RangeAllocator`] per page, the [`PagePlanner`] that picks pages and
@@ -281,7 +281,7 @@ impl Page {
     }
 
     /// `[0, written)` has been written; draws bind only that prefix (see
-    /// `MeshStore::vertex_buffers`).
+    /// `PageBuffers::vertex_buffers` in `gpu/webgpu/resources.rs`).
     pub fn written(&self) -> u32 {
         self.written
     }

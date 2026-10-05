@@ -1,9 +1,10 @@
 //! The stages of round preparation, kept apart from the renderer so their order is
 //! testable natively.
 //!
-//! Pipelines compile on the GPU process's background threads (`gpu/precompile.rs`)
-//! before wgpu creates them, so a cold system shader cache (seconds for an arena on an
-//! Apple GPU) no longer stalls the browser. The warm-up that uses every pipeline can
+//! Pipelines compile on the GPU process's background threads before the renderer uses
+//! them (`gpu/webgpu/precompile.rs`; `KHR_parallel_shader_compile` on WebGL), so a cold
+//! system shader cache (seconds for an arena on an Apple GPU) no longer stalls the
+//! browser. The warm-up that uses every pipeline can
 //! still keep the GPU busy after it is submitted, and a room page that stops
 //! acknowledging snapshots for three seconds is dropped, so the arena counts as
 //! prepared only once the GPU has run that warm-up; a room page stays suspended until

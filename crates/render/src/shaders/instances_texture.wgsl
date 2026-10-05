@@ -1,5 +1,6 @@
 // WebGL2 has no storage buffers: the instance records are rows of an RGBA32F
-// texture, `RECORDS_PER_ROW` per row and one texel per vec4 (`instance_store.rs`).
+// texture, `RECORDS_PER_ROW` per row and one texel per vec4 (`InstanceStore` in
+// `gpu/webgl/resources.rs`).
 
 @group(0) @binding(5) var instance_records: texture_2d<f32>;
 

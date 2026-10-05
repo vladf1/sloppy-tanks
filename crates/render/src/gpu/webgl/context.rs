@@ -18,36 +18,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 
 use crate::gpu::context::{ErrorSlot, GRAPHICS_API};
-
-/// Texture units, fixed per `(group, binding)` of the WGSL that samples them, so a
-/// material switch touches only the material's units.
-pub mod unit {
-    /// Group 0 binding 1: the sun shadow map (comparison sampler).
-    pub const SHADOW_MAP: u32 = 0;
-    /// Group 0 binding 3: the DFG lookup table.
-    pub const DFG_LUT: u32 = 1;
-    /// Group 0 binding 5: the instance records (`texelFetch`, no sampler).
-    pub const INSTANCES: u32 = 2;
-    /// Group 1 bindings 1, 3, 5, 7 and 9: a material's map, bump, emissive and two
-    /// effect textures; the water's normals and reflection; a cutout caster's map.
-    pub const MATERIAL: u32 = 3;
-    /// Group 0 binding 0 of the output and mipmap programs: the texture they read.
-    pub const SOURCE: u32 = 8;
-    /// Uploads and texture setup; no program samples it.
-    pub const UPLOAD: u32 = 9;
-    pub const COUNT: usize = 10;
-}
-
-/// Uniform buffer binding points, fixed per `(group, binding)`.
-pub mod block {
-    /// Group 0 binding 0: the view's `Frame`.
-    pub const FRAME: u32 = 0;
-    /// Group 1 binding 0: the material's (or the water's) uniform.
-    pub const MATERIAL: u32 = 1;
-    /// Group 0 binding 1 of the output program.
-    pub const OUTPUT: u32 = 2;
-    pub const COUNT: usize = 3;
-}
+pub use crate::shader::glsl::{block, unit};
 
 /// Faces culled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
