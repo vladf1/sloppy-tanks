@@ -25,8 +25,6 @@ pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
-/// The WebGL build's depth copy (`gpu/depth_copy.rs`).
-pub const DEPTH_COPY_WGSL: &str = include_str!("shaders/depth_copy.wgsl");
 
 /// Where the vertex stage reads instance records (`gpu/instance_store.rs`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -355,22 +353,37 @@ fn fixed_source(template: &str, source: InstanceSource) -> String {
     specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
 }
 
-/// Checks the WebGL build's shaders natively; the effect tests use them too.
-#[cfg(test)]
-pub(crate) mod webgl_check {
-    use super::*;
+/// The GLSL ES 3.00 the WebGL backend compiles, translated from the WGSL with naga
+/// the way wgpu's GL backend did: clip-space Y flipped and depth mapped to GL's
+/// -1..1 (`ADJUST_COORDINATE_SPACE`), so offscreen targets hold rows in WebGPU's
+/// order and store WebGPU's depth, and a point size written for every vertex.
+#[cfg(any(test, feature = "webgl"))]
+pub mod glsl {
+    use naga::back::glsl;
 
-    /// Translate every entry point as wgpu's WebGL2 backend does (GLSL ES 3.00).
-    pub fn translate_for_webgl(label: &str, code: &str) {
-        use naga::back::glsl;
-        let module = naga::front::wgsl::parse_str(code)
-            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+    /// A WGSL `(group, binding)`.
+    pub type Binding = (u32, u32);
+
+    /// One translated stage and what it declares, by WGSL binding: ES 3.00 has no
+    /// `layout(binding)`, so the backend binds uniform blocks and samplers by name.
+    pub struct Stage {
+        pub source: String,
+        /// Uniform block names (they differ per stage).
+        pub blocks: Vec<(String, Binding)>,
+        /// Sampler uniform names, by the binding of the texture they read.
+        pub samplers: Vec<(String, Binding)>,
+    }
+
+    /// Translate the entry points `entries` of one WGSL module, in order.
+    pub fn translate(label: &str, wgsl: &str, entries: &[&str]) -> Result<Vec<Stage>, String> {
+        let module = naga::front::wgsl::parse_str(wgsl)
+            .map_err(|error| format!("{label}: {}", error.emit_to_string(wgsl)))?;
         let info = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::empty(),
         )
         .validate(&module)
-        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+        .map_err(|error| format!("{label}: {error:?}"))?;
         let options = glsl::Options {
             version: glsl::Version::Embedded {
                 version: 300,
@@ -380,23 +393,72 @@ pub(crate) mod webgl_check {
                 | glsl::WriterFlags::FORCE_POINT_SIZE,
             ..glsl::Options::default()
         };
-        for entry in &module.entry_points {
-            let pipeline = glsl::PipelineOptions {
-                shader_stage: entry.stage,
-                entry_point: entry.name.clone(),
-                multiview: None,
-            };
-            let mut out = String::new();
-            glsl::Writer::new(
-                &mut out,
-                &module,
-                &info,
-                &options,
-                &pipeline,
-                naga::proc::BoundsCheckPolicies::default(),
-            )
-            .and_then(|mut writer| writer.write())
-            .unwrap_or_else(|error| panic!("{label} {}: {error}", entry.name));
+        let binding = |handle: naga::Handle<naga::GlobalVariable>| {
+            module.global_variables[handle]
+                .binding
+                .as_ref()
+                .map(|binding| (binding.group, binding.binding))
+        };
+        entries
+            .iter()
+            .map(|&name| {
+                let entry = module
+                    .entry_points
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .ok_or_else(|| format!("{label}: no entry point {name}"))?;
+                let pipeline = glsl::PipelineOptions {
+                    shader_stage: entry.stage,
+                    entry_point: entry.name.clone(),
+                    multiview: None,
+                };
+                let mut source = String::new();
+                let reflection = glsl::Writer::new(
+                    &mut source,
+                    &module,
+                    &info,
+                    &options,
+                    &pipeline,
+                    naga::proc::BoundsCheckPolicies::default(),
+                )
+                .and_then(|mut writer| writer.write())
+                .map_err(|error| format!("{label} {name}: {error}"))?;
+                Ok(Stage {
+                    source,
+                    blocks: reflection
+                        .uniforms
+                        .iter()
+                        .filter_map(|(&handle, name)| Some((name.clone(), binding(handle)?)))
+                        .collect(),
+                    samplers: reflection
+                        .texture_mapping
+                        .iter()
+                        .filter_map(|(name, mapping)| {
+                            Some((name.clone(), binding(mapping.texture)?))
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Checks the WebGL build's shaders natively; the effect tests use them too.
+#[cfg(test)]
+pub(crate) mod webgl_check {
+    use super::*;
+
+    /// Translate every entry point as the WebGL backend does (GLSL ES 3.00).
+    pub fn translate_for_webgl(label: &str, code: &str) {
+        let module = naga::front::wgsl::parse_str(code)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+        let entries: Vec<&str> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        if let Err(error) = glsl::translate(label, code, &entries) {
+            panic!("{error}");
         }
     }
 
@@ -474,7 +536,6 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
-        validate("depth copy", DEPTH_COPY_WGSL);
     }
 
     #[test]
@@ -510,7 +571,6 @@ mod tests {
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
         translate_for_webgl("output", OUTPUT_WGSL);
         translate_for_webgl("mipmap", MIPMAP_WGSL);
-        translate_for_webgl("depth copy", DEPTH_COPY_WGSL);
     }
 
     #[test]

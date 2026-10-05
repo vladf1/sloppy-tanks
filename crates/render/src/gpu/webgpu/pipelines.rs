@@ -19,18 +19,17 @@ use std::collections::HashMap;
 
 use sloppy_core::scene::Side;
 
+use super::Gpu;
+use super::context::{DEPTH_FORMAT, HDR_FORMAT};
+use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
-use crate::gpu::context::{DEPTH_FORMAT, HDR_FORMAT};
-use crate::gpu::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
-use crate::gpu::resources::Layouts;
+use crate::gpu::{SAMPLE_COUNT, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
     shadow_merged_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
-
-pub const SAMPLE_COUNT: u32 = 4;
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     0 => Float32x3,
@@ -48,20 +47,6 @@ const SHADOW_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_a
     3 => Float32x2,
 ];
 const SHADOW_BASE_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
-
-/// Merged shadow-caster pipelines by drawn side (see `shadow_merge.rs`).
-pub const SHADOW_MERGED_SIDES: [Side; 3] = [Side::Front, Side::Back, Side::Double];
-
-/// The merged shadow pipeline for a drawn side; cutout pipelines follow the
-/// depth-only ones.
-pub fn shadow_merged_index(side: Side, cutout: bool) -> usize {
-    let side = match side {
-        Side::Front => 0,
-        Side::Back => 1,
-        Side::Double => 2,
-    };
-    side + if cutout { SHADOW_MERGED_SIDES.len() } else { 0 }
-}
 
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -292,7 +277,7 @@ pub struct FixedPipelines {
     pub water: wgpu::RenderPipeline,
     pub output: wgpu::RenderPipeline,
     /// Merged casters, depth-only then alpha-tested, indexed by
-    /// [`shadow_merged_index`].
+    /// `shadow_merged_index`.
     pub shadow_merged: Vec<wgpu::RenderPipeline>,
 }
 
@@ -307,7 +292,7 @@ enum FixedLayout {
 
 /// The fixed pipelines while they compile in the background.
 struct FixedJobs {
-    /// Water, output, then the merged casters in [`shadow_merged_index`] order.
+    /// Water, output, then the merged casters in `shadow_merged_index` order.
     jobs: Vec<(PipelineSpec, FixedLayout, String)>,
     compile: Background,
 }
@@ -317,9 +302,6 @@ pub struct Pipelines {
     sources: HashMap<ShaderKey, String>,
     pipelines: Vec<wgpu::RenderPipeline>,
     index: HashMap<PipelineKey, u32>,
-    /// Every key ever named, numbered on first sight and kept like the pipelines:
-    /// draw lists group draws by pipeline before it has compiled ([`Self::rank`]).
-    ranks: HashMap<PipelineKey, u32>,
     surface_layout: wgpu::PipelineLayout,
     water_layout: wgpu::PipelineLayout,
     output_layout: wgpu::PipelineLayout,
@@ -332,11 +314,8 @@ impl Pipelines {
     /// Start compiling the fixed water, output and merged shadow pipelines in the
     /// background; they are created once compiled ([`Self::fixed_ready`]) while the
     /// page builds the arena, which no longer waits for them.
-    pub fn new(
-        device: &wgpu::Device,
-        layouts: &Layouts,
-        canvas_format: wgpu::TextureFormat,
-    ) -> Self {
+    pub fn new(gpu: &Gpu) -> Self {
+        let (device, layouts, canvas_format) = (&gpu.device, &*gpu.layouts, gpu.canvas_format);
         let surface_layout =
             pipeline_layout(device, "surface", &[&layouts.frame, &layouts.material]);
         let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
@@ -378,7 +357,6 @@ impl Pipelines {
             sources: HashMap::new(),
             pipelines: Vec::new(),
             index: HashMap::new(),
-            ranks: HashMap::new(),
             surface_layout,
             water_layout,
             output_layout,
@@ -390,23 +368,23 @@ impl Pipelines {
 
     /// Whether the fixed pipelines exist, creating them once their background compile
     /// has finished.
-    pub fn fixed_ready(&mut self, device: &wgpu::Device) -> bool {
+    pub fn fixed_ready(&mut self, gpu: &Gpu) -> bool {
         if self
             .fixed_jobs
             .as_ref()
             .is_some_and(|fixed| fixed.compile.done())
         {
-            self.create_fixed(device);
+            self.create_fixed(&gpu.device);
         }
         self.fixed.is_some()
     }
 
     /// Create the fixed pipelines now, compiling them synchronously if their
     /// background compile has not finished; returns whether that stalled.
-    pub fn ensure_fixed(&mut self, device: &wgpu::Device) -> bool {
-        let stalled = !self.fixed_ready(device);
+    pub fn ensure_fixed(&mut self, gpu: &Gpu) -> bool {
+        let stalled = !self.fixed_ready(gpu);
         if stalled {
-            self.create_fixed(device);
+            self.create_fixed(&gpu.device);
         }
         stalled
     }
@@ -446,13 +424,6 @@ impl Pipelines {
         self.index.get(key).copied()
     }
 
-    /// A number for `key`, the same for the page's lifetime and known before the
-    /// pipeline exists, by which opaque draws sort (`DrawState::pipeline`).
-    pub fn rank(&mut self, key: &PipelineKey) -> u32 {
-        let next = self.ranks.len() as u32;
-        *self.ranks.entry(*key).or_insert(next)
-    }
-
     pub fn get(&self, index: u32) -> &wgpu::RenderPipeline {
         &self.pipelines[index as usize]
     }
@@ -462,7 +433,7 @@ impl Pipelines {
     /// compile and returns `None`.
     pub fn request(
         &mut self,
-        device: &wgpu::Device,
+        gpu: &Gpu,
         effects: &EffectRegistry,
         key: &PipelineKey,
         create: bool,
@@ -471,7 +442,7 @@ impl Pipelines {
             return Some(index);
         }
         if self.precompiler.finished(key) {
-            return create.then(|| self.create(device, effects, key));
+            return create.then(|| self.create(&gpu.device, effects, key));
         }
         if !self.precompiler.queued(key) {
             let spec = surface_spec(key, effects);
@@ -484,15 +455,10 @@ impl Pipelines {
 
     /// The pipeline for a key, compiling it synchronously on first use (a stall on a
     /// cold shader cache; preparation uses [`Self::request`]).
-    pub fn ensure(
-        &mut self,
-        device: &wgpu::Device,
-        effects: &EffectRegistry,
-        key: &PipelineKey,
-    ) -> u32 {
+    pub fn ensure(&mut self, gpu: &Gpu, effects: &EffectRegistry, key: &PipelineKey) -> u32 {
         match self.find(key) {
             Some(index) => index,
-            None => self.create(device, effects, key),
+            None => self.create(&gpu.device, effects, key),
         }
     }
 

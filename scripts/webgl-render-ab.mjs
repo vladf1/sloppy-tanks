@@ -163,7 +163,10 @@ async function measure(build, scene) {
     window.sloppy.overview(overview);
     const canvas = document.querySelector("canvas");
     window.__gl = canvas.getContext("webgl2");
-    window.__time = performance.now();
+    // A fixed start far past the round's start: the first frame's delta clamps to the
+    // same catch-up in every build, and the same timestamps after it give every build
+    // the same simulation steps and interpolation (`Game::frame`'s accumulator).
+    window.__time = 1e6;
   }, camera === "overview");
   const glInfo = await page.evaluate(() => {
     const gl = window.__gl;
