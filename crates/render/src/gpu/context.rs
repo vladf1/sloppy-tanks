@@ -1,4 +1,4 @@
-//! Browser WebGPU (or, in the `webgl` build, WebGL2) device, canvas surface and the
+//! Browser WebGPU device, canvas surface and the
 //! size-dependent frame attachments.
 //! GPU validation errors and device loss are recorded and surfaced by the next
 //! `render` call; the page stops and shows them instead of drawing on.
@@ -31,17 +31,7 @@ impl ErrorSlot {
 
 /// The browser API this build draws with; startup errors name it, and the page
 /// tells an unavailable one from other failures by the prefix (`src/engine.ts`).
-pub const GRAPHICS_API: &str = if cfg!(feature = "webgl") {
-    "WebGL"
-} else {
-    "WebGPU"
-};
-
-const BACKENDS: wgpu::Backends = if cfg!(feature = "webgl") {
-    wgpu::Backends::GL
-} else {
-    wgpu::Backends::BROWSER_WEBGPU
-};
+use super::GRAPHICS_API;
 
 pub struct Context {
     pub surface: wgpu::Surface<'static>,
@@ -55,7 +45,7 @@ impl Context {
     pub async fn new(canvas: web_sys::HtmlCanvasElement) -> Result<Self, String> {
         let api = GRAPHICS_API;
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: BACKENDS,
+            backends: wgpu::Backends::BROWSER_WEBGPU,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let width = canvas.width().max(1);
@@ -65,19 +55,12 @@ impl Context {
                 .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
                 .map_err(|error| format!("{api} canvas unavailable: {error}"))
         };
-        // A WebGL adapter comes from the canvas's context, so that build creates the
-        // surface first. WebGPU claims the canvas only once it has a device: a page
-        // whose WebGPU device fails falls back to WebGL on the same canvas
-        // (`src/engine.ts`), and a canvas with a WebGPU context has no WebGL one.
-        let early_surface = if cfg!(feature = "webgl") {
-            Some(create_surface(canvas.clone())?)
-        } else {
-            None
-        };
+        // Claim the canvas only after obtaining a device, so a failed device
+        // leaves it available for the independently downloaded WebGL engine.
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: early_surface.as_ref(),
+                compatible_surface: None,
                 force_fallback_adapter: false,
                 ..Default::default()
             })
@@ -86,21 +69,12 @@ impl Context {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Sloppy Tanks renderer"),
-                // WebGL2 falls short of WebGPU's default limits (it has no storage
-                // buffers at all), so that build asks for what the adapter has.
-                required_limits: if cfg!(feature = "webgl") {
-                    adapter.limits()
-                } else {
-                    wgpu::Limits::default()
-                },
+                required_limits: wgpu::Limits::default(),
                 ..Default::default()
             })
             .await
             .map_err(|error| format!("{api} device unavailable: {error}"))?;
-        let surface = match early_surface {
-            Some(surface) => surface,
-            None => create_surface(canvas)?,
-        };
+        let surface = create_surface(canvas)?;
         let error = ErrorSlot::default();
         let lost = error.clone();
         device.set_device_lost_callback(move |reason, message| {
@@ -116,7 +90,7 @@ impl Context {
             Some(config) => config,
             // Every WebGPU canvas takes rgba8unorm, so WebGPU never fails here, once
             // it has claimed the canvas; the page could not fall back on it any more.
-            None if !cfg!(feature = "webgl") => wgpu::SurfaceConfiguration {
+            None => wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 color_space: Default::default(),
@@ -127,11 +101,6 @@ impl Context {
                 alpha_mode: wgpu::CompositeAlphaMode::Opaque,
                 view_formats: vec![],
             },
-            None => {
-                return Err(format!(
-                    "{api} canvas unavailable: no supported configuration"
-                ));
-            }
         };
         // The output pass encodes sRGB itself (Three's sRGBTransferOETF), so the
         // canvas keeps its preferred non-sRGB format.

@@ -9,12 +9,12 @@ superseded and remains in Git history.
 
 ## Layout
 
-| Crate           | Target        | Owns                                                                                                              |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `crates/core`   | native + wasm | `sim/` gameplay, `geometry/` meshes, `scene.rs` model contract, `models/`, `net/` protocol/replication/match host |
-| `crates/render` | wasm (wgpu)   | WebGPU renderer, WGSL, presentation and effects                                                                   |
-| `crates/web`    | wasm cdylib   | wasm-bindgen API for the page: `Game`, `NetGame`; `RenderLab`/`EffectsLab` with the `labs` feature                |
-| `crates/server` | native binary | HTTP/WebSocket server, rooms, limits, monitor, dashboard ([guide](../crates/server/README.md))                    |
+| Crate           | Target           | Owns                                                                                                              |
+| --------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `crates/core`   | native + wasm    | `sim/` gameplay, `geometry/` meshes, `scene.rs` model contract, `models/`, `net/` protocol/replication/match host |
+| `crates/render` | wasm (wgpu/glow) | Shared WebGPU/WebGL2 renderer, WGSL, presentation and effects                                                     |
+| `crates/web`    | wasm cdylib      | wasm-bindgen API for the page: `Game`, `NetGame`; `RenderLab`/`EffectsLab` with the `labs` feature                |
+| `crates/server` | native binary    | HTTP/WebSocket server, rooms, limits, monitor, dashboard ([guide](../crates/server/README.md))                    |
 
 The TypeScript left in `src/` is the page shell: menus, HUD, input gathering,
 touch controls, audio and the room page's DOM. The Node server (`server/`), the

@@ -64,19 +64,7 @@ opt-level = "s"
 [profile.release.package.sloppy-render]
 opt-level = "s"
 
-# Only the WebGL engine compiles wgpu-core, wgpu-hal and glow: the WebGPU engine uses
-# wgpu's browser backend without them, and the server and native tests have no wgpu.
-# There they run on every draw, tracking and validating commands and replaying them as
-# WebGL calls, so they get full speed optimization, which makes the WebGL engine about
-# 8% larger over gzip. naga only translates shaders when pipelines are created, and
-# `wgpu` is a thin layer over wgpu-core here (it is also in the WebGPU engine, which
-# stays as it was).
-[profile.release.package.wgpu-core]
-opt-level = 3
-
-[profile.release.package.wgpu-hal]
-opt-level = 3
-
+# Direct WebGL calls run on every draw; optimize glow for speed.
 [profile.release.package.glow]
 opt-level = 3
 

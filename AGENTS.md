@@ -28,7 +28,7 @@ One implementation of the game, in Rust, shared by the browser and the server:
   maps and levels on Rapier; `geometry/` and `models/` meshes and model trees
   that the simulation measures and the renderer draws; `net/` protocol,
   replication, match host and client connection state.
-- `crates/render` (Wasm): the `wgpu` WebGPU (and WebGL2 fallback) renderer, WGSL shaders
+- `crates/render` (Wasm): the shared WebGPU (`wgpu`) and direct WebGL2 (`glow`) renderer, WGSL shaders
   (`src/shaders/`, `src/presentation/shaders/`), presentation, effects, cameras
   and input commands. Pure CPU parts compile natively and carry its tests.
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
@@ -230,30 +230,36 @@ a slow run.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.
-- Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
-  fallback: a second engine build (`--no-default-features --features webgl`,
-  `src/generated/engine-webgl/`) on wgpu's GL backend. `src/engine.ts` loads it
-  only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
-  so a WebGPU page never downloads WebGL code. Both builds draw the same scene
-  with the same shaders and passes; WebGL2's gaps stay behind
-  `cfg(feature = "webgl")` in the renderer: instance records live in an RGBA32F
-  texture rather than a storage buffer (`gpu/instance_store.rs`, `instance_at` in
-  WGSL), pipelines compile synchronously (`precompile.rs` has no device), the
-  cached fixed-scenery shadow reaches the shadow map through a full-screen depth
-  pass rather than a texture copy (`gpu/depth_copy.rs`), bitmaps are flipped at
-  decode, the device is polled for callbacks, and opaque draws are grouped by
-  pipeline, mesh page, pool and material (`GROUP_DRAWS_BY_STATE`), so depth ties
-  can resolve differently than on WebGPU. WebGL may simplify an effect, but
-  must not give up a performance optimization such as a cache or batching: its
-  devices are the weaker ones. Keep both building:
-  `pnpm run rust:clippy` lints both and `scripts/webgl-check.mjs` plays the
-  fallback. Shaders are handwritten WGSL; custom model effects register
-  an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
-  still reject a pipeline: inspect console
-  and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
-  (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
-  MSAA counts between pipelines and attachments.
+- Rendering is WebGPU through `wgpu`, with direct WebGL2 through `glow` as a
+  separately downloaded fallback (`--no-default-features --features webgl`,
+  `src/generated/engine-webgl/`). `src/engine.ts` selects it when WebGPU has no
+  adapter or device; `?webgl` forces it. Keep the WebGL dependency graph free of
+  wgpu-core and wgpu-hal. Inspect it with `cargo tree --target
+wasm32-unknown-unknown -p sloppy-web --no-default-features --features webgl`.
+  Scene preparation, resources' CPU ownership, mesh placement, culling, draw lists,
+  batching and effects stay shared in `gpu/mod.rs` and `gpu/resources.rs`.
+  WebGPU submission lives in `gpu/webgpu.rs`; direct GL resources and submission
+  live in `gpu/gl/`. Do not introduce a general GPU API between them.
+- WGSL is authoritative for both backends. `glsl.rs` translates through Naga and
+  resolves the game's fixed resource slots from reflection; never hand-maintain
+  matching GLSL. WebGL instances use RGBA32F textures, Naga's first-instance
+  uniform handles surface draws, and merged casters offset their instance-rate
+  base attribute. Preserve absolute mesh indices and transparent ordering.
+- Every GL mutation must keep `gpu/gl/device.rs`'s state cache accurate, including
+  buffer/image uploads, generic uniform bindings changed by `bindBufferBase`,
+  depth write masks during clears, framebuffer resolves and deletion. Superseded
+  attachments and unowned objects are deleted. Naga flips clip Y and maps depth
+  from 0..1 to -1..1; GL culls clockwise fronts and the final blit flips Y back for
+  the canvas. Preserve linear HDR, sRGB textures, alpha, 4x MSAA and bitmap/ImageData
+  orientation. Inspect console and `Game.error()` as well as screenshots. Setup,
+  uploads, resize and warm-up check GL errors immediately; runtime polls every
+  30 submitted frames to avoid a synchronous browser-process round trip on every
+  draw. Context loss is checked immediately. Keep the polling cost in benchmarks.
+  `scripts/webgl-check.mjs` covers every map, fallback, still-frame parity, GL
+  object counts and Wasm memory through resets/resizes, and context loss.
+- Compute derivatives (`fwidth`, `dpdx`) before non-uniform branches, and match
+  sRGB formats and MSAA counts between pipelines and attachments. Native shader
+  and registry tests validate WGSL and the same GLSL translator used at runtime.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round

@@ -1,6 +1,6 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom `wgpu` renderer draws with handwritten WGSL on WebGPU (or WebGL2 where WebGPU is unavailable), and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
+A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a shared Rust renderer draws authoritative WGSL through `wgpu` on WebGPU and directly through `glow` on WebGL2, and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 
@@ -45,7 +45,7 @@ serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
 `src/generated/engine-webgl/`); it does not compile Rust,
 so run `pnpm run wasm` again after changing a crate.
 
-Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** shows the graphics API in use and rendering diagnostics.
+Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** shows the graphics API in use and rendering diagnostics. The WebGL build translates WGSL to GLSL ES with Naga and does not compile wgpu-core or wgpu-hal; it uses the same presentation, mesh pages, culling, batching and effects as WebGPU.
 
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 

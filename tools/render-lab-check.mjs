@@ -39,6 +39,16 @@ const within = (comparison, name) => {
   }
 };
 try {
+  await page.addInitScript(() => {
+    for (const name of ["instantiate", "instantiateStreaming"]) {
+      const original = WebAssembly[name];
+      WebAssembly[name] = async function (...args) {
+        const result = await original(...args);
+        window.labMemory = (result.instance ?? result).exports.memory;
+        return result;
+      };
+    }
+  });
   await page.goto(`${url}?freeze=${REFERENCE_TIME}`);
   await page.waitForFunction(() => ["ready", "error"].includes(document.body.dataset.state), null, {
     timeout: 90000,
@@ -96,6 +106,22 @@ try {
   }
   // Picking the look target through the canvas centre.
   report.pick = await page.evaluate(() => window.renderLab.pick(320, 200, 1.5));
+  // Rust-created ImageData must survive Wasm growth, and loaded materials must
+  // rebind when generated pixels are replaced. Use opaque colors on the leaf cards.
+  const generated = [];
+  for (const color of [
+    [255, 0, 0, 255],
+    [0, 255, 0, 255],
+  ]) {
+    await page.evaluate((rgba) => {
+      window.renderLab.setGeneratedTexture("lab-leaf", 1, 1, new Uint8Array(rgba));
+      if (!window.labMemory) throw new Error("Wasm memory probe unavailable");
+      window.labMemory.grow(1);
+      window.renderLab.compare();
+    }, color);
+    generated.push(await page.locator("#rust").screenshot());
+  }
+  assert.notDeepEqual(generated[0], generated[1], "replacing generated pixels changes the image");
   report.textureFailures = await page.evaluate(() => window.renderLab.textureFailures());
   report.gpuError = await page.evaluate(() => window.renderLab.error());
   // Its expected startup error is reported to the console; keep it out of `errors`.

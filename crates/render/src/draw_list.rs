@@ -26,6 +26,70 @@ pub struct InstanceRecord {
 pub const RECORD_TEXELS: u32 = (size_of::<InstanceRecord>() / 16) as u32;
 pub const RECORDS_PER_ROW: u32 = 256;
 
+/// Rectangular writes for an instance-texture range. At most the partial first
+/// row, full middle rows and partial last row; no padding or staging allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstanceTextureRegion {
+    pub column: u32,
+    pub row: u32,
+    pub width: u32,
+    pub rows: u32,
+}
+impl InstanceTextureRegion {
+    pub fn records(self) -> u32 {
+        self.width * self.rows
+    }
+}
+pub fn instance_texture_regions(
+    mut first: u32,
+    mut count: u32,
+) -> impl Iterator<Item = InstanceTextureRegion> {
+    std::iter::from_fn(move || {
+        if count == 0 {
+            return None;
+        }
+        let column = first % RECORDS_PER_ROW;
+        let (width, rows) = if column != 0 || count < RECORDS_PER_ROW {
+            ((RECORDS_PER_ROW - column).min(count), 1)
+        } else {
+            (RECORDS_PER_ROW, count / RECORDS_PER_ROW)
+        };
+        let region = InstanceTextureRegion {
+            column,
+            row: first / RECORDS_PER_ROW,
+            width,
+            rows,
+        };
+        first += region.records();
+        count -= region.records();
+        Some(region)
+    })
+}
+
+#[cfg(test)]
+mod instance_texture_tests {
+    use super::*;
+    #[test]
+    fn uploads_cover_exactly_the_requested_records_across_row_boundaries() {
+        for first in [0, 1, 255, 256, 257, 511] {
+            for count in [0, 1, 2, 255, 256, 257, 512, 1025] {
+                let regions: Vec<_> = instance_texture_regions(first, count).collect();
+                assert!(regions.len() <= 3);
+                let covered: Vec<_> = regions
+                    .iter()
+                    .flat_map(|r| {
+                        assert!(r.width > 0 && r.column + r.width <= RECORDS_PER_ROW);
+                        assert!(r.rows == 1 || (r.column == 0 && r.width == RECORDS_PER_ROW));
+                        let at = r.row * RECORDS_PER_ROW + r.column;
+                        at..at + r.records()
+                    })
+                    .collect();
+                assert_eq!(covered, (first..first + count).collect::<Vec<_>>());
+            }
+        }
+    }
+}
+
 impl InstanceRecord {
     pub fn new(world: &Mat4, tint: [f32; 4], data: [f32; 4]) -> Self {
         Self {

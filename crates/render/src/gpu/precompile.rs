@@ -13,11 +13,6 @@
 //! browser's pipeline and shader caches now answer at once. The mapping below mirrors
 //! wgpu 30's `backend/webgpu.rs`: a descriptor that differs only costs the stall
 //! again, since the pipeline drawn with is always wgpu's own.
-//!
-//! WebGL has no asynchronous pipeline creation, so the `webgl` build's precompiler
-//! has no device: every pipeline counts as compiled at once, and wgpu builds it when
-//! asked.
-
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
@@ -166,14 +161,8 @@ impl Background {
     }
 }
 
-/// The browser `GPUDevice` behind wgpu's, which the `webgl` build does not have.
+/// The browser `GPUDevice` behind wgpu.
 fn raw_device(device: &wgpu::Device) -> Option<RawDevice> {
-    #[cfg(feature = "webgl")]
-    {
-        let _ = device;
-        None
-    }
-    #[cfg(not(feature = "webgl"))]
     Some(
         device
             .as_webgpu()
@@ -195,7 +184,6 @@ struct Queue<K> {
 /// Compiles pipelines on the GPU process's background threads, at most
 /// [`CONCURRENCY`] at a time, keyed by `K`.
 pub struct Precompiler<K> {
-    /// `None` in the WebGL build.
     device: Option<RawDevice>,
     layouts: RefCell<HashMap<LayoutKind, JsValue>>,
     queue: Rc<RefCell<Queue<K>>>,

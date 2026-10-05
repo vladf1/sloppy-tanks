@@ -62,10 +62,7 @@ enum Pixels {
     Image(web_sys::ImageData),
 }
 
-/// RGBA8 rows (top first) as the `ImageData` a generated texture uploads from.
-pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<web_sys::ImageData, JsValue> {
-    web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(rgba), width, height)
-}
+pub use super::image::image_data;
 
 struct Loaded {
     key: TextureKey,
@@ -229,7 +226,7 @@ impl MipmapGenerator {
 
 /// WebGL cannot flip an `ImageBitmap` while uploading it, so that build decodes
 /// files the reference flips upside down instead (`fetch_bitmap`).
-const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
+const FLIP_BITMAPS_ON_DECODE: bool = false;
 
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
@@ -456,11 +453,6 @@ impl TextureStore {
                     entry.state = TextureState::Ready;
                 }
             }
-        }
-        // WebGL copies an external image when the queue next submits rather than
-        // at once, so flush the copies before releasing their bitmaps.
-        if cfg!(feature = "webgl") && !uploaded.is_empty() {
-            queue.submit([]);
         }
         for bitmap in uploaded {
             bitmap.close();

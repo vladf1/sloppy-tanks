@@ -175,6 +175,9 @@ async function createRust(): Promise<EffectsLab> {
   }
   while (lab.textures_pending() > 0) {
     await new Promise((resolve) => setTimeout(resolve, 16));
+    lab.prepare_step(0);
+    const error = lab.error();
+    if (error) throw new Error(error);
   }
   lab.warm_up();
   lab.reset();

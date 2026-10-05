@@ -8,10 +8,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::backend::{Buffer, Device, MaterialGroup, Queue, mesh_buffer, write_buffer};
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Effect, Material, TextureRef};
+#[cfg(not(feature = "webgl"))]
 use wgpu::util::DeviceExt;
 
 use crate::camera::Sphere;
@@ -26,135 +28,12 @@ use crate::model::MeshData;
 use crate::shader::MaterialFeatures;
 use crate::shadow_merge::ShadowGroup;
 
-/// Bind group layouts shared by every pipeline.
-pub struct Layouts {
-    pub frame: wgpu::BindGroupLayout,
-    pub material: wgpu::BindGroupLayout,
-    pub water: wgpu::BindGroupLayout,
-    pub output: wgpu::BindGroupLayout,
-}
-
-const fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
-    staged_texture_entry(binding, filterable, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_texture_entry(
-    binding: u32,
-    filterable: bool,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    }
-}
-
-const fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
-    staged_sampler_entry(binding, ty, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_sampler_entry(
-    binding: u32,
-    ty: wgpu::SamplerBindingType,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility,
-        ty: wgpu::BindingType::Sampler(ty),
-        count: None,
-    }
-}
-
-/// Secondary effect textures a material binds (`Material::extra_textures`).
+#[cfg(not(feature = "webgl"))]
+#[path = "layouts.rs"]
+mod layouts;
+#[cfg(not(feature = "webgl"))]
+pub use layouts::*;
 pub const EXTRA_TEXTURE_SLOTS: usize = 2;
-
-const fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-// The entries are data so the pipeline precompiler (`precompile.rs`) builds the
-// same layouts as wgpu.
-use wgpu::SamplerBindingType::{Comparison, Filtering};
-
-/// Frame uniforms, sun shadow map, reflection and the instance records.
-pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    wgpu::BindGroupLayoutEntry {
-        binding: 1,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Depth,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    },
-    sampler_entry(2, Comparison),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-    super::instance_store::INSTANCE_ENTRY,
-];
-
-/// A uniform block and two filtered textures (the water).
-pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    texture_entry(1, true),
-    sampler_entry(2, Filtering),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-];
-
-pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
-    &[texture_entry(0, false), uniform_entry(1)];
-
-/// Map, bump and emissive map for the surface; effect textures for any stage.
-pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    texture_entry(1, true),
-    sampler_entry(2, Filtering),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-    texture_entry(5, true),
-    sampler_entry(6, Filtering),
-    staged_texture_entry(7, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(8, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_texture_entry(9, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(10, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
-];
-
-impl Layouts {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let layout = |label, entries| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries,
-            })
-        };
-        Self {
-            frame: layout("frame", FRAME_ENTRIES),
-            material: layout("material", MATERIAL_ENTRIES),
-            water: layout("water", TEXTURED_ENTRIES),
-            output: layout("output", OUTPUT_ENTRIES),
-        }
-    }
-}
-
 pub struct GpuMesh {
     /// Where its vertices and absolute indices live in the mesh pages.
     pub range: MeshRange,
@@ -169,11 +48,11 @@ pub struct GpuMesh {
 /// A mesh page's buffers: its vertices or indices, and for a surface page with
 /// effect vec4s those, in the same vertex numbering. Draws bind them only through
 /// [`MeshStore::vertex_buffers`] and [`MeshStore::index_buffer`], which bind the
-/// written prefix: never `slice(..)` a page for a draw, or wgpu clears its unwritten
-/// tail first, on WebGL through a page-sized vector of zeros in the Wasm heap.
+/// written prefix: WebGPU must not clear an unwritten tail before drawing.
+/// WebGL uses the same page ranges and never stages a page-sized zero allocation.
 struct PageBuffers {
-    main: wgpu::Buffer,
-    extra: Option<wgpu::Buffer>,
+    main: Buffer,
+    extra: Option<Buffer>,
 }
 
 impl PageBuffers {
@@ -235,23 +114,13 @@ impl MeshStore {
     /// through the queue, never mapped at creation: the browser backend stages a
     /// mapped range in a Wasm-side copy of the whole buffer, and linear memory never
     /// shrinks.
-    fn create_page(&mut self, device: &wgpu::Device, page: u16) {
+    fn create_page(&mut self, device: &Device, page: u16) {
         let info = self.plan.page(page);
         let family = info.family;
         let capacity = u64::from(info.capacity());
-        let (label, usage) = match family {
-            PageFamily::Surface { .. } => ("mesh vertex page", wgpu::BufferUsages::VERTEX),
-            PageFamily::Shadow => ("shadow vertex page", wgpu::BufferUsages::VERTEX),
-            PageFamily::Index => ("mesh index page", wgpu::BufferUsages::INDEX),
-        };
-        let buffer = |label, stride: u64| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: capacity * stride,
-                usage: usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
+        let index = family == PageFamily::Index;
+        let buffer = |label, stride: u64| mesh_buffer(device, label, capacity * stride, index);
+        let label = "mesh page";
         let buffers = PageBuffers {
             main: buffer(label, family.stride()),
             extra: (family.extra_stride() > 0)
@@ -272,7 +141,7 @@ impl MeshStore {
     /// page [`reserve`](Self::reserve) created, or a general or own page now.
     fn place(
         &mut self,
-        device: &wgpu::Device,
+        device: &Device,
         family: PageFamily,
         count: u32,
         reserved: Option<Placement>,
@@ -292,7 +161,7 @@ impl MeshStore {
     /// their placements in order.
     pub fn reserve(
         &mut self,
-        device: &wgpu::Device,
+        device: &Device,
         owned: &[MeshData],
         shadow: &[ShadowGroup],
     ) -> Reservation {
@@ -336,8 +205,8 @@ impl MeshStore {
     #[allow(clippy::too_many_arguments)]
     fn upload(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &Device,
+        queue: &Queue,
         family: PageFamily,
         vertices: &[u8],
         extra: &[u8],
@@ -367,11 +236,12 @@ impl MeshStore {
         rebase_indices(indices, vertex.first);
         let page = self.page_buffers(vertex.page);
         let at = u64::from(vertex.first);
-        queue.write_buffer(&page.main, at * family.stride(), vertices);
+        write_buffer(queue, &page.main, at * family.stride(), vertices);
         if let Some(buffer) = &page.extra {
-            queue.write_buffer(buffer, at * family.extra_stride(), extra);
+            write_buffer(queue, buffer, at * family.extra_stride(), extra);
         }
-        queue.write_buffer(
+        write_buffer(
+            queue,
             &self.page_buffers(index.page).main,
             u64::from(index.first) * 4,
             bytemuck::cast_slice(indices),
@@ -391,8 +261,8 @@ impl MeshStore {
     /// never shrinks. Its indices are rebased a chunk at a time on the stack.
     fn upload_shared(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &Device,
+        queue: &Queue,
         mesh: &Mesh,
         attributes: &[&str],
     ) -> MeshRange {
@@ -419,13 +289,15 @@ impl MeshStore {
             let range = start..(start + UPLOAD_CHUNK_VERTICES).min(vertex_count as usize);
             let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range);
             let at = u64::from(vertex.first) + start as u64;
-            queue.write_buffer(
+            write_buffer(
+                queue,
                 &page.main,
                 at * family.stride(),
                 bytemuck::cast_slice(&vertices),
             );
             if let Some(extra) = &page.extra {
-                queue.write_buffer(
+                write_buffer(
+                    queue,
                     extra,
                     at * family.extra_stride(),
                     bytemuck::cast_slice(&extras),
@@ -443,7 +315,7 @@ impl MeshStore {
             &mut [0; UPLOAD_CHUNK_INDICES],
             |offset, chunk| {
                 let at = u64::from(index.first + offset) * 4;
-                queue.write_buffer(indices, at, bytemuck::cast_slice(chunk));
+                write_buffer(queue, indices, at, bytemuck::cast_slice(chunk));
             },
         );
         MeshRange {
@@ -462,8 +334,8 @@ impl MeshStore {
     /// registered it.
     pub fn shared(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &Device,
+        queue: &Queue,
         mesh: &Arc<Mesh>,
         attributes: &'static [&'static str],
     ) -> u32 {
@@ -487,8 +359,8 @@ impl MeshStore {
     /// one; release it with `release`. Its indices are rebased in place.
     pub fn owned(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &Device,
+        queue: &Queue,
         data: &mut MeshData,
         reserved: MeshPlacement,
     ) -> u32 {
@@ -518,8 +390,8 @@ impl MeshStore {
     /// place.
     pub fn shadow(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &Device,
+        queue: &Queue,
         group: &mut ShadowGroup,
         reserved: MeshPlacement,
     ) -> MeshRange {
@@ -568,6 +440,7 @@ impl MeshStore {
     /// it before the pass, and on WebGL an index page cannot be cleared on the GPU:
     /// wgpu-hal would upload a CPU vector of zeros as large as the page, and the Wasm
     /// heap would keep that size for good.
+    #[cfg(not(feature = "webgl"))]
     pub fn vertex_buffers(
         &self,
         page: u16,
@@ -586,9 +459,20 @@ impl MeshStore {
 
     /// An index page to bind: only its written prefix, as in
     /// [`vertex_buffers`](Self::vertex_buffers).
+    #[cfg(not(feature = "webgl"))]
     pub fn index_buffer(&self, page: u16) -> wgpu::BufferSlice<'_> {
         let written = u64::from(self.plan.page(page).written());
         self.page_buffers(page).main.slice(..written * 4)
+    }
+
+    #[cfg(feature = "webgl")]
+    pub fn vertex_buffers(&self, page: u16) -> (&Buffer, Option<&Buffer>) {
+        let buffers = self.page_buffers(page);
+        (&buffers.main, buffers.extra.as_ref())
+    }
+    #[cfg(feature = "webgl")]
+    pub fn index_buffer(&self, page: u16) -> &Buffer {
+        &self.page_buffers(page).main
     }
 
     pub fn get(&self, index: u32) -> &GpuMesh {
@@ -764,11 +648,9 @@ fn material_textures(material: &Material) -> impl Iterator<Item = &TextureRef> {
 
 pub struct GpuMaterial {
     pub material: Arc<Material>,
-    pub uniform: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    pub uniform: Buffer,
+    pub bind_group: MaterialGroup,
     pub effect: u16,
-    /// Built while a texture was still a placeholder.
-    waiting: bool,
     generation: u64,
     /// Live draw classes using this material.
     pub users: u32,
@@ -783,12 +665,13 @@ pub struct MaterialStore {
 }
 
 impl MaterialStore {
+    #[cfg(not(feature = "webgl"))]
     fn bind_group(
-        device: &wgpu::Device,
-        layouts: &Layouts,
+        device: &Device,
+        #[cfg(not(feature = "webgl"))] layouts: &Layouts,
         textures: &mut TextureStore,
         material: &Material,
-        uniform: &wgpu::Buffer,
+        uniform: &Buffer,
     ) -> (wgpu::BindGroup, bool) {
         // Texture slots in binding order: map, bump, emissive, then effect extras.
         let slots = [
@@ -831,11 +714,44 @@ impl MaterialStore {
         (bind_group, !ready)
     }
 
+    #[cfg(feature = "webgl")]
+    fn bind_group(
+        device: &Device,
+        textures: &mut TextureStore,
+        material: &Material,
+        uniform: &Buffer,
+    ) -> (MaterialGroup, bool) {
+        let slots = [
+            material.map.as_ref(),
+            material.bump_map.as_ref(),
+            material.emissive_map.as_ref(),
+            extra_texture(material, 0),
+            extra_texture(material, 1),
+        ];
+        let samplers = slots.map(|t| textures.sampler(device, t));
+        let mut ready = true;
+        let maps = slots.map(|t| match t {
+            Some(t) => {
+                let (view, loaded) = textures.view(t);
+                ready &= loaded;
+                view.clone()
+            }
+            None => textures.placeholder().clone(),
+        });
+        (
+            MaterialGroup {
+                uniform: uniform.clone(),
+                maps,
+                samplers,
+            },
+            !ready,
+        )
+    }
     /// The GPU material for an interned material, creating it on first use.
     pub fn get_or_create(
         &mut self,
-        device: &wgpu::Device,
-        layouts: &Layouts,
+        device: &Device,
+        #[cfg(not(feature = "webgl"))] layouts: &Layouts,
         textures: &mut TextureStore,
         effects: &EffectRegistry,
         material: &Arc<Material>,
@@ -859,18 +775,35 @@ impl MaterialStore {
                 0
             }),
         };
+        #[cfg(feature = "webgl")]
+        let uniform =
+            super::backend::uniform_buffer(device, "material", size_of::<MaterialUniform>() as u64);
+        // The direct backend writes immediately; WebGPU's helper submits through its queue.
+        #[cfg(feature = "webgl")]
+        super::backend::write_material_uniform(
+            device,
+            &uniform,
+            bytemuck::bytes_of(&MaterialUniform::of(material)),
+        );
+        #[cfg(not(feature = "webgl"))]
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("material uniform"),
             contents: bytemuck::bytes_of(&MaterialUniform::of(material)),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let (bind_group, waiting) = Self::bind_group(device, layouts, textures, material, &uniform);
+        let (bind_group, _) = Self::bind_group(
+            device,
+            #[cfg(not(feature = "webgl"))]
+            layouts,
+            textures,
+            material,
+            &uniform,
+        );
         let gpu = GpuMaterial {
             material: material.clone(),
             uniform,
             bind_group,
             effect,
-            waiting,
             generation: textures.generation,
             users: 0,
         };
@@ -891,16 +824,22 @@ impl MaterialStore {
     /// Rebind materials whose textures arrived since their bind group was built.
     pub fn refresh(
         &mut self,
-        device: &wgpu::Device,
-        layouts: &Layouts,
+        device: &Device,
+        #[cfg(not(feature = "webgl"))] layouts: &Layouts,
         textures: &mut TextureStore,
     ) {
         for gpu in self.slots.iter_mut().flatten() {
-            if gpu.waiting && gpu.generation != textures.generation {
-                let (bind_group, waiting) =
-                    Self::bind_group(device, layouts, textures, &gpu.material, &gpu.uniform);
+            // Generated images can replace an already loaded texture.
+            if gpu.generation != textures.generation {
+                let (bind_group, _) = Self::bind_group(
+                    device,
+                    #[cfg(not(feature = "webgl"))]
+                    layouts,
+                    textures,
+                    &gpu.material,
+                    &gpu.uniform,
+                );
                 gpu.bind_group = bind_group;
-                gpu.waiting = waiting;
                 gpu.generation = textures.generation;
             }
         }

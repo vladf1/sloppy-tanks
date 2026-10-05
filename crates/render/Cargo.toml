@@ -4,15 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Sloppy Tanks WebGPU (and WebGL2 fallback) renderer: wgpu with handwritten WGSL"
+description = "Sloppy Tanks renderer: WebGPU through wgpu, direct WebGL2 through glow, shared WGSL"
 
 [features]
 default = ["webgpu"]
-webgpu = ["wgpu/webgpu"]
-# The WebGL2 fallback: wgpu's GL backend, with the instance records in a texture
-# because WebGL2 has no storage buffers (`gpu/instance_store.rs`). Wins over
+webgpu = ["dep:wgpu", "wgpu/webgpu"]
+# Direct WebGL2, with instance records in a texture because WebGL2 has no
+# storage buffers (`gpu/gl/instance_store.rs`). Wins over
 # `webgpu` when both are enabled.
-webgl = ["wgpu/webgl"]
+webgl = ["dep:glow", "dep:naga"]
 
 [dependencies]
 sloppy-core.workspace = true
@@ -20,12 +20,17 @@ glam.workspace = true
 bytemuck.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu.workspace = true
+wgpu = { workspace = true, optional = true }
+glow = { version = "=0.17.0", optional = true }
+naga = { version = "=30.0.1", features = ["wgsl-in", "glsl-out"], optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = [
   "HtmlCanvasElement",
+  "WebGl2RenderingContext",
+  "WebGlContextEvent",
+  "EventTarget",
   "console",
   "Window",
   "Response",

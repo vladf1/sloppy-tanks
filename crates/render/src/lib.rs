@@ -1,15 +1,17 @@
-//! The WebGPU renderer. It uploads `sloppy_core::scene` models, draws them with
+//! The shared WebGPU and direct WebGL2 renderer. It uploads `sloppy_core::scene` models, draws them with
 //! handwritten WGSL, and never moves simulation state.
 //!
 //! Pure CPU parts (color management, cameras and picking, model preparation and
 //! batching, mesh page placement, draw-list building, shader assembly) compile
-//! natively and carry the unit tests. The `gpu` module is browser-only (`wgpu` on
-//! WebGPU, or on WebGL2 with the `webgl` feature).
+//! natively and carry the unit tests. The browser-only `gpu` module uses `wgpu`
+//! on WebGPU and `glow` directly with the `webgl` feature.
 
 pub mod camera;
 pub mod color;
 pub mod draw_list;
 pub mod effects;
+#[cfg(any(test, all(feature = "webgl", target_arch = "wasm32")))]
+mod glsl;
 pub mod material;
 pub mod mesh_pages;
 pub mod model;

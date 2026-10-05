@@ -25,7 +25,7 @@ pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
-/// The WebGL build's depth copy (`gpu/depth_copy.rs`).
+/// The direct WebGL build's cached shadow depth copy.
 pub const DEPTH_COPY_WGSL: &str = include_str!("shaders/depth_copy.wgsl");
 
 /// Where the vertex stage reads instance records (`gpu/instance_store.rs`): each
@@ -360,43 +360,26 @@ fn fixed_source(template: &str, source: InstanceSource) -> String {
 pub(crate) mod webgl_check {
     use super::*;
 
-    /// Translate every entry point as wgpu's WebGL2 backend does (GLSL ES 3.00).
+    /// Translate every entry point through the runtime's GLSL ES 3.00 translator.
     pub fn translate_for_webgl(label: &str, code: &str) {
-        use naga::back::glsl;
         let module = naga::front::wgsl::parse_str(code)
             .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
-        let info = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
-        let options = glsl::Options {
-            version: glsl::Version::Embedded {
-                version: 300,
-                is_webgl: true,
-            },
-            writer_flags: glsl::WriterFlags::ADJUST_COORDINATE_SPACE
-                | glsl::WriterFlags::FORCE_POINT_SIZE,
-            ..glsl::Options::default()
-        };
         for entry in &module.entry_points {
-            let pipeline = glsl::PipelineOptions {
-                shader_stage: entry.stage,
-                entry_point: entry.name.clone(),
-                multiview: None,
-            };
-            let mut out = String::new();
-            glsl::Writer::new(
-                &mut out,
-                &module,
-                &info,
-                &options,
-                &pipeline,
-                naga::proc::BoundsCheckPolicies::default(),
-            )
-            .and_then(|mut writer| writer.write())
-            .unwrap_or_else(|error| panic!("{label} {}: {error}", entry.name));
+            let stage = crate::glsl::translate(code, &entry.name, entry.stage)
+                .unwrap_or_else(|error| panic!("{label} {}: {error}", entry.name));
+            assert!(stage.source.starts_with("#version 300 es"));
+            for block in stage.blocks {
+                assert!(
+                    !block.name.is_empty() && block.slot < 2,
+                    "{label}: uniform block"
+                );
+            }
+            for texture in stage.textures {
+                assert!(
+                    !texture.name.is_empty() && texture.slot < 8,
+                    "{label}: texture binding"
+                );
+            }
         }
     }
 

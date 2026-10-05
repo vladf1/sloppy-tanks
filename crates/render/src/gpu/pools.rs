@@ -10,6 +10,7 @@
 //! and, when transparent, by the depth of the scene origin (Three sorted an
 //! InstancedMesh by its object position). Empty pools cost no draws.
 
+use super::{FrameGroup, write_buffer};
 use glam::Vec3;
 
 use super::instance_store::InstanceStore;
@@ -37,18 +38,19 @@ pub(super) struct PoolEntry {
     pub lifetime: Lifetime,
     pub records: InstanceStore,
     /// The frame bind group per view, with this pool's buffer as `instances`.
-    pub groups: Vec<wgpu::BindGroup>,
+    pub groups: Vec<FrameGroup>,
 }
 
 impl Renderer {
     /// Register a pool. Its pipelines join the prepare/warm-up set at once, so
     /// the first effect never compiles mid-round.
     pub fn add_pool(&mut self, desc: &PoolDesc, lifetime: Lifetime) -> PoolId {
-        let device = self.ctx.device.clone();
+        let device = self.gpu.ctx.device.clone();
         let material = self.interner.intern(&desc.material);
         let material = self.materials.get_or_create(
             &device,
-            &self.layouts,
+            #[cfg(not(feature = "webgl"))]
+            &self.gpu.layouts,
             &mut self.textures,
             &self.effects,
             &material,
@@ -56,7 +58,7 @@ impl Renderer {
         let attributes = self.effects.attributes(self.materials.get(material).effect);
         let mesh = self
             .meshes
-            .shared(&device, &self.ctx.queue, &desc.mesh, attributes);
+            .shared(&device, &self.gpu.ctx.queue, &desc.mesh, attributes);
         let capacity = desc.capacity.max(1);
         let records = InstanceStore::new(&device, desc.label, capacity);
         let groups = self.frame_groups(&records);
@@ -105,7 +107,7 @@ impl Renderer {
         // A pool buffer and its GPU buffer share one capacity.
         let capacity = entry.capacity as usize;
         entry.count = records.len().min(capacity) as u32;
-        let queue = &self.ctx.queue;
+        let queue = &self.gpu.ctx.queue;
         let store = &entry.records;
         records.take_dirty(|first, slice: &[InstanceRecord]| {
             let end = (first as usize + slice.len()).min(capacity);
@@ -123,7 +125,8 @@ impl Renderer {
     pub fn set_pool_params(&mut self, id: PoolId, params: [[f32; 4]; 4]) {
         if let Some(entry) = self.pools.get(id.index, id.generation) {
             let material = self.materials.get(entry.material);
-            self.ctx.queue.write_buffer(
+            write_buffer(
+                &self.gpu.ctx.queue,
                 &material.uniform,
                 super::resources::MATERIAL_PARAMS_OFFSET,
                 bytemuck::cast_slice(&params),
@@ -131,7 +134,7 @@ impl Renderer {
         }
     }
 
-    pub(super) fn frame_groups(&self, instances: &InstanceStore) -> Vec<wgpu::BindGroup> {
+    pub(super) fn frame_groups(&self, instances: &InstanceStore) -> Vec<FrameGroup> {
         (0..VIEW_COUNT)
             .map(|view| self.frame_group(view, instances))
             .collect()

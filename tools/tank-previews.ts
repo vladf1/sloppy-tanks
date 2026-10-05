@@ -137,6 +137,9 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
     }
     while (lab.textures_pending() > 0) {
       await new Promise((resolve) => setTimeout(resolve, 16));
+      lab.prepare_step(0);
+      const error = lab.error();
+      if (error) throw new Error(error);
     }
     const failures = lab.texture_failures();
     if (failures.length) throw new Error(`Textures failed: ${failures.join(", ")}`);

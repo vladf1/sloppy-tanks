@@ -25,7 +25,7 @@ const HEIGHT = 720;
 /** Software WebGL (SwiftShader, on machines without a GPU) takes minutes to compile
  * an arena's programs; hardware takes seconds. */
 const LOADING_TIMEOUT_MS = 300_000;
-const MAPS = ["village", "harbor", "quarry"];
+const MAPS = ["village", "harbor", "quarry", "stress-test", "superstress"];
 /** The still frame both engines draw: the quarry's floor and cliffs from above. */
 const STILL_POSE = [-40, 70, 40, 0, 0, 0];
 /** WebGL may look simpler, but not different: mean channel difference out of 255,
@@ -193,7 +193,7 @@ const onlyWebgl = (binaries) => binaries.every((name) => /^engine-webgl_bg[-.]/.
 try {
   for (const map of MAPS) {
     const { page, binaries } = await newPage();
-    await open(page, "?webgl");
+    await open(page, "?webgl&debug");
     await chooseMap(page, map);
     const result = { map, ...(await play(page, `webgl-${map}`)), binaries };
     console.log(JSON.stringify(result));
@@ -255,7 +255,169 @@ try {
   } else {
     console.log("No WebGPU adapter: the WebGL and WebGPU frames are not compared.");
   }
-  assert.deepEqual(errors, []);
+  // Independently count real GL objects through resets and attachment resizes.
+  // Renderer counters alone cannot detect a forgotten delete in a new backend.
+  {
+    const { page } = await newPage();
+    await freezeLoop(page);
+    await seedGame(page, 424242);
+    await page.addInitScript(() => {
+      const prototype = WebGL2RenderingContext.prototype;
+      const live = new Map();
+      window.glResources = () =>
+        Object.fromEntries([...live].map(([kind, objects]) => [kind, objects.size]));
+      for (const kind of [
+        "Buffer",
+        "Texture",
+        "Sampler",
+        "Framebuffer",
+        "Renderbuffer",
+        "Program",
+        "VertexArray",
+        "Sync",
+      ]) {
+        const objects = new Set();
+        live.set(kind, objects);
+        const createName = kind === "Sync" ? "fenceSync" : `create${kind}`;
+        const create = prototype[createName],
+          remove = prototype[`delete${kind}`];
+        prototype[createName] = function (...args) {
+          const object = create.apply(this, args);
+          if (object) objects.add(object);
+          return object;
+        };
+        prototype[`delete${kind}`] = function (object) {
+          objects.delete(object);
+          return remove.call(this, object);
+        };
+      }
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+        const context = getContext.call(this, type, ...args);
+        if (type === "webgl2" && context) window.testGl = context;
+        return context;
+      };
+      const instantiate = WebAssembly.instantiate;
+      WebAssembly.instantiate = async function (...args) {
+        const result = await instantiate(...args);
+        window.testMemory = (result.instance ?? result).exports.memory;
+        return result;
+      };
+      const streaming = WebAssembly.instantiateStreaming;
+      WebAssembly.instantiateStreaming = async function (...args) {
+        const result = await streaming(...args);
+        window.testMemory = result.instance.exports.memory;
+        return result;
+      };
+    });
+    const url = new URL(gameUrl);
+    url.search = "?webgl&debug&autoplay&map=superstress";
+    await page.goto(url.href);
+    await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    const resets = await page.evaluate(() => {
+      const samples = [];
+      for (let i = 0; i < 32; i++) {
+        window.sloppy.start();
+        window.engine.draw([-40, 70, 40, 0, 0, 0]);
+        samples.push({
+          objects: window.glResources(),
+          memory: window.testMemory?.buffer.byteLength,
+          error: window.sloppy.game.error() ?? null,
+          draws: window.engine.stats().drawCalls,
+        });
+      }
+      return samples;
+    });
+    console.log(JSON.stringify({ scrapYardResets: resets }));
+    assert.ok(
+      Number.isInteger(resets[0].memory) && resets[0].memory > 0,
+      "the probe observes actual Wasm memory",
+    );
+    // The allocator can reach a new high-water mark over the first few worlds.
+    // Keep the entire trace, then require a flat second half of a longer run.
+    for (const sample of resets.slice(16)) {
+      assert.deepEqual(sample.objects, resets[16].objects, "Scrap Yard resets release GL objects");
+      assert.equal(
+        sample.memory,
+        resets[16].memory,
+        "Scrap Yard resets stop growing Wasm memory after warm-up",
+      );
+      assert.equal(sample.error, null);
+      assert.equal(sample.draws, resets[16].draws);
+    }
+    const sizes = [];
+    for (const [width, height] of [
+      [1100, 700],
+      [800, 600],
+      [1280, 720],
+      [800, 600],
+      [1280, 720],
+    ]) {
+      await page.setViewportSize({ width, height });
+      sizes.push(
+        await page.evaluate(() => {
+          window.sloppy.exactResolution();
+          window.engine.draw([-40, 70, 40, 0, 0, 0]);
+          return { objects: window.glResources(), error: window.sloppy.game.error() ?? null };
+        }),
+      );
+    }
+    for (const size of sizes) {
+      assert.deepEqual(
+        size.objects,
+        resets.at(-1).objects,
+        "resizing releases superseded attachments",
+      );
+      assert.equal(size.error, null);
+    }
+    assert.equal(await page.evaluate(() => window.testGl.getError()), 0);
+    console.log(JSON.stringify({ sizes }));
+    assert.deepEqual(errors, []);
+    const contextLoss = await page.evaluate(async () => {
+      const extension = window.testGl.getExtension("WEBGL_lose_context");
+      if (!extension) return "unavailable";
+      extension.loseContext();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return window.sloppy.game.error();
+    });
+    if (contextLoss !== "unavailable") assert.match(contextLoss, /WebGL context lost/);
+    console.log(JSON.stringify({ contextLoss }));
+    await page.close();
+  }
+  // A GL command error during gameplay must reach Game.error() within the
+  // bounded runtime polling window, even when the simulation is paused.
+  {
+    const { page } = await newPage();
+    await freezeLoop(page);
+    const url = new URL(gameUrl);
+    url.search = "?webgl&autoplay";
+    await page.goto(url.href);
+    await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    const error = await page.evaluate(() => {
+      const gl = document.querySelector("canvas#game").getContext("webgl2");
+      gl.enable(0); // INVALID_ENUM, without changing any tracked state.
+      for (let i = 0; i < 32; i++) {
+        try {
+          window.engine.draw([-40, 70, 40, 0, 0, 0]);
+        } catch {
+          break;
+        }
+      }
+      return window.sloppy.game.error();
+    });
+    assert.match(error, /WebGL frame: GL error 0x0500/);
+    console.log(JSON.stringify({ runtimeError: error }));
+    await page.close();
+  }
+  assert.ok(
+    errors.every(
+      (error) =>
+        error.includes("WebGL context lost") ||
+        error.includes("WebGL frame: GL error 0x0500") ||
+        error.includes("WebGL: INVALID_ENUM: enable"),
+    ),
+    errors.join("\n"),
+  );
   console.log("PASS");
 } finally {
   await browser.close();
