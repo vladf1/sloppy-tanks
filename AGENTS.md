@@ -87,7 +87,11 @@ root postinstall also installs the isolated lint toolchain in `tools/lint/`.
 Packages come from pnpm's shared store, so a worktree install takes about a
 second and no extra disk. pnpm blocks dependency install scripts: a new
 dependency that needs one fails the install until `pnpm approve-builds <name>`
-records it under `allowBuilds` in `pnpm-workspace.yaml`.
+records it under `allowBuilds` in `pnpm-workspace.yaml`. Local Rust builds may run
+through [Kache](README.md#run), a user-level `rustc-wrapper` that restores compiler
+outputs across worktrees; keep it out of the repository's Cargo config and CI. If a
+build looks stale, rerun it with `KACHE_DISABLED=1` before debugging the code, and say
+whether Kache was on when reporting build times.
 
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests

@@ -26,6 +26,20 @@ export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 
 On other systems, `npm install -g pnpm` also works. `package.json` pins the exact pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
 
+Optionally, cache compiler outputs across checkouts with [Kache](https://github.com/kunobi-ninja/kache),
+which pays off when every change gets its own worktree. Set it as Cargo's wrapper in your
+user-level `~/.cargo/config.toml` (not the repository's, so CI stays plain):
+
+```sh
+cargo install kache --locked
+printf '[build]\nrustc-wrapper = "%s"\n' "$HOME/.cargo/bin/kache" >> ~/.cargo/config.toml
+```
+
+A new worktree then restores whatever another checkout already compiled instead of
+compiling it again, at the cost of about a second per rebuild within one tree.
+Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
+missed the cache.
+
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
 serves the release Wasm from `src/generated/engine/`; it does not compile Rust,
 so run `pnpm run wasm` again after changing a crate.
