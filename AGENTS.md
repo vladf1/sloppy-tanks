@@ -253,7 +253,8 @@ a slow run.
   opaque draws are grouped by pipeline, material, mesh page and pool
   (`GROUP_DRAWS_BY_STATE`), so depth ties can resolve differently than on WebGPU.
   A draw binds only the state that differs from the draw before it, and no
-  material when its program reads none.
+  material when its program reads none. `getError` waits for the GPU process, so
+  it runs every few seconds, before a frame's draws.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the

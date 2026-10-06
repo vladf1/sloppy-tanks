@@ -119,17 +119,17 @@ pub struct Canvas {
 
 /// What `getContext("webgl2")` asks for. The default framebuffer only ever receives
 /// the output pass's full-screen triangle: no depth or stencil, opaque like the
-/// WebGPU canvas, and no multisampling (the scene resolves its own).
+/// WebGPU canvas, and no multisampling (the scene resolves its own). Like the WebGPU
+/// adapter request, it asks for the faster GPU of a machine with two.
 fn context_options() -> js_sys::Object {
     let options = js_sys::Object::new();
-    for (name, value) in [
-        ("antialias", false),
-        ("depth", false),
-        ("stencil", false),
-        ("alpha", false),
-    ] {
-        js_sys::Reflect::set(&options, &name.into(), &value.into()).expect("plain object property");
+    let set = |name: &str, value: wasm_bindgen::JsValue| {
+        js_sys::Reflect::set(&options, &name.into(), &value).expect("plain object property");
+    };
+    for name in ["antialias", "depth", "stencil", "alpha"] {
+        set(name, false.into());
     }
+    set("powerPreference", "high-performance".into());
     options
 }
 

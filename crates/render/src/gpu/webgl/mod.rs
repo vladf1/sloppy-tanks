@@ -379,14 +379,16 @@ impl Frame {
         scene: &Scene,
         stats: &mut RenderStats,
     ) -> Result<(), String> {
-        self.draw_scene(gpu, scene, stats);
-        gpu.bind_framebuffer(None);
-        gpu.viewport(self.width, self.height);
-        self.draw_output(gpu, scene, stats);
+        // Before the frame's draws, so the wait covers the earlier frames and this
+        // one's uploads, not the thousands of calls drawing it.
         self.frames += 1;
         if self.frames.is_multiple_of(ERROR_CHECK_FRAMES) {
             gpu.check_error("drawing");
         }
+        self.draw_scene(gpu, scene, stats);
+        gpu.bind_framebuffer(None);
+        gpu.viewport(self.width, self.height);
+        self.draw_output(gpu, scene, stats);
         Ok(())
     }
 
