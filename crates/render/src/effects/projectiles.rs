@@ -430,7 +430,7 @@ mod tests {
         let mut piercing = shot(1, Weapon::Piercing, Team::Blue, 3.0, -4.0);
         piercing.visual_y = Some(1.4);
         visuals.update(&[piercing], 0.0, 1.0);
-        let world = Mat4::from_cols_array(&visuals.batch(Weapon::Piercing).body.records()[0].world);
+        let world = visuals.batch(Weapon::Piercing).body.records()[0].world();
         let (_, rotation, position) = world.to_scale_rotation_translation();
         assert!(
             position.distance(Vec3::new(3.0, 1.4, -4.0)) < 1e-6,
@@ -441,7 +441,7 @@ mod tests {
         assert!((forward.x.atan2(forward.z) - expected).abs() < 1e-6);
         // Between ticks the shell sits back along its flight, level with the tanks.
         visuals.update(&[piercing], 0.0, 0.5);
-        let world = Mat4::from_cols_array(&visuals.batch(Weapon::Piercing).body.records()[0].world);
+        let world = visuals.batch(Weapon::Piercing).body.records()[0].world();
         let back = world.w_axis.truncate();
         let expected = Vec3::new(
             (3.0 - 12.0 * 0.5 * STEP) as f32,
@@ -481,10 +481,11 @@ mod tests {
                 .flatten()
             {
                 assert!(
-                    layer
-                        .records()
+                    layer.records().iter().all(|r| r
+                        .world_rows
+                        .as_flattened()
                         .iter()
-                        .all(|r| r.world.iter().all(|v| v.is_finite()))
+                        .all(|v| v.is_finite()))
                 );
             }
         }

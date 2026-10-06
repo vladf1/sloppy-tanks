@@ -454,13 +454,9 @@ mod tests {
         assert_eq!(particles.particles.len(), MAX_PARTICLES);
         particles.update(1.0 / 60.0, 1.0);
         assert!(particles.records.len() <= MAX_PARTICLES);
-        assert!(
-            particles
-                .records
-                .records()
-                .iter()
-                .all(|r| r.world.iter().all(|v| v.is_finite()) && r.world[13] >= 0.1)
-        );
+        assert!(particles.records.records().iter().all(|r| {
+            r.world_rows.as_flattened().iter().all(|v| v.is_finite()) && r.translation().y >= 0.1
+        }));
         for _ in 0..120 {
             particles.update(1.0 / 60.0, 1.0);
         }

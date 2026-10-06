@@ -526,8 +526,10 @@ struct MergedDraw {
 /// Shadow merge cells for static scenery, in metres.
 const SHADOW_MERGE_CELL: f32 = 60.0;
 
+/// The record of a hidden part among a model's merged shadow slots: it moves every
+/// vertex to the world origin, so the part's triangles have no area.
 const ZERO_RECORD: InstanceRecord = InstanceRecord {
-    world: [0.0; 16],
+    world_rows: [[0.0; 4]; 3],
     tint: [0.0; 4],
     data: [0.0; 4],
 };

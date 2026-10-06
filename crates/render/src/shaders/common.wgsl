@@ -49,6 +49,17 @@ struct Instance {
     data: vec4f,
 }
 
+// An instance as stored (`InstanceRecord` in draw_list.rs): the first three rows of
+// its affine world transform, whose last row is always 0, 0, 0, 1, then tint and
+// data. `instance_at` reads one and expands it.
+fn expand_instance(row0: vec4f, row1: vec4f, row2: vec4f, tint: vec4f, data: vec4f) -> Instance {
+    var instance: Instance;
+    instance.world = transpose(mat4x4f(row0, row1, row2, vec4f(0.0, 0.0, 0.0, 1.0)));
+    instance.tint = tint;
+    instance.data = data;
+    return instance;
+}
+
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;

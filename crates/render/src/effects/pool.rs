@@ -207,7 +207,7 @@ mod tests {
         assert!(pool.dirty().is_empty());
         pool.swap_remove(1);
         assert_eq!(
-            pool.records()[1].world[12],
+            pool.records()[1].translation().x,
             3.0,
             "the last record fills the hole"
         );
