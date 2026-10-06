@@ -17,6 +17,7 @@ use glow::HasContext;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 
+use crate::gpu::SAMPLE_COUNT;
 use crate::gpu::context::{ErrorSlot, GRAPHICS_API};
 pub use crate::shader::glsl::{block, unit};
 
@@ -93,7 +94,10 @@ pub struct Gl {
     pub error: ErrorSlot,
     /// The largest texture and renderbuffer edge.
     pub max_size: u32,
-    pub anisotropy: bool,
+    /// The most anisotropy a sampler may ask for; 1 without the extension.
+    pub max_anisotropy: f32,
+    /// MSAA samples of the HDR targets (`sample_count`).
+    pub samples: u32,
     /// `KHR_parallel_shader_compile`: programs link in the background.
     pub parallel_compile: bool,
     /// The context-loss listener, removed on drop.
@@ -145,11 +149,19 @@ impl Gpu {
             .map_err(|_| unavailable("not a WebGL2 context"))?;
         let gl = glow::Context::from_webgl2_context(raw.clone());
         let extensions = gl.supported_extensions();
-        // The HDR targets are RGBA16F renderbuffers and textures drawn into.
-        if !extensions.contains("EXT_color_buffer_float") {
-            return Err(unavailable("EXT_color_buffer_float is missing"));
+        // The HDR targets are RGBA16F renderbuffers and textures drawn into, which
+        // either extension makes renderable (glow enables every extension offered).
+        if !extensions.contains("EXT_color_buffer_float")
+            && !extensions.contains("EXT_color_buffer_half_float")
+        {
+            return Err(unavailable("RGBA16F targets are not renderable"));
         }
-        let anisotropy = extensions.contains("EXT_texture_filter_anisotropic");
+        let max_anisotropy = if extensions.contains("EXT_texture_filter_anisotropic") {
+            unsafe { gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) }.max(1.0)
+        } else {
+            1.0
+        };
+        let samples = sample_count(&raw);
         let parallel_compile = extensions.contains("KHR_parallel_shader_compile");
         let error = ErrorSlot::default();
         let lost = error.clone();
@@ -191,12 +203,32 @@ impl Gpu {
             state: RefCell::new(state),
             error,
             max_size: max_texture.min(max_renderbuffer).max(1) as u32,
-            anisotropy,
+            max_anisotropy,
+            samples,
             parallel_compile,
             lost: on_lost,
         };
         Ok((Self(Rc::new(gl)), Canvas { width, height }))
     }
+}
+
+/// The most MSAA samples, up to WebGPU's `SAMPLE_COUNT`, that both HDR target
+/// formats take: a float format need not take as many as `MAX_SAMPLES`. 0 (no MSAA)
+/// where they share no count.
+fn sample_count(raw: &web_sys::WebGl2RenderingContext) -> u32 {
+    // WebGL answers `SAMPLES` with the whole list (it has no `NUM_SAMPLE_COUNTS`).
+    let counts = |format| {
+        raw.get_internalformat_parameter(glow::RENDERBUFFER, format, glow::SAMPLES)
+            .ok()
+            .and_then(|list| list.dyn_into::<js_sys::Int32Array>().ok())
+            .map_or_else(Vec::new, |list| list.to_vec())
+    };
+    let depth = counts(glow::DEPTH_COMPONENT32F);
+    counts(glow::RGBA16F)
+        .into_iter()
+        .filter(|&count| count as u32 <= SAMPLE_COUNT && depth.contains(&count))
+        .max()
+        .map_or(0, |count| count as u32)
 }
 
 /// Set the context to the cache's first record, whatever earlier users of the canvas

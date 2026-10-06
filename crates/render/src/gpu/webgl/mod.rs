@@ -22,7 +22,7 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use glow::HasContext;
 
-use super::{FrameUniform, MergedDraw, RenderStats, SAMPLE_COUNT, Scene, WaterUniform, lut};
+use super::{FrameUniform, MergedDraw, RenderStats, Scene, WaterUniform, lut};
 use crate::draw_list::{Draw, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
@@ -67,7 +67,7 @@ impl ColorTarget {
             gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
             gl.renderbuffer_storage_multisample(
                 glow::RENDERBUFFER,
-                SAMPLE_COUNT as i32,
+                gpu.samples as i32,
                 format,
                 width as i32,
                 height as i32,

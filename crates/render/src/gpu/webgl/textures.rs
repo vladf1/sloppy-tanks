@@ -263,12 +263,9 @@ impl Uploader {
             ] {
                 gl.sampler_parameter_i32(sampler, name, value as i32);
             }
-            if key.anisotropy > 1 && gpu.anisotropy {
-                gl.sampler_parameter_f32(
-                    sampler,
-                    glow::TEXTURE_MAX_ANISOTROPY_EXT,
-                    f32::from(key.anisotropy),
-                );
+            let anisotropy = f32::from(key.anisotropy).min(gpu.max_anisotropy);
+            if anisotropy > 1.0 {
+                gl.sampler_parameter_f32(sampler, glow::TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
             }
             sampler
         }

@@ -88,7 +88,8 @@ use pools::PoolEntry;
 use resources::{MaterialStore, MeshStore};
 use textures::TextureStore;
 
-/// MSAA samples of the main view and the water reflection.
+/// MSAA samples of the main view and the water reflection. WebGL takes the most up
+/// to this that its float targets support (`webgl/context.rs` `sample_count`).
 pub const SAMPLE_COUNT: u32 = 4;
 
 /// Bytes a multisampled HDR target of this size holds: MSAA color and depth, plus the
