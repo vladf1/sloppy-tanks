@@ -81,7 +81,8 @@ use crate::model::{
 use crate::reflection_cull::WaterFootprint;
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
-    MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
+    MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, merged_draw_order,
+    shadow_merge_kind,
 };
 use crate::target_memory::target_bytes;
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
@@ -445,6 +446,9 @@ struct PartEntry {
     local: Mat4,
     class: u32,
     faded_class: Option<u32>,
+    /// Whether `class` draws blended (the faded class always does), kept here so
+    /// building the draw lists reads no class.
+    transparent: bool,
     cast_shadow: bool,
     render_order: i32,
     frustum_culled: bool,
@@ -493,13 +497,31 @@ enum MergedBase {
 
 #[derive(Clone, Copy)]
 struct MergedItem {
-    pipeline: usize,
-    /// The caster's mesh pages, so draws from one page go together.
-    vertex_page: u16,
-    index_page: u16,
+    /// Its place in draw order, from its pipeline, the caster's mesh pages, model
+    /// and group (`merged_draw_order`).
+    order: u128,
     model: u32,
     group: u32,
     base: MergedBase,
+}
+
+impl MergedItem {
+    fn new(mesh: &ShadowMesh, model: u32, group: usize, base: MergedBase) -> Self {
+        let group = group as u32;
+        Self {
+            // A handful of merged pipelines (`shadow_merged_index`).
+            order: merged_draw_order(
+                mesh.pipeline as u32,
+                mesh.range.vertex_page,
+                mesh.range.index_page,
+                model,
+                group,
+            ),
+            model,
+            group,
+            base,
+        }
+    }
 }
 
 /// One merged shadow draw: instances `first..first + count` of the bases buffer.
@@ -1129,6 +1151,9 @@ impl Renderer {
                 local: part.local,
                 class,
                 faded_class,
+                transparent: self.classes[class as usize]
+                    .as_ref()
+                    .is_some_and(|class| class.transparent),
                 cast_shadow: part.cast_shadow,
                 render_order: part.render_order,
                 frustum_culled: part.frustum_culled,
@@ -1923,7 +1948,6 @@ impl Renderer {
         let Self {
             instances,
             models,
-            classes,
             builder,
             joints,
             joint_visible,
@@ -1969,31 +1993,40 @@ impl Renderer {
                 if !joint_visible[part.node] {
                     continue;
                 }
-                let class_index = match (faded, part.faded_class) {
-                    (true, Some(faded)) => faded,
-                    _ => part.class,
+                let (class_index, transparent) = match (faded, part.faded_class) {
+                    (true, Some(faded)) => (faded, true),
+                    _ => (part.class, part.transparent),
                 };
-                let transparent = classes[class_index as usize]
-                    .as_ref()
-                    .is_some_and(|c| c.transparent);
-                let transform = joints[part.node] * part.local;
+                // The views the part may enter before its bounds are culled, decided
+                // once rather than per instance of an instanced part.
+                let candidate: [bool; VIEW_COUNT] = std::array::from_fn(|view| {
+                    culls[view].active
+                        && match view {
+                            SHADOW_VIEW => {
+                                part.cast_shadow
+                                    && !(merged && part.merged_shadow)
+                                    && !(*cache_static_shadow
+                                        && model.scenery
+                                        && part.fixed_shadow
+                                        && !faded)
+                            }
+                            REFLECTION_VIEW => instance.reflected,
+                            _ => true,
+                        }
+                });
                 let in_view = |view: usize, sphere: &Sphere| -> bool {
-                    let cull = &culls[view];
-                    cull.active
-                        && (view != SHADOW_VIEW
-                            || (part.cast_shadow && !(merged && part.merged_shadow)))
-                        && !(view == SHADOW_VIEW
-                            && *cache_static_shadow
-                            && model.scenery
-                            && part.fixed_shadow
-                            && !faded)
-                        && (view != REFLECTION_VIEW || instance.reflected)
+                    candidate[view]
                         && (!part.frustum_culled
-                            || (cull.frustum.intersects_sphere(sphere)
+                            || (culls[view].frustum.intersects_sphere(sphere)
                                 && (view != SHADOW_VIEW || shadow_reach.reaches(sphere))))
                 };
+                // Only blended draws sort by depth; opaque draws ignore it.
                 let depth = |view: usize, sphere: &Sphere| {
-                    (sphere.center - culls[view].origin).dot(culls[view].forward)
+                    if transparent && view != SHADOW_VIEW {
+                        (sphere.center - culls[view].origin).dot(culls[view].forward)
+                    } else {
+                        0.0
+                    }
                 };
                 if let Some(Some(range)) = instance.static_ranges.get(part_index) {
                     if *cache_static_shadow
@@ -2028,6 +2061,7 @@ impl Renderer {
                     }
                     continue;
                 }
+                let transform = joints[part.node] * part.local;
                 let mut emit = |world: Mat4, color: [f32; 3], data: [f32; 4]| {
                     let sphere = part.bounds.transformed(&world);
                     let mut record = None;
@@ -2081,14 +2115,12 @@ impl Renderer {
                         if shadow.intersects_sphere(&mesh.bounds)
                             && (*cache_static_shadow || shadow_reach.reaches(&mesh.bounds))
                         {
-                            merged_items.push(MergedItem {
-                                pipeline: mesh.pipeline,
-                                vertex_page: mesh.range.vertex_page,
-                                index_page: mesh.range.index_page,
-                                model: instance.model,
-                                group: group as u32,
-                                base: MergedBase::Static(0),
-                            });
+                            merged_items.push(MergedItem::new(
+                                mesh,
+                                instance.model,
+                                group,
+                                MergedBase::Static(0),
+                            ));
                         }
                     }
                 } else {
@@ -2112,14 +2144,12 @@ impl Renderer {
                                 && shadow_reach.reaches(&sphere) =>
                         {
                             for (group, mesh) in model.shadow.iter().enumerate() {
-                                merged_items.push(MergedItem {
-                                    pipeline: mesh.pipeline,
-                                    vertex_page: mesh.range.vertex_page,
-                                    index_page: mesh.range.index_page,
-                                    model: instance.model,
-                                    group: group as u32,
-                                    base: MergedBase::Dynamic(first as u32),
-                                });
+                                merged_items.push(MergedItem::new(
+                                    mesh,
+                                    instance.model,
+                                    group,
+                                    MergedBase::Dynamic(first as u32),
+                                ));
                             }
                         }
                         _ => merged_records.truncate(first),
@@ -2153,15 +2183,7 @@ impl Renderer {
     fn finish_merged(&mut self, dynamic: u32) {
         // Depth-only casters: order changes nothing. A group's pages follow from its
         // model and group, so each group's items stay together.
-        self.merged_items.sort_unstable_by_key(|item| {
-            (
-                item.pipeline,
-                item.vertex_page,
-                item.index_page,
-                item.model,
-                item.group,
-            )
-        });
+        self.merged_items.sort_unstable_by_key(|item| item.order);
         self.shadow_bases.clear();
         self.merged_draws.clear();
         for item in &self.merged_items {
