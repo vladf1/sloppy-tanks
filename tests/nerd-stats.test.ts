@@ -180,7 +180,7 @@ function fixture(network = false) {
   assert.ok(button);
   assert.ok(container);
   assert.equal(button.type, "button");
-  assert.equal(button.textContent, "Stats for nerds");
+  assert.equal(button.textContent, "nerd stats");
   assert.equal(button.attributes.get("aria-expanded"), "false");
   assert.equal(button.attributes.get("aria-controls"), container.id);
   assert.equal(button.attributes.get("aria-keyshortcuts"), "N");

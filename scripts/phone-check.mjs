@@ -59,7 +59,16 @@ try {
   );
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   await expectVisible(
-    [".touch-drive", "#pause", "#view-mode", ".scoreboard", "#score0", "#time", "#score1"],
+    [
+      ".touch-drive",
+      "#pause",
+      "#view-mode",
+      ".scoreboard",
+      "#score0",
+      "#time",
+      "#score1",
+      "#nerd-stats",
+    ],
     [
       ".touch-aim",
       ".touch-fire",
@@ -70,7 +79,6 @@ try {
       ".brand",
       "#settings-open",
       "#zoom-in",
-      "#nerd-stats",
     ],
   );
 

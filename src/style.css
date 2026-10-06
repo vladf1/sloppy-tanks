@@ -2161,9 +2161,21 @@ html.phone,
 }
 .phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit),
 .phone .hud-actions > :not(#pause, #view-mode),
-.phone #cockpit .aim-hint,
-.phone #nerd-stats {
+.phone #cockpit .aim-hint {
   display: none;
+}
+/* Phones get a tiny "nerds" link in the corner the touch controls leave free. */
+.phone #nerd-stats {
+  right: max(8px, env(safe-area-inset-right));
+  bottom: max(4px, env(safe-area-inset-bottom));
+}
+.phone #nerd-stats button {
+  padding: 4px;
+  font-size: 0;
+}
+.phone #nerd-stats button::after {
+  content: "nerds";
+  font-size: 10px;
 }
 /* Pause and results on a phone: the title (and score), then the two actions. */
 .phone .menu.compact {

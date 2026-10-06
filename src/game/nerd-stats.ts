@@ -153,7 +153,7 @@ export class NerdStats {
     this.button.setAttribute("aria-expanded", "false");
     this.button.setAttribute("aria-controls", "nerd-stats-details");
     this.button.setAttribute("aria-keyshortcuts", "N");
-    this.button.textContent = "Stats for nerds";
+    this.button.textContent = "nerd stats";
     this.details = document.createElement("div");
     this.details.id = "nerd-stats-details";
     this.details.hidden = true;
