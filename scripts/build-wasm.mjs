@@ -25,7 +25,7 @@
 // build never replaces the production engine that the game, `pnpm run build` and the dev
 // server load.
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
 
@@ -92,6 +92,12 @@ const engines = labs
         outName: "engine-webgl",
       },
     ];
+// Cargo creates a missing target directory under a temporary name and renames it into
+// place, so on a fresh checkout the outer build could replace `target/` while the
+// inner one works in it. Both exist before either build starts.
+for (const { targetDir } of engines) {
+  await mkdir(fileURLToPath(new URL(`../${targetDir}`, import.meta.url)), { recursive: true });
+}
 const results = await Promise.allSettled(engines.map(buildEngine));
 const failure = results.find((result) => result.status === "rejected");
 if (failure) {
