@@ -534,6 +534,8 @@ async function main() {
     stats: () => JSON.parse(rust.stats()),
     error: () => rust.error() ?? null,
     textureFailures: () => rust.texture_failures(),
+    setGeneratedTexture: (name: string, width: number, height: number, rgba: Uint8Array) =>
+      rust.set_generated_texture(name, width, height, rgba),
     /** Reload the scene as a new round: round resources are released first. */
     reload() {
       rust.load_scene(JSON.stringify(SCENE));

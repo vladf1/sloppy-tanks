@@ -542,8 +542,7 @@ pub struct GpuMaterial {
     /// Its uniform and textures as the backend binds them.
     pub binding: MaterialBinding,
     pub effect: u16,
-    /// Bound while a texture was still a placeholder.
-    waiting: bool,
+    /// The texture store's generation it was bound at.
     generation: u64,
     /// Live draw classes using this material.
     pub users: u32,
@@ -558,15 +557,12 @@ pub struct MaterialStore {
 }
 
 /// A material's textures in binding order (map, bump, emissive, then effect extras),
-/// with their samplers, and whether every one has loaded.
+/// with their samplers; the placeholder stands in for one still loading.
 fn bound_textures<'a>(
     gpu: &Gpu,
     textures: &'a mut TextureStore,
     material: &Material,
-) -> (
-    [(&'a super::backend::TextureView, super::backend::Sampler); 3 + EXTRA_TEXTURE_SLOTS],
-    bool,
-) {
+) -> [(&'a super::backend::TextureView, super::backend::Sampler); 3 + EXTRA_TEXTURE_SLOTS] {
     let slots = [
         material.map.as_ref(),
         material.bump_map.as_ref(),
@@ -576,20 +572,12 @@ fn bound_textures<'a>(
     ];
     let samplers = slots.map(|texture| textures.sampler(gpu, texture));
     let textures = &*textures;
-    let mut ready = true;
     let views = slots.map(|texture| match texture {
-        Some(texture) => {
-            let (view, loaded) = textures.view(texture);
-            ready &= loaded;
-            view
-        }
+        Some(texture) => textures.view(texture).0,
         None => textures.placeholder(),
     });
     let mut samplers = samplers.into_iter();
-    (
-        views.map(|view| (view, samplers.next().expect("one sampler per slot"))),
-        ready,
-    )
+    views.map(|view| (view, samplers.next().expect("one sampler per slot")))
 }
 
 impl MaterialStore {
@@ -621,12 +609,11 @@ impl MaterialStore {
             }),
         };
         let generation = textures.generation;
-        let (bound, ready) = bound_textures(gpu, textures, material);
+        let bound = bound_textures(gpu, textures, material);
         let entry = GpuMaterial {
             material: material.clone(),
             binding: MaterialBinding::new(gpu, &MaterialUniform::of(material), bound),
             effect,
-            waiting: !ready,
             generation,
             users: 0,
         };
@@ -644,14 +631,15 @@ impl MaterialStore {
         index
     }
 
-    /// Rebind materials whose textures arrived since they were bound.
+    /// Rebind materials whose textures arrived, or were replaced, since they were
+    /// bound: a replaced texture (a generated image supplied again) destroys the old
+    /// one, which an already loaded material still names.
     pub fn refresh(&mut self, gpu: &Gpu, textures: &mut TextureStore) {
         for entry in self.slots.iter_mut().flatten() {
-            if entry.waiting && entry.generation != textures.generation {
+            if entry.generation != textures.generation {
                 let generation = textures.generation;
-                let (bound, ready) = bound_textures(gpu, textures, &entry.material);
+                let bound = bound_textures(gpu, textures, &entry.material);
                 entry.binding.rebind(gpu, bound);
-                entry.waiting = !ready;
                 entry.generation = generation;
             }
         }

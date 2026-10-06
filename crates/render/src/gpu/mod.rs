@@ -646,7 +646,7 @@ struct Water {
     normals: TextureRef,
     /// Its uniform, reflection target and bindings.
     gpu: WaterGpu,
-    waiting: bool,
+    /// The texture store's generation its normal map was bound at.
     generation: u64,
     bounds: Sphere,
     footprint: WaterFootprint,
@@ -919,7 +919,7 @@ impl Renderer {
         let mut bounds = self.meshes.get(mesh).bounds;
         bounds.center.y += settings.height;
         let sampler = self.textures.sampler(&self.gpu, Some(&normals));
-        let (view, ready) = self.textures.view(&normals);
+        let (view, _) = self.textures.view(&normals);
         let gpu = WaterGpu::new(&self.gpu, &self.frame, size, view, sampler);
         let footprint = WaterFootprint::new(&settings.mesh, settings.height, settings.calm_extent);
         self.water = Some(Water {
@@ -928,7 +928,6 @@ impl Renderer {
             mesh,
             normals,
             gpu,
-            waiting: !ready,
             generation: self.textures.generation,
             bounds,
         });
@@ -1633,14 +1632,13 @@ impl Renderer {
         if self.textures.drain(&self.gpu) {
             self.static_shadow_dirty = true;
             self.materials.refresh(&self.gpu, &mut self.textures);
+            // Like the materials, also after a replaced texture.
             if let Some(water) = &mut self.water
-                && water.waiting
                 && water.generation != self.textures.generation
             {
                 let sampler = self.textures.sampler(&self.gpu, Some(&water.normals));
-                let (view, ready) = self.textures.view(&water.normals);
+                let (view, _) = self.textures.view(&water.normals);
                 water.gpu.rebind(&self.gpu, &self.frame, view, sampler);
-                water.waiting = !ready;
                 water.generation = self.textures.generation;
             }
         }

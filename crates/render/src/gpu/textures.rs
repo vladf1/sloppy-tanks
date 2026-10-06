@@ -72,9 +72,13 @@ impl Pixels {
     }
 }
 
-/// RGBA8 rows (top first) as the `ImageData` a generated texture uploads from.
+/// RGBA8 rows (top first) as the `ImageData` a generated texture uploads from. The
+/// pixels are copied into JavaScript: the upload comes on a later frame, and an
+/// `ImageData` over Wasm memory would by then read whatever reused the freed bytes,
+/// or nothing once the memory grew and detached its buffer.
 pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<web_sys::ImageData, JsValue> {
-    web_sys::ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(rgba), width, height)
+    let pixels = js_sys::Uint8ClampedArray::from(rgba);
+    web_sys::ImageData::new_with_js_u8_clamped_array_and_sh(&pixels, width, height)
 }
 
 struct Loaded {
