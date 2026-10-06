@@ -3,8 +3,6 @@
 //! effect data; the shader fades it against the trail clock, so a mark is written
 //! once and uploaded once.
 
-use std::collections::HashMap;
-
 use glam::{Mat4, Vec3};
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::math::angle_delta;
@@ -41,7 +39,9 @@ pub struct TrackTrails {
     pub records: PoolBuffer,
     /// The trail clock (simulation seconds) the shader fades marks against.
     pub clock: f64,
-    poses: HashMap<u32, Pose>,
+    /// Each live tank's last pose, by tank id: a few dozen tanks are found faster
+    /// by scanning than by hashing their ids every frame.
+    poses: Vec<(u32, Pose)>,
     /// Spawn pads stand proud of the ground, so prints on them ride on their decks.
     pads: SpawnPadDecks,
     // Expiry order is a ring; render slots stay dense so the draw count excludes
@@ -56,7 +56,7 @@ impl Default for TrackTrails {
         Self {
             records: PoolBuffer::new(TRACK_CAPACITY),
             clock: 0.0,
-            poses: HashMap::new(),
+            poses: Vec::new(),
             pads: SpawnPadDecks::default(),
             oldest: 0,
             slots: vec![0; TRACK_CAPACITY],
@@ -107,7 +107,7 @@ impl TrackTrails {
         }
         // Humans-only rooms remove departed tanks from the roster outright.
         self.poses
-            .retain(|id, _| state.tanks.iter().any(|tank| tank.id == *id && tank.alive));
+            .retain(|(id, _)| state.tanks.iter().any(|tank| tank.id == *id && tank.alive));
         for tank in &state.tanks {
             if !tank.alive {
                 continue;
@@ -115,8 +115,8 @@ impl TrackTrails {
             let position = tank.position;
             let x = tank.previous.x + (position.x - tank.previous.x) * alpha;
             let z = tank.previous.z + (position.z - tank.previous.z) * alpha;
-            let Some(previous) = self.poses.get(&tank.id).copied() else {
-                self.poses.insert(
+            let Some(slot) = self.poses.iter().position(|(id, _)| *id == tank.id) else {
+                self.poses.push((
                     tank.id,
                     Pose {
                         x,
@@ -124,9 +124,10 @@ impl TrackTrails {
                         heading: tank.heading,
                         pending: 0.0,
                     },
-                );
+                ));
                 continue;
             };
+            let previous = self.poses[slot].1;
             let mut next = previous;
             let distance = (x - previous.x).hypot(z - previous.z);
             let turn = angle_delta(previous.heading, tank.heading);
@@ -164,7 +165,7 @@ impl TrackTrails {
             next.x = x;
             next.z = z;
             next.heading = tank.heading;
-            self.poses.insert(tank.id, next);
+            self.poses[slot].1 = next;
         }
     }
 
@@ -246,7 +247,7 @@ mod tests {
             state.tanks[0].id = id;
             trails.update(&state, 1.0);
             assert_eq!(trails.poses.len(), 1, "only the current tank keeps history");
-            assert!(trails.poses.contains_key(&id));
+            assert_eq!(trails.poses[0].0, id);
         }
         state.tanks.clear();
         trails.update(&state, 1.0);
