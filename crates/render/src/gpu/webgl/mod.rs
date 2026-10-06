@@ -229,7 +229,8 @@ pub struct Frame {
     height: u32,
     main: ColorTarget,
     shadow: DepthTarget,
-    static_shadow: DepthTarget,
+    /// The cached fixed-scenery shadow, only while frames copy it.
+    static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
     shadow_sampler: glow::Sampler,
     lut_sampler: glow::Sampler,
@@ -271,7 +272,7 @@ impl Frame {
             height: canvas.height,
             main: ColorTarget::new(gpu, "main view", canvas.width, canvas.height),
             shadow: DepthTarget::new(gpu, "sun shadow map", shadow_size),
-            static_shadow: DepthTarget::new(gpu, "fixed scenery shadow", shadow_size),
+            static_shadow: None,
             lut,
             shadow_sampler: linear_sampler(gpu, true),
             lut_sampler: linear_sampler(gpu, false),
@@ -310,10 +311,27 @@ impl Frame {
         self.main = ColorTarget::new(gpu, "main view", width, height);
     }
 
-    /// Replace both shadow maps.
+    /// Replace the shadow maps.
     pub fn set_shadow_size(&mut self, gpu: &Gpu, size: u32) {
-        self.static_shadow = DepthTarget::new(gpu, "fixed scenery shadow", size);
+        if self.static_shadow.is_some() {
+            self.static_shadow = Some(DepthTarget::new(gpu, "fixed scenery shadow", size));
+        }
         self.shadow = DepthTarget::new(gpu, "sun shadow map", size);
+    }
+
+    /// Allocate the fixed-scenery shadow at the sun shadow's size, or free it. Returns
+    /// whether it was just allocated, so nothing is drawn in it yet.
+    pub fn keep_static_shadow(&mut self, gpu: &Gpu, keep: bool) -> bool {
+        if keep == self.static_shadow.is_some() {
+            return false;
+        }
+        self.static_shadow =
+            keep.then(|| DepthTarget::new(gpu, "fixed scenery shadow", self.shadow.size));
+        keep
+    }
+
+    pub fn has_static_shadow(&self) -> bool {
+        self.static_shadow.is_some()
     }
 
     /// The view's instance records.
@@ -445,8 +463,11 @@ impl Frame {
             bases: self.shadow_bases,
         };
         let mut static_count = 0;
+        let static_shadow = self.static_shadow.as_ref();
+        let static_shadow =
+            || static_shadow.expect("frames that copy the fixed scenery shadow keep it");
         if scene.rebuild_static {
-            self.static_shadow.bind(gpu);
+            static_shadow().bind(gpu);
             gpu.clear(None);
             gpu.bind_uniform_block(block::FRAME, self.view_uniforms[SHADOW_VIEW]);
             static_count += draws.encode(scene.static_shadow_draws, SHADOW_VIEW, stats);
@@ -455,7 +476,7 @@ impl Frame {
         if scene.copy_static {
             let size = self.shadow.size;
             gpu.blit(
-                self.static_shadow.framebuffer,
+                static_shadow().framebuffer,
                 self.shadow.framebuffer,
                 size,
                 size,
