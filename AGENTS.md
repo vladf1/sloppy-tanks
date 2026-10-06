@@ -136,6 +136,19 @@ result from one category does not prove the others. Preserve outliers and
 disclose sample counts instead of reporting a clean percentile that discarded
 a slow run.
 
+Separate page runs of one build drift 2x on a developer Mac, so compare render
+CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
+loaded at once: debug-API static bundles (`NODE_ENV=development pnpm exec vite
+build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
+page per build, seeded, with the overview camera; hold the game's `loop`, step
+every page through the same timestamps in alternating 40-frame blocks, wait for
+the GPU before each frame, pair frame _n_ across builds and report the mean paired
+difference ± two standard errors over blocks. Run it again with the page order
+reversed, since the first page created tends to be faster. Call counts (wrapping
+the WebGPU or WebGL prototypes) and profiles (CDP profiler, which runs pages
+about twice as fast) explain a result but never time one; the GPU process's CPU,
+sampled with `ps` over fresh browsers, is a separate measurement.
+
 ## Simulation contracts
 
 - Gameplay advances at the fixed `STEP` of 1/60 second (`sim/data.rs`).
@@ -249,12 +262,13 @@ a slow run.
   storage buffer (`instances_texture.wgsl`), the first instance is a per-program
   uniform, programs bind their blocks and samplers by name to fixed points and
   units, the cached fixed-scenery shadow is copied with a depth blit, bitmaps are
-  flipped at decode, the output pass flips rows into the bottom-up canvas, and
-  opaque draws are grouped by pipeline, material, mesh page and pool
-  (`GROUP_DRAWS_BY_STATE`), so depth ties can resolve differently than on WebGPU.
-  A draw binds only the state that differs from the draw before it, and no
+  flipped at decode, and the output pass flips rows into the bottom-up canvas.
+  A WebGL draw binds only the state that differs from the draw before it, and no
   material when its program reads none. `getError` waits for the GPU process, so
-  it runs every few seconds, before a frame's draws.
+  it runs every few seconds, before a frame's draws. Both backends group opaque
+  draws by pipeline and then by what their bindings cost (`DRAW_GROUPING`:
+  material first on WebGL, mesh page first on WebGPU), so depth ties can resolve
+  differently between the engines.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
@@ -266,6 +280,15 @@ a slow run.
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
   MSAA counts between pipelines and attachments.
+- Main-thread render CPU decides frame drops on slow devices; desktops hold 60 Hz
+  either way. Chrome's WebGPU `writeBuffer` costs about 0.35 µs per KB on the main
+  thread whatever the call count, so keep per-frame records small (`InstanceRecord`
+  is 80 bytes) and draw only what a view can show (the reflection culls to the
+  cells its water samples, `reflection_cull.rs`). Fewer calls is not less CPU by
+  itself: grouping WebGPU draws by state removed about 1,000 calls a village frame
+  and saved only the GPU process, and `WEBGL_multi_draw` saved nothing, so time a
+  change rather than count its calls. `sloppy-render` builds at opt-level 3 for
+  speed; the rest of the engine favors size.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
