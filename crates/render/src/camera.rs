@@ -187,6 +187,13 @@ impl Frustum {
             .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= -sphere.radius)
     }
 
+    /// Whether `sphere` lies wholly inside every plane.
+    pub fn contains_sphere(&self, sphere: &Sphere) -> bool {
+        self.planes
+            .iter()
+            .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= sphere.radius)
+    }
+
     /// Whether `sphere`, moved in a straight line by `sweep`, may touch the
     /// frustum on the way. Conservative: a plane rejects it only when both ends
     /// of the sweep lie wholly outside that plane.

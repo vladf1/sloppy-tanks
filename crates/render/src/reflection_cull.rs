@@ -15,8 +15,12 @@ const CLIP_PLANES: [Vec4; 6] = [
 ];
 const WATER_DISTANCE_FLOOR: f32 = 0.001;
 /// Added to a polygon's bounding radius before the frustum pre-test, so float
-/// rounding never rejects a polygon that clipping would keep a sliver of.
+/// rounding never rejects a polygon that clipping would keep a sliver of, nor takes
+/// one for wholly inside whose points clipping would move.
 const PRETEST_MARGIN: f32 = 0.01;
+/// Consecutive polygons tested as one first: the mesh follows its shore (the creek
+/// is a ribbon along its curve), so they lie together and mostly share the answer.
+const CLUSTER: usize = 16;
 
 /// A rectangle in reflection NDC; only the cull query uses its projection crop.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,8 +47,11 @@ impl ReflectionBounds {
 /// the per-frame projection and frustum clipping reuse stack storage.
 pub struct WaterFootprint {
     polygons: Vec<Vec<Vec4>>,
-    /// Each polygon's bounds: most lie outside the view and skip clipping.
+    /// Each polygon's bounds: most lie outside the view and skip clipping, and most
+    /// of the rest wholly inside it, where clipping would keep every point.
     bounds: Vec<Sphere>,
+    /// The bounds of each `CLUSTER` polygons in order, tested before theirs.
+    clusters: Vec<Sphere>,
     height: f32,
 }
 impl WaterFootprint {
@@ -93,10 +100,12 @@ impl WaterFootprint {
                     radius: radius + PRETEST_MARGIN,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let clusters = bounds.chunks(CLUSTER).map(enclosing).collect();
         Self {
             polygons,
             bounds,
+            clusters,
             height,
         }
     }
@@ -110,27 +119,40 @@ impl WaterFootprint {
         let view = Frustum::from_view_projection(&matrix);
         let mut min = Vec2::splat(f32::INFINITY);
         let mut max = Vec2::splat(f32::NEG_INFINITY);
-        for (polygon, bounds) in self.polygons.iter().zip(&self.bounds) {
-            if !view.intersects_sphere(bounds) {
+        let clusters = self.clusters.iter().zip(
+            self.polygons
+                .chunks(CLUSTER)
+                .zip(self.bounds.chunks(CLUSTER)),
+        );
+        for (cluster, (polygons, bounds)) in clusters {
+            if !view.intersects_sphere(cluster) {
                 continue;
             }
-            let mut points = [Vec4::ZERO; CLIP_CAPACITY];
-            let mut scratch = points;
-            let mut count = polygon.len();
-            for (into, &point) in points.iter_mut().zip(polygon) {
-                *into = matrix * point;
-            }
-            for plane in CLIP_PLANES {
-                count = clip_polygon(&points[..count], plane, &mut scratch);
-                std::mem::swap(&mut points, &mut scratch);
-                if count == 0 {
-                    break;
+            let all_inside = view.contains_sphere(cluster);
+            for (polygon, bounds) in polygons.iter().zip(bounds) {
+                if !all_inside && !view.intersects_sphere(bounds) {
+                    continue;
                 }
-            }
-            for point in &points[..count] {
-                let screen = Vec2::new(point.x, point.y) / point.w;
-                min = min.min(screen);
-                max = max.max(screen);
+                let mut points = [Vec4::ZERO; CLIP_CAPACITY];
+                let mut scratch = points;
+                let mut count = polygon.len();
+                for (into, &point) in points.iter_mut().zip(polygon) {
+                    *into = matrix * point;
+                }
+                if !all_inside && !view.contains_sphere(bounds) {
+                    for plane in CLIP_PLANES {
+                        count = clip_polygon(&points[..count], plane, &mut scratch);
+                        std::mem::swap(&mut points, &mut scratch);
+                        if count == 0 {
+                            break;
+                        }
+                    }
+                }
+                for point in &points[..count] {
+                    let screen = Vec2::new(point.x, point.y) / point.w;
+                    min = min.min(screen);
+                    max = max.max(screen);
+                }
             }
         }
         if !min.is_finite() {
@@ -150,6 +172,16 @@ impl WaterFootprint {
         })
     }
 }
+/// A sphere around `spheres`.
+fn enclosing(spheres: &[Sphere]) -> Sphere {
+    let center = spheres.iter().map(|sphere| sphere.center).sum::<Vec3>() / spheres.len() as f32;
+    let radius = spheres
+        .iter()
+        .map(|sphere| sphere.center.distance(center) + sphere.radius)
+        .fold(0.0, f32::max);
+    Sphere { center, radius }
+}
+
 fn clip_polygon(points: &[Vec4], plane: Vec4, output: &mut [Vec4; CLIP_CAPACITY]) -> usize {
     let Some(&last) = points.last() else {
         return 0;
@@ -248,8 +280,9 @@ mod tests {
         assert_eq!(water.reflection_bounds(&camera, 1.8, 512), None);
     }
     #[test]
-    fn skipping_polygons_outside_the_view_keeps_the_bounds() {
-        // A creek-like strip of small triangles, mostly outside any one view.
+    fn skipping_polygons_outside_the_view_and_clipping_inside_it_keeps_the_bounds() {
+        // A creek-like strip of small triangles, mostly outside any one view; of the
+        // rest, polygons and clusters wholly inside it are not clipped.
         let mut positions = Vec::new();
         for step in 0..120 {
             let x = -150.0 + step as f32 * 2.5;
@@ -271,10 +304,11 @@ mod tests {
         };
         let water = WaterFootprint::new(&mesh, -2.0, 40.0);
         let mut everything = WaterFootprint::new(&mesh, -2.0, 40.0);
-        for bounds in &mut everything.bounds {
+        for bounds in everything.bounds.iter_mut().chain(&mut everything.clusters) {
             bounds.radius = f32::INFINITY;
         }
         let mut compared = 0;
+        let mut inside = 0;
         for step in 0..64 {
             let angle = step as f32 * 0.37;
             let eye = Vec3::new(
@@ -287,8 +321,11 @@ mod tests {
             let expected = everything.reflection_bounds(&view, 0.65, 512);
             assert_eq!(water.reflection_bounds(&view, 0.65, 512), expected);
             compared += expected.is_some() as usize;
+            let frustum = Frustum::from_view_projection(&view.view_projection());
+            inside += water.clusters.iter().any(|c| frustum.contains_sphere(c)) as usize;
         }
         assert!(compared > 16, "most poses see water");
+        assert!(inside > 8, "many poses hold whole clusters");
     }
 
     #[test]
