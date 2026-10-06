@@ -663,12 +663,14 @@ impl DrawContext<'_> {
         count
     }
 
-    /// Draw `draws` for `view`. Returns the draw count.
+    /// Draw `draws` for `view`. Returns the draw count. Consecutive draws mostly
+    /// bind the same state (`draw_list::DrawState` orders them so), so only a
+    /// change of it binds anything.
     fn encode(&self, draws: &[Draw], view: usize, stats: &mut RenderStats) -> u32 {
         let scene = self.scene;
         let gpu = self.gpu;
         let shadow = view == SHADOW_VIEW;
-        let mut last_material = u32::MAX;
+        let mut bound: Option<DrawBinding> = None;
         let mut count = 0;
         for draw in draws {
             let Some(class) = &scene.classes[draw.class as usize] else {
@@ -689,18 +691,22 @@ impl DrawContext<'_> {
             let Some(pipeline) = (if shadow { class.shadow } else { class.main }) else {
                 continue;
             };
-            gpu.bind_texture(unit::INSTANCES, instances);
             let back = if shadow { None } else { class.back };
-            if class.key.material != last_material {
-                scene.materials.get(class.key.material).binding.bind(gpu);
-                last_material = class.key.material;
-            }
-            self.bind_pages(range.vertex_page, range.index_page);
             for pipeline in back.into_iter().chain([pipeline]) {
-                let pipeline = scene.pipelines.get(pipeline);
-                let program = scene.pipelines.program(pipeline.program);
-                gpu.use_program(program.raw);
-                gpu.set_raster(&pipeline.raster);
+                let program = scene
+                    .pipelines
+                    .program(scene.pipelines.get(pipeline).program);
+                let binding = DrawBinding {
+                    pipeline,
+                    material: program.reads_material.then_some(class.key.material),
+                    vertex_page: range.vertex_page,
+                    index_page: range.index_page,
+                    instances,
+                };
+                if bound != Some(binding) {
+                    self.bind(bound, binding);
+                    bound = Some(binding);
+                }
                 program.set_first_instance(gpu, draw.first_instance);
                 self.draw_elements(range.first_index, range.index_count, draw.instance_count);
                 count += 1;
@@ -711,4 +717,41 @@ impl DrawContext<'_> {
         stats.draw_calls += count;
         count
     }
+
+    /// Bind what `next` changes from `last` (`None`: everything).
+    fn bind(&self, last: Option<DrawBinding>, next: DrawBinding) {
+        let gpu = self.gpu;
+        let scene = self.scene;
+        let changed = |same: fn(&DrawBinding, &DrawBinding) -> bool| {
+            last.is_none_or(|last| !same(&last, &next))
+        };
+        if changed(|a, b| a.pipeline == b.pipeline) {
+            let pipeline = scene.pipelines.get(next.pipeline);
+            gpu.use_program(scene.pipelines.program(pipeline.program).raw);
+            gpu.set_raster(&pipeline.raster);
+        }
+        if let Some(material) = next.material
+            && changed(|a, b| a.material == b.material)
+        {
+            scene.materials.get(material).binding.bind(gpu);
+        }
+        if changed(|a, b| (a.vertex_page, a.index_page) == (b.vertex_page, b.index_page)) {
+            self.bind_pages(next.vertex_page, next.index_page);
+        }
+        if changed(|a, b| a.instances == b.instances) {
+            gpu.bind_texture(unit::INSTANCES, next.instances);
+        }
+    }
+}
+
+/// The state an opaque or transparent draw binds; draws in a row that share it
+/// differ only in mesh range and instances.
+#[derive(Clone, Copy, PartialEq)]
+struct DrawBinding {
+    pipeline: u32,
+    /// `None` for a program that reads no material (most shadow casters).
+    material: Option<u32>,
+    vertex_page: u16,
+    index_page: u16,
+    instances: glow::Texture,
 }

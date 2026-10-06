@@ -35,9 +35,15 @@ const FAILED_VERTEX: &str = "#version 300 es\nvoid main(void) { gl_Position = ve
 /// (`naga::back::glsl::FIRST_INSTANCE_BINDING`): WebGL2 has no base instance.
 const FIRST_INSTANCE: &str = "naga_vs_first_instance";
 
+/// The WGSL bind group of a material's (or the water's) uniform and textures.
+const MATERIAL_GROUP: u32 = 1;
+
 /// A linked program.
 pub struct Program {
     pub raw: glow::Program,
+    /// Whether it reads the material's uniform or textures: most shadow casters
+    /// read neither, so their draws bind no material.
+    pub reads_material: bool,
     /// `naga_vs_first_instance`, when the vertex stage reads `instance_index`.
     first_instance: Option<glow::UniformLocation>,
     /// Its value now: uniforms are per-program state.
@@ -163,8 +169,15 @@ impl Linking {
                     gl.uniform_1_i32(Some(&location), unit as i32);
                 }
             }
+            // naga declares only the bindings an entry point uses.
+            let reads_material = self
+                .blocks
+                .iter()
+                .chain(&self.samplers)
+                .any(|&(_, (group, _))| group == MATERIAL_GROUP);
             Program {
                 raw: program,
+                reads_material,
                 first_instance: gl.get_uniform_location(program, FIRST_INSTANCE),
                 first_instance_value: Cell::new(0),
             }

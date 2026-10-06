@@ -250,8 +250,10 @@ a slow run.
   uniform, programs bind their blocks and samplers by name to fixed points and
   units, the cached fixed-scenery shadow is copied with a depth blit, bitmaps are
   flipped at decode, the output pass flips rows into the bottom-up canvas, and
-  opaque draws are grouped by pipeline, mesh page, pool and material
+  opaque draws are grouped by pipeline, material, mesh page and pool
   (`GROUP_DRAWS_BY_STATE`), so depth ties can resolve differently than on WebGPU.
+  A draw binds only the state that differs from the draw before it, and no
+  material when its program reads none.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the

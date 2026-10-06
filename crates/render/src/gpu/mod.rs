@@ -405,7 +405,7 @@ const NO_POOL: u32 = u32::MAX;
 
 /// Whether opaque draws are grouped by the GPU state their class binds
 /// (`draw_list::order_classes`) instead of following class index order. The WebGL
-/// engine groups them: every program, mesh page, pool or material change costs it
+/// engine groups them: every program, material, mesh page or pool change costs it
 /// from one to a dozen WebGL calls, each a crossing into JavaScript. The WebGPU engine
 /// keeps index order: there grouping saved the browser's GPU process a little but
 /// cost the main thread a little more per frame, and index order keeps its depth ties

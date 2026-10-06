@@ -93,12 +93,14 @@ pub struct DrawState {
     /// A stable rank of the class's pipeline in the view; the pipeline itself may
     /// still be compiling when the lists are sorted.
     pub pipeline: u32,
-    /// The vertex page of its mesh (`crate::mesh_pages`): a page switch rebinds the
-    /// vertex buffers (WebGPU) or the page's vertex array (WebGL).
-    pub vertex_page: u32,
-    /// The instance pool whose frame group it binds (`u32::MAX`: the view's own).
-    pub pool: u32,
+    /// A material switch binds its uniform block and every texture and sampler that
+    /// differs: up to a dozen WebGL calls, where a page switch is one or two.
     pub material: u32,
+    /// The vertex page of its mesh (`crate::mesh_pages`): a page switch rebinds the
+    /// page's vertex array.
+    pub vertex_page: u32,
+    /// The instance pool whose instance records it binds (`u32::MAX`: the view's own).
+    pub pool: u32,
     /// The index page of its mesh, last: switching it is a single binding.
     pub index_page: u32,
 }
@@ -443,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn opaque_draws_group_by_pipeline_pool_and_material() {
+    fn opaque_draws_group_by_pipeline_material_and_pool() {
         let mut builder = DrawListBuilder::default();
         let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
         for (i, class) in [5, 0, 3, 1, 2, 3, 0, 1, 5, 2].into_iter().enumerate() {
@@ -456,9 +458,9 @@ mod tests {
         let r = builder.record(record(10.0));
         builder.push(MAIN_VIEW, 0, false, -1, 0.0, r);
         finish(&mut builder, 100, &mut views, &orders(6, two_pipelines));
-        // Pipeline 0: material 5 (class 5), material 9 (classes 1, 3); pipeline 1: the
-        // pool (class 4), material 2 (class 2), material 5 (class 0). Each class stays
-        // one instanced draw over contiguous records.
+        // Pipeline 0: material 5 (class 5), material 9 (classes 1, 3); pipeline 1:
+        // material 2 (class 2), material 5 (class 0), material 9 (the pool's class 4).
+        // Each class stays one instanced draw over contiguous records.
         assert_eq!(
             draws(&views[MAIN_VIEW].opaque),
             [
@@ -466,9 +468,9 @@ mod tests {
                 (5, 101, 2),
                 (1, 103, 2),
                 (3, 105, 2),
-                (4, 0, 50),
                 (2, 107, 2),
                 (0, 109, 2),
+                (4, 0, 50),
             ]
         );
         // Records follow draw order: class 1 drew instances 3 and 7.
@@ -489,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn opaque_draws_group_by_mesh_page_right_after_the_pipeline() {
+    fn opaque_draws_group_by_material_then_mesh_page_within_the_pipeline() {
         // Classes 0-5 in pipelines [0, 0, 1, 0, 0, 1], vertex pages [2, 1, 1, 2, 1, 0],
         // materials [3, 4, 3, 3, 3, 4] and index pages [0, 1, 0, 0, 0, 0].
         let state = |_view: usize, class: u32| {
@@ -517,19 +519,19 @@ mod tests {
             builder.push(MAIN_VIEW, class, true, 0, depth, r);
         }
         finish(&mut builder, 0, &mut views, &orders(6, state));
-        // Pipeline 0: page 1 (material 3: class 4; material 4: class 1), then page 2
-        // (material 3: classes 0 and 3, by index); pipeline 1: page 0 (class 5), then
-        // page 1 (class 2). Each class stays one draw over contiguous records.
+        // Pipeline 0: material 3 (page 1: class 4; page 2: classes 0 and 3, by index),
+        // then material 4 (class 1); pipeline 1: material 3 (class 2), then material 4
+        // (class 5). Each class stays one draw over contiguous records.
         assert_eq!(
             draws(&views[MAIN_VIEW].opaque),
             [
                 (5, 0, 1),
                 (4, 1, 2),
-                (1, 3, 2),
-                (0, 5, 2),
-                (3, 7, 2),
-                (5, 9, 1),
-                (2, 10, 2),
+                (0, 3, 2),
+                (3, 5, 2),
+                (1, 7, 2),
+                (2, 9, 2),
+                (5, 11, 1),
             ]
         );
         let transparent: Vec<u32> = views[MAIN_VIEW]
@@ -538,8 +540,8 @@ mod tests {
             .map(|d| d.class)
             .collect();
         assert_eq!(transparent, [5, 0, 5]);
-        // The index page only breaks ties: within one pipeline, vertex page and
-        // material, a class on a later index page goes after the others.
+        // The index page only breaks ties: within one pipeline, material and vertex
+        // page, a class on a later index page goes after the others.
         let mut order = Vec::new();
         let with_index_page = |index_page| {
             Some(DrawState {
