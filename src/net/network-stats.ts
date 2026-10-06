@@ -1,4 +1,4 @@
-import type { StatsSections } from "../game/nerd-stats";
+import { passTriangleRows, type StatsSections } from "../game/nerd-stats";
 
 /** The part of `NetGame.stats_json()` a room's Stats for nerds panel reads. */
 export interface NetworkStatsSource {
@@ -120,13 +120,7 @@ export function networkStatsSections(
           stats.triangles.toLocaleString(),
           "Triangles submitted per rendered frame.",
         ],
-        [
-          "Shadow / reflection / main triangles",
-          [stats.shadowTriangles, stats.reflectionTriangles, stats.mainTriangles]
-            .map((count) => count.toLocaleString())
-            .join(" / "),
-          "Triangles submitted to each scene pass per rendered frame.",
-        ],
+        ...passTriangleRows(stats),
         [
           "GPU geometries",
           stats.meshes,

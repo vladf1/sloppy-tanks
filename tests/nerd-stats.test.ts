@@ -60,6 +60,14 @@ class StubElement {
 }
 
 const SECTION_TITLES = ["Performance", "Physics", "Render", "Battle", "Configuration"];
+/** The expanded panel's width (`#nerd-stats.expanded` in style.css); longer rows are cut off. */
+const PANEL_COLUMNS = 32;
+
+function assertRowsFit(container: StubElement): void {
+  for (const row of container.querySelectorAll("pre")) {
+    assert.ok(row.textContent.length <= PANEL_COLUMNS, `"${row.textContent}" fits the panel`);
+  }
+}
 
 function fixture(network = false) {
   const created: StubElement[] = [];
@@ -79,10 +87,10 @@ function fixture(network = false) {
   const room: NetworkStatsSource = {
     graphicsApi: "WebGPU",
     drawCalls: 42,
-    triangles: 123456,
-    shadowTriangles: 23000,
-    reflectionTriangles: 40000,
-    mainTriangles: 60456,
+    triangles: 628263,
+    shadowTriangles: 241429,
+    reflectionTriangles: 192922,
+    mainTriangles: 193912,
     meshes: 9,
     textures: 11,
     scene: {
@@ -118,14 +126,14 @@ function fixture(network = false) {
     colliders: 4,
     graphicsApi: "WebGPU",
     drawCalls: 42,
-    triangles: 123456,
-    shadowTriangles: 23000,
-    reflectionTriangles: 40000,
-    mainTriangles: 60456,
+    triangles: 628263,
+    shadowTriangles: 241429,
+    reflectionTriangles: 192922,
+    mainTriangles: 193912,
     meshes: 9,
     textures: 11,
-    gpuBytes: 3 * 1048576,
-    meshSlackBytes: 0.5 * 1048576,
+    gpuBytes: 412.3 * 1048576,
+    meshSlackBytes: 12.5 * 1048576,
     tanks: 3,
     tanksAlive: 2,
     mines: 2,
@@ -215,13 +223,8 @@ test("network stats use received scene counts and never require a client physics
         text.includes("Longest batch gap") &&
         text.includes("412 ms"),
     );
-    const network = f.container
-      .querySelectorAll("details")
-      .find((section) => section.querySelector("summary")?.textContent === "Network");
-    for (const row of network?.querySelectorAll("pre") ?? []) {
-      // The expanded panel is 32 characters wide; longer rows are cut off.
-      assert.ok((row.textContent ?? "").length <= 32, `"${row.textContent}" fits the panel`);
-    }
+    assert.ok(text.includes("Reflection triangles") && text.includes("192,922"));
+    assertRowsFit(f.container);
     assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
     assert.ok(text.includes("Update CPU / frame"));
     assert.ok(!text.includes("Sim CPU / frame"));
@@ -253,7 +256,8 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 23);
+    assert.equal(bodies.length, 26);
+    assertRowsFit(f.container);
     const renderRows = sections
       .find((section) => section.querySelector("summary")?.textContent === "Render")!
       .querySelectorAll("pre")
@@ -285,7 +289,9 @@ test("panel has one open section per group with the expected rows", () => {
       "GPU geometries",
       "GPU textures",
       "GPU memory",
-      "3.0 MB (0.5 MB page slack)",
+      "412.3 MB",
+      "Mesh page slack",
+      "12.5 MB",
       "Fixed / dynamic",
       "6 / 4",
       "Awake / sleeping",
@@ -295,8 +301,13 @@ test("panel has one open section per group with the expected rows", () => {
       "WebGPU",
       "Draw calls / frame",
       "Triangles / frame",
-      "Shadow / reflection / main triangles",
-      "23,000 / 40,000 / 60,456",
+      "628,263",
+      "Shadow triangles",
+      "241,429",
+      "Reflection triangles",
+      "192,922",
+      "Main triangles",
+      "193,912",
     ]) {
       assert.ok(text.includes(row), `missing row content: ${row}`);
     }
