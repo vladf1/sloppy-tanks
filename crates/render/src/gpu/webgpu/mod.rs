@@ -103,7 +103,8 @@ pub struct Frame {
     canvas: Canvas,
     main_target: ColorTarget,
     shadow_map: DepthMap,
-    static_shadow_map: DepthMap,
+    /// The cached fixed-scenery shadow, only while frames copy it.
+    static_shadow_map: Option<DepthMap>,
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
@@ -160,7 +161,7 @@ impl Frame {
             canvas,
             main_target,
             shadow_map: DepthMap::new(device, "sun shadow map", shadow_size),
-            static_shadow_map: DepthMap::new(device, "fixed scenery shadow", shadow_size),
+            static_shadow_map: None,
             dummy_depth: depth_texture(device, "shadow pass placeholder", 1)
                 .create_view(&Default::default()),
             shadow_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -208,11 +209,30 @@ impl Frame {
         self.output_group = output_group(gpu, &self.main_target, &self.output_uniform);
     }
 
-    /// Replace both shadow maps; the caller rebuilds the pools' frame groups.
+    /// Replace the shadow maps; the caller rebuilds the pools' frame groups.
     pub fn set_shadow_size(&mut self, gpu: &Gpu, size: u32) {
-        self.static_shadow_map = DepthMap::new(&gpu.device, "fixed scenery shadow", size);
+        if self.static_shadow_map.is_some() {
+            self.static_shadow_map = Some(DepthMap::new(&gpu.device, "fixed scenery shadow", size));
+        }
         self.shadow_map = DepthMap::new(&gpu.device, "sun shadow map", size);
         self.view_groups = self.frame_groups(gpu, &self.instance_records);
+    }
+
+    /// Allocate the fixed-scenery shadow at the sun shadow's size, or free it. Returns
+    /// whether it was just allocated, so nothing is drawn in it yet.
+    pub fn keep_static_shadow(&mut self, gpu: &Gpu, keep: bool) -> bool {
+        if keep == self.static_shadow_map.is_some() {
+            return false;
+        }
+        self.static_shadow_map = keep.then(|| {
+            let size = self.shadow_map.texture.width();
+            DepthMap::new(&gpu.device, "fixed scenery shadow", size)
+        });
+        keep
+    }
+
+    pub fn has_static_shadow(&self) -> bool {
+        self.static_shadow_map.is_some()
     }
 
     /// The view's instance records.
@@ -405,12 +425,17 @@ impl Frame {
             frame_groups: &self.view_groups,
         };
         let mut static_count = 0;
+        let static_shadow = || {
+            self.static_shadow_map
+                .as_ref()
+                .expect("frames that copy the fixed scenery shadow keep it")
+        };
         if scene.rebuild_static {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fixed scenery shadow"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.static_shadow_map.view,
+                    view: &static_shadow().view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -433,7 +458,7 @@ impl Frame {
         if scene.copy_static {
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &self.static_shadow_map.texture,
+                    texture: &static_shadow().texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::DepthOnly,

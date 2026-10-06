@@ -2294,6 +2294,11 @@ impl Renderer {
     /// into the canvas, or for `warm_up` into an offscreen probe.
     fn draw_frame(&mut self, reflection: bool, warm_up: bool) -> Result<(), String> {
         let copy_static = self.sun_shadow.enabled && self.cache_static_shadow;
+        // Most maps redraw their fixed scenery each frame; only a cached set holds the
+        // second shadow map's memory, and a newly allocated one starts unrendered.
+        if self.frame.keep_static_shadow(&self.gpu, copy_static) {
+            self.static_shadow_dirty = true;
+        }
         let scene = Scene {
             classes: &self.classes,
             meshes: &self.meshes,
@@ -2352,6 +2357,7 @@ impl Renderer {
             + self.water.is_some() as usize
             + pools as usize) as u32;
         let shadow = self.sun_shadow.map_size as u64;
+        let shadow_maps = 1 + u64::from(self.frame.has_static_shadow());
         let (width, height) = self.size();
         stats.gpu_bytes = self.meshes.bytes()
             + self.textures.bytes()
@@ -2360,7 +2366,7 @@ impl Renderer {
                 let size = w.settings.reflection_size.max(1);
                 target_bytes(size, size, self.gpu.samples)
             })
-            + shadow * shadow * 8
+            + shadow * shadow * 4 * shadow_maps
             + self.frame.instances().bytes()
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;
