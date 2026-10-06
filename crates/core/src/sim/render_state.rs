@@ -18,7 +18,7 @@ use super::types::{
     Tank, Team, VehicleKind, Weapon, WreckPart,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderTank {
     pub id: u32,
@@ -63,6 +63,22 @@ pub struct RenderTank {
     pub velocity: Point3,
 }
 
+// Manual so a state refilled in place keeps each tank's name allocation.
+impl Clone for RenderTank {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            ..*self
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        let mut name = std::mem::take(&mut self.name);
+        name.clone_from(&source.name);
+        *self = Self { name, ..*source };
+    }
+}
+
 /// Original footprint of movable cover; its navigation bookkeeping stays in the simulation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +100,7 @@ impl From<CoverMotion> for RenderCoverMotion {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderCover {
     pub id: u32,
@@ -108,6 +124,25 @@ pub struct RenderCover {
     /// Body pose; destroyed cover without a body stays at its footprint.
     pub position: Point3,
     pub rotation: Quat4,
+}
+
+// Manual so a state refilled in place keeps each cover's timber hits allocation.
+impl Clone for RenderCover {
+    fn clone(&self) -> Self {
+        Self {
+            timber_hits: self.timber_hits.clone(),
+            ..*self
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        let mut timber_hits = std::mem::take(&mut self.timber_hits);
+        timber_hits.clone_from(&source.timber_hits);
+        *self = Self {
+            timber_hits,
+            ..*source
+        };
+    }
 }
 
 impl Default for RenderCover {
@@ -168,7 +203,7 @@ impl From<&Shot> for RenderShot {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderFragment {
     pub id: u32,
@@ -192,6 +227,25 @@ pub struct RenderFragment {
     pub team: Option<Team>,
     pub position: Point3,
     pub rotation: Quat4,
+}
+
+// Manual so a state refilled in place keeps each timber part's marks allocation.
+impl Clone for RenderFragment {
+    fn clone(&self) -> Self {
+        Self {
+            timber_part: self.timber_part.clone(),
+            ..*self
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        let mut timber_part = self.timber_part.take();
+        timber_part.clone_from(&source.timber_part);
+        *self = Self {
+            timber_part,
+            ..*source
+        };
+    }
 }
 
 /// Presentation reads values only. Network implementations contain no physics world.
@@ -250,8 +304,13 @@ impl RenderState {
     }
 }
 
-/// Resize `items` to `len`, keeping existing allocations, and update each entry in place.
-fn fill_each<T: Default, S>(items: &mut Vec<T>, sources: &[S], mut update: impl FnMut(&mut T, &S)) {
+/// Resize `items` to `sources.len()`, keeping existing allocations, and update each entry
+/// in place.
+pub(crate) fn fill_each<T: Default, S>(
+    items: &mut Vec<T>,
+    sources: &[S],
+    mut update: impl FnMut(&mut T, &S),
+) {
     items.truncate(sources.len());
     while items.len() < sources.len() {
         items.push(T::default());

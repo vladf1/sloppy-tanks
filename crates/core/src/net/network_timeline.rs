@@ -24,7 +24,6 @@ pub struct NetworkTimeline {
     traces: Vec<ShotTrace>,
     newest_tick: u64,
     display_tick: f64,
-    output: RenderState,
 }
 
 fn at_tick(state: &RenderState, tick: u64) -> RenderState {
@@ -78,8 +77,15 @@ impl NetworkTimeline {
         self.display_tick
     }
 
-    /// The scene to draw at `now_ms`, and the events whose tick the display just reached.
-    pub fn read(&mut self, now_ms: f64, rtt_ms: f64, dt: f64) -> (&RenderState, Vec<SimEvent>) {
+    /// Fills `output` with the scene to draw at `now_ms`, overwriting all of it in place,
+    /// and returns the events whose tick the display just reached.
+    pub fn read(
+        &mut self,
+        now_ms: f64,
+        rtt_ms: f64,
+        dt: f64,
+        output: &mut RenderState,
+    ) -> Vec<SimEvent> {
         self.display_tick = self.clock.read(now_ms) / SIMULATION_STEP_MS;
         let newest_ms = self.newest_tick as f64 * SIMULATION_STEP_MS;
         // The local hull extrapolates toward the server's present: newest path time plus one way.
@@ -87,7 +93,7 @@ impl NetworkTimeline {
             + MAX_LOCAL_LEAD_MS.min(rtt_ms / 2.0))
             / 1000.0;
         self.poses
-            .read(self.display_tick / 60.0, local_time, dt, &mut self.output);
+            .read(self.display_tick / 60.0, local_time, dt, output);
         let mut events = Vec::new();
         while self
             .events
@@ -99,13 +105,8 @@ impl NetworkTimeline {
         let display = self.display_tick;
         let caught_up = display >= self.newest_tick as f64;
         let traced = |id: u32| self.traces.iter().any(|trace| trace.shot.id == id);
-        let mut shots: Vec<RenderShot> = self
-            .output
-            .shots
-            .iter()
-            .filter(|shot| !traced(shot.id) || caught_up)
-            .copied()
-            .collect();
+        let shots = &mut output.shots;
+        shots.retain(|shot| !traced(shot.id) || caught_up);
         for trace in &self.traces {
             if trace.tick <= display && display < trace.end_tick {
                 let alpha = (display - trace.tick) / (trace.end_tick - trace.tick);
@@ -122,7 +123,6 @@ impl NetworkTimeline {
         }
         self.traces
             .retain(|trace| trace.end_tick >= display - TRACE_RETENTION_TICKS);
-        self.output.shots = shots;
-        (&self.output, events)
+        events
     }
 }

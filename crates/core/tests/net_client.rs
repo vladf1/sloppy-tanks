@@ -328,6 +328,37 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
 }
 
 #[test]
+fn a_baseline_shows_until_the_next_frame_draws_the_timeline_with_the_own_aim() {
+    let mut net = Network::new();
+    let alice = net.add(None);
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(500.0);
+    let now = net.now;
+    net.peers[alice].client.resume(now);
+    net.settle();
+    let client = &net.peers[alice].client;
+    assert!(client.active_input(), "the fresh baseline was drawn");
+    assert_eq!(
+        client.display(),
+        client.arena_state().as_ref(),
+        "no frame has read the timeline since the baseline"
+    );
+    let input = LocalInput {
+        aim_angle: 0.3,
+        ..LocalInput::default()
+    };
+    let now = net.now + FRAME_MS;
+    let shown = net.peers[alice]
+        .client
+        .frame(now, &input)
+        .unwrap()
+        .state
+        .clone();
+    assert_eq!(shown.viewer().unwrap().aim, 0.3, "own aim shows at once");
+    assert_eq!(net.peers[alice].client.display(), Some(&shown));
+}
+
+#[test]
 fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
     let mut net = Network::new();
     let alice = net.add(None);

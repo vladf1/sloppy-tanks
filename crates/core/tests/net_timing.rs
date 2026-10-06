@@ -17,7 +17,10 @@ use sloppy_core::net::replication::{ShotTrace, TimedEvent};
 use sloppy_core::net::transport_delay::DelayedChannel;
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
-use sloppy_core::sim::render_state::{RenderShot, RenderState};
+use sloppy_core::sim::render_state::{RenderFragment, RenderShot, RenderState};
+use sloppy_core::sim::timber_layout::{
+    TimberFace, TimberHit, TimberMark, TimberPart, TimberPartKind,
+};
 use sloppy_core::sim::types::{SimEvent, SimEventType, Team, Weapon};
 
 // ---- Host clock and transport delay ---------------------------------------------------
@@ -513,9 +516,10 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         .unwrap();
     timeline.push(&respawn, 6, Vec::new(), Vec::new()).unwrap();
     timeline.arrive(50.0);
+    let mut state = RenderState::default();
     let mut frames = Vec::new();
     for now in 50..400 {
-        let (state, events) = timeline.read(f64::from(now), 0.0, 0.001);
+        let events = timeline.read(f64::from(now), 0.0, 0.001, &mut state);
         let tank = state.viewer().unwrap();
         frames.push((
             tank.alive,
@@ -548,7 +552,7 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         "effects play once"
     );
     timeline.reset(&respawn, 6, 400.0);
-    assert!(timeline.read(410.0, 0.0, 1.0 / 60.0).1.is_empty());
+    assert!(timeline.read(410.0, 0.0, 1.0 / 60.0, &mut state).is_empty());
 }
 
 #[test]
@@ -589,9 +593,10 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
     timeline.arrive(50.0);
     let mut flights = 0;
     let mut impacts = Vec::new();
+    let mut shown = RenderState::default();
     let mut now = 50.0;
     while now < 300.0 {
-        let (shown, events) = timeline.read(now, 0.0, 1.0 / 60.0);
+        let events = timeline.read(now, 0.0, 1.0 / 60.0, &mut shown);
         let shots = shown.shots.clone();
         let tick = timeline.clock.display_ms * 60.0 / 1000.0;
         if (1.0..1.5).contains(&tick) {
@@ -615,6 +620,96 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
     }
     assert!(flights > 0);
     assert_eq!(impacts, vec![SimEventType::Impact]);
+}
+
+#[test]
+fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_membership_change() {
+    let sim = empty_room();
+    let first = sim.render_state(Some(sim.tanks[0].id));
+    assert!(first.tanks.len() > 2 && !first.covers.is_empty());
+    let remote = first.tanks[1].id;
+    let start_x = first.tanks[1].position.x;
+    let beam = TimberPart {
+        kind: TimberPartKind::Beam,
+        index: 0,
+        x: 0.0,
+        y: 0.5,
+        z: 0.0,
+        w: 2.0,
+        h: 0.2,
+        d: 0.2,
+        yaw: 0.0,
+        lean: 0.0,
+        color: 0x8b5a2b,
+        damage: 1,
+        damage_seed: 7,
+        marks: vec![TimberMark {
+            x: 0.1,
+            y: 0.1,
+            face: TimberFace::Front,
+            size: 0.2,
+            seed: 3,
+        }],
+    };
+    let fragment = |id: u32, timber: bool| RenderFragment {
+        id,
+        life: 5.0,
+        timber_part: timber.then(|| beam.clone()),
+        position: Point3::new(f64::from(id), 1.0, 0.0),
+        ..RenderFragment::default()
+    };
+    // Ticks 0 → 3: the remote hull moves 3 m and is renamed, the last tank leaves, a cover
+    // is hit and timber debris appears; tick 6 brings the tank back and swaps the debris.
+    let mut moved = first.clone();
+    moved.tanks[1].position.x += 3.0;
+    moved.tanks[1].name = "A much longer replacement name".into();
+    moved.tanks.pop();
+    moved.covers[0].timber_hits.push(TimberHit {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+        size: 0.3,
+    });
+    moved.fragments = vec![fragment(1, true), fragment(2, false)];
+    let mut later = first.clone();
+    later.fragments = vec![fragment(2, false), fragment(3, true)];
+    let mut timeline = NetworkTimeline::default();
+    timeline.reset(&first, 0, 0.0);
+    timeline.push(&moved, 3, Vec::new(), Vec::new()).unwrap();
+    timeline.push(&later, 6, Vec::new(), Vec::new()).unwrap();
+    timeline.arrive(50.0);
+    let mut shown = RenderState::default();
+    let mut interpolated = 0;
+    for now in 50..400 {
+        let now = f64::from(now);
+        let mut fresh = RenderState::default();
+        timeline.clone().read(now, 0.0, 1.0 / 60.0, &mut fresh);
+        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown);
+        assert_eq!(
+            shown, fresh,
+            "the reused state at {now} ms keeps nothing stale"
+        );
+        let tick = timeline.display_tick();
+        if tick > 0.5 && tick < 2.5 {
+            interpolated += 1;
+            let tank = shown.tanks.iter().find(|tank| tank.id == remote).unwrap();
+            assert!(
+                (tank.position.x - (start_x + tick)).abs() < 1e-9,
+                "the remote hull moves 1 m per tick"
+            );
+            assert_eq!(tank.name, first.tanks[1].name);
+        }
+    }
+    assert!(interpolated > 0);
+    assert!(timeline.display_tick() > 6.0);
+    assert_eq!(shown.tanks.len(), first.tanks.len());
+    assert_eq!(shown.covers[0].timber_hits, first.covers[0].timber_hits);
+    let debris: Vec<_> = shown
+        .fragments
+        .iter()
+        .map(|fragment| (fragment.id, fragment.timber_part.is_some()))
+        .collect();
+    assert_eq!(debris, [(2, false), (3, true)]);
 }
 
 #[test]
