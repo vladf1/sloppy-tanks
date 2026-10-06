@@ -151,6 +151,7 @@ export function bindPlayModes(
       }
       return new lobby.RoomBrowser(
         panel,
+        setup.querySelector<HTMLElement>(".map-choice")!,
         address,
         () => handlers.choices(),
         (selection) => handlers.enterRoom(selection, () => lobby.joinAfterReload(selection)),

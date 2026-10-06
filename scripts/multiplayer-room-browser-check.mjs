@@ -121,6 +121,9 @@ try {
   await bob.page.locator("#player-name").fill("Bob <b>literal</b>");
   await click(bob.page, '[data-kind="scout"]');
   await click(bob.page, roomSelector);
+  // An open room keeps its own map: the map choice shows that map and waits.
+  assert.equal(await bob.page.locator(".map-choice").evaluate((part) => part.inert), true);
+  assert.equal(await bob.page.locator('.room-map input[name="mapMode"]').inputValue(), "harbor");
   // No single-player arena was built on a ?multiplayer page, so Join stays in this page.
   const bobDocument = await bob.page.evaluate(() => performance.timeOrigin);
   await click(bob.page, "#join-room");

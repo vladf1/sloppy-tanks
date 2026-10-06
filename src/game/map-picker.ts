@@ -34,10 +34,15 @@ function setMapPicker(picker: HTMLElement, value: string): boolean {
   for (const option of picker.querySelectorAll('[role="option"]')) {
     option.setAttribute("aria-selected", String(option === chosen));
   }
+  showInPicker(picker, chosen);
+  return true;
+}
+
+/** Show `option`'s map on the closed picker. */
+function showInPicker(picker: HTMLElement, option: Element): void {
   picker
     .querySelector(".map-picker-current")!
-    .replaceChildren(...[...chosen.childNodes].map((node) => node.cloneNode(true)));
-  return true;
+    .replaceChildren(...[...option.childNodes].map((node) => node.cloneNode(true)));
 }
 
 function mapPicker(root: ParentNode, name: string): HTMLElement | null {
@@ -55,6 +60,29 @@ export function setMapChoice(root: ParentNode, name: string, value: string): boo
     input.checked = input.value === value;
   });
   return true;
+}
+
+/** Show `room`, the map of the open room the player chose, in place of the `name` map
+ * choice; no `room` shows the choice again. The choice itself, which single player and
+ * a new room play, stays as it was. */
+export function showRoomMap(root: ParentNode, name: string, room?: string): void {
+  const picker = mapPicker(root, name);
+  if (!picker) {
+    return;
+  }
+  root.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((input) => {
+    input.closest(".choice-card")?.classList.toggle("room-map", input.value === room);
+  });
+  const options = [...picker.querySelectorAll<HTMLElement>('[role="option"]')];
+  // An extra level shows on the picker even on a page that does not offer it.
+  const shown = room ? options.find((option) => option.dataset.value === room) : undefined;
+  if (shown && room) {
+    picker.dataset.roomMap = room;
+  } else {
+    delete picker.dataset.roomMap;
+  }
+  const chosen = options.find((option) => option.dataset.value === picker.dataset.value);
+  showInPicker(picker, shown ?? chosen!);
 }
 
 /** Make the `name` map choice work and keep its two views in step; `change` runs with the
