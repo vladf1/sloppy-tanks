@@ -76,8 +76,9 @@ try {
   assert.ok(report.flood.effects.particles <= 1200);
   assert.ok(report.flood.effects.puffs <= 192);
   await shoot("flood");
-  // Reset clears every transient pool; only shots still in flight and the
-  // laser tank's lens redraw, and empty pools add no draws.
+  // Reset clears every transient pool; only shots still in flight (with the smoke
+  // trailing their rockets) and the laser tank's lens redraw, and empty pools add no
+  // draws.
   await page.evaluate(() => window.effectsLab.setCamera([0, 21, 25], [0, 0, 0.5]));
   report.reset = await page.evaluate(() => {
     window.effectsLab.reset();
@@ -90,7 +91,7 @@ try {
   }
   const live = report.reset.poolList.filter(([, count]) => count > 0).map(([label]) => label);
   assert.ok(
-    live.every((label) => /projectile|laser (lenses|mounts)|quarry dust/.test(label)),
+    live.every((label) => /projectile|rocket smoke|laser (lenses|mounts)|quarry dust/.test(label)),
     `unexpected live pools after reset: ${live}`,
   );
   report.gpuError = await page.evaluate(() => window.effectsLab.error());

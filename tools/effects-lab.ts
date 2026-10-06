@@ -173,8 +173,13 @@ async function createRust(): Promise<EffectsLab> {
     // Background compiles finish on their own; poll them on a short timer.
     await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
   }
+  // Textures upload while preparing; one still loading after the last pipeline
+  // compiled needs more steps.
   while (lab.textures_pending() > 0) {
     await new Promise((resolve) => setTimeout(resolve, 16));
+    lab.prepare_step(0);
+    const error = lab.error();
+    if (error) throw new Error(error);
   }
   lab.warm_up();
   lab.reset();
