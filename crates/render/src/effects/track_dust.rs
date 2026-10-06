@@ -2,8 +2,6 @@
 //! per puff, no textures, lights or physics bodies. It advances on simulation
 //! time only, so it freezes while paused and between rounds.
 
-use std::collections::HashMap;
-
 use glam::{Mat4, Vec3};
 use sloppy_core::sim::data::{ARENA, vehicle};
 use sloppy_core::sim::maps::GroundKind;
@@ -106,7 +104,9 @@ pub struct TrackDust {
     pub records: PoolBuffer,
     pub gravel: TrackGravel,
     puffs: Vec<Puff>,
-    poses: HashMap<u32, Pose>,
+    /// Each live tank's last pose, by tank id: a few dozen tanks are found faster
+    /// by scanning than by hashing their ids every frame.
+    poses: Vec<(u32, Pose)>,
     previous_time: Option<f64>,
     /// Linear dust color of the current map.
     color: [f32; 3],
@@ -118,7 +118,7 @@ impl Default for TrackDust {
             records: PoolBuffer::new(TRACK_DUST_CAPACITY),
             gravel: TrackGravel::default(),
             puffs: Vec::with_capacity(TRACK_DUST_CAPACITY),
-            poses: HashMap::new(),
+            poses: Vec::new(),
             previous_time: None,
             color: hex_to_linear(0xe1caa2),
         }
@@ -177,19 +177,29 @@ impl TrackDust {
             true
         });
         self.poses
-            .retain(|id, _| state.tanks.iter().any(|tank| tank.id == *id && tank.alive));
+            .retain(|(id, _)| state.tanks.iter().any(|tank| tank.id == *id && tank.alive));
         for tank in &state.tanks {
             if !tank.alive {
                 continue;
             }
             let p = tank.position;
-            let previous = *self.poses.entry(tank.id).or_insert(Pose {
-                x: p.x,
-                z: p.z,
-                heading: tank.heading,
-                pending: 0.0,
-                gravel_cooldown: 0.0,
-            });
+            let slot = match self.poses.iter().position(|(id, _)| *id == tank.id) {
+                Some(slot) => slot,
+                None => {
+                    self.poses.push((
+                        tank.id,
+                        Pose {
+                            x: p.x,
+                            z: p.z,
+                            heading: tank.heading,
+                            pending: 0.0,
+                            gravel_cooldown: 0.0,
+                        },
+                    ));
+                    self.poses.len() - 1
+                }
+            };
+            let previous = self.poses[slot].1;
             let mut next = previous;
             let distance = (p.x - previous.x).hypot(p.z - previous.z);
             let velocity = tank.velocity;
@@ -281,7 +291,7 @@ impl TrackDust {
             next.x = p.x;
             next.z = p.z;
             next.heading = tank.heading;
-            self.poses.insert(tank.id, next);
+            self.poses[slot].1 = next;
         }
         let peak = if quarry {
             0.46

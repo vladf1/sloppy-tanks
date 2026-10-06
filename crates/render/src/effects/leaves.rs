@@ -48,8 +48,9 @@ pub struct Leaf {
     pub vx: f64,
     pub vy: f64,
     pub vz: f64,
-    /// Sideways swing: its horizontal direction, amplitude (m), rate (rad/s) and phase.
-    swing_angle: f64,
+    /// Sideways swing: its horizontal direction (the cosine and sine of its angle,
+    /// fixed for the leaf's life), amplitude (m), rate (rad/s) and phase.
+    swing_direction: [f64; 2],
     swing: f64,
     rate: f64,
     phase: f64,
@@ -60,6 +61,8 @@ pub struct Leaf {
     pub rest: Option<f64>,
     /// The tilt the leaf landed with.
     tilt: f32,
+    /// Its orientation once landed, which no longer changes.
+    rest_rotation: Quat,
     /// Length and width in metres.
     length: f64,
     width: f64,
@@ -81,11 +84,8 @@ impl Leaf {
             Some(_) => 0.0,
             None => (0.35 * (self.age * self.rate * 0.5 + self.phase).cos()) as f32,
         };
-        let across = Vec3::new(
-            -self.swing_angle.sin() as f32,
-            0.0,
-            self.swing_angle.cos() as f32,
-        );
+        let [cos, sin] = self.swing_direction;
+        let across = Vec3::new(-sin as f32, 0.0, cos as f32);
         Quat::from_axis_angle(across, self.tilt())
             * Quat::from_rotation_y(self.yaw as f32)
             * Quat::from_rotation_x(roll)
@@ -201,7 +201,10 @@ impl LeafFall {
                 vx: out_x * speed,
                 vy: -0.3 + next() * 1.2,
                 vz: out_z * speed,
-                swing_angle: next() * TAU,
+                swing_direction: {
+                    let angle = next() * TAU;
+                    [angle.cos(), angle.sin()]
+                },
                 swing: 0.18 + next() * 0.22,
                 rate: 3.0 + next() * 2.5,
                 phase: next() * TAU,
@@ -210,6 +213,7 @@ impl LeafFall {
                 age: 0.0,
                 rest: None,
                 tilt: 0.0,
+                rest_rotation: Quat::IDENTITY,
                 length,
                 width: if foliage.conifer { 0.3 } else { 1.0 },
                 color,
@@ -233,14 +237,16 @@ impl LeafFall {
                     leaf.vz *= drag;
                     leaf.vy = terminal + (leaf.vy - terminal) * drag;
                     let swing = leaf.swing * leaf.rate * (leaf.age * leaf.rate + leaf.phase).cos();
-                    leaf.x += (leaf.vx + leaf.swing_angle.cos() * swing) * dt;
-                    leaf.z += (leaf.vz + leaf.swing_angle.sin() * swing) * dt;
+                    let [cos, sin] = leaf.swing_direction;
+                    leaf.x += (leaf.vx + cos * swing) * dt;
+                    leaf.z += (leaf.vz + sin * swing) * dt;
                     leaf.y += leaf.vy * dt;
                     leaf.yaw += leaf.spin * dt;
                     if leaf.y <= REST_HEIGHT {
                         leaf.y = REST_HEIGHT;
                         leaf.tilt = leaf.tilt() * 0.15;
                         leaf.rest = Some(REST[0] + random.next_f64() * REST[1]);
+                        leaf.rest_rotation = leaf.rotation();
                     }
                     true
                 }
@@ -253,9 +259,13 @@ impl LeafFall {
                 .map_or(1.0, |rest| (1.0 + rest.min(0.0) / SHRINK).max(0.0));
             let length = (leaf.length * shrink) as f32;
             let scale = Vec3::new(length, length, length * leaf.width as f32);
+            let rotation = match leaf.rest {
+                Some(_) => leaf.rest_rotation,
+                None => leaf.rotation(),
+            };
             let world = glam::Mat4::from_scale_rotation_translation(
                 scale,
-                leaf.rotation(),
+                rotation,
                 Vec3::new(leaf.x as f32, leaf.y as f32, leaf.z as f32),
             );
             let [r, g, b] = leaf.color;
@@ -319,6 +329,12 @@ mod tests {
         }
         assert!(fall.leaves.iter().all(|leaf| leaf.rest.is_some()));
         assert!(fall.leaves.iter().all(|leaf| leaf.y == REST_HEIGHT));
+        // A landed leaf keeps the orientation it landed with.
+        assert!(
+            fall.leaves
+                .iter()
+                .all(|leaf| leaf.rest_rotation == leaf.rotation())
+        );
         // ...lies there for a while, then shrinks away.
         for _ in 0..(60 * 9) {
             fall.update(1.0 / 60.0, &mut random);

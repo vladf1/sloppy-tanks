@@ -1,11 +1,11 @@
 //! Chips, sparks and embers (`particle-effects.ts`): one bounded instanced
 //! draw of small icosahedra, plus the pooled blasts it forwards events to.
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::explosions::ExplosionEffects;
-use super::pool::{PoolBuffer, pose, record};
+use super::pool::{PoolBuffer, euler_xyz, pose, record};
 use super::random::CosmeticRandom;
 use crate::color::hex_to_linear;
 
@@ -286,28 +286,29 @@ impl ParticleEffects {
         });
         self.records.clear();
         let time = time as f32;
+        // Every chip turns the same way this frame.
+        let chip_turn = euler_xyz(Vec3::new(0.0, time, 0.0));
         for (i, q) in self.particles.iter().enumerate() {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = (q.size * q.life / q.max) as f32;
-            let (euler, scale) = match q.shape {
-                None => (Vec3::new(0.0, time, 0.0), Vec3::splat(size)),
+            let world = match q.shape {
+                None => {
+                    Mat4::from_scale_rotation_translation(Vec3::splat(size), chip_turn, position)
+                }
                 Some(shape) => {
                     let spin = i as f32;
                     let stretch = match shape {
                         ParticleShape::Splinter => Vec3::new(0.4, 2.4, 0.4),
                     };
-                    (
+                    pose(
+                        position,
                         Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
                         stretch * size,
                     )
                 }
             };
             let [r, g, b] = q.color;
-            self.records.push(record(
-                pose(position, euler, scale),
-                [r, g, b, 1.0],
-                [0.0; 4],
-            ));
+            self.records.push(record(world, [r, g, b, 1.0], [0.0; 4]));
         }
     }
 }
@@ -363,6 +364,40 @@ mod tests {
                 .iter()
                 .all(|p| p.shape == Some(ParticleShape::Splinter))
         );
+    }
+
+    #[test]
+    fn chips_and_splinters_are_posed_by_their_euler_turn() {
+        let mut random = CosmeticRandom::default();
+        let mut particles = ParticleEffects::default();
+        particles.event(&at(SimEventType::Impact), &mut random);
+        particles.event(
+            &with_cover(SimEventType::Impact, CoverKind::Tree),
+            &mut random,
+        );
+        let time = 7.3;
+        particles.update(0.02, time);
+        assert!(particles.particles.iter().any(|q| q.shape.is_none()));
+        assert!(particles.particles.iter().any(|q| q.shape.is_some()));
+        let time = time as f32;
+        for (i, (q, record)) in particles
+            .particles
+            .iter()
+            .zip(particles.records.records())
+            .enumerate()
+        {
+            let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
+            let size = (q.size * q.life / q.max) as f32;
+            let spin = i as f32;
+            let (euler, scale) = match q.shape {
+                None => (Vec3::new(0.0, time, 0.0), Vec3::splat(size)),
+                Some(_) => (
+                    Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
+                    Vec3::new(0.4, 2.4, 0.4) * size,
+                ),
+            };
+            assert_eq!(record.world(), pose(position, euler, scale));
+        }
     }
 
     #[test]
