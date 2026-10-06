@@ -6,7 +6,9 @@
 // supports by itself (WebGPU when it has an adapter, else WebGL) and download only
 // that one. Where WebGPU has an adapter, a WebGPU device that fails must fall back
 // to WebGL on the same canvas, and the two engines must draw the same still frame of
-// the quarry (whose fixed scenery shadow is cached) closely alike.
+// the quarry (whose fixed scenery shadow is cached) closely alike. Through 32 Scrap
+// Yard resets and five resizes the context's live GL objects and the Wasm memory must
+// stop changing, and a lost context and a GL error must reach `Game.error()`.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
@@ -25,7 +27,8 @@ const HEIGHT = 720;
 /** Software WebGL (SwiftShader, on machines without a GPU) takes minutes to compile
  * an arena's programs; hardware takes seconds. */
 const LOADING_TIMEOUT_MS = 300_000;
-const MAPS = ["village", "harbor", "quarry"];
+/** The standard maps and the extra levels (offered with `?debug`). */
+const MAPS = ["village", "harbor", "quarry", "stress-test", "superstress"];
 /** The still frame both engines draw: the quarry's floor and cliffs from above. */
 const STILL_POSE = [-40, 70, 40, 0, 0, 0];
 /** WebGL may look simpler, but not different: mean channel difference out of 255,
@@ -33,6 +36,13 @@ const STILL_POSE = [-40, 70, 40, 0, 0, 0];
  * purpose; a broken cached shadow (the whole floor in shadow) measured 53 and 0.73. */
 const STILL_MEAN_TOLERANCE = 16;
 const STILL_LARGE_TOLERANCE = 0.15;
+/** Resets before the renderer and the allocator settle at their high-water marks;
+ * every later reset must leave the same GL objects and Wasm memory. */
+const SETTLING_RESETS = 16;
+const RESETS = 32;
+/** More frames than the backend draws between `getError` checks
+ * (`ERROR_CHECK_FRAMES` in `crates/render/src/gpu/webgl/mod.rs`). */
+const ERROR_CHECK_DRAWS = 320;
 /** A zeroed index buffer must come from the browser (`bufferData` with a size), never
  * from an upload of zeros out of a vector in the engine's Wasm heap, which would keep
  * that size for good (wgpu's GL backend once cleared unwritten buffer tails that way).
@@ -193,7 +203,7 @@ const onlyWebgl = (binaries) => binaries.every((name) => /^engine-webgl_bg[-.]/.
 try {
   for (const map of MAPS) {
     const { page, binaries } = await newPage();
-    await open(page, "?webgl");
+    await open(page, "?webgl&debug");
     await chooseMap(page, map);
     const result = { map, ...(await play(page, `webgl-${map}`)), binaries };
     console.log(JSON.stringify(result));
@@ -255,7 +265,137 @@ try {
   } else {
     console.log("No WebGPU adapter: the WebGL and WebGPU frames are not compared.");
   }
-  assert.deepEqual(errors, []);
+  // Count the context's live GL objects outside the renderer: its own counters
+  // cannot show a GL object it forgot to delete.
+  {
+    const { page } = await newPage();
+    await freezeLoop(page);
+    await seedGame(page, 424242);
+    await page.addInitScript(() => {
+      const prototype = WebGL2RenderingContext.prototype;
+      const live = {};
+      window.glObjects = () =>
+        Object.fromEntries(Object.entries(live).map(([kind, objects]) => [kind, objects.size]));
+      for (const kind of [
+        "Buffer",
+        "Texture",
+        "Sampler",
+        "Framebuffer",
+        "Renderbuffer",
+        "Program",
+        "Shader",
+        "VertexArray",
+      ]) {
+        const objects = (live[kind] = new Set());
+        const create = prototype[`create${kind}`];
+        const remove = prototype[`delete${kind}`];
+        prototype[`create${kind}`] = function (...args) {
+          const object = create.apply(this, args);
+          if (object) objects.add(object);
+          return object;
+        };
+        prototype[`delete${kind}`] = function (object) {
+          objects.delete(object);
+          return remove.call(this, object);
+        };
+      }
+      const instantiate = WebAssembly.instantiate;
+      WebAssembly.instantiate = async (...args) => {
+        const result = await instantiate(...args);
+        window.engineMemory ??= (result.instance ?? result).exports.memory;
+        return result;
+      };
+    });
+    const url = new URL(gameUrl);
+    url.search = "?webgl&debug&autoplay&map=superstress";
+    await page.goto(url.href);
+    await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    const resets = await page.evaluate(
+      ({ resets, pose }) => {
+        const samples = [];
+        for (let i = 0; i < resets; i++) {
+          window.sloppy.start();
+          window.engine.draw(pose);
+          samples.push({
+            objects: window.glObjects(),
+            memory: window.engineMemory?.buffer.byteLength,
+            error: window.sloppy.game.error() ?? null,
+            draws: window.engine.stats().drawCalls,
+          });
+        }
+        return samples;
+      },
+      { resets: RESETS, pose: STILL_POSE },
+    );
+    console.log(JSON.stringify({ scrapYardResets: resets }));
+    assert.ok(resets[0].memory > 0, "the probe sees the engine's Wasm memory");
+    const settled = resets[SETTLING_RESETS];
+    for (const sample of resets.slice(SETTLING_RESETS)) {
+      assert.deepEqual(sample.objects, settled.objects, "a reset frees its round's GL objects");
+      assert.equal(sample.memory, settled.memory, "resets stop growing the Wasm memory");
+      assert.equal(sample.error, null);
+      assert.equal(sample.draws, settled.draws);
+    }
+    const sizes = [];
+    for (const [width, height] of [
+      [1100, 700],
+      [800, 600],
+      [WIDTH, HEIGHT],
+      [800, 600],
+      [WIDTH, HEIGHT],
+    ]) {
+      await page.setViewportSize({ width, height });
+      sizes.push(
+        await page.evaluate((pose) => {
+          window.sloppy.exactResolution();
+          window.engine.draw(pose);
+          return { objects: window.glObjects(), error: window.sloppy.game.error() ?? null };
+        }, STILL_POSE),
+      );
+    }
+    console.log(JSON.stringify({ sizes }));
+    for (const size of sizes) {
+      assert.deepEqual(size.objects, settled.objects, "a resize deletes the targets it replaces");
+      assert.equal(size.error, null);
+    }
+    const lost = await page.evaluate(async () => {
+      const gl = document.querySelector("canvas").getContext("webgl2");
+      const extension = gl.getExtension("WEBGL_lose_context");
+      if (!extension) return "unavailable";
+      extension.loseContext();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return window.sloppy.game.error() ?? null;
+    });
+    console.log(JSON.stringify({ contextLoss: lost }));
+    if (lost !== "unavailable") assert.match(lost, /WebGL context was lost/);
+    await page.close();
+  }
+  // A GL error while drawing reaches `Game.error()` by the next periodic check.
+  {
+    const { page } = await newPage();
+    await freezeLoop(page);
+    const url = new URL(gameUrl);
+    url.search = "?webgl&autoplay";
+    await page.goto(url.href);
+    await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    const error = await page.evaluate(
+      ({ draws, pose }) => {
+        const gl = document.querySelector("canvas").getContext("webgl2");
+        // INVALID_ENUM, and no state the backend's cache tracks changes.
+        gl.enable(0);
+        for (let i = 0; i < draws && !window.sloppy.game.error(); i++) window.engine.draw(pose);
+        return window.sloppy.game.error() ?? null;
+      },
+      { draws: ERROR_CHECK_DRAWS, pose: STILL_POSE },
+    );
+    console.log(JSON.stringify({ drawingError: error }));
+    assert.match(error ?? "", /WebGL error 0x0500 while drawing/);
+    await page.close();
+  }
+  // Only the context loss and the GL error caused on purpose are reported.
+  const expected = [/WebGL context was lost/, /INVALID_ENUM: enable/, /WebGL error 0x0500/];
+  const unexpected = errors.filter((error) => !expected.some((pattern) => pattern.test(error)));
+  assert.deepEqual(unexpected, []);
   console.log("PASS");
 } finally {
   await browser.close();
