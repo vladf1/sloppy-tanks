@@ -111,6 +111,25 @@ pub fn cache_scenery_shadows(triangles: u64) -> bool {
     triangles >= MIN_CACHED_TRIANGLES
 }
 
+/// Where a frame's merged shadow item draws: by pipeline, then by the caster's
+/// vertex and index pages, so draws from one page go together, then by model and
+/// group, so each group's items stay together and draw instanced. One integer
+/// orders like that tuple: the renderer sorts a few hundred items a frame, and an
+/// integer compares in a few instructions where the tuple took a chain of branches.
+pub fn merged_draw_order(
+    pipeline: u32,
+    vertex_page: u16,
+    index_page: u16,
+    model: u32,
+    group: u32,
+) -> u128 {
+    u128::from(pipeline) << 96
+        | u128::from(vertex_page) << 80
+        | u128::from(index_page) << 64
+        | u128::from(model) << 32
+        | u128::from(group)
+}
+
 type Geometry<'a> = (Vec<Vec3>, Vec<Vec2>, std::borrow::Cow<'a, [u32]>);
 
 /// Positions, UVs and triangle indices of a part's mesh.
@@ -271,6 +290,36 @@ mod tests {
     use sloppy_core::geometry::box_geometry;
     use sloppy_core::scene::{Material, Node};
     use std::sync::Arc;
+
+    #[test]
+    fn merged_draw_order_compares_like_its_fields() {
+        let mut random = crate::effects::random::CosmeticRandom::seeded(5);
+        let mut pick = |n: f64| (random.next_f64() * n) as u32;
+        let mut items: Vec<(u32, u16, u16, u32, u32)> = (0..300)
+            .map(|_| {
+                (
+                    pick(6.0),
+                    pick(4.0) as u16,
+                    pick(3.0) as u16,
+                    pick(40.0),
+                    pick(5.0),
+                )
+            })
+            .collect();
+        // The extremes of every field too.
+        items.push((5, u16::MAX, u16::MAX, u32::MAX, u32::MAX));
+        items.push((0, 0, 0, 0, 0));
+        items.push((1, 0, u16::MAX, 0, u32::MAX));
+        let order =
+            |&(pipeline, vertex_page, index_page, model, group): &(u32, u16, u16, u32, u32)| {
+                merged_draw_order(pipeline, vertex_page, index_page, model, group)
+            };
+        for a in &items {
+            for b in &items {
+                assert_eq!(order(a).cmp(&order(b)), a.cmp(b), "{a:?} {b:?}");
+            }
+        }
+    }
 
     #[test]
     fn cache_requires_a_substantial_fixed_set() {
