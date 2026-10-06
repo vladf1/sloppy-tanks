@@ -23,13 +23,18 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 use glow::HasContext;
 
 use super::{FrameUniform, MergedDraw, RenderStats, Scene, WaterUniform, lut};
-use crate::draw_list::{Draw, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
 use textures::{linear_sampler, storage};
 
 /// Frames between `getError` checks: the call waits for the GPU process.
 const ERROR_CHECK_FRAMES: u32 = 300;
+
+/// Opaque draws group by material before mesh page: a material binds its uniform
+/// block and every texture and sampler that differs, up to a dozen calls into
+/// JavaScript, where a page rebinds one vertex array.
+pub const DRAW_GROUPING: Grouping = Grouping::MaterialFirst;
 
 const INITIAL_SHADOW_BASES: u32 = 1024;
 

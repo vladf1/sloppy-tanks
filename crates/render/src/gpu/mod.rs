@@ -68,8 +68,8 @@ use sloppy_core::scene::{Blending, Node, Side, TextureRef};
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
-    Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW,
-    VIEW_COUNT, ViewDraws, order_classes,
+    ClassOrder, Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW,
+    SHADOW_VIEW, VIEW_COUNT, ViewDraws,
 };
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::{MaterialInterner, is_transparent};
@@ -397,18 +397,6 @@ struct ClassKey {
 
 const NO_POOL: u32 = u32::MAX;
 
-/// Whether opaque draws are grouped by the GPU state their class binds
-/// (`draw_list::order_classes`) instead of following class index order. The WebGL
-/// engine groups them: every program, material, mesh page or pool change costs it
-/// from one to a dozen WebGL calls, each a crossing into JavaScript. The WebGPU engine
-/// keeps index order: there grouping saved the browser's GPU process a little but
-/// cost the main thread a little more per frame, and index order keeps its depth ties
-/// as they were. Classes are created in about the order their meshes are placed, so
-/// index order mostly draws from one mesh page after another; class slots freed by a
-/// reset or by destruction are reused in reverse, which interleaves pages a little
-/// more as rounds go by.
-const GROUP_DRAWS_BY_STATE: bool = cfg!(feature = "webgl");
-
 /// A mesh + material + pipeline combination that instances batch under.
 struct ClassEntry {
     key: ClassKey,
@@ -684,14 +672,11 @@ pub struct Renderer {
     classes: Vec<Option<ClassEntry>>,
     class_index: HashMap<ClassKey, u32>,
     free_classes: Vec<u32>,
-    /// Each class's position in opaque draw order (`GROUP_DRAWS_BY_STATE`): for the
-    /// main and reflection views, which bind its main pipeline, and for the shadow
-    /// view. Recomputed only after classes come or go.
-    class_order: [Vec<u32>; 2],
-    class_order_dirty: bool,
-    /// Scratch for `class_order`.
-    class_states: Vec<Option<DrawState>>,
-    class_by_state: Vec<u32>,
+    /// Opaque draws group by the GPU state their class binds, so consecutive draws
+    /// skip pipeline, material, mesh page and pool changes
+    /// (`backend::DRAW_GROUPING`). The order for the main and reflection views, which
+    /// bind a class's main pipeline, and for the shadow view.
+    class_order: [ClassOrder; 2],
     models: Slab<ModelEntry>,
     instances: Slab<InstanceEntry>,
     pools: Slab<PoolEntry>,
@@ -784,10 +769,7 @@ impl Renderer {
             classes: Vec::new(),
             class_index: HashMap::new(),
             free_classes: Vec::new(),
-            class_order: Default::default(),
-            class_order_dirty: false,
-            class_states: Vec::new(),
-            class_by_state: Vec::new(),
+            class_order: [0, 1].map(|_| ClassOrder::new(backend::DRAW_GROUPING)),
             models: Slab::default(),
             instances: Slab::default(),
             pools: Slab::default(),
@@ -1027,7 +1009,10 @@ impl Renderer {
                     }
                 };
                 self.class_index.insert(key, index);
-                self.class_order_dirty = true;
+                let class = self.classes[index as usize].as_ref().expect("live class");
+                for (order, view) in self.class_order.iter_mut().zip([MAIN_VIEW, SHADOW_VIEW]) {
+                    order.insert(index, class.draw_state(view));
+                }
                 index
             }
         };
@@ -1059,7 +1044,9 @@ impl Renderer {
             self.meshes.remove_user(class.key.mesh);
             self.materials.get_mut(class.key.material).users -= 1;
             self.free_classes.push(index);
-            self.class_order_dirty = true;
+            for order in &mut self.class_order {
+                order.remove(index);
+            }
         }
     }
 
@@ -2142,8 +2129,7 @@ impl Renderer {
         }
         self.push_pool_draws();
         let base = self.static_records.len() as u32;
-        self.update_class_order();
-        let [main, shadow] = &self.class_order;
+        let [main, shadow] = [0, 1].map(|view| self.class_order[view].positions());
         self.builder
             .finish(base, &mut self.views, [main, main, shadow]);
         self.finish_merged(base + self.builder.records.len() as u32);
@@ -2160,29 +2146,6 @@ impl Renderer {
                 true
             }
         });
-    }
-
-    /// Recompute where each class goes in opaque draw order after classes came or
-    /// went (`class_order`).
-    fn update_class_order(&mut self) {
-        if !self.class_order_dirty {
-            return;
-        }
-        self.class_order_dirty = false;
-        for (order, view) in self.class_order.iter_mut().zip([MAIN_VIEW, SHADOW_VIEW]) {
-            if !GROUP_DRAWS_BY_STATE {
-                order.clear();
-                order.extend(0..self.classes.len() as u32);
-                continue;
-            }
-            self.class_states.clear();
-            self.class_states.extend(
-                self.classes
-                    .iter()
-                    .map(|class| class.as_ref().map(|class| class.draw_state(view))),
-            );
-            order_classes(&self.class_states, &mut self.class_by_state, order);
-        }
     }
 
     /// Group merged shadow items into instanced draws (by pipeline, mesh page, model
