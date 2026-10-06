@@ -21,10 +21,17 @@ pub use resources::{MaterialBinding, PageBuffers};
 pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{FrameUniform, MergedDraw, RenderStats, SAMPLE_COUNT, Scene, WaterUniform, lut};
-use crate::draw_list::{Draw, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
 use context::{ColorTarget, DEPTH_FORMAT};
 use resources::uniform_buffer;
+
+/// Opaque draws group by mesh page before material. Every switch is a call Chrome
+/// validates in the GPU process, and a page switch costs one or two vertex buffers
+/// and often the index buffer where a material is one bind group: grouping by page
+/// first cut the GPU process 11-20% against class index order (material first,
+/// 6-18%), and neither changed the main thread measurably.
+pub const DRAW_GROUPING: Grouping = Grouping::PageFirst;
 
 impl Gpu {
     /// The first GPU validation error or device loss, if any.

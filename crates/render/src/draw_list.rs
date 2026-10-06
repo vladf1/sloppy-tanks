@@ -1,10 +1,9 @@
 //! Per-frame draw lists. Visible part instances are collected per view with their
 //! instance record, then ordered like Three's render lists: opaque draws by render
-//! order and draw class in a linear pass, in an order the renderer gives the classes
-//! (index order, or grouped by the GPU state they bind: [`order_classes`]), so every
-//! instance sharing a mesh and material becomes one instanced draw; transparent draws
-//! by render order and then back to front, one draw each. All buffers are reused
-//! between frames.
+//! order and draw class in a linear pass, the classes grouped by the GPU state they
+//! bind ([`ClassOrder`]), so every instance sharing a mesh and material becomes one
+//! instanced draw; transparent draws by render order and then back to front, one draw
+//! each. All buffers are reused between frames.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
@@ -109,19 +108,16 @@ enum Source {
     Range { first: u32, count: u32 },
 }
 
-/// The GPU state an opaque draw of a class binds, compared in the order of what
-/// costs most to switch. Ordering classes by it lets consecutive draws skip
-/// pipeline, mesh page, frame group and material changes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// The GPU state an opaque draw of a class binds. Ordering classes by it
+/// ([`Grouping`]) lets consecutive draws skip pipeline, mesh page, frame group and
+/// material changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawState {
     /// A stable rank of the class's pipeline in the view; the pipeline itself may
     /// still be compiling when the lists are sorted.
     pub pipeline: u32,
-    /// A material switch binds its uniform block and every texture and sampler that
-    /// differs: up to a dozen WebGL calls, where a page switch is one or two.
     pub material: u32,
-    /// The vertex page of its mesh (`crate::mesh_pages`): a page switch rebinds the
-    /// page's vertex array.
+    /// The vertex page of its mesh (`crate::mesh_pages`).
     pub vertex_page: u32,
     /// The instance pool whose instance records it binds (`u32::MAX`: the view's own).
     pub pool: u32,
@@ -129,21 +125,81 @@ pub struct DrawState {
     pub index_page: u32,
 }
 
-/// Each class's position when classes are listed by the state they bind (`states`,
-/// indexed by class; free slots are `None` and go last), then by index. Opaque draws
-/// follow these positions. Recompute it only when classes come or go: the sort is
-/// over classes, not per frame. `by_state` is scratch.
-pub fn order_classes(states: &[Option<DrawState>], by_state: &mut Vec<u32>, order: &mut Vec<u32>) {
-    by_state.clear();
-    by_state.extend(0..states.len() as u32);
-    by_state.sort_unstable_by_key(|&class| {
-        let state = states[class as usize];
-        (state.is_none(), state.unwrap_or_default(), class)
-    });
-    order.clear();
-    order.resize(states.len(), 0);
-    for (position, &class) in by_state.iter().enumerate() {
-        order[class as usize] = position as u32;
+/// What opaque draws group by after their pipeline, the costliest switch on both
+/// backends. Each backend picks by what its bindings cost (`DRAW_GROUPING`); pools
+/// and index pages break ties.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Grouping {
+    /// Material, then vertex page. A WebGL material switch binds its uniform block
+    /// and every texture and sampler that differs, up to a dozen calls, where a page
+    /// switch rebinds one vertex array.
+    #[default]
+    MaterialFirst,
+    /// Vertex page, then material. A WebGPU material switch is one bind group call,
+    /// where a page switch sets one or two vertex buffers and often the index buffer.
+    PageFirst,
+}
+
+impl DrawState {
+    /// Where a class binding this state sorts, before its index.
+    fn key(&self, grouping: Grouping) -> [u32; 5] {
+        let (first, second) = match grouping {
+            Grouping::MaterialFirst => (self.material, self.vertex_page),
+            Grouping::PageFirst => (self.vertex_page, self.material),
+        };
+        [self.pipeline, first, second, self.pool, self.index_page]
+    }
+}
+
+/// Each live class's position when classes are listed by the state they bind, then
+/// by index. Opaque draws follow these positions. Classes come and go one at a time
+/// and their state is fixed for their life, so each change moves one entry of the
+/// sorted list and renumbers the classes after it, where re-sorting every class
+/// whenever debris added one cost the Stress Grid about 24 µs a frame.
+#[derive(Default)]
+pub struct ClassOrder {
+    grouping: Grouping,
+    /// Live classes in draw order, by their [`DrawState::key`] and index.
+    by_state: Vec<([u32; 5], u32)>,
+    /// Each class's position in `by_state`, indexed by class; free slots keep a
+    /// stale one, which no draw reads.
+    positions: Vec<u32>,
+}
+
+impl ClassOrder {
+    pub fn new(grouping: Grouping) -> Self {
+        Self {
+            grouping,
+            ..Self::default()
+        }
+    }
+
+    /// The positions [`DrawListBuilder::finish`] sorts by, indexed by class.
+    pub fn positions(&self) -> &[u32] {
+        &self.positions
+    }
+
+    pub fn insert(&mut self, class: u32, state: DrawState) {
+        let entry = (state.key(self.grouping), class);
+        let at = self.by_state.partition_point(|&other| other < entry);
+        self.by_state.insert(at, entry);
+        if self.positions.len() <= class as usize {
+            self.positions.resize(class as usize + 1, 0);
+        }
+        self.renumber(at);
+    }
+
+    pub fn remove(&mut self, class: u32) {
+        let at = self.positions[class as usize] as usize;
+        debug_assert_eq!(self.by_state[at].1, class, "a live class");
+        self.by_state.remove(at);
+        self.renumber(at);
+    }
+
+    fn renumber(&mut self, from: usize) {
+        for (position, &(_, class)) in self.by_state.iter().enumerate().skip(from) {
+            self.positions[class as usize] = position as u32;
+        }
     }
 }
 
@@ -231,8 +287,8 @@ impl DrawListBuilder {
 
     /// Sort every view and emit draws. Dynamic records start at `base` in the GPU
     /// instance buffer; `self.records` holds them in draw order afterwards.
-    /// `order[view]` gives each class's position in that view (its index, or
-    /// [`order_classes`]); every class pushed this frame must have one.
+    /// `order[view]` gives each class's position in that view
+    /// ([`ClassOrder::positions`]); every class pushed this frame must have one.
     ///
     /// Within a render order, opaque draws follow their class's position. Opaque
     /// materials write depth with a less-equal test, so the order only decides depth
@@ -390,10 +446,11 @@ mod tests {
     /// `state(view, class)`.
     fn orders(classes: u32, state: impl Fn(usize, u32) -> DrawState) -> [Vec<u32>; VIEW_COUNT] {
         std::array::from_fn(|view| {
-            let states: Vec<_> = (0..classes).map(|class| Some(state(view, class))).collect();
-            let mut order = Vec::new();
-            order_classes(&states, &mut Vec::new(), &mut order);
-            order
+            let mut order = ClassOrder::default();
+            for class in 0..classes {
+                order.insert(class, state(view, class));
+            }
+            order.positions().to_vec()
         })
     }
 
@@ -581,36 +638,91 @@ mod tests {
         assert_eq!(transparent, [5, 0, 5]);
         // The index page only breaks ties: within one pipeline, material and vertex
         // page, a class on a later index page goes after the others.
-        let mut order = Vec::new();
-        let with_index_page = |index_page| {
-            Some(DrawState {
+        let mut order = ClassOrder::default();
+        for (class, index_page) in [1, 0, 1].into_iter().enumerate() {
+            let state = DrawState {
                 index_page,
                 ..DrawState::default()
-            })
-        };
-        order_classes(
-            &[with_index_page(1), with_index_page(0), with_index_page(1)],
-            &mut Vec::new(),
-            &mut order,
-        );
-        assert_eq!(order, [1, 0, 2]);
+            };
+            order.insert(class as u32, state);
+        }
+        assert_eq!(order.positions(), [1, 0, 2]);
     }
 
     #[test]
-    fn classes_order_by_state_then_index_with_free_slots_last() {
-        let state = |pipeline| {
-            Some(DrawState {
-                pipeline,
-                ..DrawState::default()
-            })
+    fn page_first_grouping_orders_by_vertex_page_before_material() {
+        // Classes 0-3 in one pipeline: (vertex page, material) = (1, 0), (0, 1),
+        // (0, 0), (1, 1).
+        let states = [(1, 0), (0, 1), (0, 0), (1, 1)].map(|(vertex_page, material)| DrawState {
+            vertex_page,
+            material,
+            ..DrawState::default()
+        });
+        let positions = |grouping| {
+            let mut order = ClassOrder::new(grouping);
+            for (class, state) in states.iter().enumerate() {
+                order.insert(class as u32, *state);
+            }
+            order.positions().to_vec()
         };
-        let mut order = Vec::new();
-        order_classes(
-            &[state(2), None, state(1), state(2), state(1)],
-            &mut Vec::new(),
-            &mut order,
-        );
-        assert_eq!(order, [2, 4, 0, 3, 1]);
+        assert_eq!(positions(Grouping::PageFirst), [2, 1, 0, 3]);
+        assert_eq!(positions(Grouping::MaterialFirst), [1, 2, 0, 3]);
+    }
+
+    #[test]
+    fn classes_order_by_state_then_index_as_they_come_and_go() {
+        let state = |pipeline| DrawState {
+            pipeline,
+            ..DrawState::default()
+        };
+        let mut order = ClassOrder::default();
+        for (class, pipeline) in [(3, 1), (0, 2), (1, 9), (2, 1), (4, 2)] {
+            order.insert(class, state(pipeline));
+        }
+        assert_eq!(order.positions(), [2, 4, 0, 1, 3]);
+        // Class 1 goes and its slot comes back with another state; class 3 goes.
+        order.remove(1);
+        order.remove(3);
+        order.insert(1, state(0));
+        let live = [0, 1, 2, 4];
+        let positions: Vec<_> = live.iter().map(|&class| order.positions()[class]).collect();
+        assert_eq!(positions, [2, 0, 1, 3]);
+    }
+
+    #[test]
+    fn class_order_matches_a_sort_of_the_live_classes() {
+        let mut random = crate::effects::random::CosmeticRandom::seeded(11);
+        let mut pick = |n: f64| (random.next_f64() * n) as u32;
+        let grouping = Grouping::PageFirst;
+        let mut order = ClassOrder::new(grouping);
+        let mut live: Vec<Option<DrawState>> = vec![None; 60];
+        for _ in 0..2000 {
+            let class = pick(60.0);
+            match live[class as usize] {
+                Some(_) => {
+                    order.remove(class);
+                    live[class as usize] = None;
+                }
+                None => {
+                    let state = DrawState {
+                        pipeline: pick(4.0),
+                        material: pick(6.0),
+                        vertex_page: pick(3.0),
+                        pool: pick(2.0),
+                        index_page: pick(3.0),
+                    };
+                    order.insert(class, state);
+                    live[class as usize] = Some(state);
+                }
+            }
+            let mut expected: Vec<([u32; 5], u32)> = (0..60)
+                .filter_map(|class| live[class as usize].map(|state| (state.key(grouping), class)))
+                .collect();
+            expected.sort();
+            for (position, (_, class)) in expected.into_iter().enumerate() {
+                assert_eq!(order.positions()[class as usize], position as u32);
+            }
+        }
     }
 
     #[test]
