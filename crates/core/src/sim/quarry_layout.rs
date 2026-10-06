@@ -1,6 +1,6 @@
 //! Dusty Dig: a broad east/west crossing, sheltered outer loops and two crate-plugged rock cuts.
 
-use super::arena::CoverDef;
+use super::arena::{CoverDef, boundary_walls};
 use super::data::ARENA;
 use super::quarry_barrier_shapes::DRAGON_TOOTH_SCALE;
 use super::types::CoverKind;
@@ -14,22 +14,7 @@ fn stone(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> CoverDef {
 pub fn quarry_layout() -> Vec<CoverDef> {
     let mut covers = Vec::new();
     for side in [-1.0, 1.0] {
-        covers.push(stone(
-            CoverKind::Boundary,
-            side * (ARENA + 0.5),
-            0.0,
-            1.0,
-            ARENA * 2.0 + 2.0,
-            1.2,
-        ));
-        covers.push(stone(
-            CoverKind::Boundary,
-            0.0,
-            side * (ARENA + 0.5),
-            ARENA * 2.0 + 2.0,
-            1.0,
-            1.2,
-        ));
+        covers.extend(boundary_walls(side, ARENA, 1.2, STONE));
         // Offset islands break cross-map fire without enclosing the central pickup.
         covers.push(stone(
             CoverKind::Rock,

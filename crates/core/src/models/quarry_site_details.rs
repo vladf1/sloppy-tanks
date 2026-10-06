@@ -16,6 +16,7 @@ use super::harbor_surfaces::steel_box;
 use super::model_primitives::{adopt_children, span_between};
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
 use super::quarry_surfaces::{RubbleStone, sandstone_rubble};
+use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::{hex_to_linear, js_hypot};
 use crate::sim::arena::spawn_positions;
 use crate::sim::math::Random;
@@ -147,7 +148,7 @@ fn scrub(rng: &mut Random) -> Node {
         } else {
             (out, along * 0.75)
         };
-        let y = -(1.8f64.min((x.abs().max(z.abs()) - 60.0) * 0.3)) + 0.01;
+        let y = -quarry_ground_drop(x, z) + 0.01;
         let blocked = SCRUB_KEEP_OUT
             .iter()
             .any(|&[x0, x1, z0, z1]| x > x0 && x < x1 && z > z0 && z < z1);

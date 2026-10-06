@@ -11,6 +11,8 @@ use crate::scene::{Effect, Material, Node, TextureRef, TextureSource, Wrap};
 use super::effects_scenery::{GRIT, GRIT_TEXTURE, QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
 use super::quarry_soil::{ACCUM_CELLS, QUARRY_TERRAIN_EXTENT};
 use crate::geometry::math::js_hypot;
+use crate::sim::arena::BOUNDARY_THICKNESS;
+use crate::sim::data::ARENA;
 use crate::sim::math::Random;
 use crate::sim::quarry_layout::quarry_layout;
 use crate::sim::types::CoverKind;
@@ -109,19 +111,29 @@ pub fn plain_soil_colors(mesh: &mut Mesh) {
     mesh.colors = vec![[1.0; 3]; mesh.positions.len()];
 }
 
-/// `quarryTerrain()`: the metre-scaled work yard floor, flat inside the wall and
-/// falling 0.3 per metre to the machinery apron 1.8 m below. Generated once for the
-/// retained scenery, never during round reset or rendering.
+/// Where the work yard's floor starts banking down: the boundary wall's outer face.
+pub const QUARRY_BANK_TOP: f64 = ARENA + BOUNDARY_THICKNESS;
+/// Depth of the machinery apron below the work yard.
+pub const QUARRY_APRON_DEPTH: f64 = 1.8;
+/// The bank meets the apron 66 m out, where the apron scenery stands.
+const QUARRY_BANK_SLOPE: f64 = QUARRY_APRON_DEPTH / (66.0 - QUARRY_BANK_TOP);
+
+/// How far the ground at (x, z) lies below the work yard: flat inside the boundary
+/// wall, banking down from its outer face to the machinery apron. The sandstone
+/// shader (`effects/sandstone.wgsl`) repeats this profile.
+pub fn quarry_ground_drop(x: f64, z: f64) -> f64 {
+    let outside = x.abs().max(z.abs()) - QUARRY_BANK_TOP;
+    (outside.max(0.0) * QUARRY_BANK_SLOPE).min(QUARRY_APRON_DEPTH)
+}
+
+/// `quarryTerrain()`: the metre-scaled work yard floor, flat to the wall's outer face
+/// and banking down to the machinery apron ([`quarry_ground_drop`]). Generated once
+/// for the retained scenery, never during round reset or rendering.
 pub fn quarry_terrain() -> Node {
     let mut geometry = plane_geometry_segments(EXTENT, EXTENT, FLOOR_SEGMENTS, FLOOR_SEGMENTS);
     geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
     for p in &mut geometry.positions {
-        let outside = f64::from(p[0]).abs().max(f64::from(p[2]).abs()) - 60.0;
-        p[1] = if outside > 0.0 {
-            (-(1.8f64.min(outside * 0.3))) as f32
-        } else {
-            0.0
-        };
+        p[1] = -quarry_ground_drop(f64::from(p[0]), f64::from(p[2])) as f32;
     }
     geometry.compute_vertex_normals();
     plain_soil_colors(&mut geometry);

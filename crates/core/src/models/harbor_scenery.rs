@@ -18,7 +18,8 @@ use super::house_surfaces::siding_box;
 use super::model_primitives::{
     DEFAULT_BOX_RADIUS, TEAM_COLORS, box_part, cylinder_part, paint, put, rotated,
 };
-use crate::sim::arena::spawn_positions;
+use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
+use crate::sim::data::ARENA;
 use crate::sim::types::{Team, Vec2};
 
 /// Indices of the animated groups among [`HarborScenery::root`]'s children.
@@ -60,6 +61,13 @@ fn paint_label(group: &mut Node, text: &'static str, x: f64, z: f64, width: f64,
 
 const DOCK: HarborSurface = HarborSurface::Dock;
 
+/// The quay face: the outer face of the harbor's boundary wall.
+const QUAY_EDGE: f64 = ARENA + BOUNDARY_THICKNESS;
+/// Top of the harbor's boundary wall (`harbor_layout`).
+const WALL_TOP: f64 = 1.2;
+/// Mooring bollards along the wall top, just inside the quay face.
+const BOLLARD_LINE: f64 = QUAY_EDGE - 0.6;
+
 impl HarborScenery {
     pub fn new() -> Self {
         let mut root = Node::group("");
@@ -69,7 +77,7 @@ impl HarborScenery {
         let mut beacons = Node::group("");
         put(
             &mut details,
-            harbor_box(124.0, 2.6, 124.0, 0x9aaba1, DOCK),
+            harbor_box(QUAY_EDGE * 2.0, 2.6, QUAY_EDGE * 2.0, 0x9aaba1, DOCK),
             0.0,
             -1.4,
             0.0,
@@ -162,23 +170,23 @@ impl HarborScenery {
                 );
             }
             for x in [-48.0, -24.0, 0.0, 24.0, 48.0] {
-                // Quay bollards and fenders are beyond the wall.
+                // Bollards stand on the wall's outer edge; fenders hang on the quay face.
                 put(
                     &mut details,
                     cylinder_part(0.42, 0.7, 0x253e45, 12),
                     x,
-                    0.05,
-                    side * 62.0,
+                    WALL_TOP + 0.05,
+                    side * BOLLARD_LINE,
                 );
                 put(
                     &mut details,
                     box_part(1.4, 0.25, 0.5, 0x253e45, DEFAULT_BOX_RADIUS),
                     x,
-                    0.45,
-                    side * 62.0,
+                    WALL_TOP + 0.45,
+                    side * BOLLARD_LINE,
                 );
                 let fender = rotated(cylinder_part(0.65, 1.4, 0x25363d, 12), FRAC_PI_2, 0.0, 0.0);
-                put(&mut details, fender, x, -1.1, side * 62.2);
+                put(&mut details, fender, x, -1.1, side * (QUAY_EDGE + 0.2));
             }
             for x in [-54.0, 54.0] {
                 put(
@@ -348,21 +356,21 @@ impl HarborScenery {
             let rope = 0xbaa377;
             harbor_beam(
                 &mut details,
-                [side * 62.0, 0.4, -24.0],
+                [side * QUAY_EDGE, 0.4, -24.0],
                 [side * 72.0, 2.3, if side < 0.0 { -27.0 } else { -4.0 }],
                 0.075,
                 rope,
             );
             harbor_beam(
                 &mut details,
-                [side * 62.0, 0.4, 24.0],
+                [side * QUAY_EDGE, 0.4, 24.0],
                 [side * 72.0, 2.3, if side < 0.0 { 12.0 } else { 34.0 }],
                 0.075,
                 rope,
             );
             harbor_beam(
                 &mut details,
-                [side * 24.0, 0.4, -62.0],
+                [side * 24.0, WALL_TOP + 0.4, -BOLLARD_LINE],
                 [side * 20.0 - 8.0, 3.0, -73.0],
                 0.075,
                 rope,

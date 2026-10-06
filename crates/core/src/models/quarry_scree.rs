@@ -12,7 +12,7 @@ use crate::scene::{Material, Node};
 use super::quarry_benches::ScreeSpot;
 use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
 use super::quarry_surfaces::{roughen_stone, sandstone_material};
-use super::quarry_terrain::plain_soil_colors;
+use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop};
 use crate::sim::math::Random;
 
 /// `screePoint(spot, u, t)`: a fan of sediment with scalloped toes and sides buried
@@ -115,7 +115,7 @@ pub fn quarry_scree_rubble(spot: &ScreeSpot) -> Mesh {
 pub fn quarry_scree(spot: &ScreeSpot, soil: &Arc<Material>) -> [Node; 2] {
     let mut mound = quarry_scree_geometry(spot);
     let mut rubble = quarry_scree_rubble(spot);
-    let dip = 1.8f64.min((spot.x.abs().max(spot.z.abs()) - 60.0) * 0.3);
+    let dip = quarry_ground_drop(spot.x, spot.z);
     for geometry in [&mut mound, &mut rubble] {
         geometry.rotate_y(spot.rot_y);
         geometry.translate(spot.x, 0.008 - dip, spot.z);

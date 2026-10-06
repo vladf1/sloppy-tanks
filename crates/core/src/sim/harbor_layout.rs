@@ -1,7 +1,7 @@
 //! Harbor Havoc: rotationally balanced lanes; outer deployment strips and shared pickups
 //! stay clear.
 
-use super::arena::CoverDef;
+use super::arena::{CoverDef, boundary_walls};
 use super::data::ARENA;
 use super::types::CoverKind;
 
@@ -10,26 +10,7 @@ pub fn harbor_layout() -> Vec<CoverDef> {
     let cover = CoverDef::new;
     let infinite = f64::INFINITY;
     for side in [-1.0, 1.0] {
-        covers.push(cover(
-            CoverKind::Boundary,
-            side * (ARENA + 0.5),
-            0.0,
-            1.0,
-            ARENA * 2.0 + 2.0,
-            1.2,
-            infinite,
-            0x879698,
-        ));
-        covers.push(cover(
-            CoverKind::Boundary,
-            0.0,
-            side * (ARENA + 0.5),
-            ARENA * 2.0 + 2.0,
-            1.0,
-            1.2,
-            infinite,
-            0x879698,
-        ));
+        covers.extend(boundary_walls(side, ARENA, 1.2, 0x879698));
         for z in [-32.0, -12.0, 12.0, 32.0] {
             let color = if z < 0.0 { 0xd37c38 } else { 0x31958d };
             covers.push(cover(
