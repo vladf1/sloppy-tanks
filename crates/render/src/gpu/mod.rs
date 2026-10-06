@@ -78,7 +78,7 @@ use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, SceneryOptions, prepare_model,
     prepare_scenery,
 };
-use crate::reflection_cull::WaterFootprint;
+use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
     MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, merged_draw_order,
@@ -661,6 +661,9 @@ struct Water {
 struct ViewCull {
     active: bool,
     frustum: Frustum,
+    /// For the reflection, the cells of it that water samples. They drop what the
+    /// frustum, cropped to a rectangle around them all, keeps between a creek's bends.
+    mask: Option<ReflectionMask>,
     origin: Vec3,
     forward: Vec3,
 }
@@ -670,9 +673,15 @@ impl ViewCull {
         Self {
             active: false,
             frustum: Frustum::from_view_projection(&Mat4::IDENTITY),
+            mask: None,
             origin: Vec3::ZERO,
             forward: Vec3::NEG_Z,
         }
+    }
+
+    fn sees(&self, sphere: &Sphere) -> bool {
+        self.frustum.intersects_sphere(sphere)
+            && self.mask.as_ref().is_none_or(|mask| mask.covers(sphere))
     }
 }
 
@@ -1897,6 +1906,7 @@ impl Renderer {
         self.culls[MAIN_VIEW] = ViewCull {
             active: true,
             frustum: Frustum::from_view_projection(&camera.view_projection()),
+            mask: None,
             origin: camera.position,
             forward,
         };
@@ -1904,6 +1914,7 @@ impl Renderer {
         self.culls[SHADOW_VIEW] = ViewCull {
             active: self.sun_shadow.enabled,
             frustum: Frustum::from_view_projection(&shadow.view_projection()),
+            mask: None,
             origin: shadow.position,
             forward: (shadow.target - shadow.position).normalize_or_zero(),
         };
@@ -1932,6 +1943,7 @@ impl Renderer {
             self.culls[REFLECTION_VIEW] = ViewCull {
                 active: true,
                 frustum: bounds.frustum(plain),
+                mask: Some(bounds.mask(plain)),
                 origin: world.w_axis.truncate(),
                 forward: -world.z_axis.truncate(),
             };
@@ -2017,7 +2029,7 @@ impl Renderer {
                 let in_view = |view: usize, sphere: &Sphere| -> bool {
                     candidate[view]
                         && (!part.frustum_culled
-                            || (culls[view].frustum.intersects_sphere(sphere)
+                            || (culls[view].sees(sphere)
                                 && (view != SHADOW_VIEW || shadow_reach.reaches(sphere))))
                 };
                 // Only blended draws sort by depth; opaque draws ignore it.
