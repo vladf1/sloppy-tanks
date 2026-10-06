@@ -2,7 +2,8 @@
 //! handwritten WGSL, and never moves simulation state.
 //!
 //! Pure CPU parts (color management, cameras and picking, model preparation and
-//! batching, mesh page placement, draw-list building, shader assembly) compile
+//! batching, mesh page placement, draw-list building, shader assembly, render
+//! target sizes) compile
 //! natively and carry the unit tests. The `gpu` module is browser-only: `wgpu` on
 //! WebGPU, or with the `webgl` feature glow on WebGL2.
 
@@ -17,6 +18,7 @@ pub mod presentation;
 pub mod reflection_cull;
 pub mod shader;
 pub mod shadow_merge;
+pub mod target_memory;
 
 #[cfg(target_arch = "wasm32")]
 pub mod gpu;

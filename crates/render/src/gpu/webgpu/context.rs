@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::resources::Layouts;
+use crate::gpu::SAMPLE_COUNT;
 use crate::gpu::context::{ErrorSlot, GRAPHICS_API};
 
 /// The device and queue, with the bind group layouts every pipeline shares. Cheap to
@@ -16,6 +17,8 @@ pub struct Gpu {
     pub layouts: Rc<Layouts>,
     /// The canvas's texture format, the output pipeline's target.
     pub canvas_format: wgpu::TextureFormat,
+    /// MSAA samples of the HDR targets: always `SAMPLE_COUNT` here.
+    pub samples: u32,
     pub error: ErrorSlot,
 }
 
@@ -92,6 +95,7 @@ impl Gpu {
         let gpu = Self {
             layouts: Rc::new(Layouts::new(&device)),
             canvas_format: config.format,
+            samples: SAMPLE_COUNT,
             device,
             queue,
             error,

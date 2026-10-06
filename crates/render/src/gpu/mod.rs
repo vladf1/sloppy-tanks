@@ -83,6 +83,7 @@ use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
     MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, shadow_merge_kind,
 };
+use crate::target_memory::target_bytes;
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
 use pools::PoolEntry;
 use resources::{MaterialStore, MeshStore};
@@ -91,14 +92,6 @@ use textures::TextureStore;
 /// MSAA samples of the main view and the water reflection. WebGL takes the most up
 /// to this that its float targets support (`webgl/context.rs` `sample_count`).
 pub const SAMPLE_COUNT: u32 = 4;
-
-/// Bytes a multisampled HDR target of this size holds: MSAA color and depth, plus the
-/// single-sample resolve.
-fn target_bytes(width: u32, height: u32) -> u64 {
-    let pixels = width as u64 * height as u64;
-    let samples = SAMPLE_COUNT as u64;
-    pixels * (8 * samples + 4 * samples + 8)
-}
 
 /// Whether a resource survives `reset_round`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2363,10 +2356,10 @@ impl Renderer {
         let (width, height) = self.size();
         stats.gpu_bytes = self.meshes.bytes()
             + self.textures.bytes()
-            + target_bytes(width, height)
+            + target_bytes(width, height, self.gpu.samples)
             + self.water.as_ref().map_or(0, |w| {
                 let size = w.settings.reflection_size.max(1);
-                target_bytes(size, size)
+                target_bytes(size, size, self.gpu.samples)
             })
             + shadow * shadow * 8
             + self.frame.instances().bytes()
