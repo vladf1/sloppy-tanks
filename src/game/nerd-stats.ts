@@ -7,6 +7,32 @@ export type StatsSections = Partial<Record<string, StatsRow[]>>;
 const SINGLE_PLAYER_SECTIONS = ["Performance", "Physics", "Render", "Battle", "Configuration"];
 const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configuration"];
 
+/** One row per scene pass: the expanded panel is 32 characters wide, too narrow
+ * for the three counts on one row. */
+export function passTriangleRows(stats: {
+  shadowTriangles: number;
+  reflectionTriangles: number;
+  mainTriangles: number;
+}): StatsRow[] {
+  return [
+    [
+      "Shadow triangles",
+      stats.shadowTriangles.toLocaleString(),
+      "Triangles submitted to the shadow map pass per rendered frame.",
+    ],
+    [
+      "Reflection triangles",
+      stats.reflectionTriangles.toLocaleString(),
+      "Triangles submitted to the reflection pass per rendered frame.",
+    ],
+    [
+      "Main triangles",
+      stats.mainTriangles.toLocaleString(),
+      "Triangles submitted to the main scene pass per rendered frame.",
+    ],
+  ];
+}
+
 /** The single-player panel's rows from the engine's `stats_json`. */
 export function engineStatsSections(stats: EngineStats): StatsSections {
   return {
@@ -36,13 +62,7 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
         stats.triangles.toLocaleString(),
         "Triangles submitted per rendered frame.",
       ],
-      [
-        "Shadow / reflection / main triangles",
-        [stats.shadowTriangles, stats.reflectionTriangles, stats.mainTriangles]
-          .map((count) => count.toLocaleString())
-          .join(" / "),
-        "Triangles submitted to each scene pass per rendered frame.",
-      ],
+      ...passTriangleRows(stats),
       [
         "GPU geometries",
         stats.meshes,
@@ -55,8 +75,13 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
       ],
       [
         "GPU memory",
-        `${(stats.gpuBytes / 1048576).toFixed(1)} MB (${(stats.meshSlackBytes / 1048576).toFixed(1)} MB page slack)`,
-        "Estimated GPU memory for mesh pages, textures, render targets, the shadow map and instances. Page slack is mesh page space no mesh uses.",
+        `${(stats.gpuBytes / 1048576).toFixed(1)} MB`,
+        "Estimated GPU memory for mesh pages, textures, render targets, the shadow map and instances.",
+      ],
+      [
+        "Mesh page slack",
+        `${(stats.meshSlackBytes / 1048576).toFixed(1)} MB`,
+        "Mesh page space no mesh uses, included in GPU memory.",
       ],
     ],
     Battle: [
