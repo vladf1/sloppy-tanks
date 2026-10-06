@@ -39,6 +39,17 @@ const within = (comparison, name) => {
   }
 };
 try {
+  // The lab engine's Wasm memory, to grow it by hand.
+  await page.addInitScript(() => {
+    for (const name of ["instantiate", "instantiateStreaming"]) {
+      const original = WebAssembly[name];
+      WebAssembly[name] = async (...args) => {
+        const result = await original(...args);
+        window.labMemory = (result.instance ?? result).exports.memory;
+        return result;
+      };
+    }
+  });
   await page.goto(`${url}?freeze=${REFERENCE_TIME}`);
   await page.waitForFunction(() => ["ready", "error"].includes(document.body.dataset.state), null, {
     timeout: 90000,
@@ -96,6 +107,22 @@ try {
   }
   // Picking the look target through the canvas centre.
   report.pick = await page.evaluate(() => window.renderLab.pick(320, 200, 1.5));
+  // Generated pixels reach the GPU a frame after they are supplied: they must
+  // survive the Wasm memory growing in between, and replacing them must redraw the
+  // materials that already show them (the leaf cards, here in opaque red, then green).
+  const replaced = [];
+  for (const rgba of [
+    [255, 0, 0, 255],
+    [0, 255, 0, 255],
+  ]) {
+    await page.evaluate((rgba) => {
+      window.renderLab.setGeneratedTexture("lab-leaf", 1, 1, new Uint8Array(rgba));
+      window.labMemory.grow(1);
+      window.renderLab.compare();
+    }, rgba);
+    replaced.push(await page.locator("#rust").screenshot());
+  }
+  assert.notDeepEqual(replaced[0], replaced[1], "replaced generated pixels redraw");
   report.textureFailures = await page.evaluate(() => window.renderLab.textureFailures());
   report.gpuError = await page.evaluate(() => window.renderLab.error());
   // Its expected startup error is reported to the console; keep it out of `errors`.

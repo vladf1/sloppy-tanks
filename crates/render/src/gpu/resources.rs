@@ -12,157 +12,22 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Effect, Material, TextureRef};
-use wgpu::util::DeviceExt;
 
+use super::backend::{Gpu, MaterialBinding, PageBuffers};
 use crate::camera::Sphere;
 use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
 use crate::gpu::textures::TextureStore;
 use crate::mesh_pages::{
-    MeshPlacement, MeshRange, MeshSize, PageFamily, PagePlanner, Placement, rebase_indices,
+    MeshPlacement, MeshRange, MeshSize, Page, PageFamily, PagePlanner, Placement, rebase_indices,
     stream_shared_indices,
 };
 use crate::model::MeshData;
 use crate::shader::MaterialFeatures;
 use crate::shadow_merge::ShadowGroup;
 
-/// Bind group layouts shared by every pipeline.
-pub struct Layouts {
-    pub frame: wgpu::BindGroupLayout,
-    pub material: wgpu::BindGroupLayout,
-    pub water: wgpu::BindGroupLayout,
-    pub output: wgpu::BindGroupLayout,
-}
-
-const fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
-    staged_texture_entry(binding, filterable, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_texture_entry(
-    binding: u32,
-    filterable: bool,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    }
-}
-
-const fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
-    staged_sampler_entry(binding, ty, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_sampler_entry(
-    binding: u32,
-    ty: wgpu::SamplerBindingType,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility,
-        ty: wgpu::BindingType::Sampler(ty),
-        count: None,
-    }
-}
-
 /// Secondary effect textures a material binds (`Material::extra_textures`).
 pub const EXTRA_TEXTURE_SLOTS: usize = 2;
-
-const fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-// The entries are data so the pipeline precompiler (`precompile.rs`) builds the
-// same layouts as wgpu.
-use wgpu::SamplerBindingType::{Comparison, Filtering};
-
-/// Frame uniforms, sun shadow map, reflection and the instance records.
-pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    wgpu::BindGroupLayoutEntry {
-        binding: 1,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Depth,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    },
-    sampler_entry(2, Comparison),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-    wgpu::BindGroupLayoutEntry {
-        binding: 5,
-        visibility: wgpu::ShaderStages::VERTEX,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    },
-];
-
-/// A uniform block and two filtered textures (the water).
-pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    texture_entry(1, true),
-    sampler_entry(2, Filtering),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-];
-
-pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
-    &[texture_entry(0, false), uniform_entry(1)];
-
-/// Map, bump and emissive map for the surface; effect textures for any stage.
-pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    uniform_entry(0),
-    texture_entry(1, true),
-    sampler_entry(2, Filtering),
-    texture_entry(3, true),
-    sampler_entry(4, Filtering),
-    texture_entry(5, true),
-    sampler_entry(6, Filtering),
-    staged_texture_entry(7, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(8, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_texture_entry(9, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(10, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
-];
-
-impl Layouts {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let layout = |label, entries| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries,
-            })
-        };
-        Self {
-            frame: layout("frame", FRAME_ENTRIES),
-            material: layout("material", MATERIAL_ENTRIES),
-            water: layout("water", TEXTURED_ENTRIES),
-            output: layout("output", OUTPUT_ENTRIES),
-        }
-    }
-}
 
 pub struct GpuMesh {
     /// Where its vertices and absolute indices live in the mesh pages.
@@ -173,24 +38,6 @@ pub struct GpuMesh {
     source: Option<(Arc<Mesh>, Vec<&'static str>)>,
     /// Live draw classes using this mesh.
     pub users: u32,
-}
-
-/// A mesh page's buffers: its vertices or indices, and for a surface page with
-/// effect vec4s those, in the same vertex numbering. Draws bind them only through
-/// [`MeshStore::vertex_buffers`] and [`MeshStore::index_buffer`], which bind the
-/// written prefix, never a `slice(..)` of the whole page.
-struct PageBuffers {
-    main: wgpu::Buffer,
-    extra: Option<wgpu::Buffer>,
-}
-
-impl PageBuffers {
-    fn destroy(&self) {
-        self.main.destroy();
-        if let Some(extra) = &self.extra {
-            extra.destroy();
-        }
-    }
 }
 
 /// Batch placements for a registration's owned meshes and merged shadow groups, in
@@ -239,37 +86,23 @@ impl MeshStore {
         }
     }
 
-    /// Create the buffers of a page the planner just added. Pages are filled only
-    /// through the queue, never mapped at creation: the browser backend stages a
-    /// mapped range in a Wasm-side copy of the whole buffer, and linear memory never
-    /// shrinks.
-    fn create_page(&mut self, device: &wgpu::Device, page: u16) {
+    /// Create the buffers of a page the planner just added.
+    fn create_page(&mut self, gpu: &Gpu, page: u16) {
         let info = self.plan.page(page);
-        let family = info.family;
-        let capacity = u64::from(info.capacity());
-        let (label, usage) = match family {
-            PageFamily::Surface { .. } => ("mesh vertex page", wgpu::BufferUsages::VERTEX),
-            PageFamily::Shadow => ("shadow vertex page", wgpu::BufferUsages::VERTEX),
-            PageFamily::Index => ("mesh index page", wgpu::BufferUsages::INDEX),
-        };
-        let buffer = |label, stride: u64| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: capacity * stride,
-                usage: usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
-        let buffers = PageBuffers {
-            main: buffer(label, family.stride()),
-            extra: (family.extra_stride() > 0)
-                .then(|| buffer("mesh effect attribute page", family.extra_stride())),
-        };
+        let buffers = PageBuffers::new(gpu, info.family, info.capacity());
         let slot = page as usize;
         if self.pages.len() <= slot {
             self.pages.resize_with(slot + 1, || None);
         }
         self.pages[slot] = Some(buffers);
+    }
+
+    /// A page's buffers and its bookkeeping (family, written prefix), for drawing.
+    pub fn page(&self, page: u16) -> (&PageBuffers, &Page) {
+        (
+            self.pages[page as usize].as_ref().expect("live mesh page"),
+            self.plan.page(page),
+        )
     }
 
     fn page_buffers(&self, page: u16) -> &PageBuffers {
@@ -280,7 +113,7 @@ impl MeshStore {
     /// page [`reserve`](Self::reserve) created, or a general or own page now.
     fn place(
         &mut self,
-        device: &wgpu::Device,
+        gpu: &Gpu,
         family: PageFamily,
         count: u32,
         reserved: Option<Placement>,
@@ -290,7 +123,7 @@ impl MeshStore {
         }
         let placement = self.plan.place(family, count);
         if placement.new_page {
-            self.create_page(device, placement.page);
+            self.create_page(gpu, placement.page);
         }
         placement
     }
@@ -300,7 +133,7 @@ impl MeshStore {
     /// their placements in order.
     pub fn reserve(
         &mut self,
-        device: &wgpu::Device,
+        gpu: &Gpu,
         owned: &[MeshData],
         shadow: &[ShadowGroup],
     ) -> Reservation {
@@ -329,7 +162,7 @@ impl MeshStore {
             .map(|placement| placement.page)
             .collect();
         for page in created {
-            self.create_page(device, page);
+            self.create_page(gpu, page);
         }
         let shadow = placements.split_off(owned.len());
         Reservation {
@@ -341,11 +174,9 @@ impl MeshStore {
     /// Place and write one mesh: `vertices`, and `extra` (its effect vec4s), at its
     /// vertex range, and `indices`, made absolute in place, at its index range. A
     /// mesh without vertices or indices gets [`MeshRange::EMPTY`] and draws nothing.
-    #[allow(clippy::too_many_arguments)]
     fn upload(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gpu: &Gpu,
         family: PageFamily,
         vertices: &[u8],
         extra: &[u8],
@@ -365,22 +196,15 @@ impl MeshStore {
             extra.len() as u64,
             u64::from(vertex_count) * family.extra_stride()
         );
-        let vertex = self.place(device, family, vertex_count, reserved.vertex);
-        let index = self.place(
-            device,
-            PageFamily::Index,
-            indices.len() as u32,
-            reserved.index,
-        );
+        let vertex = self.place(gpu, family, vertex_count, reserved.vertex);
+        let index = self.place(gpu, PageFamily::Index, indices.len() as u32, reserved.index);
         rebase_indices(indices, vertex.first);
         let page = self.page_buffers(vertex.page);
         let at = u64::from(vertex.first);
-        queue.write_buffer(&page.main, at * family.stride(), vertices);
-        if let Some(buffer) = &page.extra {
-            queue.write_buffer(buffer, at * family.extra_stride(), extra);
-        }
-        queue.write_buffer(
-            &self.page_buffers(index.page).main,
+        page.write(gpu, at * family.stride(), vertices);
+        page.write_extra(gpu, at * family.extra_stride(), extra);
+        self.page_buffers(index.page).write(
+            gpu,
             u64::from(index.first) * 4,
             bytemuck::cast_slice(indices),
         );
@@ -397,13 +221,7 @@ impl MeshStore {
     /// Stream an unmodified shared mesh to its pages a chunk at a time: the quarry's
     /// merged walls alone would need a 20 MB upload copy in linear memory, which
     /// never shrinks. Its indices are rebased a chunk at a time on the stack.
-    fn upload_shared(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        mesh: &Mesh,
-        attributes: &[&str],
-    ) -> MeshRange {
+    fn upload_shared(&mut self, gpu: &Gpu, mesh: &Mesh, attributes: &[&str]) -> MeshRange {
         let vertex_count = mesh.positions.len() as u32;
         let family = PageFamily::Surface {
             extra: attributes.len() as u8,
@@ -420,30 +238,21 @@ impl MeshStore {
             return MeshRange::EMPTY;
         }
         let index_count = size.indices;
-        let vertex = self.place(device, family, vertex_count, None);
-        let index = self.place(device, PageFamily::Index, index_count, None);
+        let vertex = self.place(gpu, family, vertex_count, None);
+        let index = self.place(gpu, PageFamily::Index, index_count, None);
         let page = self.page_buffers(vertex.page);
         for start in (0..vertex_count as usize).step_by(UPLOAD_CHUNK_VERTICES) {
             let range = start..(start + UPLOAD_CHUNK_VERTICES).min(vertex_count as usize);
             let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range);
             let at = u64::from(vertex.first) + start as u64;
-            queue.write_buffer(
-                &page.main,
-                at * family.stride(),
-                bytemuck::cast_slice(&vertices),
+            page.write(gpu, at * family.stride(), bytemuck::cast_slice(&vertices));
+            page.write_extra(
+                gpu,
+                at * family.extra_stride(),
+                bytemuck::cast_slice(&extras),
             );
-            if let Some(extra) = &page.extra {
-                queue.write_buffer(
-                    extra,
-                    at * family.extra_stride(),
-                    bytemuck::cast_slice(&extras),
-                );
-            }
         }
-        let indices = &self.pages[index.page as usize]
-            .as_ref()
-            .expect("live mesh page")
-            .main;
+        let indices = self.page_buffers(index.page);
         stream_shared_indices(
             mesh.indices.as_deref(),
             vertex_count,
@@ -451,7 +260,7 @@ impl MeshStore {
             &mut [0; UPLOAD_CHUNK_INDICES],
             |offset, chunk| {
                 let at = u64::from(index.first + offset) * 4;
-                queue.write_buffer(indices, at, bytemuck::cast_slice(chunk));
+                indices.write(gpu, at, bytemuck::cast_slice(chunk));
             },
         );
         MeshRange {
@@ -470,8 +279,7 @@ impl MeshStore {
     /// registered it.
     pub fn shared(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gpu: &Gpu,
         mesh: &Arc<Mesh>,
         attributes: &'static [&'static str],
     ) -> u32 {
@@ -479,7 +287,7 @@ impl MeshStore {
         if let Some(&index) = self.shared.get(&key) {
             return index;
         }
-        let range = self.upload_shared(device, queue, mesh, attributes);
+        let range = self.upload_shared(gpu, mesh, attributes);
         let index = self.insert(GpuMesh {
             range,
             extra_attributes: attributes.len() as u8,
@@ -493,19 +301,12 @@ impl MeshStore {
 
     /// Upload merged geometry owned by one model, at its reserved placement if it has
     /// one; release it with `release`. Its indices are rebased in place.
-    pub fn owned(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &mut MeshData,
-        reserved: MeshPlacement,
-    ) -> u32 {
+    pub fn owned(&mut self, gpu: &Gpu, data: &mut MeshData, reserved: MeshPlacement) -> u32 {
         let family = PageFamily::Surface {
             extra: data.extra_attributes,
         };
         let range = self.upload(
-            device,
-            queue,
+            gpu,
             family,
             bytemuck::cast_slice(&data.vertices),
             bytemuck::cast_slice(&data.extra),
@@ -526,14 +327,12 @@ impl MeshStore {
     /// place.
     pub fn shadow(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        gpu: &Gpu,
         group: &mut ShadowGroup,
         reserved: MeshPlacement,
     ) -> MeshRange {
         self.upload(
-            device,
-            queue,
+            gpu,
             PageFamily::Shadow,
             bytemuck::cast_slice(&group.vertices),
             &[],
@@ -555,8 +354,7 @@ impl MeshStore {
         ];
         for (page, first, count) in ranges {
             if self.plan.free(page, first, count) {
-                let buffers = self.pages[page as usize].take().expect("live mesh page");
-                buffers.destroy();
+                self.pages[page as usize] = None;
             }
         }
     }
@@ -564,38 +362,8 @@ impl MeshStore {
     /// Destroy the general pages no mesh uses (`PagePlanner::trim`).
     fn trim_pages(&mut self) {
         for page in self.plan.trim() {
-            let buffers = self.pages[page as usize].take().expect("live mesh page");
-            buffers.destroy();
+            self.pages[page as usize] = None;
         }
-    }
-
-    /// A vertex page's buffers to bind: only the prefix written so far. Every placed
-    /// range is written before anything can draw from it and a freed range keeps its
-    /// old contents, so the prefix holds every mesh in the page and is always
-    /// initialized. Binding the never-written tail as well would gain nothing, and
-    /// where wgpu-core tracks buffer initialization it would zero-fill that tail
-    /// before the pass.
-    pub fn vertex_buffers(
-        &self,
-        page: u16,
-    ) -> (wgpu::BufferSlice<'_>, Option<wgpu::BufferSlice<'_>>) {
-        let info = self.plan.page(page);
-        let written = u64::from(info.written());
-        let buffers = self.page_buffers(page);
-        (
-            buffers.main.slice(..written * info.family.stride()),
-            buffers
-                .extra
-                .as_ref()
-                .map(|extra| extra.slice(..written * info.family.extra_stride())),
-        )
-    }
-
-    /// An index page to bind: only its written prefix, as in
-    /// [`vertex_buffers`](Self::vertex_buffers).
-    pub fn index_buffer(&self, page: u16) -> wgpu::BufferSlice<'_> {
-        let written = u64::from(self.plan.page(page).written());
-        self.page_buffers(page).main.slice(..written * 4)
     }
 
     pub fn get(&self, index: u32) -> &GpuMesh {
@@ -771,11 +539,10 @@ fn material_textures(material: &Material) -> impl Iterator<Item = &TextureRef> {
 
 pub struct GpuMaterial {
     pub material: Arc<Material>,
-    pub uniform: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
+    /// Its uniform and textures as the backend binds them.
+    pub binding: MaterialBinding,
     pub effect: u16,
-    /// Built while a texture was still a placeholder.
-    waiting: bool,
+    /// The texture store's generation it was bound at.
     generation: u64,
     /// Live draw classes using this material.
     pub users: u32,
@@ -789,60 +556,35 @@ pub struct MaterialStore {
     warned: Vec<&'static str>,
 }
 
-impl MaterialStore {
-    fn bind_group(
-        device: &wgpu::Device,
-        layouts: &Layouts,
-        textures: &mut TextureStore,
-        material: &Material,
-        uniform: &wgpu::Buffer,
-    ) -> (wgpu::BindGroup, bool) {
-        // Texture slots in binding order: map, bump, emissive, then effect extras.
-        let slots = [
-            material.map.as_ref(),
-            material.bump_map.as_ref(),
-            material.emissive_map.as_ref(),
-            extra_texture(material, 0),
-            extra_texture(material, 1),
-        ];
-        let samplers = slots.map(|texture| textures.sampler(device, texture));
-        let mut ready = true;
-        let views = slots.map(|texture| match texture {
-            Some(texture) => {
-                let (view, loaded) = textures.view(texture);
-                ready &= loaded;
-                view
-            }
-            None => textures.placeholder(),
-        });
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform.as_entire_binding(),
-        }];
-        for (slot, (view, sampler)) in views.iter().zip(&samplers).enumerate() {
-            let binding = 1 + slot as u32 * 2;
-            entries.push(wgpu::BindGroupEntry {
-                binding,
-                resource: wgpu::BindingResource::TextureView(view),
-            });
-            entries.push(wgpu::BindGroupEntry {
-                binding: binding + 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            });
-        }
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material"),
-            layout: &layouts.material,
-            entries: &entries,
-        });
-        (bind_group, !ready)
-    }
+/// A material's textures in binding order (map, bump, emissive, then effect extras),
+/// with their samplers; the placeholder stands in for one still loading.
+fn bound_textures<'a>(
+    gpu: &Gpu,
+    textures: &'a mut TextureStore,
+    material: &Material,
+) -> [(&'a super::backend::TextureView, super::backend::Sampler); 3 + EXTRA_TEXTURE_SLOTS] {
+    let slots = [
+        material.map.as_ref(),
+        material.bump_map.as_ref(),
+        material.emissive_map.as_ref(),
+        extra_texture(material, 0),
+        extra_texture(material, 1),
+    ];
+    let samplers = slots.map(|texture| textures.sampler(gpu, texture));
+    let textures = &*textures;
+    let views = slots.map(|texture| match texture {
+        Some(texture) => textures.view(texture).0,
+        None => textures.placeholder(),
+    });
+    let mut samplers = samplers.into_iter();
+    views.map(|view| (view, samplers.next().expect("one sampler per slot")))
+}
 
+impl MaterialStore {
     /// The GPU material for an interned material, creating it on first use.
     pub fn get_or_create(
         &mut self,
-        device: &wgpu::Device,
-        layouts: &Layouts,
+        gpu: &Gpu,
         textures: &mut TextureStore,
         effects: &EffectRegistry,
         material: &Arc<Material>,
@@ -866,28 +608,22 @@ impl MaterialStore {
                 0
             }),
         };
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("material uniform"),
-            contents: bytemuck::bytes_of(&MaterialUniform::of(material)),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let (bind_group, waiting) = Self::bind_group(device, layouts, textures, material, &uniform);
-        let gpu = GpuMaterial {
+        let generation = textures.generation;
+        let bound = bound_textures(gpu, textures, material);
+        let entry = GpuMaterial {
             material: material.clone(),
-            uniform,
-            bind_group,
+            binding: MaterialBinding::new(gpu, &MaterialUniform::of(material), bound),
             effect,
-            waiting,
-            generation: textures.generation,
+            generation,
             users: 0,
         };
         let index = match self.free.pop() {
             Some(index) => {
-                self.slots[index as usize] = Some(gpu);
+                self.slots[index as usize] = Some(entry);
                 index
             }
             None => {
-                self.slots.push(Some(gpu));
+                self.slots.push(Some(entry));
                 self.slots.len() as u32 - 1
             }
         };
@@ -895,20 +631,16 @@ impl MaterialStore {
         index
     }
 
-    /// Rebind materials whose textures arrived since their bind group was built.
-    pub fn refresh(
-        &mut self,
-        device: &wgpu::Device,
-        layouts: &Layouts,
-        textures: &mut TextureStore,
-    ) {
-        for gpu in self.slots.iter_mut().flatten() {
-            if gpu.waiting && gpu.generation != textures.generation {
-                let (bind_group, waiting) =
-                    Self::bind_group(device, layouts, textures, &gpu.material, &gpu.uniform);
-                gpu.bind_group = bind_group;
-                gpu.waiting = waiting;
-                gpu.generation = textures.generation;
+    /// Rebind materials whose textures arrived, or were replaced, since they were
+    /// bound: a replaced texture (a generated image supplied again) destroys the old
+    /// one, which an already loaded material still names.
+    pub fn refresh(&mut self, gpu: &Gpu, textures: &mut TextureStore) {
+        for entry in self.slots.iter_mut().flatten() {
+            if entry.generation != textures.generation {
+                let generation = textures.generation;
+                let bound = bound_textures(gpu, textures, &entry.material);
+                entry.binding.rebind(gpu, bound);
+                entry.generation = generation;
             }
         }
     }
@@ -926,11 +658,11 @@ impl MaterialStore {
         for index in 0..self.slots.len() {
             let unused = self.slots[index]
                 .as_ref()
-                .is_some_and(|gpu| gpu.users == 0 && Arc::strong_count(&gpu.material) <= 2);
+                .is_some_and(|entry| entry.users == 0 && Arc::strong_count(&entry.material) <= 2);
             if unused {
-                let gpu = self.slots[index].take().expect("checked");
-                gpu.uniform.destroy();
-                self.by_ptr.remove(&(Arc::as_ptr(&gpu.material) as usize));
+                // Dropping the binding destroys its uniform buffer.
+                let entry = self.slots[index].take().expect("checked");
+                self.by_ptr.remove(&(Arc::as_ptr(&entry.material) as usize));
                 self.free.push(index as u32);
             }
         }

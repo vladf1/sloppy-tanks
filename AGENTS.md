@@ -28,12 +28,13 @@ One implementation of the game, in Rust, shared by the browser and the server:
   maps and levels on Rapier; `geometry/` and `models/` meshes and model trees
   that the simulation measures and the renderer draws; `net/` protocol,
   replication, match host and client connection state.
-- `crates/render` (Wasm): the `wgpu` WebGPU renderer, WGSL shaders
+- `crates/render` (Wasm): the WebGPU (`wgpu`) and WebGL2 (`glow`) renderer, WGSL shaders
   (`src/shaders/`, `src/presentation/shaders/`), presentation, effects, cameras
   and input commands. Pure CPU parts compile natively and carry its tests.
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
   and `NetGame` a room page, one coarse call per frame; the `labs` feature adds
-  the development `RenderLab` and `EffectsLab`.
+  the development `RenderLab` and `EffectsLab`, and `webgl` (without the default
+  `webgpu`) makes the WebGL2 fallback engine.
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
   controls, audio and the room page's DOM. Game rules, simulation, rendering,
@@ -216,9 +217,12 @@ a slow run.
   it when changing scenery or upload paths.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
-  in the vertex page, so every draw passes `base_vertex` 0 and a pass rebinds only
-  when the page changes. Bind a page only through `MeshStore::vertex_buffers` and
-  `index_buffer`, which bind its written prefix, where every mesh lives. Batch and
+  in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
+  pass rebinds only when the page changes. On WebGPU bind a page only through
+  `PageBuffers::vertex_buffers` and `index_buffer` (`gpu/webgpu/resources.rs`), which
+  bind its written prefix, where every mesh lives: a `slice(..)` of a page makes wgpu
+  clear its unwritten tail first. On WebGL a vertex page owns its vertex array, whose
+  element buffer is the index page it last drew from. Batch and
   own pages go with their last mesh, and a general page once a frame's collection
   finds it empty, so a reset's new round first refills the general pages the old
   one emptied. `View::reset` drops the old round's views before `reset_round`:
@@ -227,10 +231,38 @@ a slow run.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.
-- Rendering is WebGPU-only (`wgpu` with `Backends::BROWSER_WEBGPU`); there is
-  no WebGL fallback. Shaders are handwritten WGSL; custom model effects register
+- Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
+  fallback: a second engine build (`--no-default-features --features webgl`,
+  `src/generated/engine-webgl/`) on glow, without wgpu. `src/engine.ts` loads it
+  only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
+  so a WebGPU page never downloads WebGL code. The renderer core (`gpu/mod.rs` and
+  its shared mesh, material, texture and pool stores) builds the same draw lists
+  for both; the browser API is one backend module chosen at build time,
+  `gpu/webgpu/` or `gpu/webgl/`, each with the same few concrete types (`Gpu`,
+  `Frame`, `Pipelines`, `PageBuffers`, `MaterialBinding`, `InstanceStore`,
+  `Uploader`) whose GPU objects free themselves on drop. Keep shared logic out of
+  the backends and add no trait or wgpu-like layer between them. The WebGL backend
+  translates the same WGSL with naga (`shader::glsl`) and sets GL state only
+  through its cache (`gpu/webgl/context.rs`); uploads go through
+  `COPY_WRITE_BUFFER` and the upload texture unit so they never disturb what draws
+  bound. WebGL2's gaps: instance records live in an RGBA32F texture rather than a
+  storage buffer (`instances_texture.wgsl`), the first instance is a per-program
+  uniform, programs bind their blocks and samplers by name to fixed points and
+  units, the cached fixed-scenery shadow is copied with a depth blit, bitmaps are
+  flipped at decode, the output pass flips rows into the bottom-up canvas, and
+  opaque draws are grouped by pipeline, material, mesh page and pool
+  (`GROUP_DRAWS_BY_STATE`), so depth ties can resolve differently than on WebGPU.
+  A draw binds only the state that differs from the draw before it, and no
+  material when its program reads none. `getError` waits for the GPU process, so
+  it runs every few seconds, before a frame's draws.
+  WebGL may simplify an effect, but must not give up a performance optimization
+  such as a cache or batching: its devices are the weaker ones. Keep both
+  building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
+  fallback and `SLOPPY_WEBGL=1` runs any browser check on the WebGL engine.
+  Shaders are handwritten WGSL; custom model effects register
   an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga, but a browser can still reject a pipeline: inspect console
+  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
+  still reject a pipeline: inspect console
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
   MSAA counts between pipelines and attachments.

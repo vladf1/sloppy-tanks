@@ -25,6 +25,11 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
       ["Colliders", stats.colliders, "Collision shapes in the physics world."],
     ],
     Render: [
+      [
+        "Graphics API",
+        stats.graphicsApi,
+        "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
+      ],
       ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
       [
         "Triangles / frame",

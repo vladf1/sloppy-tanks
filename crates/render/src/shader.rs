@@ -26,6 +26,37 @@ pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
 
+/// Where the vertex stage reads instance records (`InstanceStore`): each
+/// source defines the frame group's binding 5 and `instance_at`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceSource {
+    /// WebGPU: a storage buffer.
+    Storage,
+    /// WebGL2, which has no storage buffers: an RGBA32F texture.
+    Texture,
+}
+
+impl InstanceSource {
+    /// The source this build's backend uses.
+    pub const BUILD: Self = if cfg!(feature = "webgl") {
+        Self::Texture
+    } else {
+        Self::Storage
+    };
+
+    fn wgsl(self) -> &'static str {
+        match self {
+            Self::Storage => include_str!("shaders/instances_storage.wgsl"),
+            Self::Texture => include_str!("shaders/instances_texture.wgsl"),
+        }
+    }
+}
+
+/// The frame declarations with this build's instance records.
+fn frame_wgsl(source: InstanceSource) -> String {
+    format!("{COMMON_WGSL}{}", source.wgsl())
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Pass {
     /// Lit color into the HDR target (main view and water reflection).
@@ -261,6 +292,10 @@ fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
 /// The complete WGSL for a surface or shadow variant, reduced to the code its flags
 /// enable (`specialize.rs`).
 pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
+    shader_source_for(key, effects, InstanceSource::BUILD)
+}
+
+fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: InstanceSource) -> String {
     let flags = flags(key);
     let mut code = String::with_capacity(24 * 1024);
     for (name, value) in flags {
@@ -274,7 +309,7 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
     } else {
         0
     });
-    code += COMMON_WGSL;
+    code += &frame_wgsl(source);
     code += MATERIAL_WGSL;
     if let Some(effect) = effect {
         code += effect.wgsl;
@@ -301,23 +336,214 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
 
 /// The merged shadow-caster shader (`shadow_merge.rs`).
 pub fn shadow_merged_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_MERGED_WGSL}"), &[])
+    fixed_source(SHADOW_MERGED_WGSL, InstanceSource::BUILD)
 }
 
 /// The merged alpha-tested shadow-caster shader.
 pub fn shadow_cutout_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{SHADOW_CUTOUT_WGSL}"), &[])
+    fixed_source(SHADOW_CUTOUT_WGSL, InstanceSource::BUILD)
 }
 
 /// The water shader: frame declarations plus the water template.
 pub fn water_source() -> String {
-    specialize::specialize(&format!("{COMMON_WGSL}{WATER_WGSL}"), &[])
+    fixed_source(WATER_WGSL, InstanceSource::BUILD)
+}
+
+fn fixed_source(template: &str, source: InstanceSource) -> String {
+    specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
+}
+
+/// The GLSL ES 3.00 the WebGL backend compiles, translated from the WGSL with naga
+/// the way wgpu's GL backend did: clip-space Y flipped and depth mapped to GL's
+/// -1..1 (`ADJUST_COORDINATE_SPACE`), so offscreen targets hold rows in WebGPU's
+/// order and store WebGPU's depth, and a point size written for every vertex.
+#[cfg(any(test, feature = "webgl"))]
+pub mod glsl {
+    use naga::back::glsl;
+
+    /// A WGSL `(group, binding)`.
+    pub type Binding = (u32, u32);
+
+    /// Texture units, fixed per `(group, binding)` of the WGSL that samples them, so a
+    /// material switch touches only the material's units.
+    pub mod unit {
+        /// Group 0 binding 1: the sun shadow map (comparison sampler).
+        pub const SHADOW_MAP: u32 = 0;
+        /// Group 0 binding 3: the DFG lookup table.
+        pub const DFG_LUT: u32 = 1;
+        /// Group 0 binding 5: the instance records (`texelFetch`, no sampler).
+        pub const INSTANCES: u32 = 2;
+        /// Group 1 bindings 1, 3, 5, 7 and 9: a material's map, bump, emissive and two
+        /// effect textures; the water's normals and reflection; a cutout caster's map.
+        pub const MATERIAL: u32 = 3;
+        /// Group 0 binding 0 of the output and mipmap programs: the texture they read.
+        pub const SOURCE: u32 = 8;
+        /// Uploads and texture setup; no program samples it.
+        pub const UPLOAD: u32 = 9;
+        pub const COUNT: usize = 10;
+    }
+
+    /// Uniform buffer binding points, fixed per `(group, binding)`.
+    pub mod block {
+        /// Group 0 binding 0: the view's `Frame`.
+        pub const FRAME: u32 = 0;
+        /// Group 1 binding 0: the material's (or the water's) uniform.
+        pub const MATERIAL: u32 = 1;
+        /// Group 0 binding 1 of the output program.
+        pub const OUTPUT: u32 = 2;
+        pub const COUNT: usize = 3;
+    }
+
+    /// The texture unit of a WGSL texture's binding.
+    pub fn texture_unit(binding: Binding) -> Option<u32> {
+        match binding {
+            (0, 0) => Some(unit::SOURCE),
+            (0, 1) => Some(unit::SHADOW_MAP),
+            (0, 3) => Some(unit::DFG_LUT),
+            (0, 5) => Some(unit::INSTANCES),
+            (1, binding @ (1 | 3 | 5 | 7 | 9)) => Some(unit::MATERIAL + (binding - 1) / 2),
+            _ => None,
+        }
+    }
+
+    /// The uniform block point of a WGSL uniform's binding.
+    pub fn block_point(binding: Binding) -> Option<u32> {
+        match binding {
+            (0, 0) => Some(block::FRAME),
+            (1, 0) => Some(block::MATERIAL),
+            (0, 1) => Some(block::OUTPUT),
+            _ => None,
+        }
+    }
+
+    /// One translated stage and what it declares, by WGSL binding: ES 3.00 has no
+    /// `layout(binding)`, so the backend binds uniform blocks and samplers by name.
+    pub struct Stage {
+        pub source: String,
+        /// Uniform block names (they differ per stage).
+        pub blocks: Vec<(String, Binding)>,
+        /// Sampler uniform names, by the binding of the texture they read.
+        pub samplers: Vec<(String, Binding)>,
+    }
+
+    /// Translate the entry points `entries` of one WGSL module, in order.
+    pub fn translate(label: &str, wgsl: &str, entries: &[&str]) -> Result<Vec<Stage>, String> {
+        let module = naga::front::wgsl::parse_str(wgsl)
+            .map_err(|error| format!("{label}: {}", error.emit_to_string(wgsl)))?;
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .map_err(|error| format!("{label}: {error:?}"))?;
+        let options = glsl::Options {
+            version: glsl::Version::Embedded {
+                version: 300,
+                is_webgl: true,
+            },
+            writer_flags: glsl::WriterFlags::ADJUST_COORDINATE_SPACE
+                | glsl::WriterFlags::FORCE_POINT_SIZE,
+            ..glsl::Options::default()
+        };
+        let binding = |handle: naga::Handle<naga::GlobalVariable>| {
+            module.global_variables[handle]
+                .binding
+                .as_ref()
+                .map(|binding| (binding.group, binding.binding))
+        };
+        entries
+            .iter()
+            .map(|&name| {
+                let entry = module
+                    .entry_points
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .ok_or_else(|| format!("{label}: no entry point {name}"))?;
+                let pipeline = glsl::PipelineOptions {
+                    shader_stage: entry.stage,
+                    entry_point: entry.name.clone(),
+                    multiview: None,
+                };
+                let mut source = String::new();
+                let reflection = glsl::Writer::new(
+                    &mut source,
+                    &module,
+                    &info,
+                    &options,
+                    &pipeline,
+                    naga::proc::BoundsCheckPolicies::default(),
+                )
+                .and_then(|mut writer| writer.write())
+                .map_err(|error| format!("{label} {name}: {error}"))?;
+                Ok(Stage {
+                    source,
+                    blocks: reflection
+                        .uniforms
+                        .iter()
+                        .filter_map(|(&handle, name)| Some((name.clone(), binding(handle)?)))
+                        .collect(),
+                    samplers: reflection
+                        .texture_mapping
+                        .iter()
+                        .filter_map(|(name, mapping)| {
+                            Some((name.clone(), binding(mapping.texture)?))
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Checks the WebGL build's shaders natively; the effect tests use them too.
+#[cfg(test)]
+pub(crate) mod webgl_check {
+    use super::*;
+
+    /// Translate every entry point as the WebGL backend does (GLSL ES 3.00).
+    pub fn translate_for_webgl(label: &str, code: &str) {
+        let module = naga::front::wgsl::parse_str(code)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+        let entries: Vec<&str> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        let stages =
+            glsl::translate(label, code, &entries).unwrap_or_else(|error| panic!("{error}"));
+        // The WebGL backend binds every block and sampler by its WGSL binding; one it
+        // has no point or unit for would read nothing, and two bindings on one unit
+        // would read each other's texture.
+        let mut units = std::collections::HashMap::new();
+        for stage in &stages {
+            for (name, binding) in &stage.blocks {
+                assert!(
+                    glsl::block_point(*binding).is_some(),
+                    "{label}: uniform block {name} at {binding:?} has no WebGL point"
+                );
+            }
+            for (name, binding) in &stage.samplers {
+                let unit = glsl::texture_unit(*binding).unwrap_or_else(|| {
+                    panic!("{label}: sampler {name} at {binding:?} has no WebGL unit")
+                });
+                let other = *units.entry(unit).or_insert(*binding);
+                assert_eq!(other, *binding, "{label}: two textures on unit {unit}");
+            }
+        }
+    }
+
+    /// A surface or shadow variant as the WebGL build assembles and translates it.
+    pub fn translate_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
+        let code = shader_source_for(key, effects, InstanceSource::Texture);
+        translate_for_webgl(&format!("{label} {key:?}"), &code);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use sloppy_core::scene::TextureRef;
 
+    use super::webgl_check::{translate_for_webgl, translate_variant};
     use super::*;
 
     fn validate(label: &str, code: &str) {
@@ -380,6 +606,50 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
+    }
+
+    #[test]
+    fn every_variant_translates_for_webgl() {
+        let effects = EffectRegistry::default();
+        let texture = InstanceSource::Texture;
+        for bits in 0..(1u32 << 4) {
+            let bit = |i: u32| bits & (1 << i) != 0;
+            for effect in 0..=2u16 {
+                let key = ShaderKey {
+                    pass: Pass::Main,
+                    lit: bit(0),
+                    alpha_test: bit(1),
+                    alpha_to_coverage: bit(1) && bit(2),
+                    receive_shadow: bit(0) && bit(3),
+                    effect,
+                    extra_attributes: 2,
+                    shadow_fade: false,
+                };
+                translate_variant("surface", &key, &effects);
+                let shadow = ShaderKey {
+                    pass: Pass::Shadow,
+                    alpha_test: bit(1),
+                    shadow_fade: bit(2),
+                    effect,
+                    ..ShaderKey::default()
+                };
+                translate_variant("shadow", &shadow, &effects);
+            }
+        }
+        translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
+        translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
+        translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
+        translate_for_webgl("output", OUTPUT_WGSL);
+        translate_for_webgl("mipmap", MIPMAP_WGSL);
+    }
+
+    #[test]
+    fn instance_texture_rows_match_the_store() {
+        let declaration = format!(
+            "const RECORDS_PER_ROW: u32 = {}u;",
+            crate::draw_list::RECORDS_PER_ROW
+        );
+        assert!(InstanceSource::Texture.wgsl().contains(&declaration));
     }
 
     #[test]

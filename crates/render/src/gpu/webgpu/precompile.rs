@@ -13,6 +13,8 @@
 //! browser's pipeline and shader caches now answer at once. The mapping below mirrors
 //! wgpu 30's `backend/webgpu.rs`: a descriptor that differs only costs the stall
 //! again, since the pipeline drawn with is always wgpu's own.
+//!
+//! The WebGL backend has its own background compile (`webgl/programs.rs`).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -162,6 +164,15 @@ impl Background {
     }
 }
 
+/// The browser `GPUDevice` behind wgpu's.
+fn raw_device(device: &wgpu::Device) -> RawDevice {
+    device
+        .as_webgpu()
+        .expect("the renderer runs on the browser's WebGPU")
+        .unchecked_ref::<RawDevice>()
+        .clone()
+}
+
 struct Queue<K> {
     /// Keys ever queued (a key compiles once per page).
     started: HashSet<K>,
@@ -181,13 +192,8 @@ pub struct Precompiler<K> {
 
 impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     pub fn new(device: &wgpu::Device) -> Self {
-        let device = device
-            .as_webgpu()
-            .expect("the renderer runs on the browser's WebGPU")
-            .unchecked_ref::<RawDevice>()
-            .clone();
         Self {
-            device,
+            device: raw_device(device),
             layouts: RefCell::default(),
             queue: Rc::new(RefCell::new(Queue {
                 started: HashSet::new(),
@@ -244,10 +250,11 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     fn pump(&self) {
+        let device = &self.device;
         let mut queue = self.queue.borrow_mut();
         while queue.running < CONCURRENCY && queue.running < queue.waiting.len() {
             queue.running += 1;
-            let (shared, device) = (self.queue.clone(), self.device.clone());
+            let (shared, device) = (self.queue.clone(), device.clone());
             wasm_bindgen_futures::spawn_local(async move {
                 loop {
                     let job = shared.borrow_mut().waiting.pop_front();

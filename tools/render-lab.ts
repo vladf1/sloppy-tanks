@@ -486,7 +486,14 @@ async function prepareRust(lab: RenderLab): Promise<void> {
     // Background compiles finish on their own; poll them on a short timer.
     await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
   }
-  await waitFor(() => lab.textures_pending() === 0);
+  // Textures upload while preparing; one still loading after the last pipeline
+  // compiled needs more steps.
+  await waitFor(() => {
+    lab.prepare_step(0);
+    const error = lab.error();
+    if (error) throw new Error(error);
+    return lab.textures_pending() === 0;
+  });
   lab.warm_up();
 }
 
@@ -534,6 +541,8 @@ async function main() {
     stats: () => JSON.parse(rust.stats()),
     error: () => rust.error() ?? null,
     textureFailures: () => rust.texture_failures(),
+    setGeneratedTexture: (name: string, width: number, height: number, rgba: Uint8Array) =>
+      rust.set_generated_texture(name, width, height, rgba),
     /** Reload the scene as a new round: round resources are released first. */
     reload() {
       rust.load_scene(JSON.stringify(SCENE));

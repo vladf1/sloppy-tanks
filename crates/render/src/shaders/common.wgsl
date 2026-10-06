@@ -1,4 +1,6 @@
 // Frame-level declarations shared by the surface, shadow and water shaders.
+// `shader.rs` appends `instance_at`, which reads the instance records from where
+// the build keeps them (`instances_storage.wgsl` or `instances_texture.wgsl`).
 
 const PI: f32 = 3.141592653589793;
 const RECIPROCAL_PI: f32 = 0.3183098861837907;
@@ -52,7 +54,6 @@ struct Instance {
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var dfg_lut: texture_2d<f32>;
 @group(0) @binding(4) var lut_sampler: sampler;
-@group(0) @binding(5) var<storage, read> instances: array<Instance>;
 
 // TSL `hash` (PCG-style integer hash) used by the debris shadow mask.
 fn tsl_hash(seed: f32) -> f32 {

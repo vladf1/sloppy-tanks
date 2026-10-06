@@ -4,15 +4,24 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Sloppy Tanks WebGPU renderer: wgpu with handwritten WGSL"
+description = "Sloppy Tanks renderer: handwritten WGSL drawn through WebGPU (wgpu), or WebGL2 (glow) as the fallback"
+
+[features]
+default = ["webgpu"]
+webgpu = ["dep:wgpu", "wgpu/webgpu"]
+# The WebGL2 fallback: its own backend on glow (`gpu/webgl/`), with the WGSL
+# translated to GLSL ES by naga. Wins over `webgpu` when both are enabled.
+webgl = ["dep:glow", "dep:naga"]
 
 [dependencies]
 sloppy-core.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
+naga = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu.workspace = true
+wgpu = { workspace = true, optional = true }
+glow = { workspace = true, optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
@@ -24,13 +33,18 @@ web-sys = { workspace = true, features = [
   "Blob",
   "ImageBitmap",
   "ImageBitmapOptions",
+  "ImageOrientation",
   "PremultiplyAlpha",
   "ColorSpaceConversion",
   "OffscreenCanvas",
   "OffscreenCanvasRenderingContext2d",
   "ImageData",
+  "WebGl2RenderingContext",
+  "Event",
+  "EventTarget",
 ] }
 
 [dev-dependencies]
-# Validates every generated WGSL variant natively; browsers still compile the result.
-naga = { version = "=30.0.1", features = ["wgsl-in"] }
+# Validates every generated WGSL variant natively, and translates it to the GLSL ES
+# the WebGL build hands the browser; browsers still compile the result.
+naga.workspace = true

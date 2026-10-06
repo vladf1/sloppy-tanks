@@ -19,6 +19,14 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.mjs
 ```
 
+Checks play on the WebGPU engine where the browser has it. `SLOPPY_WEBGL=1` hides
+WebGPU from their pages, so the same checks run on the WebGL2 engine through the
+page's own fallback:
+
+```sh
+SLOPPY_WEBGL=1 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
+```
+
 `pnpm run check:browser` runs every check below except `touch-loading-check`, one
 after another, in a few minutes. Run it for startup, menu, input or rendering
 changes. Browser checks keep only what needs a browser (real pointer, wheel,
@@ -43,22 +51,23 @@ stages and stumps, pickup podiums, debris opacity, laser beams, effect counts),
 `covers()`, `stats()` (renderer counters: draws, pipelines, late pipelines,
 allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 
-| Script                             | Verifies                                                                                                                                                                                               |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; rubble without late pipelines; stable renderer allocations and live WebGPU buffers across destructive resets and mines                      |
-| `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, first Esc frees the cursor and a second pauses, death keeps the pointer, Esc then a physical respawn choice, overhead restore |
-| `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                               |
-| `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                         |
-| `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                 |
-| `touch-controls-check.mjs`         | Tablet and car-screen touch: drive stick, arena aim and fire, mine and ammo taps while firing, first person, zoom, pause, preference and layout at four sizes                                          |
-| `phone-check.mjs`                  | Emulated phone: tank and map only in Battle Setup, an Easy team battle, sticks, FIRE and pause only, landscape and portrait hit-testing                                                                |
-| `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                   |
-| `render-cameras-check.mjs`         | Every map through moving, overview, first-person, zoomed and fixed cameras: no late or new pipelines, and a still frame matches pixel for pixel after a detour through other views                     |
-| `destruction-check.mjs`            | Timber stages and breach, scars on loose members, tree stumps and falling crowns, distinct tower rubble, debris sink and fade                                                                          |
-| `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, mesh page slack, water reflections) and suspension fixtures                                                                                              |
-| `multiplayer-simulation-check.mjs` | Two room seats driven through `PlayerControls`, each drawn from its own viewer (camera, models, bars); isolated speed sliders and literal player names                                                 |
-| `webkit-startup-check.mjs`         | WebKit: ready menu on the village and quarry with at most 150 distinct pipelines, a physical GO click, W driving at 45+ fps and a mouse shot, no page, console or GPU errors or late pipelines         |
-| `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                     |
+| Script                             | Verifies                                                                                                                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; rubble without late pipelines; stable renderer allocations and live WebGPU buffers across destructive resets and mines                                                                                   |
+| `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, first Esc frees the cursor and a second pauses, death keeps the pointer, Esc then a physical respawn choice, overhead restore                                                              |
+| `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                                                                                            |
+| `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                                                                                      |
+| `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                                                                              |
+| `touch-controls-check.mjs`         | Tablet and car-screen touch: drive stick, arena aim and fire, mine and ammo taps while firing, first person, zoom, pause, preference and layout at four sizes                                                                                                       |
+| `phone-check.mjs`                  | Emulated phone: tank and map only in Battle Setup, an Easy team battle, sticks, FIRE and pause only, landscape and portrait hit-testing                                                                                                                             |
+| `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                                                                                |
+| `render-cameras-check.mjs`         | Every map through moving, overview, first-person, zoomed and fixed cameras: no late or new pipelines, and a still frame matches pixel for pixel after a detour through other views                                                                                  |
+| `destruction-check.mjs`            | Timber stages and breach, scars on loose members, tree stumps and falling crowns, distinct tower rubble, debris sink and fade                                                                                                                                       |
+| `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, mesh page slack, water reflections) and suspension fixtures                                                                                                                                                           |
+| `multiplayer-simulation-check.mjs` | Two room seats driven through `PlayerControls`, each drawn from its own viewer (camera, models, bars); isolated speed sliders and literal player names                                                                                                              |
+| `webgl-check.mjs`                  | The WebGL2 engine (`?webgl`) on every standard map: only its binary downloads, a round drives, fires and draws with shadows without errors; the page picks the build the browser supports by itself; a failing WebGPU device falls back to WebGL on the same canvas |
+| `webkit-startup-check.mjs`         | WebKit: ready menu on the village and quarry with at most 150 distinct pipelines, a physical GO click, W driving at 45+ fps and a mouse shot, no page, console or GPU errors or late pipelines                                                                      |
+| `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                                                                                  |
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
 the production build splits the touch UI into separate files; it needs no dev

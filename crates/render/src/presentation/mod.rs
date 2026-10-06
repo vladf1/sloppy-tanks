@@ -85,6 +85,7 @@ impl CosmeticRandom {
 mod tests {
     use super::*;
     use crate::effects::EffectRegistry;
+    use crate::shader::webgl_check::translate_variant;
     use crate::shader::{Pass, ShaderKey, shader_source};
 
     fn validate(label: &str, code: &str) {
@@ -114,6 +115,7 @@ mod tests {
                         ..ShaderKey::default()
                     };
                     validate(effect.name, &shader_source(&key, &effects));
+                    translate_variant(effect.name, &key, &effects);
                 }
             }
         }
