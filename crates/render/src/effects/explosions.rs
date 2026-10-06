@@ -481,7 +481,7 @@ mod tests {
     }
 
     fn y(pool: &PoolBuffer, index: usize) -> f32 {
-        pool.records()[index].world[13]
+        pool.records()[index].translation().y
     }
 
     #[test]
@@ -559,13 +559,13 @@ mod tests {
         effects.update(0.18);
         assert_eq!(effects.rings.len(), MAX_EXPLOSIONS);
         assert_eq!(effects.puffs.len(), MAX_EXPLOSIONS * PUFFS_PER_BLAST);
-        assert!(
-            effects.puffs.records().iter().all(|r| r
-                .world
+        assert!(effects.puffs.records().iter().all(|r| {
+            r.world_rows
+                .as_flattened()
                 .iter()
                 .chain(&r.tint)
-                .all(|v| v.is_finite()))
-        );
+                .all(|v| v.is_finite())
+        }));
         effects.reset();
         effects.update(0.0);
         assert_eq!(effects.puffs.len(), 0);
@@ -644,7 +644,7 @@ mod tests {
                         .puffs
                         .records()
                         .iter()
-                        .flat_map(|r| r.world)
+                        .flat_map(|r| r.world_rows.into_iter().flatten())
                         .collect::<Vec<_>>(),
                 );
                 effects.update(4.0);

@@ -384,7 +384,7 @@ mod tests {
                 .records
                 .records()
                 .iter()
-                .map(|r| Vec3::new(r.world[12], r.world[13], r.world[14]))
+                .map(|r| r.translation())
                 .collect()
         }
     }

@@ -645,11 +645,19 @@ mod tests {
 
     #[test]
     fn instance_texture_rows_match_the_store() {
-        let declaration = format!(
-            "const RECORDS_PER_ROW: u32 = {}u;",
-            crate::draw_list::RECORDS_PER_ROW
-        );
-        assert!(InstanceSource::Texture.wgsl().contains(&declaration));
+        let declarations = [
+            format!(
+                "const RECORDS_PER_ROW: u32 = {}u;",
+                crate::draw_list::RECORDS_PER_ROW
+            ),
+            format!(
+                "const RECORD_TEXELS: u32 = {}u;",
+                crate::draw_list::RECORD_TEXELS
+            ),
+        ];
+        for declaration in declarations {
+            assert!(InstanceSource::Texture.wgsl().contains(&declaration));
+        }
     }
 
     #[test]

@@ -7,13 +7,17 @@
 //! between frames.
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3, Vec4};
 
-/// The per-instance GPU record (96 bytes), WGSL `Instance`.
+/// The per-instance GPU record (80 bytes), WGSL `InstanceRecord`, which
+/// `instance_at` expands to an `Instance`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct InstanceRecord {
-    pub world: [f32; 16],
+    /// The first three rows of the world transform. Instance transforms are affine,
+    /// so the last row is always 0, 0, 0, 1 and is not stored: records are most of
+    /// what a frame uploads, and the browser's buffer writes cost per byte.
+    pub world_rows: [[f32; 4]; 3],
     /// rgb multiplies the base color; a is opacity.
     pub tint: [f32; 4],
     /// Free for effects.
@@ -28,16 +32,36 @@ pub const RECORDS_PER_ROW: u32 = 256;
 
 impl InstanceRecord {
     pub fn new(world: &Mat4, tint: [f32; 4], data: [f32; 4]) -> Self {
+        debug_assert!(
+            world.row(3) == Vec4::W || world.is_nan(),
+            "instance transforms are affine"
+        );
         Self {
-            world: world.to_cols_array(),
+            world_rows: [
+                world.row(0).to_array(),
+                world.row(1).to_array(),
+                world.row(2).to_array(),
+            ],
             tint,
             data,
         }
     }
 
+    pub fn world(&self) -> Mat4 {
+        let [x, y, z] = self.world_rows.map(Vec4::from_array);
+        Mat4::from_cols(x, y, z, Vec4::W).transpose()
+    }
+
+    pub fn translation(&self) -> Vec3 {
+        let [x, y, z] = self.world_rows.map(|row| row[3]);
+        Vec3::new(x, y, z)
+    }
+
     pub const IDENTITY: InstanceRecord = InstanceRecord {
-        world: [
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        world_rows: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
         ],
         tint: [1.0; 4],
         data: [0.0; 4],
@@ -389,6 +413,21 @@ mod tests {
     }
 
     #[test]
+    fn records_keep_the_rows_of_an_affine_world() {
+        // WGSL `expand_instance` rebuilds the world from three rows, translation in w.
+        let world = Mat4::from_scale_rotation_translation(
+            glam::Vec3::new(1.0, 2.0, 0.5),
+            glam::Quat::from_rotation_y(0.7),
+            glam::Vec3::new(3.0, -1.0, 8.0),
+        );
+        let record = InstanceRecord::new(&world, [1.0; 4], [0.0; 4]);
+        assert_eq!(size_of_val(&record), 80);
+        assert_eq!(record.world_rows[1], world.row(1).to_array());
+        assert_eq!(record.translation(), glam::Vec3::new(3.0, -1.0, 8.0));
+        assert!(record.world().abs_diff_eq(world, 1e-6));
+    }
+
+    #[test]
     fn opaque_instances_of_a_class_become_one_draw() {
         let mut builder = DrawListBuilder::default();
         let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
@@ -422,8 +461,8 @@ mod tests {
         assert_eq!(views[SHADOW_VIEW].opaque.len(), 2);
         assert_eq!(builder.records.len(), 10);
         // Records follow draw order, so each range is the class's instances.
-        assert_eq!(builder.records[0].world[12], 1.0);
-        assert_eq!(builder.records[1].world[12], 3.0);
+        assert_eq!(builder.records[0].translation().x, 1.0);
+        assert_eq!(builder.records[1].translation().x, 3.0);
     }
 
     /// Main view: odd classes use pipeline 0 and even ones pipeline 1; class 4 draws
@@ -474,9 +513,9 @@ mod tests {
             ]
         );
         // Records follow draw order: class 1 drew instances 3 and 7.
-        assert_eq!(builder.records[0].world[12], 10.0);
-        assert_eq!(builder.records[3].world[12], 3.0);
-        assert_eq!(builder.records[4].world[12], 7.0);
+        assert_eq!(builder.records[0].translation().x, 10.0);
+        assert_eq!(builder.records[3].translation().x, 3.0);
+        assert_eq!(builder.records[4].translation().x, 7.0);
         assert_eq!(
             draws(&views[SHADOW_VIEW].opaque),
             [
@@ -623,7 +662,7 @@ mod tests {
             draws(&views[MAIN_VIEW].opaque),
             [(0, 20, 2), (0, 0, 8), (1, 22, 2)]
         );
-        let xs: Vec<_> = builder.records.iter().map(|r| r.world[12]).collect();
+        let xs: Vec<_> = builder.records.iter().map(|r| r.translation().x).collect();
         assert_eq!(xs, [1.0, 3.0, 0.0, 2.0]);
     }
 
@@ -654,7 +693,7 @@ mod tests {
                 (0, 205, 1)
             ]
         );
-        let xs: Vec<_> = builder.records.iter().map(|r| r.world[12]).collect();
+        let xs: Vec<_> = builder.records.iter().map(|r| r.translation().x).collect();
         assert_eq!(xs, [2.0, 5.0, 1.0, 4.0, 0.0, 3.0]);
     }
 

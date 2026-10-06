@@ -230,8 +230,7 @@ mod tests {
     }
 
     fn origin(records: &PoolBuffer, slot: usize) -> Vec3 {
-        let w = &records.records()[slot].world;
-        Vec3::new(w[12], w[13], w[14])
+        records.records()[slot].translation()
     }
 
     #[test]
@@ -398,7 +397,7 @@ mod tests {
         let live_count = trails.len() - old_count;
         let mut expected: Vec<_> = trails.records.records()[old_count..]
             .iter()
-            .map(|r| r.world)
+            .map(|r| r.world_rows)
             .collect();
         trails.records.take_dirty(|_, _| {});
         s.elapsed = TRACK_LIFETIME - 0.001;
@@ -411,11 +410,16 @@ mod tests {
         s.elapsed = TRACK_LIFETIME;
         trails.update(&s, 1.0);
         assert_eq!(trails.len(), live_count);
-        let mut actual: Vec<_> = trails.records.records().iter().map(|r| r.world).collect();
+        let mut actual: Vec<_> = trails
+            .records
+            .records()
+            .iter()
+            .map(|r| r.world_rows)
+            .collect();
         for r in trails.records.records() {
             assert_eq!(r.data[0], 10.0, "moving a slot preserves its fade age");
         }
-        let key = |w: &[f32; 16]| w.map(|v| v.to_bits());
+        let key = |w: &[[f32; 4]; 3]| w.map(|row| row.map(f32::to_bits));
         expected.sort_by_key(key);
         actual.sort_by_key(key);
         assert_eq!(actual, expected, "expiry preserves every younger mark");

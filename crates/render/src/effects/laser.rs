@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(visuals.lens.len(), 1);
         assert_eq!(visuals.mount.len(), 1);
         // The beam spans from the lens to the target.
-        let world = Mat4::from_cols_array(&visuals.core.records()[0].world);
+        let world = visuals.core.records()[0].world();
         let top = world.transform_point3(Vec3::new(0.0, 0.5, 0.0));
         let bottom = world.transform_point3(Vec3::new(0.0, -0.5, 0.0));
         let ends = [top, bottom];
@@ -228,7 +228,7 @@ mod tests {
         state.tanks[0].previous = Vec2::new(2.0, 0.0);
         state.tanks[0].position = Point3::new(2.0, 0.65, 0.0);
         visuals.update(&state, 1.0, 0.01);
-        let world = Mat4::from_cols_array(&visuals.core.records()[0].world);
+        let world = visuals.core.records()[0].world();
         let ends = [
             world.transform_point3(Vec3::new(0.0, 0.5, 0.0)),
             world.transform_point3(Vec3::new(0.0, -0.5, 0.0)),

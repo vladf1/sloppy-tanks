@@ -143,7 +143,11 @@ mod tests {
         assert_eq!(effects.rings.len(), MAX_PICKUP_EFFECTS);
         assert_eq!(effects.glows.len(), MAX_PICKUP_EFFECTS);
         let first = &effects.rings.records()[0];
-        assert_eq!(first.world[12], 6.0, "the oldest effects were replaced");
+        assert_eq!(
+            first.translation().x,
+            6.0,
+            "the oldest effects were replaced"
+        );
         assert!((first.tint[3] - 0.85 * 0.25).abs() < 1e-6);
         state.tanks[0].alive = false;
         effects.update(&state, 1.0, 0.1);
