@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use crate::sim::math::{Point3, Quat4, Vec2, angle_delta};
-use crate::sim::render_state::{RenderState, RenderTank};
+use crate::sim::render_state::{RenderState, RenderTank, fill_each};
 
 const MAX_SAMPLES: usize = 32;
 /// Longest a hull is carried past its newest authoritative pose, local or remote.
@@ -66,7 +66,8 @@ impl RenderTimeline {
     }
 
     /// Fills `output` for the delayed display `time` (seconds); `local_time` is where the
-    /// local hull aims. Needs at least one sample.
+    /// local hull aims. Needs at least one sample. Every field is overwritten, reusing the
+    /// output's allocations, so steady-state frames do not allocate.
     pub fn read(&mut self, time: f64, local_time: f64, dt: f64, output: &mut RenderState) {
         let newest = self.samples.back().expect("the timeline has a sample");
         // A late packet carries remote hulls along their velocity briefly instead of freezing them.
@@ -84,14 +85,13 @@ impl RenderTimeline {
             0.0
         };
 
-        output.tanks.clear();
-        for tank in &before.tanks {
+        fill_each(&mut output.tanks, &before.tanks, |out, tank| {
             let next = after.tanks.iter().find(|candidate| {
                 candidate.id == tank.id
                     && candidate.life == tank.life
                     && candidate.alive == tank.alive
             });
-            let mut out = tank.clone();
+            out.clone_from(tank);
             out.position = lerp(tank.position, next.map(|n| n.position), fraction);
             out.heading = tank.heading
                 + angle_delta(tank.heading, next.map_or(tank.heading, |n| n.heading)) * fraction;
@@ -101,38 +101,33 @@ impl RenderTimeline {
                 out.position.z += tank.velocity.z * overrun;
             }
             out.previous = Vec2::new(out.position.x, out.position.z);
-            output.tanks.push(out);
-        }
-        output.covers.clear();
-        for cover in &before.covers {
+        });
+        fill_each(&mut output.covers, &before.covers, |out, cover| {
             let next = after
                 .covers
                 .iter()
                 .find(|candidate| candidate.id == cover.id && candidate.alive == cover.alive);
-            let mut out = cover.clone();
+            out.clone_from(cover);
             out.position = lerp(cover.position, next.map(|n| n.position), fraction);
             out.rotation = interpolate_rotation(
                 cover.rotation,
                 next.map_or(cover.rotation, |n| n.rotation),
                 fraction,
             );
-            output.covers.push(out);
-        }
-        output.fragments.clear();
-        for fragment in &before.fragments {
+        });
+        fill_each(&mut output.fragments, &before.fragments, |out, fragment| {
             let next = after
                 .fragments
                 .iter()
                 .find(|candidate| candidate.id == fragment.id);
-            let mut out = fragment.clone();
+            out.clone_from(fragment);
             out.position = lerp(fragment.position, next.map(|n| n.position), fraction);
             out.rotation = interpolate_rotation(
                 fragment.rotation,
                 next.map_or(fragment.rotation, |n| n.rotation),
                 fraction,
             );
-            output.fragments.push(out);
-        }
+        });
         output.shots.clear();
         for shot in &before.shots {
             let next = after.shots.iter().find(|candidate| candidate.id == shot.id);
@@ -186,14 +181,14 @@ impl RenderTimeline {
                 target.x = local.position.x + (target.x - local.position.x) * blend;
                 target.z = local.position.z + (target.z - local.position.z) * blend;
             }
-            let mut local = authoritative.clone();
+            let local = self.local.get_or_insert_with(RenderTank::default);
+            local.clone_from(authoritative);
             local.position = target;
             local.previous = Vec2::new(target.x, target.z);
             local.heading = heading;
             if let Some(slot) = output.tanks.iter_mut().find(|tank| tank.id == local.id) {
-                *slot = local.clone();
+                slot.clone_from(local);
             }
-            self.local = Some(local);
         }
 
         output.viewer_id = before.viewer_id;

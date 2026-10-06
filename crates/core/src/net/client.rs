@@ -1212,13 +1212,10 @@ impl NetworkClient {
         {
             return None;
         }
-        // The battle keeps playing behind the in-battle menu too.
-        let (state, displayed) = self.timeline.read(now_ms, self.rtt_ms, dt);
-        match &mut self.display {
-            Some(display) => display.clone_from(state),
-            None => self.display = Some(state.clone()),
-        }
-        let display = self.display.as_ref().expect("just set");
+        // The battle keeps playing behind the in-battle menu too. The timeline overwrites
+        // the baseline or last frame in place.
+        let display = self.display.get_or_insert_with(RenderState::default);
+        let displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
         let events = displayed
