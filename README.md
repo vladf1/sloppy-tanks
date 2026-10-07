@@ -211,6 +211,7 @@ Runtime textures, tank previews and sounds are checked in under `public/`. Devel
 | `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
 | `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
 | `pnpm run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
+| `pnpm run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 

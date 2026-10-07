@@ -42,7 +42,8 @@ try {
   await page.locator("#startup-overlay[data-state=ready]").waitFor();
   await expectVisible(
     [".start .vehicles", ".play-tabs", ".map-choice", "#start"],
-    [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse"],
+    // The Home Screen tip is for an iPhone's browser only; this phone is not one.
+    [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse", ".home-screen-tip"],
   );
   await page.screenshot({ path: `${output}/setup-landscape.png` });
   await page.locator('[data-kind="heavy"]').tap();
@@ -272,9 +273,40 @@ try {
     [".dialog-eyebrow", ".dialog-lede", ".recap-stats", ".recap-details", ".recap-note"],
   );
   await page.screenshot({ path: `${output}/results.png` });
+
+  // An iPhone's browser cannot hide its bars for a page, so Battle Setup suggests the Home
+  // Screen; opened from there (`navigator.standalone`), the game has no bars to hide.
+  for (const standalone of [false, true]) {
+    const iphone = await browser.newContext({
+      viewport: { width: 874, height: 402 },
+      screen: { width: 874, height: 402 },
+      hasTouch: true,
+      isMobile: true,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+    });
+    if (standalone) {
+      await iphone.addInitScript(() =>
+        Object.defineProperty(navigator, "standalone", { value: true }),
+      );
+    }
+    const setup = await iphone.newPage();
+    setup.on("pageerror", (error) => errors.push(error.message));
+    await setup.goto(url);
+    const tip = setup.locator(".home-screen-tip");
+    await setup.locator(".start .vehicles").waitFor();
+    assert.equal(await tip.isVisible(), !standalone, `tip shown: ${!standalone}`);
+    if (!standalone) {
+      assert.match(await tip.innerText(), /Add to Home Screen/);
+      const box = await tip.boundingBox();
+      assert.ok(box && box.y + box.height <= 402, "the tip fits a landscape iPhone");
+      await setup.screenshot({ path: `${output}/home-screen-tip.png` });
+    }
+    await iphone.close();
+  }
   assert.deepEqual(errors, []);
   console.log(
-    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results passed.",
+    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results, iPhone Home Screen tip passed.",
   );
 } finally {
   await browser.close();
