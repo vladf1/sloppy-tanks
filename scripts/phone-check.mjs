@@ -1,7 +1,7 @@
 // The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
 // smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
 // offers only the tank, the map and the two tabs, the round is single player on Easy,
-// and the arena shows only the drive stick, first person, pause and zoom (a touch on
+// and the arena shows only the drive stick, zoom, first person and pause (a touch on
 // the arena aims and fires), in landscape and portrait, with a farther camera, no page zoom and short pause
 // and results dialogs. phone-multiplayer-check.mjs plays the Multiplayer tab.
 import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
@@ -117,8 +117,18 @@ try {
       "#zoom-out",
       "#zoom-in",
       ".scoreboard",
+      "#nerd-stats .nerd-stats-toggle",
     ];
     const rects = await Promise.all(selectors.map(box));
+    // One row across the top: zoom at the left of the scoreboard, first person and pause
+    // at its right.
+    const [, view, , zoomOut, zoomIn, scoreboard, nerds] = rects;
+    assert.ok(zoomOut.x < zoomIn.x && zoomIn.x + zoomIn.width <= scoreboard.x, "zoom left");
+    assert.ok(view.x >= scoreboard.x + scoreboard.width, "first person and pause right");
+    assert.ok(Math.abs(zoomIn.y - view.y) < 1, "zoom and first person share the top row");
+    // The tiny "nerds" link has a touch target well beyond its text, in from the corner.
+    assert.ok(nerds.width >= 44 && nerds.height >= 32, "nerds is easy to touch");
+    assert.ok(nerds.x + nerds.width <= width - 16, "nerds keeps clear of the corner");
     rects.forEach((rect, i) => {
       assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
       assert.ok(rect.x + rect.width <= width && rect.y + rect.height <= height, selectors[i]);
@@ -132,7 +142,14 @@ try {
       });
     });
     // The scoreboard only shows; the controls take touches.
-    for (const selector of [".touch-drive", "#view-mode", "#pause", "#zoom-out", "#zoom-in"]) {
+    for (const selector of [
+      ".touch-drive",
+      "#view-mode",
+      "#pause",
+      "#zoom-out",
+      "#zoom-in",
+      "#nerd-stats .nerd-stats-toggle",
+    ]) {
       const point = await center(selector);
       assert.equal(
         await page.evaluate(
