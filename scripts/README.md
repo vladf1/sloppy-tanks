@@ -59,7 +59,7 @@ allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 | `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                                                                                      |
 | `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                                                                              |
 | `touch-controls-check.mjs`         | Tablet and car-screen touch: drive stick, arena aim and fire, mine and ammo taps while firing, first person, zoom, pause, preference and layout at four sizes                                                                                                       |
-| `phone-check.mjs`                  | Emulated phone: tank and map only in Battle Setup, an Easy team battle, sticks, FIRE and pause only, landscape and portrait hit-testing                                                                                                                             |
+| `phone-check.mjs`                  | Emulated phone: tank, map and tabs only in Battle Setup, an Easy team battle, sticks, FIRE and pause only, landscape and portrait hit-testing                                                                                                                       |
 | `round-recap-check.mjs`            | Battle reports, records across reloads, report layout; Solo Assault scoreboard, time limit and death                                                                                                                                                                |
 | `render-cameras-check.mjs`         | Every map through moving, overview, first-person, zoomed and fixed cameras: no late or new pipelines, and a still frame matches pixel for pixel after a detour through other views                                                                                  |
 | `destruction-check.mjs`            | Timber stages and breach, scars on loose members, tree stumps and falling crowns, distinct tower rubble, debris sink and fade                                                                                                                                       |
@@ -186,6 +186,13 @@ Use `SLOPPY_URL` for either the local Vite URL or the public dev site,
 `SLOPPY_SERVER` as for `check:multiplayer`, and `SLOPPY_CHECK_LABEL=public` to keep
 separate evidence. Buttons and room selection
 use physical coordinate clicks.
+
+With Vite and the local server running, `node scripts/phone-multiplayer-check.mjs` plays
+phones' one-action Multiplayer tab: a phone that sees no open room creates one on its map
+with bots, and a second phone, starting on single player, has that room picked with its
+map shown, joins through a reload, and gets the phone camera, controls and short room
+menu. Each phone's room list keeps only the rooms the check made, so other rooms on the
+server cannot change the pick.
 
 `node scripts/multiplayer-restart-check.mjs` starts an isolated native server
 (`target/server/sloppy-server`) on port 8790, or `SLOPPY_RESTART_PORT`, that admits the

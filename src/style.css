@@ -2150,9 +2150,11 @@ html.phone,
 .phone
   :is(
     .setup-header,
-    .play-tabs,
+    .play-tab small,
     .battle-choice,
     .difficulty-setting,
+    .room-browse,
+    .driver-name,
     .menu-footer,
     .setup-label small,
     .start .vehicle small,
@@ -2180,16 +2182,29 @@ html.phone,
   height: 70px;
   margin: -4px 0 0;
 }
+/* Low tabs: on a phone, multiplayer is one action that joins or creates a room. */
+.phone .play-tab {
+  gap: 10px;
+  padding: 9px 14px;
+}
+.phone .play-tab svg {
+  flex-basis: 20px;
+  height: 20px;
+}
+.phone .play-tab b {
+  font-size: 17px;
+}
 .phone .setup-panels {
-  padding: 0;
-  background: none;
+  gap: 10px;
+  padding: 10px;
 }
 .phone .setup-panel {
   grid-template-rows: auto;
   gap: 8px;
 }
 .phone .start .startup-progress,
-.phone .start #start {
+.phone .start #start,
+.phone .room-action .primary {
   min-height: 50px;
 }
 .phone .map-choice .choice-card {

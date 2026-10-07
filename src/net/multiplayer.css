@@ -367,3 +367,15 @@
     padding: 18px;
   }
 }
+/* Phones get the short menu: the room, what is happening, the results, and the actions.
+   Room rules, team and tank changes and the controls help need a larger screen; a phone
+   keeps the tank it chose in Battle Setup. The teams show only in the lobby, where they
+   say who the battle waits for. */
+.phone .multiplayer :is(.network-menu, .network-connection) {
+  gap: 12px;
+  padding: 16px 20px;
+}
+.phone .network-menu :is(.network-next, .network-help),
+.phone .network-menu:not([data-phase="lobby"]) #network-roster {
+  display: none;
+}

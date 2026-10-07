@@ -23,7 +23,7 @@
 //!
 //! - `create(canvas, config)`: `{ server, room, savedSeat?: {token, roomEpoch}, latency?,
 //!   jitter?, stall?, seed?, assetBase, cssWidth?, cssHeight?, pixelRatio?,
-//!   firstPerson?, zoom? }`. `server` is
+//!   firstPerson?, zoom?, hideReticle? }`. `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
 //!   transport-delay URL parameters (omit them in production).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
@@ -158,6 +158,7 @@ struct NetConfig {
     pixel_ratio: Option<f64>,
     first_person: bool,
     zoom: Option<f64>,
+    hide_reticle: bool,
 }
 
 impl NetConfig {
@@ -253,6 +254,7 @@ impl NetGame {
         let mut view = Presentation::new(renderer, seed.to_bits());
         view.rig
             .restore_preferences(config.first_person, config.zoom);
+        view.hide_reticle = config.hide_reticle;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),

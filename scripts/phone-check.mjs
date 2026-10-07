@@ -1,8 +1,9 @@
 // The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
 // smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
-// offers only the tank and map, the round is single player on Easy, and the arena shows
-// only the drive stick and pause (a touch on the arena aims and fires), in landscape
-// and portrait, with a farther camera, no page zoom and short pause and results dialogs.
+// offers only the tank, the map and the two tabs, the round is single player on Easy,
+// and the arena shows only the drive stick and pause (a touch on the arena aims and
+// fires), in landscape and portrait, with a farther camera, no page zoom and short pause
+// and results dialogs. phone-multiplayer-check.mjs plays the Multiplayer tab.
 import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
@@ -40,8 +41,8 @@ try {
   );
   await page.locator("#startup-overlay[data-state=ready]").waitFor();
   await expectVisible(
-    [".start .vehicles", ".map-choice", "#start"],
-    [".play-tabs", ".battle-choice", ".difficulty-setting", ".menu-footer", "#multiplayer-panel"],
+    [".start .vehicles", ".play-tabs", ".map-choice", "#start"],
+    [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse"],
   );
   await page.screenshot({ path: `${output}/setup-landscape.png` });
   await page.locator('[data-kind="heavy"]').tap();

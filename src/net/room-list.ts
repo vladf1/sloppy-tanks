@@ -95,3 +95,17 @@ export function readRoomList(value: unknown): RoomListing[] {
   }
   return rooms.map(readRoomListing);
 }
+
+/** A battle under way first, then a lobby, then a room between rounds. */
+const PHASE_ORDER: Record<RoomPhase, number> = { playing: 0, lobby: 1, results: 2 };
+
+/** The room a phone, which shows no room list, joins: of the rooms `open` says can take
+ * a player, one whose battle is under way, then the one with the most players. */
+export function busiestOpenRoom(
+  rooms: readonly RoomListing[],
+  open: (room: RoomListing) => boolean,
+): RoomListing | undefined {
+  return rooms
+    .filter(open)
+    .sort((a, b) => PHASE_ORDER[a.phase] - PHASE_ORDER[b.phase] || b.players - a.players)[0];
+}

@@ -1,12 +1,13 @@
 // The engine build stamps the content version its joins send (scripts/build-wasm.mjs);
 // rooms of another version can't take this page's players.
 import { CONTENT_VERSION } from "../generated/engine/content-version.js";
-import { readRoomList, type RoomListing } from "./room-list";
+import { busiestOpenRoom, readRoomList, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
 import { showRoomMap } from "../game/map-picker";
+import { isPhone } from "../game/phone-mode";
 import type { GameOptions } from "../game/game-options";
 
 // Battle Setup loads this module alone before any other multiplayer code.
@@ -55,6 +56,8 @@ export class RoomBrowser {
   private timer?: ReturnType<typeof setTimeout>;
   private controller?: AbortController;
   private readonly leave = () => this.close();
+  /** Phones show no room list: they join the busiest open room, or create one. */
+  private readonly autoPick = isPhone();
 
   constructor(
     private readonly panel: HTMLElement,
@@ -81,6 +84,10 @@ export class RoomBrowser {
     // The plain list, which the traffic bots read too, leaves extra-level rooms out.
     this.endpoint.searchParams.set("debug", "");
     this.name.value ||= preferredPlayerName();
+    if (this.autoPick) {
+      // A phone offers no room rules, and an empty arena is no battle.
+      this.element<HTMLInputElement>("#create-humans-only").checked = false;
+    }
     // A setup copied from an earlier menu may still show that menu's rooms.
     this.render();
     this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
@@ -140,6 +147,9 @@ export class RoomBrowser {
     this.element("#room-count").textContent = String(this.rooms.length);
     if (!this.rooms.some((room) => room.room === this.selected && this.available(room))) {
       this.selected = "";
+    }
+    if (this.autoPick && !this.selected) {
+      this.selected = busiestOpenRoom(this.rooms, (room) => this.available(room))?.room ?? "";
     }
     for (const room of this.rooms) {
       const row = document.createElement("label");
@@ -363,7 +373,8 @@ export class RoomBrowser {
     }
     const create = {
       mapMode: map.id,
-      difficulty: "normal" as const,
+      // Phones play their bots on Easy, as in single player.
+      difficulty: this.autoPick ? ("easy" as const) : ("normal" as const),
       humansOnly: this.element<HTMLInputElement>("#create-humans-only").checked,
       roundMinutes,
     };
