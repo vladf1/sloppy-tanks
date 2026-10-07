@@ -30,6 +30,12 @@ canvas#game {
   outline: none;
   cursor: crosshair;
 }
+/* iOS paints what the page does not cover with the page's own background: a Home Screen
+   app's status bar strip and the fade below it, and Safari's bars. Phones and Home Screen
+   apps keep it the menu's navy rather than the sky blue. */
+html:is(.phone, .home-screen-app) {
+  background: #0d1b2a;
+}
 #nerd-stats {
   position: fixed;
   right: 8px;
@@ -2259,6 +2265,16 @@ html.phone,
 /* Phones drop the section notes, but not the one that says the map is the room's. */
 .phone .start[data-play="multiplayer"]:has(#new-room:not(:checked)) .open-room-note {
   display: inline;
+}
+/* An iPhone's browser cannot hide its bars for a page, so its Battle Setup suggests the
+   Home Screen, in the tank row's label where the hidden desktop note was. */
+.start .home-screen-tip {
+  display: none;
+}
+/* Outranks the phone's hidden label notes, whose :is() takes its longest selector's weight. */
+.offer-home-screen .start .setup-label small.home-screen-tip {
+  display: inline;
+  color: var(--label);
 }
 .phone .start .startup-progress,
 .phone .start #start,
