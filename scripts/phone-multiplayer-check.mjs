@@ -45,8 +45,9 @@ const expectVisible = async (page, shown, hidden) => {
   for (const selector of hidden) assert.equal(state[selector], false, `${selector} is hidden`);
 };
 /** A phone whose room list keeps only `keep(rooms)` of the server's real list, so other
- * rooms on a shared local server cannot change which room it picks. */
-async function openPhone(keep) {
+ * rooms on a shared local server cannot change which room it picks. Each list answers
+ * once `hold`, when given, settles. */
+async function openPhone(keep, hold) {
   const context = await browser.newContext({
     viewport: PHONE,
     screen: PHONE,
@@ -58,6 +59,7 @@ async function openPhone(keep) {
     async (route) => {
       const response = await route.fetch();
       const { rooms } = await response.json();
+      await hold;
       await route.fulfill({ response, json: { rooms: keep(rooms) } });
     },
   );
@@ -69,9 +71,22 @@ async function openPhone(keep) {
 try {
   const multiplayer = new URL(base);
   multiplayer.searchParams.set("multiplayer", "");
-  const carol = await openPhone(() => []);
+  let answerList;
+  const carol = await openPhone(() => [], new Promise((resolve) => (answerList = resolve)));
+  // The room browser asks for the list once it has set up the tab, so a request in
+  // flight means the button below is the browser's, not the markup's.
+  const listRequested = carol.page.waitForRequest((request) => request.url().includes("/rooms"));
   await carol.page.goto(multiplayer.href);
+  await listRequested;
+  // Until the first list answers, the phone cannot know that no room is open.
+  assert.equal(
+    await carol.page.locator("#create-room").isDisabled(),
+    true,
+    "A phone waits for the room list before it offers a new room",
+  );
+  answerList();
   await carol.page.locator('.room-status[data-state="ready"]').waitFor();
+  assert.equal(await carol.page.locator("#create-room").isDisabled(), false);
   await expectVisible(
     carol.page,
     [".play-tabs", ".map-choice", "#create-room"],

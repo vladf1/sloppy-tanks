@@ -40,6 +40,7 @@ export class RoomBrowser {
   private readonly hint: HTMLElement;
   private readonly name: HTMLInputElement;
   private readonly join: HTMLButtonElement;
+  private readonly create: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
   private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
@@ -79,6 +80,7 @@ export class RoomBrowser {
     this.hint = this.element("#rooms-hint");
     this.name = this.element("#player-name");
     this.join = this.element("#join-room");
+    this.create = this.element("#create-room");
     this.refresh = this.element("#refresh-rooms");
     this.newRoom = this.element("#new-room");
     this.linkedRoom = link?.room;
@@ -96,9 +98,10 @@ export class RoomBrowser {
     this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
     this.refresh.addEventListener("click", () => void this.poll());
     this.join.addEventListener("click", () => this.joinSelected());
-    const create = this.element<HTMLButtonElement>("#create-room");
-    create.addEventListener("click", () => this.createRoom());
-    create.disabled = false;
+    this.create.addEventListener("click", () => this.createRoom());
+    // A phone's one action creates a room only when it knows none is open, so it waits
+    // for the first room list; elsewhere the new room is a choice beside the list.
+    this.create.disabled = this.autoPick;
     this.newRoom.addEventListener("change", () => this.choose(""));
     // Editing the new room's rules chooses the new room.
     this.element(".room-rules").addEventListener("focusin", () => {
@@ -273,6 +276,7 @@ export class RoomBrowser {
         );
         const linked = this.link && this.followLink(this.link);
         this.render();
+        this.create.disabled = false;
         if (linked) {
           this.list
             .querySelector(".room-row:has(input:checked)")
@@ -286,6 +290,8 @@ export class RoomBrowser {
         } else {
           this.rooms = [];
           this.render();
+          // Without a list, a new room is the one thing a phone can still do.
+          this.create.disabled = false;
           // fetch() rejects with a TypeError when the server cannot be reached at all.
           this.showStatus(
             "error",
