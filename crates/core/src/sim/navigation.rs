@@ -186,6 +186,14 @@ impl Navigation {
     /// estimate, then by the order cells were first reached, which is the order a linear scan
     /// of an append-only list picks among equal estimates; seeded routes depend on that order.
     pub fn find(&mut self, from: Vec2, to: Vec2) -> Vec<Vec2> {
+        let mut path = Vec::new();
+        self.find_into(from, to, &mut path);
+        path
+    }
+
+    /// Replace a route while retaining its storage, including when no route is reachable.
+    pub fn find_into(&mut self, from: Vec2, to: Vec2, path: &mut Vec<Vec2>) {
+        path.clear();
         self.paths += 1;
         let start = self.nearest(self.index(from));
         let goal = self.nearest(self.index(to));
@@ -255,15 +263,13 @@ impl Navigation {
             }
         }
         if reached != goal {
-            return Vec::new();
+            return;
         }
-        let mut path = Vec::new();
         while reached != start {
             path.push(self.point(reached));
             reached = self.cells[reached].parent as usize;
         }
         path.reverse();
-        path
     }
 }
 

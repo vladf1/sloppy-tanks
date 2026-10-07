@@ -69,6 +69,7 @@
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
 use crate::events::{PendingEvent, drain_events};
+use crate::hud::{HudAmmo, HudHuman, HudScore};
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -170,65 +171,6 @@ struct Hud<'a> {
     human: HudHuman<'a>,
     scoreboard: Vec<HudScore<'a>>,
     recap: Option<&'a Value>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HudHuman<'a> {
-    id: u32,
-    name: &'a str,
-    kind: VehicleKind,
-    vehicle_name: &'static str,
-    team: Team,
-    alive: bool,
-    hp: f64,
-    max_hp: f64,
-    health_ratio: f64,
-    health_color: u32,
-    xp: f64,
-    rank: usize,
-    rank_name: &'static str,
-    rank_damage: f64,
-    rank_fire_rate: f64,
-    rank_health: f64,
-    rank_repair: f64,
-    repair_delay: f64,
-    selected_ammo: Weapon,
-    equipped: Weapon,
-    ammo: Vec<HudAmmo>,
-    cooldown: f64,
-    mine_cooldown: f64,
-    protection: f64,
-    shield: f64,
-    shield_points: f64,
-    rapid: f64,
-    speed: f64,
-    laser: f64,
-    respawn: f64,
-    kills: u32,
-    deaths: u32,
-    self_repair: bool,
-}
-
-#[derive(Serialize)]
-struct HudAmmo {
-    weapon: Weapon,
-    count: Option<f64>,
-    selected: bool,
-    available: bool,
-}
-
-#[derive(Serialize)]
-struct HudScore<'a> {
-    id: u32,
-    name: &'a str,
-    team: Team,
-    kind: VehicleKind,
-    human: bool,
-    alive: bool,
-    kills: u32,
-    deaths: u32,
-    rank: usize,
 }
 
 fn phase_code(phase: MatchPhase) -> f32 {
@@ -675,15 +617,12 @@ impl Game {
         let stats = &RANKS[rank];
         let health = health_bar_state(tank.hp, max_hp, tank.team);
         let selected = equipped_weapon(tank);
-        let ammo = AMMO_ORDER
-            .iter()
-            .map(|&weapon| HudAmmo {
-                weapon,
-                count: weapon.special().map(|kind| tank.ammo.get(kind)),
-                selected: weapon == selected,
-                available: has_ammo(tank, weapon),
-            })
-            .collect();
+        let ammo = AMMO_ORDER.map(|weapon| HudAmmo {
+            weapon,
+            count: weapon.special().map(|kind| tank.ammo.get(kind)),
+            selected: weapon == selected,
+            available: has_ammo(tank, weapon),
+        });
         let self_repair = tank.alive
             && stats.repair > 0.0
             && tank.hp < max_hp

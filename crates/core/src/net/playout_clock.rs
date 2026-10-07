@@ -44,6 +44,7 @@ pub struct PlayoutClock {
     path_ms: f64,
     target_buffer_ms: f64,
     arrivals: VecDeque<Arrival>,
+    lateness: Vec<f64>,
     last_read_ms: Option<f64>,
 }
 
@@ -57,6 +58,7 @@ impl Default for PlayoutClock {
             path_ms: 0.0,
             target_buffer_ms: MIN_BUFFER_MS,
             arrivals: VecDeque::new(),
+            lateness: Vec::new(),
             last_read_ms: None,
         }
     }
@@ -100,14 +102,15 @@ impl PlayoutClock {
         {
             self.arrivals.pop_front();
         }
-        let mut lateness: Vec<f64> = self
-            .arrivals
-            .iter()
-            .map(|arrival| arrival.path_ms - self.path_ms)
-            .collect();
-        lateness.sort_by(f64::total_cmp);
-        let percentile =
-            lateness[((lateness.len() - 1) as f64 * LATENESS_PERCENTILE).floor() as usize];
+        self.lateness.clear();
+        self.lateness.extend(
+            self.arrivals
+                .iter()
+                .map(|arrival| arrival.path_ms - self.path_ms),
+        );
+        self.lateness.sort_unstable_by(f64::total_cmp);
+        let percentile = self.lateness
+            [((self.lateness.len() - 1) as f64 * LATENESS_PERCENTILE).floor() as usize];
         self.target_buffer_ms = (MIN_BUFFER_MS + percentile).clamp(MIN_BUFFER_MS, MAX_BUFFER_MS);
         // A stall grows the buffer immediately; recovery gives the delay back slowly in read().
         self.buffer_ms = self.buffer_ms.max(self.target_buffer_ms);

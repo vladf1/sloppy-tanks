@@ -162,6 +162,16 @@ pub struct StateStream {
     previous: Option<Scene>,
     index: [HashMap<u32, usize>; 6],
     current_ids: HashSet<u32>,
+    scratch: SnapshotScratch,
+}
+
+// One byte arena for all changed records; entries hold ranges rather than owning strings.
+#[derive(Default)]
+struct SnapshotScratch {
+    changes: String,
+    updates: String,
+    removed: String,
+    entries: Vec<(u32, std::ops::Range<usize>)>,
 }
 
 impl StateStream {
@@ -173,6 +183,7 @@ impl StateStream {
             previous: None,
             index: Default::default(),
             current_ids: HashSet::new(),
+            scratch: SnapshotScratch::default(),
         }
     }
 
@@ -226,19 +237,25 @@ impl StateStream {
             .int("tick", tick)
             .number("elapsed", scene.elapsed);
         let previous = self.previous.as_ref();
-        let mut changes = String::new();
+        let SnapshotScratch {
+            changes,
+            updates,
+            removed,
+            entries,
+        } = &mut self.scratch;
+        changes.clear();
+        updates.clear();
+        removed.clear();
         if write_changes(
             previous.map(|scene| &scene.match_record),
             &scene.match_record,
-            &mut changes,
+            changes,
         ) {
-            frame.raw("match", &changes);
+            frame.raw("match", changes);
         }
-        let mut updates = String::new();
-        let mut removed = String::new();
-        let mut entries: Vec<(u32, String)> = Vec::new();
         for (kind, records) in scene.entities.iter().enumerate() {
             entries.clear();
+            changes.clear();
             let before = previous.map(|scene| &scene.entities[kind]);
             for record in records {
                 let old = before.and_then(|before| {
@@ -246,25 +263,25 @@ impl StateStream {
                         .get(&record.id)
                         .map(|&position| &before[position])
                 });
-                let mut text = String::new();
-                if write_changes(old, record, &mut text) {
-                    entries.push((record.id, text));
+                let start = changes.len();
+                if write_changes(old, record, changes) {
+                    entries.push((record.id, start..changes.len()));
                 }
             }
             if !entries.is_empty() {
                 // JavaScript orders integer-like object keys numerically.
-                entries.sort_by_key(|(id, _)| *id);
+                entries.sort_unstable_by_key(|(id, _)| *id);
                 updates.push(if updates.is_empty() { '{' } else { ',' });
-                write_str(&mut updates, ENTITY_TYPES[kind]);
+                write_str(updates, ENTITY_TYPES[kind]);
                 updates.push_str(":{");
                 for (index, (id, text)) in entries.iter().enumerate() {
                     if index > 0 {
                         updates.push(',');
                     }
                     updates.push('"');
-                    write_int(&mut updates, u64::from(*id));
+                    write_int(updates, u64::from(*id));
                     updates.push_str("\":");
-                    updates.push_str(text);
+                    updates.push_str(&changes[text.clone()]);
                 }
                 updates.push('}');
             }
@@ -279,13 +296,13 @@ impl StateStream {
                 {
                     if first {
                         removed.push(if removed.is_empty() { '{' } else { ',' });
-                        write_str(&mut removed, ENTITY_TYPES[kind]);
+                        write_str(removed, ENTITY_TYPES[kind]);
                         removed.push_str(":[");
                         first = false;
                     } else {
                         removed.push(',');
                     }
-                    write_int(&mut removed, u64::from(record.id));
+                    write_int(removed, u64::from(record.id));
                 }
                 if !first {
                     removed.push(']');
@@ -294,16 +311,21 @@ impl StateStream {
         }
         if !updates.is_empty() {
             updates.push('}');
-            frame.raw("updates", &updates);
+            frame.raw("updates", updates);
         }
         if !removed.is_empty() {
             removed.push('}');
-            frame.raw("removed", &removed);
+            frame.raw("removed", removed);
         }
         if !events.is_empty() {
             let list = frame.key("events");
             list.push('[');
-            list.push_str(&events.join(","));
+            for (index, event) in events.iter().enumerate() {
+                if index > 0 {
+                    list.push(',');
+                }
+                list.push_str(event);
+            }
             list.push(']');
         }
         if !traces.is_empty() {

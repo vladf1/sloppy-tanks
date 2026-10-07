@@ -59,10 +59,9 @@ fn set_goal(simulation: &mut Simulation, tank_index: usize, goal: Vec2) {
     let brain = &simulation.tanks[tank_index].brain;
     if distance(brain.goal, goal) > 1.0 || brain.nav_version != simulation.nav.version {
         let from = tank_position(simulation, tank_index);
-        let path = simulation.nav.find(from, goal);
         let brain = &mut simulation.tanks[tank_index].brain;
         brain.goal = goal;
-        brain.path = path;
+        simulation.nav.find_into(from, goal, &mut brain.path);
         brain.nav_version = simulation.nav.version;
         simulation.bot_reroutes += 1;
     }
@@ -71,10 +70,13 @@ fn set_goal(simulation: &mut Simulation, tank_index: usize, goal: Vec2) {
 /// Prefer nearby concealment; in open terrain, withdraw away from the target.
 fn escape_point(simulation: &Simulation, from: Vec2, threat: Vec2) -> Option<Vec2> {
     let away = (from.x - threat.x).atan2(from.z - threat.z);
-    let mut candidates: Vec<(Vec2, f64)> = Vec::new();
-    for radius in [8.0, 14.0] {
-        for i in 0..12 {
-            let angle = away + (i as f64 * PI * 2.0) / 12.0;
+    const RADII: [f64; 2] = [8.0, 14.0];
+    const DIRECTIONS: usize = 12;
+    let mut candidates = [(Vec2::ZERO, 0.0); RADII.len() * DIRECTIONS];
+    let mut count = 0;
+    for radius in RADII {
+        for i in 0..DIRECTIONS {
+            let angle = away + (i as f64 * PI * 2.0) / DIRECTIONS as f64;
             let point = simulation.nav.point(simulation.nav.index(Vec2::new(
                 from.x + angle.sin() * radius,
                 from.z + angle.cos() * radius,
@@ -89,14 +91,16 @@ fn escape_point(simulation: &Simulation, from: Vec2, threat: Vec2) -> Option<Vec
             }
             let score =
                 (if hidden { HIDDEN_ESCAPE_BONUS } else { 0.0 }) + gain - distance(from, point);
-            candidates.push((point, score));
+            candidates[count] = (point, score);
+            count += 1;
         }
     }
+    let candidates = &mut candidates[..count];
     candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     // A clear escape leg cannot detour toward or through the target.
     candidates
-        .into_iter()
-        .map(|(point, _)| point)
+        .iter()
+        .map(|&(point, _)| point)
         .find(|&point| simulation.nav.clear_line(from, point))
 }
 
@@ -205,20 +209,19 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         return true;
     }
     let angle = (position.x - threat.x).atan2(position.z - threat.z);
-    let mut candidates = Vec::new();
-    if last_shot.is_none()
+    let hold = (last_shot.is_none()
         && distance(position, threat) >= MIN_RANGE
-        && distance(position, threat) <= MAX_HOLD_RANGE
-    {
-        candidates.push(position);
-    }
-    for offset in [0.3, 0.6, 0.9, -0.3, -0.6, 0.0] {
-        let heading = angle + offset * flank;
-        candidates.push(Vec2::new(
-            threat.x + heading.sin() * RANGE,
-            threat.z + heading.cos() * RANGE,
-        ));
-    }
+        && distance(position, threat) <= MAX_HOLD_RANGE)
+        .then_some(position);
+    let candidates = hold
+        .into_iter()
+        .chain([0.3, 0.6, 0.9, -0.3, -0.6, 0.0].map(|offset| {
+            let heading = angle + offset * flank;
+            Vec2::new(
+                threat.x + heading.sin() * RANGE,
+                threat.z + heading.cos() * RANGE,
+            )
+        }));
     for candidate in candidates {
         let point = simulation.nav.point(simulation.nav.index(candidate));
         if simulation.nav.is_blocked(point)

@@ -210,6 +210,8 @@ pub struct Simulation {
     pub covers: Vec<Cover>,
     pub cover_by_collider: HashMap<ColliderHandle, usize>,
     pub shots: Vec<Shot>,
+    pub(crate) projectile_tank_positions: Vec<Option<Point3>>,
+    pub(crate) bot_targets: super::bot_strategy::TargetScratch,
     pub mines: Vec<Mine>,
     /// Stable mine order while detonations can recursively remove entries.
     pub(crate) mine_update_ids: Vec<u32>,
@@ -275,6 +277,8 @@ impl Simulation {
             covers: Vec::new(),
             cover_by_collider: HashMap::new(),
             shots: Vec::new(),
+            projectile_tank_positions: Vec::new(),
+            bot_targets: Default::default(),
             mines: Vec::new(),
             mine_update_ids: Vec::new(),
             pickups: Vec::new(),

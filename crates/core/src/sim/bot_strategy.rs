@@ -25,6 +25,15 @@ const PREFERRED_AMMO_DISTANCE_BONUS: f64 = 3.0;
 const HUMVEE_CROWD_RADIUS: f64 = 14.0;
 const HUMVEE_CROWD_PENALTY: f64 = 12.0;
 
+// Shared across sequential bot decisions; order remains the broad phase's reported order.
+#[derive(Default)]
+pub(crate) struct TargetScratch {
+    enemies: Vec<usize>,
+    threats: Vec<usize>,
+    scores: Vec<f64>,
+    ranked: Vec<usize>,
+}
+
 /// Choose a target, retreat/pickup/patrol goal and route; called only on decision ticks.
 pub fn update_bot_goal(
     simulation: &mut Simulation,
@@ -46,7 +55,14 @@ pub fn update_bot_goal(
     // Rapier broad phase gathers local actors; team and perception rules are controller-level
     // filters. The group filter skips cover and debris.
     let sight = Ball::new(profile.sight as f32);
-    let mut enemies: Vec<usize> = Vec::new();
+    let mut scratch = std::mem::take(&mut simulation.bot_targets);
+    let TargetScratch {
+        enemies,
+        threats,
+        scores,
+        ranked,
+    } = &mut scratch;
+    enemies.clear();
     for (handle, _) in simulation.world.intersect_shape(
         Pose::from_translation(vector(position3.x, position3.y, position3.z)),
         &sight,
@@ -76,11 +92,13 @@ pub fn update_bot_goal(
     };
     let target = if kind == VehicleKind::Humvee {
         // A HMMWV avoids crowds, so each score counts the other visible threats nearby.
-        let threats: Vec<usize> = enemies
-            .iter()
-            .copied()
-            .filter(|&enemy| seen(simulation, enemy))
-            .collect();
+        threats.clear();
+        threats.extend(
+            enemies
+                .iter()
+                .copied()
+                .filter(|&enemy| seen(simulation, enemy)),
+        );
         best_by(threats.iter().copied(), |&candidate| {
             let crowd = threats
                 .iter()
@@ -98,12 +116,11 @@ pub fn update_bot_goal(
         // Other scores ignore the rest of the threats, so sight lines are tested from the best
         // score down (ties in reported order, as best_by keeps them). The first visible enemy is
         // best_by's choice, without a ray to every enemy in sight range.
-        let scores: Vec<f64> = enemies
-            .iter()
-            .map(|&enemy| closeness(simulation, enemy))
-            .collect();
-        let mut ranked: Vec<usize> = (0..enemies.len()).collect();
-        ranked.sort_by(|&a, &b| {
+        scores.clear();
+        scores.extend(enemies.iter().map(|&enemy| closeness(simulation, enemy)));
+        ranked.clear();
+        ranked.extend(0..enemies.len());
+        ranked.sort_unstable_by(|&a, &b| {
             let difference = scores[b] - scores[a];
             if difference != 0.0 && !difference.is_nan() {
                 difference.partial_cmp(&0.0).expect("finite difference")
@@ -112,10 +129,12 @@ pub fn update_bot_goal(
             }
         });
         ranked
-            .into_iter()
+            .iter()
+            .copied()
             .find(|&index| seen(simulation, enemies[index]))
             .map(|index| enemies[index])
     };
+    simulation.bot_targets = scratch;
     let tuning = enemy_difficulty(simulation, &simulation.tanks[tank_index]);
     if let Some(target) = target {
         let target_id = simulation.tanks[target].id;
@@ -156,32 +175,29 @@ pub fn update_bot_goal(
     let tank = &simulation.tanks[tank_index];
     let max_health = simulation.max_health(tank);
     let multiplier = simulation.ammo_crate_multiplier;
-    let useful: Vec<usize> = (0..simulation.pickups.len())
-        .filter(|&p| {
-            let pickup = &simulation.pickups[p];
-            pickup.available
-                && (pickup.kind != PickupKind::Repair
-                    || tank.hp < max_health * REPAIR_COLLECT_HEALTH_FRACTION)
-                && (pickup.kind != PickupKind::Rapid || tank.rapid < EFFECT_REFRESH_SECONDS)
-                && pickup
-                    .kind
-                    .special_ammo()
-                    .is_none_or(|ammo| can_collect_ammo(tank, ammo, multiplier))
-                && (pickup.kind != PickupKind::Speed || tank.speed < EFFECT_REFRESH_SECONDS)
-                && (pickup.kind != PickupKind::Laser || tank.laser < EFFECT_REFRESH_SECONDS)
-                && (pickup.kind != PickupKind::Shield
-                    || tank.shield < EFFECT_REFRESH_SECONDS
-                    || tank.shield_points < weapon(Weapon::Standard).damage)
-        })
-        .collect();
+    let useful = (0..simulation.pickups.len()).filter(|&p| {
+        let pickup = &simulation.pickups[p];
+        pickup.available
+            && (pickup.kind != PickupKind::Repair
+                || tank.hp < max_health * REPAIR_COLLECT_HEALTH_FRACTION)
+            && (pickup.kind != PickupKind::Rapid || tank.rapid < EFFECT_REFRESH_SECONDS)
+            && pickup
+                .kind
+                .special_ammo()
+                .is_none_or(|ammo| can_collect_ammo(tank, ammo, multiplier))
+            && (pickup.kind != PickupKind::Speed || tank.speed < EFFECT_REFRESH_SECONDS)
+            && (pickup.kind != PickupKind::Laser || tank.laser < EFFECT_REFRESH_SECONDS)
+            && (pickup.kind != PickupKind::Shield
+                || tank.shield < EFFECT_REFRESH_SECONDS
+                || tank.shield_points < weapon(Weapon::Standard).damage)
+    });
     let pickup_at = |p: usize| Vec2::new(simulation.pickups[p].x, simulation.pickups[p].z);
     let favourite = bot_ammo(tank.brain.personality);
     let nearest = useful
-        .iter()
-        .copied()
+        .clone()
         .find(|&p| simulation.pickups[p].id == tank.brain.pickup_target)
         .or_else(|| {
-            best_by(useful.iter().copied(), |&p| {
+            best_by(useful.clone(), |&p| {
                 -distance(position, pickup_at(p))
                     + if simulation.pickups[p].kind.weapon() == Some(favourite) {
                         PREFERRED_AMMO_DISTANCE_BONUS
@@ -191,7 +207,7 @@ pub fn update_bot_goal(
             })
         });
     let hurt = tank.hp < max_health * REPAIR_SEEK_HEALTH_FRACTION;
-    let repair = best_by(useful.iter().copied(), |&p| {
+    let repair = best_by(useful, |&p| {
         if simulation.pickups[p].kind == PickupKind::Repair {
             -distance(position, pickup_at(p))
         } else {
@@ -301,10 +317,11 @@ pub fn update_bot_goal(
                 .last()
                 .is_some_and(|&last| distance(last, route_goal) > 4.0))
     {
-        let path = simulation.nav.find(position, route_goal);
-        let nav_version = simulation.nav.version;
         let brain = &mut simulation.tanks[tank_index].brain;
-        brain.path = path;
+        simulation
+            .nav
+            .find_into(position, route_goal, &mut brain.path);
+        let nav_version = simulation.nav.version;
         brain.nav_version = nav_version;
         simulation.bot_reroutes += 1;
     }

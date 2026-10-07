@@ -668,3 +668,41 @@ fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
         );
     }
 }
+
+#[test]
+fn snapshot_scratch_does_not_leak_updates_removals_or_events_into_the_next_frame() {
+    let mut sim = room(MapId::Village, &one_player());
+    let mut scene = Scene::capture(&sim);
+    let mut stream = StateStream::new("room", 1);
+    stream.full(&scene, 0, 0);
+    let removed = sim.tanks.pop().unwrap().id;
+    sim.tanks.reverse(); // Wire keys must still be in numeric order.
+    for tank in &mut sim.tanks {
+        tank.hp -= 1.0;
+    }
+    sim.match_state.scores[0] = 2;
+    scene.capture_from(&sim);
+    let events = [
+        r#"{"label":"one"}"#.to_string(),
+        r#"{"label":"two"}"#.to_string(),
+    ];
+    let wire = stream.snapshot(&mut scene, 1, &events, &[]);
+    let frame = parse(&wire);
+    assert_eq!(frame["removed"]["tanks"], json!([removed]));
+    assert_eq!(frame["events"], json!([{"label":"one"}, {"label":"two"}]));
+    let mut ids: Vec<_> = sim.tanks.iter().map(|tank| tank.id).collect();
+    ids.sort_unstable();
+    let positions: Vec<_> = ids
+        .iter()
+        .map(|id| wire.find(&format!("\"{id}\":{{")).unwrap())
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    for tick in 2..5 {
+        scene.capture_from(&sim);
+        assert_same(
+            &parse(&stream.snapshot(&mut scene, tick, &[], &[])),
+            &json!({ "seq": tick, "tick": tick, "elapsed": sim.elapsed }),
+            "unchanged frames contain no stale scratch data",
+        );
+    }
+}

@@ -223,15 +223,16 @@ These are manual evidence, not regression gates. Keep them out of `pnpm run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
 
-| Command                                                             | Measures                                                                          |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `node scripts/profile.mjs before` / `after`                         | Matched runtime comparison with CPU profiles                                      |
-| `node scripts/frame-pacing-check.mjs`                               | First gameplay frame and seeded combat on every map, without discarding a warm-up |
-| `pnpm run benchmark:loading -- <label>`                             | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                 |
-| `cargo run --release -p sloppy-core --example capture_benchmark`    | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval    |
-| `cargo run --release -p sloppy-core --example simulation_benchmark` | Headless seeded autoplay tick time on one map                                     |
-| `pnpm run validate`                                                 | Ten seeded headless matches and reset checks                                      |
-| `node scripts/benchmarks/host-download-benchmark.mjs`               | HTTP delivery from the live hosts only ([details](benchmarks/README.md))          |
+| Command                                                                                  | Measures                                                                               |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `node scripts/profile.mjs before` / `after`                                              | Matched runtime comparison with CPU profiles                                           |
+| `node scripts/frame-pacing-check.mjs`                                                    | First gameplay frame and seeded combat on every map, without discarding a warm-up      |
+| `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
+| `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval         |
+| `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
+| `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
+| `pnpm run validate`                                                                      | Ten seeded headless matches and reset checks                                           |
+| `node scripts/benchmarks/host-download-benchmark.mjs`                                    | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
@@ -247,6 +248,13 @@ time on an otherwise idle machine, and report sample counts with outliers.
 - `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
   ticks, times 3600 and prints JSON. For an engine change, run a base-commit
   worktree and the candidate alternately over several maps and seeds.
+- `allocation_benchmark` runs five multiplayer maps, with 1200 warm-up ticks and
+  400 measured three-tick intervals per map. It retains every sample. Allocation
+  counts include reallocations; bytes are requested sizes, not live or peak heap.
+  `timelinePush` measures enqueueing an already constructed frame. `hud` measures
+  the human and scoreboard blocks. Compare matching seeds and output hashes from
+  saved baseline/candidate executables in alternating order. These instrumented
+  native timings do not measure browser render CPU or FPS.
 - `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 

@@ -130,3 +130,32 @@ fn heap_a_star_returns_exactly_the_routes_of_the_linear_scan_search_it_replaced(
     );
     assert!(unreachable > 0, "some goals are walled off");
 }
+
+#[test]
+fn refilling_a_route_reuses_storage_and_clears_an_unreachable_or_empty_route() {
+    let mut nav = Navigation::new();
+    let from = Vec2::new(-30.0, 0.0);
+    let to = Vec2::new(30.0, 0.0);
+    let mut path = nav.find(from, to);
+    assert!(!path.is_empty());
+    let pointer = path.as_ptr();
+    let capacity = path.capacity();
+    let expected = nav.find(to, from);
+    nav.find_into(to, from, &mut path);
+    assert_eq!(path, expected);
+    assert_eq!(path.as_ptr(), pointer);
+    assert_eq!(path.capacity(), capacity);
+
+    // A wall spanning the whole grid makes the other half unreachable.
+    let size = (nav.blocked.len() as f64).sqrt() as usize;
+    for row in 0..size {
+        nav.blocked[row * size + size / 2] = 1;
+    }
+    nav.find_into(from, to, &mut path);
+    assert!(path.is_empty());
+    assert_eq!(path.capacity(), capacity);
+    path.push(Vec2::ZERO);
+    nav.find_into(from, from, &mut path);
+    assert!(path.is_empty());
+    assert_eq!(path.as_ptr(), pointer);
+}

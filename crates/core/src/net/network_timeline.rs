@@ -26,8 +26,7 @@ pub struct NetworkTimeline {
     display_tick: f64,
 }
 
-fn at_tick(state: &RenderState, tick: u64) -> RenderState {
-    let mut state = state.clone();
+fn at_tick(mut state: RenderState, tick: u64) -> RenderState {
     state.elapsed = tick as f64 / 60.0;
     state
 }
@@ -40,7 +39,7 @@ impl NetworkTimeline {
         self.display_tick = self.clock.display_ms / SIMULATION_STEP_MS;
         self.events.clear();
         self.traces.clear();
-        self.poses.reset(at_tick(state, tick));
+        self.poses.reset(at_tick(state.clone(), tick));
     }
 
     /// Records one message's arrival after its frames have been pushed.
@@ -48,10 +47,10 @@ impl NetworkTimeline {
         self.clock.arrive(self.newest_tick, now_ms);
     }
 
-    /// Adds one received frame. Fails when history overflows; the client then resyncs.
+    /// Takes ownership of one received frame. Fails when history overflows; the client then resyncs.
     pub fn push(
         &mut self,
-        state: &RenderState,
+        state: RenderState,
         tick: u64,
         events: Vec<TimedEvent>,
         traces: Vec<ShotTrace>,

@@ -643,26 +643,44 @@ impl NetGame {
         };
         let settings = self.client.lobby().map(|lobby| lobby.settings);
         let map = settings.map(|settings| settings.map_mode);
-        json!({
-            "match": state.match_state,
-            "elapsed": state.elapsed,
-            "gameMode": GameMode::Team,
-            "endlessMatch": false,
-            "mapMode": map.map(|map| map.as_str()),
-            "mapName": map.map(|map| map_option_for(map).name),
-            "difficulty": settings.map(|settings| settings.difficulty.as_str()),
-            "humanTeam": viewer.team,
-            "activeEnemies": state
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Hud<'a, Human: serde::Serialize, Scores: serde::Serialize> {
+            #[serde(rename = "match")]
+            match_state: &'a sloppy_core::sim::Match,
+            elapsed: f64,
+            game_mode: GameMode,
+            endless_match: bool,
+            map_mode: Option<&'a str>,
+            map_name: Option<&'a str>,
+            difficulty: Option<&'a str>,
+            human_team: sloppy_core::sim::Team,
+            active_enemies: usize,
+            speed_tuning: SpeedTuning,
+            human: Human,
+            scoreboard: Scores,
+            recap: Option<()>,
+        }
+        serde_json::to_string(&Hud {
+            match_state: &state.match_state,
+            elapsed: state.elapsed,
+            game_mode: GameMode::Team,
+            endless_match: false,
+            map_mode: map.map(|map| map.as_str()),
+            map_name: map.map(|map| map_option_for(map).name),
+            difficulty: settings.map(|settings| settings.difficulty.as_str()),
+            human_team: viewer.team,
+            active_enemies: state
                 .tanks
                 .iter()
                 .filter(|tank| tank.team != viewer.team && tank.alive)
                 .count(),
-            "speedTuning": SpeedTuning::default(),
-            "human": human_json(viewer, state.elapsed),
-            "scoreboard": scoreboard_json(&state.tanks),
-            "recap": Value::Null,
+            speed_tuning: SpeedTuning::default(),
+            human: human_json(viewer, state.elapsed),
+            scoreboard: scoreboard_json(&state.tanks),
+            recap: None,
         })
-        .to_string()
+        .expect("room HUD serializes")
     }
 
     /// Stats for nerds: renderer rows, the displayed scene and the network.
