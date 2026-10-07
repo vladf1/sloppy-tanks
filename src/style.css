@@ -36,6 +36,17 @@ canvas#game {
 html:is(.phone, .home-screen-app) {
   background: #0d1b2a;
 }
+/* iOS 26+ blurs the top of a Home Screen app (its scroll edge effect) unless a fixed box
+   with a solid background covers the middle of the top edge, spanning the viewport, as an
+   ancestor of what is drawn there: WebKit then fills the status bar strip with that box's
+   colour instead (LocalFrameView::fixedContainerEdges; WKWebView's
+   _shouldHideTopScrollPocket). The app box fills the viewport either way, so fixing it
+   moves nothing. */
+.home-screen-app #app {
+  position: fixed;
+  inset: 0;
+  background: #0d1b2a;
+}
 #nerd-stats {
   position: fixed;
   right: 8px;
