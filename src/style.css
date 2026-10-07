@@ -1613,6 +1613,16 @@ h2 {
 .map-picker[hidden] {
   display: none;
 }
+/* A room link can choose an extra-level room on a page without the extra levels; only
+   the dropdown names that map, so it stands in for the row while the room shows. */
+.map-choice:has(.map-picker[data-room-map]):not(:has(.map-row[hidden], .map-row .room-map))
+  .map-row {
+  display: none;
+}
+.map-choice:has(.map-picker[data-room-map]):not(:has(.map-row[hidden], .map-row .room-map))
+  .map-picker {
+  display: block;
+}
 /* The room list: the new room, then the open rooms, one radio group in one well. */
 .room-browse {
   min-height: 0;
