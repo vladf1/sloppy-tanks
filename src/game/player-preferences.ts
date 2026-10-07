@@ -38,17 +38,15 @@ export function savedCameraPreferences(): { firstPerson: boolean; zoom?: number 
   };
 }
 
-/** Phones have no zoom buttons and a small screen, so their overhead camera starts
+/** Phones have a small screen, so until the player zooms their overhead camera starts
  * farther out than the renderer's default (34) to show more of the arena. */
 const PHONE_ZOOM = 40;
 
-/** The camera an engine starts with: the saved one, or on a phone the saved view from
- * farther out and without the reticle, since phones aim by touching the arena. */
+/** The camera an engine starts with: the saved one, on a phone farther out until it
+ * zooms and without the reticle, since phones aim by touching the arena. */
 export function startingCamera(): { firstPerson: boolean; zoom?: number; hideReticle?: true } {
   const saved = savedCameraPreferences();
-  return isPhone()
-    ? { firstPerson: saved.firstPerson, zoom: PHONE_ZOOM, hideReticle: true }
-    : saved;
+  return isPhone() ? { ...saved, zoom: saved.zoom ?? PHONE_ZOOM, hideReticle: true } : saved;
 }
 
 /** Read the chosen view and clamped zoom after a user action. The current drawn

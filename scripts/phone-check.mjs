@@ -1,8 +1,8 @@
 // The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
 // smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
 // offers only the tank, the map and the two tabs, the round is single player on Easy,
-// and the arena shows only the drive stick and pause (a touch on the arena aims and
-// fires), in landscape and portrait, with a farther camera, no page zoom and short pause
+// and the arena shows only the drive stick, first person, pause and zoom (a touch on
+// the arena aims and fires), in landscape and portrait, with a farther camera, no page zoom and short pause
 // and results dialogs. phone-multiplayer-check.mjs plays the Multiplayer tab.
 import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
@@ -64,6 +64,8 @@ try {
       ".touch-drive",
       "#pause",
       "#view-mode",
+      "#zoom-out",
+      "#zoom-in",
       ".scoreboard",
       "#score0",
       "#time",
@@ -79,7 +81,6 @@ try {
       ".bottom",
       ".brand",
       "#settings-open",
-      "#zoom-in",
     ],
   );
 
@@ -108,7 +109,14 @@ try {
   };
   /** The controls and score are on screen and apart, and the controls take touches. */
   const checkLayout = async (width, height) => {
-    const selectors = [".touch-drive", "#view-mode", "#pause", ".scoreboard"];
+    const selectors = [
+      ".touch-drive",
+      "#view-mode",
+      "#pause",
+      "#zoom-out",
+      "#zoom-in",
+      ".scoreboard",
+    ];
     const rects = await Promise.all(selectors.map(box));
     rects.forEach((rect, i) => {
       assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
@@ -123,7 +131,7 @@ try {
       });
     });
     // The scoreboard only shows; the controls take touches.
-    for (const selector of [".touch-drive", "#view-mode", "#pause"]) {
+    for (const selector of [".touch-drive", "#view-mode", "#pause", "#zoom-out", "#zoom-in"]) {
       const point = await center(selector);
       assert.equal(
         await page.evaluate(
@@ -143,6 +151,18 @@ try {
     }));
 
   await checkLayout(874, 402);
+  // − and + under the corner pair step the overhead camera out and back in.
+  const zoom = () => page.evaluate(() => window.sloppy.view.zoom);
+  for (const [button, expected] of [
+    ["#zoom-in", 38],
+    ["#zoom-out", 40],
+  ]) {
+    const point = await center(button);
+    await touch("touchStart", 5, point.x, point.y);
+    await touch("touchEnd", 5);
+    await page.waitForFunction((expected) => window.sloppy.view.zoom === expected, expected);
+  }
+  assert.equal(await zoom(), 40);
   const drive = await center(".touch-drive");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 40, drive.y);
@@ -180,6 +200,8 @@ try {
   await touch("touchStart", 4, toggleView.x, toggleView.y);
   await touch("touchEnd", 4);
   await page.waitForFunction(() => window.sloppy.view.firstPerson.enabled);
+  // The turret view has no zoom, so its buttons step aside.
+  await expectVisible(["#view-mode", "#pause"], ["#zoom-out", "#zoom-in"]);
   const yaw = (await firstPerson()).yaw;
   await touch("touchStart", 2, 420, 200);
   for (let x = 440; x <= 620; x += 20) await touch("touchMove", 2, x, 200);

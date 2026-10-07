@@ -2229,9 +2229,18 @@ html.phone,
   padding: 6px 10px;
 }
 .phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit),
-.phone .hud-actions > :not(#pause, #view-mode),
+.phone .hud-actions > :not(#pause, #view-mode, .touch-zoom),
 .phone #cockpit .aim-hint {
   display: none;
+}
+/* First person and pause keep the corner, with zoom out and in under them: the scoreboard
+   holds the top edge and the drive stick the bottom-left. */
+.phone .hud-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+.phone .hud-actions > :is(#view-mode, #pause) {
+  order: -1;
 }
 /* Phones get a tiny "nerds" link in the corner the touch controls leave free. */
 .phone #nerd-stats {
