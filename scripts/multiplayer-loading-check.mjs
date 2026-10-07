@@ -47,7 +47,8 @@ try {
   page.on("request", (request) => result.requests.push(request.url()));
   page.on("websocket", (socket) => result.sockets.push(socket.url()));
   page.on("pageerror", (error) => result.errors.push(error.message));
-  await page.goto(server.resolvedUrls.local[0]);
+  // ?debug offers the nerd stats panel, opened below; it changes nothing that loads.
+  await page.goto(server.resolvedUrls.local[0] + "?debug");
   await page.locator("#start").click({ timeout: 60000 });
   await page.locator("#startup-overlay").waitFor({ state: "detached" });
   await page.waitForFunction(() => document.querySelector("#hud")?.style.opacity === "1");

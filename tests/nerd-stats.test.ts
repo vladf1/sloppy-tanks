@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
+import { NerdStats, engineStatsSections, nerdStatsShown } from "../src/game/nerd-stats";
 import type { EngineStats } from "../src/game/engine-api";
 import { networkStatsSections, type NetworkStatsSource } from "../src/net/network-stats";
 
@@ -339,4 +339,11 @@ test("the panel's corner button closes it, and only an open panel", () => {
   } finally {
     f.dispose();
   }
+});
+
+test("the panel is offered on a ?debug page only", () => {
+  assert.equal(nerdStatsShown(""), false);
+  assert.equal(nerdStatsShown("?multiplayer&room=ABCD2345"), false);
+  assert.equal(nerdStatsShown("?debug"), true);
+  assert.equal(nerdStatsShown("?room=ABCD2345&debug"), true);
 });

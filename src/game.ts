@@ -20,7 +20,7 @@ import {
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import { saveCameraPreferences, startingCamera } from "./game/player-preferences";
 import { isExtraLevel, showsExtraLevels } from "./game/map-options";
-import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import { NerdStats, engineStatsSections, nerdStatsShown } from "./game/nerd-stats";
 import type { PreparedGame } from "./game/start-menu";
 import { afterPaint, nextPrepareStep } from "./game/task-yield";
 import { startTextureBake } from "./game/texture-bake";
@@ -158,11 +158,13 @@ export async function prepareGame(
   let hud: HudState | undefined;
   let hudDt = 0;
   const readHud = () => (hud = JSON.parse(game.hud_json()) as HudState);
-  const stats = new NerdStats(
-    root,
-    () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
-    () => active && !root.classList.contains("menu-ready"),
-  );
+  const stats = nerdStatsShown(location.search)
+    ? new NerdStats(
+        root,
+        () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
+        () => active && !root.classList.contains("menu-ready"),
+      )
+    : undefined;
   let pendingZoom = 0;
   const zoom = (amount: number) => {
     pendingZoom += amount;
@@ -456,7 +458,7 @@ export async function prepareGame(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
       hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
         updateHud(hudDt);

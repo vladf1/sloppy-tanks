@@ -29,7 +29,11 @@ try {
   }
   // The host creates a room on Battle Setup; its link opens Battle Setup for the guest
   // with the room selected.
-  await first.goto(base);
+  // ?debug offers the nerd stats panel each player opens below; the guest's room link
+  // carries it too.
+  const debugBase = new URL(base);
+  debugBase.searchParams.set("debug", "");
+  await first.goto(debugBase.href);
   await openMultiplayerTab(first);
   await first.locator("#player-name").fill("W".repeat(24));
   await first.locator('input[name="playerTeam"][value="0"]').check();

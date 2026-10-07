@@ -45,7 +45,7 @@ serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
 `src/generated/engine-webgl/`); it does not compile Rust,
 so run `pnpm run wasm` again after changing a crate.
 
-Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** shows the graphics API in use and rendering diagnostics.
+Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** (on a page opened with `?debug`) shows the graphics API in use and rendering diagnostics.
 
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
@@ -186,8 +186,8 @@ accidental disconnect hides an empty room from the list while retaining the
 next round. Accounts and saved matches are not required; a server restart ends
 the current match.
 
-**Stats for nerds** is available during multiplayer battles: click the bottom-right
-button or press **N**. Network rows show RTT, received update count/rate, update
+**Stats for nerds** is available during multiplayer battles on a page opened with
+`?debug`: click the bottom-right link or press **N**. Network rows show RTT, received update count/rate, update
 age, server tick and input sequence sent/acknowledged. A received update is one
 full-state message or snapshot batch; an input acknowledgement confirms the
 server processed an input sequence. Render includes GPU geometries and textures.

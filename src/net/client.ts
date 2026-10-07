@@ -9,7 +9,7 @@ import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
 import { startTextureBake } from "../game/texture-bake";
 import { INPUT, type MatchState as Match } from "../game/engine-api";
-import { NerdStats } from "../game/nerd-stats";
+import { NerdStats, nerdStatsShown } from "../game/nerd-stats";
 import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
 import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
 import {
@@ -283,15 +283,17 @@ export async function startMultiplayer(
     },
     (amount) => (zoom += amount),
   );
-  const stats = new NerdStats(
-    root,
-    networkStatsSections(
-      (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
-      () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
-    ),
-    () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
-    { network: true },
-  );
+  const stats = nerdStatsShown(location.search)
+    ? new NerdStats(
+        root,
+        networkStatsSections(
+          (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
+          () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
+        ),
+        () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
+        { network: true },
+      )
+    : undefined;
   const reveal = () => {
     if (joining) {
       joining.done();
@@ -542,7 +544,7 @@ export async function startMultiplayer(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
     } else if (result[FRAME.events] > 0) {
       game.drain_events();
     }
