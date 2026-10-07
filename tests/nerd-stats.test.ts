@@ -321,3 +321,22 @@ test("panel has one open section per group with the expected rows", () => {
     f.dispose();
   }
 });
+
+test("the panel's corner button closes it, and only an open panel", () => {
+  const f = fixture();
+  try {
+    const close = f.panel.querySelectorAll("button")[1];
+    assert.equal(close.attributes.get("aria-label"), "Close nerd stats");
+    close.click();
+    assert.equal(f.container.hidden, true, "a closed panel stays closed");
+    f.button.click();
+    assert.equal(f.container.hidden, false);
+    assert.equal(f.button.textContent, "Stats for Nerds", "the open panel's title");
+    close.click();
+    assert.equal(f.container.hidden, true);
+    assert.equal(f.button.attributes.get("aria-expanded"), "false");
+    assert.equal(f.button.textContent, "nerd stats", "the closed panel's link");
+  } finally {
+    f.dispose();
+  }
+});

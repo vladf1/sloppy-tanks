@@ -1,6 +1,5 @@
 import { showTankTeam, type GameOptions } from "./game-options";
 import { isExtraLevel, mapOption } from "./map-options";
-import { isPhone } from "./phone-mode";
 import type { RoomBrowser } from "../net/room-browser";
 import type { RoomSelection } from "../net/pending-join";
 import type { RoomLink } from "../net/room-browser";
@@ -20,12 +19,10 @@ export interface PlayModeHandlers {
 
 const TAB_KEYS = ["ArrowLeft", "ArrowRight", "Home", "End"];
 
-/** Phones play single player only. */
+/** Sites with a game server, and local pages, which use the local one. */
 export function multiplayerAvailable(): boolean {
   return (
-    !isPhone() &&
-    (!!import.meta.env.VITE_MULTIPLAYER_URL ||
-      ["localhost", "127.0.0.1"].includes(location.hostname))
+    !!import.meta.env.VITE_MULTIPLAYER_URL || ["localhost", "127.0.0.1"].includes(location.hostname)
   );
 }
 

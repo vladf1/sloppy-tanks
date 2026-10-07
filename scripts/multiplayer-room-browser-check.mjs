@@ -180,7 +180,7 @@ try {
   }
   const polls = clients.map((client) => client.listRequests);
   await until(() => clients.every((client) => client.updates > 10), "Clients receive updates");
-  await click(alice.page, "#nerd-stats button");
+  await click(alice.page, "#nerd-stats .nerd-stats-toggle");
   await alice.page.waitForFunction(() =>
     [...document.querySelectorAll("#nerd-stats pre")].some((row) =>
       /^Updates received\s+[1-9]/.test(row.textContent),

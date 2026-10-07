@@ -3,11 +3,7 @@ import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { savedVolume } from "../game/settings-dialog";
-import {
-  savedCameraPreferences,
-  saveCameraPreferences,
-  savePreference,
-} from "../game/player-preferences";
+import { saveCameraPreferences, savePreference, startingCamera } from "../game/player-preferences";
 import { TouchModeController, type TouchState } from "../game/touch-mode";
 import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
@@ -225,7 +221,7 @@ export async function startMultiplayer(
         cssWidth: width,
         cssHeight: height,
         pixelRatio: devicePixelRatio,
-        ...savedCameraPreferences(),
+        ...startingCamera(),
       }),
     );
   } catch (error) {

@@ -124,8 +124,9 @@ through the shared `headless` flag so they never pop windows over the user's
 desktop; only `SLOPPY_HEADED=1` opens a visible window.
 
 Phones get only a deliberately limited edition (`src/game/phone-mode.ts`: tank and
-map setup, Easy single player, drive stick, touch the arena to aim and fire); do not grow it into full phone
-support unless explicitly requested. Focus browser validation on desktop; retain
+map setup, Easy single player, a one-action multiplayer tab that joins the busiest open
+room or creates one, drive stick, touch the arena to aim and fire); do not grow it into
+full phone support unless explicitly requested. Focus browser validation on desktop; retain
 tablet/iPad touch support, the phone edition and their input checks.
 
 Profiling and benchmarks (`profile.mjs`, the loading and host-download
