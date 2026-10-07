@@ -1,8 +1,9 @@
 // Phones' simplified multiplayer (src/game/phone-mode.ts) against Vite and the local game
 // server: the Multiplayer tab shows no room list, only one action. Carol's phone, seeing
 // no open room, creates one on her map with bots. Bob's phone starts on single player,
-// finds that room on its Multiplayer tab with the room's map shown, joins through a
-// reload, and plays it with the phone camera, controls and short menu.
+// finds that room on its Multiplayer tab with the room's map shown, follows a busier and
+// then a finished room as the list refreshes, joins through a reload, and plays it with
+// the phone camera, controls and short menu.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { chooseMap } from "./browser-helpers.mjs";
@@ -90,14 +91,29 @@ try {
   const code = new URL(carol.page.url()).searchParams.get("room");
 
   // Bob's phone opens on single player, so its arena loads and the join reloads the page.
-  const bob = await openPhone((rooms) => rooms.filter((room) => room.room === code));
+  // Its list may also carry `rival`, a made-up room, to see the pick follow the rooms.
+  let rival;
+  const bob = await openPhone((rooms) => {
+    const own = rooms.filter((room) => room.room === code);
+    return rival ? [...own, { ...own[0], ...rival }] : own;
+  });
+  const picked = (room) =>
+    bob.page.waitForFunction(
+      (room) => document.querySelector(`input[name="room-choice"][value="${room}"]`)?.checked,
+      room,
+      { timeout: 15000 },
+    );
   await bob.page.goto(base.href);
   await bob.page.locator("#startup-overlay[data-state=ready]").waitFor();
   await bob.page.locator("#tab-multiplayer").tap();
-  await bob.page.waitForFunction(
-    (code) => document.querySelector(`input[name="room-choice"][value="${code}"]`)?.checked,
-    code,
-  );
+  await picked(code);
+  // Each refresh picks again: a fuller battle wins, and a room between rounds loses to
+  // any battle under way.
+  rival = { room: "RIVALRUM", players: 5, reserved: 5, phase: "playing" };
+  await picked(rival.room);
+  rival = { ...rival, phase: "results" };
+  await picked(code);
+  rival = undefined;
   await expectVisible(bob.page, ["#join-room"], ["#create-room", ".room-browse"]);
   assert.equal(await bob.page.locator(".map-choice").evaluate((part) => part.inert), true);
   assert.equal(await bob.page.locator('.room-map input[name="mapMode"]').inputValue(), "harbor");
@@ -132,7 +148,7 @@ try {
   await bob.page.locator("#startup-overlay .start").waitFor();
   assert.deepEqual(errors, []);
   console.log(
-    "Phone multiplayer: one-action tab, new room on the chosen map with Easy bots, busiest open room with its map shown, reload join, phone camera, controls and short menu, leave passed.",
+    "Phone multiplayer: one-action tab, new room on the chosen map with Easy bots, busiest open room with its map shown, re-picked on refresh, reload join, phone camera, controls and short menu, leave passed.",
   );
 } finally {
   await browser.close();

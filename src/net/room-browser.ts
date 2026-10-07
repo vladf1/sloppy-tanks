@@ -58,6 +58,9 @@ export class RoomBrowser {
   private readonly leave = () => this.close();
   /** Phones show no room list: they join the busiest open room, or create one. */
   private readonly autoPick = isPhone();
+  /** A room link chose the selected room. A phone keeps that choice; any other it picks
+   * again on every refresh, as rooms fill, empty and finish their battles. */
+  private linkChose = false;
 
   constructor(
     private readonly panel: HTMLElement,
@@ -147,8 +150,9 @@ export class RoomBrowser {
     this.element("#room-count").textContent = String(this.rooms.length);
     if (!this.rooms.some((room) => room.room === this.selected && this.available(room))) {
       this.selected = "";
+      this.linkChose = false;
     }
-    if (this.autoPick && !this.selected) {
+    if (this.autoPick && !this.linkChose) {
       this.selected = busiestOpenRoom(this.rooms, (room) => this.available(room))?.room ?? "";
     }
     for (const room of this.rooms) {
@@ -313,6 +317,7 @@ export class RoomBrowser {
     const open = !!listing && this.available(listing);
     if (open) {
       this.selected = link.room;
+      this.linkChose = true;
     }
     this.notice = [
       link.notice,
