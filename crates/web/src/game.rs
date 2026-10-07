@@ -69,11 +69,12 @@
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
 use crate::events::{PendingEvent, drain_events};
+use crate::hud::{HudHuman, Scoreboard, hud_ammo, self_repair_active};
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon, has_ammo};
+use sloppy_core::sim::ammunition::equipped_weapon;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{SCORE_LIMIT, STEP, TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
@@ -168,67 +169,8 @@ struct Hud<'a> {
     active_enemies: usize,
     speed_tuning: &'a SpeedTuning,
     human: HudHuman<'a>,
-    scoreboard: Vec<HudScore<'a>>,
+    scoreboard: Scoreboard<'a>,
     recap: Option<&'a Value>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HudHuman<'a> {
-    id: u32,
-    name: &'a str,
-    kind: VehicleKind,
-    vehicle_name: &'static str,
-    team: Team,
-    alive: bool,
-    hp: f64,
-    max_hp: f64,
-    health_ratio: f64,
-    health_color: u32,
-    xp: f64,
-    rank: usize,
-    rank_name: &'static str,
-    rank_damage: f64,
-    rank_fire_rate: f64,
-    rank_health: f64,
-    rank_repair: f64,
-    repair_delay: f64,
-    selected_ammo: Weapon,
-    equipped: Weapon,
-    ammo: Vec<HudAmmo>,
-    cooldown: f64,
-    mine_cooldown: f64,
-    protection: f64,
-    shield: f64,
-    shield_points: f64,
-    rapid: f64,
-    speed: f64,
-    laser: f64,
-    respawn: f64,
-    kills: u32,
-    deaths: u32,
-    self_repair: bool,
-}
-
-#[derive(Serialize)]
-struct HudAmmo {
-    weapon: Weapon,
-    count: Option<f64>,
-    selected: bool,
-    available: bool,
-}
-
-#[derive(Serialize)]
-struct HudScore<'a> {
-    id: u32,
-    name: &'a str,
-    team: Team,
-    kind: VehicleKind,
-    human: bool,
-    alive: bool,
-    kills: u32,
-    deaths: u32,
-    rank: usize,
 }
 
 fn phase_code(phase: MatchPhase) -> f32 {
@@ -675,34 +617,14 @@ impl Game {
         let stats = &RANKS[rank];
         let health = health_bar_state(tank.hp, max_hp, tank.team);
         let selected = equipped_weapon(tank);
-        let ammo = AMMO_ORDER
-            .iter()
-            .map(|&weapon| HudAmmo {
-                weapon,
-                count: weapon.special().map(|kind| tank.ammo.get(kind)),
-                selected: weapon == selected,
-                available: has_ammo(tank, weapon),
-            })
-            .collect();
-        let self_repair = tank.alive
-            && stats.repair > 0.0
-            && tank.hp < max_hp
-            && sim.elapsed - tank.last_combat >= REPAIR_DELAY;
-        let scoreboard = sim
-            .tanks
-            .iter()
-            .map(|t| HudScore {
-                id: t.id,
-                name: &t.name,
-                team: t.team,
-                kind: t.kind,
-                human: t.human,
-                alive: t.alive,
-                kills: t.kills,
-                deaths: t.deaths,
-                rank: rank_index(t.xp),
-            })
-            .collect();
+        let ammo = hud_ammo(tank.kind, &tank.ammo, selected);
+        let self_repair = self_repair_active(
+            tank.alive,
+            stats.repair,
+            tank.hp,
+            max_hp,
+            sim.elapsed - tank.last_combat,
+        );
         let recap = if sim.match_state.phase == MatchPhase::Results {
             self.recap.as_ref()
         } else {
@@ -756,7 +678,7 @@ impl Game {
                 deaths: tank.deaths,
                 self_repair,
             },
-            scoreboard,
+            scoreboard: Scoreboard::Simulated(&sim.tanks),
             recap,
         };
         // Written straight to text: the page reads this every few frames.

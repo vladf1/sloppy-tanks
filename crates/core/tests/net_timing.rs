@@ -492,7 +492,7 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
     timeline.reset(&first, 0, 0.0);
     timeline
         .push(
-            &dead,
+            dead,
             2,
             vec![TimedEvent {
                 event_id: 1,
@@ -504,7 +504,7 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         .unwrap();
     timeline
         .push(
-            &respawn,
+            respawn.clone(),
             4,
             vec![TimedEvent {
                 event_id: 2,
@@ -514,7 +514,9 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
             Vec::new(),
         )
         .unwrap();
-    timeline.push(&respawn, 6, Vec::new(), Vec::new()).unwrap();
+    timeline
+        .push(respawn.clone(), 6, Vec::new(), Vec::new())
+        .unwrap();
     timeline.arrive(50.0);
     let mut state = RenderState::default();
     let mut frames = Vec::new();
@@ -575,7 +577,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
     timeline.reset(&state, 0, 0.0);
     timeline
         .push(
-            &state,
+            state,
             6,
             vec![TimedEvent {
                 event_id: 1,
@@ -675,8 +677,8 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
     later.fragments = vec![fragment(2, false), fragment(3, true)];
     let mut timeline = NetworkTimeline::default();
     timeline.reset(&first, 0, 0.0);
-    timeline.push(&moved, 3, Vec::new(), Vec::new()).unwrap();
-    timeline.push(&later, 6, Vec::new(), Vec::new()).unwrap();
+    timeline.push(moved, 3, Vec::new(), Vec::new()).unwrap();
+    timeline.push(later, 6, Vec::new(), Vec::new()).unwrap();
     timeline.arrive(50.0);
     let mut shown = RenderState::default();
     let mut interpolated = 0;

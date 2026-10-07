@@ -182,7 +182,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         .count();
     let budget = simulation.shots.len() * (COMBAT.contacts_per_shot + defenses) + 1;
     let mut event = 0;
-    let mut tank_positions = Vec::with_capacity(simulation.tanks.len());
+    let mut tank_positions = std::mem::take(&mut simulation.projectile_tank_positions);
     while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget
     {
         let (next, time) = find_next_contact(
@@ -223,6 +223,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         }
         event += 1;
     }
+    simulation.projectile_tank_positions = tank_positions;
 }
 
 /// The earliest contact found for one shell; indices are valid until something moves.

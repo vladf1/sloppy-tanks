@@ -242,6 +242,10 @@ try {
   await page.setViewportSize({ width: 402, height: 874 });
   await page.waitForFunction(() => innerWidth === 402);
   await checkLayout(402, 874);
+  // Layout can settle before the next frame resizes the drawing buffer.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
   // The picture is drawn at the canvas's displayed shape, so circles stay round.
   const canvasShape = await page.evaluate(() => {
     const canvas = document.querySelector("#game");

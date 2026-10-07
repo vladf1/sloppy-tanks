@@ -873,7 +873,7 @@ impl NetworkClient {
                     {
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
                             self.timeline.push(
-                                &state,
+                                state,
                                 self.mirror.tick,
                                 extras.events,
                                 extras.traces,
@@ -1250,7 +1250,7 @@ impl NetworkClient {
                 tank.aim = input.aim_angle;
             }
         }
-        let viewer = display.viewer().expect("active input has a viewer").clone();
+        let viewer = display.viewer().expect("active input has a viewer");
         let control_epoch = control.control_epoch;
         if input.mine {
             self.pending.push(Action::Mine);
