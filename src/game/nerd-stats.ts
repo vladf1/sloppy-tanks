@@ -119,6 +119,11 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
   };
 }
 
+/** The corner link that opens the panel (phones shorten it to "nerds" in CSS), and the
+ * panel's title once open. */
+const LINK_LABEL = "nerd stats";
+const PANEL_TITLE = "Stats for Nerds";
+
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
   private readonly element: HTMLElement;
@@ -150,14 +155,25 @@ export class NerdStats {
     this.element.setAttribute("aria-label", "Game statistics");
     this.button = document.createElement("button");
     this.button.type = "button";
+    this.button.className = "nerd-stats-toggle";
     this.button.setAttribute("aria-expanded", "false");
     this.button.setAttribute("aria-controls", "nerd-stats-details");
     this.button.setAttribute("aria-keyshortcuts", "N");
-    this.button.textContent = "nerd stats";
+    this.button.textContent = LINK_LABEL;
+    // The open panel's header stays put while its rows scroll, so the close button
+    // in its corner is always in reach.
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "nerd-stats-close";
+    close.setAttribute("aria-label", "Close nerd stats");
+    close.textContent = "×";
+    const head = document.createElement("div");
+    head.className = "nerd-stats-head";
+    head.append(this.button, close);
     this.details = document.createElement("div");
     this.details.id = "nerd-stats-details";
     this.details.hidden = true;
-    this.element.append(this.button, this.details);
+    this.element.append(head, this.details);
     root.append(this.element);
     for (const title of this.network ? NETWORK_SECTIONS : SINGLE_PLAYER_SECTIONS) {
       const section = document.createElement("details");
@@ -179,6 +195,7 @@ export class NerdStats {
       this.open = !this.open;
       this.element.classList.toggle("expanded", this.open);
       this.button.setAttribute("aria-expanded", String(this.open));
+      this.button.textContent = this.open ? PANEL_TITLE : LINK_LABEL;
       this.details.hidden = !this.open;
       this.reset();
       if (this.open) {
@@ -186,6 +203,11 @@ export class NerdStats {
       }
     };
     this.button.addEventListener("click", toggle);
+    close.addEventListener("click", () => {
+      if (this.open) {
+        toggle();
+      }
+    });
     window.addEventListener("keydown", (event) => {
       const target = event.target as HTMLElement | null;
       if (

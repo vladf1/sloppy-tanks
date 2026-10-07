@@ -55,11 +55,18 @@ canvas#game {
 #nerd-stats button:focus-visible {
   outline: 2px solid #ffd45a;
 }
-#nerd-stats.expanded button {
-  font-size: 14px;
-  font-weight: 600;
+/* The open panel's title, in the game's display face like its other titles. */
+#nerd-stats.expanded .nerd-stats-toggle {
+  color: #fff;
+  font:
+    800 20px/1 Impact,
+    sans-serif;
+  letter-spacing: 0.4px;
 }
+/* The open panel keeps its header in place and scrolls only the rows below it. */
 #nerd-stats.expanded {
+  display: flex;
+  flex-direction: column;
   width: calc(32ch + 24px);
   max-width: calc(100vw - 16px);
   padding: 7px;
@@ -69,7 +76,41 @@ canvas#game {
   font-size: 11px;
   line-height: 1.6;
   max-height: calc(100dvh - 24px);
+}
+#nerd-stats.expanded #nerd-stats-details {
+  min-height: 0;
   overflow-y: auto;
+}
+.nerd-stats-head {
+  display: contents;
+}
+#nerd-stats.expanded .nerd-stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* A 44 px square, the smallest comfortable touch target, reaching into the panel's
+   padding so the corner itself closes it. */
+#nerd-stats .nerd-stats-close {
+  display: none;
+}
+#nerd-stats.expanded .nerd-stats-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -7px -7px -7px 0;
+  padding: 0;
+  border-radius: 6px;
+  color: #eee;
+  font:
+    400 24px/1 Arial,
+    sans-serif;
+  text-shadow: none;
+}
+#nerd-stats.expanded .nerd-stats-close:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 #nerd-stats summary {
   pointer-events: auto;
@@ -2247,11 +2288,18 @@ html.phone,
   right: max(8px, env(safe-area-inset-right));
   bottom: max(4px, env(safe-area-inset-bottom));
 }
-.phone #nerd-stats button {
+/* The open panel stops below the corner's two rows of buttons (48 px each, 8 px apart)
+   so they stay in reach; its rows scroll. */
+.phone #nerd-stats.expanded {
+  max-height: calc(
+    100dvh - max(14px, env(safe-area-inset-top)) - 112px - max(4px, env(safe-area-inset-bottom))
+  );
+}
+.phone #nerd-stats:not(.expanded) .nerd-stats-toggle {
   padding: 4px;
   font-size: 0;
 }
-.phone #nerd-stats button::after {
+.phone #nerd-stats:not(.expanded) .nerd-stats-toggle::after {
   content: "nerds";
   font-size: 10px;
 }

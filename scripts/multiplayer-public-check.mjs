@@ -75,7 +75,7 @@ try {
       "Production diagnostics absent",
     );
     await c.page.screenshot({ path: `${output}/player-${index}.png` });
-    await c.page.locator("#nerd-stats button").click();
+    await c.page.locator("#nerd-stats .nerd-stats-toggle").click();
     assert.match(await c.page.locator("#nerd-stats-details").innerText(), /Network/);
     assert.match(await c.page.locator("#nerd-stats-details").innerText(), /RTT/);
     await c.page.keyboard.press("n");
