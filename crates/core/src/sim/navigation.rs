@@ -182,9 +182,7 @@ impl Navigation {
         true
     }
 
-    /// Four-neighbor A*: Manhattan distance is admissible. The open list is a heap ordered by
-    /// estimate, then by the order cells were first reached, which is the order a linear scan
-    /// of an append-only list picks among equal estimates; seeded routes depend on that order.
+    /// The allocating form of [`Self::find_into`].
     pub fn find(&mut self, from: Vec2, to: Vec2) -> Vec<Vec2> {
         let mut path = Vec::new();
         self.find_into(from, to, &mut path);
@@ -192,6 +190,10 @@ impl Navigation {
     }
 
     /// Replace a route while retaining its storage, including when no route is reachable.
+    ///
+    /// Four-neighbor A*: Manhattan distance is admissible. The open list is a heap ordered by
+    /// estimate, then by the order cells were first reached, which is the order a linear scan
+    /// of an append-only list picks among equal estimates; seeded routes depend on that order.
     pub fn find_into(&mut self, from: Vec2, to: Vec2, path: &mut Vec<Vec2>) {
         path.clear();
         self.paths += 1;

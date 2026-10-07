@@ -32,6 +32,7 @@ pub(crate) struct TargetScratch {
     threats: Vec<usize>,
     scores: Vec<f64>,
     ranked: Vec<usize>,
+    pickups: Vec<usize>,
 }
 
 /// Choose a target, retreat/pickup/patrol goal and route; called only on decision ticks.
@@ -61,6 +62,7 @@ pub fn update_bot_goal(
         threats,
         scores,
         ranked,
+        ..
     } = &mut scratch;
     enemies.clear();
     for (handle, _) in simulation.world.intersect_shape(
@@ -175,7 +177,9 @@ pub fn update_bot_goal(
     let tank = &simulation.tanks[tank_index];
     let max_health = simulation.max_health(tank);
     let multiplier = simulation.ammo_crate_multiplier;
-    let useful = (0..simulation.pickups.len()).filter(|&p| {
+    let mut useful = std::mem::take(&mut simulation.bot_targets.pickups);
+    useful.clear();
+    useful.extend((0..simulation.pickups.len()).filter(|&p| {
         let pickup = &simulation.pickups[p];
         pickup.available
             && (pickup.kind != PickupKind::Repair
@@ -190,14 +194,15 @@ pub fn update_bot_goal(
             && (pickup.kind != PickupKind::Shield
                 || tank.shield < EFFECT_REFRESH_SECONDS
                 || tank.shield_points < weapon(Weapon::Standard).damage)
-    });
+    }));
     let pickup_at = |p: usize| Vec2::new(simulation.pickups[p].x, simulation.pickups[p].z);
     let favourite = bot_ammo(tank.brain.personality);
     let nearest = useful
-        .clone()
+        .iter()
+        .copied()
         .find(|&p| simulation.pickups[p].id == tank.brain.pickup_target)
         .or_else(|| {
-            best_by(useful.clone(), |&p| {
+            best_by(useful.iter().copied(), |&p| {
                 -distance(position, pickup_at(p))
                     + if simulation.pickups[p].kind.weapon() == Some(favourite) {
                         PREFERRED_AMMO_DISTANCE_BONUS
@@ -207,13 +212,14 @@ pub fn update_bot_goal(
             })
         });
     let hurt = tank.hp < max_health * REPAIR_SEEK_HEALTH_FRACTION;
-    let repair = best_by(useful, |&p| {
+    let repair = best_by(useful.iter().copied(), |&p| {
         if simulation.pickups[p].kind == PickupKind::Repair {
             -distance(position, pickup_at(p))
         } else {
             f64::NEG_INFINITY
         }
     });
+    simulation.bot_targets.pickups = useful;
     let nav_version = tank.brain.nav_version;
     let brain_goal = tank.brain.goal;
     let personality = tank.brain.personality;

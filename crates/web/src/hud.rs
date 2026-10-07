@@ -1,13 +1,11 @@
-//! Page HUD records built from a `RenderTank`, the type both local play and the network
-//! client draw. The field names match `Game::hud_json` (`human` and `scoreboard`), so one
-//! page HUD renders either source.
+//! Shared page HUD records and ammo, repair and scoreboard rules for local and room play.
 
 use serde::{Serialize, Serializer};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, has_ammo_for};
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
-use sloppy_core::sim::{AmmoInventory, Team, VehicleKind, Weapon};
+use sloppy_core::sim::{AmmoInventory, Tank, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::hud::health_bar_state;
 
 /// The weapon a tank fires now: its fixed gun, or the selected special ammo while any
@@ -23,6 +21,29 @@ pub fn equipped_weapon_for(kind: VehicleKind, ammo: &AmmoInventory, selected: We
     }
 }
 
+pub(crate) fn hud_ammo(
+    kind: VehicleKind,
+    ammo: &AmmoInventory,
+    equipped: Weapon,
+) -> [HudAmmo; AMMO_ORDER.len()] {
+    AMMO_ORDER.map(|weapon| HudAmmo {
+        weapon,
+        count: weapon.special().map(|kind| ammo.get(kind)),
+        selected: weapon == equipped,
+        available: has_ammo_for(kind, ammo, weapon),
+    })
+}
+
+pub(crate) fn self_repair_active(
+    alive: bool,
+    repair: f64,
+    hp: f64,
+    max_hp: f64,
+    since_combat: f64,
+) -> bool {
+    alive && repair > 0.0 && hp < max_hp && since_combat >= REPAIR_DELAY
+}
+
 /// The viewer's HUD block (`hud_json().human`). `elapsed` is the match clock, which
 /// decides whether veteran self-repair is running.
 pub fn human_json(tank: &RenderTank, elapsed: f64) -> HudHuman<'_> {
@@ -30,16 +51,14 @@ pub fn human_json(tank: &RenderTank, elapsed: f64) -> HudHuman<'_> {
     let stats = &RANKS[rank];
     let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
     let equipped = equipped_weapon_for(tank.kind, &tank.ammo, tank.selected_ammo);
-    let ammo = AMMO_ORDER.map(|weapon| HudAmmo {
-        weapon,
-        count: weapon.special().map(|kind| tank.ammo.get(kind)),
-        selected: weapon == equipped,
-        available: has_ammo_for(tank.kind, &tank.ammo, weapon),
-    });
-    let self_repair = tank.alive
-        && stats.repair > 0.0
-        && tank.hp < tank.max_hp
-        && elapsed - tank.last_combat >= REPAIR_DELAY;
+    let ammo = hud_ammo(tank.kind, &tank.ammo, equipped);
+    let self_repair = self_repair_active(
+        tank.alive,
+        stats.repair,
+        tank.hp,
+        tank.max_hp,
+        elapsed - tank.last_combat,
+    );
     HudHuman {
         id: tank.id,
         name: &tank.name,
@@ -78,25 +97,41 @@ pub fn human_json(tank: &RenderTank, elapsed: f64) -> HudHuman<'_> {
 }
 
 /// Every tank's name, side and tally (`hud_json().scoreboard`).
-pub fn scoreboard_json(tanks: &[RenderTank]) -> impl Serialize + '_ {
-    Scoreboard(tanks)
+pub fn scoreboard_json(tanks: &[RenderTank]) -> Scoreboard<'_> {
+    Scoreboard::Rendered(tanks)
 }
 
-struct Scoreboard<'a>(&'a [RenderTank]);
+pub enum Scoreboard<'a> {
+    Rendered(&'a [RenderTank]),
+    Simulated(&'a [Tank]),
+}
 
 impl Serialize for Scoreboard<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.0.iter().map(|tank| HudScore {
-            id: tank.id,
-            name: &tank.name,
-            team: tank.team,
-            kind: tank.kind,
-            human: tank.human,
-            alive: tank.alive,
-            kills: tank.kills,
-            deaths: tank.deaths,
-            rank: rank_index(tank.xp),
-        }))
+        match self {
+            Self::Rendered(tanks) => serializer.collect_seq(tanks.iter().map(|tank| HudScore {
+                id: tank.id,
+                name: &tank.name,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
+                alive: tank.alive,
+                kills: tank.kills,
+                deaths: tank.deaths,
+                rank: rank_index(tank.xp),
+            })),
+            Self::Simulated(tanks) => serializer.collect_seq(tanks.iter().map(|tank| HudScore {
+                id: tank.id,
+                name: &tank.name,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
+                alive: tank.alive,
+                kills: tank.kills,
+                deaths: tank.deaths,
+                rank: rank_index(tank.xp),
+            })),
+        }
     }
 }
 
@@ -163,6 +198,47 @@ pub(crate) struct HudScore<'a> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use sloppy_core::sim::{RenderState, Simulation, SimulationSetup, VehicleCommand};
+
+    #[test]
+    fn self_repair_requires_a_living_wounded_veteran_past_the_delay() {
+        assert!(self_repair_active(true, 1.0, 50.0, 100.0, REPAIR_DELAY));
+        assert!(!self_repair_active(
+            true,
+            1.0,
+            50.0,
+            100.0,
+            REPAIR_DELAY - 0.01
+        ));
+        assert!(!self_repair_active(false, 1.0, 50.0, 100.0, REPAIR_DELAY));
+        assert!(!self_repair_active(true, 0.0, 50.0, 100.0, REPAIR_DELAY));
+        assert!(!self_repair_active(true, 1.0, 100.0, 100.0, REPAIR_DELAY));
+    }
+
+    #[test]
+    fn local_and_replicated_scoreboards_match() {
+        let mut simulation = Simulation::new(4242.0, SimulationSetup::default());
+        simulation.start();
+        for _ in 0..120 {
+            simulation.step(VehicleCommand::default(), true);
+        }
+        let tank = &mut simulation.tanks[0];
+        tank.name = "Quote \" slash \\ newline\n火".into();
+        tank.kills = 7;
+        tank.deaths = 2;
+        tank.xp = 500.0;
+        tank.alive = false;
+        let mut state = RenderState::default();
+        simulation.fill_render_state(&mut state, None);
+        assert_eq!(
+            serde_json::to_string(&Scoreboard::Simulated(&simulation.tanks)).unwrap(),
+            serde_json::to_string(&scoreboard_json(&state.tanks)).unwrap(),
+        );
+        assert_eq!(
+            serde_json::to_string(&Scoreboard::Simulated(&[])).unwrap(),
+            "[]"
+        );
+    }
 
     #[test]
     fn special_ammo_is_equipped_only_while_it_lasts() {

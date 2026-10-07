@@ -73,7 +73,7 @@ use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use wasm_bindgen::prelude::*;
 
-use crate::hud::{human_json, scoreboard_json};
+use crate::hud::{HudHuman, Scoreboard, human_json, scoreboard_json};
 use crate::stats::presentation_stats;
 
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
@@ -645,7 +645,7 @@ impl NetGame {
         let map = settings.map(|settings| settings.map_mode);
         #[derive(serde::Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct Hud<'a, Human: serde::Serialize, Scores: serde::Serialize> {
+        struct Hud<'a> {
             #[serde(rename = "match")]
             match_state: &'a sloppy_core::sim::Match,
             elapsed: f64,
@@ -657,9 +657,9 @@ impl NetGame {
             human_team: sloppy_core::sim::Team,
             active_enemies: usize,
             speed_tuning: SpeedTuning,
-            human: Human,
-            scoreboard: Scores,
-            recap: Option<()>,
+            human: HudHuman<'a>,
+            scoreboard: Scoreboard<'a>,
+            recap: (),
         }
         serde_json::to_string(&Hud {
             match_state: &state.match_state,
@@ -678,7 +678,7 @@ impl NetGame {
             speed_tuning: SpeedTuning::default(),
             human: human_json(viewer, state.elapsed),
             scoreboard: scoreboard_json(&state.tanks),
-            recap: None,
+            recap: (),
         })
         .expect("room HUD serializes")
     }
