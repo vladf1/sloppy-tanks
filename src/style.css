@@ -987,9 +987,10 @@ h2 {
 
 /* Battle setup: one dialog for single player and multiplayer. Sections are labelled
    rows on a three-column grid that the tank cards define; selectable choices are
-   cards like the tanks, and only lists and status use a recessed well. The tank and
-   map rows are shared and never move; below them the play tabs sit on the tray they
-   switch, and both trays end in the same status well and yellow action. */
+   cards like the tanks, and only lists and status use a recessed well. The tank row is
+   shared and never moves; below it the play tabs sit on the tray they switch. The map
+   heads the tray on both tabs, and both trays end in the same status well and yellow
+   action. */
 .menu.start {
   --tray: #1b3c5f;
   --card: #21486c;
@@ -1155,6 +1156,8 @@ h2 {
 }
 .setup-panels {
   display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 14px;
   padding: 14px 14px 14px;
   border-radius: 0 0 14px 14px;
   background: var(--tray);
@@ -1164,7 +1167,7 @@ h2 {
    choice row and an action row: a status well under the first two columns and the
    yellow button under the third, in the same place on both tabs. */
 .setup-panel {
-  grid-area: 1 / 1;
+  grid-area: 2 / 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-rows: 1fr auto;
@@ -1489,8 +1492,32 @@ h2 {
 .multiplayer-note {
   display: none;
 }
-.start[data-play="multiplayer"] .multiplayer-note {
+.start[data-play="multiplayer"]:has(#new-room:checked) .new-room-note,
+.start[data-play="multiplayer"]:has(#new-room:not(:checked)) .open-room-note {
   display: inline;
+}
+/* An open room keeps its own map. While one is chosen or joins, the map choice rings
+   that room's map in place of the player's and fades the rest; the room browser makes
+   it inert as well. */
+.start[data-play="multiplayer"]:has(#new-room:not(:checked))
+  :is(.map-row .choice-card:not(.room-map), .map-picker:not([data-room-map])) {
+  opacity: 0.4;
+  filter: saturate(0.4);
+}
+.start[data-play="multiplayer"]:has(#new-room:not(:checked))
+  .map-row
+  .choice-card:has(input:checked):not(.room-map) {
+  background: transparent;
+  box-shadow: none;
+}
+.start[data-play="multiplayer"]:has(#new-room:not(:checked)) .map-row .room-map {
+  background: var(--card-selected);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.start[data-play="multiplayer"]:has(#new-room:not(:checked))
+  .map-picker[data-room-map]
+  .map-picker-chevron {
+  visibility: hidden;
 }
 .play-tab:disabled {
   cursor: wait;
@@ -1585,6 +1612,16 @@ h2 {
 .map-row[hidden],
 .map-picker[hidden] {
   display: none;
+}
+/* A room link can choose an extra-level room on a page without the extra levels; only
+   the dropdown names that map, so it stands in for the row while the room shows. */
+.map-choice:has(.map-picker[data-room-map]):not(:has(.map-row[hidden], .map-row .room-map))
+  .map-row {
+  display: none;
+}
+.map-choice:has(.map-picker[data-room-map]):not(:has(.map-row[hidden], .map-row .room-map))
+  .map-picker {
+  display: block;
 }
 /* The room list: the new room, then the open rooms, one radio group in one well. */
 .room-browse {

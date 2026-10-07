@@ -121,6 +121,9 @@ try {
   await bob.page.locator("#player-name").fill("Bob <b>literal</b>");
   await click(bob.page, '[data-kind="scout"]');
   await click(bob.page, roomSelector);
+  // An open room keeps its own map: the map choice shows that map and waits.
+  assert.equal(await bob.page.locator(".map-choice").evaluate((part) => part.inert), true);
+  assert.equal(await bob.page.locator('.room-map input[name="mapMode"]').inputValue(), "harbor");
   // No single-player arena was built on a ?multiplayer page, so Join stays in this page.
   const bobDocument = await bob.page.evaluate(() => performance.timeOrigin);
   await click(bob.page, "#join-room");
@@ -276,6 +279,9 @@ try {
   link.searchParams.set("room", yard);
   await bob.page.goto(link.href);
   await bob.page.locator(`${yardSelector}:checked`).waitFor();
+  // Only the dropdown names an extra level, so it stands in for the row of standard maps.
+  assert.equal(await bob.page.locator(".map-row").isVisible(), false);
+  assert.match(await bob.page.locator(".map-picker-current").innerText(), /^Scrap Yard/);
   const yardRow = bob.page.locator(".room-row").filter({ has: bob.page.locator(yardSelector) });
   assert.match(await yardRow.locator("strong").innerText(), /^Scrap Yard\s*EXTRA · 1\/8 players$/);
   await click(alice.page, "#pause");

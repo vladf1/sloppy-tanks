@@ -1,5 +1,6 @@
 import { showTank, showTankTeam, shownTankTeam } from "./game-options";
-import { setMapChoice } from "./map-picker";
+import { mapOption } from "./map-options";
+import { setMapChoice, showRoomMap } from "./map-picker";
 import { showNewRoomMap, showPlayMode } from "./play-modes";
 
 /** Battle Setup's choices, kept across a reload into a room or back out of one.
@@ -18,6 +19,8 @@ export interface SetupView {
   previewTeam?: 0 | 1;
   /** The shared map picker value, which a new room plays. */
   map?: string;
+  /** The map of the open room being joined, which the map choice shows meanwhile. */
+  roomMap?: string;
   roundMinutes?: string;
   humansOnly?: boolean;
 }
@@ -94,12 +97,14 @@ export function restoreChoices(setup: HTMLElement, view: Partial<SetupView>): vo
 
 function captureSetup(setup: HTMLElement): Omit<SetupView, "room" | "joining"> {
   const value = (selector: string) => setup.querySelector<HTMLInputElement>(selector)?.value;
+  const map = setup.querySelector<HTMLElement>('.map-picker[data-name="mapMode"]')?.dataset;
   return {
     name: value("#player-name"),
     team: value('input[name="playerTeam"]:checked'),
     kind: setup.querySelector<HTMLElement>("[data-kind].selected")?.dataset.kind,
     previewTeam: shownTankTeam(setup),
-    map: setup.querySelector<HTMLElement>('.map-picker[data-name="mapMode"]')?.dataset.value,
+    map: map?.value,
+    roomMap: map?.roomMap,
     roundMinutes: value("#create-round-minutes"),
     humansOnly: setup.querySelector<HTMLInputElement>("#create-humans-only")?.checked,
   };
@@ -126,6 +131,7 @@ export class JoinScreen {
     showTank(setup, String(view.kind));
     showTankTeam(setup, view.previewTeam === 1 ? 1 : 0);
     restoreChoices(setup, view);
+    showRoomMap(setup, "mapMode", mapOption(view.roomMap)?.id);
     const screen = new JoinScreen(setup, view.room, !!view.creating);
     // The browser may style the markup as single player before this script runs; show
     // the restored setup at once rather than animating tabs, cards and buttons from it.

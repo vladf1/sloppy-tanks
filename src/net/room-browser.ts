@@ -6,6 +6,7 @@ import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
+import { showRoomMap } from "../game/map-picker";
 import type { GameOptions } from "../game/game-options";
 
 // Battle Setup loads this module alone before any other multiplayer code.
@@ -57,6 +58,9 @@ export class RoomBrowser {
 
   constructor(
     private readonly panel: HTMLElement,
+    /** The shared map choice. An open room keeps its own map, so while one is chosen
+     * the choice shows that map and waits. */
+    private readonly mapChoice: HTMLElement,
     address: URL,
     /** The shared tank and map; a new room plays the map. */
     private readonly choices: () => Pick<GameOptions, "humanKind" | "mapMode">,
@@ -99,12 +103,14 @@ export class RoomBrowser {
   show(): void {
     if (!this.shown && !this.finished) {
       this.shown = true;
+      this.lockMap();
       void this.poll();
     }
   }
 
   hide(): void {
     this.shown = false;
+    this.lockMap();
     clearTimeout(this.timer);
     this.controller?.abort();
   }
@@ -177,6 +183,7 @@ export class RoomBrowser {
     }
     this.join.disabled = !this.selected;
     this.newRoom.checked = !this.selected;
+    this.lockMap();
     if (focused && this.selected) {
       this.list.querySelector<HTMLInputElement>(`input[value="${this.selected}"]`)?.focus();
     }
@@ -186,8 +193,18 @@ export class RoomBrowser {
   private choose(room: string): void {
     this.selected = room;
     this.join.disabled = !room;
+    this.lockMap();
     this.notice = "";
     this.showPrompt();
+  }
+
+  /** The map applies to single player and a new room only. */
+  private lockMap(): void {
+    const room = this.shown
+      ? this.rooms.find((listing) => listing.room === this.selected)
+      : undefined;
+    this.mapChoice.inert = !!room;
+    showRoomMap(this.mapChoice, "mapMode", room?.mapMode);
   }
 
   /** The status well's line, its hint and its bar: "loading" sweeps, "ready" is full. */
@@ -319,14 +336,13 @@ export class RoomBrowser {
   private joinSelected(): void {
     const choice = this.choice();
     const room = this.selected;
-    if (
-      !choice ||
-      this.finished ||
-      !this.rooms.some((listing) => listing.room === room && this.available(listing))
-    ) {
+    const listing = this.rooms.find((listing) => listing.room === room);
+    if (!choice || this.finished || !listing || !this.available(listing)) {
       return;
     }
     this.close();
+    // The join screen keeps the map inert and showing the room's map while it loads.
+    showRoomMap(this.mapChoice, "mapMode", listing.mapMode);
     this.enter({ room, choice: { ...choice, existingRoom: true } });
   }
 

@@ -81,16 +81,10 @@
       </button>
     </div>
   </div>
-  <div class="setup-section map-choice">
-    <div class="setup-label">
-      <span id="map-label">MAP</span
-      ><small class="multiplayer-note">For a new room · Rooms you join keep their own</small>
-    </div>
-    <!-- map-choice:mapMode:map-label -->
-  </div>
-  <!-- Everything above the tabs is shared by both modes and never moves; the tabs sit
-       on the tray they switch. Both panels share one grid cell and end in the same row:
-       a status well and the one yellow action. -->
+  <!-- The tank above the tabs is shared by both modes and never moves; the tabs sit on
+       the tray they switch. The map heads the tray for both tabs: single player plays
+       it and a new room plays it, while an open room keeps its own. Both panels share
+       one grid cell and end in the same row: a status well and the one yellow action. -->
   <div class="setup-tray">
     <div class="play-tabs" role="tablist" aria-label="How to play">
       <button
@@ -128,6 +122,14 @@
       </button>
     </div>
     <div class="setup-panels">
+      <div class="setup-section map-choice">
+        <div class="setup-label">
+          <span id="map-label">MAP</span
+          ><small class="multiplayer-note new-room-note">For your new room</small
+          ><small class="multiplayer-note open-room-note">The room you join keeps its own</small>
+        </div>
+        <!-- map-choice:mapMode:map-label -->
+      </div>
       <div id="single-panel" class="setup-panel" role="tabpanel" aria-labelledby="tab-single">
         <div class="setup-section battle-choice" role="radiogroup" aria-labelledby="battle-label">
           <div class="setup-label"><span id="battle-label">BATTLE</span></div>
