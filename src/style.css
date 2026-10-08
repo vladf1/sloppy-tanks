@@ -470,6 +470,15 @@ body:has(#settings[open]) .hud-actions {
   margin-top: 5px;
   border-radius: 3px;
 }
+#feed .feed-arrow {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.58em;
+  margin: 0 0.45em;
+  vertical-align: 0.07em;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
 #toast {
   position: absolute;
   z-index: 1;

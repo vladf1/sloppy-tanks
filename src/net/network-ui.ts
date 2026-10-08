@@ -1,7 +1,13 @@
 import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
-import { deathCause, effectsLabel, killFeedText, rankTitle } from "../game/hud-feedback";
+import {
+  deathCause,
+  effectsLabel,
+  killFeedNames,
+  rankTitle,
+  showFeedRow,
+} from "../game/hud-feedback";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
 import type {
   EngineEvent,
@@ -151,7 +157,7 @@ export class NetworkUI {
   readonly panel: HTMLElement;
   private lastLobby?: Lobby;
   private playerRows = new Map<number, HTMLElement>();
-  private feed: { text: string; time: number }[] = [];
+  private feed: { names: string[]; time: number }[] = [];
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
@@ -667,15 +673,15 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
-  private addFeed(text: string): void {
-    this.feed.unshift({ text, time: 5 });
+  private addFeed(...names: string[]): void {
+    this.feed.unshift({ names, time: 5 });
     this.feed.length = Math.min(4, this.feed.length);
   }
   event(event: HudEvent, hud: Hud): void {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
-      this.addFeed(killFeedText(event, viewerId, hud.scoreboard));
+      this.addFeed(...killFeedNames(event, viewerId, hud.scoreboard));
     }
     if (event.id === viewerId) {
       if (event.type === "death") {
@@ -760,14 +766,12 @@ export class NetworkUI {
       feed.lastElementChild!.remove();
     }
     this.feed.forEach((row, index) => {
-      let node = feed.children[index];
+      let node = feed.children[index] as HTMLElement | undefined;
       if (!node) {
         node = document.createElement("div");
         feed.append(node);
       }
-      if (node.textContent !== row.text) {
-        node.textContent = row.text;
-      }
+      showFeedRow(node, row.names);
     });
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {

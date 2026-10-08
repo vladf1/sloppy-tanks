@@ -28,16 +28,34 @@ export function deathCause(
       : `You were destroyed by ${weapon}.`;
 }
 
-/** One kill-feed row for both HUDs. The separator stays in Windows-1252 because browsers with
- * a small font set, such as Tesla's, have no fallback for symbol blocks like U+25B8 `▸`. */
-export function killFeedText(
+/** The killer and victim of a kill-feed row, as both HUDs name them. */
+export function killFeedNames(
   event: Pick<EngineEvent, "id" | "owner">,
   viewerId: number,
   scoreboard: readonly { id: number; name: string }[],
-): string {
+): string[] {
   const name = (id: number | undefined) =>
     id === viewerId ? "YOU" : (scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-  return `${name(event.owner)}  ›  ${name(event.id)}`;
+  return [name(event.owner), name(event.id)];
+}
+
+/** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
+ * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
+ * like U+25B8 `▸` and draw a missing-glyph box instead. */
+export function showFeedRow(row: HTMLElement, names: readonly string[]): void {
+  const key = names.join("\n");
+  if (row.dataset.names === key) {
+    return;
+  }
+  row.dataset.names = key;
+  row.replaceChildren(names[0]);
+  for (const name of names.slice(1)) {
+    const arrow = document.createElement("i");
+    arrow.className = "feed-arrow";
+    arrow.setAttribute("role", "img");
+    arrow.setAttribute("aria-label", "destroyed");
+    row.append(arrow, name);
+  }
 }
 
 export function effectsLabel(

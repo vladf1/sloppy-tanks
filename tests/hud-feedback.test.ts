@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
-import { deathCause, effectsLabel, killFeedText, rankTitle } from "../src/game/hud-feedback";
+import { deathCause, effectsLabel, killFeedNames, rankTitle } from "../src/game/hud-feedback";
 
 const death: EngineEvent = {
   type: "death",
@@ -42,13 +42,12 @@ test("missing damage details and departed killers still produce a useful death e
   );
 });
 
-test("kill feed names the viewer and the yard with a separator every Latin font has", () => {
-  // Tesla's browser drew the former U+25B8 separator as a missing-glyph box.
-  assert.equal(killFeedText(death, 4, scoreboard), "Bob <b>literal</b>  ›  YOU");
-  assert.equal(
-    killFeedText({ id: 8, owner: undefined }, 4, scoreboard),
-    "YARD  ›  Bob <b>literal</b>",
-  );
+test("kill feed names the viewer as YOU and an ownerless kill as the yard", () => {
+  assert.deepEqual(killFeedNames(death, 4, scoreboard), ["Bob <b>literal</b>", "YOU"]);
+  assert.deepEqual(killFeedNames({ id: 8, owner: undefined }, 4, scoreboard), [
+    "YARD",
+    "Bob <b>literal</b>",
+  ]);
 });
 
 const noEffects = {

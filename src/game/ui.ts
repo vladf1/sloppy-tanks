@@ -3,7 +3,7 @@ import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
-import { deathCause, effectsLabel, killFeedText, rankTitle } from "./hud-feedback";
+import { deathCause, effectsLabel, killFeedNames, rankTitle, showFeedRow } from "./hud-feedback";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -40,7 +40,7 @@ export class UI {
   state?: HudState;
   private readonly battleSetup: HTMLElement;
   private playModes?: { close(): void };
-  feedRows: { text: string; time: number }[] = [];
+  feedRows: { names: string[]; time: number }[] = [];
   constructor(
     root: HTMLElement,
     /** The Battle Setup choices the in-game menu edits. */
@@ -231,7 +231,7 @@ export class UI {
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      this.feedRows.unshift({ text: killFeedText(event, human.id, state.scoreboard), time: 5 });
+      this.feedRows.unshift({ names: killFeedNames(event, human.id, state.scoreboard), time: 5 });
     }
   }
   update(state: HudState, dt: number): void {
@@ -330,14 +330,12 @@ export class UI {
       this.feed.lastElementChild!.remove();
     }
     for (let i = 0; i < this.feedRows.length; i++) {
-      let row = this.feed.children[i];
+      let row = this.feed.children[i] as HTMLElement | undefined;
       if (!row) {
         row = document.createElement("div");
         this.feed.append(row);
       }
-      if (row.textContent !== this.feedRows[i].text) {
-        row.textContent = this.feedRows[i].text;
-      }
+      showFeedRow(row, this.feedRows[i].names);
     }
   }
 }
