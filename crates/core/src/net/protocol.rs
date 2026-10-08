@@ -34,7 +34,7 @@ use crate::sim::types::{Driver, Team, VehicleKind};
 
 pub use super::room_list::RoomPhase;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Hash of the sources clients and server must agree on. The build stamps it through
 /// `SLOPPY_CONTENT_VERSION`; unstamped builds (tests, `cargo run`) use `test-content`.
 pub const CONTENT_VERSION: &str = match option_env!("SLOPPY_CONTENT_VERSION") {

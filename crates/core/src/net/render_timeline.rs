@@ -40,7 +40,8 @@ fn lerp(a: Point3, b: Option<Point3>, fraction: f64) -> Point3 {
 }
 
 /// Interpolates received scene samples at a delayed display time. Membership comes from
-/// the older sample, so removals wait for the display clock. The local hull instead
+/// the older sample, so removals wait for the display clock. Shells are left to their
+/// paths (`NetworkTimeline`). The local hull instead
 /// follows the newest authority, extrapolated toward the present and smoothed at frame
 /// rate. Samples are never modified.
 #[derive(Clone, Debug, Default)]
@@ -128,24 +129,6 @@ impl RenderTimeline {
                 fraction,
             );
         });
-        output.shots.clear();
-        for shot in &before.shots {
-            let next = after.shots.iter().find(|candidate| candidate.id == shot.id);
-            let mut out = *shot;
-            let ahead = (time + overrun - before.elapsed).clamp(0.0, 0.05);
-            match next {
-                Some(next) => {
-                    out.x = shot.x + (next.x - shot.x) * fraction;
-                    out.z = shot.z + (next.z - shot.z) * fraction;
-                }
-                None => {
-                    out.x = shot.x + shot.vx * ahead;
-                    out.z = shot.z + shot.vz * ahead;
-                }
-            }
-            output.shots.push(out);
-        }
-
         // A death or respawn waits for the display clock, so the wreck and its effects agree.
         let before_viewer = before.viewer();
         let newest_viewer = newest.viewer();

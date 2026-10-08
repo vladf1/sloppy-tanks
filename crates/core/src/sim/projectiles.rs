@@ -147,6 +147,26 @@ fn mine_hit_time(shot: &Shot, mine: &Mine, limit: f64) -> Option<f64> {
     (time >= 0.0 && time <= limit).then_some(time)
 }
 
+/// A rocket's speed-up: at the start of every tick its speed grows by `acceleration` times
+/// the step, until `top_speed`. Room clients replay it to draw rockets between updates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RocketThrust {
+    /// Metres per second squared.
+    pub acceleration: f64,
+    pub top_speed: f64,
+}
+
+impl RocketThrust {
+    pub fn of(simulation: &Simulation) -> Self {
+        let base_speed = weapon(Weapon::Rocket).speed * simulation.speed_tuning.bullet_speed;
+        let top_speed = base_speed * COMBAT.rocket_top_speed_multiplier;
+        Self {
+            acceleration: (top_speed - base_speed) / COMBAT.rocket_acceleration_seconds,
+            top_speed,
+        }
+    }
+}
+
 pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion: bool) {
     simulation.shots.retain(|shot| shot.life > 0.0);
     // Accelerate once per fixed tick, before all continuous collision sweeps.
@@ -155,19 +175,18 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         let life = simulation.shots[i].life;
         guide_tow_missile(simulation, i, dt.min(life));
     }
-    let rocket_base_speed = weapon(Weapon::Rocket).speed * simulation.speed_tuning.bullet_speed;
-    let rocket_top_speed = rocket_base_speed * COMBAT.rocket_top_speed_multiplier;
-    let rocket_acceleration =
-        (rocket_top_speed - rocket_base_speed) / COMBAT.rocket_acceleration_seconds;
+    let thrust = RocketThrust::of(simulation);
     for shot in simulation
         .shots
         .iter_mut()
         .filter(|shot| shot.weapon == Weapon::Rocket)
     {
         let speed = shot.vx.hypot(shot.vz);
-        if speed > 0.0 && speed < rocket_top_speed {
-            let scale =
-                rocket_top_speed.min(speed + rocket_acceleration * dt.min(shot.life)) / speed;
+        if speed > 0.0 && speed < thrust.top_speed {
+            let scale = thrust
+                .top_speed
+                .min(speed + thrust.acceleration * dt.min(shot.life))
+                / speed;
             shot.vx *= scale;
             shot.vz *= scale;
         }

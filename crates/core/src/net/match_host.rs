@@ -20,13 +20,11 @@ use super::protocol::{
     MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, PROTOCOL_VERSION, Player, ROOM_IDLE_MS, RoomPhase,
     RoomSettings, Welcome, error_message, read_player_kind, read_team, room_reset_message,
 };
-use super::replication::{ShotTrace, StateStream, TimedEvent};
+use super::replication::{StateStream, TimedEvent};
 use super::room_list::RoomListing;
-use super::scene_codec::{Scene, WireShot};
+use super::scene_codec::Scene;
 use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
-use crate::sim::data::STEP;
-use crate::sim::math::Vec2;
-use crate::sim::render_state::RenderShot;
+use super::shot_paths::ShotPathRecorder;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{MatchPhase, PlayerAssignment, SimEventType, Team, VehicleCommand};
 
@@ -207,7 +205,7 @@ pub struct MatchHost {
     clock: Option<FixedStepClock>,
     stream: Option<StateStream>,
     events: Vec<String>,
-    traces: Vec<ShotTrace>,
+    shot_paths: ShotPathRecorder,
     cursor: u64,
     lifecycle: Vec<Note>,
     frames: Vec<(u64, String)>,
@@ -245,7 +243,7 @@ impl MatchHost {
             clock: None,
             stream: None,
             events: Vec::new(),
-            traces: Vec::new(),
+            shot_paths: ShotPathRecorder::default(),
             cursor: 0,
             lifecycle: Vec::new(),
             frames: Vec::new(),
@@ -780,7 +778,7 @@ impl MatchHost {
         self.round_id += 1;
         self.cursor = 0;
         self.events.clear();
-        self.traces.clear();
+        self.shot_paths.clear();
         self.owners.clear();
         self.participants.clear();
         let players: Vec<PlayerAssignment> = self
@@ -1024,80 +1022,13 @@ impl MatchHost {
         if let Some(hook) = self.tick_hook.as_mut() {
             hook(simulation, tick);
         }
-        let mut moves = simulation
-            .projectile_moves
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default();
-        for projectile in moves.drain(..) {
-            self.trace(
-                tick,
-                &projectile.shot,
-                projectile.seconds,
-                projectile.offset,
-            );
-        }
-        // Keep the trace capture capacity for the next tick's projectile sweeps.
-        if let Some(stored) = self
-            .simulation
-            .as_mut()
-            .and_then(|simulation| simulation.projectile_moves.as_mut())
-        {
-            *stored = moves;
-        }
+        self.shot_paths.follow(simulation, tick);
         self.drain_events(tick);
         // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
         let simulation = self.simulation.as_ref().expect("stepped above");
         if lifecycle_changed(simulation, &mut self.lifecycle) {
             self.capture_frame(tick);
         }
-    }
-
-    /// Records one projectile sweep as a straight segment between fractional ticks.
-    fn trace(&mut self, tick: u64, shot: &crate::sim::types::Shot, seconds: f64, offset: f64) {
-        if seconds <= 0.0 {
-            return;
-        }
-        let start = RenderShot {
-            x: shot.x - shot.vx * seconds,
-            z: shot.z - shot.vz * seconds,
-            ..RenderShot::from(shot)
-        };
-        let wire = WireShot::rounded(start);
-        let trace = ShotTrace {
-            tick: super::json::position(tick as f64 - 1.0 + offset / STEP),
-            end_tick: super::json::position(tick as f64 - 1.0 + (offset + seconds) / STEP),
-            shot: RenderShot {
-                id: wire.id,
-                x: wire.x,
-                z: wire.z,
-                y: wire.y,
-                visual_y: wire.visual_y,
-                vx: wire.vx,
-                vz: wire.vz,
-                weapon: wire.weapon,
-                team: wire.team,
-            },
-            end: Vec2::new(super::json::position(shot.x), super::json::position(shot.z)),
-        };
-        // Straight flight is linear, so consecutive ticks share one segment until a bounce,
-        // steering or height change starts a new one.
-        if let Some(previous) = self
-            .traces
-            .iter_mut()
-            .rev()
-            .find(|previous| previous.shot.id == shot.id)
-            && previous.end_tick == trace.tick
-            && previous.shot.vx == trace.shot.vx
-            && previous.shot.vz == trace.shot.vz
-            && previous.shot.y == trace.shot.y
-            && previous.shot.visual_y == trace.shot.visual_y
-        {
-            previous.end_tick = trace.end_tick;
-            previous.end = trace.end;
-            return;
-        }
-        self.traces.push(trace);
     }
 
     fn broadcast_snapshot(&mut self) {
@@ -1149,10 +1080,15 @@ impl MatchHost {
             return;
         };
         self.scene.capture_from(simulation);
-        let frame = stream.snapshot(&mut self.scene, tick, &self.events, &self.traces);
+        let frame = stream.snapshot(
+            &mut self.scene,
+            tick,
+            &self.events,
+            self.shot_paths.entries(),
+        );
         self.frames.push((tick, frame));
         self.events.clear();
-        self.traces.clear();
+        self.shot_paths.clear_entries();
     }
 
     fn send_control(&mut self, seat: usize) {
@@ -1217,7 +1153,7 @@ impl MatchHost {
             return;
         };
         let scene = Scene::capture(simulation);
-        let text = stream.full(&scene, tick, self.cursor);
+        let text = stream.full(&scene, tick, self.cursor, self.shot_paths.paths());
         self.send(connection, text);
     }
 
@@ -1311,7 +1247,7 @@ impl MatchHost {
         self.clients.clear();
         self.seats.clear();
         self.events.clear();
-        self.traces.clear();
+        self.shot_paths.clear();
         self.frames.clear();
         self.participants.clear();
         self.owners.clear();

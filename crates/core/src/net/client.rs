@@ -872,12 +872,8 @@ impl NetworkClient {
                         && !self.hidden
                     {
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
-                            self.timeline.push(
-                                state,
-                                self.mirror.tick,
-                                extras.events,
-                                extras.traces,
-                            )
+                            self.timeline
+                                .push(state, self.mirror.tick, extras.events, extras.paths)
                         });
                         if pushed_frame.is_err() {
                             self.request_full(now_ms);
@@ -991,7 +987,8 @@ impl NetworkClient {
             return Ok(());
         }
         let display = self.mirror.render(control.tank_id)?;
-        self.timeline.reset(&display, self.mirror.tick, now_ms);
+        self.timeline
+            .reset(&display, self.mirror.tick, now_ms, &self.mirror.shots);
         self.display = Some(display);
         Ok(())
     }

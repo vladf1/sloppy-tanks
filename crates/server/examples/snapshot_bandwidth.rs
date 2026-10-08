@@ -30,10 +30,7 @@ const WATCHER: u64 = 1;
 
 /// The frame without its projectile replication.
 fn strip_projectiles(message: &mut Value) {
-    let Some(frames) = message
-        .get_mut("snapshots")
-        .and_then(Value::as_array_mut)
-    else {
+    let Some(frames) = message.get_mut("snapshots").and_then(Value::as_array_mut) else {
         return;
     };
     for frame in frames {
@@ -202,7 +199,10 @@ fn main() {
         "seeds": SEEDS,
         "results": results,
     });
-    std::fs::write(&output, serde_json::to_string_pretty(&report).expect("JSON"))
-        .expect("write the report");
+    std::fs::write(
+        &output,
+        serde_json::to_string_pretty(&report).expect("JSON"),
+    )
+    .expect("write the report");
     println!("Wrote {}", output.display());
 }

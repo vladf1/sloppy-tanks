@@ -12,6 +12,7 @@
 //! - [`protocol`]: constants, room settings, `join`/`lobby`/`control`/`welcome` records.
 //! - [`scene_codec`]: scene capture (host) and validation/projection (client).
 //! - [`replication`]: baselines, field deltas and the client mirror.
+//! - [`shot_paths`]: projectile trajectories, recorded by the host and drawn by clients.
 //! - [`room_list`]: public directory listings.
 //! - [`schema`] / [`json`]: TypeScript-compatible readers and number formatting.
 //!
@@ -38,4 +39,5 @@ pub mod replication;
 pub mod room_list;
 pub mod scene_codec;
 pub mod schema;
+pub mod shot_paths;
 pub mod transport_delay;

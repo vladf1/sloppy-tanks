@@ -25,7 +25,7 @@ use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, to_int32};
 use crate::sim::render_state::{
-    RenderCover, RenderCoverMotion, RenderFragment, RenderShot, RenderState, RenderTank,
+    RenderCover, RenderCoverMotion, RenderFragment, RenderState, RenderTank,
 };
 use crate::sim::simulation::Simulation;
 use crate::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -35,21 +35,21 @@ use crate::sim::timber_layout::{
 use crate::sim::tower_layout::TowerPiece;
 use crate::sim::types::{
     AmmoInventory, Cover, CoverKind, DamageCause, DamageSource, DeathStyle, Fragment,
-    FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank, Team,
+    FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank,
     VehicleKind, Weapon, WreckPart,
 };
 
 /// Entity kinds in wire order; the index of a kind in every per-kind array.
-pub const ENTITY_TYPES: [&str; 6] = ["tanks", "covers", "fragments", "shots", "mines", "pickups"];
+/// Shells travel as trajectories instead (`shot_paths`), not as per-frame records.
+pub const ENTITY_TYPES: [&str; 5] = ["tanks", "covers", "fragments", "mines", "pickups"];
 pub const TANKS: usize = 0;
 pub const COVERS: usize = 1;
 pub const FRAGMENTS: usize = 2;
-pub const SHOTS: usize = 3;
-pub const MINES: usize = 4;
-pub const PICKUPS: usize = 5;
+pub const MINES: usize = 3;
+pub const PICKUPS: usize = 4;
 /// Most records of each kind a scene may hold. Standard rooms field 12 tanks; the extra
 /// levels field 30.
-pub const ENTITY_LIMITS: [usize; 6] = [32, 1024, FRAGMENT_CAPACITY, 512, 256, 64];
+pub const ENTITY_LIMITS: [usize; 5] = [32, 1024, FRAGMENT_CAPACITY, 256, 64];
 
 // Wire names of the simulation's enums, shared by writers and readers.
 pub const VEHICLE_KINDS: [(&str, VehicleKind); 4] = [
@@ -537,75 +537,6 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     w.end();
 }
 
-/// A shell as the wire sends it, already rounded (`shotReader` then `rounded`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WireShot {
-    pub id: u32,
-    pub x: f64,
-    pub z: f64,
-    pub y: Option<f64>,
-    pub visual_y: Option<f64>,
-    pub team: Team,
-    pub vx: f64,
-    pub vz: f64,
-    pub weapon: Weapon,
-}
-
-impl WireShot {
-    pub fn rounded(shot: RenderShot) -> Self {
-        Self {
-            id: shot.id,
-            x: json::position(shot.x),
-            z: json::position(shot.z),
-            y: shot.y.map(json::position),
-            visual_y: shot.visual_y.map(json::position),
-            team: shot.team,
-            vx: json::position(shot.vx),
-            vz: json::position(shot.vz),
-            weapon: shot.weapon,
-        }
-    }
-
-    pub fn write(&self, out: &mut String) {
-        let mut writer = ObjectWriter::new(out);
-        writer
-            .int("id", u64::from(self.id))
-            .number("x", self.x)
-            .number("z", self.z);
-        if let Some(y) = self.y {
-            writer.number("y", y);
-        }
-        if let Some(visual) = self.visual_y {
-            writer.number("visualY", visual);
-        }
-        writer
-            .int("team", self.team.index() as u64)
-            .number("vx", self.vx)
-            .number("vz", self.vz)
-            .string("weapon", self.weapon.as_str());
-        writer.finish();
-    }
-}
-
-fn write_shot(record: &mut WireRecord, shot: &crate::sim::types::Shot) {
-    let wire = WireShot::rounded(RenderShot::from(shot));
-    let mut w = record.begin(wire.id);
-    w.int("id", u64::from(wire.id))
-        .number("x", wire.x)
-        .number("z", wire.z);
-    if let Some(y) = wire.y {
-        w.number("y", y);
-    }
-    if let Some(visual) = wire.visual_y {
-        w.number("visualY", visual);
-    }
-    w.int("team", wire.team.index() as u64)
-        .number("vx", wire.vx)
-        .number("vz", wire.vz)
-        .string("weapon", wire.weapon.as_str());
-    w.end();
-}
-
 fn write_mine(record: &mut WireRecord, mine: &Mine) {
     let mut w = record.begin(mine.id);
     w.int("id", u64::from(mine.id))
@@ -682,7 +613,7 @@ fn write_map(out: &mut String, simulation: &Simulation) {
 /// and the map. Captures reuse the records' buffers.
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
-    pub entities: [Vec<WireRecord>; 6],
+    pub entities: [Vec<WireRecord>; 5],
     pub elapsed: f64,
     pub match_record: WireRecord,
     /// The map object's JSON (`theme`, and `floor`, `outerFloor`, `outerFloorExtent`,
@@ -712,7 +643,7 @@ impl Scene {
 
     /// Overwrites this scene with the simulation's current state, reusing allocations.
     pub fn capture_from(&mut self, simulation: &Simulation) {
-        let [tanks, covers, fragments, shots, mines, pickups] = &mut self.entities;
+        let [tanks, covers, fragments, mines, pickups] = &mut self.entities;
         fill_records(tanks, &simulation.tanks, |record, tank| {
             write_tank(record, simulation, tank)
         });
@@ -722,7 +653,6 @@ impl Scene {
         fill_records(fragments, &simulation.fragments, |record, fragment| {
             write_fragment(record, simulation, fragment)
         });
-        fill_records(shots, &simulation.shots, write_shot);
         fill_records(mines, &simulation.mines, write_mine);
         fill_records(pickups, &simulation.pickups, write_pickup);
         self.elapsed = json::position(simulation.elapsed);
@@ -880,7 +810,7 @@ fn seed(value: Option<&Value>) -> ReadResult<i32> {
     number_in(value, -2_147_483_648.0, 4_294_967_295.0, true).map(to_int32)
 }
 
-fn read_weapon(value: Option<&Value>) -> ReadResult<Weapon> {
+pub(crate) fn read_weapon(value: Option<&Value>) -> ReadResult<Weapon> {
     choice(value, &WEAPONS)
 }
 
@@ -1061,21 +991,6 @@ pub fn read_fragment(source: &Record) -> ReadResult<RenderFragment> {
     Ok(RenderFragment {
         rotation: normalized(fragment.rotation)?,
         ..fragment
-    })
-}
-
-/// `shotReader`.
-pub fn read_shot(source: &Record) -> ReadResult<RenderShot> {
-    Ok(RenderShot {
-        id: field(source, "id", id32)?,
-        x: field(source, "x", number)?,
-        z: field(source, "z", number)?,
-        y: field(source, "y", |v| optional(v, number))?,
-        visual_y: field(source, "visualY", |v| optional(v, number))?,
-        team: field(source, "team", read_team)?,
-        vx: field(source, "vx", number)?,
-        vz: field(source, "vz", number)?,
-        weapon: field(source, "weapon", read_weapon)?,
     })
 }
 
@@ -1288,7 +1203,7 @@ impl<T> EntityStore<T> {
 
 /// Fields each kind's reader declares; others are dropped like the TypeScript readers
 /// drop unknown properties.
-pub const ENTITY_FIELDS: [&[&str]; 6] = [
+pub const ENTITY_FIELDS: [&[&str]; 5] = [
     &[
         "id",
         "life",
@@ -1361,7 +1276,6 @@ pub const ENTITY_FIELDS: [&[&str]; 6] = [
         "part",
         "team",
     ],
-    &["id", "x", "z", "y", "visualY", "team", "vx", "vz", "weapon"],
     &[
         "id",
         "x",
@@ -1399,7 +1313,6 @@ pub struct MirrorScene {
     pub tanks: EntityStore<RenderTank>,
     pub covers: EntityStore<RenderCover>,
     pub fragments: EntityStore<RenderFragment>,
-    pub shots: EntityStore<RenderShot>,
     pub mines: EntityStore<Mine>,
     pub pickups: EntityStore<Pickup>,
     pub elapsed: f64,
@@ -1456,7 +1369,6 @@ impl MirrorScene {
                         read_store(entities, TANKS, read_tank, |t| t.id)?,
                         read_store(entities, COVERS, read_cover, |c| c.id)?,
                         read_store(entities, FRAGMENTS, read_fragment, |f| f.id)?,
-                        read_store(entities, SHOTS, read_shot, |s| s.id)?,
                         read_store(entities, MINES, read_mine, |m| m.id)?,
                         read_store(entities, PICKUPS, read_pickup, |p| p.id)?,
                     ))
@@ -1474,12 +1386,11 @@ impl MirrorScene {
             let (map_wire, map) = field(source, "map", |v| {
                 nested(v, |m| Ok((m.clone(), read_map(m)?)))
             })?;
-            let (tanks, covers, fragments, shots, mines, pickups) = entities;
+            let (tanks, covers, fragments, mines, pickups) = entities;
             Ok(MirrorScene {
                 tanks,
                 covers,
                 fragments,
-                shots,
                 mines,
                 pickups,
                 elapsed,
@@ -1510,7 +1421,6 @@ impl MirrorScene {
         entities.insert("tanks".into(), records(&self.tanks));
         entities.insert("covers".into(), records(&self.covers));
         entities.insert("fragments".into(), records(&self.fragments));
-        entities.insert("shots".into(), records(&self.shots));
         entities.insert("mines".into(), records(&self.mines));
         entities.insert("pickups".into(), records(&self.pickups));
         let mut scene = Record::new();
@@ -1540,7 +1450,6 @@ impl MirrorScene {
         fill(&mut state.tanks, &self.tanks);
         fill(&mut state.covers, &self.covers);
         fill(&mut state.fragments, &self.fragments);
-        fill(&mut state.shots, &self.shots);
         fill(&mut state.mines, &self.mines);
         fill(&mut state.pickups, &self.pickups);
         state.elapsed = self.elapsed;

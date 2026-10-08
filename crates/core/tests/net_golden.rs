@@ -3,7 +3,8 @@
 //! connection, identical lobby/control/welcome/pong/error/reset messages, and baselines
 //! and snapshots with the same JSON paths and value types. `fixtures/net-golden.json` was
 //! recorded from the TypeScript host (baseline `35afd91`) by `fixtures/net-golden.ts`, which
-//! left with that engine (see Git history).
+//! left with that engine (see Git history). Protocol 2 has since replaced the `shots`
+//! records and frame `traces` with projectile `paths` (`shot_paths`), edited in by hand.
 
 mod net_support;
 
@@ -233,15 +234,13 @@ impl Runner {
 /// scripted (which shells hit what), not on the wire format.
 fn physics_dependent(path: &str) -> bool {
     path.contains(".events[].event(")
-        || path.contains(".traces[]")
+        || path.contains(".paths[]")
         || path.contains(".updates.fragments")
         || path.contains(".removed.")
         || path.contains(".updates.covers.*.")
         || path.contains(".updates.mines")
-        || path.contains(".updates.shots")
         || path.contains(".updates.pickups")
         || path.contains(".entities.fragments[]")
-        || path.contains(".entities.shots[]")
         || path.contains(".entities.mines[]")
 }
 

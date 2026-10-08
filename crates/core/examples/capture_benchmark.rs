@@ -1,5 +1,6 @@
-//! Per-room server work for one 50 ms host interval: three fixed steps, then the scene
-//! capture, field diff and JSON that `MatchHost` performs for each snapshot frame.
+//! Per-room server work for one 50 ms host interval: three fixed steps with the projectile
+//! path recording `MatchHost` does after each, then the scene capture, field diff and JSON
+//! it performs for each snapshot frame.
 //! `cargo run -p sloppy-core --release --example capture_benchmark -- [output.json]`
 //! seeds each standard map and both extra levels with one idle player, warms up 1200
 //! ticks, then times 400 intervals. Manual evidence, not a CI gate.
@@ -12,6 +13,7 @@ use serde_json::{Value, json};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::replication::StateStream;
 use sloppy_core::net::scene_codec::Scene;
+use sloppy_core::net::shot_paths::ShotPathRecorder;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{PlayerAssignment, Team, VehicleKind};
 
@@ -26,7 +28,7 @@ const ROOMS: [(&str, MapId); 5] = [
     ("stress-grid", MapId::StressTest),
     ("scrap-yard", MapId::Superstress),
 ];
-const STAGES: [&str; 3] = ["physics", "capture", "diff+json"];
+const STAGES: [&str; 4] = ["physics", "paths", "capture", "diff+json"];
 
 fn summary(samples: &mut [f64]) -> Value {
     samples.sort_by(f64::total_cmp);
@@ -66,32 +68,46 @@ fn main() {
         let mut sim = create_multiplayer_simulation(SEED, std::slice::from_ref(&player), options)
             .expect("valid room");
         sim.start();
+        sim.projectile_moves = Some(Vec::new());
+        let mut paths = ShotPathRecorder::default();
         let idle = BTreeMap::new();
-        for _ in 0..WARMUP_TICKS {
+        for tick in 1..=WARMUP_TICKS {
             sim.step_with(&idle);
             sim.events.clear();
+            paths.follow(&mut sim, tick);
         }
+        paths.clear_entries();
         let mut stream = StateStream::new("benchmark", 1);
-        stream.full(&Scene::capture(&sim), WARMUP_TICKS, 0);
-        let mut samples: [Vec<f64>; 3] = Default::default();
+        stream.full(&Scene::capture(&sim), WARMUP_TICKS, 0, paths.paths());
+        let mut samples: [Vec<f64>; 4] = Default::default();
         let mut scene = Scene::default();
         let mut tick = WARMUP_TICKS;
         let mut bytes = 0;
         for _ in 0..INTERVALS {
-            let start = Instant::now();
+            let mut physics = 0.0;
+            let mut recording = 0.0;
             for _ in 0..STEPS_PER_INTERVAL {
+                let start = Instant::now();
                 sim.step_with(&idle);
                 sim.events.clear();
                 tick += 1;
+                let stepped = Instant::now();
+                paths.follow(&mut sim, tick);
+                physics += (stepped - start).as_secs_f64() * 1000.0;
+                recording += stepped.elapsed().as_secs_f64() * 1000.0;
             }
             let stepped = Instant::now();
             scene.capture_from(&sim);
             let captured = Instant::now();
-            bytes += stream.snapshot(&mut scene, tick, &[], &[]).len();
+            bytes += stream
+                .snapshot(&mut scene, tick, &[], paths.entries())
+                .len();
+            paths.clear_entries();
             let done = Instant::now();
-            samples[0].push((stepped - start).as_secs_f64() * 1000.0);
-            samples[1].push((captured - stepped).as_secs_f64() * 1000.0);
-            samples[2].push((done - captured).as_secs_f64() * 1000.0);
+            samples[0].push(physics);
+            samples[1].push(recording);
+            samples[2].push((captured - stepped).as_secs_f64() * 1000.0);
+            samples[3].push((done - captured).as_secs_f64() * 1000.0);
         }
         println!(
             "{name} ({} tanks, {} covers, {} fragments; {INTERVALS} intervals, {} B/frame)",
