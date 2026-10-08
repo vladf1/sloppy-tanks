@@ -41,13 +41,23 @@ export function killFeedNames(
 
 /** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
  * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
- * like U+25B8 `▸` and draw a missing-glyph box instead. */
-export function showFeedRow(row: HTMLElement, names: readonly string[]): void {
+ * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills (`YOU` first,
+ * and not also the victim) are highlighted; `entering` is the newest row, which plays the pop-in
+ * once rather than again each time older rows shift down. */
+export function showFeedRow(row: HTMLElement, names: readonly string[], entering = false): void {
   const key = names.join("\n");
   if (row.dataset.names === key) {
     return;
   }
   row.dataset.names = key;
+  const ownKill = names.length > 1 && names[0] === "YOU" && names[1] !== "YOU";
+  row.classList.toggle("own-kill", ownKill);
+  row.classList.remove("own-kill-new");
+  if (ownKill && entering) {
+    // Reading offsetWidth commits the removal so a reused row restarts the animation.
+    void row.offsetWidth;
+    row.classList.add("own-kill-new");
+  }
   row.replaceChildren(names[0]);
   for (const name of names.slice(1)) {
     const arrow = document.createElement("i");

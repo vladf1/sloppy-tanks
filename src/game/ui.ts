@@ -167,10 +167,6 @@ export class UI {
     }
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     this.overlay.dataset.state = "ready";
-    const death = this.overlay.querySelector("#death-cause");
-    if (death) {
-      death.textContent = this.deathCause;
-    }
     const { actions } = this;
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
@@ -335,7 +331,7 @@ export class UI {
         row = document.createElement("div");
         this.feed.append(row);
       }
-      showFeedRow(row, this.feedRows[i].names);
+      showFeedRow(row, this.feedRows[i].names, i === 0);
     }
   }
 }

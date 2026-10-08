@@ -479,6 +479,36 @@ body:has(#settings[open]) .hud-actions {
   background: currentColor;
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
+/* The viewer's own kills stand out from the rest of the feed. */
+#feed .own-kill {
+  background: linear-gradient(90deg, #7a4a12d9, #b8841fd9);
+  color: #fff3d6;
+  border-right: 4px solid #f2c14e;
+  box-shadow: 0 0 8px #f2c14e55;
+}
+#feed .own-kill-new {
+  animation: own-kill-pop 0.9s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes own-kill-pop {
+  0% {
+    transform: translateX(60px) scale(0.6);
+    opacity: 0;
+  }
+  45% {
+    transform: translateX(0) scale(1.12);
+    opacity: 1;
+    box-shadow: 0 0 16px #f2c14e99;
+  }
+  100% {
+    transform: none;
+    box-shadow: 0 0 8px #f2c14e55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #feed .own-kill-new {
+    animation: none;
+  }
+}
 #toast {
   position: absolute;
   z-index: 1;
@@ -947,16 +977,6 @@ h2 {
   color: #ffdf91;
 }
 #ammo-notice:empty {
-  display: none;
-}
-#death-cause:not(:empty) {
-  display: block;
-  font-size: 14px;
-  line-height: 1.4;
-  color: #ffcfab;
-  margin: 8px 0 14px;
-}
-#death-cause:empty {
   display: none;
 }
 /* First person: the arena seen through a periscope. The frame only darkens
@@ -2262,10 +2282,11 @@ html.phone,
   height: 70px;
   margin: -4px 0 0;
 }
-/* Low tabs: on a phone, multiplayer is one action that joins or creates a room. */
+/* Compact tabs, tall enough to hit: on a phone, multiplayer is one action that joins or
+   creates a room. */
 .phone .play-tab {
   gap: 10px;
-  padding: 9px 14px;
+  padding: 14px;
 }
 .phone .play-tab svg {
   flex-basis: 20px;
@@ -2305,7 +2326,7 @@ html.phone,
   min-height: 48px;
   padding: 6px 10px;
 }
-.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit),
+.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit, #feed),
 .phone .hud-actions > :not(#pause, #view-mode, .touch-zoom),
 .phone #cockpit .aim-hint {
   display: none;
@@ -2313,8 +2334,11 @@ html.phone,
 /* One row across the top: zoom out and in in the left corner, first person and pause in
    the right, the scoreboard between them; the drive stick holds the bottom-left. Touches
    between the buttons pass through the row to the arena. */
-.phone .hud-actions {
-  left: max(14px, env(safe-area-inset-left));
+.phone .hud-actions,
+.phone .touch-enabled .hud-actions {
+  top: max(6px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  right: max(8px, env(safe-area-inset-right));
   justify-content: flex-end;
 }
 /* Pushes first person and pause to the right corner, where they stay alone in first
@@ -2332,7 +2356,7 @@ html.phone,
    stay in reach; its rows scroll. */
 .phone #nerd-stats.expanded {
   max-height: calc(
-    100dvh - max(14px, env(safe-area-inset-top)) - 56px - max(4px, env(safe-area-inset-bottom))
+    100dvh - max(6px, env(safe-area-inset-top)) - 54px - max(4px, env(safe-area-inset-bottom))
   );
 }
 .phone #nerd-stats:not(.expanded) .nerd-stats-toggle {
@@ -2371,10 +2395,19 @@ html.phone,
 /* The score on a phone: one small pill at the top, blue score, clock and red score;
    the team colours stand in for the labels. */
 .phone #hud .scoreboard {
-  top: max(8px, env(safe-area-inset-top));
+  /* On the same top line as the row of buttons beside it. */
+  top: max(6px, env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   gap: 2px;
+}
+/* The feed keeps only the viewer's own kills, under the right-hand buttons. */
+.phone #feed {
+  top: calc(max(6px, env(safe-area-inset-top)) + 54px);
+  right: max(8px, env(safe-area-inset-right));
+}
+.phone #feed div:not(.own-kill) {
+  display: none;
 }
 .phone #hud .scoreboard :is(.team small, .clock small) {
   display: none;
@@ -2413,9 +2446,6 @@ html.phone,
 .phone .respawn h2 {
   font-size: 18px;
   margin-bottom: 8px;
-}
-.phone #death-cause {
-  display: none;
 }
 .phone .respawn .vehicles {
   gap: 8px;

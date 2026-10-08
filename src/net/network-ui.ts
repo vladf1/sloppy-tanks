@@ -771,7 +771,7 @@ export class NetworkUI {
         node = document.createElement("div");
         feed.append(node);
       }
-      showFeedRow(node, row.names);
+      showFeedRow(node, row.names, index === 0);
     });
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {
