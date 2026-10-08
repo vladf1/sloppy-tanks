@@ -87,6 +87,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
     }
     let mut firing_range = BREACH_RANGE;
     let mut breaching = false;
+    let mut target_in_sight = false;
     let mut humvee_lane = false;
     let mut command = VehicleCommand::idle();
     command.ammo_selection = Some(AmmoSelection::Weapon(Weapon::Standard));
@@ -105,6 +106,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
                 .body_translation(simulation.tanks[target].body)
                 .planar();
             let seen = simulation.visible(position, actual);
+            target_in_sight = seen;
             humvee_lane =
                 kind == VehicleKind::Humvee && seen && humvee_can_fire(simulation, tank_index);
             if seen {
@@ -166,7 +168,9 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
     }
     // Deliberately clear nearby weak timber and towers that obstruct a useful route.
     // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
-    if !command.fire && kind != VehicleKind::Humvee {
+    // A target in sight keeps the turret while it slews or the bot reacts; otherwise
+    // cover beside the target's bearing would win every tick the shot is not yet lined up.
+    if !command.fire && !target_in_sight && kind != VehicleKind::Humvee {
         let goal = simulation.tanks[tank_index].brain.goal;
         let route = (goal.x - position.x).atan2(goal.z - position.z);
         // A distance is never shorter than either axis offset; the box only skips far covers.
