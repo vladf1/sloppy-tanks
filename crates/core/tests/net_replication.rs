@@ -11,10 +11,11 @@ use serde_json::{Map, Value, json};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::replication::{StateMirror, StateStream};
 use sloppy_core::net::scene_codec::{ENTITY_FIELDS, ENTITY_TYPES, MirrorScene, Scene};
+use sloppy_core::net::shot_paths::PathEntry;
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{
-    CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind,
+    CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_core::sim::{Simulation, render_state::RenderState};
 
@@ -242,6 +243,83 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
         .apply_full(&parse(&stream.full(&state, 3, 0, &[])), "r", 1)
         .unwrap();
     assert!(!mirror.needs_full);
+}
+
+#[test]
+fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_the_frame() {
+    let sim = room(MapId::Village, &[]);
+    let state = Scene::capture(&sim);
+    let viewer = sim.tanks[0].id;
+    let elapsed = state.elapsed;
+    let mut mirror = StateMirror::default();
+    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0, &[]));
+    mirror.apply_full(&full, "r", 1).unwrap();
+    let frame = |seq: u64, tick: u64, paths: Value| json!({ "seq": seq, "tick": tick, "elapsed": elapsed, "paths": paths });
+    let launch = json!({
+        "id": 900, "tick": 0.5, "x": 0, "z": 0, "vx": 30, "vz": 0,
+        "team": 1, "weapon": "ricochet", "y": 1.2, "visualY": 1.6,
+    });
+    assert!(
+        mirror
+            .apply_snapshot(&frame(1, 3, json!([launch])))
+            .is_some()
+    );
+    let shot = mirror.render(viewer).unwrap().shots[0];
+    assert_eq!(
+        (shot.x, shot.z),
+        (30.0 * 2.5 / 60.0, 0.0),
+        "drawn at the frame tick"
+    );
+    let bounce = json!({ "id": 900, "tick": 4, "x": 1.75, "z": 0, "vx": -30, "vz": 0 });
+    let extras = mirror
+        .apply_snapshot(&frame(2, 6, json!([bounce])))
+        .unwrap();
+    let PathEntry::Change(path) = extras.paths[0] else {
+        panic!("a new path for a flying shell");
+    };
+    assert_eq!(
+        (path.launch.weapon, path.launch.team, path.launch.visual_y),
+        (Weapon::Ricochet, Team::Red, Some(1.6)),
+        "later paths keep the launch fields"
+    );
+    let shells = |mirror: &StateMirror| mirror.shots.paths.clone();
+    let before = shells(&mirror);
+    for (bad, why) in [
+        (launch.clone(), "a second launch"),
+        (
+            json!({ "id": 901, "tick": 5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "an unknown shell",
+        ),
+        (
+            json!({ "id": 901, "end": 5 }),
+            "the end of an unknown shell",
+        ),
+        (
+            json!({ "id": 900, "tick": 3.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "an earlier path",
+        ),
+        (json!({ "id": 900, "end": 3.9 }), "an end before the path"),
+        (json!({ "id": 900, "end": 9.5 }), "an end after the frame"),
+        (
+            json!({ "id": 900, "tick": 9.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "a future path",
+        ),
+    ] {
+        // A valid launch first: the frame is rejected whole, not up to the bad entry.
+        let other = json!({ "id": 950, "tick": 7, "x": 5, "z": 5, "vx": 0, "vz": 9, "team": 0, "weapon": "standard" });
+        let mut probe = mirror.clone();
+        assert!(
+            probe
+                .apply_snapshot(&frame(3, 9, json!([other, bad])))
+                .is_none(),
+            "{why}"
+        );
+        assert_eq!(shells(&probe), before, "{why} leaves the shells");
+        assert_eq!(probe.seq, 2, "{why} leaves the stream");
+    }
+    let end = json!([{ "id": 900, "end": 7 }]);
+    assert!(mirror.apply_snapshot(&frame(3, 9, end)).is_some());
+    assert!(mirror.render(viewer).unwrap().shots.is_empty());
 }
 
 #[test]

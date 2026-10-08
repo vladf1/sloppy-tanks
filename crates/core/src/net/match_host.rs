@@ -1038,6 +1038,7 @@ impl MatchHost {
         let tick = self.tick();
         if self.frames.last().map(|(frame_tick, _)| *frame_tick) != Some(tick)
             || !self.events.is_empty()
+            || !self.shot_paths.entries().is_empty()
         {
             self.capture_frame(tick);
         }

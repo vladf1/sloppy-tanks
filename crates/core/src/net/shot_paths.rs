@@ -277,28 +277,35 @@ impl LivePaths {
             let source = super::schema::record(item)?;
             let id = field(source, "id", id32)?;
             let known = self.position(id);
-            let entry = if source.contains_key("end") {
-                let end = field(source, "end", |v| number_in(v, 0.0, MAX_TICK, false))?;
-                let index = known.ok_or("Unknown projectile")?;
-                if end < self.paths[index].tick {
-                    return Err("Invalid projectile timeline".into());
+            // Only a launch names the shell's team; every other entry needs the shell.
+            let launch = source.contains_key("team");
+            let entry = match (known, launch) {
+                (None, true) => {
+                    if self.paths.len() >= MAX_LIVE_PATHS {
+                        return Err("Too many projectiles".into());
+                    }
+                    let path = ShotPath::read(source, None)?;
+                    self.paths.push(path);
+                    PathEntry::Launch(path)
                 }
-                self.paths.remove(index);
-                PathEntry::End { id, tick: end }
-            } else if let Some(index) = known {
-                let path = ShotPath::read(source, Some(self.paths[index].launch))?;
-                if path.tick < self.paths[index].tick {
-                    return Err("Invalid projectile timeline".into());
+                (Some(_), true) => return Err("Duplicate projectile".into()),
+                (None, false) => return Err("Unknown projectile".into()),
+                (Some(index), false) if source.contains_key("end") => {
+                    let end = field(source, "end", |v| number_in(v, 0.0, MAX_TICK, false))?;
+                    if end < self.paths[index].tick {
+                        return Err("Invalid projectile timeline".into());
+                    }
+                    self.paths.remove(index);
+                    PathEntry::End { id, tick: end }
                 }
-                self.paths[index] = path;
-                PathEntry::Change(path)
-            } else {
-                if self.paths.len() >= MAX_LIVE_PATHS {
-                    return Err("Too many projectiles".into());
+                (Some(index), false) => {
+                    let path = ShotPath::read(source, Some(self.paths[index].launch))?;
+                    if path.tick < self.paths[index].tick {
+                        return Err("Invalid projectile timeline".into());
+                    }
+                    self.paths[index] = path;
+                    PathEntry::Change(path)
                 }
-                let path = ShotPath::read(source, None)?;
-                self.paths.push(path);
-                PathEntry::Launch(path)
             };
             if let PathEntry::Launch(path) | PathEntry::Change(path) = &entry
                 && path.tick > tick as f64
