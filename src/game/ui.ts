@@ -3,7 +3,7 @@ import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
-import { deathCause, effectsLabel, rankTitle } from "./hud-feedback";
+import { deathCause, effectsLabel, killFeedText, rankTitle } from "./hud-feedback";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -231,9 +231,7 @@ export class UI {
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      const name = (id: number | undefined) =>
-        id === human.id ? "YOU" : (state.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-      this.feedRows.unshift({ text: `${name(event.owner)}  ▸  ${name(event.id)}`, time: 5 });
+      this.feedRows.unshift({ text: killFeedText(event, human.id, state.scoreboard), time: 5 });
     }
   }
   update(state: HudState, dt: number): void {

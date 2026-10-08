@@ -1,7 +1,7 @@
 import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
-import { deathCause, effectsLabel, rankTitle } from "../game/hud-feedback";
+import { deathCause, effectsLabel, killFeedText, rankTitle } from "../game/hud-feedback";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
 import type {
   EngineEvent,
@@ -675,9 +675,7 @@ export class NetworkUI {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
-      const name = (id: number | undefined) =>
-        id === viewerId ? "YOU" : (hud.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-      this.addFeed(name(event.owner) + "  ▸  " + name(event.id));
+      this.addFeed(killFeedText(event, viewerId, hud.scoreboard));
     }
     if (event.id === viewerId) {
       if (event.type === "death") {

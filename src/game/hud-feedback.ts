@@ -28,6 +28,18 @@ export function deathCause(
       : `You were destroyed by ${weapon}.`;
 }
 
+/** One kill-feed row for both HUDs. The separator stays in Windows-1252 because browsers with
+ * a small font set, such as Tesla's, have no fallback for symbol blocks like U+25B8 `▸`. */
+export function killFeedText(
+  event: Pick<EngineEvent, "id" | "owner">,
+  viewerId: number,
+  scoreboard: readonly { id: number; name: string }[],
+): string {
+  const name = (id: number | undefined) =>
+    id === viewerId ? "YOU" : (scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
+  return `${name(event.owner)}  ›  ${name(event.id)}`;
+}
+
 export function effectsLabel(
   tank: Pick<
     HumanState,
