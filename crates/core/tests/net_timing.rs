@@ -156,14 +156,6 @@ fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_se
             ..sample()
         },
         InputSample {
-            actions: vec![Action::Mine],
-            ..sample()
-        },
-        InputSample {
-            actions: vec![Action::Ammo(Weapon::Rocket)],
-            ..sample()
-        },
-        InputSample {
             control_epoch: 2,
             ..sample()
         },
@@ -196,6 +188,59 @@ fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_se
         assert!(cadence.due(&sample(), 50.0));
         cadence.sent(&sample(), 50.0);
         assert!(!cadence.due(&sample(), 100.0));
+    }
+}
+
+#[test]
+fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apart() {
+    let held = |move_x: f64, move_z: f64, fire: bool| InputSample {
+        move_x,
+        move_z,
+        fire,
+        ..sample()
+    };
+    for (previous, input) in [
+        (sample(), held(1.0, 0.0, false)),
+        (held(1.0, 0.0, false), sample()),
+        (held(0.0, -1.0, false), held(0.0, 1.0, false)),
+        (held(0.0, -1.0, false), held(0.7, -0.7, false)),
+        (sample(), held(0.0, 0.0, true)),
+        (held(0.0, 0.0, true), sample()),
+        (
+            sample(),
+            InputSample {
+                actions: vec![Action::Mine],
+                ..sample()
+            },
+        ),
+        (
+            sample(),
+            InputSample {
+                actions: vec![Action::Ammo(Weapon::Rocket)],
+                ..sample()
+            },
+        ),
+    ] {
+        let mut cadence = InputCadence::default();
+        cadence.sent(&previous, 0.0);
+        assert!(!cadence.due(&input, 24.0));
+        assert!(cadence.due(&input, 25.0));
+    }
+    // A stick drifting within one direction, and aim, keep the 20 Hz cadence.
+    for (previous, input) in [
+        (held(0.4, 0.2, false), held(0.6, 0.3, false)),
+        (
+            held(1.0, 0.0, false),
+            InputSample {
+                aim: Aim::Point { x: 12.0, z: 20.0 },
+                ..held(1.0, 0.0, false)
+            },
+        ),
+    ] {
+        let mut cadence = InputCadence::default();
+        cadence.sent(&previous, 0.0);
+        assert!(!cadence.due(&input, 49.0));
+        assert!(cadence.due(&input, 50.0));
     }
 }
 
