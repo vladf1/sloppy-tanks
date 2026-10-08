@@ -439,6 +439,50 @@ fn bot_spread_checks_side_pellets_and_ignores_dead_allies() {
 }
 
 #[test]
+fn a_bot_keeps_its_turret_on_a_visible_target_instead_of_breaching_cover_beside_it() {
+    let mut s = game();
+    clear(&mut s);
+    let bot = place(&mut s, 2, 0.0, 0.0);
+    let enemy = place(&mut s, 1, 0.0, 15.0);
+    s.tanks[bot].aim = 0.0;
+    // Timber about 0.34 rad off the enemy's bearing: inside the breach cone, outside the
+    // fire cone, so a bot that is still reacting used to swing to it and never come back.
+    s.add_cover(&CoverDef::new(
+        CoverKind::Timber,
+        3.0,
+        8.5,
+        2.0,
+        1.0,
+        2.0,
+        80.0,
+        0,
+    ));
+    let enemy_id = s.tanks[enemy].id;
+    let brain = &mut s.tanks[bot].brain;
+    brain.personality = BotPersonality::Guard;
+    brain.target = enemy_id;
+    brain.memory = 10.0;
+    brain.decision = 10.0;
+    brain.reaction = 0.6;
+    brain.fire_delay = 0.0;
+    brain.aim_error = 0.0;
+    brain.mode = BotMode::Fight;
+    brain.goal = Vec2::new(0.0, 15.0);
+    let mut fired_at_enemy = false;
+    for _ in 0..60 {
+        let command = bot_command(&mut s, bot, STEP);
+        s.tanks[bot].aim = command.aim;
+        assert!(
+            command.aim.abs() < 0.1,
+            "the turret left the visible enemy for cover at aim {}",
+            command.aim
+        );
+        fired_at_enemy |= command.fire;
+    }
+    assert!(fired_at_enemy, "the bot fires once its reaction passes");
+}
+
+#[test]
 fn breaching_checks_the_standard_shell_lane_even_when_spread_ammo_is_preferred() {
     let mut s = game();
     clear(&mut s);
