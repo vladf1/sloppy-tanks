@@ -39,18 +39,28 @@ export function killFeedNames(
   return [name(event.owner), name(event.id)];
 }
 
+/** Whether the viewer destroyed someone else. Decided by tank identity, not by the displayed
+ * names, since another player may be called "YOU". */
+export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: number): boolean {
+  return event.owner === viewerId && event.id !== viewerId;
+}
+
 /** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
  * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
- * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills (`YOU` first,
- * and not also the victim) are highlighted; `entering` is the newest row, which plays the pop-in
- * once rather than again each time older rows shift down. */
-export function showFeedRow(row: HTMLElement, names: readonly string[], entering = false): void {
-  const key = names.join("\n");
+ * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills are highlighted;
+ * `entering` is the newest row, which plays the pop-in once rather than again each time older
+ * rows shift down. */
+export function showFeedRow(
+  row: HTMLElement,
+  names: readonly string[],
+  ownKill = false,
+  entering = false,
+): void {
+  const key = (ownKill ? "*" : "") + names.join("\n");
   if (row.dataset.names === key) {
     return;
   }
   row.dataset.names = key;
-  const ownKill = names.length > 1 && names[0] === "YOU" && names[1] !== "YOU";
   row.classList.toggle("own-kill", ownKill);
   row.classList.remove("own-kill-new");
   if (ownKill && entering) {

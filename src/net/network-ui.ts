@@ -4,6 +4,7 @@ import { AMMO_ORDER } from "../game/ammo-options";
 import {
   deathCause,
   effectsLabel,
+  isOwnKill,
   killFeedNames,
   rankTitle,
   showFeedRow,
@@ -157,7 +158,7 @@ export class NetworkUI {
   readonly panel: HTMLElement;
   private lastLobby?: Lobby;
   private playerRows = new Map<number, HTMLElement>();
-  private feed: { names: string[]; time: number }[] = [];
+  private feed: { names: string[]; ownKill: boolean; time: number }[] = [];
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
@@ -372,12 +373,12 @@ export class NetworkUI {
       for (const player of lobby.players) {
         const previous = this.lastLobby.players.find((item) => item.playerId === player.playerId);
         if (player.playerId !== playerId && player.connected && !previous?.connected) {
-          this.addFeed(
+          this.addFeed([
             player.name +
               (previous
                 ? " reconnected"
                 : " joined " + (player.team === 0 ? "Blue" : "Red") + " team"),
-          );
+          ]);
         }
       }
     }
@@ -673,15 +674,15 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
-  private addFeed(...names: string[]): void {
-    this.feed.unshift({ names, time: 5 });
+  private addFeed(names: string[], ownKill = false): void {
+    this.feed.unshift({ names, ownKill, time: 5 });
     this.feed.length = Math.min(4, this.feed.length);
   }
   event(event: HudEvent, hud: Hud): void {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
-      this.addFeed(...killFeedNames(event, viewerId, hud.scoreboard));
+      this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId));
     }
     if (event.id === viewerId) {
       if (event.type === "death") {
@@ -771,7 +772,7 @@ export class NetworkUI {
         node = document.createElement("div");
         feed.append(node);
       }
-      showFeedRow(node, row.names, index === 0);
+      showFeedRow(node, row.names, row.ownKill, index === 0);
     });
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {
