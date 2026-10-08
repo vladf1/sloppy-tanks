@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
-import { deathCause, effectsLabel, rankTitle } from "../src/game/hud-feedback";
+import {
+  deathCause,
+  effectsLabel,
+  isOwnKill,
+  killFeedNames,
+  rankTitle,
+} from "../src/game/hud-feedback";
 
 const death: EngineEvent = {
   type: "death",
@@ -40,6 +46,21 @@ test("missing damage details and departed killers still produce a useful death e
     deathCause({ ...death, damageSource: undefined }, scoreboard),
     "Bob <b>literal</b> killed you with an unknown weapon.",
   );
+});
+
+test("kill feed names the viewer as YOU and an ownerless kill as the yard", () => {
+  assert.deepEqual(killFeedNames(death, 4, scoreboard), ["Bob <b>literal</b>", "YOU"]);
+  assert.deepEqual(killFeedNames({ id: 8, owner: undefined }, 4, scoreboard), [
+    "YARD",
+    "Bob <b>literal</b>",
+  ]);
+});
+
+test("an own kill follows tank identity, not a player named YOU", () => {
+  assert.equal(isOwnKill({ id: 7, owner: 4 }, 4), true);
+  assert.equal(isOwnKill({ id: 4, owner: 4 }, 4), false);
+  assert.equal(isOwnKill({ id: 4, owner: 7 }, 4), false);
+  assert.equal(isOwnKill({ id: 7, owner: undefined }, 4), false);
 });
 
 const noEffects = {

@@ -1,7 +1,16 @@
 import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
-import { deathCause, effectsLabel, rankTitle } from "../game/hud-feedback";
+import {
+  type FeedRow,
+  deathCause,
+  effectsLabel,
+  isOwnKill,
+  killFeedNames,
+  newFeedRow,
+  rankTitle,
+  showFeedRow,
+} from "../game/hud-feedback";
 import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
 import type {
   EngineEvent,
@@ -151,7 +160,7 @@ export class NetworkUI {
   readonly panel: HTMLElement;
   private lastLobby?: Lobby;
   private playerRows = new Map<number, HTMLElement>();
-  private feed: { text: string; time: number }[] = [];
+  private feed: FeedRow[] = [];
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
@@ -366,12 +375,12 @@ export class NetworkUI {
       for (const player of lobby.players) {
         const previous = this.lastLobby.players.find((item) => item.playerId === player.playerId);
         if (player.playerId !== playerId && player.connected && !previous?.connected) {
-          this.addFeed(
+          this.addFeed([
             player.name +
               (previous
                 ? " reconnected"
                 : " joined " + (player.team === 0 ? "Blue" : "Red") + " team"),
-          );
+          ]);
         }
       }
     }
@@ -667,17 +676,15 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
-  private addFeed(text: string): void {
-    this.feed.unshift({ text, time: 5 });
+  private addFeed(names: string[], ownKill = false): void {
+    this.feed.unshift(newFeedRow(names, ownKill));
     this.feed.length = Math.min(4, this.feed.length);
   }
   event(event: HudEvent, hud: Hud): void {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
-      const name = (id: number | undefined) =>
-        id === viewerId ? "YOU" : (hud.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-      this.addFeed(name(event.owner) + "  ▸  " + name(event.id));
+      this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId));
     }
     if (event.id === viewerId) {
       if (event.type === "death") {
@@ -762,14 +769,12 @@ export class NetworkUI {
       feed.lastElementChild!.remove();
     }
     this.feed.forEach((row, index) => {
-      let node = feed.children[index];
+      let node = feed.children[index] as HTMLElement | undefined;
       if (!node) {
         node = document.createElement("div");
         feed.append(node);
       }
-      if (node.textContent !== row.text) {
-        node.textContent = row.text;
-      }
+      showFeedRow(node, row, index === 0);
     });
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {

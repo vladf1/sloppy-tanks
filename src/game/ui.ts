@@ -3,7 +3,16 @@ import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
-import { deathCause, effectsLabel, rankTitle } from "./hud-feedback";
+import {
+  type FeedRow,
+  deathCause,
+  effectsLabel,
+  isOwnKill,
+  killFeedNames,
+  newFeedRow,
+  rankTitle,
+  showFeedRow,
+} from "./hud-feedback";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -40,7 +49,7 @@ export class UI {
   state?: HudState;
   private readonly battleSetup: HTMLElement;
   private playModes?: { close(): void };
-  feedRows: { text: string; time: number }[] = [];
+  feedRows: FeedRow[] = [];
   constructor(
     root: HTMLElement,
     /** The Battle Setup choices the in-game menu edits. */
@@ -231,9 +240,9 @@ export class UI {
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      const name = (id: number | undefined) =>
-        id === human.id ? "YOU" : (state.scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-      this.feedRows.unshift({ text: `${name(event.owner)}  ▸  ${name(event.id)}`, time: 5 });
+      this.feedRows.unshift(
+        newFeedRow(killFeedNames(event, human.id, state.scoreboard), isOwnKill(event, human.id)),
+      );
     }
   }
   update(state: HudState, dt: number): void {
@@ -332,14 +341,12 @@ export class UI {
       this.feed.lastElementChild!.remove();
     }
     for (let i = 0; i < this.feedRows.length; i++) {
-      let row = this.feed.children[i];
+      let row = this.feed.children[i] as HTMLElement | undefined;
       if (!row) {
         row = document.createElement("div");
         this.feed.append(row);
       }
-      if (row.textContent !== this.feedRows[i].text) {
-        row.textContent = this.feedRows[i].text;
-      }
+      showFeedRow(row, this.feedRows[i], i === 0);
     }
   }
 }

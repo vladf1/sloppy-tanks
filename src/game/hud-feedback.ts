@@ -28,6 +28,71 @@ export function deathCause(
       : `You were destroyed by ${weapon}.`;
 }
 
+/** The killer and victim of a kill-feed row, as both HUDs name them. */
+export function killFeedNames(
+  event: Pick<EngineEvent, "id" | "owner">,
+  viewerId: number,
+  scoreboard: readonly { id: number; name: string }[],
+): string[] {
+  const name = (id: number | undefined) =>
+    id === viewerId ? "YOU" : (scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
+  return [name(event.owner), name(event.id)];
+}
+
+/** Whether the viewer destroyed someone else. Decided by tank identity, not by the displayed
+ * names, since another player may be called "YOU". */
+export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: number): boolean {
+  return event.owner === viewerId && event.id !== viewerId;
+}
+
+/** One kill-feed row: the names to show and how long it stays (seconds). `seq` tells two
+ * otherwise identical rows apart, such as the same kill twice in one window. */
+export interface FeedRow {
+  names: string[];
+  ownKill: boolean;
+  time: number;
+  seq: number;
+}
+
+let lastFeedSeq = 0;
+
+export function newFeedRow(names: string[], ownKill = false): FeedRow {
+  return { names, ownKill, time: 5, seq: ++lastFeedSeq };
+}
+
+/** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
+ * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
+ * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills are highlighted;
+ * `entering` is the newest row, which plays the pop-in once rather than again each time older
+ * rows shift down. */
+export function showFeedRow(
+  row: HTMLElement,
+  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq">,
+  entering = false,
+): void {
+  const { names, ownKill } = feedRow;
+  const key = `${feedRow.seq}\n${names.join("\n")}`;
+  if (row.dataset.names === key) {
+    return;
+  }
+  row.dataset.names = key;
+  row.classList.toggle("own-kill", ownKill);
+  row.classList.remove("own-kill-new");
+  if (ownKill && entering) {
+    // Reading offsetWidth commits the removal so a reused row restarts the animation.
+    void row.offsetWidth;
+    row.classList.add("own-kill-new");
+  }
+  row.replaceChildren(names[0]);
+  for (const name of names.slice(1)) {
+    const arrow = document.createElement("i");
+    arrow.className = "feed-arrow";
+    arrow.setAttribute("role", "img");
+    arrow.setAttribute("aria-label", "destroyed");
+    row.append(arrow, name);
+  }
+}
+
 export function effectsLabel(
   tank: Pick<
     HumanState,
