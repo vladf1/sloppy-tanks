@@ -684,3 +684,78 @@ fn a_server_that_never_answers_ends_as_lost_after_the_reconnect_window() {
     assert!((30_000.0..36_000.0).contains(&at), "gave up at {at}");
     assert!(opened >= 6, "backoff retried {opened} times");
 }
+
+/// The own hull, predicted: a press moves it on the next frames whatever the round trip,
+/// the prediction runs about a round trip ahead of the host, and in open driving the
+/// host's snapshots correct it by millimetres.
+#[test]
+fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
+    for (rtt, jitter) in [(0.0, 0.0), (100.0, 0.0), (200.0, 0.0), (100.0, 10.0)] {
+        let mut net = Network::new();
+        let alice = net.add(Some(DelaySettings {
+            half_ms: rtt / 2.0,
+            jitter_ms: jitter,
+            stall_ms: 0.0,
+        }));
+        let mut room = settings(MapId::Harbor);
+        room.humans_only = true;
+        net.connect(alice, choice("alice", Some(room)));
+        net.run(3000.0);
+        assert!(net.peers[alice].client.active_input());
+        let mut responses = Vec::new();
+        // Presses, holds, turns and releases, each long enough to settle.
+        let script = [
+            (0.0, 1.0, 700.0),
+            (0.0, 0.0, 500.0),
+            (1.0, 0.0, 600.0),
+            (0.0, -1.0, 600.0),
+            (0.0, 0.0, 500.0),
+            (-0.7071, 0.7071, 700.0),
+            (0.0, 0.0, 500.0),
+        ];
+        for (move_x, move_z, hold) in script.iter().cycle().take(14) {
+            let viewer = |net: &Network| {
+                let viewer = net.peers[alice].client.display().unwrap().viewer().unwrap();
+                (viewer.position.x, viewer.position.z, viewer.heading)
+            };
+            let before = viewer(&net);
+            let was_idle =
+                net.peers[alice].input.move_x == 0.0 && net.peers[alice].input.move_z == 0.0;
+            net.peers[alice].input.move_x = *move_x;
+            net.peers[alice].input.move_z = *move_z;
+            let mut frames = 0;
+            while frames < 60 {
+                net.run(FRAME_MS);
+                frames += 1;
+                let (x, z, heading) = viewer(&net);
+                if (x - before.0).hypot(z - before.1) > 0.02 || (heading - before.2).abs() > 0.02 {
+                    break;
+                }
+            }
+            if was_idle {
+                responses.push(frames);
+            }
+            net.run(hold - frames as f64 * FRAME_MS);
+        }
+        let stats = net.peers[alice].client.stats(net.now);
+        eprintln!(
+            "rtt {rtt} jitter {jitter}: response frames {responses:?}, lead {:.0} ms, \
+             {} corrections, {:.4} m/s, p95 {:.4} m, max {:.4} m",
+            stats.prediction_lead_ms,
+            stats.corrections,
+            stats.correction_m_per_s,
+            stats.correction_p95_m,
+            stats.correction_max_m
+        );
+        assert!(
+            responses.iter().all(|frames| *frames <= 3),
+            "a press shows within three frames: {responses:?}"
+        );
+        assert!(stats.corrections > 100);
+        assert!(stats.correction_p95_m < 0.02, "{stats:?}");
+        assert!(
+            stats.prediction_lead_ms > rtt && stats.prediction_lead_ms < rtt + 150.0,
+            "{stats:?}"
+        );
+    }
+}

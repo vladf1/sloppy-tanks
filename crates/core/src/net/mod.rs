@@ -22,13 +22,15 @@
 //! - [`client`]: `NetworkClient`, the connection and room session state machine.
 //! - [`network_timeline`], [`render_timeline`], [`playout_clock`]: delayed, interpolated
 //!   display of remote state with a smoothed local hull.
-//! - [`prediction`]: the viewer's own hull, replayed from the host's state ahead of it.
+//! - [`prediction`], [`hull_prediction`]: the viewer's own hull, replayed from the host's
+//!   state ahead of it, and when and how it is stepped, corrected and drawn.
 //! - [`input_cadence`]: when input goes out; [`transport_delay`]: development latency.
 //! - [`client_setup`]: pending-join validation and serialization.
 
 pub mod client;
 pub mod client_setup;
 pub mod fixed_step_clock;
+pub mod hull_prediction;
 pub mod input_cadence;
 pub mod json;
 pub mod match_host;

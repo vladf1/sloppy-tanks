@@ -45,9 +45,10 @@
 
 use serde_json::Value;
 
+use super::hull_prediction::{HostUpdate, HullPrediction};
 use super::input_cadence::{InputCadence, InputSample};
 use super::network_timeline::NetworkTimeline;
-use super::player_controls::{Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
+use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::protocol::{
     CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
     MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
@@ -57,7 +58,7 @@ use super::replication::{BinaryMessage, StateMirror, read_binary_message};
 use super::schema::{ReadResult, Record, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
 use crate::sim::ammunition::{AMMO_ORDER, has_ammo_for};
-use crate::sim::math::Random;
+use crate::sim::math::{Random, Vec2};
 use crate::sim::render_state::RenderState;
 use crate::sim::types::{
     AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, Weapon,
@@ -266,6 +267,16 @@ pub struct NetworkStats {
     pub late_batches: u64,
     /// The longest wait between consecutive batches this page session.
     pub longest_batch_gap_ms: f64,
+    /// How far the own hull's prediction runs ahead of the newest host tick.
+    pub prediction_lead_ms: f64,
+    /// Snapshots that corrected a continuing prediction, the corrections' total and
+    /// largest distance, their distance per second of prediction, and the 95th percentile
+    /// of recent ones (metres).
+    pub corrections: u64,
+    pub correction_total_m: f64,
+    pub correction_max_m: f64,
+    pub correction_m_per_s: f64,
+    pub correction_p95_m: f64,
 }
 
 struct Socket {
@@ -327,6 +338,9 @@ pub struct NetworkClient {
     late_batches: u64,
     longest_batch_gap_ms: f64,
     applied_input: i64,
+    prediction: HullPrediction,
+    /// The newest received scene, refilled for prediction.
+    prediction_scene: RenderState,
     actions: Vec<ClientAction>,
     notices: Vec<ClientNotice>,
 }
@@ -386,6 +400,8 @@ impl NetworkClient {
             late_batches: 0,
             longest_batch_gap_ms: 0.0,
             applied_input: 0,
+            prediction: HullPrediction::default(),
+            prediction_scene: RenderState::default(),
             actions: Vec::new(),
             notices: Vec::new(),
         }
@@ -467,6 +483,16 @@ impl NetworkClient {
             connected: self.connected,
             late_batches: self.late_batches,
             longest_batch_gap_ms: self.longest_batch_gap_ms,
+            prediction_lead_ms: self.prediction.lead_ms(now_ms, self.mirror.tick),
+            corrections: self.prediction.stats.count,
+            correction_total_m: self.prediction.stats.total,
+            correction_max_m: self.prediction.stats.largest,
+            correction_m_per_s: if self.prediction.stats.seconds > 0.0 {
+                self.prediction.stats.total / self.prediction.stats.seconds
+            } else {
+                0.0
+            },
+            correction_p95_m: self.prediction.stats.p95(),
         }
     }
 
@@ -760,6 +786,7 @@ impl NetworkClient {
                     self.ready_round = 0;
                     self.notices.push(ClientNotice::ResetFeedback);
                 }
+                self.prediction.reset();
                 self.mirror.needs_full = true;
                 self.active = false;
                 self.control = None;
@@ -772,6 +799,7 @@ impl NetworkClient {
                 }
                 if lobby.round_id != self.round_id {
                     self.round_id = lobby.round_id;
+                    self.prediction.reset();
                     self.observed_tick = 0;
                     self.mirror.needs_full = true;
                     self.active = false;
@@ -826,6 +854,7 @@ impl NetworkClient {
                 });
                 if changed {
                     self.clear_input();
+                    self.prediction.clear();
                 }
                 let driver = next.driver;
                 self.control = Some(next);
@@ -857,6 +886,7 @@ impl NetworkClient {
                 self.observed_tick = self.mirror.tick;
                 self.requested_full = false;
                 self.clear_input();
+                self.prediction.clear();
                 self.reset_display(now_ms)?;
                 if self.ready_round != self.round_id {
                     self.prepare(now_ms);
@@ -866,6 +896,14 @@ impl NetworkClient {
             }
             BinaryMessage::Snapshot(mut batch) => {
                 self.applied_input = i64::try_from(batch.ack).map_err(|_| "Invalid ack")?;
+                let host = HostUpdate {
+                    ack: Ack {
+                        input_seq: self.applied_input,
+                        applied_tick: batch.ack_tick,
+                        arrival_tick: batch.ack_arrival,
+                    },
+                    hull: batch.hull,
+                };
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
                     let gap = now_ms - previous;
@@ -905,9 +943,27 @@ impl NetworkClient {
                 }
                 if pushed {
                     self.timeline.arrive(self.last_snapshot_ms);
+                    self.predict_from(host, now_ms)?;
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Restarts the own hull's prediction from the host's hull in a snapshot batch. A
+    /// bot-driven seat or another life's hull predicts nothing.
+    fn predict_from(&mut self, mut host: HostUpdate, now_ms: f64) -> ReadResult<()> {
+        let Some(control) = &self.control else {
+            return Ok(());
+        };
+        host.hull = host
+            .hull
+            .filter(|hull| control.driver == Driver::Human && hull.life == control.life);
+        let viewer = control.tank_id;
+        self.mirror
+            .fill_render_state(&mut self.prediction_scene, viewer)?;
+        self.prediction
+            .receive(&host, &self.prediction_scene, now_ms, self.rtt_ms);
         Ok(())
     }
 
@@ -1229,10 +1285,32 @@ impl NetworkClient {
         {
             return None;
         }
+        // This frame's input drives the predicted hull before it is drawn.
+        let drive = if self.active_input() {
+            Vec2::new(input.move_x, input.move_z)
+        } else {
+            Vec2::ZERO
+        };
+        self.prediction.advance(now_ms, drive);
         // The battle keeps playing behind the in-battle menu too. The timeline overwrites
         // the baseline or last frame in place.
         let display = self.display.get_or_insert_with(RenderState::default);
         let displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
+        // The own hull is drawn where prediction has it while the displayed tank lives
+        // the predicted life; deaths and respawns still wait for the display clock.
+        if let Some(drawn) = self.prediction.drawn(now_ms) {
+            let viewer_id = display.viewer_id;
+            if let Some(viewer) = display
+                .tanks
+                .iter_mut()
+                .find(|tank| tank.id == viewer_id && tank.alive && tank.life == drawn.life)
+            {
+                viewer.position = drawn.position;
+                viewer.previous = Vec2::new(drawn.position.x, drawn.position.z);
+                viewer.velocity = drawn.velocity;
+                viewer.heading = drawn.heading;
+            }
+        }
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
         let events = displayed
@@ -1320,7 +1398,7 @@ impl NetworkClient {
                 control_epoch,
                 seq: self.seq + 1,
                 observed_tick: self.mirror.tick as i64,
-                tick: None,
+                tick: self.prediction.requested_tick(),
                 move_x: sample.move_x,
                 move_z: sample.move_z,
                 aim: sample.aim,
@@ -1331,6 +1409,7 @@ impl NetworkClient {
         );
         if self.raw(text, now_ms) {
             self.seq += 1;
+            self.prediction.sent(self.seq, now_ms);
             self.cadence.sent(&sample, now_ms);
             self.pending.clear();
             self.pending_weapon = None;

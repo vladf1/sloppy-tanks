@@ -736,6 +736,12 @@ impl NetGame {
                 "connected": network.connected,
                 "lateBatches": network.late_batches,
                 "longestBatchGapMs": network.longest_batch_gap_ms,
+                "predictionLeadMs": network.prediction_lead_ms,
+                "corrections": network.corrections,
+                "correctionTotalM": network.correction_total_m,
+                "correctionMaxM": network.correction_max_m,
+                "correctionMPerS": network.correction_m_per_s,
+                "correctionP95M": network.correction_p95_m,
             }),
         );
         Value::Object(stats).to_string()

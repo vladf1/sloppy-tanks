@@ -866,4 +866,12 @@ impl StateMirror {
         self.shots.fill(&mut state.shots, self.tick as f64);
         Ok(state)
     }
+
+    /// Fills `state` for `viewer`, reusing its allocations.
+    pub fn fill_render_state(&self, state: &mut RenderState, viewer: u32) -> ReadResult<()> {
+        self.state
+            .as_ref()
+            .ok_or_else(|| "No baseline".to_string())?
+            .fill_render_state(state, viewer)
+    }
 }
