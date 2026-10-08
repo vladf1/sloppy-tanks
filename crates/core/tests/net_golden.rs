@@ -8,7 +8,8 @@
 //! Protocol 3's binary state messages are compared through their JSON view, and their
 //! fixed headers are pinned by `fixtures/net-golden-binary.json`, which the traffic bots'
 //! header reader also reads; rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
-//! format change.
+//! format change. Protocol 4's additions (each tank's `drive`, the snapshot's `ackTick`,
+//! `ackArrival` and `hull`) were added to the JSON signatures by hand.
 
 mod net_support;
 

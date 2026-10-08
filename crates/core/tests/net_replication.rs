@@ -193,8 +193,9 @@ fn frames_omit_identity_and_unchanged_data_and_scenes_carry_only_presentation_fi
     let mut view = view_from(&full(&mut stream, &scene, 0));
     let mut same_scene = scene.clone();
     let message = frame(&mut stream, &mut same_scene, 1);
-    // Type, round, tick, ack, seq, count; then tick back, elapsed and an empty section mask.
-    assert_eq!(message.len(), 6 + 3);
+    // Type, round, tick, ack, seq, count, the ack's two ticks and no hull; then tick back,
+    // elapsed and an empty section mask.
+    assert_eq!(message.len(), 9 + 3);
     let frame = frame_json(&mut view, &message);
     let keys: Vec<&String> = frame.as_object().unwrap().keys().collect();
     assert_eq!(keys.len(), 3);

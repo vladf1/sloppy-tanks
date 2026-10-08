@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::player_controls::Ack;
 use sloppy_core::net::protocol::{CONTENT_VERSION, FULL_MESSAGE, Message, PROTOCOL_VERSION};
 use sloppy_core::net::replication::{
     BinaryMessage, FrameExtras, StateMirror, read_binary_message, write_snapshot_header,
@@ -372,7 +373,19 @@ pub fn last_seq(bytes: &[u8]) -> u64 {
 pub fn batch(round_id: u64, ack: u64, first_seq: u64, frames: &[(u64, Vec<u8>)]) -> Vec<u8> {
     let last = frames.last().map_or(0, |(tick, _)| *tick);
     let mut out = Vec::new();
-    write_snapshot_header(&mut out, round_id, last, ack, first_seq, frames.len());
+    let ack = Ack {
+        input_seq: ack as i64,
+        ..Ack::default()
+    };
+    write_snapshot_header(
+        &mut out,
+        round_id,
+        last,
+        &ack,
+        first_seq,
+        frames.len(),
+        None,
+    );
     for (tick, body) in frames {
         put_varint(&mut out, last - tick);
         out.extend_from_slice(body);

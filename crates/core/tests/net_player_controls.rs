@@ -164,7 +164,8 @@ fn ordered_actions_survive_coalesced_inputs_run_once_and_stale_clicks_expire_ind
         controls.ack,
         Ack {
             input_seq: 2,
-            applied_tick: 1
+            applied_tick: 1,
+            arrival_tick: 1,
         }
     );
     let second = controls.command(&mut sim, 2, 30.0).unwrap();
@@ -180,7 +181,8 @@ fn ordered_actions_survive_coalesced_inputs_run_once_and_stale_clicks_expire_ind
         controls.ack,
         Ack {
             input_seq: 2,
-            applied_tick: 1
+            applied_tick: 1,
+            arrival_tick: 1,
         }
     );
     controls.accept(
@@ -256,7 +258,8 @@ fn validation_rejects_malformed_out_of_range_stale_duplicate_and_over_capacity_m
         controls.ack,
         Ack {
             input_seq: 1,
-            applied_tick: 1
+            applied_tick: 1,
+            arrival_tick: 1,
         }
     );
 }
@@ -404,6 +407,7 @@ fn wire_input_is_rounded_omits_idle_defaults_and_is_accepted_as_the_same_command
         control_epoch: e,
         seq: 1,
         observed_tick: 0,
+        tick: None,
         move_x: 0.0,
         move_z: 0.0,
         aim: Aim::Point {

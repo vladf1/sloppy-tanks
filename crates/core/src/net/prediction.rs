@@ -1,7 +1,7 @@
 //! Client-side prediction of the viewer's own hull.
 //!
-//! The host sends the viewer its hull at full precision ([`HullState`]) with every
-//! snapshot batch. [`TankPredictor`] keeps a small Rapier world (the ground, the arena's
+//! The host sends the viewer its hull bit for bit ([`HullState`]) with every snapshot
+//! batch. [`TankPredictor`] keeps a small Rapier world (the ground, the arena's
 //! cover and the other tanks as the newest snapshot placed them) and drives one hull
 //! through the simulation's own drive model at the fixed step, so replaying the inputs
 //! the host has not applied yet reproduces what the host will compute. Everything else
@@ -11,10 +11,11 @@
 use std::collections::HashMap;
 
 use rapier3d::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::scene_codec::VEHICLE_KINDS;
-use super::schema::{ReadResult, Record, choice, field, id};
+use super::schema::ReadResult;
+use super::wire::{WireReader, put_varint};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::{ARENA, STEP, group};
 use crate::sim::math::{Point3, Quat4, Vec2};
@@ -46,52 +47,38 @@ pub struct HullState {
     pub speed: f64,
 }
 
-// Numbers travel as strings: Rust parses them back to the same bits, which a JSON number
-// read through serde_json's fast float parser does not guarantee.
-fn write_f32s(out: &mut String, values: &[f32]) {
-    use std::fmt::Write;
-    out.push('"');
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            out.push(' ');
-        }
-        // The shortest spelling that reads back to the same f32.
-        let _ = write!(out, "{value}");
+fn put_f32s(out: &mut Vec<u8>, point: Point3) {
+    for value in [point.x, point.y, point.z] {
+        out.extend_from_slice(&(value as f32).to_le_bytes());
     }
-    out.push('"');
 }
 
-fn read_f32s<const N: usize>(value: Option<&Value>) -> ReadResult<[f32; N]> {
-    let text = value.and_then(Value::as_str).ok_or("Invalid hull vector")?;
-    let mut out = [0.0; N];
-    let mut parts = text.split(' ');
-    for slot in &mut out {
-        *slot = parts
-            .next()
-            .and_then(|part| part.parse::<f32>().ok())
-            .filter(|value| value.is_finite())
-            .ok_or("Invalid hull vector")?;
+fn read_f32(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let bytes = reader.bytes(4)?;
+    let value = f32::from_le_bytes(bytes.try_into().expect("four bytes"));
+    if value.is_finite() {
+        Ok(value as f64)
+    } else {
+        Err("Invalid hull number".into())
     }
-    if parts.next().is_some() {
-        return Err("Invalid hull vector".into());
+}
+
+fn read_f64(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let bytes = reader.bytes(8)?;
+    let value = f64::from_le_bytes(bytes.try_into().expect("eight bytes"));
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("Invalid hull number".into())
     }
-    Ok(out)
 }
 
-fn read_f64(value: Option<&Value>) -> ReadResult<f64> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|text| text.parse::<f64>().ok())
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| "Invalid hull number".into())
-}
-
-fn f32s(point: Point3) -> [f32; 3] {
-    [point.x as f32, point.y as f32, point.z as f32]
-}
-
-fn point([x, y, z]: [f32; 3]) -> Point3 {
-    Point3::new(x as f64, y as f64, z as f64)
+fn read_point(reader: &mut WireReader<'_>) -> ReadResult<Point3> {
+    Ok(Point3::new(
+        read_f32(reader)?,
+        read_f32(reader)?,
+        read_f32(reader)?,
+    ))
 }
 
 impl HullState {
@@ -115,48 +102,69 @@ impl HullState {
         })
     }
 
-    /// The wire form, a JSON object with the physics values at full precision.
-    pub fn write(&self, out: &mut String) {
-        use std::fmt::Write;
+    /// The wire form: the physics values bit for bit, as Rapier's `f32` and the drive
+    /// model's `f64`, little-endian.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        put_varint(out, self.tick);
+        put_varint(out, u64::from(self.life));
+        out.push(
+            VEHICLE_KINDS
+                .iter()
+                .position(|(_, kind)| *kind == self.kind)
+                .expect("every chassis has a wire name") as u8,
+        );
+        put_f32s(out, self.position);
         let q = self.rotation;
-        let _ = write!(
-            out,
-            "{{\"tick\":{},\"life\":{},\"kind\":\"{}\",\"p\":",
-            self.tick,
-            self.life,
-            self.kind.as_str()
-        );
-        write_f32s(out, &f32s(self.position));
-        out.push_str(",\"q\":");
-        write_f32s(out, &[q.x as f32, q.y as f32, q.z as f32, q.w as f32]);
-        out.push_str(",\"v\":");
-        write_f32s(out, &f32s(self.velocity));
-        out.push_str(",\"w\":");
-        write_f32s(out, &f32s(self.angular_velocity));
-        let _ = write!(
-            out,
-            ",\"heading\":\"{}\",\"speed\":\"{}\"}}",
-            self.heading, self.speed
-        );
+        for value in [q.x, q.y, q.z, q.w] {
+            out.extend_from_slice(&(value as f32).to_le_bytes());
+        }
+        put_f32s(out, self.velocity);
+        put_f32s(out, self.angular_velocity);
+        out.extend_from_slice(&self.heading.to_le_bytes());
+        out.extend_from_slice(&self.speed.to_le_bytes());
     }
 
-    pub fn read(source: &Record) -> ReadResult<Self> {
-        let [x, y, z, w] = field(source, "q", read_f32s::<4>)?;
+    pub fn read(reader: &mut WireReader<'_>) -> ReadResult<Self> {
+        let tick = reader.varint()?;
+        let life = reader.varint32()?;
+        let kind = VEHICLE_KINDS
+            .get(reader.byte()? as usize)
+            .ok_or("Invalid hull kind")?
+            .1;
+        let position = read_point(reader)?;
+        let rotation = Quat4 {
+            x: read_f32(reader)?,
+            y: read_f32(reader)?,
+            z: read_f32(reader)?,
+            w: read_f32(reader)?,
+        };
         Ok(Self {
-            tick: field(source, "tick", id)?,
-            life: field(source, "life", id)? as u32,
-            kind: field(source, "kind", |value| choice(value, &VEHICLE_KINDS))?,
-            position: point(field(source, "p", read_f32s::<3>)?),
-            rotation: Quat4 {
-                x: x as f64,
-                y: y as f64,
-                z: z as f64,
-                w: w as f64,
-            },
-            velocity: point(field(source, "v", read_f32s::<3>)?),
-            angular_velocity: point(field(source, "w", read_f32s::<3>)?),
-            heading: field(source, "heading", read_f64)?,
-            speed: field(source, "speed", read_f64)?,
+            tick,
+            life,
+            kind,
+            position,
+            rotation,
+            velocity: read_point(reader)?,
+            angular_velocity: read_point(reader)?,
+            heading: read_f64(reader)?,
+            speed: read_f64(reader)?,
+        })
+    }
+
+    /// A readable form for the development wire log.
+    pub fn to_json(&self) -> Value {
+        let point = |p: Point3| json!([p.x, p.y, p.z]);
+        let q = self.rotation;
+        json!({
+            "tick": self.tick,
+            "life": self.life,
+            "kind": self.kind.as_str(),
+            "p": point(self.position),
+            "q": [q.x, q.y, q.z, q.w],
+            "v": point(self.velocity),
+            "w": point(self.angular_velocity),
+            "heading": self.heading,
+            "speed": self.speed,
         })
     }
 }

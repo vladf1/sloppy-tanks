@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::prediction::{HullState, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
-use sloppy_core::net::schema::parse_record;
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
@@ -94,9 +93,9 @@ fn client_scene(sim: &Simulation, viewer: u32) -> RenderState {
 /// The viewer's hull through its wire form, which must keep every bit.
 fn client_hull(sim: &Simulation, viewer: u32, tick: u64) -> Option<HullState> {
     let hull = HullState::capture(sim, tank_index(sim, viewer), tick)?;
-    let mut text = String::new();
-    hull.write(&mut text);
-    let read = HullState::read(&parse_record(&text).unwrap()).unwrap();
+    let mut bytes = Vec::new();
+    hull.write(&mut bytes);
+    let read = HullState::read(&mut WireReader::new(&bytes)).unwrap();
     assert_eq!(read, hull, "the wire form keeps every bit");
     Some(read)
 }

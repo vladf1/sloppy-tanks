@@ -1320,6 +1320,7 @@ impl NetworkClient {
                 control_epoch,
                 seq: self.seq + 1,
                 observed_tick: self.mirror.tick as i64,
+                tick: None,
                 move_x: sample.move_x,
                 move_z: sample.move_z,
                 aim: sample.aim,
