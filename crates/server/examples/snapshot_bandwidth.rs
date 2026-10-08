@@ -61,6 +61,23 @@ struct Totals {
     stripped_raw: u64,
     stripped_deflated: u64,
     advance_ms: Vec<f64>,
+    /// Projectile path entries received: launches, new paths and ends.
+    paths: [u64; 3],
+}
+
+/// Counts a frame's projectile path entries by kind into `counts`.
+fn count_paths(message: &Value, counts: &mut [u64; 3]) {
+    let frames = message["snapshots"].as_array().into_iter().flatten();
+    for entry in frames.flat_map(|frame| frame["paths"].as_array().into_iter().flatten()) {
+        let kind = if entry.get("end").is_some() {
+            2
+        } else if entry.get("weapon").is_some() {
+            0
+        } else {
+            1
+        };
+        counts[kind] += 1;
+    }
 }
 
 fn send(host: &mut MatchHost, now: u64, message: Value) {
@@ -124,6 +141,9 @@ fn run(map_mode: &str, seed: u32) -> Totals {
             // Every context sees the whole stream, warm-up included, like a live socket.
             let deflated = wire.compress(text.as_bytes()).len();
             let mut value: Value = serde_json::from_str(&text).expect("host sends JSON");
+            if interval >= warmup {
+                count_paths(&value, &mut totals.paths);
+            }
             let whole_text = value.to_string();
             strip_projectiles(&mut value);
             let stripped_text = value.to_string();
@@ -169,12 +189,15 @@ fn main() {
             let mean = totals.advance_ms.iter().sum::<f64>() / n as f64;
             let p95 = totals.advance_ms[(n * 95 / 100).min(n - 1)];
             println!(
-                "{name} seed {seed}: {} msgs, raw {:.0} B/s ({:.1}% projectiles), deflated {:.0} B/s ({:.1}% projectiles), advance mean {mean:.3} ms p95 {p95:.3} ms",
+                "{name} seed {seed}: {} msgs, raw {:.0} B/s ({:.1}% projectiles), deflated {:.0} B/s ({:.1}% projectiles), advance mean {mean:.3} ms p95 {p95:.3} ms, paths/s {:.1} launch {:.1} change {:.1} end",
                 totals.messages,
                 per_second(totals.raw),
                 raw_share * 100.0,
                 per_second(totals.deflated),
                 deflated_share * 100.0,
+                per_second(totals.paths[0]),
+                per_second(totals.paths[1]),
+                per_second(totals.paths[2]),
             );
             runs.push(json!({
                 "seed": seed,
@@ -186,6 +209,11 @@ fn main() {
                 "projectileRawBytesPerSecond": raw_share * per_second(totals.raw),
                 "projectileDeflatedBytesPerSecond": deflated_share * per_second(totals.deflated),
                 "advanceMs": { "n": n, "mean": mean, "p95": p95, "max": totals.advance_ms[n - 1] },
+                "pathsPerSecond": {
+                    "launch": per_second(totals.paths[0]),
+                    "change": per_second(totals.paths[1]),
+                    "end": per_second(totals.paths[2]),
+                },
             }));
         }
         results.insert(name.to_string(), Value::Array(runs));

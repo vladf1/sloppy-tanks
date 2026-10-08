@@ -7,7 +7,7 @@ import { StateMirror } from "./state-mirror.mjs";
 import { contentVersion } from "./content-version.mjs";
 
 /** The wire protocol version (`PROTOCOL_VERSION` in `crates/core/src/net/protocol.rs`). */
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const endpoint = process.env.SLOPPY_SERVER_URL ?? "ws://127.0.0.1:8787";
 const origin = process.env.SLOPPY_ORIGIN ?? "http://127.0.0.1:5173";
 const seconds = Number(process.env.SLOPPY_PLAYER_SECONDS ?? 15);
