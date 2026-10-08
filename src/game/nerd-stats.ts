@@ -124,6 +124,12 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
 const LINK_LABEL = "nerd stats";
 const PANEL_TITLE = "Stats for Nerds";
 
+/** The panel, its corner link and its N shortcut are a debugging aid, on a page opened
+ * with `?debug` only. */
+export function nerdStatsShown(search: string): boolean {
+  return new URLSearchParams(search).has("debug");
+}
+
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
   private readonly element: HTMLElement;

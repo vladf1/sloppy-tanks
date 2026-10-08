@@ -46,7 +46,11 @@ try {
     });
   }
   const [alice, bob] = clients;
-  await alice.page.goto(base);
+  // Alice's pages carry ?debug, which offers the nerd stats panel her room checks; Bob's
+  // stay plain, so they show what players see.
+  const aliceBase = new URL(base);
+  aliceBase.searchParams.set("debug", "");
+  await alice.page.goto(aliceBase.href);
   await openMultiplayerTab(alice.page);
   assert.ok(new URL(alice.page.url()).searchParams.has("multiplayer"), "The tab is kept on reload");
   assert.equal(await alice.page.locator("#tab-single").getAttribute("aria-selected"), "false");

@@ -151,7 +151,7 @@ automatic reconnect and physical multi-touch: driving, arena fire, mines and fir
 to 30 ms of variable delay, and `SLOPPY_STALL=200` holds about one message in fifty
 and queues later ones behind it, like TCP head-of-line blocking. They set the dev
 client's `?latency`, `?jitter` and `?stall` parameters, which also work on their own;
-the added delay preserves message order. Stats for nerds shows the adaptive playout
+the added delay preserves message order. Stats for nerds (on a `?debug` page) shows the adaptive playout
 buffer and the share of frames that ran past the newest snapshot. Browser
 diagnostics exist only in dev builds.
 

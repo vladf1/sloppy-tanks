@@ -2301,29 +2301,33 @@ html.phone,
 .phone #cockpit .aim-hint {
   display: none;
 }
-/* First person and pause keep the corner, with zoom out and in under them: the scoreboard
-   holds the top edge and the drive stick the bottom-left. */
+/* One row across the top: zoom out and in in the left corner, first person and pause in
+   the right, the scoreboard between them; the drive stick holds the bottom-left. Touches
+   between the buttons pass through the row to the arena. */
 .phone .hud-actions {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  left: max(14px, env(safe-area-inset-left));
+  justify-content: flex-end;
 }
-.phone .hud-actions > :is(#view-mode, #pause) {
-  order: -1;
+/* Pushes first person and pause to the right corner, where they stay alone in first
+   person, which has no zoom. */
+.phone #zoom-in {
+  margin-right: auto;
 }
-/* Phones get a tiny "nerds" link in the corner the touch controls leave free. */
+/* Phones get a tiny "nerds" link in the corner the touch controls leave free, held in
+   from the screen's rounded corner, its touch target well beyond its small text. */
 .phone #nerd-stats {
-  right: max(8px, env(safe-area-inset-right));
+  right: max(16px, env(safe-area-inset-right));
   bottom: max(4px, env(safe-area-inset-bottom));
 }
-/* The open panel stops below the corner's two rows of buttons (48 px each, 8 px apart)
-   so they stay in reach; its rows scroll. */
+/* The open panel stops below the top row of buttons (48 px, then an 8 px gap) so they
+   stay in reach; its rows scroll. */
 .phone #nerd-stats.expanded {
   max-height: calc(
-    100dvh - max(14px, env(safe-area-inset-top)) - 112px - max(4px, env(safe-area-inset-bottom))
+    100dvh - max(14px, env(safe-area-inset-top)) - 56px - max(4px, env(safe-area-inset-bottom))
   );
 }
 .phone #nerd-stats:not(.expanded) .nerd-stats-toggle {
-  padding: 4px;
+  padding: 12px 14px;
   font-size: 0;
 }
 .phone #nerd-stats:not(.expanded) .nerd-stats-toggle::after {

@@ -1,7 +1,7 @@
 // The limited phone edition (src/game/phone-mode.ts) on an emulated iPhone 17, the
 // smallest phone it is laid out for (smaller ones still work, unoptimized): Battle Setup
 // offers only the tank, the map and the two tabs, the round is single player on Easy,
-// and the arena shows only the drive stick, first person, pause and zoom (a touch on
+// and the arena shows only the drive stick, zoom, first person and pause (a touch on
 // the arena aims and fires), in landscape and portrait, with a farther camera, no page zoom and short pause
 // and results dialogs. phone-multiplayer-check.mjs plays the Multiplayer tab.
 import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
@@ -71,9 +71,10 @@ try {
       "#score0",
       "#time",
       "#score1",
-      "#nerd-stats",
     ],
     [
+      // The nerd stats link is for ?debug pages only (checked at the end).
+      "#nerd-stats",
       ".touch-aim",
       ".touch-fire",
       ".touch-mine",
@@ -119,6 +120,12 @@ try {
       ".scoreboard",
     ];
     const rects = await Promise.all(selectors.map(box));
+    // One row across the top: zoom at the left of the scoreboard, first person and pause
+    // at its right.
+    const [, view, , zoomOut, zoomIn, scoreboard] = rects;
+    assert.ok(zoomOut.x < zoomIn.x && zoomIn.x + zoomIn.width <= scoreboard.x, "zoom left");
+    assert.ok(view.x >= scoreboard.x + scoreboard.width, "first person and pause right");
+    assert.ok(Math.abs(zoomIn.y - view.y) < 1, "zoom and first person share the top row");
     rects.forEach((rect, i) => {
       assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
       assert.ok(rect.x + rect.width <= width && rect.y + rect.height <= height, selectors[i]);
@@ -308,6 +315,29 @@ try {
     }
     await iphone.close();
   }
+  // A ?debug page offers the tiny "nerds" link: in from the screen's corner, with a touch
+  // target well beyond its text, and a physical touch on it opens the panel.
+  const debugUrl = new URL(url);
+  debugUrl.searchParams.set("debug", "");
+  const debugPhone = await browser.newContext({
+    viewport: { width: 874, height: 402 },
+    screen: { width: 874, height: 402 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const debugPage = await debugPhone.newPage();
+  debugPage.on("pageerror", (error) => errors.push(error.message));
+  await debugPage.goto(debugUrl.href);
+  await debugPage.locator("#startup-overlay[data-state=ready]").waitFor();
+  await startRound(debugPage, { touch: true });
+  const nerds = debugPage.locator("#nerd-stats .nerd-stats-toggle");
+  await nerds.waitFor({ state: "visible" });
+  const link = await nerds.boundingBox();
+  assert.ok(link.width >= 44 && link.height >= 32, "nerds is easy to touch");
+  assert.ok(link.x + link.width <= 874 - 16, "nerds keeps clear of the corner");
+  await debugPage.touchscreen.tap(link.x + link.width / 2, link.y + link.height / 2);
+  await debugPage.locator("#nerd-stats-details").waitFor({ state: "visible" });
+  await debugPhone.close();
   assert.deepEqual(errors, []);
   console.log(
     "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results, iPhone Home Screen tip passed.",
