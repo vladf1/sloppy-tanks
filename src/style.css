@@ -479,6 +479,21 @@ body:has(#settings[open]) .hud-actions {
   background: currentColor;
   clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
+/* Spoken by screen readers, not drawn: the killer is already on screen in the toast. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Outranks `.respawn > p`, which hides the panel's notes: this one must stay announced. */
+.respawn > .sr-only {
+  display: block;
+}
 /* The viewer's own kills stand out from the rest of the feed. */
 #feed .own-kill {
   background: linear-gradient(90deg, #7a4a12d9, #b8841fd9);

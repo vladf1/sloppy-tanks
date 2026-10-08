@@ -4,10 +4,12 @@ import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-optio
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
 import {
+  type FeedRow,
   deathCause,
   effectsLabel,
   isOwnKill,
   killFeedNames,
+  newFeedRow,
   rankTitle,
   showFeedRow,
 } from "./hud-feedback";
@@ -47,7 +49,7 @@ export class UI {
   state?: HudState;
   private readonly battleSetup: HTMLElement;
   private playModes?: { close(): void };
-  feedRows: { names: string[]; ownKill: boolean; time: number }[] = [];
+  feedRows: FeedRow[] = [];
   constructor(
     root: HTMLElement,
     /** The Battle Setup choices the in-game menu edits. */
@@ -174,6 +176,10 @@ export class UI {
     }
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     this.overlay.dataset.state = "ready";
+    const death = this.overlay.querySelector("#death-cause");
+    if (death) {
+      death.textContent = this.deathCause;
+    }
     const { actions } = this;
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
@@ -234,11 +240,9 @@ export class UI {
       this.toast.classList.add("visible");
     }
     if (event.type === "death") {
-      this.feedRows.unshift({
-        names: killFeedNames(event, human.id, state.scoreboard),
-        ownKill: isOwnKill(event, human.id),
-        time: 5,
-      });
+      this.feedRows.unshift(
+        newFeedRow(killFeedNames(event, human.id, state.scoreboard), isOwnKill(event, human.id)),
+      );
     }
   }
   update(state: HudState, dt: number): void {
@@ -342,7 +346,7 @@ export class UI {
         row = document.createElement("div");
         this.feed.append(row);
       }
-      showFeedRow(row, this.feedRows[i].names, this.feedRows[i].ownKill, i === 0);
+      showFeedRow(row, this.feedRows[i], i === 0);
     }
   }
 }

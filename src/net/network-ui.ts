@@ -2,10 +2,12 @@ import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
 import {
+  type FeedRow,
   deathCause,
   effectsLabel,
   isOwnKill,
   killFeedNames,
+  newFeedRow,
   rankTitle,
   showFeedRow,
 } from "../game/hud-feedback";
@@ -158,7 +160,7 @@ export class NetworkUI {
   readonly panel: HTMLElement;
   private lastLobby?: Lobby;
   private playerRows = new Map<number, HTMLElement>();
-  private feed: { names: string[]; ownKill: boolean; time: number }[] = [];
+  private feed: FeedRow[] = [];
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
@@ -675,7 +677,7 @@ export class NetworkUI {
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
   private addFeed(names: string[], ownKill = false): void {
-    this.feed.unshift({ names, ownKill, time: 5 });
+    this.feed.unshift(newFeedRow(names, ownKill));
     this.feed.length = Math.min(4, this.feed.length);
   }
   event(event: HudEvent, hud: Hud): void {
@@ -772,7 +774,7 @@ export class NetworkUI {
         node = document.createElement("div");
         feed.append(node);
       }
-      showFeedRow(node, row.names, row.ownKill, index === 0);
+      showFeedRow(node, row, index === 0);
     });
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {

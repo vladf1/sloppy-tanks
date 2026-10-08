@@ -45,6 +45,21 @@ export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: nu
   return event.owner === viewerId && event.id !== viewerId;
 }
 
+/** One kill-feed row: the names to show and how long it stays (seconds). `seq` tells two
+ * otherwise identical rows apart, such as the same kill twice in one window. */
+export interface FeedRow {
+  names: string[];
+  ownKill: boolean;
+  time: number;
+  seq: number;
+}
+
+let lastFeedSeq = 0;
+
+export function newFeedRow(names: string[], ownKill = false): FeedRow {
+  return { names, ownKill, time: 5, seq: ++lastFeedSeq };
+}
+
 /** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
  * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
  * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills are highlighted;
@@ -52,11 +67,11 @@ export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: nu
  * rows shift down. */
 export function showFeedRow(
   row: HTMLElement,
-  names: readonly string[],
-  ownKill = false,
+  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq">,
   entering = false,
 ): void {
-  const key = (ownKill ? "*" : "") + names.join("\n");
+  const { names, ownKill } = feedRow;
+  const key = `${feedRow.seq}\n${names.join("\n")}`;
   if (row.dataset.names === key) {
     return;
   }

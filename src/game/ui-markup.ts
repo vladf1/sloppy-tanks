@@ -49,6 +49,7 @@ export function menuMarkup(hud: HudState, controlHelp: string): string {
     return `
       <section class="menu respawn">
         <h2>Respawn in <span id="respawn-count">3</span></h2>
+        <p id="death-cause" class="sr-only" role="status"></p>
         </section>`;
   }
   return "";
