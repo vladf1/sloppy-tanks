@@ -618,87 +618,15 @@ impl Simulation {
         d: f64,
         h: f64,
     ) -> (RigidBodyHandle, Vec<ColliderHandle>) {
-        let drum = kind == CoverKind::Drum;
-        let movable = kind.movable();
-        let builder = if movable {
-            RigidBodyBuilder::dynamic()
-                .can_sleep(true)
-                .sleeping(true)
-                .linear_damping(if drum { 0.6 } else { 0.2 })
-                .angular_damping(if drum { 0.3 } else { 0.4 })
-                .ccd_enabled(drum)
-        } else {
-            RigidBodyBuilder::fixed()
-        };
-        let body = self
-            .world
-            .insert_body(builder.translation(vector(x, h / 2.0, z)));
-        let shapes: Vec<ColliderBuilder> = match kind {
-            CoverKind::Teeth | CoverKind::Hedgehog => {
-                quarry_barrier_hulls(kind, w, h, d, dragon_tooth_variant(x, z))
-                    .iter()
-                    .map(|points| convex_hull(points))
-                    .collect()
-            }
-            CoverKind::Drum => vec![barrel_collider(w, h, d)],
-            CoverKind::Rock => {
-                let rock = quarry_rock_shape(w, h, d, quarry_rock_variant(x, z));
-                let vertices = rock
-                    .positions
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|p| Vector::new(p[0], (p[1] as f64 - h / 2.0) as f32, p[2]))
-                    .collect();
-                let indices = rock.indices.as_chunks::<3>().0.to_vec();
-                vec![
-                    ColliderBuilder::trimesh(vertices, indices)
-                        .expect("authored rock mesh is valid"),
-                ]
-            }
-            _ => vec![ColliderBuilder::cuboid(
-                (w / 2.0) as f32,
-                (h / 2.0) as f32,
-                (d / 2.0) as f32,
-            )],
-        };
-        let surface = cover_surface(kind);
-        let count = shapes.len() as f64;
-        let colliders = shapes
+        let parts = cover_parts(kind, x, z, w, d, h);
+        let body = self.world.insert_body(parts.body);
+        let colliders = parts
+            .colliders
             .into_iter()
-            .map(|shape| {
-                let shape = if movable {
-                    let mass = if drum {
-                        0.45
-                    } else if kind == CoverKind::Teeth {
-                        DRAGON_TOOTH_MASS
-                    } else {
-                        6.0
-                    };
-                    let material = debris_material(surface);
-                    shape
-                        .collision_groups(interaction_groups(group::MOVABLE_COVER))
-                        .mass((mass / count) as f32)
-                        .friction(material.friction as f32)
-                        .restitution(material.restitution as f32)
-                } else {
-                    shape
-                        .collision_groups(interaction_groups(group::COVER))
-                        .friction(0.4)
-                };
-                self.world.insert_collider(shape, Some(body))
-            })
+            .map(|collider| self.world.insert_collider(collider, Some(body)))
             .collect();
-        if kind == CoverKind::Teeth {
-            // Tanks use the navigation footprint so the slope cannot lift their planar hulls.
-            // Shells still hit only the visible pyramid, including its open upper shoulders.
-            self.world.insert_collider(
-                ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
-                    .collision_groups(interaction_groups(group::TOOTH_CONTACT))
-                    .mass(0.0)
-                    .friction(0.8),
-                Some(body),
-            );
+        if let Some(footprint) = parts.tank_footprint {
+            self.world.insert_collider(footprint, Some(body));
         }
         (body, colliders)
     }
@@ -1271,6 +1199,96 @@ pub struct SnapshotCounts {
     pub mines: usize,
     pub fragments: usize,
     pub covers: usize,
+}
+
+/// A cover's body and colliders as the simulation builds them, shared with client
+/// prediction so its copy of the arena collides exactly like the server's.
+pub struct CoverParts {
+    pub body: RigidBodyBuilder,
+    /// The cover's own colliders; the first is its `collider`.
+    pub colliders: Vec<ColliderBuilder>,
+    /// A tank-only footprint that is not part of the cover's hit volume.
+    pub tank_footprint: Option<ColliderBuilder>,
+}
+
+pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> CoverParts {
+    let drum = kind == CoverKind::Drum;
+    let movable = kind.movable();
+    let builder = if movable {
+        RigidBodyBuilder::dynamic()
+            .can_sleep(true)
+            .sleeping(true)
+            .linear_damping(if drum { 0.6 } else { 0.2 })
+            .angular_damping(if drum { 0.3 } else { 0.4 })
+            .ccd_enabled(drum)
+    } else {
+        RigidBodyBuilder::fixed()
+    };
+    let shapes: Vec<ColliderBuilder> = match kind {
+        CoverKind::Teeth | CoverKind::Hedgehog => {
+            quarry_barrier_hulls(kind, w, h, d, dragon_tooth_variant(x, z))
+                .iter()
+                .map(|points| convex_hull(points))
+                .collect()
+        }
+        CoverKind::Drum => vec![barrel_collider(w, h, d)],
+        CoverKind::Rock => {
+            let rock = quarry_rock_shape(w, h, d, quarry_rock_variant(x, z));
+            let vertices = rock
+                .positions
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|p| Vector::new(p[0], (p[1] as f64 - h / 2.0) as f32, p[2]))
+                .collect();
+            let indices = rock.indices.as_chunks::<3>().0.to_vec();
+            vec![ColliderBuilder::trimesh(vertices, indices).expect("authored rock mesh is valid")]
+        }
+        _ => vec![ColliderBuilder::cuboid(
+            (w / 2.0) as f32,
+            (h / 2.0) as f32,
+            (d / 2.0) as f32,
+        )],
+    };
+    let surface = cover_surface(kind);
+    let count = shapes.len() as f64;
+    let colliders = shapes
+        .into_iter()
+        .map(|shape| {
+            if movable {
+                let mass = if drum {
+                    0.45
+                } else if kind == CoverKind::Teeth {
+                    DRAGON_TOOTH_MASS
+                } else {
+                    6.0
+                };
+                let material = debris_material(surface);
+                shape
+                    .collision_groups(interaction_groups(group::MOVABLE_COVER))
+                    .mass((mass / count) as f32)
+                    .friction(material.friction as f32)
+                    .restitution(material.restitution as f32)
+            } else {
+                shape
+                    .collision_groups(interaction_groups(group::COVER))
+                    .friction(0.4)
+            }
+        })
+        .collect();
+    // Tanks use the navigation footprint so the slope cannot lift their planar hulls.
+    // Shells still hit only the visible pyramid, including its open upper shoulders.
+    let tank_footprint = (kind == CoverKind::Teeth).then(|| {
+        ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
+            .collision_groups(interaction_groups(group::TOOTH_CONTACT))
+            .mass(0.0)
+            .friction(0.8)
+    });
+    CoverParts {
+        body: builder.translation(vector(x, h / 2.0, z)),
+        colliders,
+        tank_footprint,
+    }
 }
 
 /// The packed 32-bit form of collision groups.

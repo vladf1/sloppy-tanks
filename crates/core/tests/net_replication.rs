@@ -538,7 +538,7 @@ fn rounded(value: &Value, key: &str, parent: &str) -> Value {
         Value::Number(number) => {
             let scale = if parent == "rotation" || ANGLES.contains(&key) {
                 10000.0
-            } else if VALUES.contains(&key) {
+            } else if VALUES.contains(&key) || parent == "drive" {
                 100.0
             } else {
                 1000.0

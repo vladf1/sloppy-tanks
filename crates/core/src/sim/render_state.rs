@@ -61,6 +61,9 @@ pub struct RenderTank {
     /// Body position (a dead tank rests at `previous`, 0.65 m up).
     pub position: Point3,
     pub velocity: Point3,
+    /// The move input the tank last drove with (x, z); zero for a wreck. Client
+    /// prediction holds it for the tanks it cannot steer.
+    pub drive: Vec2,
 }
 
 // Manual so a state refilled in place keeps each tank's name allocation.
@@ -438,6 +441,11 @@ impl Simulation {
         view.last_combat = tank.last_combat;
         view.life = tank.life;
         view.position = self.tank_position(tank);
+        view.drive = if tank.alive {
+            Vec2::new(tank.command.move_x, tank.command.move_z)
+        } else {
+            Vec2::ZERO
+        };
         view.velocity = self.tank_velocity(tank);
     }
 

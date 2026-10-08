@@ -22,6 +22,7 @@
 //! - [`client`]: `NetworkClient`, the connection and room session state machine.
 //! - [`network_timeline`], [`render_timeline`], [`playout_clock`]: delayed, interpolated
 //!   display of remote state with a smoothed local hull.
+//! - [`prediction`]: the viewer's own hull, replayed from the host's state ahead of it.
 //! - [`input_cadence`]: when input goes out; [`transport_delay`]: development latency.
 //! - [`client_setup`]: pending-join validation and serialization.
 
@@ -35,6 +36,7 @@ pub mod multiplayer_simulation;
 pub mod network_timeline;
 pub mod player_controls;
 pub mod playout_clock;
+pub mod prediction;
 pub mod protocol;
 pub mod render_timeline;
 pub mod replication;

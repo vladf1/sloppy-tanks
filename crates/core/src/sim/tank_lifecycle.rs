@@ -3,7 +3,7 @@
 
 use std::f64::consts::PI;
 
-use rapier3d::prelude::{ColliderHandle, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle};
 
 use super::ammunition::{clear_ammo, empty_ammo};
 use super::arena::spawn_positions;
@@ -23,37 +23,43 @@ pub fn soft_ccd_prediction(kind: VehicleKind, speed_scale: f64) -> f64 {
     vehicle(kind).speed * speed_scale * 1.5 * STEP * 2.0
 }
 
+/// A tank's body and its two colliders (the hull, which carries the mass, and the
+/// model-sized contact box), shared with client prediction.
+pub fn tank_body_parts(
+    kind: VehicleKind,
+    position: Vec2,
+    speed_scale: f64,
+) -> (RigidBodyBuilder, [ColliderBuilder; 2]) {
+    let stats = vehicle(kind);
+    let body = RigidBodyBuilder::dynamic()
+        .translation(vector(
+            position.x,
+            SIMULATION_RULES.tank_body_height,
+            position.z,
+        ))
+        .enabled_rotations(false, true, false)
+        .linear_damping(SIMULATION_RULES.tank_linear_damping as f32)
+        .angular_damping(SIMULATION_RULES.tank_angular_damping as f32)
+        .ccd_enabled(true)
+        .soft_ccd_prediction(soft_ccd_prediction(kind, speed_scale) as f32);
+    let hull = tank_contact_collider(kind)
+        .mass(stats.mass as f32)
+        .collision_groups(interaction_groups(group::TANK))
+        .friction(0.05)
+        .restitution(0.1);
+    (body, [hull, tank_contact_collider(kind)])
+}
+
 fn create_tank_body(
     simulation: &mut Simulation,
     kind: VehicleKind,
     position: Vec2,
     speed_scale: f64,
 ) -> (RigidBodyHandle, ColliderHandle) {
-    let stats = vehicle(kind);
-    let body = simulation.world.insert_body(
-        RigidBodyBuilder::dynamic()
-            .translation(vector(
-                position.x,
-                SIMULATION_RULES.tank_body_height,
-                position.z,
-            ))
-            .enabled_rotations(false, true, false)
-            .linear_damping(SIMULATION_RULES.tank_linear_damping as f32)
-            .angular_damping(SIMULATION_RULES.tank_angular_damping as f32)
-            .ccd_enabled(true)
-            .soft_ccd_prediction(soft_ccd_prediction(kind, speed_scale) as f32),
-    );
-    let collider = simulation.world.insert_collider(
-        tank_contact_collider(kind)
-            .mass(stats.mass as f32)
-            .collision_groups(interaction_groups(group::TANK))
-            .friction(0.05)
-            .restitution(0.1),
-        Some(body),
-    );
-    simulation
-        .world
-        .insert_collider(tank_contact_collider(kind), Some(body));
+    let (body, [hull, contact]) = tank_body_parts(kind, position, speed_scale);
+    let body = simulation.world.insert_body(body);
+    let collider = simulation.world.insert_collider(hull, Some(body));
+    simulation.world.insert_collider(contact, Some(body));
     (body, collider)
 }
 
