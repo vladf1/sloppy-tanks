@@ -6,11 +6,12 @@ use super::codec::Role;
 use super::extension::DeflateParams;
 
 /// Consecutive snapshot batches repeat each other's structure and small differences, so
-/// permessage-deflate still sends about a third less of the binary state. On recorded
-/// JSON room streams, zlib-rs level 1, zlib-ng's quick strategy (static Huffman codes
-/// only), sent 22-27% more than the former Node server's classic zlib level 1. Level 2, the fast strategy, sends about 7% less than classic level 1 for
-/// 1.3-1.6 times the quick strategy's CPU, still below classic level 1's; higher levels
-/// save a little more for CPU the one-vCPU host needs more.
+/// permessage-deflate still sends about a third less of the binary state. zlib-rs level 1
+/// (zlib-ng's quick strategy, static Huffman codes only) sends 4-12% more of it for less
+/// than half the CPU; level 2, the fast strategy, is where the curve bends: levels 4 and 6 save
+/// only 1-3% more bytes for 12-25% more time. Bytes count against the host's monthly
+/// transfer, while deflate is a small share of a room's 50 ms interval next to the
+/// simulation.
 pub const COMPRESSION_LEVEL: u32 = 2;
 /// Text messages shorter than this go out uncompressed, like `ws`'s default threshold:
 /// the deflate block overhead outweighs the saving on pongs and control messages.

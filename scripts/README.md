@@ -238,9 +238,8 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `node scripts/profile.mjs before` / `after`                                              | Matched runtime comparison with CPU profiles                                           |
 | `node scripts/frame-pacing-check.mjs`                                                    | First gameplay frame and seeded combat on every map, without discarding a warm-up      |
 | `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
-| `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval         |
-| `cargo run --release -p sloppy-server --example snapshot_bandwidth`                      | Snapshot bytes per room client, raw and deflated, and their projectile share           |
-| `cargo run --release -p sloppy-server --example room_traffic`                            | Four players per room: bytes raw and on the wire, deflate, decode, state parity        |
+| `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and encoding per 50 ms room interval     |
+| `cargo run --release -p sloppy-server --example snapshot_bandwidth`                      | Room bytes raw and on the wire, deflate, decode and projectile share; state parity     |
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
 | `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |
 | `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
@@ -259,21 +258,17 @@ time on an otherwise idle machine, and report sample counts with outliers.
   player, warms up 1200 ticks, then times 400 intervals of three steps (each
   followed by the host's projectile path recording) and a snapshot. It takes an
   output path after `--`.
-- `snapshot_bandwidth` plays the Village, the Stress Grid and the Scrap Yard with
-  one idle watcher for three seeds (20 s warm-up, 60 s measured) through
-  `MatchHost` and the server's permessage-deflate. It reports raw and deflated
-  snapshot bytes per second, the projectile share (the raw bytes of the path
-  entries; deflate compresses whole messages, so there is no deflated share),
-  projectile path entries per second and the host's interval time. Bytes repeat exactly for a
-  seed, so one run per build compares them; interval times drift between runs
-  like every timing here.
-- `room_traffic` plays the same three rooms with four scripted players that drive
-  and fire like the traffic bots, from a fixed seed, through a server-role codec
-  per connection. It reports raw and on-the-wire bytes per message type, the host's
-  interval, deflate and native client decode times, and hashes every frame each
-  client projects, so two builds can show they replicate the same state;
-  `SLOPPY_VERIFY=1` also compares every client's mirror with the host after every
-  frame, and `SLOPPY_DUMP=1` writes every message sent.
+- `snapshot_bandwidth` plays the Village (with bot fill), the Stress Grid and the
+  Scrap Yard with four scripted players that drive and fire like the traffic bots,
+  through `MatchHost` and a server-role codec per connection (permessage-deflate
+  with context takeover). It reports raw and on-the-wire bytes per message type, the
+  host's interval, deflate and native client decode times, projectile path entries
+  and their raw share, and hashes every frame each client projects, so two builds
+  can show they replicate the same state. It takes a label, the measured seconds
+  (60) and comma-separated seeds (4242) after `--`; `SLOPPY_VERIFY=1` also compares
+  every client's mirror with the host after every frame, and `SLOPPY_DUMP=1` writes
+  every message sent. Bytes repeat exactly for a seed, so one run per build compares
+  them; interval times drift between runs like every timing here.
 - `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
   ticks, times 3600 and prints JSON. For an engine change, run a base-commit
   worktree and the candidate alternately over several maps and seeds.
