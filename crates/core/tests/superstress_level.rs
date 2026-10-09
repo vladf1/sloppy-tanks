@@ -88,13 +88,22 @@ fn the_yard_is_dense_half_turn_symmetric_and_has_only_cover_that_rebuilds_in_pla
             .count(),
         4
     );
-    for kind in [CoverKind::House, CoverKind::Tower] {
-        assert_eq!(
-            destructible.iter().filter(|c| c.kind == kind).count(),
-            2,
-            "two {kind:?}s, both breakable so they rebuild"
-        );
-    }
+    assert_eq!(
+        destructible
+            .iter()
+            .filter(|c| c.kind == CoverKind::Tower)
+            .count(),
+        2,
+        "two watchtowers, both breakable so they rebuild"
+    );
+    assert_eq!(
+        layout
+            .iter()
+            .filter(|c| c.kind == CoverKind::House && !c.hp.is_finite())
+            .count(),
+        2,
+        "two cottages that stand for good, like the village's"
+    );
     let keys: HashSet<String> = layout.iter().map(|c| key(c.kind, c.x, c.z)).collect();
     assert_eq!(
         keys.len(),

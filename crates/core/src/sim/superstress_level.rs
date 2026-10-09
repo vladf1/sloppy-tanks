@@ -1,7 +1,8 @@
 //! The Scrap Yard: the Stress Grid's 30 tanks packed into a compact yard with over 100
-//! destructibles (cottages and watchtowers among them), cover that rebuilds in place and
-//! debris that lingers until the budget needs room. Level behaviour lives here and reaches the game only through
-//! `Simulation::after_step`, `restore_cover` and the map's scale.
+//! destructibles (watchtowers among them), cover that rebuilds in place and debris that
+//! lingers until the budget needs room. Its cottages stand for good, like the village's.
+//! Level behaviour lives here and reaches the game only through `Simulation::after_step`,
+//! `restore_cover` and the map's scale.
 
 use super::arena::{BOUNDARY_THICKNESS, CoverDef};
 use super::data::ARENA;
@@ -48,7 +49,16 @@ fn sized(kind: Piece, x: f64, z: f64) -> CoverDef {
         Piece::Cargo => CoverDef::new(CoverKind::Cargo, x, z, 2.8, 2.8, 2.4, 80.0, 0xb47a49),
         Piece::Drum => CoverDef::new(CoverKind::Drum, x, z, 1.2, 1.2, 1.7, 30.0, 0xff5b24),
         Piece::Tree => CoverDef::new(CoverKind::Tree, x, z, 2.6, 2.6, 5.8, 80.0, 0x218f55),
-        Piece::House => CoverDef::new(CoverKind::House, x, z, 5.0, 6.0, 4.6, 180.0, 0xb87b4c),
+        Piece::House => CoverDef::new(
+            CoverKind::House,
+            x,
+            z,
+            5.0,
+            6.0,
+            4.6,
+            f64::INFINITY,
+            0xb87b4c,
+        ),
         Piece::Tower => CoverDef::new(CoverKind::Tower, x, z, 6.0, 5.0, 7.5, 180.0, 0xbd864a),
     }
 }
@@ -167,8 +177,8 @@ fn superstress_layout() -> Vec<CoverDef> {
     yard.put(Piece::Cargo, 16.0, 9.0);
     yard.put(Piece::Cargo, 20.0, 41.6);
 
-    // Watchtowers overlook the plaza from beyond its fences; a cottage stands by each
-    // team's spawn. Both rebuild like the rest, the towers back over their rubble.
+    // Watchtowers overlook the plaza from beyond its fences and rebuild back over their
+    // rubble; a permanent cottage stands by each team's spawn.
     yard.put(Piece::Tower, 0.0, 26.5);
     yard.put(Piece::House, -38.0, 33.8);
 
