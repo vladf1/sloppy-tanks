@@ -207,8 +207,9 @@ pub fn update_bot_goal(
         }
     };
     // With nobody in sight, a hit bot turns toward its shooter and closes in to find it. A
-    // HMMWV is too fragile to charge; its tactics withdraw from `last_seen` instead.
-    let unseen_attacker = attacker.filter(|_| target.is_none() && kind != VehicleKind::Humvee);
+    // HMMWV is too fragile to charge: it gets the same threat, but its tactics withdraw from
+    // `last_seen` or pick a firing point at a safe range instead of driving to the shooter.
+    let unseen_attacker = attacker.filter(|_| target.is_none());
     if let Some(target) = target {
         let target_id = simulation.tanks[target].id;
         react_to(simulation, target_id);
@@ -227,7 +228,9 @@ pub fn update_bot_goal(
         brain.target = attacker_id;
         brain.memory = brain.alarm;
         brain.last_seen = brain.attacked_from;
-        brain.goal = brain.attacked_from;
+        if kind != VehicleKind::Humvee {
+            brain.goal = brain.attacked_from;
+        }
         brain.mode = BotMode::Fight;
     } else if simulation.tanks[tank_index].brain.memory <= 0.0 {
         let brain = &mut simulation.tanks[tank_index].brain;

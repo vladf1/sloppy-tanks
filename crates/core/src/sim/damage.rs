@@ -64,6 +64,10 @@ pub fn damage_tank(
     }
     let records = simulation.records(tank);
     let elapsed = simulation.elapsed;
+    // Before the shield: a shell it absorbs still shows a bot who fired it.
+    if amount > 0.0 {
+        notice_hit(simulation, tank_index, owner, source);
+    }
     let tank = &mut simulation.tanks[tank_index];
     if amount > 0.0 {
         tank.last_combat = elapsed;
@@ -104,7 +108,6 @@ pub fn damage_tank(
             hurt.team = Some(victim_team);
             hurt.size = Some(amount);
             simulation.events.push(hurt);
-            notice_hit(simulation, tank_index, owner, source);
         }
         return;
     }

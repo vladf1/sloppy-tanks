@@ -269,8 +269,13 @@ fn bots_turn_on_a_farther_enemy_whose_shell_hits_them_but_not_on_a_mine_layer() 
     s.tanks[bot].brain.decision = 0.0;
     bot_command(&mut s, bot, STEP);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[near].id);
-    // A shell makes the bot reconsider on its next tick, without waiting for a decision.
+    // A shell makes the bot reconsider on its next tick, without waiting for a decision,
+    // even when its shield absorbs all of it.
+    s.tanks[bot].shield = 10.0;
+    s.tanks[bot].shield_points = 100.0;
+    let hp = s.tanks[bot].hp;
     hit(&mut s, bot, far, DamageCause::Standard);
+    assert_eq!(s.tanks[bot].hp, hp);
     assert_eq!(s.tanks[bot].brain.decision, 0.0);
     bot_command(&mut s, bot, STEP);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[far].id);
