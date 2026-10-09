@@ -9,6 +9,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::prediction::HullState;
 use super::replication::{
     BinaryMessage, DecodedFrame, FrameExtras, StateMirror, TimedEvent, read_binary_message,
 };
@@ -228,6 +229,9 @@ impl WireView {
                         "type": "snapshot",
                         "roundId": batch.round_id,
                         "ack": batch.ack,
+                        "ackTick": batch.ack_tick,
+                        "ackArrival": batch.ack_arrival,
+                        "hull": batch.hull.as_ref().map(HullState::to_json),
                         "snapshots": frames,
                     }),
                     extras,

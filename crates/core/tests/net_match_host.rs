@@ -1168,3 +1168,81 @@ fn seats_joining_between_intervals_reach_clients_in_batches_they_accept() {
     assert_eq!(h.mirrored("alice"), capture(&h));
     assert_eq!(h.mirrored("late-6"), capture(&h));
 }
+
+/// Input between two timer callbacks drives from the tick after its arrival, not from the
+/// start of the next batch; a requested later tick is honoured, an earlier one is clamped
+/// to arrival; each snapshot reports the acknowledged input's ticks and the viewer's hull.
+#[test]
+fn input_drives_from_its_arrival_or_requested_tick_never_retroactively() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    h.tick_only(50);
+    assert_eq!(h.host.tick(), 3, "one batch is three ticks");
+    let alice = h.tank_of("alice");
+    let driven = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = driven.clone();
+    h.host.tick_hook = Some(Box::new(move |sim, tick| {
+        log.lock()
+            .unwrap()
+            .push((tick, sim.tanks[alice].command.move_z));
+    }));
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let send = |h: &mut Harness, seq: u64, extra: Value| {
+        let tick = h.host.tick();
+        h.action("alice", "input", input(&epoch, seq, tick, extra));
+    };
+
+    // 20 ms into the next batch: ticks 4 (due at 66.7 ms) ran before it in time.
+    h.now += 20;
+    send(&mut h, 1, json!({ "moveZ": 1 }));
+    h.tick_only(30);
+    let snapshot = h.latest("alice", "snapshot");
+    assert_eq!(
+        (
+            &snapshot["ack"],
+            &snapshot["ackTick"],
+            &snapshot["ackArrival"]
+        ),
+        (&json!(1), &json!(5), &json!(5))
+    );
+    assert_eq!(
+        *driven.lock().unwrap(),
+        [(4, 0.0), (5, 1.0), (6, 1.0)],
+        "the batch's earlier tick keeps the old input"
+    );
+    let hull = &snapshot["hull"];
+    assert_eq!(hull["tick"], 6);
+    assert!(
+        hull["v"][2].as_f64().unwrap() > 0.0,
+        "the hull drives forward"
+    );
+
+    // Asked for a later tick, the input waits for it; asked for the past, it starts on arrival.
+    driven.lock().unwrap().clear();
+    h.now += 10;
+    send(&mut h, 2, json!({ "moveZ": -1, "tick": 9 }));
+    h.tick_only(40);
+    let snapshot = h.latest("alice", "snapshot");
+    assert_eq!(
+        (
+            &snapshot["ack"],
+            &snapshot["ackTick"],
+            &snapshot["ackArrival"]
+        ),
+        (&json!(2), &json!(9), &json!(7))
+    );
+    assert_eq!(*driven.lock().unwrap(), [(7, 1.0), (8, 1.0), (9, -1.0)]);
+    h.now += 5;
+    send(&mut h, 3, json!({ "moveZ": 0.5, "tick": 2 }));
+    h.tick_only(45);
+    let snapshot = h.latest("alice", "snapshot");
+    assert_eq!(
+        (
+            &snapshot["ack"],
+            &snapshot["ackTick"],
+            &snapshot["ackArrival"]
+        ),
+        (&json!(3), &json!(10), &json!(10))
+    );
+}

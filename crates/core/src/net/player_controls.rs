@@ -1,8 +1,10 @@
 //! One seat's input on the host (`src/net/player-controls.ts`), and the wire form of the
 //! client's `input` message.
 //!
-//! Held input lasts a 250 ms lease; one-shot actions (mines, ammo choices) run once, in
-//! order, each within its own lease. A control epoch changes on every death, respawn,
+//! Each input drives from a well-defined tick: the tick the client asked for, or the
+//! tick after its arrival if that came later. Inputs waiting for their tick queue in
+//! order, and the newest one due wins. Held input lasts a 250 ms lease; one-shot actions
+//! (mines, ammo choices) run once, in order, each within its own lease. A control epoch changes on every death, respawn,
 //! suspension and reconnect, and input from an older epoch is refused, so stale held
 //! input or queued clicks never carry into a new life.
 
@@ -10,6 +12,7 @@ use std::collections::VecDeque;
 
 use serde_json::Value;
 
+use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::json::{self, ObjectWriter};
 use super::multiplayer_simulation::set_driver;
 use super::schema::MAX_SAFE_INTEGER;
@@ -20,6 +23,10 @@ pub const INPUT_LEASE_MS: f64 = 250.0;
 pub const BOT_TAKEOVER_MS: f64 = 5000.0;
 pub const MAX_QUEUED_ACTIONS: usize = 8;
 pub const MAX_INPUT_LAG_TICKS: u64 = 30;
+/// Furthest past its arrival an input may ask to start driving (half a second).
+pub const MAX_INPUT_LEAD_TICKS: u64 = 30;
+/// Most inputs waiting for their tick: a second of input at the rate limit.
+const MAX_WAITING_INPUTS: usize = MAX_INPUTS_PER_SECOND as usize;
 const MAX_AIM_COORDINATE: f64 = 1024.0;
 const MAX_INPUTS_PER_SECOND: u32 = 60;
 /// Weapons a player may select (the TOW is bot-only).
@@ -52,6 +59,8 @@ pub struct ControlInput {
     pub control_epoch: u64,
     pub seq: i64,
     pub observed_tick: i64,
+    /// The tick the client predicted this input from; it drives no earlier than arrival.
+    pub tick: Option<u64>,
     pub move_x: f64,
     pub move_z: f64,
     pub aim: Aim,
@@ -98,6 +107,9 @@ pub fn encode_input(input: &ControlInput, round_id: u64) -> String {
             .number("moveZ", rounded(input.move_z, json::VALUE_SCALE))
             .number("seq", input.seq as f64)
             .number("observedTick", input.observed_tick as f64);
+        if let Some(tick) = input.tick {
+            writer.int("tick", tick);
+        }
         let aim = writer.key("aim");
         let mut aim_writer = ObjectWriter::new(aim);
         match input.aim {
@@ -184,11 +196,16 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
         return None;
     };
     let control_epoch = safe_integer(message.get("controlEpoch"))?;
+    let tick = match message.get("tick") {
+        None | Some(Value::Null) => None,
+        some => Some(u64::try_from(safe_integer(some)?).ok()?),
+    };
     Some(ControlInput {
         // A negative epoch never matches; keep it distinguishable from every real one.
         control_epoch: u64::try_from(control_epoch).unwrap_or(u64::MAX),
         seq: safe_integer(message.get("seq"))?,
         observed_tick: safe_integer(message.get("observedTick"))?,
+        tick,
         move_x: finite(message.get("moveX"), 1.0)?,
         move_z: finite(message.get("moveZ"), 1.0)?,
         aim,
@@ -197,11 +214,23 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
     })
 }
 
-/// The latest input sequence applied to the simulation, and the tick it first drove.
+/// The latest input sequence applied to the simulation, the tick it first drove, and
+/// the first tick it could have driven when it arrived. Client prediction replays from
+/// the first and times its requests by the second.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Ack {
     pub input_seq: i64,
     pub applied_tick: u64,
+    pub arrival_tick: u64,
+}
+
+/// An accepted input waiting for its tick.
+#[derive(Clone, Debug)]
+struct WaitingInput {
+    input: ControlInput,
+    tick: u64,
+    arrival_tick: u64,
+    received_ms: f64,
 }
 
 /// One assigned seat, independent of sockets and wall-clock APIs. Room ownership is
@@ -214,8 +243,13 @@ pub struct PlayerControls {
     life: u32,
     alive: bool,
     input: Option<ControlInput>,
+    /// The arrival tick of `input`.
+    input_arrival: u64,
+    waiting: VecDeque<WaitingInput>,
     last_seq: i64,
     last_received_ms: f64,
+    /// When the held input's lease started: its receipt, plus any ticks it waited for.
+    lease_from_ms: f64,
     rate_window_ms: f64,
     received_in_window: u32,
     actions: VecDeque<(Action, f64)>,
@@ -248,8 +282,11 @@ impl PlayerControls {
             life: tank.life,
             alive: tank.alive,
             input: None,
+            input_arrival: 0,
+            waiting: VecDeque::new(),
             last_seq: 0,
             last_received_ms: now_ms,
+            lease_from_ms: now_ms,
             rate_window_ms: now_ms,
             received_in_window: 0,
             actions: VecDeque::new(),
@@ -276,13 +313,26 @@ impl PlayerControls {
         simulation.tank_index(self.tank_id)
     }
 
-    /// Accepts one `input` message. Returns false without partially applying a malformed
-    /// or stale message, or extending its lease.
+    /// Accepts one `input` message that arrived after tick `server_tick` was stepped, to
+    /// drive from the next tick at the earliest. See [`accept_at`](Self::accept_at).
     pub fn accept(
         &mut self,
         simulation: &Simulation,
         value: &Value,
         server_tick: u64,
+        now_ms: f64,
+    ) -> bool {
+        self.accept_at(simulation, value, server_tick, server_tick + 1, now_ms)
+    }
+
+    /// Accepts one `input` message whose earliest tick is `arrival_tick`. Returns false
+    /// without partially applying a malformed or stale message, or extending its lease.
+    pub fn accept_at(
+        &mut self,
+        simulation: &Simulation,
+        value: &Value,
+        server_tick: u64,
+        arrival_tick: u64,
         now_ms: f64,
     ) -> bool {
         self.synchronize_life(simulation);
@@ -302,25 +352,45 @@ impl PlayerControls {
             return false;
         }
         self.expire_actions(now_ms);
-        let Some(mut input) = read_input(value) else {
+        let Some(input) = read_input(value) else {
             return false;
         };
         let server_tick = server_tick as i64;
+        let queued_actions = self.actions.len()
+            + self
+                .waiting
+                .iter()
+                .map(|waiting| waiting.input.actions.len())
+                .sum::<usize>();
         if input.control_epoch != self.control_epoch
             || input.seq <= self.last_seq
             || input.observed_tick < 0
             || input.observed_tick > server_tick
             || server_tick - input.observed_tick > MAX_INPUT_LAG_TICKS as i64
-            || self.actions.len() + input.actions.len() > MAX_QUEUED_ACTIONS
+            || queued_actions + input.actions.len() > MAX_QUEUED_ACTIONS
+            || self.waiting.len() >= MAX_WAITING_INPUTS
         {
             return false;
         }
-        for action in input.actions.drain(..) {
-            self.actions.push_back((action, now_ms));
-        }
+        // Inputs drive in sequence order, so none may start before the one queued ahead.
+        let after = self
+            .waiting
+            .back()
+            .map_or(arrival_tick, |waiting| waiting.tick);
+        let tick = input
+            .tick
+            .unwrap_or(arrival_tick)
+            .clamp(arrival_tick, arrival_tick + MAX_INPUT_LEAD_TICKS)
+            .max(after);
         self.last_seq = input.seq;
         self.last_received_ms = now_ms;
-        self.input = Some(input);
+        self.lease_from_ms = now_ms;
+        self.waiting.push_back(WaitingInput {
+            input,
+            tick,
+            arrival_tick,
+            received_ms: now_ms,
+        });
         self.lapsed = false;
         true
     }
@@ -347,8 +417,24 @@ impl PlayerControls {
         if !tank.alive {
             return Some(command);
         }
+        // The newest input due by this tick takes over; any it overtook never drives.
+        while self
+            .waiting
+            .front()
+            .is_some_and(|waiting| waiting.tick <= tick)
+        {
+            let waiting = self.waiting.pop_front().expect("checked above");
+            for action in &waiting.input.actions {
+                self.actions.push_back((*action, waiting.received_ms));
+            }
+            // An input asked to wait keeps its whole lease for when it starts driving.
+            let wait_ms = (waiting.tick - waiting.arrival_tick) as f64 * SIMULATION_STEP_MS;
+            self.lease_from_ms = self.lease_from_ms.max(waiting.received_ms + wait_ms);
+            self.input_arrival = waiting.arrival_tick;
+            self.input = Some(waiting.input);
+        }
         self.expire_actions(now_ms);
-        let leased = now_ms - self.last_received_ms < INPUT_LEASE_MS;
+        let leased = now_ms - self.lease_from_ms < INPUT_LEASE_MS;
         if !leased && !self.lapsed && self.input.as_ref().is_some_and(ControlInput::drives) {
             self.lapsed = true;
             self.lapses += 1;
@@ -374,6 +460,7 @@ impl PlayerControls {
             self.ack = Ack {
                 input_seq: seq,
                 applied_tick: tick,
+                arrival_tick: self.input_arrival,
             };
         }
         match self.actions.pop_front().map(|(action, _)| action) {
@@ -411,6 +498,7 @@ impl PlayerControls {
             set_driver(simulation, index, Driver::Human).expect("controls drive a player tank");
         }
         self.last_received_ms = now_ms;
+        self.lease_from_ms = now_ms;
         self.new_epoch();
     }
 
@@ -435,6 +523,7 @@ impl PlayerControls {
     fn new_epoch(&mut self) {
         self.control_epoch += 1;
         self.input = None;
+        self.waiting.clear();
         self.actions.clear();
         self.last_seq = 0;
         self.ack = Ack::default();

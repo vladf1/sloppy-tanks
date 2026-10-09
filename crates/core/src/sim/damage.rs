@@ -1,7 +1,7 @@
 //! The damage paths for tanks and cover, and blasts. Every tank or cover hit routes through
 //! these helpers so team immunity, XP attribution and destruction chains stay consistent.
 
-use rapier3d::prelude::SharedShape;
+use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
 use super::arena::CoverDef;
@@ -167,6 +167,21 @@ pub fn damage_tank(
     simulation.events.push(death);
 }
 
+/// The upright footprint a felled tree leaves on its cover body: the stump's shape and
+/// its offset from the body origin (the trunk's mid-height).
+pub struct TreeStump {
+    pub shape: SharedShape,
+    pub offset: Vector,
+}
+
+pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
+    let stump_radius = tree_proportions(x, z, w, d, h).stump_radius;
+    TreeStump {
+        shape: SharedShape::cylinder(0.8, stump_radius as f32),
+        offset: vector(0.0, 0.8 - h / 2.0, 0.0),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn damage_cover(
     simulation: &mut Simulation,
@@ -231,12 +246,10 @@ pub fn damage_cover(
     if cover.kind == CoverKind::Tree {
         // A tank-only upright footprint stops planar hulls climbing or crossing the
         // stump while shells can still fly through the space left by the crown.
-        let stump_radius =
-            tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h).stump_radius;
-        let offset = 0.8 - cover.h / 2.0;
+        let stump = tree_stump(cover.x, cover.z, cover.w, cover.d, cover.h);
         let collider = &mut simulation.world.colliders[cover.collider];
-        collider.set_shape(SharedShape::cylinder(0.8, stump_radius as f32));
-        collider.set_translation_wrt_parent(vector(0.0, offset, 0.0));
+        collider.set_shape(stump.shape);
+        collider.set_translation_wrt_parent(stump.offset);
         collider.set_collision_groups(interaction_groups(group::STUMP_CONTACT));
     } else {
         simulation.remove_body(body);

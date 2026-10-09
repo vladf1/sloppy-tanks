@@ -33,6 +33,12 @@ export interface NetworkStatsSource {
     connected: boolean;
     lateBatches: number;
     longestBatchGapMs: number;
+    predictionLeadMs: number;
+    corrections: number;
+    correctionTotalM: number;
+    correctionMaxM: number;
+    correctionMPerS: number;
+    correctionP95M: number;
   };
 }
 
@@ -95,6 +101,21 @@ export function networkStatsSections(
           "Longest batch gap",
           `${Math.round(network.longestBatchGapMs)} ms`,
           "The longest wait between consecutive snapshot batches during this page session; about 50 ms while the stream flows.",
+        ],
+        [
+          "Prediction lead",
+          `${Math.round(network.predictionLeadMs)} ms`,
+          "How far your own tank is predicted ahead of the newest server tick, so driving responds at once. About the round trip plus a little margin.",
+        ],
+        [
+          "Corrections",
+          `${(network.correctionMPerS * 100).toFixed(1)} cm/s`,
+          "How far server snapshots moved your predicted tank, per second of driving. Each correction is glided out over about 0.1 s. Blasts, other players' steering and debris cause most of them.",
+        ],
+        [
+          "Correction p95",
+          `${(network.correctionP95M * 100).toFixed(1)} cm`,
+          "The 95th percentile of your tank's recent prediction corrections.",
         ],
         ["Server tick", network.serverTick, "Latest authoritative simulation tick received."],
         [

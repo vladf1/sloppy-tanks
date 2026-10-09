@@ -27,6 +27,14 @@ impl FixedStepClock {
         }
     }
 
+    /// The first tick an input received at `now_ms` may drive: the next tick due after
+    /// it. Ticks already owed but not yet stepped belong to the time before it arrived,
+    /// so a batch never applies input retroactively.
+    pub fn arrival_tick(&self, now_ms: f64) -> u64 {
+        let owed = self.debt_ms + (now_ms - self.last_ms).max(0.0);
+        self.tick + ((owed + CLOCK_EPSILON_MS) / SIMULATION_STEP_MS).floor() as u64 + 1
+    }
+
     /// Runs the ticks now due (at most [`MAX_STEPS_PER_BATCH`]), passing each new tick
     /// number to `step`. Returns false, running nothing, when the debt exceeds
     /// [`MAX_TICK_DEBT_MS`]. A clock that goes backwards adds no time.

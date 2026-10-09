@@ -116,6 +116,12 @@ function fixture(network = false) {
       connected: true,
       lateBatches: 3,
       longestBatchGapMs: 412.4,
+      predictionLeadMs: 120,
+      corrections: 40,
+      correctionTotalM: 0.8,
+      correctionMaxM: 0.12,
+      correctionMPerS: 0.04,
+      correctionP95M: 0.03,
     },
   };
   const engine = {

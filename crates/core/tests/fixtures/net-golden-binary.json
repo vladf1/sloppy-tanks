@@ -107,65 +107,51 @@
     },
     {
       "connection": "bob",
-      "header": "01011b0c0b0b676f6c64656e2d726f6f6d",
+      "header": "01011b0d0b0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 27,
       "type": "full"
     },
     {
       "connection": "alice",
-      "header": "02011e030d01",
+      "header": "02011e030d02",
       "roundId": 1,
       "tick": 30,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "02011e000d01",
+      "header": "02011e000e01",
       "roundId": 1,
       "tick": 30,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "01011e0d0b0b676f6c64656e2d726f6f6d",
+      "header": "01011e0e0b0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 30,
       "type": "full"
     },
     {
       "connection": "carol",
-      "header": "01011e0e0c0b676f6c64656e2d726f6f6d",
+      "header": "01011e0f0c0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 30,
       "type": "full"
     },
     {
       "connection": "alice",
-      "header": "020121030e03",
+      "header": "020121030f03",
       "roundId": 1,
       "tick": 33,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "020121000e03",
+      "header": "020121000f03",
       "roundId": 1,
       "tick": 33,
-      "type": "snapshot"
-    },
-    {
-      "connection": "alice",
-      "header": "020124031101",
-      "roundId": 1,
-      "tick": 36,
-      "type": "snapshot"
-    },
-    {
-      "connection": "bob",
-      "header": "020124001101",
-      "roundId": 1,
-      "tick": 36,
       "type": "snapshot"
     },
     {
@@ -178,6 +164,20 @@
     {
       "connection": "bob",
       "header": "020124001201",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020124031301",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020124001301",
       "roundId": 1,
       "tick": 36,
       "type": "snapshot"
@@ -309,5 +309,5 @@
       "type": "snapshot"
     }
   ],
-  "protocol": 3
+  "protocol": 4
 }

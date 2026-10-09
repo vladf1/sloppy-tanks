@@ -27,6 +27,8 @@
 use std::collections::HashMap;
 
 use super::json::POSITION_SCALE;
+use super::player_controls::Ack;
+use super::prediction::HullState;
 use super::protocol::{FULL_MESSAGE, SNAPSHOT_MESSAGE};
 use super::scene_codec::{
     COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS,
@@ -277,22 +279,33 @@ impl StateStream {
     }
 }
 
-/// Writes a snapshot message's header; the frames follow, each its tick back from `tick`
-/// and its body.
+/// Writes a snapshot message's header for one seat; the frames follow, each its tick back
+/// from `tick` and its body. The acknowledged input's ticks and the seat's hull come after
+/// the batch's own fields, which is all the traffic bots read.
 pub fn write_snapshot_header(
     out: &mut Vec<u8>,
     round_id: u64,
     tick: u64,
-    ack: u64,
+    ack: &Ack,
     first_seq: u64,
     count: usize,
+    hull: Option<&HullState>,
 ) {
     out.push(SNAPSHOT_MESSAGE);
     put_varint(out, round_id);
     put_varint(out, tick);
-    put_varint(out, ack);
+    put_varint(out, ack.input_seq.max(0) as u64);
     put_varint(out, first_seq);
     put_varint(out, count as u64);
+    put_varint(out, ack.applied_tick);
+    put_varint(out, ack.arrival_tick);
+    match hull {
+        Some(hull) => {
+            out.push(1);
+            hull.write(out);
+        }
+        None => out.push(0),
+    }
 }
 
 /// A `full` baseline's header, with its scene still to read.
@@ -316,6 +329,11 @@ pub struct SnapshotBatch<'a> {
     pub ack: u64,
     pub first_seq: u64,
     pub count: u64,
+    /// The tick that input first drove, and the first it could have driven on arrival.
+    pub ack_tick: u64,
+    pub ack_arrival: u64,
+    /// The seat's tank after `tick`, while it lives.
+    pub hull: Option<HullState>,
     read: u64,
     frames: WireReader<'a>,
 }
@@ -345,6 +363,13 @@ pub fn read_binary_message(bytes: &[u8]) -> ReadResult<BinaryMessage<'_>> {
             ack: reader.varint()?,
             first_seq: reader.varint()?,
             count: reader.varint()?,
+            ack_tick: reader.varint()?,
+            ack_arrival: reader.varint()?,
+            hull: match reader.byte()? {
+                0 => None,
+                1 => Some(HullState::read(&mut reader)?),
+                _ => return Err("Invalid hull".into()),
+            },
             read: 0,
             frames: reader,
         })),
@@ -840,5 +865,13 @@ impl StateMirror {
             .render(viewer)?;
         self.shots.fill(&mut state.shots, self.tick as f64);
         Ok(state)
+    }
+
+    /// Fills `state` for `viewer`, reusing its allocations.
+    pub fn fill_render_state(&self, state: &mut RenderState, viewer: u32) -> ReadResult<()> {
+        self.state
+            .as_ref()
+            .ok_or_else(|| "No baseline".to_string())?
+            .fill_render_state(state, viewer)
     }
 }

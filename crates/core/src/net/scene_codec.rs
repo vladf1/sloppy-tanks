@@ -239,6 +239,8 @@ wire_fields!(
         AIM = Field::new("aim", ROTATION),
         VELOCITY_X = Field::new("velocity.x", POSITION),
         VELOCITY_Z = Field::new("velocity.z", POSITION),
+        DRIVE_X = Field::new("drive.x", VALUE),
+        DRIVE_Z = Field::new("drive.z", VALUE),
         COOLDOWN = Field::new("cooldown", VALUE),
         RECOIL = Field::new("recoil", VALUE),
         POSITION_Y = Field::new("position.y", POSITION),
@@ -674,6 +676,14 @@ fn write_tank(record: &mut WireRecord, simulation: &Simulation, tank: &Tank) {
     record.set_fixed(VELOCITY_Z, velocity.z, POSITION_SCALE);
     record.set_fixed(HEADING, tank.heading, ROTATION_SCALE);
     record.set_fixed(AIM, tank.aim, ROTATION_SCALE);
+    // The held move input, for client prediction to drive this tank with.
+    let (move_x, move_z) = if tank.alive {
+        (tank.command.move_x, tank.command.move_z)
+    } else {
+        (0.0, 0.0)
+    };
+    record.set_fixed(DRIVE_X, move_x, VALUE_SCALE);
+    record.set_fixed(DRIVE_Z, move_z, VALUE_SCALE);
     for (field, value) in [
         (COOLDOWN, tank.cooldown),
         (RECOIL, tank.recoil),
@@ -1256,6 +1266,7 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
             fields.fixed(VELOCITY_Y)?,
             fields.fixed(VELOCITY_Z)?,
         ),
+        drive: Vec2::new(fields.fixed(DRIVE_X)?, fields.fixed(DRIVE_Z)?),
         heading: fields.fixed(HEADING)?,
         aim: fields.fixed(AIM)?,
         hp: fields.fixed(HP)?,

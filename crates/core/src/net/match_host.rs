@@ -15,6 +15,7 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::PlayerControls;
+use super::prediction::HullState;
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
     MAX_BATTLE_OVERRUN_MS, MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION,
@@ -413,7 +414,11 @@ impl MatchHost {
                     return Ok(());
                 };
                 let value = Value::Object(message);
-                if controls.accept(simulation, &value, tick, now_ms as f64) {
+                let arrival = self
+                    .clock
+                    .as_ref()
+                    .map_or(tick + 1, |clock| clock.arrival_tick(now_ms as f64));
+                if controls.accept_at(simulation, &value, tick, arrival, now_ms as f64) {
                     let observed = id(value.get("observedTick"))?;
                     let client = &mut self.clients[client_index].1;
                     client.observed_tick = client.observed_tick.max(observed);
@@ -1066,10 +1071,13 @@ impl MatchHost {
             if self.seats[seat].suspended && !self.seats[seat].watching {
                 continue;
             }
-            let ack = self.seats[seat]
-                .controls
-                .as_ref()
-                .map_or(0, |controls| controls.ack.input_seq.max(0) as u64);
+            let controls = self.seats[seat].controls.as_ref();
+            let ack = controls.map(|controls| controls.ack).unwrap_or_default();
+            // The viewer's own hull, for its client to predict from.
+            let simulation = self.simulation.as_ref().expect("checked above");
+            let hull = controls
+                .and_then(|controls| simulation.tank_index(controls.tank_id))
+                .and_then(|index| HullState::capture(simulation, index, tick));
             // A baseline sent since the previous batch already shows its earlier frames.
             let unseen: Vec<_> = frames
                 .iter()
@@ -1088,9 +1096,10 @@ impl MatchHost {
                     &mut message,
                     self.round_id,
                     last_tick,
-                    ack,
+                    &ack,
                     first_seq,
                     chunk.len(),
+                    hull.as_ref(),
                 );
                 for (frame_tick, _, body) in chunk {
                     super::wire::put_varint(&mut message, last_tick - frame_tick);
