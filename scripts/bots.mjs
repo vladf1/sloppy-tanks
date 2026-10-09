@@ -78,7 +78,7 @@ switch (command) {
     break;
   default:
     console.log(`Usage:
-  pnpm run bots -- start <region> [bots=1]    [--minutes 30] [--host] [--room CODE] [--per-room 1]
+  pnpm run bots -- start <region> [bots=1]    [--minutes 5]  [--host] [--room CODE] [--per-room 1]
   pnpm run bots -- stop [region]              stop one region, or all
   pnpm run bots -- status
 Regions: wnam enam sam weur eeur apac oc afr me`);

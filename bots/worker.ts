@@ -20,7 +20,7 @@ interface Env {
 export const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
 type Region = (typeof REGIONS)[number];
 const MAX_BOTS_PER_REGION = 32;
-const DEFAULT_MINUTES = 30;
+const DEFAULT_MINUTES = 5;
 // Every running bot keeps its Durable Object awake and billed for wall time, so runs always end.
 const MAX_MINUTES = 6 * 60;
 const TICK_MS = 25;

@@ -38,7 +38,7 @@ export const controlPage = `<!doctype html>
       <option value="oc">oc: Oceania</option><option value="afr">afr: Africa</option><option value="me">me: Middle East</option>
     </select></label>
     <label>Bots <input id="bots" type="number" min="1" max="32" value="1"></label>
-    <label>Minutes <input id="minutes" type="number" min="1" max="360" value="30"></label>
+    <label>Minutes <input id="minutes" type="number" min="1" max="360" value="5"></label>
     <label>Per room <input id="perRoom" type="number" min="1" max="8" value="1"></label>
     <label>Room code (optional) <input id="room" size="10" maxlength="8"></label>
     <label><span><input id="host" type="checkbox"> Create rooms when none are open</span></label>

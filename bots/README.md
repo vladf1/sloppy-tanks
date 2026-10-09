@@ -25,7 +25,7 @@ starts the next round after 15 seconds, so people are never stuck waiting on it.
 A dropped socket reclaims its seat with its token. Full, ended or incompatible
 rooms are skipped for a minute.
 
-Every run has a deadline (default 30 minutes, maximum 6 hours). A 30-second
+Every run has a deadline (default 5 minutes, maximum 6 hours). A 30-second
 alarm stops the run at the deadline and brings the bots back if a deploy or
 runtime restart evicted the object. Stopping sends `leave`, which frees seats
 immediately.
@@ -34,7 +34,7 @@ immediately.
 
 ```sh
 pnpm run bots:deploy                    # deploy after changing bot code
-pnpm run bots -- start weur 4 --host    # --minutes 30 --room CODE --per-room 1
+pnpm run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
 pnpm run bots -- start apac 2           # join whatever rooms are open
 pnpm run bots -- status
 pnpm run bots -- stop apac              # or no region to stop all
