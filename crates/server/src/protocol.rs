@@ -5,8 +5,8 @@
 
 pub use sloppy_core::net::protocol::{
     CONTENT_VERSION, DEFAULT_ROUND_MINUTES, EMPTY_GRACE_MS, MAX_BATTLE_OVERRUN_MS,
-    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, MAX_ROUND_MINUTES, PROTOCOL_VERSION, ROOM_IDLE_MS,
-    is_room_code,
+    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, MAX_ROUND_MINUTES, Message, PROTOCOL_VERSION,
+    ROOM_IDLE_MS, is_room_code,
 };
 
 /// Fingerprint of everything built into this server, so a deploy check can tell

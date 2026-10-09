@@ -5,6 +5,10 @@
 //! recorded from the TypeScript host (baseline `35afd91`) by `fixtures/net-golden.ts`, which
 //! left with that engine (see Git history). Protocol 2 has since replaced the `shots`
 //! records and frame `traces` with projectile `paths` (`shot_paths`), edited in by hand.
+//! Protocol 3's binary state messages are compared through their JSON view, and pinned
+//! byte for byte by `fixtures/net-golden-binary.json` (each message's header, length and
+//! hash), which the traffic bots' header reader also reads; rerun with
+//! `SLOPPY_UPDATE_FIXTURES=1` after a deliberate format change.
 
 mod net_support;
 
@@ -13,7 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use net_support::assert_same;
 use serde_json::{Map, Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
-use sloppy_core::net::protocol::PROTOCOL_VERSION;
+use sloppy_core::net::protocol::{Message, PROTOCOL_VERSION};
+use sloppy_core::net::replication::{BinaryMessage, read_binary_message};
+use sloppy_core::net::wire_view::WireView;
 
 const CONTENT: &str = "golden-content";
 const EXACT: [&str; 6] = ["welcome", "lobby", "control", "pong", "error", "room-reset"];
@@ -69,7 +75,25 @@ struct Runner {
     now: u64,
     record: Recording,
     seqs: BTreeMap<String, u64>,
+    /// Each connection's binary state as the former JSON.
+    views: BTreeMap<String, WireView>,
+    binary: Vec<Value>,
 }
+
+/// FNV-1a, enough to notice any changed byte.
+fn fnv64(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The fixed header every binary state message starts with.
+const HEADER_SAMPLE_BYTES: usize = 24;
 
 impl Runner {
     fn id(&mut self, name: &str) -> u64 {
@@ -85,9 +109,37 @@ impl Runner {
     fn drain(&mut self) {
         for event in self.host.take_events() {
             match event {
-                HostEvent::Send { connection, text } => {
+                HostEvent::Send {
+                    connection,
+                    message,
+                } => {
                     let name = self.names[connection as usize - 1].clone();
-                    let message: Value = serde_json::from_str(&text).unwrap();
+                    if let Message::Binary(bytes) = &message {
+                        let header = match read_binary_message(bytes).unwrap() {
+                            BinaryMessage::Full(full) => ("full", full.round_id, full.tick),
+                            BinaryMessage::Snapshot(batch) => {
+                                ("snapshot", batch.round_id, batch.tick)
+                            }
+                        };
+                        self.binary.push(json!({
+                            "connection": name,
+                            "type": header.0,
+                            "roundId": header.1,
+                            "tick": header.2,
+                            "length": bytes.len(),
+                            "fnv64": fnv64(bytes),
+                            "start": hex(&bytes[..bytes.len().min(HEADER_SAMPLE_BYTES)]),
+                        }));
+                    }
+                    let message: Value = match &message {
+                        Message::Text(text) => serde_json::from_str(text).unwrap(),
+                        Message::Binary(bytes) => self
+                            .views
+                            .entry(name.clone())
+                            .or_default()
+                            .binary(bytes)
+                            .unwrap(),
+                    };
                     let kind = message["type"].as_str().unwrap().to_string();
                     let exact = EXACT.contains(&kind.as_str()).then(|| message.clone());
                     match kind.as_str() {
@@ -265,10 +317,24 @@ fn the_rust_host_speaks_the_typescript_wire_format_for_a_scripted_room() {
         now: 0,
         record: Recording::default(),
         seqs: BTreeMap::new(),
+        views: BTreeMap::new(),
+        binary: Vec::new(),
     };
     for step in script["steps"].as_array().unwrap() {
         runner.run(step.as_object().unwrap());
     }
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/net-golden-binary.json"
+    );
+    let binary = json!({ "protocol": PROTOCOL_VERSION, "messages": runner.binary });
+    if std::env::var_os("SLOPPY_UPDATE_FIXTURES").is_some() {
+        let text = serde_json::to_string_pretty(&binary).unwrap() + "\n";
+        std::fs::write(path, text).unwrap();
+    }
+    let pinned: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(binary, pinned, "binary messages differ from {path}");
 
     let expected = golden["connections"].as_object().unwrap();
     let actual = &runner.record.entries;

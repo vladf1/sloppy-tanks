@@ -3,6 +3,7 @@
 //!
 //! - [`Game`] (`game.rs`): single-player play, one call per frame.
 //! - [`NetGame`] (`net_game.rs`): one multiplayer room page, one call per frame.
+//! - [`WireView`]: binary room messages as the former JSON, for the Node checks.
 //! - `RenderLab` (`lab.rs`) and `EffectsLab` (`effects_lab.rs`): the development labs of
 //!   `tools/render-lab.html` and `tools/effects-lab.html`, built only with the `labs` feature.
 
@@ -31,6 +32,31 @@ pub use game::Game;
 pub use lab::RenderLab;
 #[cfg(target_arch = "wasm32")]
 pub use net_game::NetGame;
+
+/// One connection's binary room messages as the JSON protocol sent them (see
+/// `sloppy_core::net::wire_view`), for the Node checks that follow a room's state
+/// (`scripts/state-mirror.mjs`). The page itself never needs it.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+#[derive(Default)]
+pub struct WireView(sloppy_core::net::wire_view::WireView);
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl WireView {
+    #[wasm_bindgen::prelude::wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The message as JSON text; frames advance this view's mirror.
+    pub fn json(&mut self, bytes: &[u8]) -> Result<String, wasm_bindgen::JsValue> {
+        self.0
+            .binary(bytes)
+            .map(|value| value.to_string())
+            .map_err(|error| wasm_bindgen::JsValue::from_str(&error))
+    }
+}
 
 /// Rows `band` of `bands` (equal shares, top first) of a generated texture key as
 /// RGBA8, for the page's bake workers: further instances of this module that run only

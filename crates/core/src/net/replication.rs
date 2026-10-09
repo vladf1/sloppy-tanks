@@ -1,34 +1,58 @@
-//! Baselines and field deltas (`src/net/replication.ts`).
+//! Baselines and field deltas (`src/net/replication.ts`), in binary.
 //!
 //! The host sends a `full` baseline on join, resume and resync, then one snapshot frame per
-//! captured tick: only changed fields of each record (a deleted optional field as `null`),
-//! removed ids, and the events and projectile path entries (`shot_paths`) since the previous
-//! frame. The client
-//! [`StateMirror`] applies frames transactionally: a malformed or skipped frame never
-//! partially alters the mirror; it asks for a new baseline instead.
+//! captured tick: only changed fields of each record, removed ids, and the events and
+//! projectile path entries (`shot_paths`) since the previous frame. A fixed-point field the client already
+//! holds travels as the difference from its value, so a client must apply every frame in
+//! order from a baseline; the client [`StateMirror`] applies frames transactionally: a
+//! malformed or skipped frame never partially alters the mirror; it asks for a new
+//! baseline instead.
+//!
+//! Messages (all integers LEB128 varints, `signed` zigzag varints):
+//!
+//! - `full`: `[FULL_MESSAGE] roundId tick seq eventCursor roomEpoch(text)` then the scene
+//!   ([`Scene::write`]) and every shell's path ([`LivePaths::write_baseline`]).
+//! - `snapshot`: `[SNAPSHOT_MESSAGE] roundId tick ack firstSeq count` then `count` frames
+//!   with consecutive sequence numbers. `tick` is the last frame's, so a reader that needs
+//!   only the newest tick (the traffic bots) stops after the header.
+//!
+//! A frame is `tickBack` (the header tick minus the frame's), `signed` elapsed difference
+//! in milliseconds, a section mask ([`MATCH_SECTION`] ...) and the sections:
+//! match changes; per changed kind (a kind mask first) the record count and each record
+//! as an id difference (ascending) and its changes; per kind with removals the count and
+//! ascending id differences; events as id differences, `signed` tick offsets back from
+//! the frame in thousandths and whole event records; projectile path entries
+//! ([`PathEntry::write_binary`]).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use serde_json::Value;
-
-use super::json::{self, ObjectWriter, write_int, write_str};
+use super::json::POSITION_SCALE;
+use super::protocol::{FULL_MESSAGE, SNAPSHOT_MESSAGE};
 use super::scene_codec::{
-    COVERS, ENTITY_LIMITS, ENTITY_TYPES, EntityStore, FRAGMENTS, MATCH_FIELDS, MINES, MirrorScene,
-    Scene, Stored, TANKS, WireRecord, read_cover, read_entity, read_event, read_fragment,
-    read_match, read_mine, read_pickup, read_tank, write_event,
+    COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS,
+    MATCH_FIELDS, MINES, MirrorScene, Scene, Stored, TANKS, read_cover, read_event, read_fragment,
+    read_match, read_mine, read_pickup, read_tank, write_event, write_record,
 };
-use super::schema::{ReadResult, Record, array, field, id, nested, number, number_in, record};
+use super::schema::ReadResult;
 use super::shot_paths::{LivePaths, PathEntry, ShotPath};
-use crate::sim::render_state::RenderState;
-use crate::sim::types::SimEvent;
+use super::wire::{
+    ChangedFields, WireReader, WireRecord, put_signed, put_text, put_varint, read_changes, units,
+    write_changes,
+};
+use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
+use crate::sim::types::{Match, Mine, Pickup, SimEvent};
 
-/// Most field changes (updates plus removals) one frame may carry.
+/// Most field changes (updated records plus removals) one frame may carry.
 const MAX_CHANGES: usize = 4096;
 /// Most events or projectile path entries one frame may carry.
 const MAX_FRAME_ITEMS: usize = 2048;
-/// Fields whose `null` is a real value rather than a deletion.
-const COVER_NULLABLE: [&str; 2] = ["hp", "maxHp"];
-const MATCH_NULLABLE: [&str; 1] = ["winner"];
+pub const MATCH_SECTION: u64 = 1;
+pub const UPDATES_SECTION: u64 = 2;
+pub const REMOVED_SECTION: u64 = 4;
+pub const EVENTS_SECTION: u64 = 8;
+pub const PATHS_SECTION: u64 = 16;
+/// Room epochs are UUIDs; anything longer is not a baseline this protocol sent.
+const MAX_EPOCH_BYTES: usize = 128;
 
 /// A simulation event stamped with its stream position and tick.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,73 +62,8 @@ pub struct TimedEvent {
     pub event: SimEvent,
 }
 
-impl TimedEvent {
-    /// `{"eventId":...,"tick":...,"event":{...}}`, the event rounded by field name.
-    pub fn write(event_id: u64, tick: f64, event: &SimEvent) -> String {
-        let mut out = String::new();
-        let mut writer = ObjectWriter::new(&mut out);
-        writer
-            .int("eventId", event_id)
-            .number("tick", json::position(tick));
-        write_event(writer.key("event"), event);
-        writer.finish();
-        out
-    }
-
-    /// `timedEventReader`.
-    pub fn read(source: &Record) -> ReadResult<Self> {
-        Ok(Self {
-            event_id: field(source, "eventId", id)?,
-            tick: field(source, "tick", |v| number_in(v, 0.0, 1e9, false))?,
-            event: field(source, "event", |v| nested(v, read_event))?,
-        })
-    }
-}
-
-/// Writes `{"field":value,...,"deleted":null}` for fields of `next` whose JSON differs from
-/// `previous`, current fields in order followed by deleted ones. `None` when nothing changed.
-fn write_changes(previous: Option<&WireRecord>, next: &WireRecord, out: &mut String) -> bool {
-    let Some(previous) = previous else {
-        out.push_str(next.text());
-        return true;
-    };
-    if previous.text() == next.text() {
-        return false;
-    }
-    let mut any = false;
-    let mut add = |out: &mut String, key: &str, value: &str| {
-        out.push(if any { ',' } else { '{' });
-        any = true;
-        write_str(out, key);
-        out.push(':');
-        out.push_str(value);
-    };
-    let mut cursor = 0;
-    for (key, value) in next.fields() {
-        // Records of a kind share one field order, so the match is usually at the cursor.
-        let found = previous
-            .find_field(key, cursor)
-            .or_else(|| previous.find_field(key, 0));
-        let same = match found {
-            Some((index, previous_value)) => {
-                cursor = index + 1;
-                previous_value == value
-            }
-            None => false,
-        };
-        if !same {
-            add(out, key, value);
-        }
-    }
-    for (key, _) in previous.fields() {
-        if next.get(key).is_none() {
-            add(out, key, "null");
-        }
-    }
-    if any {
-        out.push('}');
-    }
-    any
+fn thousandths(value: f64) -> i64 {
+    units(value, POSITION_SCALE)
 }
 
 /// The host's per-round stream: numbers frames and diffs each captured scene against the
@@ -114,18 +73,30 @@ pub struct StateStream {
     room_epoch: String,
     round_id: u64,
     previous: Option<Scene>,
+    /// Ids of the previous scene's records by kind, and of the scene being written.
     index: [HashMap<u32, usize>; 5],
-    current_ids: HashSet<u32>,
+    current: [HashMap<u32, usize>; 5],
     scratch: SnapshotScratch,
 }
 
-// One byte arena for all changed records; entries hold ranges rather than owning strings.
 #[derive(Default)]
 struct SnapshotScratch {
-    changes: String,
-    updates: String,
-    removed: String,
-    entries: Vec<(u32, std::ops::Range<usize>)>,
+    updates: Vec<u8>,
+    removed: Vec<u8>,
+    entries: Vec<u32>,
+    record: WireRecord,
+}
+
+fn index_scene(index: &mut [HashMap<u32, usize>; 5], scene: &Scene) {
+    for (kind, ids) in index.iter_mut().enumerate() {
+        ids.clear();
+        for (position, record) in scene.entities[kind].iter().enumerate() {
+            assert!(
+                ids.insert(record.id, position).is_none(),
+                "Duplicate entity id"
+            );
+        }
+    }
 }
 
 impl StateStream {
@@ -136,184 +107,248 @@ impl StateStream {
             round_id,
             previous: None,
             index: Default::default(),
-            current_ids: HashSet::new(),
+            current: Default::default(),
             scratch: SnapshotScratch::default(),
         }
     }
 
-    fn remember(&mut self, scene: Scene) -> Option<Scene> {
-        for (kind, index) in self.index.iter_mut().enumerate() {
-            index.clear();
-            for (position, record) in scene.entities[kind].iter().enumerate() {
-                assert!(
-                    index.insert(record.id, position).is_none(),
-                    "Duplicate entity id"
-                );
-            }
-        }
-        self.previous.replace(scene)
+    /// The scene the last frame left clients with, if any frame or baseline was written.
+    pub fn previous(&self) -> Option<&Scene> {
+        self.previous.as_ref()
     }
 
-    /// A `full` baseline message: the whole scene at `tick`, the current `seq`, the id
-    /// of the last event it already reflects, and the path of every shell in flight.
+    /// A `full` baseline message: the stream's previous scene (the first baseline starts
+    /// the stream with `capture`), at `tick` and the current `seq`, with the id of the last
+    /// event it already reflects and the path of every shell in flight. Only that scene
+    /// works as a baseline: the next frame's differences apply to it.
     pub fn full<'a>(
         &mut self,
-        scene: &Scene,
         tick: u64,
         event_cursor: u64,
         paths: impl IntoIterator<Item = &'a ShotPath>,
-    ) -> String {
+        capture: impl FnOnce() -> Scene,
+    ) -> Vec<u8> {
         if self.previous.is_none() {
-            self.remember(scene.clone());
+            let scene = capture();
+            index_scene(&mut self.index, &scene);
+            self.previous = Some(scene);
         }
-        let mut out = String::new();
-        let mut writer = ObjectWriter::new(&mut out);
-        writer
-            .string("roomEpoch", &self.room_epoch)
-            .int("roundId", self.round_id)
-            .string("type", "full")
-            .int("seq", self.seq)
-            .int("tick", tick)
-            .int("eventCursor", event_cursor);
-        scene.write(writer.key("state"));
-        let list = writer.key("paths");
-        list.push('[');
-        for (index, path) in paths.into_iter().enumerate() {
-            if index > 0 {
-                list.push(',');
-            }
-            path.write(list, true);
-        }
-        list.push(']');
-        writer.finish();
+        let scene = self.previous.as_ref().expect("set above");
+        let mut out = Vec::with_capacity(16 * 1024);
+        out.push(FULL_MESSAGE);
+        put_varint(&mut out, self.round_id);
+        put_varint(&mut out, tick);
+        put_varint(&mut out, self.seq);
+        put_varint(&mut out, event_cursor);
+        put_text(&mut out, &self.room_epoch);
+        scene.write(&mut out);
+        LivePaths::write_baseline(paths, tick, &mut out);
         out
     }
 
-    /// The next frame's JSON. `scene` becomes the stream's previous scene and is replaced
-    /// by the older one, whose buffers the caller may reuse for its next capture.
+    /// The next frame's body (without its tick, which the batch header carries). `scene`
+    /// becomes the stream's previous scene and is replaced by the older one, whose
+    /// buffers the caller may reuse for its next capture.
     pub fn snapshot(
         &mut self,
         scene: &mut Scene,
         tick: u64,
-        events: &[String],
+        events: &[TimedEvent],
         paths: &[PathEntry],
-    ) -> String {
+    ) -> Vec<u8> {
         self.seq += 1;
-        let mut out = String::new();
-        let mut frame = ObjectWriter::new(&mut out);
-        frame
-            .int("seq", self.seq)
-            .int("tick", tick)
-            .number("elapsed", scene.elapsed);
+        index_scene(&mut self.current, scene);
         let previous = self.previous.as_ref();
         let SnapshotScratch {
-            changes,
             updates,
             removed,
             entries,
+            record,
         } = &mut self.scratch;
-        changes.clear();
-        updates.clear();
-        removed.clear();
+        let mut out = Vec::with_capacity(256);
+        let mut sections = 0;
+        let elapsed = thousandths(scene.elapsed);
+        put_signed(
+            &mut out,
+            elapsed - previous.map_or(0, |scene| thousandths(scene.elapsed)),
+        );
+        let mut body = Vec::new();
         if write_changes(
+            MATCH_FIELDS,
             previous.map(|scene| &scene.match_record),
             &scene.match_record,
-            changes,
+            &mut body,
         ) {
-            frame.raw("match", changes);
+            sections |= MATCH_SECTION;
         }
+        updates.clear();
+        removed.clear();
+        let (mut updated_kinds, mut removed_kinds) = (0u64, 0u64);
         for (kind, records) in scene.entities.iter().enumerate() {
-            entries.clear();
-            changes.clear();
+            let fields = ENTITY_FIELDS[kind];
             let before = previous.map(|scene| &scene.entities[kind]);
-            for record in records {
-                let old = before.and_then(|before| {
-                    self.index[kind]
-                        .get(&record.id)
-                        .map(|&position| &before[position])
-                });
+            let old = |id: u32| {
+                before.and_then(|before| self.index[kind].get(&id).map(|&at| &before[at]))
+            };
+            // Ascending ids: clients append new records in id order, as JavaScript visited
+            // integer object keys.
+            entries.clear();
+            entries.extend(records.iter().map(|record| record.id));
+            entries.sort_unstable();
+            let count_at = updates.len();
+            let mut count = 0u64;
+            let mut last = 0u32;
+            let mut changes = Vec::new();
+            for &id in entries.iter() {
+                let next = &records[self.current[kind][&id]];
                 let start = changes.len();
-                if write_changes(old, record, changes) {
-                    entries.push((record.id, start..changes.len()));
+                put_varint(&mut changes, u64::from(id - last));
+                if write_changes(fields, old(id), next, &mut changes) {
+                    last = id;
+                    count += 1;
+                } else {
+                    changes.truncate(start);
                 }
             }
-            if !entries.is_empty() {
-                // JavaScript orders integer-like object keys numerically.
-                entries.sort_unstable_by_key(|(id, _)| *id);
-                updates.push(if updates.is_empty() { '{' } else { ',' });
-                write_str(updates, ENTITY_TYPES[kind]);
-                updates.push_str(":{");
-                for (index, (id, text)) in entries.iter().enumerate() {
-                    if index > 0 {
-                        updates.push(',');
-                    }
-                    updates.push('"');
-                    write_int(updates, u64::from(*id));
-                    updates.push_str("\":");
-                    updates.push_str(&changes[text.clone()]);
-                }
-                updates.push('}');
+            if count > 0 {
+                updated_kinds |= 1 << kind;
+                debug_assert_eq!(count_at, updates.len());
+                put_varint(updates, count);
+                updates.extend_from_slice(&changes);
             }
             if let Some(before) = before {
-                self.current_ids.clear();
-                self.current_ids
-                    .extend(records.iter().map(|record| record.id));
-                let mut first = true;
-                for record in before
-                    .iter()
-                    .filter(|record| !self.current_ids.contains(&record.id))
-                {
-                    if first {
-                        removed.push(if removed.is_empty() { '{' } else { ',' });
-                        write_str(removed, ENTITY_TYPES[kind]);
-                        removed.push_str(":[");
-                        first = false;
-                    } else {
-                        removed.push(',');
+                entries.clear();
+                entries.extend(
+                    before
+                        .iter()
+                        .map(|record| record.id)
+                        .filter(|id| !self.current[kind].contains_key(id)),
+                );
+                if !entries.is_empty() {
+                    removed_kinds |= 1 << kind;
+                    entries.sort_unstable();
+                    put_varint(removed, entries.len() as u64);
+                    let mut last = 0;
+                    for &id in entries.iter() {
+                        put_varint(removed, u64::from(id - last));
+                        last = id;
                     }
-                    write_int(removed, u64::from(record.id));
-                }
-                if !first {
-                    removed.push(']');
                 }
             }
         }
-        if !updates.is_empty() {
-            updates.push('}');
-            frame.raw("updates", updates);
+        if updated_kinds != 0 {
+            sections |= UPDATES_SECTION;
+            put_varint(&mut body, updated_kinds);
+            body.extend_from_slice(updates);
         }
-        if !removed.is_empty() {
-            removed.push('}');
-            frame.raw("removed", removed);
+        if removed_kinds != 0 {
+            sections |= REMOVED_SECTION;
+            put_varint(&mut body, removed_kinds);
+            body.extend_from_slice(removed);
         }
+        let frame_tick = thousandths(tick as f64);
         if !events.is_empty() {
-            let list = frame.key("events");
-            list.push('[');
-            for (index, event) in events.iter().enumerate() {
-                if index > 0 {
-                    list.push(',');
-                }
-                list.push_str(event);
+            sections |= EVENTS_SECTION;
+            put_varint(&mut body, events.len() as u64);
+            let mut last = 0;
+            for event in events {
+                put_varint(&mut body, event.event_id - last);
+                last = event.event_id;
+                put_signed(&mut body, frame_tick - thousandths(event.tick));
+                write_event(record, &event.event);
+                write_record(EVENT_FIELDS, record, &mut body);
             }
-            list.push(']');
         }
         if !paths.is_empty() {
-            let list = frame.key("paths");
-            list.push('[');
-            for (index, entry) in paths.iter().enumerate() {
-                if index > 0 {
-                    list.push(',');
-                }
-                entry.write(list);
+            sections |= PATHS_SECTION;
+            put_varint(&mut body, paths.len() as u64);
+            for entry in paths {
+                entry.write_binary(&mut body, tick);
             }
-            list.push(']');
         }
-        frame.finish();
+        put_varint(&mut out, sections);
+        out.extend_from_slice(&body);
         let current = std::mem::take(scene);
-        if let Some(old) = self.remember(current) {
+        std::mem::swap(&mut self.index, &mut self.current);
+        if let Some(old) = self.previous.replace(current) {
             *scene = old;
         }
         out
+    }
+}
+
+/// Writes a snapshot message's header; the frames follow, each its tick back from `tick`
+/// and its body.
+pub fn write_snapshot_header(
+    out: &mut Vec<u8>,
+    round_id: u64,
+    tick: u64,
+    ack: u64,
+    first_seq: u64,
+    count: usize,
+) {
+    out.push(SNAPSHOT_MESSAGE);
+    put_varint(out, round_id);
+    put_varint(out, tick);
+    put_varint(out, ack);
+    put_varint(out, first_seq);
+    put_varint(out, count as u64);
+}
+
+/// A `full` baseline's header, with its scene still to read.
+#[derive(Clone, Debug)]
+pub struct Baseline<'a> {
+    pub round_id: u64,
+    pub tick: u64,
+    pub seq: u64,
+    pub event_cursor: u64,
+    pub room_epoch: &'a str,
+    scene: WireReader<'a>,
+}
+
+/// A snapshot batch's header, with its frames still to read.
+#[derive(Clone, Debug)]
+pub struct SnapshotBatch<'a> {
+    pub round_id: u64,
+    /// The last frame's tick.
+    pub tick: u64,
+    /// The latest input sequence the host applied for this seat.
+    pub ack: u64,
+    pub first_seq: u64,
+    pub count: u64,
+    read: u64,
+    frames: WireReader<'a>,
+}
+
+/// A binary server message.
+#[derive(Clone, Debug)]
+pub enum BinaryMessage<'a> {
+    Full(Baseline<'a>),
+    Snapshot(SnapshotBatch<'a>),
+}
+
+/// Reads a binary message's header.
+pub fn read_binary_message(bytes: &[u8]) -> ReadResult<BinaryMessage<'_>> {
+    let mut reader = WireReader::new(bytes);
+    match reader.byte()? {
+        FULL_MESSAGE => Ok(BinaryMessage::Full(Baseline {
+            round_id: reader.varint()?,
+            tick: reader.varint()?,
+            seq: reader.varint()?,
+            event_cursor: reader.varint()?,
+            room_epoch: reader.text(MAX_EPOCH_BYTES)?,
+            scene: reader,
+        })),
+        SNAPSHOT_MESSAGE => Ok(BinaryMessage::Snapshot(SnapshotBatch {
+            round_id: reader.varint()?,
+            tick: reader.varint()?,
+            ack: reader.varint()?,
+            first_seq: reader.varint()?,
+            count: reader.varint()?,
+            read: 0,
+            frames: reader,
+        })),
+        _ => Err("Unknown message".into()),
     }
 }
 
@@ -353,19 +388,6 @@ impl Default for StateMirror {
     }
 }
 
-/// `{...before, ...changes}` with `null` deleting every field not in `nullable`.
-fn apply_changes(before: Option<&Record>, changes: &Record, nullable: &[&str]) -> Record {
-    let mut merged = before.cloned().unwrap_or_default();
-    for (key, value) in changes {
-        if value.is_null() && !nullable.contains(&key.as_str()) {
-            merged.remove(key);
-        } else {
-            merged.insert(key.clone(), value.clone());
-        }
-    }
-    merged
-}
-
 /// Validated changes for one kind, applied only once the whole frame is valid.
 struct KindChanges<T> {
     updates: Vec<Stored<T>>,
@@ -401,77 +423,111 @@ impl<T> KindChanges<T> {
 
 #[derive(Default)]
 struct FrameChanges {
-    tanks: KindChanges<crate::sim::render_state::RenderTank>,
-    covers: KindChanges<crate::sim::render_state::RenderCover>,
-    fragments: KindChanges<crate::sim::render_state::RenderFragment>,
-    mines: KindChanges<crate::sim::types::Mine>,
-    pickups: KindChanges<crate::sim::types::Pickup>,
+    tanks: KindChanges<RenderTank>,
+    covers: KindChanges<RenderCover>,
+    fragments: KindChanges<RenderFragment>,
+    mines: KindChanges<Mine>,
+    pickups: KindChanges<Pickup>,
 }
 
-fn update_entity<T>(
+fn update<T>(
     store: &EntityStore<T>,
+    changes: &mut KindChanges<T>,
     kind: usize,
-    entity_id: u32,
-    changes: &Record,
-    nullable: &[&str],
-    read: fn(&Record) -> ReadResult<T>,
-    id_of: fn(&T) -> u32,
-) -> ReadResult<Stored<T>> {
-    let merged = apply_changes(
-        store.get(entity_id).map(|stored| &stored.wire),
-        changes,
-        nullable,
+    id: u32,
+    reader: &mut WireReader<'_>,
+    read: fn(&WireRecord) -> ReadResult<T>,
+) -> ReadResult<(ChangedFields, bool)> {
+    let held = store.get(id);
+    let mut wire = held.map_or_else(
+        || WireRecord {
+            id,
+            slots: Vec::new(),
+        },
+        |stored| stored.wire.clone(),
     );
-    let stored = read_entity(kind, merged, read, id_of)?;
-    if stored.id != entity_id {
-        return Err("Entity identity changed".into());
-    }
-    Ok(stored)
+    let changed = read_changes(ENTITY_FIELDS[kind], &mut wire, reader)?;
+    let value = read(&wire)?;
+    changes.updates.push(Stored { id, wire, value });
+    Ok((changed, held.is_none()))
 }
 
-fn entity_kind(name: &str) -> ReadResult<usize> {
-    ENTITY_TYPES
-        .iter()
-        .position(|kind| *kind == name)
-        .ok_or_else(|| "Invalid entity type".into())
+/// One record a frame changed, for the JSON view.
+#[derive(Clone, Debug)]
+pub struct ChangedRecord {
+    pub kind: usize,
+    pub id: u32,
+    pub changed: ChangedFields,
+    /// The client did not hold it before: the frame sent it whole.
+    pub added: bool,
+    pub record: WireRecord,
+}
+
+/// A decoded, validated frame, applied by [`StateMirror::commit`].
+pub struct DecodedFrame {
+    pub seq: u64,
+    pub tick: u64,
+    pub elapsed: f64,
+    changes: FrameChanges,
+    match_wire: Option<(WireRecord, Match, ChangedFields)>,
+    pub removed: [Vec<u32>; 5],
+    pub events: Vec<TimedEvent>,
+    pub paths: Vec<PathEntry>,
+    /// The shells in flight after this frame.
+    shots: LivePaths,
+    event_cursor: u64,
+    /// Filled only when decoding for the JSON view.
+    pub changed: Vec<ChangedRecord>,
+}
+
+impl DecodedFrame {
+    /// The match record after this frame and the fields it changed, if any.
+    pub fn match_change(&self) -> Option<(&WireRecord, ChangedFields)> {
+        self.match_wire
+            .as_ref()
+            .map(|(record, _, changed)| (record, *changed))
+    }
 }
 
 impl StateMirror {
     /// Adopts a `full` baseline for the given room instance and round. Errors leave the
     /// mirror unchanged.
-    pub fn apply_full(&mut self, value: &Value, room_epoch: &str, round_id: u64) -> ReadResult<()> {
-        let data = record(value)?;
-        if data.get("type").and_then(Value::as_str) != Some("full")
-            || data.get("roomEpoch").and_then(Value::as_str) != Some(room_epoch)
-            || data.get("roundId").and_then(Value::as_f64) != Some(round_id as f64)
-        {
+    pub fn apply_full(
+        &mut self,
+        baseline: &Baseline<'_>,
+        room_epoch: &str,
+        round_id: u64,
+    ) -> ReadResult<()> {
+        if baseline.room_epoch != room_epoch || baseline.round_id != round_id {
             return Err("Wrong baseline identity".into());
         }
-        let state = MirrorScene::read(data.get("state"))?;
-        let seq = id(data.get("seq"))?;
-        let tick = id(data.get("tick"))?;
-        let cursor = id(data.get("eventCursor"))?;
-        let shots =
-            LivePaths::read(data.get("paths"), tick).map_err(|error| format!("paths: {error}"))?;
+        let mut scene = baseline.scene.clone();
+        let state = MirrorScene::read(&mut scene)?;
+        let shots = LivePaths::read_binary(&mut scene, baseline.tick)
+            .map_err(|error| format!("paths: {error}"))?;
+        if !scene.is_empty() {
+            return Err("Trailing data".into());
+        }
         self.state = Some(state);
         self.shots = shots;
         self.room_epoch = room_epoch.to_string();
         self.round_id = round_id;
-        self.seq = seq;
-        self.tick = tick;
-        self.event_cursor = cursor;
+        self.seq = baseline.seq;
+        self.tick = baseline.tick;
+        self.event_cursor = baseline.event_cursor;
         self.needs_full = false;
         Ok(())
     }
 
-    /// Applies the next frame, returning its new events and path entries, or `None` (and
-    /// `needs_full`) when the frame is invalid, out of order, or no baseline is held.
-    pub fn apply_snapshot(&mut self, value: &Value) -> Option<FrameExtras> {
+    /// Applies the batch's next frame, returning its new events and path entries, or `None`
+    /// (and `needs_full`) when the frame is invalid, out of order, or no baseline is held.
+    /// A failed frame leaves the rest of the batch unreadable.
+    pub fn apply_snapshot(&mut self, batch: &mut SnapshotBatch<'_>) -> Option<FrameExtras> {
         if self.state.is_none() || self.needs_full {
             return None;
         }
-        match self.try_apply(value) {
-            Ok(extras) => Some(extras),
+        match self.decode(batch, false) {
+            Ok(frame) => Some(self.commit(frame)),
             Err(_) => {
                 self.needs_full = true;
                 None
@@ -479,128 +535,207 @@ impl StateMirror {
         }
     }
 
-    fn try_apply(&mut self, value: &Value) -> ReadResult<FrameExtras> {
-        let data = record(value)?;
-        if data.get("seq").and_then(Value::as_f64) != Some((self.seq + 1) as f64) {
+    /// Reads and validates the batch's next frame without changing the mirror. With
+    /// `view`, the frame also lists every record it changed.
+    pub fn decode(&self, batch: &mut SnapshotBatch<'_>, view: bool) -> ReadResult<DecodedFrame> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| "No baseline".to_string())?;
+        if batch.read >= batch.count {
+            return Err("No more frames".into());
+        }
+        let seq = batch.first_seq + batch.read;
+        batch.read += 1;
+        if seq != self.seq + 1 {
             return Err("Snapshot gap".into());
         }
-        let tick = id(data.get("tick"))?;
+        let reader = &mut batch.frames;
+        let tick = batch
+            .tick
+            .checked_sub(reader.varint()?)
+            .ok_or_else(|| "Invalid tick".to_string())?;
         if tick < self.tick {
             return Err("Tick went backwards".into());
         }
-        let state = self.state.as_ref().expect("checked by apply_snapshot");
-        let mut changes = FrameChanges::default();
-        let mut claimed: [HashSet<u32>; 5] = Default::default();
+        let elapsed_units = thousandths(state.elapsed)
+            .checked_add(reader.signed()?)
+            .ok_or_else(|| "Invalid number".to_string())?;
+        let elapsed = elapsed_units as f64 / POSITION_SCALE;
+        if elapsed.abs() > 1e9 {
+            return Err("elapsed: Invalid number".into());
+        }
+        let sections = reader.varint()?;
+        if sections >> 5 != 0 {
+            return Err("Invalid sections".into());
+        }
+        let mut frame = DecodedFrame {
+            seq,
+            tick,
+            elapsed,
+            changes: FrameChanges::default(),
+            match_wire: None,
+            removed: Default::default(),
+            events: Vec::new(),
+            paths: Vec::new(),
+            shots: LivePaths::default(),
+            event_cursor: self.event_cursor,
+            changed: Vec::new(),
+        };
+        if sections & MATCH_SECTION != 0 {
+            let mut wire = state.match_wire.clone();
+            let changed = read_changes(MATCH_FIELDS, &mut wire, reader)
+                .map_err(|error| format!("match: {error}"))?;
+            let value = read_match(&wire).map_err(|error| format!("match: {error}"))?;
+            frame.match_wire = Some((wire, value, changed));
+        }
         let mut count = 0;
-        let mut claim = |kind: usize, entity: u32| -> ReadResult<()> {
-            if !claimed[kind].insert(entity) {
-                return Err("Duplicate change".into());
-            }
-            if count >= MAX_CHANGES {
+        let mut claim = |items: u64| -> ReadResult<()> {
+            count += items as usize;
+            if count > MAX_CHANGES {
                 return Err("Invalid changes".into());
             }
-            count += 1;
             Ok(())
         };
-        let empty = Value::Object(Record::new());
-        let section = |key: &str| match data.get(key) {
-            None | Some(Value::Null) => &empty,
-            Some(value) => value,
+        let kinds = |reader: &mut WireReader<'_>, present: bool| -> ReadResult<u64> {
+            if !present {
+                return Ok(0);
+            }
+            match reader.varint()? {
+                0 => Err("Invalid sections".into()),
+                kinds if kinds >> ENTITY_TYPES.len() == 0 => Ok(kinds),
+                _ => Err("Invalid entity type".into()),
+            }
         };
-        for (kind_name, by_id) in record(section("updates"))? {
-            let kind = entity_kind(kind_name)?;
-            // JavaScript visits integer keys in numeric order, so new records append in
-            // id order; serde's map would visit them as text.
-            let mut entries = record(by_id)?
-                .iter()
-                .map(|(id_text, fields)| {
-                    id_text
-                        .parse::<f64>()
-                        .ok()
-                        .and_then(|number| id(Some(&Value::from(number))).ok())
-                        .filter(|number| number.to_string() == *id_text)
-                        .and_then(|number| u32::try_from(number).ok())
-                        .map(|entity| (entity, fields))
-                        .ok_or_else(|| "Invalid entity id".to_string())
-                })
-                .collect::<ReadResult<Vec<_>>>()?;
-            entries.sort_by_key(|(entity, _)| *entity);
-            for (entity, fields) in entries {
-                claim(kind, entity)?;
-                let fields = record(fields)?;
-                match kind {
-                    TANKS => changes.tanks.updates.push(update_entity(
+        let updated = kinds(reader, sections & UPDATES_SECTION != 0)?;
+        for kind in (0..ENTITY_TYPES.len()).filter(|kind| updated & (1 << kind) != 0) {
+            let records = reader.varint()?;
+            claim(records)?;
+            let mut id = 0u32;
+            for index in 0..records {
+                let step = reader.varint32()?;
+                if index > 0 && step == 0 {
+                    return Err("Duplicate change".into());
+                }
+                id = id
+                    .checked_add(step)
+                    .ok_or_else(|| "Invalid entity id".to_string())?;
+                let changes = &mut frame.changes;
+                let label = |error: String| format!("{}: {error}", ENTITY_TYPES[kind]);
+                let (changed, added) = match kind {
+                    TANKS => update(
                         &state.tanks,
+                        &mut changes.tanks,
                         kind,
-                        entity,
-                        fields,
-                        &[],
+                        id,
+                        reader,
                         read_tank,
-                        |t| t.id,
-                    )?),
-                    COVERS => changes.covers.updates.push(update_entity(
+                    ),
+                    COVERS => update(
                         &state.covers,
+                        &mut changes.covers,
                         kind,
-                        entity,
-                        fields,
-                        &COVER_NULLABLE,
+                        id,
+                        reader,
                         read_cover,
-                        |c| c.id,
-                    )?),
-                    FRAGMENTS => changes.fragments.updates.push(update_entity(
+                    ),
+                    FRAGMENTS => update(
                         &state.fragments,
+                        &mut changes.fragments,
                         kind,
-                        entity,
-                        fields,
-                        &[],
+                        id,
+                        reader,
                         read_fragment,
-                        |f| f.id,
-                    )?),
-                    MINES => changes.mines.updates.push(update_entity(
+                    ),
+                    MINES => update(
                         &state.mines,
+                        &mut changes.mines,
                         kind,
-                        entity,
-                        fields,
-                        &[],
+                        id,
+                        reader,
                         read_mine,
-                        |m| m.id,
-                    )?),
-                    _ => changes.pickups.updates.push(update_entity(
+                    ),
+                    _ => update(
                         &state.pickups,
+                        &mut changes.pickups,
                         kind,
-                        entity,
-                        fields,
-                        &[],
+                        id,
+                        reader,
                         read_pickup,
-                        |p| p.id,
-                    )?),
+                    ),
+                }
+                .map_err(label)?;
+                if view {
+                    let record = match kind {
+                        TANKS => changes.tanks.updates.last().map(|s| s.wire.clone()),
+                        COVERS => changes.covers.updates.last().map(|s| s.wire.clone()),
+                        FRAGMENTS => changes.fragments.updates.last().map(|s| s.wire.clone()),
+                        MINES => changes.mines.updates.last().map(|s| s.wire.clone()),
+                        _ => changes.pickups.updates.last().map(|s| s.wire.clone()),
+                    };
+                    frame.changed.push(ChangedRecord {
+                        kind,
+                        id,
+                        changed,
+                        added,
+                        record: record.expect("just pushed"),
+                    });
                 }
             }
         }
-        for (kind_name, ids) in record(section("removed"))? {
-            let kind = entity_kind(kind_name)?;
-            for entity in array(Some(ids), MAX_CHANGES, |item| id(Some(item)))? {
-                let entity = u32::try_from(entity).map_err(|_| "Unknown removal")?;
-                claim(kind, entity)?;
-                let known = match kind {
-                    TANKS => state.tanks.contains(entity),
-                    COVERS => state.covers.contains(entity),
-                    FRAGMENTS => state.fragments.contains(entity),
-                    MINES => state.mines.contains(entity),
-                    _ => state.pickups.contains(entity),
+        let removed = kinds(reader, sections & REMOVED_SECTION != 0)?;
+        for kind in (0..ENTITY_TYPES.len()).filter(|kind| removed & (1 << kind) != 0) {
+            let records = reader.varint()?;
+            claim(records)?;
+            let mut id = 0u32;
+            for index in 0..records {
+                let step = reader.varint32()?;
+                if index > 0 && step == 0 {
+                    return Err("Duplicate change".into());
+                }
+                id = id
+                    .checked_add(step)
+                    .ok_or_else(|| "Unknown removal".to_string())?;
+                let changes = &mut frame.changes;
+                let (known, updated) = match kind {
+                    TANKS => (
+                        state.tanks.contains(id),
+                        &changes.tanks.updates.iter().any(|s| s.id == id),
+                    ),
+                    COVERS => (
+                        state.covers.contains(id),
+                        &changes.covers.updates.iter().any(|s| s.id == id),
+                    ),
+                    FRAGMENTS => (
+                        state.fragments.contains(id),
+                        &changes.fragments.updates.iter().any(|s| s.id == id),
+                    ),
+                    MINES => (
+                        state.mines.contains(id),
+                        &changes.mines.updates.iter().any(|s| s.id == id),
+                    ),
+                    _ => (
+                        state.pickups.contains(id),
+                        &changes.pickups.updates.iter().any(|s| s.id == id),
+                    ),
                 };
+                if *updated {
+                    return Err("Duplicate change".into());
+                }
                 if !known {
                     return Err("Unknown removal".into());
                 }
                 match kind {
-                    TANKS => changes.tanks.removals.push(entity),
-                    COVERS => changes.covers.removals.push(entity),
-                    FRAGMENTS => changes.fragments.removals.push(entity),
-                    MINES => changes.mines.removals.push(entity),
-                    _ => changes.pickups.removals.push(entity),
+                    TANKS => changes.tanks.removals.push(id),
+                    COVERS => changes.covers.removals.push(id),
+                    FRAGMENTS => changes.fragments.removals.push(id),
+                    MINES => changes.mines.removals.push(id),
+                    _ => changes.pickups.removals.push(id),
                 }
+                frame.removed[kind].push(id);
             }
         }
+        let changes = &frame.changes;
         let lengths = [
             changes.tanks.resulting_len(&state.tanks),
             changes.covers.resulting_len(&state.covers),
@@ -613,53 +748,87 @@ impl StateMirror {
                 return Err(format!("entities: {}: Invalid list", ENTITY_TYPES[kind]));
             }
         }
-        let elapsed = field(data, "elapsed", number)?;
-        let match_changes = record(section("match"))?;
-        let mut match_wire = apply_changes(Some(&state.match_wire), match_changes, &MATCH_NULLABLE);
-        let match_state = read_match(&match_wire).map_err(|error| format!("match: {error}"))?;
-        match_wire.retain(|key, _| MATCH_FIELDS.contains(&key.as_str()));
         if lengths[TANKS] == 0 {
             return Err("Missing viewer".into());
         }
-        let events = match data.get("events") {
-            None => Vec::new(),
-            some => array(some, MAX_FRAME_ITEMS, |item| {
-                nested(Some(item), TimedEvent::read)
-            })?,
+        let frame_tick = thousandths(tick as f64);
+        let items = |reader: &mut WireReader<'_>, present: bool| -> ReadResult<u64> {
+            if !present {
+                return Ok(0);
+            }
+            match reader.varint()? {
+                count if count as usize <= MAX_FRAME_ITEMS => Ok(count),
+                _ => Err("Invalid list".into()),
+            }
         };
-        let events: Vec<TimedEvent> = events
-            .into_iter()
-            .filter(|event| event.event_id > self.event_cursor)
-            .collect();
-        let mut shots = self.shots.clone();
-        let paths = match data.get("paths") {
-            None => Vec::new(),
-            Some(Value::Array(items)) if items.len() <= MAX_FRAME_ITEMS => shots
-                .apply(items, tick)
-                .map_err(|error| format!("paths: {error}"))?,
-            Some(_) => return Err("paths: Invalid list".into()),
-        };
-        let mut cursor = self.event_cursor;
-        for event in &events {
-            if event.event_id != cursor + 1 || event.tick > tick as f64 {
+        let mut record = WireRecord::default();
+        let mut event_id = 0u64;
+        for _ in 0..items(reader, sections & EVENTS_SECTION != 0)? {
+            event_id = event_id
+                .checked_add(reader.varint()?)
+                .ok_or_else(|| "Invalid number".to_string())?;
+            let back = reader.signed()?;
+            record.slots.clear();
+            read_changes(EVENT_FIELDS, &mut record, reader)
+                .map_err(|error| format!("event: {error}"))?;
+            let event = read_event(&record).map_err(|error| format!("event: {error}"))?;
+            let event_tick = frame_tick
+                .checked_sub(back)
+                .ok_or_else(|| "Invalid number".to_string())?;
+            if event_id <= frame.event_cursor {
+                // Already reflected by the baseline this mirror started from.
+                continue;
+            }
+            if event_id != frame.event_cursor + 1 || back < 0 || event_tick < 0 {
                 return Err("Event gap".into());
             }
-            cursor = event.event_id;
+            frame.event_cursor = event_id;
+            frame.events.push(TimedEvent {
+                event_id,
+                tick: event_tick as f64 / POSITION_SCALE,
+                event,
+            });
         }
-        let state = self.state.as_mut().expect("checked by apply_snapshot");
-        changes.tanks.apply(&mut state.tanks);
-        changes.covers.apply(&mut state.covers);
-        changes.fragments.apply(&mut state.fragments);
-        changes.mines.apply(&mut state.mines);
-        changes.pickups.apply(&mut state.pickups);
-        state.elapsed = elapsed;
-        state.match_wire = match_wire;
-        state.match_state = match_state;
-        self.shots = shots;
-        self.tick = tick;
-        self.seq += 1;
-        self.event_cursor = cursor;
-        Ok(FrameExtras { events, paths })
+        frame.shots = self.shots.clone();
+        let paths = items(reader, sections & PATHS_SECTION != 0)?;
+        frame.paths = frame
+            .shots
+            .apply_binary(reader, paths, tick)
+            .map_err(|error| format!("paths: {error}"))?;
+        if batch.read == batch.count && !batch.frames.is_empty() {
+            return Err("Trailing data".into());
+        }
+        Ok(frame)
+    }
+
+    /// Applies a frame [`decode`](Self::decode) validated against this mirror.
+    pub fn commit(&mut self, frame: DecodedFrame) -> FrameExtras {
+        let state = self.state.as_mut().expect("decoded against a baseline");
+        let FrameChanges {
+            tanks,
+            covers,
+            fragments,
+            mines,
+            pickups,
+        } = frame.changes;
+        tanks.apply(&mut state.tanks);
+        covers.apply(&mut state.covers);
+        fragments.apply(&mut state.fragments);
+        mines.apply(&mut state.mines);
+        pickups.apply(&mut state.pickups);
+        state.elapsed = frame.elapsed;
+        if let Some((wire, value, _)) = frame.match_wire {
+            state.match_wire = wire;
+            state.match_state = value;
+        }
+        self.shots = frame.shots;
+        self.tick = frame.tick;
+        self.seq = frame.seq;
+        self.event_cursor = frame.event_cursor;
+        FrameExtras {
+            events: frame.events,
+            paths: frame.paths,
+        }
     }
 
     /// The render state for `viewer`, its shells where their paths put them at `tick`.

@@ -1,6 +1,6 @@
 //! Per-room server work for one 50 ms host interval: three fixed steps with the projectile
-//! path recording `MatchHost` does after each, then the scene capture, field diff and JSON
-//! it performs for each snapshot frame.
+//! path recording `MatchHost` does after each, then the scene capture, field diff and
+//! encoding it performs for each snapshot frame.
 //! `cargo run -p sloppy-core --release --example capture_benchmark -- [output.json]`
 //! seeds each standard map and both extra levels with one idle player, warms up 1200
 //! ticks, then times 400 intervals. Manual evidence, not a CI gate.
@@ -28,7 +28,7 @@ const ROOMS: [(&str, MapId); 5] = [
     ("stress-grid", MapId::StressTest),
     ("scrap-yard", MapId::Superstress),
 ];
-const STAGES: [&str; 4] = ["physics", "paths", "capture", "diff+json"];
+const STAGES: [&str; 4] = ["physics", "paths", "capture", "diff+encode"];
 
 fn summary(samples: &mut [f64]) -> Value {
     samples.sort_by(f64::total_cmp);
@@ -78,7 +78,8 @@ fn main() {
         }
         paths.clear_entries();
         let mut stream = StateStream::new("benchmark", 1);
-        stream.full(&Scene::capture(&sim), WARMUP_TICKS, 0, paths.paths());
+        let first = Scene::capture(&sim);
+        stream.full(WARMUP_TICKS, 0, paths.paths(), || first);
         let mut samples: [Vec<f64>; 4] = Default::default();
         let mut scene = Scene::default();
         let mut tick = WARMUP_TICKS;

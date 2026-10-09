@@ -103,7 +103,7 @@ impl DelaySettings {
 pub struct TransportDelay {
     pub settings: DelaySettings,
     pub outbound: DelayedChannel<String>,
-    pub inbound: DelayedChannel<String>,
+    pub inbound: DelayedChannel<super::protocol::Message>,
     random: Box<dyn FnMut() -> f64 + Send>,
 }
 
@@ -131,9 +131,13 @@ impl TransportDelay {
         self.outbound.send(text, now_ms, delay)
     }
 
-    pub fn receive(&mut self, text: String, now_ms: f64) -> Result<(), String> {
+    pub fn receive(
+        &mut self,
+        message: super::protocol::Message,
+        now_ms: f64,
+    ) -> Result<(), String> {
         let delay = self.delay();
-        self.inbound.send(text, now_ms, delay)
+        self.inbound.send(message, now_ms, delay)
     }
 
     /// No per-message timers survive a reconnect.

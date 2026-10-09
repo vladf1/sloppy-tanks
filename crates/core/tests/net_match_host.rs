@@ -7,12 +7,17 @@ mod support;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use net_support::{Harness, harness, harness_at, set_translation};
+use net_support::{
+    Harness, apply_batch, batch, first_seq, harness, harness_at, last_seq, set_translation,
+};
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{
-    CONTENT_VERSION, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS, MAX_ROUND_MINUTES, RoomPhase,
+    CONTENT_VERSION, FULL_MESSAGE, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS, MAX_ROUND_MINUTES, Message,
+    PROTOCOL_VERSION, RoomPhase, SNAPSHOT_MESSAGE,
 };
-use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
+use sloppy_core::net::replication::{
+    BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
+};
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::ShotPath;
 use sloppy_core::sim::arena::CoverDef;
@@ -20,25 +25,15 @@ use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, SimEvent, SimEventT
 use support::clear_arena;
 
 fn mirror_from(h: &Harness, name: &str) -> (StateMirror, Value) {
-    let full = h.latest(name, "full");
-    let mut mirror = StateMirror::default();
-    let epoch = full["roomEpoch"].as_str().unwrap().to_string();
-    let round = full["roundId"].as_u64().unwrap();
-    mirror
-        .apply_full(&full, &epoch, round)
-        .expect("valid baseline");
-    (mirror, full)
+    (h.mirror_from_latest_full(name), h.latest(name, "full"))
 }
 
 fn apply_latest(h: &Harness, name: &str, mirror: &mut StateMirror) {
-    for snapshot in h.latest(name, "snapshot")["snapshots"].as_array().unwrap() {
-        assert!(mirror.apply_snapshot(snapshot).is_some());
-    }
+    apply_batch(mirror, &h.latest_binary(name, SNAPSHOT_MESSAGE));
 }
 
 fn capture(h: &Harness) -> Value {
-    let scene = Scene::capture(h.host.simulation.as_ref().unwrap());
-    serde_json::from_str(&scene.to_json()).unwrap()
+    Scene::capture(h.host.simulation.as_ref().unwrap()).to_json()
 }
 
 fn tank_id(h: &mut Harness, index: usize) -> u32 {
@@ -96,13 +91,9 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
     h.advance();
     let (mut mirror, full) = mirror_from(&h, "alice");
     let full_seq = full["seq"].as_u64().unwrap();
-    for message in h.all("alice").to_vec() {
-        if message["type"] == "snapshot"
-            && message["snapshots"][0]["seq"].as_u64().unwrap() > full_seq
-        {
-            for snapshot in message["snapshots"].as_array().unwrap() {
-                assert!(mirror.apply_snapshot(snapshot).is_some());
-            }
+    for message in h.binary("alice", SNAPSHOT_MESSAGE) {
+        if first_seq(&message) > full_seq {
+            apply_batch(&mut mirror, &message);
         }
     }
     assert_eq!(
@@ -173,6 +164,9 @@ fn humans_only_removes_expired_reservations_and_accepts_new_occupants_without_gr
         }
         for texts in h.texts.values_mut() {
             texts.clear();
+        }
+        for wire in h.wire.values_mut() {
+            wire.clear();
         }
     }
     assert_eq!(h.sim().tanks.len(), 1);
@@ -578,9 +572,7 @@ fn real_host_messages_apply_to_mirrors_and_projectile_paths_survive_an_impact_be
     );
     h.advance();
     let snaps = h.latest("alice", "snapshot")["snapshots"].clone();
-    for snap in snaps.as_array().unwrap() {
-        assert!(mirror.apply_snapshot(snap).is_some());
-    }
+    apply_latest(&h, "alice", &mut mirror);
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), capture(&h));
     let team = h.sim().tanks[tank].team.index();
     let sim = h.host.simulation.as_ref().unwrap();
@@ -659,8 +651,12 @@ fn membership_and_lifecycle_changes_between_broadcasts_keep_a_frame_at_their_own
     assert_eq!(ticks, vec![first, first + 1, first + 2]);
     let piece = piece.load(Ordering::SeqCst);
     let mut states = Vec::new();
-    for frame in frames.as_array().unwrap() {
-        assert!(mirror.apply_snapshot(frame).is_some());
+    let latest = h.latest_binary("alice", SNAPSHOT_MESSAGE);
+    let BinaryMessage::Snapshot(mut batch) = read_binary_message(&latest).unwrap() else {
+        unreachable!()
+    };
+    for _ in 0..batch.count {
+        assert!(mirror.apply_snapshot(&mut batch).is_some());
         states.push(mirror.state.clone().unwrap());
     }
     let available: Vec<bool> = states
@@ -711,15 +707,26 @@ fn resync_skips_events_already_included_in_its_baseline_and_repeated_rounds_reta
     let mut state = Scene::capture(h.host.simulation.as_ref().unwrap());
     let mut stream = StateStream::new("r", 1);
     let mut mirror = StateMirror::default();
-    let full: Value = serde_json::from_str(&stream.full(&state, 0, 2, &[])).unwrap();
-    mirror.apply_full(&full, "r", 1).unwrap();
-    let events: Vec<String> = (1..=3)
-        .map(|id| TimedEvent::write(id, id as f64, &SimEvent::at(SimEventType::Impact, 0.0, 0.0)))
+    let full = stream.full(0, 2, [], || state.clone());
+    let BinaryMessage::Full(baseline) = read_binary_message(&full).unwrap() else {
+        unreachable!()
+    };
+    mirror.apply_full(&baseline, "r", 1).unwrap();
+    let events: Vec<TimedEvent> = (1..=3)
+        .map(|id| TimedEvent {
+            event_id: id,
+            tick: id as f64,
+            event: SimEvent::at(SimEventType::Impact, 0.0, 0.0),
+        })
         .collect();
-    let frame: Value = serde_json::from_str(&stream.snapshot(&mut state, 3, &events, &[])).unwrap();
-    let result = mirror.apply_snapshot(&frame).unwrap();
+    let frame = stream.snapshot(&mut state, 3, &events, &[]);
+    let result = apply_batch(&mut mirror, &batch(1, 0, 1, &[(3, frame)]));
     assert_eq!(
-        result.events.iter().map(|e| e.event_id).collect::<Vec<_>>(),
+        result[0]
+            .events
+            .iter()
+            .map(|e| e.event_id)
+            .collect::<Vec<_>>(),
         vec![3]
     );
 }
@@ -932,10 +939,7 @@ fn live_snapshots_carry_each_players_authoritative_kills_and_preserve_them_throu
     h.join("bob", json!({ "team": 1 }));
     let alice = h.sim().tanks[0].clone();
     let bob = h.sim().tanks[1].id;
-    let mut mirror = StateMirror::default();
-    mirror
-        .apply_full(&h.latest("alice", "full"), "test-room", 1)
-        .unwrap();
+    let mut mirror = h.mirror_from_latest_full("alice");
     h.sim().tanks[1].protection = 0.0;
     h.sim()
         .damage_tank(1, 10000.0, alice.id, alice.team, Some(alice.life), None);
@@ -965,21 +969,41 @@ fn wire_messages_keep_the_typescript_key_order() {
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
     h.advance();
-    let texts = h.texts["alice"].clone();
+    let texts: Vec<String> = h.wire["alice"]
+        .iter()
+        .filter_map(|message| match message {
+            Message::Text(text) => Some(text.clone()),
+            Message::Binary(_) => None,
+        })
+        .collect();
     let starts = |prefix: &str| texts.iter().any(|text| text.starts_with(prefix));
-    assert!(starts(r#"{"type":"welcome","version":2,"contentVersion":"#));
+    assert!(starts(&format!(
+        r#"{{"type":"welcome","version":{PROTOCOL_VERSION},"contentVersion":"#
+    )));
     assert!(starts(
         r#"{"roomEpoch":"test-room","roundId":0,"type":"lobby","phase":"lobby""#
     ));
     assert!(starts(
         r#"{"roomEpoch":"test-room","roundId":1,"type":"control","tankId":"#
     ));
-    assert!(starts(
-        r#"{"roomEpoch":"test-room","roundId":1,"type":"full","seq":0,"tick":0,"eventCursor":"#
-    ));
-    assert!(starts(
-        r#"{"type":"snapshot","roundId":1,"ack":0,"snapshots":[{"seq":1,"tick":"#
-    ));
+    // State is binary: a type byte, then the round and tick.
+    let binary: Vec<&Vec<u8>> = h.wire["alice"]
+        .iter()
+        .filter_map(|message| match message {
+            Message::Binary(bytes) => Some(bytes),
+            Message::Text(_) => None,
+        })
+        .collect();
+    assert!(
+        binary
+            .iter()
+            .any(|bytes| bytes[..3] == [FULL_MESSAGE, 1, 0])
+    );
+    assert!(
+        binary
+            .iter()
+            .any(|bytes| bytes[..2] == [SNAPSHOT_MESSAGE, 1])
+    );
     assert!(starts(r#"{"type":"pong","t":50,"tick":0}"#));
     assert!(
         !texts
@@ -1063,4 +1087,52 @@ fn control_messages_follow_life_driver_and_round_changes_without_idle_repeats() 
     let controls = h.count("alice", "control");
     h.advance();
     assert_eq!(h.count("alice", "control"), controls);
+}
+
+#[test]
+fn a_mid_round_join_gets_the_streamed_scene_and_every_client_keeps_matching_the_host() {
+    let mut h = harness();
+    let create = json!({ "mapMode": "village", "difficulty": "normal", "humansOnly": false });
+    h.join("alice", json!({ "create": create }));
+    h.advance();
+    h.advance();
+    let seq_before = last_seq(&h.latest_binary("alice", SNAPSHOT_MESSAGE));
+    // Taking over a bot's tank changes the simulation between frames, so the host streams
+    // that change as a frame before the baseline, which must show exactly the streamed scene.
+    h.join("bob", json!({ "existingRoom": true }));
+    let full = h.latest("bob", "full");
+    let baseline_seq = full["seq"].as_u64().unwrap();
+    assert_eq!(baseline_seq, seq_before + 1, "the join became a frame");
+    let bob = h.latest("bob", "control")["tankId"].as_u64().unwrap();
+    let tank = full["state"]["entities"]["tanks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tank| tank["id"] == bob)
+        .unwrap()
+        .clone();
+    assert_eq!(tank["name"], "bob");
+    assert_eq!(tank["human"], true);
+    h.advance();
+    let alice_batch = h.latest_binary("alice", SNAPSHOT_MESSAGE);
+    let bob_batch = h.latest_binary("bob", SNAPSHOT_MESSAGE);
+    assert_eq!(
+        first_seq(&alice_batch),
+        baseline_seq,
+        "alice receives the join frame"
+    );
+    assert_eq!(
+        first_seq(&bob_batch),
+        baseline_seq + 1,
+        "bob's baseline already shows it"
+    );
+    let truth = capture(&h);
+    assert_eq!(h.mirrored("alice"), truth);
+    assert_eq!(h.mirrored("bob"), truth);
+    for _ in 0..20 {
+        h.advance();
+        let truth = capture(&h);
+        assert_eq!(h.mirrored("alice"), truth);
+        assert_eq!(h.mirrored("bob"), truth);
+    }
 }

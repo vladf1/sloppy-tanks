@@ -124,8 +124,11 @@ WebSocket-frame recording are shared in `multiplayer-helpers.mjs`. Server rules
 (seats, idle watchdog, humans-only, reconnect, host transfer, expiry) are covered by
 the engine's tests (`crates/core/tests/net_match_host.rs`, `net_player_controls.rs`,
 `crates/server/tests/`); these checks cover what only a browser or a real socket
-shows. Checks that follow a room's state apply its frames with `state-mirror.mjs`,
-which also asserts the snapshot stream stays contiguous.
+shows. Room state travels in binary WebSocket frames, deltas against what the client
+already holds; `wire-view.mjs` decodes them through the engine Wasm (one `WireView`
+per socket, so run `pnpm run wasm` first) into the JSON `full` and `snapshot` shapes.
+Checks that follow a room's state apply those with `state-mirror.mjs`, which also
+asserts the snapshot stream stays contiguous.
 
 `pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
 multiplayer requests, sockets or UI in single-player, server or traffic-bot code in
@@ -237,6 +240,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
 | `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval         |
 | `cargo run --release -p sloppy-server --example snapshot_bandwidth`                      | Snapshot bytes per room client, raw and deflated, and their projectile share           |
+| `cargo run --release -p sloppy-server --example room_traffic`                            | Four players per room: bytes raw and on the wire, deflate, decode, state parity        |
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
 | `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |
 | `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
@@ -258,11 +262,18 @@ time on an otherwise idle machine, and report sample counts with outliers.
 - `snapshot_bandwidth` plays the Village, the Stress Grid and the Scrap Yard with
   one idle watcher for three seeds (20 s warm-up, 60 s measured) through
   `MatchHost` and the server's permessage-deflate. It reports raw and deflated
-  snapshot bytes per second, the projectile share (the same stream with its
-  projectile keys stripped, compressed on its own context), projectile path
-  entries per second and the host's interval time. Bytes repeat exactly for a
+  snapshot bytes per second, the projectile share (the raw bytes of the path
+  entries; deflate compresses whole messages, so there is no deflated share),
+  projectile path entries per second and the host's interval time. Bytes repeat exactly for a
   seed, so one run per build compares them; interval times drift between runs
   like every timing here.
+- `room_traffic` plays the same three rooms with four scripted players that drive
+  and fire like the traffic bots, from a fixed seed, through a server-role codec
+  per connection. It reports raw and on-the-wire bytes per message type, the host's
+  interval, deflate and native client decode times, and hashes every frame each
+  client projects, so two builds can show they replicate the same state;
+  `SLOPPY_VERIFY=1` also compares every client's mirror with the host after every
+  frame, and `SLOPPY_DUMP=1` writes every message sent.
 - `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
   ticks, times 3600 and prints JSON. For an engine change, run a base-commit
   worktree and the candidate alternately over several maps and seeds.

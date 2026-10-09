@@ -1,12 +1,18 @@
 //! A scripted room for the multiplayer tests: named connections, an in-memory clock, and
-//! every message the host sends, parsed. Include with `mod net_support;`.
+//! every message the host sends, parsed (binary state through each connection's
+//! [`WireView`], as the former JSON). Include with `mod net_support;`.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
-use sloppy_core::net::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
+use sloppy_core::net::protocol::{CONTENT_VERSION, FULL_MESSAGE, Message, PROTOCOL_VERSION};
+use sloppy_core::net::replication::{
+    BinaryMessage, FrameExtras, StateMirror, read_binary_message, write_snapshot_header,
+};
+use sloppy_core::net::wire::put_varint;
+use sloppy_core::net::wire_view::WireView;
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::physics::vector;
 
@@ -15,8 +21,11 @@ pub struct Harness {
     pub now: u64,
     /// Parsed messages per connection name, in arrival order.
     pub messages: BTreeMap<String, Vec<Value>>,
-    /// Raw texts per connection name.
+    /// Texts per connection name: JSON messages as sent, binary ones as their JSON view.
     pub texts: BTreeMap<String, Vec<String>>,
+    /// Messages per connection name as sent.
+    pub wire: BTreeMap<String, Vec<Message>>,
+    views: BTreeMap<String, WireView>,
     /// Connection names the host closed, with each close.
     pub closed: Vec<String>,
     pub close_codes: Vec<(String, u16, String)>,
@@ -49,6 +58,8 @@ pub fn harness_at(created_ms: i64, epoch: &str, seed: u32) -> Harness {
         now: offset,
         messages: BTreeMap::new(),
         texts: BTreeMap::new(),
+        wire: BTreeMap::new(),
+        views: BTreeMap::new(),
         closed: Vec::new(),
         close_codes: Vec::new(),
         names: Vec::new(),
@@ -87,11 +98,29 @@ impl Harness {
     pub fn drain(&mut self) {
         for event in self.host.take_events() {
             match event {
-                HostEvent::Send { connection, text } => {
+                HostEvent::Send {
+                    connection,
+                    message,
+                } => {
                     let name = self.name(connection);
-                    let value: Value = serde_json::from_str(&text).expect("host sends JSON");
+                    let value: Value = match &message {
+                        Message::Text(text) => {
+                            serde_json::from_str(text).expect("host sends JSON text")
+                        }
+                        Message::Binary(bytes) => self
+                            .views
+                            .entry(name.clone())
+                            .or_default()
+                            .binary(bytes)
+                            .unwrap_or_else(|error| panic!("{name} cannot read state: {error}")),
+                    };
+                    let text = match &message {
+                        Message::Text(text) => text.clone(),
+                        Message::Binary(_) => value.to_string(),
+                    };
                     self.messages.entry(name.clone()).or_default().push(value);
-                    self.texts.entry(name).or_default().push(text);
+                    self.texts.entry(name.clone()).or_default().push(text);
+                    self.wire.entry(name).or_default().push(message);
                 }
                 HostEvent::Close {
                     connection,
@@ -273,5 +302,92 @@ pub fn assert_same(a: &Value, b: &Value, context: &str) {
     }
     if let Some(difference) = first_difference(a, b, String::new()) {
         panic!("{context}: {difference}");
+    }
+}
+
+impl Harness {
+    /// The binary messages of one type (`FULL_MESSAGE` or `SNAPSHOT_MESSAGE`) a
+    /// connection received, in order.
+    pub fn binary(&self, name: &str, kind: u8) -> Vec<Vec<u8>> {
+        self.wire
+            .get(name)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter_map(|message| match message {
+                Message::Binary(bytes) if bytes.first() == Some(&kind) => Some(bytes.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn latest_binary(&self, name: &str, kind: u8) -> Vec<u8> {
+        self.binary(name, kind)
+            .pop()
+            .unwrap_or_else(|| panic!("{name} received no binary message {kind}"))
+    }
+
+    /// A mirror started from the connection's latest baseline.
+    pub fn mirror_from_latest_full(&self, name: &str) -> StateMirror {
+        let bytes = self.latest_binary(name, FULL_MESSAGE);
+        let BinaryMessage::Full(baseline) = read_binary_message(&bytes).unwrap() else {
+            unreachable!()
+        };
+        let mut mirror = StateMirror::default();
+        mirror
+            .apply_full(&baseline, baseline.room_epoch, baseline.round_id)
+            .expect("valid baseline");
+        mirror
+    }
+}
+
+/// Applies every frame of a binary snapshot batch, asserting each applies.
+pub fn apply_batch(mirror: &mut StateMirror, bytes: &[u8]) -> Vec<FrameExtras> {
+    let BinaryMessage::Snapshot(mut batch) = read_binary_message(bytes).unwrap() else {
+        panic!("not a snapshot batch");
+    };
+    (0..batch.count)
+        .map(|_| mirror.apply_snapshot(&mut batch).expect("frame applies"))
+        .collect()
+}
+
+/// The first frame sequence number of a binary snapshot batch.
+pub fn first_seq(bytes: &[u8]) -> u64 {
+    match read_binary_message(bytes).unwrap() {
+        BinaryMessage::Snapshot(batch) => batch.first_seq,
+        BinaryMessage::Full(_) => panic!("not a snapshot batch"),
+    }
+}
+
+/// The last frame sequence number of a binary snapshot batch.
+pub fn last_seq(bytes: &[u8]) -> u64 {
+    match read_binary_message(bytes).unwrap() {
+        BinaryMessage::Snapshot(batch) => batch.first_seq + batch.count - 1,
+        BinaryMessage::Full(_) => panic!("not a snapshot batch"),
+    }
+}
+
+/// A batch message of frames the host would send: `(tick, body)` from
+/// [`StateStream::snapshot`](sloppy_core::net::replication::StateStream::snapshot), the
+/// first with sequence number `first_seq`.
+pub fn batch(round_id: u64, ack: u64, first_seq: u64, frames: &[(u64, Vec<u8>)]) -> Vec<u8> {
+    let last = frames.last().map_or(0, |(tick, _)| *tick);
+    let mut out = Vec::new();
+    write_snapshot_header(&mut out, round_id, last, ack, first_seq, frames.len());
+    for (tick, body) in frames {
+        put_varint(&mut out, last - tick);
+        out.extend_from_slice(body);
+    }
+    out
+}
+
+impl Harness {
+    /// The scene a connection's view mirrors, as the former JSON.
+    pub fn mirrored(&self, name: &str) -> Value {
+        self.views[name]
+            .mirror
+            .state
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name} holds no baseline"))
+            .to_value()
     }
 }

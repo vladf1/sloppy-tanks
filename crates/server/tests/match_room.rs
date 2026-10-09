@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use sloppy_core::net::wire_view::WireView;
 use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
 use sloppy_server::server::{MultiplayerServer, ServerOptions};
@@ -47,7 +48,9 @@ async fn connect(base: &str, room: &str) -> Socket {
 
 struct Player {
     socket: Socket,
+    /// Text messages, and binary state as the former JSON.
     messages: Vec<Value>,
+    view: WireView,
 }
 
 impl Player {
@@ -71,6 +74,9 @@ impl Player {
             match next {
                 Some(Ok(Message::Text(text))) => {
                     self.messages.push(serde_json::from_str(&text).unwrap());
+                }
+                Some(Ok(Message::Binary(bytes))) => {
+                    self.messages.push(self.view.binary(&bytes).unwrap());
                 }
                 Some(Ok(Message::Close(frame))) => panic!("closed before {what}: {frame:?}"),
                 Some(Ok(_)) => {}
@@ -118,6 +124,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     let mut alice = Player {
         socket: connect(&base, "MATCHRM2").await,
         messages: Vec::new(),
+        view: WireView::default(),
     };
     alice
         .send(join(
@@ -147,6 +154,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     let mut bob = Player {
         socket: connect(&base, "MATCHRM2").await,
         messages: Vec::new(),
+        view: WireView::default(),
     };
     bob.send(join("bob", json!({ "existingRoom": true }))).await;
     let bob_welcome = bob.next("welcome").await;
@@ -211,6 +219,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     let mut back = Player {
         socket: connect(&base, "MATCHRM2").await,
         messages: Vec::new(),
+        view: WireView::default(),
     };
     back.send(join(
         "bob",

@@ -1,6 +1,7 @@
 // A plain-JSON mirror of one room's replicated scene for the Node multiplayer checks,
-// which watch a browser's or a bot's socket frames. It applies the wire format of
-// `crates/core/src/net/replication.rs`: a `full` baseline (`{ roomEpoch, roundId, seq,
+// which watch a browser's or a bot's socket frames. The server sends state as binary
+// frames (`crates/core/src/net/replication.rs`) that `wire-view.mjs` turns back into the
+// JSON shapes this applies: a `full` baseline (`{ roomEpoch, roundId, seq,
 // tick, eventCursor, state: { entities: { tanks: [...], ... }, elapsed, match, map } }`),
 // then one frame per captured tick with `seq` one higher, the changed fields of each
 // record (`updates: { tanks: { "<id>": { field: value } } }`, a deleted optional field as

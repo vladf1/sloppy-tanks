@@ -17,10 +17,11 @@ use super::multiplayer_simulation::{
 use super::player_controls::PlayerControls;
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATTLE_OVERRUN_MS,
-    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, PROTOCOL_VERSION, Player, ROOM_IDLE_MS, RoomPhase,
-    RoomSettings, Welcome, error_message, read_player_kind, read_team, room_reset_message,
+    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION, Player, ROOM_IDLE_MS,
+    RoomPhase, RoomSettings, Welcome, error_message, read_player_kind, read_team,
+    room_reset_message,
 };
-use super::replication::{StateStream, TimedEvent};
+use super::replication::{StateStream, TimedEvent, write_snapshot_header};
 use super::room_list::RoomListing;
 use super::scene_codec::Scene;
 use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
@@ -46,7 +47,7 @@ pub type ConnectionId = u64;
 pub enum HostEvent {
     Send {
         connection: ConnectionId,
-        text: String,
+        message: Message,
     },
     Close {
         connection: ConnectionId,
@@ -92,6 +93,8 @@ struct Client {
     count: u32,
     full_window_ms: u64,
     full_count: u32,
+    /// The stream position of this client's latest baseline; batches skip frames up to it.
+    baseline_seq: u64,
 }
 
 /// One identity or lifecycle value `lifecycle_changed` compares between ticks.
@@ -204,11 +207,12 @@ pub struct MatchHost {
     owners: HashMap<(u32, u32), String>,
     clock: Option<FixedStepClock>,
     stream: Option<StateStream>,
-    events: Vec<String>,
+    events: Vec<TimedEvent>,
     shot_paths: ShotPathRecorder,
     cursor: u64,
     lifecycle: Vec<Note>,
-    frames: Vec<(u64, String)>,
+    /// Frames captured since the last batch: tick, stream seq and body.
+    frames: Vec<(u64, u64, Vec<u8>)>,
     empty_since_ms: Option<u64>,
     active_ms: u64,
     scene: Scene,
@@ -292,7 +296,10 @@ impl MatchHost {
     }
 
     fn send(&mut self, connection: ConnectionId, text: String) {
-        self.out.push(HostEvent::Send { connection, text });
+        self.out.push(HostEvent::Send {
+            connection,
+            message: Message::Text(text),
+        });
     }
 
     fn close(&mut self, connection: ConnectionId, code: u16, reason: &str) {
@@ -674,6 +681,7 @@ impl MatchHost {
                 count: 0,
                 full_window_ms: now_ms,
                 full_count: 0,
+                baseline_seq: 0,
             },
         ));
         self.empty_since_ms = None;
@@ -809,6 +817,8 @@ impl MatchHost {
         self.stream = Some(StateStream::new(&self.room_epoch, self.round_id));
         for (_, client) in &mut self.clients {
             client.observed_tick = 0;
+            // Each round's stream numbers its frames from zero again.
+            client.baseline_seq = 0;
         }
         let bot_takeover = !simulation.humans_only;
         self.simulation = Some(simulation);
@@ -893,8 +903,11 @@ impl MatchHost {
                 }
             }
             self.cursor += 1;
-            self.events
-                .push(TimedEvent::write(self.cursor, tick as f64, &event));
+            self.events.push(TimedEvent {
+                event_id: self.cursor,
+                tick: tick as f64,
+                event,
+            });
         }
         for seat in 0..self.seats.len() {
             let player = &self.seats[seat].player;
@@ -1036,24 +1049,13 @@ impl MatchHost {
             return;
         }
         let tick = self.tick();
-        if self.frames.last().map(|(frame_tick, _)| *frame_tick) != Some(tick)
+        if self.frames.last().map(|(frame_tick, _, _)| *frame_tick) != Some(tick)
             || !self.events.is_empty()
             || !self.shot_paths.entries().is_empty()
         {
             self.capture_frame(tick);
         }
-        let mut body = String::from("[");
-        for (index, (_, frame)) in self.frames.drain(..).enumerate() {
-            if index > 0 {
-                body.push(',');
-            }
-            body.push_str(&frame);
-        }
-        body.push(']');
-        let head = format!(
-            "{{\"type\":\"snapshot\",\"roundId\":{},\"ack\":",
-            self.round_id
-        );
+        let frames = std::mem::take(&mut self.frames);
         let mut sends = Vec::new();
         for (connection, client) in &self.clients {
             let Some(seat) = self.seat_index(&client.player_id) else {
@@ -1067,11 +1069,40 @@ impl MatchHost {
             let ack = self.seats[seat]
                 .controls
                 .as_ref()
-                .map_or(0, |controls| controls.ack.input_seq);
-            sends.push((*connection, format!("{head}{ack},\"snapshots\":{body}}}")));
+                .map_or(0, |controls| controls.ack.input_seq.max(0) as u64);
+            // A baseline sent since the previous batch already shows its earlier frames.
+            let unseen: Vec<_> = frames
+                .iter()
+                .filter(|(_, seq, _)| *seq > client.baseline_seq)
+                .collect();
+            let (Some(first), Some(last)) = (unseen.first(), unseen.last()) else {
+                continue;
+            };
+            let (first_seq, last_tick) = (first.1, last.0);
+            let size = unseen
+                .iter()
+                .map(|(_, _, body)| body.len() + 3)
+                .sum::<usize>();
+            let mut message = Vec::with_capacity(size + 24);
+            write_snapshot_header(
+                &mut message,
+                self.round_id,
+                last_tick,
+                ack,
+                first_seq,
+                unseen.len(),
+            );
+            for (frame_tick, _, body) in unseen {
+                super::wire::put_varint(&mut message, last_tick - frame_tick);
+                message.extend_from_slice(body);
+            }
+            sends.push((*connection, message));
         }
-        for (connection, text) in sends {
-            self.send(connection, text);
+        for (connection, message) in sends {
+            self.out.push(HostEvent::Send {
+                connection,
+                message: Message::Binary(message),
+            });
         }
     }
 
@@ -1087,7 +1118,7 @@ impl MatchHost {
             &self.events,
             self.shot_paths.entries(),
         );
-        self.frames.push((tick, frame));
+        self.frames.push((tick, stream.seq, frame));
         self.events.clear();
         self.shot_paths.clear_entries();
     }
@@ -1149,13 +1180,41 @@ impl MatchHost {
 
     fn send_full(&mut self, connection: ConnectionId) {
         let tick = self.tick();
+        let (Some(simulation), Some(stream)) = (self.simulation.as_ref(), self.stream.as_ref())
+        else {
+            return;
+        };
+        // Frames carry differences from the stream's previous scene, so a baseline must
+        // show exactly that scene. Seats and commands can change the simulation between
+        // frames; capture those changes as a frame first (the client skips it). Pending
+        // events need no frame: the baseline's cursor tells the client which it holds.
+        if let Some(previous) = stream.previous() {
+            self.scene.capture_from(simulation);
+            // Pending path entries must reach the stream too, or the baseline's shells
+            // would be launched again by the next frame.
+            if self.scene != *previous || !self.shot_paths.entries().is_empty() {
+                self.capture_frame(tick);
+                if self.phase != RoomPhase::Playing {
+                    // No batch follows outside play; nobody needs the frame.
+                    self.frames.clear();
+                }
+            }
+        }
         let (Some(simulation), Some(stream)) = (self.simulation.as_ref(), self.stream.as_mut())
         else {
             return;
         };
-        let scene = Scene::capture(simulation);
-        let text = stream.full(&scene, tick, self.cursor, self.shot_paths.paths());
-        self.send(connection, text);
+        let message = stream.full(tick, self.cursor, self.shot_paths.paths(), || {
+            Scene::capture(simulation)
+        });
+        let seq = stream.seq;
+        if let Some(index) = self.client_index(connection) {
+            self.clients[index].1.baseline_seq = seq;
+        }
+        self.out.push(HostEvent::Send {
+            connection,
+            message: Message::Binary(message),
+        });
     }
 
     fn finish(&mut self, now_ms: u64) {

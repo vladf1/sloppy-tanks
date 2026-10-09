@@ -55,7 +55,8 @@ Check the account's plan allowances before long or wide runs; current limits are
 on the
 [Durable Objects pricing page](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 On the game server, a bot costs the same as a human player: about 20 inputs a
-second in, and the room's full snapshot stream out (roughly 55–110 KB/s per bot,
+second in, and the room's snapshot stream out (binary deltas under permessage-deflate:
+roughly 3–6 KB/s per bot in a standard room and up to about 45 KB/s in the Scrap Yard,
 which counts against the VPS's monthly transfer).
 
 `/api/status` queries all nine region objects, and the control page polls it

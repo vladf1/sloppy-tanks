@@ -30,7 +30,8 @@
 //!   socket, text}` (close the socket instead when its `bufferedAmount` exceeds 16 KiB),
 //!   `{type: "close", socket}`, `{type: "saveSeat", token, roomEpoch}`, `{type:
 //!   "forgetSeat"}`. Report socket events with `socket_opened`, `socket_message` (text
-//!   frames) and `socket_closed` (close code).
+//!   frames), `socket_binary` (binary frames, as a `Uint8Array`; set the socket's
+//!   `binaryType` to `"arraybuffer"`) and `socket_closed` (close code).
 //! - Notices (`take_notices`): `status {text, connected}`, `notice {text}`, `ended {cause,
 //!   text}`, `lobby {lobby, playerId}` (the wire lobby record), `result {match, team}`,
 //!   `resetFeedback`, `clearInput`, `reveal`, `prepare` (run `prepare_step` between tasks
@@ -343,6 +344,12 @@ impl NetGame {
 
     pub fn socket_message(&mut self, socket: u32, text: &str, now: f64) {
         self.client.socket_message(socket, text, now);
+    }
+
+    /// A binary frame (a baseline or snapshot batch), copied out of the page's
+    /// `ArrayBuffer` in one call.
+    pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now: f64) {
+        self.client.socket_binary(socket, bytes, now);
     }
 
     pub fn socket_closed(&mut self, socket: u32, code: u16, now: f64) {

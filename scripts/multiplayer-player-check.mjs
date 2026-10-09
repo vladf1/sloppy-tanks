@@ -4,17 +4,16 @@ import { setTimeout as wait } from "node:timers/promises";
 import WebSocket from "ws";
 import { BotPlayer, randomRoomCode } from "../bots/bot-player.ts";
 import { StateMirror } from "./state-mirror.mjs";
-import { contentVersion } from "./content-version.mjs";
+import { contentVersion, protocolVersion } from "./content-version.mjs";
+import { createWireView } from "./wire-view.mjs";
 
-/** The wire protocol version (`PROTOCOL_VERSION` in `crates/core/src/net/protocol.rs`). */
-const PROTOCOL_VERSION = 2;
 const endpoint = process.env.SLOPPY_SERVER_URL ?? "ws://127.0.0.1:8787";
 const origin = process.env.SLOPPY_ORIGIN ?? "http://127.0.0.1:5173";
 const seconds = Number(process.env.SLOPPY_PLAYER_SECONDS ?? 15);
 const count = Number(process.env.SLOPPY_PLAYER_CLIENTS ?? 4);
 const maps = (process.env.SLOPPY_PLAYER_MAPS ?? "village,harbor,quarry").split(",");
 const recover = process.env.SLOPPY_PLAYER_RECOVER === "1";
-const server = { version: PROTOCOL_VERSION, contentVersion: await contentVersion() };
+const server = { version: await protocolVersion(), contentVersion: await contentVersion() };
 const output = `artifacts/performance/multiplayer/players-${Date.now()}.json`;
 const report = { endpoint, seconds, count, server, runs: [], errors: [], reconnects: [] };
 /** The traffic bots' input loop wakes this often; BotPlayer rate-limits its own sends. */
@@ -74,13 +73,15 @@ class Player {
         else void this.reconnect(incident).catch((error) => report.errors.push(error.stack));
       }
     });
-    socket.on("message", (raw) => {
+    // Binary state frames are deltas against this connection's earlier ones.
+    const wire = createWireView();
+    socket.on("message", (raw, isBinary) => {
       try {
-        const text = String(raw);
         this.bytes += raw.length;
         this.messages++;
-        this.bot.receive(text, Date.now());
-        const m = JSON.parse(text);
+        const data = isBinary ? raw : String(raw);
+        this.bot.receive(data, Date.now());
+        const m = wire.decode(data);
         if (m.type === "welcome") this.welcome = m;
         if (m.type === "lobby") {
           if (this.lobby?.roundId !== m.roundId) this.mirror = new StateMirror();
@@ -215,7 +216,7 @@ try {
       assert.ok(player.inputs > 0, "Players drive with real input");
       assert.ok(player.fullMax < 160_000, "Full-state budget");
       assert.ok(player.snapshotMax < 128_000, "Snapshot batch budget");
-      assert.ok(player.bytesPerSecond < 512_000, "Sustained JSON byte budget");
+      assert.ok(player.bytesPerSecond < 512_000, "Sustained byte budget");
     }
     console.log(JSON.stringify(row));
     for (const player of players) {

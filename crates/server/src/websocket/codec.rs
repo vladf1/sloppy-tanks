@@ -2,7 +2,7 @@
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use super::deflate::{COMPRESSION_THRESHOLD, Deflate, InflateError};
+use super::deflate::{BINARY_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD, Deflate, InflateError};
 use super::extension::DeflateParams;
 use super::is_valid_close_code;
 
@@ -235,6 +235,18 @@ impl Codec {
         }
     }
 
+    /// Appends one binary message (game state) as a single frame, compressed when
+    /// negotiated and at least [`BINARY_COMPRESSION_THRESHOLD`] long.
+    pub fn encode_binary(&mut self, bytes: &[u8], output: &mut BytesMut) {
+        match self.deflate.as_mut() {
+            Some(deflate) if bytes.len() >= BINARY_COMPRESSION_THRESHOLD => {
+                let packed = deflate.compress(bytes);
+                self.encode_frame(0x80 | 0x40 | OP_BINARY, &packed, output);
+            }
+            _ => self.encode_frame(0x80 | OP_BINARY, bytes, output),
+        }
+    }
+
     pub fn encode_close(&mut self, code: Option<u16>, reason: &str, output: &mut BytesMut) {
         let mut payload = Vec::with_capacity(2 + reason.len());
         if let Some(code) = code {
@@ -360,6 +372,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn binary_state_is_compressed_far_below_the_text_threshold() {
+        let params = DeflateParams::default();
+        let (mut server, mut client) = pair(Some(&params));
+        let state: Vec<u8> = (0..200u32).map(|i| (i % 7) as u8).collect();
+        for _ in 0..2 {
+            let mut wire = BytesMut::new();
+            server.encode_binary(&state, &mut wire);
+            assert_eq!(
+                wire[0],
+                0x80 | 0x40 | OP_BINARY,
+                "final, compressed, binary"
+            );
+            assert!(wire.len() < state.len() / 2);
+            assert_eq!(
+                decode_all(&mut client, &wire).unwrap(),
+                [Event::Binary(state.clone())]
+            );
+        }
+        let mut wire = BytesMut::new();
+        server.encode_binary(&[2, 1, 3], &mut wire);
+        assert_eq!(
+            &wire[..],
+            [0x80 | OP_BINARY, 3, 2, 1, 3],
+            "tiny messages stay plain"
+        );
+        let (mut plain, mut reader) = pair(None);
+        let mut wire = BytesMut::new();
+        plain.encode_binary(&state, &mut wire);
+        assert_eq!(wire[0], 0x80 | OP_BINARY);
+        assert_eq!(
+            decode_all(&mut reader, &wire).unwrap(),
+            [Event::Binary(state)]
+        );
     }
 
     #[test]

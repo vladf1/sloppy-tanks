@@ -5,16 +5,20 @@ use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 use super::codec::Role;
 use super::extension::DeflateParams;
 
-/// Snapshots are repetitive JSON, so permessage-deflate sends about a quarter of the
-/// bytes. zlib-rs level 1 is zlib-ng's quick strategy (static Huffman codes only), which
-/// sent 22-27% more than the former Node server's classic zlib level 1 on recorded room
-/// streams. Level 2, the fast strategy, sends about 7% less than classic level 1 for
+/// Consecutive snapshot batches repeat each other's structure and small differences, so
+/// permessage-deflate still sends about a third less of the binary state. On recorded
+/// JSON room streams, zlib-rs level 1, zlib-ng's quick strategy (static Huffman codes
+/// only), sent 22-27% more than the former Node server's classic zlib level 1. Level 2, the fast strategy, sends about 7% less than classic level 1 for
 /// 1.3-1.6 times the quick strategy's CPU, still below classic level 1's; higher levels
 /// save a little more for CPU the one-vCPU host needs more.
 pub const COMPRESSION_LEVEL: u32 = 2;
-/// Messages shorter than this go out uncompressed, like `ws`'s default threshold: the
-/// deflate block overhead outweighs the saving on pings, pongs and control messages.
+/// Text messages shorter than this go out uncompressed, like `ws`'s default threshold:
+/// the deflate block overhead outweighs the saving on pongs and control messages.
 pub const COMPRESSION_THRESHOLD: usize = 1024;
+/// Binary state messages (snapshot batches and baselines) shorter than this go out
+/// uncompressed. Batches are a few hundred bytes, but consecutive ones repeat each other,
+/// so with context takeover even small ones shrink.
+pub const BINARY_COMPRESSION_THRESHOLD: usize = 64;
 /// The empty stored block a sync flush ends with; senders strip it and receivers add it.
 const SYNC_TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 const DEFAULT_WINDOW_BITS: u8 = 15;

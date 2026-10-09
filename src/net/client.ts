@@ -309,18 +309,19 @@ export async function startMultiplayer(
 
   const openSocket = (id: number, url: string) => {
     const socket = new WebSocket(url);
+    // Game state arrives as binary frames; low-rate messages stay JSON text.
+    socket.binaryType = "arraybuffer";
     sockets.set(id, socket);
     socket.onopen = () => {
       game.socket_opened(id, performance.now());
       pump();
     };
-    socket.onmessage = (event) => {
-      // Binary frames are never valid; the engine rejects the placeholder.
-      game.socket_message(
-        id,
-        typeof event.data === "string" ? event.data : "\u0000",
-        performance.now(),
-      );
+    socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
+      if (typeof event.data === "string") {
+        game.socket_message(id, event.data, performance.now());
+      } else {
+        game.socket_binary(id, new Uint8Array(event.data), performance.now());
+      }
       pump();
     };
     socket.onclose = (event) => {

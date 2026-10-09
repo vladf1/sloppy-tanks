@@ -1,18 +1,21 @@
 //! Protocol constants, room settings and the lobby/control/join records
 //! (`src/net/protocol.ts`).
 //!
-//! Server messages, in the TypeScript key order:
+//! Server messages. Low-rate ones are JSON text, in the TypeScript key order:
 //!
 //! | type         | fields                                                                          |
 //! | ------------ | ------------------------------------------------------------------------------- |
 //! | `welcome`    | `type version contentVersion roomEpoch playerId token hostId reset`             |
 //! | `lobby`      | `roomEpoch roundId type phase hostId players scoreboard settings`               |
 //! | `control`    | `roomEpoch roundId type tankId life controlEpoch driver`                        |
-//! | `full`       | `roomEpoch roundId type seq tick eventCursor state` (see `replication`)         |
-//! | `snapshot`   | `type roundId ack snapshots` (`ack`: latest input seq applied for this seat)    |
 //! | `pong`       | `type t tick`                                                                   |
 //! | `error`      | `type code message fatal`                                                       |
 //! | `room-reset` | `type roomEpoch reason`                                                         |
+//!
+//! State travels in binary frames whose first byte is the type ([`FULL_MESSAGE`] or
+//! [`SNAPSHOT_MESSAGE`]), then varints `roundId tick`; see `replication` for the rest. A
+//! snapshot's `tick` is its newest frame's, and its next varint is `ack`, the latest
+//! input seq applied for this seat.
 //!
 //! Client messages carry `type` and `roundId` (the socket already names the room):
 //! `join` (see [`JoinRequest`]), `input` (see `player_controls`), `ping {t, observedTick}`,
@@ -34,7 +37,13 @@ use crate::sim::types::{Driver, Team, VehicleKind};
 
 pub use super::room_list::RoomPhase;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+/// 2: projectiles as paths sent once; 3: binary `full` and `snapshot` messages with fields
+/// as differences.
+pub const PROTOCOL_VERSION: u32 = 3;
+/// First byte of a binary baseline message.
+pub const FULL_MESSAGE: u8 = 1;
+/// First byte of a binary snapshot batch.
+pub const SNAPSHOT_MESSAGE: u8 = 2;
 /// Hash of the sources clients and server must agree on. The build stamps it through
 /// `SLOPPY_CONTENT_VERSION`; unstamped builds (tests, `cargo run`) use `test-content`.
 pub const CONTENT_VERSION: &str = match option_env!("SLOPPY_CONTENT_VERSION") {
@@ -43,7 +52,7 @@ pub const CONTENT_VERSION: &str = match option_env!("SLOPPY_CONTENT_VERSION") {
 };
 /// Largest client message, in UTF-8 bytes, that a room accepts.
 pub const MAX_CLIENT_MESSAGE_BYTES: usize = 4096;
-/// Largest server message, in UTF-16 units, that a client reads.
+/// Largest server message, in UTF-16 units or bytes, that a client reads.
 pub const MAX_SERVER_MESSAGE_BYTES: usize = 1_000_000;
 /// A dropped connection keeps its seat, and an emptied room stays, this long.
 pub const EMPTY_GRACE_MS: u64 = 30_000;
@@ -82,6 +91,35 @@ pub const MAP_MODES: [(&str, MapId); 5] = [
     ("stress-test", MapId::StressTest),
     ("superstress", MapId::Superstress),
 ];
+
+/// A message to one client: JSON text, or a binary state message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Message {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+impl Message {
+    pub fn len(&self) -> usize {
+        match self {
+            Message::Text(text) => text.len(),
+            Message::Binary(bytes) => bytes.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The message's type: the text's `"type"`, or the binary state message's name.
+    pub fn binary_type(bytes: &[u8]) -> &'static str {
+        match bytes.first() {
+            Some(&FULL_MESSAGE) => "full",
+            Some(&SNAPSHOT_MESSAGE) => "snapshot",
+            _ => "other",
+        }
+    }
+}
 
 /// `team`: 0 or 1.
 pub fn read_team(value: Option<&Value>) -> ReadResult<Team> {

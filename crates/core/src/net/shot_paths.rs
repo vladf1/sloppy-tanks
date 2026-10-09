@@ -9,13 +9,16 @@
 //! a guided missile's turn, an interception's survivor. It ends a path when the shell is
 //! gone, at the end of its last sweep, so impacts land where the shell is drawn. Hits stay
 //! with the host's simulation; paths are presentation only.
+//!
+//! On the wire ([`PathEntry::write_binary`]) a path is its shell id, its start tick back
+//! from the frame's in thousandths, and its position and velocity in millimetres; a launch
+//! adds the team, the weapon, a mask of the heights and thrust it has, and those values.
 
-use serde_json::Value;
-
-use super::json::{self, ObjectWriter};
+use super::json::{self, ObjectWriter, POSITION_SCALE};
 use super::protocol::read_team;
-use super::scene_codec::read_weapon;
-use super::schema::{ReadResult, Record, field, id32, number, number_in, optional};
+use super::scene_codec::WEAPONS;
+use super::schema::{ReadResult, Record, choice, field, id32, number, number_in, optional};
+use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::data::STEP;
 use crate::sim::math::angle_delta;
 use crate::sim::projectiles::RocketThrust;
@@ -130,7 +133,7 @@ impl ShotPath {
             Some(launch) => launch,
             None => ShotLaunch {
                 team: field(source, "team", read_team)?,
-                weapon: field(source, "weapon", read_weapon)?,
+                weapon: field(source, "weapon", |v| choice(v, &WEAPONS))?,
                 y: field(source, "y", |v| optional(v, number))?,
                 visual_y: field(source, "visualY", |v| optional(v, number))?,
                 thrust: match source.get("thrust") {
@@ -254,69 +257,85 @@ impl LivePaths {
         self.paths.iter().position(|path| path.id == id)
     }
 
-    /// A baseline's `paths`: every shell's current path in launch form.
-    pub fn read(value: Option<&Value>, tick: u64) -> ReadResult<Self> {
+    /// A baseline's paths ([`write_baseline`]): every shell's current path in launch form.
+    pub fn read_binary(reader: &mut WireReader<'_>, tick: u64) -> ReadResult<Self> {
+        let count = reader.varint()?;
+        if count > MAX_LIVE_PATHS as u64 {
+            return Err("Invalid list".into());
+        }
         let mut live = Self::default();
-        for item in super::schema::array(value, MAX_LIVE_PATHS, |item| {
-            super::schema::nested(Some(item), |source| ShotPath::read(source, None))
-        })? {
-            if item.tick > tick as f64 || live.position(item.id).is_some() {
+        for _ in 0..count {
+            let path = ShotPath::read_binary(reader, None, tick)?;
+            if live.position(path.id).is_some() {
                 return Err("Invalid projectile path".into());
             }
-            live.paths.push(item);
+            live.paths.push(path);
         }
         Ok(live)
     }
 
-    /// Reads a frame's `paths` against these shells and applies them, returning each entry
-    /// with its launch fields filled in. Fails, leaving `self` partly changed, on an entry
-    /// that names an unknown or duplicate shell, goes back in time or passes `tick`.
-    pub fn apply(&mut self, items: &[Value], tick: u64) -> ReadResult<Vec<PathEntry>> {
-        let mut entries = Vec::with_capacity(items.len());
-        for item in items {
-            let source = super::schema::record(item)?;
-            let id = field(source, "id", id32)?;
-            let known = self.position(id);
-            // Only a launch names the shell's team; every other entry needs the shell.
-            let launch = source.contains_key("team");
-            let entry = match (known, launch) {
-                (None, true) => {
+    /// Writes every shell's path in launch form, for a baseline at `tick`.
+    pub fn write_baseline<'a>(
+        paths: impl IntoIterator<Item = &'a ShotPath>,
+        tick: u64,
+        out: &mut Vec<u8>,
+    ) {
+        let paths: Vec<&ShotPath> = paths.into_iter().collect();
+        put_varint(out, paths.len() as u64);
+        for path in paths {
+            path.write_binary(out, true, tick);
+        }
+    }
+
+    /// Reads `count` of a frame's path entries against these shells and applies them,
+    /// returning each entry with its launch fields filled in. Fails, leaving `self` partly
+    /// changed, on an entry that names an unknown or duplicate shell, goes back in time or
+    /// passes `tick`.
+    pub fn apply_binary(
+        &mut self,
+        reader: &mut WireReader<'_>,
+        count: u64,
+        tick: u64,
+    ) -> ReadResult<Vec<PathEntry>> {
+        let mut entries = Vec::with_capacity(count.min(MAX_LIVE_PATHS as u64) as usize);
+        for _ in 0..count {
+            let kind = reader.varint()?;
+            let entry = match kind {
+                LAUNCH_ENTRY => {
+                    let path = ShotPath::read_binary(reader, None, tick)?;
+                    if self.position(path.id).is_some() {
+                        return Err("Duplicate projectile".into());
+                    }
                     if self.paths.len() >= MAX_LIVE_PATHS {
                         return Err("Too many projectiles".into());
                     }
-                    let path = ShotPath::read(source, None)?;
                     self.paths.push(path);
                     PathEntry::Launch(path)
                 }
-                (Some(_), true) => return Err("Duplicate projectile".into()),
-                (None, false) => return Err("Unknown projectile".into()),
-                (Some(index), false) if source.contains_key("end") => {
-                    let end = field(source, "end", |v| number_in(v, 0.0, MAX_TICK, false))?;
-                    if end < self.paths[index].tick {
-                        return Err("Invalid projectile timeline".into());
+                CHANGE_ENTRY | END_ENTRY => {
+                    let id = reader.varint32()?;
+                    let index = self
+                        .position(id)
+                        .ok_or_else(|| "Unknown projectile".to_string())?;
+                    if kind == END_ENTRY {
+                        let end = tick_back(reader, tick)?;
+                        if end < self.paths[index].tick {
+                            return Err("Invalid projectile timeline".into());
+                        }
+                        self.paths.remove(index);
+                        PathEntry::End { id, tick: end }
+                    } else {
+                        let mut path = ShotPath::read_motion(reader, id, tick)?;
+                        path.launch = self.paths[index].launch;
+                        if path.tick < self.paths[index].tick {
+                            return Err("Invalid projectile timeline".into());
+                        }
+                        self.paths[index] = path;
+                        PathEntry::Change(path)
                     }
-                    self.paths.remove(index);
-                    PathEntry::End { id, tick: end }
                 }
-                (Some(index), false) => {
-                    let path = ShotPath::read(source, Some(self.paths[index].launch))?;
-                    if path.tick < self.paths[index].tick {
-                        return Err("Invalid projectile timeline".into());
-                    }
-                    self.paths[index] = path;
-                    PathEntry::Change(path)
-                }
+                _ => return Err("Invalid projectile path".into()),
             };
-            if let PathEntry::Launch(path) | PathEntry::Change(path) = &entry
-                && path.tick > tick as f64
-            {
-                return Err("Invalid projectile timeline".into());
-            }
-            if let PathEntry::End { tick: end, .. } = entry
-                && end > tick as f64
-            {
-                return Err("Invalid projectile timeline".into());
-            }
             entries.push(entry);
         }
         Ok(entries)
@@ -326,6 +345,174 @@ impl LivePaths {
     pub fn fill(&self, shots: &mut Vec<RenderShot>, tick: f64) {
         shots.clear();
         shots.extend(self.paths.iter().map(|path| path.at(tick)));
+    }
+}
+
+const LAUNCH_ENTRY: u64 = 0;
+const CHANGE_ENTRY: u64 = 1;
+const END_ENTRY: u64 = 2;
+const HAS_Y: u64 = 1;
+const HAS_VISUAL_Y: u64 = 2;
+const HAS_THRUST: u64 = 4;
+
+fn thousandths(value: f64) -> i64 {
+    units(value, POSITION_SCALE)
+}
+
+fn read_thousandths(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let value = reader.signed()? as f64 / POSITION_SCALE;
+    if value.abs() <= MAX_TICK {
+        Ok(value)
+    } else {
+        Err("Invalid number".into())
+    }
+}
+
+/// A tick written back from the frame's `tick`: never after it, never before zero.
+fn tick_back(reader: &mut WireReader<'_>, tick: u64) -> ReadResult<f64> {
+    let back = reader.signed()?;
+    let at = thousandths(tick as f64) - back;
+    if back < 0 || at < 0 {
+        return Err("Invalid projectile timeline".into());
+    }
+    Ok(at as f64 / POSITION_SCALE)
+}
+
+impl ShotPath {
+    /// The path in binary (see the module docs), its start written back from `tick`.
+    pub fn write_binary(&self, out: &mut Vec<u8>, launch: bool, tick: u64) {
+        put_varint(out, u64::from(self.id));
+        put_signed(out, thousandths(tick as f64) - thousandths(self.tick));
+        for value in [self.x, self.z, self.vx, self.vz] {
+            put_signed(out, thousandths(value));
+        }
+        if !launch {
+            return;
+        }
+        let launch = &self.launch;
+        put_varint(out, launch.team.index() as u64);
+        let weapon = WEAPONS
+            .iter()
+            .position(|(_, weapon)| *weapon == launch.weapon)
+            .expect("every weapon has a wire name");
+        put_varint(out, weapon as u64);
+        let mut has = 0;
+        for (present, flag) in [
+            (launch.y.is_some(), HAS_Y),
+            (launch.visual_y.is_some(), HAS_VISUAL_Y),
+            (launch.thrust.is_some(), HAS_THRUST),
+        ] {
+            if present {
+                has |= flag;
+            }
+        }
+        put_varint(out, has);
+        for value in [launch.y, launch.visual_y].into_iter().flatten() {
+            put_signed(out, thousandths(value));
+        }
+        if let Some(thrust) = launch.thrust {
+            put_signed(out, thousandths(thrust.acceleration));
+            put_signed(out, thousandths(thrust.top_speed));
+        }
+    }
+
+    /// A path's start and motion after its id; its launch fields are the caller's.
+    fn read_motion(reader: &mut WireReader<'_>, id: u32, tick: u64) -> ReadResult<Self> {
+        Ok(Self {
+            id,
+            tick: tick_back(reader, tick)?,
+            x: read_thousandths(reader)?,
+            z: read_thousandths(reader)?,
+            vx: read_thousandths(reader)?,
+            vz: read_thousandths(reader)?,
+            launch: ShotLaunch {
+                team: Team::Blue,
+                weapon: Weapon::Standard,
+                y: None,
+                visual_y: None,
+                thrust: None,
+            },
+        })
+    }
+
+    /// A path in launch form, or with `launch` when given.
+    fn read_binary(
+        reader: &mut WireReader<'_>,
+        launch: Option<ShotLaunch>,
+        tick: u64,
+    ) -> ReadResult<Self> {
+        let id = reader.varint32()?;
+        let mut path = Self::read_motion(reader, id, tick)?;
+        path.launch = match launch {
+            Some(launch) => launch,
+            None => {
+                let team = match reader.varint()? {
+                    0 => Team::Blue,
+                    1 => Team::Red,
+                    _ => return Err("team: Invalid choice".into()),
+                };
+                let weapon = WEAPONS
+                    .get(reader.varint()? as usize)
+                    .map(|(_, weapon)| *weapon)
+                    .ok_or_else(|| "weapon: Invalid choice".to_string())?;
+                let has = reader.varint()?;
+                if has & !(HAS_Y | HAS_VISUAL_Y | HAS_THRUST) != 0 {
+                    return Err("Invalid projectile path".into());
+                }
+                let mut optional = |flag| -> ReadResult<Option<f64>> {
+                    if has & flag != 0 {
+                        read_thousandths(reader).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                };
+                let y = optional(HAS_Y)?;
+                let visual_y = optional(HAS_VISUAL_Y)?;
+                let thrust = match (optional(HAS_THRUST)?, optional(HAS_THRUST)?) {
+                    (Some(acceleration), Some(top_speed))
+                        if (0.0..=1e6).contains(&acceleration)
+                            && (0.0..=1e6).contains(&top_speed) =>
+                    {
+                        Some(RocketThrust {
+                            acceleration,
+                            top_speed,
+                        })
+                    }
+                    (None, None) => None,
+                    _ => return Err("thrust: Invalid number".into()),
+                };
+                ShotLaunch {
+                    team,
+                    weapon,
+                    y,
+                    visual_y,
+                    thrust,
+                }
+            }
+        };
+        Ok(path)
+    }
+}
+
+impl PathEntry {
+    /// The entry in binary: its kind, then a launch's whole path, a change's motion or an
+    /// end's tick, ticks written back from the frame's `tick`.
+    pub fn write_binary(&self, out: &mut Vec<u8>, tick: u64) {
+        match self {
+            PathEntry::Launch(path) => {
+                put_varint(out, LAUNCH_ENTRY);
+                path.write_binary(out, true, tick);
+            }
+            PathEntry::Change(path) => {
+                put_varint(out, CHANGE_ENTRY);
+                path.write_binary(out, false, tick);
+            }
+            PathEntry::End { id, tick: end } => {
+                put_varint(out, END_ENTRY);
+                put_varint(out, u64::from(*id));
+                put_signed(out, thousandths(tick as f64) - thousandths(*end));
+            }
+        }
     }
 }
 

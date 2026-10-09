@@ -6,17 +6,25 @@ mod net_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use net_support::{assert_same, same};
+use net_support::{apply_batch, assert_same, batch, same};
 use serde_json::{Map, Value, json};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::replication::{StateMirror, StateStream};
-use sloppy_core::net::scene_codec::{ENTITY_FIELDS, ENTITY_TYPES, MirrorScene, Scene};
-use sloppy_core::net::shot_paths::PathEntry;
+use sloppy_core::net::replication::{
+    Baseline, BinaryMessage, PATHS_SECTION, REMOVED_SECTION, StateMirror, StateStream, TimedEvent,
+    UPDATES_SECTION, read_binary_message,
+};
+use sloppy_core::net::scene_codec::{
+    ENTITY_FIELDS, ENTITY_TYPES, MINE_FIELDS, MINES, MirrorScene, Scene, TANKS, mine, tank,
+};
+use sloppy_core::net::shot_paths::{PathEntry, ShotLaunch, ShotPath};
+use sloppy_core::net::wire::{WireRecord, put_signed, put_varint, write_changes};
+use sloppy_core::net::wire_view::WireView;
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{
     CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
+use sloppy_core::sim::types::{SimEvent, SimEventType};
 use sloppy_core::sim::{Simulation, render_state::RenderState};
 
 fn one_player() -> Vec<PlayerAssignment> {
@@ -52,12 +60,38 @@ fn step(sim: &mut Simulation, command: VehicleCommand) {
     sim.events.clear();
 }
 
-fn parse(text: &str) -> Value {
-    serde_json::from_str(text).unwrap()
+fn read_scene(scene: &Scene) -> MirrorScene {
+    MirrorScene::from_scene(scene.clone()).unwrap()
 }
 
-fn read_scene(scene: &Scene) -> MirrorScene {
-    MirrorScene::read(Some(&parse(&scene.to_json()))).unwrap()
+/// A baseline message of the stream's scene, starting the stream with `scene`.
+fn full(stream: &mut StateStream, scene: &Scene, tick: u64) -> Vec<u8> {
+    stream.full(tick, 0, [], || scene.clone())
+}
+
+fn baseline(message: &[u8]) -> Baseline<'_> {
+    match read_binary_message(message).unwrap() {
+        BinaryMessage::Full(baseline) => baseline,
+        BinaryMessage::Snapshot(_) => panic!("not a baseline"),
+    }
+}
+
+/// The next frame as a one-frame batch message.
+fn frame(stream: &mut StateStream, scene: &mut Scene, tick: u64) -> Vec<u8> {
+    let body = stream.snapshot(scene, tick, &[], &[]);
+    batch(1, 0, stream.seq, &[(tick, body)])
+}
+
+/// A client's JSON view, started from a baseline message.
+fn view_from(full: &[u8]) -> WireView {
+    let mut view = WireView::default();
+    view.binary(full).unwrap();
+    view
+}
+
+/// A batch's single frame as the former JSON.
+fn frame_json(view: &mut WireView, message: &[u8]) -> Value {
+    view.binary(message).unwrap()["snapshots"][0].clone()
 }
 
 fn render_json(state: &RenderState) -> Value {
@@ -71,9 +105,12 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
         sim.start();
         let mut stream = StateStream::new("room", 1);
         let mut mirror = StateMirror::default();
-        let full = stream.full(&Scene::capture(&sim), 0, 0, &[]);
-        assert!(full.len() < 160_000, "Full-state wire budget");
-        mirror.apply_full(&parse(&full), "room", 1).unwrap();
+        let full_message = full(&mut stream, &Scene::capture(&sim), 0);
+        assert!(full_message.len() < 160_000, "Full-state wire budget");
+        mirror
+            .apply_full(&baseline(&full_message), "room", 1)
+            .unwrap();
+        let mut view = view_from(&full_message);
         let mut removed = false;
         for tick in 1..=180 {
             if tick == 30 {
@@ -103,16 +140,14 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
             }
             let scene = Scene::capture(&sim);
             let mut next = scene.clone();
-            let frame = stream.snapshot(&mut next, tick, &[], &[]);
+            let frame = frame(&mut stream, &mut next, tick);
             assert!(frame.len() < 128_000, "Burst snapshot wire budget");
-            removed |= parse(&frame).get("removed").is_some();
-            assert!(
-                mirror.apply_snapshot(&parse(&frame)).is_some(),
-                "{map:?} tick {tick}"
-            );
+            removed |= frame_json(&mut view, &frame).get("removed").is_some();
+            apply_batch(&mut mirror, &frame);
+            assert_eq!(mirror.state.as_ref().unwrap().to_scene(), scene);
             assert_same(
                 &mirror.state.as_ref().unwrap().to_value(),
-                &parse(&scene.to_json()),
+                &scene.to_json(),
                 "mirror equals the capture",
             );
             let viewer = human(&sim);
@@ -120,7 +155,7 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
             assert_eq!(mirror.render(viewer).unwrap(), expected);
             if tick == 60 || tick == 93 {
                 let mut late = StateMirror::default();
-                late.apply_full(&parse(&stream.full(&scene, tick, 0, &[])), "room", 1)
+                late.apply_full(&baseline(&full(&mut stream, &scene, tick)), "room", 1)
                     .unwrap();
                 assert_eq!(late.render(viewer).unwrap(), mirror.render(viewer).unwrap());
             }
@@ -155,15 +190,18 @@ fn frames_omit_identity_and_unchanged_data_and_scenes_carry_only_presentation_fi
     );
     let scene = Scene::capture(&sim);
     let mut stream = StateStream::new("room", 1);
-    stream.full(&scene, 0, 0, &[]);
+    let mut view = view_from(&full(&mut stream, &scene, 0));
     let mut same_scene = scene.clone();
-    let frame = parse(&stream.snapshot(&mut same_scene, 1, &[], &[]));
+    let message = frame(&mut stream, &mut same_scene, 1);
+    // Type, round, tick, ack, seq, count; then tick back, elapsed and an empty section mask.
+    assert_eq!(message.len(), 6 + 3);
+    let frame = frame_json(&mut view, &message);
     let keys: Vec<&String> = frame.as_object().unwrap().keys().collect();
     assert_eq!(keys.len(), 3);
     for key in ["seq", "tick", "elapsed"] {
         assert!(frame.get(key).is_some());
     }
-    let value = parse(&scene.to_json());
+    let value = scene.to_json();
     let entities = &value["entities"];
     assert!(
         entities.get("shots").is_none(),
@@ -205,20 +243,48 @@ fn debris_life_reaches_clients_only_once_its_final_fade_begins() {
     let mut sim = room(MapId::Village, &one_player());
     sim.fragment(0.0, 0.0, 0xffffff, 0.5, FragmentShape::Shard, 1.0);
     let piece = sim.fragments[0].id;
-    let life_update =
-        |frame: &str| parse(frame)["updates"]["fragments"][piece.to_string()]["life"].clone();
     sim.fragments[0].life = 5.0;
     let mut stream = StateStream::new("room", 1);
-    stream.full(&Scene::capture(&sim), 0, 0, &[]);
+    let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
+    let mut life_update = |stream: &mut StateStream, sim: &Simulation, tick| {
+        let message = frame(stream, &mut Scene::capture(sim), tick);
+        frame_json(&mut view, &message)["updates"]["fragments"][piece.to_string()]["life"].clone()
+    };
     sim.fragments[0].life = 4.0;
-    let frame = stream.snapshot(&mut Scene::capture(&sim), 1, &[], &[]);
-    assert_eq!(life_update(&frame), Value::Null);
+    assert_eq!(life_update(&mut stream, &sim, 1), Value::Null);
     sim.fragments[0].life = DEBRIS_CLEANUP_SECONDS / 2.0;
-    let frame = stream.snapshot(&mut Scene::capture(&sim), 2, &[], &[]);
     assert_eq!(
-        life_update(&frame).as_f64(),
+        life_update(&mut stream, &sim, 2).as_f64(),
         Some(DEBRIS_CLEANUP_SECONDS / 2.0)
     );
+}
+
+/// A hand-written frame body: elapsed unchanged, then `sections` and their bytes.
+fn frame_body(sections: u64, write: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    let mut body = Vec::new();
+    put_signed(&mut body, 0);
+    put_varint(&mut body, sections);
+    write(&mut body);
+    body
+}
+
+/// One kind's records: the kind mask, the count, then each id difference and record.
+fn records(out: &mut Vec<u8>, kind: usize, records: &[(u32, Vec<u8>)]) {
+    put_varint(out, 1 << kind);
+    put_varint(out, records.len() as u64);
+    let mut last = 0;
+    for (id, changes) in records {
+        put_varint(out, u64::from(id - last));
+        last = *id;
+        out.extend_from_slice(changes);
+    }
+}
+
+fn hp_change(hp: i64) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_varint(&mut out, 1 << (tank::HP + 1));
+    put_signed(&mut out, hp);
+    out
 }
 
 #[test]
@@ -227,22 +293,66 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
     let state = Scene::capture(&sim);
     let mut stream = StateStream::new("r", 1);
     let mut mirror = StateMirror::default();
-    let full = parse(&stream.full(&state, 0, 0, &[]));
-    mirror.apply_full(&full, "r", 1).unwrap();
+    let full_message = full(&mut stream, &state, 0);
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     let before = mirror.state.as_ref().unwrap().to_value();
-    let mut bad = parse(&stream.snapshot(&mut state.clone(), 3, &[], &[]));
-    bad["updates"] = json!({ "tanks": { sim.tanks[0].id.to_string(): { "hp": "bad" } } });
-    assert!(mirror.apply_snapshot(&bad).is_none());
+    let tank = sim.tanks[0].id;
+    // A team outside 0..=1 fails the tank reader after the hp change already decoded.
+    let bad = frame_body(UPDATES_SECTION, |out| {
+        let mut changes = Vec::new();
+        put_varint(
+            &mut changes,
+            (1 << (tank::HP + 1)) | (1 << (tank::TEAM + 1)),
+        );
+        put_signed(&mut changes, -100);
+        put_varint(&mut changes, 5);
+        records(out, TANKS, &[(tank, changes)]);
+    });
+    let apply = |mirror: &mut StateMirror, message: &[u8]| {
+        let BinaryMessage::Snapshot(mut batch) = read_binary_message(message).unwrap() else {
+            unreachable!()
+        };
+        mirror.apply_snapshot(&mut batch)
+    };
+    assert!(apply(&mut mirror, &batch(1, 0, 1, &[(3, bad.clone())])).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     assert!(mirror.needs_full);
-    mirror.apply_full(&full, "r", 1).unwrap();
-    bad["seq"] = json!(9);
-    assert!(mirror.apply_snapshot(&bad).is_none());
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
+    let good = frame_body(UPDATES_SECTION, |out| {
+        records(out, TANKS, &[(tank, hp_change(-100))])
+    });
+    assert!(apply(&mut mirror, &batch(1, 0, 9, &[(3, good.clone())])).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
-    mirror
-        .apply_full(&parse(&stream.full(&state, 3, 0, &[])), "r", 1)
-        .unwrap();
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
+    let mut truncated = batch(1, 0, 1, &[(3, good)]);
+    truncated.pop();
+    assert!(apply(&mut mirror, &truncated).is_none());
+    assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     assert!(!mirror.needs_full);
+}
+
+/// A frame of path entries alone, as a one-frame batch.
+fn paths_frame(seq: u64, tick: u64, entries: &[PathEntry]) -> Vec<u8> {
+    let body = frame_body(PATHS_SECTION, |out| {
+        put_varint(out, entries.len() as u64);
+        for entry in entries {
+            entry.write_binary(out, tick);
+        }
+    });
+    batch(1, 0, seq, &[(tick, body)])
+}
+
+fn path(id: u32, tick: f64, x: f64, z: f64, vx: f64, vz: f64, launch: ShotLaunch) -> ShotPath {
+    ShotPath {
+        id,
+        tick,
+        x,
+        z,
+        vx,
+        vz,
+        launch,
+    }
 }
 
 #[test]
@@ -250,75 +360,89 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
     let sim = room(MapId::Village, &[]);
     let state = Scene::capture(&sim);
     let viewer = sim.tanks[0].id;
-    let elapsed = state.elapsed;
     let mut mirror = StateMirror::default();
-    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0, &[]));
-    mirror.apply_full(&full, "r", 1).unwrap();
-    let frame = |seq: u64, tick: u64, paths: Value| json!({ "seq": seq, "tick": tick, "elapsed": elapsed, "paths": paths });
-    let launch = json!({
-        "id": 900, "tick": 0.5, "x": 0, "z": 0, "vx": 30, "vz": 0,
-        "team": 1, "weapon": "ricochet", "y": 1.2, "visualY": 1.6,
-    });
-    assert!(
-        mirror
-            .apply_snapshot(&frame(1, 3, json!([launch])))
-            .is_some()
-    );
+    let full_message = full(&mut StateStream::new("r", 1), &state, 0);
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
+    let apply = |mirror: &mut StateMirror, message: &[u8]| {
+        let BinaryMessage::Snapshot(mut batch) = read_binary_message(message).unwrap() else {
+            unreachable!()
+        };
+        mirror.apply_snapshot(&mut batch)
+    };
+    let ricochet = ShotLaunch {
+        team: Team::Red,
+        weapon: Weapon::Ricochet,
+        y: Some(1.2),
+        visual_y: Some(1.6),
+        thrust: None,
+    };
+    let launch = PathEntry::Launch(path(900, 0.5, 0.0, 0.0, 30.0, 0.0, ricochet));
+    assert!(apply(&mut mirror, &paths_frame(1, 3, &[launch])).is_some());
     let shot = mirror.render(viewer).unwrap().shots[0];
     assert_eq!(
         (shot.x, shot.z),
         (30.0 * 2.5 / 60.0, 0.0),
         "drawn at the frame tick"
     );
-    let bounce = json!({ "id": 900, "tick": 4, "x": 1.75, "z": 0, "vx": -30, "vz": 0 });
-    let extras = mirror
-        .apply_snapshot(&frame(2, 6, json!([bounce])))
-        .unwrap();
-    let PathEntry::Change(path) = extras.paths[0] else {
+    // A change sends no launch fields; the reader's placeholder launch must not survive.
+    let blank = ShotLaunch {
+        team: Team::Blue,
+        weapon: Weapon::Standard,
+        y: None,
+        visual_y: None,
+        thrust: None,
+    };
+    let bounce = PathEntry::Change(path(900, 4.0, 1.75, 0.0, -30.0, 0.0, blank));
+    let extras = apply(&mut mirror, &paths_frame(2, 6, &[bounce])).unwrap();
+    let PathEntry::Change(changed) = extras.paths[0] else {
         panic!("a new path for a flying shell");
     };
     assert_eq!(
-        (path.launch.weapon, path.launch.team, path.launch.visual_y),
+        (
+            changed.launch.weapon,
+            changed.launch.team,
+            changed.launch.visual_y
+        ),
         (Weapon::Ricochet, Team::Red, Some(1.6)),
         "later paths keep the launch fields"
     );
     let shells = |mirror: &StateMirror| mirror.shots.paths.clone();
     let before = shells(&mirror);
+    let change = |id, tick| PathEntry::Change(path(id, tick, 0.0, 0.0, 1.0, 0.0, blank));
     for (bad, why) in [
-        (launch.clone(), "a second launch"),
+        (launch, "a second launch"),
+        (change(901, 5.0), "an unknown shell"),
         (
-            json!({ "id": 901, "tick": 5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
-            "an unknown shell",
-        ),
-        (
-            json!({ "id": 901, "end": 5 }),
+            PathEntry::End { id: 901, tick: 5.0 },
             "the end of an unknown shell",
         ),
+        (change(900, 3.5), "an earlier path"),
         (
-            json!({ "id": 900, "tick": 3.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
-            "an earlier path",
+            PathEntry::End { id: 900, tick: 3.9 },
+            "an end before the path",
         ),
-        (json!({ "id": 900, "end": 3.9 }), "an end before the path"),
-        (json!({ "id": 900, "end": 9.5 }), "an end after the frame"),
         (
-            json!({ "id": 900, "tick": 9.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
-            "a future path",
+            PathEntry::End { id: 900, tick: 9.5 },
+            "an end after the frame",
         ),
+        (change(900, 9.5), "a future path"),
     ] {
         // A valid launch first: the frame is rejected whole, not up to the bad entry.
-        let other = json!({ "id": 950, "tick": 7, "x": 5, "z": 5, "vx": 0, "vz": 9, "team": 0, "weapon": "standard" });
+        let standard = ShotLaunch {
+            team: Team::Blue,
+            ..blank
+        };
+        let other = PathEntry::Launch(path(950, 7.0, 5.0, 5.0, 0.0, 9.0, standard));
         let mut probe = mirror.clone();
         assert!(
-            probe
-                .apply_snapshot(&frame(3, 9, json!([other, bad])))
-                .is_none(),
+            apply(&mut probe, &paths_frame(3, 9, &[other, bad])).is_none(),
             "{why}"
         );
         assert_eq!(shells(&probe), before, "{why} leaves the shells");
         assert_eq!(probe.seq, 2, "{why} leaves the stream");
     }
-    let end = json!([{ "id": 900, "end": 7 }]);
-    assert!(mirror.apply_snapshot(&frame(3, 9, end)).is_some());
+    let end = PathEntry::End { id: 900, tick: 7.0 };
+    assert!(apply(&mut mirror, &paths_frame(3, 9, &[end])).is_some());
     assert!(mirror.render(viewer).unwrap().shots.is_empty());
 }
 
@@ -327,38 +451,58 @@ fn mirror_allows_one_change_per_entity_of_each_kind_in_a_frame() {
     let sim = room(MapId::Village, &[]);
     let state = Scene::capture(&sim);
     let mut mirror = StateMirror::default();
-    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0, &[]));
-    mirror.apply_full(&full, "r", 1).unwrap();
+    let full_message = full(&mut StateStream::new("r", 1), &state, 0);
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     let before = mirror.state.as_ref().unwrap().to_value();
     let tank = sim.tanks[0].id;
-    let key = tank.to_string();
-    let elapsed = state.elapsed;
-    let mine = json!({ "id": tank, "x": 0, "z": 0, "owner": tank, "team": 0, "arm": 0, "life": 1 });
-    let conflicting = json!({
-        "seq": 1, "tick": 1, "elapsed": elapsed,
-        "updates": { "tanks": { key.clone(): { "hp": 1 } } },
-        "removed": { "tanks": [tank] },
+    let hp = mirror.state.as_ref().unwrap().tanks.records[0].value.hp;
+    let conflicting = frame_body(UPDATES_SECTION | REMOVED_SECTION, |out| {
+        records(out, TANKS, &[(tank, hp_change(100 - (hp * 100.0) as i64))]);
+        put_varint(out, 1 << TANKS);
+        put_varint(out, 1);
+        put_varint(out, u64::from(tank));
     });
-    assert!(mirror.apply_snapshot(&conflicting).is_none());
+    let message = batch(1, 0, 1, &[(1, conflicting)]);
+    let BinaryMessage::Snapshot(mut conflict) = read_binary_message(&message).unwrap() else {
+        unreachable!()
+    };
+    assert!(mirror.apply_snapshot(&mut conflict).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     assert!(mirror.needs_full);
-    mirror.apply_full(&full, "r", 1).unwrap();
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     // Ids are claimed per kind, so another kind may reuse a tank's id in the same frame.
-    let shared = json!({
-        "seq": 1, "tick": 1, "elapsed": elapsed,
-        "updates": { "tanks": { key.clone(): { "hp": 1 } }, "mines": { key.clone(): mine } },
+    let mut mine_record = WireRecord::default();
+    mine_record.reset(tank, MINE_FIELDS.len());
+    mine_record.set_fixed(mine::ARM, 0.0, 100.0);
+    mine_record.set_fixed(mine::LIFE, 1.0, 100.0);
+    mine_record.set_fixed(mine::X, 0.0, 1000.0);
+    mine_record.set_fixed(mine::Z, 0.0, 1000.0);
+    mine_record.set_count(mine::OWNER, u64::from(tank));
+    mine_record.set_count(mine::TEAM, 0);
+    let mut mine_changes = Vec::new();
+    write_changes(MINE_FIELDS, None, &mine_record, &mut mine_changes);
+    let shared = frame_body(UPDATES_SECTION, |out| {
+        put_varint(out, (1 << TANKS) | (1 << MINES));
+        for (id, changes) in [
+            (tank, hp_change(100 - (hp * 100.0) as i64)),
+            (tank, mine_changes),
+        ] {
+            put_varint(out, 1);
+            put_varint(out, u64::from(id));
+            out.extend_from_slice(&changes);
+        }
     });
-    assert!(mirror.apply_snapshot(&shared).is_some());
+    apply_batch(&mut mirror, &batch(1, 0, 1, &[(1, shared)]));
     let scene = mirror.state.as_ref().unwrap();
     assert_eq!(scene.tanks.records[0].value.hp, 1.0);
-    assert!(same(
-        &Value::Object(scene.mines.records.last().unwrap().wire.clone()),
-        &mine
-    ));
+    assert_eq!(scene.mines.records.last().unwrap().wire, mine_record);
     // The removal that conflicted with the update above is valid in a frame of its own.
-    let removal =
-        json!({ "seq": 2, "tick": 1, "elapsed": elapsed, "removed": { "tanks": [tank] } });
-    assert!(mirror.apply_snapshot(&removal).is_some());
+    let removal = frame_body(REMOVED_SECTION, |out| {
+        put_varint(out, 1 << TANKS);
+        put_varint(out, 1);
+        put_varint(out, u64::from(tank));
+    });
+    apply_batch(&mut mirror, &batch(1, 0, 2, &[(1, removal)]));
     assert!(!mirror.state.as_ref().unwrap().tanks.contains(tank));
 }
 
@@ -437,6 +581,18 @@ fn select(record: &Value, fields: &[&str], nullable: &[&str]) -> Value {
     Value::Object(out)
 }
 
+/// A kind's top-level wire fields, `id` first, as the JSON records named them.
+fn field_names(kind: usize) -> Vec<&'static str> {
+    let mut names = vec!["id"];
+    for field in ENTITY_FIELDS[kind] {
+        let name = field.name.split('.').next().unwrap();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
 fn strip_nulls(value: &Value) -> Value {
     match value {
         Value::Object(fields) => Value::Object(
@@ -463,7 +619,7 @@ fn reference_scene(sim: &Simulation) -> Value {
                     .map(|record| {
                         let mut record = record.as_object().unwrap().clone();
                         adjust(&mut record);
-                        select(&Value::Object(record), ENTITY_FIELDS[kind], nullable)
+                        select(&Value::Object(record), &field_names(kind), nullable)
                     })
                     .collect(),
             )
@@ -641,9 +797,9 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
         let mut sim = room(map, &one_player());
         sim.start();
         let mut stream = StateStream::new("room", 1);
-        let mut previous = parse(&Scene::capture(&sim).to_json());
+        let mut previous = Scene::capture(&sim).to_json();
         assert_same(&previous, &reference_scene(&sim), &format!("{map:?} start"));
-        stream.full(&Scene::capture(&sim), 0, 0, &[]);
+        let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
         for tick in 1..=ticks {
             if tick == 30 {
                 // Collapsed towers leave seeded rubble; the rest leave debris and removals.
@@ -683,14 +839,14 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                 continue;
             }
             let mut scene = Scene::capture(&sim);
-            let text = scene.to_json();
-            let captured = parse(&text);
+            let captured = scene.to_json();
             assert_same(
                 &captured,
                 &reference_scene(&sim),
                 &format!("{map:?} scene at tick {tick}"),
             );
-            let frame = parse(&stream.snapshot(&mut scene, tick, &[], &[]));
+            let message = frame(&mut stream, &mut scene, tick);
+            let frame = frame_json(&mut view, &message);
             let mut delta = Map::new();
             for key in ["match", "updates", "removed"] {
                 if let Some(value) = frame.get(key) {
@@ -730,11 +886,12 @@ fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
     sim.covers[0].debris_seed = None;
     let cover_id = sim.covers[0].id.to_string();
     let mut stream = StateStream::new("room", 1);
-    stream.full(&Scene::capture(&sim), 0, 0, &[]);
+    let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
     for (index, seed) in [Some(12.0), None, Some(34.0)].into_iter().enumerate() {
         sim.covers[0].debris_seed = seed;
         let mut scene = Scene::capture(&sim);
-        let frame = parse(&stream.snapshot(&mut scene, index as u64 + 1, &[], &[]));
+        let message = frame(&mut stream, &mut scene, index as u64 + 1);
+        let frame = frame_json(&mut view, &message);
         assert_same(
             &frame["updates"],
             &json!({"covers": {&cover_id: {"debrisSeed": seed}}}),
@@ -748,33 +905,53 @@ fn snapshot_scratch_does_not_leak_updates_removals_or_events_into_the_next_frame
     let mut sim = room(MapId::Village, &one_player());
     let mut scene = Scene::capture(&sim);
     let mut stream = StateStream::new("room", 1);
-    stream.full(&scene, 0, 0, &[]);
+    let full_message = full(&mut stream, &scene, 0);
+    let mut view = view_from(&full_message);
+    let mut mirror = StateMirror::default();
+    mirror
+        .apply_full(&baseline(&full_message), "room", 1)
+        .unwrap();
     let removed = sim.tanks.pop().unwrap().id;
-    sim.tanks.reverse(); // Wire keys must still be in numeric order.
+    sim.tanks.reverse(); // Frames still list records by ascending id.
     for tank in &mut sim.tanks {
         tank.hp -= 1.0;
     }
     sim.match_state.scores[0] = 2;
     scene.capture_from(&sim);
-    let events = [
-        r#"{"label":"one"}"#.to_string(),
-        r#"{"label":"two"}"#.to_string(),
-    ];
-    let wire = stream.snapshot(&mut scene, 1, &events, &[]);
-    let frame = parse(&wire);
-    assert_eq!(frame["removed"]["tanks"], json!([removed]));
-    assert_eq!(frame["events"], json!([{"label":"one"}, {"label":"two"}]));
-    let mut ids: Vec<_> = sim.tanks.iter().map(|tank| tank.id).collect();
-    ids.sort_unstable();
-    let positions: Vec<_> = ids
-        .iter()
-        .map(|id| wire.find(&format!("\"{id}\":{{")).unwrap())
+    let events: Vec<TimedEvent> = ["one", "two"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| TimedEvent {
+            event_id: index as u64 + 1,
+            tick: 1.0,
+            event: SimEvent {
+                label: Some(label.into()),
+                ..SimEvent::at(SimEventType::Notice, 0.0, 0.0)
+            },
+        })
         .collect();
-    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    let body = stream.snapshot(&mut scene, 1, &events, &[]);
+    let message = batch(1, 0, 1, &[(1, body)]);
+    let BinaryMessage::Snapshot(mut decoded) = read_binary_message(&message).unwrap() else {
+        unreachable!()
+    };
+    let decoded = mirror.decode(&mut decoded, true).unwrap();
+    let ids: Vec<u32> = decoded.changed.iter().map(|change| change.id).collect();
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    let changes = frame_json(&mut view, &message);
+    assert_eq!(changes["removed"]["tanks"], json!([removed]));
+    let labels: Vec<&Value> = changes["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| &event["event"]["label"])
+        .collect();
+    assert_eq!(labels, [&json!("one"), &json!("two")]);
     for tick in 2..5 {
         scene.capture_from(&sim);
+        let message = frame(&mut stream, &mut scene, tick);
         assert_same(
-            &parse(&stream.snapshot(&mut scene, tick, &[], &[])),
+            &frame_json(&mut view, &message),
             &json!({ "seq": tick, "tick": tick, "elapsed": sim.elapsed }),
             "unchanged frames contain no stale scratch data",
         );

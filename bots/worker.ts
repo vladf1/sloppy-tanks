@@ -388,6 +388,8 @@ export class BotSwarm extends DurableObject<Env> {
           }
           return;
         }
+        // Game state arrives as binary frames; the bots read only their headers.
+        socket.binaryType = "arraybuffer";
         socket.accept();
         if (!this.seats.includes(seat) || !this.config) {
           socket.close(1000, "Bot stopped");
@@ -395,9 +397,6 @@ export class BotSwarm extends DurableObject<Env> {
         }
         seat.socket = socket;
         socket.addEventListener("message", (event) => {
-          if (typeof event.data !== "string") {
-            return;
-          }
           try {
             seat.bot.receive(event.data, Date.now());
           } catch (error) {
