@@ -906,7 +906,9 @@ fn range() -> Simulation {
     sim
 }
 
-/// An indestructible rock block centred at (`x`, `z`).
+/// An indestructible rock centred at (`x`, `z`): the quarry boulder's octagonal outline
+/// stretched to `w` by `d`, so its long faces span only the middle of its length and two
+/// rocks laid end to end leave a gap between their chamfered ends. Walls of rocks overlap.
 fn rock(sim: &mut Simulation, x: f64, z: f64, w: f64, d: f64) {
     sim.add_cover(&CoverDef::new(
         CoverKind::Rock,
@@ -1273,7 +1275,8 @@ fn standard_shells_are_launched_once_and_drawn_on_their_simulated_flight_until_i
 fn ricochet_shells_start_a_path_at_each_bounce_and_stay_on_the_simulated_flight() {
     let mut sim = range();
     // A corridor along +z whose walls the shell bounces between until its bounces run out
-    // and the next wall stops it; the target waits beside it.
+    // and the next wall stops it; the target waits beside it. Each wall is two overlapping
+    // rocks: one long rock's chamfered ends would let the first bounce miss.
     support::place_tank(&mut sim, 1, 20.0, 30.0, Some(0.0));
     for z in [14.0, 30.0] {
         rock(&mut sim, -4.0, z, 1.0, 20.0);
