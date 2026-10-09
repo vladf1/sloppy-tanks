@@ -19,9 +19,7 @@ use super::wire::{WireReader, put_varint};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::{ARENA, STEP, group};
 use crate::sim::math::{Point3, Quat4, Vec2};
-use crate::sim::physics::{
-    from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
-};
+use crate::sim::physics::{from_vector, interaction_groups, to_rotation, to_vector, vector};
 use crate::sim::render_state::{RenderCover, RenderState, RenderTank};
 use crate::sim::simulation::{Simulation, cover_parts};
 use crate::sim::simulation_rules::GRAVITY;
@@ -39,9 +37,10 @@ pub struct HullState {
     pub life: u32,
     pub kind: VehicleKind,
     pub position: Point3,
-    pub rotation: Quat4,
     pub velocity: Point3,
-    pub angular_velocity: Point3,
+    /// Angular velocity about Y, the only axis a hull turns on. Its rotation is not sent:
+    /// the drive sets it from `heading` before every step.
+    pub spin: f64,
     pub heading: f64,
     /// Remaining speed-pickup seconds.
     pub speed: f64,
@@ -94,9 +93,8 @@ impl HullState {
             life: tank.life,
             kind: tank.kind,
             position: from_vector(body.translation()),
-            rotation: from_rotation(*body.rotation()),
             velocity: from_vector(body.linvel()),
-            angular_velocity: from_vector(body.angvel()),
+            spin: body.angvel().y as f64,
             heading: tank.heading,
             speed: tank.speed,
         })
@@ -114,12 +112,8 @@ impl HullState {
                 .expect("every chassis has a wire name") as u8,
         );
         put_f32s(out, self.position);
-        let q = self.rotation;
-        for value in [q.x, q.y, q.z, q.w] {
-            out.extend_from_slice(&(value as f32).to_le_bytes());
-        }
         put_f32s(out, self.velocity);
-        put_f32s(out, self.angular_velocity);
+        out.extend_from_slice(&(self.spin as f32).to_le_bytes());
         out.extend_from_slice(&self.heading.to_le_bytes());
         out.extend_from_slice(&self.speed.to_le_bytes());
     }
@@ -131,21 +125,13 @@ impl HullState {
             .get(reader.byte()? as usize)
             .ok_or("Invalid hull kind")?
             .1;
-        let position = read_point(reader)?;
-        let rotation = Quat4 {
-            x: read_f32(reader)?,
-            y: read_f32(reader)?,
-            z: read_f32(reader)?,
-            w: read_f32(reader)?,
-        };
         Ok(Self {
             tick,
             life,
             kind,
-            position,
-            rotation,
+            position: read_point(reader)?,
             velocity: read_point(reader)?,
-            angular_velocity: read_point(reader)?,
+            spin: read_f32(reader)?,
             heading: read_f64(reader)?,
             speed: read_f64(reader)?,
         })
@@ -154,15 +140,13 @@ impl HullState {
     /// A readable form for the development wire log.
     pub fn to_json(&self) -> Value {
         let point = |p: Point3| json!([p.x, p.y, p.z]);
-        let q = self.rotation;
         json!({
             "tick": self.tick,
             "life": self.life,
             "kind": self.kind.as_str(),
             "p": point(self.position),
-            "q": [q.x, q.y, q.z, q.w],
             "v": point(self.velocity),
-            "w": point(self.angular_velocity),
+            "spin": self.spin,
             "heading": self.heading,
             "speed": self.speed,
         })
@@ -406,9 +390,9 @@ impl TankPredictor {
         hull.speed = state.speed;
         let body = &mut self.world.bodies[hull.body];
         body.set_translation(to_vector(state.position), true);
-        body.set_rotation(to_rotation(state.rotation), true);
+        body.set_rotation(to_rotation(Quat4::yaw(state.heading)), true);
         body.set_linvel(to_vector(state.velocity), true);
-        body.set_angvel(to_vector(state.angular_velocity), true);
+        body.set_angvel(vector(0.0, state.spin, 0.0), true);
     }
 
     /// Forgets the hull, as when the viewer's tank dies.
