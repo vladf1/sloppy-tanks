@@ -352,12 +352,19 @@ impl HullPrediction {
         // the tick already sent to the host. A change first seen after a stalled frame
         // cannot reach the host in time for the ticks the stall skipped; those keep the
         // previous input there and here.
+        // The skipped ticks keep the newest recorded input, or after a restart emptied
+        // the record, the input of the frame before the change.
+        let earlier = self
+            .inputs
+            .back()
+            .map(|(_, input)| *input)
+            .or(self.last_input)
+            .unwrap_or(input);
         if self.last_input != Some(input) {
             self.last_input = Some(input);
             self.run_start = (self.tick + 1).max(target);
             self.run_sent = false;
         }
-        let earlier = self.inputs.back().map_or(input, |(_, input)| *input);
         let mut steps = 0;
         while self.tick < target && steps < MAX_STEPS_PER_FRAME {
             self.tick += 1;
