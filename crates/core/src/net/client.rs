@@ -47,6 +47,7 @@ use serde_json::Value;
 
 use super::hull_prediction::{HostUpdate, HullPrediction};
 use super::input_cadence::{InputCadence, InputSample};
+use super::json;
 use super::network_timeline::NetworkTimeline;
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::protocol::{
@@ -277,6 +278,9 @@ pub struct NetworkStats {
     pub correction_max_m: f64,
     pub correction_m_per_s: f64,
     pub correction_p95_m: f64,
+    /// Acknowledged input changes, and those that reached the host after their tick.
+    pub input_starts: u64,
+    pub late_input_starts: u64,
 }
 
 struct Socket {
@@ -493,6 +497,8 @@ impl NetworkClient {
                 0.0
             },
             correction_p95_m: self.prediction.stats.p95(),
+            input_starts: self.prediction.stats.changes,
+            late_input_starts: self.prediction.stats.late_changes,
         }
     }
 
@@ -1285,9 +1291,13 @@ impl NetworkClient {
         {
             return None;
         }
-        // This frame's input drives the predicted hull before it is drawn.
+        // This frame's input drives the predicted hull before it is drawn, rounded as the
+        // host will read it.
         let drive = if self.active_input() {
-            Vec2::new(input.move_x, input.move_z)
+            Vec2::new(
+                json::wire_round(input.move_x, json::VALUE_SCALE),
+                json::wire_round(input.move_z, json::VALUE_SCALE),
+            )
         } else {
             Vec2::ZERO
         };

@@ -26,6 +26,8 @@ struct Peer {
     opening: Vec<(u32, u64)>,
     input: LocalInput,
     frames: usize,
+    /// The page draws no frames until then, like a tab stalled by garbage collection.
+    stalled_until: f64,
 }
 
 struct Network {
@@ -40,6 +42,9 @@ struct Network {
     /// together.
     stalled_until: f64,
     held: Vec<HostEvent>,
+    /// Page frame intervals, repeated; uneven ones step zero or two ticks some frames.
+    frame_ms: Vec<f64>,
+    frame: usize,
 }
 
 fn choice(name: &str, create: Option<RoomSettings>) -> JoinChoice {
@@ -82,6 +87,8 @@ impl Network {
             next_host_tick: 50.0,
             stalled_until: 0.0,
             held: Vec::new(),
+            frame_ms: vec![FRAME_MS],
+            frame: 0,
         }
     }
 
@@ -100,6 +107,7 @@ impl Network {
             opening: Vec::new(),
             input: LocalInput::default(),
             frames: 0,
+            stalled_until: 0.0,
         });
         self.peers.len() - 1
     }
@@ -226,13 +234,17 @@ impl Network {
     fn run(&mut self, ms: f64) {
         let end = self.now + ms;
         while self.now < end {
-            self.now += FRAME_MS;
+            self.now += self.frame_ms[self.frame % self.frame_ms.len()];
+            self.frame += 1;
             let now = self.now;
             for index in 0..self.peers.len() {
                 for (socket, connection) in std::mem::take(&mut self.peers[index].opening) {
                     self.peers[index].socket = Some((socket, connection));
                     self.routes.insert(connection, (index, socket));
                     self.peers[index].client.socket_opened(socket, now);
+                }
+                if now < self.peers[index].stalled_until {
+                    continue;
                 }
                 self.peers[index].client.poll(now);
                 let input = self.peers[index].input;
@@ -690,8 +702,23 @@ fn a_server_that_never_answers_ends_as_lost_after_the_reconnect_window() {
 /// host's snapshots correct it by millimetres.
 #[test]
 fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
-    for (rtt, jitter) in [(0.0, 0.0), (100.0, 0.0), (200.0, 0.0), (100.0, 10.0)] {
+    for (rtt, jitter, stall) in [
+        (0.0, 0.0, 0.0),
+        (100.0, 0.0, 0.0),
+        (200.0, 0.0, 0.0),
+        (100.0, 10.0, 0.0),
+        (100.0, 0.0, 100.0),
+        (100.0, 0.0, -1.0),
+    ] {
         let mut net = Network::new();
+        // A negative stall marks the uneven-frames case: about 60 Hz, drifting against
+        // the ticks, so some frames step no tick and others two.
+        let stall = if stall < 0.0 {
+            net.frame_ms = vec![9.0, 24.0];
+            0.0
+        } else {
+            stall
+        };
         let alice = net.add(Some(DelaySettings {
             half_ms: rtt / 2.0,
             jitter_ms: jitter,
@@ -710,7 +737,7 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
             (1.0, 0.0, 600.0),
             (0.0, -1.0, 600.0),
             (0.0, 0.0, 500.0),
-            (-0.7071, 0.7071, 700.0),
+            (-0.6, 0.8, 700.0),
             (0.0, 0.0, 500.0),
         ];
         for (move_x, move_z, hold) in script.iter().cycle().take(14) {
@@ -723,6 +750,9 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
                 net.peers[alice].input.move_x == 0.0 && net.peers[alice].input.move_z == 0.0;
             net.peers[alice].input.move_x = *move_x;
             net.peers[alice].input.move_z = *move_z;
+            // The key goes down while the page is stalled; its first frame comes late.
+            net.peers[alice].stalled_until = net.now + stall;
+            net.run(stall);
             let mut frames = 0;
             while frames < 60 {
                 net.run(FRAME_MS);
@@ -739,7 +769,7 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
         }
         let stats = net.peers[alice].client.stats(net.now);
         eprintln!(
-            "rtt {rtt} jitter {jitter}: response frames {responses:?}, lead {:.0} ms, \
+            "rtt {rtt} jitter {jitter} stall {stall}: response frames {responses:?}, lead {:.0} ms, \
              {} corrections, {:.4} m/s, p95 {:.4} m, max {:.4} m",
             stats.prediction_lead_ms,
             stats.corrections,
@@ -752,7 +782,8 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
             "a press shows within three frames: {responses:?}"
         );
         assert!(stats.corrections > 100);
-        assert!(stats.correction_p95_m < 0.02, "{stats:?}");
+        assert!(stats.correction_p95_m < 0.002, "{stats:?}");
+        assert!(stats.correction_max_m < 0.01, "{stats:?}");
         assert!(
             stats.prediction_lead_ms > rtt && stats.prediction_lead_ms < rtt + 150.0,
             "{stats:?}"

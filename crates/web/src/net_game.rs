@@ -742,6 +742,8 @@ impl NetGame {
                 "correctionMaxM": network.correction_max_m,
                 "correctionMPerS": network.correction_m_per_s,
                 "correctionP95M": network.correction_p95_m,
+                "inputStarts": network.input_starts,
+                "lateInputStarts": network.late_input_starts,
             }),
         );
         Value::Object(stats).to_string()

@@ -55,6 +55,10 @@ pub struct CorrectionStats {
     /// Seconds of continuing prediction those corrections span.
     pub seconds: f64,
     pub largest: f64,
+    /// Acknowledged input changes, and those the host started after the tick they asked
+    /// for because they arrived too late.
+    pub changes: u64,
+    pub late_changes: u64,
     /// The latest correction sizes, metres.
     pub recent: VecDeque<f64>,
 }
@@ -81,6 +85,13 @@ impl CorrectionStats {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SentInput {
+    seq: i64,
+    sent_ms: f64,
+    requested: Option<u64>,
+}
+
 /// The drawn own hull.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnHull {
@@ -101,14 +112,18 @@ pub struct HullPrediction {
     current: Option<PredictedPose>,
     /// The move input of each predicted tick the host has not confirmed, oldest first.
     inputs: VecDeque<(u64, Vec2)>,
-    /// The first tick the current local input drove.
+    /// The first tick the current local input drives, set once when that input appears.
     run_start: u64,
+    /// The local input of the last frame.
+    last_input: Option<Vec2>,
     /// `P(now) = now / step + offset`: the predicted tick at local time `now`.
     offset: Option<f64>,
     target_offset: f64,
     last_ms: Option<f64>,
-    /// Sent inputs not yet acknowledged: sequence and local send time.
-    sent: VecDeque<(i64, f64)>,
+    /// Sent inputs not yet acknowledged.
+    sent: VecDeque<SentInput>,
+    /// The current run's start has gone to the host.
+    run_sent: bool,
     acked: i64,
     /// Recent arrival ticks less their send time in ticks.
     arrivals: VecDeque<f64>,
@@ -139,6 +154,7 @@ impl HullPrediction {
         self.previous = None;
         self.current = None;
         self.inputs.clear();
+        self.last_input = None;
         self.correction = Vec2::ZERO;
         self.heading_correction = 0.0;
         self.predictor.clear_hull();
@@ -167,14 +183,23 @@ impl HullPrediction {
     }
 
     /// The tick to ask the host to start the input sent now from: where the current local
-    /// input began driving the prediction.
+    /// input began driving the prediction. Only the first send of a run asks; repeats of
+    /// the same input change nothing the host drives, so they start on arrival.
     pub fn requested_tick(&self) -> Option<u64> {
-        self.active().then_some(self.run_start)
+        (self.active() && !self.run_sent).then_some(self.run_start)
     }
 
     /// Records an input that went out at `now_ms`.
     pub fn sent(&mut self, seq: i64, now_ms: f64) {
-        self.sent.push_back((seq, now_ms));
+        let requested = self.requested_tick();
+        self.sent.push_back(SentInput {
+            seq,
+            sent_ms: now_ms,
+            requested,
+        });
+        if requested.is_some() {
+            self.run_sent = true;
+        }
         if self.sent.len() > MAX_UNACKED_SENDS {
             self.sent.pop_front();
         }
@@ -188,6 +213,7 @@ impl HullPrediction {
             self.clear();
             return;
         };
+        let newest_input = self.inputs.back().map_or(Vec2::ZERO, |(_, input)| *input);
         while self
             .inputs
             .front()
@@ -197,8 +223,8 @@ impl HullPrediction {
         }
         let continuing = self.life == Some(hull.life) && self.current.is_some();
         // The recorded inputs must cover every tick from the host's to the predicted one;
-        // otherwise (first hull, respawn, a stall, a client behind the host) restart from
-        // the host's tick and catch up over the next frames.
+        // otherwise (first hull, respawn, a client behind the host) restart from the host's
+        // tick. A continuing hull catches up at once with its newest input, so it glides.
         let covered = self.tick > hull.tick
             && self.inputs.len() as u64 == self.tick - hull.tick
             && self
@@ -218,12 +244,19 @@ impl HullPrediction {
             self.offset = Some(self.target_offset.max(estimate));
         }
         if restart {
+            let predicted = self.tick;
             self.tick = hull.tick;
             self.inputs.clear();
+            if continuing {
+                while self.tick < predicted && self.inputs.len() < MAX_PENDING_TICKS {
+                    self.tick += 1;
+                    self.inputs.push_back((self.tick, newest_input));
+                }
+            }
         }
         self.predictor.sync_scene(scene);
         self.predictor.reset(&hull);
-        let old = if restart { None } else { self.current };
+        let old = if continuing { self.current } else { None };
         let mut previous = self.predictor.pose();
         let mut current = previous;
         for &(_, input) in &self.inputs {
@@ -262,23 +295,29 @@ impl HullPrediction {
             return;
         }
         self.acked = ack.input_seq;
-        while let Some(&(seq, sent_ms)) = self.sent.front() {
-            if seq > ack.input_seq {
+        while let Some(&sent) = self.sent.front() {
+            if sent.seq > ack.input_seq {
                 break;
             }
             self.sent.pop_front();
-            if seq == ack.input_seq {
-                self.arrivals
-                    .push_back(ack.arrival_tick as f64 - sent_ms / SIMULATION_STEP_MS);
-                if self.arrivals.len() > MAX_ARRIVAL_SAMPLES {
-                    self.arrivals.pop_front();
-                }
-                let mut sorted: Vec<f64> = self.arrivals.iter().copied().collect();
-                sorted.sort_by(f64::total_cmp);
-                let late =
-                    sorted[((sorted.len() - 1) as f64 * ARRIVAL_PERCENTILE).round() as usize];
-                self.target_offset = late + ARRIVAL_MARGIN_TICKS;
+            if sent.seq != ack.input_seq {
+                continue;
             }
+            if let Some(requested) = sent.requested {
+                self.stats.changes += 1;
+                if ack.applied_tick > requested {
+                    self.stats.late_changes += 1;
+                }
+            }
+            self.arrivals
+                .push_back(ack.arrival_tick as f64 - sent.sent_ms / SIMULATION_STEP_MS);
+            if self.arrivals.len() > MAX_ARRIVAL_SAMPLES {
+                self.arrivals.pop_front();
+            }
+            let mut sorted: Vec<f64> = self.arrivals.iter().copied().collect();
+            sorted.sort_by(f64::total_cmp);
+            let late = sorted[((sorted.len() - 1) as f64 * ARRIVAL_PERCENTILE).round() as usize];
+            self.target_offset = late + ARRIVAL_MARGIN_TICKS;
         }
     }
 
@@ -307,17 +346,28 @@ impl HullPrediction {
             return false;
         }
         self.stats.seconds += dt_ms / 1000.0;
-        let latest = self.inputs.back().map(|(_, input)| *input);
-        if latest != Some(input) {
-            self.run_start = self.tick + 1;
-        }
         let present = now_ms / SIMULATION_STEP_MS + offset;
         let target = present.ceil().max(0.0) as u64;
+        // Date each change once: a frame that steps no tick must not push it later than
+        // the tick already sent to the host. A change first seen after a stalled frame
+        // cannot reach the host in time for the ticks the stall skipped; those keep the
+        // previous input there and here.
+        if self.last_input != Some(input) {
+            self.last_input = Some(input);
+            self.run_start = (self.tick + 1).max(target);
+            self.run_sent = false;
+        }
+        let earlier = self.inputs.back().map_or(input, |(_, input)| *input);
         let mut steps = 0;
         while self.tick < target && steps < MAX_STEPS_PER_FRAME {
             self.tick += 1;
-            self.predictor.step(input.x, input.z);
-            self.inputs.push_back((self.tick, input));
+            let drive = if self.tick >= self.run_start {
+                input
+            } else {
+                earlier
+            };
+            self.predictor.step(drive.x, drive.z);
+            self.inputs.push_back((self.tick, drive));
             if self.inputs.len() > MAX_PENDING_TICKS {
                 self.inputs.pop_front();
             }
