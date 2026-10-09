@@ -44,6 +44,12 @@ fn lerp(a: Point3, b: Option<Point3>, fraction: f64) -> Point3 {
 /// paths (`NetworkTimeline`). The local hull instead
 /// follows the newest authority, extrapolated toward the present and smoothed at frame
 /// rate. Samples are never modified.
+///
+/// That local hull is the fallback for when own-hull prediction (`HullPrediction`) has
+/// nothing to draw: the client draws the predicted hull over it whenever prediction holds
+/// the displayed tank's live life. This one shows while a bot drives the seat (behind the
+/// in-battle menu), until the first snapshot after a baseline or control change brings the
+/// hull, and from a death (which ends prediction) until the display reaches the respawn.
 #[derive(Clone, Debug, Default)]
 pub struct RenderTimeline {
     samples: VecDeque<RenderState>,
@@ -187,10 +193,5 @@ impl RenderTimeline {
         output.custom_map = before.custom_map;
         // Keep one predecessor for interpolation, with all delayed lifecycle data intact.
         self.samples.drain(..index);
-    }
-
-    /// The smoothed local hull of the last read.
-    pub fn local(&self) -> Option<&RenderTank> {
-        self.local.as_ref()
     }
 }

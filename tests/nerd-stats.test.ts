@@ -122,6 +122,8 @@ function fixture(network = false) {
       correctionMaxM: 0.12,
       correctionMPerS: 0.04,
       correctionP95M: 0.03,
+      inputStarts: 25,
+      lateInputStarts: 2,
     },
   };
   const engine = {
@@ -224,6 +226,7 @@ test("network stats use received scene counts and never require a client physics
       .join("\n");
     assert.ok(text.includes("RTT") && text.includes("42 ms"));
     assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
+    assert.ok(text.includes("Late input starts") && text.includes("2 / 25"));
     assert.ok(
       text.includes("Late batches") &&
         text.includes("Longest batch gap") &&

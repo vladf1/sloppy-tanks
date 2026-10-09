@@ -151,7 +151,8 @@ pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
 /// A frame's payload as the room sees it.
 pub enum Incoming<'a> {
     Text(&'a str),
-    /// Binary messages are not part of the protocol; the socket is closed with 1008.
+    /// Clients send only text; only the server sends binary (state frames). A binary
+    /// message from a client closes the socket with 1008.
     Binary,
 }
 

@@ -91,8 +91,11 @@ roughly five times a standard room's snapshot bandwidth.
 Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy; level
 1's quick strategy sent about a quarter more than the former Node server's zlib
 level 1) with context takeover, which browsers negotiate natively; a client that
-does not offer it gets plain frames. Monitor byte counts are measured before compression; the `wire` figures
-count socket bytes after it.
+does not offer it gets plain frames. Binary state messages (snapshot batches and
+baselines) are deflated from 64 bytes, since consecutive batches repeat each other and
+even small ones shrink with context takeover; text messages only from 1 KiB, below which
+the block overhead outweighs the saving (`src/websocket/deflate.rs`). Monitor byte counts
+are measured before compression; the `wire` figures count socket bytes after it.
 
 `GET /rooms` returns public room metadata only, never names or seat tokens.
 Rooms publish on lobby changes and every 20 seconds while active;

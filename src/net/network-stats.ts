@@ -39,6 +39,8 @@ export interface NetworkStatsSource {
     correctionMaxM: number;
     correctionMPerS: number;
     correctionP95M: number;
+    inputStarts: number;
+    lateInputStarts: number;
   };
 }
 
@@ -116,6 +118,11 @@ export function networkStatsSections(
           "Correction p95",
           `${(network.correctionP95M * 100).toFixed(1)} cm`,
           "The 95th percentile of your tank's recent prediction corrections.",
+        ],
+        [
+          "Late input starts",
+          `${network.lateInputStarts} / ${network.inputStarts}`,
+          "Input changes the server started after the tick your prediction asked for, out of all acknowledged changes during this page session. Late ones arrived too late to start on time, so the prediction is corrected.",
         ],
         ["Server tick", network.serverTick, "Latest authoritative simulation tick received."],
         [

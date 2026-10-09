@@ -1,6 +1,7 @@
 //! The client's display timeline (`src/net/interpolation.ts`): remote poses, events and
 //! projectile paths share one delayed playout clock; only the local hull targets the
-//! present.
+//! present. Own-hull prediction draws over that hull while it has one (see
+//! `RenderTimeline`).
 
 use std::collections::VecDeque;
 
@@ -13,6 +14,8 @@ use crate::sim::render_state::RenderState;
 use crate::sim::types::SimEvent;
 
 const MAX_HISTORY_ITEMS: usize = 4096;
+/// How far the fallback local hull may aim past the newest received tick, and at most
+/// how much of the one-way delay it adds on top.
 const MAX_LOCAL_LEAD_MS: f64 = 150.0;
 /// Paths are kept this many ticks past their end, for late display reads.
 const PATH_RETENTION_TICKS: f64 = 12.0;
@@ -120,7 +123,8 @@ impl NetworkTimeline {
     ) -> Vec<SimEvent> {
         self.display_tick = self.clock.read(now_ms) / SIMULATION_STEP_MS;
         let newest_ms = self.newest_tick as f64 * SIMULATION_STEP_MS;
-        // The local hull extrapolates toward the server's present: newest path time plus one way.
+        // The fallback local hull extrapolates toward the server's present: newest path
+        // time plus one way.
         let local_time = ((newest_ms + MAX_LOCAL_LEAD_MS).min(self.clock.path_server_ms(now_ms))
             + MAX_LOCAL_LEAD_MS.min(rtt_ms / 2.0))
             / 1000.0;
