@@ -195,7 +195,7 @@ fn main() {
                 ] {
                     samples.entry(stage).or_default().push(sample);
                 }
-                hash(&mut hashes[0], wire.as_bytes());
+                hash(&mut hashes[0], &wire);
                 hash(&mut hashes[1], &serde_json::to_vec(&display).unwrap());
                 // Object key order is not a HUD API; normalize before comparing.
                 let hud: serde_json::Value = serde_json::from_str(&hud).unwrap();

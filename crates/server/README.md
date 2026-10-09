@@ -279,7 +279,7 @@ like the dashboard, and lists full room codes; `/rooms` lists them too, except
 for rooms whose players are all reconnecting. Until the first sample, 10 s after
 start, only a direct loopback request without `X-Forwarded-For` (the update
 timer's) samples on demand; others get 503. Traffic figures count
-characters of JSON, which equals bytes for ASCII; `wire` figures are socket bytes
+message bytes before compression (JSON text and binary state); `wire` figures are socket bytes
 after compression, including WebSocket frame and handshake bytes.
 `tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
 `debtMs` that keeps rising means the room is falling behind real time.

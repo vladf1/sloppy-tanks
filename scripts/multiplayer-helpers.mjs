@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { chooseMap, headless } from "./browser-helpers.mjs";
+import { createWireView } from "./wire-view.mjs";
 
 /** The Vite dev server's default page; checks use `SLOPPY_URL` for any other. */
 export const DEFAULT_GAME_URL = "http://127.0.0.1:5173/sloppy-tanks/";
@@ -41,16 +42,18 @@ export async function click(page, selector) {
 
 /**
  * Records a page's room traffic from its real WebSocket frames, across reloads and
- * reconnects. Pass `mirror: new StateMirror()` (from `state-mirror.mjs`)
+ * reconnects. Binary state frames are read as JSON through one `WireView` per socket.
+ * Pass `mirror: new StateMirror()` (from `state-mirror.mjs`)
  * to rebuild the replicated scene and assert snapshot continuity.
  * Server `error`/`room-reset` messages and malformed frames go to `errors`.
  */
 export function recordRoomFrames(page, errors, { mirror } = {}) {
   const room = { mirror, updates: 0, snapshots: 0, ack: 0, inputs: [], pings: 0 };
   page.on("websocket", (socket) => {
+    const wire = createWireView();
     socket.on("framereceived", ({ payload }) => {
       try {
-        const message = JSON.parse(String(payload));
+        const message = wire.decode(payload);
         if (message.type === "lobby") room.lobby = message;
         if (message.type === "control") room.control = message;
         if (message.type === "full") {

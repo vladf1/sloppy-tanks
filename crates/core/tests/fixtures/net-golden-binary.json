@@ -1,0 +1,313 @@
+{
+  "messages": [
+    {
+      "connection": "alice",
+      "header": "01010000000b676f6c64656e2d726f6f6d",
+      "roundId": 1,
+      "tick": 0,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "020103000101",
+      "roundId": 1,
+      "tick": 3,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020106000201",
+      "roundId": 1,
+      "tick": 6,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020109000301",
+      "roundId": 1,
+      "tick": 9,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "01010904090b676f6c64656e2d726f6f6d",
+      "roundId": 1,
+      "tick": 9,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "02010c000403",
+      "roundId": 1,
+      "tick": 12,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "02010c000502",
+      "roundId": 1,
+      "tick": 12,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "02010f010701",
+      "roundId": 1,
+      "tick": 15,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "02010f010701",
+      "roundId": 1,
+      "tick": 15,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020112020802",
+      "roundId": 1,
+      "tick": 18,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020112020802",
+      "roundId": 1,
+      "tick": 18,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020115030a01",
+      "roundId": 1,
+      "tick": 21,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020115020a01",
+      "roundId": 1,
+      "tick": 21,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020118030b01",
+      "roundId": 1,
+      "tick": 24,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "02011b030c01",
+      "roundId": 1,
+      "tick": 27,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "01011b0c0b0b676f6c64656e2d726f6f6d",
+      "roundId": 1,
+      "tick": 27,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "02011e030d01",
+      "roundId": 1,
+      "tick": 30,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "02011e000d01",
+      "roundId": 1,
+      "tick": 30,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "01011e0d0b0b676f6c64656e2d726f6f6d",
+      "roundId": 1,
+      "tick": 30,
+      "type": "full"
+    },
+    {
+      "connection": "carol",
+      "header": "01011e0e0c0b676f6c64656e2d726f6f6d",
+      "roundId": 1,
+      "tick": 30,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "020121030e03",
+      "roundId": 1,
+      "tick": 33,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020121000e03",
+      "roundId": 1,
+      "tick": 33,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020124031101",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020124001101",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020124031201",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020124001201",
+      "roundId": 1,
+      "tick": 36,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "01020000000b676f6c64656e2d726f6f6d",
+      "roundId": 2,
+      "tick": 0,
+      "type": "full"
+    },
+    {
+      "connection": "bob",
+      "header": "01020000000b676f6c64656e2d726f6f6d",
+      "roundId": 2,
+      "tick": 0,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "020203000101",
+      "roundId": 2,
+      "tick": 3,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020203000101",
+      "roundId": 2,
+      "tick": 3,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020206040201",
+      "roundId": 2,
+      "tick": 6,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020206030201",
+      "roundId": 2,
+      "tick": 6,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020209040301",
+      "roundId": 2,
+      "tick": 9,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "020209030301",
+      "roundId": 2,
+      "tick": 9,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "02020c050401",
+      "roundId": 2,
+      "tick": 12,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "02020c030401",
+      "roundId": 2,
+      "tick": 12,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "02020f050501",
+      "roundId": 2,
+      "tick": 15,
+      "type": "snapshot"
+    },
+    {
+      "connection": "bob",
+      "header": "02020f030501",
+      "roundId": 2,
+      "tick": 15,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020212050602",
+      "roundId": 2,
+      "tick": 18,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "020215050801",
+      "roundId": 2,
+      "tick": 21,
+      "type": "snapshot"
+    },
+    {
+      "connection": "carol-again",
+      "header": "01021508060b676f6c64656e2d726f6f6d",
+      "roundId": 2,
+      "tick": 21,
+      "type": "full"
+    },
+    {
+      "connection": "alice",
+      "header": "020218050901",
+      "roundId": 2,
+      "tick": 24,
+      "type": "snapshot"
+    },
+    {
+      "connection": "carol-again",
+      "header": "020218000901",
+      "roundId": 2,
+      "tick": 24,
+      "type": "snapshot"
+    },
+    {
+      "connection": "alice",
+      "header": "02021b050a01",
+      "roundId": 2,
+      "tick": 27,
+      "type": "snapshot"
+    }
+  ],
+  "protocol": 3
+}

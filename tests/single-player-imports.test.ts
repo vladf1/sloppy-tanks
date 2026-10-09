@@ -19,6 +19,7 @@ const SHELL = new Set([
     "button-input",
     "cockpit",
     "controls",
+    "debug-console",
     "engine-api",
     "game-options",
     "hud-feedback",

@@ -2,28 +2,30 @@
 //! simulation, what clients validate, and how a client projects it into the same
 //! [`RenderState`] local play draws.
 //!
-//! The host writes each wire record directly as JSON text, in its reader's field order and
-//! with the precision the TypeScript `rounded` gave that field name: positions and sizes in
+//! Each entity, the match and the map is a [`WireRecord`] of its kind's field table, with
+//! the precision the TypeScript `rounded` gave that field: positions and sizes in
 //! millimetres, rotations and angles in ten-thousandths, timers and meters in hundredths.
-//! Each record remembers where every field's value sits in its text, so the replication
-//! stream compares fields without parsing. Clients read records back through readers that
-//! keep the TypeScript limits and error messages.
+//! Tables list the fields that change most often first, so a frame's field mask usually
+//! fits one byte. The host compares records slot by slot to send only changed fields;
+//! clients keep the same records and read them into typed values with the TypeScript
+//! readers' limits.
 
 use std::collections::HashMap;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::json::{self, ObjectWriter, write_int, write_number, write_str};
-use super::protocol::{MAP_MODES, read_team};
-use super::schema::{
-    ReadResult, Record, array, boolean, choice, field, id, id32, nested, nullable, number,
-    number_in, optional, string,
+use super::json::{self, POSITION_SCALE, ROTATION_SCALE, VALUE_SCALE};
+use super::protocol::MAP_MODES;
+use super::schema::{ReadResult, text_length};
+use super::wire::{
+    Field, FieldKind, Slot, WireReader, WireRecord, names, put_signed, put_varint, read_changes,
+    wire_fields, write_changes,
 };
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
-use crate::sim::math::{Point3, Quat4, Vec2, to_int32};
+use crate::sim::math::{Point3, Quat4, Vec2};
 use crate::sim::render_state::{
     RenderCover, RenderCoverMotion, RenderFragment, RenderState, RenderTank,
 };
@@ -35,12 +37,12 @@ use crate::sim::timber_layout::{
 use crate::sim::tower_layout::TowerPiece;
 use crate::sim::types::{
     AmmoInventory, Cover, CoverKind, DamageCause, DamageSource, DeathStyle, Fragment,
-    FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank,
+    FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank, Team,
     VehicleKind, Weapon, WreckPart,
 };
 
-/// Entity kinds in wire order; the index of a kind in every per-kind array.
-/// Shells travel as trajectories instead (`shot_paths`), not as per-frame records.
+/// Entity kinds in wire order; the index of a kind in every per-kind array. Shells travel
+/// as trajectories instead (`shot_paths`), not as per-frame records.
 pub const ENTITY_TYPES: [&str; 5] = ["tanks", "covers", "fragments", "mines", "pickups"];
 pub const TANKS: usize = 0;
 pub const COVERS: usize = 1;
@@ -180,183 +182,535 @@ pub const DAMAGE_CAUSES: [(&str, DamageCause); 10] = [
     ("interception", DamageCause::Interception),
     ("explosion", DamageCause::Explosion),
 ];
+const DEATH_STYLES: [(&str, DeathStyle); 1] = [("burnout", DeathStyle::Burnout)];
 
 /// The wire name of `value` in a name table.
 pub fn name<T: PartialEq + Copy>(table: &[(&'static str, T)], value: T) -> &'static str {
+    table[index_of(table, value)].0
+}
+
+fn index_of<T: PartialEq + Copy>(table: &[(&'static str, T)], value: T) -> usize {
     table
         .iter()
-        .find(|(_, option)| *option == value)
-        .map(|(name, _)| *name)
+        .position(|(_, option)| *option == value)
         .expect("every enum value has a wire name")
+}
+
+// ---------------------------------------------------------------------------------------
+// Field tables.
+// ---------------------------------------------------------------------------------------
+
+const POSITION: FieldKind = FieldKind::Fixed(POSITION_SCALE);
+const ROTATION: FieldKind = FieldKind::Fixed(ROTATION_SCALE);
+const VALUE: FieldKind = FieldKind::Fixed(VALUE_SCALE);
+const COUNT: FieldKind = FieldKind::Count;
+const FLAG: FieldKind = FieldKind::Flag;
+/// Tank and player names are at most 64 UTF-16 units; four UTF-8 bytes each at most.
+const NAME_BYTES: usize = 256;
+/// Event labels (kill-feed notices) are at most 160 UTF-16 units.
+const LABEL_BYTES: usize = 640;
+const MAX_TIMBER_HITS: usize = 32;
+const MAX_TIMBER_MARKS: usize = 32;
+const TIMBER_HITS_BYTES: usize = MAX_TIMBER_HITS * 4 * 10 + 10;
+const TIMBER_PART_BYTES: usize = 256 + MAX_TIMBER_MARKS * 50;
+const SCORES_BYTES: usize = 20;
+
+const VEHICLE_NAMES: [&str; 4] = names(&VEHICLE_KINDS);
+const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
+const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
+const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
+const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
+const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
+const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
+const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
+const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
+const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
+const MAP_NAMES: [&str; 5] = names(&MAP_MODES);
+const EVENT_NAMES: [&str; 13] = names(&EVENT_TYPES);
+const CAUSE_NAMES: [&str; 10] = names(&DAMAGE_CAUSES);
+const DEATH_STYLE_NAMES: [&str; 1] = names(&DEATH_STYLES);
+
+wire_fields!(
+    /// `tankReader`'s fields.
+    TANK_FIELDS, tank {
+        POSITION_X = Field::new("position.x", POSITION),
+        POSITION_Z = Field::new("position.z", POSITION),
+        HEADING = Field::new("heading", ROTATION),
+        AIM = Field::new("aim", ROTATION),
+        VELOCITY_X = Field::new("velocity.x", POSITION),
+        VELOCITY_Z = Field::new("velocity.z", POSITION),
+        COOLDOWN = Field::new("cooldown", VALUE),
+        RECOIL = Field::new("recoil", VALUE),
+        POSITION_Y = Field::new("position.y", POSITION),
+        VELOCITY_Y = Field::new("velocity.y", POSITION),
+        LAST_COMBAT = Field::new("lastCombat", VALUE),
+        SPEED = Field::new("speed", VALUE),
+        MINE_COOLDOWN = Field::new("mineCooldown", VALUE),
+        HP = Field::new("hp", VALUE),
+        SHIELD = Field::new("shield", VALUE),
+        SHIELD_POINTS = Field::new("shieldPoints", VALUE),
+        PROTECTION = Field::new("protection", VALUE),
+        LASER = Field::new("laser", VALUE),
+        RESPAWN = Field::new("respawn", VALUE),
+        RAPID = Field::new("rapid", VALUE),
+        XP = Field::new("xp", VALUE),
+        MAX_HP = Field::new("maxHp", VALUE),
+        ALIVE = Field::new("alive", FLAG),
+        LIFE = Field::new("life", COUNT),
+        KILLS = Field::new("kills", COUNT),
+        DEATHS = Field::new("deaths", COUNT),
+        SELECTED_AMMO = Field::new("selectedAmmo", FieldKind::Choice(&WEAPON_NAMES)),
+        AMMO_SPREAD = Field::new("ammo.spread", COUNT),
+        AMMO_ROCKET = Field::new("ammo.rocket", COUNT),
+        AMMO_RICOCHET = Field::new("ammo.ricochet", COUNT),
+        AMMO_PIERCING = Field::new("ammo.piercing", COUNT),
+        HUMAN = Field::new("human", FLAG),
+        NAME = Field::new("name", FieldKind::Text(NAME_BYTES)),
+        KIND = Field::new("kind", FieldKind::Choice(&VEHICLE_NAMES)),
+        TEAM = Field::new("team", COUNT),
+    }
+);
+
+wire_fields!(
+    /// `coverReader`'s fields; `hp` and `maxHp` are absent (null) for indestructible cover.
+    COVER_FIELDS, cover {
+        POSITION_X = Field::new("position.x", POSITION),
+        POSITION_Y = Field::new("position.y", POSITION),
+        POSITION_Z = Field::new("position.z", POSITION),
+        ROTATION_X = Field::new("rotation.x", ROTATION),
+        ROTATION_Y = Field::new("rotation.y", ROTATION),
+        ROTATION_Z = Field::new("rotation.z", ROTATION),
+        ROTATION_W = Field::new("rotation.w", ROTATION),
+        HP = Field::nullable("hp", VALUE),
+        ALIVE = Field::new("alive", FLAG),
+        TIMBER_HITS = Field::new(
+            "timberHits",
+            FieldKind::Blob(TIMBER_HITS_BYTES, timber_hits_json)
+        ),
+        MAX_HP = Field::nullable("maxHp", VALUE),
+        X = Field::new("x", POSITION),
+        Z = Field::new("z", POSITION),
+        W = Field::new("w", POSITION),
+        H = Field::new("h", POSITION),
+        D = Field::new("d", POSITION),
+        KIND = Field::new("kind", FieldKind::Choice(&COVER_NAMES)),
+        DESTRUCTIBLE = Field::new("destructible", FLAG),
+        COLOR = Field::new("color", COUNT),
+        DEBRIS_SEED = Field::new("debrisSeed", COUNT),
+        TIMBER_JOIN = Field::new("timberJoin", FieldKind::Blob(1, timber_join_json)),
+        MOTION_ORIGIN_X = Field::new("motion.originX", POSITION),
+        MOTION_ORIGIN_Z = Field::new("motion.originZ", POSITION),
+        MOTION_W = Field::new("motion.w", POSITION),
+        MOTION_D = Field::new("motion.d", POSITION),
+    }
+);
+
+wire_fields!(
+    /// `fragmentReader`'s fields.
+    FRAGMENT_FIELDS, fragment {
+        POSITION_X = Field::new("position.x", POSITION),
+        POSITION_Y = Field::new("position.y", POSITION),
+        POSITION_Z = Field::new("position.z", POSITION),
+        ROTATION_X = Field::new("rotation.x", ROTATION),
+        ROTATION_Y = Field::new("rotation.y", ROTATION),
+        ROTATION_Z = Field::new("rotation.z", ROTATION),
+        ROTATION_W = Field::new("rotation.w", ROTATION),
+        LIFE = Field::new("life", VALUE),
+        SIZE = Field::new("size", POSITION),
+        COLOR = Field::new("color", COUNT),
+        SHAPE = Field::new("shape", FieldKind::Choice(&SHAPE_NAMES)),
+        DIMENSIONS_X = Field::new("dimensions.x", POSITION),
+        DIMENSIONS_Y = Field::new("dimensions.y", POSITION),
+        DIMENSIONS_Z = Field::new("dimensions.z", POSITION),
+        MATERIAL = Field::new("material", FieldKind::Choice(&MATERIAL_NAMES)),
+        SOURCE_KIND = Field::new("sourceKind", FieldKind::Choice(&COVER_NAMES)),
+        TIMBER_PART = Field::new(
+            "timberPart",
+            FieldKind::Blob(TIMBER_PART_BYTES, timber_part_json)
+        ),
+        TOWER_PIECE = Field::new("towerPiece", FieldKind::Choice(&TOWER_NAMES)),
+        TREE_COVER_ID = Field::new("treeCoverId", COUNT),
+        TREE_CENTER_Y = Field::new("treeCenterY", POSITION),
+        CREATED_AT = Field::new("createdAt", VALUE),
+        EXPIRES_AT = Field::new("expiresAt", VALUE),
+        WRECK = Field::new("wreck", FieldKind::Choice(&VEHICLE_NAMES)),
+        PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
+        TEAM = Field::new("team", COUNT),
+    }
+);
+
+wire_fields!(
+    /// `mineReader`'s fields.
+    MINE_FIELDS, mine {
+        ARM = Field::new("arm", VALUE),
+        LIFE = Field::new("life", VALUE),
+        X = Field::new("x", POSITION),
+        Z = Field::new("z", POSITION),
+        OWNER = Field::new("owner", COUNT),
+        OWNER_LIFE = Field::new("ownerLife", COUNT),
+        DAMAGE = Field::new("damage", POSITION),
+        TEAM = Field::new("team", COUNT),
+    }
+);
+
+wire_fields!(
+    /// `pickupReader`'s fields.
+    PICKUP_FIELDS, pickup {
+        COOLDOWN = Field::new("cooldown", VALUE),
+        AVAILABLE = Field::new("available", FLAG),
+        X = Field::new("x", POSITION),
+        Z = Field::new("z", POSITION),
+        KIND = Field::new("kind", FieldKind::Choice(&PICKUP_NAMES)),
+        COOLDOWN_DURATION = Field::new("cooldownDuration", VALUE),
+    }
+);
+
+wire_fields!(
+    /// `matchReader`'s fields; `winner` is absent (null) until a team wins.
+    MATCH_FIELDS, match_record {
+        TIME = Field::new("time", VALUE),
+        PHASE = Field::new("phase", FieldKind::Choice(&PHASE_NAMES)),
+        SCORES = Field::new("scores", FieldKind::Blob(SCORES_BYTES, scores_json)),
+        OVERTIME = Field::new("overtime", FLAG),
+        ENDED_EARLY = Field::new("endedEarly", FLAG),
+        WINNER = Field::nullable("winner", COUNT),
+        ROUND = Field::new("round", COUNT),
+    }
+);
+
+wire_fields!(
+    /// The scene's `map` object.
+    MAP_FIELDS, map {
+        THEME = Field::new("theme", FieldKind::Choice(&MAP_NAMES)),
+        FLOOR = Field::new("floor", FieldKind::Choice(&GROUND_NAMES)),
+        OUTER_FLOOR = Field::new("outerFloor", FieldKind::Choice(&GROUND_NAMES)),
+        OUTER_FLOOR_EXTENT = Field::new("outerFloorExtent", POSITION),
+        SCALE = Field::new("scale", POSITION),
+    }
+);
+
+wire_fields!(
+    /// `eventReader`'s fields.
+    EVENT_FIELDS, event {
+        TYPE = Field::new("type", FieldKind::Choice(&EVENT_NAMES)),
+        X = Field::new("x", POSITION),
+        Z = Field::new("z", POSITION),
+        ID = Field::new("id", COUNT),
+        OWNER = Field::new("owner", COUNT),
+        OWNER_LIFE = Field::new("ownerLife", COUNT),
+        WEAPON = Field::new("weapon", FieldKind::Choice(&WEAPON_NAMES)),
+        TEAM = Field::new("team", COUNT),
+        SIZE = Field::new("size", POSITION),
+        LABEL = Field::new("label", FieldKind::Text(LABEL_BYTES)),
+        COLOR = Field::new("color", COUNT),
+        FROM_X = Field::new("from.x", POSITION),
+        FROM_Y = Field::new("from.y", POSITION),
+        FROM_Z = Field::new("from.z", POSITION),
+        DEATH_STYLE = Field::new("deathStyle", FieldKind::Choice(&DEATH_STYLE_NAMES)),
+        MATERIAL = Field::new("material", FieldKind::Choice(&MATERIAL_NAMES)),
+        FORCE = Field::new("force", POSITION),
+        COVER_KIND = Field::new("coverKind", FieldKind::Choice(&COVER_NAMES)),
+        HEIGHT = Field::new("height", POSITION),
+        DAMAGE_CAUSE = Field::new("damageSource.cause", FieldKind::Choice(&CAUSE_NAMES)),
+        DAMAGE_ORIGIN_X = Field::new("damageSource.origin.x", POSITION),
+        DAMAGE_ORIGIN_Z = Field::new("damageSource.origin.z", POSITION),
+    }
+);
+
+/// Each entity kind's field table, by kind index.
+pub const ENTITY_FIELDS: [&[Field]; 5] = [
+    TANK_FIELDS,
+    COVER_FIELDS,
+    FRAGMENT_FIELDS,
+    MINE_FIELDS,
+    PICKUP_FIELDS,
+];
+
+// ---------------------------------------------------------------------------------------
+// Nested structures, sent whole as blobs.
+// ---------------------------------------------------------------------------------------
+
+fn put_position(out: &mut Vec<u8>, value: f64) {
+    put_signed(out, super::wire::units(value, POSITION_SCALE));
+}
+
+fn put_rotation(out: &mut Vec<u8>, value: f64) {
+    put_signed(out, super::wire::units(value, ROTATION_SCALE));
+}
+
+fn read_position(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    Ok(reader.signed()? as f64 / POSITION_SCALE)
+}
+
+fn read_rotation(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    Ok(reader.signed()? as f64 / ROTATION_SCALE)
+}
+
+fn read_seed(reader: &mut WireReader<'_>) -> ReadResult<i32> {
+    i32::try_from(reader.signed()?).map_err(|_| "Invalid number".into())
+}
+
+fn read_index<T: Copy>(reader: &mut WireReader<'_>, table: &[(&str, T)]) -> ReadResult<T> {
+    table
+        .get(reader.varint()? as usize)
+        .map(|(_, value)| *value)
+        .ok_or_else(|| "Invalid choice".into())
+}
+
+fn finished<T>(reader: &WireReader<'_>, value: T) -> ReadResult<T> {
+    if reader.is_empty() {
+        Ok(value)
+    } else {
+        Err("Invalid list".into())
+    }
+}
+
+fn write_timber_hits(out: &mut Vec<u8>, hits: &[TimberHit]) {
+    put_varint(out, hits.len() as u64);
+    for hit in hits {
+        put_position(out, hit.x);
+        put_position(out, hit.y);
+        put_position(out, hit.z);
+        put_position(out, hit.size);
+    }
+}
+
+fn read_timber_hits(bytes: &[u8]) -> ReadResult<Vec<TimberHit>> {
+    let mut reader = WireReader::new(bytes);
+    let count = reader.varint()?;
+    if count > MAX_TIMBER_HITS as u64 {
+        return Err("Invalid list".into());
+    }
+    let mut hits = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        hits.push(TimberHit {
+            x: read_position(&mut reader)?,
+            y: read_position(&mut reader)?,
+            z: read_position(&mut reader)?,
+            size: read_position(&mut reader)?,
+        });
+    }
+    finished(&reader, hits)
+}
+
+fn timber_hits_json(bytes: &[u8]) -> ReadResult<Value> {
+    Ok(Value::Array(
+        read_timber_hits(bytes)?
+            .iter()
+            .map(|hit| {
+                json!({
+                    "x": json_number(hit.x), "y": json_number(hit.y),
+                    "z": json_number(hit.z), "size": json_number(hit.size),
+                })
+            })
+            .collect(),
+    ))
+}
+
+const OPEN_MIN: u8 = 1;
+const OPEN_MAX: u8 = 2;
+const POST: u8 = 4;
+
+fn read_timber_join(bytes: &[u8]) -> ReadResult<TimberJoin> {
+    match bytes {
+        [bits] if bits & !(OPEN_MIN | OPEN_MAX | POST) == 0 => Ok(TimberJoin {
+            open_min: bits & OPEN_MIN != 0,
+            open_max: bits & OPEN_MAX != 0,
+            post: bits & POST != 0,
+        }),
+        _ => Err("Expected object".into()),
+    }
+}
+
+/// Only set ends travel, as the JSON protocol sent them; a missing end reads as closed.
+fn timber_join_json(bytes: &[u8]) -> ReadResult<Value> {
+    let join = read_timber_join(bytes)?;
+    let mut object = serde_json::Map::new();
+    for (key, set) in [
+        ("openMin", join.open_min),
+        ("openMax", join.open_max),
+        ("post", join.post),
+    ] {
+        if set {
+            object.insert(key.into(), Value::Bool(true));
+        }
+    }
+    Ok(Value::Object(object))
+}
+
+fn write_timber_part(out: &mut Vec<u8>, part: &TimberPart) {
+    put_varint(out, index_of(&TIMBER_PART_KINDS, part.kind) as u64);
+    put_varint(out, part.index as u64);
+    for value in [part.x, part.y, part.z, part.w, part.h, part.d] {
+        put_position(out, value);
+    }
+    put_rotation(out, part.yaw);
+    put_rotation(out, part.lean);
+    put_varint(out, u64::from(part.color));
+    put_varint(out, u64::from(part.damage));
+    put_signed(out, i64::from(part.damage_seed));
+    put_varint(out, part.marks.len() as u64);
+    for mark in &part.marks {
+        put_position(out, mark.x);
+        put_position(out, mark.y);
+        put_varint(out, index_of(&TIMBER_FACES, mark.face) as u64);
+        put_position(out, mark.size);
+        put_signed(out, i64::from(mark.seed));
+    }
+}
+
+fn read_timber_part(bytes: &[u8]) -> ReadResult<TimberPart> {
+    let mut reader = WireReader::new(bytes);
+    let reader = &mut reader;
+    let kind = read_index(reader, &TIMBER_PART_KINDS)?;
+    let index = reader.varint()? as usize;
+    let mut part = TimberPart {
+        kind,
+        index,
+        x: read_position(reader)?,
+        y: read_position(reader)?,
+        z: read_position(reader)?,
+        w: read_position(reader)?,
+        h: read_position(reader)?,
+        d: read_position(reader)?,
+        yaw: read_rotation(reader)?,
+        lean: read_rotation(reader)?,
+        color: reader.varint32()?,
+        damage: reader.varint32()?,
+        damage_seed: read_seed(reader)?,
+        marks: Vec::new(),
+    };
+    let count = reader.varint()?;
+    if count > MAX_TIMBER_MARKS as u64 {
+        return Err("Invalid list".into());
+    }
+    for _ in 0..count {
+        part.marks.push(TimberMark {
+            x: read_position(reader)?,
+            y: read_position(reader)?,
+            face: read_index(reader, &TIMBER_FACES)?,
+            size: read_position(reader)?,
+            seed: read_seed(reader)?,
+        });
+    }
+    finished(reader, part)
+}
+
+fn timber_part_json(bytes: &[u8]) -> ReadResult<Value> {
+    let part = read_timber_part(bytes)?;
+    Ok(json!({
+        "kind": name(&TIMBER_PART_KINDS, part.kind),
+        "index": part.index,
+        "x": json_number(part.x), "y": json_number(part.y), "z": json_number(part.z),
+        "w": json_number(part.w), "h": json_number(part.h), "d": json_number(part.d),
+        "yaw": json_number(part.yaw), "lean": json_number(part.lean),
+        "color": part.color,
+        "damage": part.damage,
+        "damageSeed": part.damage_seed,
+        "marks": part.marks.iter().map(|mark| json!({
+            "x": json_number(mark.x), "y": json_number(mark.y),
+            "face": name(&TIMBER_FACES, mark.face),
+            "size": json_number(mark.size), "seed": mark.seed,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn read_scores(bytes: &[u8]) -> ReadResult<[u32; 2]> {
+    let mut reader = WireReader::new(bytes);
+    let scores = [reader.varint32()?, reader.varint32()?];
+    finished(&reader, scores)
+}
+
+fn scores_json(bytes: &[u8]) -> ReadResult<Value> {
+    Ok(json!(read_scores(bytes)?))
+}
+
+/// A number as JavaScript would hold it: integers without a fraction.
+pub(crate) fn json_number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 9e15 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
+    }
 }
 
 // ---------------------------------------------------------------------------------------
 // Host side: wire records written from the simulation.
 // ---------------------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Default)]
-struct FieldSpan {
-    key: &'static str,
-    start: u32,
-    end: u32,
+fn set_point(record: &mut WireRecord, first: usize, point: Point3) {
+    record.set_fixed(first, point.x, POSITION_SCALE);
+    record.set_fixed(first + 1, point.y, POSITION_SCALE);
+    record.set_fixed(first + 2, point.z, POSITION_SCALE);
 }
 
-/// One JSON object record with the byte span of every field's value.
-#[derive(Clone, Debug, Default)]
-pub struct WireRecord {
-    /// The entity id; zero for records without one (the match).
-    pub id: u32,
-    text: String,
-    fields: Vec<FieldSpan>,
-}
-
-impl WireRecord {
-    /// The whole record as JSON.
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// Field names and their JSON values, in order.
-    pub fn fields(&self) -> impl Iterator<Item = (&'static str, &str)> {
-        self.fields
-            .iter()
-            .map(|span| (span.key, &self.text[span.start as usize..span.end as usize]))
-    }
-
-    /// Search the existing field spans without materializing another field index.
-    pub(super) fn find_field(&self, key: &str, start: usize) -> Option<(usize, &str)> {
-        let index = start
-            + self.fields[start..]
-                .iter()
-                .position(|span| span.key == key)?;
-        let span = &self.fields[index];
-        Some((index, &self.text[span.start as usize..span.end as usize]))
-    }
-
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|span| span.key == key)
-            .map(|span| &self.text[span.start as usize..span.end as usize])
-    }
-
-    fn begin(&mut self, id: u32) -> RecordWriter<'_> {
-        self.id = id;
-        self.text.clear();
-        self.fields.clear();
-        self.text.push('{');
-        RecordWriter { record: self }
+fn set_optional(record: &mut WireRecord, field: usize, value: Option<f64>, scale: f64) {
+    if let Some(value) = value {
+        record.set_fixed(field, value, scale);
     }
 }
 
-struct RecordWriter<'a> {
-    record: &'a mut WireRecord,
-}
-
-impl RecordWriter<'_> {
-    fn value(&mut self, key: &'static str, write: impl FnOnce(&mut String)) -> &mut Self {
-        let record = &mut *self.record;
-        if !record.fields.is_empty() {
-            record.text.push(',');
-        }
-        write_str(&mut record.text, key);
-        record.text.push(':');
-        let start = record.text.len() as u32;
-        write(&mut record.text);
-        let end = record.text.len() as u32;
-        record.fields.push(FieldSpan { key, start, end });
-        self
+fn set_choice<T: PartialEq + Copy>(
+    record: &mut WireRecord,
+    field: usize,
+    table: &[(&'static str, T)],
+    value: Option<T>,
+) {
+    if let Some(value) = value {
+        record.set_number(field, index_of(table, value) as i64);
     }
-
-    fn number(&mut self, key: &'static str, value: f64) -> &mut Self {
-        self.value(key, |out| write_number(out, value))
-    }
-
-    fn int(&mut self, key: &'static str, value: u64) -> &mut Self {
-        self.value(key, |out| write_int(out, value))
-    }
-
-    fn string(&mut self, key: &'static str, value: &str) -> &mut Self {
-        self.value(key, |out| write_str(out, value))
-    }
-
-    fn boolean(&mut self, key: &'static str, value: bool) -> &mut Self {
-        self.value(key, |out| {
-            out.push_str(if value { "true" } else { "false" })
-        })
-    }
-
-    fn end(self) {
-        self.record.text.push('}');
-    }
-}
-
-fn write_vector(out: &mut String, v: Point3) {
-    let mut writer = ObjectWriter::new(out);
-    writer
-        .number("x", json::position(v.x))
-        .number("y", json::position(v.y))
-        .number("z", json::position(v.z));
-    writer.finish();
-}
-
-fn write_quaternion(out: &mut String, q: Quat4) {
-    let mut writer = ObjectWriter::new(out);
-    writer
-        .number("x", json::rotation(q.x))
-        .number("y", json::rotation(q.y))
-        .number("z", json::rotation(q.z))
-        .number("w", json::rotation(q.w));
-    writer.finish();
 }
 
 fn write_tank(record: &mut WireRecord, simulation: &Simulation, tank: &Tank) {
-    let mut w = record.begin(tank.id);
-    w.int("id", u64::from(tank.id))
-        .int("life", u64::from(tank.life))
-        .string("name", &tank.name)
-        .string("kind", tank.kind.as_str())
-        .int("team", tank.team.index() as u64)
-        .boolean("human", tank.human)
-        .boolean("alive", tank.alive)
-        .value("position", |out| {
-            write_vector(out, simulation.tank_position(tank))
-        })
-        .value("velocity", |out| {
-            write_vector(out, simulation.tank_velocity(tank))
-        })
-        .number("heading", json::rotation(tank.heading))
-        .number("aim", json::rotation(tank.aim))
-        .number("hp", json::value(tank.hp))
-        .number("maxHp", json::value(simulation.max_health(tank)))
-        .number("xp", json::value(tank.xp))
-        .number("shield", json::value(tank.shield))
-        .number("shieldPoints", json::value(tank.shield_points))
-        .number("protection", json::value(tank.protection))
-        .number("laser", json::value(tank.laser))
-        .number("recoil", json::value(tank.recoil))
-        .number("cooldown", json::value(tank.cooldown))
-        .number("mineCooldown", json::value(tank.mine_cooldown))
-        .number("respawn", json::value(tank.respawn))
-        .number("rapid", json::value(tank.rapid))
-        .number("speed", json::value(tank.speed))
-        .string("selectedAmmo", tank.selected_ammo.as_str())
-        .value("ammo", |out| {
-            let mut writer = ObjectWriter::new(out);
-            writer
-                .number("spread", tank.ammo.spread)
-                .number("rocket", tank.ammo.rocket)
-                .number("ricochet", tank.ammo.ricochet)
-                .number("piercing", tank.ammo.piercing);
-            writer.finish();
-        })
-        .int("kills", u64::from(tank.kills))
-        .int("deaths", u64::from(tank.deaths))
-        .number("lastCombat", json::value(tank.last_combat));
-    w.end();
+    use tank::*;
+    record.reset(tank.id, TANK_FIELDS.len());
+    let position = simulation.tank_position(tank);
+    record.set_fixed(POSITION_X, position.x, POSITION_SCALE);
+    record.set_fixed(POSITION_Y, position.y, POSITION_SCALE);
+    record.set_fixed(POSITION_Z, position.z, POSITION_SCALE);
+    let velocity = simulation.tank_velocity(tank);
+    record.set_fixed(VELOCITY_X, velocity.x, POSITION_SCALE);
+    record.set_fixed(VELOCITY_Y, velocity.y, POSITION_SCALE);
+    record.set_fixed(VELOCITY_Z, velocity.z, POSITION_SCALE);
+    record.set_fixed(HEADING, tank.heading, ROTATION_SCALE);
+    record.set_fixed(AIM, tank.aim, ROTATION_SCALE);
+    for (field, value) in [
+        (COOLDOWN, tank.cooldown),
+        (RECOIL, tank.recoil),
+        (LAST_COMBAT, tank.last_combat),
+        (SPEED, tank.speed),
+        (MINE_COOLDOWN, tank.mine_cooldown),
+        (HP, tank.hp),
+        (SHIELD, tank.shield),
+        (SHIELD_POINTS, tank.shield_points),
+        (PROTECTION, tank.protection),
+        (LASER, tank.laser),
+        (RESPAWN, tank.respawn),
+        (RAPID, tank.rapid),
+        (XP, tank.xp),
+        (MAX_HP, simulation.max_health(tank)),
+    ] {
+        record.set_fixed(field, value, VALUE_SCALE);
+    }
+    record.set_flag(ALIVE, tank.alive);
+    record.set_count(LIFE, u64::from(tank.life));
+    record.set_count(KILLS, u64::from(tank.kills));
+    record.set_count(DEATHS, u64::from(tank.deaths));
+    set_choice(record, SELECTED_AMMO, &WEAPONS, Some(tank.selected_ammo));
+    // Ammunition counts are whole rounds.
+    record.set_count(AMMO_SPREAD, tank.ammo.spread as u64);
+    record.set_count(AMMO_ROCKET, tank.ammo.rocket as u64);
+    record.set_count(AMMO_RICOCHET, tank.ammo.ricochet as u64);
+    record.set_count(AMMO_PIERCING, tank.ammo.piercing as u64);
+    record.set_flag(HUMAN, tank.human);
+    record.set_text(NAME, &tank.name);
+    set_choice(record, KIND, &VEHICLE_KINDS, Some(tank.kind));
+    record.set_count(TEAM, tank.team.index() as u64);
 }
 
 fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) {
+    use cover::*;
+    record.reset(cover.id, COVER_FIELDS.len());
     let has_body = simulation.world.bodies.contains(cover.body);
     let position = if has_body {
         simulation.body_translation(cover.body)
@@ -368,257 +722,245 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
     } else {
         Quat4::IDENTITY
     };
-    let mut w = record.begin(cover.id);
-    w.int("id", u64::from(cover.id))
-        .string("kind", name(&COVER_KINDS, cover.kind))
-        .number("x", json::position(cover.x))
-        .number("z", json::position(cover.z))
-        .number("w", json::position(cover.w))
-        .number("h", json::position(cover.h))
-        .number("d", json::position(cover.d));
-    if cover.hp.is_finite() {
-        w.number("hp", json::value(cover.hp));
-    } else {
-        w.value("hp", |out| out.push_str("null"));
+    set_point(record, POSITION_X, position);
+    for (field, value) in [
+        (ROTATION_X, rotation.x),
+        (ROTATION_Y, rotation.y),
+        (ROTATION_Z, rotation.z),
+        (ROTATION_W, rotation.w),
+    ] {
+        record.set_fixed(field, value, ROTATION_SCALE);
     }
-    if cover.max_hp.is_finite() {
-        w.number("maxHp", json::value(cover.max_hp));
+    // Indestructible cover has infinite health, which travels as null.
+    set_optional(
+        record,
+        HP,
+        Some(cover.hp).filter(|hp| hp.is_finite()),
+        VALUE_SCALE,
+    );
+    set_optional(
+        record,
+        MAX_HP,
+        Some(cover.max_hp).filter(|hp| hp.is_finite()),
+        VALUE_SCALE,
+    );
+    record.set_flag(ALIVE, cover.alive);
+    if cover.timber_hits.is_empty() {
+        record.clear(TIMBER_HITS);
     } else {
-        w.value("maxHp", |out| out.push_str("null"));
+        record.set_blob(TIMBER_HITS, |out| {
+            write_timber_hits(out, &cover.timber_hits)
+        });
     }
-    w.boolean("alive", cover.alive)
-        .boolean("destructible", cover.destructible)
-        .int("color", u64::from(cover.color));
+    for (field, value) in [
+        (X, cover.x),
+        (Z, cover.z),
+        (W, cover.w),
+        (H, cover.h),
+        (D, cover.d),
+    ] {
+        record.set_fixed(field, value, POSITION_SCALE);
+    }
+    set_choice(record, KIND, &COVER_KINDS, Some(cover.kind));
+    record.set_flag(DESTRUCTIBLE, cover.destructible);
+    record.set_count(COLOR, u64::from(cover.color));
+    // Debris seeds are whole numbers.
     if let Some(seed) = cover.debris_seed {
-        w.number("debrisSeed", seed);
+        record.set_count(DEBRIS_SEED, seed as u64);
     }
-    w.value("position", |out| write_vector(out, position))
-        .value("rotation", |out| write_quaternion(out, rotation));
-    if !cover.timber_hits.is_empty() {
-        w.value("timberHits", |out| {
-            out.push('[');
-            for (index, hit) in cover.timber_hits.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
+    match cover.timber_join {
+        Some(join) => record.set_blob(TIMBER_JOIN, |out| {
+            let mut bits = 0;
+            for (set, bit) in [
+                (join.open_min, OPEN_MIN),
+                (join.open_max, OPEN_MAX),
+                (join.post, POST),
+            ] {
+                if set {
+                    bits |= bit;
                 }
-                let mut writer = ObjectWriter::new(out);
-                writer
-                    .number("x", json::position(hit.x))
-                    .number("y", json::position(hit.y))
-                    .number("z", json::position(hit.z))
-                    .number("size", json::position(hit.size));
-                writer.finish();
             }
-            out.push(']');
-        });
-    }
-    if let Some(join) = cover.timber_join {
-        // The Rust layout keeps plain booleans, so only set ends are sent; a missing end
-        // reads as closed, as `undefined` did.
-        w.value("timberJoin", |out| {
-            let mut writer = ObjectWriter::new(out);
-            if join.open_min {
-                writer.boolean("openMin", true);
-            }
-            if join.open_max {
-                writer.boolean("openMax", true);
-            }
-            if join.post {
-                writer.boolean("post", true);
-            }
-            writer.finish();
-        });
+            out.push(bits);
+        }),
+        None => record.clear(TIMBER_JOIN),
     }
     if let Some(motion) = cover.motion {
-        w.value("motion", |out| {
-            let mut writer = ObjectWriter::new(out);
-            writer
-                .number("originX", json::position(motion.origin_x))
-                .number("originZ", json::position(motion.origin_z))
-                .number("w", json::position(motion.w))
-                .number("d", json::position(motion.d));
-            writer.finish();
-        });
+        record.set_fixed(MOTION_ORIGIN_X, motion.origin_x, POSITION_SCALE);
+        record.set_fixed(MOTION_ORIGIN_Z, motion.origin_z, POSITION_SCALE);
+        record.set_fixed(MOTION_W, motion.w, POSITION_SCALE);
+        record.set_fixed(MOTION_D, motion.d, POSITION_SCALE);
     }
-    w.end();
-}
-
-fn write_timber_part(out: &mut String, part: &TimberPart) {
-    let mut writer = ObjectWriter::new(out);
-    writer
-        .string("kind", name(&TIMBER_PART_KINDS, part.kind))
-        .int("index", part.index as u64)
-        .number("x", json::position(part.x))
-        .number("y", json::position(part.y))
-        .number("z", json::position(part.z))
-        .number("w", json::position(part.w))
-        .number("h", json::position(part.h))
-        .number("d", json::position(part.d))
-        .number("yaw", json::rotation(part.yaw))
-        .number("lean", json::rotation(part.lean))
-        .int("color", u64::from(part.color))
-        .number("damage", json::position(f64::from(part.damage)))
-        .number("damageSeed", f64::from(part.damage_seed));
-    let marks = writer.key("marks");
-    marks.push('[');
-    for (index, mark) in part.marks.iter().enumerate() {
-        if index > 0 {
-            marks.push(',');
-        }
-        let mut mark_writer = ObjectWriter::new(marks);
-        mark_writer
-            .number("x", json::position(mark.x))
-            .number("y", json::position(mark.y))
-            .string("face", name(&TIMBER_FACES, mark.face))
-            .number("size", json::position(mark.size))
-            .number("seed", f64::from(mark.seed));
-        mark_writer.finish();
-    }
-    marks.push(']');
-    writer.finish();
 }
 
 fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &Fragment) {
-    let mut w = record.begin(fragment.id);
-    w.int("id", u64::from(fragment.id))
-        // Clients read life only for the final fade, so a steady value until then keeps
-        // every settled piece out of the per-frame deltas.
-        .number(
-            "life",
-            json::value(fragment.life.min(DEBRIS_CLEANUP_SECONDS)),
-        )
-        .number("size", json::position(fragment.size))
-        .int("color", u64::from(fragment.color))
-        .value("position", |out| {
-            write_vector(out, simulation.body_translation(fragment.body))
-        })
-        .value("rotation", |out| {
-            write_quaternion(out, simulation.body_rotation(fragment.body))
-        });
-    if let Some(shape) = fragment.shape {
-        w.string("shape", name(&FRAGMENT_SHAPES, shape));
+    use fragment::*;
+    record.reset(fragment.id, FRAGMENT_FIELDS.len());
+    set_point(
+        record,
+        POSITION_X,
+        simulation.body_translation(fragment.body),
+    );
+    let rotation = simulation.body_rotation(fragment.body);
+    for (field, value) in [
+        (ROTATION_X, rotation.x),
+        (ROTATION_Y, rotation.y),
+        (ROTATION_Z, rotation.z),
+        (ROTATION_W, rotation.w),
+    ] {
+        record.set_fixed(field, value, ROTATION_SCALE);
     }
+    // Clients read life only for the final fade, so a steady value until then keeps
+    // every settled piece out of the per-frame deltas.
+    record.set_fixed(LIFE, fragment.life.min(DEBRIS_CLEANUP_SECONDS), VALUE_SCALE);
+    record.set_fixed(SIZE, fragment.size, POSITION_SCALE);
+    record.set_count(COLOR, u64::from(fragment.color));
+    set_choice(record, SHAPE, &FRAGMENT_SHAPES, fragment.shape);
     if let Some(dimensions) = fragment.dimensions {
-        w.value("dimensions", |out| write_vector(out, dimensions));
+        set_point(record, DIMENSIONS_X, dimensions);
     }
-    if let Some(material) = fragment.material {
-        w.string("material", name(&MATERIALS, material));
+    set_choice(record, MATERIAL, &MATERIALS, fragment.material);
+    set_choice(record, SOURCE_KIND, &COVER_KINDS, fragment.source_kind);
+    match &fragment.timber_part {
+        Some(part) => record.set_blob(TIMBER_PART, |out| write_timber_part(out, part)),
+        None => record.clear(TIMBER_PART),
     }
-    if let Some(kind) = fragment.source_kind {
-        w.string("sourceKind", name(&COVER_KINDS, kind));
-    }
-    if let Some(part) = &fragment.timber_part {
-        w.value("timberPart", |out| write_timber_part(out, part));
-    }
-    if let Some(piece) = fragment.tower_piece {
-        w.string("towerPiece", name(&TOWER_PIECES, piece));
-    }
+    set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
     if let Some(tree) = fragment.tree_cover_id {
-        w.int("treeCoverId", u64::from(tree));
+        record.set_count(TREE_COVER_ID, u64::from(tree));
     }
-    if let Some(center) = fragment.tree_center_y {
-        w.number("treeCenterY", json::position(center));
-    }
-    if let Some(created) = fragment.created_at {
-        w.number("createdAt", json::value(created));
-    }
-    if let Some(expires) = fragment.expires_at {
-        w.number("expiresAt", json::value(expires));
-    }
-    if let Some(wreck) = fragment.wreck {
-        w.string("wreck", wreck.as_str());
-    }
-    if let Some(part) = fragment.part {
-        w.string("part", name(&WRECK_PARTS, part));
-    }
+    set_optional(
+        record,
+        TREE_CENTER_Y,
+        fragment.tree_center_y,
+        POSITION_SCALE,
+    );
+    set_optional(record, CREATED_AT, fragment.created_at, VALUE_SCALE);
+    set_optional(record, EXPIRES_AT, fragment.expires_at, VALUE_SCALE);
+    set_choice(record, WRECK, &VEHICLE_KINDS, fragment.wreck);
+    set_choice(record, PART, &WRECK_PARTS, fragment.part);
     if let Some(team) = fragment.team {
-        w.int("team", team.index() as u64);
+        record.set_count(TEAM, team.index() as u64);
     }
-    w.end();
 }
 
 fn write_mine(record: &mut WireRecord, mine: &Mine) {
-    let mut w = record.begin(mine.id);
-    w.int("id", u64::from(mine.id))
-        .number("x", json::position(mine.x))
-        .number("z", json::position(mine.z))
-        .int("owner", u64::from(mine.owner));
+    use mine::*;
+    record.reset(mine.id, MINE_FIELDS.len());
+    record.set_fixed(ARM, mine.arm, VALUE_SCALE);
+    record.set_fixed(LIFE, mine.life, VALUE_SCALE);
+    record.set_fixed(X, mine.x, POSITION_SCALE);
+    record.set_fixed(Z, mine.z, POSITION_SCALE);
+    record.set_count(OWNER, u64::from(mine.owner));
     if let Some(life) = mine.owner_life {
-        w.int("ownerLife", u64::from(life));
+        record.set_count(OWNER_LIFE, u64::from(life));
     }
-    if let Some(damage) = mine.damage {
-        w.number("damage", json::position(damage));
-    }
-    w.int("team", mine.team.index() as u64)
-        .number("arm", json::value(mine.arm))
-        .number("life", json::value(mine.life));
-    w.end();
+    set_optional(record, DAMAGE, mine.damage, POSITION_SCALE);
+    record.set_count(TEAM, mine.team.index() as u64);
 }
 
 fn write_pickup(record: &mut WireRecord, pickup: &Pickup) {
-    let mut w = record.begin(pickup.id);
-    w.int("id", u64::from(pickup.id))
-        .number("x", json::position(pickup.x))
-        .number("z", json::position(pickup.z))
-        .string("kind", name(&PICKUP_KINDS, pickup.kind))
-        .boolean("available", pickup.available)
-        .number("cooldown", json::value(pickup.cooldown))
-        .number("cooldownDuration", json::value(pickup.cooldown_duration));
-    w.end();
+    use pickup::*;
+    record.reset(pickup.id, PICKUP_FIELDS.len());
+    record.set_fixed(COOLDOWN, pickup.cooldown, VALUE_SCALE);
+    record.set_flag(AVAILABLE, pickup.available);
+    record.set_fixed(X, pickup.x, POSITION_SCALE);
+    record.set_fixed(Z, pickup.z, POSITION_SCALE);
+    set_choice(record, KIND, &PICKUP_KINDS, Some(pickup.kind));
+    record.set_fixed(COOLDOWN_DURATION, pickup.cooldown_duration, VALUE_SCALE);
 }
 
 fn write_match(record: &mut WireRecord, state: &Match) {
-    let mut w = record.begin(0);
-    w.string("phase", name(&MATCH_PHASES, state.phase))
-        .number("time", json::value(state.time))
-        .value("scores", |out| {
-            out.push('[');
-            write_int(out, u64::from(state.scores[0]));
-            out.push(',');
-            write_int(out, u64::from(state.scores[1]));
-            out.push(']');
-        })
-        .boolean("overtime", state.overtime);
+    use match_record::*;
+    record.reset(0, MATCH_FIELDS.len());
+    record.set_fixed(TIME, state.time, VALUE_SCALE);
+    set_choice(record, PHASE, &MATCH_PHASES, Some(state.phase));
+    record.set_blob(SCORES, |out| {
+        put_varint(out, u64::from(state.scores[0]));
+        put_varint(out, u64::from(state.scores[1]));
+    });
+    record.set_flag(OVERTIME, state.overtime);
     if let Some(early) = state.ended_early {
-        w.boolean("endedEarly", early);
+        record.set_flag(ENDED_EARLY, early);
     }
-    match state.winner {
-        Some(team) => w.int("winner", team.index() as u64),
-        None => w.value("winner", |out| out.push_str("null")),
-    };
-    w.int("round", u64::from(state.round));
-    w.end();
+    if let Some(team) = state.winner {
+        record.set_count(WINNER, team.index() as u64);
+    }
+    record.set_count(ROUND, u64::from(state.round));
 }
 
-fn write_map(out: &mut String, simulation: &Simulation) {
-    out.clear();
-    let mut writer = ObjectWriter::new(out);
-    writer.string("theme", simulation.map_theme());
-    if let Some(floor) = simulation.map_floor() {
-        writer.string("floor", name(&GROUNDS, floor));
+fn write_map(record: &mut WireRecord, simulation: &Simulation) {
+    use map::*;
+    record.reset(0, MAP_FIELDS.len());
+    let theme = MAP_MODES
+        .iter()
+        .position(|(name, _)| *name == simulation.map_theme())
+        .expect("every map theme is a map mode");
+    record.set_number(THEME, theme as i64);
+    set_choice(record, FLOOR, &GROUNDS, simulation.map_floor());
+    set_choice(record, OUTER_FLOOR, &GROUNDS, simulation.map_outer_floor());
+    set_optional(
+        record,
+        OUTER_FLOOR_EXTENT,
+        simulation.map_outer_floor_extent(),
+        POSITION_SCALE,
+    );
+    set_optional(
+        record,
+        SCALE,
+        Some(simulation.map_scale()).filter(|scale| *scale != 1.0),
+        POSITION_SCALE,
+    );
+}
+
+/// A simulation event as the wire sends it, rounded by field.
+pub fn write_event(record: &mut WireRecord, event: &SimEvent) {
+    use event::*;
+    record.reset(0, EVENT_FIELDS.len());
+    set_choice(record, TYPE, &EVENT_TYPES, Some(event.kind));
+    record.set_fixed(X, event.x, POSITION_SCALE);
+    record.set_fixed(Z, event.z, POSITION_SCALE);
+    for (field, value) in [
+        (ID, event.id),
+        (OWNER, event.owner),
+        (OWNER_LIFE, event.owner_life),
+        (COLOR, event.color),
+    ] {
+        if let Some(value) = value {
+            record.set_count(field, u64::from(value));
+        }
     }
-    if let Some(outer) = simulation.map_outer_floor() {
-        writer.string("outerFloor", name(&GROUNDS, outer));
+    set_choice(record, WEAPON, &WEAPONS, event.weapon);
+    if let Some(team) = event.team {
+        record.set_count(TEAM, team.index() as u64);
     }
-    if let Some(extent) = simulation.map_outer_floor_extent() {
-        writer.number("outerFloorExtent", json::position(extent));
+    set_optional(record, SIZE, event.size, POSITION_SCALE);
+    match &event.label {
+        Some(label) => record.set_text(LABEL, label),
+        None => record.clear(LABEL),
     }
-    if simulation.map_scale() != 1.0 {
-        writer.number("scale", json::position(simulation.map_scale()));
+    if let Some(from) = event.from {
+        set_point(record, FROM_X, from);
     }
-    writer.finish();
+    set_choice(record, DEATH_STYLE, &DEATH_STYLES, event.death_style);
+    set_choice(record, MATERIAL, &MATERIALS, event.material);
+    set_optional(record, FORCE, event.force, POSITION_SCALE);
+    set_choice(record, COVER_KIND, &COVER_KINDS, event.cover_kind);
+    set_optional(record, HEIGHT, event.height, POSITION_SCALE);
+    if let Some(source) = event.damage_source {
+        set_choice(record, DAMAGE_CAUSE, &DAMAGE_CAUSES, Some(source.cause));
+        record.set_fixed(DAMAGE_ORIGIN_X, source.origin.x, POSITION_SCALE);
+        record.set_fixed(DAMAGE_ORIGIN_Z, source.origin.z, POSITION_SCALE);
+    }
 }
 
 /// A captured scene: every entity's wire record by kind in simulation order, the match
 /// and the map. Captures reuse the records' buffers.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
     pub entities: [Vec<WireRecord>; 5],
     pub elapsed: f64,
     pub match_record: WireRecord,
-    /// The map object's JSON (`theme`, and `floor`, `outerFloor`, `outerFloorExtent`,
-    /// `scale` when set).
-    pub map: String,
+    pub map: WireRecord,
 }
 
 fn fill_records<S>(
@@ -660,385 +1002,426 @@ impl Scene {
         write_map(&mut self.map, simulation);
     }
 
-    /// The scene object's JSON: `{"entities":{...},"elapsed":...,"match":{...},"map":{...}}`.
-    pub fn write(&self, out: &mut String) {
-        out.push_str("{\"entities\":{");
+    /// The scene as a baseline sends it: elapsed time, the match and the map, then each
+    /// kind's record count and records (the id as a difference from the previous one's).
+    pub fn write(&self, out: &mut Vec<u8>) {
+        put_signed(out, super::wire::units(self.elapsed, POSITION_SCALE));
+        write_record(MATCH_FIELDS, &self.match_record, out);
+        write_record(MAP_FIELDS, &self.map, out);
         for (kind, records) in self.entities.iter().enumerate() {
-            if kind > 0 {
-                out.push(',');
+            put_varint(out, records.len() as u64);
+            let mut previous = 0;
+            for record in records {
+                put_signed(out, i64::from(record.id) - previous);
+                previous = i64::from(record.id);
+                write_record(ENTITY_FIELDS[kind], record, out);
             }
-            write_str(out, ENTITY_TYPES[kind]);
-            out.push_str(":[");
-            for (index, record) in records.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                out.push_str(record.text());
-            }
-            out.push(']');
         }
-        out.push_str("},\"elapsed\":");
-        write_number(out, self.elapsed);
-        out.push_str(",\"match\":");
-        out.push_str(self.match_record.text());
-        out.push_str(",\"map\":");
-        out.push_str(&self.map);
-        out.push('}');
     }
 
-    pub fn to_json(&self) -> String {
-        let mut out = String::new();
-        self.write(&mut out);
-        out
+    /// The scene in the JSON protocol's shape, for tests and tools.
+    pub fn to_json(&self) -> Value {
+        let mut entities = serde_json::Map::new();
+        for (kind, records) in self.entities.iter().enumerate() {
+            let list = records
+                .iter()
+                .map(|record| super::wire_view::record_json(ENTITY_FIELDS[kind], record, true))
+                .collect::<ReadResult<Vec<_>>>()
+                .expect("captured records are valid");
+            entities.insert(ENTITY_TYPES[kind].into(), Value::Array(list));
+        }
+        json!({
+            "entities": entities,
+            "elapsed": json_number(self.elapsed),
+            "match": super::wire_view::record_json(MATCH_FIELDS, &self.match_record, false)
+                .expect("valid match"),
+            "map": super::wire_view::record_json(MAP_FIELDS, &self.map, false)
+                .expect("valid map"),
+        })
     }
 }
 
-/// A simulation event as the wire sends it: `eventReader`'s fields in its order, rounded
-/// by field name.
-pub fn write_event(out: &mut String, event: &SimEvent) {
-    let mut writer = ObjectWriter::new(out);
-    writer
-        .string("type", name(&EVENT_TYPES, event.kind))
-        .number("x", json::position(event.x))
-        .number("z", json::position(event.z));
-    if let Some(id) = event.id {
-        writer.int("id", u64::from(id));
+/// A whole record, every present field; an empty record still writes its empty mask.
+pub fn write_record(fields: &[Field], record: &WireRecord, out: &mut Vec<u8>) {
+    if !write_changes(fields, None, record, out) {
+        put_varint(out, 0);
     }
-    if let Some(owner) = event.owner {
-        writer.int("owner", u64::from(owner));
-    }
-    if let Some(life) = event.owner_life {
-        writer.int("ownerLife", u64::from(life));
-    }
-    if let Some(weapon) = event.weapon {
-        writer.string("weapon", weapon.as_str());
-    }
-    if let Some(team) = event.team {
-        writer.int("team", team.index() as u64);
-    }
-    if let Some(size) = event.size {
-        writer.number("size", json::position(size));
-    }
-    if let Some(label) = &event.label {
-        writer.string("label", label);
-    }
-    if let Some(color) = event.color {
-        writer.int("color", u64::from(color));
-    }
-    if let Some(from) = event.from {
-        write_vector(writer.key("from"), from);
-    }
-    if let Some(style) = event.death_style {
-        writer.string(
-            "deathStyle",
-            match style {
-                DeathStyle::Burnout => "burnout",
-            },
-        );
-    }
-    if let Some(material) = event.material {
-        writer.string("material", name(&MATERIALS, material));
-    }
-    if let Some(force) = event.force {
-        writer.number("force", json::position(force));
-    }
-    if let Some(kind) = event.cover_kind {
-        writer.string("coverKind", name(&COVER_KINDS, kind));
-    }
-    if let Some(height) = event.height {
-        writer.number("height", json::position(height));
-    }
-    if let Some(source) = event.damage_source {
-        let out = writer.key("damageSource");
-        let mut nested = ObjectWriter::new(out);
-        nested.string("cause", name(&DAMAGE_CAUSES, source.cause));
-        let origin = nested.key("origin");
-        let mut point = ObjectWriter::new(origin);
-        point
-            .number("x", json::position(source.origin.x))
-            .number("z", json::position(source.origin.z));
-        point.finish();
-        nested.finish();
-    }
-    writer.finish();
 }
 
 // ---------------------------------------------------------------------------------------
 // Client side: readers and projection.
 // ---------------------------------------------------------------------------------------
 
-fn point(value: Option<&Value>) -> ReadResult<Point3> {
-    nested(value, |source| {
-        Ok(Point3::new(
-            field(source, "x", number)?,
-            field(source, "y", number)?,
-            field(source, "z", number)?,
-        ))
-    })
+/// Typed reads of one record's fields, with errors that name the field.
+struct Fields<'a> {
+    table: &'static [Field],
+    record: &'a WireRecord,
 }
 
-fn unit(value: Option<&Value>) -> ReadResult<f64> {
-    number_in(value, -1.0, 1.0, false)
-}
+/// `number()`'s bound: any finite number within ±1e9.
+const NUMBER_BOUND: f64 = 1e9;
 
-fn quaternion(value: Option<&Value>) -> ReadResult<Quat4> {
-    nested(value, |source| {
-        Ok(Quat4 {
-            x: field(source, "x", unit)?,
-            y: field(source, "y", unit)?,
-            z: field(source, "z", unit)?,
-            w: field(source, "w", unit)?,
-        })
-    })
-}
-
-/// `projectScene`'s rotation check: a near-zero quaternion is rejected, others normalized.
-fn normalized(q: Quat4) -> ReadResult<Quat4> {
-    let length = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
-    if length < 0.5 {
-        return Err("Invalid rotation".into());
+impl<'a> Fields<'a> {
+    fn new(table: &'static [Field], record: &'a WireRecord) -> Self {
+        Self { table, record }
     }
-    Ok(Quat4 {
-        x: q.x / length,
-        y: q.y / length,
-        z: q.z / length,
-        w: q.w / length,
-    })
-}
 
-fn seed(value: Option<&Value>) -> ReadResult<i32> {
-    number_in(value, -2_147_483_648.0, 4_294_967_295.0, true).map(to_int32)
-}
+    fn error<T>(&self, field: usize, message: &str) -> ReadResult<T> {
+        Err(format!("{}: {message}", self.table[field].name))
+    }
 
-pub(crate) fn read_weapon(value: Option<&Value>) -> ReadResult<Weapon> {
-    choice(value, &WEAPONS)
+    fn number(&self, field: usize) -> Option<i64> {
+        self.record.slots.get(field).and_then(Slot::number)
+    }
+
+    fn opt_fixed(&self, field: usize) -> ReadResult<Option<f64>> {
+        let FieldKind::Fixed(scale) = self.table[field].kind else {
+            unreachable!("not a fixed-point field");
+        };
+        match self.number(field) {
+            None => Ok(None),
+            Some(units) => {
+                let value = units as f64 / scale;
+                if value.abs() <= NUMBER_BOUND {
+                    Ok(Some(value))
+                } else {
+                    self.error(field, "Invalid number")
+                }
+            }
+        }
+    }
+
+    fn fixed(&self, field: usize) -> ReadResult<f64> {
+        match self.opt_fixed(field)? {
+            Some(value) => Ok(value),
+            None => self.error(field, "Invalid number"),
+        }
+    }
+
+    /// A quaternion component, which must lie in [-1, 1].
+    fn unit(&self, field: usize) -> ReadResult<f64> {
+        let value = self.fixed(field)?;
+        if value.abs() <= 1.0 {
+            Ok(value)
+        } else {
+            self.error(field, "Invalid number")
+        }
+    }
+
+    fn opt_count32(&self, field: usize) -> ReadResult<Option<u32>> {
+        match self.number(field) {
+            None => Ok(None),
+            Some(value) => match u32::try_from(value) {
+                Ok(value) => Ok(Some(value)),
+                Err(_) => self.error(field, "Invalid number"),
+            },
+        }
+    }
+
+    fn count32(&self, field: usize) -> ReadResult<u32> {
+        match self.opt_count32(field)? {
+            Some(value) => Ok(value),
+            None => self.error(field, "Invalid number"),
+        }
+    }
+
+    fn count(&self, field: usize) -> ReadResult<f64> {
+        match self.number(field) {
+            Some(value) => Ok(value as f64),
+            None => self.error(field, "Invalid number"),
+        }
+    }
+
+    fn opt_flag(&self, field: usize) -> Option<bool> {
+        self.number(field).map(|value| value != 0)
+    }
+
+    fn flag(&self, field: usize) -> ReadResult<bool> {
+        match self.opt_flag(field) {
+            Some(value) => Ok(value),
+            None => self.error(field, "Invalid boolean"),
+        }
+    }
+
+    fn opt_choice<T: Copy>(&self, field: usize, table: &[(&str, T)]) -> ReadResult<Option<T>> {
+        match self.number(field) {
+            None => Ok(None),
+            Some(index) => match table.get(index as usize) {
+                Some((_, value)) => Ok(Some(*value)),
+                None => self.error(field, "Invalid choice"),
+            },
+        }
+    }
+
+    fn choice<T: Copy>(&self, field: usize, table: &[(&str, T)]) -> ReadResult<T> {
+        match self.opt_choice(field, table)? {
+            Some(value) => Ok(value),
+            None => self.error(field, "Invalid choice"),
+        }
+    }
+
+    /// `team`: 0 or 1.
+    fn opt_team(&self, field: usize) -> ReadResult<Option<Team>> {
+        match self.number(field) {
+            None => Ok(None),
+            Some(0) => Ok(Some(Team::Blue)),
+            Some(1) => Ok(Some(Team::Red)),
+            Some(_) => self.error(field, "Invalid choice"),
+        }
+    }
+
+    fn team(&self, field: usize) -> ReadResult<Team> {
+        match self.opt_team(field)? {
+            Some(team) => Ok(team),
+            None => self.error(field, "Invalid choice"),
+        }
+    }
+
+    /// Text of at most `max` UTF-16 units.
+    fn opt_text(&self, field: usize, max: usize) -> ReadResult<Option<String>> {
+        match self.record.slots.get(field) {
+            Some(Slot::Text(text)) if text_length(text) <= max => Ok(Some(text.clone())),
+            Some(Slot::Absent) | None => Ok(None),
+            Some(_) => self.error(field, "Invalid text"),
+        }
+    }
+
+    fn blob(&self, field: usize) -> Option<&'a [u8]> {
+        match self.record.slots.get(field) {
+            Some(Slot::Blob(bytes)) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    fn opt_point(&self, first: usize) -> ReadResult<Option<Point3>> {
+        let [x, y, z] = [
+            self.opt_fixed(first)?,
+            self.opt_fixed(first + 1)?,
+            self.opt_fixed(first + 2)?,
+        ];
+        match (x, y, z) {
+            (Some(x), Some(y), Some(z)) => Ok(Some(Point3::new(x, y, z))),
+            (None, None, None) => Ok(None),
+            _ => self.error(first, "Expected object"),
+        }
+    }
+
+    fn point(&self, first: usize) -> ReadResult<Point3> {
+        match self.opt_point(first)? {
+            Some(point) => Ok(point),
+            None => self.error(first, "Expected object"),
+        }
+    }
+
+    /// `projectScene`'s rotation check: a near-zero quaternion is rejected, others
+    /// normalized.
+    fn rotation(&self, first: usize) -> ReadResult<Quat4> {
+        let q = Quat4 {
+            x: self.unit(first)?,
+            y: self.unit(first + 1)?,
+            z: self.unit(first + 2)?,
+            w: self.unit(first + 3)?,
+        };
+        let length = (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w).sqrt();
+        if length < 0.5 {
+            return Err("Invalid rotation".into());
+        }
+        Ok(Quat4 {
+            x: q.x / length,
+            y: q.y / length,
+            z: q.z / length,
+            w: q.w / length,
+        })
+    }
 }
 
 /// `tankReader`, projected with `previous` at its position.
-pub fn read_tank(source: &Record) -> ReadResult<RenderTank> {
-    let ammo = |value: Option<&Value>| {
-        nested(value, |ammo| {
-            Ok(AmmoInventory {
-                spread: field(ammo, "spread", id)? as f64,
-                rocket: field(ammo, "rocket", id)? as f64,
-                ricochet: field(ammo, "ricochet", id)? as f64,
-                piercing: field(ammo, "piercing", id)? as f64,
-            })
-        })
-    };
-    let mut tank = RenderTank {
-        id: field(source, "id", id32)?,
-        life: field(source, "life", id32)?,
-        name: field(source, "name", |v| string(v, 64, 0))?,
-        kind: field(source, "kind", |v| choice(v, &VEHICLE_KINDS))?,
-        team: field(source, "team", read_team)?,
-        human: field(source, "human", boolean)?,
-        alive: field(source, "alive", boolean)?,
-        position: field(source, "position", point)?,
-        velocity: field(source, "velocity", point)?,
-        heading: field(source, "heading", number)?,
-        aim: field(source, "aim", number)?,
-        hp: field(source, "hp", number)?,
-        max_hp: field(source, "maxHp", number)?,
-        xp: field(source, "xp", number)?,
-        shield: field(source, "shield", number)?,
-        shield_points: field(source, "shieldPoints", number)?,
-        protection: field(source, "protection", number)?,
-        laser: field(source, "laser", number)?,
-        recoil: field(source, "recoil", number)?,
-        cooldown: field(source, "cooldown", number)?,
-        mine_cooldown: field(source, "mineCooldown", number)?,
-        respawn: field(source, "respawn", number)?,
-        rapid: field(source, "rapid", number)?,
-        speed: field(source, "speed", number)?,
-        selected_ammo: field(source, "selectedAmmo", read_weapon)?,
-        ammo: field(source, "ammo", ammo)?,
-        kills: field(source, "kills", id32)?,
-        deaths: field(source, "deaths", id32)?,
-        last_combat: field(source, "lastCombat", number)?,
-        previous: Vec2::ZERO,
-    };
-    tank.previous = Vec2::new(tank.position.x, tank.position.z);
-    Ok(tank)
-}
-
-/// `coverReader`, projected: an indestructible cover's `null` hp is infinite.
-pub fn read_cover(source: &Record) -> ReadResult<RenderCover> {
-    let hits = |value: Option<&Value>| {
-        array(value, 32, |hit| {
-            nested(Some(hit), |hit| {
-                Ok(TimberHit {
-                    x: field(hit, "x", number)?,
-                    y: field(hit, "y", number)?,
-                    z: field(hit, "z", number)?,
-                    size: field(hit, "size", number)?,
-                })
-            })
-        })
-    };
-    let join = |value: Option<&Value>| {
-        nested(value, |join| {
-            Ok(TimberJoin {
-                open_min: field(join, "openMin", |v| optional(v, boolean))?.unwrap_or(false),
-                open_max: field(join, "openMax", |v| optional(v, boolean))?.unwrap_or(false),
-                post: field(join, "post", |v| optional(v, boolean))?.unwrap_or(false),
-            })
-        })
-    };
-    let motion = |value: Option<&Value>| {
-        nested(value, |motion| {
-            Ok(RenderCoverMotion {
-                origin_x: field(motion, "originX", number)?,
-                origin_z: field(motion, "originZ", number)?,
-                w: field(motion, "w", number)?,
-                d: field(motion, "d", number)?,
-            })
-        })
-    };
-    let cover = RenderCover {
-        id: field(source, "id", id32)?,
-        kind: field(source, "kind", |v| choice(v, &COVER_KINDS))?,
-        x: field(source, "x", number)?,
-        z: field(source, "z", number)?,
-        w: field(source, "w", number)?,
-        h: field(source, "h", number)?,
-        d: field(source, "d", number)?,
-        hp: field(source, "hp", |v| nullable(v, number))?.unwrap_or(f64::INFINITY),
-        max_hp: field(source, "maxHp", |v| nullable(v, number))?.unwrap_or(f64::INFINITY),
-        alive: field(source, "alive", boolean)?,
-        destructible: field(source, "destructible", boolean)?,
-        color: field(source, "color", id32)?,
-        debris_seed: field(source, "debrisSeed", |v| optional(v, id))?.map(|seed| seed as f64),
-        position: field(source, "position", point)?,
-        rotation: field(source, "rotation", quaternion)?,
-        timber_hits: field(source, "timberHits", |v| optional(v, hits))?.unwrap_or_default(),
-        timber_join: field(source, "timberJoin", |v| optional(v, join))?,
-        motion: field(source, "motion", |v| optional(v, motion))?,
-    };
-    Ok(RenderCover {
-        rotation: normalized(cover.rotation)?,
-        ..cover
+pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
+    use tank::*;
+    let fields = Fields::new(TANK_FIELDS, record);
+    let position = fields.tank_position()?;
+    Ok(RenderTank {
+        id: record.id,
+        life: fields.count32(LIFE)?,
+        name: fields
+            .opt_text(NAME, 64)?
+            .ok_or_else(|| "name: Invalid text".to_string())?,
+        kind: fields.choice(KIND, &VEHICLE_KINDS)?,
+        team: fields.team(TEAM)?,
+        human: fields.flag(HUMAN)?,
+        alive: fields.flag(ALIVE)?,
+        position,
+        velocity: Point3::new(
+            fields.fixed(VELOCITY_X)?,
+            fields.fixed(VELOCITY_Y)?,
+            fields.fixed(VELOCITY_Z)?,
+        ),
+        heading: fields.fixed(HEADING)?,
+        aim: fields.fixed(AIM)?,
+        hp: fields.fixed(HP)?,
+        max_hp: fields.fixed(MAX_HP)?,
+        xp: fields.fixed(XP)?,
+        shield: fields.fixed(SHIELD)?,
+        shield_points: fields.fixed(SHIELD_POINTS)?,
+        protection: fields.fixed(PROTECTION)?,
+        laser: fields.fixed(LASER)?,
+        recoil: fields.fixed(RECOIL)?,
+        cooldown: fields.fixed(COOLDOWN)?,
+        mine_cooldown: fields.fixed(MINE_COOLDOWN)?,
+        respawn: fields.fixed(RESPAWN)?,
+        rapid: fields.fixed(RAPID)?,
+        speed: fields.fixed(SPEED)?,
+        selected_ammo: fields.choice(SELECTED_AMMO, &WEAPONS)?,
+        ammo: AmmoInventory {
+            spread: fields.count(AMMO_SPREAD)?,
+            rocket: fields.count(AMMO_ROCKET)?,
+            ricochet: fields.count(AMMO_RICOCHET)?,
+            piercing: fields.count(AMMO_PIERCING)?,
+        },
+        kills: fields.count32(KILLS)?,
+        deaths: fields.count32(DEATHS)?,
+        last_combat: fields.fixed(LAST_COMBAT)?,
+        previous: Vec2::new(position.x, position.z),
     })
 }
 
-fn read_timber_part(value: Option<&Value>) -> ReadResult<TimberPart> {
-    nested(value, |part| {
-        let marks = |value: Option<&Value>| {
-            array(value, 32, |mark| {
-                nested(Some(mark), |mark| {
-                    Ok(TimberMark {
-                        x: field(mark, "x", number)?,
-                        y: field(mark, "y", number)?,
-                        face: field(mark, "face", |v| choice(v, &TIMBER_FACES))?,
-                        size: field(mark, "size", number)?,
-                        seed: field(mark, "seed", seed)?,
-                    })
-                })
-            })
-        };
-        Ok(TimberPart {
-            kind: field(part, "kind", |v| choice(v, &TIMBER_PART_KINDS))?,
-            index: field(part, "index", id)? as usize,
-            x: field(part, "x", number)?,
-            y: field(part, "y", number)?,
-            z: field(part, "z", number)?,
-            w: field(part, "w", number)?,
-            h: field(part, "h", number)?,
-            d: field(part, "d", number)?,
-            yaw: field(part, "yaw", number)?,
-            lean: field(part, "lean", number)?,
-            color: field(part, "color", id32)?,
-            damage: field(part, "damage", number)?.max(0.0) as u32,
-            damage_seed: field(part, "damageSeed", seed)?,
-            marks: field(part, "marks", marks)?,
-        })
+impl Fields<'_> {
+    /// The tank table splits position across non-adjacent fields.
+    fn tank_position(&self) -> ReadResult<Point3> {
+        Ok(Point3::new(
+            self.fixed(tank::POSITION_X)?,
+            self.fixed(tank::POSITION_Y)?,
+            self.fixed(tank::POSITION_Z)?,
+        ))
+    }
+}
+
+/// `coverReader`, projected: an indestructible cover's `null` hp is infinite.
+pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
+    use cover::*;
+    let fields = Fields::new(COVER_FIELDS, record);
+    let motion = match (
+        fields.opt_fixed(MOTION_ORIGIN_X)?,
+        fields.opt_fixed(MOTION_ORIGIN_Z)?,
+        fields.opt_fixed(MOTION_W)?,
+        fields.opt_fixed(MOTION_D)?,
+    ) {
+        (Some(origin_x), Some(origin_z), Some(w), Some(d)) => Some(RenderCoverMotion {
+            origin_x,
+            origin_z,
+            w,
+            d,
+        }),
+        (None, None, None, None) => None,
+        _ => return Err("motion: Expected object".into()),
+    };
+    Ok(RenderCover {
+        id: record.id,
+        kind: fields.choice(KIND, &COVER_KINDS)?,
+        x: fields.fixed(X)?,
+        z: fields.fixed(Z)?,
+        w: fields.fixed(W)?,
+        h: fields.fixed(H)?,
+        d: fields.fixed(D)?,
+        hp: fields.opt_fixed(HP)?.unwrap_or(f64::INFINITY),
+        max_hp: fields.opt_fixed(MAX_HP)?.unwrap_or(f64::INFINITY),
+        alive: fields.flag(ALIVE)?,
+        destructible: fields.flag(DESTRUCTIBLE)?,
+        color: fields.count32(COLOR)?,
+        debris_seed: fields.number(DEBRIS_SEED).map(|seed| seed as f64),
+        position: fields.point(POSITION_X)?,
+        rotation: fields.rotation(ROTATION_X)?,
+        timber_hits: match fields.blob(TIMBER_HITS) {
+            Some(bytes) => read_timber_hits(bytes).map_err(|e| format!("timberHits: {e}"))?,
+            None => Vec::new(),
+        },
+        timber_join: fields
+            .blob(TIMBER_JOIN)
+            .map(read_timber_join)
+            .transpose()
+            .map_err(|e| format!("timberJoin: {e}"))?,
+        motion,
     })
 }
 
 /// `fragmentReader`, projected with a normalized rotation.
-pub fn read_fragment(source: &Record) -> ReadResult<RenderFragment> {
-    let fragment = RenderFragment {
-        id: field(source, "id", id32)?,
-        life: field(source, "life", number)?,
-        size: field(source, "size", number)?,
-        color: field(source, "color", id32)?,
-        position: field(source, "position", point)?,
-        rotation: field(source, "rotation", quaternion)?,
-        shape: field(source, "shape", |v| {
-            optional(v, |v| choice(v, &FRAGMENT_SHAPES))
-        })?,
-        dimensions: field(source, "dimensions", |v| optional(v, point))?,
-        material: field(source, "material", |v| {
-            optional(v, |v| choice(v, &MATERIALS))
-        })?,
-        source_kind: field(source, "sourceKind", |v| {
-            optional(v, |v| choice(v, &COVER_KINDS))
-        })?,
-        timber_part: field(source, "timberPart", |v| optional(v, read_timber_part))?,
-        tower_piece: field(source, "towerPiece", |v| {
-            optional(v, |v| choice(v, &TOWER_PIECES))
-        })?,
-        tree_cover_id: field(source, "treeCoverId", |v| optional(v, id32))?,
-        tree_center_y: field(source, "treeCenterY", |v| optional(v, number))?,
-        created_at: field(source, "createdAt", |v| optional(v, number))?,
-        expires_at: field(source, "expiresAt", |v| optional(v, number))?,
-        wreck: field(source, "wreck", |v| {
-            optional(v, |v| choice(v, &VEHICLE_KINDS))
-        })?,
-        part: field(source, "part", |v| optional(v, |v| choice(v, &WRECK_PARTS)))?,
-        team: field(source, "team", |v| optional(v, read_team))?,
-    };
+pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
+    use fragment::*;
+    let fields = Fields::new(FRAGMENT_FIELDS, record);
     Ok(RenderFragment {
-        rotation: normalized(fragment.rotation)?,
-        ..fragment
+        id: record.id,
+        life: fields.fixed(LIFE)?,
+        size: fields.fixed(SIZE)?,
+        color: fields.count32(COLOR)?,
+        position: fields.point(POSITION_X)?,
+        rotation: fields.rotation(ROTATION_X)?,
+        shape: fields.opt_choice(SHAPE, &FRAGMENT_SHAPES)?,
+        dimensions: fields.opt_point(DIMENSIONS_X)?,
+        material: fields.opt_choice(MATERIAL, &MATERIALS)?,
+        source_kind: fields.opt_choice(SOURCE_KIND, &COVER_KINDS)?,
+        timber_part: fields
+            .blob(TIMBER_PART)
+            .map(read_timber_part)
+            .transpose()
+            .map_err(|e| format!("timberPart: {e}"))?,
+        tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
+        tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
+        tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
+        created_at: fields.opt_fixed(CREATED_AT)?,
+        expires_at: fields.opt_fixed(EXPIRES_AT)?,
+        wreck: fields.opt_choice(WRECK, &VEHICLE_KINDS)?,
+        part: fields.opt_choice(PART, &WRECK_PARTS)?,
+        team: fields.opt_team(TEAM)?,
     })
 }
 
 /// `mineReader`.
-pub fn read_mine(source: &Record) -> ReadResult<Mine> {
+pub fn read_mine(record: &WireRecord) -> ReadResult<Mine> {
+    use mine::*;
+    let fields = Fields::new(MINE_FIELDS, record);
     Ok(Mine {
-        id: field(source, "id", id32)?,
-        x: field(source, "x", number)?,
-        z: field(source, "z", number)?,
-        owner: field(source, "owner", id32)?,
-        owner_life: field(source, "ownerLife", |v| optional(v, id32))?,
-        damage: field(source, "damage", |v| optional(v, number))?,
-        team: field(source, "team", read_team)?,
-        arm: field(source, "arm", number)?,
-        life: field(source, "life", number)?,
+        id: record.id,
+        x: fields.fixed(X)?,
+        z: fields.fixed(Z)?,
+        owner: fields.count32(OWNER)?,
+        owner_life: fields.opt_count32(OWNER_LIFE)?,
+        damage: fields.opt_fixed(DAMAGE)?,
+        team: fields.team(TEAM)?,
+        arm: fields.fixed(ARM)?,
+        life: fields.fixed(LIFE)?,
     })
 }
 
 /// `pickupReader`; a missing refill duration reads as zero.
-pub fn read_pickup(source: &Record) -> ReadResult<Pickup> {
+pub fn read_pickup(record: &WireRecord) -> ReadResult<Pickup> {
+    use pickup::*;
+    let fields = Fields::new(PICKUP_FIELDS, record);
     Ok(Pickup {
-        id: field(source, "id", id32)?,
-        x: field(source, "x", number)?,
-        z: field(source, "z", number)?,
-        kind: field(source, "kind", |v| choice(v, &PICKUP_KINDS))?,
-        available: field(source, "available", boolean)?,
-        cooldown: field(source, "cooldown", number)?,
-        cooldown_duration: field(source, "cooldownDuration", |v| optional(v, number))?
-            .unwrap_or(0.0),
+        id: record.id,
+        x: fields.fixed(X)?,
+        z: fields.fixed(Z)?,
+        kind: fields.choice(KIND, &PICKUP_KINDS)?,
+        available: fields.flag(AVAILABLE)?,
+        cooldown: fields.fixed(COOLDOWN)?,
+        cooldown_duration: fields.opt_fixed(COOLDOWN_DURATION)?.unwrap_or(0.0),
     })
 }
 
 /// `matchReader`.
-pub fn read_match(source: &Record) -> ReadResult<Match> {
+pub fn read_match(record: &WireRecord) -> ReadResult<Match> {
+    use match_record::*;
+    let fields = Fields::new(MATCH_FIELDS, record);
     Ok(Match {
-        phase: field(source, "phase", |v| choice(v, &MATCH_PHASES))?,
-        time: field(source, "time", number)?,
-        scores: field(source, "scores", |v| {
-            let scores = array(v, 2, |item| id32(Some(item)))?;
-            if scores.len() != 2 {
-                return Err("Invalid scores".into());
-            }
-            Ok([scores[0], scores[1]])
-        })?,
-        overtime: field(source, "overtime", boolean)?,
-        ended_early: field(source, "endedEarly", |v| optional(v, boolean))?,
-        winner: field(source, "winner", |v| nullable(v, read_team))?,
-        round: field(source, "round", id32)?,
+        phase: fields.choice(PHASE, &MATCH_PHASES)?,
+        time: fields.fixed(TIME)?,
+        scores: match fields.blob(SCORES) {
+            Some(bytes) => read_scores(bytes).map_err(|_| "Invalid scores".to_string())?,
+            None => return Err("scores: Invalid list".into()),
+        },
+        overtime: fields.flag(OVERTIME)?,
+        ended_early: fields.opt_flag(ENDED_EARLY),
+        winner: fields.opt_team(WINNER)?,
+        round: fields.count32(ROUND)?,
     })
 }
 
@@ -1053,82 +1436,66 @@ pub struct SceneMap {
     pub scale: Option<f64>,
 }
 
-pub fn read_map(source: &Record) -> ReadResult<SceneMap> {
-    let ground = |v: Option<&Value>| optional(v, |v| choice(v, &GROUNDS));
+pub fn read_map(record: &WireRecord) -> ReadResult<SceneMap> {
+    use map::*;
+    let fields = Fields::new(MAP_FIELDS, record);
+    let scale = fields.opt_fixed(SCALE)?;
+    if scale.is_some_and(|scale| !(0.1..=1.0).contains(&scale)) {
+        return Err("scale: Invalid number".into());
+    }
     Ok(SceneMap {
-        theme: field(source, "theme", |v| choice(v, &MAP_MODES))?,
-        floor: field(source, "floor", ground)?,
-        outer_floor: field(source, "outerFloor", ground)?,
-        outer_floor_extent: field(source, "outerFloorExtent", |v| optional(v, number))?,
-        scale: field(source, "scale", |v| {
-            optional(v, |v| number_in(v, 0.1, 1.0, false))
-        })?,
+        theme: fields.choice(THEME, &MAP_MODES)?,
+        floor: fields.opt_choice(FLOOR, &GROUNDS)?,
+        outer_floor: fields.opt_choice(OUTER_FLOOR, &GROUNDS)?,
+        outer_floor_extent: fields.opt_fixed(OUTER_FLOOR_EXTENT)?,
+        scale,
     })
 }
 
 /// `eventReader`.
-pub fn read_event(source: &Record) -> ReadResult<SimEvent> {
-    let damage_source = |value: Option<&Value>| {
-        nested(value, |damage| {
-            Ok(DamageSource {
-                cause: field(damage, "cause", |v| choice(v, &DAMAGE_CAUSES))?,
-                origin: field(damage, "origin", |v| {
-                    nested(v, |origin| {
-                        Ok(Vec2::new(
-                            field(origin, "x", number)?,
-                            field(origin, "z", number)?,
-                        ))
-                    })
-                })?,
-            })
-        })
+pub fn read_event(record: &WireRecord) -> ReadResult<SimEvent> {
+    use event::*;
+    let fields = Fields::new(EVENT_FIELDS, record);
+    let damage_source = match (
+        fields.opt_choice(DAMAGE_CAUSE, &DAMAGE_CAUSES)?,
+        fields.opt_fixed(DAMAGE_ORIGIN_X)?,
+        fields.opt_fixed(DAMAGE_ORIGIN_Z)?,
+    ) {
+        (Some(cause), Some(x), Some(z)) => Some(DamageSource {
+            cause,
+            origin: Vec2::new(x, z),
+        }),
+        (None, None, None) => None,
+        _ => return Err("damageSource: Expected object".into()),
     };
     Ok(SimEvent {
-        kind: field(source, "type", |v| choice(v, &EVENT_TYPES))?,
-        x: field(source, "x", number)?,
-        z: field(source, "z", number)?,
-        id: field(source, "id", |v| optional(v, id32))?,
-        // The TypeScript host marked ownerless damage with -1; the Rust simulation uses 0.
-        owner: field(source, "owner", |v| {
-            optional(v, |v| {
-                number_in(v, -1.0, super::schema::MAX_SAFE_INTEGER, true)
-            })
-        })?
-        .map(|owner| {
-            if owner < 0.0 {
-                0
-            } else {
-                owner.min(f64::from(u32::MAX)) as u32
-            }
-        }),
-        owner_life: field(source, "ownerLife", |v| optional(v, id32))?,
-        weapon: field(source, "weapon", |v| optional(v, read_weapon))?,
-        team: field(source, "team", |v| optional(v, read_team))?,
-        size: field(source, "size", |v| optional(v, number))?,
-        label: field(source, "label", |v| optional(v, |v| string(v, 160, 0)))?,
-        color: field(source, "color", |v| optional(v, id32))?,
-        from: field(source, "from", |v| optional(v, point))?,
-        death_style: field(source, "deathStyle", |v| {
-            optional(v, |v| choice(v, &[("burnout", DeathStyle::Burnout)]))
-        })?,
-        material: field(source, "material", |v| {
-            optional(v, |v| choice(v, &MATERIALS))
-        })?,
-        force: field(source, "force", |v| optional(v, number))?,
-        cover_kind: field(source, "coverKind", |v| {
-            optional(v, |v| choice(v, &COVER_KINDS))
-        })?,
-        height: field(source, "height", |v| optional(v, number))?,
-        damage_source: field(source, "damageSource", |v| optional(v, damage_source))?,
+        kind: fields.choice(TYPE, &EVENT_TYPES)?,
+        x: fields.fixed(X)?,
+        z: fields.fixed(Z)?,
+        id: fields.opt_count32(ID)?,
+        owner: fields.opt_count32(OWNER)?,
+        owner_life: fields.opt_count32(OWNER_LIFE)?,
+        weapon: fields.opt_choice(WEAPON, &WEAPONS)?,
+        team: fields.opt_team(TEAM)?,
+        size: fields.opt_fixed(SIZE)?,
+        label: fields.opt_text(LABEL, 160)?,
+        color: fields.opt_count32(COLOR)?,
+        from: fields.opt_point(FROM_X)?,
+        death_style: fields.opt_choice(DEATH_STYLE, &DEATH_STYLES)?,
+        material: fields.opt_choice(MATERIAL, &MATERIALS)?,
+        force: fields.opt_fixed(FORCE)?,
+        cover_kind: fields.opt_choice(COVER_KIND, &COVER_KINDS)?,
+        height: fields.opt_fixed(HEIGHT)?,
+        damage_source,
     })
 }
 
-/// One replicated entity: its merged wire fields (for applying field deltas) and the
+/// One replicated entity: its wire record (for applying field changes) and the
 /// validated, projected value.
 #[derive(Clone, Debug)]
 pub struct Stored<T> {
     pub id: u32,
-    pub wire: Record,
+    pub wire: WireRecord,
     pub value: T,
 }
 
@@ -1169,6 +1536,11 @@ impl<T> EntityStore<T> {
         self.records.iter().map(|stored| &stored.value)
     }
 
+    /// The wire records in scene order.
+    pub fn wires(&self) -> impl Iterator<Item = &WireRecord> {
+        self.records.iter().map(|stored| &stored.wire)
+    }
+
     fn push(&mut self, stored: Stored<T>) -> ReadResult<()> {
         if self.index.insert(stored.id, self.records.len()).is_some() {
             return Err("Duplicate entity id".into());
@@ -1201,112 +1573,6 @@ impl<T> EntityStore<T> {
     }
 }
 
-/// Fields each kind's reader declares; others are dropped like the TypeScript readers
-/// drop unknown properties.
-pub const ENTITY_FIELDS: [&[&str]; 5] = [
-    &[
-        "id",
-        "life",
-        "name",
-        "kind",
-        "team",
-        "human",
-        "alive",
-        "position",
-        "velocity",
-        "heading",
-        "aim",
-        "hp",
-        "maxHp",
-        "xp",
-        "shield",
-        "shieldPoints",
-        "protection",
-        "laser",
-        "recoil",
-        "cooldown",
-        "mineCooldown",
-        "respawn",
-        "rapid",
-        "speed",
-        "selectedAmmo",
-        "ammo",
-        "kills",
-        "deaths",
-        "lastCombat",
-    ],
-    &[
-        "id",
-        "kind",
-        "x",
-        "z",
-        "w",
-        "h",
-        "d",
-        "hp",
-        "maxHp",
-        "alive",
-        "destructible",
-        "color",
-        "debrisSeed",
-        "position",
-        "rotation",
-        "timberHits",
-        "timberJoin",
-        "motion",
-    ],
-    &[
-        "id",
-        "life",
-        "size",
-        "color",
-        "position",
-        "rotation",
-        "shape",
-        "dimensions",
-        "material",
-        "sourceKind",
-        "timberPart",
-        "towerPiece",
-        "treeCoverId",
-        "treeCenterY",
-        "createdAt",
-        "expiresAt",
-        "wreck",
-        "part",
-        "team",
-    ],
-    &[
-        "id",
-        "x",
-        "z",
-        "owner",
-        "ownerLife",
-        "damage",
-        "team",
-        "arm",
-        "life",
-    ],
-    &[
-        "id",
-        "x",
-        "z",
-        "kind",
-        "available",
-        "cooldown",
-        "cooldownDuration",
-    ],
-];
-pub const MATCH_FIELDS: [&str; 7] = [
-    "phase",
-    "time",
-    "scores",
-    "overtime",
-    "endedEarly",
-    "winner",
-    "round",
-];
-
 /// A client's copy of the replicated scene: stored wire records and projected values.
 #[derive(Clone, Debug)]
 pub struct MirrorScene {
@@ -1316,122 +1582,105 @@ pub struct MirrorScene {
     pub mines: EntityStore<Mine>,
     pub pickups: EntityStore<Pickup>,
     pub elapsed: f64,
-    pub match_wire: Record,
+    pub match_wire: WireRecord,
     pub match_state: Match,
-    pub map_wire: Record,
+    pub map_wire: WireRecord,
     pub map: SceneMap,
 }
 
-/// Validates one entity record of `kind` and keeps only its declared fields.
-pub(crate) fn read_entity<T>(
-    kind: usize,
-    mut wire: Record,
-    read: fn(&Record) -> ReadResult<T>,
-    id_of: fn(&T) -> u32,
-) -> ReadResult<Stored<T>> {
-    let value = read(&wire)?;
-    wire.retain(|key, _| ENTITY_FIELDS[kind].contains(&key.as_str()));
-    Ok(Stored {
-        id: id_of(&value),
-        wire,
-        value,
-    })
-}
-
 fn read_store<T>(
-    source: &Record,
-    kind: usize,
-    read: fn(&Record) -> ReadResult<T>,
-    id_of: fn(&T) -> u32,
+    records: impl IntoIterator<Item = WireRecord>,
+    read: fn(&WireRecord) -> ReadResult<T>,
 ) -> ReadResult<EntityStore<T>> {
-    field(source, ENTITY_TYPES[kind], |value| {
-        let items = array(value, ENTITY_LIMITS[kind], |item| {
-            nested(Some(item), |record| {
-                read_entity(kind, record.clone(), read, id_of)
-            })
+    let mut store = EntityStore::default();
+    for wire in records {
+        let value = read(&wire)?;
+        store.push(Stored {
+            id: wire.id,
+            wire,
+            value,
         })?;
-        let mut store = EntityStore::default();
-        for stored in items {
-            store.push(stored)?;
-        }
-        Ok(store)
-    })
+    }
+    Ok(store)
 }
 
 impl MirrorScene {
-    /// `sceneReader` plus `indexEntities` and `projectScene`'s checks: every record valid,
-    /// no duplicate ids, rotations usable and at least one tank to view.
-    pub fn read(value: Option<&Value>) -> ReadResult<MirrorScene> {
-        let scene = nested(value, |source| {
-            let entities = field(source, "entities", |value| {
-                nested(value, |entities| {
-                    Ok((
-                        read_store(entities, TANKS, read_tank, |t| t.id)?,
-                        read_store(entities, COVERS, read_cover, |c| c.id)?,
-                        read_store(entities, FRAGMENTS, read_fragment, |f| f.id)?,
-                        read_store(entities, MINES, read_mine, |m| m.id)?,
-                        read_store(entities, PICKUPS, read_pickup, |p| p.id)?,
-                    ))
-                })
-            })?;
-            let elapsed = field(source, "elapsed", number)?;
-            let (match_wire, match_state) = field(source, "match", |v| {
-                nested(v, |m| {
-                    let state = read_match(m)?;
-                    let mut wire = m.clone();
-                    wire.retain(|key, _| MATCH_FIELDS.contains(&key.as_str()));
-                    Ok((wire, state))
-                })
-            })?;
-            let (map_wire, map) = field(source, "map", |v| {
-                nested(v, |m| Ok((m.clone(), read_map(m)?)))
-            })?;
-            let (tanks, covers, fragments, mines, pickups) = entities;
-            Ok(MirrorScene {
-                tanks,
-                covers,
-                fragments,
-                mines,
-                pickups,
-                elapsed,
-                match_wire,
-                match_state,
-                map_wire,
-                map,
-            })
-        })?;
-        if scene.tanks.is_empty() {
-            return Err("Missing viewer".into());
+    /// Reads a baseline's scene (see [`Scene::write`]) with `projectScene`'s checks:
+    /// every record valid, no duplicate ids, rotations usable and at least one tank to
+    /// view.
+    pub fn read(reader: &mut WireReader<'_>) -> ReadResult<MirrorScene> {
+        let mut scene = Scene {
+            elapsed: reader.signed()? as f64 / POSITION_SCALE,
+            ..Scene::default()
+        };
+        read_changes(MATCH_FIELDS, &mut scene.match_record, reader)
+            .map_err(|error| format!("match: {error}"))?;
+        read_changes(MAP_FIELDS, &mut scene.map, reader)
+            .map_err(|error| format!("map: {error}"))?;
+        for (kind, records) in scene.entities.iter_mut().enumerate() {
+            let count = reader.varint()?;
+            if count > ENTITY_LIMITS[kind] as u64 {
+                return Err(format!("entities: {}: Invalid list", ENTITY_TYPES[kind]));
+            }
+            let mut id = 0i64;
+            for _ in 0..count {
+                id += reader.signed()?;
+                let mut record = WireRecord {
+                    id: u32::try_from(id).map_err(|_| "Invalid entity id".to_string())?,
+                    slots: Vec::new(),
+                };
+                read_changes(ENTITY_FIELDS[kind], &mut record, reader)
+                    .map_err(|error| format!("{}: {error}", ENTITY_TYPES[kind]))?;
+                records.push(record);
+            }
         }
-        Ok(scene)
+        Self::from_scene(scene)
     }
 
-    /// The scene as plain JSON, for comparing a mirror with a capture.
-    pub fn to_value(&self) -> Value {
-        fn records<T>(store: &EntityStore<T>) -> Value {
-            Value::Array(
-                store
-                    .records
-                    .iter()
-                    .map(|stored| Value::Object(stored.wire.clone()))
-                    .collect(),
-            )
+    /// Validates and projects a scene's records.
+    pub fn from_scene(scene: Scene) -> ReadResult<MirrorScene> {
+        if scene.elapsed.abs() > NUMBER_BOUND {
+            return Err("elapsed: Invalid number".into());
         }
-        let mut entities = Record::new();
-        entities.insert("tanks".into(), records(&self.tanks));
-        entities.insert("covers".into(), records(&self.covers));
-        entities.insert("fragments".into(), records(&self.fragments));
-        entities.insert("mines".into(), records(&self.mines));
-        entities.insert("pickups".into(), records(&self.pickups));
-        let mut scene = Record::new();
-        scene.insert("entities".into(), Value::Object(entities));
-        scene.insert(
-            "elapsed".into(),
-            serde_json::from_str(&json_number(self.elapsed)).unwrap_or(Value::Null),
-        );
-        scene.insert("match".into(), Value::Object(self.match_wire.clone()));
-        scene.insert("map".into(), Value::Object(self.map_wire.clone()));
-        Value::Object(scene)
+        let [tanks, covers, fragments, mines, pickups] = scene.entities;
+        let label = |kind: usize| move |error: String| format!("{}: {error}", ENTITY_TYPES[kind]);
+        let mirror = MirrorScene {
+            tanks: read_store(tanks, read_tank).map_err(label(TANKS))?,
+            covers: read_store(covers, read_cover).map_err(label(COVERS))?,
+            fragments: read_store(fragments, read_fragment).map_err(label(FRAGMENTS))?,
+            mines: read_store(mines, read_mine).map_err(label(MINES))?,
+            pickups: read_store(pickups, read_pickup).map_err(label(PICKUPS))?,
+            elapsed: scene.elapsed,
+            match_state: read_match(&scene.match_record).map_err(|e| format!("match: {e}"))?,
+            match_wire: scene.match_record,
+            map: read_map(&scene.map).map_err(|e| format!("map: {e}"))?,
+            map_wire: scene.map,
+        };
+        if mirror.tanks.is_empty() {
+            return Err("Missing viewer".into());
+        }
+        Ok(mirror)
+    }
+
+    /// The mirrored records as a [`Scene`], for comparing a mirror with a capture.
+    pub fn to_scene(&self) -> Scene {
+        Scene {
+            entities: [
+                self.tanks.wires().cloned().collect(),
+                self.covers.wires().cloned().collect(),
+                self.fragments.wires().cloned().collect(),
+                self.mines.wires().cloned().collect(),
+                self.pickups.wires().cloned().collect(),
+            ],
+            elapsed: self.elapsed,
+            match_record: self.match_wire.clone(),
+            map: self.map_wire.clone(),
+        }
+    }
+
+    /// The scene in the JSON protocol's shape, for tests and tools.
+    pub fn to_value(&self) -> Value {
+        self.to_scene().to_json()
     }
 
     /// `projectScene`: the render state for the tank `viewer`.
@@ -1480,10 +1729,4 @@ fn fill<T: Clone>(items: &mut Vec<T>, store: &EntityStore<T>) {
             .iter()
             .map(|stored| stored.value.clone()),
     );
-}
-
-fn json_number(value: f64) -> String {
-    let mut out = String::new();
-    write_number(&mut out, value);
-    out
 }

@@ -14,7 +14,9 @@ use sloppy_core::net::network_timeline::NetworkTimeline;
 use sloppy_core::net::player_controls::{Action, Aim};
 use sloppy_core::net::playout_clock::PlayoutClock;
 use sloppy_core::net::render_timeline::RenderTimeline;
-use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
+use sloppy_core::net::replication::{
+    BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
+};
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::{
     LivePaths, PATH_TOLERANCE, PathEntry, ShotLaunch, ShotPath, ShotPathRecorder,
@@ -927,7 +929,7 @@ fn fire(sim: &mut Simulation, weapon: Weapon, aim: f64) {
 }
 
 /// Plays `ticks` of `sim` as a room does: the host follows every projectile sweep with its
-/// path recorder and sends a frame every third tick, which goes through the wire JSON and
+/// path recorder and sends a frame every third tick, which goes through the binary wire and
 /// the client's mirror into its display timeline, read every 4 ms as frames arrive every
 /// 50 ms. `before` runs ahead of each tick, to fire.
 fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulation, u64)) -> Replay {
@@ -936,10 +938,11 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
     let mut recorder = ShotPathRecorder::default();
     let mut stream = StateStream::new("room", 1);
     let mut mirror = StateMirror::default();
-    let full = stream.full(&Scene::capture(&sim), 0, 0, recorder.paths());
-    mirror
-        .apply_full(&serde_json::from_str(&full).unwrap(), "room", 1)
-        .unwrap();
+    let full = stream.full(0, 0, recorder.paths(), || Scene::capture(&sim));
+    let BinaryMessage::Full(baseline) = read_binary_message(&full).unwrap() else {
+        unreachable!()
+    };
+    mirror.apply_full(&baseline, "room", 1).unwrap();
     let mut timeline = NetworkTimeline::default();
     timeline.reset(&mirror.render(viewer).unwrap(), 0, 0.0, &mirror.shots);
     let mut replay = Replay {
@@ -970,7 +973,11 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
         recorder.follow(&mut sim, tick);
         for event in sim.events.drain(..) {
             event_id += 1;
-            events.push(TimedEvent::write(event_id, tick as f64, &event));
+            events.push(TimedEvent {
+                event_id,
+                tick: tick as f64,
+                event,
+            });
         }
         if tick % 3 != 0 {
             continue;
@@ -979,9 +986,12 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
         let frame = stream.snapshot(&mut scene, tick, &events, recorder.entries());
         events.clear();
         recorder.clear_entries();
-        let extras = mirror
-            .apply_snapshot(&serde_json::from_str(&frame).unwrap())
-            .expect("a valid frame");
+        let extras = net_support::apply_batch(
+            &mut mirror,
+            &net_support::batch(1, 0, stream.seq, &[(tick, frame)]),
+        )
+        .pop()
+        .expect("a valid frame");
         replay.entries.extend(extras.paths.iter().copied());
         replay.impacts.extend(
             extras

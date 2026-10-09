@@ -8,6 +8,7 @@
 //! this crate if core must not depend on the server), and
 //! [`crate::lobby_host::LobbyHost`] is the lobby-only stand-in used until then.
 
+use crate::protocol::Message;
 use crate::room_list::RoomListing;
 
 /// One socket's identity inside a room. It is never sent to clients (seat tokens and
@@ -18,10 +19,10 @@ pub struct ConnectionId(pub u64);
 /// What a host asks the transport to do; `MatchHost`'s `HostTransport` callbacks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostAction {
-    /// Send one text message to a connection. Unknown or closed connections are ignored.
+    /// Send one message to a connection. Unknown or closed connections are ignored.
     Send {
         connection: ConnectionId,
-        text: String,
+        message: Message,
     },
     /// Close a connection with a WebSocket close code and reason. The session then
     /// forgets the socket and calls [`RoomHost::disconnect`] for it.
@@ -47,9 +48,13 @@ pub struct HostOutput {
 
 impl HostOutput {
     pub fn send(&mut self, connection: ConnectionId, text: impl Into<String>) {
+        self.send_message(connection, Message::Text(text.into()));
+    }
+
+    pub fn send_message(&mut self, connection: ConnectionId, message: Message) {
         self.actions.push(HostAction::Send {
             connection,
-            text: text.into(),
+            message,
         });
     }
 

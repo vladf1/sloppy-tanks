@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { BotPlayer, openSeats, randomRoomCode, type ServerInfo } from "../bots/bot-player";
+import { readStateHeader } from "../bots/state-header";
 
 // The traffic bots drive the real multiplayer server: `pnpm run server:build` (part of
 // `pnpm run check`) builds this binary. CI sets SLOPPY_SERVER_VPS so that is the static
@@ -84,12 +85,16 @@ test("traffic bots create a room on the Rust server, drive with accepted input a
   for (const [index, seat] of bots.entries()) {
     const socket = new WebSocket(`ws://${base}/room/${room}`, { origin: ORIGIN });
     seat.socket = socket;
-    socket.on("message", (data) => {
-      const text = String(data);
-      if (text.startsWith('{"type":"snapshot"')) {
-        seat.acked = Math.max(seat.acked, (JSON.parse(text) as { ack: number }).ack);
+    socket.on("message", (data: Buffer, isBinary) => {
+      if (!isBinary) {
+        seat.bot.receive(String(data), performance.now());
+        return;
       }
-      seat.bot.receive(text, performance.now());
+      const header = readStateHeader(data);
+      if (header.type === "snapshot") {
+        seat.acked = Math.max(seat.acked, header.ack ?? 0);
+      }
+      seat.bot.receive(data, performance.now());
     });
     socket.on("close", (code) => {
       seat.closed = code;

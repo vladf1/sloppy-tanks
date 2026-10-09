@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::host::ConnectionId;
+use crate::protocol::Message;
 use crate::room_task::RoomCommand;
 use crate::session::{RoomSocket, SendFailed};
 use crate::tcp_path::TcpReading;
@@ -27,7 +28,7 @@ pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(30);
 const READ_BUFFER_BYTES: usize = 8 * 1024;
 
 enum Outbound {
-    Text(String),
+    Message(Message),
     Close(u16, String),
 }
 
@@ -69,17 +70,17 @@ impl SocketHandle {
 }
 
 impl RoomSocket for SocketHandle {
-    fn send(&self, text: String) -> Result<(), SendFailed> {
+    fn send(&self, message: Message) -> Result<(), SendFailed> {
         if self.state.closing.load(Ordering::Relaxed) {
             return Ok(());
         }
-        if !self.state.reserve(text.len()) {
+        if !self.state.reserve(message.len()) {
             self.close(4002, "Slow reader");
             return Ok(());
         }
         // A finished connection task has already reported its close to the room.
-        let bytes = text.len();
-        if self.sender.send(Outbound::Text(text)).is_err() {
+        let bytes = message.len();
+        if self.sender.send(Outbound::Message(message)).is_err() {
             self.state.queued.fetch_sub(bytes, Ordering::Relaxed);
         }
         Ok(())
@@ -169,7 +170,7 @@ where
     let mut close_deadline: Option<Instant> = None;
     let mut outbound_open = true;
     let mut close_requested: Option<(Option<u16>, String)> = None;
-    // Text already reserved its uncompressed bytes at admission; control replies reserve
+    // Messages already reserved their uncompressed bytes at admission; control replies reserve
     // their full frame here. Adjust atomically against messages the room may be queuing.
     let append =
         |pending: &mut BytesMut, reserved: usize, encode: &mut dyn FnMut(&mut BytesMut)| {
@@ -210,8 +211,12 @@ where
             () = stopped(&mut terminate) => break Ending::Terminated,
             () = sleep_until_some(deadline), if deadline.is_some() => break Ending::Dropped,
             command = receiver.recv(), if outbound_open && !close_sent => match command {
-                Some(Outbound::Text(text)) => {
-                    if !append(&mut pending, text.len(), &mut |out| codec.encode_text(&text, out)) {
+                Some(Outbound::Message(message)) => {
+                    let encode = &mut |out: &mut BytesMut| match &message {
+                        Message::Text(text) => codec.encode_text(text, out),
+                        Message::Binary(bytes) => codec.encode_binary(bytes, out),
+                    };
+                    if !append(&mut pending, message.len(), encode) {
                         close_requested = Some((Some(4002), "Slow reader".into()));
                     }
                 }

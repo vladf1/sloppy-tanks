@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::host::{ConnectionId, HostAction, HostFactory, HostOptions, HostOutput, RoomHost};
-use crate::protocol::{CONTENT_VERSION, MAX_CLIENT_MESSAGE_BYTES};
+use crate::protocol::{CONTENT_VERSION, MAX_CLIENT_MESSAGE_BYTES, Message};
 use crate::random;
 use crate::room_list::{RoomListing, RoomPhase};
 use crate::tcp_path::TcpReading;
@@ -101,8 +101,8 @@ pub struct SendFailed;
 
 /// The part of a WebSocket that a room needs.
 pub trait RoomSocket {
-    /// Queues a text message. Sending to a socket that is already closing is ignored.
-    fn send(&self, text: String) -> Result<(), SendFailed>;
+    /// Queues a message. Sending to a socket that is already closing is ignored.
+    fn send(&self, message: Message) -> Result<(), SendFailed>;
     /// Starts the closing handshake. Later calls are ignored.
     fn close(&self, code: u16, reason: &str);
     /// The connection's TCP round trip and retransmissions so far, where the transport
@@ -155,9 +155,8 @@ pub enum Incoming<'a> {
     Binary,
 }
 
-/// One room's state and load since the previous sample. Byte counts are UTF-8 lengths
-/// before compression (the TypeScript counted UTF-16 units; both equal bytes for the
-/// ASCII JSON the game sends).
+/// One room's state and load since the previous sample. Byte counts are message lengths
+/// before compression: UTF-8 text and binary state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomSample {
     pub room: String,
@@ -494,14 +493,21 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
     fn apply(&mut self, actions: Vec<HostAction>) {
         for action in actions {
             match action {
-                HostAction::Send { connection, text } => {
+                HostAction::Send {
+                    connection,
+                    message,
+                } => {
                     let Some(entry) = self.sockets.get_mut(&connection) else {
                         continue;
                     };
-                    let bytes = text.len() as u64;
-                    let kind = message_type(&text);
-                    let welcome = text.starts_with(WELCOME_PREFIX);
-                    if entry.socket.send(text).is_err() {
+                    let bytes = message.len() as u64;
+                    let (kind, welcome) = match &message {
+                        Message::Text(text) => {
+                            (message_type(text), text.starts_with(WELCOME_PREFIX))
+                        }
+                        Message::Binary(bytes) => (Message::binary_type(bytes), false),
+                    };
+                    if entry.socket.send(message).is_err() {
                         self.drop_socket(connection, 1011, "Send failed");
                         continue;
                     }

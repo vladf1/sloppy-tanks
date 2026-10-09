@@ -34,7 +34,10 @@ impl MatchRoom {
     fn flush(&mut self, out: &mut HostOutput) {
         for event in self.host.take_events() {
             match event {
-                HostEvent::Send { connection, text } => out.send(ConnectionId(connection), text),
+                HostEvent::Send {
+                    connection,
+                    message,
+                } => out.send_message(ConnectionId(connection), message),
                 HostEvent::Close {
                     connection,
                     code,

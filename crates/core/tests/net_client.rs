@@ -8,7 +8,7 @@ use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
-use sloppy_core::net::protocol::{JoinChoice, RoomPhase, RoomSettings};
+use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
 use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
@@ -196,9 +196,16 @@ impl Network {
     fn deliver(&mut self, event: HostEvent) {
         let now = self.now;
         match event {
-            HostEvent::Send { connection, text } => {
+            HostEvent::Send {
+                connection,
+                message,
+            } => {
                 if let Some(&(peer, socket)) = self.routes.get(&connection) {
-                    self.peers[peer].client.socket_message(socket, &text, now);
+                    let client = &mut self.peers[peer].client;
+                    match message {
+                        Message::Text(text) => client.socket_message(socket, &text, now),
+                        Message::Binary(bytes) => client.socket_binary(socket, &bytes, now),
+                    }
                 }
             }
             HostEvent::Close {

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::host::{ConnectionId, HostOptions, HostOutput, RoomHost};
 use crate::lobby_host::LobbyHost;
-use crate::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
+use crate::protocol::{CONTENT_VERSION, Message, PROTOCOL_VERSION};
 use crate::room_list::RoomListing;
 use crate::session::*;
 use crate::tcp_path::TcpReading;
@@ -44,7 +44,10 @@ impl FakeSocket {
 }
 
 impl RoomSocket for FakeSocket {
-    fn send(&self, text: String) -> Result<(), SendFailed> {
+    fn send(&self, message: Message) -> Result<(), SendFailed> {
+        let Message::Text(text) = message else {
+            panic!("the lobby host sends only text");
+        };
         self.0
             .borrow_mut()
             .sent

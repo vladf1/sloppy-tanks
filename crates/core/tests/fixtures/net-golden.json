@@ -5,7 +5,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 2,
+          "version": 3,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000001",
@@ -1056,7 +1056,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 2,
+          "version": 3,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000003",
@@ -1731,7 +1731,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 2,
+          "version": 3,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",
@@ -1865,7 +1865,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 2,
+          "version": 3,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",

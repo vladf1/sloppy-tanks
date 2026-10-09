@@ -5,6 +5,8 @@
  * `tests/traffic-bots.test.ts`.
  */
 
+import { readStateHeader } from "./state-header";
+
 export const BOT_NAME_PREFIX = "bot-";
 export const ROOM_SEATS = 8;
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -182,10 +184,20 @@ export class BotPlayer {
     }
   }
 
-  receive(text: string, nowMs: number): void {
-    this.stats.bytesIn += text.length;
+  /** One server message: JSON text, or a binary state frame of which only the header is read. */
+  receive(data: string | ArrayBuffer | Uint8Array, nowMs: number): void {
     this.stats.messagesIn++;
-    const message = record(JSON.parse(text));
+    if (typeof data !== "string") {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      this.stats.bytesIn += bytes.length;
+      const header = readStateHeader(bytes);
+      if (header.roundId === this.roundId && (header.type === "full" || header.frames)) {
+        this.observe(header.tick);
+      }
+      return;
+    }
+    this.stats.bytesIn += data.length;
+    const message = record(JSON.parse(data));
     switch (message.type) {
       case "welcome":
         this.playerId = String(message.playerId);
@@ -226,18 +238,6 @@ export class BotPlayer {
           }
         }
         break;
-      case "full":
-        if (message.roundId === this.roundId) {
-          this.observe(Number(message.tick));
-        }
-        break;
-      case "snapshot": {
-        const snapshots = message.snapshots;
-        if (message.roundId === this.roundId && Array.isArray(snapshots) && snapshots.length) {
-          this.observe(Number(record(snapshots.at(-1)).tick));
-        }
-        break;
-      }
       case "pong":
         this.stats.rttMs = Math.max(0, nowMs - Number(message.t));
         break;

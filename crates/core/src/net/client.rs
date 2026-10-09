@@ -17,6 +17,7 @@
 //!    `bufferedAmount` exceeds 16 KiB should be closed instead (as the TypeScript did).
 //! 3. Forward socket events: [`socket_opened`](NetworkClient::socket_opened),
 //!    [`socket_message`](NetworkClient::socket_message) for text frames,
+//!    [`socket_binary`](NetworkClient::socket_binary) for binary ones (game state),
 //!    [`socket_closed`](NetworkClient::socket_closed) with the close code. Events for a
 //!    socket id that is no longer current are ignored.
 //! 4. Call [`poll`](NetworkClient::poll) at least every 250 ms (a `setInterval` or each
@@ -48,10 +49,11 @@ use super::input_cadence::{InputCadence, InputSample};
 use super::network_timeline::NetworkTimeline;
 use super::player_controls::{Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::protocol::{
-    CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_ROOM_MS, MAX_SERVER_MESSAGE_BYTES,
-    PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings, client_message,
+    CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
+    MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
+    client_message,
 };
-use super::replication::StateMirror;
+use super::replication::{BinaryMessage, StateMirror, read_binary_message};
 use super::schema::{ReadResult, Record, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
 use crate::sim::ammunition::{AMMO_ORDER, has_ammo_for};
@@ -67,8 +69,6 @@ const HEARTBEAT_MS: f64 = 1000.0;
 const SILENCE_MS: f64 = 10_000.0;
 const MAX_RETRY_MS: f64 = 5000.0;
 const FIRST_RETRY_MS: f64 = 500.0;
-/// Most snapshot frames one batch may carry.
-const MAX_BATCH_FRAMES: usize = 8;
 /// A bot-driven seat asks for its tank back at most this often.
 const RESUME_RETRY_MS: f64 = 1000.0;
 /// A snapshot batch arriving this long after the previous one (three host intervals,
@@ -543,26 +543,37 @@ impl NetworkClient {
     }
 
     pub fn socket_message(&mut self, socket: u32, text: &str, now_ms: f64) {
-        if !self.is_current(socket) {
-            return;
+        if self.is_current(socket) && text_length(text) <= MAX_SERVER_MESSAGE_BYTES {
+            self.arrive(Message::Text(text.to_string()), now_ms);
+        } else if self.is_current(socket) {
+            self.unreadable();
         }
-        if text_length(text) > MAX_SERVER_MESSAGE_BYTES {
-            self.fail(
-                EndCause::Rejected,
-                "The server sent a message this page can't read.",
-            );
-            return;
+    }
+
+    /// A binary frame: a baseline or a snapshot batch.
+    pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now_ms: f64) {
+        if self.is_current(socket) && bytes.len() <= MAX_SERVER_MESSAGE_BYTES {
+            self.arrive(Message::Binary(bytes.to_vec()), now_ms);
+        } else if self.is_current(socket) {
+            self.unreadable();
         }
+    }
+
+    fn unreadable(&mut self) {
+        self.fail(
+            EndCause::Rejected,
+            "The server sent a message this page can't read.",
+        );
+    }
+
+    fn arrive(&mut self, message: Message, now_ms: f64) {
         match self.delay.as_mut() {
             Some(delay) => {
-                if delay.receive(text.to_string(), now_ms).is_err() {
-                    self.fail(
-                        EndCause::Rejected,
-                        "The server sent a message this page can't read.",
-                    );
+                if delay.receive(message, now_ms).is_err() {
+                    self.unreadable();
                 }
             }
-            None => self.receive(text, now_ms),
+            None => self.receive(&message, now_ms),
         }
     }
 
@@ -646,16 +657,20 @@ impl NetworkClient {
                     });
                 }
             }
-            for text in inbound {
+            for message in inbound {
                 if self.socket.is_some() && !self.stopped {
-                    self.receive(&text, now_ms);
+                    self.receive(&message, now_ms);
                 }
             }
         }
     }
 
-    fn receive(&mut self, text: &str, now_ms: f64) {
-        if let Err(error) = self.handle(text, now_ms) {
+    fn receive(&mut self, message: &Message, now_ms: f64) {
+        let handled = match message {
+            Message::Text(text) => self.handle(text, now_ms),
+            Message::Binary(bytes) => self.handle_binary(bytes, now_ms),
+        };
+        if let Err(error) = handled {
             // Anything the page cannot read means the page and server disagree.
             let _ = error;
             self.fail(
@@ -824,13 +839,20 @@ impl NetworkClient {
                     self.send("resume", now_ms, |_| {});
                 }
             }
-            "full" => {
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_binary(&mut self, bytes: &[u8], now_ms: f64) -> ReadResult<()> {
+        self.last_message_at = now_ms;
+        match read_binary_message(bytes)? {
+            BinaryMessage::Full(baseline) => {
                 self.last_snapshot_ms = now_ms;
                 self.last_batch_ms = Some(now_ms);
                 self.applied_input = 0;
-                let value = Value::Object(message);
                 self.mirror
-                    .apply_full(&value, &self.room_epoch.clone(), self.round_id)?;
+                    .apply_full(&baseline, &self.room_epoch.clone(), self.round_id)?;
                 self.received_updates += 1;
                 self.observed_tick = self.mirror.tick;
                 self.requested_full = false;
@@ -842,8 +864,8 @@ impl NetworkClient {
                     self.show_baseline();
                 }
             }
-            "snapshot" => {
-                self.applied_input = id(message.get("ack"))? as i64;
+            BinaryMessage::Snapshot(mut batch) => {
+                self.applied_input = i64::try_from(batch.ack).map_err(|_| "Invalid ack")?;
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
                     let gap = now_ms - previous;
@@ -852,17 +874,16 @@ impl NetworkClient {
                         self.late_batches += 1;
                     }
                 }
-                let frames = match message.get("snapshots") {
-                    Some(Value::Array(frames)) if frames.len() <= MAX_BATCH_FRAMES => frames,
-                    _ => return Err("Invalid frame batch".into()),
-                };
+                if batch.count > MAX_BATCH_FRAMES as u64 {
+                    return Err("Invalid frame batch".into());
+                }
                 self.received_updates += 1;
-                if message.get("roundId").and_then(Value::as_f64) != Some(self.round_id as f64) {
+                if batch.round_id != self.round_id {
                     return Ok(());
                 }
                 let mut pushed = false;
-                for frame in frames {
-                    let Some(extras) = self.mirror.apply_snapshot(frame) else {
+                for _ in 0..batch.count {
+                    let Some(extras) = self.mirror.apply_snapshot(&mut batch) else {
                         self.request_full(now_ms);
                         break;
                     };
@@ -886,7 +907,6 @@ impl NetworkClient {
                     self.timeline.arrive(self.last_snapshot_ms);
                 }
             }
-            _ => {}
         }
         Ok(())
     }

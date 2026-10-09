@@ -18,6 +18,7 @@ const SHELL = new Set([
     "button-input",
     "cockpit",
     "controls",
+    "debug-console",
     "engine-api",
     "game-options",
     "hud-feedback",
@@ -49,6 +50,7 @@ const SHELL = new Set([
     "room-list",
     "room-protocol",
     "server-address",
+    "wire-log",
   ].map((name) => `src/net/${name}.ts`),
 ]);
 /** Audio is the one library a room page loads. */

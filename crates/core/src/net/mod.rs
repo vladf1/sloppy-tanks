@@ -11,8 +11,10 @@
 //! Shared wire format:
 //! - [`protocol`]: constants, room settings, `join`/`lobby`/`control`/`welcome` records.
 //! - [`scene_codec`]: scene capture (host) and validation/projection (client).
-//! - [`replication`]: baselines, field deltas and the client mirror.
+//! - [`replication`]: binary baselines, field deltas and the client mirror.
 //! - [`shot_paths`]: projectile trajectories, recorded by the host and drawn by clients.
+//! - [`wire`]: varints and records of quantized fields; [`wire_view`]: binary messages as
+//!   the former JSON, for tests and tools.
 //! - [`room_list`]: public directory listings.
 //! - [`schema`] / [`json`]: TypeScript-compatible readers and number formatting.
 //!
@@ -41,3 +43,5 @@ pub mod scene_codec;
 pub mod schema;
 pub mod shot_paths;
 pub mod transport_delay;
+pub mod wire;
+pub mod wire_view;

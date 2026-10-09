@@ -315,7 +315,9 @@ async fn reports_health_with_the_content_version_at_the_root_too() {
         "pretty-printed with a trailing newline"
     );
     assert!(
-        health.body.starts_with("{\n  \"protocol\": 2,"),
+        health
+            .body
+            .starts_with(&format!("{{\n  \"protocol\": {PROTOCOL_VERSION},")),
         "fields keep the TypeScript order"
     );
     let slashed = get(&base, "/health/", &[]).await;

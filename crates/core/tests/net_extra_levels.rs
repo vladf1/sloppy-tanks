@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 
 use net_support::{Harness, harness_at};
 use serde_json::{Value, json};
-use sloppy_core::net::protocol::MAX_SERVER_MESSAGE_BYTES;
-use sloppy_core::net::replication::StateMirror;
+use sloppy_core::net::protocol::{MAX_SERVER_MESSAGE_BYTES, Message};
+use sloppy_core::net::replication::{BinaryMessage, StateMirror, read_binary_message};
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::map_options::MAP_OPTIONS;
@@ -170,24 +170,28 @@ fn mirror_room(level: &mut Harness, steps: usize) -> Mirrored {
     let mut rebuilt = BTreeSet::new();
     for _ in 0..steps {
         level.advance();
-        let texts = level.texts["alice"].clone();
-        for text in &texts[read..] {
-            assert!(text.len() < MAX_SERVER_MESSAGE_BYTES);
-            let message: Value = serde_json::from_str(text).unwrap();
-            if message["type"] == "full" {
-                mirror.apply_full(&message, "yard-room", round).unwrap();
-            } else if message["type"] == "snapshot" {
-                let frames = message["snapshots"].as_array().unwrap();
-                largest_batch = largest_batch.max(frames.len());
-                for frame in frames {
-                    assert!(
-                        mirror.apply_snapshot(frame).is_some(),
-                        "every snapshot passes client validation"
-                    );
+        let messages = level.wire["alice"].clone();
+        for message in &messages[read..] {
+            assert!(message.len() < MAX_SERVER_MESSAGE_BYTES);
+            let Message::Binary(bytes) = message else {
+                continue;
+            };
+            match read_binary_message(bytes).unwrap() {
+                BinaryMessage::Full(baseline) => {
+                    mirror.apply_full(&baseline, "yard-room", round).unwrap();
+                }
+                BinaryMessage::Snapshot(mut batch) => {
+                    largest_batch = largest_batch.max(batch.count);
+                    for _ in 0..batch.count {
+                        assert!(
+                            mirror.apply_snapshot(&mut batch).is_some(),
+                            "every snapshot passes client validation"
+                        );
+                    }
                 }
             }
         }
-        read = texts.len();
+        read = messages.len();
         let scene = mirror.state.as_ref().unwrap();
         most_fragments = most_fragments.max(scene.fragments.len());
         for cover in scene.covers.values() {
