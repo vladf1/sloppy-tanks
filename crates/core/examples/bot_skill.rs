@@ -4,9 +4,9 @@
 //! Options: `--maps village,harbor,quarry` (standard maps by default), `--seeds 8` (rounds
 //! per map, each seeded `n * SEED_STRIDE`), `--out <path>` (default
 //! `artifacts/performance/bot-skill.json`) and `--baseline <path>`, an earlier output to
-//! print differences against. Every tank plays with the bot brain; the autoplayed human
-//! slot is left out of the roles. Manual evidence for AI changes, not a CI gate: an AI
-//! change alters every seeded match, so compare means over many rounds, never one match.
+//! print differences against. Each match is a room with no players, so every tank is a
+//! bot under the same rules. Manual evidence for AI changes, not a CI gate: an AI change
+//! alters every seeded match, so compare means over many rounds, never one match.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -19,7 +19,8 @@ use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{
-    BotMode, MatchPhase, SimEventType, Simulation, SimulationSetup, VehicleCommand, VehicleKind,
+    BotMode, DamageCause, DamageSource, MatchPhase, SimEventType, Simulation, SimulationSetup,
+    VehicleKind,
 };
 
 const DEFAULT_MAPS: [MapId; 3] = [MapId::Village, MapId::Harbor, MapId::Quarry];
@@ -36,14 +37,14 @@ const ANSWER_WINDOW_SECONDS: f64 = 5.0;
 
 /// Metrics in report order: (key, label).
 const METRICS: [(&str, &str); 10] = [
-    ("accuracy", "enemy hits per shot"),
-    ("damagePerShot", "hull damage per shot"),
+    ("accuracy", "enemy shell hits per shot"),
+    ("damagePerMinute", "hull damage dealt per minute alive"),
     ("killsPerMinute", "kills per minute alive"),
     ("deathsPerMinute", "deaths per minute alive"),
     ("engaged", "share of time fighting"),
     ("stalled", "share of time stalled"),
     ("recoveriesPerMinute", "stuck recoveries per minute alive"),
-    ("blindsided", "share of hits from an untargeted enemy"),
+    ("blindsided", "share of shell hits from an untargeted enemy"),
     ("answered", "share of those hits answered"),
     ("answerSeconds", "seconds to answer"),
 ];
@@ -91,7 +92,7 @@ impl Tally {
         let ratio = |a: f64, b: f64| (b > 0.0).then_some(a / b);
         [
             ("accuracy", ratio(self.enemy_hits, self.shots)),
-            ("damagePerShot", ratio(self.damage_dealt, self.shots)),
+            ("damagePerMinute", ratio(self.damage_dealt, minutes)),
             ("killsPerMinute", ratio(self.kills, minutes)),
             ("deathsPerMinute", ratio(self.deaths, minutes)),
             ("engaged", ratio(self.fight_ticks, self.alive_ticks)),
@@ -127,21 +128,40 @@ fn role(personality: BotPersonality, kind: VehicleKind) -> String {
     }
 }
 
+/// Whether a hit came from a fired round (including rocket splash), as opposed to a mine,
+/// a drum or another explosion that no shot or targeting decision accounts for.
+fn shell_hit(source: Option<DamageSource>) -> bool {
+    source.is_some_and(|source| {
+        matches!(
+            source.cause,
+            DamageCause::Standard
+                | DamageCause::Spread
+                | DamageCause::Rocket
+                | DamageCause::Ricochet
+                | DamageCause::Piercing
+                | DamageCause::Tow
+        )
+    })
+}
+
 fn play_round(map: MapId, seed: f64) -> RoundResult {
+    // A room without players fills every seat with a bot. Local play would keep a human
+    // tank with human-only rules (fire rate, health) even when autoplayed.
     let setup = SimulationSetup {
         map_mode: Some(map),
+        players: Some(Vec::new()),
         ..SimulationSetup::default()
     };
     let mut simulation = Simulation::new(seed, setup);
     simulation.start();
-    let human = simulation.human().id;
+    let no_players = BTreeMap::new();
     let mut tallies: HashMap<u32, Tally> = HashMap::new();
     let mut recoveries: HashMap<u32, u32> = HashMap::new();
     // Victim id -> (attacker id, elapsed at the hit).
     let mut pending: HashMap<u32, (u32, f64)> = HashMap::new();
     let mut steps = 0;
     while simulation.match_state.phase == MatchPhase::Playing && steps < MAX_STEPS {
-        simulation.step(VehicleCommand::idle(), true);
+        simulation.step_with(&no_players);
         steps += 1;
         let elapsed = simulation.elapsed;
         let team_of = |simulation: &Simulation, id: u32| {
@@ -152,8 +172,8 @@ fn play_round(map: MapId, seed: f64) -> RoundResult {
                 continue;
             };
             match event.kind {
-                SimEventType::Shot if id != human => tallies.entry(id).or_default().shots += 1.0,
-                SimEventType::Hurt | SimEventType::Death => {
+                SimEventType::Shot => tallies.entry(id).or_default().shots += 1.0,
+                SimEventType::Hurt | SimEventType::Death if shell_hit(event.damage_source) => {
                     let Some(owner) = owner else { continue };
                     let (Some(victim_team), Some(attacker_team)) =
                         (team_of(&simulation, id), team_of(&simulation, owner))
@@ -163,12 +183,7 @@ fn play_round(map: MapId, seed: f64) -> RoundResult {
                     if victim_team == attacker_team {
                         continue;
                     }
-                    if owner != human {
-                        tallies.entry(owner).or_default().enemy_hits += 1.0;
-                    }
-                    if id == human {
-                        continue;
-                    }
+                    tallies.entry(owner).or_default().enemy_hits += 1.0;
                     let tally = tallies.entry(id).or_default();
                     tally.hits_taken += 1.0;
                     let victim = &simulation.tanks[simulation.tank_index(id).expect("victim")];
@@ -202,7 +217,7 @@ fn play_round(map: MapId, seed: f64) -> RoundResult {
             }
         });
         for tank in &simulation.tanks {
-            if tank.id == human || !tank.alive {
+            if !tank.alive {
                 continue;
             }
             let tally = tallies.entry(tank.id).or_default();
@@ -222,7 +237,7 @@ fn play_round(map: MapId, seed: f64) -> RoundResult {
         }
     }
     let mut roles: BTreeMap<String, Tally> = BTreeMap::new();
-    for tank in simulation.tanks.iter().filter(|tank| tank.id != human) {
+    for tank in &simulation.tanks {
         let mut tally = tallies.remove(&tank.id).unwrap_or_default();
         tally.damage_dealt = tank.damage_dealt;
         tally.kills = tank.kills as f64;
@@ -281,6 +296,11 @@ fn parse_args() -> (Vec<MapId>, u32, PathBuf, Option<PathBuf>) {
 
 fn main() {
     let (maps, seeds, out, baseline) = parse_args();
+    // Read the baseline first: it may be the file this run is about to overwrite.
+    let baseline: Option<Value> = baseline.map(|path| {
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read the baseline"))
+            .expect("baseline JSON")
+    });
     let started = Instant::now();
     let jobs: Vec<(MapId, f64)> = maps
         .iter()
@@ -363,10 +383,6 @@ fn main() {
     )
     .expect("write the results");
 
-    let baseline: Option<Value> = baseline.map(|path| {
-        serde_json::from_str(&std::fs::read_to_string(&path).expect("read the baseline"))
-            .expect("baseline JSON")
-    });
     println!(
         "{} rounds ({} maps x {seeds} seeds) in {:.1} s, written to {}",
         rounds.len(),
