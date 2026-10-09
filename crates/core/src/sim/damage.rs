@@ -5,6 +5,7 @@ use rapier3d::prelude::SharedShape;
 
 use super::ammunition::clear_ammo;
 use super::arena::CoverDef;
+use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
 use super::data::group;
@@ -103,6 +104,7 @@ pub fn damage_tank(
             hurt.team = Some(victim_team);
             hurt.size = Some(amount);
             simulation.events.push(hurt);
+            notice_hit(simulation, tank_index, owner, source);
         }
         return;
     }

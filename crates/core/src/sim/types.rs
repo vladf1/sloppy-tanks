@@ -380,6 +380,12 @@ pub struct Brain {
     pub pickup_target: u32,
     pub nav_version: u32,
     pub mode: BotMode,
+    /// The enemy whose shell last hit this tank; zero when there is none.
+    pub attacker: u32,
+    /// Where that enemy was when its shell hit.
+    pub attacked_from: Vec2,
+    /// Seconds this tank still favors, or looks for, its attacker.
+    pub alarm: f64,
 }
 
 /// Persistent entity identity. The body and colliders are recreated for each life.
@@ -704,6 +710,22 @@ pub enum DamageCause {
     Drum,
     Interception,
     Explosion,
+}
+
+impl DamageCause {
+    /// Whether the damage came from a fired round (rocket splash included), rather than a
+    /// mine, a drum, an interception or another explosion.
+    pub const fn fired(self) -> bool {
+        matches!(
+            self,
+            DamageCause::Standard
+                | DamageCause::Spread
+                | DamageCause::Rocket
+                | DamageCause::Ricochet
+                | DamageCause::Piercing
+                | DamageCause::Tow
+        )
+    }
 }
 
 impl From<Weapon> for DamageCause {

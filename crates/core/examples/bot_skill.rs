@@ -19,8 +19,7 @@ use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{
-    BotMode, DamageCause, DamageSource, MatchPhase, SimEventType, Simulation, SimulationSetup,
-    VehicleKind,
+    BotMode, MatchPhase, SimEventType, Simulation, SimulationSetup, VehicleKind,
 };
 
 const DEFAULT_MAPS: [MapId; 3] = [MapId::Village, MapId::Harbor, MapId::Quarry];
@@ -128,22 +127,6 @@ fn role(personality: BotPersonality, kind: VehicleKind) -> String {
     }
 }
 
-/// Whether a hit came from a fired round (including rocket splash), as opposed to a mine,
-/// a drum or another explosion that no shot or targeting decision accounts for.
-fn shell_hit(source: Option<DamageSource>) -> bool {
-    source.is_some_and(|source| {
-        matches!(
-            source.cause,
-            DamageCause::Standard
-                | DamageCause::Spread
-                | DamageCause::Rocket
-                | DamageCause::Ricochet
-                | DamageCause::Piercing
-                | DamageCause::Tow
-        )
-    })
-}
-
 fn play_round(map: MapId, seed: f64) -> RoundResult {
     // A room without players fills every seat with a bot. Local play would keep a human
     // tank with human-only rules (fire rate, health) even when autoplayed.
@@ -173,7 +156,11 @@ fn play_round(map: MapId, seed: f64) -> RoundResult {
             };
             match event.kind {
                 SimEventType::Shot => tallies.entry(id).or_default().shots += 1.0,
-                SimEventType::Hurt | SimEventType::Death if shell_hit(event.damage_source) => {
+                SimEventType::Hurt | SimEventType::Death
+                    if event
+                        .damage_source
+                        .is_some_and(|source| source.cause.fired()) =>
+                {
                     let Some(owner) = owner else { continue };
                     let (Some(victim_team), Some(attacker_team)) =
                         (team_of(&simulation, id), team_of(&simulation, owner))
