@@ -67,6 +67,22 @@ pub fn harness_at(created_ms: i64, epoch: &str, seed: u32) -> Harness {
     }
 }
 
+/// The wire rounds positions to millimetres and ticks to thousandths, which a 60 m/s
+/// shell crosses in another millimetre: a drawn shell may be this much farther from its
+/// simulated position than `PATH_TOLERANCE`.
+pub const WIRE_SLACK: f64 = 0.003;
+/// A height rounded to the wire's millimetres.
+pub const HEIGHT_SLACK: f64 = 0.0005 + 1e-9;
+
+/// Whether a drawn shell height is the simulated one, as the wire rounds it.
+pub fn same_height(drawn: Option<f64>, simulated: Option<f64>) -> bool {
+    match (drawn, simulated) {
+        (Some(drawn), Some(simulated)) => (drawn - simulated).abs() <= HEIGHT_SLACK,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 pub fn harness() -> Harness {
     harness_at(0, "test-room", 4242)
 }

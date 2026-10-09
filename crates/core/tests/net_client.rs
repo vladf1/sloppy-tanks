@@ -2,17 +2,28 @@
 //! clock: joining, arena preparation, baselines, input cadence and acks, pause and resume,
 //! reconnects that keep the seat, and every way a connection ends.
 
+mod net_support;
+
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+use net_support::{WIRE_SLACK, same_height};
 
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
+use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
+use sloppy_core::net::shot_paths::PATH_TOLERANCE;
 use sloppy_core::net::transport_delay::DelaySettings;
+use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::types::{Driver, VehicleKind};
+use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::render_state::RenderShot;
+use sloppy_core::sim::types::{AmmoInventory, Driver, VehicleKind, Weapon};
+use sloppy_core::sim::weapons::fire_weapon;
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
@@ -811,6 +822,234 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
         assert!(
             stats.prediction_lead_ms > rtt && stats.prediction_lead_ms < rtt + 150.0,
             "{stats:?}"
+        );
+    }
+}
+
+/// One sweep the host simulated: shell `id` flew straight from `from` at tick `start` to
+/// `to` at tick `end` (fractional ticks), at combat height `y` and render height `visual_y`.
+struct HostSweep {
+    id: u32,
+    start: f64,
+    end: f64,
+    from: Vec2,
+    to: Vec2,
+    y: Option<f64>,
+    visual_y: Option<f64>,
+}
+
+impl HostSweep {
+    /// Where the host had the shell at `tick`, inside this sweep.
+    fn at(&self, tick: f64) -> Vec2 {
+        let span = self.end - self.start;
+        let alpha = if span > 0.0 {
+            ((tick - self.start) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        Vec2::new(
+            self.from.x + (self.to.x - self.from.x) * alpha,
+            self.from.z + (self.to.z - self.from.z) * alpha,
+        )
+    }
+}
+
+/// Sweeps of shell `id` that contain display tick `tick`, with slack for the wire's
+/// thousandth-of-a-tick rounding.
+fn sweeps_at(sweeps: &[HostSweep], id: u32, tick: f64) -> impl Iterator<Item = &HostSweep> {
+    sweeps.iter().filter(move |sweep| {
+        sweep.id == id && sweep.start - 1e-3 <= tick && tick <= sweep.end + 1e-3
+    })
+}
+
+/// The host's tank `id` fires `weapon` at `aim` radians.
+fn fire_from(sim: &mut sloppy_core::sim::Simulation, id: u32, weapon: Weapon, aim: f64) {
+    let Some(index) = sim.tank_index(id) else {
+        return;
+    };
+    let tank = &mut sim.tanks[index];
+    if !tank.alive {
+        return;
+    }
+    tank.ammo = AmmoInventory {
+        spread: 99.0,
+        rocket: 99.0,
+        ricochet: 99.0,
+        piercing: 99.0,
+    };
+    tank.selected_ammo = weapon;
+    tank.aim = aim;
+    tank.cooldown = 0.0;
+    fire_weapon(sim, index);
+}
+
+#[test]
+fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
+    let mut net = Network::new();
+    let alice = net.add(None);
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(300.0);
+    let shooter = net.peers[alice].client.control().unwrap().tank_id;
+    // The host records every sweep. Bots fire their own shells; alice's tank also fires a
+    // ricochet and a rocket in turn, sweeping round the compass.
+    let sweeps = Arc::new(Mutex::new(Vec::new()));
+    let log = sweeps.clone();
+    net.host.tick_hook = Some(Box::new(move |sim, tick| {
+        let moves = sim
+            .projectile_moves
+            .as_ref()
+            .expect("a room records sweeps");
+        let mut log = log.lock().unwrap();
+        for sweep in moves {
+            let shot = &sweep.shot;
+            let start = tick as f64 - 1.0 + sweep.offset / STEP;
+            log.push(HostSweep {
+                id: shot.id,
+                start,
+                end: start + sweep.seconds / STEP,
+                from: Vec2::new(
+                    shot.x - shot.vx * sweep.seconds,
+                    shot.z - shot.vz * sweep.seconds,
+                ),
+                to: Vec2::new(shot.x, shot.z),
+                y: shot.y,
+                visual_y: shot.visual_y,
+            });
+        }
+        if tick % 10 == 0 {
+            let weapon = if tick % 20 == 0 {
+                Weapon::Ricochet
+            } else {
+                Weapon::Rocket
+            };
+            fire_from(sim, shooter, weapon, tick as f64 * 2.4);
+        }
+    }));
+    // Join once a ricochet that has bounced, a rocket and a few other shells are airborne.
+    let airborne = |net: &Network| {
+        let shots = &net.host.simulation.as_ref().unwrap().shots;
+        let flying = || shots.iter().filter(|shot| shot.life > 0.0);
+        let bounced = flying().any(|shot| shot.weapon == Weapon::Ricochet && shot.ricocheted);
+        let rocket = flying().any(|shot| shot.weapon == Weapon::Rocket);
+        (bounced && rocket && flying().count() >= 4)
+            .then(|| flying().map(|shot| shot.id).collect::<Vec<_>>())
+    };
+    let mut waited = 0.0;
+    let in_flight = loop {
+        if let Some(ids) = airborne(&net) {
+            break ids;
+        }
+        assert!(
+            waited < 20_000.0,
+            "the room never had a bounced ricochet and a rocket airborne"
+        );
+        net.run(FRAME_MS);
+        waited += FRAME_MS;
+    };
+    let bob = net.add(None);
+    net.connect(
+        bob,
+        JoinChoice {
+            existing_room: Some(true),
+            ..choice("bob", None)
+        },
+    );
+    // What bob draws at each frame's display tick.
+    let mut reads: Vec<(f64, Vec<RenderShot>)> = Vec::new();
+    let mut baseline = None;
+    let mut frames = net.peers[bob].frames;
+    for _ in 0..240 {
+        net.run(FRAME_MS);
+        let peer = &net.peers[bob];
+        if baseline.is_none() && peer.client.mirror().state.is_some() {
+            // At least the baseline's tick: frames may already have followed it.
+            baseline = Some(peer.client.mirror().tick as f64);
+        }
+        if peer.frames > frames {
+            frames = peer.frames;
+            let shots = peer.client.display().unwrap().shots.clone();
+            // The margin is how far the newest frame, the mirror's, is ahead of the display.
+            let stats = peer.client.stats(net.now);
+            let display = stats.server_tick as f64 - stats.margin_ms / SIMULATION_STEP_MS;
+            reads.push((display, shots));
+        }
+    }
+    let baseline = baseline.expect("bob received a baseline");
+    assert!(reads.len() > 200, "bob drew {} frames", reads.len());
+    let sweeps = sweeps.lock().unwrap();
+    for id in &in_flight {
+        assert!(
+            sweeps
+                .iter()
+                .any(|sweep| sweep.id == *id && sweep.end >= baseline),
+            "shell {id} was still flying at bob's baseline"
+        );
+    }
+    let newest = net.host.tick() as f64;
+    let mut compared = 0;
+    for (tick, shots) in &reads {
+        let tick = *tick;
+        if tick > newest - 3.0 {
+            continue;
+        }
+        // Every drawn shell flies there, at the host's position and heights.
+        for shot in shots {
+            let distance = sweeps_at(&sweeps, shot.id, tick)
+                .map(|sweep| {
+                    assert!(
+                        same_height(shot.y, sweep.y) && same_height(shot.visual_y, sweep.visual_y),
+                        "shell {} is drawn at height {:?}/{:?}, flies at {:?}/{:?}",
+                        shot.id,
+                        shot.y,
+                        shot.visual_y,
+                        sweep.y,
+                        sweep.visual_y
+                    );
+                    let at = sweep.at(tick);
+                    (at.x - shot.x).hypot(at.z - shot.z)
+                })
+                .reduce(f64::min)
+                .unwrap_or_else(|| {
+                    panic!("shell {} is drawn at tick {tick} but not flying", shot.id)
+                });
+            assert!(
+                distance <= PATH_TOLERANCE + WIRE_SLACK,
+                "shell {} is drawn {distance} m from where the host flies it at tick {tick}",
+                shot.id
+            );
+            compared += 1;
+        }
+        // From the baseline on, every shell flying well inside a sweep is drawn.
+        if tick < baseline {
+            continue;
+        }
+        for sweep in sweeps.iter() {
+            if sweep.start + 0.01 < tick && tick < sweep.end - 0.01 {
+                assert!(
+                    shots.iter().any(|shot| shot.id == sweep.id),
+                    "shell {} flies at tick {tick} but bob does not draw it",
+                    sweep.id
+                );
+            }
+        }
+    }
+    assert!(compared > 100, "compared {compared} drawn shells");
+    // Each shell in flight at the join is drawn on until its last sweep.
+    for id in &in_flight {
+        let end = sweeps
+            .iter()
+            .rfind(|sweep| sweep.id == *id)
+            .map(|sweep| sweep.end)
+            .unwrap();
+        let last_drawn = reads
+            .iter()
+            .filter(|(_, shots)| shots.iter().any(|shot| shot.id == *id))
+            .map(|(tick, _)| *tick)
+            .reduce(f64::max)
+            .unwrap_or_else(|| panic!("bob never draws shell {id}, in flight at the join"));
+        assert!(
+            end < newest - 3.0 && last_drawn > end - 1.5,
+            "shell {id} ends at tick {end} but is last drawn at {last_drawn}"
         );
     }
 }

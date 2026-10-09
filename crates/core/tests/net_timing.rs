@@ -6,7 +6,9 @@
 mod net_support;
 mod support;
 
-use net_support::{set_linvel, set_translation};
+use std::f64::consts::PI;
+
+use net_support::{WIRE_SLACK, same_height, set_linvel, set_translation};
 use sloppy_core::net::fixed_step_clock::FixedStepClock;
 use sloppy_core::net::input_cadence::{InputCadence, InputSample};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
@@ -24,14 +26,15 @@ use sloppy_core::net::shot_paths::{
 use sloppy_core::net::transport_delay::DelayedChannel;
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{STEP, weapon};
+use sloppy_core::sim::data::{INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, STEP, weapon};
+use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::render_state::{RenderFragment, RenderShot, RenderState};
 use sloppy_core::sim::timber_layout::{
     TimberFace, TimberHit, TimberMark, TimberPart, TimberPartKind,
 };
 use sloppy_core::sim::types::{
-    AmmoInventory, CoverKind, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
+    AmmoInventory, CoverKind, Mine, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
 };
 use sloppy_core::sim::weapons::fire_weapon;
 
@@ -861,13 +864,15 @@ fn local_extrapolation_is_bounded_and_resets_across_tank_lives() {
 // ---- Projectile paths: what a client draws against what the host simulated -------------
 
 /// One simulated sweep: shell `id` flew straight from `from` at tick `start` to `to` at
-/// tick `end` (fractional ticks).
+/// tick `end` (fractional ticks), at combat height `y` and render launch height `visual_y`.
 struct Sweep {
     id: u32,
     start: f64,
     end: f64,
     from: Vec2,
     to: Vec2,
+    y: Option<f64>,
+    visual_y: Option<f64>,
 }
 
 /// A recorded room: the host's sweeps and events, and what its client drew.
@@ -878,6 +883,8 @@ struct Replay {
     entries: Vec<PathEntry>,
     /// Impact effects as the client received them: (tick, x, z).
     impacts: Vec<(f64, f64, f64)>,
+    /// Every event the client received, at its tick.
+    events: Vec<TimedEvent>,
     /// Display reads: the display tick and the shells drawn at it.
     reads: Vec<(f64, Vec<RenderShot>)>,
     ticks: u64,
@@ -915,7 +922,12 @@ fn rock(sim: &mut Simulation, x: f64, z: f64, w: f64, d: f64) {
 
 /// Fires the shooter's `weapon` at `aim` radians.
 fn fire(sim: &mut Simulation, weapon: Weapon, aim: f64) {
-    let tank = &mut sim.tanks[0];
+    fire_from(sim, 0, weapon, aim);
+}
+
+/// Fires tank `index`'s `weapon` at `aim` radians.
+fn fire_from(sim: &mut Simulation, index: usize, weapon: Weapon, aim: f64) {
+    let tank = &mut sim.tanks[index];
     tank.ammo = AmmoInventory {
         spread: 99.0,
         rocket: 99.0,
@@ -925,7 +937,7 @@ fn fire(sim: &mut Simulation, weapon: Weapon, aim: f64) {
     tank.selected_ammo = weapon;
     tank.aim = aim;
     tank.cooldown = 0.0;
-    fire_weapon(sim, 0);
+    fire_weapon(sim, index);
 }
 
 /// Plays `ticks` of `sim` as a room does: the host follows every projectile sweep with its
@@ -968,6 +980,8 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
                     shot.z - shot.vz * sweep.seconds,
                 ),
                 to: Vec2::new(shot.x, shot.z),
+                y: shot.y,
+                visual_y: shot.visual_y,
             });
         }
         recorder.follow(&mut sim, tick);
@@ -1000,6 +1014,7 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
                 .filter(|timed| timed.event.kind == SimEventType::Impact)
                 .map(|timed| (timed.tick, timed.event.x, timed.event.z)),
         );
+        replay.events.extend(extras.events.iter().cloned());
         timeline
             .push(
                 mirror.render(viewer).unwrap(),
@@ -1043,13 +1058,10 @@ fn simulated(sweep: &Sweep, tick: f64) -> Vec2 {
     )
 }
 
-/// The wire rounds positions to millimetres and ticks to thousandths, which a 60 m/s
-/// shell crosses in another millimetre.
-const WIRE_SLACK: f64 = 0.003;
-
 /// Checks every display read against the host: each drawn shell was flying there and is
-/// within `PATH_TOLERANCE` of its simulated position, and each flying shell is drawn.
-/// Returns how many drawn shells were compared and the largest distance seen.
+/// within `PATH_TOLERANCE` of its simulated position at its simulated combat and render
+/// heights, and each flying shell is drawn. Returns how many drawn shells were compared
+/// and the largest distance seen.
 fn assert_drawn_where_simulated(replay: &Replay) -> (usize, f64) {
     let mut compared = 0;
     let mut worst: f64 = 0.0;
@@ -1062,6 +1074,15 @@ fn assert_drawn_where_simulated(replay: &Replay) -> (usize, f64) {
         for shot in shots {
             let distance = sweeps_at(replay, shot.id, tick)
                 .map(|sweep| {
+                    assert!(
+                        same_height(shot.y, sweep.y) && same_height(shot.visual_y, sweep.visual_y),
+                        "shell {} is drawn at height {:?}/{:?}, flies at {:?}/{:?}",
+                        shot.id,
+                        shot.y,
+                        shot.visual_y,
+                        sweep.y,
+                        sweep.visual_y
+                    );
                     let at = simulated(sweep, tick);
                     (at.x - shot.x).hypot(at.z - shot.z)
                 })
@@ -1126,6 +1147,88 @@ fn assert_impacts_meet_the_drawn_shell(replay: &Replay) -> usize {
     met
 }
 
+/// A shell's path end as the client drew it: the end tick and the last drawn position.
+struct DrawnEnd {
+    id: u32,
+    tick: f64,
+    at: Vec2,
+}
+
+fn drawn_ends(replay: &Replay) -> Vec<DrawnEnd> {
+    let mut paths: Vec<ShotPath> = Vec::new();
+    let mut ends = Vec::new();
+    for entry in &replay.entries {
+        match *entry {
+            PathEntry::Launch(path) | PathEntry::Change(path) => {
+                paths.retain(|known| known.id != path.id);
+                paths.push(path);
+            }
+            PathEntry::End { id, tick } => {
+                let drawn = paths.iter().find(|path| path.id == id).unwrap().at(tick);
+                ends.push(DrawnEnd {
+                    id,
+                    tick,
+                    at: Vec2::new(drawn.x, drawn.z),
+                });
+            }
+        }
+    }
+    ends
+}
+
+/// The shell the host destroyed during tick `tick` within `reach` of (`x`, `z`): its path
+/// ends in that tick, where the shell was last drawn, and no display read draws it after.
+fn assert_destroyed_at(replay: &Replay, tick: f64, x: f64, z: f64, reach: f64) -> u32 {
+    let end = drawn_ends(replay)
+        .into_iter()
+        .find(|end| {
+            tick - 1.0 < end.tick
+                && end.tick <= tick + 1e-3
+                && (end.at.x - x).hypot(end.at.z - z) <= reach + PATH_TOLERANCE + WIRE_SLACK
+        })
+        .unwrap_or_else(|| panic!("no shell path ends at ({x}, {z}) in tick {tick}"));
+    for (read, shots) in &replay.reads {
+        if *read > end.tick + 1e-3 {
+            assert!(
+                shots.iter().all(|shot| shot.id != end.id),
+                "shell {} is drawn at tick {read} after it ended at {}",
+                end.id,
+                end.tick
+            );
+        }
+    }
+    end.id
+}
+
+/// Each bounce's ricochet effect is where the drawn shell turns: a new path for the shell
+/// starts there during the bounce's tick. Returns how many bounces were checked.
+fn assert_bounces_turn_the_drawn_shell(replay: &Replay) -> usize {
+    let bounces = events_of(replay, SimEventType::Ricochet);
+    for bounce in &bounces {
+        let (tick, x, z) = (bounce.tick, bounce.event.x, bounce.event.z);
+        assert!(
+            replay.entries.iter().any(|entry| match entry {
+                PathEntry::Change(path) =>
+                    tick - 1.0 <= path.tick
+                        && path.tick <= tick + 1e-3
+                        && (path.x - x).hypot(path.z - z) <= PATH_TOLERANCE + WIRE_SLACK,
+                _ => false,
+            }),
+            "no drawn shell turns at the bounce at ({x}, {z}) in tick {tick}"
+        );
+    }
+    bounces.len()
+}
+
+/// Received events of one kind.
+fn events_of(replay: &Replay, kind: SimEventType) -> Vec<&TimedEvent> {
+    replay
+        .events
+        .iter()
+        .filter(|timed| timed.event.kind == kind)
+        .collect()
+}
+
 fn launches(replay: &Replay) -> usize {
     replay
         .entries
@@ -1169,10 +1272,14 @@ fn standard_shells_are_launched_once_and_drawn_on_their_simulated_flight_until_i
 #[test]
 fn ricochet_shells_start_a_path_at_each_bounce_and_stay_on_the_simulated_flight() {
     let mut sim = range();
-    // A corridor along +z whose walls the shell bounces between.
-    rock(&mut sim, -4.0, 14.0, 1.0, 20.0);
-    rock(&mut sim, 4.0, 14.0, 1.0, 20.0);
-    let replay = replay(sim, 120, |sim, tick| {
+    // A corridor along +z whose walls the shell bounces between until its bounces run out
+    // and the next wall stops it; the target waits beside it.
+    support::place_tank(&mut sim, 1, 20.0, 30.0, Some(0.0));
+    for z in [14.0, 30.0] {
+        rock(&mut sim, -4.0, z, 1.0, 20.0);
+        rock(&mut sim, 4.0, z, 1.0, 20.0);
+    }
+    let replay = replay(sim, 150, |sim, tick| {
         if tick == 1 {
             fire(sim, Weapon::Ricochet, 0.6);
         }
@@ -1189,12 +1296,18 @@ fn ricochet_shells_start_a_path_at_each_bounce_and_stay_on_the_simulated_flight(
             }
         })
         .count();
-    assert!(bounces >= 2, "the shell bounced {bounces} times");
-    assert!(changes(&replay) >= 2, "each bounce starts a path");
+    assert_eq!(bounces, 3, "the shell bounced {bounces} times");
+    assert!(changes(&replay) >= 3, "each bounce starts a path");
     let (compared, worst) = assert_drawn_where_simulated(&replay);
     assert!(compared > 50, "compared {compared} drawn shells");
     assert!(worst <= PATH_TOLERANCE + WIRE_SLACK);
-    assert_impacts_meet_the_drawn_shell(&replay);
+    let turns = assert_bounces_turn_the_drawn_shell(&replay);
+    assert_eq!(turns, 3, "every bounce turns the drawn shell");
+    assert_eq!(
+        assert_impacts_meet_the_drawn_shell(&replay),
+        1,
+        "the shell's last wall hit meets its drawn shell"
+    );
 }
 
 #[test]
@@ -1273,4 +1386,104 @@ fn spread_pellets_each_follow_their_own_simulated_flight() {
     assert!(compared > 100, "compared {compared} drawn shells");
     assert!(worst < 0.01);
     assert!(assert_impacts_meet_the_drawn_shell(&replay) >= 3);
+}
+
+#[test]
+fn shells_that_intercept_each_other_stop_drawing_where_they_met() {
+    let mut sim = range();
+    assert_ne!(sim.tanks[0].team, sim.tanks[1].team);
+    let replay = replay(sim, 60, |sim, tick| {
+        if tick == 1 {
+            fire_from(sim, 0, Weapon::Standard, 0.0);
+            fire_from(sim, 1, Weapon::Standard, PI);
+        }
+    });
+    let flashes = events_of(&replay, SimEventType::Explosion);
+    assert_eq!(flashes.len(), 1, "the shells met once");
+    let flash = &flashes[0];
+    let ends = drawn_ends(&replay);
+    assert_eq!(ends.len(), 2, "both shells ended");
+    // The flash is at the midpoint of the two shells as they were last drawn.
+    let reach = INTERCEPTION_RADIUS / 2.0;
+    let a = assert_destroyed_at(&replay, flash.tick, flash.event.x, flash.event.z, reach);
+    let b = ends.iter().find(|end| end.id != a).unwrap();
+    assert_destroyed_at(&replay, flash.tick, b.at.x, b.at.z, 0.0);
+    let middle = Vec2::new(
+        (ends[0].at.x + ends[1].at.x) / 2.0,
+        (ends[0].at.z + ends[1].at.z) / 2.0,
+    );
+    assert!(
+        (middle.x - flash.event.x).hypot(middle.z - flash.event.z) <= PATH_TOLERANCE + WIRE_SLACK,
+        "the interception flashes between the drawn shells"
+    );
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 20, "compared {compared} drawn shells");
+    assert!(worst < 0.01);
+    assert!(
+        events_of(&replay, SimEventType::Impact).is_empty(),
+        "neither tank is hit"
+    );
+}
+
+#[test]
+fn a_shell_zapped_by_a_laser_defense_stops_drawing_where_the_beam_met_it() {
+    let mut sim = range();
+    sim.tanks[1].laser = LASER_DEFENSE.duration;
+    let replay = replay(sim, 150, |sim, tick| {
+        if tick % 30 == 1 && tick < 100 {
+            fire(sim, Weapon::Standard, 0.0);
+        }
+    });
+    let zaps = events_of(&replay, SimEventType::Laser);
+    assert!(!zaps.is_empty(), "the defense zapped a shell");
+    for zap in &zaps {
+        assert_destroyed_at(&replay, zap.tick, zap.event.x, zap.event.z, 0.0);
+        assert!(
+            zap.event.z < 30.0 - 2.0,
+            "the beam met the shell short of the hull"
+        );
+    }
+    assert_eq!(drawn_ends(&replay).len(), 4, "every shell ended");
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 50, "compared {compared} drawn shells");
+    assert!(worst < 0.01);
+}
+
+#[test]
+fn a_shell_that_sets_off_a_mine_stops_drawing_at_the_mine() {
+    let mut sim = range();
+    let id = sim.next_id;
+    sim.next_id += 1;
+    let (owner, team) = (sim.tanks[1].id, sim.tanks[1].team);
+    sim.mines.push(Mine {
+        id,
+        owner,
+        owner_life: None,
+        damage: None,
+        team,
+        x: 0.0,
+        z: 15.0,
+        arm: 0.0,
+        life: 25.0,
+    });
+    let replay = replay(sim, 60, |sim, tick| {
+        if tick == 1 {
+            fire(sim, Weapon::Standard, 0.0);
+        }
+    });
+    let blasts = events_of(&replay, SimEventType::Explosion);
+    assert_eq!(blasts.len(), 1, "the mine went off once");
+    let blast = &blasts[0];
+    assert!((blast.event.x - 0.0).hypot(blast.event.z - 15.0) < 1e-6);
+    assert_destroyed_at(
+        &replay,
+        blast.tick,
+        0.0,
+        15.0,
+        MINE_RADIUS + SHELL_HIT_RADIUS,
+    );
+    assert_eq!(drawn_ends(&replay).len(), 1);
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 10, "compared {compared} drawn shells");
+    assert!(worst < 0.01);
 }
