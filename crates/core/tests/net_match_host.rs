@@ -283,6 +283,46 @@ fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() 
 }
 
 #[test]
+fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let human = h.sim().human_index().unwrap();
+    set_translation(h.sim(), human, 0.0, 0.65, 0.0);
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let tick = h.host.tick();
+    h.action(
+        "alice",
+        "input",
+        input(&epoch, 1, tick, json!({ "fire": true })),
+    );
+    h.advance();
+    h.advance();
+    assert!(!h.sim().shots.is_empty(), "a shell is in flight");
+    h.action("alice", "end", json!({}));
+    let entries = path_entries(&h, "alice");
+    let sim = h.host.simulation.as_ref().unwrap();
+    for shot in &sim.shots {
+        let launch = entries
+            .iter()
+            .find(|entry| entry["id"] == shot.id && entry["weapon"].is_string())
+            .expect("the shell was launched");
+        let end = entries
+            .iter()
+            .find(|entry| entry["id"] == shot.id && entry["end"].is_number())
+            .expect("the frozen round ends the shell's path");
+        let path = ShotPath::read(launch.as_object().unwrap(), None).unwrap();
+        let drawn = path.at(end["end"].as_f64().unwrap());
+        assert!(
+            (drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01,
+            "and it ends where the shell stopped"
+        );
+    }
+}
+
+#[test]
 fn two_seats_drive_independently_reconnect_revokes_the_old_socket_and_host_transfer_persists() {
     let mut h = harness();
     h.join("alice", json!({ "kind": "scout", "team": 0 }));

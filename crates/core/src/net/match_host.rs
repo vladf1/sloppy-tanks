@@ -1161,6 +1161,8 @@ impl MatchHost {
     fn finish(&mut self, now_ms: u64) {
         self.phase = RoomPhase::Results;
         self.active_ms = now_ms;
+        // The simulation steps no more, so shells in flight end where they stopped.
+        self.shot_paths.end_all();
         // END BATTLE can arrive outside a timer callback, so publish its final state too.
         self.broadcast_snapshot();
         self.broadcast_lobby();

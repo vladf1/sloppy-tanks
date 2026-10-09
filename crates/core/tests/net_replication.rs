@@ -663,6 +663,10 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                     }
                 }
             }
+            if tick == 240 && !sim.mines.is_empty() {
+                // Shells no longer travel as records, so make sure a removal is encoded.
+                sim.mines.remove(0);
+            }
             let t = tick as f64;
             step(
                 &mut sim,

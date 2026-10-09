@@ -418,6 +418,17 @@ impl ShotPathRecorder {
         }
     }
 
+    /// Ends every path where its shell last flew to, for a round that stops stepping with
+    /// shells still in flight: clients would otherwise carry them on past their final pose.
+    pub fn end_all(&mut self) {
+        for followed in self.followed.drain(..) {
+            self.entries.push(PathEntry::End {
+                id: followed.path.id,
+                tick: json::position(followed.swept_to),
+            });
+        }
+    }
+
     /// Ends the path of every followed shell that is no longer flying in `shots`.
     pub fn retire(&mut self, shots: &[Shot]) {
         self.flying.clear();
