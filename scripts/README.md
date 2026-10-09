@@ -237,6 +237,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
 | `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and JSON per 50 ms room interval         |
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
+| `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |
 | `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
 | `pnpm run validate`                                                                      | Ten seeded headless matches and reset checks                                           |
 | `node scripts/benchmarks/host-download-benchmark.mjs`                                    | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
@@ -255,6 +256,11 @@ time on an otherwise idle machine, and report sample counts with outliers.
 - `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
   ticks, times 3600 and prints JSON. For an engine change, run a base-commit
   worktree and the candidate alternately over several maps and seeds.
+- `bot_skill` plays seeded bots-only team matches on the standard maps (eight
+  seeds each by default; `--maps`, `--seeds`) and writes
+  `artifacts/performance/bot-skill.json`. Pass an earlier output as `--baseline`
+  to print differences. An AI change alters every seeded match, so judge it by the
+  means ± two standard errors over rounds, not by any one match.
 - `allocation_benchmark` runs five multiplayer maps, with 1200 warm-up ticks and
   400 measured three-tick intervals per map. It retains every sample. Allocation
   counts include reallocations; bytes are requested sizes, not live or peak heap.
