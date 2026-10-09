@@ -413,6 +413,17 @@ impl NetGame {
         self.client.set_menu(open);
     }
 
+    /// Development transport delay from the page's latency slider: round trip, jitter
+    /// and stall in milliseconds, clamped like the `latency`/`jitter`/`stall` parameters.
+    pub fn set_transport_delay(&mut self, latency: f64, jitter: f64, stall: f64) {
+        let [latency, jitter, stall] = [latency, jitter, stall].map(|value| value.to_string());
+        self.client.set_delay(DelaySettings::from_params(
+            Some(&latency),
+            Some(&jitter),
+            Some(&stall),
+        ));
+    }
+
     pub fn end(&mut self, now: f64) {
         self.commands.clear();
         self.client.end(now);

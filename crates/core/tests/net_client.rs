@@ -585,6 +585,30 @@ fn heartbeats_ping_every_second_and_measure_round_trips() {
 }
 
 #[test]
+fn the_transport_delay_changes_mid_session_without_reconnecting() {
+    let mut net = Network::new();
+    let alice = net.add(None);
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(2000.0);
+    assert!(net.peers[alice].client.stats(net.now).rtt_ms < 40.0);
+    let delayed = |half_ms| DelaySettings {
+        half_ms,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    net.peers[alice].client.set_delay(delayed(40.0));
+    net.run(3000.0);
+    let rtt = net.peers[alice].client.stats(net.now).rtt_ms;
+    assert!((80.0..120.0).contains(&rtt), "40 ms each way: {rtt}");
+    net.peers[alice].client.set_delay(delayed(0.0));
+    net.run(3000.0);
+    let rtt = net.peers[alice].client.stats(net.now).rtt_ms;
+    assert!(rtt < 40.0, "the delay is gone again: {rtt}");
+    assert!(net.peers[alice].client.connected);
+    assert!(net.ended(alice).is_none());
+}
+
+#[test]
 fn a_room_reset_ends_the_connection_and_forgets_the_seat() {
     let mut net = Network::new();
     let alice = net.add(None);

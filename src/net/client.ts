@@ -38,6 +38,8 @@ const FRAME = {
   drawn: 11,
   pointerFree: 12,
 } as const;
+/** The dev-build page parameter that shows the transport delay sliders. */
+const LATENCY_SLIDER_PARAM = "latencySlider";
 /** The engine asks for timers at least this often (heartbeat, reconnect, dev delay). */
 const POLL_MS = 250;
 /** How often, in frames, to ask the engine for a recorded GPU error. */
@@ -631,7 +633,52 @@ export async function startMultiplayer(
         resume,
       },
     });
+    if (params.has(LATENCY_SLIDER_PARAM)) {
+      root.append(latencySlider(game, params, () => ui.canvas.focus()));
+    }
   }
+}
+
+/** Development panel, shown on a `?latencySlider` page, that changes the transport delay
+ * mid-battle; it starts from `?latency=`, `?jitter=` and `?stall=` when given. */
+function latencySlider(game: NetGame, params: URLSearchParams, done: () => void): HTMLElement {
+  const panel = document.createElement("div");
+  panel.style.cssText =
+    "position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:50;display:flex;" +
+    "flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 24px);box-sizing:border-box;" +
+    "gap:6px 14px;align-items:center;padding:8px 14px;border-radius:8px;background:#000b;" +
+    "color:#fff;font:13px system-ui;user-select:none";
+  const sliders = [
+    { key: "latency", label: "Round trip", max: 300, step: 10 },
+    { key: "jitter", label: "Jitter", max: 30, step: 5 },
+    { key: "stall", label: "Stalls", max: 500, step: 50 },
+  ].map(({ key, label, max, step }) => {
+    const input = document.createElement("input");
+    Object.assign(input, { type: "range", min: "0", max: String(max), step: String(step) });
+    input.value = String(Math.min(max, Number(params.get(key)) || 0));
+    input.style.width = key === "latency" ? "220px" : "90px";
+    const text = document.createElement("span");
+    text.style.cssText = "min-width:58px;font-variant-numeric:tabular-nums";
+    const field = document.createElement("label");
+    field.style.cssText = "display:flex;gap:6px;align-items:center";
+    field.append(label, input, text);
+    panel.append(field);
+    return { input, text };
+  });
+  const apply = () => {
+    const [latency, jitter, stall] = sliders.map(({ input }) => Number(input.value));
+    for (const { input, text } of sliders) {
+      text.textContent = `${input.value} ms`;
+    }
+    game.set_transport_delay(latency, jitter, stall);
+  };
+  for (const { input } of sliders) {
+    input.addEventListener("input", apply);
+    // Hand the keyboard back to driving once a slider is released.
+    input.addEventListener("change", done);
+  }
+  apply();
+  return panel;
 }
 
 /** A seat this tab held in the room before a reload; the engine checks it. */

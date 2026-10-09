@@ -540,6 +540,23 @@ impl NetworkClient {
         self.open(now_ms);
     }
 
+    /// Changes the development transport delay mid-session (the page's latency slider).
+    /// Messages already queued keep their delivery times, and a channel never delivers
+    /// before the message ahead of it, so lowering the delay cannot reorder them.
+    pub fn set_delay(&mut self, settings: DelaySettings) {
+        self.config.delay = Some(settings);
+        match self.delay.as_mut() {
+            Some(delay) => delay.settings = settings,
+            None => {
+                let mut random = Random::new(f64::from(self.config.seed));
+                self.delay = Some(TransportDelay::new(
+                    settings,
+                    Box::new(move || random.next()),
+                ));
+            }
+        }
+    }
+
     fn open(&mut self, now_ms: f64) {
         if self.stopped || self.choice.is_none() {
             return;
