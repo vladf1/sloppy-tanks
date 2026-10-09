@@ -44,6 +44,9 @@ pub const PROTOCOL_VERSION: u32 = 3;
 pub const FULL_MESSAGE: u8 = 1;
 /// First byte of a binary snapshot batch.
 pub const SNAPSHOT_MESSAGE: u8 = 2;
+/// Most snapshot frames one batch message carries; the host splits a longer run of
+/// frames (many seats joining within one interval) into several batches.
+pub const MAX_BATCH_FRAMES: usize = 8;
 /// Hash of the sources clients and server must agree on. The build stamps it through
 /// `SLOPPY_CONTENT_VERSION`; unstamped builds (tests, `cargo run`) use `test-content`.
 pub const CONTENT_VERSION: &str = match option_env!("SLOPPY_CONTENT_VERSION") {

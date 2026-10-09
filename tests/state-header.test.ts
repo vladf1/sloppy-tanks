@@ -52,19 +52,19 @@ test("a bot observes binary ticks of its own round and counts their bytes", () =
 
 test("reads the headers of the Rust host's pinned binary messages", () => {
   // `crates/core/tests/net_golden.rs` writes each binary message's header fields and
-  // first bytes from a scripted room, so the bots' reader and the encoder cannot drift.
+  // header bytes from a scripted room, so the bots' reader and the encoder cannot drift.
   const fixture = JSON.parse(
     readFileSync(
       new URL("../crates/core/tests/fixtures/net-golden-binary.json", import.meta.url),
       "utf8",
     ),
   ) as {
-    messages: { type: "full" | "snapshot"; roundId: number; tick: number; start: string }[];
+    messages: { type: "full" | "snapshot"; roundId: number; tick: number; header: string }[];
   };
   assert.ok(fixture.messages.some((message) => message.type === "full"));
   assert.ok(fixture.messages.some((message) => message.type === "snapshot"));
   for (const message of fixture.messages) {
-    const header = readStateHeader(Buffer.from(message.start, "hex"));
+    const header = readStateHeader(Buffer.from(message.header, "hex"));
     assert.equal(header.type, message.type);
     assert.equal(header.roundId, message.roundId);
     assert.equal(header.tick, message.tick);

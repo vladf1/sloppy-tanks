@@ -16,10 +16,10 @@ use super::multiplayer_simulation::{
 };
 use super::player_controls::PlayerControls;
 use super::protocol::{
-    CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATTLE_OVERRUN_MS,
-    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION, Player, ROOM_IDLE_MS,
-    RoomPhase, RoomSettings, Welcome, error_message, read_player_kind, read_team,
-    room_reset_message,
+    CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
+    MAX_BATTLE_OVERRUN_MS, MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION,
+    Player, ROOM_IDLE_MS, RoomPhase, RoomSettings, Welcome, error_message, read_player_kind,
+    read_team, room_reset_message,
 };
 use super::replication::{StateStream, TimedEvent, write_snapshot_header};
 use super::room_list::RoomListing;
@@ -1075,28 +1075,29 @@ impl MatchHost {
                 .iter()
                 .filter(|(_, seq, _)| *seq > client.baseline_seq)
                 .collect();
-            let (Some(first), Some(last)) = (unseen.first(), unseen.last()) else {
-                continue;
-            };
-            let (first_seq, last_tick) = (first.1, last.0);
-            let size = unseen
-                .iter()
-                .map(|(_, _, body)| body.len() + 3)
-                .sum::<usize>();
-            let mut message = Vec::with_capacity(size + 24);
-            write_snapshot_header(
-                &mut message,
-                self.round_id,
-                last_tick,
-                ack,
-                first_seq,
-                unseen.len(),
-            );
-            for (frame_tick, _, body) in unseen {
-                super::wire::put_varint(&mut message, last_tick - frame_tick);
-                message.extend_from_slice(body);
+            // Clients read at most MAX_BATCH_FRAMES per message; seats joining between
+            // two intervals each add a frame, so a longer run goes out as several batches.
+            for chunk in unseen.chunks(MAX_BATCH_FRAMES) {
+                let (first_seq, last_tick) = (chunk[0].1, chunk[chunk.len() - 1].0);
+                let size = chunk
+                    .iter()
+                    .map(|(_, _, body)| body.len() + 3)
+                    .sum::<usize>();
+                let mut message = Vec::with_capacity(size + 24);
+                write_snapshot_header(
+                    &mut message,
+                    self.round_id,
+                    last_tick,
+                    ack,
+                    first_seq,
+                    chunk.len(),
+                );
+                for (frame_tick, _, body) in chunk {
+                    super::wire::put_varint(&mut message, last_tick - frame_tick);
+                    message.extend_from_slice(body);
+                }
+                sends.push((*connection, message));
             }
-            sends.push((*connection, message));
         }
         for (connection, message) in sends {
             self.out.push(HostEvent::Send {

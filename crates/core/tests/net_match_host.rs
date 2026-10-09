@@ -12,8 +12,8 @@ use net_support::{
 };
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{
-    CONTENT_VERSION, FULL_MESSAGE, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS, MAX_ROUND_MINUTES, Message,
-    PROTOCOL_VERSION, RoomPhase, SNAPSHOT_MESSAGE,
+    CONTENT_VERSION, FULL_MESSAGE, MAX_BATCH_FRAMES, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS,
+    MAX_ROUND_MINUTES, Message, PROTOCOL_VERSION, RoomPhase, SNAPSHOT_MESSAGE,
 };
 use sloppy_core::net::replication::{
     BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
@@ -1135,4 +1135,36 @@ fn a_mid_round_join_gets_the_streamed_scene_and_every_client_keeps_matching_the_
         assert_eq!(h.mirrored("alice"), truth);
         assert_eq!(h.mirrored("bob"), truth);
     }
+}
+
+#[test]
+fn seats_joining_between_intervals_reach_clients_in_batches_they_accept() {
+    let mut h = harness();
+    let create = json!({ "mapMode": "village", "difficulty": "normal", "humansOnly": false });
+    h.join("alice", json!({ "create": create }));
+    h.advance();
+    let before = h.binary("alice", SNAPSHOT_MESSAGE).len();
+    // Each join takes over a bot's tank between intervals, which the host streams as a
+    // frame of its own before that seat's baseline.
+    for index in 0..7 {
+        h.join(&format!("late-{index}"), json!({ "existingRoom": true }));
+    }
+    h.advance();
+    let counts: Vec<u64> = h.binary("alice", SNAPSHOT_MESSAGE)[before..]
+        .iter()
+        .map(|bytes| match read_binary_message(bytes).unwrap() {
+            BinaryMessage::Snapshot(batch) => batch.count,
+            BinaryMessage::Full(_) => unreachable!(),
+        })
+        .collect();
+    assert!(
+        counts.iter().sum::<u64>() > MAX_BATCH_FRAMES as u64,
+        "the joins produced more frames than one batch holds: {counts:?}"
+    );
+    assert!(
+        counts.iter().all(|count| *count <= MAX_BATCH_FRAMES as u64),
+        "every batch fits the client's limit: {counts:?}"
+    );
+    assert_eq!(h.mirrored("alice"), capture(&h));
+    assert_eq!(h.mirrored("late-6"), capture(&h));
 }

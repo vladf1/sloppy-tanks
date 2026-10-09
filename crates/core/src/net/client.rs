@@ -49,8 +49,9 @@ use super::input_cadence::{InputCadence, InputSample};
 use super::network_timeline::NetworkTimeline;
 use super::player_controls::{Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::protocol::{
-    CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_ROOM_MS, MAX_SERVER_MESSAGE_BYTES, Message,
-    PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings, client_message,
+    CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
+    MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
+    client_message,
 };
 use super::replication::{BinaryMessage, StateMirror, read_binary_message};
 use super::schema::{ReadResult, Record, id, parse_record, string, text_length};
@@ -68,8 +69,6 @@ const HEARTBEAT_MS: f64 = 1000.0;
 const SILENCE_MS: f64 = 10_000.0;
 const MAX_RETRY_MS: f64 = 5000.0;
 const FIRST_RETRY_MS: f64 = 500.0;
-/// Most snapshot frames one batch may carry.
-const MAX_BATCH_FRAMES: usize = 8;
 /// A bot-driven seat asks for its tank back at most this often.
 const RESUME_RETRY_MS: f64 = 1000.0;
 /// A snapshot batch arriving this long after the previous one (three host intervals,

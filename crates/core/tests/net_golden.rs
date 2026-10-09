@@ -5,10 +5,10 @@
 //! recorded from the TypeScript host (baseline `35afd91`) by `fixtures/net-golden.ts`, which
 //! left with that engine (see Git history). Protocol 2 has since replaced the `shots`
 //! records and frame `traces` with projectile `paths` (`shot_paths`), edited in by hand.
-//! Protocol 3's binary state messages are compared through their JSON view, and pinned
-//! byte for byte by `fixtures/net-golden-binary.json` (each message's header, length and
-//! hash), which the traffic bots' header reader also reads; rerun with
-//! `SLOPPY_UPDATE_FIXTURES=1` after a deliberate format change.
+//! Protocol 3's binary state messages are compared through their JSON view, and their
+//! fixed headers are pinned by `fixtures/net-golden-binary.json`, which the traffic bots'
+//! header reader also reads; rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
+//! format change.
 
 mod net_support;
 
@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use net_support::assert_same;
 use serde_json::{Map, Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
-use sloppy_core::net::protocol::{Message, PROTOCOL_VERSION};
+use sloppy_core::net::protocol::{Message, PROTOCOL_VERSION, SNAPSHOT_MESSAGE};
 use sloppy_core::net::replication::{BinaryMessage, read_binary_message};
 use sloppy_core::net::wire_view::WireView;
 
@@ -80,20 +80,38 @@ struct Runner {
     binary: Vec<Value>,
 }
 
-/// FNV-1a, enough to notice any changed byte.
-fn fnv64(bytes: &[u8]) -> String {
-    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-    });
-    format!("{hash:016x}")
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The fixed header every binary state message starts with.
-const HEADER_SAMPLE_BYTES: usize = 24;
+/// The length of a binary state message's fixed header: the type byte and its varints
+/// (`roundId tick ack firstSeq count` for a snapshot, `roundId tick seq eventCursor` and
+/// the room epoch for a baseline). Frame contents follow the physics, which differs in
+/// the last bits between platforms, so the fixture pins only the header.
+fn header_len(bytes: &[u8]) -> usize {
+    let mut at = 1;
+    let varint = |at: &mut usize| {
+        let mut value = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = bytes[*at];
+            *at += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+        }
+    };
+    let snapshot = bytes[0] == SNAPSHOT_MESSAGE;
+    for _ in 0..if snapshot { 5 } else { 4 } {
+        varint(&mut at);
+    }
+    if !snapshot {
+        at += varint(&mut at) as usize;
+    }
+    at
+}
 
 impl Runner {
     fn id(&mut self, name: &str) -> u64 {
@@ -126,9 +144,7 @@ impl Runner {
                             "type": header.0,
                             "roundId": header.1,
                             "tick": header.2,
-                            "length": bytes.len(),
-                            "fnv64": fnv64(bytes),
-                            "start": hex(&bytes[..bytes.len().min(HEADER_SAMPLE_BYTES)]),
+                            "header": hex(&bytes[..header_len(bytes)]),
                         }));
                     }
                     let message: Value = match &message {
