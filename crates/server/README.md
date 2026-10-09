@@ -226,11 +226,16 @@ lobby. Stop load tests before deploying.
 The host and SSH user are in `scripts/vps-host.mjs`; deploys need key-based SSH
 as root. The scripts trust a new host's key on first contact and refuse a
 changed one. To move to another server or provider, provision it with
-`SLOPPY_VPS_SSH=root@<new ip> pnpm run server:provision`, repoint the A record,
-then run `ssh-keygen -R sloppy-tanks-server.fridman.me` so the scripts accept
-the new host key. Caddy obtains the certificate once the record reaches the new
-server. `SLOPPY_SERVER_URL` points the deploy scripts' final `/health` check at
-another address, such as a test machine's tunnelled port.
+`SLOPPY_VPS_SSH=root@<new ip> pnpm run server:provision`, and start its dev server
+with `SLOPPY_VPS_SSH=root@<new ip> node scripts/deploy-vps.mjs --dev` (provisioning
+restarts only a server that already has an image). While `SLOPPY_VPS_SSH` names a
+host other than the public one, the deploy and update scripts read `/health` on
+that machine's loopback listener over SSH, since the public name still reaches the
+old server. Then repoint the A record and run
+`ssh-keygen -R sloppy-tanks-server.fridman.me` so the scripts accept the new host
+key. Caddy obtains the certificate once the record reaches the new server.
+`SLOPPY_SERVER_URL` points those `/health` checks at any other address, such as a
+test machine's tunnelled port.
 
 ## Monitoring
 

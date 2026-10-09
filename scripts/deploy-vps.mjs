@@ -1,12 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import {
-  SERVER_IMAGE,
-  VPS_DEV_MULTIPLAYER_URL,
-  VPS_MULTIPLAYER_URL,
-  VPS_SSH,
-  VPS_SSH_OPTIONS,
-} from "./vps-host.mjs";
+import { SERVER_IMAGE, VPS_SSH, VPS_SSH_OPTIONS, vpsHealth } from "./vps-host.mjs";
 
 /** Build the server on this machine and deploy it over SSH: the dev server's normal
  * deploy, and production's fallback when CI or the registry cannot serve
@@ -34,13 +28,11 @@ const target = dev
       name: "dev",
       service: "sloppy-tanks-dev",
       updater: "dev",
-      url: VPS_DEV_MULTIPLAYER_URL,
     }
   : {
       name: "production",
       service: "sloppy-tanks",
       updater: "production",
-      url: VPS_MULTIPLAYER_URL,
     };
 
 // Production runs what main published; a local build of anything else would stop
@@ -118,16 +110,9 @@ function loadImageOnServer(image) {
   });
 }
 
-// Through Caddy, as players reach it. SLOPPY_SERVER_URL checks another server, such as a
-// test VM.
-const health = new URL(
-  "/health",
-  (process.env.SLOPPY_SERVER_URL ?? target.url).replace(/^ws/, "http"),
-);
-const readHealth = () =>
-  fetch(health, { cache: "no-store" })
-    .then((response) => response.json())
-    .catch(() => ({}));
+// Through Caddy, or on the machine itself before the public name reaches it.
+const health = vpsHealth(dev);
+const readHealth = health.read;
 // The build, not only the content version, so a server-only change cannot pass against
 // the previous process before a restart completes.
 const isCurrent = (status) => status.contentVersion === version && status.serverBuild === build;
@@ -163,4 +148,4 @@ for (;;) {
     );
   await new Promise((resolve) => setTimeout(resolve, 2000));
 }
-console.log(`The ${target.name} multiplayer server is live at ${health.origin}`);
+console.log(`The ${target.name} multiplayer server is live at ${health.where}`);

@@ -1,11 +1,5 @@
 import { spawnSync } from "node:child_process";
-import {
-  SERVER_IMAGE,
-  VPS_DEV_MULTIPLAYER_URL,
-  VPS_MULTIPLAYER_URL,
-  VPS_SSH,
-  VPS_SSH_OPTIONS,
-} from "./vps-host.mjs";
+import { SERVER_IMAGE, VPS_SSH, VPS_SSH_OPTIONS, vpsHealth } from "./vps-host.mjs";
 
 /** Operate the VPS server's image through deploy/vps/sloppy-tanks-update over SSH.
  *
@@ -57,10 +51,6 @@ switch (command) {
     process.exit(1);
 }
 
-// What players reach through Caddy. SLOPPY_SERVER_URL reads another server.
-const url = process.env.SLOPPY_SERVER_URL ?? (dev ? VPS_DEV_MULTIPLAYER_URL : VPS_MULTIPLAYER_URL);
-const health = new URL("/health", url.replace(/^ws/, "http"));
-const status = await fetch(health, { cache: "no-store" })
-  .then((response) => response.json())
-  .catch((error) => ({ error: error.message }));
-console.log(`${health}: ${JSON.stringify(status)}`);
+// What players reach through Caddy, or the machine itself before the public name reaches it.
+const health = vpsHealth(dev);
+console.log(`${health.where}: ${JSON.stringify(await health.read())}`);
