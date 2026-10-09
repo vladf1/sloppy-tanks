@@ -9,8 +9,8 @@ import { gameServer, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 /** Operate a game server machine (deploy/servers.json) over SSH; `--dev` picks the dev
  * site's machine, otherwise production's. See crates/server/README.md.
  *
- *   provision                set the machine up (again), then start a server if none runs:
- *                            CI's :production image on production, :main on dev
+ *   provision                set the machine up (again), then start CI's :production image
+ *                            if no server runs (deploy:dev then replaces it on dev)
  *   update [--image TAG]     pull an image CI published (default :production) and switch
  *   deploy [--force]         build the image here, copy it over SSH and switch (dev's
  *                            deploy; production's fallback, from a clean origin/main)
@@ -175,9 +175,7 @@ switch (command) {
   case "provision": {
     provision();
     // A fresh machine has no pinned image; one that has keeps running it.
-    if (!succeeds("test -f /var/lib/sloppy-tanks/image")) {
-      ssh(`sloppy-tanks-update pull ${dev ? `${SERVER_IMAGE}:main` : ""}`);
-    }
+    if (!succeeds("test -f /var/lib/sloppy-tanks/image")) ssh("sloppy-tanks-update pull");
     const status = await waitForHealth((status) => !!status.contentVersion, "a /health report");
     console.log(`The ${server.role} server answers at ${health.origin}: ${JSON.stringify(status)}`);
     break;

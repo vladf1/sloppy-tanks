@@ -236,8 +236,9 @@ lobby. Stop load tests before deploying.
 To set up a machine, create an Ubuntu 26.04 x64 VPS with a public IPv4 address and
 your SSH key for root, put its address in `deploy/servers.json` and run
 `pnpm run server:provision` (`--dev` for the dev site's). It installs everything,
-starts CI's `:production` image on production or `:main` on dev, and waits until
-the server answers through Caddy at its nip.io name, which takes about a minute
+starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
+checkout's build), and waits until the server answers through Caddy at its nip.io
+name, which takes about a minute
 while Caddy obtains the certificate. The scripts trust a new machine's host key on
 first contact and refuse a changed one; after replacing a machine at the same
 address, remove the old key with `ssh-keygen -R <ip>`.
