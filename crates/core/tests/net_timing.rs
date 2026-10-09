@@ -1390,7 +1390,7 @@ fn spread_pellets_each_follow_their_own_simulated_flight() {
 
 #[test]
 fn shells_that_intercept_each_other_stop_drawing_where_they_met() {
-    let mut sim = range();
+    let sim = range();
     assert_ne!(sim.tanks[0].team, sim.tanks[1].team);
     let replay = replay(sim, 60, |sim, tick| {
         if tick == 1 {
