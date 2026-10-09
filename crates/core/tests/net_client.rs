@@ -1019,7 +1019,10 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
             );
             compared += 1;
         }
-        // From the baseline on, every shell flying well inside a sweep is drawn.
+        // From the baseline on, every shell flying well inside a sweep is drawn. The display
+        // starts a buffer behind the baseline, which holds only each shell's current path
+        // (and only the baseline pose for tanks): until the display reaches the baseline, a
+        // shell that turned or ended just before it is missing, never misplaced.
         if tick < baseline {
             continue;
         }
