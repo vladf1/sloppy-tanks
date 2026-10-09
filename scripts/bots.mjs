@@ -4,7 +4,12 @@ import { parseArgs } from "node:util";
 const endpoint = (
   process.env.SLOPPY_BOTS_URL ?? "https://sloppy-tanks-bots.vova145.workers.dev"
 ).replace(/\/$/, "");
+// `pnpm run bots -- start …` passes its `--` through, and parseArgs reads every flag
+// after a `--` as a positional, so `--minutes` and `--host` would be dropped silently.
+const args = process.argv.slice(2);
+if (args[0] === "--") args.shift();
 const { values, positionals } = parseArgs({
+  args,
   allowPositionals: true,
   options: {
     minutes: { type: "string" },
