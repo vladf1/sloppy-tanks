@@ -9,7 +9,9 @@ import { returnToSetup, type JoinScreen } from "../game/join-screen";
 import { nextPrepareStep } from "../game/task-yield";
 import { startTextureBake } from "../game/texture-bake";
 import { INPUT, type MatchState as Match } from "../game/engine-api";
+import { debugPage, printDebugHelp } from "../game/debug-console";
 import { NerdStats, nerdStatsShown } from "../game/nerd-stats";
+import { WireLog } from "./wire-log";
 import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
 import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
 import {
@@ -307,6 +309,13 @@ export async function startMultiplayer(
     joining?.status(text);
   };
 
+  // A `?debug` page logs its traffic as JSON for the console (`sloppy.wire`).
+  const wire = debugPage(location.search) ? new WireLog(engine) : undefined;
+  if (wire) {
+    Object.assign(window, { sloppy: { wire: wire.api() } });
+    printDebugHelp("room");
+  }
+
   const openSocket = (id: number, url: string) => {
     const socket = new WebSocket(url);
     // Game state arrives as binary frames; low-rate messages stay JSON text.
@@ -317,6 +326,7 @@ export async function startMultiplayer(
       pump();
     };
     socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
+      wire?.received(id, event.data, performance.now());
       if (typeof event.data === "string") {
         game.socket_message(id, event.data, performance.now());
       } else {
@@ -326,6 +336,7 @@ export async function startMultiplayer(
     };
     socket.onclose = (event) => {
       sockets.delete(id);
+      wire?.closed(id);
       game.socket_closed(id, event.code, performance.now());
       pump();
     };
@@ -347,6 +358,7 @@ export async function startMultiplayer(
           socket.close();
         } else {
           socket.send(action.text);
+          wire?.sent(action.text, performance.now());
         }
         break;
       }

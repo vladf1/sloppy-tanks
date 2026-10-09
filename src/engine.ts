@@ -9,12 +9,12 @@
 // both over, so the download and compilation overlap with the menu and the engine's
 // own JavaScript, and a page downloads and compiles the engine once.
 import * as webgpuGlue from "./generated/engine/engine.js";
-import type { Game, NetGame } from "./generated/engine/engine.js";
+import type { Game, NetGame, WireView } from "./generated/engine/engine.js";
 import webgpuBinaryUrl from "./generated/engine/engine_bg.wasm?url";
 import webglBinaryUrl from "./generated/engine-webgl/engine-webgl_bg.wasm?url";
 import { GraphicsUnavailableError } from "./game/startup-error";
 
-export type { Game, NetGame };
+export type { Game, NetGame, WireView };
 
 /** The browser graphics API an engine build renders with. */
 export type GraphicsApi = "webgpu" | "webgl";
@@ -33,6 +33,8 @@ export interface EngineGlue {
   default(options: { module_or_path: WebAssembly.Module }): Promise<unknown>;
   Game: typeof Game;
   NetGame: typeof NetGame;
+  /** Binary room messages as JSON, for `?debug` pages' `sloppy.wire`. */
+  WireView: typeof WireView;
 }
 
 interface Engine {

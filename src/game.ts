@@ -5,6 +5,7 @@
 // sound and the DOM.
 import { createGame, engineModule, type Game } from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
+import { debugPage, printDebugHelp } from "./game/debug-console";
 import { AudioSystem } from "./game/audio";
 import { Cockpit } from "./game/cockpit";
 import { Controls } from "./game/controls";
@@ -508,6 +509,9 @@ export async function prepareGame(
       const { minZoom, maxZoom } = view();
       pane.addBinding(camera, "zoom", { min: minZoom, max: maxZoom });
     }
+  }
+  if (debugPage(location.search)) {
+    printDebugHelp("single player");
   }
 
   // Let the ready menu paint first; GO still creates audio if it arrives sooner.
