@@ -12,7 +12,8 @@
 # it created, and releases its hold on pf, which stays on if something else enabled it.
 set -euo pipefail
 
-SERVER=sloppy-tanks-server.fridman.me
+# The production and dev game server machines, whose wss traffic comes from port 443.
+SERVERS_FILE=$(dirname "$0")/../../deploy/servers.json
 ANCHOR=com.apple/sloppy-lossy
 PIPE=4242
 # Exists while the script owns the pipe and anchor; holds its pf enable token.
@@ -46,12 +47,21 @@ case "${1:-}" in
     if [[ ! -f $STATE_FILE ]]; then
       pfctl -E 2>&1 | awk '/Token/ { print $3 }' >"$STATE_FILE"
     fi
+    # A machine still to be created has no ip (plutil cannot extract null).
+    servers=()
+    for role in production dev; do
+      if ip=$(plutil -extract "$role.ip" raw -o - "$SERVERS_FILE" 2>/dev/null); then servers+=("$ip"); fi
+    done
+    if [[ ${#servers[@]} -eq 0 ]]; then
+      echo "deploy/servers.json lists no server ip." >&2
+      exit 1
+    fi
     plr=$(awk -v p="$percent" 'BEGIN { printf "%.4f", p / 100 }')
     dnctl pipe "$PIPE" config plr "$plr"
-    # Production (443) and the dev server (8443), server to this Mac only.
-    echo "dummynet in quick proto tcp from $SERVER port { 443, 8443 } to any pipe $PIPE" |
+    # Server to this Mac only.
+    echo "dummynet in quick proto tcp from { ${servers[*]} } port 443 to any pipe $PIPE" |
       pfctl -q -a "$ANCHOR" -f -
-    echo "Dropping ${percent}% of packets from $SERVER, open connections included."
+    echo "Dropping ${percent}% of packets from ${servers[*]}, open connections included."
     echo "Check with: sudo $0 status   Undo with: sudo $0 off"
     ;;
   off)

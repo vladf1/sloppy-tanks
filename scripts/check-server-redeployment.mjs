@@ -1,5 +1,5 @@
 import { contentVersion, protocolVersion, serverBuild } from "./content-version.mjs";
-import { VPS_DEV_MULTIPLAYER_URL, VPS_MULTIPLAYER_URL } from "./vps-host.mjs";
+import { gameServer } from "./servers.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
  * with what the live server reports: the protocol and content version decide whether
@@ -14,8 +14,8 @@ const HEALTH_TIMEOUT_MS = 10_000;
 const PRODUCTION_PAGE_URL = "https://sloppy-tanks.fridman.me/";
 const DEV_PAGE_URL = "https://sloppy-tanks-dev.fridman.me/";
 const dev = process.argv.includes("--dev");
-const endpoint =
-  process.env.SLOPPY_SERVER_URL ?? (dev ? VPS_DEV_MULTIPLAYER_URL : VPS_MULTIPLAYER_URL);
+// The address players use, as they reach it.
+const endpoint = process.env.SLOPPY_SERVER_URL ?? gameServer(dev).url;
 const pageUrl =
   process.env.SLOPPY_PAGE_URL ??
   (process.env.SLOPPY_SERVER_URL ? undefined : dev ? DEV_PAGE_URL : PRODUCTION_PAGE_URL);

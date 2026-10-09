@@ -1,0 +1,6 @@
+[Unit]
+Description=Follow the server image on :production (auto-update)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sloppy-tanks-update auto

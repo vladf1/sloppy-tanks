@@ -231,9 +231,10 @@ repository's Pages custom domain (a Namecheap CNAME to `vladf1.github.io`). The 
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
-The workflow sets `VITE_MULTIPLAYER_URL` to the VPS game server. It does not deploy that
-server, but after the site deploys it points the server's container image tag
-`:production` at the commit's image; the dev site uses a separate server (below). A
+The workflow sets `VITE_MULTIPLAYER_URL` to the production game server
+(`deploy/servers.json`). It does not deploy that server, but after the site deploys it
+points the server's container image tag `:production` at the commit's image; the dev
+site uses a separate server on its own machine (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
@@ -267,12 +268,12 @@ Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` firs
 (or provide a Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
-The dev build connects the **Multiplayer** tab to the dev multiplayer server,
-`wss://sloppy-tanks-server.fridman.me:8443`: a second server process on the same VPS,
-separate from production's, whose dashboard is
-<https://sloppy-tanks-server.fridman.me:8443/dashboard>. `deploy:dev` redeploys that dev
-server from the same checkout first (over SSH) so client and server versions match;
-production multiplayer is never affected.
+The dev build connects the **Multiplayer** tab to the dev multiplayer server, which
+runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at its
+hostname or, without one, its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
+`/dashboard`). `deploy:dev` redeploys that dev server from the same checkout first
+(over SSH) so client and server versions match; production multiplayer is never
+affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

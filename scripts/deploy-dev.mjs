@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { VPS_DEV_MULTIPLAYER_URL as DEV_MULTIPLAYER_URL } from "./vps-host.mjs";
+import { gameServer } from "./servers.mjs";
 
 const repo = new URL("..", import.meta.url);
 const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };
@@ -24,7 +24,9 @@ const scripts = readdirSync(assets).filter((name) => name.endsWith(".js"));
 // Battle Setup's room list, so look for it in any script beside the client entry.
 const clientHasServer =
   scripts.some((name) => /^client-.*\.js$/.test(name)) &&
-  scripts.some((name) => readFileSync(new URL(name, assets), "utf8").includes(DEV_MULTIPLAYER_URL));
+  scripts.some((name) =>
+    readFileSync(new URL(name, assets), "utf8").includes(gameServer(true).url),
+  );
 if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
   throw new Error(
     "dist-dev has no multiplayer entry or dev server URL; rebuild with pnpm run build:dev",
@@ -32,10 +34,10 @@ if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
 }
 
 // Clients and the server reject each other unless both were built from the same
-// game/network sources, so publish the dev server from this checkout first. It is a
-// separate process from production's, which this never touches. The deploy waits until
-// the dev server reports this checkout's content version.
-run("node", ["scripts/deploy-vps.mjs", "--dev"]);
+// game/network sources, so publish the dev server from this checkout first. It runs on
+// its own machine, so this never touches production's. The deploy waits until the dev
+// server reports this checkout's content version.
+run("node", ["scripts/server.mjs", "deploy", "--dev"]);
 
 console.log(
   `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,
