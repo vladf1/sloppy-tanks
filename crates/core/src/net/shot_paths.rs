@@ -32,7 +32,9 @@ pub const PATH_TOLERANCE: f64 = 0.05;
 /// simulated one before a new path starts, so a bounce starts one at the wall.
 const HEADING_TOLERANCE: f64 = 0.05;
 const SPEED_TOLERANCE: f64 = 0.02;
-/// Most shells a room tracks; the simulation's shells are far fewer.
+/// Most shells a room draws: the host follows no more ([`ShotPathRecorder::sweep`]) and
+/// clients refuse state that holds more. Rooms rarely come near it; past it, new shells
+/// fly and hit undrawn until a path ends.
 pub const MAX_LIVE_PATHS: usize = 512;
 /// Latest tick a path may name.
 const MAX_TICK: f64 = 1e9;
@@ -591,6 +593,9 @@ impl ShotPathRecorder {
                 followed.path = path;
                 self.entries.push(PathEntry::Change(path));
             }
+            // At the limit a shell stays unfollowed rather than ending a drawn one: that
+            // one would vanish mid-flight. A later sweep launches it once a path ends.
+            Err(_) if self.followed.len() >= MAX_LIVE_PATHS => {}
             Err(index) => {
                 let path = ShotPath::starting(shot, start, start_x, start_z, thrust);
                 self.followed.insert(

@@ -19,9 +19,9 @@ use sloppy_core::net::replication::{
     BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
 };
 use sloppy_core::net::scene_codec::Scene;
-use sloppy_core::net::shot_paths::ShotPath;
+use sloppy_core::net::shot_paths::{MAX_LIVE_PATHS, PATH_TOLERANCE, ShotPath};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, SimEvent, SimEventType, Team};
+use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, Shot, SimEvent, SimEventType, Team};
 use support::clear_arena;
 
 fn mirror_from(h: &Harness, name: &str) -> (StateMirror, Value) {
@@ -313,6 +313,96 @@ fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
             (drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01,
             "and it ends where the shell stopped"
         );
+    }
+}
+
+/// Applies the snapshot batches `name` received after the first `seen`, asserting each
+/// frame applies, and counts them in `seen`.
+fn apply_new(h: &Harness, name: &str, mirror: &mut StateMirror, seen: &mut usize) {
+    let batches = h.binary(name, SNAPSHOT_MESSAGE);
+    for bytes in &batches[*seen..] {
+        apply_batch(mirror, bytes);
+    }
+    *seen = batches.len();
+}
+
+#[test]
+fn shells_past_the_path_limit_fly_undrawn_and_are_drawn_once_paths_free_up() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action(
+        "alice",
+        "settings",
+        json!({ "mapMode": "harbor", "difficulty": "normal", "humansOnly": true }),
+    );
+    h.action("alice", "start", json!({}));
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let human = h.sim().human_index().unwrap();
+    set_translation(h.sim(), human, 0.0, 0.65, 0.0);
+    let mut mirror = h.mirror_from_latest_full("alice");
+    let mut seen = h.binary("alice", SNAPSHOT_MESSAGE).len();
+    // A grid of slow friendly shells away from the only tank: the first 300 expire soon,
+    // the rest outlive them, and together they pass the limit.
+    let short_lived = 300;
+    let total = MAX_LIVE_PATHS + 88;
+    let sim = h.sim();
+    let (owner, team) = (sim.tanks[human].id, sim.tanks[human].team);
+    for i in 0..total {
+        let id = sim.next_id;
+        sim.next_id += 1;
+        sim.shots.push(Shot {
+            id,
+            x: (i % 30) as f64 - 15.0,
+            z: 5.0 + (i / 30) as f64,
+            y: Some(1.0),
+            vz: 2.0,
+            owner,
+            team,
+            damage: 1.0,
+            life: if i < short_lived { 0.3 } else { 3.0 },
+            ..Shot::default()
+        });
+    }
+    h.advance();
+    apply_new(&h, "alice", &mut mirror, &mut seen);
+    assert_eq!(h.sim().shots.len(), total, "every shell flies");
+    assert_eq!(
+        mirror.shots.paths.len(),
+        MAX_LIVE_PATHS,
+        "only the limit is drawn"
+    );
+    h.action("alice", "resync", json!({}));
+    let resynced = h.mirror_from_latest_full("alice");
+    assert_eq!(resynced.shots.paths.len(), MAX_LIVE_PATHS);
+    assert!(!mirror.needs_full && !resynced.needs_full);
+
+    for _ in 0..8 {
+        h.advance();
+    }
+    apply_new(&h, "alice", &mut mirror, &mut seen);
+    assert!(!mirror.needs_full);
+    let tick = h.host.tick() as f64;
+    let sim = h.host.simulation.as_ref().unwrap();
+    assert_eq!(
+        sim.shots.len(),
+        total - short_lived,
+        "the short-lived expired"
+    );
+    assert_eq!(
+        mirror.shots.paths.len(),
+        sim.shots.len(),
+        "every shell is drawn"
+    );
+    for shot in &sim.shots {
+        let path = mirror
+            .shots
+            .paths
+            .iter()
+            .find(|path| path.id == shot.id)
+            .expect("a path for the shell");
+        let drawn = path.at(tick);
+        assert!((drawn.x - shot.x).hypot(drawn.z - shot.z) <= PATH_TOLERANCE + 0.01);
     }
 }
 
