@@ -82,6 +82,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
     brain.reaction -= dt;
     brain.fire_delay = 0f64.max(brain.fire_delay - dt);
     brain.memory -= dt;
+    brain.alarm -= dt;
     if brain.decision <= 0.0 {
         update_bot_goal(simulation, tank_index, role, easy, aggressive, preferred);
     }

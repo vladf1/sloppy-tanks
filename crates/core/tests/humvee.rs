@@ -22,8 +22,8 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::tank_driving::drive_tank;
 use sloppy_core::sim::weapons::{collect_pickup, fire_weapon};
 use sloppy_core::sim::{
-    BotMode, CoverKind, GameMode, Pickup, PickupKind, SimEventType, Simulation, SpecialAmmo,
-    VehicleCommand, VehicleKind, Weapon,
+    BotMode, CoverKind, DamageCause, DamageSource, GameMode, Pickup, PickupKind, SimEventType,
+    Simulation, SpecialAmmo, VehicleCommand, VehicleKind, Weapon,
 };
 use support::clear_arena;
 
@@ -399,6 +399,52 @@ fn humvees_plan_an_escape_fire_once_withdraw_and_wait_before_attacking_again() {
     assert!(
         distance(simulation.tanks[hunter].brain.goal, last_shot) >= 5.0,
         "next attack uses a different position"
+    );
+}
+
+#[test]
+fn a_humvee_shot_from_out_of_sight_withdraws_from_a_close_shooter_instead_of_charging() {
+    let Duel {
+        mut simulation,
+        hunter,
+        target,
+    } = duel(
+        10.0,
+        &[CoverDef::new(
+            CoverKind::Concrete,
+            0.0,
+            5.0,
+            6.0,
+            1.0,
+            3.0,
+            f64::INFINITY,
+            0,
+        )],
+    );
+    let shooter = position(&simulation, target);
+    assert!(!simulation.visible(position(&simulation, hunter), shooter));
+    // An ordinary HMMWV: hunters track enemies through cover anyway.
+    let brain = &mut simulation.tanks[hunter].brain;
+    brain.ultra_aggressive = false;
+    brain.target = 0;
+    brain.memory = 0.0;
+    brain.decision = 0.0;
+    bot_command(&mut simulation, hunter, STEP);
+    assert_eq!(simulation.tanks[hunter].brain.target, 0);
+    let (owner, team) = (simulation.tanks[target].id, simulation.tanks[target].team);
+    let source = DamageSource {
+        cause: DamageCause::Standard,
+        origin: Vec2::new(0.0, 1.0),
+    };
+    simulation.damage_tank(hunter, 1.0, owner, team, None, Some(source));
+    bot_command(&mut simulation, hunter, STEP);
+    let brain = &simulation.tanks[hunter].brain;
+    assert_eq!(brain.target, owner);
+    assert_eq!(brain.mode, BotMode::Retreat);
+    assert_eq!(tactics(&simulation, hunter).phase, HumveePhase::Withdraw);
+    assert!(
+        distance(tactics(&simulation, hunter).escape, shooter) > 10.0,
+        "the escape leads away from the shooter"
     );
 }
 

@@ -8,12 +8,13 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_movement::route_direction;
 use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
-use sloppy_core::sim::math::{Vec2, distance};
+use sloppy_core::sim::math::{Vec2, angle_delta, distance};
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
-    CoverKind, Pickup, PickupKind, Simulation, Team, VehicleCommand, VehicleKind, Weapon,
+    BotMode, CoverKind, DamageCause, DamageSource, Pickup, PickupKind, Simulation, Team,
+    VehicleCommand, VehicleKind, Weapon,
 };
 use support::clear_arena;
 
@@ -233,6 +234,100 @@ fn bots_skip_a_closer_enemy_behind_cover_for_the_nearest_one_in_sight() {
     s.tanks[bot].brain.decision = 0.0;
     bot_command(&mut s, bot, STEP);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[hidden].id);
+}
+
+/// Damage `victim` as if `shooter` (on team Red) hit it with `cause`.
+fn hit(s: &mut Simulation, victim: usize, shooter: usize, cause: DamageCause) {
+    s.tanks[victim].protection = 0.0;
+    let owner = s.tanks[shooter].id;
+    let source = DamageSource {
+        cause,
+        origin: tank_position(s, victim),
+    };
+    s.damage_tank(victim, 1.0, owner, Team::Red, None, Some(source));
+}
+
+fn tank_position(s: &Simulation, index: usize) -> Vec2 {
+    s.body_translation(s.tanks[index].body).planar()
+}
+
+#[test]
+fn bots_turn_on_a_farther_enemy_whose_shell_hits_them_but_not_on_a_mine_layer() {
+    let mut s = arena();
+    let bot = s.add_tank(Team::Blue, false, VehicleKind::Balanced, 1);
+    let near = s.add_tank(Team::Red, true, VehicleKind::Balanced, 0);
+    let far = s.add_tank(Team::Red, true, VehicleKind::Balanced, 0);
+    place(&mut s, bot, 0.0, 0.0);
+    place(&mut s, near, 2.0, 10.0);
+    place(&mut s, far, -2.0, 18.0);
+    s.world.step();
+    s.tanks[bot].brain.decision = 0.0;
+    bot_command(&mut s, bot, STEP);
+    assert_eq!(s.tanks[bot].brain.target, s.tanks[near].id);
+    // A mine names no shooter the bot could have seen.
+    hit(&mut s, bot, far, DamageCause::Mine);
+    s.tanks[bot].brain.decision = 0.0;
+    bot_command(&mut s, bot, STEP);
+    assert_eq!(s.tanks[bot].brain.target, s.tanks[near].id);
+    // A shell makes the bot reconsider on its next tick, without waiting for a decision,
+    // even when its shield absorbs all of it.
+    s.tanks[bot].shield = 10.0;
+    s.tanks[bot].shield_points = 100.0;
+    let hp = s.tanks[bot].hp;
+    hit(&mut s, bot, far, DamageCause::Standard);
+    assert_eq!(s.tanks[bot].hp, hp);
+    assert_eq!(s.tanks[bot].brain.decision, 0.0);
+    bot_command(&mut s, bot, STEP);
+    assert_eq!(s.tanks[bot].brain.target, s.tanks[far].id);
+}
+
+#[test]
+fn a_bot_shot_from_out_of_sight_turns_toward_the_shooter_and_gives_up_when_the_alarm_ends() {
+    let mut s = arena();
+    let bot = s.add_tank(Team::Blue, false, VehicleKind::Balanced, 1);
+    let shooter = s.add_tank(Team::Red, true, VehicleKind::Balanced, 0);
+    place(&mut s, bot, 0.0, 0.0);
+    place(&mut s, shooter, 0.0, 20.0);
+    s.add_cover(&concrete(0.0, 8.0, 8.0, 1.0));
+    s.world.step();
+    s.tanks[bot].aim = std::f64::consts::PI;
+    s.tanks[bot].brain.decision = 0.0;
+    bot_command(&mut s, bot, STEP);
+    assert_eq!(s.tanks[bot].brain.target, 0);
+
+    hit(&mut s, bot, shooter, DamageCause::Rocket);
+    let shooter_at = tank_position(&s, shooter);
+    let mut fired = false;
+    for _ in 0..60 {
+        let command = bot_command(&mut s, bot, STEP);
+        s.tanks[bot].aim = command.aim;
+        fired |= command.fire;
+    }
+    let brain = &s.tanks[bot].brain;
+    assert_eq!(brain.target, s.tanks[shooter].id);
+    assert_eq!(brain.mode, BotMode::Fight);
+    assert!(
+        distance(brain.goal, shooter_at) < 1.0,
+        "the bot heads for the shooter"
+    );
+    assert!(
+        // Within the bot's deliberate aim error.
+        angle_delta(s.tanks[bot].aim, 0.0).abs() < 0.3,
+        "the turret turned toward the shooter, aim {}",
+        s.tanks[bot].aim
+    );
+    assert!(!fired, "the bot never fires at a shooter it cannot see");
+
+    for _ in 0..5 * 60 {
+        bot_command(&mut s, bot, STEP);
+    }
+    assert_eq!(s.tanks[bot].brain.target, 0);
+    assert_eq!(s.tanks[bot].brain.mode, BotMode::Advance);
+
+    hit(&mut s, bot, shooter, DamageCause::Standard);
+    s.respawn(bot, None);
+    assert_eq!(s.tanks[bot].brain.attacker, 0);
+    assert_eq!(s.tanks[bot].brain.alarm, 0.0);
 }
 
 #[test]

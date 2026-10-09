@@ -183,6 +183,9 @@ pub fn spawn_tank(
             stuck: 0.0,
             recovery: 0.0,
             recovery_goal: position,
+            attacker: 0,
+            attacked_from: position,
+            alarm: 0.0,
             recoveries: 0,
             avoidance: Vec2::ZERO,
             avoidance_time: 0.0,
@@ -271,6 +274,8 @@ pub fn respawn_tank(simulation: &mut Simulation, tank_index: usize, position: Op
     brain.pickup_target = 0;
     brain.avoidance = Vec2::ZERO;
     brain.recovery_goal = p;
+    brain.attacker = 0;
+    brain.alarm = 0.0;
     let id = tank.id;
     let mut event = SimEvent::at(SimEventType::Respawn, p.x, p.z);
     event.id = Some(id);

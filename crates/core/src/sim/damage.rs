@@ -5,6 +5,7 @@ use rapier3d::prelude::SharedShape;
 
 use super::ammunition::clear_ammo;
 use super::arena::CoverDef;
+use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
 use super::data::group;
@@ -63,6 +64,10 @@ pub fn damage_tank(
     }
     let records = simulation.records(tank);
     let elapsed = simulation.elapsed;
+    // Before the shield: a shell it absorbs still shows a bot who fired it.
+    if amount > 0.0 {
+        notice_hit(simulation, tank_index, owner, source);
+    }
     let tank = &mut simulation.tanks[tank_index];
     if amount > 0.0 {
         tank.last_combat = elapsed;
