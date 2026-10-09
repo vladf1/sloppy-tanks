@@ -1,27 +1,36 @@
 //! The client's display timeline (`src/net/interpolation.ts`): remote poses, events and
-//! projectile traces share one delayed playout clock; only the local hull targets the
+//! projectile paths share one delayed playout clock; only the local hull targets the
 //! present.
 
 use std::collections::VecDeque;
 
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::playout_clock::PlayoutClock;
-use super::render_timeline::RenderTimeline;
-use super::replication::{ShotTrace, TimedEvent};
-use crate::sim::render_state::{RenderShot, RenderState};
+use super::render_timeline::{MAX_EXTRAPOLATION_SECONDS, RenderTimeline};
+use super::replication::TimedEvent;
+use super::shot_paths::{LivePaths, PathEntry, ShotPath};
+use crate::sim::render_state::RenderState;
 use crate::sim::types::SimEvent;
 
 const MAX_HISTORY_ITEMS: usize = 4096;
 const MAX_LOCAL_LEAD_MS: f64 = 150.0;
-/// Traces are kept this many ticks past their end, for late display reads.
-const TRACE_RETENTION_TICKS: f64 = 12.0;
+/// Paths are kept this many ticks past their end, for late display reads.
+const PATH_RETENTION_TICKS: f64 = 12.0;
+
+/// A shell's path on the display clock: drawn from its start until `until`, the start of
+/// the shell's next path or its end; unbounded while it is the current one.
+#[derive(Clone, Debug)]
+struct DisplayedPath {
+    path: ShotPath,
+    until: f64,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct NetworkTimeline {
     pub clock: PlayoutClock,
     poses: RenderTimeline,
     events: VecDeque<TimedEvent>,
-    traces: Vec<ShotTrace>,
+    paths: Vec<DisplayedPath>,
     newest_tick: u64,
     display_tick: f64,
 }
@@ -32,13 +41,18 @@ fn at_tick(mut state: RenderState, tick: u64) -> RenderState {
 }
 
 impl NetworkTimeline {
-    /// Starts over from a baseline received at `now_ms`.
-    pub fn reset(&mut self, state: &RenderState, tick: u64, now_ms: f64) {
+    /// Starts over from a baseline received at `now_ms`, with its shells in flight.
+    pub fn reset(&mut self, state: &RenderState, tick: u64, now_ms: f64, shots: &LivePaths) {
         self.newest_tick = tick;
         self.clock.reset(tick, now_ms);
         self.display_tick = self.clock.display_ms / SIMULATION_STEP_MS;
         self.events.clear();
-        self.traces.clear();
+        self.paths.clear();
+        self.paths
+            .extend(shots.paths.iter().map(|&path| DisplayedPath {
+                path,
+                until: f64::INFINITY,
+            }));
         self.poses.reset(at_tick(state.clone(), tick));
     }
 
@@ -53,13 +67,32 @@ impl NetworkTimeline {
         state: RenderState,
         tick: u64,
         events: Vec<TimedEvent>,
-        traces: Vec<ShotTrace>,
+        paths: Vec<PathEntry>,
     ) -> Result<(), String> {
         self.newest_tick = tick;
         self.poses.push(at_tick(state, tick));
         self.events.extend(events);
-        self.traces.extend(traces);
-        if self.events.len() > MAX_HISTORY_ITEMS || self.traces.len() > MAX_HISTORY_ITEMS {
+        for entry in paths {
+            let (id, from) = match entry {
+                PathEntry::Launch(path) | PathEntry::Change(path) => (path.id, path.tick),
+                PathEntry::End { id, tick } => (id, tick),
+            };
+            if let Some(current) = self
+                .paths
+                .iter_mut()
+                .rev()
+                .find(|displayed| displayed.path.id == id && displayed.until == f64::INFINITY)
+            {
+                current.until = from;
+            }
+            if let PathEntry::Launch(path) | PathEntry::Change(path) = entry {
+                self.paths.push(DisplayedPath {
+                    path,
+                    until: f64::INFINITY,
+                });
+            }
+        }
+        if self.events.len() > MAX_HISTORY_ITEMS || self.paths.len() > MAX_HISTORY_ITEMS {
             return Err("Display history overflow; resync required".into());
         }
         Ok(())
@@ -101,27 +134,19 @@ impl NetworkTimeline {
         {
             events.push(self.events.pop_front().expect("checked").event);
         }
+        // A shell whose end has not arrived flies on its path only as far as hulls
+        // extrapolate past the newest frame.
         let display = self.display_tick;
-        let caught_up = display >= self.newest_tick as f64;
-        let traced = |id: u32| self.traces.iter().any(|trace| trace.shot.id == id);
-        let shots = &mut output.shots;
-        shots.retain(|shot| !traced(shot.id) || caught_up);
-        for trace in &self.traces {
-            if trace.tick <= display && display < trace.end_tick {
-                let alpha = (display - trace.tick) / (trace.end_tick - trace.tick);
-                let shot = RenderShot {
-                    x: trace.shot.x + (trace.end.x - trace.shot.x) * alpha,
-                    z: trace.shot.z + (trace.end.z - trace.shot.z) * alpha,
-                    ..trace.shot
-                };
-                match shots.iter_mut().find(|existing| existing.id == shot.id) {
-                    Some(existing) => *existing = shot,
-                    None => shots.push(shot),
-                }
+        let horizon =
+            self.newest_tick as f64 + MAX_EXTRAPOLATION_SECONDS * 1000.0 / SIMULATION_STEP_MS;
+        output.shots.clear();
+        for displayed in &self.paths {
+            if displayed.path.tick <= display && display < displayed.until.min(horizon) {
+                output.shots.push(displayed.path.at(display));
             }
         }
-        self.traces
-            .retain(|trace| trace.end_tick >= display - TRACE_RETENTION_TICKS);
+        self.paths
+            .retain(|displayed| displayed.until >= display - PATH_RETENTION_TICKS);
         events
     }
 }

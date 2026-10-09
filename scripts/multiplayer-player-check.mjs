@@ -7,7 +7,7 @@ import { StateMirror } from "./state-mirror.mjs";
 import { contentVersion } from "./content-version.mjs";
 
 /** The wire protocol version (`PROTOCOL_VERSION` in `crates/core/src/net/protocol.rs`). */
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const endpoint = process.env.SLOPPY_SERVER_URL ?? "ws://127.0.0.1:8787";
 const origin = process.env.SLOPPY_ORIGIN ?? "http://127.0.0.1:5173";
 const seconds = Number(process.env.SLOPPY_PLAYER_SECONDS ?? 15);
@@ -39,7 +39,7 @@ class Player {
   snapshotBytes = [];
   fullBytes = [];
   rtts = [];
-  traces = 0;
+  paths = 0;
   events = 0;
   deaths = 0;
   respawns = 0;
@@ -96,7 +96,7 @@ class Player {
           for (const snap of m.snapshots) {
             assert.ok(this.mirror.applySnapshot(snap), "Contiguous valid snapshots");
             const events = snap.events ?? [];
-            this.traces += snap.traces?.length ?? 0;
+            this.paths += snap.paths?.length ?? 0;
             this.events += events.length;
             this.deaths += events.filter((e) => e.event.type === "death").length;
             this.respawns += events.filter((e) => e.event.type === "respawn").length;
@@ -163,7 +163,7 @@ class Player {
       fullMax: Math.max(0, ...this.fullBytes),
       rttP95: this.rtts.toSorted((a, b) => a - b)[Math.floor(this.rtts.length * 0.95)],
       inputs: this.bot.stats.inputs,
-      traces: this.traces,
+      paths: this.paths,
       events: this.events,
       deaths: this.deaths,
       respawns: this.respawns,

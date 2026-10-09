@@ -14,6 +14,7 @@ use sloppy_core::net::protocol::{
 };
 use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
 use sloppy_core::net::scene_codec::Scene;
+use sloppy_core::net::shot_paths::ShotPath;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, SimEvent, SimEventType, Team};
 use support::clear_arena;
@@ -229,8 +230,60 @@ fn the_host_counts_held_input_that_lapses_before_the_next_input_arrives() {
     assert_eq!(h.host.input_lapses(), 1, "released controls never lapse");
 }
 
+/// Every projectile path entry `name` received after its latest baseline.
+fn path_entries(h: &Harness, name: &str) -> Vec<Value> {
+    h.all(name)
+        .iter()
+        .filter(|message| message["type"] == "snapshot")
+        .flat_map(|message| message["snapshots"].as_array().cloned().unwrap_or_default())
+        .flat_map(|snap| snap["paths"].as_array().cloned().unwrap_or_default())
+        .collect()
+}
+
 #[test]
-fn a_shell_in_straight_flight_is_one_trace_segment_per_frame() {
+fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    let keep = h.all_tanks();
+    clear_arena(h.sim(), &keep);
+    let human = h.sim().human_index().unwrap();
+    set_translation(h.sim(), human, 0.0, 0.65, 0.0);
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let tick = h.host.tick();
+    h.action(
+        "alice",
+        "input",
+        input(&epoch, 1, tick, json!({ "fire": true })),
+    );
+    for _ in 0..4 {
+        h.advance();
+    }
+    let entries = path_entries(&h, "alice");
+    let tick = h.host.tick() as f64;
+    let sim = h.host.simulation.as_ref().unwrap();
+    let owner = sim.tanks[human].id;
+    let flying: Vec<_> = sim
+        .shots
+        .iter()
+        .filter(|shot| shot.owner == owner)
+        .collect();
+    assert!(!flying.is_empty());
+    for shot in flying {
+        let sent: Vec<&Value> = entries
+            .iter()
+            .filter(|entry| entry["id"] == shot.id)
+            .collect();
+        assert_eq!(sent.len(), 1, "one launch, nothing per frame");
+        assert!(sent[0]["weapon"].is_string(), "the launch names its shell");
+        let path = ShotPath::read(sent[0].as_object().unwrap(), None).unwrap();
+        let drawn = path.at(tick);
+        assert!((drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01);
+    }
+}
+
+#[test]
+fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
     let mut h = harness();
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
@@ -247,31 +300,25 @@ fn a_shell_in_straight_flight_is_one_trace_segment_per_frame() {
     );
     h.advance();
     h.advance();
-    let traces: Vec<Value> = h.latest("alice", "snapshot")["snapshots"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|snap| snap["traces"].as_array().cloned().unwrap_or_default())
-        .collect();
+    assert!(!h.sim().shots.is_empty(), "a shell is in flight");
+    h.action("alice", "end", json!({}));
+    let entries = path_entries(&h, "alice");
     let sim = h.host.simulation.as_ref().unwrap();
-    let owner = sim.tanks[human].id;
-    let flying: Vec<_> = sim
-        .shots
-        .iter()
-        .filter(|shot| shot.owner == owner)
-        .collect();
-    assert!(!flying.is_empty());
-    for shot in flying {
-        let segments: Vec<&Value> = traces
+    for shot in &sim.shots {
+        let launch = entries
             .iter()
-            .filter(|trace| trace["shot"]["id"] == shot.id)
-            .collect();
-        assert_eq!(segments.len(), 1);
-        let span = segments[0]["endTick"].as_f64().unwrap() - segments[0]["tick"].as_f64().unwrap();
-        assert_eq!(span, 3.0);
-        let round = |v: f64| sloppy_core::sim::math::js_round(v * 1000.0) / 1000.0;
-        assert_eq!(segments[0]["end"]["x"].as_f64().unwrap(), round(shot.x));
-        assert_eq!(segments[0]["end"]["z"].as_f64().unwrap(), round(shot.z));
+            .find(|entry| entry["id"] == shot.id && entry["weapon"].is_string())
+            .expect("the shell was launched");
+        let end = entries
+            .iter()
+            .find(|entry| entry["id"] == shot.id && entry["end"].is_number())
+            .expect("the frozen round ends the shell's path");
+        let path = ShotPath::read(launch.as_object().unwrap(), None).unwrap();
+        let drawn = path.at(end["end"].as_f64().unwrap());
+        assert!(
+            (drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01,
+            "and it ends where the shell stopped"
+        );
     }
 }
 
@@ -497,7 +544,7 @@ fn a_full_room_full_team_invalid_kind_and_incompatible_build_are_rejected_before
 }
 
 #[test]
-fn real_host_messages_apply_to_mirrors_and_projectile_traces_survive_an_impact_between_snapshots() {
+fn real_host_messages_apply_to_mirrors_and_projectile_paths_survive_an_impact_between_snapshots() {
     let mut h = harness();
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
@@ -537,16 +584,23 @@ fn real_host_messages_apply_to_mirrors_and_projectile_traces_survive_an_impact_b
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), capture(&h));
     let team = h.sim().tanks[tank].team.index();
     let sim = h.host.simulation.as_ref().unwrap();
-    let traces: Vec<Value> = snaps
+    let entries: Vec<Value> = snaps
         .as_array()
         .unwrap()
         .iter()
-        .flat_map(|snap| snap["traces"].as_array().cloned().unwrap_or_default())
+        .flat_map(|snap| snap["paths"].as_array().cloned().unwrap_or_default())
         .collect();
-    assert!(traces.iter().any(|trace| {
-        trace["shot"]["team"] == team
-            && !sim.shots.iter().any(|shot| trace["shot"]["id"] == shot.id)
-    }));
+    let launch = entries
+        .iter()
+        .find(|entry| entry["team"] == team && !sim.shots.iter().any(|s| entry["id"] == s.id))
+        .expect("the shell that hit the wall was launched in these frames");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["id"] == launch["id"] && entry["end"].is_number()),
+        "and ended in them"
+    );
+    assert!(mirror.shots.paths.is_empty());
     assert!(
         snaps
             .as_array()
@@ -657,7 +711,7 @@ fn resync_skips_events_already_included_in_its_baseline_and_repeated_rounds_reta
     let mut state = Scene::capture(h.host.simulation.as_ref().unwrap());
     let mut stream = StateStream::new("r", 1);
     let mut mirror = StateMirror::default();
-    let full: Value = serde_json::from_str(&stream.full(&state, 0, 2)).unwrap();
+    let full: Value = serde_json::from_str(&stream.full(&state, 0, 2, &[])).unwrap();
     mirror.apply_full(&full, "r", 1).unwrap();
     let events: Vec<String> = (1..=3)
         .map(|id| TimedEvent::write(id, id as f64, &SimEvent::at(SimEventType::Impact, 0.0, 0.0)))
@@ -913,7 +967,7 @@ fn wire_messages_keep_the_typescript_key_order() {
     h.advance();
     let texts = h.texts["alice"].clone();
     let starts = |prefix: &str| texts.iter().any(|text| text.starts_with(prefix));
-    assert!(starts(r#"{"type":"welcome","version":1,"contentVersion":"#));
+    assert!(starts(r#"{"type":"welcome","version":2,"contentVersion":"#));
     assert!(starts(
         r#"{"roomEpoch":"test-room","roundId":0,"type":"lobby","phase":"lobby""#
     ));

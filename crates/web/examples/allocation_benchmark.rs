@@ -14,6 +14,7 @@ use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multip
 use sloppy_core::net::network_timeline::NetworkTimeline;
 use sloppy_core::net::replication::StateStream;
 use sloppy_core::net::scene_codec::Scene;
+use sloppy_core::net::shot_paths::{LivePaths, ShotPathRecorder};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{PlayerAssignment, RenderState, Team, VehicleKind};
 use sloppy_render::effects::EffectSystems;
@@ -117,6 +118,8 @@ fn main() {
         )
         .expect("valid room");
         simulation.start();
+        simulation.projectile_moves = Some(Vec::new());
+        let mut paths = ShotPathRecorder::default();
         let idle = BTreeMap::new();
         let mut scene = Scene::default();
         let mut stream = StateStream::new("benchmark", 1);
@@ -128,15 +131,18 @@ fn main() {
         let mut hashes = [0xcbf29ce484222325; 3];
         // 20 seconds warm-up, then 20 seconds measured, 3 ticks per snapshot.
         for interval in 0..800 {
+            let tick = (interval + 1) * 3;
             let (_, step) = measure(|| {
-                for _ in 0..3 {
+                for step in 0..3 {
                     simulation.step_with(&idle);
                     simulation.events.clear();
+                    paths.follow(&mut simulation, tick - 2 + step);
                 }
             });
             let (_, capture) = measure(|| scene.capture_from(&simulation));
-            let tick = (interval + 1) * 3;
-            let (wire, diff) = measure(|| stream.snapshot(&mut scene, tick, &[], &[]));
+            let (wire, diff) = measure(|| stream.snapshot(&mut scene, tick, &[], paths.entries()));
+            let entries = paths.entries().to_vec();
+            paths.clear_entries();
             let (_, render) = measure(|| simulation.fill_render_state(&mut state, None));
             let now = tick as f64 * 1000.0 / 60.0;
             // The client constructs an owned frame from its mirror before enqueueing it.
@@ -144,11 +150,12 @@ fn main() {
             let received = state.clone();
             let (_, push) = measure(|| {
                 if interval == 0 {
-                    timeline.reset(&received, tick, now);
+                    let shots = LivePaths {
+                        paths: paths.paths().copied().collect(),
+                    };
+                    timeline.reset(&received, tick, now, &shots);
                 } else {
-                    timeline
-                        .push(received, tick, Vec::new(), Vec::new())
-                        .unwrap();
+                    timeline.push(received, tick, Vec::new(), entries).unwrap();
                     timeline.arrive(now);
                 }
             });

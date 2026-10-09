@@ -11,10 +11,11 @@ use serde_json::{Map, Value, json};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::replication::{StateMirror, StateStream};
 use sloppy_core::net::scene_codec::{ENTITY_FIELDS, ENTITY_TYPES, MirrorScene, Scene};
+use sloppy_core::net::shot_paths::PathEntry;
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{
-    CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind,
+    CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_core::sim::{Simulation, render_state::RenderState};
 
@@ -70,7 +71,7 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
         sim.start();
         let mut stream = StateStream::new("room", 1);
         let mut mirror = StateMirror::default();
-        let full = stream.full(&Scene::capture(&sim), 0, 0);
+        let full = stream.full(&Scene::capture(&sim), 0, 0, &[]);
         assert!(full.len() < 160_000, "Full-state wire budget");
         mirror.apply_full(&parse(&full), "room", 1).unwrap();
         let mut removed = false;
@@ -119,7 +120,7 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
             assert_eq!(mirror.render(viewer).unwrap(), expected);
             if tick == 60 || tick == 93 {
                 let mut late = StateMirror::default();
-                late.apply_full(&parse(&stream.full(&scene, tick, 0)), "room", 1)
+                late.apply_full(&parse(&stream.full(&scene, tick, 0, &[])), "room", 1)
                     .unwrap();
                 assert_eq!(late.render(viewer).unwrap(), mirror.render(viewer).unwrap());
             }
@@ -154,7 +155,7 @@ fn frames_omit_identity_and_unchanged_data_and_scenes_carry_only_presentation_fi
     );
     let scene = Scene::capture(&sim);
     let mut stream = StateStream::new("room", 1);
-    stream.full(&scene, 0, 0);
+    stream.full(&scene, 0, 0, &[]);
     let mut same_scene = scene.clone();
     let frame = parse(&stream.snapshot(&mut same_scene, 1, &[], &[]));
     let keys: Vec<&String> = frame.as_object().unwrap().keys().collect();
@@ -164,7 +165,10 @@ fn frames_omit_identity_and_unchanged_data_and_scenes_carry_only_presentation_fi
     }
     let value = parse(&scene.to_json());
     let entities = &value["entities"];
-    assert!(!entities["shots"].as_array().unwrap().is_empty());
+    assert!(
+        entities.get("shots").is_none(),
+        "shells travel as paths, not records"
+    );
     assert!(
         entities["covers"]
             .as_array()
@@ -172,14 +176,6 @@ fn frames_omit_identity_and_unchanged_data_and_scenes_carry_only_presentation_fi
             .iter()
             .any(|cover| cover.get("motion").is_some())
     );
-    for shot in entities["shots"].as_array().unwrap() {
-        for field in shot.as_object().unwrap().keys() {
-            assert!(
-                ["id", "x", "z", "y", "visualY", "vx", "vz", "weapon", "team"]
-                    .contains(&field.as_str())
-            );
-        }
-    }
     for cover in entities["covers"].as_array().unwrap() {
         if let Some(motion) = cover.get("motion") {
             let keys: BTreeSet<&str> = motion
@@ -213,7 +209,7 @@ fn debris_life_reaches_clients_only_once_its_final_fade_begins() {
         |frame: &str| parse(frame)["updates"]["fragments"][piece.to_string()]["life"].clone();
     sim.fragments[0].life = 5.0;
     let mut stream = StateStream::new("room", 1);
-    stream.full(&Scene::capture(&sim), 0, 0);
+    stream.full(&Scene::capture(&sim), 0, 0, &[]);
     sim.fragments[0].life = 4.0;
     let frame = stream.snapshot(&mut Scene::capture(&sim), 1, &[], &[]);
     assert_eq!(life_update(&frame), Value::Null);
@@ -231,7 +227,7 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
     let state = Scene::capture(&sim);
     let mut stream = StateStream::new("r", 1);
     let mut mirror = StateMirror::default();
-    let full = parse(&stream.full(&state, 0, 0));
+    let full = parse(&stream.full(&state, 0, 0, &[]));
     mirror.apply_full(&full, "r", 1).unwrap();
     let before = mirror.state.as_ref().unwrap().to_value();
     let mut bad = parse(&stream.snapshot(&mut state.clone(), 3, &[], &[]));
@@ -244,9 +240,86 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
     assert!(mirror.apply_snapshot(&bad).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     mirror
-        .apply_full(&parse(&stream.full(&state, 3, 0)), "r", 1)
+        .apply_full(&parse(&stream.full(&state, 3, 0, &[])), "r", 1)
         .unwrap();
     assert!(!mirror.needs_full);
+}
+
+#[test]
+fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_the_frame() {
+    let sim = room(MapId::Village, &[]);
+    let state = Scene::capture(&sim);
+    let viewer = sim.tanks[0].id;
+    let elapsed = state.elapsed;
+    let mut mirror = StateMirror::default();
+    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0, &[]));
+    mirror.apply_full(&full, "r", 1).unwrap();
+    let frame = |seq: u64, tick: u64, paths: Value| json!({ "seq": seq, "tick": tick, "elapsed": elapsed, "paths": paths });
+    let launch = json!({
+        "id": 900, "tick": 0.5, "x": 0, "z": 0, "vx": 30, "vz": 0,
+        "team": 1, "weapon": "ricochet", "y": 1.2, "visualY": 1.6,
+    });
+    assert!(
+        mirror
+            .apply_snapshot(&frame(1, 3, json!([launch])))
+            .is_some()
+    );
+    let shot = mirror.render(viewer).unwrap().shots[0];
+    assert_eq!(
+        (shot.x, shot.z),
+        (30.0 * 2.5 / 60.0, 0.0),
+        "drawn at the frame tick"
+    );
+    let bounce = json!({ "id": 900, "tick": 4, "x": 1.75, "z": 0, "vx": -30, "vz": 0 });
+    let extras = mirror
+        .apply_snapshot(&frame(2, 6, json!([bounce])))
+        .unwrap();
+    let PathEntry::Change(path) = extras.paths[0] else {
+        panic!("a new path for a flying shell");
+    };
+    assert_eq!(
+        (path.launch.weapon, path.launch.team, path.launch.visual_y),
+        (Weapon::Ricochet, Team::Red, Some(1.6)),
+        "later paths keep the launch fields"
+    );
+    let shells = |mirror: &StateMirror| mirror.shots.paths.clone();
+    let before = shells(&mirror);
+    for (bad, why) in [
+        (launch.clone(), "a second launch"),
+        (
+            json!({ "id": 901, "tick": 5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "an unknown shell",
+        ),
+        (
+            json!({ "id": 901, "end": 5 }),
+            "the end of an unknown shell",
+        ),
+        (
+            json!({ "id": 900, "tick": 3.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "an earlier path",
+        ),
+        (json!({ "id": 900, "end": 3.9 }), "an end before the path"),
+        (json!({ "id": 900, "end": 9.5 }), "an end after the frame"),
+        (
+            json!({ "id": 900, "tick": 9.5, "x": 0, "z": 0, "vx": 1, "vz": 0 }),
+            "a future path",
+        ),
+    ] {
+        // A valid launch first: the frame is rejected whole, not up to the bad entry.
+        let other = json!({ "id": 950, "tick": 7, "x": 5, "z": 5, "vx": 0, "vz": 9, "team": 0, "weapon": "standard" });
+        let mut probe = mirror.clone();
+        assert!(
+            probe
+                .apply_snapshot(&frame(3, 9, json!([other, bad])))
+                .is_none(),
+            "{why}"
+        );
+        assert_eq!(shells(&probe), before, "{why} leaves the shells");
+        assert_eq!(probe.seq, 2, "{why} leaves the stream");
+    }
+    let end = json!([{ "id": 900, "end": 7 }]);
+    assert!(mirror.apply_snapshot(&frame(3, 9, end)).is_some());
+    assert!(mirror.render(viewer).unwrap().shots.is_empty());
 }
 
 #[test]
@@ -254,7 +327,7 @@ fn mirror_allows_one_change_per_entity_of_each_kind_in_a_frame() {
     let sim = room(MapId::Village, &[]);
     let state = Scene::capture(&sim);
     let mut mirror = StateMirror::default();
-    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0));
+    let full = parse(&StateStream::new("r", 1).full(&state, 0, 0, &[]));
     mirror.apply_full(&full, "r", 1).unwrap();
     let before = mirror.state.as_ref().unwrap().to_value();
     let tank = sim.tanks[0].id;
@@ -410,9 +483,8 @@ fn reference_scene(sim: &Simulation) -> Value {
             let life = fragment["life"].as_f64().unwrap().min(DEBRIS_CLEANUP_SECONDS);
             fragment.insert("life".into(), json!(life));
         }),
-        "shots": kind_records(3, &[], &|_| {}),
-        "mines": kind_records(4, &[], &|_| {}),
-        "pickups": kind_records(5, &[], &|_| {}),
+        "mines": kind_records(3, &[], &|_| {}),
+        "pickups": kind_records(4, &[], &|_| {}),
     });
     let mut map = Map::new();
     map.insert("theme".into(), view["mapTheme"].clone());
@@ -537,7 +609,7 @@ fn seen_fields(scene: &Value, seen: &mut BTreeSet<String>) {
     }
 }
 
-const EXPECTED_FIELDS: [&str; 18] = [
+const EXPECTED_FIELDS: [&str; 16] = [
     "covers.debrisSeed",
     "covers.timberHits",
     "covers.timberJoin",
@@ -552,8 +624,6 @@ const EXPECTED_FIELDS: [&str; 18] = [
     "fragments.wreck",
     "fragments.part",
     "fragments.team",
-    "shots.y",
-    "shots.visualY",
     "mines.ownerLife",
     "pickups.cooldownDuration",
 ];
@@ -573,7 +643,7 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
         let mut stream = StateStream::new("room", 1);
         let mut previous = parse(&Scene::capture(&sim).to_json());
         assert_same(&previous, &reference_scene(&sim), &format!("{map:?} start"));
-        stream.full(&Scene::capture(&sim), 0, 0);
+        stream.full(&Scene::capture(&sim), 0, 0, &[]);
         for tick in 1..=ticks {
             if tick == 30 {
                 // Collapsed towers leave seeded rubble; the rest leave debris and removals.
@@ -592,6 +662,10 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                         sim.damage_cover(cover, 10000.0, 0, Team::Blue, None, None);
                     }
                 }
+            }
+            if tick == 240 && !sim.mines.is_empty() {
+                // Shells no longer travel as records, so make sure a removal is encoded.
+                sim.mines.remove(0);
             }
             let t = tick as f64;
             step(
@@ -656,7 +730,7 @@ fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
     sim.covers[0].debris_seed = None;
     let cover_id = sim.covers[0].id.to_string();
     let mut stream = StateStream::new("room", 1);
-    stream.full(&Scene::capture(&sim), 0, 0);
+    stream.full(&Scene::capture(&sim), 0, 0, &[]);
     for (index, seed) in [Some(12.0), None, Some(34.0)].into_iter().enumerate() {
         sim.covers[0].debris_seed = seed;
         let mut scene = Scene::capture(&sim);
@@ -674,7 +748,7 @@ fn snapshot_scratch_does_not_leak_updates_removals_or_events_into_the_next_frame
     let mut sim = room(MapId::Village, &one_player());
     let mut scene = Scene::capture(&sim);
     let mut stream = StateStream::new("room", 1);
-    stream.full(&scene, 0, 0);
+    stream.full(&scene, 0, 0, &[]);
     let removed = sim.tanks.pop().unwrap().id;
     sim.tanks.reverse(); // Wire keys must still be in numeric order.
     for tank in &mut sim.tanks {

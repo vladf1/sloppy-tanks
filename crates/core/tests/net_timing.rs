@@ -1,9 +1,10 @@
 //! Clocks and display timing: the host's fixed-step clock and the dev transport delay
 //! (`tests/network-clock.test.ts`), input cadence (`input-cadence.test.ts`), the adaptive
-//! playout clock (`playout-clock.test.ts`) and pose/event timelines
-//! (`network-timeline.test.ts`).
+//! playout clock (`playout-clock.test.ts`), pose/event timelines
+//! (`network-timeline.test.ts`), and projectile paths drawn against the host's flight.
 
 mod net_support;
+mod support;
 
 use net_support::{set_linvel, set_translation};
 use sloppy_core::net::fixed_step_clock::FixedStepClock;
@@ -13,15 +14,24 @@ use sloppy_core::net::network_timeline::NetworkTimeline;
 use sloppy_core::net::player_controls::{Action, Aim};
 use sloppy_core::net::playout_clock::PlayoutClock;
 use sloppy_core::net::render_timeline::RenderTimeline;
-use sloppy_core::net::replication::{ShotTrace, TimedEvent};
+use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
+use sloppy_core::net::scene_codec::Scene;
+use sloppy_core::net::shot_paths::{
+    LivePaths, PATH_TOLERANCE, PathEntry, ShotLaunch, ShotPath, ShotPathRecorder,
+};
 use sloppy_core::net::transport_delay::DelayedChannel;
 use sloppy_core::sim::Simulation;
+use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::render_state::{RenderFragment, RenderShot, RenderState};
 use sloppy_core::sim::timber_layout::{
     TimberFace, TimberHit, TimberMark, TimberPart, TimberPartKind,
 };
-use sloppy_core::sim::types::{SimEvent, SimEventType, Team, Weapon};
+use sloppy_core::sim::types::{
+    AmmoInventory, CoverKind, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
+};
+use sloppy_core::sim::weapons::fire_weapon;
 
 // ---- Host clock and transport delay ---------------------------------------------------
 
@@ -534,7 +544,7 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         tank.position = Point3::new(30.0, 0.65, 0.0);
     });
     let mut timeline = NetworkTimeline::default();
-    timeline.reset(&first, 0, 0.0);
+    timeline.reset(&first, 0, 0.0, &LivePaths::default());
     timeline
         .push(
             dead,
@@ -598,28 +608,31 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         vec![SimEventType::Death, SimEventType::Respawn],
         "effects play once"
     );
-    timeline.reset(&respawn, 6, 400.0);
+    timeline.reset(&respawn, 6, 400.0, &LivePaths::default());
     assert!(timeline.read(410.0, 0.0, 1.0 / 60.0, &mut state).is_empty());
 }
 
 #[test]
-fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_disappears_at_impact()
-{
+fn a_projectile_born_and_destroyed_between_snapshots_follows_its_path_and_disappears_at_impact() {
     let sim = empty_room();
     let state = sim.render_state(Some(sim.tanks[0].id));
-    let shot = RenderShot {
+    let path = ShotPath {
         id: 999,
+        tick: 1.0,
         x: 0.0,
         z: 0.0,
-        y: Some(1.0),
-        visual_y: None,
         vx: 120.0,
         vz: 0.0,
-        weapon: Weapon::Standard,
-        team: Team::Blue,
+        launch: ShotLaunch {
+            team: Team::Blue,
+            weapon: Weapon::Standard,
+            y: Some(1.0),
+            visual_y: None,
+            thrust: None,
+        },
     };
     let mut timeline = NetworkTimeline::default();
-    timeline.reset(&state, 0, 0.0);
+    timeline.reset(&state, 0, 0.0, &LivePaths::default());
     timeline
         .push(
             state,
@@ -629,12 +642,10 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
                 tick: 1.5,
                 event: SimEvent::at(SimEventType::Impact, 1.0, 0.0),
             }],
-            vec![ShotTrace {
-                tick: 1.0,
-                end_tick: 1.5,
-                shot,
-                end: Vec2::new(1.0, 0.0),
-            }],
+            vec![
+                PathEntry::Launch(path),
+                PathEntry::End { id: 999, tick: 1.5 },
+            ],
         )
         .unwrap();
     timeline.arrive(50.0);
@@ -650,7 +661,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_segment_and_dis
             flights += 1;
             assert!(
                 (shots[0].x - (tick - 1.0) * 2.0).abs() < 1e-8,
-                "shot follows its segment"
+                "shot follows its path"
             );
             assert!(events.is_empty());
         } else {
@@ -721,7 +732,7 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
     let mut later = first.clone();
     later.fragments = vec![fragment(2, false), fragment(3, true)];
     let mut timeline = NetworkTimeline::default();
-    timeline.reset(&first, 0, 0.0);
+    timeline.reset(&first, 0, 0.0, &LivePaths::default());
     timeline.push(moved, 3, Vec::new(), Vec::new()).unwrap();
     timeline.push(later, 6, Vec::new(), Vec::new()).unwrap();
     timeline.arrive(50.0);
@@ -843,4 +854,413 @@ fn local_extrapolation_is_bounded_and_resets_across_tank_lives() {
             .x,
         0.0
     );
+}
+
+// ---- Projectile paths: what a client draws against what the host simulated -------------
+
+/// One simulated sweep: shell `id` flew straight from `from` at tick `start` to `to` at
+/// tick `end` (fractional ticks).
+struct Sweep {
+    id: u32,
+    start: f64,
+    end: f64,
+    from: Vec2,
+    to: Vec2,
+}
+
+/// A recorded room: the host's sweeps and events, and what its client drew.
+#[derive(Default)]
+struct Replay {
+    sweeps: Vec<Sweep>,
+    /// Every shell path entry the client received, in order.
+    entries: Vec<PathEntry>,
+    /// Impact effects as the client received them: (tick, x, z).
+    impacts: Vec<(f64, f64, f64)>,
+    /// Display reads: the display tick and the shells drawn at it.
+    reads: Vec<(f64, Vec<RenderShot>)>,
+    ticks: u64,
+}
+
+/// Two tanks on a cleared arena, neither driven by a bot: the shooter at the origin
+/// aiming along +z and a target 30 m ahead.
+fn range() -> Simulation {
+    let mut sim = Simulation::with_seed(123.0);
+    support::clear_arena(&mut sim, &[0, 1]);
+    for (index, z) in [(0, 0.0), (1, 30.0)] {
+        sim.tanks[index].human = true;
+        sim.tanks[index].protection = 0.0;
+        sim.tanks[index].aim = 0.0;
+        support::place_tank(&mut sim, index, 0.0, z, Some(0.0));
+    }
+    sim.world.step();
+    sim.start();
+    sim
+}
+
+/// An indestructible rock block centred at (`x`, `z`).
+fn rock(sim: &mut Simulation, x: f64, z: f64, w: f64, d: f64) {
+    sim.add_cover(&CoverDef::new(
+        CoverKind::Rock,
+        x,
+        z,
+        w,
+        d,
+        3.0,
+        1e6,
+        0x777777,
+    ));
+}
+
+/// Fires the shooter's `weapon` at `aim` radians.
+fn fire(sim: &mut Simulation, weapon: Weapon, aim: f64) {
+    let tank = &mut sim.tanks[0];
+    tank.ammo = AmmoInventory {
+        spread: 99.0,
+        rocket: 99.0,
+        ricochet: 99.0,
+        piercing: 99.0,
+    };
+    tank.selected_ammo = weapon;
+    tank.aim = aim;
+    tank.cooldown = 0.0;
+    fire_weapon(sim, 0);
+}
+
+/// Plays `ticks` of `sim` as a room does: the host follows every projectile sweep with its
+/// path recorder and sends a frame every third tick, which goes through the wire JSON and
+/// the client's mirror into its display timeline, read every 4 ms as frames arrive every
+/// 50 ms. `before` runs ahead of each tick, to fire.
+fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulation, u64)) -> Replay {
+    let viewer = sim.tanks[0].id;
+    sim.projectile_moves = Some(Vec::new());
+    let mut recorder = ShotPathRecorder::default();
+    let mut stream = StateStream::new("room", 1);
+    let mut mirror = StateMirror::default();
+    let full = stream.full(&Scene::capture(&sim), 0, 0, recorder.paths());
+    mirror
+        .apply_full(&serde_json::from_str(&full).unwrap(), "room", 1)
+        .unwrap();
+    let mut timeline = NetworkTimeline::default();
+    timeline.reset(&mirror.render(viewer).unwrap(), 0, 0.0, &mirror.shots);
+    let mut replay = Replay {
+        ticks,
+        ..Replay::default()
+    };
+    let mut events = Vec::new();
+    let mut event_id = 0;
+    let mut scene = Scene::default();
+    let mut now = 0.0;
+    for tick in 1..=ticks {
+        before(&mut sim, tick);
+        sim.step(VehicleCommand::idle(), false);
+        for sweep in sim.projectile_moves.as_ref().unwrap() {
+            let shot = &sweep.shot;
+            let start = tick as f64 - 1.0 + sweep.offset / STEP;
+            replay.sweeps.push(Sweep {
+                id: shot.id,
+                start,
+                end: start + sweep.seconds / STEP,
+                from: Vec2::new(
+                    shot.x - shot.vx * sweep.seconds,
+                    shot.z - shot.vz * sweep.seconds,
+                ),
+                to: Vec2::new(shot.x, shot.z),
+            });
+        }
+        recorder.follow(&mut sim, tick);
+        for event in sim.events.drain(..) {
+            event_id += 1;
+            events.push(TimedEvent::write(event_id, tick as f64, &event));
+        }
+        if tick % 3 != 0 {
+            continue;
+        }
+        scene.capture_from(&sim);
+        let frame = stream.snapshot(&mut scene, tick, &events, recorder.entries());
+        events.clear();
+        recorder.clear_entries();
+        let extras = mirror
+            .apply_snapshot(&serde_json::from_str(&frame).unwrap())
+            .expect("a valid frame");
+        replay.entries.extend(extras.paths.iter().copied());
+        replay.impacts.extend(
+            extras
+                .events
+                .iter()
+                .filter(|timed| timed.event.kind == SimEventType::Impact)
+                .map(|timed| (timed.tick, timed.event.x, timed.event.z)),
+        );
+        timeline
+            .push(
+                mirror.render(viewer).unwrap(),
+                tick,
+                extras.events,
+                extras.paths,
+            )
+            .unwrap();
+        timeline.arrive(now);
+        let mut shown = RenderState::default();
+        for _ in 0..12 {
+            timeline.read(now, 0.0, 0.004, &mut shown);
+            replay
+                .reads
+                .push((timeline.display_tick(), shown.shots.clone()));
+            now += 50.0 / 12.0;
+        }
+    }
+    replay
+}
+
+/// Simulated sweeps of shell `id` that contain display tick `tick`, with a little slack
+/// for the wire's thousandth-of-a-tick rounding.
+fn sweeps_at(replay: &Replay, id: u32, tick: f64) -> impl Iterator<Item = &Sweep> {
+    replay.sweeps.iter().filter(move |sweep| {
+        sweep.id == id && sweep.start - 1e-3 <= tick && tick <= sweep.end + 1e-3
+    })
+}
+
+/// Where the host had shell `id` at `tick`, if it was flying then.
+fn simulated(sweep: &Sweep, tick: f64) -> Vec2 {
+    let span = sweep.end - sweep.start;
+    let alpha = if span > 0.0 {
+        ((tick - sweep.start) / span).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Vec2::new(
+        sweep.from.x + (sweep.to.x - sweep.from.x) * alpha,
+        sweep.from.z + (sweep.to.z - sweep.from.z) * alpha,
+    )
+}
+
+/// The wire rounds positions to millimetres and ticks to thousandths, which a 60 m/s
+/// shell crosses in another millimetre.
+const WIRE_SLACK: f64 = 0.003;
+
+/// Checks every display read against the host: each drawn shell was flying there and is
+/// within `PATH_TOLERANCE` of its simulated position, and each flying shell is drawn.
+/// Returns how many drawn shells were compared and the largest distance seen.
+fn assert_drawn_where_simulated(replay: &Replay) -> (usize, f64) {
+    let mut compared = 0;
+    let mut worst: f64 = 0.0;
+    let newest = replay.ticks as f64;
+    for (tick, shots) in &replay.reads {
+        let tick = *tick;
+        if tick > newest - 3.0 {
+            continue;
+        }
+        for shot in shots {
+            let distance = sweeps_at(replay, shot.id, tick)
+                .map(|sweep| {
+                    let at = simulated(sweep, tick);
+                    (at.x - shot.x).hypot(at.z - shot.z)
+                })
+                .reduce(f64::min)
+                .unwrap_or_else(|| {
+                    panic!("shell {} is drawn at tick {tick} but not flying", shot.id)
+                });
+            assert!(
+                distance <= PATH_TOLERANCE + WIRE_SLACK,
+                "shell {} is drawn {distance} m from its simulated position at tick {tick}",
+                shot.id
+            );
+            worst = worst.max(distance);
+            compared += 1;
+        }
+        // A shell flying well inside one sweep is drawn.
+        for sweep in &replay.sweeps {
+            if sweep.start + 0.01 < tick && tick < sweep.end - 0.01 {
+                assert!(
+                    shots.iter().any(|shot| shot.id == sweep.id),
+                    "shell {} flies at tick {tick} but is not drawn",
+                    sweep.id
+                );
+            }
+        }
+    }
+    (compared, worst)
+}
+
+/// Each shell's path ends where its last sweep did, and an impact effect there arrives
+/// within a tick: the explosion lines up with the shell's last drawn position.
+fn assert_impacts_meet_the_drawn_shell(replay: &Replay) -> usize {
+    let mut paths: Vec<ShotPath> = Vec::new();
+    let mut met = 0;
+    for entry in &replay.entries {
+        match *entry {
+            PathEntry::Launch(path) | PathEntry::Change(path) => {
+                paths.retain(|known| known.id != path.id);
+                paths.push(path);
+            }
+            PathEntry::End { id, tick } => {
+                let path = paths.iter().find(|path| path.id == id).unwrap();
+                let drawn = path.at(tick);
+                let last = replay.sweeps.iter().rfind(|sweep| sweep.id == id).unwrap();
+                assert!(
+                    (drawn.x - last.to.x).hypot(drawn.z - last.to.z) <= PATH_TOLERANCE + WIRE_SLACK,
+                    "shell {id} vanishes where it stopped"
+                );
+                let impact = replay.impacts.iter().find(|(at, x, z)| {
+                    (tick..tick + 1.0).contains(at) && (x - last.to.x).hypot(z - last.to.z) < 1e-3
+                });
+                if let Some((_, x, z)) = impact {
+                    assert!(
+                        (x - drawn.x).hypot(z - drawn.z) <= PATH_TOLERANCE + WIRE_SLACK,
+                        "shell {id}'s impact shows where it was last drawn"
+                    );
+                    met += 1;
+                }
+            }
+        }
+    }
+    met
+}
+
+fn launches(replay: &Replay) -> usize {
+    replay
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry, PathEntry::Launch(_)))
+        .count()
+}
+
+fn changes(replay: &Replay) -> usize {
+    replay
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry, PathEntry::Change(_)))
+        .count()
+}
+
+#[test]
+fn standard_shells_are_launched_once_and_drawn_on_their_simulated_flight_until_impact() {
+    let mut sim = range();
+    rock(&mut sim, 12.0, 20.0, 4.0, 2.0);
+    let replay = replay(sim, 150, |sim, tick| match tick {
+        1 => fire(sim, Weapon::Standard, 0.0),
+        30 => fire(sim, Weapon::Standard, 0.54),
+        60 => fire(sim, Weapon::Standard, 0.9),
+        _ => {}
+    });
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 100, "compared {compared} drawn shells");
+    assert!(
+        worst < 0.01,
+        "straight flight is exact on the wire: {worst} m"
+    );
+    assert_eq!(launches(&replay), 3);
+    assert_eq!(changes(&replay), 0, "straight flight needs no new paths");
+    assert!(
+        assert_impacts_meet_the_drawn_shell(&replay) >= 2,
+        "the tank and the rock are hit"
+    );
+}
+
+#[test]
+fn ricochet_shells_start_a_path_at_each_bounce_and_stay_on_the_simulated_flight() {
+    let mut sim = range();
+    // A corridor along +z whose walls the shell bounces between.
+    rock(&mut sim, -4.0, 14.0, 1.0, 20.0);
+    rock(&mut sim, 4.0, 14.0, 1.0, 20.0);
+    let replay = replay(sim, 120, |sim, tick| {
+        if tick == 1 {
+            fire(sim, Weapon::Ricochet, 0.6);
+        }
+    });
+    let bounces = replay
+        .sweeps
+        .windows(2)
+        .filter(|pair| {
+            let [a, b] = pair else { unreachable!() };
+            a.id == b.id && {
+                let (ax, az) = (a.to.x - a.from.x, a.to.z - a.from.z);
+                let (bx, bz) = (b.to.x - b.from.x, b.to.z - b.from.z);
+                ax * bx < 0.0 && az * bz >= 0.0
+            }
+        })
+        .count();
+    assert!(bounces >= 2, "the shell bounced {bounces} times");
+    assert!(changes(&replay) >= 2, "each bounce starts a path");
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 50, "compared {compared} drawn shells");
+    assert!(worst <= PATH_TOLERANCE + WIRE_SLACK);
+    assert_impacts_meet_the_drawn_shell(&replay);
+}
+
+#[test]
+fn accelerating_rockets_and_a_steering_missile_follow_their_simulated_flight() {
+    let mut sim = range();
+    // The target moves off the launch line, so the missile has to turn.
+    let target = sim.tanks[1].clone();
+    support::place_tank(&mut sim, 1, 18.0, 30.0, Some(0.0));
+    let replay = replay(sim, 150, |sim, tick| {
+        if tick == 1 {
+            fire(sim, Weapon::Rocket, -0.2);
+        }
+        if tick == 2 {
+            let id = sim.next_id;
+            sim.next_id += 1;
+            sim.shots.push(Shot {
+                id,
+                x: -8.0,
+                z: 4.0,
+                y: Some(1.0),
+                vx: 0.0,
+                vz: weapon(Weapon::Tow).speed,
+                team: target.team.opponent(),
+                owner: 999,
+                weapon: Weapon::Tow,
+                damage: weapon(Weapon::Tow).damage,
+                life: 4.0,
+                target_id: Some(target.id),
+                target_life: Some(target.life),
+                ..Shot::default()
+            });
+        }
+    });
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 100, "compared {compared} drawn shells");
+    assert!(worst <= PATH_TOLERANCE + WIRE_SLACK);
+    let rocket = replay.sweeps[0].id;
+    let rocket_paths = replay
+        .entries
+        .iter()
+        .filter(|entry| entry.id() == rocket && !matches!(entry, PathEntry::End { .. }))
+        .count();
+    assert_eq!(rocket_paths, 1, "a rocket's speed-up is part of its path");
+    let missile_paths = replay
+        .entries
+        .iter()
+        .filter(|entry| entry.id() != rocket && !matches!(entry, PathEntry::End { .. }))
+        .count();
+    let missile_ticks = replay
+        .sweeps
+        .iter()
+        .filter(|sweep| sweep.id != rocket)
+        .count();
+    assert!(
+        missile_paths > 1 && missile_paths * 2 < missile_ticks,
+        "a turning missile sends {missile_paths} paths for {missile_ticks} sweeps"
+    );
+    assert!(assert_impacts_meet_the_drawn_shell(&replay) >= 1);
+}
+
+#[test]
+fn spread_pellets_each_follow_their_own_simulated_flight() {
+    let mut sim = range();
+    rock(&mut sim, 0.0, 12.0, 6.0, 1.0);
+    let replay = replay(sim, 90, |sim, tick| {
+        if tick == 1 {
+            fire(sim, Weapon::Spread, 0.0);
+        }
+        if tick == 40 {
+            fire(sim, Weapon::Spread, 1.2);
+        }
+    });
+    assert_eq!(launches(&replay), 6);
+    assert_eq!(changes(&replay), 0);
+    let (compared, worst) = assert_drawn_where_simulated(&replay);
+    assert!(compared > 100, "compared {compared} drawn shells");
+    assert!(worst < 0.01);
+    assert!(assert_impacts_meet_the_drawn_shell(&replay) >= 3);
 }

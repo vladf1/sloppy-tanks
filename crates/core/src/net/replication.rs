@@ -2,7 +2,8 @@
 //!
 //! The host sends a `full` baseline on join, resume and resync, then one snapshot frame per
 //! captured tick: only changed fields of each record (a deleted optional field as `null`),
-//! removed ids, and the events and projectile traces since the previous frame. The client
+//! removed ids, and the events and projectile path entries (`shot_paths`) since the previous
+//! frame. The client
 //! [`StateMirror`] applies frames transactionally: a malformed or skipped frame never
 //! partially alters the mirror; it asks for a new baseline instead.
 
@@ -13,19 +14,17 @@ use serde_json::Value;
 use super::json::{self, ObjectWriter, write_int, write_str};
 use super::scene_codec::{
     COVERS, ENTITY_LIMITS, ENTITY_TYPES, EntityStore, FRAGMENTS, MATCH_FIELDS, MINES, MirrorScene,
-    SHOTS, Scene, Stored, TANKS, WireRecord, WireShot, read_cover, read_entity, read_event,
-    read_fragment, read_match, read_mine, read_pickup, read_shot, read_tank, write_event,
+    Scene, Stored, TANKS, WireRecord, read_cover, read_entity, read_event, read_fragment,
+    read_match, read_mine, read_pickup, read_tank, write_event,
 };
-use super::schema::{
-    ReadResult, Record, array, field, id, nested, number, number_in, optional, record,
-};
-use crate::sim::math::Vec2;
-use crate::sim::render_state::{RenderShot, RenderState};
+use super::schema::{ReadResult, Record, array, field, id, nested, number, number_in, record};
+use super::shot_paths::{LivePaths, PathEntry, ShotPath};
+use crate::sim::render_state::RenderState;
 use crate::sim::types::SimEvent;
 
 /// Most field changes (updates plus removals) one frame may carry.
 const MAX_CHANGES: usize = 4096;
-/// Most events or traces one frame may carry.
+/// Most events or projectile path entries one frame may carry.
 const MAX_FRAME_ITEMS: usize = 2048;
 /// Fields whose `null` is a real value rather than a deletion.
 const COVER_NULLABLE: [&str; 2] = ["hp", "maxHp"];
@@ -58,51 +57,6 @@ impl TimedEvent {
             event_id: field(source, "eventId", id)?,
             tick: field(source, "tick", |v| number_in(v, 0.0, 1e9, false))?,
             event: field(source, "event", |v| nested(v, read_event))?,
-        })
-    }
-}
-
-/// One projectile's straight flight between two (fractional) ticks, so a shell born and
-/// destroyed between snapshots is still drawn along its path.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ShotTrace {
-    pub tick: f64,
-    pub end_tick: f64,
-    /// The shell at the start of the segment.
-    pub shot: RenderShot,
-    pub end: Vec2,
-}
-
-impl ShotTrace {
-    pub fn write(&self, out: &mut String) {
-        let mut writer = ObjectWriter::new(out);
-        writer
-            .number("tick", json::position(self.tick))
-            .number("endTick", json::position(self.end_tick));
-        WireShot::rounded(self.shot).write(writer.key("shot"));
-        let end = writer.key("end");
-        let mut point = ObjectWriter::new(end);
-        point
-            .number("x", json::position(self.end.x))
-            .number("z", json::position(self.end.z));
-        point.finish();
-        writer.finish();
-    }
-
-    /// `traceReader`.
-    pub fn read(source: &Record) -> ReadResult<Self> {
-        Ok(Self {
-            tick: field(source, "tick", |v| number_in(v, 0.0, 1e9, false))?,
-            end_tick: field(source, "endTick", |v| number_in(v, 0.0, 1e9, false))?,
-            shot: field(source, "shot", |v| nested(v, read_shot))?,
-            end: field(source, "end", |v| {
-                nested(v, |end| {
-                    Ok(Vec2::new(
-                        field(end, "x", number)?,
-                        field(end, "z", number)?,
-                    ))
-                })
-            })?,
         })
     }
 }
@@ -160,7 +114,7 @@ pub struct StateStream {
     room_epoch: String,
     round_id: u64,
     previous: Option<Scene>,
-    index: [HashMap<u32, usize>; 6],
+    index: [HashMap<u32, usize>; 5],
     current_ids: HashSet<u32>,
     scratch: SnapshotScratch,
 }
@@ -200,9 +154,15 @@ impl StateStream {
         self.previous.replace(scene)
     }
 
-    /// A `full` baseline message: the whole scene at `tick`, the current `seq`, and the id
-    /// of the last event it already reflects.
-    pub fn full(&mut self, scene: &Scene, tick: u64, event_cursor: u64) -> String {
+    /// A `full` baseline message: the whole scene at `tick`, the current `seq`, the id
+    /// of the last event it already reflects, and the path of every shell in flight.
+    pub fn full<'a>(
+        &mut self,
+        scene: &Scene,
+        tick: u64,
+        event_cursor: u64,
+        paths: impl IntoIterator<Item = &'a ShotPath>,
+    ) -> String {
         if self.previous.is_none() {
             self.remember(scene.clone());
         }
@@ -216,6 +176,15 @@ impl StateStream {
             .int("tick", tick)
             .int("eventCursor", event_cursor);
         scene.write(writer.key("state"));
+        let list = writer.key("paths");
+        list.push('[');
+        for (index, path) in paths.into_iter().enumerate() {
+            if index > 0 {
+                list.push(',');
+            }
+            path.write(list, true);
+        }
+        list.push(']');
         writer.finish();
         out
     }
@@ -227,7 +196,7 @@ impl StateStream {
         scene: &mut Scene,
         tick: u64,
         events: &[String],
-        traces: &[ShotTrace],
+        paths: &[PathEntry],
     ) -> String {
         self.seq += 1;
         let mut out = String::new();
@@ -328,14 +297,14 @@ impl StateStream {
             }
             list.push(']');
         }
-        if !traces.is_empty() {
-            let list = frame.key("traces");
+        if !paths.is_empty() {
+            let list = frame.key("paths");
             list.push('[');
-            for (index, trace) in traces.iter().enumerate() {
+            for (index, entry) in paths.iter().enumerate() {
                 if index > 0 {
                     list.push(',');
                 }
-                trace.write(list);
+                entry.write(list);
             }
             list.push(']');
         }
@@ -352,13 +321,15 @@ impl StateStream {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FrameExtras {
     pub events: Vec<TimedEvent>,
-    pub traces: Vec<ShotTrace>,
+    pub paths: Vec<PathEntry>,
 }
 
 /// A client's mirror of the host's stream.
 #[derive(Clone, Debug)]
 pub struct StateMirror {
     pub state: Option<MirrorScene>,
+    /// Shells in flight at `tick`.
+    pub shots: LivePaths,
     pub room_epoch: String,
     pub round_id: u64,
     pub seq: u64,
@@ -371,6 +342,7 @@ impl Default for StateMirror {
     fn default() -> Self {
         Self {
             state: None,
+            shots: LivePaths::default(),
             room_epoch: String::new(),
             round_id: 0,
             seq: 0,
@@ -432,7 +404,6 @@ struct FrameChanges {
     tanks: KindChanges<crate::sim::render_state::RenderTank>,
     covers: KindChanges<crate::sim::render_state::RenderCover>,
     fragments: KindChanges<crate::sim::render_state::RenderFragment>,
-    shots: KindChanges<RenderShot>,
     mines: KindChanges<crate::sim::types::Mine>,
     pickups: KindChanges<crate::sim::types::Pickup>,
 }
@@ -480,7 +451,10 @@ impl StateMirror {
         let seq = id(data.get("seq"))?;
         let tick = id(data.get("tick"))?;
         let cursor = id(data.get("eventCursor"))?;
+        let shots =
+            LivePaths::read(data.get("paths"), tick).map_err(|error| format!("paths: {error}"))?;
         self.state = Some(state);
+        self.shots = shots;
         self.room_epoch = room_epoch.to_string();
         self.round_id = round_id;
         self.seq = seq;
@@ -490,7 +464,7 @@ impl StateMirror {
         Ok(())
     }
 
-    /// Applies the next frame, returning its new events and traces, or `None` (and
+    /// Applies the next frame, returning its new events and path entries, or `None` (and
     /// `needs_full`) when the frame is invalid, out of order, or no baseline is held.
     pub fn apply_snapshot(&mut self, value: &Value) -> Option<FrameExtras> {
         if self.state.is_none() || self.needs_full {
@@ -516,7 +490,7 @@ impl StateMirror {
         }
         let state = self.state.as_ref().expect("checked by apply_snapshot");
         let mut changes = FrameChanges::default();
-        let mut claimed: [HashSet<u32>; 6] = Default::default();
+        let mut claimed: [HashSet<u32>; 5] = Default::default();
         let mut count = 0;
         let mut claim = |kind: usize, entity: u32| -> ReadResult<()> {
             if !claimed[kind].insert(entity) {
@@ -582,15 +556,6 @@ impl StateMirror {
                         read_fragment,
                         |f| f.id,
                     )?),
-                    SHOTS => changes.shots.updates.push(update_entity(
-                        &state.shots,
-                        kind,
-                        entity,
-                        fields,
-                        &[],
-                        read_shot,
-                        |s| s.id,
-                    )?),
                     MINES => changes.mines.updates.push(update_entity(
                         &state.mines,
                         kind,
@@ -621,7 +586,6 @@ impl StateMirror {
                     TANKS => state.tanks.contains(entity),
                     COVERS => state.covers.contains(entity),
                     FRAGMENTS => state.fragments.contains(entity),
-                    SHOTS => state.shots.contains(entity),
                     MINES => state.mines.contains(entity),
                     _ => state.pickups.contains(entity),
                 };
@@ -632,7 +596,6 @@ impl StateMirror {
                     TANKS => changes.tanks.removals.push(entity),
                     COVERS => changes.covers.removals.push(entity),
                     FRAGMENTS => changes.fragments.removals.push(entity),
-                    SHOTS => changes.shots.removals.push(entity),
                     MINES => changes.mines.removals.push(entity),
                     _ => changes.pickups.removals.push(entity),
                 }
@@ -642,7 +605,6 @@ impl StateMirror {
             changes.tanks.resulting_len(&state.tanks),
             changes.covers.resulting_len(&state.covers),
             changes.fragments.resulting_len(&state.fragments),
-            changes.shots.resulting_len(&state.shots),
             changes.mines.resulting_len(&state.mines),
             changes.pickups.resulting_len(&state.pickups),
         ];
@@ -669,12 +631,14 @@ impl StateMirror {
             .into_iter()
             .filter(|event| event.event_id > self.event_cursor)
             .collect();
-        let traces = optional(data.get("traces"), |value| {
-            array(value, MAX_FRAME_ITEMS, |item| {
-                nested(Some(item), ShotTrace::read)
-            })
-        })?
-        .unwrap_or_default();
+        let mut shots = self.shots.clone();
+        let paths = match data.get("paths") {
+            None => Vec::new(),
+            Some(Value::Array(items)) if items.len() <= MAX_FRAME_ITEMS => shots
+                .apply(items, tick)
+                .map_err(|error| format!("paths: {error}"))?,
+            Some(_) => return Err("paths: Invalid list".into()),
+        };
         let mut cursor = self.event_cursor;
         for event in &events {
             if event.event_id != cursor + 1 || event.tick > tick as f64 {
@@ -682,32 +646,30 @@ impl StateMirror {
             }
             cursor = event.event_id;
         }
-        for trace in &traces {
-            if trace.tick > trace.end_tick || trace.end_tick > tick as f64 {
-                return Err("Invalid projectile timeline".into());
-            }
-        }
         let state = self.state.as_mut().expect("checked by apply_snapshot");
         changes.tanks.apply(&mut state.tanks);
         changes.covers.apply(&mut state.covers);
         changes.fragments.apply(&mut state.fragments);
-        changes.shots.apply(&mut state.shots);
         changes.mines.apply(&mut state.mines);
         changes.pickups.apply(&mut state.pickups);
         state.elapsed = elapsed;
         state.match_wire = match_wire;
         state.match_state = match_state;
+        self.shots = shots;
         self.tick = tick;
         self.seq += 1;
         self.event_cursor = cursor;
-        Ok(FrameExtras { events, traces })
+        Ok(FrameExtras { events, paths })
     }
 
-    /// The render state for `viewer`.
+    /// The render state for `viewer`, its shells where their paths put them at `tick`.
     pub fn render(&self, viewer: u32) -> ReadResult<RenderState> {
-        self.state
+        let mut state = self
+            .state
             .as_ref()
             .ok_or_else(|| "No baseline".to_string())?
-            .render(viewer)
+            .render(viewer)?;
+        self.shots.fill(&mut state.shots, self.tick as f64);
+        Ok(state)
     }
 }
