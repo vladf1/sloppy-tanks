@@ -1,4 +1,5 @@
 //! Track steering applied as bounded impulses; collisions and knockback retain momentum.
+//! The easter egg's Cybertrucks steer like cars instead.
 
 use std::f64::consts::PI;
 
@@ -12,6 +13,13 @@ use super::types::{Tank, VehicleCommand, VehicleKind};
 const DRIVE_DEADZONE: f64 = 0.05;
 const REVERSE_ANGLE_EPSILON: f64 = 1e-6;
 const SPEED_BOOST_MULTIPLIER: f64 = 1.5;
+/// A Cybertruck turns only while it rolls, no tighter than this radius (metres), and
+/// at least this fast (radians per second) so one at rest can pull away into a turn.
+const TRUCK_TURN_RADIUS: f64 = 5.0;
+const TRUCK_CREEP_TURN: f64 = 0.35;
+/// The share of its speed a Cybertruck keeps through the sharpest turn: it arcs round
+/// rather than pivoting.
+const TRUCK_TURN_SPEED_SHARE: f64 = 0.5;
 
 pub fn drive_tank(
     tank: &mut Tank,
@@ -25,8 +33,11 @@ pub fn drive_tank(
         heading: tank.heading,
         boosted: tank.speed > 0.0,
         // HMMWVs are hunters: rotate and drive forward to retreat instead of backing into
-        // danger. Only a committed stuck-position recovery may use reverse gear.
-        reverse_gear: tank.kind != VehicleKind::Humvee || tank.human || tank.brain.recovery > 0.0,
+        // danger, and Cybertrucks are cars. Only a committed stuck-position recovery may
+        // use reverse gear.
+        reverse_gear: !(tank.kind == VehicleKind::Humvee || tank.kind.neutral())
+            || tank.human
+            || tank.brain.recovery > 0.0,
     };
     drive_hull(
         &mut hull,
@@ -75,14 +86,23 @@ pub fn drive_hull(
         let reverse = reverse_requested && hull.reverse_gear;
         let target = desired + if reverse { PI } else { 0.0 };
         let turn = angle_delta(hull.heading, target);
-        hull.heading += (-HULL_TURN_SPEED * dt).max((HULL_TURN_SPEED * dt).min(turn));
-        // Unequal track speeds make an arc. Sharp turns shed speed toward a pivot.
+        let car = hull.kind.neutral();
+        let turn_speed = if car {
+            car_turn_speed(body, hull.heading)
+        } else {
+            HULL_TURN_SPEED
+        };
+        hull.heading += (-turn_speed * dt).max((turn_speed * dt).min(turn));
+        // Unequal track speeds make an arc. Sharp turns shed speed toward a pivot; a car
+        // keeps rolling round.
         let alignment = 0f64.max(angle_delta(hull.heading, target).cos());
-        drive = input_magnitude.min(1.0)
-            * speed
-            * alignment
-            * alignment
-            * if reverse { -REVERSE_SPEED } else { 1.0 };
+        let share = if car {
+            TRUCK_TURN_SPEED_SHARE + (1.0 - TRUCK_TURN_SPEED_SHARE) * alignment
+        } else {
+            alignment * alignment
+        };
+        drive =
+            input_magnitude.min(1.0) * speed * share * if reverse { -REVERSE_SPEED } else { 1.0 };
     }
     let desired_velocity_x = hull.heading.sin() * drive;
     let desired_velocity_z = hull.heading.cos() * drive;
@@ -103,4 +123,12 @@ pub fn drive_hull(
         true,
     );
     body.set_rotation(to_rotation(Quat4::yaw(hull.heading)), true);
+}
+
+/// How fast a car may turn: its rolling speed over the tightest turning radius, within
+/// the creep and track turn speeds.
+fn car_turn_speed(body: &RigidBody, heading: f64) -> f64 {
+    let velocity = body.linvel();
+    let rolling = (velocity.x as f64 * heading.sin() + velocity.z as f64 * heading.cos()).abs();
+    (rolling / TRUCK_TURN_RADIUS).clamp(TRUCK_CREEP_TURN, HULL_TURN_SPEED)
 }

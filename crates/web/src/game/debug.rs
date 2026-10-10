@@ -287,10 +287,14 @@ impl Game {
         Ok(())
     }
 
-    /// Add a bot tank; returns its id.
+    /// Add a bot tank, or a neutral Cybertruck (whatever `team`); returns its id.
     pub fn debug_add_tank(&mut self, team: u8, kind: &str) -> Result<u32, JsValue> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
+        if kind.neutral() {
+            let index = self.sim.add_cybertruck(kind, Vec2::ZERO);
+            return Ok(self.sim.tanks[index].id);
+        }
         let slot = self.sim.tanks.len();
         let index = self
             .sim

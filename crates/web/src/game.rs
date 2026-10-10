@@ -640,7 +640,7 @@ impl Game {
                 let p = sim.tank_position(tank);
                 json!({
                     "id": tank.id, "kind": tank.kind, "team": tank.team, "human": tank.human,
-                    "alive": tank.alive, "x": p.x, "z": p.z, "hp": tank.hp,
+                    "alive": tank.alive, "x": p.x, "z": p.z, "heading": tank.heading, "hp": tank.hp,
                     "shown": self.view.tank_shown(tank.id),
                 })
             })

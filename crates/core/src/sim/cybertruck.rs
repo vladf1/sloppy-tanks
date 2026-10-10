@@ -62,14 +62,15 @@ const WHEEL_DRAG: [f64; 2] = [0.3, 0.02];
 /// A tyre's crown: the share of its half-width rounded off at each shoulder.
 const WHEEL_CROWN: f64 = 0.9;
 /// Below this planar speed (m/s) a rolling wheel wobbles over: it is tipped toward the
-/// side it already leans to (radians per second each second) until it lies flat.
+/// side it already leans to at this rate (radians per second) until it leans past
+/// `TIPPED_AXLE` (the sine of its axle's rise), and gravity lays it down.
 const TOPPLE_SPEED: f64 = 1.3;
-const TOPPLE_RATE: f64 = 2.5;
-/// An axle this steep (the sine of its rise) has the wheel lying down.
-const LYING_AXLE: f64 = 0.8;
+const TOPPLE_RATE: f64 = 1.2;
+const TIPPED_AXLE: f64 = 0.3;
 const WHEEL_MASS: f64 = 30.0;
-/// Seconds a loose wheel lasts before it sinks away.
-const WHEEL_SECONDS: f64 = 9.0;
+/// Seconds a loose wheel lasts before it sinks away: it rolls, wobbles over and
+/// lies still a moment.
+const WHEEL_SECONDS: f64 = 11.0;
 /// Planar speed below which a loose wheel just topples instead of rolling.
 const ROLLING_SPEED: f64 = 0.5;
 /// Chance, one in this many, that a plain truck's crash only burns out.
@@ -112,13 +113,12 @@ const SPAWN_CLEARANCE: f64 = 6.0;
 /// Where truck `salt` appears: one of the spots in the half of the map farther from
 /// the player, clear of every vehicle.
 pub(crate) fn cybertruck_spawn(simulation: &Simulation, salt: u32) -> Vec2 {
+    // A dead player has no body; it waits where it fell.
     let player = simulation
         .tanks
         .iter()
         .find(|tank| tank.human)
-        .map_or(Vec2::ZERO, |tank| {
-            simulation.body_translation(tank.body).planar()
-        });
+        .map_or(Vec2::ZERO, |tank| simulation.tank_position(tank).planar());
     let vehicles: Vec<Vec2> = simulation
         .tanks
         .iter()
@@ -426,17 +426,25 @@ fn topple_slow_wheels(simulation: &mut Simulation) {
         let velocity = body.linvel();
         let axle = *body.rotation() * Vector::Y;
         if f64::from(velocity.x.hypot(velocity.z)) > TOPPLE_SPEED
-            || f64::from(axle.y.abs()) > LYING_AXLE
+            || f64::from(axle.y.abs()) > TIPPED_AXLE
         {
             continue;
         }
-        // Turning about axle x up raises the axle: onto the side it already leans to.
+        // Its spin no longer holds it up: without gyroscopic forces the push tips it
+        // rather than steering it. Turning about axle x up raises the axle, onto the
+        // side it already leans to.
+        body.enable_gyroscopic_forces(false);
         let Some(over) = axle.cross(Vector::Y).try_normalize() else {
             continue;
         };
         let side = if axle.y < 0.0 { -1.0 } else { 1.0 };
-        let push = over * (side * TOPPLE_RATE * STEP) as f32;
-        body.set_angvel(body.angvel() + push, true);
+        let tipping = body.angvel().dot(over) * side;
+        if tipping < TOPPLE_RATE as f32 {
+            body.set_angvel(
+                body.angvel() + over * side * (TOPPLE_RATE as f32 - tipping),
+                true,
+            );
+        }
     }
 }
 

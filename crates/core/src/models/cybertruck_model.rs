@@ -1,8 +1,10 @@
 //! The Cybertruck easter egg: a stainless-steel wedge of a pickup that roams
 //! debug single-player arenas as a harmless target. Low poly by nature: its body
 //! is one extruded side profile (a wedge nose, the roof apex, the long vault over
-//! the bed and trapezoid wheel arches), with a dark glass band, light bars across
-//! the nose and tail, and aero-covered wheels.
+//! the bed and trapezoid wheel arches), with tinted glass, light bars across the
+//! nose and tail, and, after the production truck, chunky tyres in thick black
+//! arch flares, black rocker cladding and bumpers, and a dark tonneau cover between
+//! the steel sail panels, which is what reads from the game's high camera.
 //!
 //! Part names follow the tanks (`hull`, `track-group`, an empty `turret` and
 //! `barrel`, a `muzzle` marker at the nose) so presentation poses it like the
@@ -24,11 +26,12 @@ use crate::scene::{Color, Material, Node};
 /// Overall length and width; the body's height comes from its profile.
 const LENGTH: f64 = 5.7;
 const WIDTH: f64 = 2.0;
-/// Wheels: radius, tread width, track half-width and axle stations.
-pub const CYBERTRUCK_WHEEL_RADIUS: f64 = 0.43;
-pub const CYBERTRUCK_WHEEL_WIDTH: f64 = 0.3;
-const WHEEL_X: f64 = 0.84;
-const AXLES: [f64; 2] = [-1.8, 1.8];
+/// Wheels: radius, tread width, track half-width (the tread stands a little proud of
+/// the flank) and axle stations (a 3.8 m wheelbase).
+pub const CYBERTRUCK_WHEEL_RADIUS: f64 = 0.45;
+pub const CYBERTRUCK_WHEEL_WIDTH: f64 = 0.36;
+const WHEEL_X: f64 = 0.85;
+const AXLES: [f64; 2] = [-1.9, 1.9];
 /// Each wheel's hub as (across, along) the truck before the vehicle scale, in the
 /// order of `CYBERTRUCK_WHEEL_JOINTS`.
 pub const CYBERTRUCK_WHEELS: [[f64; 2]; 4] = [
@@ -40,22 +43,29 @@ pub const CYBERTRUCK_WHEELS: [[f64; 2]; 4] = [
 pub const CYBERTRUCK_WHEEL_JOINTS: [&str; 4] = ["wheel-0", "wheel-1", "wheel-2", "wheel-3"];
 /// The roof apex and the window line along the body's flanks.
 const APEX: [f64; 2] = [0.3, 1.8];
-const NOSE: [f64; 2] = [2.83, 0.98];
-const TAIL: [f64; 2] = [-2.85, 1.26];
-const BELTLINE: f64 = 1.28;
+const NOSE: [f64; 2] = [2.84, 1.0];
+const TAIL: [f64; 2] = [-2.85, 1.22];
+const BELTLINE: f64 = 1.2;
+/// The sill under the doors, and the steel sails either side of the tonneau cover.
+const SILL: f64 = 0.5;
+const SAIL: f64 = 0.2;
 /// Glass and trim lie this far off the steel they cover.
 const SKIN: f64 = 0.004;
 /// The ground line in the model: vehicles are drawn 0.25 m above the ground (the
 /// physics body's height less the view's model drop), here at the 0.95 vehicle scale.
 const GROUND_Y: f64 = -0.26;
 
-const STAINLESS: u32 = 0xc4c8ca;
-/// The gold-foil wrap: bright, mirror-smooth metal.
-const GOLD_FOIL: u32 = 0xe2b23c;
-const GLASS: u32 = 0x15181b;
-const TRIM: u32 = 0x2b2e31;
-const RUBBER: u32 = 0x1c1f21;
-const AERO_COVER: u32 = 0x8e9398;
+/// Brushed stainless steel, a mid grey.
+const STAINLESS: u32 = 0xaeb3b7;
+/// The gold-foil wrap: bright, smooth metal with a warm glow so it reads as gold
+/// rather than olive in shade.
+const GOLD_FOIL: u32 = 0xf6c445;
+const GOLD_GLOW: u32 = 0x7a5200;
+/// Tinted glass, the black cladding and tonneau, tyres and dark grey rims.
+const GLASS: u32 = 0x26313a;
+const TRIM: u32 = 0x232527;
+const RUBBER: u32 = 0x18191a;
+const RIM: u32 = 0x4b5056;
 const HEADLIGHT: u32 = 0xf2f5ff;
 const TAILLIGHT: u32 = 0xd3241c;
 
@@ -64,7 +74,7 @@ const TAILLIGHT: u32 = 0xd3241c;
 /// back along the sill under both arches.
 fn profile() -> Vec<DVec2> {
     let half = LENGTH / 2.0;
-    let mut points = vec![[half, 0.58], NOSE, APEX, TAIL, [-half, 0.62]];
+    let mut points = vec![[half, 0.6], NOSE, APEX, TAIL, [-half, 0.6]];
     // The sill runs back to front under both arches.
     for center in AXLES {
         points.extend(arch(center, 0.0));
@@ -75,10 +85,10 @@ fn profile() -> Vec<DVec2> {
 /// A wheel arch over the axle at `center`, rear to front, `grow` larger all round.
 fn arch(center: f64, grow: f64) -> [[f64; 2]; 4] {
     [
-        [center - 0.65 - grow, 0.54],
-        [center - 0.4 - grow * 0.6, 0.98 + grow * 0.7],
-        [center + 0.4 + grow * 0.6, 0.98 + grow * 0.7],
-        [center + 0.65 + grow, 0.54],
+        [center - 0.74 - grow, SILL],
+        [center - 0.44 - grow * 0.6, 1.02 + grow * 0.7],
+        [center + 0.44 + grow * 0.6, 1.02 + grow * 0.7],
+        [center + 0.74 + grow, SILL],
     ]
 }
 
@@ -142,12 +152,16 @@ fn kit(gold: bool) -> &'static Kit {
     static KITS: [OnceLock<Kit>; 2] = [OnceLock::new(), OnceLock::new()];
     KITS[usize::from(gold)].get_or_init(|| {
         let steel = if gold {
-            material(GOLD_FOIL, 0.9, 0.2)
+            Arc::new(Material {
+                emissive: Color(GOLD_GLOW),
+                emissive_intensity: 0.5,
+                ..Material::standard(GOLD_FOIL, 0.6, 0.22)
+            })
         } else {
-            material(STAINLESS, 0.7, 0.32)
+            material(STAINLESS, 0.75, 0.36)
         };
-        let glass = material(GLASS, 0.5, 0.08);
-        let trim = material(TRIM, 0.0, 0.85);
+        let glass = material(GLASS, 0.3, 0.1);
+        let trim = material(TRIM, 0.0, 0.8);
         let mut body = extrude_geometry(
             &[Shape::from_points(&profile())],
             &ExtrudeOptions {
@@ -161,7 +175,7 @@ fn kit(gold: bool) -> &'static Kit {
         body.rotate_y(-FRAC_PI_2);
         // Windshield and the small rear window lie on the roof lines, the side
         // windows on the flanks above the beltline.
-        let front_glass = 1.72;
+        let front_glass = 1.6;
         let rear_glass = -0.55;
         let across = WIDTH / 2.0 - 0.07;
         let on_roof = |z: f64, x: f64| DVec3::new(x, roof(z) + SKIN, z);
@@ -191,20 +205,46 @@ fn kit(gold: bool) -> &'static Kit {
             [window_back, BELTLINE],
         ];
         let mut glass_parts = vec![windshield, rear_window];
-        // The flare over each wheel and the sill between them, in dark trim.
-        let mut trim_parts = Vec::new();
+        // The tonneau over the bed, between the steel sails.
+        let sail = WIDTH / 2.0 - SAIL;
+        let tonneau_front = rear_glass - 0.02;
+        let tonneau_back = TAIL[0] + 0.04;
+        let mut trim_parts = vec![quad(
+            [
+                on_roof(tonneau_front, -sail),
+                on_roof(tonneau_front, sail),
+                on_roof(tonneau_back, sail),
+                on_roof(tonneau_back, -sail),
+            ],
+            DVec3::new(0.0, APEX[0] - TAIL[0], TAIL[1] - APEX[1]).normalize(),
+        )];
+        // Thick flares round each arch and the rocker cladding between them.
+        let rocker = [AXLES[0] + 0.74, AXLES[1] - 0.74];
         for side in [-1.0, 1.0] {
             glass_parts.push(flank(&side_window, side));
             for center in AXLES {
                 // A flare around the arch: its outline out, then the opening back.
-                let mut band: Vec<[f64; 2]> = arch(center, 0.09).to_vec();
+                let mut band: Vec<[f64; 2]> = arch(center, 0.17).to_vec();
                 band.extend(arch(center, 0.0).iter().rev());
                 trim_parts.push(flank(&band, side));
             }
             trim_parts.push(flank(
-                &[[-1.12, 0.52], [1.12, 0.52], [1.12, 0.66], [-1.12, 0.66]],
+                &[
+                    [rocker[0], SILL - 0.08],
+                    [rocker[1], SILL - 0.08],
+                    [rocker[1], SILL + 0.18],
+                    [rocker[0], SILL + 0.18],
+                ],
                 side,
             ));
+        }
+        // Black bumpers under the nose, flush with it, and a chunkier one standing
+        // out under the tailgate.
+        let half = LENGTH / 2.0;
+        for (z, height, depth) in [(half - 0.15, 0.26, 0.3), (-half + 0.18, 0.32, 0.44)] {
+            let mut bumper = crate::geometry::box_geometry(WIDTH + 0.02, height, depth);
+            bumper.translate(0.0, 0.58 - height / 2.0, z);
+            trim_parts.push(bumper.to_non_indexed());
         }
         let merge = |parts: &[Mesh]| {
             Arc::new(
@@ -224,13 +264,13 @@ fn kit(gold: bool) -> &'static Kit {
             16,
         );
         wheel_tire.rotate_z(FRAC_PI_2);
-        let mut cover = cylinder_geometry(
-            CYBERTRUCK_WHEEL_RADIUS * 0.74,
-            CYBERTRUCK_WHEEL_RADIUS * 0.74,
+        let mut rim = cylinder_geometry(
+            CYBERTRUCK_WHEEL_RADIUS * 0.66,
+            CYBERTRUCK_WHEEL_RADIUS * 0.66,
             CYBERTRUCK_WHEEL_WIDTH + 0.012,
-            16,
+            12,
         );
-        cover.rotate_z(FRAC_PI_2);
+        rim.rotate_z(FRAC_PI_2);
         Kit {
             body: vec![
                 (steel, Arc::new(body)),
@@ -247,7 +287,7 @@ fn kit(gold: bool) -> &'static Kit {
             ],
             wheel: vec![
                 (material(RUBBER, 0.0, 0.92), Arc::new(wheel_tire)),
-                (material(AERO_COVER, 0.4, 0.5), Arc::new(cover)),
+                (material(RIM, 0.5, 0.45), Arc::new(rim)),
             ],
         }
     })

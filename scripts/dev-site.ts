@@ -8,7 +8,7 @@ export const devPages = [
     title: "Tank surfaces",
     detail: "Vehicle textures and materials, drawn by the engine's renderer",
   },
-  ...["humvee", "suspension", "maps", "destruction", "reinforcements"].map((name) => ({
+  ...["humvee", "cybertruck", "suspension", "maps", "destruction", "reinforcements"].map((name) => ({
     path: `tests/${name}.browser.html`,
     title: `${name[0].toUpperCase()}${name.slice(1)} check`,
     detail:

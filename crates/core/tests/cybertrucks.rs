@@ -3,14 +3,14 @@
 
 mod support;
 
+use rapier3d::prelude::Vector;
 use sloppy_core::models::CYBERTRUCK_WHEEL_RADIUS;
 use sloppy_core::sim::cybertruck::{CYBERTRUCK_COUNT, CYBERTRUCK_RESPAWN_SECONDS};
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::math::{Point3, Vec2, distance};
 use sloppy_core::sim::physics::from_vector;
-use sloppy_core::sim::{
-    Shot, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, WreckPart,
-};
+use sloppy_core::sim::tank_driving::drive_tank;
+use sloppy_core::sim::{Shot, Simulation, SimulationSetup, VehicleCommand, VehicleKind, WreckPart};
 use support::{clear_arena, damage_from, idle, place_tank, tank_xz};
 
 const PLAYER: usize = 0;
@@ -84,6 +84,16 @@ fn shell_at(s: &mut Simulation, x: f64, z: f64) {
     });
 }
 
+/// The loose wheel's centre and axle direction.
+fn wheel_pose(s: &Simulation) -> (Point3, Vector) {
+    let wheel = wheel_fragment(s).expect("a loose wheel");
+    let body = &s.world.bodies[s.fragments[wheel].body];
+    (
+        from_vector(body.translation()),
+        *body.rotation() * Vector::Y,
+    )
+}
+
 fn wheel_fragment(s: &Simulation) -> Option<usize> {
     s.fragments
         .iter()
@@ -150,6 +160,37 @@ fn trucks_roam_without_firing_and_bots_ignore_them() {
 }
 
 #[test]
+fn trucks_turn_round_like_cars_instead_of_reversing_or_pivoting() {
+    let mut s = truck_range(VehicleKind::Cybertruck);
+    // Told to head back the way it faces, from rest.
+    let command = VehicleCommand {
+        move_z: -1.0,
+        ..VehicleCommand::idle()
+    };
+    let mut travelled = 0.0;
+    let mut turned_at = None;
+    for tick in 0..(4.0 / STEP) as usize {
+        let from = tank_xz(&s, TRUCK);
+        let tank = &mut s.tanks[TRUCK];
+        let body = &mut s.world.bodies[tank.body];
+        drive_tank(tank, body, &command, STEP, 1.0);
+        s.world.step();
+        let to = tank_xz(&s, TRUCK);
+        let heading = s.tanks[TRUCK].heading;
+        let along = (to.x - from.x) * heading.sin() + (to.z - from.z) * heading.cos();
+        assert!(along > -1e-3, "reversed at tick {tick}");
+        travelled += distance(from, to);
+        if turned_at.is_none() && heading.cos() < -0.95 {
+            turned_at = Some((tick, travelled));
+        }
+    }
+    let (tick, arc) = turned_at.expect("it turned round");
+    // A tank pivots round in under a second; the truck drives an arc.
+    assert!(tick as f64 * STEP > 1.0, "turned round in {tick} ticks");
+    assert!(arc > 5.0, "turned round in {arc:.1} m");
+}
+
+#[test]
 fn a_destroyed_truck_scores_nothing_and_returns() {
     let mut s = truck_range(VehicleKind::Cybertruck);
     let score = s.match_state.clone();
@@ -161,6 +202,17 @@ fn a_destroyed_truck_scores_nothing_and_returns() {
     for _ in 0..((CYBERTRUCK_RESPAWN_SECONDS + 0.5) / STEP) as usize {
         idle(&mut s);
     }
+    assert!(s.tanks[TRUCK].alive);
+}
+
+#[test]
+fn a_truck_returns_while_the_player_is_dead() {
+    let mut s = truck_range(VehicleKind::Cybertruck);
+    damage_from(&mut s, TRUCK, 500.0, PLAYER, None, None);
+    damage_from(&mut s, PLAYER, 500.0, ENEMY, None, None);
+    assert!(!s.tanks[PLAYER].alive);
+    s.tanks[TRUCK].respawn = STEP;
+    idle(&mut s);
     assert!(s.tanks[TRUCK].alive);
 }
 
@@ -212,41 +264,21 @@ fn a_shell_near_a_wheel_can_knock_it_off_and_the_truck_crashes() {
         .find(|f| f.wreck == Some(VehicleKind::Cybertruck) && f.part == Some(WreckPart::Intact))
         .expect("a wreck");
     assert_eq!(wreck.lost_wheel, Some(0));
-    // The loose wheel rolls away on its rim.
+    // The loose wheel rolls away upright on its rim...
+    let radius = CYBERTRUCK_WHEEL_RADIUS * vehicle(VehicleKind::Cybertruck).scale;
     for _ in 0..60 {
         idle(&mut s);
     }
-    let wheel = wheel_fragment(&s).expect("the wheel outlasts the crash");
-    let body = &s.world.bodies[s.fragments[wheel].body];
-    let at = from_vector(body.translation());
-    println!(
-        "launched {launched:?} at {at:?} linvel {:?} angvel {:?} rot {:?}",
-        body.linvel(),
-        body.angvel(),
-        body.rotation()
-    );
-    for second in 0..16 {
-        for _ in 0..30 {
-            idle(&mut s);
-        }
-        if let Some(w) = wheel_fragment(&s) {
-            let body = &s.world.bodies[s.fragments[w].body];
-            let at = from_vector(body.translation());
-            let v = body.linvel();
-            let axle = *body.rotation() * rapier3d::prelude::Vector::Y;
-            println!(
-                "t+{second} at ({:.1}, {:.3}, {:.1}) speed {:.2} spin {:.2} tilt {:.3} heading {:.2}",
-                at.x,
-                at.y,
-                at.z,
-                v.x.hypot(v.z),
-                body.angvel().length(),
-                axle.y.asin(),
-                v.x.atan2(v.z)
-            );
-        }
-    }
+    let (at, axle) = wheel_pose(&s);
     assert!(distance(at.planar(), launched.planar()) > 3.0, "{at:?}");
-    assert!(at.y < CYBERTRUCK_WHEEL_RADIUS * 2.0, "{at:?}");
-    let _ = (Point3::default(), Team::Blue);
+    assert!(
+        (at.y - radius).abs() < 0.03 && axle.y.abs() < 0.2,
+        "{at:?} {axle:?}"
+    );
+    // ...and once it slows down, wobbles over and lies flat.
+    for _ in 0..(7.0 / STEP) as usize {
+        idle(&mut s);
+    }
+    let (_, axle) = wheel_pose(&s);
+    assert!(axle.y.abs() > 0.95, "still upright: {axle:?}");
 }
