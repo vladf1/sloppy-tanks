@@ -200,7 +200,6 @@ export interface RecapState {
   stats: Record<RecapMetric, number>;
   best: Record<RecapMetric, number>;
   improved: RecapMetric[];
-  established: boolean;
   persisted: boolean;
   feats: { title: string; detail: string }[];
   shots: number;
@@ -208,7 +207,6 @@ export interface RecapState {
   damageTaken: number;
   shieldAbsorbed: number;
   rankNames: string[];
-  recordsKey: string;
 }
 
 /** `hud_json`: everything the HUD and menus show. */

@@ -1140,7 +1140,6 @@ impl Game {
             "stats": metrics(&stats),
             "best": metrics(&records.best),
             "improved": records.improved.iter().map(|metric| metric.key()).collect::<Vec<_>>(),
-            "established": records.established,
             "persisted": records.persisted,
             "feats": combat_feats(&stats, combat.shots, combat.direct_hits),
             "shots": combat.shots,
@@ -1148,7 +1147,6 @@ impl Game {
             "damageTaken": combat.damage_taken,
             "shieldAbsorbed": combat.shield_absorbed,
             "rankNames": RANKS.iter().map(|rank| rank.name).collect::<Vec<_>>(),
-            "recordsKey": key,
         })
     }
 
