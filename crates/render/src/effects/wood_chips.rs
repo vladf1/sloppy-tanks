@@ -34,8 +34,9 @@ const SETTLE_SECONDS: f32 = 0.16;
 /// this speed (m/s).
 const SLIDE_DRAG: f64 = 7.0;
 const STOPPED: f64 = 0.02;
-/// Landed pieces lie this far above the ground, clear of its decals.
-const CLEARANCE: f64 = 0.012;
+/// Landed pieces lie this far above the ground, clear of its decals and the harbor
+/// paving.
+const CLEARANCE: f64 = 0.03;
 /// Seconds a landed piece lies, [minimum, random span], then shrinks away.
 const WOOD_REST: [f64; 2] = [3.0, 3.0];
 const STRAW_REST: [f64; 2] = [4.0, 3.0];

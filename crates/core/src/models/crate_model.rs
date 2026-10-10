@@ -16,10 +16,10 @@ use std::sync::Arc;
 use glam::{DMat3, DQuat, DVec2, DVec3};
 
 use super::batching::batch;
-use super::model_primitives::{material, shadowed};
-use super::timber_model::timber_member;
+use super::model_primitives::shadowed;
+use super::timber_model::{timber_member, timber_member_face, wood as timber_wood};
 use crate::geometry::math::scale_hex_color;
-use crate::geometry::{Shape, box_geometry, shape_geometry};
+use crate::geometry::{Mesh, Shape, box_geometry, shape_geometry};
 use crate::scene::Node;
 use crate::sim::crate_layout::{
     CRATE_BASE, CRATE_BATTEN, CRATE_BATTEN_WIDTH, CRATE_BOARD_PITCH, CRATE_LID, CRATE_PLANK,
@@ -59,9 +59,10 @@ const RAW_WOOD: u32 = 0xe4c899;
 const TORN_WOOD: u32 = 0xc9a26e;
 const CRACK_LIP_COLOR: u32 = 0xb98a55;
 const CRACK_COLOR: u32 = 0x2b1d12;
-/// Splinters, torn fibres and the hold share one matte finish, so batching merges
-/// them into one draw.
-const SCRAP_FINISH: (f64, f64) = (0.0, 0.85);
+/// Splinters, torn fibres, cracks, the hold and the straps sample this one texel
+/// of the timber atlas's first plank row, so they share the boards' material and a
+/// whole crate batches into a single draw.
+const SCRAP_TEXEL: [f32; 2] = [0.3, 0.875];
 
 /// Decals sit this far over the board they mark, enough to win the depth test.
 const DECAL_LIFT: f64 = 0.003;
@@ -135,13 +136,17 @@ struct Bend {
 
 /// What breaks a board: the face's breaches, extra torn spans and cracks along it
 /// (board coordinates: a span, or a centre, half-length and seed) and an optional
-/// bend.
+/// bend. `skin` marks a board over the hold whose outer face alone can show, so
+/// its unbroken lengths are drawn as that face; `coarse` a loose, tumbling one,
+/// whose breaks carry only their stepped strip and a splinter or two.
 #[derive(Default)]
 struct Damage<'a> {
     breaches: &'a [Breach],
     gaps: Vec<(f64, f64)>,
     cracks: Vec<(f64, f64, i32)>,
     bend: Option<Bend>,
+    skin: bool,
+    coarse: bool,
 }
 
 fn hash(seed: i32, salt: i32) -> i32 {
@@ -152,14 +157,72 @@ fn random(seed: i32, salt: i32) -> Random {
     Random::new(f64::from(hash(seed, salt)))
 }
 
+/// Shades a crate's boards vary between. Each paint is a material the shared cache
+/// keeps for good, so the shades are few rather than drawn continuously.
+const BOARD_TONES: [f64; 4] = [0.87, 0.93, 0.99, 1.05];
+
+fn board_tone(color: u32, rng: &mut Random) -> u32 {
+    let tone = BOARD_TONES[(rng.next() * BOARD_TONES.len() as f64) as usize];
+    scale_hex_color(color, tone)
+}
+
 /// A crate's cosmetic seed from its position, never the combat RNG.
 fn crate_seed(c: &CrateShape) -> i32 {
     to_int32(js_round(c.x * 100.0)).wrapping_mul(73_856_093)
         ^ to_int32(js_round(c.z * 100.0)).wrapping_mul(19_349_663)
 }
 
-fn scrap(mesh: Arc<crate::geometry::Mesh>, color: u32) -> Node {
-    shadowed(mesh, material(color, SCRAP_FINISH.0, SCRAP_FINISH.1))
+/// A scrap of `mesh` painted `color` over the boards' wood (see [`SCRAP_TEXEL`]).
+fn scrap(mut mesh: Mesh, color: u32) -> Node {
+    mesh.uvs.fill(SCRAP_TEXEL);
+    shadowed(Arc::new(mesh), timber_wood(color))
+}
+
+/// A splinter: a thin three-sided spike from its base at the origin to its tip
+/// along +x, in four triangles.
+fn spike(length: f64, width: f64, thickness: f64) -> Mesh {
+    let base = [
+        DVec3::new(0.0, -width / 2.0, -thickness / 2.0),
+        DVec3::new(0.0, width / 2.0, -thickness / 2.0),
+        DVec3::new(0.0, 0.0, thickness / 2.0),
+    ];
+    let tip = DVec3::new(length, 0.0, 0.0);
+    let center = (base[0] + base[1] + base[2] + tip) / 4.0;
+    let (mut positions, mut normals) = (Vec::with_capacity(36), Vec::with_capacity(36));
+    for [a, b, c] in [
+        [base[0], base[1], base[2]],
+        [base[0], base[1], tip],
+        [base[1], base[2], tip],
+        [base[2], base[0], tip],
+    ] {
+        let mut normal = (b - a).cross(c - a).normalize();
+        // Wind every face outwards.
+        let (b, c) = if normal.dot((a + b + c) / 3.0 - center) < 0.0 {
+            normal = -normal;
+            (c, b)
+        } else {
+            (b, c)
+        };
+        for p in [a, b, c] {
+            positions.extend_from_slice(&[p.x, p.y, p.z]);
+            normals.extend_from_slice(&[normal.x, normal.y, normal.z]);
+        }
+    }
+    let uvs = vec![0.0; positions.len() / 3 * 2];
+    Mesh::from_f64(&positions, &normals, &uvs, None)
+}
+
+/// A flat chip lying on the ground: its upper face only, in two triangles.
+fn flake(length: f64, width: f64) -> Mesh {
+    let (x, z) = (length / 2.0, width / 2.0);
+    let positions = [-x, 0.0, -z, x, 0.0, -z, x, 0.0, z, -x, 0.0, z];
+    let normals = [0.0, 1.0, 0.0].repeat(4);
+    Mesh::from_f64(
+        &positions,
+        &normals,
+        &[0.0; 8],
+        Some(vec![0, 2, 1, 0, 3, 2]),
+    )
 }
 
 /// Lay `board` on `face`, broken by `damage`: the spans breaches and gaps remove,
@@ -270,9 +333,15 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
             strips.push((tip, ends[end], share, edge));
         }
         let length = ends[1] - ends[0];
+        let whole = damage.skin && strips.is_empty() && transform.is_none();
+        let member = if whole {
+            timber_member_face
+        } else {
+            timber_member
+        };
         place(
             group,
-            timber_member(
+            member(
                 DVec3::new(length, board.width, board.thickness),
                 hash(board.seed, index as i32),
                 board.color,
@@ -299,7 +368,11 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
             // Splinters: from the strip's tip and the main board's end, mostly bent
             // into the hole, the odd one peeled outwards.
             let outward = if tip < base { -1.0 } else { 1.0 };
-            let count = 3 + (rng.next() * 3.0) as usize;
+            let count = if damage.coarse {
+                1 + (rng.next() * 2.0) as usize
+            } else {
+                2 + (rng.next() * 3.0) as usize
+            };
             for i in 0..count {
                 let on_strip = i % 2 == 0;
                 let (from, low, high) = if on_strip {
@@ -325,27 +398,16 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
                 let yaw = rng.range(-0.3, 0.3);
                 let local = DQuat::from_rotation_z(if outward > 0.0 { yaw } else { PI + yaw })
                     * DQuat::from_rotation_y(bend);
-                let reach = local * DVec3::new(length / 2.0, 0.0, 0.0);
                 let color = if rng.next() < 0.6 {
                     RAW_WOOD
                 } else {
                     TORN_WOOD
                 };
-                place(
-                    group,
-                    scrap(
-                        Arc::new(box_geometry(
-                            length,
-                            rng.range(0.012, 0.035),
-                            rng.range(0.008, 0.016),
-                        )),
-                        color,
-                    ),
-                    from + reach.x,
-                    s + reach.y,
-                    reach.z,
-                    local,
-                );
+                let splinter = spike(length, rng.range(0.015, 0.04), rng.range(0.01, 0.018));
+                place(group, scrap(splinter, color), from, s, 0.0, local);
+            }
+            if damage.coarse {
+                continue;
             }
             // Torn fibres on the face just behind the break.
             let depth = rng.range(0.03, 0.09);
@@ -359,10 +421,7 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
                     DVec2::new(base + outward * 0.002, -board.width * 0.48),
                 ])
                 .collect();
-            let fibres = Node::mesh(
-                Arc::new(shape_geometry(&[Shape::from_points(&points)])),
-                material(TORN_WOOD, SCRAP_FINISH.0, SCRAP_FINISH.1),
-            );
+            let fibres = scrap(shape_geometry(&[Shape::from_points(&points)]), TORN_WOOD);
             place(
                 group,
                 fibres,
@@ -413,7 +472,7 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
 /// how far over the board it lies.
 fn crack_decals(t: f64, s: f64, reach: f64, seed: i32) -> Vec<(Node, f64)> {
     let mut rng = random(seed, 7);
-    let count = 6;
+    let count = 4;
     let path: Vec<DVec2> = (0..=count)
         .map(|i| {
             let x = t - reach + 2.0 * reach * f64::from(i) / f64::from(count);
@@ -434,11 +493,10 @@ fn crack_decals(t: f64, s: f64, reach: f64, seed: i32) -> Vec<(Node, f64)> {
                 outline.push(DVec2::new(path[i].x, path[i].y + side * thickness * taper));
             }
         }
-        let node = Node::mesh(
-            Arc::new(shape_geometry(&[Shape::from_points(&outline)])),
-            material(color, SCRAP_FINISH.0, SCRAP_FINISH.1),
-        );
-        (node, lift)
+        (
+            scrap(shape_geometry(&[Shape::from_points(&outline)]), color),
+            lift,
+        )
     })
     .collect()
 }
@@ -553,7 +611,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
         .max_by_key(|&i| (breaches[i].len(), usize::from(i == 0)))
         .unwrap_or(0);
     let snapped = if rng.next() < 0.5 { -1.0 } else { 1.0 };
-    let tone = |rng: &mut Random| scale_hex_color(c.color, rng.range(0.86, 1.06));
+    let tone = |rng: &mut Random| board_tone(c.color, rng);
 
     // Skids under the crate.
     let skids: &[f64] = if c.w >= 2.6 {
@@ -600,7 +658,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     for normal in &mut liner.normals {
         *normal = normal.map(|n| -n);
     }
-    let mut hold = scrap(Arc::new(liner), HOLD_COLOR);
+    let mut hold = scrap(liner, HOLD_COLOR);
     hold.position = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
     group.children.push(hold);
 
@@ -634,7 +692,11 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
                 color: tone(&mut rng),
                 seed: hash(seed, (index * 40 + row) as i32),
             };
-            lay_board(group, face, &board, &damage(None));
+            let skin = Damage {
+                skin: true,
+                ..damage(None)
+            };
+            lay_board(group, face, &board, &skin);
         }
         let reach = if long {
             face.half + CRATE_BATTEN
@@ -725,14 +787,14 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
                     1 => TORN_WOOD,
                     _ => tone(&mut rng),
                 };
-                let mut chip = scrap(Arc::new(box_geometry(length, thickness, width)), color);
+                let mut chip = scrap(flake(length, width), color);
                 chip.position = face.at(
                     clamp(
                         breach.u + rng.range(-0.7, 0.7),
                         -face.half - 0.4,
                         face.half + 0.4,
                     ),
-                    thickness / 2.0 + LITTER_LIFT,
+                    thickness + LITTER_LIFT,
                     rng.range(CRATE_BATTEN + 0.08, 1.1),
                 );
                 chip.rotation = DQuat::from_rotation_y(rng.range(0.0, PI))
@@ -779,7 +841,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             }
         }
     }
-    for row in 0..rows as usize {
+    for (row, shock) in shaken.into_iter().enumerate() {
         let v = -c.d / 2.0 + pitch * (row as f64 + 0.5);
         let board = Board {
             u: 0.0,
@@ -798,7 +860,6 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             side: snapped,
             angle: if row == sprung { 0.11 } else { 0.05 },
         });
-        let shock = std::mem::take(&mut shaken[row]);
         lay_board(
             group,
             lid,
@@ -806,6 +867,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             &Damage {
                 breaches: &breaches[LID],
                 bend,
+                skin: true,
                 ..shock
             },
         );
@@ -836,13 +898,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     // Two steel straps over the lid and down the long walls, bridging between the
     // battens like tensioned bands. A worn crate's strap on one side has snapped
     // and its ends curl up off the lid.
-    let strap = material(STRAP_COLOR, 0.55, 0.42);
-    let band = |size: DVec3| {
-        shadowed(
-            Arc::new(box_geometry(size.x, size.y, size.z)),
-            strap.clone(),
-        )
-    };
+    let band = |size: DVec3| scrap(box_geometry(size.x, size.y, size.z), STRAP_COLOR);
     let over = c.h + CRATE_BATTEN + STRAP_THICKNESS / 2.0;
     let wrap = c.d / 2.0 + CRATE_BATTEN + STRAP_THICKNESS / 2.0;
     let rise = over + STRAP_THICKNESS / 2.0 - CRATE_BASE;
@@ -911,7 +967,11 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
         n: DVec3::Z,
         half,
     };
-    let tone = |rng: &mut Random| scale_hex_color(color, rng.range(0.86, 1.06));
+    let tone = |rng: &mut Random| board_tone(color, rng);
+    let loose = || Damage {
+        coarse: true,
+        ..Damage::default()
+    };
     match piece {
         CratePiece::WallLeft | CratePiece::WallRight | CratePiece::End => {
             // The torn side, and on the other the corner it was nailed into.
@@ -952,7 +1012,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 };
                 let mut damage = Damage {
                     gaps: vec![ragged(&mut rng, deepest)],
-                    ..Damage::default()
+                    ..loose()
                 };
                 // A board knocked clean out of the middle of the section.
                 if row == missing {
@@ -982,7 +1042,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 );
                 let damage = Damage {
                     gaps: vec![ragged(&mut rng, deepest * 1.4)],
-                    ..Damage::default()
+                    ..loose()
                 };
                 lay_board(&mut group, &face, &batten, &damage);
             }
@@ -992,7 +1052,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 &mut group,
                 &face,
                 &frame(corner, 0.0, FRAC_PI_2, post, 2),
-                &Damage::default(),
+                &loose(),
             );
             // What is left of the brace climbs from the corner and breaks off.
             let rise = post;
@@ -1027,7 +1087,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 } else {
                     vec![(kept / 2.0 + CRATE_BATTEN_WIDTH * 0.15 - 0.02, kept)]
                 },
-                ..Damage::default()
+                ..loose()
             };
             lay_board(&mut group, &face, &brace, &damage);
         }
@@ -1059,7 +1119,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                     seed: hash(seed, row as i32),
                 };
                 let edge = (v * torn) > height / 2.0 - pitch * 1.5;
-                let mut damage = Damage::default();
+                let mut damage = loose();
                 if edge {
                     let at = rng.range(-0.35, 0.35) * length;
                     let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
@@ -1083,8 +1143,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 color: BATTEN_COLOR,
                 seed: hash(seed, 60),
             };
-            lay_board(&mut group, &lid_face, &frame, &Damage::default());
-            let strap = material(STRAP_COLOR, 0.55, 0.42);
+            lay_board(&mut group, &lid_face, &frame, &loose());
             for side in [-1.0, 1.0] {
                 // Each end lies over the half from the crate's edge, then curls up
                 // where it tore.
@@ -1095,9 +1154,9 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 let edge = -torn * height / 2.0;
                 let rest = size.z / 2.0 + STRAP_THICKNESS / 2.0;
                 let band = |long: f64| {
-                    shadowed(
-                        Arc::new(box_geometry(STRAP_WIDTH, long, STRAP_THICKNESS)),
-                        strap.clone(),
+                    scrap(
+                        box_geometry(STRAP_WIDTH, long, STRAP_THICKNESS),
+                        STRAP_COLOR,
                     )
                 };
                 let mut lying = band(flat);
@@ -1134,7 +1193,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 &board,
                 &Damage {
                     gaps: vec![(at, half + 1.0)],
-                    ..Damage::default()
+                    ..loose()
                 },
             );
         }
@@ -1161,7 +1220,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 &board,
                 &Damage {
                     gaps: vec![(-half - 1.0, -half + left), (half - right, half + 1.0)],
-                    ..Damage::default()
+                    ..loose()
                 },
             );
         }
@@ -1176,7 +1235,7 @@ mod tests {
     use crate::geometry::node_bounds;
     use crate::sim::crate_layout::crate_sections;
 
-    /// The nearest textured board a ray from `origin` along `dir` meets, as the
+    /// The nearest front-facing wood a ray from `origin` along `dir` meets, as the
     /// distance along it (Möller–Trumbore over the batched triangles).
     fn first_board(node: &Node, origin: DVec3, dir: DVec3) -> Option<f64> {
         let mut group = node.clone();
@@ -1194,8 +1253,9 @@ mod tests {
                 });
                 let (e1, e2) = (b - a, c - a);
                 let p = dir.cross(e2);
+                // Back faces are culled, as the GPU does (the hold is inside out).
                 let det = e1.dot(p);
-                if det.abs() < 1e-12 {
+                if det < 1e-12 {
                     return None;
                 }
                 let t0 = origin - a;
