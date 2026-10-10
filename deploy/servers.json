@@ -4,7 +4,7 @@
     "hostname": "sloppy-tanks-server.fridman.me"
   },
   "dev": {
-    "ip": null,
+    "ip": "45.77.4.39",
     "hostname": null
   }
 }
