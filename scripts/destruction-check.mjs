@@ -214,10 +214,17 @@ try {
       );
       game.debug_damage_cover(id, 999);
     }
-    const tank = game.debug_add_tank(1, "balanced");
-    game.debug_place_tank(tank, 0, 5, NaN);
-    engine.setTank(tank, { protection: 0, shield: 0 });
-    game.debug_damage_tank(tank, 999, 999999, 0);
+    // A death is a quiet burnout (one whole hull) or a breakup by a hash of the tank's
+    // id, which the cover pieces allocated before it shift: kill tanks until two or
+    // more wreck parts are down.
+    for (let i = 0; i < 6; i++) {
+      const tank = game.debug_add_tank(1, "balanced");
+      game.debug_place_tank(tank, 5 * i, 5, NaN);
+      engine.setTank(tank, { protection: 0, shield: 0 });
+      game.debug_damage_tank(tank, 999, 999999, 0);
+      engine.draw();
+      if (engine.view().fragments.filter((f) => f.look === "wreck").length >= 2) break;
+    }
     game.debug_step(210, 0, 0);
     engine.draw();
     window.drawDebris = (life) => {

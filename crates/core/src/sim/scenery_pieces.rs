@@ -7,9 +7,7 @@ use std::f64::consts::PI;
 use glam::DVec3;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
 
-use super::crate_layout::{
-    CRATE_LID_SPLITS, CRATE_WALL_SPLITS, CratePiece, CrateSection, crate_sections,
-};
+use super::crate_layout::{CrateBreak, CratePiece, CrateSection, crate_sections};
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
@@ -135,13 +133,15 @@ impl Breakup<'_> {
 
     /// A section of a broken crate where it stood, thrown away from the shot that
     /// broke it: the struck wall caves in and is carried through, the far wall and
-    /// lid blow out, the sides spread, and every section tumbles. Without a known
-    /// direction the crate bursts outwards.
+    /// lid blow out, the sides spread, and every section tumbles, all the harder for
+    /// a larger `force` (the crate's, about 1). Without a known direction the crate
+    /// bursts outwards.
     fn crate_section(
         &mut self,
         simulation: &mut Simulation,
         section: &CrateSection,
         kick: Option<Vec2>,
+        force: f64,
     ) {
         let shape = match section.piece {
             CratePiece::Skid | CratePiece::Plank => FragmentShape::Beam,
@@ -158,7 +158,10 @@ impl Breakup<'_> {
         simulation.fragments[index].crate_piece = Some(section.piece);
         let [nx, ny, nz] = section.normal;
         let rng = &mut self.rng;
-        let lid = matches!(section.piece, CratePiece::LidFront | CratePiece::LidBack);
+        let lid = matches!(
+            section.piece,
+            CratePiece::Lid | CratePiece::LidFront | CratePiece::LidMiddle | CratePiece::LidBack
+        );
         // (speed along the shot, speed out of the section's face, lift, spin)
         let (carried, outward, lift, spin) = match section.piece {
             CratePiece::Skid => (rng.range(1.0, 2.0), 0.0, rng.range(1.5, 2.5), 3.0),
@@ -179,6 +182,8 @@ impl Breakup<'_> {
                 }
             }
         };
+        let (carried, outward, lift, spin) =
+            (carried * force, outward * force, lift * force, spin * force);
         let (vx, vz) = match kick {
             Some(kick) => (
                 kick.x * carried + nx * outward,
@@ -246,17 +251,16 @@ pub fn break_scenery(
     let wood = DebrisMaterial::Wood;
     match cover.kind {
         CoverKind::Cargo => {
-            // Walls split where they tore, the ends, the lid in halves, a skid and
-            // a loose plank (ten bodies), each drawn as its section of the crate.
-            let mut pick =
-                |choices: &[f64]| choices[(breakup.rng.next() * choices.len() as f64) as usize];
-            let splits = [
-                pick(&CRATE_WALL_SPLITS),
-                pick(&CRATE_WALL_SPLITS),
-                pick(&CRATE_LID_SPLITS),
-            ];
-            for section in crate_sections(cover.w, cover.d, cover.h, splits) {
-                breakup.crate_section(simulation, &section, cover.kick);
+            // Each wall and the lid come away whole or in pieces, with a plank or
+            // two and maybe a skid (5 to 18 bodies, about 11), each drawn as its
+            // section of the crate, every crate differently and with its own force.
+            // Also seeded by how many covers have fallen, so a crate that rebuilds
+            // in place breaks differently each time.
+            breakup.rng.state += f64::from(simulation.destroyed) * 19_349_663.0;
+            let how = CrateBreak::random(|| breakup.rng.next());
+            let force = breakup.rng.range(0.75, 1.3);
+            for section in crate_sections(cover.w, cover.d, cover.h, &how) {
+                breakup.crate_section(simulation, &section, cover.kick, force);
             }
         }
         CoverKind::Timber => {

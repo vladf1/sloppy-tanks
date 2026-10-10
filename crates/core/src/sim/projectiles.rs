@@ -11,7 +11,9 @@ use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
 };
-use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debris};
+use super::debris_physics::{
+    blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
+};
 use super::hitboxes::{SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
@@ -499,6 +501,15 @@ fn resolve_contact(
             // Remove first so the blast cannot rediscover and detonate this mine twice.
             let mine = simulation.mines.remove(mi);
             simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
+        }
+        Contact::Debris { fragment: fi } if shatters(&simulation.fragments[fi]) => {
+            // The board bursts; a shell flies on to what lies behind, a rocket goes off.
+            shatter_debris(simulation, fi, &shot);
+            if shot.weapon == Weapon::Rocket {
+                rocket_blast(simulation, &shot);
+            } else {
+                remove = false;
+            }
         }
         Contact::Debris { fragment: fi } => {
             let fragment = &simulation.fragments[fi];

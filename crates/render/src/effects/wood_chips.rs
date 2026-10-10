@@ -61,6 +61,10 @@ const BURST_PIECES: [usize; 2] = [56, 12];
 const BURST_HALF_WIDTH: f64 = 1.1;
 /// The first pieces of a burst are broken-off lengths of board.
 const BURST_BOARDS: usize = 6;
+/// A loose board a shell bursts throws this many pieces per metre of its length,
+/// within [fewest, most].
+const SHATTER_PIECES_PER_METRE: f64 = 7.0;
+const SHATTER_PIECES: [usize; 2] = [8, 22];
 /// A destroyed crate without its height stood about this tall.
 pub(super) const CRATE_HEIGHT: f64 = 2.4;
 /// Of a burst, this share only tumbles out around the crate's foot, this share is
@@ -384,17 +388,58 @@ impl WoodChips {
         self.straw.iter()
     }
 
-    /// Splinter a crate's struck face, or burst a destroyed crate; other events
-    /// throw nothing.
+    /// Splinter a crate's struck face, burst a destroyed crate, or shatter a loose
+    /// crate or watchtower board a shell flew through; other events throw nothing.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
-        if event.cover_kind != Some(CoverKind::Cargo) {
-            return;
-        }
-        match event.kind {
-            SimEventType::Impact => self.splinter_face(event, random),
-            SimEventType::Destroy => self.burst(event, random),
+        match (event.kind, event.cover_kind) {
+            (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
+            (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
+            (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
+                self.shatter(event, random)
+            }
             _ => {}
         }
+    }
+
+    /// A loose board a shell flew through bursts into splinters and chips across its
+    /// length, most carried on with the shell, a few dropping where it stood.
+    fn shatter(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let size = event.size.unwrap_or(1.5);
+        let height = event.height.unwrap_or(HIT_HEIGHT);
+        let along = event
+            .from
+            .and_then(|from| horizontal(event.x - from.x, event.z - from.z));
+        let boards = event.color.unwrap_or(CRATE_WOOD);
+        let count = ((size * SHATTER_PIECES_PER_METRE).round() as usize)
+            .clamp(SHATTER_PIECES[0], SHATTER_PIECES[1]);
+        for i in 0..count {
+            let reach = size * 0.45;
+            let offset = heading(random).map(|v| v * reach * random.next_f64());
+            let position = DVec3::new(
+                event.x + offset[0],
+                (height + (random.next_f64() - 0.5) * size * 0.4).max(0.1),
+                event.z + offset[1],
+            );
+            let speed = 1.5 + random.next_f64() * 4.5;
+            let spread = turned(
+                along.unwrap_or_else(|| heading(random)),
+                (random.next_f64() - 0.5) * 1.6,
+            );
+            let velocity = DVec3::new(
+                spread[0] * speed,
+                0.8 + random.next_f64() * 3.2,
+                spread[1] * speed,
+            );
+            let cut = if i < 2 {
+                BOARD
+            } else {
+                pick_cut(random, BURST_MIX)
+            };
+            let color = wood_color(random, BURST_MIX, boards);
+            let piece = wood_piece(random, cut, position, velocity, color);
+            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+        }
+        self.changed = true;
     }
 
     /// A shell hit: pieces burst out of the face back toward the gun, `from`.

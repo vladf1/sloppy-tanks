@@ -103,11 +103,14 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("roof", TowerPiece::Roof),
     ("ladder", TowerPiece::Ladder),
 ];
-pub const CRATE_PIECES: [(&str, CratePiece); 7] = [
+pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
+    ("wall", CratePiece::Wall),
     ("wall-left", CratePiece::WallLeft),
+    ("wall-middle", CratePiece::WallMiddle),
     ("wall-right", CratePiece::WallRight),
-    ("end", CratePiece::End),
+    ("lid", CratePiece::Lid),
     ("lid-front", CratePiece::LidFront),
+    ("lid-middle", CratePiece::LidMiddle),
     ("lid-back", CratePiece::LidBack),
     ("skid", CratePiece::Skid),
     ("plank", CratePiece::Plank),
@@ -165,7 +168,7 @@ pub const TIMBER_PART_KINDS: [(&str, TimberPartKind); 2] = [
     ("beam", TimberPartKind::Beam),
     ("post", TimberPartKind::Post),
 ];
-pub const EVENT_TYPES: [(&str, SimEventType); 13] = [
+pub const EVENT_TYPES: [(&str, SimEventType); 14] = [
     ("debris-impact", SimEventType::DebrisImpact),
     ("notice", SimEventType::Notice),
     ("shot", SimEventType::Shot),
@@ -179,6 +182,7 @@ pub const EVENT_TYPES: [(&str, SimEventType); 13] = [
     ("ricochet", SimEventType::Ricochet),
     ("laser", SimEventType::Laser),
     ("promotion", SimEventType::Promotion),
+    ("shatter", SimEventType::Shatter),
 ];
 pub const DAMAGE_CAUSES: [(&str, DamageCause); 10] = [
     ("standard", DamageCause::Standard),
@@ -231,14 +235,14 @@ const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
 const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
-const CRATE_NAMES: [&str; 7] = names(&CRATE_PIECES);
+const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
 const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
 const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
 const MAP_NAMES: [&str; 5] = names(&MAP_MODES);
-const EVENT_NAMES: [&str; 13] = names(&EVENT_TYPES);
+const EVENT_NAMES: [&str; 14] = names(&EVENT_TYPES);
 const CAUSE_NAMES: [&str; 10] = names(&DAMAGE_CAUSES);
 const DEATH_STYLE_NAMES: [&str; 1] = names(&DEATH_STYLES);
 

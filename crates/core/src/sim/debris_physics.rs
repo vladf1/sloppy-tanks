@@ -7,7 +7,7 @@ use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::math::{Point3, Vec2, hypot3};
 use super::physics::{from_vector, vector};
 use super::simulation::Simulation;
-use super::types::{CoverKind, Shot, SimEvent, SimEventType, Weapon};
+use super::types::{CoverKind, Fragment, Shot, SimEvent, SimEventType, Weapon};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -216,6 +216,35 @@ pub fn hit_movable_cover(simulation: &mut Simulation, cover_index: usize, shot: 
         vector(shot.x, shot.combat_y(), shot.z),
         true,
     );
+}
+
+/// Whether a shell bursts this piece and flies on: loose crate sections and
+/// watchtower pieces are thin boards. Timber wall beams and wreckage stop it.
+pub fn shatters(fragment: &Fragment) -> bool {
+    fragment.crate_piece.is_some() || fragment.tower_piece.is_some()
+}
+
+/// A shell bursts a loose crate section or watchtower piece: the piece and its body
+/// go at once, so it never shields what lies behind it, and a `Shatter` event
+/// throws its splinters on along the shell.
+pub fn shatter_debris(simulation: &mut Simulation, fragment_index: usize, shot: &Shot) {
+    let fragment = simulation.fragments.remove(fragment_index);
+    let at = simulation.body_translation(fragment.body);
+    simulation.remove_body(fragment.body);
+    let mut event = SimEvent::at(SimEventType::Shatter, at.x, at.z);
+    event.height = Some(at.y);
+    event.size = Some(fragment.dimensions.map_or(1.0, |d| d.x.max(d.y).max(d.z)));
+    event.color = Some(fragment.color);
+    event.cover_kind = fragment.source_kind;
+    let speed = shot.vx.hypot(shot.vz);
+    if speed > 0.0 {
+        event.from = Some(Point3::new(
+            at.x - shot.vx / speed,
+            at.y,
+            at.z - shot.vz / speed,
+        ));
+    }
+    simulation.events.push(event);
 }
 
 /// Substantial debris absorbs the round and takes only physical impulse.

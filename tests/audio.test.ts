@@ -15,6 +15,10 @@ test("cover destruction uses material sounds while drums defer to their blast", 
   }
   assert.equal(destructionSound({ type: "destroy", coverKind: "drum", x: 0, z: 0 }), null);
   assert.equal(destructionSound({ type: "death", x: 0, z: 0 }), null);
+  // A shell bursting a loose crate or watchtower board.
+  for (const kind of ["cargo", "tower"] as const) {
+    assert.equal(destructionSound({ type: "shatter", coverKind: kind, x: 0, z: 0 }), "wood-break");
+  }
 });
 
 test("scenery sound throttling does not swallow a vehicle explosion", () => {

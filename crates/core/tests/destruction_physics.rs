@@ -477,8 +477,10 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
     let cases: [(CoverKind, &[FragmentShape], usize); 5] = [
         (
             CoverKind::Cargo,
+            // This seed's break: walls and lid in ten panels, a skid and two planks.
             &[
-                Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam, Beam,
+                Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam, Beam,
+                Beam,
             ],
             33,
         ),
@@ -891,6 +893,45 @@ fn wreck_pieces_carry_the_wreck_group_and_cover_and_steering_rays_pass_through_t
             10.0,
             query_filter(groups)
         ));
+    }
+}
+
+#[test]
+fn shells_burst_loose_crate_and_tower_boards_and_fly_on_but_timber_beams_stop_them() {
+    for (kind, bursts) in [
+        (CoverKind::Cargo, true),
+        (CoverKind::Tower, true),
+        (CoverKind::Timber, false),
+    ] {
+        let mut s = arena();
+        let broken = cover(&mut s, kind, 0.0, -12.0);
+        s.damage_cover(broken, 1000.0, 999, Team::Blue, None, None);
+        let piece = fragment_where(&s, |f| {
+            f.crate_piece.is_some() || f.tower_piece.is_some() || f.timber_part.is_some()
+        });
+        park_others(&mut s, &[piece]);
+        // The piece stands in the shell's path, in front of an intact crate.
+        let body = fragment_body(&s, piece);
+        park(&mut s, body, 0.0, 1.0, 0.0);
+        let behind = cover(&mut s, CoverKind::Cargo, 3.0, 0.0);
+        refresh_queries(&mut s);
+        s.events.clear();
+        let mut shell = round(&mut s, Weapon::Standard, 1.0);
+        shell.damage = 10.0;
+        s.shots.push(shell);
+        step_projectiles(&mut s, 0.4, false);
+        assert_eq!(find(&s, piece).is_none(), bursts, "{kind:?} piece bursts");
+        assert_eq!(s.world.bodies.contains(body), !bursts);
+        assert_eq!(
+            event_count(&s, SimEventType::Shatter),
+            usize::from(bursts),
+            "{kind:?}"
+        );
+        assert_eq!(
+            s.covers[behind].timber_hits.len(),
+            usize::from(bursts),
+            "{kind:?}: the shell flies on into the crate behind"
+        );
     }
 }
 

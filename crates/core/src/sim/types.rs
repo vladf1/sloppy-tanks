@@ -741,6 +741,10 @@ pub enum SimEventType {
     Ricochet,
     Laser,
     Promotion,
+    /// A shell burst a loose crate section or watchtower piece into splinters and
+    /// flew on: `x`/`z`/`height` where, `size` the piece's longest side, `color` its
+    /// paint, `cover_kind` what it came from and `from` a point back along the shell.
+    Shatter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

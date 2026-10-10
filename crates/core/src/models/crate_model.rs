@@ -973,31 +973,34 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
         ..Damage::default()
     };
     match piece {
-        CratePiece::WallLeft | CratePiece::WallRight | CratePiece::End => {
-            // The torn side, and on the other the corner it was nailed into.
-            let torn = match piece {
-                CratePiece::WallLeft => 1.0,
-                CratePiece::WallRight => -1.0,
-                _ => {
-                    if rng.next() < 0.5 {
-                        -1.0
-                    } else {
-                        1.0
+        CratePiece::Wall
+        | CratePiece::WallLeft
+        | CratePiece::WallMiddle
+        | CratePiece::WallRight => {
+            // Torn sides are ragged; at a clean side the boards met a corner.
+            let (low, high) = piece.torn();
+            let ragged = |rng: &mut Random, deepest: f64| {
+                let mut gaps = Vec::new();
+                for (torn, side) in [(low, -1.0), (high, 1.0)] {
+                    if torn {
+                        let depth = rng.range(0.03, deepest).min(length * 0.35);
+                        gaps.push(if side > 0.0 {
+                            (half - depth, half + 1.0)
+                        } else {
+                            (-half - 1.0, -half + depth)
+                        });
                     }
                 }
-            };
-            let deepest = if piece == CratePiece::End { 0.18 } else { 0.42 };
-            let ragged = |rng: &mut Random, deepest: f64| {
-                let depth = rng.range(0.03, deepest).min(length * 0.4);
-                if torn > 0.0 {
-                    (half - depth, half + 1.0)
-                } else {
-                    (-half - 1.0, -half + depth)
-                }
+                gaps
             };
             let rows = (height / CRATE_BOARD_PITCH).round().max(3.0);
             let pitch = height / rows;
-            let missing = (rng.next() * rows * 2.0) as usize;
+            // A board or two knocked clean out somewhere; a wall that came away
+            // whole always shows the blast.
+            let knocked = if low || high { 1 } else { 2 };
+            let missing: Vec<usize> = (0..knocked)
+                .map(|_| (rng.next() * rows * 1.6) as usize)
+                .collect();
             for row in 0..rows as usize {
                 let board = Board {
                     u: 0.0,
@@ -1011,13 +1014,14 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
                     seed: hash(seed, row as i32),
                 };
                 let mut damage = Damage {
-                    gaps: vec![ragged(&mut rng, deepest)],
+                    gaps: ragged(&mut rng, 0.42),
                     ..loose()
                 };
-                // A board knocked clean out of the middle of the section.
-                if row == missing {
-                    let at = rng.range(-0.25, 0.25) * length;
-                    damage.gaps.push((at - 0.18, at + rng.range(0.1, 0.3)));
+                if missing.contains(&row) {
+                    let at = rng.range(-0.3, 0.3) * length;
+                    damage
+                        .gaps
+                        .push((at - rng.range(0.12, 0.3), at + rng.range(0.1, 0.3)));
                 }
                 lay_board(&mut group, &face, &board, &damage);
             }
@@ -1041,35 +1045,56 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
                     salt,
                 );
                 let damage = Damage {
-                    gaps: vec![ragged(&mut rng, deepest * 1.4)],
+                    gaps: ragged(&mut rng, 0.6),
                     ..loose()
                 };
                 lay_board(&mut group, &face, &batten, &damage);
             }
             let post = height - 2.0 * CRATE_BATTEN_WIDTH;
-            let corner = -torn * (half - CRATE_BATTEN_WIDTH / 2.0);
-            lay_board(
-                &mut group,
-                &face,
-                &frame(corner, 0.0, FRAC_PI_2, post, 2),
-                &loose(),
-            );
-            // What is left of the brace climbs from the corner and breaks off.
-            let rise = post;
-            let run = if piece == CratePiece::End {
-                length - 2.0 * CRATE_BATTEN_WIDTH
-            } else {
-                2.0 * length
+            for (torn, side, salt) in [(low, -1.0, 2), (high, 1.0, 3)] {
+                if !torn {
+                    let corner = frame(
+                        side * (half - CRATE_BATTEN_WIDTH / 2.0),
+                        0.0,
+                        FRAC_PI_2,
+                        post,
+                        salt,
+                    );
+                    lay_board(&mut group, &face, &corner, &loose());
+                }
+            }
+            // The brace: corner to corner on a whole wall, a stub climbing from the
+            // corner on a wall's end, a broken length across a middle.
+            let lean = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+            let (start, run, kept) = match (low, high) {
+                (false, false) => {
+                    let run = length - 2.0 * CRATE_BATTEN_WIDTH;
+                    (
+                        -lean * (half - CRATE_BATTEN_WIDTH),
+                        lean * run,
+                        run.hypot(post),
+                    )
+                }
+                (false, true) => {
+                    let run = 2.0 * length;
+                    let kept = run.hypot(post) * rng.range(0.32, 0.45);
+                    (-half + CRATE_BATTEN_WIDTH, run, kept)
+                }
+                (true, false) => {
+                    let run = 2.0 * length;
+                    let kept = run.hypot(post) * rng.range(0.32, 0.45);
+                    (half - CRATE_BATTEN_WIDTH, -run, kept)
+                }
+                (true, true) => (-half, 3.0 * length, length * 1.05),
             };
-            let angle = rise.atan2(torn * run);
-            let full = run.hypot(rise);
-            let kept = if piece == CratePiece::End {
-                full
+            let angle = post.atan2(run) * if low && high { lean } else { 1.0 };
+            let direction = DVec2::new(angle.cos(), angle.sin());
+            let from = if low && high {
+                DVec2::new(-half, -direction.y * length / 2.0)
             } else {
-                full * rng.range(0.32, 0.45)
+                DVec2::new(start, -post / 2.0)
             };
-            let start = DVec2::new(-torn * (half - CRATE_BATTEN_WIDTH), -post / 2.0);
-            let middle = start + DVec2::new(angle.cos(), angle.sin()) * (kept / 2.0);
+            let middle = from + direction * (kept / 2.0);
             let brace = Board {
                 u: middle.x,
                 v: middle.y,
@@ -1081,24 +1106,20 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
                 color: BATTEN_COLOR,
                 seed: hash(seed, 45),
             };
-            let damage = Damage {
-                gaps: if piece == CratePiece::End {
-                    Vec::new()
-                } else {
-                    vec![(kept / 2.0 + CRATE_BATTEN_WIDTH * 0.15 - 0.02, kept)]
-                },
-                ..loose()
-            };
-            lay_board(&mut group, &face, &brace, &damage);
+            let end = kept / 2.0 + CRATE_BATTEN_WIDTH * 0.15;
+            let mut gaps = Vec::new();
+            if high || low {
+                gaps.push((end - 0.02, end + 1.0));
+            }
+            if low && high {
+                gaps.push((-end - 1.0, -end + 0.02));
+            }
+            lay_board(&mut group, &face, &brace, &Damage { gaps, ..loose() });
         }
-        CratePiece::LidFront | CratePiece::LidBack => {
-            // Boards along x; the torn edge runs along +y (front) or -y (back),
-            // where the outermost boards broke part way along.
-            let torn = if piece == CratePiece::LidFront {
-                1.0
-            } else {
-                -1.0
-            };
+        CratePiece::Lid | CratePiece::LidFront | CratePiece::LidMiddle | CratePiece::LidBack => {
+            // Boards along x. Along each torn edge (-y, +y) the outermost boards
+            // broke part way along; each clean edge keeps its frame batten.
+            let (low, high) = piece.torn();
             let lid_face = Face {
                 origin: DVec3::new(0.0, 0.0, size.z / 2.0 - CRATE_BATTEN),
                 ..face
@@ -1118,12 +1139,11 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
                     color: tone(&mut rng),
                     seed: hash(seed, row as i32),
                 };
-                let edge = (v * torn) > height / 2.0 - pitch * 1.5;
+                let near = |side: f64| side * v > height / 2.0 - pitch * 1.5;
                 let mut damage = loose();
-                if edge {
+                if (low && near(-1.0)) || (high && near(1.0)) {
                     let at = rng.range(-0.35, 0.35) * length;
-                    let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
-                    damage.gaps.push(if side > 0.0 {
+                    damage.gaps.push(if rng.next() < 0.5 {
                         (at, half + 1.0)
                     } else {
                         (-half - 1.0, at)
@@ -1131,43 +1151,55 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
                 }
                 lay_board(&mut group, &lid_face, &board, &damage);
             }
-            // The frame batten along the crate's edge, and the straps' ends.
-            let frame = Board {
-                u: 0.0,
-                v: -torn * (height / 2.0 - CRATE_BATTEN_WIDTH / 2.0),
-                angle: 0.0,
-                length,
-                width: CRATE_BATTEN_WIDTH,
-                thickness: CRATE_BATTEN,
-                out: CRATE_BATTEN / 2.0,
-                color: BATTEN_COLOR,
-                seed: hash(seed, 60),
-            };
-            lay_board(&mut group, &lid_face, &frame, &loose());
-            for side in [-1.0, 1.0] {
-                // Each end lies over the half from the crate's edge, then curls up
-                // where it tore.
-                let reach = height * rng.range(0.55, 0.95);
-                let curled = rng.range(0.15, 0.3).min(reach * 0.5);
-                let flat = reach - curled;
-                let x = side * length * STRAP_SPREAD;
-                let edge = -torn * height / 2.0;
-                let rest = size.z / 2.0 + STRAP_THICKNESS / 2.0;
-                let band = |long: f64| {
-                    scrap(
-                        box_geometry(STRAP_WIDTH, long, STRAP_THICKNESS),
-                        STRAP_COLOR,
-                    )
+            for (torn, side) in [(low, -1.0), (high, 1.0)] {
+                if torn {
+                    continue;
+                }
+                let frame = Board {
+                    u: 0.0,
+                    v: side * (height / 2.0 - CRATE_BATTEN_WIDTH / 2.0),
+                    angle: 0.0,
+                    length,
+                    width: CRATE_BATTEN_WIDTH,
+                    thickness: CRATE_BATTEN,
+                    out: CRATE_BATTEN / 2.0,
+                    color: BATTEN_COLOR,
+                    seed: hash(seed, 60 + side as i32),
                 };
-                let mut lying = band(flat);
-                lying.position = DVec3::new(x, edge + torn * flat / 2.0, rest);
-                group.children.push(lying);
-                let mut tip = band(curled);
-                let bend = DVec3::new(x, edge + torn * flat, rest);
-                let curl = DQuat::from_rotation_x(torn * rng.range(0.5, 1.0));
-                tip.position = bend + curl * DVec3::new(0.0, torn * curled / 2.0, 0.0);
-                tip.rotation = curl;
-                group.children.push(tip);
+                lay_board(&mut group, &lid_face, &frame, &loose());
+            }
+            // The straps' ends: anchored at a clean edge, lying over the lid and
+            // curling up where they tore. A middle piece lost its straps.
+            let anchor = match (low, high) {
+                (true, true) => None,
+                (true, false) => Some(1.0),
+                _ => Some(-1.0),
+            };
+            if let Some(edge_side) = anchor {
+                let toward = -edge_side;
+                for side in [-1.0, 1.0] {
+                    let reach = height * rng.range(0.55, 0.95);
+                    let curled = rng.range(0.15, 0.3).min(reach * 0.5);
+                    let flat = reach - curled;
+                    let x = side * length * STRAP_SPREAD;
+                    let edge = edge_side * height / 2.0;
+                    let rest = size.z / 2.0 + STRAP_THICKNESS / 2.0;
+                    let band = |long: f64| {
+                        scrap(
+                            box_geometry(STRAP_WIDTH, long, STRAP_THICKNESS),
+                            STRAP_COLOR,
+                        )
+                    };
+                    let mut lying = band(flat);
+                    lying.position = DVec3::new(x, edge + toward * flat / 2.0, rest);
+                    group.children.push(lying);
+                    let mut tip = band(curled);
+                    let bend = DVec3::new(x, edge + toward * flat, rest);
+                    let curl = DQuat::from_rotation_x(toward * rng.range(0.5, 1.0));
+                    tip.position = bend + curl * DVec3::new(0.0, toward * curled / 2.0, 0.0);
+                    tip.rotation = curl;
+                    group.children.push(tip);
+                }
             }
         }
         CratePiece::Skid => {
@@ -1233,7 +1265,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
 mod tests {
     use super::*;
     use crate::geometry::node_bounds;
-    use crate::sim::crate_layout::crate_sections;
+    use crate::sim::crate_layout::crate_section_looks;
 
     /// The nearest front-facing wood a ray from `origin` along `dir` meets, as the
     /// distance along it (Möller–Trumbore over the batched triangles).
@@ -1306,25 +1338,25 @@ mod tests {
     }
 
     #[test]
-    fn sections_fit_the_bodies_they_ride() {
+    fn every_section_look_fits_the_body_it_rides() {
         for (w, d, h) in [(3.1, 3.0, 2.6), (2.4, 2.8, 2.1), (2.0, 2.0, 2.0)] {
-            for (id, section) in crate_sections(w, d, h, [0.4, 0.6, 0.5]).iter().enumerate() {
-                let size = DVec3::from_array(section.size);
-                let node = crate_piece_model(section.piece, size, 0xb47a49, id as u32);
-                let bounds = node_bounds(&node, glam::DMat4::IDENTITY);
-                // Splinters and a curled strap end may poke a little past the box.
-                let slack = DVec3::splat(0.25);
-                assert!(
-                    bounds.min.cmpge(-size / 2.0 - slack).all()
-                        && bounds.max.cmple(size / 2.0 + slack).all(),
-                    "{:?} {size:?}: {bounds:?}",
-                    section.piece
-                );
-                assert!(
-                    bounds.max.x - bounds.min.x > size.x * 0.7,
-                    "{:?} keeps its length",
-                    section.piece
-                );
+            for (piece, size) in crate_section_looks(w, d, h) {
+                for look in 0..3 {
+                    let size = DVec3::from_array(size);
+                    let node = crate_piece_model(piece, size, 0xb47a49, look);
+                    let bounds = node_bounds(&node, glam::DMat4::IDENTITY);
+                    // Splinters and a curled strap end may poke a little past the box.
+                    let slack = DVec3::splat(0.25);
+                    assert!(
+                        bounds.min.cmpge(-size / 2.0 - slack).all()
+                            && bounds.max.cmple(size / 2.0 + slack).all(),
+                        "{piece:?} {size:?}: {bounds:?}"
+                    );
+                    assert!(
+                        bounds.max.x - bounds.min.x > size.x * 0.6,
+                        "{piece:?} keeps its length"
+                    );
+                }
             }
         }
     }

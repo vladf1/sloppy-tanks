@@ -49,7 +49,8 @@ const WOOD_RING_SCALE: f64 = 0.6;
 /// The dust a cargo crate raises.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WoodDust {
-    /// A puff of sawdust blown out of a struck face, back toward the gun.
+    /// A puff of sawdust blown out of a struck face, back toward the gun, or on
+    /// with the shell from a loose board it burst.
     Hit,
     /// A crate bursting apart: a cloud rolling out low, a jet blowing on along the
     /// killing shot and a plume rising over the wreck.
@@ -246,7 +247,10 @@ impl ExplosionEffects {
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
         let wood = match (event.kind, event.cover_kind) {
-            (SimEventType::Impact, Some(CoverKind::Cargo)) => Some(WoodDust::Hit),
+            (SimEventType::Impact, Some(CoverKind::Cargo))
+            | (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
+                Some(WoodDust::Hit)
+            }
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => Some(WoodDust::Burst),
             _ => None,
         };
@@ -301,7 +305,16 @@ impl ExplosionEffects {
             let (y, direction) = match wood {
                 WoodDust::Hit => (
                     event.height.unwrap_or(HIT_HEIGHT),
-                    event.from.map(|from| [from.x - event.x, from.z - event.z]),
+                    // A struck face puffs back toward the gun; a burst board's dust
+                    // flies on with the shell.
+                    event.from.map(|from| {
+                        let back = [from.x - event.x, from.z - event.z];
+                        if event.kind == SimEventType::Shatter {
+                            back.map(|v| -v)
+                        } else {
+                            back
+                        }
+                    }),
                 ),
                 WoodDust::Burst => (
                     event.height.unwrap_or(CRATE_HEIGHT),

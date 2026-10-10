@@ -17,9 +17,7 @@ use sloppy_core::models::{
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
-use sloppy_core::sim::crate_layout::{
-    CRATE_LID_SPLITS, CRATE_WALL_SPLITS, CratePiece, crate_sections,
-};
+use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
@@ -380,7 +378,7 @@ enum FragmentLook {
 }
 
 /// Looks each crate section comes in, so a crate's matching sections differ.
-const CRATE_SECTION_LOOKS: u32 = 2;
+const CRATE_SECTION_LOOKS: u32 = 3;
 
 /// A crate section's look: the section, its size in whole millimetres (as
 /// replication rounds it), the crate's paint and which of [`CRATE_SECTION_LOOKS`]
@@ -1088,8 +1086,8 @@ impl Presentation {
     /// combined model (a joint each), so their shadows merge into a couple of
     /// draws; covers sharing a look stay instanced, movable ones get their own
     /// instance. A combined cover that changes its look moves out to its own.
-    /// Queue every section look this round's crates can break into: each size of
-    /// crate splits its walls and lid at a few places only.
+    /// Queue every section look this round's crates can break into: walls and lids
+    /// split in a few patterns only, so each size of crate has a few dozen.
     fn queue_sections(&mut self, covers: &[RenderCover]) {
         self.section_warmups.clear();
         let mut crates = Vec::new();
@@ -1099,16 +1097,11 @@ impl Presentation {
                 continue;
             }
             crates.push((shape, cover.color));
-            for wall in CRATE_WALL_SPLITS {
-                for lid in CRATE_LID_SPLITS {
-                    for section in crate_sections(cover.w, cover.d, cover.h, [wall, wall, lid]) {
-                        for look in 0..CRATE_SECTION_LOOKS {
-                            let size = DVec3::from_array(section.size);
-                            let key = section_key(section.piece, size, cover.color, look);
-                            if !self.section_warmups.contains(&key) {
-                                self.section_warmups.push(key);
-                            }
-                        }
+            for (piece, size) in crate_section_looks(cover.w, cover.d, cover.h) {
+                for look in 0..CRATE_SECTION_LOOKS {
+                    let key = section_key(piece, DVec3::from_array(size), cover.color, look);
+                    if !self.section_warmups.contains(&key) {
+                        self.section_warmups.push(key);
                     }
                 }
             }

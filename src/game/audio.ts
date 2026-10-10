@@ -37,8 +37,12 @@ const shotSounds = {
   piercing: "shot-piercing",
 } as const satisfies Record<Weapon, string>;
 
-/** Drums emit a separate blast event; do not play a second sound for their shell. */
+/** Drums emit a separate blast event; do not play a second sound for their shell. A shell
+ * bursting a loose crate or watchtower piece breaks wood. */
 export function destructionSound(event: SoundEvent): "wood-break" | "rubble-break" | null {
+  if (event.type === "shatter") {
+    return "wood-break";
+  }
   if (event.type !== "destroy" || event.coverKind === "drum") {
     return null;
   }
