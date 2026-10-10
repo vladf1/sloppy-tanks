@@ -226,7 +226,7 @@ try {
       const fragments = engine.view().fragments;
       return {
         pieces: fragments.filter((f) => f.look === "piece" && f.shown),
-        owned: fragments.filter((f) => f.look === "owned" && f.shown),
+        owned: fragments.filter((f) => ["owned", "section"].includes(f.look) && f.shown),
         wrecks: fragments.filter((f) => f.look === "wreck"),
       };
     };
@@ -237,8 +237,8 @@ try {
   await page.screenshot({ path: `${out}/debris-sinking.png` });
   const gone = await page.evaluate(() => window.drawDebris(0));
   await page.screenshot({ path: `${out}/debris-gone.png` });
-  // Timber members, crate sections and crowns are their own models, so instanced debris is
-  // the stump's splinter and the drum.
+  // Timber members, crate sections (shared between alike sections) and crowns have models
+  // of their own, so instanced debris is the stump's splinter and the drum.
   assert.ok(
     full.pieces.length >= 5 && full.owned.length >= 10 && full.wrecks.length >= 2,
     JSON.stringify({

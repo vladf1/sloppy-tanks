@@ -7,7 +7,9 @@ use std::f64::consts::PI;
 use glam::DVec3;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
 
-use super::crate_layout::{CratePiece, CrateSection, crate_sections};
+use super::crate_layout::{
+    CRATE_LID_SPLITS, CRATE_WALL_SPLITS, CratePiece, CrateSection, crate_sections,
+};
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
@@ -246,7 +248,13 @@ pub fn break_scenery(
         CoverKind::Cargo => {
             // Walls split where they tore, the ends, the lid in halves, a skid and
             // a loose plank (ten bodies), each drawn as its section of the crate.
-            let splits = [breakup.rng.next(), breakup.rng.next(), breakup.rng.next()];
+            let mut pick =
+                |choices: &[f64]| choices[(breakup.rng.next() * choices.len() as f64) as usize];
+            let splits = [
+                pick(&CRATE_WALL_SPLITS),
+                pick(&CRATE_WALL_SPLITS),
+                pick(&CRATE_LID_SPLITS),
+            ];
             for section in crate_sections(cover.w, cover.d, cover.h, splits) {
                 breakup.crate_section(simulation, &section, cover.kick);
             }

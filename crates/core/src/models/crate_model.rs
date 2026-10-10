@@ -950,10 +950,10 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
 
 /// The model of a broken crate's section, centred on its body: `size` is along
 /// its boards, up its face and through it (see [`CratePiece`]), `color` the
-/// crate's paint and `seed` (the fragment id) varies the tear. Batched like the
-/// watchtower's pieces.
-pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) -> Node {
-    let seed = to_int32(f64::from(seed)).wrapping_mul(0x2c1b_3c6d);
+/// crate's paint and `look` picks how it tore. Batched like the watchtower's
+/// pieces; the renderer shares one model between sections that look alike.
+pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) -> Node {
+    let seed = to_int32(f64::from(look) + 1.0).wrapping_mul(0x2c1b_3c6d);
     let mut rng = random(seed, 0);
     let mut group = Node::default();
     let (length, height) = (size.x, size.y);

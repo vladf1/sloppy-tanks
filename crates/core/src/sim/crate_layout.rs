@@ -23,6 +23,10 @@ pub const CRATE_BOARD_PITCH: f64 = 0.3;
 pub const CRATE_SKID_WIDTH: f64 = 0.2;
 /// Clearance between neighbouring sections so they start apart, not interpenetrating.
 const SECTION_GAP: f64 = 0.02;
+/// Where (0..1 along it) a long wall and the lid may split. A few places rather
+/// than any keep section sizes repeating, so crates share their sections' models.
+pub const CRATE_WALL_SPLITS: [f64; 3] = [0.38, 0.5, 0.62];
+pub const CRATE_LID_SPLITS: [f64; 2] = [0.42, 0.58];
 
 /// A section of a broken crate. Walls and ends are seen from outside with their
 /// boards along x; a lid half lies with its boards along x and its break along one
@@ -84,7 +88,8 @@ pub fn crate_lid_thickness() -> f64 {
 
 /// The sections a `w` × `d` × `h` crate breaks into. Each long wall splits where
 /// `splits[0]` and `splits[1]` (0..1 along it) say, and the lid across its depth at
-/// `splits[2]`. The loose plank starts inside the crate, where nothing else is.
+/// `splits[2]` (see [`CRATE_WALL_SPLITS`]). The loose plank starts inside the
+/// crate, where nothing else is.
 pub fn crate_sections(w: f64, d: f64, h: f64, splits: [f64; 3]) -> Vec<CrateSection> {
     let wall = crate_wall_thickness();
     let wall_height = h - CRATE_LID - CRATE_BASE - SECTION_GAP;
