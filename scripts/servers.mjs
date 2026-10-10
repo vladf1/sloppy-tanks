@@ -24,7 +24,9 @@ export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 
 /**
  * accept-new trusts a fresh machine's host key on first contact, so a new one needs no
- * manual login, but still refuses a known address whose key has changed.
+ * manual login, but still refuses a known address whose key has changed. Every ssh and
+ * scp a command runs shares one connection per machine, kept for a minute, so a key that
+ * asks before each use (1Password's SSH agent) asks once per command, not per connection.
  */
 export const SSH_OPTIONS = [
   "-o",
@@ -33,6 +35,12 @@ export const SSH_OPTIONS = [
   "ConnectTimeout=15",
   "-o",
   "StrictHostKeyChecking=accept-new",
+  "-o",
+  "ControlMaster=auto",
+  "-o",
+  "ControlPath=~/.ssh/sloppy-tanks-%C",
+  "-o",
+  "ControlPersist=60",
 ];
 
 // Addresses outside the internet, such as a local test machine's, get no nip.io name:
