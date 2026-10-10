@@ -1,15 +1,15 @@
 import type { MapId } from "../game/map-options";
 import type { Difficulty, PlayerVehicleKind, Team } from "../game/engine-api";
 
-/** Room records and limits the page shows: types and constants only. The connection,
+/** Room records and limits the page shows, and the checks for them. The connection,
  * replication and input run in the Rust engine (`NetGame`); the wire protocol itself
  * lives in `crates/core/src/net`. */
 
 export const ROOM_CODE = /^[A-Z2-9]{8}$/;
-export const DEFAULT_ROUND_MINUTES = 20;
+/** Human seats in a room. */
+export const ROOM_SEATS = 8;
 export const MAX_ROUND_MINUTES = 99;
 export const PLAYER_KINDS = ["scout", "balanced", "heavy"] as const satisfies PlayerVehicleKind[];
-export type { Difficulty };
 export type RoomPhase = "lobby" | "playing" | "results";
 
 /** The host's rules for the next battle. */
@@ -66,7 +66,7 @@ export type EndCause =
   | "other-tab"
   /** This page and the server run different game versions. */
   | "outdated"
-  /** WebGPU reported a validation error or lost the device; only a reload recovers. */
+  /** The renderer reported a GPU error or lost the device; only a reload recovers. */
   | "renderer"
   | "rejected";
 export interface ConnectionEnd {

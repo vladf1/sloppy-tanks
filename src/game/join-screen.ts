@@ -1,6 +1,6 @@
 import { showTank, showTankTeam, shownTankTeam } from "./game-options";
 import { mapOption } from "./map-options";
-import { setMapChoice, showRoomMap } from "./map-picker";
+import { checkRadio, setMapChoice, showRoomMap } from "./map-picker";
 import { showNewRoomMap, showPlayMode } from "./play-modes";
 
 /** Battle Setup's choices, kept across a reload into a room or back out of one.
@@ -73,18 +73,13 @@ export function takeSetupView(room: string): Partial<SetupView> | undefined {
 
 /** Put remembered form choices back; a missing one keeps the page's default. */
 export function restoreChoices(setup: HTMLElement, view: Partial<SetupView>): void {
-  const check = (name: string, value: unknown) => {
-    if (typeof value === "string") {
-      setup.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((input) => {
-        input.checked = input.value === value;
-      });
-    }
-  };
   if (typeof view.name === "string") {
     setup.querySelector<HTMLInputElement>("#player-name")!.value = view.name;
   }
-  check("playerTeam", view.team);
-  if (typeof view.map === "string" && setMapChoice(setup, "mapMode", view.map)) {
+  if (typeof view.team === "string") {
+    checkRadio(setup, "playerTeam", view.team);
+  }
+  if (typeof view.map === "string" && setMapChoice(setup, view.map)) {
     showNewRoomMap(setup);
   }
   if (typeof view.roundMinutes === "string") {
@@ -131,7 +126,7 @@ export class JoinScreen {
     showTank(setup, String(view.kind));
     showTankTeam(setup, view.previewTeam === 1 ? 1 : 0);
     restoreChoices(setup, view);
-    showRoomMap(setup, "mapMode", mapOption(view.roomMap)?.id);
+    showRoomMap(setup, mapOption(view.roomMap)?.id);
     const screen = new JoinScreen(setup, view.room, !!view.creating);
     // The browser may style the markup as single player before this script runs; show
     // the restored setup at once rather than animating tabs, cards and buttons from it.

@@ -1,21 +1,22 @@
 import type { HudState, RecapMetric, RecapState } from "./engine-api";
 
-/** Report order; the engine computes the values, feats and personal bests. */
-const metrics: readonly RecapMetric[] = [
-  "kills",
-  "damage",
-  "bestLife",
-  "rank",
-  "busiestMinute",
-  "longestLife",
-  "multikill",
-  "clutchKills",
-  "revengeKills",
-  "posthumousKills",
-  "mineKills",
-  "coverDestroyed",
-  "pickups",
-];
+/** Each metric's label and, on hover, its explanation, so the report itself reads at a
+ * glance. In report order; the engine computes the values, feats and personal bests. */
+const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
+  kills: { label: "Kills", hint: "Enemy tanks wrecked" },
+  damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
+  bestLife: { label: "Best spree", hint: "Most kills in a single life" },
+  rank: { label: "Top rank", hint: "Peak rank across all lives" },
+  busiestMinute: { label: "Busiest minute", hint: "Most kills in any rolling 60s" },
+  longestLife: { label: "Longest life", hint: "Longest time alive, pauses excluded" },
+  multikill: { label: "Multikill", hint: "Most kills in any rolling 5s" },
+  clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
+  revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
+  posthumousKills: { label: "From the grave", hint: "Kills by a previous life's ordnance" },
+  mineKills: { label: "Mine kills", hint: "Kills from mine explosions" },
+  coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
+  pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
+};
 const featuredMetrics: readonly RecapMetric[] = [
   "kills",
   "damage",
@@ -23,37 +24,6 @@ const featuredMetrics: readonly RecapMetric[] = [
   "bestLife",
   "rank",
 ];
-const labels: Record<RecapMetric, string> = {
-  kills: "Kills",
-  damage: "Damage dealt",
-  bestLife: "Best spree",
-  rank: "Top rank",
-  busiestMinute: "Busiest minute",
-  longestLife: "Longest life",
-  multikill: "Multikill",
-  clutchKills: "Clutch kills",
-  revengeKills: "Revenge kills",
-  posthumousKills: "From the grave",
-  mineKills: "Mine kills",
-  coverDestroyed: "Cover wrecked",
-  pickups: "Pickups",
-};
-// Explanations stay available on hover so the report itself reads at a glance.
-const hints: Record<RecapMetric, string> = {
-  kills: "Enemy tanks wrecked",
-  damage: "Enemy hull damage, no overkill",
-  bestLife: "Most kills in a single life",
-  rank: "Peak rank across all lives",
-  busiestMinute: "Most kills in any rolling 60s",
-  longestLife: "Longest time alive, pauses excluded",
-  multikill: "Most kills in any rolling 5s",
-  clutchKills: "Kills at 25% hull or less",
-  revengeKills: "Kills on your last killer",
-  posthumousKills: "Kills by a previous life's ordnance",
-  mineKills: "Kills from mine explosions",
-  coverDestroyed: "Destructible objects you finished",
-  pickups: "Ammo and power-ups collected",
-};
 
 export function duration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -83,12 +53,11 @@ export function recapMarkup(
         : "";
   const hitRate = recap.shots ? `${Math.round((recap.directHits / recap.shots) * 100)}%` : "—";
   const extras: { label: string; value: string; hint: string; improved?: boolean }[] = [
-    ...metrics
+    ...(Object.keys(METRICS) as RecapMetric[])
       .filter((metric) => !featuredMetrics.includes(metric) && stats[metric] > 0)
       .map((metric) => ({
-        label: labels[metric],
+        ...METRICS[metric],
         value: format(metric, stats[metric]),
-        hint: hints[metric],
         improved: improved.has(metric),
       })),
     ...(recap.damageTaken >= 1
@@ -123,9 +92,9 @@ export function recapMarkup(
     <dl class="recap-stats">${featuredMetrics
       .map((metric) =>
         tile(
-          labels[metric],
+          METRICS[metric].label,
           format(metric, stats[metric]),
-          hints[metric],
+          METRICS[metric].hint,
           recordFooter(metric),
           improved.has(metric),
         ),

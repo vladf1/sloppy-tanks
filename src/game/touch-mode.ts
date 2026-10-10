@@ -1,13 +1,8 @@
 import type { Controls } from "./controls";
-import type { Phase } from "./engine-api";
 import type { TouchControls } from "./touch-controls";
 import type { TouchMode } from "./touch-input";
 import { isPhone } from "./phone-mode";
-/** What the touch overlay shows: the mine button's cooldown and whether to show at all. */
-export interface TouchState {
-  readonly human: { readonly mineCooldown: number };
-  readonly match: { readonly phase: Phase };
-}
+import { savedPreference, savePreference } from "./player-preferences";
 
 /** Desktop retains only detection/settings; joystick code and CSS load on first enable. */
 export class TouchModeController {
@@ -20,15 +15,11 @@ export class TouchModeController {
   constructor(
     private readonly root: HTMLElement,
     private readonly controls: Controls,
-    private readonly simulation: TouchState,
+    /** The HUD's mine cooldown, which the touch mine button shows. */
+    private readonly mineCooldown: () => number,
     private readonly zoom: (amount: number) => void,
   ) {
-    let saved: string | null = null;
-    try {
-      saved = localStorage.getItem("sloppy-touch");
-    } catch {
-      /* Settings remain usable without storage. */
-    }
+    const saved = savedPreference("touch");
     // A phone has no other controls, and no Settings to change this.
     this.mode = isPhone() ? "on" : saved === "on" || saved === "off" ? saved : "auto";
     controls.touchLook = () => this.enabled;
@@ -41,11 +32,7 @@ export class TouchModeController {
       return;
     }
     this.mode = mode;
-    try {
-      localStorage.setItem("sloppy-touch", this.mode);
-    } catch {
-      /* Session-only preference. */
-    }
+    savePreference("touch", mode);
     this.controls.clear();
     this.applyMode();
   }
@@ -75,7 +62,7 @@ export class TouchModeController {
           if (!this.enabled) {
             return;
           }
-          this.view = new TouchControls(this.root, this.controls, this.simulation, this.zoom);
+          this.view = new TouchControls(this.root, this.controls, this.mineCooldown, this.zoom);
           this.view.setEnabled(true);
         })
         .catch((error: unknown) => {

@@ -1,3 +1,5 @@
+import { savedPreference, savePreference } from "../game/player-preferences";
+
 /** Battle Setup suggests a random bot name before the engine loads; the same list is the
  * bots' roster in `crates/core/src/sim/bot_personalities.rs`. */
 const DEFAULT_NAMES = [
@@ -88,20 +90,12 @@ const DEFAULT_NAMES = [
 ];
 
 export function preferredPlayerName(): string {
-  try {
-    const saved = localStorage.getItem("sloppy-player-name")?.trim().slice(0, 24);
-    if (saved) {
-      return saved;
-    }
-  } catch {
-    /* Optional preference. */
+  const saved = savedPreference("player-name")?.trim().slice(0, 24);
+  if (saved) {
+    return saved;
   }
   return DEFAULT_NAMES[crypto.getRandomValues(new Uint32Array(1))[0] % DEFAULT_NAMES.length];
 }
 export function rememberPlayerName(name: string): void {
-  try {
-    localStorage.setItem("sloppy-player-name", name);
-  } catch {
-    /* Optional preference. */
-  }
+  savePreference("player-name", name);
 }

@@ -34,8 +34,9 @@ export function initialPlayMode(search: string): PlayMode {
     : "single";
 }
 
-/** Keep a reload on the chosen tab. The flags also tell the page's head scripts not to
- * download single-player physics, so they must match the tab the page opens on. */
+/** Keep a reload on the chosen tab. The flags also tell the page's inline scripts which
+ * tab to show first and whether to preload the single-player modules, so they must match
+ * the tab the page opens on. */
 function rememberPlayMode(mode: PlayMode): void {
   const url = new URL(location.href);
   if (mode === "multiplayer") {

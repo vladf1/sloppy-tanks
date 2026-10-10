@@ -1,9 +1,3 @@
-/** A page opened with `?debug`: nerd stats, extra levels in the map lists, and the
- * console aids `printDebugHelp` lists. */
-export function debugPage(search: string): boolean {
-  return new URLSearchParams(search).has("debug");
-}
-
 const PAGE_PARAMETERS = [
   "Page parameters (add to the URL):",
   "  ?debug               this help, nerd stats (N), extra levels in the map lists",

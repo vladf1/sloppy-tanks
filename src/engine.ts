@@ -166,3 +166,17 @@ export function createGame(canvas: HTMLCanvasElement, config: object): Promise<G
 export function createNetGame(canvas: HTMLCanvasElement, configJson: string): Promise<NetGame> {
   return createWith((glue) => glue.NetGame.create(canvas, configJson));
 }
+
+/** How often, in frames, a page asks its engine for a recorded GPU error. */
+const ERROR_CHECK_EVERY_FRAMES = 30;
+
+/** Throw the GPU error the engine recorded, on every ERROR_CHECK_EVERY_FRAMES-th `frame`.
+ * Most GPU errors arrive asynchronously, so the engine records them for polling. */
+export function throwGpuError(game: Game | NetGame, frame: number): void {
+  if (frame % ERROR_CHECK_EVERY_FRAMES === 0) {
+    const error = game.error();
+    if (error) {
+      throw new Error(error);
+    }
+  }
+}

@@ -1,7 +1,6 @@
 import "../touch-controls.css";
 import { bindPress } from "./button-input";
 import type { Controls } from "./controls";
-import type { TouchState } from "./touch-mode";
 
 const STICK_RADIUS = 58;
 const ANCHOR_SHIFT = 22;
@@ -20,7 +19,7 @@ export class TouchControls {
   constructor(
     private readonly root: HTMLElement,
     private readonly controls: Controls,
-    private readonly simulation: TouchState,
+    private readonly mineCooldown: () => number,
     zoom: (amount: number) => void,
   ) {
     root.insertAdjacentHTML(
@@ -165,7 +164,7 @@ export class TouchControls {
     }
     const playing = this.controls.active();
     this.layer.hidden = !playing;
-    const cooldown = this.simulation.human.mineCooldown;
+    const cooldown = this.mineCooldown();
     this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;
     this.mine.style.setProperty(

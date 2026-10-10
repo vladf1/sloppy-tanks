@@ -1,4 +1,4 @@
-/** Act on individual fingers, including non-primary touches while both sticks are held. */
+/** Act on individual fingers, including non-primary touches while the stick is held. */
 export function bindPress(button: HTMLElement, action: () => void): void {
   button.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || button.matches(":disabled")) {

@@ -45,32 +45,40 @@ function showInPicker(picker: HTMLElement, option: Element): void {
     .replaceChildren(...[...option.childNodes].map((node) => node.cloneNode(true)));
 }
 
-function mapPicker(root: ParentNode, name: string): HTMLElement | null {
-  return root.querySelector<HTMLElement>(`.map-picker[data-name="${name}"]`);
-}
-
-/** Show `value` in both views of the `name` map choice. The dropdown always holds the
- * choice, even while the row of standard maps is the one shown. */
-export function setMapChoice(root: ParentNode, name: string, value: string): boolean {
-  const picker = mapPicker(root, name);
-  if (!picker || !setMapPicker(picker, value)) {
-    return false;
-  }
+/** Check the radio of the `name` group under `root` whose value is `value`. */
+export function checkRadio(root: ParentNode, name: string, value: string): void {
   root.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((input) => {
     input.checked = input.value === value;
   });
+}
+
+/** The one map choice, which single player and a new room share (`battle-setup.html`). */
+const MAP_CHOICE = "mapMode";
+
+function mapPicker(root: ParentNode): HTMLElement | null {
+  return root.querySelector<HTMLElement>(`.map-picker[data-name="${MAP_CHOICE}"]`);
+}
+
+/** Show `value` in both views of the map choice. The dropdown always holds the choice,
+ * even while the row of standard maps is the one shown. */
+export function setMapChoice(root: ParentNode, value: string): boolean {
+  const picker = mapPicker(root);
+  if (!picker || !setMapPicker(picker, value)) {
+    return false;
+  }
+  checkRadio(root, MAP_CHOICE, value);
   return true;
 }
 
-/** Show `room`, the map of the open room the player chose, in place of the `name` map
- * choice; no `room` shows the choice again. The choice itself, which single player and
- * a new room play, stays as it was. */
-export function showRoomMap(root: ParentNode, name: string, room?: string): void {
-  const picker = mapPicker(root, name);
+/** Show `room`, the map of the open room the player chose, in place of the map choice;
+ * no `room` shows the choice again. The choice itself, which single player and a new
+ * room play, stays as it was. */
+export function showRoomMap(root: ParentNode, room?: string): void {
+  const picker = mapPicker(root);
   if (!picker) {
     return;
   }
-  root.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((input) => {
+  root.querySelectorAll<HTMLInputElement>(`input[name="${MAP_CHOICE}"]`).forEach((input) => {
     input.closest(".choice-card")?.classList.toggle("room-map", input.value === room);
   });
   const options = [...picker.querySelectorAll<HTMLElement>('[role="option"]')];
@@ -85,25 +93,21 @@ export function showRoomMap(root: ParentNode, name: string, room?: string): void
   showInPicker(picker, shown ?? chosen!);
 }
 
-/** Make the `name` map choice work and keep its two views in step; `change` runs with the
- * new map after the player picks one in either view. */
-export function bindMapChoice(
-  root: ParentNode,
-  name: string,
-  change: (value: string) => void,
-): void {
-  const picker = mapPicker(root, name);
+/** Make the map choice work and keep its two views in step; `change` runs with the new
+ * map after the player picks one in either view. */
+export function bindMapChoice(root: ParentNode, change: (value: string) => void): void {
+  const picker = mapPicker(root);
   if (!picker) {
     return;
   }
   bindMapPicker(picker);
   picker.addEventListener("change", () => {
-    setMapChoice(root, name, picker.dataset.value!);
+    setMapChoice(root, picker.dataset.value!);
     change(picker.dataset.value!);
   });
-  root.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`).forEach((input) => {
+  root.querySelectorAll<HTMLInputElement>(`input[name="${MAP_CHOICE}"]`).forEach((input) => {
     input.addEventListener("change", () => {
-      if (input.checked && setMapChoice(root, name, input.value)) {
+      if (input.checked && setMapChoice(root, input.value)) {
         change(input.value);
       }
     });

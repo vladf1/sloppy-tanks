@@ -4,13 +4,13 @@
 // `texture-bake-worker-webgl.ts`).
 
 interface BakeRequest {
-  engine: WebAssembly.Module | string;
+  engine: WebAssembly.Module;
   key: string;
   band: number;
   bands: number;
 }
 
-type Init = (options: { module_or_path: WebAssembly.Module | string }) => Promise<unknown>;
+type Init = (options: { module_or_path: WebAssembly.Module }) => Promise<unknown>;
 type Bake = (key: string, band: number, bands: number) => Uint8Array | undefined;
 
 export function serveTextureBakes(init: Init, bake: Bake): void {

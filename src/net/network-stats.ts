@@ -1,15 +1,7 @@
-import { passTriangleRows, type StatsSections } from "../game/nerd-stats";
+import { renderRows, type RenderStats, type StatsSections } from "../game/nerd-stats";
 
 /** The part of `NetGame.stats_json()` a room's Stats for nerds panel reads. */
-export interface NetworkStatsSource {
-  graphicsApi: string;
-  drawCalls: number;
-  triangles: number;
-  shadowTriangles: number;
-  reflectionTriangles: number;
-  mainTriangles: number;
-  meshes: number;
-  textures: number;
+export interface NetworkStatsSource extends RenderStats {
   scene?: {
     tanks: number;
     alive: number;
@@ -34,9 +26,6 @@ export interface NetworkStatsSource {
     lateBatches: number;
     longestBatchGapMs: number;
     predictionLeadMs: number;
-    corrections: number;
-    correctionTotalM: number;
-    correctionMaxM: number;
     correctionMPerS: number;
     correctionP95M: number;
     inputStarts: number;
@@ -136,30 +125,7 @@ export function networkStatsSections(
           "Current game-server connection state.",
         ],
       ],
-      Render: [
-        [
-          "Graphics API",
-          stats.graphicsApi,
-          "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
-        ],
-        ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
-        [
-          "Triangles / frame",
-          stats.triangles.toLocaleString(),
-          "Triangles submitted per rendered frame.",
-        ],
-        ...passTriangleRows(stats),
-        [
-          "GPU geometries",
-          stats.meshes,
-          "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
-        ],
-        [
-          "GPU textures",
-          stats.textures,
-          "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
-        ],
-      ],
+      Render: renderRows(stats),
       Battle: scene
         ? [
             ["Tanks", `${scene.alive} / ${scene.tanks}`, "Tanks alive out of total spawned."],

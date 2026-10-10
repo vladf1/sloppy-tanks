@@ -1,5 +1,6 @@
 /** The maps offered by Battle Setup, room settings and `?map=` links. This module imports
- * nothing: the inline startup script and the server both read it. */
+ * nothing: the inline startup script and the build's map-picker markup
+ * (`scripts/map-picker-markup.ts`) both read it. */
 export const MAP_OPTIONS = [
   {
     id: "village",
@@ -59,7 +60,8 @@ export function isExtraLevel(id: MapId): id is ExtraLevelId {
   return "extra" in mapOption(id)!;
 }
 
-/** Battle Setup offers the extra levels only on a page opened with `?debug`. */
-export function showsExtraLevels(search: string): boolean {
+/** A page opened with `?debug`: nerd stats, extra levels in the map lists, and the
+ * console aids `printDebugHelp` lists. */
+export function debugPage(search: string): boolean {
   return new URLSearchParams(search).has("debug");
 }

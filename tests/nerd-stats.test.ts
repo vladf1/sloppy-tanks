@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NerdStats, engineStatsSections, nerdStatsShown } from "../src/game/nerd-stats";
+import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
 import type { EngineStats } from "../src/game/engine-api";
+import { debugPage } from "../src/game/map-options";
 import { networkStatsSections, type NetworkStatsSource } from "../src/net/network-stats";
 
 type Listener = () => void;
@@ -121,9 +122,6 @@ function fixture(network = false) {
       lateBatches: 3,
       longestBatchGapMs: 412.4,
       predictionLeadMs: 120,
-      corrections: 40,
-      correctionTotalM: 0.8,
-      correctionMaxM: 0.12,
       correctionMPerS: 0.04,
       correctionP95M: 0.03,
       inputStarts: 25,
@@ -348,8 +346,8 @@ test("the panel's corner button closes it, and only an open panel", () => {
 });
 
 test("the panel is offered on a ?debug page only", () => {
-  assert.equal(nerdStatsShown(""), false);
-  assert.equal(nerdStatsShown("?multiplayer&room=ABCD2345"), false);
-  assert.equal(nerdStatsShown("?debug"), true);
-  assert.equal(nerdStatsShown("?room=ABCD2345&debug"), true);
+  assert.equal(debugPage(""), false);
+  assert.equal(debugPage("?multiplayer&room=ABCD2345"), false);
+  assert.equal(debugPage("?debug"), true);
+  assert.equal(debugPage("?room=ABCD2345&debug"), true);
 });

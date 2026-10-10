@@ -3,9 +3,9 @@
 import { CONTENT_VERSION } from "../generated/engine/content-version.js";
 import { busiestOpenRoom, readRoomList, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
-import { isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
+import { ROOM_SEATS, isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
-import { isExtraLevel, mapOption, showsExtraLevels } from "../game/map-options";
+import { debugPage, isExtraLevel, mapOption } from "../game/map-options";
 import { showRoomMap } from "../game/map-picker";
 import { isPhone } from "../game/phone-mode";
 import type { GameOptions } from "../game/game-options";
@@ -16,7 +16,6 @@ export { joinAfterReload } from "./pending-join";
 
 const REFRESH_MS = 5000;
 const LIST_TIMEOUT_MS = 8000;
-const ROOM_PLAYERS = 8;
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function newRoomCode(): string {
@@ -45,7 +44,7 @@ export class RoomBrowser {
   private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
-  private readonly extraLevels = showsExtraLevels(location.search);
+  private readonly extraLevels = debugPage(location.search);
   private readonly linkedRoom?: string;
   private rooms: RoomListing[] = [];
   private selected = "";
@@ -144,7 +143,7 @@ export class RoomBrowser {
   }
 
   private available(room: RoomListing): boolean {
-    return room.reserved < ROOM_PLAYERS && room.contentVersion === CONTENT_VERSION;
+    return room.reserved < ROOM_SEATS && room.contentVersion === CONTENT_VERSION;
   }
 
   private render(): void {
@@ -177,7 +176,7 @@ export class RoomBrowser {
         badge.textContent = "EXTRA";
         title.append(badge);
       }
-      title.append(` · ${room.players}/${ROOM_PLAYERS} players`);
+      title.append(` · ${room.players}/${ROOM_SEATS} players`);
       const info = document.createElement("small");
       const seconds = Math.ceil(room.time);
       const phase =
@@ -191,7 +190,7 @@ export class RoomBrowser {
         (room.reserved > room.players ? ` · ${room.reserved - room.players} reconnecting` : "") +
         (room.contentVersion !== CONTENT_VERSION
           ? " · Reload for updated game"
-          : room.reserved >= ROOM_PLAYERS
+          : room.reserved >= ROOM_SEATS
             ? " · Full"
             : "");
       details.append(title, info);
@@ -221,7 +220,7 @@ export class RoomBrowser {
       ? this.rooms.find((listing) => listing.room === this.selected)
       : undefined;
     this.mapChoice.inert = !!room;
-    showRoomMap(this.mapChoice, "mapMode", room?.mapMode);
+    showRoomMap(this.mapChoice, room?.mapMode);
   }
 
   /** The status well's line, its hint and its bar: "loading" sweeps, "ready" is full. */
@@ -363,7 +362,7 @@ export class RoomBrowser {
     }
     this.close();
     // The join screen keeps the map inert and showing the room's map while it loads.
-    showRoomMap(this.mapChoice, "mapMode", listing.mapMode);
+    showRoomMap(this.mapChoice, listing.mapMode);
     this.enter({ room, choice: { ...choice, existingRoom: true } });
   }
 

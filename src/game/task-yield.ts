@@ -15,6 +15,9 @@ export function nextTask(): Promise<void> {
  * background or running the warm-up. */
 const GPU_POLL_MS = 16;
 
+/** Pipelines compiled per `prepare_step`; the page stays responsive between steps. */
+export const PREPARE_BUDGET = 4;
+
 /** Wait before the next `prepare_step`: a message task while pipelines and textures
  * remain, or a short timer while only the GPU works (`gpuPending`: background
  * pipeline compiles or the warm-up),

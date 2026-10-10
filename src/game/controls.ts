@@ -23,6 +23,18 @@ AMMO_ORDER.forEach((weapon, i) => {
 const held = (keys: Set<string>, ...codes: string[]) =>
   codes.some((code) => keys.has(code)) ? 1 : 0;
 
+/** A key typed into a field, or pressed with a modifier, is no game shortcut. */
+export function typingOrShortcut(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  return (
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    !!target?.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
+  );
+}
+
 /** Raw keyboard, mouse and touch state for the engine. Continuous input stays held;
  * one-shot presses (a mine, an ammo choice, a wheel step) queue until `takeInput`
  * hands them to the engine, which applies them on its next simulation tick. */
@@ -93,16 +105,10 @@ export class Controls {
         pause();
         return;
       }
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.isContentEditable ||
-        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "") ||
-        e.metaKey ||
-        e.ctrlKey ||
-        e.altKey
-      ) {
+      if (typingOrShortcut(e)) {
         return;
       }
+      const target = e.target as HTMLElement | null;
       const selection = ammoKeys.get(e.code);
       if (selection !== undefined) {
         if (this.active()) {

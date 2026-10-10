@@ -1,7 +1,9 @@
 import type { GameMode, PlayerVehicleKind } from "./engine-api";
 import { isPhone } from "./phone-mode";
 
-type Preference = "tank" | "game-mode" | "map" | "difficulty" | "camera" | "zoom";
+type Preference = "tank" | "game-mode" | "map" | "difficulty" | "camera" | "zoom" | Setting;
+/** The Settings dialog's choices, and the name a player joins rooms with. */
+type Setting = "volume" | "tank-speed" | "bullet-speed" | "touch" | "player-name";
 
 /** Storage can be disabled or full; the choices still work for this visit. */
 export function savedPreference(key: Preference): string | null {
