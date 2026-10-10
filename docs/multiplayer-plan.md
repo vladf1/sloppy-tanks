@@ -27,7 +27,6 @@ Considered and set aside:
 - **Player-hosted matches:** the host tab pauses when hidden, browsers throttle background tabs, and the match ends when the host leaves.
 - **Peer lockstep or whole-match deterministic rollback:** would require reproducibility across peers that has not been established. Matching aggregate results on two V8 builds is insufficient. Server-authoritative local prediction and reconciliation remain possible without that guarantee.
 - **Colyseus:** needs a Node host. Keep it as an alternative if owning room and replication code becomes too costly; it does not remove the need to design game-specific input and lifecycle rules.
-- **WebTransport:** Cloudflare can't host it; it needs a VM with an open UDP port.
 
 ## Implementation status
 
@@ -65,7 +64,7 @@ Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-load
 
 ## Hosting assumptions
 
-- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. A four-player room measured about 3 ms of simulation per 50 ms tick and 8% CPU; the server process uses roughly 130–200 MB. Watch `tickAvgMs`, `debtMs`, memory and event-loop delay in `pnpm run server:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
+- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. Watch `tickAvgMs`, `debtMs`, memory and loop delay (`loopDelayP99Ms`) in `pnpm run server:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
 - **Bandwidth:** snapshots are binary field deltas under permessage-deflate (`crates/core/src/net/replication.rs`): about 3–6 KB/s per client on the wire in a standard room, 10–17 KB/s on the Stress Grid and up to about 45 KB/s in the Scrap Yard. That counts against the VPS plan's monthly transfer.
 - **Placement:** every room runs where the VPS is, so friends far from it pay that distance in RTT. Record per-player RTT in playtests.
 - **Restarts:** rooms are not persisted. A deploy or restart ends every live match with a room-reset notice; a crash leaves clients to reconnect into a fresh lobby.

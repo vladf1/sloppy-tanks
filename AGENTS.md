@@ -385,7 +385,7 @@ offline.
   which directories changed.
   Change the machines only through `deploy/servers.json`, `deploy/server/` and the
   `server:*` scripts described in `crates/server/README.md`. The traffic bots in
-  `bots/` remain a Cloudflare Worker that targets the production server;
+  `bots/` are a Cloudflare Worker that targets the production server;
   `pnpm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add

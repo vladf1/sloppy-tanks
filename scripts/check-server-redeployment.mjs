@@ -44,7 +44,7 @@ try {
 }
 const describe = (side) =>
   (side.version ? `v${side.version}, ` : "") +
-  `protocol ${side.protocol}, content ${side.contentVersion}, server build ${side.serverBuild ?? "unknown"}` +
+  `protocol ${side.protocol}, content ${side.contentVersion}, server build ${side.serverBuild}` +
   (side.commit ? `, commit ${side.commit}${side.dirty ? " (local changes)" : ""}` : "") +
   (side.builtAt ? `, built ${side.builtAt}` : "");
 console.log(`checkout ${describe(local)}`);
@@ -54,7 +54,7 @@ if (pageUrl) {
   try {
     const page = await readHealth(pageHealth);
     console.log(
-      `page     ${page.version ? `v${page.version}, ` : ""}protocol ${page.protocol}, content ${page.contentVersion}, commit ${page.commit}${page.dirty ? " (local changes)" : ""}, built ${page.builtAt}`,
+      `page     v${page.version}, protocol ${page.protocol}, content ${page.contentVersion}, commit ${page.commit}${page.dirty ? " (local changes)" : ""}, built ${page.builtAt}`,
     );
     if (page.protocol !== live.protocol || page.contentVersion !== live.contentVersion) {
       console.log(`Warning: ${pageUrl} cannot join this server's rooms until both match.`);

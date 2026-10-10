@@ -47,15 +47,10 @@ case "${1:-}" in
     if [[ ! -f $STATE_FILE ]]; then
       pfctl -E 2>&1 | awk '/Token/ { print $3 }' >"$STATE_FILE"
     fi
-    # A machine still to be created has no ip (plutil cannot extract null).
     servers=()
     for role in production dev; do
-      if ip=$(plutil -extract "$role.ip" raw -o - "$SERVERS_FILE" 2>/dev/null); then servers+=("$ip"); fi
+      servers+=("$(plutil -extract "$role.ip" raw -o - "$SERVERS_FILE")")
     done
-    if [[ ${#servers[@]} -eq 0 ]]; then
-      echo "deploy/servers.json lists no server ip." >&2
-      exit 1
-    fi
     plr=$(awk -v p="$percent" 'BEGIN { printf "%.4f", p / 100 }')
     dnctl pipe "$PIPE" config plr "$plr"
     # Server to this Mac only.

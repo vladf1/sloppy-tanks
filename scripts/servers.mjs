@@ -56,25 +56,20 @@ export function gameServer(dev) {
 /** How the scripts reach a machine from its deploy/servers.json entry. */
 export function serverMachine(role, { ip, hostnames }) {
   if (!hostnames?.length) throw new Error(`${role} in deploy/servers.json lists no hostnames`);
-  if (ip && isIP(ip) !== 4) throw new Error(`${role}'s ip is not an IPv4 address: ${ip}`);
+  if (isIP(ip) !== 4) throw new Error(`${role}'s ip is not an IPv4 address: ${ip}`);
   const fromIp = (name) => name.includes(DASHED_IP);
   const expand = (name) => name.replaceAll(DASHED_IP, ip.replaceAll(".", "-"));
-  // Until the machine exists, neither do the names made from its address.
-  const sites = ip ? hostnames.map(expand) : hostnames.filter((name) => !fromIp(name));
+  const sites = hostnames.map(expand);
   for (const name of sites) {
     if (/[{}]/.test(name)) throw new Error(`Only ${DASHED_IP} can stand in a hostname: ${name}`);
   }
-  if (!sites.length) throw new Error(`${role} in deploy/servers.json needs an ip`);
-  const machineName = ip ? hostnames.filter(fromIp).map(expand)[0] : undefined;
+  const machineName = hostnames.filter(fromIp).map(expand)[0];
   return {
     role,
-    /** The machine's public IPv4 address, or null until it exists. */
+    /** The machine's public IPv4 address. */
     ip,
-    /** SSH destination; throws until the machine exists. */
-    get ssh() {
-      if (!ip) throw new Error(`${role} in deploy/servers.json has no ip yet`);
-      return `root@${ip}`;
-    },
+    /** SSH destination. */
+    ssh: `root@${ip}`,
     /** Every name Caddy serves, which it obtains certificates for. */
     sites,
     /** The hostnames that need their own DNS record pointing at `ip`. */

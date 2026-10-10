@@ -90,8 +90,7 @@ export async function startMultiplayer(
   }
   const address = serverAddress();
   if (!address) {
-    app.textContent =
-      "Multiplayer isn't enabled on this site yet. Open the development site to play with friends.";
+    app.textContent = "This site has no multiplayer server.";
     return;
   }
   if (selection) {

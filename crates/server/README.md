@@ -64,9 +64,9 @@ Settings come from the environment:
 | --------------- | -------------------- | ----------------------------------------------------------- |
 | `HOST` / `PORT` | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
 | `MAX_ROOMS`     | `10`                 | Live rooms; new room codes beyond it get 503                |
-| `TRUST_PROXY`   | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy   |
 
-A malformed value stops startup instead of silently turning a limit off.
+A malformed value stops startup instead of silently turning a limit off. A loopback
+listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
 
 ## Rooms and limits
 

@@ -23,7 +23,7 @@ const DEFAULT_MINUTES = 5;
 // Every running bot keeps its Durable Object awake and billed for wall time, so runs always end.
 const MAX_MINUTES = 6 * 60;
 const TICK_MS = 25;
-// Directory polls and joins share the server's per-IP edge limits (120 listings, 60 joins a minute).
+// Directory polls and joins share the server's per-IP limits (120 listings, 60 joins a minute).
 const MAINTAIN_MS = 10_000;
 const MAX_JOINS_PER_PASS = 8;
 // The alarm restarts bots after a runtime restart evicts the in-memory sockets.
@@ -378,7 +378,7 @@ export class BotSwarm extends DurableObject<Env> {
         if (!socket) {
           seat.bot.lastError = `Room ${room} refused ${response.status}: ${await response.text()}`;
           seat.bot.token = undefined;
-          // Edge rate limits are not about the room; retry it on the next pass.
+          // The server's per-IP rate limits are not about the room; retry it on the next pass.
           if (response.status !== 429) {
             this.blocked.set(room, Date.now() + BLOCKED_ROOM_MS);
           }

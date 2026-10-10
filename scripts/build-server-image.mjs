@@ -22,7 +22,7 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * image first, without a number, so that main build restamps the image's metadata
  * (release, commit and time) over the same binary layer, and later builds only retag it.
  * The VPS restarts only when :production's image changes, which then happens once per
- * server build, as before. */
+ * server build. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const LOCAL_IMAGE = "sloppy-tanks-server";
 
