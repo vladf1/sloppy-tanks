@@ -1,6 +1,6 @@
 {
   "production": {
-    "ip": null,
+    "ip": "108.61.218.248",
     "hostname": "sloppy-tanks-server.fridman.me"
   },
   "dev": {
