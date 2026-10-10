@@ -4,66 +4,32 @@
 
 mod support;
 
-use sloppy_core::sim::Simulation;
 use sloppy_core::sim::ai::bot_command;
 use sloppy_core::sim::difficulty::{Difficulty, difficulty_tuning, parse_difficulty};
-use sloppy_core::sim::math::Vec2;
-use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::simulation::GameMode;
 use sloppy_core::sim::simulation_rules::SOLO;
-use support::clear_arena;
-
-const PLAYER: usize = 0;
-const ENEMY: usize = 1;
-const ALLY: usize = 2;
-
-/// The human, one enemy and one ally, 14 m apart along +z (indices `PLAYER`, `ENEMY`, `ALLY`).
-fn squad() -> Simulation {
-    let mut s = Simulation::with_seed(123.0);
-    let player = s.human_index().unwrap();
-    let team = s.tanks[player].team;
-    let enemy = s.tanks.iter().position(|t| t.team != team).unwrap();
-    let ally = s
-        .tanks
-        .iter()
-        .position(|t| !t.human && t.team == team)
-        .unwrap();
-    clear_arena(&mut s, &[player, enemy, ally]);
-    for i in 0..s.tanks.len() {
-        let z = i as f64 * 14.0;
-        s.tanks[i].protection = 0.0;
-        let body = s.tanks[i].body;
-        s.world.bodies[body].set_translation(vector(0.0, 0.65, z), true);
-        s.tanks[i].previous = Vec2::new(0.0, z);
-    }
-    s.world.step();
-    s.start();
-    s
-}
+use support::{ALLY, ENEMY, PLAYER, damage_from, squad};
 
 #[test]
 fn enemy_damage_scales_while_allied_and_self_damage_keep_baseline_and_reset_keeps_choice() {
     for level in Difficulty::ALL {
         let mut s = squad();
         s.difficulty = level;
-        let (player_id, player_team) = (s.tanks[PLAYER].id, s.tanks[PLAYER].team);
-        let (enemy_id, enemy_team) = (s.tanks[ENEMY].id, s.tanks[ENEMY].team);
-        let (ally_id, ally_team) = (s.tanks[ALLY].id, s.tanks[ALLY].team);
         let hp = s.tanks[PLAYER].hp;
-        s.damage_tank(PLAYER, 20.0, enemy_id, enemy_team, None, None);
+        damage_from(&mut s, PLAYER, 20.0, ENEMY, None, None);
         assert_eq!(
             s.tanks[PLAYER].hp,
             hp - 20.0 * difficulty_tuning(level).damage,
             "{level:?}"
         );
         let enemy_hp = s.tanks[ENEMY].hp;
-        s.damage_tank(ENEMY, 20.0, ally_id, ally_team, None, None);
+        damage_from(&mut s, ENEMY, 20.0, ALLY, None, None);
         assert_eq!(s.tanks[ENEMY].hp, enemy_hp - 20.0, "{level:?}");
         let own_hp = s.tanks[PLAYER].hp;
-        s.damage_tank(PLAYER, 10.0, player_id, player_team, None, None);
+        damage_from(&mut s, PLAYER, 10.0, PLAYER, None, None);
         assert_eq!(s.tanks[PLAYER].hp, own_hp - 10.0, "{level:?}");
         let safe_hp = s.tanks[PLAYER].hp;
-        s.damage_tank(PLAYER, 20.0, ally_id, ally_team, None, None);
+        damage_from(&mut s, PLAYER, 20.0, ALLY, None, None);
         assert_eq!(s.tanks[PLAYER].hp, safe_hp, "{level:?}");
         s.reset(None);
         assert_eq!(s.difficulty, level);
@@ -78,8 +44,7 @@ fn difficulty_applies_to_solo_damage_before_shield_absorption() {
     s.tanks[PLAYER].shield = 10.0;
     s.tanks[PLAYER].shield_points = 3.0;
     let hp = s.tanks[PLAYER].hp;
-    let (enemy_id, enemy_team) = (s.tanks[ENEMY].id, s.tanks[ENEMY].team);
-    s.damage_tank(PLAYER, 40.0, enemy_id, enemy_team, None, None);
+    damage_from(&mut s, PLAYER, 40.0, ENEMY, None, None);
     assert_eq!(
         s.tanks[PLAYER].hp,
         hp - (40.0 * 0.9 * SOLO.enemy_damage_multiplier - 3.0)

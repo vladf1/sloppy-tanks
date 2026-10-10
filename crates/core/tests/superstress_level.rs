@@ -3,6 +3,8 @@
 //! lingers while the budget has room, and a seeded brawl stays bounded (the former
 //! `tests/superstress-level.test.ts`).
 
+mod support;
+
 use std::collections::HashSet;
 
 use sloppy_core::sim::data::{ARENA, STEP};
@@ -17,10 +19,9 @@ use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, SimEventType, Simulation, SimulationSetup, VehicleCommand,
 };
+use support::{assert_spawns_and_pickups_clear, set_translation};
 
 const YARD: f64 = ARENA * SUPERSTRESS_SCALE;
-/// Hull clearance a yard spawn or pickup keeps from every cover.
-const CLEARANCE: f64 = 1.5;
 
 fn superstress(seed: f64) -> Simulation {
     Simulation::new(
@@ -32,42 +33,15 @@ fn superstress(seed: f64) -> Simulation {
     )
 }
 
-fn human(s: &Simulation) -> usize {
-    s.human_index().expect("local play has a human")
-}
-
 #[test]
 fn superstress_spawns_and_pickups_fit_the_compact_yard_with_hull_clearance_and_routes() {
     let mut sim = superstress(731.0);
     assert_eq!(sim.tanks.len(), 30);
-    let mut points: Vec<Vec2> = sim.pickups.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-    points.extend(
-        sim.tanks
-            .iter()
-            .map(|tank| sim.body_translation(tank.body).planar()),
-    );
-    for point in points {
+    for point in assert_spawns_and_pickups_clear(&mut sim) {
         assert!(
             point.x.abs().max(point.z.abs()) < YARD - 2.0,
             "inside the yard"
         );
-        assert_eq!(
-            sim.nav.blocked[sim.nav.index(point)],
-            0,
-            "blocked {point:?}"
-        );
-        assert!(
-            (point.x == 0.0 && point.z == 0.0) || !sim.nav.find(Vec2::ZERO, point).is_empty(),
-            "unreachable {point:?}"
-        );
-        for cover in &sim.covers {
-            assert!(
-                (point.x - cover.x).abs() >= cover.w / 2.0 + CLEARANCE
-                    || (point.z - cover.z).abs() >= cover.d / 2.0 + CLEARANCE,
-                "no hull clearance at {point:?} beside {:?}",
-                cover.kind
-            );
-        }
     }
 }
 
@@ -128,16 +102,10 @@ fn destroy(sim: &mut Simulation, kind: CoverKind) -> usize {
         .iter()
         .position(|c| c.kind == kind && c.alive)
         .unwrap();
-    let h = human(sim);
-    let (id, team) = (sim.tanks[h].id, sim.tanks[h].team);
+    let (id, team) = (sim.human().id, sim.human().team);
     sim.damage_cover(cover, 9999.0, id, team, None, None);
     assert!(!sim.covers[cover].alive);
     cover
-}
-
-fn set_tank_translation(sim: &mut Simulation, tank: usize, x: f64, z: f64) {
-    let body = sim.tanks[tank].body;
-    sim.world.bodies[body].set_translation(vector(x, 0.65, z), true);
 }
 
 #[test]
@@ -161,14 +129,13 @@ fn destroyed_cover_rises_with_its_identity_once_the_rebuild_delay_passes_and_it_
         destroy(&mut sim, CoverKind::Tree),
         destroy(&mut sim, CoverKind::Cargo),
     ];
-    let h = human(&sim);
-    let (id, team) = (sim.tanks[h].id, sim.tanks[h].team);
+    let (id, team) = (sim.human().id, sim.human().team);
     sim.damage_cover(drum, 9999.0, id, team, None, None);
     fallen.push(drum);
     let fallen_ids: Vec<u32> = fallen.iter().map(|&c| sim.covers[c].id).collect();
     sim.events.clear();
     let near_tank = sim.tanks.iter().position(|t| !t.human).unwrap();
-    set_tank_translation(&mut sim, near_tank, origin.x, origin.z + 1.0);
+    set_translation(&mut sim, near_tank, origin.x, origin.z + 1.0);
     let rng = sim.rng.state;
     superstress_rules(&mut sim);
     sim.elapsed += REBUILD_SECONDS - 0.5;
@@ -187,7 +154,7 @@ fn destroyed_cover_rises_with_its_identity_once_the_rebuild_delay_passes_and_it_
     for &c in fallen.iter().filter(|&&c| c != drum) {
         assert!(sim.covers[c].alive, "{:?} rebuilt", sim.covers[c].kind);
     }
-    set_tank_translation(&mut sim, near_tank, 0.0, 0.0);
+    set_translation(&mut sim, near_tank, 0.0, 0.0);
     superstress_rules(&mut sim);
 
     for (&c, &id) in fallen.iter().zip(&fallen_ids) {
@@ -198,9 +165,8 @@ fn destroyed_cover_rises_with_its_identity_once_the_rebuild_delay_passes_and_it_
         assert_eq!(cover.id, id, "{:?} keeps its record", cover.kind);
         assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&c));
         let at = Vec2::new(cover.x, cover.z);
-        assert_eq!(
-            sim.nav.blocked[sim.nav.index(at)],
-            1,
+        assert!(
+            sim.nav.is_blocked(at),
             "{:?} blocks routes again",
             cover.kind
         );
@@ -265,9 +231,7 @@ fn a_seeded_superstress_brawl_keeps_rebuilding_its_cover_and_stays_inside_its_bo
     sim.start();
     // Two rebuild delays, so every cover felled in the first six seconds has had time to
     // return; a shorter window hinges on whether one opening shot sets off a drum chain.
-    let steps = (2.0 * REBUILD_SECONDS) / STEP;
-    let mut i = 0;
-    while (i as f64) < steps {
+    for _ in 0..((2.0 * REBUILD_SECONDS) / STEP).ceil() as usize {
         sim.step(VehicleCommand::idle(), true);
         for event in sim.events.drain(..) {
             if event.kind == SimEventType::Impact
@@ -278,7 +242,6 @@ fn a_seeded_superstress_brawl_keeps_rebuilding_its_cover_and_stays_inside_its_bo
             }
         }
         assert!(sim.fragments.len() <= sim.max_fragments);
-        i += 1;
     }
     assert!(sim.destroyed > 15, "only {} covers fell", sim.destroyed);
     assert!(restored.len() > 5, "only {} covers rebuilt", restored.len());
@@ -314,10 +277,9 @@ fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
             .collect()
     };
     for tank in 0..sim.tanks.len() {
-        set_tank_translation(&mut sim, tank, -30.0, 0.0);
+        set_translation(&mut sim, tank, -30.0, 0.0);
     }
-    let h = human(&sim);
-    let (id, team) = (sim.tanks[h].id, sim.tanks[h].team);
+    let (id, team) = (sim.human().id, sim.human().team);
     let mut covers = None;
     for cycle in 0..2 {
         sim.damage_cover(tower, 9999.0, id, team, None, None);
@@ -330,11 +292,7 @@ fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
         );
         for &r in &rubble {
             let at = Vec2::new(sim.covers[r].x, sim.covers[r].z);
-            assert_eq!(
-                sim.nav.blocked[sim.nav.index(at)],
-                1,
-                "rubble blocks routes"
-            );
+            assert!(sim.nav.is_blocked(at), "rubble blocks routes");
         }
         // The second collapse reuses the first one's rubble records.
         let count = *covers.get_or_insert(sim.covers.len());
@@ -358,11 +316,7 @@ fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
             assert!(!sim.cover_by_collider.values().any(|&c| c == r));
         }
         let at = Vec2::new(x, z);
-        assert_eq!(
-            sim.nav.blocked[sim.nav.index(at)],
-            1,
-            "the tower blocks routes again"
-        );
+        assert!(sim.nav.is_blocked(at), "the tower blocks routes again");
         assert_eq!(
             sim.cover_by_collider.get(&sim.covers[tower].collider),
             Some(&tower)

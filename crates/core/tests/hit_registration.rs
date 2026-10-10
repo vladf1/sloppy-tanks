@@ -12,6 +12,8 @@ mod support;
 use rapier3d::parry::query::{Ray, RayCast};
 use rapier3d::parry::shape::Cuboid;
 use rapier3d::prelude::Pose;
+use sloppy_core::geometry::math::js_sign;
+use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::combat_rules::MINE;
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
@@ -24,12 +26,10 @@ use sloppy_core::sim::{
     CoverKind, DamageCause, DamageSource, Mine, Shot, SimEventType, Simulation, Tank, Team,
     VehicleKind, Weapon,
 };
-use support::{clear_arena, place_tank};
-
-fn set_translation(s: &mut Simulation, index: usize, x: f64, z: f64) {
-    let body = s.tanks[index].body;
-    s.world.bodies[body].set_translation(vector(x, 0.65, z), true);
-}
+use support::{
+    ALLY, ENEMY, PLAYER, clear_arena, concrete, event_count, place_tank, set_translation,
+    shot_by_id, squad,
+};
 
 /// One red enemy target of `kind` at the origin (index 0), facing `heading`.
 fn fixture(kind: VehicleKind, heading: f64) -> Simulation {
@@ -64,33 +64,6 @@ fn column(count: usize) -> Simulation {
     s
 }
 
-const PLAYER: usize = 0;
-const ENEMY: usize = 1;
-const ALLY: usize = 2;
-
-/// The human, one enemy and one ally, 14 m apart along +z.
-fn squad() -> Simulation {
-    let mut s = Simulation::with_seed(123.0);
-    let player = s.human_index().unwrap();
-    let team = s.tanks[player].team;
-    let enemy = s.tanks.iter().position(|t| t.team != team).unwrap();
-    let ally = s
-        .tanks
-        .iter()
-        .position(|t| !t.human && t.team == team)
-        .unwrap();
-    clear_arena(&mut s, &[player, enemy, ally]);
-    for i in 0..s.tanks.len() {
-        let z = i as f64 * 14.0;
-        s.tanks[i].protection = 0.0;
-        set_translation(&mut s, i, 0.0, z);
-        s.tanks[i].previous = Vec2::new(0.0, z);
-    }
-    s.world.step();
-    s.start();
-    s
-}
-
 /// A standard 40-damage shell owned by the first tank of `team`, or 999 when there is none.
 fn shot(s: &mut Simulation, x: f64, z: f64, vx: f64, vz: f64, team: Team) -> Shot {
     let id = s.next_id;
@@ -108,10 +81,7 @@ fn shot(s: &mut Simulation, x: f64, z: f64, vx: f64, vz: f64, team: Team) -> Sho
             .find(|t| t.team == team)
             .map_or(999, |t| t.id),
         damage: 40.0,
-        bounces: 0,
         life: 3.5,
-        piercing: 0,
-        weapon: Weapon::Standard,
         ..Shot::default()
     }
 }
@@ -133,17 +103,6 @@ fn incoming(s: &mut Simulation, fired: Weapon, owner: u32, team: Team) -> Shot {
     p
 }
 
-fn count(s: &Simulation, kind: SimEventType) -> usize {
-    s.events.iter().filter(|e| e.kind == kind).count()
-}
-
-fn shot_by_id(s: &Simulation, id: u32) -> &Shot {
-    s.shots
-        .iter()
-        .find(|shot| shot.id == id)
-        .expect("shot still in flight")
-}
-
 /// The recorded rendered-hull bounds in the tank frame: (min x, max x, min z, max z).
 fn hull_bounds(kind: VehicleKind) -> (f64, f64, f64, f64) {
     let hull = tank_hull(kind);
@@ -157,11 +116,7 @@ fn hull_bounds(kind: VehicleKind) -> (f64, f64, f64, f64) {
 
 #[test]
 fn hit_boundaries_match_hull_bounds_plus_shell_radius_on_every_side_of_rotated_hulls() {
-    for kind in [
-        VehicleKind::Scout,
-        VehicleKind::Balanced,
-        VehicleKind::Heavy,
-    ] {
+    for kind in VehicleKind::PLAYABLE {
         let (min_x, max_x, min_z, max_z) = hull_bounds(kind);
         for angle in [0.0, std::f64::consts::PI / 3.0] {
             let mut s = fixture(kind, angle);
@@ -270,11 +225,6 @@ fn unbounded_hit_time(
     (time >= 0.0 && time <= limit).then_some(time)
 }
 
-/// JavaScript `Math.sign` for finite values.
-fn js_sign(value: f64) -> f64 {
-    if value == 0.0 { 0.0 } else { value.signum() }
-}
-
 #[test]
 fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
     let mut s = Simulation::with_seed(123.0);
@@ -362,16 +312,7 @@ fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
 #[test]
 fn cover_still_blocks_shots_at_the_widened_hull_and_protected_targets_do_not_lose_health() {
     let mut s = fixture(VehicleKind::Balanced, 0.0);
-    s.add_cover(&CoverDef::new(
-        CoverKind::Concrete,
-        0.0,
-        -3.8,
-        5.0,
-        0.25,
-        3.0,
-        f64::INFINITY,
-        0,
-    ));
+    s.add_cover(&concrete(0.0, -3.8, 5.0, 0.25));
     s.world.step();
     shell(
         &mut s,
@@ -412,7 +353,6 @@ fn moving_tanks_are_hit_at_the_crossing_time_not_just_their_end_of_tick_location
 #[test]
 fn damage_events_credit_the_owner_on_surviving_and_lethal_hits_excluding_protected_hits() {
     let mut s = fixture(VehicleKind::Balanced, 0.0);
-    s.events.clear();
     let target_team = s.tanks[0].team;
     s.tanks[0].protection = 1.0;
     s.damage_tank(0, 40.0, 999, Team::Blue, None, None);
@@ -439,11 +379,7 @@ fn damage_events_credit_the_owner_on_surviving_and_lethal_hits_excluding_protect
 
 #[test]
 fn shells_and_spread_pellets_emerge_from_the_muzzle_for_all_chassis_and_aim_directions() {
-    for kind in [
-        VehicleKind::Scout,
-        VehicleKind::Balanced,
-        VehicleKind::Heavy,
-    ] {
+    for kind in VehicleKind::PLAYABLE {
         for angle in [0.0, 1.2] {
             let mut s = Simulation::with_seed(123.0);
             clear_arena(&mut s, &[]);
@@ -527,13 +463,7 @@ fn a_protruding_barrel_cannot_spawn_shots_beyond_nearby_cover_or_an_enemy() {
 
 #[test]
 fn every_weapon_hit_records_actual_impact_direction_and_death_cause() {
-    for fired in [
-        Weapon::Standard,
-        Weapon::Spread,
-        Weapon::Rocket,
-        Weapon::Ricochet,
-        Weapon::Piercing,
-    ] {
+    for fired in AMMO_ORDER {
         let mut s = squad();
         s.tanks[PLAYER].hp = 1.0;
         let (enemy_id, enemy_team) = (s.tanks[ENEMY].id, s.tanks[ENEMY].team);
@@ -639,16 +569,7 @@ fn protected_and_fully_shielded_hits_do_not_emit_hull_damage_direction() {
 #[test]
 fn a_reflected_shell_points_toward_its_bounce_not_the_original_shooter() {
     let mut s = squad();
-    s.add_cover(&CoverDef::new(
-        CoverKind::Concrete,
-        5.0,
-        0.0,
-        1.0,
-        10.0,
-        3.0,
-        f64::INFINITY,
-        0,
-    ));
+    s.add_cover(&concrete(5.0, 0.0, 1.0, 10.0));
     s.world.step();
     let (enemy_id, enemy_team) = (s.tanks[ENEMY].id, s.tanks[ENEMY].team);
     let mut p = incoming(&mut s, Weapon::Ricochet, enemy_id, enemy_team);
@@ -673,16 +594,7 @@ fn a_ricochet_stops_harmlessly_at_its_shooter_and_teammates() {
     for (target, start_x) in [(PLAYER, 0.0), (ALLY, 3.0)] {
         let mut s = squad();
         let z = s.body_translation(s.tanks[target].body).z;
-        s.add_cover(&CoverDef::new(
-            CoverKind::Concrete,
-            5.0,
-            z,
-            1.0,
-            10.0,
-            3.0,
-            f64::INFINITY,
-            0,
-        ));
+        s.add_cover(&concrete(5.0, z, 1.0, 10.0));
         s.world.step();
         let (player_id, player_team) = (s.tanks[PLAYER].id, s.tanks[PLAYER].team);
         let mut p = incoming(&mut s, Weapon::Ricochet, player_id, player_team);
@@ -692,14 +604,18 @@ fn a_ricochet_stops_harmlessly_at_its_shooter_and_teammates() {
         s.shots = vec![p];
         let (hp, shield) = (s.tanks[target].hp, s.tanks[target].shield_points);
         step_projectiles(&mut s, 0.4, false);
-        assert_eq!(count(&s, SimEventType::Ricochet), 1, "target {target}");
+        assert_eq!(
+            event_count(&s, SimEventType::Ricochet),
+            1,
+            "target {target}"
+        );
         assert_eq!(
             s.shots.len(),
             0,
             "the reflected shell stops at target {target}"
         );
-        assert_eq!(count(&s, SimEventType::Impact), 2, "target {target}");
-        assert_eq!(count(&s, SimEventType::Hurt), 0, "target {target}");
+        assert_eq!(event_count(&s, SimEventType::Impact), 2, "target {target}");
+        assert_eq!(event_count(&s, SimEventType::Hurt), 0, "target {target}");
         assert_eq!(
             (s.tanks[target].hp, s.tanks[target].shield_points),
             (hp, shield)
@@ -715,7 +631,7 @@ fn opposing_fast_shells_intercept_between_endpoints_while_allies_and_asynchronou
     s.shots = vec![a.clone(), b.clone()];
     step_projectiles(&mut s, STEP, false);
     assert_eq!(s.shots.len(), 0);
-    assert_eq!(count(&s, SimEventType::Explosion), 1);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 1);
     let ally = Shot {
         team: Team::Blue,
         ..b
@@ -742,29 +658,20 @@ fn the_earliest_interception_consumes_each_bullet_once_independent_of_array_orde
         step_projectiles(&mut s, 0.1, false);
         let ids: Vec<u32> = s.shots.iter().map(|p| p.id).collect();
         assert_eq!(ids, vec![far_id], "reversed={reversed}");
-        assert_eq!(count(&s, SimEventType::Explosion), 1);
+        assert_eq!(event_count(&s, SimEventType::Explosion), 1);
     }
 }
 
 #[test]
 fn a_wall_blocks_interception_while_a_reflected_shell_can_intercept_on_its_new_path() {
     let mut s = column(0);
-    s.add_cover(&CoverDef::new(
-        CoverKind::Concrete,
-        0.0,
-        0.0,
-        0.5,
-        8.0,
-        3.0,
-        f64::INFINITY,
-        0,
-    ));
+    s.add_cover(&concrete(0.0, 0.0, 0.5, 8.0));
     s.world.step();
     let a = shot(&mut s, -2.0, 0.0, 100.0, 0.0, Team::Blue);
     let b = shot(&mut s, 2.0, 0.0, -100.0, 0.0, Team::Red);
     s.shots = vec![a, b];
     step_projectiles(&mut s, 0.1, false);
-    assert_eq!(count(&s, SimEventType::Explosion), 0);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 0);
     assert_eq!(s.shots.len(), 0);
     s.events.clear();
     let mut ricochet = shot(&mut s, -1.0, 0.0, 60.0, 0.0, Team::Blue);
@@ -773,8 +680,8 @@ fn a_wall_blocks_interception_while_a_reflected_shell_can_intercept_on_its_new_p
     let chaser = shot(&mut s, -3.0, 0.0, 60.0, 0.0, Team::Red);
     s.shots = vec![ricochet, chaser];
     step_projectiles(&mut s, 0.05, false);
-    assert_eq!(count(&s, SimEventType::Ricochet), 1);
-    assert_eq!(count(&s, SimEventType::Explosion), 1);
+    assert_eq!(event_count(&s, SimEventType::Ricochet), 1);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 1);
     assert_eq!(s.shots.len(), 0);
 }
 
@@ -795,7 +702,7 @@ fn earlier_tank_impacts_and_lifetime_expiry_take_precedence_over_later_intercept
     s.events.clear();
     step_projectiles(&mut s, 0.1, false);
     assert_eq!(s.shots.len(), 1);
-    assert_eq!(count(&s, SimEventType::Explosion), 0);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 0);
 }
 
 #[test]
@@ -860,16 +767,7 @@ fn accelerated_rockets_still_hit_thin_cover_and_intercept_crossing_enemy_shells(
         rocket.weapon = Weapon::Rocket;
         s.shots = vec![rocket];
         if obstacle == "wall" {
-            s.add_cover(&CoverDef::new(
-                CoverKind::Concrete,
-                0.0,
-                0.0,
-                0.1,
-                4.0,
-                3.0,
-                f64::INFINITY,
-                0,
-            ));
+            s.add_cover(&concrete(0.0, 0.0, 0.1, 4.0));
             s.world.step();
         } else {
             let enemy = shot(
@@ -884,7 +782,7 @@ fn accelerated_rockets_still_hit_thin_cover_and_intercept_crossing_enemy_shells(
         }
         step_projectiles(&mut s, STEP, false);
         assert_eq!(s.shots.len(), 0, "{obstacle}");
-        assert_eq!(count(&s, SimEventType::Explosion), 1, "{obstacle}");
+        assert_eq!(event_count(&s, SimEventType::Explosion), 1, "{obstacle}");
         if obstacle == "wall" {
             let explosion = s
                 .events

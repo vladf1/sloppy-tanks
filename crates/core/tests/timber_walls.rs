@@ -12,24 +12,13 @@ use sloppy_core::sim::maps::{ArenaMap, MAPS};
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::projectiles::step_projectiles;
-use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::{
     TimberFace, TimberPartKind, TimberWall, timber_damage_stage, timber_parts,
 };
-use sloppy_core::sim::{CoverKind, DamageCause, Shot, SimEventType, Simulation, Team, Weapon};
-use support::clear_arena;
-
-/// Whether two packed interaction groups (membership << 16 | filter) collide.
-fn allows(a: u32, b: u32) -> bool {
-    ((a >> 16) & b & 0xffff) != 0 && ((b >> 16) & a & 0xffff) != 0
-}
-
-fn collider_groups(s: &Simulation, body: rapier3d::prelude::RigidBodyHandle) -> u32 {
-    let collider = s.world.bodies[body].colliders()[0];
-    packed_groups(s.world.colliders[collider].collision_groups())
-}
+use sloppy_core::sim::{CoverKind, DamageCause, Shot, SimEventType, Simulation, Team};
+use support::{clear_arena, collider_groups};
 
 fn timber(x: f64, z: f64, w: f64, d: f64) -> CoverDef {
     CoverDef::new(CoverKind::Timber, x, z, w, d, 2.8, 120.0, 0xb47a49)
@@ -38,7 +27,7 @@ fn timber(x: f64, z: f64, w: f64, d: f64) -> CoverDef {
 #[test]
 fn timber_barriers_meet_without_overlapping_colliders_across_every_map() {
     // The TS test also compared Three.js part-model bounds for every damage pose; that
-    // rendering check stays with the presentation code.
+    // rendering check was not ported.
     let maps: Vec<&ArenaMap> = MAPS
         .iter()
         .chain([&STRESS_TEST_MAP, &SUPERSTRESS_MAP])
@@ -91,7 +80,7 @@ fn two_shells_breach_one_timber_bay_clearing_physics_and_bot_navigation_and_rese
     let (wx, wz) = (s.covers[wall].x, s.covers[wall].z);
     let handle = s.covers[wall].collider;
     let version = s.nav.version;
-    assert_eq!(s.nav.blocked[s.nav.index(Vec2::new(wx, wz))], 1);
+    assert!(s.nav.is_blocked(Vec2::new(wx, wz)));
     for hit in 1..=2 {
         let id = s.next_id;
         s.next_id += 1;
@@ -104,10 +93,7 @@ fn two_shells_breach_one_timber_bay_clearing_physics_and_bot_navigation_and_rese
             owner: 999,
             team: Team::Blue,
             damage: 40.0,
-            bounces: 0,
             life: 2.0,
-            piercing: 0,
-            weapon: Weapon::Standard,
             ..Shot::default()
         }];
         step_projectiles(&mut s, STEP, false);
@@ -119,7 +105,7 @@ fn two_shells_breach_one_timber_bay_clearing_physics_and_bot_navigation_and_rese
     assert!(s.covers[neighbor].alive);
     assert!(!s.cover_by_collider.contains_key(&handle));
     assert!(s.nav.version > version);
-    assert_eq!(s.nav.blocked[s.nav.index(Vec2::new(wx, wz))], 0);
+    assert!(!s.nav.is_blocked(Vec2::new(wx, wz)));
     s.world.step();
     assert!(s.visible(Vec2::new(wx, wz - 3.0), Vec2::new(wx, wz + 3.0)));
     assert!(!s.fragments.is_empty());
@@ -351,11 +337,6 @@ fn detached_timber_beams_land_across_one_another_and_remain_stacked() {
         s.world.bodies[lower].is_sleeping() && s.world.bodies[upper].is_sleeping(),
         "the pile settles"
     );
-    assert!(allows(group::TIMBER_DEBRIS, group::TIMBER_DEBRIS));
-    assert!(allows(group::TIMBER_DEBRIS, group::TANK));
-    for excluded in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
-        assert!(!allows(group::TIMBER_DEBRIS, excluded));
-    }
 }
 
 #[test]

@@ -4,7 +4,6 @@
 mod support;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_movement::route_direction;
 use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
@@ -13,10 +12,10 @@ use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
-    BotMode, CoverKind, DamageCause, DamageSource, Pickup, PickupKind, Simulation, Team,
-    VehicleCommand, VehicleKind, Weapon,
+    BotMode, DamageCause, DamageSource, PickupKind, Simulation, Team, VehicleCommand, VehicleKind,
+    Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, concrete, damage_from, decide, pickup, tank_xz};
 
 fn arena() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
@@ -55,26 +54,6 @@ fn run(s: &mut Simulation, index: usize, seconds: usize) -> usize {
     reversals
 }
 
-fn position(s: &Simulation, index: usize) -> Vec2 {
-    s.body_translation(s.tanks[index].body).planar()
-}
-
-fn concrete(x: f64, z: f64, w: f64, d: f64) -> CoverDef {
-    CoverDef::new(CoverKind::Concrete, x, z, w, d, 3.0, f64::INFINITY, 0)
-}
-
-fn pickup(id: u32, kind: PickupKind, x: f64, z: f64) -> Pickup {
-    Pickup {
-        id,
-        kind,
-        x,
-        z,
-        available: true,
-        cooldown: 0.0,
-        cooldown_duration: 0.0,
-    }
-}
-
 #[test]
 fn bots_brake_and_settle_near_a_destination_without_repeated_direction_flips_including_double_speed()
  {
@@ -99,7 +78,7 @@ fn bots_brake_and_settle_near_a_destination_without_repeated_direction_flips_inc
             let reversals = run(&mut s, bot, 4);
             let label = format!("{personality:?} at {speed}x");
             assert!(reversals <= 1, "{label}: {reversals} reversals");
-            let settled = distance(position(&s, bot), s.tanks[bot].brain.goal);
+            let settled = distance(tank_xz(&s, bot), s.tanks[bot].brain.goal);
             assert!(settled < 0.3, "{label}: {settled} from the goal");
             let command = s.tanks[bot].command;
             assert!(
@@ -117,20 +96,11 @@ fn a_retreating_guard_skirts_a_wall_instead_of_alternating_attack_and_retreat() 
     let enemy = s.add_tank(Team::Red, true, VehicleKind::Balanced, 0);
     place(&mut s, bot, 0.0, -8.0);
     place(&mut s, enemy, 0.0, 0.0);
-    s.add_cover(&CoverDef::new(
-        CoverKind::Concrete,
-        0.0,
-        -12.0,
-        16.0,
-        2.0,
-        3.0,
-        f64::INFINITY,
-        0,
-    ));
+    s.add_cover(&concrete(0.0, -12.0, 16.0, 2.0));
     s.nav.rebuild(&s.covers, None);
     assert!(run(&mut s, bot, 4) < 5);
     assert!(
-        position(&s, bot).x.abs() > 8.0,
+        tank_xz(&s, bot).x.abs() > 8.0,
         "escape past the edge of the wall"
     );
 }
@@ -149,8 +119,8 @@ fn head_on_allies_pass_each_other_and_both_reach_their_destinations() {
         s.tanks[t].brain.path = s.nav.find(from, goal);
     }
     assert!(run(&mut s, a, 10) < 5);
-    assert!(distance(position(&s, a), s.tanks[a].brain.goal) < 0.5);
-    assert!(distance(position(&s, b), s.tanks[b].brain.goal) < 0.5);
+    assert!(distance(tank_xz(&s, a), s.tanks[a].brain.goal) < 0.5);
+    assert!(distance(tank_xz(&s, b), s.tanks[b].brain.goal) < 0.5);
 }
 
 #[test]
@@ -163,8 +133,7 @@ fn a_stalled_bot_commits_to_its_recovery_route_across_combat_decisions_and_clear
     s.world.step();
     s.start();
     s.tanks[bot].brain.stuck = 1.3;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.recoveries, 1);
     assert!(s.tanks[bot].brain.recovery > 1.0);
     let goal = s.tanks[bot].brain.recovery_goal;
@@ -178,8 +147,7 @@ fn a_stalled_bot_commits_to_its_recovery_route_across_combat_decisions_and_clear
     }
     assert!(s.snapshot().tanks[0].recovering);
     s.tanks[bot].protection = 0.0;
-    let (enemy_id, enemy_team) = (s.tanks[enemy].id, s.tanks[enemy].team);
-    s.damage_tank(bot, 999.0, enemy_id, enemy_team, None, None);
+    damage_from(&mut s, bot, 999.0, enemy, None, None);
     s.respawn(bot, None);
     let brain = &s.tanks[bot].brain;
     assert_eq!(brain.recovery, 0.0);
@@ -198,18 +166,15 @@ fn bots_retain_comparable_visible_targets_but_react_to_a_substantially_closer_en
     place(&mut s, a, 2.0, 18.0);
     place(&mut s, b, -2.0, 19.0);
     s.world.step();
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[a].id);
     place(&mut s, b, -2.0, 17.0);
     s.world.step();
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[a].id);
     place(&mut s, b, -2.0, 9.0);
     s.world.step();
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[b].id);
 }
 
@@ -226,13 +191,11 @@ fn bots_skip_a_closer_enemy_behind_cover_for_the_nearest_one_in_sight() {
     place(&mut s, farthest, -14.0, 14.0);
     s.add_cover(&concrete(0.0, 6.0, 3.0, 1.0));
     s.world.step();
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[farther].id);
     // Hunters track through cover, so the closest enemy wins without a sight line.
     s.tanks[bot].brain.ultra_aggressive = true;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[hidden].id);
 }
 
@@ -242,13 +205,9 @@ fn hit(s: &mut Simulation, victim: usize, shooter: usize, cause: DamageCause) {
     let owner = s.tanks[shooter].id;
     let source = DamageSource {
         cause,
-        origin: tank_position(s, victim),
+        origin: tank_xz(s, victim),
     };
     s.damage_tank(victim, 1.0, owner, Team::Red, None, Some(source));
-}
-
-fn tank_position(s: &Simulation, index: usize) -> Vec2 {
-    s.body_translation(s.tanks[index].body).planar()
 }
 
 #[test]
@@ -261,13 +220,11 @@ fn bots_turn_on_a_farther_enemy_whose_shell_hits_them_but_not_on_a_mine_layer() 
     place(&mut s, near, 2.0, 10.0);
     place(&mut s, far, -2.0, 18.0);
     s.world.step();
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[near].id);
     // A mine names no shooter the bot could have seen.
     hit(&mut s, bot, far, DamageCause::Mine);
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, s.tanks[near].id);
     // A shell makes the bot reconsider on its next tick, without waiting for a decision,
     // even when its shield absorbs all of it.
@@ -291,12 +248,11 @@ fn a_bot_shot_from_out_of_sight_turns_toward_the_shooter_and_gives_up_when_the_a
     s.add_cover(&concrete(0.0, 8.0, 8.0, 1.0));
     s.world.step();
     s.tanks[bot].aim = std::f64::consts::PI;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.target, 0);
 
     hit(&mut s, bot, shooter, DamageCause::Rocket);
-    let shooter_at = tank_position(&s, shooter);
+    let shooter_at = tank_xz(&s, shooter);
     let mut fired = false;
     for _ in 0..60 {
         let command = bot_command(&mut s, bot, STEP);
@@ -337,29 +293,24 @@ fn pickup_and_patrol_destinations_persist_across_decisions_and_unavailable_crate
     place(&mut s, bot, 20.0, -38.0);
     s.world.step();
     s.tanks[bot].brain.goal = Vec2::new(20.0, -38.0);
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     let patrol = s.tanks[bot].brain.goal;
     assert_eq!(patrol.x, 46.0);
     for _ in 0..5 {
-        s.tanks[bot].brain.decision = 0.0;
-        bot_command(&mut s, bot, STEP);
+        decide(&mut s, bot);
         assert_eq!(s.tanks[bot].brain.goal, patrol);
     }
     s.pickups = vec![
         pickup(999, PickupKind::Rocket, 24.0, -38.0),
         pickup(1000, PickupKind::Piercing, 15.0, -38.0),
     ];
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.pickup_target, 999);
     s.pickups[1].x = 17.0;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.pickup_target, 999);
     s.pickups[0].available = false;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.pickup_target, 1000);
 }
 

@@ -2,21 +2,20 @@
 //! destruction workload that keeps the authored maps' destructibility rules, and endless
 //! rules that survive respawns and resets (the former `tests/stress-test-level.test.ts`).
 
+mod support;
+
 use std::collections::HashSet;
 
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::level_rules::single_player_rules;
 use sloppy_core::sim::maps::{GroundKind, MAPS};
-use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::stress_test_level::{
     STRESS_PLAYER_HEALTH_MULTIPLIER, STRESS_TANK_COUNT, STRESS_TEST_MAP, stress_test_level,
 };
 use sloppy_core::sim::{
     CoverKind, MatchPhase, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind,
 };
-
-/// Hull clearance a stress spawn or pickup keeps from every cover.
-const CLEARANCE: f64 = 1.5;
+use support::{assert_spawns_and_pickups_clear, damage_from};
 
 fn stress_simulation(extra: SimulationSetup) -> Simulation {
     Simulation::new(
@@ -28,39 +27,11 @@ fn stress_simulation(extra: SimulationSetup) -> Simulation {
     )
 }
 
-fn human(s: &Simulation) -> usize {
-    s.human_index().expect("local play has a human")
-}
-
 #[test]
 fn stress_pickups_and_all_30_spawns_have_hull_clearance_and_navigable_routes() {
     let mut sim = stress_simulation(SimulationSetup::default());
     assert_eq!(sim.tanks.len(), STRESS_TANK_COUNT);
-    let mut points: Vec<Vec2> = sim.pickups.iter().map(|p| Vec2::new(p.x, p.z)).collect();
-    points.extend(
-        sim.tanks
-            .iter()
-            .map(|tank| sim.body_translation(tank.body).planar()),
-    );
-    for point in points {
-        assert_eq!(
-            sim.nav.blocked[sim.nav.index(point)],
-            0,
-            "blocked {point:?}"
-        );
-        assert!(
-            (point.x == 0.0 && point.z == 0.0) || !sim.nav.find(Vec2::ZERO, point).is_empty(),
-            "unreachable {point:?}"
-        );
-        for cover in &sim.covers {
-            assert!(
-                (point.x - cover.x).abs() >= cover.w / 2.0 + CLEARANCE
-                    || (point.z - cover.z).abs() >= cover.d / 2.0 + CLEARANCE,
-                "no hull clearance at {point:?} beside {:?}",
-                cover.kind
-            );
-        }
-    }
+    assert_spawns_and_pickups_clear(&mut sim);
 }
 
 #[test]
@@ -151,7 +122,7 @@ fn stress_configuration_survives_respawns_and_resets_and_never_ends_at_the_norma
             15
         );
         assert_eq!(sim.tanks.iter().filter(|t| t.team == Team::Red).count(), 15);
-        let h = human(&sim);
+        let h = sim.human_index().unwrap();
         assert_eq!(sim.tanks[h].kind, VehicleKind::Heavy);
         let hp = vehicle(VehicleKind::Heavy).health * STRESS_PLAYER_HEALTH_MULTIPLIER;
         assert_eq!(sim.tanks[h].hp, hp);
@@ -161,16 +132,14 @@ fn stress_configuration_survives_respawns_and_resets_and_never_ends_at_the_norma
         let human_team = sim.tanks[h].team;
         let enemy = sim.tanks.iter().position(|t| t.team != human_team).unwrap();
         sim.tanks[enemy].protection = 0.0;
-        let human_id = sim.tanks[h].id;
-        sim.damage_tank(enemy, 9999.0, human_id, human_team, None, None);
+        damage_from(&mut sim, enemy, 9999.0, h, None, None);
         sim.step(VehicleCommand::idle(), false);
         assert_eq!(sim.match_state.scores[human_team.index()], 101);
         assert_eq!(sim.match_state.phase, MatchPhase::Playing);
         assert_eq!(sim.match_state.winner, None);
         sim.tanks[h].protection = 0.0;
         let lethal = sim.max_health(&sim.tanks[h]) * 2.0;
-        let (enemy_id, enemy_team) = (sim.tanks[enemy].id, sim.tanks[enemy].team);
-        sim.damage_tank(h, lethal, enemy_id, enemy_team, None, None);
+        damage_from(&mut sim, h, lethal, enemy, None, None);
         sim.respawn(h, None);
         assert_eq!(sim.tanks[h].hp, hp);
         sim.reset(None);

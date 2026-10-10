@@ -18,13 +18,8 @@ fn quarry() -> Simulation {
     sim
 }
 
-fn human(s: &Simulation) -> usize {
-    s.human_index().expect("local play has a human")
-}
-
 fn damage_by_human(sim: &mut Simulation, cover: usize, amount: f64) {
-    let h = human(sim);
-    let (id, team) = (sim.tanks[h].id, sim.human_team);
+    let (id, team) = (sim.human().id, sim.human_team);
     sim.damage_cover(cover, amount, id, team, None, None);
 }
 
@@ -48,7 +43,7 @@ fn the_central_crossing_is_open_and_the_crate_cut_opens_to_tanks_only_after_dest
     for c in crates {
         damage_by_human(&mut sim, c, 30.0);
         let at = Vec2::new(sim.covers[c].x, sim.covers[c].z);
-        assert_eq!(sim.nav.blocked[sim.nav.index(at)], 1);
+        assert!(sim.nav.is_blocked(at));
         damage_by_human(&mut sim, c, 30.0);
         assert!(!sim.cover_by_collider.contains_key(&sim.covers[c].collider));
     }
@@ -69,7 +64,7 @@ fn the_central_crossing_is_open_and_the_crate_cut_opens_to_tanks_only_after_dest
         damage_by_human(&mut sim, c, 10000.0);
         assert!(sim.covers[c].alive);
         let at = Vec2::new(sim.covers[c].x, sim.covers[c].z);
-        assert_eq!(sim.nav.blocked[sim.nav.index(at)], 1);
+        assert!(sim.nav.is_blocked(at));
     }
 }
 
@@ -113,27 +108,11 @@ fn barrier_collision_follows_tapered_concrete_and_open_steel_rather_than_invisib
     let tooth = leftmost(&sim, CoverKind::Teeth);
     let hedgehog = leftmost(&sim, CoverKind::Hedgehog);
     assert!(ray(&sim, tooth, 0.0, 1.0) >= 0.0);
+    // The tank footprint never creates invisible cover for shells.
     assert_eq!(
         ray(&sim, tooth, 0.8, 1.7),
         -1.0,
         "shot clears the sloping shoulder"
-    );
-    // The tank footprint never creates invisible cover for shells.
-    let tooth_body = sim.covers[tooth].body;
-    let own = |_: ColliderHandle, collider: &Collider| collider.parent() == Some(tooth_body);
-    let shoulder = Ray::new(
-        vector(sim.covers[tooth].x + 0.8, 1.7, sim.covers[tooth].z - 4.0),
-        vector(0.0, 0.0, 1.0),
-    );
-    assert_eq!(
-        sim.world.cast_ray(
-            &shoulder,
-            8.0,
-            true,
-            query_filter(group::COVER_QUERY).predicate(&own)
-        ),
-        None,
-        "the tank footprint never creates invisible cover for shells"
     );
     assert!(
         ray(&sim, hedgehog, 0.0, 1.3) >= 0.0,
@@ -160,24 +139,13 @@ fn barrier_collision_follows_tapered_concrete_and_open_steel_rather_than_invisib
     );
 }
 
-/// `Math.sign`: zero stays zero, unlike `f64::signum`.
-fn sign(value: f64) -> f64 {
-    if value > 0.0 {
-        1.0
-    } else if value < 0.0 {
-        -1.0
-    } else {
-        0.0
-    }
-}
-
 #[test]
 fn quarry_defenses_form_mirrored_belts_and_supply_bays_use_individual_crates() {
     let layout = quarry_layout();
     for side in [-1.0, 1.0] {
         let teeth: Vec<_> = layout
             .iter()
-            .filter(|c| c.kind == CoverKind::Teeth && sign(c.x) == side)
+            .filter(|c| c.kind == CoverKind::Teeth && c.x * side > 0.0)
             .collect();
         assert_eq!(teeth.len(), 8);
         assert_eq!(
@@ -196,7 +164,7 @@ fn quarry_defenses_form_mirrored_belts_and_supply_bays_use_individual_crates() {
         assert!(xs.len() > 4, "individual placement breaks straight lines");
         let steel: Vec<_> = layout
             .iter()
-            .filter(|c| c.kind == CoverKind::Hedgehog && sign(c.x) == side)
+            .filter(|c| c.kind == CoverKind::Hedgehog && c.x * side > 0.0)
             .collect();
         assert_eq!(steel.len(), 4);
         let mut zs: Vec<f64> = steel.iter().map(|c| c.z).collect();

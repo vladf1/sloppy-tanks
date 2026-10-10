@@ -10,8 +10,8 @@ use sloppy_core::sim::data::{MOVE_ACCELERATION, STEP, vehicle};
 use sloppy_core::sim::math::{Vec2, angle_delta};
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::weapons::collect_pickup;
-use sloppy_core::sim::{Pickup, PickupKind, Simulation, Team, VehicleCommand, VehicleKind};
-use support::clear_arena;
+use sloppy_core::sim::{PickupKind, Simulation, Team, VehicleCommand, VehicleKind};
+use support::{clear_arena, idle, supply, tank_xz};
 
 /// An empty map with one human tank of `kind` at the origin, facing `heading`.
 fn arena(kind: VehicleKind, heading: f64) -> (Simulation, usize) {
@@ -39,16 +39,8 @@ fn drive(s: &mut Simulation, angle: f64, steps: usize) {
     }
 }
 
-fn idle(s: &mut Simulation) {
-    s.step(VehicleCommand::idle(), false);
-}
-
 fn velocity(s: &Simulation, t: usize) -> Vec2 {
     s.body_linvel(s.tanks[t].body).planar()
-}
-
-fn position(s: &Simulation, t: usize) -> Vec2 {
-    s.body_translation(s.tanks[t].body).planar()
 }
 
 fn planar_speed(s: &Simulation, t: usize) -> f64 {
@@ -58,11 +50,7 @@ fn planar_speed(s: &Simulation, t: usize) -> f64 {
 
 #[test]
 fn opposite_input_brakes_then_reverses_without_turning_the_hull_on_any_chassis() {
-    for kind in [
-        VehicleKind::Scout,
-        VehicleKind::Balanced,
-        VehicleKind::Heavy,
-    ] {
+    for kind in VehicleKind::PLAYABLE {
         for heading in [0.0, PI / 2.0, PI, -PI / 2.0] {
             let (mut s, t) = arena(kind, heading);
             let label = format!("{kind:?} heading {heading}");
@@ -142,7 +130,7 @@ fn a_moving_right_angle_turn_sheds_speed_and_traces_an_arc_instead_of_changing_d
 {
     let (mut s, t) = arena(VehicleKind::Balanced, 0.0);
     drive(&mut s, 0.0, 30);
-    let start = position(&s, t);
+    let start = tank_xz(&s, t);
     drive(&mut s, PI / 2.0, 1);
     assert!(
         velocity(&s, t).z > 5.0,
@@ -155,7 +143,7 @@ fn a_moving_right_angle_turn_sheds_speed_and_traces_an_arc_instead_of_changing_d
     drive(&mut s, PI / 2.0, 9);
     assert!(planar_speed(&s, t) < vehicle(VehicleKind::Balanced).speed * 0.5);
     drive(&mut s, PI / 2.0, 20);
-    let end = position(&s, t);
+    let end = tank_xz(&s, t);
     assert!(
         end.x - start.x > 1.0 && end.z - start.z > 0.3,
         "{start:?} -> {end:?}"
@@ -211,7 +199,7 @@ fn diagonal_input_is_normalized_release_brakes_to_rest_and_a_speed_boost_reaches
         for _ in 0..60 {
             s.step(input, false);
         }
-        let p = position(&s, t);
+        let p = tank_xz(&s, t);
         distances.push(p.x.hypot(p.z));
         let top_speed = vehicle(s.tanks[t].kind).speed;
         assert!(planar_speed(&s, t) > top_speed * 0.98);
@@ -220,17 +208,7 @@ fn diagonal_input_is_normalized_release_brakes_to_rest_and_a_speed_boost_reaches
             idle(&mut s);
         }
         assert!(planar_speed(&s, t) < 0.01);
-        let id = s.next_id;
-        s.next_id += 1;
-        let mut boost = Pickup {
-            id,
-            kind: PickupKind::Speed,
-            x: 0.0,
-            z: 0.0,
-            available: true,
-            cooldown: 0.0,
-            cooldown_duration: 0.0,
-        };
+        let mut boost = supply(&mut s, PickupKind::Speed, 0.0, 0.0);
         collect_pickup(&mut s, t, &mut boost);
         let boost_steps = ((top_speed * 1.5) / (MOVE_ACCELERATION * STEP)).ceil() as usize + 2;
         for _ in 0..boost_steps {

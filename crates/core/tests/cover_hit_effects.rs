@@ -3,10 +3,13 @@
 //! duplicate impact, and leaves physical debris. The particle counts (leaves and splinters)
 //! the TS test also checked belong to the presentation's particle effects and are not ported.
 
+mod support;
+
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::projectiles::step_projectiles;
-use sloppy_core::sim::{CoverKind, Shot, SimEventType, Simulation, Weapon};
+use sloppy_core::sim::{CoverKind, Shot, SimEventType, Simulation};
+use support::event_count;
 
 struct Hit {
     alive: bool,
@@ -34,10 +37,7 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
         owner,
         team,
         damage,
-        bounces: 0,
         life: 1.0,
-        piercing: 0,
-        weapon: Weapon::Standard,
         ..Shot::default()
     });
     step_projectiles(s, 0.05, false);
@@ -50,11 +50,7 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
             .iter()
             .filter(|e| e.kind == SimEventType::Impact && e.cover_kind == Some(cover.kind))
             .count(),
-        destroys: s
-            .events
-            .iter()
-            .filter(|e| e.kind == SimEventType::Destroy)
-            .count(),
+        destroys: event_count(s, SimEventType::Destroy),
         fragments: s.fragments.len(),
         tree_parts: s
             .fragments

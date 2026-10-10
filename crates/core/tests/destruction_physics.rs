@@ -17,7 +17,9 @@ use sloppy_core::sim::debris_physics::{
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Quat4, Random, Vec2};
 use sloppy_core::sim::navigation::Navigation;
-use sloppy_core::sim::physics::{interaction_groups, query_filter, to_rotation, vector};
+use sloppy_core::sim::physics::{
+    from_vector, interaction_groups, query_filter, to_rotation, vector,
+};
 use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::tank_destruction::tank_burnout;
@@ -28,7 +30,7 @@ use sloppy_core::sim::{
     CoverKind, DamageCause, Fragment, FragmentShape, Shot, SimEventType, Simulation, Team,
     VehicleCommand, VehicleKind, Weapon, WreckPart,
 };
-use support::clear_arena;
+use support::{clear_arena, collider_groups, cover_at, event_count, idle, place_tank};
 
 fn arena() -> Simulation {
     let mut s = Simulation::with_seed(731.0);
@@ -40,10 +42,6 @@ fn arena() -> Simulation {
 /// Whether two packed interaction groups (membership << 16 | filter) collide.
 fn collides(a: u32, b: u32) -> bool {
     ((a >> 16) & b & 0xffff) != 0 && ((b >> 16) & a & 0xffff) != 0
-}
-
-fn idle(s: &mut Simulation) {
-    s.step(VehicleCommand::idle(), false);
 }
 
 /// `for (let i = 0; i < seconds / STEP; i++) s.step()`, including its floating-point count.
@@ -120,6 +118,19 @@ fn shot(s: &mut Simulation, kind: Weapon, y: f64) {
     step_projectiles(s, 0.2, false);
 }
 
+/// A blast owned by the absent blue tank 999.
+fn explode(s: &mut Simulation, at: Vec2, radius: f64, damage: f64) {
+    s.explode(
+        at,
+        radius,
+        damage,
+        999,
+        Team::Blue,
+        None,
+        DamageCause::Explosion,
+    );
+}
+
 /// Destroys a balanced tank at the origin as a breakup (never a burnout) and returns the id
 /// of its turret fragment.
 fn wreck(s: &mut Simulation) -> u32 {
@@ -168,6 +179,18 @@ fn fragment_where(s: &Simulation, test: impl Fn(&Fragment) -> bool) -> u32 {
         .id
 }
 
+/// Breaks a timber wall away from the test area and returns the id of its first `kind` piece.
+fn timber_piece(s: &mut Simulation, kind: TimberPartKind) -> u32 {
+    let wall = cover(s, CoverKind::Timber, 20.0, 20.0);
+    s.damage_cover(wall, 999.0, 999, Team::Blue, None, None);
+    fragment_where(s, |fragment| {
+        fragment
+            .timber_part
+            .as_ref()
+            .is_some_and(|part| part.kind == kind)
+    })
+}
+
 /// Park every other fragment out of the way at (30, 1).
 fn park_others(s: &mut Simulation, keep: &[u32]) {
     let others: Vec<_> = s
@@ -181,18 +204,8 @@ fn park_others(s: &mut Simulation, keep: &[u32]) {
     }
 }
 
-fn first_collider_groups(s: &Simulation, body: RigidBodyHandle) -> u32 {
-    let collider = s.world.bodies[body].colliders()[0];
-    packed_groups(s.world.colliders[collider].collision_groups())
-}
-
-fn linvel(s: &Simulation, body: RigidBodyHandle) -> Point3 {
-    s.body_linvel(body)
-}
-
 fn angvel(s: &Simulation, body: RigidBodyHandle) -> Point3 {
-    let w = s.world.bodies[body].angvel();
-    Point3::new(w.x as f64, w.y as f64, w.z as f64)
+    from_vector(s.world.bodies[body].angvel())
 }
 
 fn length(v: Point3) -> f64 {
@@ -201,10 +214,6 @@ fn length(v: Point3) -> f64 {
 
 fn sleeping(s: &Simulation, body: RigidBodyHandle) -> bool {
     s.world.bodies[body].is_sleeping()
-}
-
-fn cover_at(s: &Simulation, cover: usize) -> Vec2 {
-    Vec2::new(s.covers[cover].x, s.covers[cover].z)
 }
 
 fn cast_ray(s: &Simulation, origin: Point3, max: f64, filter: QueryFilter) -> bool {
@@ -242,12 +251,14 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
         remove_all_fragments(&mut s);
         let tank = s.add_tank(Team::Blue, true, kind, 0);
         let direction = Vec2::new(heading.sin(), heading.cos());
-        s.tanks[tank].heading = heading;
+        place_tank(
+            &mut s,
+            tank,
+            -5.0 * direction.x,
+            -5.0 * direction.z,
+            Some(heading),
+        );
         let body = s.tanks[tank].body;
-        s.world.bodies[body].set_rotation(to_rotation(Quat4::yaw(heading)), true);
-        s.world.bodies[body]
-            .set_translation(vector(-5.0 * direction.x, 0.65, -5.0 * direction.z), true);
-        s.tanks[tank].previous = Vec2::new(-5.0 * direction.x, -5.0 * direction.z);
         s.world.step();
         for _ in 0..180 {
             s.step(
@@ -271,9 +282,8 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
         let tree_body = s.covers[tree].body;
         assert!(s.world.bodies.contains(tree_body));
         assert!(s.world.bodies[tree_body].is_fixed());
-        assert_eq!(
-            s.nav.blocked[s.nav.index(cover_at(&s, tree))],
-            1,
+        assert!(
+            s.nav.is_blocked(cover_at(&s, tree)),
             "bots must route around the stump"
         );
         assert!(!s.nav.clear_line(Vec2::new(-4.0, 0.0), Vec2::new(4.0, 0.0)));
@@ -313,10 +323,10 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
 fn destroyed_trees_leave_a_narrow_stump_rather_than_the_original_canopy_sized_obstacle() {
     let mut s = arena();
     let tree = cover(&mut s, CoverKind::Tree, 0.0, 0.0);
-    assert_eq!(s.nav.blocked[s.nav.index(Vec2::new(2.0, 0.0))], 1);
+    assert!(s.nav.is_blocked(Vec2::new(2.0, 0.0)));
     s.damage_cover(tree, 1000.0, 999, Team::Blue, None, None);
     remove_all_fragments(&mut s);
-    assert_eq!(s.nav.blocked[s.nav.index(Vec2::new(2.0, 0.0))], 0);
+    assert!(!s.nav.is_blocked(Vec2::new(2.0, 0.0)));
     let tank = s.add_tank(Team::Blue, true, VehicleKind::Heavy, 0);
     s.tanks[tank].heading = 0.0;
     let body = s.tanks[tank].body;
@@ -356,7 +366,7 @@ fn blasts_wake_and_tumble_a_wreck_while_edge_distant_and_airborne_debris_obey_fa
     let state = s.rng.state;
     park(&mut s, body, 1.0, 0.5, 0.0);
     blast_debris(&mut s, Vec2::ZERO, 5.0, 60.0);
-    let near = linvel(&s, body).y;
+    let near = s.body_linvel(body).y;
     assert!(
         near > 3.0 && near < 8.0,
         "wrecks lift without the old weightless launch: {near}"
@@ -365,11 +375,11 @@ fn blasts_wake_and_tumble_a_wreck_while_edge_distant_and_airborne_debris_obey_fa
     assert!(!sleeping(&s, body));
     park(&mut s, body, 4.8, 0.5, 0.0);
     blast_debris(&mut s, Vec2::ZERO, 5.0, 60.0);
-    assert!(linvel(&s, body).y < near * 0.02);
+    assert!(s.body_linvel(body).y < near * 0.02);
     for (x, y) in [(6.0, 0.5), (0.0, 8.0)] {
         park(&mut s, body, x, y, 0.0);
         blast_debris(&mut s, Vec2::ZERO, 5.0, 60.0);
-        assert_eq!(linvel(&s, body).y, 0.0);
+        assert_eq!(s.body_linvel(body).y, 0.0);
         assert!(sleeping(&s, body));
     }
     assert_eq!(s.rng.state, state);
@@ -386,15 +396,9 @@ fn a_turret_lands_then_a_drum_chain_naturally_launches_that_same_body_again() {
     let drum = cover(&mut s, CoverKind::Drum, p.x + 1.4, p.z);
     cover(&mut s, CoverKind::Drum, p.x + 3.5, p.z);
     s.damage_cover(drum, 100.0, 999, Team::Blue, None, None);
-    assert!(linvel(&s, body).y > 4.0, "{}", linvel(&s, body).y);
+    assert!(s.body_linvel(body).y > 4.0, "{}", s.body_linvel(body).y);
     assert_eq!(fragment_body(&s, f), body);
-    assert!(
-        s.events
-            .iter()
-            .filter(|e| e.kind == SimEventType::Explosion)
-            .count()
-            >= 2
-    );
+    assert!(event_count(&s, SimEventType::Explosion) >= 2);
     tick(&mut s, 0.3);
     assert!(s.body_translation(body).y > p.y + 0.5);
 }
@@ -406,20 +410,12 @@ fn real_projectile_hits_shove_concrete_cumulatively_while_rockets_and_nearby_bla
         let mut s = arena();
         let c = cover(&mut s, CoverKind::Teeth, 0.0, 0.0);
         match mode {
-            "blast" => s.explode(
-                Vec2::new(-1.0, 0.0),
-                5.0,
-                80.0,
-                999,
-                Team::Blue,
-                None,
-                DamageCause::Explosion,
-            ),
+            "blast" => explode(&mut s, Vec2::new(-1.0, 0.0), 5.0, 80.0),
             "rocket" => shot(&mut s, Weapon::Rocket, 1.0),
             _ => shot(&mut s, Weapon::Standard, 1.0),
         }
         let body = s.covers[c].body;
-        let v = linvel(&s, body);
+        let v = s.body_linvel(body);
         speeds.push(length(v));
         assert!(v.x > 0.5, "{mode}: {v:?}");
         assert!(s.covers[c].alive);
@@ -429,7 +425,7 @@ fn real_projectile_hits_shove_concrete_cumulatively_while_rockets_and_nearby_bla
         assert!(collider.restitution() < 0.05);
         if mode == "standard" {
             shot(&mut s, Weapon::Standard, 1.0);
-            assert!(linvel(&s, body).x > v.x * 1.8);
+            assert!(s.body_linvel(body).x > v.x * 1.8);
             assert!(angvel(&s, body).z.abs() > 0.1);
         }
     }
@@ -443,32 +439,16 @@ fn repeated_impacts_displace_concrete_update_old_and_new_navigation_footprints_a
     let mut s = arena();
     let c = cover(&mut s, CoverKind::Teeth, 0.0, 0.0);
     let initial_version = s.nav.version;
-    s.explode(
-        Vec2::new(-1.0, 0.0),
-        6.0,
-        100.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
+    explode(&mut s, Vec2::new(-1.0, 0.0), 6.0, 100.0);
     tick(&mut s, 8.0);
     // Heavy cover now needs repeated blasts to clear its old navigation footprint.
     let at = cover_at(&s, c);
-    s.explode(
-        Vec2::new(at.x - 1.0, at.z),
-        6.0,
-        100.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
+    explode(&mut s, Vec2::new(at.x - 1.0, at.z), 6.0, 100.0);
     tick(&mut s, 8.0);
     let x = s.covers[c].x;
     assert!(x > 1.0 && x < 6.0, "heavy concrete displacement {x}");
-    assert_eq!(s.nav.blocked[s.nav.index(Vec2::ZERO)], 0);
-    assert_eq!(s.nav.blocked[s.nav.index(cover_at(&s, c))], 1);
+    assert!(!s.nav.is_blocked(Vec2::ZERO));
+    assert!(s.nav.is_blocked(cover_at(&s, c)));
     assert!(s.nav.version > initial_version);
     assert!(
         s.nav.version - initial_version <= 64,
@@ -488,7 +468,7 @@ fn repeated_impacts_displace_concrete_update_old_and_new_navigation_footprints_a
         .nav
         .find(Vec2::new(at.x - 8.0, at.z), Vec2::new(at.x + 8.0, at.z));
     assert!(!path.is_empty());
-    assert!(path.iter().all(|&p| s.nav.blocked[s.nav.index(p)] == 0));
+    assert!(path.iter().all(|&p| !s.nav.is_blocked(p)));
 }
 
 #[test]
@@ -531,7 +511,7 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
             assert!(f.dimensions.is_some());
             assert!(s.world.bodies[f.body].is_dynamic());
             assert_eq!(
-                first_collider_groups(&s, f.body),
+                collider_groups(&s, f.body),
                 if kind == CoverKind::Timber {
                     group::TIMBER_DEBRIS
                 } else if matches!(
@@ -557,7 +537,7 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
             );
             assert!((s.body_translation(trunk.body).y - trunk.tree_center_y.unwrap()).abs() < 1e-5);
             assert_eq!(
-                linvel(&s, trunk.body).y,
+                s.body_linvel(trunk.body).y,
                 0.0,
                 "a severed tree falls rather than launching upward"
             );
@@ -617,15 +597,7 @@ fn physical_pieces_stay_within_the_shared_body_budget_stay_out_of_cover_queries_
     let colliders = s.world.colliders.len();
     s.start();
     let first = cover_at(&s, s.movable_covers[0]);
-    s.explode(
-        first,
-        6.0,
-        100.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
+    explode(&mut s, first, 6.0, 100.0);
     tick(&mut s, 1.0);
     s.reset(None);
     assert_eq!(s.world.bodies.len(), bodies);
@@ -668,15 +640,7 @@ fn physical_destruction_and_blast_replay_remain_deterministic_for_a_fixed_seed()
         s.damage_cover(cargo, 100.0, 999, Team::Blue, None, None);
         for i in 0..180 {
             if i % 60 == 0 {
-                s.explode(
-                    Vec2::new(1.0, 0.0),
-                    6.0,
-                    80.0,
-                    999,
-                    Team::Blue,
-                    None,
-                    DamageCause::Explosion,
-                );
+                explode(&mut s, Vec2::new(1.0, 0.0), 6.0, 80.0);
             }
             idle(&mut s);
         }
@@ -700,15 +664,7 @@ fn physical_destruction_and_blast_replay_remain_deterministic_for_a_fixed_seed()
 fn bots_route_around_a_displaced_tooth_and_cross_its_former_position_without_repeated_recovery() {
     let mut s = arena();
     let c = cover(&mut s, CoverKind::Teeth, 0.0, 0.0);
-    s.explode(
-        Vec2::new(-1.0, 0.0),
-        6.0,
-        100.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
+    explode(&mut s, Vec2::new(-1.0, 0.0), 6.0, 100.0);
     tick(&mut s, 8.0);
     let human = s.add_tank(Team::Blue, true, VehicleKind::Balanced, 0);
     let human_body = s.tanks[human].body;
@@ -753,34 +709,18 @@ fn steel_hedgehogs_keep_open_compound_geometry_and_move_settle_and_update_naviga
     for collider in s.world.bodies[body].colliders() {
         assert_eq!(s.cover_by_collider.get(collider), Some(&c));
     }
-    s.explode(
-        Vec2::new(-1.0, 0.0),
-        5.0,
-        80.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
-    assert!(linvel(&s, body).x > 3.0);
+    explode(&mut s, Vec2::new(-1.0, 0.0), 5.0, 80.0);
+    assert!(s.body_linvel(body).x > 3.0);
     assert!(length(angvel(&s, body)) > 1.0);
     tick(&mut s, 10.0);
     let at = cover_at(&s, c);
-    s.explode(
-        Vec2::new(at.x - 1.0, at.z),
-        5.0,
-        80.0,
-        999,
-        Team::Blue,
-        None,
-        DamageCause::Explosion,
-    );
+    explode(&mut s, Vec2::new(at.x - 1.0, at.z), 5.0, 80.0);
     tick(&mut s, 10.0);
     let x = s.covers[c].x;
     assert!(x > 1.0 && x < 6.0, "heavy steel displacement {x}");
     assert!(s.body_translation(body).y > 0.0);
     assert!(sleeping(&s, body));
-    assert_eq!(s.nav.blocked[s.nav.index(cover_at(&s, c))], 1);
+    assert!(s.nav.is_blocked(cover_at(&s, c)));
     let mut expected_nav = Navigation::new();
     expected_nav.rebuild(&s.covers, None);
     assert_eq!(
@@ -816,7 +756,7 @@ fn a_scout_can_steadily_push_every_concrete_profile_with_throttled_navigation_an
         assert!(s.body_translation(tank_body).x > x - 1.8);
         assert_eq!(s.covers[c].hp, f64::INFINITY);
         assert!(s.nav.version > version && s.nav.version - version <= 16);
-        assert_eq!(s.nav.blocked[s.nav.index(cover_at(&s, c))], 1);
+        assert!(s.nav.is_blocked(cover_at(&s, c)));
         s.remove_body(tank_body);
         s.tanks.clear();
         tick(&mut s, 8.0);
@@ -871,22 +811,12 @@ fn tanks_physically_shove_landed_hulls_and_turrets_without_damage_and_wreck_clea
 }
 
 #[test]
-fn only_large_wrecks_accept_tank_contact_and_projectile_hits_while_steering_still_excludes_wrecks()
-{
-    assert!(collides(group::WRECK, group::TANK));
-    assert!(collides(group::WRECK, group::DEBRIS_QUERY));
-    assert!(collides(group::WRECK, group::WRECK));
-    for other in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
-        assert!(!collides(group::WRECK, other));
-    }
-    assert!(!collides(group::FRAGMENT, group::TANK));
-    assert!(collides(group::WRECK, group::GROUND));
-    assert!(collides(group::WRECK, group::MOVABLE_COVER));
+fn wreck_pieces_carry_the_wreck_group_and_cover_and_steering_rays_pass_through_them() {
     let mut s = arena();
     wreck(&mut s);
     let bodies: Vec<_> = s.fragments.iter().map(|f| f.body).collect();
     for body in bodies {
-        assert_eq!(first_collider_groups(&s, body), group::WRECK);
+        assert_eq!(collider_groups(&s, body), group::WRECK);
         park(&mut s, body, 0.0, 1.0, 0.0);
     }
     s.world.step();
@@ -918,7 +848,10 @@ fn shells_shove_indestructible_wrecks_rockets_detonate_on_them_and_high_rounds_c
         s.events.clear();
         shot(&mut s, Weapon::Standard, 1.0);
         assert_eq!(s.shots.len(), 0, "{part:?} absorbs the shell");
-        assert!(linvel(&s, body).x > 0.0, "{part:?} moves from the impact");
+        assert!(
+            s.body_linvel(body).x > 0.0,
+            "{part:?} moves from the impact"
+        );
         assert!(
             !s.events
                 .iter()
@@ -952,14 +885,7 @@ fn shells_wake_and_shove_timber_at_flight_height_and_rockets_detonate_on_it() {
     for kind in [TimberPartKind::Beam, TimberPartKind::Post] {
         for weapon in [Weapon::Standard, Weapon::Piercing, Weapon::Rocket] {
             let mut s = arena();
-            let wall = cover(&mut s, CoverKind::Timber, 20.0, 20.0);
-            s.damage_cover(wall, 999.0, 999, Team::Blue, None, None);
-            let f = fragment_where(&s, |fragment| {
-                fragment
-                    .timber_part
-                    .as_ref()
-                    .is_some_and(|part| part.kind == kind)
-            });
+            let f = timber_piece(&mut s, kind);
             park_others(&mut s, &[f]);
             let body = fragment_body(&s, f);
             let height = find(&s, f).unwrap().timber_part.as_ref().unwrap().h;
@@ -977,7 +903,7 @@ fn shells_wake_and_shove_timber_at_flight_height_and_rockets_detonate_on_it() {
             assert_eq!(s.shots.len(), 0, "{weapon:?} hits {kind:?}");
             assert!(!sleeping(&s, body));
             assert!(
-                linvel(&s, body).x > 0.0,
+                s.body_linvel(body).x > 0.0,
                 "{kind:?} moves along the shot direction"
             );
             assert_eq!(
@@ -998,7 +924,7 @@ fn shells_wake_and_shove_timber_at_flight_height_and_rockets_detonate_on_it() {
                     "off-center shots turn the wood"
                 );
                 assert!(
-                    linvel(&s, body).x <= 5.01,
+                    s.body_linvel(body).x <= 5.01,
                     "light wood receives a bounded shove"
                 );
             }
@@ -1009,14 +935,7 @@ fn shells_wake_and_shove_timber_at_flight_height_and_rockets_detonate_on_it() {
 #[test]
 fn timber_shots_respect_nearer_cover_gaps_and_debris_cleanup() {
     let mut s = arena();
-    let wall = cover(&mut s, CoverKind::Timber, 20.0, 20.0);
-    s.damage_cover(wall, 999.0, 999, Team::Blue, None, None);
-    let f = fragment_where(&s, |fragment| {
-        fragment
-            .timber_part
-            .as_ref()
-            .is_some_and(|part| part.kind == TimberPartKind::Beam)
-    });
+    let f = timber_piece(&mut s, TimberPartKind::Beam);
     park_others(&mut s, &[f]);
     let body = fragment_body(&s, f);
     let half = find(&s, f).unwrap().timber_part.as_ref().unwrap().h / 2.0;
@@ -1026,7 +945,7 @@ fn timber_shots_respect_nearer_cover_gaps_and_debris_cleanup() {
     s.covers[blocker].hp = f64::INFINITY;
     shot(&mut s, Weapon::Standard, 1.0);
     assert_eq!(s.shots.len(), 0);
-    assert_eq!(linvel(&s, body).x, 0.0, "nearer cover protects the beam");
+    assert_eq!(s.body_linvel(body).x, 0.0, "nearer cover protects the beam");
     let blocker_body = s.covers[blocker].body;
     s.remove_body(blocker_body);
     s.covers.clear();
@@ -1089,7 +1008,7 @@ fn a_scout_pushes_fallen_logs_beams_panels_and_drum_pieces_while_small_chips_sta
         );
         s.fragment(0.0, 0.0, 0x999999, 0.4, FragmentShape::Shard, 1.0);
         let chip = s.fragments.last().unwrap().body;
-        assert_eq!(first_collider_groups(&s, chip), group::FRAGMENT);
+        assert_eq!(collider_groups(&s, chip), group::FRAGMENT);
         let elapsed = s.elapsed;
         let piece = s
             .fragments
@@ -1100,7 +1019,7 @@ fn a_scout_pushes_fallen_logs_beams_panels_and_drum_pieces_while_small_chips_sta
         piece.expires_at = Some(elapsed + DEBRIS_CLEANUP_SECONDS);
         idle(&mut s);
         assert_eq!(
-            first_collider_groups(&s, body),
+            collider_groups(&s, body),
             group::FRAGMENT,
             "sinking pieces cannot block tanks"
         );
@@ -1128,11 +1047,11 @@ fn barrels_rupture_radially_and_a_centered_blast_adds_no_sideways_bias() {
         .iter()
         .filter(|f| f.shape == Some(FragmentShape::DrumShell))
         .collect();
-    assert!(scraps.iter().any(|f| linvel(&s, f.body).x < 0.0));
-    assert!(scraps.iter().any(|f| linvel(&s, f.body).x > 0.0));
+    assert!(scraps.iter().any(|f| s.body_linvel(f.body).x < 0.0));
+    assert!(scraps.iter().any(|f| s.body_linvel(f.body).x > 0.0));
     for f in &scraps {
         let p = s.body_translation(f.body);
-        let v = linvel(&s, f.body);
+        let v = s.body_linvel(f.body);
         assert!((p.x - drum.x) * v.x + (p.z - drum.z) * v.z > 0.0);
         let size = f.dimensions.unwrap();
         assert!(size.x < drum.w / 2.0 && size.y < drum.h / 2.0);
@@ -1145,7 +1064,7 @@ fn barrels_rupture_radially_and_a_centered_blast_adds_no_sideways_bias() {
         .body;
     s.world.bodies[lid].set_linvel(vector(0.0, 0.0, 0.0), true);
     blast_debris(&mut s, Vec2::new(drum.x, drum.z), 6.0, 75.0);
-    let v = linvel(&s, lid);
+    let v = s.body_linvel(lid);
     assert_eq!(v.x, 0.0);
     assert_eq!(v.z, 0.0);
     assert!(v.y > 0.0);
@@ -1226,12 +1145,15 @@ fn all_substantial_debris_shares_contacts_stacks_across_categories_and_excludes_
         for b in groups {
             assert!(collides(a, b));
         }
-        assert!(!collides(a, group::FRAGMENT));
+        for b in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
+            assert!(!collides(a, b));
+        }
         for b in [
             group::GROUND,
             group::COVER,
             group::MOVABLE_COVER,
             group::TANK,
+            group::DEBRIS_QUERY,
         ] {
             assert!(collides(a, b));
         }
@@ -1279,11 +1201,7 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
             let half = if upright { 1.0 } else { 0.125 };
             let body = s
                 .world
-                .insert_body(RigidBodyBuilder::dynamic().translation(vector(
-                    -1.0,
-                    if upright { 1.0 } else { 0.125 },
-                    0.0,
-                )));
+                .insert_body(RigidBodyBuilder::dynamic().translation(vector(-1.0, half, 0.0)));
             s.world.insert_collider(
                 ColliderBuilder::cuboid(0.5, half as f32, 0.5)
                     .collision_groups(interaction_groups(groups))
@@ -1293,7 +1211,7 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
             let id = s.next_id;
             s.next_id += 1;
             let mut debris = Fragment::new(id, body, 8.0, 1.0, 0x805336);
-            debris.dimensions = Some(Point3::new(1.0, if upright { 2.0 } else { 0.25 }, 1.0));
+            debris.dimensions = Some(Point3::new(1.0, 2.0 * half, 1.0));
             debris.material = Some(DebrisMaterial::Wood);
             s.fragments.push(debris);
             s.world.bodies[body].sleep();
@@ -1303,7 +1221,7 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
             assert_eq!(s.shots.len(), 0);
             assert_eq!(s.tanks[target].hp, if upright { hp } else { hp - 40.0 });
             assert_eq!(
-                linvel(&s, body).x > 0.0,
+                s.body_linvel(body).x > 0.0,
                 upright,
                 "only an actual debris hit pushes it"
             );
@@ -1314,31 +1232,13 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
 #[test]
 fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concrete() {
     let mut s = arena();
-    let wall = cover(&mut s, CoverKind::Timber, 20.0, 20.0);
-    s.damage_cover(wall, 999.0, 999, Team::Blue, None, None);
-    let wood = fragment_where(&s, |f| {
-        f.timber_part
-            .as_ref()
-            .is_some_and(|part| part.kind == TimberPartKind::Beam)
-    });
+    let wood = timber_piece(&mut s, TimberPartKind::Beam);
     wreck(&mut s);
     let hull = fragment_where(&s, |f| f.part == Some(WreckPart::Hull));
     let concrete = cover(&mut s, CoverKind::Teeth, 20.0, 20.0);
     let shell = Shot {
-        id: 0,
-        owner: 999,
-        team: Team::Blue,
         x: 1.0,
-        z: 0.0,
-        y: Some(0.5),
-        vx: 25.0,
-        vz: 0.0,
-        damage: 40.0,
-        life: 2.0,
-        bounces: 0,
-        piercing: 0,
-        weapon: Weapon::Standard,
-        ..Shot::default()
+        ..round(&mut s, Weapon::Standard, 0.5)
     };
     let (wood_body, hull_body) = (fragment_body(&s, wood), fragment_body(&s, hull));
     let concrete_body = s.covers[concrete].body;
@@ -1354,14 +1254,14 @@ fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concr
     }
     park(&mut s, concrete_body, 1.0, 0.5, 0.0);
     hit_movable_cover(&mut s, concrete, &shell);
-    assert!(linvel(&s, wood_body).x > linvel(&s, hull_body).x);
-    assert!(linvel(&s, hull_body).x > linvel(&s, concrete_body).x);
+    assert!(s.body_linvel(wood_body).x > s.body_linvel(hull_body).x);
+    assert!(s.body_linvel(hull_body).x > s.body_linvel(concrete_body).x);
     for body in [wood_body, hull_body, concrete_body] {
         park(&mut s, body, 1.0, 0.5, 0.0);
     }
     blast_debris(&mut s, Vec2::ZERO, 5.0, 60.0);
-    assert!(linvel(&s, wood_body).x > linvel(&s, hull_body).x);
-    assert!(linvel(&s, hull_body).x > linvel(&s, concrete_body).x);
+    assert!(s.body_linvel(wood_body).x > s.body_linvel(hull_body).x);
+    assert!(s.body_linvel(hull_body).x > s.body_linvel(concrete_body).x);
     let mass = |body: RigidBodyHandle| s.world.bodies[body].mass();
     assert!(mass(hull_body) > mass(wood_body));
     assert!(mass(concrete_body) > mass(hull_body));
@@ -1409,15 +1309,15 @@ fn a_destroyed_watchtower_comes_apart_into_its_parts_and_topples_away_from_the_h
     };
     let (roof, bent) = (body(TowerPiece::Roof), body(TowerPiece::WestBent));
     let roof_start = s.body_translation(roof);
-    assert!(linvel(&s, roof).x > 0.5, "the top tips along the hit");
-    assert!(linvel(&s, roof).y < 0.0, "rather than launching upward");
+    assert!(s.body_linvel(roof).x > 0.5, "the top tips along the hit");
+    assert!(s.body_linvel(roof).y < 0.0, "rather than launching upward");
     assert!(
         s.world.bodies[bent].angvel().z > 0.5,
         "the legs' feet swing out along the fall"
     );
     let mut highest = roof_start.y;
     for _ in 0..150 {
-        tick(&mut s, STEP);
+        idle(&mut s);
         highest = highest.max(s.body_translation(roof).y);
     }
     let roof_end = s.body_translation(roof);

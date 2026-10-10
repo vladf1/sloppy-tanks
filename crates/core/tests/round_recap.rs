@@ -21,35 +21,18 @@ use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
     CoverKind, DamageCause, DamageSource, MatchPhase, PickupKind, Simulation, VehicleCommand,
 };
-use support::clear_arena;
-
-fn human(s: &Simulation) -> usize {
-    s.human_index().expect("local play has a human")
-}
+use support::{clear_arena, damage_from};
 
 fn first_enemy(s: &Simulation) -> usize {
-    let team = s.tanks[human(s)].team;
+    let team = s.human().team;
     s.tanks.iter().position(|t| t.team != team).unwrap()
-}
-
-/// `s.damageTank(victim, amount, attacker.id, attacker.team, ownerLife, source)`.
-fn damage_from(
-    s: &mut Simulation,
-    victim: usize,
-    amount: f64,
-    attacker: usize,
-    owner_life: Option<u32>,
-    source: Option<DamageSource>,
-) {
-    let (id, team) = (s.tanks[attacker].id, s.tanks[attacker].team);
-    s.damage_tank(victim, amount, id, team, owner_life, source);
 }
 
 #[test]
 fn recap_counts_actual_enemy_hull_damage_preserves_peaks_and_resets_with_the_round() {
     let mut s = Simulation::with_seed(123.0);
     s.start();
-    let player = human(&s);
+    let player = s.human_index().unwrap();
     let enemy = first_enemy(&s);
     let player_team = s.tanks[player].team;
     let ally = s
@@ -89,7 +72,7 @@ fn recap_counts_actual_enemy_hull_damage_preserves_peaks_and_resets_with_the_rou
         "old-life ordnance cannot pad the new life"
     );
     s.reset(None);
-    let player = human(&s);
+    let player = s.human_index().unwrap();
     assert_eq!(s.tanks[player].damage_dealt, 0.0);
     assert_eq!(s.tanks[player].highest_rank, 0);
     assert_eq!(s.tanks[player].best_life_kills, 0);
@@ -166,7 +149,7 @@ fn records_distinguish_a_first_round_improvements_ties_and_separate_categories()
 fn rolling_kill_windows_cross_clock_minute_boundaries_and_expire_exactly() {
     let mut s = Simulation::with_seed(123.0);
     let victim = first_enemy(&s);
-    let player = human(&s);
+    let player = s.human_index().unwrap();
     for time in [58.0, 59.0, 61.0] {
         s.elapsed = time;
         record_kill(&mut s, player, victim, Some(0), None);
@@ -179,7 +162,7 @@ fn rolling_kill_windows_cross_clock_minute_boundaries_and_expire_exactly() {
     assert_eq!(s.combat_record.busiest_minute, 3);
     s.reset(None);
     assert_eq!(s.combat_record.busiest_minute, 0);
-    let player = human(&s);
+    let player = s.human_index().unwrap();
     let victim = first_enemy(&s);
     s.elapsed = 1.0;
     record_kill(&mut s, player, victim, Some(0), None);
@@ -194,7 +177,7 @@ fn rolling_kill_windows_cross_clock_minute_boundaries_and_expire_exactly() {
 #[test]
 fn longest_life_freezes_on_death_excludes_respawn_and_paused_time_includes_unfinished_life() {
     let mut s = Simulation::with_seed(123.0);
-    let player = human(&s);
+    let player = s.human_index().unwrap();
     let enemy = first_enemy(&s);
     s.start();
     s.elapsed = 42.0;
@@ -218,7 +201,7 @@ fn longest_life_freezes_on_death_excludes_respawn_and_paused_time_includes_unfin
 fn revenge_clutch_posthumous_and_mine_feats_use_credited_kills() {
     let mut s = Simulation::with_seed(123.0);
     s.start();
-    let p = human(&s);
+    let p = s.human_index().unwrap();
     let enemy = first_enemy(&s);
     s.tanks[p].protection = 0.0;
     damage_from(&mut s, p, 9999.0, enemy, None, None);
@@ -262,7 +245,7 @@ fn revenge_clutch_posthumous_and_mine_feats_use_credited_kills() {
 fn combat_counters_measure_shield_and_hull_loss_actual_pickups_and_attributable_demolition() {
     let mut s = Simulation::with_seed(123.0);
     s.start();
-    let p = human(&s);
+    let p = s.human_index().unwrap();
     let enemy = first_enemy(&s);
     s.tanks[p].protection = 0.0;
     s.tanks[p].shield = 10.0;
@@ -292,7 +275,7 @@ fn combat_counters_measure_shield_and_hull_loss_actual_pickups_and_attributable_
 fn direct_hit_rate_counts_emitted_projectiles_and_enemy_contacts_excluding_protected_hits() {
     let mut s = Simulation::with_seed(123.0);
     s.start();
-    let p = human(&s);
+    let p = s.human_index().unwrap();
     let enemy = first_enemy(&s);
     let all: Vec<usize> = (0..s.tanks.len()).collect();
     // Keeping every tank preserves their indices.
@@ -337,7 +320,7 @@ fn ending_a_paused_battle_preserves_the_round_and_stats_without_claiming_victory
     assert_eq!(s.match_state.phase, MatchPhase::Ready);
     s.start();
     s.elapsed = 42.0;
-    let h = human(&s);
+    let h = s.human_index().unwrap();
     s.tanks[h].kills = 3;
     s.match_state.scores = [7, 4];
     s.match_state.phase = MatchPhase::Paused;
