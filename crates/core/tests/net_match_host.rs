@@ -354,8 +354,7 @@ fn shells_past_the_path_limit_fly_undrawn_and_are_drawn_once_paths_free_up() {
     let sim = h.sim();
     let (owner, team) = (sim.tanks[human].id, sim.tanks[human].team);
     for i in 0..total {
-        let id = sim.next_id;
-        sim.next_id += 1;
+        let id = sim.allocate_id();
         sim.shots.push(Shot {
             id,
             x: (i % 30) as f64 - 15.0,

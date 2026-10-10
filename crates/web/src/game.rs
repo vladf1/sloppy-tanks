@@ -20,9 +20,8 @@
 //! ```
 //!
 //! - `Game.create(canvas, config_json)`: config `{ seed?, assetBase, map?,
-//!   lastMap?, difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?,
-//!   autoplay?, cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?,
-//!   hideReticle? }`. Choices follow `initialGameOptions`; the arena is reset and
+//!   difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?, autoplay?,
+//!   cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?, hideReticle? }`. Choices follow `initialGameOptions`; the arena is reset and
 //!   preparation begins.
 //! - `set_options(options_json) -> bool`: Battle Setup choices `{ humanKind,
 //!   humanTeam, gameMode, mapMode, difficulty }` (`GameOptions`, camelCase). When
@@ -186,7 +185,6 @@ fn options_setup(options: &GameOptions) -> SimulationSetup {
 #[serde(rename_all = "camelCase", default)]
 struct GameConfig {
     map: Option<String>,
-    last_map: Option<String>,
     difficulty: Option<String>,
     extra_levels: bool,
     human_kind: Option<VehicleKind>,
@@ -258,7 +256,6 @@ impl Game {
             config.map.as_deref(),
             config.extra_levels,
             config.difficulty.as_deref(),
-            config.last_map.as_deref(),
         );
         if let Some(kind) = config.human_kind {
             options.human_kind = kind;
@@ -840,13 +837,8 @@ impl Game {
 
     /// The listener and aim origin: the body, or where the tank died.
     fn human_position(&self) -> (f64, f64) {
-        let tank = self.sim.human();
-        if tank.alive {
-            let p = self.sim.tank_position(tank);
-            (p.x, p.z)
-        } else {
-            (tank.previous.x, tank.previous.z)
-        }
+        let p = self.sim.tank_position(self.sim.human());
+        (p.x, p.z)
     }
 
     fn fill_state(&mut self) {
@@ -865,8 +857,7 @@ impl Game {
         let owners: Vec<u32> = self.sim.tanks.iter().map(|tank| tank.id).collect();
         for i in self.sim.shots.len()..200 {
             let angle = i as f64 * std::f64::consts::TAU / 200.0;
-            let id = self.sim.next_id;
-            self.sim.next_id += 1;
+            let id = self.sim.allocate_id();
             self.sim.shots.push(Shot {
                 id,
                 x: angle.sin() * radius,

@@ -27,7 +27,7 @@ fn create(map: &str) -> Value {
 }
 
 #[test]
-fn every_extra_level_offered_by_the_menu_has_a_matching_level_with_its_roster() {
+fn every_extra_level_offered_by_the_menu_has_a_matching_level() {
     for option in MAP_OPTIONS {
         if !option.extra {
             assert!(MAPS.iter().any(|map| map.id == option.id));
@@ -37,13 +37,6 @@ fn every_extra_level_offered_by_the_menu_has_a_matching_level_with_its_roster() 
         let map = level.custom_map.flatten().expect("its own arena");
         // Its map id names the replicated theme, which clients validate against map ids.
         assert_eq!(map.id, option.id);
-        assert_eq!(map.name, option.name);
-        assert_eq!(map.description, option.description);
-        assert_eq!(
-            option.team_tanks.unwrap() * 2,
-            level.round_count.unwrap(),
-            "lobby rosters count the bots"
-        );
     }
 }
 

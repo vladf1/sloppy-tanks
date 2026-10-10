@@ -577,7 +577,7 @@ impl NetworkClient {
         self.heartbeat_at = Some(now_ms + HEARTBEAT_MS);
     }
 
-    pub fn socket_opened(&mut self, socket: u32, _now_ms: f64) {
+    pub fn socket_opened(&mut self, socket: u32, now_ms: f64) {
         if !self.is_current(socket) {
             return;
         }
@@ -586,7 +586,7 @@ impl NetworkClient {
         }
         let choice = self.choice.as_ref().expect("an open socket has a choice");
         let text = choice.join_message(self.token.as_deref(), &self.room_epoch);
-        self.raw(text, _now_ms);
+        self.raw(text, now_ms);
     }
 
     pub fn socket_message(&mut self, socket: u32, text: &str, now_ms: f64) {

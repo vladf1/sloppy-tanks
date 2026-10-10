@@ -25,7 +25,7 @@ use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
-use crate::sim::math::{Point3, Quat4, Vec2};
+use crate::sim::math::{Point3, Quat4, Vec2, json_number};
 use crate::sim::render_state::{
     RenderCover, RenderCoverMotion, RenderFragment, RenderState, RenderTank, fill_each,
 };
@@ -630,15 +630,6 @@ fn read_scores(bytes: &[u8]) -> ReadResult<[u32; 2]> {
 
 fn scores_json(bytes: &[u8]) -> ReadResult<Value> {
     Ok(json!(read_scores(bytes)?))
-}
-
-/// A number as JavaScript would hold it: integers without a fraction.
-pub(crate) fn json_number(value: f64) -> Value {
-    if value.fract() == 0.0 && value.abs() < 9e15 {
-        Value::from(value as i64)
-    } else {
-        Value::from(value)
-    }
 }
 
 // ---------------------------------------------------------------------------------------

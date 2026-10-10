@@ -146,8 +146,7 @@ pub fn pickup(id: u32, kind: PickupKind, x: f64, z: f64) -> Pickup {
 
 /// An available pickup that takes the next simulation id.
 pub fn supply(s: &mut Simulation, kind: PickupKind, x: f64, z: f64) -> Pickup {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     pickup(id, kind, x, z)
 }
 

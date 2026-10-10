@@ -26,16 +26,7 @@ fn arena() -> Simulation {
 }
 
 fn barrel(sim: &mut Simulation, x: f64, z: f64) -> usize {
-    sim.add_cover(&CoverDef::new(
-        CoverKind::Drum,
-        x,
-        z,
-        1.2,
-        1.2,
-        1.7,
-        30.0,
-        0xff5b24,
-    ))
+    sim.add_cover(&CoverDef::drum(x, z))
 }
 
 #[test]
@@ -131,8 +122,7 @@ fn a_displaced_tipped_barrel_updates_navigation_and_can_be_shot_to_chain_explode
     assert!(sim.nav.is_blocked(cover_at(&sim, drum)));
     let position = sim.body_translation(drum_body);
     let handle = sim.covers[drum].collider;
-    let id = sim.next_id;
-    sim.next_id += 1;
+    let id = sim.allocate_id();
     sim.shots.push(Shot {
         id,
         owner: 999,

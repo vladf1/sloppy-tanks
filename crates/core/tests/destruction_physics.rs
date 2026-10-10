@@ -92,8 +92,7 @@ fn cover(s: &mut Simulation, kind: CoverKind, x: f64, z: f64) -> usize {
 }
 
 fn round(s: &mut Simulation, kind: Weapon, y: f64) -> Shot {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Shot {
         id,
         owner: 999,
@@ -1208,8 +1207,7 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
                     .mass(0.3),
                 Some(body),
             );
-            let id = s.next_id;
-            s.next_id += 1;
+            let id = s.allocate_id();
             let mut debris = Fragment::new(id, body, 8.0, 1.0, 0x805336);
             debris.dimensions = Some(Point3::new(1.0, 2.0 * half, 1.0));
             debris.material = Some(DebrisMaterial::Wood);

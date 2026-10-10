@@ -6,8 +6,7 @@ use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::Ball;
 use rapier3d::prelude::{ColliderHandle, Pose, Ray};
 
-use super::combat_rules::{COMBAT, MINE};
-use super::damage::{damage_cover, damage_tank, explode};
+use super::combat_rules::COMBAT;
 use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
@@ -63,16 +62,11 @@ fn guide_tow_missile(simulation: &mut Simulation, shot_index: usize, dt: f64) {
     shot.vz = heading.cos() * speed;
 }
 
-/// Continuous relative-motion contact, including shots that cross between ticks.
-pub fn interception_time(a: &Shot, b: &Shot, limit: f64) -> Option<f64> {
-    if a.team == b.team || a.pierced_shot == Some(b.id) || b.pierced_shot == Some(a.id) {
-        return None;
-    }
-    let x = a.x - b.x;
-    let z = a.z - b.z;
-    let vx = a.vx - b.vx;
-    let vz = a.vz - b.vz;
-    let c = x * x + z * z - INTERCEPTION_RADIUS.powi(2);
+/// When a point at `x, z` moving at `vx, vz` enters the circle of `radius` about the
+/// origin, within `limit` seconds; 0 when it starts inside.
+#[inline]
+fn entry_time(x: f64, z: f64, vx: f64, vz: f64, radius: f64, limit: f64) -> Option<f64> {
+    let c = x * x + z * z - radius.powi(2);
     if c <= 0.0 {
         return Some(0.0);
     }
@@ -86,7 +80,17 @@ pub fn interception_time(a: &Shot, b: &Shot, limit: f64) -> Option<f64> {
         return None;
     }
     let time = (-approach - discriminant.sqrt()) / speed2;
-    (time <= limit).then_some(time)
+    (time >= 0.0 && time <= limit).then_some(time)
+}
+
+/// Continuous relative-motion contact, including shots that cross between ticks.
+pub fn interception_time(a: &Shot, b: &Shot, limit: f64) -> Option<f64> {
+    if a.team == b.team || a.pierced_shot == Some(b.id) || b.pierced_shot == Some(a.id) {
+        return None;
+    }
+    let (x, z) = (a.x - b.x, a.z - b.z);
+    let (vx, vz) = (a.vx - b.vx, a.vz - b.vz);
+    entry_time(x, z, vx, vz, INTERCEPTION_RADIUS, limit)
 }
 
 fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
@@ -112,8 +116,7 @@ fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
             continue;
         }
         let enemy_shot = if a.team != tank.team { a } else { b };
-        damage_tank(
-            simulation,
+        simulation.damage_tank(
             i,
             standard_damage,
             enemy_shot.owner,
@@ -128,23 +131,9 @@ fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
 }
 
 fn mine_hit_time(shot: &Shot, mine: &Mine, limit: f64) -> Option<f64> {
-    let x = shot.x - mine.x;
-    let z = shot.z - mine.z;
-    let c = x * x + z * z - (MINE_RADIUS + SHELL_HIT_RADIUS).powi(2);
-    if c <= 0.0 {
-        return Some(0.0);
-    }
-    let speed2 = shot.vx.powi(2) + shot.vz.powi(2);
-    let approach = x * shot.vx + z * shot.vz;
-    if speed2 == 0.0 || approach >= 0.0 {
-        return None;
-    }
-    let discriminant = approach.powi(2) - speed2 * c;
-    if discriminant < 0.0 {
-        return None;
-    }
-    let time = (-approach - discriminant.sqrt()) / speed2;
-    (time >= 0.0 && time <= limit).then_some(time)
+    let radius = MINE_RADIUS + SHELL_HIT_RADIUS;
+    let (x, z) = (shot.x - mine.x, shot.z - mine.z);
+    entry_time(x, z, shot.vx, shot.vz, radius, limit)
 }
 
 /// A rocket's speed-up: at the start of every tick its speed grows by `acceleration` times
@@ -226,70 +215,47 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
             }));
         }
         remaining -= time;
-        let Some(next) = next else {
+        let Some((shot_index, next)) = next else {
             break;
         };
-        let shot_id = simulation.shots[next.shot()].id;
+        let shot_id = simulation.shots[shot_index].id;
         let fraction = if sweep_tank_motion {
             (dt - remaining) / dt
         } else {
             1.0
         };
-        if resolve_contact(simulation, next, fraction, dt - remaining)
-            && let Some(index) = simulation.shots.iter().position(|shot| shot.id == shot_id)
-        {
-            simulation.shots.remove(index);
+        if resolve_contact(simulation, shot_index, next, fraction, dt - remaining) {
+            remove_shot(simulation, shot_id);
         }
         event += 1;
     }
     simulation.projectile_tank_positions = tank_positions;
 }
 
-/// The earliest contact found for one shell; indices are valid until something moves.
+/// The earliest contact found for one shell, returned beside that shell's index; indices
+/// are valid until something moves.
 #[derive(Clone, Copy, Debug)]
 enum Contact {
     World {
-        shot: usize,
         collider: ColliderHandle,
         normal: Vec2,
     },
     Debris {
-        shot: usize,
         fragment: usize,
     },
     Tank {
-        shot: usize,
         tank: usize,
     },
     Mine {
-        shot: usize,
         mine: usize,
     },
     Pair {
-        shot: usize,
         other: usize,
     },
     Laser {
-        shot: usize,
         tank: usize,
     },
-    Expiry {
-        shot: usize,
-    },
-}
-
-impl Contact {
-    fn shot(self) -> usize {
-        match self {
-            Contact::World { shot, .. }
-            | Contact::Debris { shot, .. }
-            | Contact::Tank { shot, .. }
-            | Contact::Mine { shot, .. }
-            | Contact::Pair { shot, .. }
-            | Contact::Laser { shot, .. }
-            | Contact::Expiry { shot } => shot,
-        }
-    }
+    Expiry,
 }
 
 /// Query without moving entities; equal-time contacts preserve the original priority order.
@@ -301,7 +267,7 @@ fn find_next_contact(
     elapsed: f64,
     tank_frame_delta: f64,
     defenses: bool,
-) -> (Option<Contact>, f64) {
+) -> (Option<(usize, Contact)>, f64) {
     let mut next = None;
     let mut time = limit;
     // Nothing moves during the query, so each hull is read once rather than once per shell.
@@ -317,7 +283,7 @@ fn find_next_contact(
     for (si, shot) in simulation.shots.iter().enumerate() {
         if shot.life <= time {
             time = shot.life;
-            next = Some(Contact::Expiry { shot: si });
+            next = Some((si, Contact::Expiry));
         }
         let speed = shot.vx.hypot(shot.vz);
         if speed > 0.0 {
@@ -333,11 +299,8 @@ fn find_next_contact(
             ) && hit.time_of_impact as f64 / speed <= time
             {
                 time = hit.time_of_impact as f64 / speed;
-                next = Some(Contact::World {
-                    shot: si,
-                    collider,
-                    normal: Vec2::new(hit.normal.x as f64, hit.normal.z as f64),
-                });
+                let normal = Vec2::new(hit.normal.x as f64, hit.normal.z as f64);
+                next = Some((si, Contact::World { collider, normal }));
             }
             let options = ShapeCastOptions {
                 max_time_of_impact: time as f32,
@@ -361,7 +324,7 @@ fn find_next_contact(
                 })
             {
                 time = hit.time_of_impact as f64;
-                next = Some(Contact::Debris { shot: si, fragment });
+                next = Some((si, Contact::Debris { fragment }));
             }
         }
         let probe = ShotProbe::from(shot);
@@ -377,7 +340,7 @@ fn find_next_contact(
             ) && (contact < time || next.is_none())
             {
                 time = contact;
-                next = Some(Contact::Tank { shot: si, tank: ti });
+                next = Some((si, Contact::Tank { tank: ti }));
             }
             if defenses
                 && tank.laser > 0.0
@@ -386,7 +349,7 @@ fn find_next_contact(
                 && (laser < time || next.is_none())
             {
                 time = laser;
-                next = Some(Contact::Laser { shot: si, tank: ti });
+                next = Some((si, Contact::Laser { tank: ti }));
             }
         }
         for (mi, mine) in simulation.mines.iter().enumerate() {
@@ -394,7 +357,7 @@ fn find_next_contact(
                 && (contact < time || next.is_none())
             {
                 time = contact;
-                next = Some(Contact::Mine { shot: si, mine: mi });
+                next = Some((si, Contact::Mine { mine: mi }));
             }
         }
     }
@@ -433,7 +396,7 @@ fn find_next_contact(
                 }
             }
             time = contact;
-            next = Some(Contact::Pair { shot: i, other: j });
+            next = Some((i, Contact::Pair { other: j }));
         }
     }
     (next, time)
@@ -452,19 +415,33 @@ fn remove_shot(simulation: &mut Simulation, id: u32) {
     }
 }
 
-/// Apply one contact `elapsed` seconds into the sweep. Return whether its primary shot
+/// A rocket's blast where it struck.
+fn rocket_blast(simulation: &mut Simulation, shot: &Shot) {
+    simulation.explode(
+        Vec2::new(shot.x, shot.z),
+        COMBAT.rocket_blast_radius,
+        shot.damage,
+        shot.owner,
+        shot.team,
+        shot.owner_life,
+        DamageCause::Rocket,
+    );
+}
+
+/// Apply shell `si`'s contact `elapsed` seconds into the sweep. Return whether that shell
 /// should be removed.
 fn resolve_contact(
     simulation: &mut Simulation,
+    si: usize,
     next: Contact,
     fraction: f64,
     elapsed: f64,
 ) -> bool {
-    let shot = simulation.shots[next.shot()].clone();
+    let shot = simulation.shots[si].clone();
     let shot_color = weapon(shot.weapon).color;
     let mut remove = true;
     match next {
-        Contact::Laser { shot: si, tank: ti } => {
+        Contact::Laser { tank: ti } => {
             let tank_id = simulation.tanks[ti].id;
             simulation.shots[si].laser_checked_by.push(tank_id);
             remove = simulation.rng.next() < LASER_DEFENSE.chance;
@@ -488,10 +465,7 @@ fn resolve_contact(
             }
             // A successful zap vaporizes the shell without triggering a rocket blast.
         }
-        Contact::Pair {
-            shot: si,
-            other: oi,
-        } => {
+        Contact::Pair { other: oi } => {
             let other = simulation.shots[oi].clone();
             let a_pierces = shot.piercing > 0;
             let b_pierces = other.piercing > 0;
@@ -521,21 +495,12 @@ fn resolve_contact(
                 remove_shot(simulation, other.id);
             }
         }
-        Contact::Mine { mine: mi, .. } => {
+        Contact::Mine { mine: mi } => {
             // Remove first so the blast cannot rediscover and detonate this mine twice.
             let mine = simulation.mines.remove(mi);
-            explode(
-                simulation,
-                Vec2::new(mine.x, mine.z),
-                MINE.blast_radius,
-                mine.damage.unwrap_or(MINE.damage),
-                shot.owner,
-                shot.team,
-                shot.owner_life,
-                DamageCause::Mine,
-            );
+            simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
         }
-        Contact::Debris { fragment: fi, .. } => {
+        Contact::Debris { fragment: fi } => {
             let fragment = &simulation.fragments[fi];
             let timber = fragment.timber_part.is_some();
             let fragment_color = fragment.color;
@@ -559,16 +524,7 @@ fn resolve_contact(
                 })
                 .unwrap_or(shell_point);
             if shot.weapon == Weapon::Rocket {
-                explode(
-                    simulation,
-                    Vec2::new(shot.x, shot.z),
-                    COMBAT.rocket_blast_radius,
-                    shot.damage,
-                    shot.owner,
-                    shot.team,
-                    shot.owner_life,
-                    DamageCause::Rocket,
-                );
+                rocket_blast(simulation, &shot);
             } else {
                 hit_projectile_debris(simulation, fi, &shot, point);
             }
@@ -582,7 +538,7 @@ fn resolve_contact(
             impact.cover_kind = timber.then_some(CoverKind::Timber);
             simulation.events.push(impact);
         }
-        Contact::Tank { shot: si, tank: ti } => {
+        Contact::Tank { tank: ti } => {
             let target = &simulation.tanks[ti];
             if !shot.recap_hit
                 && simulation
@@ -597,16 +553,7 @@ fn resolve_contact(
             }
             let target_team = simulation.tanks[ti].team;
             if shot.weapon == Weapon::Rocket {
-                explode(
-                    simulation,
-                    Vec2::new(shot.x, shot.z),
-                    COMBAT.rocket_blast_radius,
-                    shot.damage,
-                    shot.owner,
-                    shot.team,
-                    shot.owner_life,
-                    DamageCause::Rocket,
-                );
+                rocket_blast(simulation, &shot);
             } else if simulation.tanks[ti].id != shot.owner {
                 // A shell that ricochets back stops at its shooter, harmless like at an ally.
                 let position = simulation.body_translation(simulation.tanks[ti].body);
@@ -614,8 +561,7 @@ fn resolve_contact(
                     0.0 => 1.0,
                     speed => speed,
                 };
-                damage_tank(
-                    simulation,
+                simulation.damage_tank(
                     ti,
                     shot.damage,
                     shot.owner,
@@ -643,11 +589,7 @@ fn resolve_contact(
             impact.height = Some(1.0);
             simulation.events.push(impact);
         }
-        Contact::World {
-            shot: si,
-            collider,
-            normal,
-        } => {
+        Contact::World { collider, normal } => {
             let cover = simulation.cover_by_collider.get(&collider).copied();
             if let Some(ci) = cover {
                 if matches!(
@@ -663,19 +605,9 @@ fn resolve_contact(
                 hit_movable_cover(simulation, ci, &shot);
             }
             if shot.weapon == Weapon::Rocket {
-                explode(
-                    simulation,
-                    Vec2::new(shot.x, shot.z),
-                    COMBAT.rocket_blast_radius,
-                    shot.damage,
-                    shot.owner,
-                    shot.team,
-                    shot.owner_life,
-                    DamageCause::Rocket,
-                );
+                rocket_blast(simulation, &shot);
             } else if let Some(ci) = cover {
-                damage_cover(
-                    simulation,
+                simulation.damage_cover(
                     ci,
                     shot.damage,
                     shot.owner,
@@ -721,7 +653,7 @@ fn resolve_contact(
             impact.height = chipped.map(|cover| cover.h);
             simulation.events.push(impact);
         }
-        Contact::Expiry { .. } => {}
+        Contact::Expiry => {}
     }
     remove
 }

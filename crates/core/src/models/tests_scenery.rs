@@ -253,14 +253,14 @@ fn sections() -> Vec<(String, Node)> {
     harbor.update(5.3);
     sections.push(("harbor-5.3".into(), harbor.root.children[1].clone()));
     sections.push(("quarry".into(), quarry_scenery()));
-    for (kind, extent, y) in [
-        (GroundKind::DryGrass, 120.0, 0.008),
-        (GroundKind::PackedDirt, 140.0, -0.002),
-        (GroundKind::PackedDirt, 78.0, 0.008),
-        (GroundKind::DryGrass, 140.0, -0.002),
+    for (name, kind, extent, y) in [
+        ("dry-grass", GroundKind::DryGrass, 120.0, 0.008),
+        ("packed-dirt", GroundKind::PackedDirt, 140.0, -0.002),
+        ("packed-dirt", GroundKind::PackedDirt, 78.0, 0.008),
+        ("dry-grass", GroundKind::DryGrass, 140.0, -0.002),
     ] {
         sections.push((
-            format!("floor-{}-{extent}", kind.as_str()),
+            format!("floor-{name}-{extent}"),
             create_arena_floor(kind, extent, y),
         ));
     }

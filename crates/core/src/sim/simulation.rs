@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rapier3d::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::ai::bot_command;
 use super::ammunition::{has_ammo, select_ammo};
@@ -20,8 +20,7 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
-use super::fragments::create_fragment;
-use super::map_options::MapId;
+use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
 use super::match_state::{new_match, tick_match};
 use super::math::{Point3, Quat4, Random, Vec2, best_by, distance, js_round, to_uint32};
@@ -37,12 +36,12 @@ use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quar
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
-use super::tank_lifecycle::{respawn_tank, spawn_tank};
+use super::tank_lifecycle::solo_spawn;
 use super::tower_layout::TOWER_BASE;
 use super::types::{
-    Cover, CoverKind, CoverMotion, Driver, Fragment, FragmentShape, Match, MatchPhase, Mine,
-    Pickup, PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand,
-    VehicleKind, Weapon,
+    Cover, CoverKind, CoverMotion, Driver, Fragment, Match, MatchPhase, Mine, Pickup,
+    PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind,
+    Weapon,
 };
 use super::veterancy::{rank_index, rank_stats, repair_veteran};
 use super::weapons::{fire_weapon, place_mine, step_mines};
@@ -139,51 +138,37 @@ impl SimulationSetup {
     /// Assign every set option to `simulation` (the TS `Object.assign`). Takes effect at the
     /// next `reset`.
     pub fn apply(&self, simulation: &mut Simulation) {
+        fn set<T: Copy>(target: &mut T, value: Option<T>) {
+            if let Some(value) = value {
+                *target = value;
+            }
+        }
         if let Some(players) = &self.players {
             simulation.players = Some(players.clone());
         }
-        if let Some(value) = self.humans_only {
-            simulation.humans_only = value;
-        }
-        if let Some(value) = self.human_kind {
-            simulation.human_kind = value;
-        }
-        if let Some(value) = self.human_team {
-            simulation.human_team = value;
-        }
-        if let Some(value) = self.difficulty {
-            simulation.difficulty = value;
-        }
-        if let Some(value) = self.game_mode {
-            simulation.game_mode = value;
-        }
-        if let Some(value) = self.map_mode {
-            simulation.map_mode = value;
-        }
-        if let Some(value) = self.custom_map {
-            simulation.custom_map = value;
-        }
-        if let Some(value) = self.endless_match {
-            simulation.endless_match = value;
-        }
-        if let Some(value) = self.round_count {
-            simulation.round_count = value;
-        }
-        if let Some(value) = self.human_health_multiplier {
-            simulation.human_health_multiplier = value;
-        }
-        if let Some(value) = self.power_up_duration_multiplier {
-            simulation.power_up_duration_multiplier = value;
-        }
-        if let Some(value) = self.ammo_crate_multiplier {
-            simulation.ammo_crate_multiplier = value;
-        }
-        if let Some(value) = self.max_fragments {
-            simulation.max_fragments = value;
-        }
-        if let Some(value) = self.after_step {
-            simulation.after_step = value;
-        }
+        set(&mut simulation.humans_only, self.humans_only);
+        set(&mut simulation.human_kind, self.human_kind);
+        set(&mut simulation.human_team, self.human_team);
+        set(&mut simulation.difficulty, self.difficulty);
+        set(&mut simulation.game_mode, self.game_mode);
+        set(&mut simulation.map_mode, self.map_mode);
+        set(&mut simulation.custom_map, self.custom_map);
+        set(&mut simulation.endless_match, self.endless_match);
+        set(&mut simulation.round_count, self.round_count);
+        set(
+            &mut simulation.human_health_multiplier,
+            self.human_health_multiplier,
+        );
+        set(
+            &mut simulation.power_up_duration_multiplier,
+            self.power_up_duration_multiplier,
+        );
+        set(
+            &mut simulation.ammo_crate_multiplier,
+            self.ammo_crate_multiplier,
+        );
+        set(&mut simulation.max_fragments, self.max_fragments);
+        set(&mut simulation.after_step, self.after_step);
     }
 }
 
@@ -246,7 +231,6 @@ pub struct Simulation {
     pub power_up_duration_multiplier: f64,
     pub ammo_crate_multiplier: f64,
     current_map: &'static ArenaMap,
-    pub active_enemy_limit: usize,
     pub reinforcement_delay: f64,
     pub max_fragments: usize,
     pub wreck_view: Option<WreckView>,
@@ -307,7 +291,6 @@ impl Simulation {
             power_up_duration_multiplier: 1.0,
             ammo_crate_multiplier: 1.0,
             current_map: &super::maps::MAPS[0],
-            active_enemy_limit: SOLO.active_enemies,
             reinforcement_delay: 0.0,
             max_fragments: MAX_FRAGMENTS,
             wreck_view: None,
@@ -320,8 +303,8 @@ impl Simulation {
             debris_contacts: HashMap::new(),
         };
         setup.apply(&mut simulation);
-        // reset advances the round; callers can preserve its existing seeded map
-        // selection without constructing and discarding an earlier physics world.
+        // reset advances the round (its number and the seed of the bot names), so start one
+        // round earlier rather than building and discarding a physics world first.
         simulation.match_state = new_match(setup.round.unwrap_or(2) - 1);
         simulation.reset(None);
         simulation
@@ -384,11 +367,7 @@ impl Simulation {
     }
 
     pub fn map_name(&self) -> String {
-        self.current_map.name.to_uppercase()
-    }
-
-    pub fn current_map(&self) -> &'static ArenaMap {
-        self.current_map
+        map_option_for(self.current_map.id).name.to_uppercase()
     }
 
     /// Compact maps shrink the shared spawn lanes, pickups and patrol routes about the centre.
@@ -440,24 +419,19 @@ impl Simulation {
             .iter()
             .map(|placement| {
                 let laser = placement.kind == super::types::PickupKind::Laser;
-                let id = self.next_id;
-                self.next_id += 1;
+                let cooldown = if laser {
+                    LASER_DEFENSE.initial_delay
+                } else {
+                    0.0
+                };
                 Pickup {
-                    id,
+                    id: self.allocate_id(),
                     kind: placement.kind,
                     x: placement.x * scale,
                     z: placement.z * scale,
                     available: !laser,
-                    cooldown: if laser {
-                        LASER_DEFENSE.initial_delay
-                    } else {
-                        0.0
-                    },
-                    cooldown_duration: if laser {
-                        LASER_DEFENSE.initial_delay
-                    } else {
-                        0.0
-                    },
+                    cooldown,
+                    cooldown_duration: cooldown,
                 }
             })
             .collect();
@@ -465,35 +439,26 @@ impl Simulation {
         self.nav.rebuild(&self.covers, None);
         if self.game_mode == GameMode::Solo {
             self.add_tank(self.human_team, true, self.human_kind, 2);
-            for slot in 0..self.active_enemy_limit {
+            for slot in 0..SOLO.active_enemies {
                 self.add_tank(self.human_team.opponent(), false, VehicleKind::Scout, slot);
             }
         } else {
             for i in 0..count {
                 let team = Team::from_index(i % 2);
                 let slot = i / 2;
-                let player = self.players.as_ref().and_then(|players| {
-                    players
-                        .iter()
-                        .find(|p| p.team == team && p.slot == slot)
-                        .cloned()
-                });
-                if self.multiplayer() && self.humans_only && player.is_none() {
+                let player_kind = self.player_at(team, slot).map(|player| player.kind);
+                if self.multiplayer() && self.humans_only && player_kind.is_none() {
                     continue;
                 }
                 let human = if self.multiplayer() {
-                    player.is_some()
+                    player_kind.is_some()
                 } else {
                     i == self.human_team.index()
                 };
-                let kind = match &player {
-                    Some(player) => player.kind,
+                let kind = match player_kind {
+                    Some(kind) => kind,
                     None if i == self.human_team.index() => self.human_kind,
-                    None => [
-                        VehicleKind::Scout,
-                        VehicleKind::Balanced,
-                        VehicleKind::Heavy,
-                    ][slot % 3],
+                    None => VehicleKind::PLAYABLE[slot % 3],
                 };
                 self.add_tank(team, human, kind, slot);
             }
@@ -504,10 +469,8 @@ impl Simulation {
     /// Create a cover record and its physics body from an authored placement.
     pub fn add_cover(&mut self, def: &CoverDef) -> usize {
         let (body, colliders) = self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h);
-        let id = self.next_id;
-        self.next_id += 1;
         let cover = Cover {
-            id,
+            id: self.allocate_id(),
             kind: def.kind,
             x: def.x,
             z: def.z,
@@ -645,10 +608,6 @@ impl Simulation {
         }
     }
 
-    pub fn add_tank(&mut self, team: Team, human: bool, kind: VehicleKind, slot: usize) -> usize {
-        spawn_tank(self, team, human, kind, slot)
-    }
-
     /// The first human tank, if any.
     pub fn human_index(&self) -> Option<usize> {
         self.tanks.iter().position(|tank| tank.human)
@@ -661,6 +620,21 @@ impl Simulation {
 
     pub fn tank_index(&self, id: u32) -> Option<usize> {
         self.tanks.iter().position(|tank| tank.id == id)
+    }
+
+    /// The multiplayer seat assigned to a team's spawn slot.
+    pub(crate) fn player_at(&self, team: Team, slot: usize) -> Option<&PlayerAssignment> {
+        self.players
+            .as_ref()?
+            .iter()
+            .find(|player| player.team == team && player.slot == slot)
+    }
+
+    /// The next entity id; tanks, cover, pickups, shells, mines and debris share one sequence.
+    pub fn allocate_id(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 
     pub fn start(&mut self) {
@@ -855,21 +829,12 @@ impl Simulation {
         let living: Vec<usize> = (0..self.tanks.len())
             .filter(|&i| !self.tanks[i].human && self.tanks[i].alive)
             .collect();
-        if living.len() >= self.active_enemy_limit {
+        if living.len() >= SOLO.active_enemies {
             return;
         }
         let team = self.human_team.opponent();
-        let limit = self.active_enemy_limit;
-        let slots: Vec<Vec2> = (0..limit)
-            .map(|slot| Vec2 {
-                x: if team == Team::Blue {
-                    -SOLO.spawn_x
-                } else {
-                    SOLO.spawn_x
-                },
-                z: -SOLO.spawn_half_span_z
-                    + (slot as f64 * (SOLO.spawn_half_span_z * 2.0)) / (limit as f64 - 1.0),
-            })
+        let slots: Vec<Vec2> = (0..SOLO.active_enemies)
+            .map(|slot| solo_spawn(team, slot))
             .filter(|&p| {
                 self.tanks.iter().all(|tank| {
                     !tank.alive
@@ -910,14 +875,10 @@ impl Simulation {
         }
     }
 
-    pub fn respawn(&mut self, tank_index: usize, position: Option<Vec2>) {
-        respawn_tank(self, tank_index, position);
-    }
-
     pub fn spawn_score(&self, position: Vec2, enemies: &[usize], friends: &[usize]) -> f64 {
         let mut score = SPAWN_SCORING.maximum_enemy_distance;
         for &enemy in enemies {
-            let q = self.body_translation(self.tanks[enemy].body).planar();
+            let q = self.tank_planar(enemy);
             score = score.min(
                 distance(position, q)
                     - if self.visible(position, q) {
@@ -928,7 +889,7 @@ impl Simulation {
             );
         }
         for &friend in friends {
-            let q = self.body_translation(self.tanks[friend].body).planar();
+            let q = self.tank_planar(friend);
             score -= 0f64.max(SPAWN_SCORING.ally_clearance - distance(position, q))
                 * SPAWN_SCORING.ally_proximity_penalty;
         }
@@ -953,70 +914,13 @@ impl Simulation {
     /// Evict the least relevant debris until `count` more pieces fit the budget.
     pub fn reserve_fragments(&mut self, count: usize) {
         while self.fragments.len() + count > self.max_fragments {
-            let Some(old) = cleanup_candidate(self, None) else {
+            let Some(old) = cleanup_candidate(self) else {
                 break;
             };
             let body = self.fragments[old].body;
             self.fragments.remove(old);
             self.remove_body(body);
         }
-    }
-
-    /// A small cosmetic physics fragment.
-    pub fn fragment(
-        &mut self,
-        x: f64,
-        z: f64,
-        color: u32,
-        size: f64,
-        shape: FragmentShape,
-        lifetime_scale: f64,
-    ) {
-        create_fragment(self, x, z, color, size, shape, lifetime_scale);
-    }
-
-    /// Damage a tank through the shared damage path (see `damage::damage_tank`).
-    #[allow(clippy::too_many_arguments)]
-    pub fn damage_tank(
-        &mut self,
-        tank_index: usize,
-        amount: f64,
-        owner: u32,
-        team: Team,
-        owner_life: Option<u32>,
-        source: Option<super::types::DamageSource>,
-    ) {
-        super::damage::damage_tank(self, tank_index, amount, owner, team, owner_life, source);
-    }
-
-    /// Damage a cover through the shared damage path (see `damage::damage_cover`).
-    pub fn damage_cover(
-        &mut self,
-        cover_index: usize,
-        amount: f64,
-        owner: u32,
-        team: Team,
-        owner_life: Option<u32>,
-        impact: Option<Point3>,
-    ) {
-        super::damage::damage_cover(self, cover_index, amount, owner, team, owner_life, impact);
-    }
-
-    /// A blast damaging tanks, cover and mines (see `damage::explode`).
-    #[allow(clippy::too_many_arguments)]
-    pub fn explode(
-        &mut self,
-        position: Vec2,
-        radius: f64,
-        damage: f64,
-        owner: u32,
-        team: Team,
-        owner_life: Option<u32>,
-        cause: super::types::DamageCause,
-    ) {
-        super::damage::explode(
-            self, position, radius, damage, owner, team, owner_life, cause,
-        );
     }
 
     /// Remove a body with its colliders, and forget its debris-contact metadata.
@@ -1027,6 +931,11 @@ impl Simulation {
 
     pub fn body_translation(&self, body: RigidBodyHandle) -> Point3 {
         from_vector(self.world.bodies[body].translation())
+    }
+
+    /// A live tank's body position on the X/Z plane.
+    pub fn tank_planar(&self, tank_index: usize) -> Vec2 {
+        self.body_translation(self.tanks[tank_index].body).planar()
     }
 
     pub fn body_rotation(&self, body: RigidBodyHandle) -> Quat4 {
@@ -1054,11 +963,7 @@ impl Simulation {
                 .tanks
                 .iter()
                 .map(|tank| {
-                    let position = if tank.alive {
-                        self.body_translation(tank.body).planar()
-                    } else {
-                        tank.previous
-                    };
+                    let position = self.tank_position(tank).planar();
                     TankSnapshot {
                         id: tank.id,
                         name: tank.name.clone(),
@@ -1106,7 +1011,7 @@ impl Simulation {
 }
 
 /// Serializable diagnostics of the whole simulation, matching the TS `snapshot()`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub seed: f64,
@@ -1122,7 +1027,7 @@ pub struct Snapshot {
     pub bot_breach_shots: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TankSnapshot {
     pub id: u32,
@@ -1146,42 +1051,22 @@ pub struct TankSnapshot {
     pub recovering: bool,
     pub recoveries: u32,
     /// The bot personality; serialized as "player" for humans.
-    #[serde(with = "personality_or_player")]
+    #[serde(serialize_with = "personality_or_player")]
     pub personality: Option<BotPersonality>,
     pub ultra_aggressive: bool,
 }
 
-mod personality_or_player {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    use super::BotPersonality;
-
-    pub fn serialize<S: Serializer>(
-        value: &Option<BotPersonality>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        match value {
-            Some(personality) => personality.serialize(serializer),
-            None => serializer.serialize_str("player"),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<BotPersonality>, D::Error> {
-        let name = String::deserialize(deserializer)?;
-        if name == "player" {
-            return Ok(None);
-        }
-        BotPersonality::ALL
-            .into_iter()
-            .find(|personality| personality.as_str() == name)
-            .map(Some)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown personality {name}")))
+fn personality_or_player<S: Serializer>(
+    value: &Option<BotPersonality>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(personality) => personality.serialize(serializer),
+        None => serializer.serialize_str("player"),
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SnapshotCounts {
     pub bodies: usize,
     pub colliders: usize,

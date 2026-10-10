@@ -43,7 +43,7 @@ fn budget_eviction_preserves_nearby_moving_debris_ahead_of_distant_settled_piece
     let nearby = fragment(&mut sim, 0.0, true);
     let distant = fragment(&mut sim, 40.0, false);
     let distant_body = sim.fragments[index_of(&sim, distant).unwrap()].body;
-    assert_eq!(cleanup_candidate(&sim, None), index_of(&sim, distant));
+    assert_eq!(cleanup_candidate(&sim), index_of(&sim, distant));
     sim.max_fragments = 2;
     fragment(&mut sim, 2.0, true);
     assert!(index_of(&sim, nearby).is_some());

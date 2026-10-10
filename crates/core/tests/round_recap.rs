@@ -15,7 +15,6 @@ use sloppy_core::sim::round_recap::{
     Metric, RecapStats, RecordStorage, StorageUnavailable, combat_feats, recap_stats,
     save_personal_bests,
 };
-use sloppy_core::sim::tank_lifecycle::respawn_tank;
 use sloppy_core::sim::veterancy::earn_experience;
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
@@ -58,12 +57,12 @@ fn recap_counts_actual_enemy_hull_damage_preserves_peaks_and_resets_with_the_rou
     assert_eq!(s.tanks[player].highest_rank, 3);
     let enemy_deaths = s.tanks[enemy].deaths;
     damage_from(&mut s, player, 9999.0, enemy, Some(enemy_deaths), None);
-    respawn_tank(&mut s, player, None);
+    s.respawn(player, None);
     assert_eq!(s.tanks[player].life_kills, 0);
     assert_eq!(s.tanks[player].best_life_kills, 1);
     assert_eq!(s.tanks[player].highest_rank, 3);
     assert_eq!(s.tanks[player].xp, 0.0);
-    respawn_tank(&mut s, enemy, None);
+    s.respawn(enemy, None);
     s.tanks[enemy].protection = 0.0;
     damage_from(&mut s, enemy, 9999.0, player, Some(0), None);
     assert_eq!(s.tanks[player].kills, 2);
@@ -185,7 +184,7 @@ fn longest_life_freezes_on_death_excludes_respawn_and_paused_time_includes_unfin
     damage_from(&mut s, player, 9999.0, enemy, None, None);
     assert_eq!(longest_life(&s), 42.0);
     s.elapsed = 45.0;
-    respawn_tank(&mut s, player, None);
+    s.respawn(player, None);
     s.elapsed = 65.0;
     assert_eq!(longest_life(&s), 42.0);
     s.match_state.phase = MatchPhase::Paused;
@@ -205,7 +204,7 @@ fn revenge_clutch_posthumous_and_mine_feats_use_credited_kills() {
     let enemy = first_enemy(&s);
     s.tanks[p].protection = 0.0;
     damage_from(&mut s, p, 9999.0, enemy, None, None);
-    respawn_tank(&mut s, p, None);
+    s.respawn(p, None);
     s.tanks[p].hp = 1.0;
     s.tanks[enemy].protection = 0.0;
     let deaths = s.tanks[p].deaths;
@@ -217,7 +216,7 @@ fn revenge_clutch_posthumous_and_mine_feats_use_credited_kills() {
     assert_eq!(s.combat_record.revenge_kills, 1);
     assert_eq!(s.combat_record.clutch_kills, 1);
     assert_eq!(s.combat_record.mine_kills, 1);
-    respawn_tank(&mut s, enemy, None);
+    s.respawn(enemy, None);
     s.tanks[enemy].protection = 0.0;
     let deaths = s.tanks[p].deaths;
     damage_from(&mut s, enemy, 9999.0, p, Some(deaths - 1), None);

@@ -33,8 +33,7 @@ fn duel(layer_x: f64, gap: f64) -> Simulation {
 }
 
 fn mine(s: &mut Simulation, x: f64, owner: u32, team: Team, arm: f64) -> Mine {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Mine {
         id,
         owner,
@@ -50,8 +49,7 @@ fn mine(s: &mut Simulation, x: f64, owner: u32, team: Team, arm: f64) -> Mine {
 
 /// A fast standard shell fired north by an absent blue shooter.
 fn shell(s: &mut Simulation, x: f64) {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     s.shots.push(Shot {
         id,
         x,

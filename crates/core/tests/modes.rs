@@ -7,7 +7,7 @@ mod support;
 use sloppy_core::sim::ai::bot_command;
 use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::data::ARENA;
-use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::map_options::{MapId, map_option_for};
 use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::pickups::collect_pickup;
@@ -224,7 +224,7 @@ fn each_authored_map_builds_completely_in_both_modes_keeps_it_for_the_match_and_
                 );
                 assert_eq!(
                     sim.map_name(),
-                    map.name.to_uppercase(),
+                    map_option_for(map.id).name.to_uppercase(),
                     "show the actual battlefield name"
                 );
                 let built: Vec<_> = sim

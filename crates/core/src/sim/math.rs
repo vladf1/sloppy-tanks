@@ -2,6 +2,7 @@
 //! seeded match contract depends on (the previous engine ran on JS doubles).
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// A point on the playable X/Z plane, in metres.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -51,12 +52,6 @@ impl Point3 {
             self.y + (other.y - self.y) * t,
             self.z + (other.z - self.z) * t,
         )
-    }
-}
-
-impl From<Point3> for Vec2 {
-    fn from(point: Point3) -> Self {
-        point.planar()
     }
 }
 
@@ -189,6 +184,15 @@ pub fn js_round(value: f64) -> f64 {
         floor + 1.0
     } else {
         floor
+    }
+}
+
+/// A number as JavaScript would hold it: integers without a fraction.
+pub(crate) fn json_number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 9e15 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
     }
 }
 
@@ -326,6 +330,16 @@ mod tests {
                 assert_eq!(random.next(), expected, "seed {seed}");
             }
         }
+        let mut random = Random::new(812.0);
+        assert_eq!(
+            [random.next(), random.next(), random.next()],
+            [0.5522837908938527, 0.5438373878132552, 0.34959222935140133]
+        );
+        let mut random = Random::new(-1_234_567.0);
+        assert_eq!(
+            [random.next(), random.next()],
+            [0.1790107295382768, 0.05965530825778842]
+        );
         // Past 2^53 the double state rounds on every increment, exactly like JS.
         let mut random = Random::new(1e15);
         for _ in 0..5_000_000 {

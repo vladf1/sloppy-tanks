@@ -25,8 +25,7 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
     s.shots.clear();
     s.events.clear();
     let c = s.covers[cover].clone();
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     let (owner, team) = (s.human().id, s.human_team);
     s.shots.push(Shot {
         id,

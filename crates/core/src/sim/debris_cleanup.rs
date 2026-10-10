@@ -1,6 +1,6 @@
 //! Debris budget: which pieces fade first when the fragment pool fills.
 
-use super::math::{Vec2, js_min};
+use super::math::{Vec2, best_by, js_min};
 use super::simulation::Simulation;
 use super::types::Fragment;
 
@@ -30,23 +30,13 @@ struct CleanupScores {
 impl CleanupScores {
     fn new(simulation: &Simulation) -> Self {
         let human = simulation.tanks.iter().find(|tank| tank.human);
-        let focus = match human {
-            Some(tank) if tank.alive => simulation.body_translation(tank.body).planar(),
-            Some(tank) => tank.previous,
-            None => Vec2::ZERO,
-        };
+        let focus = human.map_or(Vec2::ZERO, |tank| simulation.tank_position(tank).planar());
         let players = simulation.multiplayer().then(|| {
             simulation
                 .tanks
                 .iter()
                 .filter(|tank| tank.human)
-                .map(|tank| {
-                    if tank.alive {
-                        simulation.body_translation(tank.body).planar()
-                    } else {
-                        tank.previous
-                    }
-                })
+                .map(|tank| simulation.tank_position(tank).planar())
                 .collect()
         });
         Self { focus, players }
@@ -76,26 +66,13 @@ impl CleanupScores {
 }
 
 /// Prefer distant settled pieces, then distant moving pieces, preserving nearby action.
-/// Chooses among `candidates` (indices into `fragments`), or all fragments; returns the
-/// index into `fragments`.
-pub fn cleanup_candidate(simulation: &Simulation, candidates: Option<&[usize]>) -> Option<usize> {
+/// Returns the index into `fragments` of the lowest score, the first of equal ones; a NaN
+/// or infinite score is never picked.
+pub fn cleanup_candidate(simulation: &Simulation) -> Option<usize> {
     let scores = CleanupScores::new(simulation);
-    let lowest = |indices: &mut dyn Iterator<Item = usize>| {
-        let mut best = None;
-        let mut best_score = f64::INFINITY;
-        for index in indices {
-            let score = scores.score(simulation, &simulation.fragments[index]);
-            if score < best_score {
-                best = Some(index);
-                best_score = score;
-            }
-        }
-        best
-    };
-    match candidates {
-        Some(candidates) => lowest(&mut candidates.iter().copied()),
-        None => lowest(&mut (0..simulation.fragments.len())),
-    }
+    best_by(0..simulation.fragments.len(), |&index| {
+        -scores.score(simulation, &simulation.fragments[index])
+    })
 }
 
 /// Start the normal fade before the hard budget forces an immediate eviction.

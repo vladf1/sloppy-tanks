@@ -3,8 +3,6 @@
 
 use std::f64::consts::PI;
 
-use serde::{Deserialize, Serialize};
-
 use super::math::{Vec2, distance};
 use super::simulation::Simulation;
 use super::types::{BotMode, Team};
@@ -25,8 +23,7 @@ const MINIMUM_OPEN_GAIN: f64 = 5.0;
 pub const HUMVEE_AIM_SECONDS: f64 = 0.75;
 pub const HUMVEE_DEPARTURE_SECONDS: f64 = 0.65;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HumveePhase {
     Attack,
     Withdraw,
@@ -49,16 +46,10 @@ pub struct HumveeTactics {
     pub departure_at: f64,
 }
 
-fn tank_position(simulation: &Simulation, tank_index: usize) -> Vec2 {
-    simulation
-        .body_translation(simulation.tanks[tank_index].body)
-        .planar()
-}
-
 fn set_goal(simulation: &mut Simulation, tank_index: usize, goal: Vec2) {
     let brain = &simulation.tanks[tank_index].brain;
     if distance(brain.goal, goal) > 1.0 || brain.nav_version != simulation.nav.version {
-        let from = tank_position(simulation, tank_index);
+        let from = simulation.tank_planar(tank_index);
         let brain = &mut simulation.tanks[tank_index].brain;
         brain.goal = goal;
         simulation.nav.find_into(from, goal, &mut brain.path);
@@ -106,11 +97,13 @@ fn escape_point(simulation: &Simulation, from: Vec2, threat: Vec2) -> Option<Vec
 
 /// Plan the Humvee's next goal. Returns true when the tactics chose the goal and route.
 pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> bool {
-    let position = tank_position(simulation, tank_index);
+    let position = simulation.tank_planar(tank_index);
     let elapsed = simulation.elapsed;
     let tank = &mut simulation.tanks[tank_index];
     let flank = if tank.team == Team::Blue { 1.0 } else { -1.0 };
-    tank.brain.humvee.get_or_insert(HumveeTactics {
+    let threat = tank.brain.last_seen;
+    let has_target = tank.brain.target != 0;
+    let tactics = tank.brain.humvee.get_or_insert(HumveeTactics {
         phase: HumveePhase::Attack,
         escape: position,
         firing_point: position,
@@ -124,13 +117,6 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         aim_target: None,
         departure_at: 0.0,
     });
-    let threat = tank.brain.last_seen;
-    let has_target = tank.brain.target != 0;
-    let tactics = tank
-        .brain
-        .humvee
-        .as_ref()
-        .expect("tactics were just created");
     if tactics.phase == HumveePhase::Attack && has_target && distance(position, threat) < MIN_RANGE
     {
         let escape = escape_point(simulation, position, threat).unwrap_or(position);
@@ -275,14 +261,13 @@ fn humvee(simulation: &mut Simulation, tank_index: usize) -> &mut HumveeTactics 
 
 /// Commit only after an actual launch, not an attempted or ally-blocked shot.
 pub fn withdraw_humvee(simulation: &mut Simulation, tank_index: usize) {
-    if simulation.tanks[tank_index].brain.humvee.is_none() {
-        return;
-    }
-    let position = tank_position(simulation, tank_index);
+    let position = simulation.tank_planar(tank_index);
     let elapsed = simulation.elapsed;
     let tank = &mut simulation.tanks[tank_index];
     let reload = tank.cooldown.max(tank.brain.fire_delay);
-    let tactics = tank.brain.humvee.as_mut().expect("humvee tactics");
+    let Some(tactics) = tank.brain.humvee.as_mut() else {
+        return;
+    };
     tactics.last_shot = Some(position);
     tactics.flank *= -1.0;
     tactics.aim_seconds = 0.0;
@@ -300,7 +285,7 @@ pub fn withdraw_humvee(simulation: &mut Simulation, tank_index: usize) {
 
 pub fn humvee_can_fire(simulation: &Simulation, tank_index: usize) -> bool {
     let tank = &simulation.tanks[tank_index];
-    let position = tank_position(simulation, tank_index);
+    let position = simulation.tank_planar(tank_index);
     tank.brain
         .humvee
         .as_ref()

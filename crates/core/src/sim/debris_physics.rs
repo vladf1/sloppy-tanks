@@ -159,15 +159,10 @@ fn blast_body(
     }
     let horizontal = dx.hypot(dz);
     // At the epicenter pressure has no preferred horizontal direction.
-    let nx = if horizontal > 0.001 {
-        dx / horizontal
+    let (nx, nz) = if horizontal > 0.001 {
+        (dx / horizontal, dz / horizontal)
     } else {
-        0.0
-    };
-    let nz = if horizontal > 0.001 {
-        dz / horizontal
-    } else {
-        0.0
+        (0.0, 0.0)
     };
     let falloff = (1.0 - distance / radius).powi(2);
     let strength = (power / 60.0).min(1.8) * falloff;

@@ -1,9 +1,7 @@
 //! Ammunition choice, inventory and crate refills.
 
 use super::data::{vehicle, weapon};
-use super::types::{
-    AmmoInventory, AmmoSelection, PickupKind, SpecialAmmo, Tank, VehicleKind, Weapon,
-};
+use super::types::{AmmoInventory, AmmoSelection, SpecialAmmo, Tank, VehicleKind, Weapon};
 
 pub const AMMO_ORDER: [Weapon; 5] = [
     Weapon::Standard,
@@ -23,15 +21,6 @@ pub const PROJECTILE_ORDER: [Weapon; 6] = [
 
 pub const AMMO_RESPAWN_SECONDS: f64 = 13.0;
 pub const AMMO_SCROLL_INTERVAL_MS: f64 = 120.0;
-
-pub fn empty_ammo() -> AmmoInventory {
-    AmmoInventory::default()
-}
-
-/// Whether a crate kind carries special ammunition.
-pub fn is_special_ammo(kind: PickupKind) -> bool {
-    kind.special_ammo().is_some()
-}
 
 pub fn has_ammo_for(kind: VehicleKind, ammo: &AmmoInventory, selected: Weapon) -> bool {
     match selected {
@@ -136,7 +125,7 @@ pub fn refill_ammo(tank: &mut Tank, kind: SpecialAmmo, multiplier: f64) -> f64 {
 }
 
 pub fn clear_ammo(tank: &mut Tank) {
-    tank.ammo = empty_ammo();
+    tank.ammo = AmmoInventory::default();
     tank.selected_ammo = Weapon::Standard;
     tank.command.ammo_selection = None;
 }

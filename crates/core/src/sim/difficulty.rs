@@ -28,8 +28,6 @@ impl Difficulty {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DifficultyTuning {
-    pub label: &'static str,
-    pub description: &'static str,
     pub reaction: f64,
     pub aim_error: f64,
     pub reload: f64,
@@ -37,24 +35,18 @@ pub struct DifficultyTuning {
 }
 
 const EASY: DifficultyTuning = DifficultyTuning {
-    label: "Easy",
-    description: "Slightly more forgiving enemies · 10% less enemy damage",
     reaction: 1.2,
     aim_error: 1.2,
     reload: 1.1,
     damage: 0.9,
 };
 const NORMAL: DifficultyTuning = DifficultyTuning {
-    label: "Normal",
-    description: "The original combat balance",
     reaction: 1.0,
     aim_error: 1.0,
     reload: 1.0,
     damage: 1.0,
 };
 const HARD: DifficultyTuning = DifficultyTuning {
-    label: "Hard",
-    description: "Faster, sharper enemies · 15% more enemy damage",
     reaction: 0.7,
     aim_error: 0.65,
     reload: 0.85,
@@ -69,12 +61,11 @@ pub const fn difficulty_tuning(difficulty: Difficulty) -> &'static DifficultyTun
     }
 }
 
+/// A menu or link difficulty name; anything else is the default.
 pub fn parse_difficulty(value: Option<&str>) -> Difficulty {
-    match value {
-        Some("easy") => Difficulty::Easy,
-        Some("hard") => Difficulty::Hard,
-        _ => Difficulty::Normal,
-    }
+    value
+        .and_then(|name| Difficulty::ALL.into_iter().find(|d| d.as_str() == name))
+        .unwrap_or_default()
 }
 
 /// Allies retain the original behavior; mode-specific Solo tuning still applies.

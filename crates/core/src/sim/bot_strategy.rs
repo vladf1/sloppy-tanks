@@ -1,5 +1,7 @@
 //! Bot decisions: target, retreat/pickup/patrol goal and route. Runs only on decision ticks.
 
+use std::cmp::Ordering;
+
 use rapier3d::parry::shape::Ball;
 use rapier3d::prelude::Pose;
 
@@ -55,16 +57,11 @@ pub fn notice_hit(
     let Some(attacker) = simulation.tank_index(owner) else {
         return;
     };
-    let (attacker_team, attacker_alive) = (
-        simulation.tanks[attacker].team,
-        simulation.tanks[attacker].alive,
-    );
-    if attacker_team == simulation.tanks[tank_index].team || !attacker_alive {
+    let shooter = &simulation.tanks[attacker];
+    if shooter.team == simulation.tanks[tank_index].team || !shooter.alive {
         return;
     }
-    let from = simulation
-        .body_translation(simulation.tanks[attacker].body)
-        .planar();
+    let from = simulation.tank_planar(attacker);
     let brain = &mut simulation.tanks[tank_index].brain;
     brain.attacker = owner;
     brain.attacked_from = from;
@@ -126,17 +123,12 @@ pub fn update_bot_goal(
     {
         enemies.push(attacker);
     }
-    let enemy_position = |simulation: &Simulation, enemy: usize| {
-        simulation
-            .body_translation(simulation.tanks[enemy].body)
-            .planar()
-    };
     let seen = |simulation: &Simulation, enemy: usize| {
-        aggressive || simulation.visible(position, enemy_position(simulation, enemy))
+        aggressive || simulation.visible(position, simulation.tank_planar(enemy))
     };
     let closeness = |simulation: &Simulation, enemy: usize| {
         let id = simulation.tanks[enemy].id;
-        -distance(position, enemy_position(simulation, enemy))
+        -distance(position, simulation.tank_planar(enemy))
             * if id == previous_target {
                 TARGET_STICKINESS
             } else {
@@ -163,8 +155,8 @@ pub fn update_bot_goal(
                 .filter(|&&other| {
                     other != candidate
                         && distance(
-                            enemy_position(simulation, other),
-                            enemy_position(simulation, candidate),
+                            simulation.tank_planar(other),
+                            simulation.tank_planar(candidate),
                         ) < HUMVEE_CROWD_RADIUS
                 })
                 .count();
@@ -179,12 +171,10 @@ pub fn update_bot_goal(
         ranked.clear();
         ranked.extend(0..enemies.len());
         ranked.sort_unstable_by(|&a, &b| {
-            let difference = scores[b] - scores[a];
-            if difference != 0.0 && !difference.is_nan() {
-                difference.partial_cmp(&0.0).expect("finite difference")
-            } else {
-                a.cmp(&b)
-            }
+            scores[b]
+                .partial_cmp(&scores[a])
+                .unwrap_or(Ordering::Equal)
+                .then(a.cmp(&b))
         });
         ranked
             .iter()
@@ -209,11 +199,10 @@ pub fn update_bot_goal(
     // With nobody in sight, a hit bot turns toward its shooter and closes in to find it. A
     // HMMWV is too fragile to charge: it gets the same threat, but its tactics withdraw from
     // `last_seen` or pick a firing point at a safe range instead of driving to the shooter.
-    let unseen_attacker = attacker.filter(|_| target.is_none());
     if let Some(target) = target {
         let target_id = simulation.tanks[target].id;
         react_to(simulation, target_id);
-        let last_seen = enemy_position(simulation, target);
+        let last_seen = simulation.tank_planar(target);
         let brain = &mut simulation.tanks[tank_index].brain;
         brain.target = target_id;
         brain.memory = if aggressive { 3.0 } else { 1.5 };
@@ -222,7 +211,7 @@ pub fn update_bot_goal(
             brain.goal = last_seen;
         }
         brain.mode = BotMode::Fight;
-    } else if let Some(attacker_id) = attacker_id.filter(|_| unseen_attacker.is_some()) {
+    } else if let Some(attacker_id) = attacker_id {
         react_to(simulation, attacker_id);
         let brain = &mut simulation.tanks[tank_index].brain;
         brain.target = attacker_id;
@@ -297,7 +286,7 @@ pub fn update_bot_goal(
     let brain_goal = tank.brain.goal;
     let personality = tank.brain.personality;
     simulation.tanks[tank_index].brain.pickup_target = 0;
-    let engaged = target.is_some() || unseen_attacker.is_some();
+    let engaged = target.is_some() || attacker.is_some();
     let pickup_reach = if profile.stationary && engaged {
         5.0
     } else if aggressive {
@@ -357,11 +346,9 @@ pub fn update_bot_goal(
                 && i != tank_index
                 && candidate.brain.personality != BotPersonality::Support
         });
-        let closest = best_by(allies, |&i| {
-            -distance(position, enemy_position(simulation, i))
-        });
+        let closest = best_by(allies, |&i| -distance(position, simulation.tank_planar(i)));
         if let Some(closest) = closest {
-            let ally = enemy_position(simulation, closest);
+            let ally = simulation.tank_planar(closest);
             let brain = &mut simulation.tanks[tank_index].brain;
             brain.goal = Vec2::new(ally.x + if team == Team::Blue { -4.0 } else { 4.0 }, ally.z);
             brain.mode = BotMode::Escort;

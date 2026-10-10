@@ -2,7 +2,6 @@
 //! every spawn, pickup and flank lane clear of cover and reachable from both spawn lines
 //! (the former `tests/map-layout.test.ts`).
 
-use sloppy_core::sim::ammunition::is_special_ammo;
 use sloppy_core::sim::arena::{PICKUP_LAYOUT, spawn_positions};
 use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::math::{Vec2, distance};
@@ -51,7 +50,7 @@ fn pickups_and_spawn_slots_are_point_symmetric_and_ammo_and_repairs_sit_away_fro
     }
     let ammo: Vec<_> = PICKUP_LAYOUT
         .iter()
-        .filter(|p| is_special_ammo(p.kind))
+        .filter(|p| p.kind.special_ammo().is_some())
         .collect();
     assert_eq!(ammo.len(), 8);
     for p in &ammo {

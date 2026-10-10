@@ -766,7 +766,7 @@ fn debris_cleanup_preserves_proximity_to_either_player_rather_than_just_the_firs
         sim.world.bodies[body].sleep();
         sim.fragments[i].life = 5.0;
     }
-    assert_eq!(cleanup_candidate(&sim, None), Some(1));
+    assert_eq!(cleanup_candidate(&sim), Some(1));
 }
 
 #[test]

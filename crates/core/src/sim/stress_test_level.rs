@@ -59,98 +59,38 @@ fn stress_test_layout() -> Vec<CoverDef> {
     // Breakable barricades create four temporary gates around the open centre.
     for side in [-1.0, 1.0] {
         for offset in [-12.0, -6.0, 0.0, 6.0, 12.0] {
-            add(
-                CoverKind::Timber,
-                offset,
-                side * 22.0,
-                4.2,
-                0.9,
-                2.8,
-                TIMBER_HEALTH,
-                0xb47a49,
-            );
-            add(
-                CoverKind::Timber,
-                side * 22.0,
-                offset,
-                0.9,
-                4.2,
-                2.8,
-                TIMBER_HEALTH,
-                0xb47a49,
-            );
+            for (x, z, w, d) in [
+                (offset, side * 22.0, 4.2, 0.9),
+                (side * 22.0, offset, 0.9, 4.2),
+            ] {
+                add(CoverKind::Timber, x, z, w, d, 2.8, TIMBER_HEALTH, 0xb47a49);
+            }
         }
     }
 
     // Permanent buildings create hard sight-line breaks without sealing the broad central lanes.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
-            add(
-                CoverKind::House,
-                offset,
-                side * 35.0,
-                5.5,
-                6.5,
-                5.0,
-                infinite,
-                0xb87b4c,
-            );
-            add(
-                CoverKind::House,
-                side * 35.0,
-                offset,
-                6.5,
-                5.5,
-                5.0,
-                infinite,
-                0xc78b50,
-            );
+            for (x, z, w, d, color) in [
+                (offset, side * 35.0, 5.5, 6.5, 0xb87b4c),
+                (side * 35.0, offset, 6.5, 5.5, 0xc78b50),
+            ] {
+                add(CoverKind::House, x, z, w, d, 5.0, infinite, color);
+            }
         }
     }
 
     // Tree groves sit between the permanent houses, outer obstacle grid and spawn approaches.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
-            add(
-                CoverKind::Tree,
-                offset,
-                side * 45.0,
-                2.8,
-                2.8,
-                6.2,
-                80.0,
-                0x169f65,
-            );
-            add(
-                CoverKind::Tree,
-                offset,
-                side * 27.0,
-                2.6,
-                2.6,
-                5.8,
-                80.0,
-                0x218f55,
-            );
-            add(
-                CoverKind::Tree,
-                side * 45.0,
-                offset,
-                2.8,
-                2.8,
-                6.2,
-                80.0,
-                0x169f65,
-            );
-            add(
-                CoverKind::Tree,
-                side * 27.0,
-                offset,
-                2.6,
-                2.6,
-                5.8,
-                80.0,
-                0x218f55,
-            );
+            for (x, z, size, h, color) in [
+                (offset, side * 45.0, 2.8, 6.2, 0x169f65),
+                (offset, side * 27.0, 2.6, 5.8, 0x218f55),
+                (side * 45.0, offset, 2.8, 6.2, 0x169f65),
+                (side * 27.0, offset, 2.6, 5.8, 0x218f55),
+            ] {
+                add(CoverKind::Tree, x, z, size, size, h, 80.0, color);
+            }
         }
     }
 
@@ -189,8 +129,6 @@ fn stress_test_layout() -> Vec<CoverDef> {
 
 pub static STRESS_TEST_MAP: ArenaMap = ArenaMap {
     id: MapId::StressTest,
-    name: "Stress Grid",
-    description: "30 tanks · 75 destructibles · permanent buildings and barriers",
     theme: None,
     // Reuse only existing ground materials, without Pine Village's surrounding scenery.
     floor: Some(GroundKind::DryGrass),

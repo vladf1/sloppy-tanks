@@ -70,8 +70,7 @@ fn fixture() -> Simulation {
 
 /// A red shell heading north at the defender; `adjust` applies the test's overrides.
 fn incoming(s: &mut Simulation, weapon: Weapon, adjust: impl FnOnce(&mut Shot)) -> u32 {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     let mut shot = Shot {
         id,
         x: 0.0,

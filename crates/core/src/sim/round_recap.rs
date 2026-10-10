@@ -4,11 +4,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::combat_record::longest_life;
-use super::math::js_round;
+use super::math::{js_round, json_number};
 use super::simulation::Simulation;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Metric {
     Kills,
     Damage,
@@ -137,15 +136,6 @@ pub fn save_personal_bests(
         improved,
         established,
         persisted,
-    }
-}
-
-fn json_number(value: f64) -> serde_json::Value {
-    if value.fract() == 0.0 && value.abs() < 9e15 {
-        serde_json::Value::from(value as i64)
-    } else {
-        serde_json::Number::from_f64(value)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number)
     }
 }
 

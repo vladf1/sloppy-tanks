@@ -82,8 +82,7 @@ fn two_shells_breach_one_timber_bay_clearing_physics_and_bot_navigation_and_rese
     let version = s.nav.version;
     assert!(s.nav.is_blocked(Vec2::new(wx, wz)));
     for hit in 1..=2 {
-        let id = s.next_id;
-        s.next_id += 1;
+        let id = s.allocate_id();
         s.shots = vec![Shot {
             id,
             x: wx,

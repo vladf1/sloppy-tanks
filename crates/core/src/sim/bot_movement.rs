@@ -35,9 +35,7 @@ const RECOVERY_COMMITMENT_SECONDS: f64 = 1.8;
 
 /// Follow a few visible waypoints ahead, then brake as the destination approaches.
 pub fn route_direction(simulation: &mut Simulation, tank_index: usize) -> Vec2 {
-    let position = simulation
-        .body_translation(simulation.tanks[tank_index].body)
-        .planar();
+    let position = simulation.tank_planar(tank_index);
     let nav = &simulation.nav;
     let brain = &mut simulation.tanks[tank_index].brain;
     let goal = if brain.recovery > 0.0 {
@@ -205,9 +203,7 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
 
 /// Sustained lack of progress triggers a committed detour, independent of decision timing.
 pub fn recover_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, dt: f64) {
-    let position = simulation
-        .body_translation(simulation.tanks[tank_index].body)
-        .planar();
+    let position = simulation.tank_planar(tank_index);
     let brain = &mut simulation.tanks[tank_index].brain;
     brain.recovery = 0f64.max(brain.recovery - dt);
     if distance(position, brain.last) > PROGRESS_DISTANCE

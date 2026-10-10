@@ -24,8 +24,8 @@ export const MAP_OPTIONS = [
     tint: "#a8733a",
   },
   // Extra levels are offered only with `?debug`. Each brings its own arena, bot
-  // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); this menu
-  // list mirrors `crates/core/src/sim/map_options.rs`.
+  // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); the ids,
+  // names and extra flags mirror `crates/core/src/sim/map_options.rs`.
   {
     id: "stress-test",
     name: "Stress Grid",

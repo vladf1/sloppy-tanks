@@ -381,8 +381,7 @@ impl Game {
         sim.pickups = specs
             .into_iter()
             .map(|spec| {
-                let id = sim.next_id;
-                sim.next_id += 1;
+                let id = sim.allocate_id();
                 Pickup {
                     id,
                     kind: spec.kind,
@@ -400,8 +399,7 @@ impl Game {
     /// Put a shell in flight; returns its id.
     pub fn debug_add_shot(&mut self, shot_json: &str) -> Result<u32, JsValue> {
         let spec: ShotSpec = parse(shot_json)?;
-        let id = self.sim.next_id;
-        self.sim.next_id += 1;
+        let id = self.sim.allocate_id();
         self.sim.shots.push(Shot {
             id,
             x: spec.x,
@@ -425,8 +423,7 @@ impl Game {
 
     /// Lay a mine owned by the human; returns its id.
     pub fn debug_add_mine(&mut self, x: f64, z: f64, team: u8, arm: f64) -> u32 {
-        let id = self.sim.next_id;
-        self.sim.next_id += 1;
+        let id = self.sim.allocate_id();
         let owner = self.sim.human().id;
         self.sim.mines.push(Mine {
             id,

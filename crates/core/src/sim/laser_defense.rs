@@ -1,6 +1,7 @@
 //! The laser defense pickup: a chance to zap incoming enemy shells, one zap per recharge.
 
 use super::data::LASER_DEFENSE;
+use super::hitboxes::sweep_velocity;
 use super::math::Vec2;
 use super::simulation::Simulation;
 use super::types::{Shot, Tank};
@@ -26,16 +27,7 @@ pub fn laser_contact_time(
         return None;
     }
     let end = simulation.body_translation(tank.body);
-    let tx = if frame_delta > 0.0 {
-        (end.x - tank.previous.x) / frame_delta
-    } else {
-        0.0
-    };
-    let tz = if frame_delta > 0.0 {
-        (end.z - tank.previous.z) / frame_delta
-    } else {
-        0.0
-    };
+    let Vec2 { x: tx, z: tz } = sweep_velocity(tank, end, frame_delta);
     let x = end.x - tx * (frame_delta - elapsed);
     let z = end.z - tz * (frame_delta - elapsed);
     let dx = shot.x - x;

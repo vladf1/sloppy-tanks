@@ -22,7 +22,6 @@ use crate::geometry::Mesh;
 use crate::geometry::math::{compose, js_round};
 use crate::geometry::reference_tests::fnv;
 use crate::scene::{Material, Node, TextureSource};
-use crate::sim::math::Random;
 use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts,
 };
@@ -180,16 +179,6 @@ fn timber_hash(parts: &[TimberPart]) -> u32 {
         words.extend([p.x, p.y, p.z, p.w, p.h, p.d, p.lean].map(|v| (v as f32).to_bits()));
         words
     }))
-}
-
-#[test]
-fn random_matches_typescript() {
-    let mut a = Random::new(812.0);
-    let mut b = Random::new(4_294_967_295.0);
-    let mut c = Random::new(-1_234_567.0);
-    assert_eq!([a.next(), a.next(), a.next()], RANDOM_812);
-    assert_eq!([b.next(), b.next()], RANDOM_MAX);
-    assert_eq!([c.next(), c.next()], RANDOM_NEGATIVE);
 }
 
 #[test]
@@ -393,13 +382,6 @@ fn wreck_aging_darkens_over_two_and_a_half_seconds() {
 }
 
 // ---- Expected values printed by the TypeScript reference script. ----
-pub(super) const RANDOM_812: [f64; 3] =
-    [0.5522837908938527, 0.5438373878132552, 0.34959222935140133];
-
-pub(super) const RANDOM_MAX: [f64; 2] = [0.8964226141106337, 0.189478256739676];
-
-pub(super) const RANDOM_NEGATIVE: [f64; 2] = [0.1790107295382768, 0.05965530825778842];
-
 #[rustfmt::skip]
 pub(super) const COVER_CASES: &[CoverCase] = &[
     CoverCase { kind: CoverKind::Boundary, x: -60.5, z: 0.0, w: 1.0, d: 122.0, h: 2.2, color: 0xa68c68, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (1, 324, 108, 0x065494e2), exact: 0x15c22f33, timber_parts: (0, 0x811c9dc5), tree: None },

@@ -105,8 +105,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
     let bullet_speed = simulation.speed_tuning.bullet_speed;
     for offset in offsets {
         let angle = aim + offset;
-        let shot_id = simulation.next_id;
-        simulation.next_id += 1;
+        let shot_id = simulation.allocate_id();
         simulation.shots.push(Shot {
             id: shot_id,
             x: position.x + direction.x * spawn_distance,

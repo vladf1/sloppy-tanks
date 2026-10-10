@@ -6,7 +6,7 @@
 mod support;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::ammunition::{AMMO_ORDER, empty_ammo, select_ammo};
+use sloppy_core::sim::ammunition::{AMMO_ORDER, select_ammo};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::{BotPersonality, bot_ammo, preferred_ammo};
 use sloppy_core::sim::data::{STEP, pickup as pickup_stats, vehicle, weapon};
@@ -60,8 +60,7 @@ fn pickup(s: &mut Simulation, kind: PickupKind) {
 
 /// A shell on the x axis owned by the absent tank `999 + team`.
 fn shot(s: &mut Simulation, fired: Weapon, x: f64, vx: f64, team: Team) -> Shot {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Shot {
         id,
         weapon: fired,
@@ -119,7 +118,7 @@ fn each_weapon_emits_the_correct_shot_costs_one_unit_and_respects_cooldown() {
         }
         match fired.special() {
             Some(special) => assert_eq!(s.tanks[0].ammo.get(special), before.get(special) - 1.0),
-            None => assert_eq!(s.tanks[0].ammo, empty_ammo()),
+            None => assert_eq!(s.tanks[0].ammo, AmmoInventory::default()),
         }
         let after = s.tanks[0].ammo;
         let cooldown = s.tanks[0].cooldown;
@@ -144,7 +143,7 @@ fn standard_remains_unlimited_over_sustained_firing() {
         s.shots.clear();
     }
     assert_eq!(s.shots_fired, 500);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
 }
 
@@ -251,7 +250,7 @@ fn death_respawn_and_reset_clear_inventories_and_snapshots_own_their_inventory_c
     assert_eq!(snapshot.selected_ammo, Weapon::Piercing);
     let (id, team) = (s.tanks[0].id, s.tanks[0].team);
     s.damage_tank(0, 999.0, id, team, None, None);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
     assert_eq!(s.pickups.len(), 0);
     assert_eq!(snapshot.ammo.piercing, 24.0);
@@ -259,7 +258,7 @@ fn death_respawn_and_reset_clear_inventories_and_snapshots_own_their_inventory_c
     select_ammo(&mut s.tanks[0], Some(AmmoSelection::Step(1)));
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
     s.respawn(0, None);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     s.tanks[0].ammo.rocket = 7.0;
     s.tanks[0].selected_ammo = Weapon::Rocket;
     s.reset(None);
@@ -604,7 +603,7 @@ fn bot_roles_select_stocked_ammo_use_standard_on_cover_and_fall_back_after_deple
         bot_command(&mut s, bot, STEP).ammo_selection,
         Some(AmmoSelection::Weapon(Weapon::Standard))
     );
-    s.tanks[bot].ammo = empty_ammo();
+    s.tanks[bot].ammo = AmmoInventory::default();
     s.tanks[bot].ammo.rocket = 1.0;
     s.tanks[bot].selected_ammo = Weapon::Rocket;
     fire_weapon(&mut s, bot);

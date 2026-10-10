@@ -5,7 +5,7 @@ use rapier3d::parry::shape::Cuboid;
 use rapier3d::prelude::{ColliderBuilder, Pose};
 
 use super::data::group;
-use super::math::{Point3, hypot3};
+use super::math::{Point3, Vec2, hypot3};
 use super::physics::{interaction_groups, vector};
 use super::simulation::Simulation;
 use super::tank_dimensions::tank_hull;
@@ -75,6 +75,19 @@ pub fn tank_contact_collider(kind: VehicleKind) -> ColliderBuilder {
         .restitution(0.0)
 }
 
+/// The tank's planar velocity over a tick that ends at `end`; zero for a zero-length tick.
+#[inline]
+pub(crate) fn sweep_velocity(tank: &Tank, end: Point3, frame_delta: f64) -> Vec2 {
+    if frame_delta > 0.0 {
+        Vec2::new(
+            (end.x - tank.previous.x) / frame_delta,
+            (end.z - tank.previous.z) / frame_delta,
+        )
+    } else {
+        Vec2::ZERO
+    }
+}
+
 /// Sweep a shell against the hull, accounting for this tick's tank translation. Callers
 /// testing many shells may pass the live body's current translation read once.
 pub fn tank_hit_time(
@@ -90,16 +103,7 @@ pub fn tank_hit_time(
         return None;
     }
     let end = translation.unwrap_or_else(|| simulation.body_translation(tank.body));
-    let vx = if frame_delta > 0.0 {
-        (end.x - tank.previous.x) / frame_delta
-    } else {
-        0.0
-    };
-    let vz = if frame_delta > 0.0 {
-        (end.z - tank.previous.z) / frame_delta
-    } else {
-        0.0
-    };
+    let Vec2 { x: vx, z: vz } = sweep_velocity(tank, end, frame_delta);
     // Most lanes pass far from most hulls. If the ray's closest approach to the body within
     // the limit stays beyond the box's reach, Rapier could not report a hit either.
     let dx = end.x - vx * (frame_delta - elapsed) - shot.x;

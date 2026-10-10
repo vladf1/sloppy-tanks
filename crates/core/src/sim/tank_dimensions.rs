@@ -5,48 +5,23 @@
 
 use std::sync::OnceLock;
 
-use super::math::Point3;
+use glam::DVec3;
+
 use super::types::VehicleKind;
-use crate::models;
+pub use crate::models::TankDimensions;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TankDimensions {
-    /// Hull bounding-box center, local frame.
-    pub center: Point3,
-    /// Hull bounding-box size (full extents).
-    pub size: Point3,
-    /// Combat launch point: inside the planar hit volume for every chassis.
-    pub muzzle: Point3,
-    /// Render-only launch point; not used for collision queries.
-    pub visual_muzzle: Point3,
-}
-
-fn point(v: glam::DVec3) -> Point3 {
-    Point3::new(v.x, v.y, v.z)
-}
-
-/// Hull bounds in the tank's local frame.
+/// Hull bounds in the tank's local frame, measured once per chassis.
 pub fn tank_hull(kind: VehicleKind) -> &'static TankDimensions {
     static DIMENSIONS: OnceLock<[TankDimensions; 4]> = OnceLock::new();
-    &DIMENSIONS.get_or_init(|| {
-        VehicleKind::ALL.map(|kind| {
-            let measured = models::tank_dimensions(kind);
-            TankDimensions {
-                center: point(measured.center),
-                size: point(measured.size),
-                muzzle: point(measured.muzzle),
-                visual_muzzle: point(measured.visual_muzzle),
-            }
-        })
-    })[kind.index()]
+    &DIMENSIONS.get_or_init(|| VehicleKind::ALL.map(crate::models::tank_dimensions))[kind.index()]
 }
 
-pub fn tank_muzzle(kind: VehicleKind) -> Point3 {
+pub fn tank_muzzle(kind: VehicleKind) -> DVec3 {
     tank_hull(kind).muzzle
 }
 
 /// Render-only launch point; unlike `tank_muzzle`, this is not used for collision queries.
-pub fn tank_visual_muzzle(kind: VehicleKind) -> Point3 {
+pub fn tank_visual_muzzle(kind: VehicleKind) -> DVec3 {
     tank_hull(kind).visual_muzzle
 }
 

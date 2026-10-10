@@ -12,13 +12,10 @@ const BEAM_COUNT: usize = 4;
 
 /// Ends use the increasing world X/Z axis, independent of the model's yaw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct TimberJoin {
-    #[serde(default)]
     pub open_min: bool,
-    #[serde(default)]
     pub open_max: bool,
-    #[serde(default)]
     pub post: bool,
 }
 
@@ -80,41 +77,16 @@ pub struct TimberPart {
 // Manual so render views can refresh a part in place without reallocating its marks.
 impl Clone for TimberPart {
     fn clone(&self) -> Self {
-        let mut part = TimberPart {
-            kind: self.kind,
-            index: 0,
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-            w: 0.0,
-            h: 0.0,
-            d: 0.0,
-            yaw: 0.0,
-            lean: 0.0,
-            color: 0,
-            damage: 0,
-            damage_seed: 0,
-            marks: Vec::with_capacity(self.marks.len()),
-        };
-        part.clone_from(self);
-        part
+        Self {
+            marks: self.marks.clone(),
+            ..*self
+        }
     }
 
     fn clone_from(&mut self, source: &Self) {
-        self.kind = source.kind;
-        self.index = source.index;
-        self.x = source.x;
-        self.y = source.y;
-        self.z = source.z;
-        self.w = source.w;
-        self.h = source.h;
-        self.d = source.d;
-        self.yaw = source.yaw;
-        self.lean = source.lean;
-        self.color = source.color;
-        self.damage = source.damage;
-        self.damage_seed = source.damage_seed;
-        self.marks.clone_from(&source.marks);
+        let mut marks = std::mem::take(&mut self.marks);
+        marks.clone_from(&source.marks);
+        *self = Self { marks, ..*source };
     }
 }
 

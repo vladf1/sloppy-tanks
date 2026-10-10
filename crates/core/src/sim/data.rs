@@ -12,9 +12,8 @@ const BASE_STANDARD_SHELL_SPEED: f64 = 19.2;
 const REFERENCE_TANK_SPEED: f64 = 184.0;
 const REFERENCE_SHELL_SPEED: f64 = 535.0;
 const TANK_PACING_MULTIPLIER: f64 = 1.2;
-pub const KMH_PER_METRE_PER_SECOND: f64 = 3.6;
 
-// Simulation distances use world metres; the selector rounds speeds to km/h.
+// Simulation distances use world metres.
 // V-Tanks 570bf8d: Vanguard 184, standard shell 535; preserve that dodge
 // ratio at our existing 19.2 m/s shell speed, then apply chassis ratios
 // and the tank-only 20% increase, followed by the shared 13% pacing increase.
@@ -23,11 +22,6 @@ const fn reference_speed(multiplier: f64) -> f64 {
         * multiplier
         * TANK_PACING_MULTIPLIER
         * BASE_SPEED_MULTIPLIER
-}
-
-/// `Math.round` for the positive speeds below, usable in constants.
-const fn round_positive(value: f64) -> f64 {
-    (value + 0.5) as i64 as f64
 }
 
 pub const MOVE_ACCELERATION: f64 = 100.0;
@@ -42,10 +36,8 @@ pub const MINE_RADIUS: f64 = 0.5;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VehicleStats {
     pub name: &'static str,
-    pub tag: &'static str,
     pub health: f64,
     pub speed: f64,
-    pub speed_kmh: f64,
     pub mass: f64,
     /// Uniform model scale: real vehicle proportions fitted to the arena's 1.95 m
     /// reference width.
@@ -55,20 +47,16 @@ pub struct VehicleStats {
 
 const fn vehicle_stats(
     name: &'static str,
-    tag: &'static str,
     health: f64,
     speed_multiplier: f64,
     mass: f64,
     scale: f64,
     weapon: Weapon,
 ) -> VehicleStats {
-    let speed = reference_speed(speed_multiplier);
     VehicleStats {
         name,
-        tag,
         health,
-        speed,
-        speed_kmh: round_positive(speed * KMH_PER_METRE_PER_SECOND),
+        speed: reference_speed(speed_multiplier),
         mass,
         scale,
         weapon,
@@ -78,33 +66,23 @@ const fn vehicle_stats(
 // Comparable game sizes; Bruiser anchors the fleet at 1.95 units wide.
 const SCOUT: VehicleStats = vehicle_stats(
     "SKIPPER",
-    "Light scout",
     80.0,
     1.24,
     1.0,
     (3.59 / 2.3) * (1.95 / 3.66),
     Weapon::Standard,
 );
-const BALANCED: VehicleStats = vehicle_stats(
-    "BRUISER",
-    "Balanced tank",
-    100.0,
-    1.0,
-    1.45,
-    1.95 / 2.42,
-    Weapon::Standard,
-);
+const BALANCED: VehicleStats =
+    vehicle_stats("BRUISER", 100.0, 1.0, 1.45, 1.95 / 2.42, Weapon::Standard);
 const HEAVY: VehicleStats = vehicle_stats(
     "BIG RIG",
-    "Heavy tank",
     140.0,
     0.76,
     2.5,
     (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
     Weapon::Standard,
 );
-const HUMVEE: VehicleStats =
-    vehicle_stats("HUNTER", "TOW Humvee", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
+const HUMVEE: VehicleStats = vehicle_stats("HUNTER", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
 
 pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
     match kind {
@@ -117,7 +95,6 @@ pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeaponStats {
-    pub name: &'static str,
     pub interval: f64,
     pub damage: f64,
     pub speed: f64,
@@ -134,7 +111,6 @@ const STANDARD: WeaponStats = WeaponStats {
     unit: "SHELLS",
     per_crate: 0.0,
     carry_limit: f64::INFINITY,
-    name: "Standard shells",
     interval: 0.85,
     damage: 40.0,
     speed: BASE_STANDARD_SHELL_SPEED * BASE_SPEED_MULTIPLIER,
@@ -146,7 +122,6 @@ const SPREAD: WeaponStats = WeaponStats {
     unit: "SPREAD VOLLEYS",
     per_crate: 18.0,
     carry_limit: 36.0,
-    name: "Spread shot",
     interval: 1.1,
     damage: 27.0,
     speed: 17.6 * BASE_SPEED_MULTIPLIER,
@@ -158,7 +133,6 @@ const ROCKET: WeaponStats = WeaponStats {
     unit: "ROCKETS",
     per_crate: 12.0,
     carry_limit: 24.0,
-    name: "Breaching rockets",
     interval: 1.3,
     damage: 65.0,
     speed: 13.6 * BASE_SPEED_MULTIPLIER,
@@ -166,7 +140,6 @@ const ROCKET: WeaponStats = WeaponStats {
     color: 0xff591c,
 };
 const RICOCHET: WeaponStats = WeaponStats {
-    name: "Ricochet shells",
     label: "RICOCHET",
     unit: "RICOCHET SHELLS",
     per_crate: 24.0,
@@ -178,7 +151,6 @@ const RICOCHET: WeaponStats = WeaponStats {
     color: 0xb19afc,
 };
 const PIERCING: WeaponStats = WeaponStats {
-    name: "Piercing shells",
     label: "PIERCING",
     unit: "PIERCING SHELLS",
     per_crate: 24.0,
@@ -190,7 +162,6 @@ const PIERCING: WeaponStats = WeaponStats {
     color: 0x54e6dc,
 };
 const TOW: WeaponStats = WeaponStats {
-    name: "TOW missiles",
     label: "TOW",
     unit: "TOW MISSILES",
     interval: 2.35,
@@ -237,7 +208,6 @@ pub const LASER_DEFENSE: LaserDefense = LaserDefense {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PickupStats {
     pub name: &'static str,
-    pub icon: &'static str,
     pub color: u32,
     pub duration: f64,
 }
@@ -246,55 +216,46 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
     match kind {
         PickupKind::Rapid => PickupStats {
             name: "RAPID FIRE",
-            icon: "»",
             color: 0xffcf54,
             duration: 20.0,
         },
         PickupKind::Spread => PickupStats {
             name: "SPREAD AMMO",
-            icon: "⋔",
             color: SPREAD.color,
             duration: 0.0,
         },
         PickupKind::Rocket => PickupStats {
             name: "ROCKET AMMO",
-            icon: "↑",
             color: ROCKET.color,
             duration: 0.0,
         },
         PickupKind::Ricochet => PickupStats {
             name: "RICOCHET AMMO",
-            icon: "↗",
             color: RICOCHET.color,
             duration: 0.0,
         },
         PickupKind::Piercing => PickupStats {
             name: "PIERCING AMMO",
-            icon: "↟",
             color: PIERCING.color,
             duration: 0.0,
         },
         PickupKind::Shield => PickupStats {
             name: "SHIELD",
-            icon: "◇",
             color: 0x72dbef,
             duration: 20.0,
         },
         PickupKind::Speed => PickupStats {
             name: "SPEED BOOST",
-            icon: "ϟ",
             color: 0xbbe574,
             duration: 20.0,
         },
         PickupKind::Repair => PickupStats {
             name: "REPAIR",
-            icon: "+",
             color: 0x88ddb0,
             duration: 0.0,
         },
         PickupKind::Laser => PickupStats {
             name: "LASER DEFENSE",
-            icon: "✧",
             color: 0x7bfff2,
             duration: LASER_DEFENSE.duration,
         },
@@ -349,29 +310,13 @@ mod tests {
     fn speeds_match_the_typescript_table() {
         // Values printed by the TS `VEHICLES` and `WEAPONS` tables.
         let expected = [
-            (
-                VehicleKind::Scout,
-                11.103161181308407,
-                40.0,
-                0.8316108339272986,
-            ),
-            (
-                VehicleKind::Balanced,
-                8.954162242990652,
-                32.0,
-                0.8057851239669421,
-            ),
-            (
-                VehicleKind::Heavy,
-                6.805163304672895,
-                24.0,
-                0.8577868852459014,
-            ),
-            (VehicleKind::Humvee, 13.61032660934579, 49.0, 0.9),
+            (VehicleKind::Scout, 11.103161181308407, 0.8316108339272986),
+            (VehicleKind::Balanced, 8.954162242990652, 0.8057851239669421),
+            (VehicleKind::Heavy, 6.805163304672895, 0.8577868852459014),
+            (VehicleKind::Humvee, 13.61032660934579, 0.9),
         ];
-        for (kind, speed, speed_kmh, scale) in expected {
+        for (kind, speed, scale) in expected {
             assert_eq!(vehicle(kind).speed, speed);
-            assert_eq!(vehicle(kind).speed_kmh, speed_kmh);
             assert_eq!(vehicle(kind).scale, scale);
         }
         assert_eq!(weapon(Weapon::Standard).speed, 21.695999999999998);

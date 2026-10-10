@@ -254,21 +254,6 @@ impl PickupKind {
         PickupKind::Laser,
     ];
 
-    /// The TypeScript identifier (the serialized name).
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            PickupKind::Spread => "spread",
-            PickupKind::Rocket => "rocket",
-            PickupKind::Ricochet => "ricochet",
-            PickupKind::Piercing => "piercing",
-            PickupKind::Rapid => "rapid",
-            PickupKind::Shield => "shield",
-            PickupKind::Speed => "speed",
-            PickupKind::Repair => "repair",
-            PickupKind::Laser => "laser",
-        }
-    }
-
     pub const fn special_ammo(self) -> Option<SpecialAmmo> {
         match self {
             PickupKind::Spread => Some(SpecialAmmo::Spread),
@@ -354,7 +339,7 @@ pub enum BotMode {
 }
 
 /// Bot memory survives between decisions; steering and recovery update every fixed tick.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Brain {
     pub humvee: Option<HumveeTactics>,
     pub personality: BotPersonality,
@@ -389,7 +374,7 @@ pub struct Brain {
 }
 
 /// Persistent entity identity. The body and colliders are recreated for each life.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Tank {
     pub id: u32,
     pub name: String,
@@ -435,7 +420,7 @@ pub struct Tank {
     pub brain: Brain,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CoverKind {
     Rock,
@@ -450,6 +435,7 @@ pub enum CoverKind {
     Drum,
     Tower,
     Rubble,
+    #[default]
     Boundary,
 }
 
@@ -647,7 +633,7 @@ pub enum FragmentShape {
 }
 
 /// A physical debris piece; bounded by `Simulation::max_fragments`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Fragment {
     pub id: u32,
     pub body: RigidBodyHandle,
@@ -680,19 +666,7 @@ impl Fragment {
             life,
             size,
             color,
-            shape: None,
-            dimensions: None,
-            material: None,
-            source_kind: None,
-            timber_part: None,
-            tower_piece: None,
-            tree_cover_id: None,
-            tree_center_y: None,
-            expires_at: None,
-            created_at: None,
-            wreck: None,
-            part: None,
-            team: None,
+            ..Self::default()
         }
     }
 }

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::f64::consts::PI;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::ammunition::AMMO_ORDER;
+use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::{
     BotPersonality, bot_assignment, bot_profile_for, bot_reload, combat_movement, preferred_ammo,
@@ -155,7 +155,7 @@ fn artillery_needs_crates_and_every_role_preserves_the_player_cadence_edge() {
                     s.tanks[BOT].rapid = rapid;
                     s.tanks[HUMAN].rapid = rapid;
                     assert!(
-                        bot_reload(&s.tanks[BOT], 0.0, None)
+                        bot_reload(&s.tanks[BOT], 0.0, equipped_weapon(&s.tanks[BOT]))
                             > weapon_interval(&s.tanks[HUMAN]) * 1.2,
                         "{role:?} {chosen:?} cadence"
                     );

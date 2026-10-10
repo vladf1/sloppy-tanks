@@ -13,12 +13,11 @@ use super::prediction::HullState;
 use super::replication::{
     BinaryMessage, DecodedFrame, StateMirror, TimedEvent, read_binary_message,
 };
-use super::scene_codec::{
-    ENTITY_FIELDS, ENTITY_TYPES, EVENT_FIELDS, MATCH_FIELDS, json_number, write_event,
-};
+use super::scene_codec::{ENTITY_FIELDS, ENTITY_TYPES, EVENT_FIELDS, MATCH_FIELDS, write_event};
 use super::schema::ReadResult;
 use super::shot_paths::PathEntry;
 use super::wire::{ChangedFields, Field, FieldKind, Slot, WireRecord};
+use crate::sim::math::json_number;
 
 fn value_json(field: &Field, slot: &Slot) -> ReadResult<Value> {
     Ok(match (field.kind, slot) {

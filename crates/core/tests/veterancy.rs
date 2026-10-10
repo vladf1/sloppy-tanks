@@ -141,15 +141,12 @@ fn all_five_weapons_snapshot_rank_damage_and_reload_bonuses_stack_with_rapid_fir
                 refill_ammo(&mut s.tanks[t], special, 1.0);
             }
             let rookie = weapon_interval(&s.tanks[t]);
-            let bot_rookie = bot_reload(&s.tanks[t], 0.0, Some(fired));
+            let bot_rookie = bot_reload(&s.tanks[t], 0.0, fired);
             s.tanks[t].xp = RANKS[3].xp;
             s.tanks[t].rapid = 12.0;
             s.tanks[t].cooldown = 0.0;
             near(weapon_interval(&s.tanks[t]), rookie / 1.2 / 2.0);
-            near(
-                bot_reload(&s.tanks[t], 0.0, Some(fired)),
-                bot_rookie / 1.2 / 2.0,
-            );
+            near(bot_reload(&s.tanks[t], 0.0, fired), bot_rookie / 1.2 / 2.0);
             s.shots.clear();
             fire_weapon(&mut s, t);
             assert_eq!(
@@ -206,8 +203,7 @@ fn mines_snapshot_damage_and_old_ordnance_never_gives_xp_to_dead_owners_or_repla
         move_tank(&mut s, fresh, 0.0, 10.0);
         s.tanks[fresh].protection = 0.0;
         s.world.step();
-        let id = s.next_id;
-        s.next_id += 1;
+        let id = s.allocate_id();
         s.shots.push(Shot {
             id,
             owner: player_id,
@@ -253,8 +249,7 @@ fn mine_and_drum_chains_retain_the_initiating_tanks_xp_and_life_attribution() {
             10.0,
             0,
         ));
-        let id = s.next_id;
-        s.next_id += 1;
+        let id = s.allocate_id();
         s.mines.push(Mine {
             id,
             owner: enemy_id,

@@ -66,8 +66,7 @@ fn column(count: usize) -> Simulation {
 
 /// A standard 40-damage shell owned by the first tank of `team`, or 999 when there is none.
 fn shot(s: &mut Simulation, x: f64, z: f64, vx: f64, vz: f64, team: Team) -> Shot {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Shot {
         id,
         x,
@@ -499,8 +498,7 @@ fn mines_barrels_and_shell_collisions_preserve_distinct_death_causes() {
         let (ally_id, ally_team) = (s.tanks[ALLY].id, s.tanks[ALLY].team);
         match cause {
             DamageCause::Mine => {
-                let id = s.next_id;
-                s.next_id += 1;
+                let id = s.allocate_id();
                 s.mines.push(Mine {
                     id,
                     x: 1.0,

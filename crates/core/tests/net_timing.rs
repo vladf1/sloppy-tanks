@@ -1181,8 +1181,7 @@ fn accelerating_rockets_and_a_steering_missile_follow_their_simulated_flight() {
             fire(sim, Weapon::Rocket, -0.2);
         }
         if tick == 2 {
-            let id = sim.next_id;
-            sim.next_id += 1;
+            let id = sim.allocate_id();
             sim.shots.push(Shot {
                 id,
                 x: -8.0,
@@ -1316,8 +1315,7 @@ fn a_shell_zapped_by_a_laser_defense_stops_drawing_where_the_beam_met_it() {
 #[test]
 fn a_shell_that_sets_off_a_mine_stops_drawing_at_the_mine() {
     let mut sim = range();
-    let id = sim.next_id;
-    sim.next_id += 1;
+    let id = sim.allocate_id();
     let (owner, team) = (sim.tanks[1].id, sim.tanks[1].team);
     sim.mines.push(Mine {
         id,
