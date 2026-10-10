@@ -49,6 +49,7 @@ mod wreck_model;
 mod barrel_debris;
 mod barrel_surfaces;
 mod cover_model;
+mod crate_model;
 pub mod effects_props;
 mod flags;
 mod harbor_models;
@@ -104,6 +105,7 @@ pub use wreck_model::{WreckPart, wreck_model};
 // Cover, trees and props.
 pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
 pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
+pub use crate_model::crate_piece_model;
 pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use pickup_visuals::pickup_cube;

@@ -11,7 +11,9 @@ use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
 };
-use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debris};
+use super::debris_physics::{
+    blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
+};
 use super::hitboxes::{SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
@@ -500,6 +502,15 @@ fn resolve_contact(
             let mine = simulation.mines.remove(mi);
             simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
         }
+        Contact::Debris { fragment: fi } if shatters(&simulation.fragments[fi]) => {
+            // The board bursts; a shell flies on to what lies behind, a rocket goes off.
+            shatter_debris(simulation, fi, &shot);
+            if shot.weapon == Weapon::Rocket {
+                rocket_blast(simulation, &shot);
+            } else {
+                remove = false;
+            }
+        }
         Contact::Debris { fragment: fi } => {
             let fragment = &simulation.fragments[fi];
             let timber = fragment.timber_part.is_some();
@@ -594,7 +605,7 @@ fn resolve_contact(
             if let Some(ci) = cover {
                 if matches!(
                     simulation.covers[ci].kind,
-                    CoverKind::Timber | CoverKind::Tower
+                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
                 ) {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {
@@ -651,6 +662,14 @@ fn resolve_contact(
             );
             impact.cover_kind = chipped.map(|cover| cover.kind);
             impact.height = chipped.map(|cover| cover.h);
+            // A crate's splinters burst from the struck face, back along the shell.
+            if let Some(cover) = chipped.filter(|cover| cover.kind == CoverKind::Cargo) {
+                let y = shot.combat_y();
+                impact.height = Some(y);
+                impact.from = cover
+                    .kick
+                    .map(|kick| Point3::new(shot.x - kick.x, y, shot.z - kick.z));
+            }
             simulation.events.push(impact);
         }
         Contact::Expiry => {}

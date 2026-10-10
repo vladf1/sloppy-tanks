@@ -45,7 +45,7 @@ const PLANK_AVERAGE: u32 = 0xcaa378;
 
 /// The textured wood of a member painted `color`; batching bakes the tint into
 /// vertex colours, so every member shares one material and draw setup.
-fn wood(color: u32) -> Arc<Material> {
+pub(super) fn wood(color: u32) -> Arc<Material> {
     textured(TIMBER_TEXTURE, tint_over(color, PLANK_AVERAGE), 0.03, 0.82)
 }
 
@@ -117,6 +117,19 @@ fn member_mesh(size: DVec3, seed: i32) -> Mesh {
 /// for framing outside the timber walls: the watchtower's posts, braces and deck.
 pub(super) fn timber_member(size: DVec3, seed: i32, color: u32) -> Node {
     shadowed(Arc::new(member_mesh(size, seed)), wood(color))
+}
+
+/// Only the +z face of [`timber_member`] (2 triangles instead of 12), for boards
+/// whose other faces nothing can see.
+pub(super) fn timber_member_face(size: DVec3, seed: i32, color: u32) -> Node {
+    let mut mesh = member_mesh(size, seed);
+    // Faces run x-, x+, y-, y+, z-, z+, four corners and two triangles each.
+    let keep = 20..24;
+    mesh.positions.drain(..keep.start);
+    mesh.normals.drain(..keep.start);
+    mesh.uvs.drain(..keep.start);
+    mesh.indices = Some(vec![0, 1, 2, 0, 2, 3]);
+    shadowed(Arc::new(mesh), wood(color))
 }
 
 /// `timberPartModel(p)`: a batched member with its chips and cracks, reused for

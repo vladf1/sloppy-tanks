@@ -6,6 +6,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::bot_personalities::BotPersonality;
+use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
 use super::humvee_tactics::HumveeTactics;
 pub use super::math::{Point3, Quat4, Vec2};
@@ -520,11 +521,12 @@ pub struct Cover {
     pub color: u32,
     /// Chosen at collapse so rubble stays stable when its model is rebuilt.
     pub debris_seed: Option<f64>,
-    /// Bounded, persistent impact marks in local wall coordinates.
+    /// Bounded, persistent impact marks of a timber wall or a cargo crate, in
+    /// coordinates relative to the cover.
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// Direction of the last hit on a timber wall or the watchtower, which its
-    /// pieces are thrown or topple along when it breaks.
+    /// Direction of the last hit on a timber wall, a cargo crate or the
+    /// watchtower, which its pieces are thrown or topple along when it breaks.
     pub kick: Option<Vec2>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
@@ -647,6 +649,8 @@ pub struct Fragment {
     pub timber_part: Option<TimberPart>,
     /// The watchtower part this piece is drawn as.
     pub tower_piece: Option<TowerPiece>,
+    /// The section of a broken cargo crate this piece is drawn as.
+    pub crate_piece: Option<CratePiece>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
@@ -737,6 +741,10 @@ pub enum SimEventType {
     Ricochet,
     Laser,
     Promotion,
+    /// A shell burst a loose crate section or watchtower piece into splinters and
+    /// flew on: `x`/`z`/`height` where, `size` the piece's longest side, `color` its
+    /// paint, `cover_kind` what it came from and `from` a point back along the shell.
+    Shatter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,7 +778,9 @@ pub struct SimEvent {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<u32>,
-    /// Laser beam origin.
+    /// Where the effect came from: a laser's beam origin, or for a cargo crate's
+    /// impact or destruction a point a metre back along the shell or blast that
+    /// struck it, which its splinters fly away from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<Point3>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -140,16 +140,18 @@ impl ParticleEffects {
         let hurt = event.kind == T::Hurt;
         let explosion = matches!(event.kind, T::Explosion | T::Death | T::Destroy);
         let cover_effect = matches!(event.kind, T::Destroy | T::Impact);
-        let timber =
-            cover_effect && matches!(event.cover_kind, Some(CoverKind::Timber | CoverKind::Cargo));
-        let timber_wall = cover_effect && event.cover_kind == Some(CoverKind::Timber);
+        // A crate's splinters and packing are lit wood (`wood_chips.rs`).
+        if cover_effect && event.cover_kind == Some(CoverKind::Cargo) {
+            return false;
+        }
+        let timber = cover_effect && event.cover_kind == Some(CoverKind::Timber);
         let tree = cover_effect && event.cover_kind == Some(CoverKind::Tree);
         let chip_hit = event.kind == T::Impact && (tree || timber);
         // A felled tree's falling trunk and crown carry the moment; no leaf burst.
         if tree && !chip_hit {
             return false;
         }
-        let style = if timber_wall {
+        let style = if timber {
             &WOOD_HIT
         } else if chip_hit {
             if tree { &TREE_HIT } else { &WOOD_HIT }
@@ -170,7 +172,7 @@ impl ParticleEffects {
             return false;
         }
         // The real beams carry a collapse; add only a hit-sized handful of chips.
-        let count = if timber_wall {
+        let count = if timber {
             style.count as i64 - 2
                 + (random.next_f64() * 5.0).floor() as i64
                 + if explosion { 2 } else { 0 }
@@ -184,7 +186,7 @@ impl ParticleEffects {
             style.count as i64
         };
         let speed = style.speed
-            * if explosion && !tree && !timber_wall {
+            * if explosion && !tree && !timber {
                 event.size.unwrap_or(3.0)
             } else {
                 1.0
@@ -423,12 +425,21 @@ mod tests {
     }
 
     /// `cover-hit-effects.test.ts`, particle part: hits chip, a fatal hit bursts.
-    /// A tree's leaves are the leaf fall's (`leaves.rs`), not particles.
+    /// A tree's leaves are the leaf fall's (`leaves.rs`), and a crate's splinters
+    /// lit wood chips (`wood_chips.rs`), not particles.
     #[test]
-    fn cover_hits_chip_trees_timber_and_cargo() {
+    fn cover_hits_chip_trees_and_timber() {
         let mut random = CosmeticRandom::constant(0.5);
         let chips = |p: &ParticleEffects| p.particles.iter().filter(|q| q.splinter).count();
-        for cover in [CoverKind::Tree, CoverKind::Timber, CoverKind::Cargo] {
+        for kind in [SimEventType::Impact, SimEventType::Destroy] {
+            let mut cargo = ParticleEffects::default();
+            assert!(!cargo.event(&with_cover(kind, CoverKind::Cargo), &mut random));
+            assert!(
+                cargo.particles.is_empty(),
+                "{kind:?}: crate wood is not particles"
+            );
+        }
+        for cover in [CoverKind::Tree, CoverKind::Timber] {
             let mut hit = ParticleEffects::default();
             hit.event(&with_cover(SimEventType::Impact, cover), &mut random);
             assert!(chips(&hit) > 0, "{cover:?} hit chips");

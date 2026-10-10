@@ -10,12 +10,14 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
-    create_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
-    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
+    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
+    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
+    wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
+use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
@@ -371,6 +373,21 @@ enum FragmentLook {
     Piece,
     Wreck(VehicleKind, Team, WreckPart),
     Owned(ModelId, Aabb),
+    /// A crate section's model, which every section of its look shares this round.
+    Section(Aabb),
+}
+
+/// Looks each crate section comes in, so a crate's matching sections differ.
+const CRATE_SECTION_LOOKS: u32 = 3;
+
+/// A crate section's look: the section, its size in whole millimetres (as
+/// replication rounds it), the crate's paint and which of [`CRATE_SECTION_LOOKS`]
+/// it wears.
+type SectionKey = (CratePiece, [i64; 3], u32, u32);
+
+fn section_key(piece: CratePiece, size: DVec3, color: u32, look: u32) -> SectionKey {
+    let millimetres = (size * 1000.0).round().as_i64vec3().to_array();
+    (piece, millimetres, color, look)
 }
 
 struct FragmentView {
@@ -495,6 +512,12 @@ pub struct Presentation {
     covers: HashMap<u32, CoverView>,
     cover_models: HashMap<String, CoverModelEntry>,
     fragments: HashMap<u32, FragmentView>,
+    /// Crate section models built this round, shared by every section that looks
+    /// the same: walls split at a few places, so sizes repeat between crates.
+    sections: HashMap<SectionKey, BoundedModel>,
+    /// Section looks this round's crates can break into, still to build; one is
+    /// built a frame, so a crate breaking builds none.
+    section_warmups: Vec<SectionKey>,
     pickups: HashMap<u32, PickupView>,
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
@@ -563,6 +586,8 @@ impl Presentation {
             covers: HashMap::new(),
             cover_models: HashMap::new(),
             fragments: HashMap::new(),
+            sections: HashMap::new(),
+            section_warmups: Vec::new(),
             pickups: HashMap::new(),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
@@ -764,6 +789,7 @@ impl Presentation {
         self.covers.clear();
         self.cover_models.clear();
         self.fragments.clear();
+        self.sections.clear();
         self.pickups.clear();
         self.mines.clear();
         self.pickup_effects.clear();
@@ -776,6 +802,7 @@ impl Presentation {
         self.player_was_alive = false;
         self.effects.reset(&mut self.renderer);
         self.add_covers(&state.covers);
+        self.queue_sections(&state.covers);
         for tank in &state.tanks {
             self.add_tank(tank);
         }
@@ -1059,6 +1086,49 @@ impl Presentation {
     /// combined model (a joint each), so their shadows merge into a couple of
     /// draws; covers sharing a look stay instanced, movable ones get their own
     /// instance. A combined cover that changes its look moves out to its own.
+    /// Queue every section look this round's crates can break into: walls and lids
+    /// split in a few patterns only, so each size of crate has a few dozen.
+    fn queue_sections(&mut self, covers: &[RenderCover]) {
+        self.section_warmups.clear();
+        let mut crates = Vec::new();
+        for cover in covers.iter().filter(|cover| cover.kind == CoverKind::Cargo) {
+            let shape = [cover.w, cover.d, cover.h].map(f64::to_bits);
+            if crates.contains(&(shape, cover.color)) {
+                continue;
+            }
+            crates.push((shape, cover.color));
+            for (piece, size) in crate_section_looks(cover.w, cover.d, cover.h) {
+                for look in 0..CRATE_SECTION_LOOKS {
+                    let key = section_key(piece, DVec3::from_array(size), cover.color, look);
+                    if !self.section_warmups.contains(&key) {
+                        self.section_warmups.push(key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Build one queued crate section look.
+    fn warm_section(&mut self) {
+        if let Some(key) = self.section_warmups.pop() {
+            self.section(key);
+        }
+    }
+
+    /// A crate section look's shared model, built on first use.
+    fn section(&mut self, key: SectionKey) -> &BoundedModel {
+        let renderer = &mut self.renderer;
+        self.sections.entry(key).or_insert_with(|| {
+            let (piece, millimetres, color, look) = key;
+            let size = DVec3::from_array(millimetres.map(|mm| mm as f64 / 1000.0));
+            let node = crate_piece_model(piece, size, color, look);
+            BoundedModel {
+                bounds: node_bounds(&node, DMat4::IDENTITY),
+                model: renderer.add_model(&node, Lifetime::Round),
+            }
+        })
+    }
+
     fn add_covers(&mut self, covers: &[RenderCover]) {
         let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
         let mut looks: HashMap<String, usize> = HashMap::new();
@@ -1364,6 +1434,7 @@ impl Presentation {
         self.update_covers(state);
         self.update_pickups(state, dt);
         self.update_fragments(state);
+        self.warm_section();
         self.update_mines(state);
         self.effects
             .update(&mut self.renderer, state, alpha, dt, self.time);
@@ -1730,7 +1801,7 @@ impl Presentation {
             let rebuild = self.covers.get(&cover.id).is_none_or(|view| {
                 cover.alive
                     && (view.stage != stage
-                        || (cover.kind == CoverKind::Timber
+                        || (matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo)
                             && view.hits != cover.timber_hits.len()))
             });
             if rebuild {
@@ -2015,13 +2086,15 @@ impl Presentation {
                     self.renderer
                         .set_tint(view.instance, hex_to_linear(fragment.color));
                 }
-                FragmentLook::Wreck(..) | FragmentLook::Owned(..) => {
+                FragmentLook::Wreck(..) | FragmentLook::Owned(..) | FragmentLook::Section(..) => {
                     let (scale, bounds) = match &view.look {
                         FragmentLook::Wreck(kind, team, part) => (
                             vehicle(*kind).scale as f32,
                             self.library.wrecks[&(*kind, *team, *part)].bounds,
                         ),
-                        FragmentLook::Owned(_, bounds) => (1.0, *bounds),
+                        FragmentLook::Owned(_, bounds) | FragmentLook::Section(bounds) => {
+                            (1.0, *bounds)
+                        }
                         FragmentLook::Piece => unreachable!("handled above"),
                     };
                     let scale = Vec3::splat(scale);
@@ -2054,13 +2127,18 @@ impl Presentation {
     }
 
     /// A physical debris view: an instanced piece, a wreck part, a timber member,
-    /// a watchtower piece or a falling crown.
+    /// a watchtower piece, a section of a crate or a falling crown.
     fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
             owned_look(&mut self.renderer, &timber_part_model(part))
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
             owned_look(&mut self.renderer, &node)
+        } else if let (Some(piece), Some(size)) = (fragment.crate_piece, fragment.dimensions) {
+            let size = DVec3::new(size.x, size.y, size.z);
+            let look = fragment.id % CRATE_SECTION_LOOKS;
+            let section = self.section(section_key(piece, size, fragment.color, look));
+            (section.model, FragmentLook::Section(section.bounds))
         } else if let Some(tree) = fragment.tree_cover_id {
             let view = self.covers.get(&tree)?;
             let entry = self.cover_models.get(&view.key)?;
