@@ -244,7 +244,7 @@ impl Presentation {
         inspection.mines = self.mines.len();
         inspection.branches = self.branches.len();
         inspection.pickup_effects = self.pickup_effects.len();
-        let laser = &self.effects.systems().laser;
+        let laser = &self.effects.systems.laser;
         inspection.laser_lenses = laser.lens.len();
         inspection.laser_cores = laser.core.len();
         inspection.laser_beams = laser.beams();

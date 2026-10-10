@@ -36,25 +36,19 @@ pub use view::{
     PresentationStats, ReticleInspection, TankInspection, ViewInspection,
 };
 
-use crate::effects::EffectDefinition;
+use crate::effects::{EffectDefinition, effect};
 
 /// Flag cloth rippling in the arena breeze (`flags.ts`).
-pub const FLAG_CLOTH: EffectDefinition = EffectDefinition {
-    name: models::FLAG_CLOTH_EFFECT,
-    wgsl: include_str!("shaders/flag_cloth.wgsl"),
-    attributes: &[],
-    shadow_fade: false,
-    still_shadow: false,
-};
+pub const FLAG_CLOTH: EffectDefinition = effect(
+    models::FLAG_CLOTH_EFFECT,
+    include_str!("shaders/flag_cloth.wgsl"),
+);
 
 /// The pickup refill arc growing back segment by segment.
-pub const PICKUP_REFILL: EffectDefinition = EffectDefinition {
-    name: models::PICKUP_REFILL_EFFECT,
-    wgsl: include_str!("shaders/pickup_refill.wgsl"),
-    attributes: &[],
-    shadow_fade: false,
-    still_shadow: false,
-};
+pub const PICKUP_REFILL: EffectDefinition = effect(
+    models::PICKUP_REFILL_EFFECT,
+    include_str!("shaders/pickup_refill.wgsl"),
+);
 
 /// Effects presentation registers before building its models.
 pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_REFILL];
@@ -85,27 +79,14 @@ impl CosmeticRandom {
 mod tests {
     use super::*;
     use crate::effects::EffectRegistry;
-    use crate::shader::webgl_check::check_variant;
-    use crate::shader::{Pass, ShaderKey};
+    use crate::shader::webgl_check::validate_effect;
 
     #[test]
     fn presentation_effects_are_valid_wgsl() {
         let mut effects = EffectRegistry::default();
         for effect in PRESENTATION_EFFECTS {
             let id = effects.register(effect);
-            for pass in [Pass::Main, Pass::Shadow] {
-                for (alpha_test, lit) in [(false, true), (true, true), (false, false)] {
-                    let key = ShaderKey {
-                        pass,
-                        lit,
-                        alpha_test,
-                        receive_shadow: lit,
-                        effect: id,
-                        ..ShaderKey::default()
-                    };
-                    check_variant(effect.name, &key, &effects);
-                }
-            }
+            validate_effect(&effects, id);
         }
     }
 

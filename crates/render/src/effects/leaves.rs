@@ -8,7 +8,7 @@ use std::f64::consts::TAU;
 use glam::{Quat, Vec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::TreeFoliage;
-use sloppy_core::sim::{CoverKind, SimEvent, SimEventType};
+use sloppy_core::sim::{SimEvent, SimEventType};
 
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
@@ -149,18 +149,13 @@ impl LeafFall {
         self.leaves.is_empty()
     }
 
-    /// Shake leaves from `crown` for a tree hit or felling; other events shed none.
-    pub fn event(&mut self, event: &SimEvent, crown: Option<&Crown>, random: &mut CosmeticRandom) {
-        if event.cover_kind != Some(CoverKind::Tree) {
-            return;
-        }
+    /// Shake leaves from `crown` for a hit on its tree or its felling; other event
+    /// kinds shed none.
+    pub fn event(&mut self, event: &SimEvent, crown: &Crown, random: &mut CosmeticRandom) {
         let (count, burst) = match event.kind {
             SimEventType::Impact => (HIT_LEAVES, [0.4, 1.4]),
             SimEventType::Destroy => (FELL_LEAVES, [0.2, 0.7]),
             _ => return,
-        };
-        let Some(crown) = crown else {
-            return;
         };
         let foliage = &crown.foliage;
         let count = if foliage.conifer {
@@ -293,26 +288,14 @@ mod tests {
     }
 
     fn tree_event(kind: SimEventType) -> SimEvent {
-        let mut event = SimEvent::at(kind, 0.4, 1.0);
-        event.cover_kind = Some(CoverKind::Tree);
-        event
+        SimEvent::at(kind, 0.4, 1.0)
     }
 
     #[test]
     fn hits_and_fellings_shed_leaves_that_drift_down_land_and_go() {
         let mut random = CosmeticRandom::seeded(7);
         let mut fall = LeafFall::default();
-        fall.event(&tree_event(SimEventType::Impact), None, &mut random);
-        assert!(fall.is_empty(), "no crown, no leaves");
-        let mut timber = tree_event(SimEventType::Impact);
-        timber.cover_kind = Some(CoverKind::Timber);
-        fall.event(&timber, Some(&crown()), &mut random);
-        assert!(fall.is_empty());
-        fall.event(
-            &tree_event(SimEventType::Impact),
-            Some(&crown()),
-            &mut random,
-        );
+        fall.event(&tree_event(SimEventType::Impact), &crown(), &mut random);
         assert_eq!(fall.len(), HIT_LEAVES);
         // Drag holds the fall to a drift: well under a free fall's speed.
         for _ in 0..30 {
@@ -348,11 +331,7 @@ mod tests {
         let mut random = CosmeticRandom::seeded(3);
         let mut fall = LeafFall::default();
         for _ in 0..40 {
-            fall.event(
-                &tree_event(SimEventType::Destroy),
-                Some(&crown()),
-                &mut random,
-            );
+            fall.event(&tree_event(SimEventType::Destroy), &crown(), &mut random);
         }
         assert_eq!(fall.len(), MAX_LEAVES);
         fall.update(1.0 / 60.0, &mut random);

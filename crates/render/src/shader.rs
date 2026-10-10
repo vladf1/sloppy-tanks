@@ -543,6 +543,33 @@ pub(crate) mod webgl_check {
         validate(&format!("{label} {key:?}"), &shader_source(key, effects));
         translate_variant(label, key, effects);
     }
+
+    /// Check effect `id` for both builds in the variants its materials use: basic
+    /// and lit, with and without an alpha test, and the shadow pass.
+    pub fn validate_effect(effects: &EffectRegistry, id: u16) {
+        let effect = effects.get(id).expect("a registered effect");
+        for (lit, alpha_test) in [(false, false), (true, false), (true, true), (false, true)] {
+            let key = ShaderKey {
+                pass: Pass::Main,
+                lit,
+                alpha_test,
+                receive_shadow: lit,
+                effect: id,
+                ..ShaderKey::default()
+            };
+            check_variant(effect.name, &key, effects);
+        }
+        for alpha_test in [false, true] {
+            let shadow = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test,
+                shadow_fade: effect.shadow_fade,
+                effect: id,
+                ..ShaderKey::default()
+            };
+            check_variant(effect.name, &shadow, effects);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -4,5 +4,5 @@
 // marks freeze with the simulation while paused.
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let age = material.params[0].x - f.instance_data.x;
-    (*s).opacity = f.instance_data.y * (1.0 - smoothstep(4.0, 24.0, age)) * 0.38;
+    (*s).opacity *= f.instance_data.y * (1.0 - smoothstep(4.0, 24.0, age));
 }

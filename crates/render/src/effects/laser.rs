@@ -54,6 +54,10 @@ impl Default for LaserVisuals {
 impl LaserVisuals {
     pub fn reset(&mut self) {
         self.beams.clear();
+        self.clear_layers();
+    }
+
+    fn clear_layers(&mut self) {
         for layer in [
             &mut self.halo,
             &mut self.core,
@@ -88,14 +92,7 @@ impl LaserVisuals {
     }
 
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64) {
-        for layer in [
-            &mut self.halo,
-            &mut self.core,
-            &mut self.mount,
-            &mut self.lens,
-        ] {
-            layer.clear();
-        }
+        self.clear_layers();
         let playing = state.match_state.phase == MatchPhase::Playing;
         self.beams.retain_mut(|beam| {
             if playing {

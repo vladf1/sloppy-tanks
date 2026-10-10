@@ -7,11 +7,12 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Vec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::Material;
 
 use crate::draw_list::InstanceRecord;
+use crate::presentation::posing::euler_xyz;
 
 /// Upload lists longer than this collapse into one covering range; effects
 /// append one span and relocate a few slots per frame.
@@ -33,18 +34,29 @@ pub struct PoolDesc {
 }
 
 impl PoolDesc {
-    /// An unshadowed, reflected pool, like the game's effect InstancedMeshes.
+    /// A [`pool`] with a mesh and material of its own.
     pub fn new(label: &'static str, mesh: Mesh, material: Material, capacity: usize) -> Self {
-        Self {
-            label,
-            mesh: Arc::new(mesh),
-            material: Arc::new(material),
-            capacity: capacity as u32,
-            render_order: 0,
-            cast_shadow: false,
-            receive_shadow: false,
-            reflected: true,
-        }
+        pool(label, &Arc::new(mesh), &Arc::new(material), capacity)
+    }
+}
+
+/// An unshadowed, reflected pool, like the game's effect InstancedMeshes. Pools
+/// given the same `mesh` or `material` share it.
+pub fn pool(
+    label: &'static str,
+    mesh: &Arc<Mesh>,
+    material: &Arc<Material>,
+    capacity: usize,
+) -> PoolDesc {
+    PoolDesc {
+        label,
+        mesh: mesh.clone(),
+        material: material.clone(),
+        capacity: capacity as u32,
+        render_order: 0,
+        cast_shadow: false,
+        receive_shadow: false,
+        reflected: true,
     }
 }
 
@@ -103,11 +115,6 @@ impl PoolBuffer {
         true
     }
 
-    pub fn set(&mut self, slot: usize, record: InstanceRecord) {
-        self.records[slot] = record;
-        self.mark(slot as u32..slot as u32 + 1);
-    }
-
     /// Remove `slot` by moving the last record into it, keeping one dense draw.
     pub fn swap_remove(&mut self, slot: usize) {
         self.records.swap_remove(slot);
@@ -156,29 +163,12 @@ impl PoolBuffer {
 
 /// Three's `Object3D` pose with an XYZ Euler rotation, as `updateMatrix` builds it.
 pub fn pose(position: Vec3, euler: Vec3, scale: Vec3) -> Mat4 {
-    Mat4::from_scale_rotation_translation(scale, euler_xyz(euler), position)
-}
-
-/// Three's default `Euler` order: R = Rx · Ry · Rz.
-pub fn euler_xyz(euler: Vec3) -> Quat {
-    Quat::from_rotation_x(euler.x) * Quat::from_rotation_y(euler.y) * Quat::from_rotation_z(euler.z)
+    Mat4::from_scale_rotation_translation(scale, euler_xyz(euler.x, euler.y, euler.z), position)
 }
 
 /// A record with a linear tint (rgb multiplies the material color, a is opacity).
 pub fn record(world: Mat4, tint: [f32; 4], data: [f32; 4]) -> InstanceRecord {
     InstanceRecord::new(&world, tint, data)
-}
-
-/// `THREE.MathUtils.smoothstep(x, min, max)`.
-pub fn smoothstep(x: f64, min: f64, max: f64) -> f64 {
-    if x <= min {
-        return 0.0;
-    }
-    if x >= max {
-        return 1.0;
-    }
-    let t = (x - min) / (max - min);
-    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
@@ -234,7 +224,7 @@ mod tests {
         }
         pool.take_dirty(|_, _| {});
         for slot in (0..40).step_by(4) {
-            pool.set(slot, at(0.0));
+            pool.mark(slot..slot + 1);
         }
         // The ninth range collapsed the first nine; the tenth starts a new list.
         assert_eq!(pool.dirty(), [0..33, 36..37]);
@@ -242,11 +232,9 @@ mod tests {
 
     #[test]
     fn euler_order_matches_three() {
-        let q = euler_xyz(Vec3::new(0.3, 0.5, 0.7));
+        let posed = pose(Vec3::ZERO, Vec3::new(0.3, 0.5, 0.7), Vec3::ONE);
         let m =
             Mat4::from_rotation_x(0.3) * Mat4::from_rotation_y(0.5) * Mat4::from_rotation_z(0.7);
-        assert!(Mat4::from_quat(q).abs_diff_eq(m, 1e-6));
-        assert_eq!(smoothstep(0.5, 0.0, 1.0), 0.5);
-        assert_eq!(smoothstep(-1.0, 0.0, 1.0), 0.0);
+        assert!(posed.abs_diff_eq(m, 1e-6));
     }
 }

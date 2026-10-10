@@ -564,7 +564,7 @@ impl Game {
     /// What every entity's view shows after the last frame (`Presentation::inspect`).
     pub fn debug_view_json(&mut self) -> String {
         let inspection = self.view.inspect();
-        let effects = self.view.effects.stats();
+        let effects = self.view.effects.systems.stats();
         let v3 = |v: glam::Vec3| [v.x, v.y, v.z];
         let reticle = &inspection.reticle;
         json!({

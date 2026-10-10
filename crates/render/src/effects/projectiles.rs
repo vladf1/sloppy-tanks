@@ -4,15 +4,15 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec3};
 use sloppy_core::geometry::{
     ExtrudeOptions, Mesh, Path, Shape, box_geometry, cone_geometry, cylinder_geometry,
     extrude_geometry, icosahedron_geometry, merge_geometries, sphere_geometry, torus_geometry,
 };
+use sloppy_core::sim::Weapon;
 use sloppy_core::sim::ammunition::PROJECTILE_ORDER;
 use sloppy_core::sim::data::{STEP, TEAM_COLORS, weapon};
 use sloppy_core::sim::render_state::RenderShot;
-use sloppy_core::sim::{Team, Weapon};
 
 use super::pool::{PoolBuffer, record};
 use crate::color::hex_to_linear;
@@ -119,16 +119,15 @@ fn four_fins(parts: &mut Vec<(Mesh, u32)>, color: u32) {
 /// The motor's flame: a plume from the nozzle, white-hot at its root through
 /// yellow and orange to a red tip, unlit so it glows.
 fn rocket_exhaust() -> Mesh {
-    const ROOT: f64 = FLAME_ROOT;
     const LENGTH: f64 = 1.05;
     let mut cone = point(0.21, LENGTH, 0.0);
     cone.rotate_y(PI)
-        .translate(0.0, 0.0, -(ROOT + LENGTH / 2.0));
+        .translate(0.0, 0.0, -(FLAME_ROOT + LENGTH / 2.0));
     let mut mesh = painted(vec![(cone, 0xff671c)]);
     let stops = FLAME_STOPS;
     for (color, position) in mesh.colors.iter_mut().zip(&mesh.positions) {
         // Hot colour gives way to orange early: the root is the cone's widest part.
-        let t = ((-f64::from(position[2]) - ROOT) / LENGTH)
+        let t = ((-f64::from(position[2]) - FLAME_ROOT) / LENGTH)
             .clamp(0.0, 1.0)
             .sqrt()
             * 3.0;
@@ -283,11 +282,19 @@ fn batch_index(kind: Weapon) -> usize {
         .expect("every munition has a batch")
 }
 
-impl ProjectileVisuals {
-    pub fn batch(&self, kind: Weapon) -> &ProjectileBatch {
-        &self.batches[batch_index(kind)]
-    }
+/// Where a shot is drawn: `alpha` places it between its previous and current
+/// physics pose (straight flight within one tick), so shells stay level with the
+/// interpolated tanks that fired them.
+pub fn shot_position(shot: &RenderShot, alpha: f64) -> Vec3 {
+    let behind = (1.0 - alpha.clamp(0.0, 1.0)) * STEP;
+    Vec3::new(
+        (shot.x - shot.vx * behind) as f32,
+        shot.visual_y.or(shot.y).unwrap_or(1.0) as f32,
+        (shot.z - shot.vz * behind) as f32,
+    )
+}
 
+impl ProjectileVisuals {
     pub fn reset(&mut self) {
         for batch in &mut self.batches {
             batch.body.clear();
@@ -298,19 +305,12 @@ impl ProjectileVisuals {
         }
     }
 
-    /// Rebuild every layer from the shots. `alpha` places each shot between its
-    /// previous and current physics pose (straight flight within one tick), so
-    /// shells stay level with the interpolated tanks that fired them.
+    /// Rebuild every layer from the shots, placed by [`shot_position`].
     pub fn update(&mut self, shots: &[RenderShot], time: f64, alpha: f64) {
         self.reset();
-        let behind = (1.0 - alpha.clamp(0.0, 1.0)) * STEP;
         for shot in shots.iter().take(PROJECTILE_CAPACITY) {
             let batch = &mut self.batches[batch_index(shot.weapon)];
-            let position = Vec3::new(
-                (shot.x - shot.vx * behind) as f32,
-                shot.visual_y.or(shot.y).unwrap_or(1.0) as f32,
-                (shot.z - shot.vz * behind) as f32,
-            );
+            let position = shot_position(shot, alpha);
             let spin = if shot.weapon == Weapon::Ricochet {
                 time * RICOCHET_SPIN + f64::from(shot.id)
             } else {
@@ -319,10 +319,7 @@ impl ProjectileVisuals {
             let yaw = shot.vx.atan2(shot.vz) + spin;
             let world = Mat4::from_translation(position) * Mat4::from_rotation_y(yaw as f32);
             batch.body.push(record(world, [1.0; 4], [0.0; 4]));
-            let team = self.team_colors[match shot.team {
-                Team::Blue => 0,
-                Team::Red => 1,
-            }];
+            let team = self.team_colors[shot.team.index()];
             batch.team.push(record(world, team, [0.0; 4]));
             if let Some(exhaust) = &mut batch.exhaust {
                 // An attached flame; `rocket_smoke` lays the trail behind it.
@@ -345,21 +342,23 @@ impl ProjectileVisuals {
     }
 }
 
-/// Planar bounds (x width, z length) of a mesh, for the compactness check.
-pub fn footprint(mesh: &Mesh) -> Vec2 {
-    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-    for p in &mesh.positions {
-        let v = Vec2::new(p[0], p[2]);
-        min = min.min(v);
-        max = max.max(v);
-    }
-    max - min
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
+    use sloppy_core::sim::Team;
     use sloppy_core::sim::ammunition::AMMO_ORDER;
+
+    /// Planar bounds (x width, z length) of a mesh.
+    fn footprint(mesh: &Mesh) -> Vec2 {
+        let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for p in &mesh.positions {
+            let v = Vec2::new(p[0], p[2]);
+            min = min.min(v);
+            max = max.max(v);
+        }
+        max - min
+    }
 
     fn shot(id: u32, kind: Weapon, team: Team, x: f64, z: f64) -> RenderShot {
         RenderShot {
@@ -417,7 +416,7 @@ mod tests {
             );
         }
         // Instances follow shot order within a batch, so team colors follow teams.
-        let standard = &visuals.batch(Weapon::Standard).team;
+        let standard = &visuals.batches[batch_index(Weapon::Standard)].team;
         for (index, hex) in TEAM_COLORS.iter().enumerate() {
             let [r, g, b] = hex_to_linear(*hex);
             assert_eq!(standard.records()[index].tint, [r, g, b, 1.0]);
@@ -427,10 +426,11 @@ mod tests {
     #[test]
     fn instances_sit_at_the_shot_position_facing_its_velocity() {
         let mut visuals = ProjectileVisuals::default();
+        let batch = batch_index(Weapon::Piercing);
         let mut piercing = shot(1, Weapon::Piercing, Team::Blue, 3.0, -4.0);
         piercing.visual_y = Some(1.4);
         visuals.update(&[piercing], 0.0, 1.0);
-        let world = visuals.batch(Weapon::Piercing).body.records()[0].world();
+        let world = visuals.batches[batch].body.records()[0].world();
         let (_, rotation, position) = world.to_scale_rotation_translation();
         assert!(
             position.distance(Vec3::new(3.0, 1.4, -4.0)) < 1e-6,
@@ -441,7 +441,7 @@ mod tests {
         assert!((forward.x.atan2(forward.z) - expected).abs() < 1e-6);
         // Between ticks the shell sits back along its flight, level with the tanks.
         visuals.update(&[piercing], 0.0, 0.5);
-        let world = visuals.batch(Weapon::Piercing).body.records()[0].world();
+        let world = visuals.batches[batch].body.records()[0].world();
         let back = world.w_axis.truncate();
         let expected = Vec3::new(
             (3.0 - 12.0 * 0.5 * STEP) as f32,

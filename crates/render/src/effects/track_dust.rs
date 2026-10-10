@@ -3,7 +3,8 @@
 //! time only, so it freezes while paused and between rounds.
 
 use glam::{Mat4, Vec3};
-use sloppy_core::sim::data::{ARENA, vehicle};
+use sloppy_core::models::is_village_dirt;
+use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::maps::GroundKind;
 use sloppy_core::sim::math::angle_delta;
 use sloppy_core::sim::{MatchPhase, RenderState, VehicleKind};
@@ -11,6 +12,7 @@ use sloppy_core::sim::{MatchPhase, RenderState, VehicleKind};
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use super::track_gravel::TrackGravel;
+use super::tracks::{AIRBORNE_HEIGHT, TELEPORT_DISTANCE, TELEPORT_TURN};
 use crate::color::hex_to_linear;
 
 pub const TRACK_DUST_CAPACITY: usize = 384;
@@ -18,65 +20,7 @@ pub const TRACK_DUST_CAPACITY: usize = 384;
 const MAX_STEP: f64 = 0.1;
 /// Contact speeds (m/s) below this raise no dust.
 const MIN_CONTACT_SPEED: f64 = 1.5;
-const TELEPORT_DISTANCE: f64 = 5.0;
-const TELEPORT_TURN: f64 = 0.8;
-const AIRBORNE_HEIGHT: f64 = 1.25;
 const GRAVEL_COOLDOWN: f64 = 0.12;
-
-// `village-roads.ts`: the dirt roads' footprints and grass-blended shoulder.
-const ROAD_SHOULDER: f64 = 0.7;
-struct Road {
-    x: f64,
-    z: f64,
-    w: f64,
-    d: f64,
-}
-const VILLAGE_ROADS: [Road; 6] = [
-    Road {
-        x: -52.0,
-        z: 0.0,
-        w: 10.0,
-        d: ARENA * 2.0 - 2.0,
-    },
-    Road {
-        x: 0.0,
-        z: 0.0,
-        w: 18.0,
-        d: ARENA * 2.0 - 2.0,
-    },
-    Road {
-        x: 52.0,
-        z: 0.0,
-        w: 10.0,
-        d: ARENA * 2.0 - 2.0,
-    },
-    Road {
-        x: 0.0,
-        z: -38.0,
-        w: ARENA * 2.0 - 2.0,
-        d: 8.0,
-    },
-    Road {
-        x: 0.0,
-        z: 0.0,
-        w: ARENA * 2.0 - 2.0,
-        d: 12.0,
-    },
-    Road {
-        x: 0.0,
-        z: 38.0,
-        w: ARENA * 2.0 - 2.0,
-        d: 8.0,
-    },
-];
-
-/// Dust starts on the solid dirt, leaving the grass-blended shoulders quiet.
-pub fn is_village_dirt(x: f64, z: f64) -> bool {
-    VILLAGE_ROADS.iter().any(|road| {
-        (x - road.x).abs() <= road.w / 2.0 - ROAD_SHOULDER
-            && (z - road.z).abs() <= road.d / 2.0 - ROAD_SHOULDER
-    })
-}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Puff {
@@ -108,8 +52,6 @@ pub struct TrackDust {
     /// by scanning than by hashing their ids every frame.
     poses: Vec<(u32, Pose)>,
     previous_time: Option<f64>,
-    /// Linear dust color of the current map.
-    color: [f32; 3],
 }
 
 impl Default for TrackDust {
@@ -120,7 +62,6 @@ impl Default for TrackDust {
             puffs: Vec::with_capacity(TRACK_DUST_CAPACITY),
             poses: Vec::new(),
             previous_time: None,
-            color: hex_to_linear(0xe1caa2),
         }
     }
 }
@@ -156,16 +97,14 @@ impl TrackDust {
         self.gravel.update(elapsed);
         let theme = state.map_theme.as_str();
         let quarry = theme == "quarry";
-        let harbor = theme == "harbor";
         let village = theme == "village";
         let grass_floor = state.map_floor == Some(GroundKind::DryGrass);
-        self.color = hex_to_linear(if quarry {
-            0xd9bc8b
-        } else if harbor {
-            0xaeb0ab
-        } else {
-            0xe1caa2
-        });
+        // Per map: dust color, puff spacing (m, times the vehicle scale) and peak opacity.
+        let (color, spacing, peak) = match theme {
+            "quarry" => (0xd9bc8b, 1.0, 0.46),
+            "harbor" => (0xaeb0ab, 3.0, 0.12),
+            _ => (0xe1caa2, 2.1, 0.38),
+        };
         self.puffs.retain_mut(|puff| {
             puff.life -= elapsed;
             if puff.life <= 0.0 {
@@ -219,13 +158,7 @@ impl TrackDust {
             // Use the faster of translation and belt travel during a pivot, not
             // both added: turns stir the same surface, they do not multiply dust.
             let contact_travel = distance.max(turn.abs() * scale);
-            let spacing = if quarry {
-                1.0
-            } else if harbor {
-                3.0
-            } else {
-                2.1
-            } * scale;
+            let spacing = spacing * scale;
             next.gravel_cooldown -= dt;
             if elapsed > MAX_STEP
                 || distance > TELEPORT_DISTANCE
@@ -293,15 +226,8 @@ impl TrackDust {
             next.heading = tank.heading;
             self.poses[slot].1 = next;
         }
-        let peak = if quarry {
-            0.46
-        } else if harbor {
-            0.12
-        } else {
-            0.38
-        };
         self.records.clear();
-        let [r, g, b] = self.color;
+        let [r, g, b] = hex_to_linear(color);
         for puff in &self.puffs {
             let age = 1.0 - puff.life / puff.max;
             let size = (puff.size * (0.7 + age * 1.8)) as f32;

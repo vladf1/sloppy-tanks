@@ -689,7 +689,7 @@ impl Game {
     pub fn stats_json(&mut self) -> String {
         let render = self.view.renderer.stats();
         let view = self.view.stats();
-        let effects = self.view.effects.stats();
+        let effects = self.view.effects.systems.stats();
         let counts = self.sim.snapshot().counts;
         let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
         for (_, body) in self.sim.world.bodies.iter() {

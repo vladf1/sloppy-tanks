@@ -835,7 +835,7 @@ impl Presentation {
         self.hit_until.clear();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
-        self.effects.reset(&mut self.renderer, state);
+        self.effects.reset(&mut self.renderer);
         self.add_covers(&state.covers);
         for tank in &state.tanks {
             self.add_tank(tank);
@@ -1241,7 +1241,7 @@ impl Presentation {
         ) {
             return;
         }
-        self.effects.event(event);
+        self.effects.systems.event(event);
         if event.cover_kind == Some(CoverKind::Tree) {
             self.tree_event(event);
         }
@@ -1296,7 +1296,7 @@ impl Presentation {
         let Some(tree) = tree else {
             return;
         };
-        self.effects.shed_leaves(event, &tree.leaves);
+        self.effects.systems.shed_leaves(event, &tree.leaves);
         if event.kind == SimEventType::Impact {
             // The crown leans away from the shell first.
             let push = Vec3::new(
@@ -1440,13 +1440,8 @@ impl Presentation {
         self.update_pickups(state, dt);
         self.update_fragments(state);
         self.update_mines(state);
-        self.effects.update(
-            &mut self.renderer,
-            state,
-            alpha as f32,
-            dt as f32,
-            self.time,
-        );
+        self.effects
+            .update(&mut self.renderer, state, alpha, dt, self.time);
         // A destroyed player in first person keeps the view without aiming, and
         // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;

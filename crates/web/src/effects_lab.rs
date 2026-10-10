@@ -14,7 +14,7 @@ use sloppy_core::sim::maps::GroundKind;
 use sloppy_core::sim::render_state::{RenderShot, RenderTank};
 use sloppy_core::sim::{MatchPhase, Point3, RenderState, SimEvent, Team, Vec2, VehicleKind};
 use sloppy_render::camera::PerspectiveCamera;
-use sloppy_render::effects::Effects;
+use sloppy_render::effects::{CosmeticRandom, Effects};
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId, Renderer, RendererOptions};
 use wasm_bindgen::prelude::*;
 
@@ -106,7 +106,7 @@ impl EffectsLab {
     }
 
     pub fn set_seed(&mut self, seed: u32) {
-        self.effects.set_seed(u64::from(seed));
+        self.effects.systems.random = CosmeticRandom::seeded(u64::from(seed));
     }
 
     /// Replace the effects' view of the match (TS `RenderState` subset, JSON).
@@ -160,23 +160,22 @@ impl EffectsLab {
     pub fn event(&mut self, json: &str) -> Result<(), JsValue> {
         let event: SimEvent =
             serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
-        self.effects.event(&event);
+        self.effects.systems.event(&event);
         Ok(())
     }
 
     pub fn reset(&mut self) {
-        self.effects.reset(&mut self.renderer, &self.state);
+        self.effects.reset(&mut self.renderer);
     }
 
     /// Advance effects by `dt` and draw at `time` (seconds).
-    pub fn frame(&mut self, alpha: f32, dt: f32, time: f64) -> Result<(), JsValue> {
+    pub fn frame(&mut self, alpha: f64, dt: f64, time: f64) -> Result<(), JsValue> {
         for tank in &self.state.tanks {
             let Some(&(instance, root)) = self.tanks.get(&tank.id) else {
                 continue;
             };
-            let a = f64::from(alpha);
-            let x = tank.previous.x + (tank.position.x - tank.previous.x) * a;
-            let z = tank.previous.z + (tank.position.z - tank.previous.z) * a;
+            let x = tank.previous.x + (tank.position.x - tank.previous.x) * alpha;
+            let z = tank.previous.z + (tank.position.z - tank.previous.z) * alpha;
             let world = Mat4::from_translation(Vec3::new(
                 x as f32,
                 tank.position.y as f32 - HULL_DROP,
@@ -220,7 +219,7 @@ impl EffectsLab {
     /// Renderer counters, effect counts and per-pool instances as JSON.
     pub fn stats(&mut self) -> String {
         let s = self.renderer.stats();
-        let e = self.effects.stats();
+        let e = self.effects.systems.stats();
         let pools: Vec<String> = self
             .renderer
             .pool_summary()

@@ -7,11 +7,10 @@ use std::collections::HashMap;
 
 use glam::{Mat4, Vec3};
 use sloppy_core::sim::Weapon;
-use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::render_state::RenderShot;
 
 use super::pool::{PoolBuffer, record};
-use super::projectiles::model_scale;
+use super::projectiles::{model_scale, shot_position};
 use super::random::CosmeticRandom;
 use crate::color::hex_to_linear;
 
@@ -77,17 +76,8 @@ impl RocketSmoke {
         self.records.clear();
     }
 
-    pub fn len(&self) -> usize {
-        self.puffs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.puffs.is_empty()
-    }
-
-    /// Lay puffs behind every missile in flight (placed like
-    /// `ProjectileVisuals::update`, `alpha` between physics poses), age the trail
-    /// by `dt` and write the records.
+    /// Lay puffs behind every missile in flight (at its [`shot_position`]), age
+    /// the trail by `dt` and write the records.
     pub fn update(
         &mut self,
         shots: &[RenderShot],
@@ -95,15 +85,15 @@ impl RocketSmoke {
         dt: f64,
         random: &mut CosmeticRandom,
     ) {
+        // The puffs' push from the exhaust dies away; their rise stays.
+        let push_decay = (-2.0 * dt).exp() as f32;
         for puff in &mut self.puffs {
             puff.age += dt;
             puff.position += puff.velocity * dt as f32;
-            // The puff's push from the exhaust dies away; its rise stays.
-            puff.velocity.x *= (-2.0 * dt).exp() as f32;
-            puff.velocity.z *= (-2.0 * dt).exp() as f32;
+            puff.velocity.x *= push_decay;
+            puff.velocity.z *= push_decay;
         }
         self.puffs.retain(|puff| puff.age < puff.life);
-        let behind = (1.0 - alpha.clamp(0.0, 1.0)) * STEP;
         for trail in self.trails.values_mut() {
             trail.seen = false;
         }
@@ -118,11 +108,8 @@ impl RocketSmoke {
                 continue;
             }
             let back = Vec3::new((-shot.vx / speed) as f32, 0.0, (-shot.vz / speed) as f32);
-            let nozzle = Vec3::new(
-                (shot.x - shot.vx * behind) as f32,
-                shot.visual_y.or(shot.y).unwrap_or(1.0) as f32,
-                (shot.z - shot.vz * behind) as f32,
-            ) + back * (NOZZLE * model_scale(shot.weapon)) as f32;
+            let nozzle =
+                shot_position(shot, alpha) + back * (NOZZLE * model_scale(shot.weapon)) as f32;
             let mut last = self
                 .trails
                 .get(&shot.id)
@@ -190,6 +177,7 @@ impl RocketSmoke {
 mod tests {
     use super::*;
     use sloppy_core::sim::Team;
+    use sloppy_core::sim::data::STEP;
 
     fn missile(id: u32, weapon: Weapon, x: f64) -> RenderShot {
         RenderShot {
@@ -211,7 +199,7 @@ mod tests {
         let mut smoke = RocketSmoke::default();
         // A shell lays nothing; a rocket lays one puff per spacing of flight.
         smoke.update(&[missile(1, Weapon::Standard, 0.0)], 1.0, STEP, &mut random);
-        assert!(smoke.is_empty());
+        assert!(smoke.puffs.is_empty());
         let mut x = 0.0;
         for _ in 0..30 {
             x += 20.0 * STEP;
@@ -219,8 +207,9 @@ mod tests {
         }
         let flown = 20.0 * STEP * 29.0;
         let expected = (flown / ROCKET_SPACING) as usize;
-        assert!(smoke.len().abs_diff(expected) <= 1, "{} puffs", smoke.len());
-        assert_eq!(smoke.records.len(), smoke.len());
+        let puffs = smoke.puffs.len();
+        assert!(puffs.abs_diff(expected) <= 1, "{puffs} puffs");
+        assert_eq!(smoke.records.len(), puffs);
         // Every puff lies behind the rocket's nozzle.
         let nozzle = x as f32 - (NOZZLE * model_scale(Weapon::Rocket)) as f32;
         assert!(
@@ -233,7 +222,7 @@ mod tests {
         for _ in 0..((LIFE[0] + LIFE[1]) / STEP) as usize + 1 {
             smoke.update(&[], 1.0, STEP, &mut random);
         }
-        assert!(smoke.is_empty() && smoke.records.is_empty());
+        assert!(smoke.puffs.is_empty() && smoke.records.is_empty());
     }
 
     #[test]
@@ -279,7 +268,7 @@ mod tests {
             let volley: Vec<_> = (0..8).map(|id| missile(id, Weapon::Rocket, x)).collect();
             smoke.update(&volley, 1.0, STEP, &mut random);
         }
-        assert_eq!(smoke.len(), ROCKET_SMOKE_CAPACITY);
+        assert_eq!(smoke.puffs.len(), ROCKET_SMOKE_CAPACITY);
         assert_eq!(smoke.records.len(), ROCKET_SMOKE_CAPACITY);
     }
 }

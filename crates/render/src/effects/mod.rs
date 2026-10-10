@@ -67,8 +67,6 @@ pub struct Flash {
 pub struct EffectStats {
     /// Chips, sparks, embers and falling leaves: every exported "particles" count.
     pub particles: u32,
-    /// The falling leaves among them.
-    pub leaves: u32,
     pub blasts: u32,
     pub puffs: u32,
     pub blast_rings: u32,
@@ -142,7 +140,7 @@ impl EffectSystems {
     /// Leaves shaken from `crown` by a tree hit or felling, once presentation knows
     /// which tree the event belongs to.
     pub fn shed_leaves(&mut self, event: &SimEvent, crown: &leaves::Crown) {
-        self.leaves.event(event, Some(crown), &mut self.random);
+        self.leaves.event(event, crown, &mut self.random);
     }
 
     /// Advance one rendered frame, in the order `presentation.ts` `render` used.
@@ -193,7 +191,6 @@ impl EffectSystems {
         let explosions = &self.particles.explosions;
         EffectStats {
             particles: (self.particles.particles.len() + self.leaves.len()) as u32,
-            leaves: self.leaves.len() as u32,
             blasts: explosions.active() as u32,
             puffs: explosions.puffs.len() as u32,
             blast_rings: explosions.rings.len() as u32,
@@ -215,23 +212,24 @@ impl EffectSystems {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use browser::{Effects, FLASH_LIGHT};
+pub use browser::Effects;
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
-    use sloppy_core::sim::{RenderState, SimEvent};
+    use sloppy_core::sim::RenderState;
 
-    use super::{EffectStats, EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE};
+    use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE};
     use crate::gpu::{Lifetime, PointLight, PoolId, Renderer};
 
     /// The point-light slot the explosion flash uses.
-    pub const FLASH_LIGHT: usize = 0;
+    const FLASH_LIGHT: usize = 0;
     /// Below this the light is switched off rather than shading every pixel.
     const FLASH_CUTOFF: f32 = 0.01;
 
     /// The effect systems bound to renderer pools (created once, kept across rounds).
     pub struct Effects {
-        systems: EffectSystems,
+        /// The CPU side; callers send it events and read its stats directly.
+        pub systems: EffectSystems,
         pools: Vec<PoolId>,
     }
 
@@ -247,21 +245,9 @@ mod browser {
             }
         }
 
-        pub fn reset(&mut self, renderer: &mut Renderer, state: &RenderState) {
+        pub fn reset(&mut self, renderer: &mut Renderer) {
             self.systems.reset();
-            // Quarry wind dust is shown only on the quarry; update decides that.
-            self.systems.quarry_dust.visible = state.map_theme == "quarry";
             self.sync(renderer);
-        }
-
-        /// The visual response to one simulation event.
-        pub fn event(&mut self, event: &SimEvent) {
-            self.systems.event(event);
-        }
-
-        /// Leaves shaken from `crown` by a tree hit or felling.
-        pub fn shed_leaves(&mut self, event: &SimEvent, crown: &super::leaves::Crown) {
-            self.systems.shed_leaves(event, crown);
         }
 
         /// Once per rendered frame after entity poses are updated; `alpha`
@@ -270,12 +256,11 @@ mod browser {
             &mut self,
             renderer: &mut Renderer,
             state: &RenderState,
-            alpha: f32,
-            dt: f32,
+            alpha: f64,
+            dt: f64,
             time: f64,
         ) {
-            self.systems
-                .update(state, f64::from(alpha), f64::from(dt), time);
+            self.systems.update(state, alpha, dt, time);
             self.sync(renderer);
         }
 
@@ -289,20 +274,6 @@ mod browser {
                     *id = renderer.add_pool(desc, Lifetime::Shared);
                 }
             }
-        }
-
-        pub fn stats(&mut self) -> EffectStats {
-            self.systems.stats()
-        }
-
-        /// The CPU systems, for inspection (lab pages, tests).
-        pub fn systems(&self) -> &EffectSystems {
-            &self.systems
-        }
-
-        /// Restart the cosmetic random stream (repeatable lab screenshots).
-        pub fn set_seed(&mut self, seed: u64) {
-            self.systems.random = super::CosmeticRandom::seeded(seed);
         }
 
         fn sync(&mut self, renderer: &mut Renderer) {
@@ -383,8 +354,8 @@ mod tests {
         };
         systems.shed_leaves(&hit, &crown);
         let stats = systems.stats();
-        assert!(stats.leaves > 0);
-        assert_eq!(stats.particles as usize, chips + stats.leaves as usize);
+        assert!(!systems.leaves.is_empty());
+        assert_eq!(stats.particles as usize, chips + systems.leaves.len());
     }
 
     #[test]

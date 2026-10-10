@@ -5,9 +5,10 @@
 use std::f64::consts::TAU;
 
 use glam::{Mat4, Vec3};
+use sloppy_core::geometry::math::{lerp_color, smoothstep};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
-use super::pool::{PoolBuffer, record, smoothstep};
+use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use super::spawn_pad_decks::SpawnPadDecks;
 use crate::color::hex_to_linear;
@@ -187,10 +188,6 @@ fn scaled(color: [f64; 3], factor: f64) -> [f64; 3] {
     color.map(|c| c * factor)
 }
 
-fn lerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
 /// Pooled blasts; `puffs` and `rings` are rebuilt each update.
 #[derive(Clone, Debug)]
 pub struct ExplosionEffects {
@@ -294,7 +291,6 @@ impl ExplosionEffects {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn puff(&mut self, position: [f64; 3], size: f64, color: [f64; 3], opacity: f64, height: f64) {
         if size <= 0.0 || opacity <= 0.0 {
             return;
@@ -305,13 +301,9 @@ impl ExplosionEffects {
             glam::Quat::IDENTITY,
             Vec3::new(position[0] as f32, position[1] as f32, position[2] as f32),
         );
-        let tint = [
-            color[0] as f32,
-            color[1] as f32,
-            color[2] as f32,
-            opacity as f32,
-        ];
-        self.puffs.push(record(world, tint, [0.0; 4]));
+        let [r, g, b] = color.map(|c| c as f32);
+        self.puffs
+            .push(record(world, [r, g, b, opacity as f32], [0.0; 4]));
     }
 
     fn advance(&mut self, b: &mut Blast, dt: f64) {
@@ -426,7 +418,7 @@ impl ExplosionEffects {
                 let jf = j as f64;
                 let angle = b.phase + jf * TAU / 3.0;
                 let heat = (fire_age * if j == 0 { 2.0 } else { 5.0 } + jf * 0.3).min(1.0);
-                let color = lerp(HOT, flame, heat);
+                let color = lerp_color(HOT, flame, heat);
                 let (spread, drift) = match profile {
                     Some(p) => (p.fire_spread, p.drift * fire_age * 0.7),
                     None => (0.55, 0.0),
@@ -526,7 +518,7 @@ mod tests {
                     &mut random,
                 );
             }
-            let deck = effects.pads.top(-53.0, 0.0).expect("pad deck");
+            let deck = effects.pads.top_within(-53.0, 0.0, 0.0).expect("pad deck");
             let mut heights = Vec::new();
             for _ in 0..8 {
                 effects.update(0.06);
