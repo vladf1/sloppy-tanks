@@ -1,6 +1,7 @@
-//! A parts kit for the Humvee: every part is moved into its assembly's frame and
-//! merged per paint role, so a whole body, wheel or launcher is a handful of
-//! shared meshes (one per material) instead of hundreds of tiny parts.
+//! A parts kit for the wheeled vehicles (the Humvee and the Cybertruck): every part
+//! is moved into its assembly's frame and merged per paint role, so a whole body,
+//! wheel or launcher is a handful of shared meshes (one per material) instead of
+//! hundreds of tiny parts.
 //!
 //! Every triangle is checked against its intended normal and turned to face it,
 //! so mirrored parts and hand-built faces never show their back sides.
@@ -19,7 +20,7 @@ use crate::geometry::{
 /// The paint a part takes; the palette turns each role into a material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Role {
-    /// Team paint (the armored body).
+    /// The body: the Humvee's team paint, the Cybertruck's steel or gold foil.
     Paint,
     /// Darker team paint (bumpers, rims, launcher, trim).
     Shade,

@@ -39,6 +39,7 @@ mod model_primitives;
 // Vehicles.
 mod cybertruck_model;
 mod humvee_model;
+mod parts_kit;
 mod tank_details;
 mod tank_dimensions;
 mod tank_kit;

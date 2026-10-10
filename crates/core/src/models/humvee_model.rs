@@ -17,10 +17,10 @@ use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
 mod body;
-mod kit;
 mod turret;
 mod wheel;
 
+use super::parts_kit as kit;
 use kit::Role;
 
 /// The body shell and wheelbase are stretched by this factor along z.
