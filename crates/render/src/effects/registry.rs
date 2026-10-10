@@ -279,19 +279,8 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shader::webgl_check::translate_variant;
-    use crate::shader::{Pass, ShaderKey, shader_source};
-
-    fn validate(label: &str, code: &str) {
-        let module = naga::front::wgsl::parse_str(code)
-            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
-    }
+    use crate::shader::webgl_check::check_variant;
+    use crate::shader::{Pass, ShaderKey};
 
     /// Every builtin effect compiles in the variants its materials use: basic and
     /// lit, with and without an alpha test, and the shadow pass.
@@ -308,8 +297,7 @@ mod tests {
                     effect: id,
                     ..ShaderKey::default()
                 };
-                validate(effect.name, &shader_source(&key, &registry));
-                translate_variant(effect.name, &key, &registry);
+                check_variant(effect.name, &key, &registry);
             }
             for alpha_test in [false, true] {
                 let shadow = ShaderKey {
@@ -319,8 +307,7 @@ mod tests {
                     effect: id,
                     ..ShaderKey::default()
                 };
-                validate(effect.name, &shader_source(&shadow, &registry));
-                translate_variant(effect.name, &shadow, &registry);
+                check_variant(effect.name, &shadow, &registry);
             }
         }
         assert_eq!(registry.iter().count(), BUILTIN_EFFECTS.len());

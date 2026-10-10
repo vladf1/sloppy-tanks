@@ -218,7 +218,7 @@ fn surface_raster(key: &PipelineKey) -> Raster {
             BlendMode::Additive => Blend::Additive,
         },
         polygon_offset: (key.depth_bias.slope_scale(), key.depth_bias.constant as f32),
-        alpha_to_coverage: key.alpha_to_coverage,
+        alpha_to_coverage: key.shader.alpha_to_coverage,
     }
 }
 
@@ -381,7 +381,7 @@ impl Pipelines {
             Pass::Main => ("vs_main", Some("fs_main")),
             Pass::Shadow => (
                 "vs_shadow",
-                shader.shadow_needs_fragment(effects).then_some("fs_shadow"),
+                shader.shadow_needs_fragment().then_some("fs_shadow"),
             ),
         };
         let source = self

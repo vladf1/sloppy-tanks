@@ -2,7 +2,6 @@
 // `shader.rs` appends `instance_at`, which reads the instance records from where
 // the build keeps them (`instances_storage.wgsl` or `instances_texture.wgsl`).
 
-const PI: f32 = 3.141592653589793;
 const RECIPROCAL_PI: f32 = 0.3183098861837907;
 
 struct PointLight {

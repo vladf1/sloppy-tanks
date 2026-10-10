@@ -29,10 +29,5 @@ pub mod gpu;
 ))]
 compile_error!("the browser renderer needs the `webgpu` or the `webgl` feature");
 
-pub use camera::{Frustum, PerspectiveCamera, Ray, ShadowCamera, Sphere};
-pub use effects::{EffectDefinition, EffectRegistry};
 #[cfg(target_arch = "wasm32")]
-pub use gpu::{
-    Environment, Fog, GRAPHICS_API, InstanceId, Lifetime, ModelId, PointLight, PoolId,
-    PrepareProgress, RenderStats, Renderer, RendererOptions, SunShadow, WaterSettings, WaterShore,
-};
+pub use gpu::GRAPHICS_API;

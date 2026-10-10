@@ -13,8 +13,6 @@ struct MaterialUniform {
     map_transform: vec4f,
     bump_transform: vec4f,
     emissive_transform: vec4f,
-    // The repeat and offset of `extra_texture0` and `extra_texture1`.
-    extra_transforms: array<vec4f, 2>,
     // Effect parameters, 16 floats.
     params: array<vec4f, 4>,
     // x: the MATERIAL_* features below that this material uses.

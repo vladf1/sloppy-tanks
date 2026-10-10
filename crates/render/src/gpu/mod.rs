@@ -72,16 +72,15 @@ use crate::draw_list::{
     SHADOW_VIEW, VIEW_COUNT, ViewDraws,
 };
 use crate::effects::{EffectDefinition, EffectRegistry};
-use crate::material::{MaterialInterner, is_transparent};
+use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, ModelNode, PartMesh, PreparedModel, SceneryOptions, prepare_model,
-    prepare_scenery,
+    InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
 };
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
-    MergeKind, ShadowGroup, ShadowMerge, cache_scenery_shadows, merge_shadows, merged_draw_order,
+    MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge, merge_shadows, merged_draw_order,
     shadow_merge_kind,
 };
 use crate::target_memory::target_bytes;
@@ -991,7 +990,7 @@ impl Renderer {
                 let range = self.meshes.get(mesh).range;
                 let extra = self.meshes.get(mesh).extra_attributes;
                 let source = &gpu.material;
-                let transparent = is_transparent(source) || faded;
+                let transparent = source.transparent || faded;
                 let main_key = |material: &sloppy_core::scene::Material| {
                     let shader = ShaderKey::main(material, gpu.effect, extra, receive_shadow);
                     PipelineKey::main(shader, material, faded)
@@ -1101,10 +1100,6 @@ impl Renderer {
                 SHADOW_MERGE_CELL,
             )
         };
-        let groups: Vec<ShadowGroup> = groups
-            .into_iter()
-            .filter(|group| !group.indices.is_empty())
-            .collect();
         // The whole model is known before anything uploads, so a large one gets batch
         // pages of its own.
         let reservation = self.meshes.reserve(&gpu, &prepared.meshes, &groups);
@@ -1330,18 +1325,9 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
-        self.add_scenery_with(root, lifetime, SceneryOptions::default())
-    }
-
-    pub fn add_scenery_with(
-        &mut self,
-        root: &Node,
-        lifetime: Lifetime,
-        options: SceneryOptions,
-    ) -> InstanceId {
         let prepared = {
             let attributes = Self::attributes_for(&self.effects);
-            prepare_scenery(root, &mut self.interner, &attributes, options)
+            prepare_scenery(root, &mut self.interner, &attributes)
         };
         let model = self.register(prepared, lifetime, true);
         let id = self
@@ -1681,7 +1667,7 @@ impl Renderer {
         }
         self.static_dirty = false;
         self.static_shadow_dirty = true;
-        let triangles = self
+        let triangles: u64 = self
             .instances
             .iter()
             // Themes hide other maps' shared scenery; only shown sets cast.
@@ -1710,7 +1696,7 @@ impl Renderer {
                 merged + separate
             })
             .sum();
-        self.cache_static_shadow = cache_scenery_shadows(triangles);
+        self.cache_static_shadow = triangles >= MIN_CACHED_SHADOW_TRIANGLES;
         self.static_records.truncate(1);
         let instance_ids: Vec<u32> = self.instances.iter().map(|(index, _)| index).collect();
         for index in instance_ids {

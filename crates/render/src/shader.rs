@@ -128,12 +128,8 @@ impl ShaderKey {
     }
 
     /// Whether this shadow variant needs a fragment stage at all.
-    pub fn shadow_needs_fragment(&self, effects: &EffectRegistry) -> bool {
-        self.alpha_test
-            || self.shadow_fade
-            || effects
-                .get(self.effect)
-                .is_some_and(|e| e.has_surface() && self.alpha_test)
+    pub fn shadow_needs_fragment(&self) -> bool {
+        self.alpha_test || self.shadow_fade
     }
 }
 
@@ -167,10 +163,6 @@ impl MaterialFeatures {
                 .filter(|&(_, used)| used)
                 .fold(0, |bits, (bit, _)| bits | bit),
         )
-    }
-
-    pub fn has(self, feature: u32) -> bool {
-        self.0 & feature != 0
     }
 }
 
@@ -219,7 +211,6 @@ pub struct PipelineKey {
     pub depth_bias: DepthBias,
     /// The faces that are drawn (culling removes the others).
     pub side: Side,
-    pub alpha_to_coverage: bool,
 }
 
 impl PipelineKey {
@@ -237,7 +228,6 @@ impl PipelineKey {
             depth_write: material.depth_write,
             depth_bias: DepthBias::of(material),
             side: material.side,
-            alpha_to_coverage: shader.alpha_to_coverage,
         }
     }
 
@@ -250,10 +240,7 @@ impl PipelineKey {
             depth_test: true,
             depth_write: true,
             depth_bias: DepthBias::default(),
-            side: material
-                .shadow_side
-                .unwrap_or_else(|| shadow_side(material.side)),
-            alpha_to_coverage: false,
+            side: shadow_side(material),
         }
     }
 }
@@ -495,10 +482,23 @@ pub mod glsl {
     }
 }
 
-/// Checks the WebGL build's shaders natively; the effect tests use them too.
+/// Checks this build's WGSL and the WebGL build's shaders natively; the effect tests
+/// use them too.
 #[cfg(test)]
 pub(crate) mod webgl_check {
     use super::*;
+
+    /// Parse and validate WGSL with naga.
+    pub fn validate(label: &str, code: &str) {
+        let module = naga::front::wgsl::parse_str(code)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+    }
 
     /// Translate every entry point as the WebGL backend does (GLSL ES 3.00).
     pub fn translate_for_webgl(label: &str, code: &str) {
@@ -537,29 +537,25 @@ pub(crate) mod webgl_check {
         let code = shader_source_for(key, effects, InstanceSource::Texture);
         translate_for_webgl(&format!("{label} {key:?}"), &code);
     }
+
+    /// Validate a variant as this build assembles it, then translate its WebGL build.
+    pub fn check_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
+        validate(&format!("{label} {key:?}"), &shader_source(key, effects));
+        translate_variant(label, key, effects);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use sloppy_core::scene::TextureRef;
 
-    use super::webgl_check::{translate_for_webgl, translate_variant};
+    use super::webgl_check::{check_variant, translate_for_webgl, validate};
     use super::*;
 
-    fn validate(label: &str, code: &str) {
-        let module = naga::front::wgsl::parse_str(code)
-            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
-    }
-
     #[test]
-    fn every_surface_variant_is_valid_wgsl() {
+    fn every_variant_is_valid_wgsl_and_translates_for_webgl() {
         let effects = EffectRegistry::default();
+        let texture = InstanceSource::Texture;
         for bits in 0..(1u32 << 4) {
             let bit = |i: u32| bits & (1 << i) != 0;
             for effect in 0..=2u16 {
@@ -574,29 +570,30 @@ mod tests {
                         extra_attributes,
                         shadow_fade: false,
                     };
-                    validate(&format!("{key:?}"), &shader_source(&key, &effects));
+                    if extra_attributes == 2 {
+                        check_variant("surface", &key, &effects);
+                    } else {
+                        validate(&format!("{key:?}"), &shader_source(&key, &effects));
+                    }
                 }
-            }
-        }
-    }
-
-    #[test]
-    fn shadow_variants_are_valid_wgsl() {
-        let effects = EffectRegistry::default();
-        for alpha_test in [false, true] {
-            for fade in [false, true] {
-                for effect in 0..=2u16 {
-                    let key = ShaderKey {
+                // Lighting and shadow reception (bits 0 and 3) leave a caster unchanged.
+                if !bit(0) && !bit(3) {
+                    let shadow = ShaderKey {
                         pass: Pass::Shadow,
-                        alpha_test,
-                        shadow_fade: fade,
+                        alpha_test: bit(1),
+                        shadow_fade: bit(2),
                         effect,
                         ..ShaderKey::default()
                     };
-                    validate(&format!("{key:?}"), &shader_source(&key, &effects));
+                    check_variant("shadow", &shadow, &effects);
                 }
             }
         }
+        translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
+        translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
+        translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
+        translate_for_webgl("output", OUTPUT_WGSL);
+        translate_for_webgl("mipmap", MIPMAP_WGSL);
     }
 
     #[test]
@@ -606,41 +603,6 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
-    }
-
-    #[test]
-    fn every_variant_translates_for_webgl() {
-        let effects = EffectRegistry::default();
-        let texture = InstanceSource::Texture;
-        for bits in 0..(1u32 << 4) {
-            let bit = |i: u32| bits & (1 << i) != 0;
-            for effect in 0..=2u16 {
-                let key = ShaderKey {
-                    pass: Pass::Main,
-                    lit: bit(0),
-                    alpha_test: bit(1),
-                    alpha_to_coverage: bit(1) && bit(2),
-                    receive_shadow: bit(0) && bit(3),
-                    effect,
-                    extra_attributes: 2,
-                    shadow_fade: false,
-                };
-                translate_variant("surface", &key, &effects);
-                let shadow = ShaderKey {
-                    pass: Pass::Shadow,
-                    alpha_test: bit(1),
-                    shadow_fade: bit(2),
-                    effect,
-                    ..ShaderKey::default()
-                };
-                translate_variant("shadow", &shadow, &effects);
-            }
-        }
-        translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
-        translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
-        translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
-        translate_for_webgl("output", OUTPUT_WGSL);
-        translate_for_webgl("mipmap", MIPMAP_WGSL);
     }
 
     #[test]
@@ -716,10 +678,10 @@ mod tests {
             MaterialFeatures::VERTEX_COLORS,
             MaterialFeatures::FLAT_SHADING,
         ] {
-            assert!(features.has(feature));
+            assert!(features.0 & feature != 0);
         }
-        assert!(!features.has(MaterialFeatures::FOG));
-        assert!(MaterialFeatures::of(&plain).has(MaterialFeatures::FOG));
+        assert!(features.0 & MaterialFeatures::FOG == 0);
+        assert!(MaterialFeatures::of(&plain).0 & MaterialFeatures::FOG != 0);
     }
 
     #[test]
@@ -731,8 +693,8 @@ mod tests {
             ..Material::basic(0xffffff)
         };
         let features = MaterialFeatures::of(&unlit);
-        assert!(!features.has(MaterialFeatures::EMISSIVE_MAP));
-        assert!(!features.has(MaterialFeatures::BUMP));
+        assert!(features.0 & MaterialFeatures::EMISSIVE_MAP == 0);
+        assert!(features.0 & MaterialFeatures::BUMP == 0);
     }
 
     #[test]

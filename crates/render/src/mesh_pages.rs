@@ -46,9 +46,6 @@ pub const GENERAL_INDEX_PAGE_BYTES: u64 = 2 * MIB;
 /// always takes at least two meshes.
 pub const BATCH_PAGE_MIN_BYTES: u64 = GENERAL_VERTEX_PAGE_BYTES / 2;
 
-/// The same for a registration's indices: half a general index page.
-pub const BATCH_INDEX_PAGE_MIN_BYTES: u64 = GENERAL_INDEX_PAGE_BYTES / 2;
-
 /// The largest batch page. It stays below the 128 MiB per-resource floor of D3D11,
 /// which ANGLE uses for WebGL on Windows, and WebGPU's default 256 MiB
 /// `max_buffer_size` (`context.rs` asks for the default limits). Batches split at
@@ -111,14 +108,11 @@ impl PageFamily {
         (MAX_PAGE_BYTES / self.element_bytes()) as u32
     }
 
-    /// Half a general page ([`BATCH_PAGE_MIN_BYTES`], [`BATCH_INDEX_PAGE_MIN_BYTES`]):
-    /// one mesh larger than this gets an own page, and one registration's meshes that
-    /// add up to it get batch pages.
+    /// Half a general page ([`BATCH_PAGE_MIN_BYTES`] for vertices): one mesh larger
+    /// than this gets an own page, and one registration's meshes that add up to it get
+    /// batch pages.
     fn large_bytes(self) -> u64 {
-        match self {
-            Self::Index => BATCH_INDEX_PAGE_MIN_BYTES,
-            Self::Surface { .. } | Self::Shadow => BATCH_PAGE_MIN_BYTES,
-        }
+        self.general_page_bytes() / 2
     }
 }
 
@@ -220,16 +214,6 @@ impl RangeAllocator {
             (false, false) => self.free.insert(index, (start, end)),
         }
     }
-
-    /// Elements free now.
-    pub fn free_elements(&self) -> u32 {
-        self.free.iter().map(|&(start, end)| end - start).sum()
-    }
-
-    /// The free ranges, address-ordered.
-    pub fn free_ranges(&self) -> &[(u32, u32)] {
-        &self.free
-    }
 }
 
 // ------------------------------------------------------------------ planner
@@ -284,10 +268,6 @@ impl Page {
     /// `PageBuffers::vertex_buffers` in `gpu/webgpu/resources.rs`).
     pub fn written(&self) -> u32 {
         self.written
-    }
-
-    pub fn ranges(&self) -> &RangeAllocator {
-        &self.ranges
     }
 
     fn allocate(&mut self, count: u32) -> Option<u32> {
@@ -625,14 +605,14 @@ mod tests {
         assert_eq!(ranges.allocate(20), Some(10));
         assert_eq!(ranges.allocate(30), Some(30));
         ranges.free(10, 20);
-        assert_eq!(ranges.free_ranges(), [(10, 30), (60, 100)]);
+        assert_eq!(ranges.free, [(10, 30), (60, 100)]);
         // The first hole that fits, not the best one.
         assert_eq!(ranges.allocate(5), Some(10));
         assert_eq!(ranges.allocate(40), Some(60));
-        assert_eq!(ranges.free_ranges(), [(15, 30)]);
+        assert_eq!(ranges.free, [(15, 30)]);
         // An exact fit removes the hole.
         assert_eq!(ranges.allocate(15), Some(15));
-        assert_eq!(ranges.free_ranges(), []);
+        assert_eq!(ranges.free, []);
         assert_eq!(ranges.allocate(1), None);
     }
 
@@ -644,19 +624,18 @@ mod tests {
         }
         ranges.free(0, 10);
         ranges.free(20, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 10), (20, 30)]);
+        assert_eq!(ranges.free, [(0, 10), (20, 30)]);
         // Right neighbour: 10..20 joins 20..30 and then the left one.
         ranges.free(10, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 30)]);
+        assert_eq!(ranges.free, [(0, 30)]);
         // Left neighbour.
         ranges.free(30, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 40)]);
-        assert_eq!(ranges.free_elements(), 40);
+        assert_eq!(ranges.free, [(0, 40)]);
         // Right only.
         assert_eq!(ranges.allocate(40), Some(0));
         ranges.free(35, 5);
         ranges.free(30, 5);
-        assert_eq!(ranges.free_ranges(), [(30, 40)]);
+        assert_eq!(ranges.free, [(30, 40)]);
     }
 
     #[test]
@@ -671,7 +650,7 @@ mod tests {
         for &first in firsts.iter().step_by(2) {
             ranges.free(first, 8);
         }
-        assert_eq!(ranges.free_ranges(), [(0, 64)]);
+        assert_eq!(ranges.free, [(0, 64)]);
     }
 
     #[test]
@@ -722,9 +701,10 @@ mod tests {
                     _ => {}
                 }
             }
-            assert_eq!(ranges.free_ranges(), runs, "step {step}");
+            assert_eq!(ranges.free, runs, "step {step}");
             let allocated: u32 = live.iter().map(|&(_, count)| count).sum();
-            assert_eq!(ranges.free_elements() + allocated, CAPACITY);
+            let free: u32 = ranges.free.iter().map(|&(start, end)| end - start).sum();
+            assert_eq!(free + allocated, CAPACITY);
         }
     }
 
@@ -1008,7 +988,7 @@ mod tests {
         // Under half a general vertex page of vertices with over half a general index
         // page of indices.
         let vertices = BATCH_PAGE_MIN_BYTES as u32 / 48 - 1;
-        let indices = BATCH_INDEX_PAGE_MIN_BYTES as u32 / 4;
+        let indices = (GENERAL_INDEX_PAGE_BYTES / 2) as u32 / 4;
         let meshes = [
             MeshSize {
                 family: SURFACE,

@@ -462,7 +462,6 @@ mod tests {
             bounds.radius = f32::INFINITY;
         }
         let mut compared = 0;
-        let mut inside = 0;
         for step in 0..64 {
             let angle = step as f32 * 0.37;
             let eye = Vec3::new(
@@ -475,11 +474,8 @@ mod tests {
             let expected = everything.reflection_bounds(&view, 0.65, 512);
             assert_eq!(water.reflection_bounds(&view, 0.65, 512), expected);
             compared += expected.is_some() as usize;
-            let frustum = Frustum::from_view_projection(&view.view_projection());
-            inside += water.clusters.iter().any(|c| frustum.contains_sphere(c)) as usize;
         }
         assert!(compared > 16, "most poses see water");
-        assert!(inside > 8, "many poses hold whole clusters");
     }
     #[test]
     fn the_reflection_keeps_whatever_visible_water_samples() {

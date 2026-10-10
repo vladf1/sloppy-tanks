@@ -181,7 +181,7 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
 }
 
 /// A surface or shadow variant.
-fn surface_spec(key: &PipelineKey, effects: &EffectRegistry) -> PipelineSpec {
+fn surface_spec(key: &PipelineKey) -> PipelineSpec {
     let shader = key.shader;
     let main = shader.pass == Pass::Main;
     let mut buffers = vec![vertex_layout()];
@@ -194,7 +194,7 @@ fn surface_spec(key: &PipelineKey, effects: &EffectRegistry) -> PipelineSpec {
     }
     let fragment_entry = if main {
         Some("fs_main")
-    } else if shader.shadow_needs_fragment(effects) {
+    } else if shader.shadow_needs_fragment() {
         Some("fs_shadow")
     } else {
         None
@@ -235,7 +235,7 @@ fn surface_spec(key: &PipelineKey, effects: &EffectRegistry) -> PipelineSpec {
         multisample: wgpu::MultisampleState {
             count: if main { SAMPLE_COUNT } else { 1 },
             mask: !0,
-            alpha_to_coverage_enabled: key.alpha_to_coverage,
+            alpha_to_coverage_enabled: main && shader.alpha_to_coverage,
         },
     }
 }
@@ -445,7 +445,7 @@ impl Pipelines {
             return create.then(|| self.create(&gpu.device, effects, key));
         }
         if !self.precompiler.queued(key) {
-            let spec = surface_spec(key, effects);
+            let spec = surface_spec(key);
             let source = source(&mut self.sources, effects, key.shader);
             let raw = self.precompiler.module(spec.label, source);
             self.precompiler.start(*key, &spec, &raw);
@@ -468,7 +468,7 @@ impl Pipelines {
         effects: &EffectRegistry,
         key: &PipelineKey,
     ) -> u32 {
-        let spec = surface_spec(key, effects);
+        let spec = surface_spec(key);
         let module = module(
             device,
             spec.label,

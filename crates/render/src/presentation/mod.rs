@@ -85,19 +85,8 @@ impl CosmeticRandom {
 mod tests {
     use super::*;
     use crate::effects::EffectRegistry;
-    use crate::shader::webgl_check::translate_variant;
-    use crate::shader::{Pass, ShaderKey, shader_source};
-
-    fn validate(label: &str, code: &str) {
-        let module = naga::front::wgsl::parse_str(code)
-            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(code)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|error| panic!("{label}: {error:?}"));
-    }
+    use crate::shader::webgl_check::check_variant;
+    use crate::shader::{Pass, ShaderKey};
 
     #[test]
     fn presentation_effects_are_valid_wgsl() {
@@ -114,8 +103,7 @@ mod tests {
                         effect: id,
                         ..ShaderKey::default()
                     };
-                    validate(effect.name, &shader_source(&key, &effects));
-                    translate_variant(effect.name, &key, &effects);
+                    check_variant(effect.name, &key, &effects);
                 }
             }
         }

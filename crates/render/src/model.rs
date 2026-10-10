@@ -23,7 +23,8 @@ use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Drawable, Material, Node};
 
 use crate::camera::Sphere;
-use crate::material::{MaterialInterner, is_paintable, paint_color, painted};
+use crate::color::hex_to_linear;
+use crate::material::{MaterialInterner, is_paintable, painted};
 
 /// The uploaded vertex layout (48 bytes).
 #[repr(C)]
@@ -53,10 +54,6 @@ impl MeshData {
     fn finish(mut self) -> Self {
         self.bounds = Sphere::from_points(self.vertices.iter().map(|v| Vec3::from(v.position)));
         self
-    }
-
-    pub fn triangle_count(&self) -> usize {
-        self.indices.len() / 3
     }
 
     fn append(
@@ -131,19 +128,9 @@ fn push_vertices(
     }
 }
 
-/// Upload data for an unmodified shared mesh.
-pub fn mesh_data(mesh: &Mesh, attributes: &[&str]) -> MeshData {
-    let mut data = MeshData {
-        extra_attributes: attributes.len() as u8,
-        ..MeshData::default()
-    };
-    data.append(mesh, attributes, None, None);
-    data.finish()
-}
-
-/// Vertices `range` of an unmodified shared mesh as [`mesh_data`] lays them out,
-/// with their effect attribute vec4s, so a large mesh can go to the GPU in pieces
-/// instead of through one full-size copy.
+/// Vertices `range` of an unmodified shared mesh in the upload layout, with their
+/// effect attribute vec4s, so a large mesh can go to the GPU in pieces instead of
+/// through one full-size copy.
 pub fn shared_vertices(
     mesh: &Mesh,
     attributes: &[&str],
@@ -314,13 +301,14 @@ struct Builder<'a, 'b> {
     groups: Groups<'a, GroupKey>,
     /// Drawables that are placed individually (instanced meshes).
     single: Vec<(usize, Pending<'a>)>,
+    /// Merge cell edge in metres; 0 merges each material into one draw.
     cell_size: f32,
 }
 
 impl<'a> Builder<'a, '_> {
     fn draw_material(&mut self, material: &Arc<Material>) -> (Arc<Material>, bool) {
         if is_paintable(material) {
-            (self.interner.intern_value(painted(material)), true)
+            (self.interner.intern(&Arc::new(painted(material))), true)
         } else {
             (self.interner.intern(material), false)
         }
@@ -341,14 +329,12 @@ impl<'a> Builder<'a, '_> {
     }
 
     fn add(&mut self, node: usize, drawable: &'a Drawable, transform: DMat4) {
+        let pending = Pending {
+            drawable,
+            transform,
+        };
         if drawable.instances.is_some() {
-            self.single.push((
-                node,
-                Pending {
-                    drawable,
-                    transform,
-                },
-            ));
+            self.single.push((node, pending));
             return;
         }
         let (material, painted) = self.draw_material(&drawable.material);
@@ -362,13 +348,7 @@ impl<'a> Builder<'a, '_> {
             frustum_culled: drawable.frustum_culled,
             cell: self.cell(drawable, &transform),
         };
-        self.groups.push(
-            key,
-            Pending {
-                drawable,
-                transform,
-            },
-        );
+        self.groups.push(key, pending);
     }
 
     fn part(
@@ -392,30 +372,24 @@ impl<'a> Builder<'a, '_> {
         }
     }
 
+    /// A part drawing the drawable's shared mesh with its exact material.
+    fn shared_part(&mut self, node: usize, pending: &Pending) -> PreparedPart {
+        let material = self.interner.intern(&pending.drawable.material);
+        let mesh = PartMesh::Shared(pending.drawable.mesh.clone());
+        self.part(node, pending, mesh, material)
+    }
+
     fn finish(mut self) -> PreparedModel {
         let singles = std::mem::take(&mut self.single);
         for (node, pending) in &singles {
-            let material = self.interner.intern(&pending.drawable.material);
-            let part = self.part(
-                *node,
-                pending,
-                PartMesh::Shared(pending.drawable.mesh.clone()),
-                material,
-            );
+            let part = self.shared_part(*node, pending);
             self.model.parts.push(part);
         }
         let groups = std::mem::take(&mut self.groups.order);
         for (key, members) in groups {
             if members.len() == 1 {
                 // A lone part keeps its shared mesh and exact material.
-                let pending = &members[0];
-                let material = self.interner.intern(&pending.drawable.material);
-                let part = self.part(
-                    key.node,
-                    pending,
-                    PartMesh::Shared(pending.drawable.mesh.clone()),
-                    material,
-                );
+                let part = self.shared_part(key.node, &members[0]);
                 self.model.parts.push(part);
                 continue;
             }
@@ -426,7 +400,9 @@ impl<'a> Builder<'a, '_> {
                 ..MeshData::default()
             };
             for pending in &members {
-                let paint = key.painted.then(|| paint_color(&pending.drawable.material));
+                let paint = key
+                    .painted
+                    .then(|| hex_to_linear(pending.drawable.material.color.0));
                 data.append(
                     &pending.drawable.mesh,
                     attributes,
@@ -500,23 +476,10 @@ pub fn prepare_model(
     builder.finish()
 }
 
-/// Static scenery settings.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SceneryOptions {
-    /// Merge cell edge in metres; 0 merges each material into one draw.
-    pub cell_size: f32,
-    /// A mesh repeated at least this often draws instanced instead of merged.
-    pub instance_threshold: usize,
-}
-
-impl Default for SceneryOptions {
-    fn default() -> Self {
-        Self {
-            cell_size: 60.0,
-            instance_threshold: 24,
-        }
-    }
-}
+/// Static scenery's merge cell edge in metres.
+const SCENERY_CELL_SIZE: f32 = 60.0;
+/// A scenery mesh repeated at least this often draws instanced instead of merged.
+const SCENERY_INSTANCE_THRESHOLD: usize = 24;
 
 /// Prepare static scenery in world space (the root transform applies). The result
 /// has a single root joint drawn at identity.
@@ -524,7 +487,6 @@ pub fn prepare_scenery(
     root: &Node,
     interner: &mut MaterialInterner,
     attributes_for: AttributesFor,
-    options: SceneryOptions,
 ) -> PreparedModel {
     let mut all = Vec::new();
     collect_visible(root, DMat4::IDENTITY, &mut all);
@@ -551,7 +513,7 @@ pub fn prepare_scenery(
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
-        cell_size: options.cell_size,
+        cell_size: SCENERY_CELL_SIZE,
     };
     builder.model.nodes.push(ModelNode {
         name: root.name.clone(),
@@ -562,7 +524,7 @@ pub fn prepare_scenery(
     let mut repeated: Groups<(usize, usize, bool, bool, i32)> = Groups::new();
     for (drawable, world) in all {
         let key = repeat_key(drawable);
-        if drawable.instances.is_none() && counts[&key] >= options.instance_threshold {
+        if drawable.instances.is_none() && counts[&key] >= SCENERY_INSTANCE_THRESHOLD {
             repeated.push(
                 key,
                 Pending {
@@ -575,28 +537,19 @@ pub fn prepare_scenery(
         }
     }
     for (_, members) in repeated.order {
-        let first = members[0].drawable;
-        let material = builder.interner.intern(&first.material);
-        builder.model.parts.push(PreparedPart {
-            node: 0,
-            local: Mat4::IDENTITY,
-            mesh: PartMesh::Shared(first.mesh.clone()),
-            material,
-            cast_shadow: first.cast_shadow,
-            receive_shadow: first.receive_shadow,
-            render_order: first.render_order,
-            frustum_culled: first.frustum_culled,
-            instances: Some(
-                members
-                    .iter()
-                    .map(|pending| InstanceData {
-                        matrix: pending.transform.as_mat4(),
-                        color: [1.0; 3],
-                        data: None,
-                    })
-                    .collect(),
-            ),
-        });
+        let mut part = builder.shared_part(0, &members[0]);
+        part.local = Mat4::IDENTITY;
+        part.instances = Some(
+            members
+                .iter()
+                .map(|pending| InstanceData {
+                    matrix: pending.transform.as_mat4(),
+                    color: [1.0; 3],
+                    data: None,
+                })
+                .collect(),
+        );
+        builder.model.parts.push(part);
     }
     builder.finish()
 }
@@ -694,7 +647,7 @@ mod tests {
         };
         let data = &model.meshes[index];
         assert_eq!(data.vertices.len(), 8);
-        assert_eq!(data.triangle_count(), 4);
+        assert_eq!(data.indices.len(), 12);
         assert_eq!(data.vertices[4].position, [2.0, 0.0, 0.0]);
         assert_ne!(data.vertices[0].color, data.vertices[4].color);
         // The turret's single part keeps the shared mesh and its exact material.
@@ -735,16 +688,16 @@ mod tests {
             vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         ));
         faded.set_attribute(Attribute::instance("phase", 1, vec![0.25, 0.75]));
-        let data = mesh_data(&faded, &["origin"]);
-        assert_eq!(data.vertices[1].color, [0.5, 0.5, 0.5, 0.5]);
+        let (vertices, extra) = shared_vertices(&faded, &["origin"], 0..4);
+        assert_eq!(vertices[1].color, [0.5, 0.5, 0.5, 0.5]);
         // Per-instance attributes never become per-vertex effect inputs.
-        assert_eq!(data.extra[0], [0.0; 4]);
+        assert_eq!(extra[0], [0.0; 4]);
         assert_eq!(
             instance_attribute_data(&faded, 1),
             Some([4.0, 5.0, 6.0, 0.75])
         );
         assert_eq!(instance_attribute_data(&quad(), 0), None);
-        assert_eq!(mesh_data(&quad(), &[]).vertices[0].color, [1.0; 4]);
+        assert_eq!(shared_vertices(&quad(), &[], 0..1).0[0].color, [1.0; 4]);
     }
 
     #[test]
@@ -759,15 +712,14 @@ mod tests {
         mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
         let origin = (0..count * 3).map(|i| i as f32).collect();
         mesh.set_attribute(Attribute::vertex("origin", 3, origin));
-        let whole = mesh_data(&mesh, &["origin"]);
+        let whole = shared_vertices(&mesh, &["origin"], 0..count);
         let (mut vertices, mut extra) = (Vec::new(), Vec::new());
         for start in (0..count).step_by(17) {
             let (v, e) = shared_vertices(&mesh, &["origin"], start..(start + 17).min(count));
             vertices.extend(v);
             extra.extend(e);
         }
-        assert_eq!(vertices, whole.vertices);
-        assert_eq!(extra, whole.extra);
+        assert_eq!((vertices, extra), whole);
     }
 
     #[test]
@@ -797,12 +749,7 @@ mod tests {
         ]);
         root.children.push(grass);
         let mut interner = MaterialInterner::default();
-        let scenery = prepare_scenery(
-            &root,
-            &mut interner,
-            &no_attributes,
-            SceneryOptions::default(),
-        );
+        let scenery = prepare_scenery(&root, &mut interner, &no_attributes);
         let instanced: Vec<_> = scenery
             .parts
             .iter()
