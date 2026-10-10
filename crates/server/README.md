@@ -245,7 +245,15 @@ A hostname needs only its A record pointing at the machine and its entry in the
 list; provision again so Caddy serves it. To move production to another machine, put
 its address in production's entry and provision it: players stay on the old machine
 until the hostname's record points at the new one, while the scripts already check
-the new one through its nip.io name. `SLOPPY_SERVERS` points the scripts at another list, such as
+the new one through its nip.io name.
+
+`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the hostname
+through Namecheap's Dynamic DNS: it asks for the domain's Dynamic DNS password (Advanced
+DNS > Dynamic DNS) and the IP, defaulting to the machine in the list, and waits until
+Google's and Cloudflare's resolvers return it. The record must be an "A + Dynamic DNS
+Record"; the password can repoint any host in the domain, so it stays off the
+machines. Provision again right after, so Caddy obtains the certificate at once instead
+of after its retry backoff. `SLOPPY_SERVERS` points the scripts at another list, such as
 one of local test machines: Caddy gives names ending in `.local` its own local
 certificates, and private addresses get no nip.io name.
 

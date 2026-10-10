@@ -75,6 +75,10 @@ export function serverMachine(role, { ip, hostname }) {
   if (!sites.length) throw new Error(`${role} in deploy/servers.json needs an ip`);
   return {
     role,
+    /** The machine's public IPv4 address, or null until it exists. */
+    ip,
+    /** The players' name, or null when they use the nip.io name. */
+    hostname,
     /** SSH destination; throws until the machine exists. */
     get ssh() {
       if (!ip) throw new Error(`${role} in deploy/servers.json has no ip yet`);
