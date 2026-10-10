@@ -23,7 +23,7 @@ use super::Gpu;
 use super::context::{DEPTH_FORMAT, HDR_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
-use crate::gpu::{SAMPLE_COUNT, SHADOW_MERGED_SIDES};
+use crate::gpu::{FixedPipelines, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
@@ -36,10 +36,6 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     1 => Float32x3,
     2 => Float32x2,
     3 => Float32x4,
-];
-static EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
-    4 => Float32x4,
-    5 => Float32x4,
 ];
 const SHADOW_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
     0 => Float32x3,
@@ -137,22 +133,19 @@ fn output_spec(canvas_format: wgpu::TextureFormat) -> PipelineSpec {
 }
 
 fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
+    let (label, layout, vertex_entry) = if cutout {
+        ("shadow cutout", LayoutKind::Surface, "vs_shadow_cutout")
+    } else {
+        (
+            "shadow merged",
+            LayoutKind::ShadowMerged,
+            "vs_shadow_merged",
+        )
+    };
     PipelineSpec {
-        label: if cutout {
-            "shadow cutout"
-        } else {
-            "shadow merged"
-        },
-        layout: if cutout {
-            LayoutKind::Surface
-        } else {
-            LayoutKind::ShadowMerged
-        },
-        vertex_entry: if cutout {
-            "vs_shadow_cutout"
-        } else {
-            "vs_shadow_merged"
-        },
+        label,
+        layout,
+        vertex_entry,
         fragment_entry: cutout.then_some("fs_shadow_cutout"),
         buffers: vec![
             wgpu::VertexBufferLayout {
@@ -182,23 +175,8 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
 
 /// A surface or shadow variant.
 fn surface_spec(key: &PipelineKey) -> PipelineSpec {
-    let shader = key.shader;
-    let main = shader.pass == Pass::Main;
-    let mut buffers = vec![vertex_layout()];
-    if shader.extra_attributes > 0 {
-        buffers.push(wgpu::VertexBufferLayout {
-            array_stride: 16 * shader.extra_attributes as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &EXTRA_ATTRIBUTES[..shader.extra_attributes as usize],
-        });
-    }
-    let fragment_entry = if main {
-        Some("fs_main")
-    } else if shader.shadow_needs_fragment() {
-        Some("fs_shadow")
-    } else {
-        None
-    };
+    let main = key.shader.pass == Pass::Main;
+    let (vertex_entry, fragment_entry) = key.shader.entry_points();
     let targets = if main {
         vec![Some(wgpu::ColorTargetState {
             format: HDR_FORMAT,
@@ -211,9 +189,9 @@ fn surface_spec(key: &PipelineKey) -> PipelineSpec {
     PipelineSpec {
         label: if main { "surface" } else { "shadow" },
         layout: LayoutKind::Surface,
-        vertex_entry: if main { "vs_main" } else { "vs_shadow" },
+        vertex_entry,
         fragment_entry,
-        buffers,
+        buffers: vec![vertex_layout()],
         targets,
         primitive: wgpu::PrimitiveState {
             cull_mode: cull_mode(key.side),
@@ -235,7 +213,7 @@ fn surface_spec(key: &PipelineKey) -> PipelineSpec {
         multisample: wgpu::MultisampleState {
             count: if main { SAMPLE_COUNT } else { 1 },
             mask: !0,
-            alpha_to_coverage_enabled: main && shader.alpha_to_coverage,
+            alpha_to_coverage_enabled: main && key.shader.alpha_to_coverage,
         },
     }
 }
@@ -259,7 +237,7 @@ fn module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModul
     })
 }
 
-fn pipeline_layout(
+pub(super) fn pipeline_layout(
     device: &wgpu::Device,
     label: &str,
     groups: &[&wgpu::BindGroupLayout],
@@ -272,28 +250,10 @@ fn pipeline_layout(
     })
 }
 
-/// The water, output and merged shadow pipelines every arena draws with.
-pub struct FixedPipelines {
-    pub water: wgpu::RenderPipeline,
-    pub output: wgpu::RenderPipeline,
-    /// Merged casters, depth-only then alpha-tested, indexed by
-    /// `shadow_merged_index`.
-    pub shadow_merged: Vec<wgpu::RenderPipeline>,
-}
-
-/// Which layout a fixed pipeline uses.
-#[derive(Clone, Copy)]
-enum FixedLayout {
-    Water,
-    Output,
-    Merged,
-    Surface,
-}
-
 /// The fixed pipelines while they compile in the background.
 struct FixedJobs {
     /// Water, output, then the merged casters in `shadow_merged_index` order.
-    jobs: Vec<(PipelineSpec, FixedLayout, String)>,
+    jobs: Vec<(PipelineSpec, String)>,
     compile: Background,
 }
 
@@ -307,13 +267,13 @@ pub struct Pipelines {
     output_layout: wgpu::PipelineLayout,
     merged_layout: wgpu::PipelineLayout,
     fixed_jobs: Option<FixedJobs>,
-    fixed: Option<FixedPipelines>,
+    fixed: Option<FixedPipelines<wgpu::RenderPipeline>>,
 }
 
 impl Pipelines {
     /// Start compiling the fixed water, output and merged shadow pipelines in the
     /// background; they are created once compiled ([`Self::fixed_ready`]) while the
-    /// page builds the arena, which no longer waits for them.
+    /// page builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
         let (device, layouts, canvas_format) = (&gpu.device, &*gpu.layouts, gpu.canvas_format);
         let surface_layout =
@@ -321,35 +281,24 @@ impl Pipelines {
         let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
         let output_layout = pipeline_layout(device, "output", &[&layouts.output]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let (merged_source, cutout_source) = (shadow_merged_source(), shadow_cutout_source());
         let mut jobs = vec![
-            (water_spec(), FixedLayout::Water, water_source()),
+            (water_spec(), water_source()),
             (
                 output_spec(canvas_format),
-                FixedLayout::Output,
                 crate::shader::OUTPUT_WGSL.to_owned(),
             ),
         ];
-        for cutout in [false, true] {
+        for (cutout, source) in [
+            (false, shadow_merged_source()),
+            (true, shadow_cutout_source()),
+        ] {
             for &side in &SHADOW_MERGED_SIDES {
-                jobs.push(if cutout {
-                    (
-                        shadow_merged_spec(side, true),
-                        FixedLayout::Surface,
-                        cutout_source.clone(),
-                    )
-                } else {
-                    (
-                        shadow_merged_spec(side, false),
-                        FixedLayout::Merged,
-                        merged_source.clone(),
-                    )
-                });
+                jobs.push((shadow_merged_spec(side, cutout), source.clone()));
             }
         }
         let specs: Vec<_> = jobs
             .iter()
-            .map(|(spec, _, source)| (spec, source.as_str()))
+            .map(|(spec, source)| (spec, source.as_str()))
             .collect();
         let compile = Background::start(device, &specs);
         Self {
@@ -397,12 +346,13 @@ impl Pipelines {
         else {
             return;
         };
-        let mut created = jobs.iter().map(|(spec, layout, source)| {
-            let layout = match layout {
-                FixedLayout::Water => &self.water_layout,
-                FixedLayout::Output => &self.output_layout,
-                FixedLayout::Merged => &self.merged_layout,
-                FixedLayout::Surface => &self.surface_layout,
+        let mut created = jobs.iter().map(|(spec, source)| {
+            let layout = match spec.layout {
+                LayoutKind::Water => &self.water_layout,
+                LayoutKind::Output => &self.output_layout,
+                LayoutKind::ShadowMerged => &self.merged_layout,
+                LayoutKind::Surface => &self.surface_layout,
+                LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
             };
             spec.create(device, layout, &module(device, spec.label, source))
         });
@@ -414,7 +364,7 @@ impl Pipelines {
     }
 
     /// The fixed pipelines; draws first make sure of them ([`Self::ensure_fixed`]).
-    pub fn fixed(&self) -> &FixedPipelines {
+    pub fn fixed(&self) -> &FixedPipelines<wgpu::RenderPipeline> {
         self.fixed
             .as_ref()
             .expect("fixed pipelines are created before drawing")
@@ -489,11 +439,7 @@ impl Pipelines {
 
     /// Pipelines including the fixed water, output and merged shadow ones.
     pub fn count(&self) -> usize {
-        self.pipelines.len()
-            + self
-                .fixed
-                .as_ref()
-                .map_or(0, |fixed| 2 + fixed.shadow_merged.len())
+        self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
     }
 
     /// Distinct shader sources, including the fixed water, output and merged shadow

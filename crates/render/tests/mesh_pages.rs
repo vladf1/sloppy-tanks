@@ -9,7 +9,7 @@
 use sloppy_render::effects::random::CosmeticRandom;
 use sloppy_render::mesh_pages::{PageFamily, PageKind, PagePlanner};
 
-const SURFACE: PageFamily = PageFamily::Surface { extra: 0 };
+const SURFACE: PageFamily = PageFamily::Surface;
 const FAMILIES: [PageFamily; 3] = [SURFACE, PageFamily::Shadow, PageFamily::Index];
 
 /// One mesh in the planner: its vertices and its indices.
@@ -58,7 +58,7 @@ fn general_bytes(planner: &PagePlanner, family: PageFamily) -> (u64, u64) {
         .filter(|(_, page)| page.family == family && page.kind == PageKind::General)
         .map(|(_, page)| (page.capacity(), page.live()))
         .fold((0, 0), |(capacity, live), page| {
-            let bytes = family.element_bytes();
+            let bytes = family.stride();
             (
                 capacity + u64::from(page.0) * bytes,
                 live + u64::from(page.1) * bytes,
@@ -67,7 +67,7 @@ fn general_bytes(planner: &PagePlanner, family: PageFamily) -> (u64, u64) {
 }
 
 fn general_page_bytes(family: PageFamily) -> u64 {
-    u64::from(family.general_capacity()) * family.element_bytes()
+    u64::from(family.general_capacity()) * family.stride()
 }
 
 // ------------------------------------------------------------------ recorded

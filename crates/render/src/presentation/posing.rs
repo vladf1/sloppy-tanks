@@ -117,7 +117,7 @@ mod tests {
     fn rest_pose_round_trips_through_the_basis() {
         let source = tank_model(VehicleKind::Balanced, sloppy_core::sim::types::Team::Red);
         let mut interner = MaterialInterner::default();
-        let prepared = prepare_model(&source, &mut interner, &|_| &[]);
+        let prepared = prepare_model(&source, &mut interner);
         for name in [part::HULL, part::TURRET, part::BARREL, part::TRACK_GROUP] {
             let basis = JointBasis::new(&prepared.nodes, &source, name).expect(name);
             let rest = prepared.nodes[basis.index].rest;

@@ -15,13 +15,12 @@ use std::collections::HashMap;
 use glow::HasContext;
 use sloppy_core::scene::Side;
 
-use super::context::{Blend, Cull, Gpu, Raster};
+use super::context::{Gpu, Raster};
 use crate::effects::EffectRegistry;
-use crate::gpu::SHADOW_MERGED_SIDES;
+use crate::gpu::{FixedPipelines, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
-    shadow_merged_source, water_source,
+    PipelineKey, ShaderKey, shader_source, shadow_cutout_source, shadow_merged_source, water_source,
 };
 
 /// The fragment stage of programs whose WGSL has none (depth-only casters).
@@ -193,30 +192,18 @@ pub struct Pipeline {
     pub raster: Raster,
 }
 
-fn cull(side: Side) -> Cull {
-    match side {
-        Side::Front => Cull::Back,
-        Side::Back => Cull::Front,
-        Side::Double => Cull::None,
-    }
-}
-
 /// The fixed-function state of a surface or shadow pipeline, as WebGPU's
 /// (`webgpu/pipelines.rs` `surface_spec`).
 fn surface_raster(key: &PipelineKey) -> Raster {
     Raster {
-        cull: cull(key.side),
+        side: key.side,
         depth_func: Some(if key.depth_test {
             glow::LEQUAL
         } else {
             glow::ALWAYS
         }),
         depth_write: key.depth_write,
-        blend: match key.blend {
-            BlendMode::Replace => Blend::Replace,
-            BlendMode::Normal => Blend::Normal,
-            BlendMode::Additive => Blend::Additive,
-        },
+        blend: key.blend,
         polygon_offset: (key.depth_bias.slope_scale(), key.depth_bias.constant as f32),
         alpha_to_coverage: key.shader.alpha_to_coverage,
     }
@@ -225,28 +212,17 @@ fn surface_raster(key: &PipelineKey) -> Raster {
 /// Depth-tested, depth-writing state for `side` (water, merged casters).
 fn depth_raster(side: Side) -> Raster {
     Raster {
-        cull: cull(side),
+        side,
         depth_func: Some(glow::LEQUAL),
         depth_write: true,
         ..Raster::PLAIN
     }
 }
 
-/// The water, output and merged shadow pipelines every arena draws with.
-pub struct FixedPipelines {
-    pub water: Pipeline,
-    pub output: Pipeline,
-    /// Merged casters, depth-only then alpha-tested, indexed by
-    /// `shadow_merged_index`.
-    pub shadow_merged: Vec<Pipeline>,
-}
-
 /// The water, output, merged and cutout caster programs, in that order.
 const FIXED_PROGRAMS: usize = 4;
 
 pub struct Pipelines {
-    /// The WGSL of each surface or shadow variant.
-    sources: HashMap<ShaderKey, String>,
     programs: Vec<Program>,
     by_shader: HashMap<ShaderKey, u32>,
     /// Variants linking in the background.
@@ -254,15 +230,15 @@ pub struct Pipelines {
     pipelines: Vec<Pipeline>,
     index: HashMap<PipelineKey, u32>,
     /// The fixed programs while they link.
-    fixed_jobs: Option<Vec<Linking>>,
-    fixed: Option<FixedPipelines>,
+    fixed_jobs: Option<[Linking; FIXED_PROGRAMS]>,
+    fixed: Option<FixedPipelines<Pipeline>>,
 }
 
 impl Pipelines {
     /// Start linking the fixed water, output and merged shadow programs; they are
     /// used once linked ([`Self::fixed_ready`]) while the page builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
-        let jobs = vec![
+        let jobs = [
             Linking::start(gpu, "water", &water_source(), "vs_water", Some("fs_water")),
             Linking::start(
                 gpu,
@@ -287,7 +263,6 @@ impl Pipelines {
             ),
         ];
         Self {
-            sources: HashMap::new(),
             programs: Vec::new(),
             by_shader: HashMap::new(),
             linking: HashMap::new(),
@@ -324,13 +299,10 @@ impl Pipelines {
         let Some(jobs) = self.fixed_jobs.take() else {
             return;
         };
-        debug_assert_eq!(jobs.len(), FIXED_PROGRAMS);
-        let first = self.programs.len() as u32;
-        for job in jobs {
-            let program = job.finish(gpu);
-            self.programs.push(program);
-        }
-        let [water, output, merged, cutout] = [0, 1, 2, 3].map(|offset| first + offset);
+        let [water, output, merged, cutout] = jobs.map(|job| {
+            self.programs.push(job.finish(gpu));
+            self.programs.len() as u32 - 1
+        });
         let mut shadow_merged = Vec::new();
         for program in [merged, cutout] {
             for &side in &SHADOW_MERGED_SIDES {
@@ -354,7 +326,7 @@ impl Pipelines {
     }
 
     /// The fixed pipelines; draws first make sure of them ([`Self::ensure_fixed`]).
-    pub fn fixed(&self) -> &FixedPipelines {
+    pub fn fixed(&self) -> &FixedPipelines<Pipeline> {
         self.fixed
             .as_ref()
             .expect("fixed pipelines are created before drawing")
@@ -377,19 +349,10 @@ impl Pipelines {
         if self.by_shader.contains_key(&shader) || self.linking.contains_key(&shader) {
             return;
         }
-        let (vertex, fragment) = match shader.pass {
-            Pass::Main => ("vs_main", Some("fs_main")),
-            Pass::Shadow => (
-                "vs_shadow",
-                shader.shadow_needs_fragment().then_some("fs_shadow"),
-            ),
-        };
-        let source = self
-            .sources
-            .entry(shader)
-            .or_insert_with(|| shader_source(&shader, effects));
+        let (vertex, fragment) = shader.entry_points();
+        let source = shader_source(&shader, effects);
         let label = format!("{:?} {}", shader.pass, shader.effect);
-        let job = Linking::start(gpu, &label, source, vertex, fragment);
+        let job = Linking::start(gpu, &label, &source, vertex, fragment);
         self.linking.insert(shader, job);
     }
 
@@ -459,16 +422,12 @@ impl Pipelines {
 
     /// Pipelines including the fixed water, output and merged shadow ones.
     pub fn count(&self) -> usize {
-        self.pipelines.len()
-            + self
-                .fixed
-                .as_ref()
-                .map_or(0, |fixed| 2 + fixed.shadow_merged.len())
+        self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
     }
 
     /// Distinct shader sources, including the fixed water, output and merged shadow
     /// ones.
     pub fn module_count(&self) -> usize {
-        self.sources.len() + FIXED_PROGRAMS
+        self.by_shader.len() + self.linking.len() + FIXED_PROGRAMS
     }
 }

@@ -1,7 +1,7 @@
 //! WebGPU bind group layouts, mesh page buffers and material bind groups.
 
 use super::Gpu;
-use crate::gpu::resources::{EXTRA_TEXTURE_SLOTS, MATERIAL_PARAMS_OFFSET, MaterialUniform};
+use crate::gpu::resources::{MATERIAL_PARAMS_OFFSET, MaterialTextures, MaterialUniform};
 use crate::mesh_pages::PageFamily;
 
 /// Bind group layouts shared by every pipeline.
@@ -98,6 +98,10 @@ pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
 pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
     &[texture_entry(0, false), uniform_entry(1)];
 
+/// The mipmap blit's source level and sampler.
+pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
+    &[texture_entry(0, true), sampler_entry(1, Filtering)];
+
 /// Map, bump and emissive map for the surface; effect textures for any stage.
 pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     uniform_entry(0),
@@ -139,71 +143,46 @@ pub fn uniform_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Bu
     })
 }
 
-/// A mesh page's buffers: its vertices or indices, and for a surface page with
-/// effect vec4s those, in the same vertex numbering. Draws bind them only through
+/// A mesh page's buffer: its vertices or indices. Draws bind it only through
 /// [`Self::vertex_buffers`] and [`Self::index_buffer`], which bind the written
 /// prefix: never `slice(..)` a page for a draw, or wgpu clears its unwritten tail
-/// first. Dropping a page destroys its buffers.
+/// first. Dropping a page destroys its buffer.
 pub struct PageBuffers {
     main: wgpu::Buffer,
-    extra: Option<wgpu::Buffer>,
 }
 
 impl PageBuffers {
-    /// Buffers for `capacity` elements of `family`. Pages are filled only through
+    /// A buffer for `capacity` elements of `family`. Pages are filled only through
     /// the queue, never mapped at creation: the browser backend stages a mapped range
     /// in a Wasm-side copy of the whole buffer, and linear memory never shrinks.
     pub fn new(gpu: &Gpu, family: PageFamily, capacity: u32) -> Self {
-        let capacity = u64::from(capacity);
         let (label, usage) = match family {
-            PageFamily::Surface { .. } => ("mesh vertex page", wgpu::BufferUsages::VERTEX),
+            PageFamily::Surface => ("mesh vertex page", wgpu::BufferUsages::VERTEX),
             PageFamily::Shadow => ("shadow vertex page", wgpu::BufferUsages::VERTEX),
             PageFamily::Index => ("mesh index page", wgpu::BufferUsages::INDEX),
         };
-        let buffer = |label, stride: u64| {
-            gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        Self {
+            main: gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: capacity * stride,
+                size: u64::from(capacity) * family.stride(),
                 usage: usage | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            })
-        };
-        Self {
-            main: buffer(label, family.stride()),
-            extra: (family.extra_stride() > 0)
-                .then(|| buffer("mesh effect attribute page", family.extra_stride())),
+            }),
         }
     }
 
-    /// Write `data` at byte `offset` of the main buffer.
+    /// Write `data` at byte `offset`.
     pub fn write(&self, gpu: &Gpu, offset: u64, data: &[u8]) {
         gpu.queue.write_buffer(&self.main, offset, data);
     }
 
-    /// Write effect vec4s at byte `offset` of the effect attribute buffer, if any.
-    pub fn write_extra(&self, gpu: &Gpu, offset: u64, data: &[u8]) {
-        if let Some(extra) = &self.extra {
-            gpu.queue.write_buffer(extra, offset, data);
-        }
-    }
-
-    /// A vertex page's buffers to bind: only the prefix of `written` elements. Every
-    /// placed range is written before anything can draw from it and a freed range keeps
-    /// its old contents, so the prefix holds every mesh in the page and is always
+    /// A vertex page to bind: only the prefix of `written` elements. Every placed
+    /// range is written before anything can draw from it and a freed range keeps its
+    /// old contents, so the prefix holds every mesh in the page and is always
     /// initialized. Binding the never-written tail as well would make wgpu zero-fill it
     /// before the pass.
-    pub fn vertex_buffers(
-        &self,
-        family: PageFamily,
-        written: u32,
-    ) -> (wgpu::BufferSlice<'_>, Option<wgpu::BufferSlice<'_>>) {
-        let written = u64::from(written);
-        (
-            self.main.slice(..written * family.stride()),
-            self.extra
-                .as_ref()
-                .map(|extra| extra.slice(..written * family.extra_stride())),
-        )
+    pub fn vertex_buffers(&self, family: PageFamily, written: u32) -> wgpu::BufferSlice<'_> {
+        self.main.slice(..u64::from(written) * family.stride())
     }
 
     /// An index page to bind: only its written prefix, as in
@@ -216,9 +195,6 @@ impl PageBuffers {
 impl Drop for PageBuffers {
     fn drop(&mut self) {
         self.main.destroy();
-        if let Some(extra) = &self.extra {
-            extra.destroy();
-        }
     }
 }
 
@@ -229,9 +205,6 @@ pub struct MaterialBinding {
     uniform: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
-
-/// A material's textures and their samplers, in binding order.
-pub type MaterialTextures<'a> = [(&'a wgpu::TextureView, wgpu::Sampler); 3 + EXTRA_TEXTURE_SLOTS];
 
 impl MaterialBinding {
     pub fn new(gpu: &Gpu, uniform: &MaterialUniform, textures: MaterialTextures) -> Self {

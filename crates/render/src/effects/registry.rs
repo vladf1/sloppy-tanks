@@ -18,9 +18,10 @@
 //!
 //! Snippets read `material.params` (the `Effect::Custom` params, 16 floats as
 //! four vec4s), `frame.camera_position.w` (time in seconds), the frame's camera
-//! vectors, per-instance `instance_data`, and up to two named mesh attributes as
-//! `extra0`/`extra1`. Shader variants are assembled per material and cached by
-//! variant key, so an effect costs one pipeline per distinct material setup.
+//! vectors and per-instance `instance_data`; `extra0`/`extra1` start at zero and
+//! carry what a vertex hook writes to the fragment. Shader variants are assembled
+//! per material and cached by variant key, so an effect costs one pipeline per
+//! distinct material setup.
 
 use sloppy_core::models::{effects_props, effects_scenery};
 
@@ -31,8 +32,6 @@ pub struct EffectDefinition {
     pub name: &'static str,
     /// WGSL defining any of `effect_vertex`, `effect_world`, `effect_surface`.
     pub wgsl: &'static str,
-    /// Mesh attributes bound to `extra0` and `extra1`, in order (at most two).
-    pub attributes: &'static [&'static str],
     /// The shadow pass dithers the caster away with the instance opacity, like
     /// the renderer's faded instances (`debris-fade.ts`).
     pub shadow_fade: bool,
@@ -46,7 +45,6 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
     EffectDefinition {
         name,
         wgsl,
-        attributes: &[],
         shadow_fade: false,
         still_shadow: false,
     }
@@ -203,10 +201,6 @@ impl Default for EffectRegistry {
 impl EffectRegistry {
     /// Register or replace an effect by name; returns its id.
     pub fn register(&mut self, effect: EffectDefinition) -> u16 {
-        assert!(
-            effect.attributes.len() <= 2,
-            "effects read at most two attributes"
-        );
         if let Some(index) = self.effects.iter().position(|e| e.name == effect.name) {
             self.effects[index] = effect;
             return index as u16 + 1;
@@ -226,10 +220,6 @@ impl EffectRegistry {
     pub fn get(&self, id: u16) -> Option<&EffectDefinition> {
         id.checked_sub(1)
             .and_then(|index| self.effects.get(index as usize))
-    }
-
-    pub fn attributes(&self, id: u16) -> &'static [&'static str] {
-        self.get(id).map_or(&[], |effect| effect.attributes)
     }
 }
 

@@ -1,5 +1,5 @@
-//! The browser renderer: WebGPU device and canvas, resources, per-frame culling
-//! and draw lists, and the shadow → reflection → main → output passes.
+//! The browser renderer: device and canvas, resources, per-frame culling and draw
+//! lists, and the shadow → reflection → main → output passes.
 //!
 //! # Drawing model
 //!
@@ -20,8 +20,8 @@
 //!   (`crate::mesh_pages`, `resources.rs`) with absolute indices, so every draw
 //!   passes `base_vertex` 0 and a pass rebinds only when the page changes. Draws
 //!   bind a page's written prefix, never all of it. A general page left empty is
-//!   destroyed at the next `reset_round` or frame collection, a batch or own page
-//!   with its last mesh.
+//!   destroyed at the next frame's collection, a batch or own page with its last
+//!   mesh.
 //! - Pipelines are cached forever. `prepare_step` compiles the scene's variants
 //!   in the background (WebGPU `createRenderPipelineAsync`, WebGL
 //!   `KHR_parallel_shader_compile`); call it until nothing remains, then `warm_up`,
@@ -63,6 +63,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
+use sloppy_core::models::SHADOW_DEPTH;
 use sloppy_core::scene::{Blending, Node, Side, TextureRef};
 
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
@@ -183,9 +184,6 @@ pub struct SunShadow {
     pub receiver_floor: f32,
 }
 
-/// `SHADOW_DEPTH` in scenery.ts.
-pub const SHADOW_DEPTH: f32 = 219.5;
-
 impl Default for SunShadow {
     /// `createLighting` + `defaultSunShadow` (arena half 60 + 10).
     fn default() -> Self {
@@ -197,7 +195,7 @@ impl Default for SunShadow {
                 Vec3::ZERO,
                 70.0,
                 0.5,
-                SHADOW_DEPTH,
+                SHADOW_DEPTH as f32,
             ),
             bias: -0.0002,
             normal_bias: 0.05,
@@ -385,30 +383,20 @@ struct ClassKey {
     material: u32,
     receive_shadow: bool,
     faded: bool,
-    /// The instance pool that owns this class, `NO_POOL` for model parts.
-    pool: u32,
+    /// The instance pool that owns this class, whose draws read the pool's own
+    /// instance buffer; `None` for model parts.
+    pool: Option<u32>,
 }
-
-const NO_POOL: u32 = u32::MAX;
 
 /// A mesh + material + pipeline combination that instances batch under.
 struct ClassEntry {
     key: ClassKey,
-    /// Pool classes draw from their pool's own instance buffer.
-    pool: Option<u32>,
     transparent: bool,
     main_key: PipelineKey,
     /// Transparent double-sided materials draw back faces first, then front
     /// faces, like Three's two-pass `DoubleSide` transparency.
     back_key: Option<PipelineKey>,
     shadow_key: PipelineKey,
-    /// `Pipelines::rank` of the main and shadow keys: classes are created before
-    /// their pipelines compile, and draw lists sort by these.
-    main_rank: u32,
-    shadow_rank: u32,
-    /// The mesh pages of its mesh, fixed for the mesh's life.
-    vertex_page: u16,
-    index_page: u16,
     main: Option<u32>,
     back: Option<u32>,
     shadow: Option<u32>,
@@ -418,19 +406,17 @@ struct ClassEntry {
 }
 
 impl ClassEntry {
-    /// What its opaque draws bind in `view`, by which the draw lists sort them.
-    fn draw_state(&self, view: usize) -> DrawState {
-        DrawState {
-            pipeline: if view == SHADOW_VIEW {
-                self.shadow_rank
-            } else {
-                self.main_rank
-            },
-            vertex_page: u32::from(self.vertex_page),
-            pool: self.key.pool,
-            material: self.key.material,
-            index_page: u32::from(self.index_page),
-        }
+    /// Its pipeline slots and the keys that fill them: main always, back for
+    /// two-pass transparency, shadow while a part casts.
+    fn pipeline_slots(&mut self) -> [(&mut Option<u32>, Option<&PipelineKey>); 3] {
+        [
+            (&mut self.main, Some(&self.main_key)),
+            (&mut self.back, self.back_key.as_ref()),
+            (
+                &mut self.shadow,
+                (self.casters > 0).then_some(&self.shadow_key),
+            ),
+        ]
     }
 }
 
@@ -465,6 +451,22 @@ fn shadow_merged_index(side: Side, cutout: bool) -> usize {
         Side::Double => 2,
     };
     side + if cutout { SHADOW_MERGED_SIDES.len() } else { 0 }
+}
+
+/// The water, output and merged shadow pipelines every arena draws with, as the
+/// backend's pipeline type.
+struct FixedPipelines<P> {
+    water: P,
+    output: P,
+    /// Merged casters, depth-only then alpha-tested, indexed by
+    /// `shadow_merged_index`.
+    shadow_merged: Vec<P>,
+}
+
+impl<P> FixedPipelines<P> {
+    fn count(&self) -> usize {
+        2 + self.shadow_merged.len()
+    }
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -547,7 +549,6 @@ struct ModelEntry {
     owned_meshes: Vec<u32>,
     lifetime: Lifetime,
     scenery: bool,
-    instances: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -628,11 +629,19 @@ impl<T> Slab<T> {
             .get(index as usize)
             .and_then(|slot| slot.1.as_ref())
     }
+    fn at_mut(&mut self, index: u32) -> Option<&mut T> {
+        self.slots
+            .get_mut(index as usize)
+            .and_then(|slot| slot.1.as_mut())
+    }
     fn iter(&self) -> impl Iterator<Item = (u32, &T)> {
         self.slots
             .iter()
             .enumerate()
             .filter_map(|(index, slot)| slot.1.as_ref().map(|value| (index as u32, value)))
+    }
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.slots.iter_mut().filter_map(|slot| slot.1.as_mut())
     }
     fn len(&self) -> usize {
         self.slots.iter().filter(|slot| slot.1.is_some()).count()
@@ -679,6 +688,8 @@ impl ViewCull {
 }
 
 const INITIAL_INSTANCE_CAPACITY: u32 = 4096;
+/// Merged shadow record bases the frame's buffer first holds.
+const INITIAL_SHADOW_BASES: u32 = 1024;
 const RECORD_SIZE: u64 = size_of::<InstanceRecord>() as u64;
 
 pub struct Renderer {
@@ -686,16 +697,15 @@ pub struct Renderer {
     /// The main view, shadow maps, view uniforms and instance records.
     frame: Frame,
     pipelines: Pipelines,
-    /// A number per pipeline key ever named ([`Self::rank`]).
+    /// A number per pipeline key ever named ([`pipeline_rank`]).
     ranks: HashMap<PipelineKey, u32>,
     effects: EffectRegistry,
     interner: MaterialInterner,
     textures: TextureStore,
     meshes: MeshStore,
     materials: MaterialStore,
-    classes: Vec<Option<ClassEntry>>,
+    classes: Slab<ClassEntry>,
     class_index: HashMap<ClassKey, u32>,
-    free_classes: Vec<u32>,
     /// Opaque draws group by the GPU state their class binds, so consecutive draws
     /// skip pipeline, material, mesh page and pool changes
     /// (`backend::DRAW_GROUPING`). The order for the main and reflection views, which
@@ -724,7 +734,6 @@ pub struct Renderer {
     joints: Vec<Mat4>,
     joint_visible: Vec<bool>,
     culls: [ViewCull; VIEW_COUNT],
-    reflection_active: bool,
     shadow_reach: ShadowReach,
     /// Merged shadow casters this frame: records, items, draws and their bases.
     merged_records: Vec<InstanceRecord>,
@@ -737,7 +746,7 @@ pub struct Renderer {
 /// What one frame draws, for the backend's passes: the draw lists of every view and
 /// what their classes bind.
 struct Scene<'a> {
-    classes: &'a [Option<ClassEntry>],
+    classes: &'a Slab<ClassEntry>,
     meshes: &'a MeshStore,
     materials: &'a MaterialStore,
     pipelines: &'a Pipelines,
@@ -779,7 +788,7 @@ impl Renderer {
         let frame = Frame::new(&gpu, canvas, sun_shadow.map_size, INITIAL_INSTANCE_CAPACITY);
         // A target the browser cannot draw into fails here, where the page can tell
         // an unavailable API from other errors.
-        if let Some(error) = gpu.error() {
+        if let Some(error) = gpu.error.get() {
             return Err(error);
         }
         Ok(Renderer {
@@ -790,9 +799,8 @@ impl Renderer {
             textures,
             meshes: MeshStore::default(),
             materials: MaterialStore::default(),
-            classes: Vec::new(),
+            classes: Slab::default(),
             class_index: HashMap::new(),
-            free_classes: Vec::new(),
             class_order: [0, 1].map(|_| ClassOrder::new(backend::DRAW_GROUPING)),
             models: Slab::default(),
             instances: Slab::default(),
@@ -813,12 +821,7 @@ impl Renderer {
             views: Default::default(),
             joints: Vec::new(),
             joint_visible: Vec::new(),
-            culls: [
-                ViewCull::inactive(),
-                ViewCull::inactive(),
-                ViewCull::inactive(),
-            ],
-            reflection_active: false,
+            culls: std::array::from_fn(|_| ViewCull::inactive()),
             shadow_reach: ShadowReach::everywhere(),
             merged_records: Vec::new(),
             merged_items: Vec::new(),
@@ -844,7 +847,7 @@ impl Renderer {
 
     /// The first GPU validation error or device loss, if any.
     pub fn error(&self) -> Option<String> {
-        self.gpu.error()
+        self.gpu.error.get()
     }
 
     /// Add or replace a custom material effect; returns its id.
@@ -905,7 +908,8 @@ impl Renderer {
     pub fn set_water(&mut self, settings: Option<WaterSettings>) {
         if let Some(water) = self.water.take() {
             self.meshes.remove_user(water.mesh);
-            // Dropping it destroys its uniform and reflection target.
+            // Dropping it destroys its uniform and reflection target and releases the
+            // settings' surface mesh, which the collection below can then free.
             drop(water);
             // The surface mesh is usually rebuilt per map; free it now if unused.
             self.meshes.collect_unused();
@@ -913,7 +917,7 @@ impl Renderer {
         let Some(settings) = settings else {
             return;
         };
-        let mesh = self.meshes.shared(&self.gpu, &settings.mesh, &[]);
+        let mesh = self.meshes.shared(&self.gpu, &settings.mesh);
         self.meshes.get_mut(mesh).users += 1;
         let normals = water_normals();
         self.textures.request(&normals);
@@ -921,7 +925,7 @@ impl Renderer {
         let mut bounds = self.meshes.get(mesh).bounds;
         bounds.center.y += settings.height;
         let sampler = self.textures.sampler(&self.gpu, Some(&normals));
-        let (view, _) = self.textures.view(&normals);
+        let view = self.textures.view(Some(&normals));
         let gpu = WaterGpu::new(&self.gpu, &self.frame, size, view, sampler);
         let footprint = WaterFootprint::new(&settings.mesh, settings.height, settings.calm_extent);
         self.water = Some(Water {
@@ -975,18 +979,17 @@ impl Renderer {
             material,
             receive_shadow,
             faded,
-            pool: pool.unwrap_or(NO_POOL),
+            pool,
         };
         let index = match self.class_index.get(&key) {
             Some(&index) => index,
             None => {
                 let gpu = self.materials.get(material);
                 let range = self.meshes.get(mesh).range;
-                let extra = self.meshes.get(mesh).extra_attributes;
                 let source = &gpu.material;
                 let transparent = source.transparent || faded;
                 let main_key = |material: &sloppy_core::scene::Material| {
-                    let shader = ShaderKey::main(material, gpu.effect, extra, receive_shadow);
+                    let shader = ShaderKey::main(material, gpu.effect, receive_shadow);
                     PipelineKey::main(shader, material, faded)
                 };
                 let two_pass = transparent && source.side == Side::Double;
@@ -995,25 +998,22 @@ impl Renderer {
                     ..(**source).clone()
                 };
                 let dithered = faded || self.effects.get(gpu.effect).is_some_and(|e| e.shadow_fade);
-                let shadow_shader =
-                    ShaderKey::shadow(source, gpu.effect, extra, dithered, &self.effects);
+                let shadow_shader = ShaderKey::shadow(source, gpu.effect, dithered, &self.effects);
                 let main = if two_pass {
                     main_key(&face(Side::Front))
                 } else {
                     main_key(source)
                 };
                 let shadow = PipelineKey::shadow(shadow_shader, source);
+                // Classes are created before their pipelines compile, and draw lists
+                // sort by these.
+                let ranks = [main, shadow].map(|key| pipeline_rank(&mut self.ranks, &key));
                 let entry = ClassEntry {
                     key,
-                    pool,
                     transparent,
                     main_key: main,
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
                     shadow_key: shadow,
-                    main_rank: pipeline_rank(&mut self.ranks, &main),
-                    shadow_rank: pipeline_rank(&mut self.ranks, &shadow),
-                    vertex_page: range.vertex_page,
-                    index_page: range.index_page,
                     main: None,
                     back: None,
                     shadow: None,
@@ -1022,52 +1022,38 @@ impl Renderer {
                 };
                 self.meshes.get_mut(mesh).users += 1;
                 self.materials.get_mut(material).users += 1;
-                let index = match self.free_classes.pop() {
-                    Some(index) => {
-                        self.classes[index as usize] = Some(entry);
-                        index
-                    }
-                    None => {
-                        self.classes.push(Some(entry));
-                        self.classes.len() as u32 - 1
-                    }
-                };
+                let (index, _) = self.classes.insert(entry);
                 self.class_index.insert(key, index);
-                let class = self.classes[index as usize].as_ref().expect("live class");
-                for (order, view) in self.class_order.iter_mut().zip([MAIN_VIEW, SHADOW_VIEW]) {
-                    order.insert(index, class.draw_state(view));
+                // What its opaque draws bind in the main and shadow views, by which the
+                // draw lists sort them.
+                for (order, pipeline) in self.class_order.iter_mut().zip(ranks) {
+                    let state = DrawState {
+                        pipeline,
+                        vertex_page: u32::from(range.vertex_page),
+                        pool: key.pool.unwrap_or(u32::MAX),
+                        material,
+                        index_page: u32::from(range.index_page),
+                    };
+                    order.insert(index, state);
                 }
                 index
             }
         };
-        let class = self.classes[index as usize].as_mut().expect("live class");
+        let class = self.classes.at_mut(index).expect("live class");
         class.users += 1;
         class.casters += cast as u32;
         index
     }
 
-    /// The draw class of an instance pool (its own, keyed by the pool slot).
-    fn class_for_pool(
-        &mut self,
-        mesh: u32,
-        material: u32,
-        receive_shadow: bool,
-        cast: bool,
-        pool: u32,
-    ) -> u32 {
-        self.class(mesh, material, receive_shadow, false, cast, Some(pool))
-    }
-
     fn release_class(&mut self, index: u32, cast: bool) {
-        let class = self.classes[index as usize].as_mut().expect("live class");
+        let class = self.classes.at_mut(index).expect("live class");
         class.users -= 1;
         class.casters -= cast as u32;
         if class.users == 0 {
-            let class = self.classes[index as usize].take().expect("live class");
+            let class = self.classes.remove(index).expect("live class");
             self.class_index.remove(&class.key);
             self.meshes.remove_user(class.key.mesh);
             self.materials.get_mut(class.key.material).users -= 1;
-            self.free_classes.push(index);
             for order in &mut self.class_order {
                 order.remove(index);
             }
@@ -1105,16 +1091,17 @@ impl Renderer {
             .map(|(data, placement)| self.meshes.owned(&gpu, data, placement))
             .collect();
         let mut parts = Vec::with_capacity(prepared.parts.len());
-        for (prepared_index, part) in prepared.parts.iter().enumerate() {
+        // The parts' instance lists move into the entries: only the joints outlive
+        // registration.
+        for (prepared_index, part) in std::mem::take(&mut prepared.parts).into_iter().enumerate() {
             let material = self.materials.get_or_create(
                 &gpu,
                 &mut self.textures,
                 &self.effects,
                 &part.material,
             );
-            let attributes = self.effects.attributes(self.materials.get(material).effect);
             let mesh = match &part.mesh {
-                PartMesh::Shared(mesh) => self.meshes.shared(&gpu, mesh, attributes),
+                PartMesh::Shared(mesh) => self.meshes.shared(&gpu, mesh),
                 PartMesh::Owned(index) => owned[*index],
             };
             if self.meshes.get(mesh).range.is_empty() {
@@ -1149,14 +1136,15 @@ impl Renderer {
                 local: part.local,
                 class,
                 faded_class,
-                transparent: self.classes[class as usize]
-                    .as_ref()
+                transparent: self
+                    .classes
+                    .at(class)
                     .is_some_and(|class| class.transparent),
                 cast_shadow: part.cast_shadow,
                 render_order: part.render_order,
                 frustum_culled: part.frustum_culled,
                 bounds: self.meshes.get(mesh).bounds,
-                instances: part.instances.clone(),
+                instances: part.instances,
                 merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
@@ -1187,8 +1175,7 @@ impl Renderer {
             .collect();
         let skeleton = PreparedModel {
             nodes: prepared.nodes,
-            parts: Vec::new(),
-            meshes: Vec::new(),
+            ..Default::default()
         };
         let (index, generation) = self.models.insert(ModelEntry {
             skeleton,
@@ -1198,29 +1185,14 @@ impl Renderer {
             owned_meshes: owned,
             lifetime,
             scenery,
-            instances: 0,
         });
         ModelId { index, generation }
-    }
-
-    fn attributes_for(
-        effects: &EffectRegistry,
-    ) -> impl Fn(&sloppy_core::scene::Material) -> &'static [&'static str] + '_ {
-        move |material| match &material.effect {
-            sloppy_core::scene::Effect::Custom { name, .. } => effects
-                .id(name)
-                .map_or(&[][..], |id| effects.attributes(id)),
-            sloppy_core::scene::Effect::None => &[],
-        }
     }
 
     /// Prepare a movable model (tanks, pickups, props). Named nodes become joints
     /// that instances can pose; the root's transform comes from each instance.
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
-        let prepared = {
-            let attributes = Self::attributes_for(&self.effects);
-            prepare_model(root, &mut self.interner, &attributes)
-        };
+        let prepared = prepare_model(root, &mut self.interner);
         self.register(prepared, lifetime, false)
     }
 
@@ -1287,8 +1259,7 @@ impl Renderer {
         world: Mat4,
         lifetime: Lifetime,
     ) -> Option<InstanceId> {
-        let entry = self.models.get_mut(model.index, model.generation)?;
-        entry.instances += 1;
+        let entry = self.models.get(model.index, model.generation)?;
         if entry.scenery {
             self.static_dirty = true;
         }
@@ -1319,10 +1290,7 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
-        let prepared = {
-            let attributes = Self::attributes_for(&self.effects);
-            prepare_scenery(root, &mut self.interner, &attributes)
-        };
+        let prepared = prepare_scenery(root, &mut self.interner);
         let model = self.register(prepared, lifetime, true);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
@@ -1337,18 +1305,8 @@ impl Renderer {
             return;
         }
         let instance = self.instances.remove(id.index).expect("checked");
-        let model = instance.model;
-        let scenery = self.models.at(model).is_some_and(|m| m.scenery);
-        if let Some(entry) = self
-            .models
-            .slots
-            .get_mut(model as usize)
-            .and_then(|s| s.1.as_mut())
-        {
-            entry.instances -= 1;
-        }
-        if scenery {
-            self.release_model(model);
+        if instance.scenery {
+            self.release_model(instance.model);
         }
     }
 
@@ -1422,7 +1380,7 @@ impl Renderer {
     }
 
     /// Replace the instances of an InstancedMesh part of a model instance's model
-    /// (for example a debris pool). Affects every instance of that model.
+    /// (for example the chimney smoke wisps). Affects every instance of that model.
     pub fn set_part_instances(&mut self, model: ModelId, part: usize, instances: &[InstanceData]) {
         if let Some(entry) = self.models.get_mut(model.index, model.generation)
             && let Some(part) = entry.parts.get_mut(part)
@@ -1437,11 +1395,8 @@ impl Renderer {
     }
 
     /// Release everything created with `Lifetime::Round`, then free GPU meshes and
-    /// materials that nothing uses and no caller still holds, and destroy the general
-    /// mesh pages that left empty, so the next round starts from the pages that still
-    /// hold meshes.
+    /// materials that nothing uses and no caller still holds.
     pub fn reset_round(&mut self) {
-        self.release_round_pools();
         let round: Vec<u32> = self
             .instances
             .iter()
@@ -1459,20 +1414,12 @@ impl Renderer {
             .map(|(index, _)| index)
             .collect();
         for index in models {
-            let users: Vec<u32> = self
-                .instances
-                .iter()
-                .filter(|(_, instance)| instance.model == index)
-                .map(|(i, _)| i)
-                .collect();
-            for i in users {
-                self.instances.remove(i);
-            }
-            self.release_model(index);
+            let generation = self.models.slots[index as usize].0;
+            self.remove_model(ModelId { index, generation });
         }
         // General pages this empties stay for the next round's uploads, which
-        // follow at once (`Presentation::reset`); the next frame's `collect_released` trims
-        // the ones those leave empty.
+        // follow at once (`Presentation::reset`); the next frame's `collect_released`
+        // trims the ones those leave empty.
         self.meshes.collect_unused();
         self.materials.collect_unused();
         self.interner.retain_used();
@@ -1481,25 +1428,6 @@ impl Renderer {
 
     // ---------------------------------------------------------------- warm-up
 
-    /// Distinct pipelines the registered scene still lacks. Many draw classes share
-    /// one pipeline (every opaque textured mesh, say), so progress counts keys, not
-    /// class slots: the scene's shaders, as the player sees them.
-    fn missing_pipelines(&self) -> u32 {
-        let mut missing = std::collections::HashSet::new();
-        for class in self.classes.iter().flatten() {
-            if class.main.is_none() {
-                missing.insert(class.main_key);
-            }
-            if let (Some(key), None) = (&class.back_key, class.back) {
-                missing.insert(*key);
-            }
-            if class.casters > 0 && class.shadow.is_none() {
-                missing.insert(class.shadow_key);
-            }
-        }
-        missing.len() as u32
-    }
-
     /// Create up to `budget` of the pipelines the registered scene needs whose
     /// background compile has finished, and queue the compiles of the rest. Yield to
     /// the page between calls (a short timer while only `compiling` remains).
@@ -1507,17 +1435,13 @@ impl Renderer {
         self.update_textures();
         let fixed_pending = !self.pipelines.fixed_ready(&self.gpu);
         let mut compiled = 0;
+        // Distinct pipelines the registered scene still lacks. Many draw classes share
+        // one pipeline (every opaque textured mesh, say), so progress counts keys, not
+        // class slots: the scene's shaders, as the player sees them.
+        let mut missing = std::collections::HashSet::new();
         let gpu = &self.gpu;
-        for class in self.classes.iter_mut().flatten() {
-            let slots = [
-                (&mut class.main, Some(&class.main_key)),
-                (&mut class.back, class.back_key.as_ref()),
-                (
-                    &mut class.shadow,
-                    (class.casters > 0).then_some(&class.shadow_key),
-                ),
-            ];
-            for (slot, key) in slots {
+        for class in self.classes.iter_mut() {
+            for (slot, key) in class.pipeline_slots() {
                 if slot.is_none()
                     && let Some(key) = key
                 {
@@ -1531,12 +1455,15 @@ impl Renderer {
                         .pipelines
                         .request(gpu, &self.effects, key, compiled < budget);
                     compiled += slot.is_some() as u32;
+                    if slot.is_none() {
+                        missing.insert(*key);
+                    }
                 }
             }
         }
         PrepareProgress {
             compiled,
-            remaining: self.missing_pipelines() + u32::from(fixed_pending),
+            remaining: missing.len() as u32 + u32::from(fixed_pending),
             compiling: self.pipelines.compiling() + u32::from(fixed_pending),
         }
     }
@@ -1546,15 +1473,13 @@ impl Renderer {
     fn complete_pipelines(&mut self) {
         let gpu = &self.gpu;
         self.pipelines.ensure_fixed(gpu);
-        for class in self.classes.iter_mut().flatten() {
-            if class.main.is_none() {
-                class.main = Some(self.pipelines.ensure(gpu, &self.effects, &class.main_key));
-            }
-            if let (Some(key), None) = (&class.back_key, class.back) {
-                class.back = Some(self.pipelines.ensure(gpu, &self.effects, key));
-            }
-            if class.casters > 0 && class.shadow.is_none() {
-                class.shadow = Some(self.pipelines.ensure(gpu, &self.effects, &class.shadow_key));
+        for class in self.classes.iter_mut() {
+            for (slot, key) in class.pipeline_slots() {
+                if slot.is_none()
+                    && let Some(key) = key
+                {
+                    *slot = Some(self.pipelines.ensure(gpu, &self.effects, key));
+                }
             }
         }
     }
@@ -1579,10 +1504,9 @@ impl Renderer {
         for draws in &mut self.views {
             draws.clear();
         }
-        for (index, class) in self.classes.iter().enumerate() {
-            let Some(class) = class else { continue };
+        for (index, class) in self.classes.iter() {
             let draw = Draw {
-                class: index as u32,
+                class: index,
                 first_instance: 0,
                 instance_count: 1,
             };
@@ -1612,7 +1536,7 @@ impl Renderer {
         }
         self.shadow_bases.clear();
         self.shadow_bases.push(0);
-        self.upload_shadow_bases();
+        self.frame.write_shadow_bases(&self.gpu, &self.shadow_bases);
         self.draw_frame(false, true)?;
         // Warm-up uses representative draws, not the complete fixed scenery.
         self.static_shadow_dirty = true;
@@ -1634,7 +1558,7 @@ impl Renderer {
                 && water.generation != self.textures.generation
             {
                 let sampler = self.textures.sampler(&self.gpu, Some(&water.normals));
-                let (view, _) = self.textures.view(&water.normals);
+                let view = self.textures.view(Some(&water.normals));
                 water.gpu.rebind(&self.gpu, &self.frame, view, sampler);
                 water.generation = self.textures.generation;
             }
@@ -1680,9 +1604,7 @@ impl Renderer {
                     .iter()
                     .filter(|part| part.cast_shadow && part.fixed_shadow && !part.merged_shadow)
                     .map(|part| {
-                        let class = self.classes[part.class as usize]
-                            .as_ref()
-                            .expect("live class");
+                        let class = self.classes.at(part.class).expect("live class");
                         u64::from(self.meshes.get(class.key.mesh).range.index_count / 3)
                             * part.instances.as_ref().map_or(1, |list| list.len() as u64)
                     })
@@ -1692,12 +1614,7 @@ impl Renderer {
             .sum();
         self.cache_static_shadow = triangles >= MIN_CACHED_SHADOW_TRIANGLES;
         self.static_records.truncate(1);
-        let instance_ids: Vec<u32> = self.instances.iter().map(|(index, _)| index).collect();
-        for index in instance_ids {
-            let instance = self.instances.slots[index as usize]
-                .1
-                .as_ref()
-                .expect("live");
+        for instance in self.instances.iter_mut() {
             let Some(model) = self.models.at(instance.model).filter(|m| m.scenery) else {
                 continue;
             };
@@ -1726,11 +1643,7 @@ impl Renderer {
                     bounds,
                 }));
             }
-            self.instances.slots[index as usize]
-                .1
-                .as_mut()
-                .expect("live")
-                .static_ranges = ranges;
+            instance.static_ranges = ranges;
         }
         self.ensure_capacity(self.static_records.len() as u32);
         self.frame
@@ -1898,7 +1811,6 @@ impl Renderer {
             origin: shadow.position,
             forward: (shadow.target - shadow.position).normalize_or_zero(),
         };
-        self.reflection_active = false;
         self.culls[REFLECTION_VIEW].active = false;
         let mut reflection_shadow_view = None;
         if let Some(water) = &self.water
@@ -1907,7 +1819,7 @@ impl Renderer {
                 .frustum
                 .intersects_sphere(&water.bounds)
             && water_in_view(&camera, &water.settings)
-            && let Some((view, projection)) = self.mirror()
+            && let Some((view, _)) = self.mirror()
             && let Some(bounds) = water.footprint.reflection_bounds(
                 &camera,
                 water.settings.distortion_scale,
@@ -1917,8 +1829,7 @@ impl Renderer {
             let world = view.inverse();
             // Cull with the plain projection: the oblique near plane also skews
             // the far plane, which would reject most of the reflected scene.
-            let _ = projection;
-            let plain = self.camera().projection() * view;
+            let plain = camera.projection() * view;
             reflection_shadow_view = Some(Frustum::from_view_projection(&plain));
             self.culls[REFLECTION_VIEW] = ViewCull {
                 active: true,
@@ -1927,7 +1838,6 @@ impl Renderer {
                 origin: world.w_axis.truncate(),
                 forward: -world.z_axis.truncate(),
             };
-            self.reflection_active = true;
         }
         self.shadow_reach = ShadowReach {
             light: self.culls[SHADOW_VIEW].forward,
@@ -2198,11 +2108,6 @@ impl Renderer {
         }
     }
 
-    /// Upload this frame's merged shadow bases.
-    fn upload_shadow_bases(&mut self) {
-        self.frame.write_shadow_bases(&self.gpu, &self.shadow_bases);
-    }
-
     /// Compile pipelines for any class drawn this frame that warm-up missed.
     fn ensure_frame_pipelines(&mut self) {
         let gpu = &self.gpu;
@@ -2211,9 +2116,7 @@ impl Renderer {
         }
         for (view, draws) in self.views.iter().enumerate() {
             for draw in draws.opaque.iter().chain(&draws.transparent) {
-                let class = self.classes[draw.class as usize]
-                    .as_mut()
-                    .expect("live class");
+                let class = self.classes.at_mut(draw.class).expect("live class");
                 let (slot, key) = if view == SHADOW_VIEW {
                     (&mut class.shadow, &class.shadow_key)
                 } else {
@@ -2263,9 +2166,9 @@ impl Renderer {
                 .instances()
                 .write(&self.gpu, dynamic, &self.merged_records);
         }
-        self.upload_shadow_bases();
+        self.frame.write_shadow_bases(&self.gpu, &self.shadow_bases);
         self.write_view_uniforms();
-        self.draw_frame(self.reflection_active, false)?;
+        self.draw_frame(self.culls[REFLECTION_VIEW].active, false)?;
         self.stats.instance_records = dynamic + self.merged_records.len() as u32;
         Ok(())
     }
@@ -2299,8 +2202,11 @@ impl Renderer {
         let stats = &mut self.stats;
         stats.draw_calls = 0;
         stats.triangles = 0;
+        stats.reflection_draw_calls = 0;
+        stats.reflection_triangles = 0;
         let result = if warm_up {
-            self.frame.warm_up(&self.gpu, &scene, stats)
+            self.frame.warm_up(&self.gpu, &scene, stats);
+            Ok(())
         } else {
             self.frame.draw(&self.gpu, &scene, stats)
         };
@@ -2324,12 +2230,12 @@ impl Renderer {
         stats.textures_pending = self.textures.pending() as u32;
         stats.models = self.models.len() as u32;
         stats.instances = self.instances.len() as u32;
-        stats.draw_classes = self.classes.iter().flatten().count() as u32;
-        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output
-        // and water uniforms.
+        stats.draw_classes = self.classes.len() as u32;
         let (pools, pool_instances) = self.pool_totals();
         stats.pools = pools;
         stats.pool_instances = pool_instances;
+        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output
+        // and water uniforms, and a record store per pool.
         stats.buffers = (self.meshes.buffers()
             + self.materials.count()
             + VIEW_COUNT
@@ -2347,7 +2253,7 @@ impl Renderer {
                 target_bytes(size, size, self.gpu.samples)
             })
             + shadow * shadow * 4 * shadow_maps
-            + self.frame.instances().bytes()
+            + u64::from(self.frame.instances().capacity()) * RECORD_SIZE
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;
         stats.mesh_slack_bytes = self.meshes.slack_bytes();

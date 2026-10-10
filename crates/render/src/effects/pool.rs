@@ -18,7 +18,8 @@ use crate::presentation::posing::euler_xyz;
 /// append one span and relocate a few slots per frame.
 const MAX_DIRTY_RANGES: usize = 8;
 
-/// What a pool draws and how.
+/// What a pool draws and how. Pools cast no shadows and also draw in the planar
+/// water reflection (Three's default layer).
 #[derive(Clone, Debug)]
 pub struct PoolDesc {
     pub label: &'static str,
@@ -27,10 +28,7 @@ pub struct PoolDesc {
     /// Maximum instances; the GPU buffer is allocated at this size once.
     pub capacity: u32,
     pub render_order: i32,
-    pub cast_shadow: bool,
     pub receive_shadow: bool,
-    /// Drawn in the planar water reflection too (Three's default layer).
-    pub reflected: bool,
 }
 
 impl PoolDesc {
@@ -54,9 +52,7 @@ pub fn pool(
         material: material.clone(),
         capacity: capacity as u32,
         render_order: 0,
-        cast_shadow: false,
         receive_shadow: false,
-        reflected: true,
     }
 }
 

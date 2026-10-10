@@ -20,10 +20,12 @@ pub use pipelines::Pipelines;
 pub use resources::{MaterialBinding, PageBuffers};
 pub use textures::{Sampler, Texture, TextureView, Uploader};
 
-use super::{FrameUniform, MergedDraw, RenderStats, SAMPLE_COUNT, Scene, WaterUniform, lut};
+use super::{
+    FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, RenderStats, Scene, WaterUniform, lut,
+};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
-use context::{ColorTarget, DEPTH_FORMAT};
+use context::{ColorTarget, DEPTH_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
 /// Opaque draws group by mesh page before material. Every switch is a call Chrome
@@ -33,31 +35,12 @@ use resources::uniform_buffer;
 /// 6-18%), and neither changed the main thread measurably.
 pub const DRAW_GROUPING: Grouping = Grouping::PageFirst;
 
-impl Gpu {
-    /// The first GPU validation error or device loss, if any.
-    pub fn error(&self) -> Option<String> {
-        self.error.get()
-    }
-}
-
 fn depth_texture(device: &wgpu::Device, label: &str, size: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    })
+    let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC
+        | wgpu::TextureUsages::COPY_DST;
+    texture_2d(device, label, size, size, DEPTH_FORMAT, 1, usage)
 }
 
 /// A depth texture with its view; dropping it destroys the texture.
@@ -81,8 +64,6 @@ impl Drop for DepthMap {
         self.texture.destroy();
     }
 }
-
-const INITIAL_SHADOW_BASES: u32 = 1024;
 
 fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -108,8 +89,8 @@ pub struct Frame {
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
-    lut_sampler: wgpu::Sampler,
-    reflection_sampler: wgpu::Sampler,
+    /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
+    linear_sampler: wgpu::Sampler,
     view_uniforms: [wgpu::Buffer; VIEW_COUNT],
     view_groups: FrameGroups,
     instance_records: InstanceStore,
@@ -145,15 +126,7 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
-        let linear_clamp = |label| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some(label),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            })
-        };
-        let main_target = ColorTarget::new(device, "main view", width, height, SAMPLE_COUNT);
+        let main_target = ColorTarget::new(device, "main view", width, height);
         let output_uniform = uniform_buffer(device, "output", 16);
         let output_group = output_group(gpu, &main_target, &output_uniform);
         let instance_records = InstanceStore::new(gpu, "instances", instances);
@@ -172,8 +145,12 @@ impl Frame {
                 ..Default::default()
             }),
             lut_view: lut.create_view(&Default::default()),
-            lut_sampler: linear_clamp("DFG LUT"),
-            reflection_sampler: linear_clamp("water reflection"),
+            linear_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("linear clamp"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
             view_uniforms: [0, 1, 2]
                 .map(|_| uniform_buffer(device, "frame", size_of::<FrameUniform>() as u64)),
             // Replaced below, once the frame's own resources exist.
@@ -205,7 +182,7 @@ impl Frame {
         config.width = width;
         config.height = height;
         self.canvas.surface.configure(&gpu.device, config);
-        self.main_target = ColorTarget::new(&gpu.device, "main view", width, height, SAMPLE_COUNT);
+        self.main_target = ColorTarget::new(&gpu.device, "main view", width, height);
         self.output_group = output_group(gpu, &self.main_target, &self.output_uniform);
     }
 
@@ -277,7 +254,7 @@ impl Frame {
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&self.lut_sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
@@ -374,27 +351,17 @@ impl Frame {
 
     /// Draw every pass once, the output into an offscreen probe, so the browser
     /// finishes compiling before gameplay needs the pipelines.
-    pub fn warm_up(
-        &mut self,
-        gpu: &Gpu,
-        scene: &Scene,
-        stats: &mut RenderStats,
-    ) -> Result<(), String> {
+    pub fn warm_up(&mut self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
         let device = &gpu.device;
-        let probe = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("warm-up output"),
-            size: wgpu::Extent3d {
-                width: 4,
-                height: 4,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.canvas.config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
+        let probe = texture_2d(
+            device,
+            "warm-up output",
+            4,
+            4,
+            self.canvas.config.format,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
         let probe_view = probe.create_view(&Default::default());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("warm-up"),
@@ -403,7 +370,6 @@ impl Frame {
         self.encode_output(&mut encoder, &probe_view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
         probe.destroy();
-        Ok(())
     }
 
     /// The sun shadow, water reflection and main view passes, into `main_target`.
@@ -456,19 +422,10 @@ impl Frame {
             );
         }
         if scene.copy_static {
+            // A depth-only format: copying all aspects copies its depth.
             encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &static_shadow().texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::DepthOnly,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.shadow_map.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::DepthOnly,
-                },
+                static_shadow().texture.as_image_copy(),
+                self.shadow_map.texture.as_image_copy(),
                 self.shadow_map.texture.size(),
             );
         }
@@ -508,8 +465,6 @@ impl Frame {
             stats.shadow_draw_calls = count + static_count;
             stats.shadow_triangles = stats.triangles;
         }
-        stats.reflection_draw_calls = 0;
-        stats.reflection_triangles = 0;
         if let (true, Some(water)) = (scene.reflection, scene.water) {
             let mut pass = scene_pass(encoder, "water reflection", &water.gpu.target, clear);
             pass.set_bind_group(0, &self.view_groups.0[REFLECTION_VIEW], &[]);
@@ -530,13 +485,7 @@ impl Frame {
             {
                 pass.set_pipeline(&scene.pipelines.fixed().water);
                 pass.set_bind_group(1, &water.gpu.bind_group, &[]);
-                let (buffers, page) = scene.meshes.page(range.vertex_page);
-                pass.set_vertex_buffer(0, buffers.vertex_buffers(page.family, page.written()).0);
-                let (buffers, page) = scene.meshes.page(range.index_page);
-                pass.set_index_buffer(
-                    buffers.index_buffer(page.written()),
-                    wgpu::IndexFormat::Uint32,
-                );
+                BoundPages::default().bind(&mut pass, scene.meshes, range);
                 pass.draw_indexed(range.indices(), 0, 0..1);
                 stats.draw_calls += 1;
                 stats.triangles += range.index_count as u64 / 3;
@@ -610,7 +559,7 @@ impl WaterGpu {
         sampler: Sampler,
     ) -> Self {
         let uniform = uniform_buffer(&gpu.device, "water", size_of::<WaterUniform>() as u64);
-        let target = ColorTarget::new(&gpu.device, "water reflection", size, size, SAMPLE_COUNT);
+        let target = ColorTarget::new(&gpu.device, "water reflection", size, size);
         let bind_group = Self::bind_group(gpu, frame, &uniform, &target, normals, &sampler);
         Self {
             uniform,
@@ -649,7 +598,7 @@ impl WaterGpu {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&frame.reflection_sampler),
+                    resource: wgpu::BindingResource::Sampler(&frame.linear_sampler),
                 },
             ],
         })
@@ -706,7 +655,7 @@ fn scene_pass<'a>(
 
 /// The mesh pages a pass has bound, so consecutive draws from one page skip the
 /// rebinding. Each encode starts from none bound: other draws between them (the
-/// water, merged shadows on slot 1) may have changed the bindings.
+/// water, merged shadows) may have changed the bindings.
 struct BoundPages {
     vertex: u16,
     index: u16,
@@ -722,16 +671,12 @@ impl Default for BoundPages {
 }
 
 impl BoundPages {
-    /// Bind the pages of `range` that are not bound yet. A surface page's effect
-    /// vec4s go to slot 1; merged shadows keep their record bases there instead.
+    /// Bind the pages of `range` that are not bound yet, the vertices to slot 0
+    /// (merged shadows keep their record bases on slot 1).
     fn bind(&mut self, pass: &mut wgpu::RenderPass, meshes: &super::MeshStore, range: MeshRange) {
         if range.vertex_page != self.vertex {
             let (buffers, page) = meshes.page(range.vertex_page);
-            let (vertices, extra) = buffers.vertex_buffers(page.family, page.written());
-            pass.set_vertex_buffer(0, vertices);
-            if let Some(extra) = extra {
-                pass.set_vertex_buffer(1, extra);
-            }
+            pass.set_vertex_buffer(0, buffers.vertex_buffers(page.family, page.written()));
             self.vertex = range.vertex_page;
         }
         if range.index_page != self.index {
@@ -751,6 +696,8 @@ struct DrawContext<'a> {
 }
 
 impl DrawContext<'_> {
+    /// Encode merged shadow draws. Returns the draw count. The caller binds the
+    /// shadow view's frame group.
     fn encode_merged(
         &self,
         pass: &mut wgpu::RenderPass,
@@ -759,7 +706,6 @@ impl DrawContext<'_> {
         stats: &mut RenderStats,
     ) -> u32 {
         let scene = self.scene;
-        pass.set_bind_group(0, &self.frame_groups.0[SHADOW_VIEW], &[]);
         pass.set_vertex_buffer(1, bases.slice(..));
         let mut pipeline = usize::MAX;
         let mut pages = BoundPages::default();
@@ -808,7 +754,7 @@ impl DrawContext<'_> {
         let mut bound_pool: Option<u32> = None;
         let mut count = 0;
         for draw in draws {
-            let Some(class) = &scene.classes[draw.class as usize] else {
+            let Some(class) = scene.classes.at(draw.class) else {
                 continue;
             };
             // An empty mesh has no page to bind and nothing to draw.
@@ -816,8 +762,8 @@ impl DrawContext<'_> {
             if range.is_empty() {
                 continue;
             }
-            if class.pool != bound_pool {
-                let group = match class.pool {
+            if class.key.pool != bound_pool {
+                let group = match class.key.pool {
                     Some(pool) => match scene.pools.at(pool) {
                         Some(entry) => &entry.groups.0[view],
                         None => continue,
@@ -825,7 +771,7 @@ impl DrawContext<'_> {
                     None => &self.frame_groups.0[view],
                 };
                 pass.set_bind_group(0, group, &[]);
-                bound_pool = class.pool;
+                bound_pool = class.key.pool;
             }
             let Some(pipeline) = (if shadow { class.shadow } else { class.main }) else {
                 continue;

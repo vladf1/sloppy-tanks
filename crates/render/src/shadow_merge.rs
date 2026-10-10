@@ -331,10 +331,6 @@ mod tests {
         assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Separate);
     }
 
-    fn no_attributes(_: &Material) -> &'static [&'static str] {
-        &[]
-    }
-
     fn caster(mesh: &Arc<sloppy_core::geometry::Mesh>, material: Material, x: f64) -> Node {
         let mut node = Node::mesh(mesh.clone(), Arc::new(material));
         node.position = DVec3::new(x, 0.0, 0.0);
@@ -372,7 +368,7 @@ mod tests {
         ));
         root.children.push(turret);
         let mut interner = MaterialInterner::default();
-        let model = prepare_model(&root, &mut interner, &no_attributes);
+        let model = prepare_model(&root, &mut interner);
         let kind = |index: usize| {
             if model.parts[index].material.alpha_test == 0.0 {
                 MergeKind::Opaque
@@ -405,7 +401,7 @@ mod tests {
                 .push(caster(&cube, Material::standard(0x888888, 0.0, 0.9), x));
         }
         let mut interner = MaterialInterner::default();
-        let scenery = prepare_scenery(&root, &mut interner, &no_attributes);
+        let scenery = prepare_scenery(&root, &mut interner);
         let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 60.0);
         assert_eq!(merge.groups.len(), 2);
         assert!(merge.slots.is_empty());

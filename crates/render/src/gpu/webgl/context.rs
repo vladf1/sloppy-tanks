@@ -14,40 +14,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use glow::HasContext;
+use sloppy_core::scene::Side;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 
 use crate::gpu::SAMPLE_COUNT;
 use crate::gpu::context::{ErrorSlot, GRAPHICS_API};
+use crate::shader::BlendMode;
 pub use crate::shader::glsl::{block, unit};
-
-/// Faces culled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Cull {
-    None,
-    Back,
-    Front,
-}
-
-/// Color blending (`shader::BlendMode` as GL factors).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Blend {
-    Replace,
-    /// srcAlpha, oneMinusSrcAlpha; alpha one, oneMinusSrcAlpha.
-    Normal,
-    /// srcAlpha, one; alpha one, one.
-    Additive,
-}
 
 /// The fixed-function state a pipeline draws with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Raster {
-    pub cull: Cull,
+    /// The faces drawn; culling removes the others.
+    pub side: Side,
     /// `None` disables the depth test (targets without depth); WebGPU's `Always`
     /// compare stays a test that always passes, so depth writes still happen.
     pub depth_func: Option<u32>,
     pub depth_write: bool,
-    pub blend: Blend,
+    pub blend: BlendMode,
     /// `polygonOffset(factor, units)`; zero is off.
     pub polygon_offset: (f32, f32),
     pub alpha_to_coverage: bool,
@@ -56,10 +41,10 @@ pub struct Raster {
 impl Raster {
     /// Full-screen passes: no depth, culling or blending.
     pub const PLAIN: Raster = Raster {
-        cull: Cull::None,
+        side: Side::Double,
         depth_func: None,
         depth_write: false,
-        blend: Blend::Replace,
+        blend: BlendMode::Replace,
         polygon_offset: (0.0, 0.0),
         alpha_to_coverage: false,
     };
@@ -289,11 +274,6 @@ impl Drop for Gl {
 }
 
 impl Gl {
-    /// The first GPU error or context loss, if any.
-    pub fn error(&self) -> Option<String> {
-        self.error.get()
-    }
-
     /// A new GL object. Creation fails only once the context is lost; then the
     /// renderer stops: the loss goes to the error slot and the call panics, which
     /// the page reports like any engine failure.
@@ -533,14 +513,14 @@ impl Gl {
                 gl.disable(capability);
             }
         };
-        if last.cull != raster.cull {
-            if (last.cull == Cull::None) != (raster.cull == Cull::None) {
-                toggle(glow::CULL_FACE, raster.cull != Cull::None);
+        if last.side != raster.side {
+            if (last.side == Side::Double) != (raster.side == Side::Double) {
+                toggle(glow::CULL_FACE, raster.side != Side::Double);
             }
-            match raster.cull {
-                Cull::Back => unsafe { gl.cull_face(glow::BACK) },
-                Cull::Front => unsafe { gl.cull_face(glow::FRONT) },
-                Cull::None => {}
+            match raster.side {
+                Side::Front => unsafe { gl.cull_face(glow::BACK) },
+                Side::Back => unsafe { gl.cull_face(glow::FRONT) },
+                Side::Double => {}
             }
         }
         if last.depth_func != raster.depth_func {
@@ -555,11 +535,11 @@ impl Gl {
             unsafe { gl.depth_mask(raster.depth_write) };
         }
         if last.blend != raster.blend {
-            if (last.blend == Blend::Replace) != (raster.blend == Blend::Replace) {
-                toggle(glow::BLEND, raster.blend != Blend::Replace);
+            if (last.blend == BlendMode::Replace) != (raster.blend == BlendMode::Replace) {
+                toggle(glow::BLEND, raster.blend != BlendMode::Replace);
             }
             match raster.blend {
-                Blend::Normal => unsafe {
+                BlendMode::Normal => unsafe {
                     gl.blend_func_separate(
                         glow::SRC_ALPHA,
                         glow::ONE_MINUS_SRC_ALPHA,
@@ -567,10 +547,10 @@ impl Gl {
                         glow::ONE_MINUS_SRC_ALPHA,
                     )
                 },
-                Blend::Additive => unsafe {
+                BlendMode::Additive => unsafe {
                     gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE, glow::ONE, glow::ONE)
                 },
-                Blend::Replace => {}
+                BlendMode::Replace => {}
             }
         }
         if last.polygon_offset != raster.polygon_offset {

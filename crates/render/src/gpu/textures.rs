@@ -44,17 +44,11 @@ pub struct SamplerKey {
     pub mipmaps: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextureState {
-    Loading,
-    Ready,
-    Failed,
-}
-
 struct TextureEntry {
     texture: Option<Texture>,
     bytes: u64,
-    state: TextureState,
+    /// Still downloading or awaiting generated pixels.
+    loading: bool,
 }
 
 /// Decoded pixels the backend uploads from.
@@ -146,7 +140,7 @@ impl TextureStore {
             TextureEntry {
                 texture: None,
                 bytes: 0,
-                state: TextureState::Loading,
+                loading: true,
             },
         );
         match &key.source {
@@ -203,9 +197,9 @@ impl TextureStore {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
             };
+            entry.loading = false;
             match result {
                 Err(message) => {
-                    entry.state = TextureState::Failed;
                     web_sys::console::error_1(&format!("Texture failed: {message}").into());
                     self.failures.push(message);
                 }
@@ -227,7 +221,6 @@ impl TextureStore {
                         bitmap.close();
                     }
                     entry.bytes = (width as u64 * height as u64 * 4 * 4).div_ceil(3);
-                    entry.state = TextureState::Ready;
                 }
             }
         }
@@ -237,20 +230,12 @@ impl TextureStore {
         changed
     }
 
-    /// The texture's view, or the white placeholder while it loads.
-    pub fn view(&self, texture: &TextureRef) -> (&TextureView, bool) {
-        match self
-            .entries
-            .get(&TextureKey::of(texture))
-            .and_then(|e| e.texture.as_ref())
-        {
-            Some(texture) => (&texture.view, true),
-            None => (self.uploader.placeholder(), false),
-        }
-    }
-
-    pub fn placeholder(&self) -> &TextureView {
-        self.uploader.placeholder()
+    /// The texture's view, or the white placeholder while it loads or for none.
+    pub fn view(&self, texture: Option<&TextureRef>) -> &TextureView {
+        texture
+            .and_then(|texture| self.entries.get(&TextureKey::of(texture)))
+            .and_then(|entry| entry.texture.as_ref())
+            .map_or(self.uploader.placeholder(), |texture| &texture.view)
     }
 
     // A wgpu sampler is a handle that clones; a WebGL one is a `Copy` name.
@@ -276,10 +261,7 @@ impl TextureStore {
 
     /// Textures still downloading or awaiting generated pixels.
     pub fn pending(&self) -> usize {
-        self.entries
-            .values()
-            .filter(|entry| entry.state == TextureState::Loading)
-            .count()
+        self.entries.values().filter(|entry| entry.loading).count()
     }
 
     pub fn count(&self) -> usize {

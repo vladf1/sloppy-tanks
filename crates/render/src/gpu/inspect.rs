@@ -10,9 +10,7 @@ use super::{InstanceId, Renderer};
 pub struct InstanceState {
     pub visible: bool,
     pub opacity: f32,
-    pub tint: [f32; 3],
     pub data: [f32; 4],
-    pub reflected: bool,
     pub world: Mat4,
     /// Per joint: whether it draws.
     pub node_visible: Vec<bool>,
@@ -32,9 +30,7 @@ impl Renderer {
         Some(InstanceState {
             visible: instance.visible,
             opacity: instance.opacity,
-            tint: instance.tint,
             data: instance.data,
-            reflected: instance.reflected,
             world: instance.world,
             node_visible: instance.node_visible.clone(),
             overrides: instance.overrides.clone(),

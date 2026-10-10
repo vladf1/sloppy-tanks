@@ -219,7 +219,7 @@ mod browser {
     use sloppy_core::sim::RenderState;
 
     use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE};
-    use crate::gpu::{Lifetime, PointLight, PoolId, Renderer};
+    use crate::gpu::{PointLight, PoolId, Renderer};
 
     /// The point-light slot the explosion flash uses.
     const FLASH_LIGHT: usize = 0;
@@ -234,10 +234,13 @@ mod browser {
     }
 
     impl Effects {
+        /// Register every pool now, so their pipelines are part of
+        /// `prepare_step`/`warm_up` and the first blast, mark or shell never compiles
+        /// mid-round.
         pub fn new(renderer: &mut Renderer) -> Self {
             let pools = super::looks::pool_descs()
                 .iter()
-                .map(|desc| renderer.add_pool(desc, Lifetime::Shared))
+                .map(|desc| renderer.add_pool(desc))
                 .collect();
             Self {
                 systems: EffectSystems::default(),
@@ -262,18 +265,6 @@ mod browser {
         ) {
             self.systems.update(state, alpha, dt, time);
             self.sync(renderer);
-        }
-
-        /// Register any pool the renderer no longer has. Pools exist from `new`,
-        /// so their pipelines are already part of `prepare_step`/`warm_up` and
-        /// the first blast, mark or shell never compiles mid-round.
-        pub fn warm_up_samples(&mut self, renderer: &mut Renderer) {
-            let descs = super::looks::pool_descs();
-            for (id, desc) in self.pools.iter_mut().zip(&descs) {
-                if !renderer.has_pool(*id) {
-                    *id = renderer.add_pool(desc, Lifetime::Shared);
-                }
-            }
         }
 
         fn sync(&mut self, renderer: &mut Renderer) {

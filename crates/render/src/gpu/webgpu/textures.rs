@@ -4,7 +4,10 @@
 use sloppy_core::scene::{TextureSource, Wrap};
 
 use super::Gpu;
+use super::context::texture_2d;
+use super::pipelines::pipeline_layout;
 use super::precompile::{Background, LayoutKind, PipelineSpec};
+use super::resources::MIPMAP_SOURCE_ENTRIES;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
 use crate::shader::MIPMAP_WGSL;
 
@@ -22,26 +25,6 @@ impl Drop for Texture {
 
 pub type TextureView = wgpu::TextureView;
 pub type Sampler = wgpu::Sampler;
-
-/// The mipmap blit's source level and sampler (shared with `precompile.rs`).
-pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    },
-    wgpu::BindGroupLayoutEntry {
-        binding: 1,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        count: None,
-    },
-];
 
 fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
     PipelineSpec {
@@ -79,28 +62,19 @@ impl Uploader {
             label: Some("mipmap source"),
             entries: MIPMAP_SOURCE_ENTRIES,
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mipmap"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = pipeline_layout(device, "mipmap", &[&layout]);
         let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
         let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
         let compile = Background::start(device, &[(&srgb, MIPMAP_WGSL), (&linear, MIPMAP_WGSL)]);
-        let placeholder = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("white placeholder"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let placeholder = texture_2d(
+            device,
+            "white placeholder",
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            1,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
         gpu.queue.write_texture(
             placeholder.as_image_copy(),
             &[255; 4],
@@ -109,11 +83,7 @@ impl Uploader {
                 bytes_per_row: Some(4),
                 rows_per_image: None,
             },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
+            placeholder.size(),
         );
         Self {
             pending: Some((srgb, linear, compile)),

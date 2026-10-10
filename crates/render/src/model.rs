@@ -43,10 +43,6 @@ pub struct Vertex {
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    /// `extra_attributes` vec4s per vertex, in the effect's attribute order
-    /// (per-vertex attributes only; per-instance ones travel with instances).
-    pub extra: Vec<[f32; 4]>,
-    pub extra_attributes: u8,
     pub bounds: Sphere,
 }
 
@@ -56,28 +52,13 @@ impl MeshData {
         self
     }
 
-    fn append(
-        &mut self,
-        mesh: &Mesh,
-        attributes: &[&str],
-        transform: Option<&Mat4>,
-        paint: Option<[f32; 3]>,
-    ) {
+    fn append(&mut self, mesh: &Mesh, transform: Option<&Mat4>, paint: Option<[f32; 3]>) {
         let base = self.vertices.len() as u32;
         let count = mesh.positions.len();
         self.vertices.reserve(count);
-        self.extra.reserve(count * attributes.len());
         self.indices
             .reserve(mesh.indices.as_ref().map_or(count, Vec::len));
-        push_vertices(
-            &mut self.vertices,
-            &mut self.extra,
-            mesh,
-            attributes,
-            0..count,
-            transform,
-            paint,
-        );
+        push_vertices(&mut self.vertices, mesh, 0..count, transform, paint);
         match &mesh.indices {
             Some(indices) => self.indices.extend(indices.iter().map(|i| base + i)),
             None => self
@@ -88,12 +69,10 @@ impl MeshData {
 }
 
 /// Convert vertices `range` of `mesh` to the upload layout, moved by `transform`
-/// and painted with `paint` when given, with their `attributes` vec4s.
+/// and painted with `paint` when given.
 fn push_vertices(
     vertices: &mut Vec<Vertex>,
-    extra: &mut Vec<[f32; 4]>,
     mesh: &Mesh,
-    attributes: &[&str],
     range: Range<usize>,
     transform: Option<&Mat4>,
     paint: Option<[f32; 3]>,
@@ -115,39 +94,15 @@ fn push_vertices(
             uv: mesh.uvs.get(i).copied().unwrap_or_default(),
             color: [r, g, b, a],
         });
-        for name in attributes {
-            let mut value = [0.0; 4];
-            if let Some(attribute) = mesh.attribute(name).filter(|a| !a.per_instance) {
-                let size = attribute.item_size as usize;
-                for (k, slot) in value.iter_mut().enumerate().take(size.min(4)) {
-                    *slot = attribute.data.get(i * size + k).copied().unwrap_or(0.0);
-                }
-            }
-            extra.push(value);
-        }
     }
 }
 
-/// Vertices `range` of an unmodified shared mesh in the upload layout, with their
-/// effect attribute vec4s, so a large mesh can go to the GPU in pieces instead of
-/// through one full-size copy.
-pub fn shared_vertices(
-    mesh: &Mesh,
-    attributes: &[&str],
-    range: Range<usize>,
-) -> (Vec<Vertex>, Vec<[f32; 4]>) {
+/// Vertices `range` of an unmodified shared mesh in the upload layout, so a large
+/// mesh can go to the GPU in pieces instead of through one full-size copy.
+pub fn shared_vertices(mesh: &Mesh, range: Range<usize>) -> Vec<Vertex> {
     let mut vertices = Vec::with_capacity(range.len());
-    let mut extra = Vec::with_capacity(range.len() * attributes.len());
-    push_vertices(
-        &mut vertices,
-        &mut extra,
-        mesh,
-        attributes,
-        range,
-        None,
-        None,
-    );
-    (vertices, extra)
+    push_vertices(&mut vertices, mesh, range, None, None);
+    vertices
 }
 
 /// One InstancedMesh instance relative to its part.
@@ -238,9 +193,6 @@ impl PreparedModel {
     }
 }
 
-/// Which attribute names a material's effect reads (for packing extra vertex data).
-pub type AttributesFor<'a> = &'a dyn Fn(&Material) -> &'static [&'static str];
-
 struct Pending<'a> {
     drawable: &'a Drawable,
     transform: DMat4,
@@ -296,7 +248,6 @@ fn instances_of(drawable: &Drawable) -> Option<Vec<InstanceData>> {
 
 struct Builder<'a, 'b> {
     interner: &'b mut MaterialInterner,
-    attributes_for: AttributesFor<'b>,
     model: PreparedModel,
     groups: Groups<'a, GroupKey>,
     /// Drawables that are placed individually (instanced meshes).
@@ -394,18 +345,13 @@ impl<'a> Builder<'a, '_> {
                 continue;
             }
             let (material, _) = self.draw_material(&members[0].drawable.material);
-            let attributes = (self.attributes_for)(&material);
-            let mut data = MeshData {
-                extra_attributes: attributes.len() as u8,
-                ..MeshData::default()
-            };
+            let mut data = MeshData::default();
             for pending in &members {
                 let paint = key
                     .painted
                     .then(|| hex_to_linear(pending.drawable.material.color.0));
                 data.append(
                     &pending.drawable.mesh,
-                    attributes,
                     Some(&pending.transform.as_mat4()),
                     paint,
                 );
@@ -427,14 +373,9 @@ impl<'a> Builder<'a, '_> {
 
 /// Prepare a movable model. The root's own transform is ignored: an instance's
 /// world matrix places the root, like setting the Three group's position.
-pub fn prepare_model(
-    root: &Node,
-    interner: &mut MaterialInterner,
-    attributes_for: AttributesFor,
-) -> PreparedModel {
+pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
     let mut builder = Builder {
         interner,
-        attributes_for,
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
@@ -483,11 +424,7 @@ const SCENERY_INSTANCE_THRESHOLD: usize = 24;
 
 /// Prepare static scenery in world space (the root transform applies). The result
 /// has a single root joint drawn at identity.
-pub fn prepare_scenery(
-    root: &Node,
-    interner: &mut MaterialInterner,
-    attributes_for: AttributesFor,
-) -> PreparedModel {
+pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
     let mut all = Vec::new();
     collect_visible(root, DMat4::IDENTITY, &mut all);
     // Count repeated (mesh, material, flags) so crowds of identical props become
@@ -509,7 +446,6 @@ pub fn prepare_scenery(
     }
     let mut builder = Builder {
         interner,
-        attributes_for,
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
@@ -594,10 +530,6 @@ mod tests {
         node
     }
 
-    fn no_attributes(_: &Material) -> &'static [&'static str] {
-        &[]
-    }
-
     fn tank() -> (Node, Arc<Mesh>) {
         let mesh = quad();
         let green = Arc::new(Material::standard(0x3a5f3a, 0.05, 0.65));
@@ -629,7 +561,7 @@ mod tests {
     fn joints_merge_rigid_parts_and_paint_them() {
         let (root, _) = tank();
         let mut interner = MaterialInterner::default();
-        let model = prepare_model(&root, &mut interner, &no_attributes);
+        let model = prepare_model(&root, &mut interner);
         let names: Vec<_> = model.nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["tank", "turret", "barrel"]);
         assert_eq!(model.nodes[2].parent, Some(1));
@@ -662,7 +594,7 @@ mod tests {
     fn joint_transforms_apply_overrides() {
         let (root, _) = tank();
         let mut interner = MaterialInterner::default();
-        let model = prepare_model(&root, &mut interner, &no_attributes);
+        let model = prepare_model(&root, &mut interner);
         let mut joints = Vec::new();
         let place = Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0));
         model.joint_transforms(place, &[], &mut joints);
@@ -688,16 +620,14 @@ mod tests {
             vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         ));
         faded.set_attribute(Attribute::instance("phase", 1, vec![0.25, 0.75]));
-        let (vertices, extra) = shared_vertices(&faded, &["origin"], 0..4);
+        let vertices = shared_vertices(&faded, 0..4);
         assert_eq!(vertices[1].color, [0.5, 0.5, 0.5, 0.5]);
-        // Per-instance attributes never become per-vertex effect inputs.
-        assert_eq!(extra[0], [0.0; 4]);
         assert_eq!(
             instance_attribute_data(&faded, 1),
             Some([4.0, 5.0, 6.0, 0.75])
         );
         assert_eq!(instance_attribute_data(&quad(), 0), None);
-        assert_eq!(shared_vertices(&quad(), &[], 0..1).0[0].color, [1.0; 4]);
+        assert_eq!(shared_vertices(&quad(), 0..1)[0].color, [1.0; 4]);
     }
 
     #[test]
@@ -710,16 +640,12 @@ mod tests {
             .collect();
         let alpha = (0..count).map(|i| (i % 3) as f32 / 2.0).collect();
         mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
-        let origin = (0..count * 3).map(|i| i as f32).collect();
-        mesh.set_attribute(Attribute::vertex("origin", 3, origin));
-        let whole = shared_vertices(&mesh, &["origin"], 0..count);
-        let (mut vertices, mut extra) = (Vec::new(), Vec::new());
+        let whole = shared_vertices(&mesh, 0..count);
+        let mut vertices = Vec::new();
         for start in (0..count).step_by(17) {
-            let (v, e) = shared_vertices(&mesh, &["origin"], start..(start + 17).min(count));
-            vertices.extend(v);
-            extra.extend(e);
+            vertices.extend(shared_vertices(&mesh, start..(start + 17).min(count)));
         }
-        assert_eq!((vertices, extra), whole);
+        assert_eq!(vertices, whole);
     }
 
     #[test]
@@ -749,7 +675,7 @@ mod tests {
         ]);
         root.children.push(grass);
         let mut interner = MaterialInterner::default();
-        let scenery = prepare_scenery(&root, &mut interner, &no_attributes);
+        let scenery = prepare_scenery(&root, &mut interner);
         let instanced: Vec<_> = scenery
             .parts
             .iter()

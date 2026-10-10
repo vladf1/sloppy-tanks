@@ -845,7 +845,6 @@ impl Presentation {
             // Falling crowns and boughs reuse the live tree's materials, whose
             // faded variants every movable model registers up front.
         }
-        self.effects.warm_up_samples(&mut self.renderer);
     }
 
     /// Create up to `budget` pipelines whose background compile has finished and queue
