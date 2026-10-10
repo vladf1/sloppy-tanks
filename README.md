@@ -113,7 +113,7 @@ pnpm run format         # Prettier for source, tests, scripts, styles and docs; 
 pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
-[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements, and [docs/rust-rewrite.md](docs/rust-rewrite.md) records how the engine moved from TypeScript to Rust.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
 
 | Crate / directory | Target        | Owns                                                                                     |
 | ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
@@ -138,7 +138,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
 Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
-and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); both use the same
+and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer), each with its own
 game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
@@ -196,7 +196,6 @@ Single-player downloads no multiplayer page code and opens no game-server connec
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 [server guide](crates/server/README.md) describes local development and deployment.
-Multiplayer runs on a stand-alone Rust server on a VPS, with rooms held in memory.
 
 ## Assets
 
@@ -264,8 +263,8 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
-Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first
-(or provide a Pages:Edit API token). The publisher sets the account, project and
+Cloudflare Pages project. Run `pnpm exec wrangler login` first (or provide a
+Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev multiplayer server, which

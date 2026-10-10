@@ -41,7 +41,7 @@ menu (the startup overlay otherwise swallows pointer and wheel input), and
 input to `Game.frame`, so a check advances exact engine frames.
 
 Checks read and arrange the engine through the dev-only `window.sloppy` (see
-`docs/rust-rewrite.md`) and the `Game.debug_*` fixture hooks
+[below](#windowsloppy-development-builds)) and the `Game.debug_*` fixture hooks
 (`crates/web/src/game/debug.rs`): an emptied arena, placed and patched tanks, damage
 through the shared damage paths, pickups, shells, mines, fixed simulation steps, still
 frames from a fixed camera, a pixel probe and two room seats. `launchGame()` installs
@@ -89,6 +89,30 @@ turning lean, a turret riding the hull's tilt), `humvee` (an orbit view of the T
 humvee) and `destruction` (an interactive showcase of every destructible). Fixtures
 with a pass/fail verdict show it in a `#result` element starting with `PASS` or
 `FAIL`, which `fixtures-check.mjs` reads.
+
+### `window.sloppy` (development builds)
+
+| Member                                        | Backed by / meaning                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `game`                                        | The wasm `Game` itself                                                     |
+| `sim`, `view` (getters), `debug()`            | `debug_json()`: a fresh copy per read (match, human, tanks, camera, zoom…) |
+| `hud()`, `stats()`, `snapshot()`              | `hud_json()`, `stats_json()`, `debug_snapshot()`                           |
+| `error()`                                     | `error()`: the first GPU error or null                                     |
+| `frames`, `events`                            | Engine frames run and events drained by the page                           |
+| `audio`, `controls`                           | The page's `AudioSystem` and `Controls`                                    |
+| `start()`, `restart()`                        | A fresh round now / a fresh world behind Battle Setup                      |
+| `autoplay(v)`, `overview(v)`, `autoRounds(v)` | `debug_set_autoplay/overview/auto_rounds`                                  |
+| `zoom(z)`, `reflections(v)`, `firstPerson()`  | `debug_set_zoom`, `debug_set_reflections`, `toggle_first_person`           |
+| `giveAmmo(n)`, `killHuman()`                  | `debug_give_ammo`, `debug_kill_human`                                      |
+| `stress()`, `collapse()`, `soak(s)`           | `debug_stress`, `debug_collapse`, `debug_soak` (synchronous)               |
+| `record()`, `stop()`, `report()`, `samples`   | Frame recorder (per-frame `stats_json` while recording)                    |
+| `exactResolution()`                           | `resize(2560, 1440, 1, true)` until reload                                 |
+
+`sim` and `view` are read-only snapshots: checks that assigned simulation fields
+(`sim.human.ammo.rocket = 10`) use the methods instead. Zoom from the wheel or touch
+buttons reaches the engine with the next frame's input, so checks wait a frame.
+`profile.mjs` uses `game.debug_configure(seed, tanks, team)` and
+`game.debug_stress_burst()`.
 
 ## Labs
 

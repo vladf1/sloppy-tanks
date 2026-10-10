@@ -1,8 +1,5 @@
 # Temporary Cloudflare test links
 
-Create a Cloudflare tunnel **only when the user explicitly requests one**.
-Do not create public links automatically for development or browser checks.
-
 - `pnpm run tunnel` (`scripts/tunnel.mjs`) does the setup: it builds `dist/`,
   serves only `dist/` under the default `/sloppy-tanks/` base (nothing else in the
   checkout is reachable) on `127.0.0.1:4179` (`PORT` overrides), starts

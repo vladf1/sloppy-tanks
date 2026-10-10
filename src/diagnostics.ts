@@ -120,7 +120,7 @@ export interface DebugState {
 }
 
 /** The development `window.sloppy`: engine state and controls for browser checks.
- * See `docs/rust-rewrite.md` ("Single-player shell") for the surface. */
+ * `scripts/README.md` lists the surface. */
 export function createDebug(
   game: Game,
   audio: () => AudioSystem,
