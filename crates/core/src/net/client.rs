@@ -46,7 +46,7 @@
 use serde_json::Value;
 
 use super::hull_prediction::{HostUpdate, HullPrediction};
-use super::input_cadence::{InputCadence, InputSample};
+use super::input_cadence::InputCadence;
 use super::json;
 use super::network_timeline::NetworkTimeline;
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
@@ -1406,8 +1406,11 @@ impl NetworkClient {
             let excess = self.pending.len() - MAX_QUEUED_ACTIONS;
             self.pending.drain(..excess);
         }
-        let sample = InputSample {
+        let message = ControlInput {
             control_epoch,
+            seq: self.seq + 1,
+            observed_tick: self.mirror.tick as i64,
+            tick: self.prediction.requested_tick(),
             move_x: input.move_x,
             move_z: input.move_z,
             aim: match input.aim_point {
@@ -1417,27 +1420,13 @@ impl NetworkClient {
             fire: input.fire,
             actions: self.pending.clone(),
         };
-        if !self.cadence.due(&sample, now_ms) {
+        if !self.cadence.due(&message, now_ms) {
             return;
         }
-        let text = encode_input(
-            &ControlInput {
-                control_epoch,
-                seq: self.seq + 1,
-                observed_tick: self.mirror.tick as i64,
-                tick: self.prediction.requested_tick(),
-                move_x: sample.move_x,
-                move_z: sample.move_z,
-                aim: sample.aim,
-                fire: sample.fire,
-                actions: sample.actions.clone(),
-            },
-            self.round_id,
-        );
-        if self.raw(text, now_ms) {
+        if self.raw(encode_input(&message, self.round_id), now_ms) {
             self.seq += 1;
             self.prediction.sent(self.seq, now_ms);
-            self.cadence.sent(&sample, now_ms);
+            self.cadence.sent(&message, now_ms);
             self.pending.clear();
             self.pending_weapon = None;
         }

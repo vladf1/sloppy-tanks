@@ -3,7 +3,7 @@
 //! controls at a slower rate. A key press or release goes out without waiting for the
 //! next 20 Hz slot, since that wait adds directly to how late the tank responds.
 
-use super::player_controls::{Action, Aim};
+use super::player_controls::{Aim, ControlInput};
 
 const ACTIVE_INTERVAL_MS: f64 = 50.0;
 /// The shortest gap before a control change goes out. It bounds the send rate at 40 a
@@ -13,20 +13,9 @@ const IDLE_INTERVAL_MS: f64 = 1000.0;
 const AIM_POSITION_EPSILON: f64 = 0.01;
 const AIM_ANGLE_EPSILON: f64 = 0.001;
 
-/// One input sample before it is numbered and stamped with the observed tick.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InputSample {
-    pub control_epoch: u64,
-    pub move_x: f64,
-    pub move_z: f64,
-    pub aim: Aim,
-    pub fire: bool,
-    pub actions: Vec<Action>,
-}
-
 #[derive(Clone, Debug)]
 pub struct InputCadence {
-    previous: Option<InputSample>,
+    previous: Option<ControlInput>,
     sent_at: f64,
 }
 
@@ -41,7 +30,7 @@ impl Default for InputCadence {
 
 impl InputCadence {
     /// Whether `input` should be sent at `now_ms`.
-    pub fn due(&self, input: &InputSample, now_ms: f64) -> bool {
+    pub fn due(&self, input: &ControlInput, now_ms: f64) -> bool {
         let elapsed = now_ms - self.sent_at;
         if elapsed < CONTROL_CHANGE_INTERVAL_MS {
             return false;
@@ -80,8 +69,8 @@ impl InputCadence {
     }
 
     /// Records that `input` went out at `now_ms`.
-    pub fn sent(&mut self, input: &InputSample, now_ms: f64) {
-        self.previous = Some(InputSample {
+    pub fn sent(&mut self, input: &ControlInput, now_ms: f64) {
+        self.previous = Some(ControlInput {
             actions: Vec::new(),
             ..input.clone()
         });
@@ -91,7 +80,7 @@ impl InputCadence {
 
 /// A press or release: a one-shot action, fire toggling, or a movement axis starting,
 /// stopping or reversing. Aim and a stick's steady drift keep the 20 Hz cadence.
-fn control_changed(input: &InputSample, previous: &InputSample) -> bool {
+fn control_changed(input: &ControlInput, previous: &ControlInput) -> bool {
     let direction = |value: f64| (value > 0.0, value < 0.0);
     !input.actions.is_empty()
         || input.fire != previous.fire

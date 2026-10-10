@@ -6,7 +6,7 @@ mod net_support;
 
 use std::collections::BTreeSet;
 
-use net_support::{Harness, harness_at};
+use net_support::{Harness, harness};
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{MAX_SERVER_MESSAGE_BYTES, Message};
 use sloppy_core::net::replication::{BinaryMessage, StateMirror, read_binary_message};
@@ -20,10 +20,6 @@ use sloppy_core::sim::stress_test_level::{
 };
 use sloppy_core::sim::superstress_level::{SUPERSTRESS_MAX_FRAGMENTS, SUPERSTRESS_SCALE};
 use sloppy_core::sim::types::{Driver, VehicleKind};
-
-fn room() -> Harness {
-    harness_at(0, "yard-room", 4242)
-}
 
 /// Room settings for a new room on `map`, as Battle Setup's CREATE ROOM sends them.
 fn create(map: &str) -> Value {
@@ -53,7 +49,7 @@ fn every_extra_level_offered_by_the_menu_has_a_matching_level_with_its_roster() 
 
 #[test]
 fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_standard_map() {
-    let mut yard = room();
+    let mut yard = harness();
     yard.join("alice", create("superstress"));
     yard.join("bob", json!({}));
     assert_eq!(
@@ -138,7 +134,7 @@ fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_stan
 
 #[test]
 fn standard_rooms_send_the_same_lobby_and_scene_fields_as_before() {
-    let mut standard = room();
+    let mut standard = harness();
     standard.join("carol", json!({}));
     standard.action("carol", "start", json!({}));
     assert_eq!(standard.sim().map_name(), "PINE VILLAGE");
@@ -146,8 +142,10 @@ fn standard_rooms_send_the_same_lobby_and_scene_fields_as_before() {
     let listing = serde_json::to_value(standard.host.directory_entry("ROOMCODE")).unwrap();
     assert!(listing.get("scenario").is_none());
     assert!(
-        standard.texts["carol"]
+        standard
+            .all("carol")
             .iter()
+            .map(Value::to_string)
             .all(|text| !text.contains("\"scenario\"") && !text.contains("\"scale\""))
     );
 }
@@ -170,7 +168,7 @@ fn mirror_room(level: &mut Harness, steps: usize) -> Mirrored {
     let mut rebuilt = BTreeSet::new();
     for _ in 0..steps {
         level.advance();
-        let messages = level.wire["alice"].clone();
+        let messages = &level.wire["alice"];
         for message in &messages[read..] {
             assert!(message.len() < MAX_SERVER_MESSAGE_BYTES);
             let Message::Binary(bytes) = message else {
@@ -178,7 +176,7 @@ fn mirror_room(level: &mut Harness, steps: usize) -> Mirrored {
             };
             match read_binary_message(bytes).unwrap() {
                 BinaryMessage::Full(baseline) => {
-                    mirror.apply_full(&baseline, "yard-room", round).unwrap();
+                    mirror.apply_full(&baseline, "test-room", round).unwrap();
                 }
                 BinaryMessage::Snapshot(mut batch) => {
                     largest_batch = largest_batch.max(batch.count);
@@ -216,7 +214,7 @@ fn mirror_room(level: &mut Harness, steps: usize) -> Mirrored {
 
 #[test]
 fn a_scrap_yard_room_replicates_the_compact_yard_its_debris_and_rebuilt_cover() {
-    let mut yard = room();
+    let mut yard = harness();
     yard.join("alice", create("superstress"));
     let result = mirror_room(&mut yard, 15 * 20);
     let scene = result.mirror.state.as_ref().unwrap();
@@ -237,7 +235,7 @@ fn a_scrap_yard_room_replicates_the_compact_yard_its_debris_and_rebuilt_cover() 
 
 #[test]
 fn a_stress_grid_room_fields_its_30_tanks_on_the_full_size_grid() {
-    let mut grid = room();
+    let mut grid = harness();
     grid.join("alice", create("stress-test"));
     let alice = {
         let sim = grid.sim();

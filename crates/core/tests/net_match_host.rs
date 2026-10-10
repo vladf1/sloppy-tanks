@@ -8,25 +8,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use net_support::{
-    Harness, apply_batch, batch, first_seq, harness, harness_at, last_seq, set_translation,
+    Harness, apply_batch, baseline, batch, first_seq, harness, harness_aged, last_seq,
+    set_translation, snapshot_batch,
 };
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{
     CONTENT_VERSION, FULL_MESSAGE, MAX_BATCH_FRAMES, MAX_BATTLE_OVERRUN_MS, MAX_ROOM_MS,
     MAX_ROUND_MINUTES, Message, PROTOCOL_VERSION, RoomPhase, SNAPSHOT_MESSAGE,
 };
-use sloppy_core::net::replication::{
-    BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
-};
+use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::{MAX_LIVE_PATHS, PATH_TOLERANCE, ShotPath};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::types::{CoverKind, Driver, MatchPhase, Shot, SimEvent, SimEventType, Team};
-use support::clear_arena;
-
-fn mirror_from(h: &Harness, name: &str) -> (StateMirror, Value) {
-    (h.mirror_from_latest_full(name), h.latest(name, "full"))
-}
+use sloppy_core::sim::types::{CoverKind, Driver, Shot, SimEvent, SimEventType, Team};
+use support::{clear_arena, tank_index};
 
 fn apply_latest(h: &Harness, name: &str, mirror: &mut StateMirror) {
     apply_batch(mirror, &h.latest_binary(name, SNAPSHOT_MESSAGE));
@@ -40,8 +35,11 @@ fn tank_id(h: &mut Harness, index: usize) -> u32 {
     h.sim().tanks[index].id
 }
 
-fn index_of(h: &mut Harness, id: u32) -> usize {
-    h.sim().tank_index(id).expect("tank exists")
+/// Clears the arena of everything but the tanks.
+fn clear_cover(h: &mut Harness) {
+    let sim = h.sim();
+    let keep: Vec<usize> = (0..sim.tanks.len()).collect();
+    clear_arena(sim, &keep);
 }
 
 #[test]
@@ -69,11 +67,11 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
     assert!(h.sim().tanks.iter().all(|tank| tank.driver == Driver::Idle));
     assert_eq!(h.sim().shots_fired, 0);
     h.action("alice", "resume", json!({}));
-    let index = index_of(&mut h, alice);
+    let index = tank_index(h.sim(), alice);
     assert_eq!(h.sim().tanks[index].driver, Driver::Human);
     let token = h.latest("bob", "welcome")["token"].clone();
     h.disconnect("bob");
-    let index = index_of(&mut h, bob);
+    let index = tank_index(h.sim(), bob);
     assert_eq!(h.sim().tanks[index].driver, Driver::Idle);
     h.join(
         "bob-again",
@@ -89,8 +87,8 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
         "leaving removes the hull collider too"
     );
     h.advance();
-    let (mut mirror, full) = mirror_from(&h, "alice");
-    let full_seq = full["seq"].as_u64().unwrap();
+    let mut mirror = h.mirror_from_latest_full("alice");
+    let full_seq = h.latest("alice", "full")["seq"].as_u64().unwrap();
     for message in h.binary("alice", SNAPSHOT_MESSAGE) {
         if first_seq(&message) > full_seq {
             apply_batch(&mut mirror, &message);
@@ -112,7 +110,7 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
         "new occupant cannot inherit old ordnance ownership"
     );
     h.sim().tanks[carol].protection = 0.0;
-    let alice_index = index_of(&mut h, alice);
+    let alice_index = tank_index(h.sim(), alice);
     let (team, life) = (
         h.sim().tanks[alice_index].team,
         h.sim().tanks[alice_index].life,
@@ -161,9 +159,6 @@ fn humans_only_removes_expired_reservations_and_accepts_new_occupants_without_gr
         for messages in h.messages.values_mut() {
             let excess = messages.len().saturating_sub(12);
             messages.drain(..excess);
-        }
-        for texts in h.texts.values_mut() {
-            texts.clear();
         }
         for wire in h.wire.values_mut() {
             wire.clear();
@@ -234,13 +229,12 @@ fn path_entries(h: &Harness, name: &str) -> Vec<Value> {
         .collect()
 }
 
-#[test]
-fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() {
+/// Alice alone at the origin of a cleared arena, having sent one input that fires.
+fn alice_fires_alone() -> (Harness, usize) {
     let mut h = harness();
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
-    let keep = h.all_tanks();
-    clear_arena(h.sim(), &keep);
+    clear_cover(&mut h);
     let human = h.sim().human_index().unwrap();
     set_translation(h.sim(), human, 0.0, 0.65, 0.0);
     let epoch = h.latest("alice", "control")["controlEpoch"].clone();
@@ -250,6 +244,12 @@ fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() 
         "input",
         input(&epoch, 1, tick, json!({ "fire": true })),
     );
+    (h, human)
+}
+
+#[test]
+fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() {
+    let (mut h, human) = alice_fires_alone();
     for _ in 0..4 {
         h.advance();
     }
@@ -278,20 +278,7 @@ fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() 
 
 #[test]
 fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
-    let mut h = harness();
-    h.join("alice", json!({}));
-    h.action("alice", "start", json!({}));
-    let keep = h.all_tanks();
-    clear_arena(h.sim(), &keep);
-    let human = h.sim().human_index().unwrap();
-    set_translation(h.sim(), human, 0.0, 0.65, 0.0);
-    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
-    let tick = h.host.tick();
-    h.action(
-        "alice",
-        "input",
-        input(&epoch, 1, tick, json!({ "fire": true })),
-    );
+    let (mut h, _) = alice_fires_alone();
     h.advance();
     h.advance();
     assert!(!h.sim().shots.is_empty(), "a shell is in flight");
@@ -336,8 +323,7 @@ fn shells_past_the_path_limit_fly_undrawn_and_are_drawn_once_paths_free_up() {
         json!({ "mapMode": "harbor", "difficulty": "normal", "humansOnly": true }),
     );
     h.action("alice", "start", json!({}));
-    let keep = h.all_tanks();
-    clear_arena(h.sim(), &keep);
+    clear_cover(&mut h);
     let human = h.sim().human_index().unwrap();
     set_translation(h.sim(), human, 0.0, 0.65, 0.0);
     let mut mirror = h.mirror_from_latest_full("alice");
@@ -417,10 +403,9 @@ fn two_seats_drive_independently_reconnect_revokes_the_old_socket_and_host_trans
     let second = h.latest("bob", "control");
     let a = first["tankId"].as_u64().unwrap() as u32;
     let b = second["tankId"].as_u64().unwrap() as u32;
-    let keep = h.all_tanks();
-    clear_arena(h.sim(), &keep);
-    let ai = index_of(&mut h, a);
-    let bi = index_of(&mut h, b);
+    clear_cover(&mut h);
+    let ai = tank_index(h.sim(), a);
+    let bi = tank_index(h.sim(), b);
     set_translation(h.sim(), ai, -10.0, 0.65, 0.0);
     set_translation(h.sim(), bi, 10.0, 0.65, 0.0);
     for seq in 1..=20 {
@@ -632,13 +617,12 @@ fn real_host_messages_apply_to_mirrors_and_projectile_paths_survive_an_impact_be
     let mut h = harness();
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
-    let (mut mirror, _) = mirror_from(&h, "alice");
+    let mut mirror = h.mirror_from_latest_full("alice");
     let control = h.latest("alice", "control");
     let tank = h.sim().human_index().unwrap();
     h.sim().tanks[tank].protection = 0.0;
     set_translation(h.sim(), tank, 0.0, 0.65, 0.0);
-    let keep = h.all_tanks();
-    clear_arena(h.sim(), &keep);
+    clear_cover(&mut h);
     let tank = h.sim().human_index().unwrap();
     h.sim().add_cover(&CoverDef::new(
         CoverKind::Concrete,
@@ -698,7 +682,7 @@ fn membership_and_lifecycle_changes_between_broadcasts_keep_a_frame_at_their_own
     let mut h = harness();
     h.join("alice", json!({}));
     h.action("alice", "start", json!({}));
-    let (mut mirror, _) = mirror_from(&h, "alice");
+    let mut mirror = h.mirror_from_latest_full("alice");
     let first = h.host.tick() + 1;
     let pickup = h.sim().pickups[0].id;
     let cover = h
@@ -742,9 +726,7 @@ fn membership_and_lifecycle_changes_between_broadcasts_keep_a_frame_at_their_own
     let piece = piece.load(Ordering::SeqCst);
     let mut states = Vec::new();
     let latest = h.latest_binary("alice", SNAPSHOT_MESSAGE);
-    let BinaryMessage::Snapshot(mut batch) = read_binary_message(&latest).unwrap() else {
-        unreachable!()
-    };
+    let mut batch = snapshot_batch(&latest);
     for _ in 0..batch.count {
         assert!(mirror.apply_snapshot(&mut batch).is_some());
         states.push(mirror.state.clone().unwrap());
@@ -798,10 +780,7 @@ fn resync_skips_events_already_included_in_its_baseline_and_repeated_rounds_reta
     let mut stream = StateStream::new("r", 1);
     let mut mirror = StateMirror::default();
     let full = stream.full(0, 2, [], || state.clone());
-    let BinaryMessage::Full(baseline) = read_binary_message(&full).unwrap() else {
-        unreachable!()
-    };
-    mirror.apply_full(&baseline, "r", 1).unwrap();
+    mirror.apply_full(&baseline(&full), "r", 1).unwrap();
     let events: Vec<TimedEvent> = (1..=3)
         .map(|id| TimedEvent {
             event_id: id,
@@ -986,7 +965,7 @@ fn a_room_past_its_lifetime_lets_the_battle_under_way_finish_then_closes() {
         "roundMinutes": MAX_ROUND_MINUTES,
     });
     // Created exactly one lifetime ago: the battle it starts now keeps running.
-    let mut h = harness_at(-(MAX_ROOM_MS as i64), "test-room", 4242);
+    let mut h = harness_aged(MAX_ROOM_MS);
     h.join("alice", json!({ "create": create }));
     assert_eq!(h.host.phase, RoomPhase::Playing);
     assert_eq!(
@@ -1006,11 +985,7 @@ fn a_room_past_its_lifetime_lets_the_battle_under_way_finish_then_closes() {
     );
     assert_eq!(h.latest("alice", "room-reset")["reason"], "expired");
     // Even a battle stuck in overtime ends with the room at the hard limit.
-    let mut stuck = harness_at(
-        -((MAX_ROOM_MS + MAX_BATTLE_OVERRUN_MS) as i64),
-        "test-room",
-        4242,
-    );
+    let mut stuck = harness_aged(MAX_ROOM_MS + MAX_BATTLE_OVERRUN_MS);
     stuck.join("alice", json!({ "create": create }));
     stuck.advance();
     assert!(stuck.host.disposed);
@@ -1100,7 +1075,6 @@ fn wire_messages_keep_the_typescript_key_order() {
             .iter()
             .any(|text| text.contains(".0,") || text.contains(".0}"))
     );
-    let _ = MatchPhase::Playing;
 }
 
 #[test]
@@ -1242,10 +1216,7 @@ fn seats_joining_between_intervals_reach_clients_in_batches_they_accept() {
     h.advance();
     let counts: Vec<u64> = h.binary("alice", SNAPSHOT_MESSAGE)[before..]
         .iter()
-        .map(|bytes| match read_binary_message(bytes).unwrap() {
-            BinaryMessage::Snapshot(batch) => batch.count,
-            BinaryMessage::Full(_) => unreachable!(),
-        })
+        .map(|bytes| snapshot_batch(bytes).count)
         .collect();
     assert!(
         counts.iter().sum::<u64>() > MAX_BATCH_FRAMES as u64,
@@ -1282,20 +1253,20 @@ fn input_drives_from_its_arrival_or_requested_tick_never_retroactively() {
         let tick = h.host.tick();
         h.action("alice", "input", input(&epoch, seq, tick, extra));
     };
+    let acks = |snapshot: &Value| {
+        (
+            snapshot["ack"].clone(),
+            snapshot["ackTick"].clone(),
+            snapshot["ackArrival"].clone(),
+        )
+    };
 
     // 20 ms into the next batch: ticks 4 (due at 66.7 ms) ran before it in time.
     h.now += 20;
     send(&mut h, 1, json!({ "moveZ": 1 }));
     h.tick_only(30);
     let snapshot = h.latest("alice", "snapshot");
-    assert_eq!(
-        (
-            &snapshot["ack"],
-            &snapshot["ackTick"],
-            &snapshot["ackArrival"]
-        ),
-        (&json!(1), &json!(5), &json!(5))
-    );
+    assert_eq!(acks(&snapshot), (json!(1), json!(5), json!(5)));
     assert_eq!(
         *driven.lock().unwrap(),
         [(4, 0.0), (5, 1.0), (6, 1.0)],
@@ -1314,25 +1285,11 @@ fn input_drives_from_its_arrival_or_requested_tick_never_retroactively() {
     send(&mut h, 2, json!({ "moveZ": -1, "tick": 9 }));
     h.tick_only(40);
     let snapshot = h.latest("alice", "snapshot");
-    assert_eq!(
-        (
-            &snapshot["ack"],
-            &snapshot["ackTick"],
-            &snapshot["ackArrival"]
-        ),
-        (&json!(2), &json!(9), &json!(7))
-    );
+    assert_eq!(acks(&snapshot), (json!(2), json!(9), json!(7)));
     assert_eq!(*driven.lock().unwrap(), [(7, 1.0), (8, 1.0), (9, -1.0)]);
     h.now += 5;
     send(&mut h, 3, json!({ "moveZ": 0.5, "tick": 2 }));
     h.tick_only(45);
     let snapshot = h.latest("alice", "snapshot");
-    assert_eq!(
-        (
-            &snapshot["ack"],
-            &snapshot["ackTick"],
-            &snapshot["ackArrival"]
-        ),
-        (&json!(3), &json!(10), &json!(10))
-    );
+    assert_eq!(acks(&snapshot), (json!(3), json!(10), json!(10)));
 }

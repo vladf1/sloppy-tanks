@@ -15,9 +15,9 @@ mod net_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use net_support::assert_same;
+use net_support::{assert_same, connection_id, merged, test_host};
 use serde_json::{Map, Value, json};
-use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{Message, PROTOCOL_VERSION, SNAPSHOT_MESSAGE};
 use sloppy_core::net::replication::{BinaryMessage, read_binary_message};
 use sloppy_core::net::wire_view::WireView;
@@ -115,16 +115,6 @@ fn header_len(bytes: &[u8]) -> usize {
 }
 
 impl Runner {
-    fn id(&mut self, name: &str) -> u64 {
-        match self.names.iter().position(|known| known == name) {
-            Some(index) => index as u64 + 1,
-            None => {
-                self.names.push(name.to_string());
-                self.names.len() as u64
-            }
-        }
-    }
-
     fn drain(&mut self) {
         for event in self.host.take_events() {
             match event {
@@ -193,7 +183,7 @@ impl Runner {
     }
 
     fn receive(&mut self, name: &str, message: Value) {
-        let id = self.id(name);
+        let id = connection_id(&mut self.names, name);
         self.host.receive(id, &message.to_string(), self.now);
         self.drain();
     }
@@ -205,12 +195,7 @@ impl Runner {
             .unwrap_or("")
             .to_string();
         let extra = step.get("extra").cloned().unwrap_or(json!({}));
-        let merge = |mut base: Value| {
-            for (key, value) in extra.as_object().unwrap() {
-                base[key] = value.clone();
-            }
-            base
-        };
+        let merge = |base| merged(base, extra.clone());
         match step["op"].as_str().unwrap() {
             "join" => {
                 let mut join = merge(json!({
@@ -279,7 +264,7 @@ impl Runner {
                 }
             }
             "disconnect" => {
-                let id = self.id(&conn);
+                let id = connection_id(&mut self.names, &conn);
                 self.host.disconnect(id, self.now);
                 self.drain();
                 self.record.closed.insert(conn);
@@ -289,7 +274,7 @@ impl Runner {
                 self.drain();
             }
             "raw" => {
-                let id = self.id(&conn);
+                let id = connection_id(&mut self.names, &conn);
                 self.host
                     .receive(id, step["text"].as_str().unwrap(), self.now);
                 self.drain();
@@ -318,18 +303,12 @@ fn the_rust_host_speaks_the_typescript_wire_format_for_a_scripted_room() {
     let script: Value =
         serde_json::from_str(include_str!("fixtures/net-golden-script.json")).unwrap();
     let golden: Value = serde_json::from_str(include_str!("fixtures/net-golden.json")).unwrap();
-    let mut token = 0;
     let mut runner = Runner {
-        host: MatchHost::new(MatchHostOptions {
-            room_epoch: script["roomEpoch"].as_str().unwrap().to_string(),
-            now_ms: 0,
-            token: Box::new(move || {
-                token += 1;
-                format!("credential-{token:020}")
-            }),
-            seed: Some(script["seed"].as_u64().unwrap() as u32),
-            content_version: Some(CONTENT.to_string()),
-        }),
+        host: test_host(
+            script["roomEpoch"].as_str().unwrap(),
+            script["seed"].as_u64().unwrap() as u32,
+            Some(CONTENT),
+        ),
         names: Vec::new(),
         now: 0,
         record: Recording::default(),

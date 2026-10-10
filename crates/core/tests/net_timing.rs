@@ -8,17 +8,15 @@ mod support;
 
 use std::f64::consts::PI;
 
-use net_support::{WIRE_SLACK, same_height, set_linvel, set_translation};
+use net_support::{Sweep, WIRE_SLACK, baseline, fire_from, set_linvel, set_translation};
 use sloppy_core::net::fixed_step_clock::FixedStepClock;
-use sloppy_core::net::input_cadence::{InputCadence, InputSample};
+use sloppy_core::net::input_cadence::InputCadence;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::network_timeline::NetworkTimeline;
-use sloppy_core::net::player_controls::{Action, Aim};
+use sloppy_core::net::player_controls::{Action, Aim, ControlInput};
 use sloppy_core::net::playout_clock::PlayoutClock;
 use sloppy_core::net::render_timeline::RenderTimeline;
-use sloppy_core::net::replication::{
-    BinaryMessage, StateMirror, StateStream, TimedEvent, read_binary_message,
-};
+use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::{
     LivePaths, PATH_TOLERANCE, PathEntry, ShotLaunch, ShotPath, ShotPathRecorder,
@@ -26,7 +24,7 @@ use sloppy_core::net::shot_paths::{
 use sloppy_core::net::transport_delay::DelayedChannel;
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, STEP, weapon};
+use sloppy_core::sim::data::{INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, weapon};
 use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::render_state::{RenderFragment, RenderShot, RenderState};
@@ -34,9 +32,8 @@ use sloppy_core::sim::timber_layout::{
     TimberFace, TimberHit, TimberMark, TimberPart, TimberPartKind,
 };
 use sloppy_core::sim::types::{
-    AmmoInventory, CoverKind, Mine, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
+    CoverKind, Mine, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
 };
-use sloppy_core::sim::weapons::fire_weapon;
 
 // ---- Host clock and transport delay ---------------------------------------------------
 
@@ -119,9 +116,12 @@ fn delay_buffers_are_bounded_and_reset_discards_old_life_actions() {
 
 // ---- Input cadence --------------------------------------------------------------------
 
-fn sample() -> InputSample {
-    InputSample {
+fn sample() -> ControlInput {
+    ControlInput {
         control_epoch: 1,
+        seq: 0,
+        observed_tick: 0,
+        tick: None,
         move_x: 0.0,
         move_z: 0.0,
         aim: Aim::Point { x: 10.0, z: 20.0 },
@@ -135,14 +135,14 @@ fn idle_input_sends_once_per_second_while_held_movement_and_fire_keep_their_leas
     for (input, expected) in [
         (sample(), 6),
         (
-            InputSample {
+            ControlInput {
                 move_x: 1.0,
                 ..sample()
             },
             120,
         ),
         (
-            InputSample {
+            ControlInput {
                 fire: true,
                 ..sample()
             },
@@ -166,15 +166,15 @@ fn idle_input_sends_once_per_second_while_held_movement_and_fire_keep_their_leas
 #[test]
 fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_second() {
     for input in [
-        InputSample {
+        ControlInput {
             aim: Aim::Point { x: 11.0, z: 20.0 },
             ..sample()
         },
-        InputSample {
+        ControlInput {
             control_epoch: 2,
             ..sample()
         },
-        InputSample {
+        ControlInput {
             aim: Aim::Angle(0.0),
             ..sample()
         },
@@ -185,15 +185,15 @@ fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_se
         assert!(cadence.due(&input, 50.0));
     }
     for held in [
-        InputSample {
+        ControlInput {
             move_x: 1.0,
             ..sample()
         },
-        InputSample {
+        ControlInput {
             move_z: -1.0,
             ..sample()
         },
-        InputSample {
+        ControlInput {
             fire: true,
             ..sample()
         },
@@ -208,7 +208,7 @@ fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_se
 
 #[test]
 fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apart() {
-    let held = |move_x: f64, move_z: f64, fire: bool| InputSample {
+    let held = |move_x: f64, move_z: f64, fire: bool| ControlInput {
         move_x,
         move_z,
         fire,
@@ -223,14 +223,14 @@ fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apar
         (held(0.0, 0.0, true), sample()),
         (
             sample(),
-            InputSample {
+            ControlInput {
                 actions: vec![Action::Mine],
                 ..sample()
             },
         ),
         (
             sample(),
-            InputSample {
+            ControlInput {
                 actions: vec![Action::Ammo(Weapon::Rocket)],
                 ..sample()
             },
@@ -246,7 +246,7 @@ fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apar
         (held(0.4, 0.2, false), held(0.6, 0.3, false)),
         (
             held(1.0, 0.0, false),
-            InputSample {
+            ControlInput {
                 aim: Aim::Point { x: 12.0, z: 20.0 },
                 ..held(1.0, 0.0, false)
             },
@@ -263,13 +263,13 @@ fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apar
 fn sub_centimetre_camera_noise_does_not_flood_idle_traffic_but_cumulative_aim_changes_are_sent() {
     let mut cadence = InputCadence::default();
     cadence.sent(&sample(), 0.0);
-    let aimed = |x: f64| InputSample {
+    let aimed = |x: f64| ControlInput {
         aim: Aim::Point { x, z: 20.0 },
         ..sample()
     };
     assert!(!cadence.due(&aimed(10.005), 100.0));
     assert!(cadence.due(&aimed(10.02), 150.0));
-    let angle = |angle: f64| InputSample {
+    let angle = |angle: f64| ControlInput {
         aim: Aim::Angle(angle),
         ..sample()
     };
@@ -337,6 +337,22 @@ fn assert_monotonic(frames: &[Frame]) {
     }
 }
 
+/// Frames whose display ran past the newest received data.
+fn starved(frames: &[Frame]) -> usize {
+    frames
+        .iter()
+        .filter(|frame| frame.display_ms > frame.newest_ms)
+        .count()
+}
+
+/// The largest playout buffer the frames held.
+fn peak_buffer(frames: &[Frame]) -> f64 {
+    frames
+        .iter()
+        .map(|frame| frame.buffer_ms)
+        .fold(0.0, f64::max)
+}
+
 #[test]
 fn a_steady_long_path_keeps_a_full_buffer_and_rtt_no_longer_eats_the_interpolation_delay() {
     for path in [0.0, 50.0, 100.0, 200.0] {
@@ -372,20 +388,8 @@ fn ordinary_arrival_jitter_is_absorbed_without_underrun() {
     .filter(|frame| frame.now_ms > 3000.0)
     .collect();
     assert_monotonic(&frames);
-    assert_eq!(
-        frames
-            .iter()
-            .filter(|frame| frame.display_ms > frame.newest_ms)
-            .count(),
-        0
-    );
-    assert!(
-        frames
-            .iter()
-            .map(|frame| frame.buffer_ms)
-            .fold(0.0, f64::max)
-            < 110.0
-    );
+    assert_eq!(starved(&frames), 0);
+    assert!(peak_buffer(&frames) < 110.0);
 }
 
 #[test]
@@ -399,19 +403,12 @@ fn a_head_of_line_stall_extrapolates_briefly_grows_the_buffer_then_gives_the_del
             "extrapolation is bounded"
         );
     }
-    let starved = frames
-        .iter()
-        .filter(|frame| frame.display_ms > frame.newest_ms)
-        .count();
+    let starved = starved(&frames);
     assert!(
         starved > 0 && starved as f64 * FRAME_MS < 200.0,
         "only part of the stall shows"
     );
-    let peak = frames
-        .iter()
-        .map(|frame| frame.buffer_ms)
-        .fold(0.0, f64::max);
-    assert!(peak > 100.0, "the stall grows the buffer");
+    assert!(peak_buffer(&frames) > 100.0, "the stall grows the buffer");
     assert!(
         frames.last().unwrap().buffer_ms < 75.0,
         "the buffer shrinks once arrivals are steady again"
@@ -423,25 +420,16 @@ fn repeated_stalls_buy_enough_buffer_to_hide_the_next_one() {
     // Every second, one batch is retransmitted 150 ms late on a 40 ms path.
     let frames = play(12.0, |batch| if batch % 20 == 0 { 190.0 } else { 40.0 });
     assert_monotonic(&frames);
-    let settled: Vec<&Frame> = frames
-        .iter()
+    let settled: Vec<Frame> = frames
+        .into_iter()
         .filter(|frame| frame.now_ms > 4000.0)
         .collect();
     assert_eq!(
-        settled
-            .iter()
-            .filter(|frame| frame.display_ms > frame.newest_ms)
-            .count(),
+        starved(&settled),
         0,
         "motion no longer pauses once the stall pattern is learned"
     );
-    assert!(
-        settled
-            .iter()
-            .map(|frame| frame.buffer_ms)
-            .fold(0.0, f64::max)
-            <= 250.0
-    );
+    assert!(peak_buffer(&settled) <= 250.0);
 }
 
 #[test]
@@ -863,26 +851,12 @@ fn local_extrapolation_is_bounded_and_resets_across_tank_lives() {
 
 // ---- Projectile paths: what a client draws against what the host simulated -------------
 
-/// One simulated sweep: shell `id` flew straight from `from` at tick `start` to `to` at
-/// tick `end` (fractional ticks), at combat height `y` and render launch height `visual_y`.
-struct Sweep {
-    id: u32,
-    start: f64,
-    end: f64,
-    from: Vec2,
-    to: Vec2,
-    y: Option<f64>,
-    visual_y: Option<f64>,
-}
-
 /// A recorded room: the host's sweeps and events, and what its client drew.
 #[derive(Default)]
 struct Replay {
     sweeps: Vec<Sweep>,
     /// Every shell path entry the client received, in order.
     entries: Vec<PathEntry>,
-    /// Impact effects as the client received them: (tick, x, z).
-    impacts: Vec<(f64, f64, f64)>,
     /// Every event the client received, at its tick.
     events: Vec<TimedEvent>,
     /// Display reads: the display tick and the shells drawn at it.
@@ -927,21 +901,6 @@ fn fire(sim: &mut Simulation, weapon: Weapon, aim: f64) {
     fire_from(sim, 0, weapon, aim);
 }
 
-/// Fires tank `index`'s `weapon` at `aim` radians.
-fn fire_from(sim: &mut Simulation, index: usize, weapon: Weapon, aim: f64) {
-    let tank = &mut sim.tanks[index];
-    tank.ammo = AmmoInventory {
-        spread: 99.0,
-        rocket: 99.0,
-        ricochet: 99.0,
-        piercing: 99.0,
-    };
-    tank.selected_ammo = weapon;
-    tank.aim = aim;
-    tank.cooldown = 0.0;
-    fire_weapon(sim, index);
-}
-
 /// Plays `ticks` of `sim` as a room does: the host follows every projectile sweep with its
 /// path recorder and sends a frame every third tick, which goes through the binary wire and
 /// the client's mirror into its display timeline, read every 4 ms as frames arrive every
@@ -953,10 +912,7 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
     let mut stream = StateStream::new("room", 1);
     let mut mirror = StateMirror::default();
     let full = stream.full(0, 0, recorder.paths(), || Scene::capture(&sim));
-    let BinaryMessage::Full(baseline) = read_binary_message(&full).unwrap() else {
-        unreachable!()
-    };
-    mirror.apply_full(&baseline, "room", 1).unwrap();
+    mirror.apply_full(&baseline(&full), "room", 1).unwrap();
     let mut timeline = NetworkTimeline::default();
     timeline.reset(&mirror.render(viewer).unwrap(), 0, 0.0, &mirror.shots);
     let mut replay = Replay {
@@ -970,22 +926,8 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
     for tick in 1..=ticks {
         before(&mut sim, tick);
         sim.step(VehicleCommand::idle(), false);
-        for sweep in sim.projectile_moves.as_ref().unwrap() {
-            let shot = &sweep.shot;
-            let start = tick as f64 - 1.0 + sweep.offset / STEP;
-            replay.sweeps.push(Sweep {
-                id: shot.id,
-                start,
-                end: start + sweep.seconds / STEP,
-                from: Vec2::new(
-                    shot.x - shot.vx * sweep.seconds,
-                    shot.z - shot.vz * sweep.seconds,
-                ),
-                to: Vec2::new(shot.x, shot.z),
-                y: shot.y,
-                visual_y: shot.visual_y,
-            });
-        }
+        let moves = sim.projectile_moves.as_ref().unwrap();
+        replay.sweeps.extend(Sweep::record(moves, tick));
         recorder.follow(&mut sim, tick);
         for event in sim.events.drain(..) {
             event_id += 1;
@@ -1009,13 +951,6 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
         .pop()
         .expect("a valid frame");
         replay.entries.extend(extras.paths.iter().copied());
-        replay.impacts.extend(
-            extras
-                .events
-                .iter()
-                .filter(|timed| timed.event.kind == SimEventType::Impact)
-                .map(|timed| (timed.tick, timed.event.x, timed.event.z)),
-        );
         replay.events.extend(extras.events.iter().cloned());
         timeline
             .push(
@@ -1038,112 +973,40 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
     replay
 }
 
-/// Simulated sweeps of shell `id` that contain display tick `tick`, with a little slack
-/// for the wire's thousandth-of-a-tick rounding.
-fn sweeps_at(replay: &Replay, id: u32, tick: f64) -> impl Iterator<Item = &Sweep> {
-    replay.sweeps.iter().filter(move |sweep| {
-        sweep.id == id && sweep.start - 1e-3 <= tick && tick <= sweep.end + 1e-3
-    })
-}
-
-/// Where the host had shell `id` at `tick`, if it was flying then.
-fn simulated(sweep: &Sweep, tick: f64) -> Vec2 {
-    let span = sweep.end - sweep.start;
-    let alpha = if span > 0.0 {
-        ((tick - sweep.start) / span).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    Vec2::new(
-        sweep.from.x + (sweep.to.x - sweep.from.x) * alpha,
-        sweep.from.z + (sweep.to.z - sweep.from.z) * alpha,
-    )
-}
-
-/// Checks every display read against the host: each drawn shell was flying there and is
-/// within `PATH_TOLERANCE` of its simulated position at its simulated combat and render
-/// heights, and each flying shell is drawn. Returns how many drawn shells were compared
-/// and the largest distance seen.
+/// Checks the replay's display reads against its sweeps, every read drawing each flying
+/// shell. Returns how many drawn shells were compared and the largest distance seen.
 fn assert_drawn_where_simulated(replay: &Replay) -> (usize, f64) {
-    let mut compared = 0;
-    let mut worst: f64 = 0.0;
-    let newest = replay.ticks as f64;
-    for (tick, shots) in &replay.reads {
-        let tick = *tick;
-        if tick > newest - 3.0 {
-            continue;
-        }
-        for shot in shots {
-            let distance = sweeps_at(replay, shot.id, tick)
-                .map(|sweep| {
-                    assert!(
-                        same_height(shot.y, sweep.y) && same_height(shot.visual_y, sweep.visual_y),
-                        "shell {} is drawn at height {:?}/{:?}, flies at {:?}/{:?}",
-                        shot.id,
-                        shot.y,
-                        shot.visual_y,
-                        sweep.y,
-                        sweep.visual_y
-                    );
-                    let at = simulated(sweep, tick);
-                    (at.x - shot.x).hypot(at.z - shot.z)
-                })
-                .reduce(f64::min)
-                .unwrap_or_else(|| {
-                    panic!("shell {} is drawn at tick {tick} but not flying", shot.id)
-                });
-            assert!(
-                distance <= PATH_TOLERANCE + WIRE_SLACK,
-                "shell {} is drawn {distance} m from its simulated position at tick {tick}",
-                shot.id
-            );
-            worst = worst.max(distance);
-            compared += 1;
-        }
-        // A shell flying well inside one sweep is drawn.
-        for sweep in &replay.sweeps {
-            if sweep.start + 0.01 < tick && tick < sweep.end - 0.01 {
-                assert!(
-                    shots.iter().any(|shot| shot.id == sweep.id),
-                    "shell {} flies at tick {tick} but is not drawn",
-                    sweep.id
-                );
-            }
-        }
-    }
-    (compared, worst)
+    net_support::assert_drawn_where_simulated(
+        &replay.sweeps,
+        &replay.reads,
+        replay.ticks as f64,
+        f64::NEG_INFINITY,
+    )
 }
 
 /// Each shell's path ends where its last sweep did, and an impact effect there arrives
 /// within a tick: the explosion lines up with the shell's last drawn position.
 fn assert_impacts_meet_the_drawn_shell(replay: &Replay) -> usize {
-    let mut paths: Vec<ShotPath> = Vec::new();
+    let impacts = events_of(replay, SimEventType::Impact);
     let mut met = 0;
-    for entry in &replay.entries {
-        match *entry {
-            PathEntry::Launch(path) | PathEntry::Change(path) => {
-                paths.retain(|known| known.id != path.id);
-                paths.push(path);
-            }
-            PathEntry::End { id, tick } => {
-                let path = paths.iter().find(|path| path.id == id).unwrap();
-                let drawn = path.at(tick);
-                let last = replay.sweeps.iter().rfind(|sweep| sweep.id == id).unwrap();
-                assert!(
-                    (drawn.x - last.to.x).hypot(drawn.z - last.to.z) <= PATH_TOLERANCE + WIRE_SLACK,
-                    "shell {id} vanishes where it stopped"
-                );
-                let impact = replay.impacts.iter().find(|(at, x, z)| {
-                    (tick..tick + 1.0).contains(at) && (x - last.to.x).hypot(z - last.to.z) < 1e-3
-                });
-                if let Some((_, x, z)) = impact {
-                    assert!(
-                        (x - drawn.x).hypot(z - drawn.z) <= PATH_TOLERANCE + WIRE_SLACK,
-                        "shell {id}'s impact shows where it was last drawn"
-                    );
-                    met += 1;
-                }
-            }
+    for end in drawn_ends(replay) {
+        let (id, tick, drawn) = (end.id, end.tick, end.at);
+        let last = replay.sweeps.iter().rfind(|sweep| sweep.id == id).unwrap();
+        assert!(
+            (drawn.x - last.to.x).hypot(drawn.z - last.to.z) <= PATH_TOLERANCE + WIRE_SLACK,
+            "shell {id} vanishes where it stopped"
+        );
+        let impact = impacts.iter().find(|impact| {
+            let (x, z) = (impact.event.x, impact.event.z);
+            (tick..tick + 1.0).contains(&impact.tick) && (x - last.to.x).hypot(z - last.to.z) < 1e-3
+        });
+        if let Some(impact) = impact {
+            let (x, z) = (impact.event.x, impact.event.z);
+            assert!(
+                (x - drawn.x).hypot(z - drawn.z) <= PATH_TOLERANCE + WIRE_SLACK,
+                "shell {id}'s impact shows where it was last drawn"
+            );
+            met += 1;
         }
     }
     met
