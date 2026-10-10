@@ -29,7 +29,7 @@ pub mod view_settings;
 mod view;
 
 #[cfg(target_arch = "wasm32")]
-pub use view::Presentation;
+pub use view::{PrepareStatus, Presentation};
 
 use crate::effects::{EffectDefinition, effect};
 

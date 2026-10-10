@@ -11,9 +11,8 @@ use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, custom_floor,
-    custom_spawn_pads, flags_model, part, pickup_cube, tank_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
-    wreck_brightness, wreck_model,
+    custom_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
+    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;

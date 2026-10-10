@@ -1,30 +1,29 @@
-//! `RenderLab`: the renderer driven from `tools/render-lab.ts` for calibration
-//! against Three.js, warm-up, reset and resource checks.
+//! `RenderLab`: the renderer driven from `tools/render-lab.ts`, which compares its frames
+//! with references captured from the former Three.js renderer, and checks warm-up,
+//! reset and resources.
 
 use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3};
+use serde_json::Value;
 use sloppy_core::models::tank_model;
 use sloppy_core::scene::Node;
 use sloppy_core::sim::{Team, VehicleKind};
 use sloppy_render::camera::{PerspectiveCamera, ShadowCamera};
 use sloppy_render::gpu::{
-    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, RendererOptions,
-    SunShadow, WaterSettings,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PointLight, Renderer, SunShadow, WaterSettings,
 };
 use wasm_bindgen::prelude::*;
 
-use crate::lab_scene::{SceneSpec, object_node, water_mesh};
+use crate::lab_scene::{SceneSpec, leak, object_node, water_mesh};
+use crate::page::{js_error, parse};
+use crate::stats::renderer_stats;
 
 #[wasm_bindgen]
 pub struct RenderLab {
     renderer: Renderer,
     objects: Vec<(String, InstanceId)>,
     models: Vec<(InstanceId, ModelId)>,
-}
-
-fn js_error(message: impl Into<String>) -> JsValue {
-    js_sys::Error::new(&message.into()).into()
 }
 
 #[wasm_bindgen]
@@ -35,9 +34,7 @@ impl RenderLab {
         asset_base: String,
     ) -> Result<RenderLab, JsValue> {
         console_error_panic_hook::set_once();
-        let renderer = Renderer::new(canvas, RendererOptions { asset_base })
-            .await
-            .map_err(js_error)?;
+        let renderer = Renderer::new(canvas, asset_base).await.map_err(js_error)?;
         Ok(RenderLab {
             renderer,
             objects: Vec::new(),
@@ -47,8 +44,7 @@ impl RenderLab {
 
     /// Replace the scene: round resources are released first, like a new round.
     pub fn load_scene(&mut self, json: &str) -> Result<(), JsValue> {
-        let spec: SceneSpec =
-            serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
+        let spec: SceneSpec = parse(json)?;
         self.renderer.reset_round();
         self.objects.clear();
         self.models.clear();
@@ -115,11 +111,7 @@ impl RenderLab {
             }
             // The object node becomes the model root; its transform is the
             // instance's world matrix.
-            let world = Mat4::from_scale_rotation_translation(
-                node.scale.as_vec3(),
-                node.rotation.as_quat(),
-                node.position.as_vec3(),
-            );
+            let world = node.local_matrix().as_mat4();
             let mut root = node;
             root.position = glam::DVec3::ZERO;
             root.rotation = glam::DQuat::IDENTITY;
@@ -149,7 +141,7 @@ impl RenderLab {
         height: u32,
         rgba: Vec<u8>,
     ) -> Result<(), JsValue> {
-        let name: &'static str = Box::leak(name.to_owned().into_boxed_str());
+        let name = leak(name);
         let image = sloppy_render::gpu::image_data(width, height, &rgba)?;
         self.renderer.set_generated_texture(name, image);
         Ok(())
@@ -270,38 +262,9 @@ impl RenderLab {
         self.renderer.render(time).map_err(js_error)
     }
 
-    /// Renderer counters as JSON.
+    /// Renderer counters as JSON (Stats for nerds' renderer rows).
     pub fn stats(&self) -> String {
-        let s = self.renderer.stats();
-        format!(
-            concat!(
-                "{{\"drawCalls\":{},\"triangles\":{},\"shadowDrawCalls\":{},\"reflectionDrawCalls\":{},",
-                "\"shadowTriangles\":{},\"reflectionTriangles\":{},\"mainTriangles\":{},",
-                "\"instanceRecords\":{},\"pipelines\":{},\"shaderModules\":{},\"latePipelines\":{},",
-                "\"meshes\":{},\"materials\":{},\"textures\":{},\"texturesPending\":{},\"buffers\":{},",
-                "\"models\":{},\"instances\":{},\"drawClasses\":{},\"gpuBytes\":{}}}"
-            ),
-            s.draw_calls,
-            s.triangles,
-            s.shadow_draw_calls,
-            s.reflection_draw_calls,
-            s.shadow_triangles,
-            s.reflection_triangles,
-            s.main_triangles,
-            s.instance_records,
-            s.pipelines,
-            s.shader_modules,
-            s.late_pipelines,
-            s.meshes,
-            s.materials,
-            s.textures,
-            s.textures_pending,
-            s.buffers,
-            s.models,
-            s.instances,
-            s.draw_classes,
-            s.gpu_bytes,
-        )
+        Value::Object(renderer_stats(&self.renderer)).to_string()
     }
 
     /// Ground point under a canvas pixel at `height`, or empty.

@@ -58,12 +58,18 @@ pub fn can_collect_ammo(tank: &Tank, kind: SpecialAmmo, multiplier: f64) -> bool
 }
 
 pub fn equipped_weapon(tank: &Tank) -> Weapon {
-    let primary = vehicle(tank.kind).weapon;
+    equipped_weapon_for(tank.kind, &tank.ammo, tank.selected_ammo)
+}
+
+/// The weapon a tank fires now: its fixed gun, or the selected special ammo while any
+/// remains (also for tanks known only by their replicated values).
+pub fn equipped_weapon_for(kind: VehicleKind, ammo: &AmmoInventory, selected: Weapon) -> Weapon {
+    let primary = vehicle(kind).weapon;
     if primary != Weapon::Standard {
         return primary;
     }
-    if has_ammo(tank, tank.selected_ammo) && tank.selected_ammo != Weapon::Tow {
-        tank.selected_ammo
+    if has_ammo_for(kind, ammo, selected) && selected != Weapon::Tow {
+        selected
     } else {
         Weapon::Standard
     }

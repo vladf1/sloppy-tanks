@@ -43,6 +43,7 @@
 //!    page visibility to [`set_hidden`](NetworkClient::set_hidden), `pagehide` to
 //!    [`stop`](NetworkClient::stop).
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::hull_prediction::{HostUpdate, HullPrediction};
@@ -196,7 +197,8 @@ pub enum ClientNotice {
 }
 
 /// A seat kept across reloads.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SavedSeat {
     pub token: String,
     pub room_epoch: String,
@@ -1232,11 +1234,6 @@ impl NetworkClient {
         self.active = false;
         self.last_resume_ms = now_ms;
         self.send("resume", now_ms, |_| {});
-    }
-
-    /// The UI opened or closed its menu by itself.
-    pub fn set_menu(&mut self, open: bool) {
-        self.menu = open;
     }
 
     pub fn end(&mut self, now_ms: f64) {

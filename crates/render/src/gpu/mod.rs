@@ -296,12 +296,6 @@ impl WaterSettings {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct RendererOptions {
-    /// URL prefix for `TextureSource::File` paths (the page's `BASE_URL`).
-    pub asset_base: String,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PrepareProgress {
     /// Pipelines compiled by this call.
@@ -772,15 +766,15 @@ fn water_normals() -> TextureRef {
 }
 
 impl Renderer {
-    /// Create the device and canvas context. Fails when the build's graphics API is
-    /// unavailable.
+    /// Create the device and canvas context. `asset_base` prefixes `TextureSource::File`
+    /// paths (the page's `BASE_URL`). Fails when the build's graphics API is unavailable.
     pub async fn new(
         canvas: web_sys::HtmlCanvasElement,
-        options: RendererOptions,
+        asset_base: String,
     ) -> Result<Renderer, String> {
         let (gpu, canvas) = Gpu::new(canvas).await?;
         let pipelines = Pipelines::new(&gpu);
-        let textures = TextureStore::new(&gpu, options.asset_base);
+        let textures = TextureStore::new(&gpu, asset_base);
         let sun_shadow = SunShadow::default();
         let frame = Frame::new(&gpu, canvas, sun_shadow.map_size, INITIAL_INSTANCE_CAPACITY);
         // A target the browser cannot draw into fails here, where the page can tell

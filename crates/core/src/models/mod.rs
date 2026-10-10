@@ -94,7 +94,7 @@ mod village_vegetation;
 
 // Shared building blocks.
 pub use batching::{batch, is_paintable, painted, vertex_material};
-pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint, put};
+pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint, put, shadowed};
 
 // Vehicles.
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;

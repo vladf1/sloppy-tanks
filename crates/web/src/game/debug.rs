@@ -1,11 +1,10 @@
 //! Fixture hooks for the browser checks and `tests/*.browser.html` (`debug_*`).
 //!
-//! The checks used to reach into the TypeScript simulation and Three.js scene; these
-//! calls give them the same arrangements through the engine: an emptied arena, placed
-//! and patched tanks, damage through the shared damage paths, pickups, shells and
-//! mines, fixed simulation steps without a frame, still frames with an optional fixed
-//! camera, and a read-only inspection of what every entity's view shows. Arranging
-//! state here bypasses the gameplay rules on purpose; none of it runs in play.
+//! These calls arrange the engine for the checks: an emptied arena, placed and patched
+//! tanks, damage through the shared damage paths, pickups, shells and mines, fixed
+//! simulation steps without a frame, still frames with an optional fixed camera, and a
+//! read-only inspection of what every entity's view shows. Arranging state here
+//! bypasses the gameplay rules on purpose; none of it runs in play.
 //!
 //! - `debug_clear_arena(keep)`: remove every cover, pickup, shell, mine and tank
 //!   except the human and the tanks with ids in `keep`; navigation sees open floor.
@@ -28,8 +27,7 @@
 //! - `debug_step(ticks, moveX, moveZ)`: fixed simulation steps with the human's
 //!   command, without drawing; `debug_render(alpha, dt, overview, camera)` draws one
 //!   frame, from `camera = [px, py, pz, tx, ty, tz]` when given.
-//! - `debug_rebuild_view()`: rebuild every entity view and prepare again;
-//!   `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
+//! - `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
 //! - `debug_view_json()`: `Presentation::inspect` as JSON; `debug_covers_json()`: the
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
@@ -58,7 +56,7 @@ use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
 use wasm_bindgen::prelude::*;
 
-use super::{Game, js_error};
+use super::{Game, js_error, parse};
 
 /// A bot that should hold still waits this long before deciding anything.
 const FROZEN_BRAIN_SECONDS: f64 = 999.0;
@@ -72,10 +70,6 @@ const MS_PER_TICK: f64 = 1000.0 / 60.0;
 thread_local! {
     /// The pixel probe box, if one is placed.
     static PROBE: Cell<Option<(ModelId, InstanceId)>> = const { Cell::new(None) };
-}
-
-fn parse<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, JsValue> {
-    serde_json::from_str(json).map_err(|error| js_error(error.to_string()))
 }
 
 #[derive(Deserialize, Default)]
@@ -153,7 +147,6 @@ struct CoverSpec {
     d: f64,
     h: f64,
     /// Null (or missing) for indestructible cover.
-    #[serde(default)]
     hp: Option<f64>,
     color: u32,
 }
@@ -337,22 +330,17 @@ impl Game {
     /// Add a cover and its navigation footprint; returns its id.
     pub fn debug_add_cover(&mut self, spec_json: &str) -> Result<u32, JsValue> {
         let spec: CoverSpec = parse(spec_json)?;
-        let index = self.sim.add_cover(&CoverDef {
-            kind: spec.kind,
-            x: spec.x,
-            z: spec.z,
-            w: spec.w,
-            d: spec.d,
-            h: spec.h,
-            hp: spec.hp.unwrap_or(f64::INFINITY),
-            color: spec.color,
-            timber_join: None,
-            timber_bays: None,
-            debris_seed: None,
-        });
-        let covers = std::mem::take(&mut self.sim.covers);
-        self.sim.nav.rebuild(&covers, None);
-        self.sim.covers = covers;
+        let index = self.sim.add_cover(&CoverDef::new(
+            spec.kind,
+            spec.x,
+            spec.z,
+            spec.w,
+            spec.d,
+            spec.h,
+            spec.hp.unwrap_or(f64::INFINITY),
+            spec.color,
+        ));
+        self.sim.nav.rebuild(&self.sim.covers, None);
         Ok(self.sim.covers[index].id)
     }
 
@@ -465,7 +453,6 @@ impl Game {
         self.sim.mines.clear();
     }
 
-    /// Solo Assault's reinforcement check, as the next tick would run it.
     /// A blast credited to nobody on blue, through the shared explosion path.
     pub fn debug_explode(&mut self, x: f64, z: f64, radius: f64, damage: f64) {
         self.sim.explode(
@@ -479,6 +466,7 @@ impl Game {
         );
     }
 
+    /// Solo Assault's reinforcement check, as the next tick would run it.
     pub fn debug_reinforce(&mut self) {
         self.sim.reinforce_solo();
     }
@@ -551,14 +539,9 @@ impl Game {
             .camera()
             .project(glam::Vec3::new(x, y, z));
         vec![
-            (ndc.x + 1.0) * 0.5 * self.client.x,
-            (1.0 - ndc.y) * 0.5 * self.client.y,
+            (ndc.x + 1.0) * 0.5 * self.canvas.css.x,
+            (1.0 - ndc.y) * 0.5 * self.canvas.css.y,
         ]
-    }
-
-    /// Rebuild every entity view for the current world and prepare it again.
-    pub fn debug_rebuild_view(&mut self) {
-        self.reset_view();
     }
 
     /// What every entity's view shows after the last frame (`Presentation::inspect`).
@@ -632,7 +615,7 @@ impl Game {
         Value::from(covers).to_string()
     }
 
-    /// Enable or skip the water's reflection pass (the reflection check's baseline).
+    /// The water's height, reflection flag and calm extent, or null without water.
     pub fn debug_water_json(&self) -> String {
         match self.view.renderer.water_settings() {
             Some(water) => json!({
@@ -645,6 +628,7 @@ impl Game {
         }
     }
 
+    /// Enable or skip the water's reflection pass (the reflection check's baseline).
     pub fn debug_set_water_reflection(&mut self, enabled: bool) {
         self.view.renderer.set_water_reflection(enabled);
     }

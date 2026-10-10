@@ -411,7 +411,9 @@ impl Simulation {
         state
     }
 
-    fn fill_tank(&self, view: &mut RenderTank, tank: &Tank) {
+    /// Fill `view` with `tank` as [`Simulation::fill_render_state`] does, reusing its
+    /// allocations.
+    pub fn fill_tank(&self, view: &mut RenderTank, tank: &Tank) {
         view.id = tank.id;
         view.name.clone_from(&tank.name);
         view.kind = tank.kind;

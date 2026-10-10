@@ -479,7 +479,7 @@ export async function startMultiplayer(
   }
   const resize = () => {
     const [width, height] = cssSize();
-    game.resize(width, height, devicePixelRatio, false);
+    game.resize(width, height, devicePixelRatio);
   };
   const route = (drained: DrainedEvents) => {
     audio.listenerRight = drained.listenerRight;

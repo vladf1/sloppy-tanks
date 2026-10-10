@@ -133,16 +133,13 @@ export interface AmmoSlot {
 
 export interface HumanState {
   id: number;
-  name: string;
   kind: VehicleKind;
   vehicleName: string;
-  team: Team;
   alive: boolean;
   hp: number;
   maxHp: number;
   healthRatio: number;
   healthColor: number;
-  xp: number;
   rank: number;
   rankName: string;
   rankDamage: number;
@@ -151,9 +148,7 @@ export interface HumanState {
   rankRepair: number;
   /** Seconds out of combat before a veteran repairs. */
   repairDelay: number;
-  equipped: Weapon;
   ammo: AmmoSlot[];
-  cooldown: number;
   mineCooldown: number;
   protection: number;
   shield: number;
@@ -170,13 +165,7 @@ export interface HumanState {
 export interface ScoreboardRow {
   id: number;
   name: string;
-  team: Team;
-  kind: VehicleKind;
-  human: boolean;
-  alive: boolean;
   kills: number;
-  deaths: number;
-  rank: number;
 }
 
 export type RecapMetric =
@@ -230,7 +219,6 @@ export interface HudState {
 /** `stats_json`: Stats for nerds. */
 export interface EngineStats {
   frameMs: number;
-  averageFrameMs: number;
   fps: number;
   simMs: number;
   renderMs: number;
@@ -268,7 +256,6 @@ export interface EngineStats {
   pickups: number;
   pickupsReady: number;
   particles: number;
-  effectInstances: number;
   elapsed: number;
   pixelRatio: number;
 }

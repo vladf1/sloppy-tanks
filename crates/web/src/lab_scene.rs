@@ -1,17 +1,21 @@
-//! The render lab's scene description, shared with `tools/render-lab.ts`: the page
-//! builds the Three.js reference scene and this Rust scene from the same JSON, so
-//! calibration compares renderers rather than two hand-copied scenes.
+//! The render lab's scene description, the JSON `tools/render-lab.ts` defines and loads
+//! (`RenderLab::load_scene`). The lab compares the drawn scene with reference frames
+//! captured from the same scene in the former Three.js renderer.
 
-use std::f64::consts::PI;
+use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use glam::{DQuat, DVec3, EulerRot};
 use serde::Deserialize;
-use sloppy_core::geometry::Mesh;
+use sloppy_core::geometry::{
+    Mesh, box_geometry, plane_geometry, plane_geometry_segments, sphere_geometry,
+};
+use sloppy_core::models::create_arena_floor;
 use sloppy_core::scene::{
     Blending, Color, Effect, Instance, Material, Node, Shading, Side, TextureRef, TextureSource,
     Wrap,
 };
+use sloppy_core::sim::maps::GroundKind;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +63,6 @@ pub struct EffectSpec {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MaterialSpec {
-    #[serde(default)]
     pub shading: Option<String>,
     pub color: u32,
     #[serde(default = "one")]
@@ -87,9 +90,7 @@ pub struct MaterialSpec {
     pub alpha_test: f32,
     #[serde(default)]
     pub alpha_to_coverage: bool,
-    #[serde(default)]
     pub side: Option<String>,
-    #[serde(default)]
     pub blending: Option<String>,
     #[serde(default = "yes")]
     pub depth_write: bool,
@@ -255,7 +256,7 @@ pub struct SceneSpec {
     pub objects: Vec<ObjectSpec>,
 }
 
-fn leak(text: &str) -> &'static str {
+pub(crate) fn leak(text: &str) -> &'static str {
     // Lab scenes are loaded a bounded number of times; the core contract uses
     // static texture keys and effect names.
     Box::leak(text.to_owned().into_boxed_str())
@@ -336,195 +337,55 @@ pub fn material(spec: &MaterialSpec) -> Material {
     }
 }
 
-/// One BoxGeometry face: (u, v, w axes, u and v directions, width, height, depth).
-type BoxPlane = (usize, usize, usize, f32, f32, f32, f32, f32);
-
-/// Three.js `BoxGeometry(width, height, depth)` with one segment per side: same
-/// vertex order, normals and UVs.
-pub fn box_mesh(width: f32, height: f32, depth: f32) -> Mesh {
-    let mut mesh = Mesh::default();
-    let mut indices = Vec::new();
-    let planes: [BoxPlane; 6] = [
-        (2, 1, 0, -1.0, -1.0, depth, height, width),
-        (2, 1, 0, 1.0, -1.0, depth, height, -width),
-        (0, 2, 1, 1.0, 1.0, width, depth, height),
-        (0, 2, 1, 1.0, -1.0, width, depth, -height),
-        (0, 1, 2, 1.0, -1.0, width, height, depth),
-        (0, 1, 2, -1.0, -1.0, width, height, -depth),
-    ];
-    for (u, v, w, udir, vdir, plane_width, plane_height, plane_depth) in planes {
-        let base = mesh.positions.len() as u32;
-        for iy in 0..2 {
-            let y = iy as f32 * plane_height - plane_height / 2.0;
-            for ix in 0..2 {
-                let x = ix as f32 * plane_width - plane_width / 2.0;
-                let mut position = [0.0; 3];
-                position[u] = x * udir;
-                position[v] = y * vdir;
-                position[w] = plane_depth / 2.0;
-                let mut normal = [0.0; 3];
-                normal[w] = if plane_depth > 0.0 { 1.0 } else { -1.0 };
-                mesh.positions.push(position);
-                mesh.normals.push(normal);
-                mesh.uvs.push([ix as f32, 1.0 - iy as f32]);
-            }
-        }
-        let (a, b, c, d) = (base, base + 2, base + 3, base + 1);
-        indices.extend([a, b, d, b, c, d]);
-    }
-    mesh.indices = Some(indices);
-    mesh
-}
-
-/// Three.js `PlaneGeometry` in the XY plane facing +Z.
-pub fn plane_mesh(width: f32, height: f32, width_segments: u32, height_segments: u32) -> Mesh {
-    let mut mesh = Mesh::default();
-    let columns = width_segments + 1;
-    for iy in 0..=height_segments {
-        let y = iy as f32 * height / height_segments as f32 - height / 2.0;
-        for ix in 0..=width_segments {
-            let x = ix as f32 * width / width_segments as f32 - width / 2.0;
-            mesh.positions.push([x, -y, 0.0]);
-            mesh.normals.push([0.0, 0.0, 1.0]);
-            mesh.uvs.push([
-                ix as f32 / width_segments as f32,
-                1.0 - iy as f32 / height_segments as f32,
-            ]);
-        }
-    }
-    let mut indices = Vec::new();
-    for iy in 0..height_segments {
-        for ix in 0..width_segments {
-            let a = ix + columns * iy;
-            let b = ix + columns * (iy + 1);
-            let c = ix + 1 + columns * (iy + 1);
-            let d = ix + 1 + columns * iy;
-            indices.extend([a, b, d, b, c, d]);
-        }
-    }
-    mesh.indices = Some(indices);
-    mesh
-}
-
-/// Three.js `SphereGeometry(radius, widthSegments, heightSegments)`.
-pub fn sphere_mesh(radius: f32, width_segments: u32, height_segments: u32) -> Mesh {
-    let mut mesh = Mesh::default();
-    let mut grid = Vec::new();
-    for iy in 0..=height_segments {
-        let v = iy as f64 / height_segments as f64;
-        let u_offset = if iy == 0 {
-            0.5 / width_segments as f64
-        } else if iy == height_segments {
-            -0.5 / width_segments as f64
-        } else {
-            0.0
-        };
-        let mut row = Vec::new();
-        for ix in 0..=width_segments {
-            let u = ix as f64 / width_segments as f64;
-            let r = radius as f64;
-            let x = -r * (u * 2.0 * PI).cos() * (v * PI).sin();
-            let y = r * (v * PI).cos();
-            let z = r * (u * 2.0 * PI).sin() * (v * PI).sin();
-            let n = DVec3::new(x, y, z).normalize_or_zero();
-            row.push(mesh.positions.len() as u32);
-            mesh.positions.push([x as f32, y as f32, z as f32]);
-            mesh.normals.push([n.x as f32, n.y as f32, n.z as f32]);
-            mesh.uvs.push([(u + u_offset) as f32, (1.0 - v) as f32]);
-        }
-        grid.push(row);
-    }
-    let mut indices = Vec::new();
-    for iy in 0..height_segments as usize {
-        for ix in 0..width_segments as usize {
-            let a = grid[iy][ix + 1];
-            let b = grid[iy][ix];
-            let c = grid[iy + 1][ix];
-            let d = grid[iy + 1][ix + 1];
-            if iy != 0 {
-                indices.extend([a, b, d]);
-            }
-            if iy != height_segments as usize - 1 {
-                indices.extend([b, c, d]);
-            }
-        }
-    }
-    mesh.indices = Some(indices);
-    mesh
-}
-
-/// `createArenaFloor("dry-grass")` geometry: the plane rotated flat, UVs every
-/// eight metres and the patchy vertex tint.
-pub fn ground_mesh(extent: f32) -> Mesh {
-    let segments = ((extent / 2.5).round() as u32).max(1);
-    let mut mesh = plane_mesh(extent, extent, segments, segments);
-    for ((position, normal), uv) in mesh
-        .positions
-        .iter_mut()
-        .zip(&mut mesh.normals)
-        .zip(&mut mesh.uvs)
-    {
-        // rotateX(-π/2): (x, y, z) → (x, z, -y)
-        *position = [position[0], position[2], -position[1]];
-        *normal = [0.0, 1.0, 0.0];
-        *uv = [position[0] / 8.0, position[2] / 8.0];
-    }
-    mesh.colors = mesh
-        .positions
-        .iter()
-        .map(|p| {
-            let (x, z) = (p[0] as f64, p[2] as f64);
-            let patch =
-                0.5 + 0.25 * (x * 0.18 + z * 0.09).sin() + 0.25 * (z * 0.22 - x * 0.1).sin();
-            [
-                (0.68 + patch * 0.28) as f32,
-                (0.83 + patch * 0.14) as f32,
-                (0.42 + patch * 0.36) as f32,
-            ]
-        })
-        .collect();
-    mesh
-}
-
 /// The water surface in world XZ at y = 0 (a rotated PlaneGeometry).
 pub fn water_mesh(spec: &WaterSpec) -> Mesh {
-    let mut mesh = plane_mesh(spec.width, spec.depth, 1, 1);
-    for (position, normal) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
-        *position = [
-            position[0] + spec.center[0],
-            0.0,
-            -position[1] + spec.center[1],
-        ];
-        *normal = [0.0, 1.0, 0.0];
-    }
+    let mut mesh = plane_geometry(spec.width.into(), spec.depth.into());
+    mesh.rotate_x(-FRAC_PI_2)
+        .translate(spec.center[0].into(), 0.0, spec.center[1].into());
     mesh
 }
 
-pub fn geometry(spec: &GeometrySpec) -> Mesh {
+/// Three.js `BoxGeometry`, `SphereGeometry` and `PlaneGeometry`, and
+/// `createArenaFloor("dry-grass")` for `Ground`.
+pub fn geometry(spec: &GeometrySpec) -> Arc<Mesh> {
     match *spec {
         GeometrySpec::Box {
             width,
             height,
             depth,
-        } => box_mesh(width, height, depth),
+        } => Arc::new(box_geometry(width.into(), height.into(), depth.into())),
         GeometrySpec::Sphere {
             radius,
             width_segments,
             height_segments,
-        } => sphere_mesh(radius, width_segments, height_segments),
+        } => Arc::new(sphere_geometry(
+            radius.into(),
+            width_segments,
+            height_segments,
+        )),
         GeometrySpec::Plane {
             width,
             height,
             width_segments,
             height_segments,
-        } => plane_mesh(width, height, width_segments, height_segments),
-        GeometrySpec::Ground { extent } => ground_mesh(extent),
+        } => Arc::new(plane_geometry_segments(
+            width.into(),
+            height.into(),
+            width_segments,
+            height_segments,
+        )),
+        GeometrySpec::Ground { extent } => {
+            create_arena_floor(GroundKind::DryGrass, extent.into())
+                .drawable
+                .expect("floor mesh")
+                .mesh
+        }
     }
 }
 
 /// The object as a model tree: a named root holding the drawable node.
 pub fn object_node(spec: &ObjectSpec) -> Node {
-    let mesh = Arc::new(geometry(&spec.geometry));
+    let mesh = geometry(&spec.geometry);
     let material = Arc::new(material(&spec.material));
     let mut node = Node::mesh(mesh, material);
     node.name = spec.name.clone();
@@ -559,18 +420,29 @@ mod tests {
 
     #[test]
     fn primitives_match_three_counts() {
-        let cube = box_mesh(2.0, 2.0, 2.0);
+        let cube = geometry(&GeometrySpec::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
         assert_eq!(cube.positions.len(), 24);
         assert_eq!(cube.triangle_count(), 12);
         // BoxGeometry's first vertex: +X face, top-left corner.
         assert_eq!(cube.positions[0], [1.0, 1.0, 1.0]);
         assert_eq!(cube.uvs[0], [0.0, 1.0]);
-        let sphere = sphere_mesh(1.0, 32, 16);
+        let sphere = geometry(&GeometrySpec::Sphere {
+            radius: 1.0,
+            width_segments: 32,
+            height_segments: 16,
+        });
         assert_eq!(sphere.positions.len(), 33 * 17);
         assert_eq!(sphere.triangle_count(), 32 * 16 * 2 - 64);
-        let ground = ground_mesh(40.0);
+        let ground = geometry(&GeometrySpec::Ground { extent: 40.0 });
         assert_eq!(ground.positions.len(), 17 * 17);
-        assert_eq!(ground.positions[0], [-20.0, 0.0, -20.0]);
+        // Rotated flat like Three's rotateX(-π/2), which leaves y a rounding error off 0.
+        let [x, y, z] = ground.positions[0];
+        assert_eq!([x, z], [-20.0, -20.0]);
+        assert!(y.abs() < 1e-6);
         assert_eq!(ground.uvs[0], [-2.5, -2.5]);
     }
 
