@@ -1,17 +1,19 @@
 import { readFileSync } from "node:fs";
-import { BlockList, isIP } from "node:net";
+import { isIP } from "node:net";
 
 /**
  * The multiplayer game servers: one machine each for production and the dev site, listed
  * in deploy/servers.json and set up by deploy/server/ (crates/server/README.md). Each entry
  * has the machine's public `ip`, which every script reaches it by over SSH as root, and
- * an optional `hostname` for players; nothing else differs between the machines.
+ * the `hostnames` Caddy serves; nothing else differs between the machines.
  *
- * Caddy on the machine serves the hostname and the machine's nip.io name (`1-2-3-4.nip.io`
- * resolves to 1.2.3.4), so a new machine has a certificate and a working address as soon as
- * it is provisioned; a hostname only needs its DNS record to point at `ip`. Players use the
- * hostname when there is one, and the scripts check through the nip.io name, which always
- * reaches this machine whatever the hostname's DNS says.
+ * `{dashed-ip}` in a hostname stands for the address with dashes: `{dashed-ip}.nip.io`
+ * becomes `1-2-3-4.nip.io`, which nip.io resolves to 1.2.3.4 (sslip.io and others work the
+ * same way). Such a name needs no DNS record of ours, so a new machine has a certificate
+ * and a working address as soon as it is provisioned; any other hostname needs its own A
+ * record pointing at `ip`. Players use the first hostname, and the scripts check through
+ * the first one made from the address, which reaches this machine whatever the other
+ * names' DNS says.
  *
  * SLOPPY_SERVERS names another list, such as one of local test machines.
  */
@@ -43,24 +45,7 @@ export const SSH_OPTIONS = [
   "ControlPersist=60",
 ];
 
-// Addresses outside the internet, such as a local test machine's, get no nip.io name:
-// no certificate authority can reach them to issue one.
-const privateAddresses = new BlockList();
-for (const [network, prefix] of [
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["172.16.0.0", 12],
-  ["192.168.0.0", 16],
-]) {
-  privateAddresses.addSubnet(network, prefix);
-}
-
-/** The nip.io name that resolves to an IPv4 address: 45.63.56.58 → 45-63-56-58.nip.io. */
-export function nipName(ip) {
-  if (isIP(ip) !== 4) throw new Error(`Not an IPv4 address: ${ip}`);
-  return `${ip.replaceAll(".", "-")}.nip.io`;
-}
+const DASHED_IP = "{dashed-ip}";
 
 /** The production server, or with `dev` the dev site's. */
 export function gameServer(dev) {
@@ -69,16 +54,22 @@ export function gameServer(dev) {
 }
 
 /** How the scripts reach a machine from its deploy/servers.json entry. */
-export function serverMachine(role, { ip, hostname }) {
-  const nip = ip && !privateAddresses.check(ip) ? nipName(ip) : undefined;
-  const sites = [hostname, nip].filter(Boolean);
+export function serverMachine(role, { ip, hostnames }) {
+  if (!hostnames?.length) throw new Error(`${role} in deploy/servers.json lists no hostnames`);
+  if (ip && isIP(ip) !== 4) throw new Error(`${role}'s ip is not an IPv4 address: ${ip}`);
+  const fromIp = (name) => name.includes(DASHED_IP);
+  const expand = (name) => name.replaceAll(DASHED_IP, ip.replaceAll(".", "-"));
+  // Until the machine exists, neither do the names made from its address.
+  const sites = ip ? hostnames.map(expand) : hostnames.filter((name) => !fromIp(name));
+  for (const name of sites) {
+    if (/[{}]/.test(name)) throw new Error(`Only ${DASHED_IP} can stand in a hostname: ${name}`);
+  }
   if (!sites.length) throw new Error(`${role} in deploy/servers.json needs an ip`);
+  const machineName = ip ? hostnames.filter(fromIp).map(expand)[0] : undefined;
   return {
     role,
     /** The machine's public IPv4 address, or null until it exists. */
     ip,
-    /** The players' name, or null when they use the nip.io name. */
-    hostname,
     /** SSH destination; throws until the machine exists. */
     get ssh() {
       if (!ip) throw new Error(`${role} in deploy/servers.json has no ip yet`);
@@ -86,9 +77,11 @@ export function serverMachine(role, { ip, hostname }) {
     },
     /** Every name Caddy serves, which it obtains certificates for. */
     sites,
+    /** The hostnames that need their own DNS record pointing at `ip`. */
+    dnsNames: hostnames.filter((name) => !fromIp(name)),
     /** The WebSocket address players' pages use. */
     url: `wss://${sites[0]}`,
     /** Where the scripts check the server through Caddy: the name that reaches this machine. */
-    checkUrl: `https://${nip ?? sites[0]}`,
+    checkUrl: `https://${machineName ?? sites[0]}`,
   };
 }

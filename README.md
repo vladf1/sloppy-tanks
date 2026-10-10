@@ -269,8 +269,8 @@ Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` firs
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev multiplayer server, which
-runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at its
-hostname or, without one, its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
+runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at the
+first of its hostnames, now its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
 `/dashboard`). `deploy:dev` redeploys that dev server from the same checkout first
 (over SSH) so client and server versions match; production multiplayer is never
 affected.
