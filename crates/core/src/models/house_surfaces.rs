@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::geometry::math::js_hypot;
 use crate::geometry::{ExtrudeOptions, Mesh, Path, Shape, box_geometry, extrude_geometry};
-use crate::scene::{Material, Node, Side, TextureRef, Wrap};
+use crate::scene::{Material, Node, Side, TextureRef};
 
 use super::model_primitives::{Cache, shadowed};
 
@@ -42,7 +42,6 @@ impl HouseSurface {
 /// The shared siding or shingle tile, sampled unflipped (see the module docs).
 pub fn house_texture(kind: HouseSurface) -> TextureRef {
     TextureRef {
-        wrap: Wrap::Repeat,
         anisotropy: SURFACE_ANISOTROPY,
         flip_y: false,
         ..TextureRef::file(kind.texture_path())

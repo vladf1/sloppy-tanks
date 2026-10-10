@@ -150,7 +150,8 @@ static OCTAHEDRON: Cache<(), Mesh> = Cache::new();
 /// position.
 pub(super) fn house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, color: u32) {
     let palette = palette(x, z, color);
-    let antenna = (variant(x, z) / 5).is_multiple_of(3);
+    let v = variant(x, z);
+    let antenna = (v / 5).is_multiple_of(3);
     let roof = Roof::new(w, d, h);
     let mut kit = Kit::new();
     build_house(&mut kit, w, d, &roof, antenna);
@@ -161,12 +162,12 @@ pub(super) fn house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, co
         Arc::new(shingle_courses(&roof)),
         house_material(HouseSurface::Shingles, palette.roof),
     ));
-    window_plants(group, w, d, h, x, z);
+    window_plants(group, w, d, &roof, v);
 }
 
 /// The wall frames: front (+z, the door), back, right (+x) and left, each with its
 /// half length along the wall.
-fn wall_frames(w: f64, d: f64) -> [(DMat4, f64); 4] {
+pub(super) fn wall_frames(w: f64, d: f64) -> [(DMat4, f64); 4] {
     [
         (pose(DVec3::new(0.0, 0.0, d / 2.0), DVec3::ZERO), w / 2.0),
         (
@@ -289,11 +290,7 @@ fn build_house(kit: &mut Kit<Surface>, w: f64, d: f64, roof: &Roof, antenna: boo
             openings.push(vent_opening);
         }
         wall(kit, frame, &outline, &openings, REVEAL);
-        let glazing = Glazing {
-            cols: 2,
-            rows: 2,
-            double_hung: true,
-        };
+        let glazing = Glazing { double_hung: true };
         for opening in &windows {
             window(kit, frame, opening, glazing, REVEAL);
             let inner_limit = if front { door_edge } else { 0.0 };
@@ -464,15 +461,15 @@ fn window_box(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening) {
     }
 }
 
-/// Shrubs and flowers in every window box, jittered per cottage.
-fn window_plants(group: &mut Node, w: f64, d: f64, h: f64, x: f64, z: f64) {
-    let roof = Roof::new(w, d, h);
+/// Shrubs and flowers in every window box, jittered per cottage (`v` is its
+/// [`variant`]).
+fn window_plants(group: &mut Node, w: f64, d: f64, roof: &Roof, v: u32) {
     let octahedron = OCTAHEDRON.get_or_insert((), || octahedron_geometry(1.0, 0));
-    let mut rng = Random::new(f64::from(variant(x, z)) + 17.0);
-    let flower = FLOWERS[(variant(x, z) / 3) as usize % FLOWERS.len()];
+    let mut rng = Random::new(f64::from(v) + 17.0);
+    let flower = FLOWERS[(v / 3) as usize % FLOWERS.len()];
     for (frame, half) in wall_frames(w, d).into_iter().take(2) {
         for u in window_positions(true, half) {
-            let opening = window_opening(u, &roof);
+            let opening = window_opening(u, roof);
             let width = opening.width + 0.08;
             let soil = opening.y - 0.18;
             // Overlapping leafy clumps along the box, flowers held above them.

@@ -10,8 +10,8 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, custom_floor,
-    custom_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
+    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
+    create_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
     tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
@@ -676,7 +676,7 @@ impl Presentation {
     fn custom_pads(&mut self, scale: f64) -> InstanceId {
         *self.pads.entry(scale.to_bits()).or_insert_with(|| {
             self.renderer
-                .add_scenery(&custom_spawn_pads(scale), Lifetime::Shared)
+                .add_scenery(&create_spawn_pads(scale), Lifetime::Shared)
         })
     }
 
@@ -689,7 +689,7 @@ impl Presentation {
         let key = format!("{kind:?}:{extent}:{y}");
         *self.floors.entry(key).or_insert_with(|| {
             self.renderer
-                .add_scenery(&custom_floor(kind, Some(extent), y), Lifetime::Shared)
+                .add_scenery(&create_arena_floor(kind, extent, y), Lifetime::Shared)
         })
     }
 

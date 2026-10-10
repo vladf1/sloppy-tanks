@@ -13,10 +13,11 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 
 use super::batching::batch;
-use super::model_primitives::{Cache, box_part, material, put, shadowed};
-use crate::geometry::math::{hex_to_linear, linear_to_hex, quat_from_euler};
+use super::building_kit::{textured, tint_over};
+use super::model_primitives::{box_part, material, put, shadowed};
+use crate::geometry::math::quat_from_euler;
 use crate::geometry::{Mesh, Shape, shape_geometry};
-use crate::scene::{Color, Material, Node, TextureRef};
+use crate::scene::{Material, Node};
 use crate::sim::math::{Random, clamp};
 use crate::sim::timber_layout::{TimberFace, TimberMark, TimberPart, TimberPartKind};
 
@@ -42,28 +43,10 @@ const ATLAS_INSET: f64 = 0.02;
 /// posts stay darker than beams, and beams keep their alternating tones.
 const PLANK_AVERAGE: u32 = 0xcaa378;
 
-static WOOD: Cache<u32, Material> = Cache::new();
-
 /// The textured wood of a member painted `color`; batching bakes the tint into
 /// vertex colours, so every member shares one material and draw setup.
 fn wood(color: u32) -> Arc<Material> {
-    WOOD.get_or_insert(color, || {
-        let map = TextureRef {
-            anisotropy: 8,
-            ..TextureRef::file(TIMBER_TEXTURE)
-        };
-        let (paint, plank) = (hex_to_linear(color), hex_to_linear(PLANK_AVERAGE));
-        let tint = [0, 1, 2].map(|i| (paint[i] / plank[i]).min(1.0));
-        Material {
-            map: Some(map.clone()),
-            bump_map: Some(map),
-            bump_scale: 0.03,
-            color: Color(linear_to_hex(tint)),
-            roughness: 0.82,
-            metalness: 0.0,
-            ..Material::default()
-        }
-    })
+    textured(TIMBER_TEXTURE, tint_over(color, PLANK_AVERAGE), 0.03, 0.82)
 }
 
 /// A member's box with the grain along the longer of its width (beams) and height
@@ -140,16 +123,11 @@ pub(super) fn timber_member(size: DVec3, seed: i32, color: u32) -> Node {
 /// standing walls and detached pieces.
 pub fn timber_part_model(p: &TimberPart) -> Node {
     let mut group = Node::default();
-    put(
-        &mut group,
-        shadowed(
-            Arc::new(member_mesh(DVec3::new(p.w, p.h, p.d), p.damage_seed)),
-            wood(p.color),
-        ),
-        0.0,
-        0.0,
-        0.0,
-    );
+    group.children.push(timber_member(
+        DVec3::new(p.w, p.h, p.d),
+        p.damage_seed,
+        p.color,
+    ));
     for (mark_index, mark) in p.marks.iter().enumerate() {
         add_mark(&mut group, p, mark_index, mark);
     }
@@ -233,7 +211,7 @@ fn add_mark(group: &mut Node, p: &TimberPart, mark_index: usize, mark: &TimberMa
         };
         put(
             group,
-            Node::mesh(std::sync::Arc::new(mesh), material(color, 0.05, 0.65)),
+            Node::mesh(Arc::new(mesh), material(color, 0.05, 0.65)),
             px,
             py,
             pz,

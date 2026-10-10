@@ -1,19 +1,15 @@
 //! Port of `scenery.ts` and the scenery half of `presentation.ts` (`buildScenery`,
 //! `customFloor`, `customSpawnPad`): the per-theme entry points, shared spawn pads,
-//! arena floors, the village yard, sun shadow fitting, and the JavaScript-exact math
-//! helpers the scenery modules share.
+//! arena floors and the village yard.
 //!
 //! Presentation builds each theme's [`Scenery`] once (it needs no physics world, so
 //! startup can build it while physics loads), keeps it across rounds, shows only the
 //! current theme's root, and calls [`Scenery::update`] every frame with its clock.
-//! Extra levels have no themed scenery: they show [`custom_spawn_pads`] for their
-//! scale and one or two [`custom_floor`]s.
+//! Extra levels have no themed scenery: they show [`create_spawn_pads`] for their
+//! scale and one or two [`create_arena_floor`]s.
 
 use std::sync::Arc;
 
-use glam::{DMat4, DVec3};
-
-use crate::geometry::math::normalize;
 use crate::geometry::{Path, RingGeometry, Shape, plane_geometry_segments, shape_geometry};
 use crate::scene::{Material, Node};
 use crate::sim::arena::spawn_positions;
@@ -23,8 +19,10 @@ use crate::sim::types::{Team, Vec2};
 use super::batching::{batch, paint_mesh};
 use super::ground_surfaces::{GroundKind, ground_material, ground_uvs, road_geometry};
 use super::harbor_scenery::HarborScenery;
-use super::model_primitives::{TEAM_COLORS, box_part, cylinder_part, paint, put, rotated};
-use super::quarry_scenery::QuarryScenery;
+use super::model_primitives::{
+    TEAM_COLORS, box_part, cylinder_part, paint, put, rotated, shadow_receiver,
+};
+use super::quarry_scenery::quarry_scenery;
 use super::village_roads::village_roads;
 use super::village_scenery::VillageScenery;
 
@@ -35,7 +33,7 @@ pub use crate::sim::maps::MapTheme;
 pub enum Scenery {
     Village(Box<VillageScenery>),
     Harbor(Box<HarborScenery>),
-    Quarry(Box<QuarryScenery>),
+    Quarry(Box<Node>),
 }
 
 /// `Presentation.buildScenery(theme)`: build a theme's scenery. Callers cache it; it
@@ -45,7 +43,7 @@ pub fn build_scenery(theme: MapTheme) -> Scenery {
     match theme {
         MapTheme::Village => Scenery::Village(Box::default()),
         MapTheme::Harbor => Scenery::Harbor(Box::default()),
-        MapTheme::Quarry => Scenery::Quarry(Box::default()),
+        MapTheme::Quarry => Scenery::Quarry(Box::new(quarry_scenery())),
     }
 }
 
@@ -54,7 +52,7 @@ impl Scenery {
         match self {
             Scenery::Village(scenery) => &scenery.root,
             Scenery::Harbor(scenery) => &scenery.root,
-            Scenery::Quarry(scenery) => &scenery.root,
+            Scenery::Quarry(root) => root,
         }
     }
 
@@ -104,34 +102,14 @@ pub fn create_spawn_pads(scale: f64) -> Node {
         let color = TEAM_COLORS[team.index()];
         for Vec2 { x, z } in spawn_positions(team, scale) {
             // Low octagonal deployment plinth with a recessed deck and segmented team lights.
-            put(
-                &mut details,
-                cylinder_part(2.75, 0.1, 0x283c4e, 8),
-                x,
-                0.08,
-                z,
-            );
-            put(
-                &mut details,
-                cylinder_part(2.52, 0.045, 0x718898, 8),
-                x,
-                0.135,
-                z,
-            );
-            put(
-                &mut details,
-                cylinder_part(2.37, 0.035, 0x223d51, 32),
-                x,
-                0.17,
-                z,
-            );
-            put(
-                &mut details,
-                cylinder_part(1.98, 0.025, 0x455e70, 8),
-                x,
-                0.193,
-                z,
-            );
+            for (r, h, color, sides, y) in [
+                (2.75, 0.1, 0x283c4e, 8, 0.08),
+                (2.52, 0.045, 0x718898, 8, 0.135),
+                (2.37, 0.035, 0x223d51, 32, 0.17),
+                (1.98, 0.025, 0x455e70, 8, 0.193),
+            ] {
+                put(&mut details, cylinder_part(r, h, color, sides), x, y, z);
+            }
             for i in 0..8 {
                 let angle = (f64::from(i) * std::f64::consts::PI) / 4.0;
                 let segment = rotated(Node::mesh(rim.clone(), paint(color)), 0.0, angle, 0.0);
@@ -178,10 +156,12 @@ pub fn create_spawn_pads(scale: f64) -> Node {
     details
 }
 
-/// `createArenaFloor(renderer, kind, extent)`: a flat ground square. Dry grass is
-/// subdivided every ~2.5 m and tinted by broad vertex-color patches. Each floor
-/// gets its own material, like the TypeScript (the village terrain shares it).
-pub fn create_arena_floor(kind: GroundKind, extent: f64) -> Node {
+/// `createArenaFloor(renderer, kind, extent)` raised to `y`: a flat ground square.
+/// Dry grass is subdivided every ~2.5 m and tinted by broad vertex-color patches.
+/// Each floor gets its own material, like the TypeScript (the village terrain
+/// shares it). Extra levels use it as `customFloor(kind, extent, y)`: the floor
+/// (`y` 0.008) or outer floor (`y` -0.002), cached by the caller per key.
+pub fn create_arena_floor(kind: GroundKind, extent: f64, y: f64) -> Node {
     let mut surface = ground_material(kind);
     let grass = kind == GroundKind::DryGrass;
     let segments = if grass {
@@ -210,22 +190,7 @@ pub fn create_arena_floor(kind: GroundKind, extent: f64) -> Node {
             })
             .collect();
     }
-    let mut floor = Node::mesh(Arc::new(geometry), Arc::new(surface));
-    if let Some(drawable) = &mut floor.drawable {
-        drawable.receive_shadow = true;
-    }
-    floor
-}
-
-/// `customSpawnPad(scale)`: an extra level's pads (cache one per scale).
-pub fn custom_spawn_pads(scale: f64) -> Node {
-    create_spawn_pads(scale)
-}
-
-/// `customFloor(kind, extent, y)`: an extra level's floor (`y` 0.008) or outer floor
-/// (`y` -0.002), `extent` defaulting to the standard arena (cache one per key).
-pub fn custom_floor(kind: GroundKind, extent: Option<f64>, y: f64) -> Node {
-    let mut floor = create_arena_floor(kind, extent.unwrap_or(ARENA * 2.0));
+    let mut floor = shadow_receiver(Arc::new(geometry), Arc::new(surface));
     floor.position.y = y;
     floor
 }
@@ -237,14 +202,14 @@ pub(crate) fn create_terrain(scene: &mut Node) -> Arc<Material> {
     let mut board = box_part(ARENA * 2.0 + 6.0, 1.2, ARENA * 2.0 + 6.0, 0x947c4d, 0.4);
     paint_mesh(&mut board);
     put(scene, board, 0.0, -0.8, 0.0);
-    let floor = create_arena_floor(GroundKind::DryGrass, ARENA * 2.0);
+    let floor = create_arena_floor(GroundKind::DryGrass, ARENA * 2.0, 0.008);
     let grass = floor
         .drawable
         .as_ref()
         .expect("floor mesh")
         .material
         .clone();
-    put(scene, floor, 0.0, 0.008, 0.0);
+    scene.children.push(floor);
     create_yard_details(scene);
     grass
 }
@@ -303,86 +268,4 @@ fn create_yard_details(scene: &mut Node) {
     }
     batch(&mut details);
     scene.children.push(details);
-}
-
-// ---------------------------------------------------------------------------
-// Lighting and sun shadows (createLighting, defaultSunShadow, fitSunShadow).
-
-/// The sun shadow camera's depth span; the tuned bias assumes it.
-pub const SHADOW_DEPTH: f64 = 219.5;
-
-/// An orthographic shadow camera box, in the light camera's view space.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ShadowBox {
-    pub left: f64,
-    pub right: f64,
-    pub bottom: f64,
-    pub top: f64,
-    pub near: f64,
-    pub far: f64,
-}
-
-/// `defaultSunShadow`: the original square sun shadow box shared by the village
-/// and harbor.
-pub fn default_sun_shadow() -> ShadowBox {
-    ShadowBox {
-        left: -(ARENA + 10.0),
-        bottom: -(ARENA + 10.0),
-        right: ARENA + 10.0,
-        top: ARENA + 10.0,
-        near: 0.5,
-        far: 0.5 + SHADOW_DEPTH,
-    }
-}
-
-/// `fitSunShadow(sun, half, low, high)`: fit the sun's orthographic shadow box
-/// around a ground square (`|x|, |z| <= half`, `low <= y <= high`) for the sun's
-/// direction from `sun` towards `target`. A square box aimed at a low, diagonal
-/// sun lands on the ground as a tilted strip that misses two arena corners; this
-/// one covers the whole square. The depth range keeps its default span.
-pub fn fit_sun_shadow(sun: DVec3, target: DVec3, half: f64, low: f64, high: f64) -> ShadowBox {
-    // Object3D.lookAt for a camera: Matrix4.lookAt(eye, target, up) with the
-    // camera looking down its -z.
-    let mut z = sun - target;
-    if z.length_squared() == 0.0 {
-        z.z = 1.0;
-    }
-    z = normalize(z);
-    let up = DVec3::Y;
-    let mut x = up.cross(z);
-    if x.length_squared() == 0.0 {
-        if up.z.abs() == 1.0 {
-            z.x += 0.0001;
-        } else {
-            z.z += 0.0001;
-        }
-        z = normalize(z);
-        x = up.cross(z);
-    }
-    x = normalize(x);
-    let y = z.cross(x);
-    let world = DMat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), sun.extend(1.0));
-    let inverse = world.inverse();
-    let mut min = DVec3::splat(f64::INFINITY);
-    let mut max = DVec3::splat(f64::NEG_INFINITY);
-    for cx in [-half, half] {
-        for cy in [low, high] {
-            for cz in [-half, half] {
-                let corner =
-                    crate::geometry::math::transform_point(&inverse, DVec3::new(cx, cy, cz));
-                min = min.min(corner);
-                max = max.max(corner);
-            }
-        }
-    }
-    // The camera looks down -z; orthographic near may sit behind the light.
-    let near = -max.z - 2.0;
-    ShadowBox {
-        left: min.x,
-        right: max.x,
-        bottom: min.y,
-        top: max.y,
-        near,
-        far: near + SHADOW_DEPTH,
-    }
 }

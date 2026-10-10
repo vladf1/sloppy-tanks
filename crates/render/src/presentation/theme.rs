@@ -6,11 +6,12 @@
 //! the village look with plain pads and floors.
 
 use glam::Vec3;
-use sloppy_core::models::SHADOW_DEPTH;
 use sloppy_core::sim::data::ARENA;
 
 use crate::camera::ShadowCamera;
 
+/// `SHADOW_DEPTH` in scenery.ts: the sun box's depth span the bias was tuned for.
+pub const SHADOW_DEPTH: f32 = 219.5;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_BIAS: f32 = -0.0002;
 pub const SHADOW_NORMAL_BIAS: f32 = 0.05;
@@ -90,7 +91,7 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
             QUARRY_SHADOW_HALF,
             QUARRY_SHADOW_LOW,
             QUARRY_SHADOW_HIGH,
-            SHADOW_DEPTH as f32,
+            SHADOW_DEPTH,
         )
     } else {
         ShadowCamera::square(
@@ -98,7 +99,7 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
             Vec3::ZERO,
             ARENA as f32 + 10.0,
             0.5,
-            SHADOW_DEPTH as f32,
+            SHADOW_DEPTH,
         )
     };
     ThemeLook {

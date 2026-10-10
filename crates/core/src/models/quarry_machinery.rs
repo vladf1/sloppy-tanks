@@ -76,12 +76,7 @@ fn piston(group: &mut Node, a: [f64; 3], b: [f64; 3]) {
     let length = direction.length();
     for (fraction, radius, color) in [(0.65, 0.21, STEEL), (1.0, 0.105, 0xb8b8af)] {
         let mut mesh = cylinder_part(radius, length * fraction, color, 10);
-        let s = fraction / 2.0;
-        mesh.position = DVec3::new(
-            from.x + direction.x * s,
-            from.y + direction.y * s,
-            from.z + direction.z * s,
-        );
+        mesh.position = from + direction * (fraction / 2.0);
         mesh.rotation = quat_from_unit_vectors(DVec3::Y, normalize(direction));
         group.children.push(mesh);
     }

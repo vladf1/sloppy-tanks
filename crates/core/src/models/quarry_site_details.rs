@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use crate::geometry::{Mesh, icosahedron_geometry, plane_geometry, widen};
-use crate::scene::{Material, Node, Side, TextureRef, TextureSource, Wrap};
+use crate::scene::{Material, Node, Side, TextureRef};
 
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
@@ -25,15 +25,10 @@ use crate::sim::types::Team;
 /// The "DUSTY DIG / 03 — ACTIVE QUARRY" board (drawn by the browser, see
 /// [`QUARRY_SIGN_TEXTURE`]) on two posts.
 fn site_sign(group: &mut Node) {
-    let map = TextureRef {
-        source: TextureSource::Generated(QUARRY_SIGN_TEXTURE),
-        wrap: Wrap::Clamp,
-        ..TextureRef::file("")
-    };
     let face = Node::mesh(
         Arc::new(plane_geometry(5.8, 2.9)),
         Arc::new(Material {
-            map: Some(map),
+            map: Some(TextureRef::generated(QUARRY_SIGN_TEXTURE)),
             ..Material::standard(0xffffff, 0.0, 0.95)
         }),
     );
@@ -60,18 +55,13 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
     let mut rng = Random::new(62541.0);
     // Spilled haul loads leave tight clusters of flat gravel across the work floor,
     // with a scatter of strays between them. Spawn pads stay clean.
-    let pads: Vec<(f64, f64)> = spawn_positions(Team::Blue, 1.0)
+    let pads: Vec<_> = spawn_positions(Team::Blue, 1.0)
         .into_iter()
         .chain(spawn_positions(Team::Red, 1.0))
-        .map(|p| (p.x, p.z))
         .collect();
     let mut stones = Vec::new();
     let mut stone = |rng: &mut Random, x: f64, z: f64, size: f64| {
-        if x.abs().max(z.abs()) > 58.5
-            || pads
-                .iter()
-                .any(|&(px, pz)| js_hypot(&[x - px, z - pz]) < 3.4)
-        {
+        if x.abs().max(z.abs()) > 58.5 || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.4) {
             return;
         }
         let h = rng.range(0.04, 0.07);
@@ -101,22 +91,17 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
             stone(&mut rng, cx + angle.cos() * r, cz + angle.sin() * r, size);
         }
     }
-    for _ in 0..240 {
-        let (x, z, size) = (
-            rng.range(-57.0, 57.0),
-            rng.range(-57.0, 57.0),
-            rng.range(0.12, 0.42),
-        );
-        stone(&mut rng, x, z, size);
-    }
-    // A few flat spalls knocked off the rock islands by earlier shelling.
-    for _ in 0..30 {
-        let (x, z, size) = (
-            rng.range(-57.0, 57.0),
-            rng.range(-57.0, 57.0),
-            rng.range(0.45, 0.8),
-        );
-        stone(&mut rng, x, z, size);
+    // Strays between the clusters, then a few flat spalls knocked off the rock
+    // islands by earlier shelling.
+    for (count, min_size, max_size) in [(240, 0.12, 0.42), (30, 0.45, 0.8)] {
+        for _ in 0..count {
+            let (x, z, size) = (
+                rng.range(-57.0, 57.0),
+                rng.range(-57.0, 57.0),
+                rng.range(min_size, max_size),
+            );
+            stone(&mut rng, x, z, size);
+        }
     }
     gravel.children.push(sandstone_rubble(&stones));
     equipment.children.push(scrub(&mut rng));
@@ -205,11 +190,7 @@ fn scrub(rng: &mut Random) -> Node {
                 z + angle.sin() * lean,
             ]);
             // Blades fade from shaded base to sunlit, straw-bleached tips.
-            let base = [
-                (tint[0] * 0.6) as f32,
-                (tint[1] * 0.6) as f32,
-                (tint[2] * 0.6) as f32,
-            ];
+            let base = tint.map(|c| (c * 0.6) as f32);
             tints.extend([
                 base,
                 base,

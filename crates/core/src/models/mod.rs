@@ -15,24 +15,23 @@
 //! - Map scenery: [`build_scenery`]`(theme)` once per theme, then
 //!   [`Scenery::update`] every frame (animated parts: [`WATERWHEEL`], the harbor
 //!   beacons, [`CHIMNEY_SMOKE_NODE`] fed by [`VillageScenery::set_covers`]). Extra
-//!   levels use [`custom_floor`] and [`custom_spawn_pads`]. The sun's shadow box comes
-//!   from [`default_sun_shadow`] and [`fit_sun_shadow`].
+//!   levels use [`create_arena_floor`] and [`create_spawn_pads`].
 //! - Cover: [`cover_model`] from a [`CoverShape`] (convertible from
 //!   [`RenderCover`](crate::sim::render_state::RenderCover)); rebuild when
 //!   [`cover_damage_stage`] or the timber hit count changes. Trees:
-//!   [`tree_model`], damaged with [`set_tree_damage`] / [`set_tree_destroyed`]
-//!   (node names in [`tree_part`]); shed boughs fall as [`falling_branch_model`].
-//!   Detached timber members: [`timber_part_model`].
+//!   [`tree_model`], whose boughs drop by [`tree_branch_stage`] /
+//!   [`branch_drop_stage`] (node names in [`tree_part`]). Detached timber members:
+//!   [`timber_part_model`].
 //! - Props: [`pickup_cube`], [`flags_model`] (cloth node [`FLAG_CLOTH_NODE`]),
 //!   debris meshes [`barrel_scrap_geometry`] and [`trunk_fragment`], burnt wrecks
-//!   darkened with [`aged_wreck_material`], fading debris with
-//!   [`debris_fade_material`].
-//! - Custom shading: every `Effect::Custom` name with its WGSL contract is
-//!   documented in [`effects_props`] and [`effects_scenery`].
+//!   darkened with [`aged_wreck_material`].
+//! - Custom shading: every `Effect::Custom` name with its parameters and inputs is
+//!   documented in [`effects_props`] and [`effects_scenery`]; the renderer's WGSL
+//!   implements them.
 //! - Textures: file paths are in each `TextureRef`; [`node_textures`] lists what a
-//!   tree needs, and presentation supplies its generated keys. Those are baked by
-//!   [`effects_scenery::generated_texture`] (the quarry soil) or drawn by the
-//!   browser from [`effects_scenery::canvas_texture`] (signs and labels).
+//!   tree needs, and presentation supplies its generated keys. Those are baked in
+//!   row bands by [`bake_quarry_soil`] (the quarry soil) or drawn by the browser
+//!   from [`effects_scenery::canvas_texture`] (signs and labels).
 
 mod batching;
 mod model_primitives;
@@ -57,7 +56,6 @@ mod pickup_visuals;
 mod quarry_barriers;
 mod timber_model;
 mod tower_model;
-mod tree_debris;
 mod tree_models;
 
 // Surfaces shared by cover and scenery.
@@ -105,17 +103,15 @@ pub use wreck_model::{WreckPart, wreck_model};
 
 // Cover, trees and props.
 pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
-pub use cover_model::{CoverModel, CoverShape, cover_damage_stage, cover_model};
-pub use effects_props::{aged_wreck_material, debris_fade_material, wreck_brightness};
+pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
+pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use pickup_visuals::pickup_cube;
 pub use timber_model::timber_part_model;
 pub use tower_model::tower_piece_model;
-pub use tree_debris::{fading_material, falling_branch_model};
 pub use tree_models::{
-    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeModel, TreeShape, branch_drop_stage,
-    set_tree_damage, set_tree_destroyed, tree_branch_stage, tree_foliage, tree_model, tree_part,
-    trunk_fragment,
+    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,
+    tree_foliage, tree_model, tree_part, trunk_fragment,
 };
 
 // Surfaces.
@@ -127,17 +123,14 @@ pub use water_surface::water_normals;
 // Map scenery.
 pub use harbor_scenery::HarborScenery;
 pub use loading_assets::node_textures;
-pub use quarry_scenery::{QuarryScenery, SpawnPadShape, quarry_spawn_pad_pieces};
-pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil, quarry_soil_pixels};
+pub use quarry_scenery::{SpawnPadShape, quarry_spawn_pad_pieces};
+pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;
-pub use scenery::{
-    MapTheme, SHADOW_DEPTH, Scenery, ShadowBox, build_scenery, create_arena_floor,
-    create_spawn_pads, custom_floor, custom_spawn_pads, default_sun_shadow, fit_sun_shadow,
-};
-pub use village_atmosphere::SmokeCover;
+pub use scenery::{MapTheme, Scenery, build_scenery, create_arena_floor, create_spawn_pads};
+pub use village_atmosphere::{CHIMNEY_SMOKE_NODE, SmokeCover};
 pub use village_landmarks::WATERWHEEL;
 pub use village_roads::is_village_dirt;
-pub use village_scenery::{CHIMNEY_SMOKE_NODE, VillageScenery};
+pub use village_scenery::VillageScenery;
 
 /// Names of the vehicle parts the TypeScript kept in `userData`. Every vehicle
 /// model (tanks and Humvee) has all of them.

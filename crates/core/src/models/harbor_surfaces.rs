@@ -11,21 +11,13 @@ use crate::scene::{Material, Node, TextureRef, Wrap};
 use super::model_primitives::{Cache, shadowed, span_between};
 
 /// The two harbor surface tiles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HarborSurface {
     Dock,
-    #[default]
     Steel,
 }
 
 impl HarborSurface {
-    pub fn texture_path(self) -> &'static str {
-        match self {
-            HarborSurface::Dock => "textures/harbor/dock.webp",
-            HarborSurface::Steel => "textures/harbor/steel.webp",
-        }
-    }
-
     /// World metres per tile.
     fn tile(self) -> f64 {
         match self {
@@ -41,14 +33,14 @@ static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> = Cache::new();
 /// `harborMaterial(kind, color)`: the tile as albedo and bump.
 pub fn harbor_material(kind: HarborSurface, color: u32) -> Arc<Material> {
     MATERIALS.get_or_insert((kind, color), || {
+        let (path, bump_scale, metalness, roughness) = match kind {
+            HarborSurface::Dock => ("textures/harbor/dock.webp", 0.035, 0.0, 0.95),
+            HarborSurface::Steel => ("textures/harbor/steel.webp", 0.012, 0.3, 0.68),
+        };
         let texture = TextureRef {
             wrap: Wrap::Mirror,
             anisotropy: 4,
-            ..TextureRef::file(kind.texture_path())
-        };
-        let (bump_scale, metalness, roughness) = match kind {
-            HarborSurface::Dock => (0.035, 0.0, 0.95),
-            HarborSurface::Steel => (0.012, 0.3, 0.68),
+            ..TextureRef::file(path)
         };
         Material {
             map: Some(texture.clone()),

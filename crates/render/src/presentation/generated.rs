@@ -254,7 +254,6 @@ mod browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::models::quarry_soil_pixels;
 
     #[test]
     fn the_page_claims_a_soil_bake_once_before_it_starts() {
@@ -303,6 +302,6 @@ mod tests {
             steps += 1;
         }
         assert_eq!(steps, QUARRY_SOIL_SIZE.div_ceil(SOIL_ROWS_PER_STEP * 3 + 7));
-        assert!(result.unwrap() == quarry_soil_pixels());
+        assert!(result.unwrap() == bake_quarry_soil(sand_accum(), 0, QUARRY_SOIL_SIZE));
     }
 }

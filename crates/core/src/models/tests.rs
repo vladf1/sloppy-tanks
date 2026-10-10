@@ -6,6 +6,7 @@
 use glam::DVec3;
 
 use super::*;
+use crate::geometry::reference_tests::fnv;
 use crate::scene::Node;
 
 /// (meshes, vertices, triangles) over every drawable in the tree.
@@ -133,15 +134,6 @@ fn painted_parts_use_the_wear_texture() {
         .collect();
     assert!(links.len() > 40);
     assert!(links.iter().all(|link| link.material.map.is_none()));
-}
-
-fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for word in words {
-        h ^= word;
-        h = h.wrapping_mul(16_777_619);
-    }
-    h
 }
 
 fn float_hash<const N: usize>(values: &[[f32; N]]) -> u32 {

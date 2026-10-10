@@ -13,7 +13,7 @@ use glam::{DVec2, DVec3};
 use super::math::{compose, quat_from_euler, scale_hex_color};
 use super::*;
 
-fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
+pub(crate) fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for word in words {
         h ^= word;

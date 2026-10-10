@@ -77,9 +77,18 @@ pub struct TextureRef {
 
 impl TextureRef {
     pub fn file(path: &'static str) -> Self {
+        Self::with_source(TextureSource::File(path), Wrap::Repeat)
+    }
+
+    /// Pixels generated at runtime by key (a bake or canvas drawing), clamped.
+    pub fn generated(key: &'static str) -> Self {
+        Self::with_source(TextureSource::Generated(key), Wrap::Clamp)
+    }
+
+    fn with_source(source: TextureSource, wrap: Wrap) -> Self {
         Self {
-            source: TextureSource::File(path),
-            wrap: Wrap::Repeat,
+            source,
+            wrap,
             repeat: [1.0, 1.0],
             offset: [0.0, 0.0],
             srgb: true,

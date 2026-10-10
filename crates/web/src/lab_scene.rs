@@ -375,7 +375,7 @@ pub fn geometry(spec: &GeometrySpec) -> Arc<Mesh> {
             height_segments,
         )),
         GeometrySpec::Ground { extent } => {
-            create_arena_floor(GroundKind::DryGrass, extent.into())
+            create_arena_floor(GroundKind::DryGrass, extent.into(), 0.0)
                 .drawable
                 .expect("floor mesh")
                 .mesh

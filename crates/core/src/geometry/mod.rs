@@ -51,4 +51,4 @@ pub use shape::{Path, Shape};
 pub use triangulate::triangulate_shape;
 
 #[cfg(test)]
-mod reference_tests;
+pub(crate) mod reference_tests;

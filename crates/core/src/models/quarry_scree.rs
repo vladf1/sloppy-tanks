@@ -10,9 +10,8 @@ use crate::geometry::{Mesh, icosahedron_geometry, merge_geometries, narrow, wide
 use crate::scene::{Material, Node};
 
 use super::quarry_benches::ScreeSpot;
-use super::quarry_soil::QUARRY_TERRAIN_EXTENT;
 use super::quarry_surfaces::{roughen_stone, sandstone_material};
-use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop};
+use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop, soil_uvs};
 use crate::sim::math::Random;
 
 /// `screePoint(spot, u, t)`: a fan of sediment with scalloped toes and sides buried
@@ -120,16 +119,7 @@ pub fn quarry_scree(spot: &ScreeSpot, soil: &Arc<Material>) -> [Node; 2] {
         geometry.rotate_y(spot.rot_y);
         geometry.translate(spot.x, 0.008 - dip, spot.z);
     }
-    mound.uvs = mound
-        .positions
-        .iter()
-        .map(|p| {
-            [
-                (f64::from(p[0]) / QUARRY_TERRAIN_EXTENT + 0.5) as f32,
-                (0.5 - f64::from(p[2]) / QUARRY_TERRAIN_EXTENT) as f32,
-            ]
-        })
-        .collect();
+    soil_uvs(&mut mound);
     plain_soil_colors(&mut mound);
     [
         Node::mesh(Arc::new(mound), soil.clone()),

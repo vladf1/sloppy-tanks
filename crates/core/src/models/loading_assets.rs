@@ -9,7 +9,7 @@ use crate::scene::{Node, TextureSource};
 /// duplicates: material maps, bump maps, emissive maps and effect inputs
 /// (`extra_textures`). File sources are paths
 /// under `public/`; generated ones are baked in Rust or drawn by the browser (see
-/// `effects_scenery::generated_texture` and `canvas_texture`).
+/// `bake_quarry_soil` and `effects_scenery::canvas_texture`).
 pub fn node_textures(root: &Node) -> Vec<TextureSource> {
     let mut textures = Vec::new();
     let mut add = |source: &TextureSource| {

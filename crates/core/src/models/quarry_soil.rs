@@ -3,9 +3,8 @@
 //! the page can bake it in bands (workers, or slices between frames) and the
 //! result is independent of the split.
 //!
-//! The bake is heavy (4.2 M pixels). Callers that must keep the menu responsive
-//! should bake [`bake_quarry_soil`] in bands; [`quarry_soil_pixels`] bakes it
-//! whole and caches it.
+//! The bake is heavy (4.2 M pixels), so callers that must keep the menu responsive
+//! bake [`bake_quarry_soil`] in bands.
 
 use std::sync::OnceLock;
 
@@ -68,25 +67,10 @@ fn sample_accum(grid: &[f32], x: f64, z: f64) -> f64 {
         + at(i + 1, j + 1) * u * v
 }
 
-/// `Uint8ClampedArray` element assignment (ECMAScript ToUint8Clamp): clamp, then
-/// round half to even.
+/// `Uint8ClampedArray` element assignment (ECMAScript ToUint8Clamp): round half to
+/// even, then clamp; the saturating cast clamps to 0..=255 and maps NaN to 0.
 fn to_uint8_clamp(value: f64) -> u8 {
-    if value.is_nan() || value <= 0.0 {
-        return 0;
-    }
-    if value >= 255.0 {
-        return 255;
-    }
-    let floor = value.floor();
-    let half = floor + 0.5;
-    let rounded = if half < value {
-        floor + 1.0
-    } else if value < half || floor % 2.0 == 0.0 {
-        floor
-    } else {
-        floor + 1.0
-    };
-    rounded as u8
+    value.round_ties_even() as u8
 }
 
 /// `bakeQuarrySoil(accum, start, end)`: sRGBA rows `[start, end)` of the soil.
@@ -217,13 +201,6 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, z: f64, out: &mut [u
         out[i + 2] = to_uint8_clamp(b + shade);
         out[i + 3] = to_uint8_clamp(128.0 + gravel * 127.0);
     }
-}
-
-/// The whole bake for the current layout's drift, computed once and cached.
-pub fn quarry_soil_pixels() -> &'static [u8] {
-    static PIXELS: OnceLock<Vec<u8>> = OnceLock::new();
-    PIXELS
-        .get_or_init(|| bake_quarry_soil(super::quarry_terrain::sand_accum(), 0, QUARRY_SOIL_SIZE))
 }
 
 #[cfg(test)]

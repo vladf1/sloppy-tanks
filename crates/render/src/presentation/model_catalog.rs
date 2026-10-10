@@ -101,7 +101,7 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
 /// `physicalCoverModel`'s model: the cover's full-detail model, batched.
 pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
     let shape = CoverShape::from(cover);
-    let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage).node;
+    let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage);
     batch(&mut root);
     let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
     CoverModel { root, tree }
@@ -287,7 +287,7 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
         take_at(&mut root, &path);
         let drawable = node.drawable.as_ref().expect("water mesh");
         let height = match &drawable.material.effect {
-            Effect::Custom { params, .. } => f64::from(params[1]),
+            Effect::Custom { params, .. } => f64::from(params[0]),
             Effect::None => 0.0,
         };
         let mut mesh = (*drawable.mesh).clone();

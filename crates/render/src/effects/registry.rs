@@ -107,15 +107,6 @@ pub const WRECK_AGING: EffectDefinition = effect(
     include_str!("../shaders/effects/wreck_aging.wgsl"),
 );
 
-/// Fading debris: instance opacity in color, a dithered shadow (`debris-fade.ts`).
-pub const DEBRIS_FADE: EffectDefinition = EffectDefinition {
-    shadow_fade: true,
-    ..effect(
-        effects_props::DEBRIS_FADE,
-        include_str!("../shaders/effects/debris_fade.wgsl"),
-    )
-};
-
 /// Meadow tufts swaying in the wind (`village-vegetation.ts`).
 pub const MEADOW_SWAY: EffectDefinition = effect(
     effects_scenery::MEADOW_SWAY,
@@ -167,7 +158,7 @@ pub const SAND_DRIFT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 13] = [
     WAVE,
     PULSE,
     PUFF,
@@ -175,7 +166,6 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
     TRACK_MARK,
     DUST,
     WRECK_AGING,
-    DEBRIS_FADE,
     MEADOW_SWAY,
     FOLIAGE,
     CHIMNEY_SMOKE,

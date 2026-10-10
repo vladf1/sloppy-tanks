@@ -159,3 +159,11 @@ pub fn span_between(mut part: Node, from: DVec3, to: DVec3) -> Node {
     part.rotation = quat_from_unit_vectors(DVec3::Y, normalize(to - from));
     part
 }
+
+/// `beam(group, a, b, width, color)`: a square box part between two authored
+/// points (timbers, crane braces, rails, rigging and mooring lines).
+pub(super) fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
+    let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
+    let part = box_part(width, from.distance(to), width, color, 0.0);
+    group.children.push(span_between(part, from, to));
+}

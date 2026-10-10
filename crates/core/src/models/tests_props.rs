@@ -20,19 +20,14 @@ use glam::DMat4;
 use super::*;
 use crate::geometry::Mesh;
 use crate::geometry::math::{compose, js_round};
-use crate::scene::{Material, Node, Side, TextureSource};
+use crate::geometry::reference_tests::fnv;
+use crate::scene::{Material, Node, TextureSource};
 use crate::sim::math::Random;
-use crate::sim::timber_layout::{TimberHit, TimberJoin, TimberPart, TimberPartKind};
+use crate::sim::timber_layout::{
+    TimberHit, TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts,
+};
+use crate::sim::tree_proportions::tree_proportions;
 use crate::sim::types::{CoverKind, PickupKind};
-
-fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for word in words {
-        h ^= word;
-        h = h.wrapping_mul(16_777_619);
-    }
-    h
-}
 
 /// Whether summaries hash exact bits or grid-rounded values (see the module docs).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,18 +54,13 @@ fn descriptor(material: &Material) -> String {
         Some(TextureSource::File(path)) => path,
         _ => "",
     };
-    let side = match material.side {
-        Side::Front => 0,
-        Side::Back => 1,
-        Side::Double => 2,
-    };
     format!(
         "{:x}|{}|{}|{}|{}|{}|{}",
         material.color.0,
         map,
         u8::from(material.vertex_colors),
         u8::from(material.transparent),
-        side,
+        material.side as u8,
         material.roughness,
         material.metalness
     )
@@ -225,12 +215,32 @@ fn cover_models_match_typescript() {
             TreeDetail::Full
         };
         let model = cover_model(&shape, detail, case.stage);
-        let (actual, hashes) = summary(&model.node);
-        let parts = (model.timber_parts.len(), timber_hash(&model.timber_parts));
-        if summary_with(&model.node, Precision::Exact).0.3 == case.exact {
+        let (actual, hashes) = summary(&model);
+        // The members and tree traits the TypeScript kept in `userData`.
+        let parts = if case.kind == CoverKind::Timber {
+            let wall = TimberWall {
+                x: case.x,
+                z: case.z,
+                w: case.w,
+                h: case.h,
+                d: case.d,
+                color: case.color,
+                hits: case.hits,
+                join: case.join,
+            };
+            timber_parts(&wall, case.stage)
+        } else {
+            Vec::new()
+        };
+        let parts = (parts.len(), timber_hash(&parts));
+        let tree = (case.kind == CoverKind::Tree).then(|| {
+            let proportions = tree_proportions(case.x, case.z, case.w, case.d, case.h);
+            (proportions.family, proportions.seed)
+        });
+        if summary_with(&model, Precision::Exact).0.3 == case.exact {
             exact += 1;
         }
-        if actual != case.expected || parts != case.timber_parts || model.tree != case.tree {
+        if actual != case.expected || parts != case.timber_parts || tree != case.tree {
             failures.push(format!(
                 "#{index} {:?} ({}, {}) stage {} background {}: {actual:?} vs {:?}, parts {parts:?} vs {:?}, tree {:?} vs {:?}, meshes {hashes:08x?}",
                 case.kind,
@@ -240,7 +250,7 @@ fn cover_models_match_typescript() {
                 case.background,
                 case.expected,
                 case.timber_parts,
-                model.tree,
+                tree,
                 case.tree
             ));
         }
@@ -334,26 +344,16 @@ fn tree_damage_sheds_boughs_by_stage() {
         d: 2.6,
         h: 5.8,
     };
-    let mut tree = tree_model(&shape, TreeDetail::Full).node;
-    let boughs = |tree: &Node| {
-        let crown = tree.find(tree_part::CROWN).unwrap();
-        crown
-            .children
-            .iter()
-            .filter_map(branch_drop_stage)
-            .collect::<Vec<_>>()
-    };
-    let stages = boughs(&tree);
+    let tree = tree_model(&shape, TreeDetail::Full);
+    let crown = tree.find(tree_part::CROWN).unwrap();
+    let stages: Vec<_> = crown
+        .children
+        .iter()
+        .filter_map(branch_drop_stage)
+        .collect();
     assert!(stages.contains(&1) && stages.contains(&2));
-    let (stage, dropped) = set_tree_damage(&mut tree, 0, 0.9);
-    assert_eq!(stage, 1);
-    assert_eq!(dropped.len(), stages.iter().filter(|&&s| s == 1).count());
-    let (stage, dropped) = set_tree_damage(&mut tree, stage, 0.3);
-    assert_eq!(stage, 2);
-    assert_eq!(dropped.len(), stages.iter().filter(|&&s| s == 2).count());
-    set_tree_destroyed(&mut tree, true);
-    assert!(!tree.find(tree_part::CROWN).unwrap().visible);
-    assert!(tree.find(tree_part::CUT_SURFACE).unwrap().visible);
+    // Presentation's tree joints show the cut surface only once the tree is felled.
+    assert!(!tree.find(tree_part::CUT_SURFACE).unwrap().visible);
 }
 
 /// Tower rubble keeps the tower's concrete footing and timber, never its clapboard
@@ -373,7 +373,7 @@ fn tower_rubble_wears_concrete_and_timber() {
         timber_hits: Vec::new(),
         timber_join: None,
     };
-    let textures = |kind| node_textures(&cover_model(&shape(kind), TreeDetail::Full, 0).node);
+    let textures = |kind| node_textures(&cover_model(&shape(kind), TreeDetail::Full, 0));
     let tower = textures(CoverKind::Tower);
     assert!(tower.contains(&TextureSource::File(building_kit::CLAPBOARD_TEXTURE)));
     assert_eq!(
@@ -383,33 +383,6 @@ fn tower_rubble_wears_concrete_and_timber() {
             TextureSource::File(timber_model::TIMBER_TEXTURE),
         ]
     );
-}
-
-#[test]
-fn falling_branches_fade_without_depth_writes() {
-    let tree = tree_model(
-        &TreeShape {
-            x: 12.0,
-            z: 3.0,
-            w: 2.6,
-            d: 2.6,
-            h: 5.8,
-        },
-        TreeDetail::Full,
-    )
-    .node;
-    let crown = tree.find(tree_part::CROWN).unwrap();
-    let bough = crown
-        .children
-        .iter()
-        .find(|c| branch_drop_stage(c).is_some())
-        .unwrap();
-    let world = DMat4::from_translation(tree.position)
-        * compose(bough.position, bough.rotation, bough.scale);
-    let falling = falling_branch_model(bough, world);
-    assert!((falling.position - (tree.position + bough.position)).length() < 1e-12);
-    let material = &falling.children[0].drawable.as_ref().unwrap().material;
-    assert!(material.transparent && !material.depth_write);
 }
 
 #[test]

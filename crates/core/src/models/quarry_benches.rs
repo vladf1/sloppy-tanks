@@ -278,28 +278,6 @@ pub fn quarry_scree_spots() -> [ScreeSpot; 6] {
     ]
 }
 
-/// Where the sentinel butte stands.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ButteSpot {
-    pub x: f64,
-    pub z: f64,
-    pub base_y: f64,
-    pub scale: f64,
-    pub rot_y: f64,
-}
-
-/// `quarryButteSpot()`: a lone layered sentinel on the north apron, clear of the
-/// boundary, the conveyor, the excavator swing and both northern scree collapses.
-pub fn quarry_butte_spot() -> ButteSpot {
-    ButteSpot {
-        x: 16.0,
-        z: -68.0,
-        base_y: -1.8,
-        scale: 1.0,
-        rot_y: 0.15,
-    }
-}
-
 /// w, h, d, dx, dy, dz per stacked slab.
 const BUTTE_SLABS: [[f64; 6]; 6] = [
     [15.0, 3.2, 11.0, 0.0, 1.6, 0.0],
@@ -310,16 +288,19 @@ const BUTTE_SLABS: [[f64; 6]; 6] = [
     [3.4, 1.8, 3.0, 0.3, 14.0, -0.2],
 ];
 
-/// `quarryButte(scale, rotY)` (`quarry-sentinel-butte`): stacked offset slabs with an
-/// eroded cap, merged into one batch so the landmark costs one draw.
-pub fn quarry_butte(scale: f64, rot_y: f64) -> Node {
+/// `quarryButte(scale, rotY)` (`quarry-sentinel-butte`) at `quarryButteSpot()`:
+/// stacked offset slabs with an eroded cap, merged into one batch so the landmark
+/// costs one draw. A lone layered sentinel on the north apron, clear of the
+/// boundary, the conveyor, the excavator swing and both northern scree collapses.
+pub fn quarry_butte() -> Node {
     let mut group = Node::group("quarry-sentinel-butte");
     for (i, [w, h, d, dx, dy, dz]) in BUTTE_SLABS.into_iter().enumerate() {
-        let mut rock = sandstone_rock(w * scale, h * scale, d * scale, 20 + i as u32);
-        rock.position = DVec3::new(dx * scale, dy * scale, dz * scale);
-        rock.set_rotation_euler(0.0, rot_y + i as f64 * 0.22, 0.0);
+        let mut rock = sandstone_rock(w, h, d, 20 + i as u32);
+        rock.position = DVec3::new(dx, dy, dz);
+        rock.set_rotation_euler(0.0, 0.15 + i as f64 * 0.22, 0.0);
         group.children.push(rock);
     }
     batch(&mut group);
+    group.position = DVec3::new(16.0, -1.8, -68.0);
     group
 }

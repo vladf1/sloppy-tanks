@@ -63,7 +63,6 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::models::SHADOW_DEPTH;
 use sloppy_core::scene::{Blending, Node, Side, TextureRef};
 
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
@@ -78,6 +77,7 @@ use crate::mesh_pages::MeshRange;
 use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
 };
+use crate::presentation::theme::SHADOW_DEPTH;
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
@@ -195,7 +195,7 @@ impl Default for SunShadow {
                 Vec3::ZERO,
                 70.0,
                 0.5,
-                SHADOW_DEPTH as f32,
+                SHADOW_DEPTH,
             ),
             bias: -0.0002,
             normal_bias: 0.05,
@@ -766,14 +766,6 @@ struct Scene<'a> {
     reflection: bool,
 }
 
-fn water_normals() -> TextureRef {
-    TextureRef {
-        srgb: false,
-        anisotropy: 4,
-        ..TextureRef::file("textures/water/normals.webp")
-    }
-}
-
 impl Renderer {
     /// Create the device and canvas context. `asset_base` prefixes `TextureSource::File`
     /// paths (the page's `BASE_URL`). Fails when the build's graphics API is unavailable.
@@ -919,7 +911,7 @@ impl Renderer {
         };
         let mesh = self.meshes.shared(&self.gpu, &settings.mesh);
         self.meshes.get_mut(mesh).users += 1;
-        let normals = water_normals();
+        let normals = sloppy_core::models::water_normals();
         self.textures.request(&normals);
         let size = settings.reflection_size.max(1);
         let mut bounds = self.meshes.get(mesh).bounds;
