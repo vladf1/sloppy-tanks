@@ -213,8 +213,8 @@ build metadata.
 including combat, reconnect and results. The traffic bots' `BotPlayer`
 (`bots/bot-player.ts`) drives each socket; the check mirrors every snapshot to prove
 the stream is contiguous and enforces full-state, snapshot-batch and sustained byte
-budgets. Set `SLOPPY_SERVER_URL` for a deployed server (with a listed
-`SLOPPY_ORIGIN`), `SLOPPY_PLAYER_CLIENTS=8` for the capacity check, or
+budgets. Set `SLOPPY_SERVER_URL` for a deployed server,
+`SLOPPY_PLAYER_CLIENTS=8` for the capacity check, or
 `SLOPPY_PLAYER_SECONDS=900 SLOPPY_PLAYER_MAPS=village` for the long run.
 Set `SLOPPY_PLAYER_RECOVER=1` to exercise recovery after transport loss: each
 closure is retained in the report and room/seat continuity is mandatory. The

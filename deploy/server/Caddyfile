@@ -1,0 +1,11 @@
+# Installed to /etc/sloppy-tanks/caddy/ by provision.sh, with the site address below
+# replaced by the machine's names from deploy/servers.json: its hostname, if any, and its
+# nip.io name.
+# Caddy obtains a certificate for each and forwards WebSocket upgrades as-is.
+# X-Client-Port (with X-Forwarded-For) names the player's end of Caddy's socket to them,
+# which the game server reads its TCP round trip and retransmissions from.
+{$SITES} {
+	reverse_proxy 127.0.0.1:8787 {
+		header_up X-Client-Port {remote_port}
+	}
+}

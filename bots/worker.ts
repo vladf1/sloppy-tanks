@@ -13,7 +13,6 @@ import { controlPage } from "./control-page";
 interface Env {
   SWARM: DurableObjectNamespace<BotSwarm>;
   SERVER_URL: string;
-  BOT_ORIGIN: string;
 }
 
 /** Durable Object location hints; each region runs at most one swarm object. */
@@ -357,9 +356,7 @@ export class BotSwarm extends DurableObject<Env> {
   }
 
   private async listRooms(): Promise<RoomListingSummary[]> {
-    const response = await fetch(this.env.SERVER_URL + "/rooms", {
-      headers: { Origin: this.env.BOT_ORIGIN },
-    });
+    const response = await fetch(this.env.SERVER_URL + "/rooms");
     if (!response.ok) {
       throw new Error(`Room directory ${response.status}: ${await response.text()}`);
     }
@@ -375,7 +372,7 @@ export class BotSwarm extends DurableObject<Env> {
         const abort = new AbortController();
         const timeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
         const response = await fetch(this.env.SERVER_URL + "/room/" + room, {
-          headers: { Upgrade: "websocket", Origin: this.env.BOT_ORIGIN },
+          headers: { Upgrade: "websocket" },
           signal: abort.signal,
         }).finally(() => clearTimeout(timeout));
         const socket = response.webSocket;

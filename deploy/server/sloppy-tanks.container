@@ -11,10 +11,10 @@ ContainerName=sloppy-tanks
 # sloppy-tanks-update writes. Until a deploy pins one, Quadlet generates no service.
 # The pinned image is always local, so a crash or reboot never needs the registry.
 Pull=never
-# Host networking keeps the listener on loopback (HOST in the env file) behind Caddy,
-# with the real peer address, and leaves no ports to publish past the firewall.
+# Host networking keeps the listener on loopback behind Caddy, which reaches it there,
+# and leaves no ports to publish past the firewall.
 Network=host
-EnvironmentFile=/etc/sloppy-tanks.env
+Environment=HOST=127.0.0.1 PORT=8787
 # A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
 # cap without swap.
 ReadOnly=true

@@ -1,0 +1,10 @@
+{
+  "production": {
+    "ip": "108.61.218.248",
+    "hostname": "sloppy-tanks-server.fridman.me"
+  },
+  "dev": {
+    "ip": "45.77.4.39",
+    "hostname": null
+  }
+}

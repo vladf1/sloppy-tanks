@@ -30,7 +30,7 @@ fn main() -> ExitCode {
 }
 
 async fn serve(settings: Settings) -> ExitCode {
-    let mut options = ServerOptions::new(settings.allowed_origins, settings.trust_proxy);
+    let mut options = ServerOptions::new(settings.trust_proxy);
     options.build = settings.build;
     if let Some(max_rooms) = settings.max_rooms {
         options.max_rooms = max_rooms;

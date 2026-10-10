@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
-# Switches a multiplayer server service to a container image and keeps its pinned-image
+# Switches the machine's game server to a container image and keeps its pinned-image
 # state. provision.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
-# scripts call it over SSH and sloppy-tanks-update.timer runs `production auto`.
+# scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update SERVICE pull [REF]    pull REF (default :production) and switch now
-#   sloppy-tanks-update SERVICE local IMAGE   switch to an image already loaded here (SSH deploy)
-#   sloppy-tanks-update SERVICE rollback      switch back to the previous image
-#   sloppy-tanks-update SERVICE resume        let auto-update follow :production again
-#   sloppy-tanks-update production auto       the timer's check (see auto below)
-#   sloppy-tanks-update SERVICE status
+#   sloppy-tanks-update pull [REF]    pull REF (default :production) and switch now
+#   sloppy-tanks-update local IMAGE   switch to an image already loaded here (SSH deploy)
+#   sloppy-tanks-update rollback      switch back to the previous image
+#   sloppy-tanks-update resume        let auto-update follow :production again
+#   sloppy-tanks-update auto          the timer's check (see auto below)
+#   sloppy-tanks-update status
 #
-# SERVICE is production (sloppy-tanks) or dev (sloppy-tanks-dev). The unit runs the image
-# ID in /var/lib/sloppy-tanks/SERVICE.image, so a crash or reboot restarts exactly what was
-# running, and only this script changes it, restarting in the same step. The service's
-# Quadlet unit reads the pin from a drop-in this script writes beside it. Anything but
-# `pull` of :production leaves a hold that auto-update respects until `resume` or such a
-# pull.
+# The sloppy-tanks unit runs the image ID in /var/lib/sloppy-tanks/image, so a crash or
+# reboot restarts exactly what was running, and only this script changes it, restarting
+# in the same step. The Quadlet unit reads the pin from a drop-in this script writes
+# beside it. Anything but `pull` of :production leaves a hold that auto-update respects
+# until `resume` or such a pull.
 set -euo pipefail
 
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
+UNIT=sloppy-tanks
+# The server's loopback port (sloppy-tanks.container), which Caddy forwards to.
+PORT=8787
 STATE=/var/lib/sloppy-tanks
 # Local tags that keep the running and previous images from being pruned.
 PINNED=sloppy-tanks-pinned
@@ -31,26 +33,19 @@ MAX_WAIT_SERVER_ONLY_SECONDS=14400
 MAX_WAIT_CONTENT_SECONDS=600
 
 usage() {
-  echo "usage: sloppy-tanks-update production|dev pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
+  echo "usage: sloppy-tanks-update pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
   exit 2
 }
-service=${1:-}
-command=${2:-}
-case $service in
-  production) unit=sloppy-tanks ;;
-  dev) unit=sloppy-tanks-dev ;;
-  *) usage ;;
-esac
-port=$(sed -n 's/^PORT=//p' "/etc/$unit.env")
-quadlet=/etc/containers/systemd/$unit.container
-image_file=$STATE/$service.image
-previous_file=$STATE/$service.previous
-hold_file=$STATE/$service.hold
-pending_file=$STATE/$service.pending
+command=${1:-}
+quadlet=/etc/containers/systemd/$UNIT.container
+image_file=$STATE/image
+previous_file=$STATE/previous
+hold_file=$STATE/hold
+pending_file=$STATE/pending
 mkdir -p "$STATE"
 
-# One change at a time per service. The timer skips a check while another runs.
-exec 9>"/run/lock/sloppy-tanks-update-$service.lock"
+# One change at a time. The timer skips a check while another runs.
+exec 9>/run/lock/sloppy-tanks-update.lock
 if [[ $command == auto ]]; then
   flock --nonblock 9 || exit 0
 else
@@ -82,13 +77,13 @@ use_pin() {
 }
 
 # Every load or pull leaves an image tagged with its build, which a plain prune (untagged
-# images only) never frees. Untag the server images that no service runs or could roll
-# back to (both services share the image store), keeping :production for a pending
-# auto-update, then prune what is left untagged. Podman lists every name of a matching
-# image, so only the registry's tags are considered.
+# images only) never frees. Untag the server images the server neither runs nor could
+# roll back to, keeping :production for a pending auto-update, then prune what is left
+# untagged (Caddy's image stays tagged). Podman lists every name of a matching image, so
+# only the registry's tags are considered.
 remove_old_images() {
   local keep ref id
-  keep=$({ cat "$STATE"/*.image "$STATE"/*.previous 2>/dev/null || true; } | sed -n 's/^IMAGE=//p')
+  keep=$({ cat "$image_file" "$previous_file" 2>/dev/null || true; } | sed -n 's/^IMAGE=//p')
   podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
       if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
@@ -104,7 +99,7 @@ healthy() {
   build=$(label "$1" $LABELS.server-build)
   content=$(label "$1" $LABELS.content-version)
   for ((waited = 0; waited < HEALTH_TIMEOUT_SECONDS; waited += 2)); do
-    body=$(curl -fsS --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null | tr -d ' \n' || true)
+    body=$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | tr -d ' \n' || true)
     if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* ]]; then
       return 0
     fi
@@ -117,38 +112,38 @@ switch_to() {
   local new=$1 current previous
   current=$(pinned "$image_file")
   previous=$(pinned "$previous_file")
-  if [[ $new == "$current" ]] && systemctl is-active --quiet "$unit"; then
-    echo "$unit already runs $(describe "$new")"
+  if [[ $new == "$current" ]] && systemctl is-active --quiet "$UNIT"; then
+    echo "$UNIT already runs $(describe "$new")"
     return 0
   fi
   if [[ -n $current && $current != "$new" ]]; then
     pin "$previous_file" "$current"
-    podman tag "$current" "$PINNED:$service-previous"
+    podman tag "$current" "$PINNED:previous"
   fi
   pin "$image_file" "$new"
-  podman tag "$new" "$PINNED:$service-current"
+  podman tag "$new" "$PINNED:current"
   use_pin "$new"
-  echo "Restarting $unit on $(describe "$new")"
-  systemctl restart "$unit"
+  echo "Restarting $UNIT on $(describe "$new")"
+  systemctl restart "$UNIT"
   if healthy "$new"; then
-    echo "$unit runs $(describe "$new")"
+    echo "$UNIT runs $(describe "$new")"
     remove_old_images
     return 0
   fi
-  echo "$unit did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+  echo "$UNIT did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
   if [[ -n $current && $current != "$new" ]]; then
     pin "$image_file" "$current"
-    podman tag "$current" "$PINNED:$service-current"
+    podman tag "$current" "$PINNED:current"
     use_pin "$current"
     if [[ -n $previous ]]; then
       pin "$previous_file" "$previous"
-      podman tag "$previous" "$PINNED:$service-previous"
+      podman tag "$previous" "$PINNED:previous"
     fi
-    systemctl restart "$unit"
+    systemctl restart "$UNIT"
     if healthy "$current"; then
       echo "Rolled back to $(describe "$current")" >&2
     else
-      echo "The previous image is not healthy either; see journalctl -u $unit" >&2
+      echo "The previous image is not healthy either; see journalctl -u $UNIT" >&2
     fi
   fi
   return 1
@@ -157,7 +152,6 @@ switch_to() {
 # The timer's check. It follows :production unless a hold is set, and restarts only when
 # nobody holds a seat or the pending image has waited its maximum.
 auto() {
-  [[ $service == production ]] || { echo "auto-update follows production only" >&2; exit 2; }
   if [[ -f $hold_file ]]; then
     echo "Holding: $(cat "$hold_file")"
     return 0
@@ -184,7 +178,7 @@ auto() {
   # The top-level count: each room in /stats has a "players" field too. A server that
   # does not answer has nobody to protect.
   local players
-  players=$(curl -fsS --max-time 5 "http://127.0.0.1:$port/stats" 2>/dev/null |
+  players=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/stats" 2>/dev/null |
     python3 -c 'import json, sys; print(int(json.load(sys.stdin)["players"]))' 2>/dev/null || true)
   players=${players:-0}
   local waited=$((now - first))
@@ -200,23 +194,21 @@ status() {
   local current previous
   current=$(pinned "$image_file")
   previous=$(pinned "$previous_file")
-  echo "service:  $unit ($(systemctl is-active "$unit" || true))"
+  echo "service:  $UNIT ($(systemctl is-active "$UNIT" || true))"
   echo "running:  ${current:+$(describe "$current")}"
   echo "previous: ${previous:+$(describe "$previous")}"
   if [[ -f $hold_file ]]; then echo "hold:     $(cat "$hold_file")"; fi
-  if [[ $service == production ]]; then
-    echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true)"
-    if [[ -f $pending_file ]]; then
-      local pending first
-      read -r pending first <"$pending_file" || true
-      echo "pending:  $(describe "$pending") since $(date -u -d "@$first" +%FT%TZ)"
-    fi
+  echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true)"
+  if [[ -f $pending_file ]]; then
+    local pending first
+    read -r pending first <"$pending_file" || true
+    echo "pending:  $(describe "$pending") since $(date -u -d "@$first" +%FT%TZ)"
   fi
 }
 
 case $command in
   pull)
-    ref=${3:-$REGISTRY:production}
+    ref=${2:-$REGISTRY:production}
     podman pull --quiet "$ref" >/dev/null
     new=$(image_id "$ref")
     # Only following :production releases a hold; any other image is a pin. A failed
@@ -225,13 +217,13 @@ case $command in
     if [[ $ref == "$REGISTRY:production" ]]; then rm -f "$hold_file" "$pending_file"; else hold "Pulled $ref" "$new"; fi
     ;;
   local)
-    new=$(image_id "${3:?local needs an image}")
+    new=$(image_id "${2:?local needs an image}")
     switch_to "$new"
     hold "SSH deploy" "$new"
     ;;
   rollback)
     previous=$(pinned "$previous_file")
-    [[ -n $previous ]] || { echo "No previous image for $unit" >&2; exit 1; }
+    [[ -n $previous ]] || { echo "No previous image for $UNIT" >&2; exit 1; }
     switch_to "$previous"
     hold "Rollback" "$previous"
     ;;

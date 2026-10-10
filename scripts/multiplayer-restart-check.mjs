@@ -29,8 +29,7 @@ async function startServer() {
   assert.ok(!busy, `port ${PORT} is already in use; set SLOPPY_RESTART_PORT`);
   // The native server `pnpm run server:build` produces.
   server = spawn("target/server/sloppy-server", [], {
-    // Admit whichever Vite origin the check was given, not only the default local ports.
-    env: { ...process.env, PORT: String(PORT), ALLOWED_ORIGINS: url.origin },
+    env: { ...process.env, PORT: String(PORT) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (data) => (logs += data));

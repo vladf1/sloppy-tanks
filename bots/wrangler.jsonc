@@ -8,8 +8,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BotSwarm"] }],
   "observability": { "enabled": true },
   "vars": {
-    // The self-hosted game server on the VPS (scripts/vps-host.mjs).
+    // The production game server (deploy/servers.json; a test keeps the two equal).
     "SERVER_URL": "https://sloppy-tanks-server.fridman.me",
-    "BOT_ORIGIN": "https://sloppy-tanks-dev.pages.dev",
   },
 }

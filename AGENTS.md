@@ -363,15 +363,15 @@ offline.
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
 - `deploy:dev` first deploys the dev site's own multiplayer server
-  (`scripts/deploy-vps.mjs --dev`, key-based SSH): a second service,
-  `sloppy-tanks-dev`, on the same Vultr VPS, served at port 8443 of the
-  production hostname. It resets only the dev server's rooms and never touches
-  production's server. Client and server must agree on a content hash of the
-  `crates/core` sources, the crates they resolve to and `rust-toolchain.toml`
-  (list them with `node scripts/content-version.mjs`); `crates/render`,
-  `crates/web` and the page shell are outside it. The VPS runs both servers as
-  container images under Podman: CI pushes one per server build and, after the
-  Pages deploy, moves `:production` to main's. Production then needs
+  (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
+  Vultr machine (`deploy/servers.json` lists both machines). It resets only the
+  dev server's rooms and never touches production's server. Client and server
+  must agree on a content hash of the `crates/core` sources, the crates they
+  resolve to and `rust-toolchain.toml` (list them with
+  `node scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
+  shell are outside it. Each machine runs its server as a container image under
+  Podman, behind Caddy's own container: CI pushes one image per server build and,
+  after the Pages deploy, moves `:production` to main's. Production then needs
   `pnpm run server:update` unless auto-update is on (`server:status` shows it); ask before running it.
   `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or
@@ -383,10 +383,10 @@ offline.
   hash) apart from server-only changes (`serverBuild`: `crates/server`, its
   dependencies, build settings). Run it after a merge instead of judging by
   which directories changed.
-  Change the VPS only through `deploy/vps/` and the `server:*` deploy
-  scripts described in `crates/server/README.md`. The traffic bots in `bots/` remain
-  a Cloudflare Worker that targets the VPS; `pnpm run bots:deploy` publishes
-  them separately.
+  Change the machines only through `deploy/servers.json`, `deploy/server/` and the
+  `server:*` scripts described in `crates/server/README.md`. The traffic bots in
+  `bots/` remain a Cloudflare Worker that targets the production server;
+  `pnpm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and

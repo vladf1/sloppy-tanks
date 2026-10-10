@@ -63,7 +63,6 @@ pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
 type Body = BoxBody<Bytes, Infallible>;
 
 pub struct ServerOptions {
-    pub allowed_origins: Vec<String>,
     /// Take the client IP from the last `X-Forwarded-For` hop (the local reverse proxy).
     pub trust_proxy: bool,
     pub max_rooms: usize,
@@ -75,9 +74,8 @@ pub struct ServerOptions {
 }
 
 impl ServerOptions {
-    pub fn new(allowed_origins: Vec<String>, trust_proxy: bool) -> Self {
+    pub fn new(trust_proxy: bool) -> Self {
         Self {
-            allowed_origins,
             trust_proxy,
             max_rooms: DEFAULT_MAX_ROOMS,
             max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
@@ -371,15 +369,6 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
         .unwrap_or("")
 }
 
-fn allowed(shared: &Shared, headers: &HeaderMap) -> bool {
-    let origin = header_text(headers, "origin");
-    shared
-        .options
-        .allowed_origins
-        .iter()
-        .any(|allowed| allowed == origin)
-}
-
 fn client_ip(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> String {
     if shared.options.trust_proxy {
         let forwarded: Vec<&str> = headers
@@ -550,9 +539,6 @@ async fn route(
             }
         }
         "/rooms" => {
-            if !allowed(shared, headers) {
-                return reply(403, Reply::Text("Origin not allowed"), &[]);
-            }
             if request.method() != Method::GET {
                 return reply(405, Reply::None, &cors);
             }
@@ -589,12 +575,7 @@ async fn route(
             reply(200, Reply::Json(json), &cors)
         }
         _ => match room_path(&path) {
-            Some(code) if is_room_code(code) => {
-                if !allowed(shared, headers) {
-                    return reply(403, Reply::Text("Origin not allowed"), &[]);
-                }
-                reply(426, Reply::Text("WebSocket required"), &[])
-            }
+            Some(code) if is_room_code(code) => reply(426, Reply::Text("WebSocket required"), &[]),
             _ => reply(404, Reply::Text("Not found"), &[]),
         },
     }
@@ -639,9 +620,6 @@ fn upgrade(
     else {
         return refuse(404, "Not Found");
     };
-    if !allowed(shared, headers) {
-        return refuse(403, "Origin not allowed");
-    }
     let now = (shared.clock)();
     let ip = client_ip(shared, headers, peer);
     {
