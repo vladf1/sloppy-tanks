@@ -820,7 +820,7 @@ impl RoomHost for EchoHost {
             room_epoch: String::new(),
             now_ms: 0,
             token: Box::new(String::new),
-            seed: None,
+            seed: 0,
             content_version: None,
         });
         RoomListing {

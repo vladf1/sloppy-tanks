@@ -192,7 +192,7 @@ fn mirror_room(level: &mut Harness, steps: usize) -> Mirrored {
         read = messages.len();
         let scene = mirror.state.as_ref().unwrap();
         most_fragments = most_fragments.max(scene.fragments.len());
-        for cover in scene.covers.values() {
+        for cover in scene.covers.records.iter().map(|stored| &stored.value) {
             if !cover.alive {
                 fallen.insert(cover.id);
             } else if fallen.contains(&cover.id) {
@@ -229,7 +229,7 @@ fn a_scrap_yard_room_replicates_the_compact_yard_its_debris_and_rebuilt_cover() 
         !result.rebuilt.is_empty(),
         "rebuilt cover reaches clients with its identity"
     );
-    let view = scene.render(scene.tanks.records[0].id).unwrap();
+    let view = scene.render(scene.tanks.records[0].wire.id).unwrap();
     assert_eq!(view.map_scale, SUPERSTRESS_SCALE);
 }
 

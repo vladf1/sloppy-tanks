@@ -16,10 +16,10 @@ use serde_json::{Value, json};
 
 use super::json::{self, POSITION_SCALE, ROTATION_SCALE, VALUE_SCALE};
 use super::protocol::MAP_MODES;
-use super::schema::{ReadResult, text_length};
+use super::schema::{NUMBER_BOUND, ReadResult, text_length};
 use super::wire::{
     Field, FieldKind, Slot, WireReader, WireRecord, names, put_signed, put_varint, read_changes,
-    wire_fields, write_changes,
+    thousandths, wire_fields, write_changes,
 };
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
@@ -27,7 +27,7 @@ use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2};
 use crate::sim::render_state::{
-    RenderCover, RenderCoverMotion, RenderFragment, RenderState, RenderTank,
+    RenderCover, RenderCoverMotion, RenderFragment, RenderState, RenderTank, fill_each,
 };
 use crate::sim::simulation::Simulation;
 use crate::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -189,7 +189,8 @@ pub fn name<T: PartialEq + Copy>(table: &[(&'static str, T)], value: T) -> &'sta
     table[index_of(table, value)].0
 }
 
-fn index_of<T: PartialEq + Copy>(table: &[(&'static str, T)], value: T) -> usize {
+/// The index of `value` in a name table, as the wire sends it.
+pub(crate) fn index_of<T: PartialEq + Copy>(table: &[(&'static str, T)], value: T) -> usize {
     table
         .iter()
         .position(|(_, option)| *option == value)
@@ -452,7 +453,11 @@ fn read_seed(reader: &mut WireReader<'_>) -> ReadResult<i32> {
     i32::try_from(reader.signed()?).map_err(|_| "Invalid number".into())
 }
 
-fn read_index<T: Copy>(reader: &mut WireReader<'_>, table: &[(&str, T)]) -> ReadResult<T> {
+/// A name table's value at the index read from `reader`.
+pub(crate) fn read_index<T: Copy>(
+    reader: &mut WireReader<'_>,
+    table: &[(&str, T)],
+) -> ReadResult<T> {
     table
         .get(reader.varint()? as usize)
         .map(|(_, value)| *value)
@@ -646,6 +651,13 @@ fn set_point(record: &mut WireRecord, first: usize, point: Point3) {
     record.set_fixed(first + 2, point.z, POSITION_SCALE);
 }
 
+fn set_rotation(record: &mut WireRecord, first: usize, rotation: Quat4) {
+    record.set_fixed(first, rotation.x, ROTATION_SCALE);
+    record.set_fixed(first + 1, rotation.y, ROTATION_SCALE);
+    record.set_fixed(first + 2, rotation.z, ROTATION_SCALE);
+    record.set_fixed(first + 3, rotation.w, ROTATION_SCALE);
+}
+
 fn set_optional(record: &mut WireRecord, field: usize, value: Option<f64>, scale: f64) {
     if let Some(value) = value {
         record.set_fixed(field, value, scale);
@@ -721,26 +733,16 @@ fn write_tank(record: &mut WireRecord, simulation: &Simulation, tank: &Tank) {
 fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) {
     use cover::*;
     record.reset(cover.id, COVER_FIELDS.len());
-    let has_body = simulation.world.bodies.contains(cover.body);
-    let position = if has_body {
-        simulation.body_translation(cover.body)
+    let (position, rotation) = if simulation.world.bodies.contains(cover.body) {
+        (
+            simulation.body_translation(cover.body),
+            simulation.body_rotation(cover.body),
+        )
     } else {
-        Point3::new(cover.x, 0.0, cover.z)
-    };
-    let rotation = if has_body {
-        simulation.body_rotation(cover.body)
-    } else {
-        Quat4::IDENTITY
+        (Point3::new(cover.x, 0.0, cover.z), Quat4::IDENTITY)
     };
     set_point(record, POSITION_X, position);
-    for (field, value) in [
-        (ROTATION_X, rotation.x),
-        (ROTATION_Y, rotation.y),
-        (ROTATION_Z, rotation.z),
-        (ROTATION_W, rotation.w),
-    ] {
-        record.set_fixed(field, value, ROTATION_SCALE);
-    }
+    set_rotation(record, ROTATION_X, rotation);
     // Indestructible cover has infinite health, which travels as null.
     set_optional(
         record,
@@ -780,17 +782,11 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
     }
     match cover.timber_join {
         Some(join) => record.set_blob(TIMBER_JOIN, |out| {
-            let mut bits = 0;
-            for (set, bit) in [
-                (join.open_min, OPEN_MIN),
-                (join.open_max, OPEN_MAX),
-                (join.post, POST),
-            ] {
-                if set {
-                    bits |= bit;
-                }
-            }
-            out.push(bits);
+            out.push(
+                (u8::from(join.open_min) * OPEN_MIN)
+                    | (u8::from(join.open_max) * OPEN_MAX)
+                    | (u8::from(join.post) * POST),
+            );
         }),
         None => record.clear(TIMBER_JOIN),
     }
@@ -810,15 +806,7 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         POSITION_X,
         simulation.body_translation(fragment.body),
     );
-    let rotation = simulation.body_rotation(fragment.body);
-    for (field, value) in [
-        (ROTATION_X, rotation.x),
-        (ROTATION_Y, rotation.y),
-        (ROTATION_Z, rotation.z),
-        (ROTATION_W, rotation.w),
-    ] {
-        record.set_fixed(field, value, ROTATION_SCALE);
-    }
+    set_rotation(record, ROTATION_X, simulation.body_rotation(fragment.body));
     // Clients read life only for the final fade, so a steady value until then keeps
     // every settled piece out of the per-frame deltas.
     record.set_fixed(LIFE, fragment.life.min(DEBRIS_CLEANUP_SECONDS), VALUE_SCALE);
@@ -973,18 +961,6 @@ pub struct Scene {
     pub map: WireRecord,
 }
 
-fn fill_records<S>(
-    records: &mut Vec<WireRecord>,
-    sources: &[S],
-    mut write: impl FnMut(&mut WireRecord, &S),
-) {
-    records.truncate(sources.len());
-    records.resize_with(sources.len(), WireRecord::default);
-    for (record, source) in records.iter_mut().zip(sources) {
-        write(record, source);
-    }
-}
-
 impl Scene {
     /// Reads the simulation's entities (`captureScene`).
     pub fn capture(simulation: &Simulation) -> Scene {
@@ -996,17 +972,17 @@ impl Scene {
     /// Overwrites this scene with the simulation's current state, reusing allocations.
     pub fn capture_from(&mut self, simulation: &Simulation) {
         let [tanks, covers, fragments, mines, pickups] = &mut self.entities;
-        fill_records(tanks, &simulation.tanks, |record, tank| {
+        fill_each(tanks, &simulation.tanks, |record, tank| {
             write_tank(record, simulation, tank)
         });
-        fill_records(covers, &simulation.covers, |record, cover| {
+        fill_each(covers, &simulation.covers, |record, cover| {
             write_cover(record, simulation, cover)
         });
-        fill_records(fragments, &simulation.fragments, |record, fragment| {
+        fill_each(fragments, &simulation.fragments, |record, fragment| {
             write_fragment(record, simulation, fragment)
         });
-        fill_records(mines, &simulation.mines, write_mine);
-        fill_records(pickups, &simulation.pickups, write_pickup);
+        fill_each(mines, &simulation.mines, write_mine);
+        fill_each(pickups, &simulation.pickups, write_pickup);
         self.elapsed = json::position(simulation.elapsed);
         write_match(&mut self.match_record, &simulation.match_state);
         write_map(&mut self.map, simulation);
@@ -1015,7 +991,7 @@ impl Scene {
     /// The scene as a baseline sends it: elapsed time, the match and the map, then each
     /// kind's record count and records (the id as a difference from the previous one's).
     pub fn write(&self, out: &mut Vec<u8>) {
-        put_signed(out, super::wire::units(self.elapsed, POSITION_SCALE));
+        put_signed(out, thousandths(self.elapsed));
         write_record(MATCH_FIELDS, &self.match_record, out);
         write_record(MAP_FIELDS, &self.map, out);
         for (kind, records) in self.entities.iter().enumerate() {
@@ -1068,9 +1044,6 @@ struct Fields<'a> {
     record: &'a WireRecord,
 }
 
-/// `number()`'s bound: any finite number within ±1e9.
-const NUMBER_BOUND: f64 = 1e9;
-
 impl<'a> Fields<'a> {
     fn new(table: &'static [Field], record: &'a WireRecord) -> Self {
         Self { table, record }
@@ -1078,6 +1051,11 @@ impl<'a> Fields<'a> {
 
     fn error<T>(&self, field: usize, message: &str) -> ReadResult<T> {
         Err(format!("{}: {message}", self.table[field].name))
+    }
+
+    /// `value`, or `message` for `field` when it is missing.
+    fn required<T>(&self, field: usize, value: Option<T>, message: &str) -> ReadResult<T> {
+        value.map_or_else(|| self.error(field, message), Ok)
     }
 
     fn number(&self, field: usize) -> Option<i64> {
@@ -1102,10 +1080,7 @@ impl<'a> Fields<'a> {
     }
 
     fn fixed(&self, field: usize) -> ReadResult<f64> {
-        match self.opt_fixed(field)? {
-            Some(value) => Ok(value),
-            None => self.error(field, "Invalid number"),
-        }
+        self.required(field, self.opt_fixed(field)?, "Invalid number")
     }
 
     /// A quaternion component, which must lie in [-1, 1].
@@ -1119,27 +1094,18 @@ impl<'a> Fields<'a> {
     }
 
     fn opt_count32(&self, field: usize) -> ReadResult<Option<u32>> {
-        match self.number(field) {
-            None => Ok(None),
-            Some(value) => match u32::try_from(value) {
-                Ok(value) => Ok(Some(value)),
-                Err(_) => self.error(field, "Invalid number"),
-            },
-        }
+        self.number(field)
+            .map(|value| self.required(field, u32::try_from(value).ok(), "Invalid number"))
+            .transpose()
     }
 
     fn count32(&self, field: usize) -> ReadResult<u32> {
-        match self.opt_count32(field)? {
-            Some(value) => Ok(value),
-            None => self.error(field, "Invalid number"),
-        }
+        self.required(field, self.opt_count32(field)?, "Invalid number")
     }
 
     fn count(&self, field: usize) -> ReadResult<f64> {
-        match self.number(field) {
-            Some(value) => Ok(value as f64),
-            None => self.error(field, "Invalid number"),
-        }
+        let value = self.number(field).map(|value| value as f64);
+        self.required(field, value, "Invalid number")
     }
 
     fn opt_flag(&self, field: usize) -> Option<bool> {
@@ -1147,27 +1113,20 @@ impl<'a> Fields<'a> {
     }
 
     fn flag(&self, field: usize) -> ReadResult<bool> {
-        match self.opt_flag(field) {
-            Some(value) => Ok(value),
-            None => self.error(field, "Invalid boolean"),
-        }
+        self.required(field, self.opt_flag(field), "Invalid boolean")
     }
 
     fn opt_choice<T: Copy>(&self, field: usize, table: &[(&str, T)]) -> ReadResult<Option<T>> {
-        match self.number(field) {
-            None => Ok(None),
-            Some(index) => match table.get(index as usize) {
-                Some((_, value)) => Ok(Some(*value)),
-                None => self.error(field, "Invalid choice"),
-            },
-        }
+        self.number(field)
+            .map(|index| {
+                let value = table.get(index as usize).map(|(_, value)| *value);
+                self.required(field, value, "Invalid choice")
+            })
+            .transpose()
     }
 
     fn choice<T: Copy>(&self, field: usize, table: &[(&str, T)]) -> ReadResult<T> {
-        match self.opt_choice(field, table)? {
-            Some(value) => Ok(value),
-            None => self.error(field, "Invalid choice"),
-        }
+        self.required(field, self.opt_choice(field, table)?, "Invalid choice")
     }
 
     /// `team`: 0 or 1.
@@ -1181,10 +1140,7 @@ impl<'a> Fields<'a> {
     }
 
     fn team(&self, field: usize) -> ReadResult<Team> {
-        match self.opt_team(field)? {
-            Some(team) => Ok(team),
-            None => self.error(field, "Invalid choice"),
-        }
+        self.required(field, self.opt_team(field)?, "Invalid choice")
     }
 
     /// Text of at most `max` UTF-16 units.
@@ -1217,10 +1173,7 @@ impl<'a> Fields<'a> {
     }
 
     fn point(&self, first: usize) -> ReadResult<Point3> {
-        match self.opt_point(first)? {
-            Some(point) => Ok(point),
-            None => self.error(first, "Expected object"),
-        }
+        self.required(first, self.opt_point(first)?, "Expected object")
     }
 
     /// `projectScene`'s rotation check: a near-zero quaternion is rejected, others
@@ -1249,7 +1202,12 @@ impl<'a> Fields<'a> {
 pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
     use tank::*;
     let fields = Fields::new(TANK_FIELDS, record);
-    let position = fields.tank_position()?;
+    // The tank table splits position across non-adjacent fields.
+    let position = Point3::new(
+        fields.fixed(POSITION_X)?,
+        fields.fixed(POSITION_Y)?,
+        fields.fixed(POSITION_Z)?,
+    );
     Ok(RenderTank {
         id: record.id,
         life: fields.count32(LIFE)?,
@@ -1294,17 +1252,6 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
         last_combat: fields.fixed(LAST_COMBAT)?,
         previous: Vec2::new(position.x, position.z),
     })
-}
-
-impl Fields<'_> {
-    /// The tank table splits position across non-adjacent fields.
-    fn tank_position(&self) -> ReadResult<Point3> {
-        Ok(Point3::new(
-            self.fixed(tank::POSITION_X)?,
-            self.fixed(tank::POSITION_Y)?,
-            self.fixed(tank::POSITION_Z)?,
-        ))
-    }
 }
 
 /// `coverReader`, projected: an indestructible cover's `null` hp is infinite.
@@ -1501,11 +1448,10 @@ pub fn read_event(record: &WireRecord) -> ReadResult<SimEvent> {
     })
 }
 
-/// One replicated entity: its wire record (for applying field changes) and the
-/// validated, projected value.
+/// One replicated entity: its wire record (for applying field changes, and holding its
+/// id) and the validated, projected value.
 #[derive(Clone, Debug)]
 pub struct Stored<T> {
-    pub id: u32,
     pub wire: WireRecord,
     pub value: T,
 }
@@ -1543,17 +1489,17 @@ impl<T> EntityStore<T> {
         self.index.contains_key(&id)
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &T> {
-        self.records.iter().map(|stored| &stored.value)
-    }
-
     /// The wire records in scene order.
     pub fn wires(&self) -> impl Iterator<Item = &WireRecord> {
         self.records.iter().map(|stored| &stored.wire)
     }
 
     fn push(&mut self, stored: Stored<T>) -> ReadResult<()> {
-        if self.index.insert(stored.id, self.records.len()).is_some() {
+        if self
+            .index
+            .insert(stored.wire.id, self.records.len())
+            .is_some()
+        {
             return Err("Duplicate entity id".into());
         }
         self.records.push(stored);
@@ -1562,10 +1508,10 @@ impl<T> EntityStore<T> {
 
     /// Replaces a record in place, or appends a new one.
     pub(crate) fn upsert(&mut self, stored: Stored<T>) {
-        match self.index.get(&stored.id) {
+        match self.index.get(&stored.wire.id) {
             Some(&index) => self.records[index] = stored,
             None => {
-                self.index.insert(stored.id, self.records.len());
+                self.index.insert(stored.wire.id, self.records.len());
                 self.records.push(stored);
             }
         }
@@ -1576,10 +1522,10 @@ impl<T> EntityStore<T> {
         if ids.is_empty() {
             return;
         }
-        self.records.retain(|stored| !ids.contains(&stored.id));
+        self.records.retain(|stored| !ids.contains(&stored.wire.id));
         self.index.clear();
         for (index, stored) in self.records.iter().enumerate() {
-            self.index.insert(stored.id, index);
+            self.index.insert(stored.wire.id, index);
         }
     }
 }
@@ -1606,11 +1552,7 @@ fn read_store<T>(
     let mut store = EntityStore::default();
     for wire in records {
         let value = read(&wire)?;
-        store.push(Stored {
-            id: wire.id,
-            wire,
-            value,
-        })?;
+        store.push(Stored { wire, value })?;
     }
     Ok(store)
 }

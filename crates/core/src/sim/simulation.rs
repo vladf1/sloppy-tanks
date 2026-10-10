@@ -398,9 +398,7 @@ impl Simulation {
 
     pub fn reset(&mut self, count: Option<usize>) {
         let count = count.unwrap_or(self.round_count);
-        self.world = PhysicsWorld::new();
-        self.world.gravity = vector(0.0, -GRAVITY, 0.0);
-        self.world.integration_parameters.dt = STEP as f32;
+        self.world = arena_world();
         self.contact_forces.clear();
         self.debris_contacts.clear();
         self.movable_covers.clear();
@@ -434,14 +432,6 @@ impl Simulation {
         );
         self.bot_names = shuffled_bot_names(round_seed as f64);
         self.current_map = selected_map(self.map_mode, self.custom_map);
-        let ground = self
-            .world
-            .insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
-        self.world.insert_collider(
-            ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
-                .collision_groups(interaction_groups(group::GROUND)),
-            Some(ground),
-        );
         for cover in (self.current_map.layout)() {
             self.add_cover(&cover);
         }
@@ -1199,6 +1189,21 @@ pub struct SnapshotCounts {
     pub mines: usize,
     pub fragments: usize,
     pub covers: usize,
+}
+
+/// A fresh physics world at the fixed step whose first body is the arena's ground slab,
+/// shared with client prediction so its world matches the server's.
+pub(crate) fn arena_world() -> PhysicsWorld {
+    let mut world = PhysicsWorld::new();
+    world.gravity = vector(0.0, -GRAVITY, 0.0);
+    world.integration_parameters.dt = STEP as f32;
+    let ground = world.insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
+    world.insert_collider(
+        ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
+            .collision_groups(interaction_groups(group::GROUND)),
+        Some(ground),
+    );
+    world
 }
 
 /// A cover's body and colliders as the simulation builds them, shared with client

@@ -58,10 +58,8 @@ use crate::events::{PendingEvent, drain_events};
 use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sloppy_core::net::client::{
-    ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
-};
-use sloppy_core::net::client_setup::{pending_join, pending_join_text};
+use sloppy_core::net::client::{ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat};
+use sloppy_core::net::client_setup::pending_join;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -194,10 +192,7 @@ impl NetGame {
     /// The choices Battle Setup stored for `room` before reloading into it, as `JoinChoice`
     /// JSON, or undefined when the saved text is missing, for another room, or invalid.
     pub fn pending_join(saved: Option<String>, room: &str) -> Option<String> {
-        let choice = pending_join(saved.as_deref(), room)?;
-        let text = pending_join_text(room, &choice).ok()?;
-        let value: Value = serde_json::from_str(&text).ok()?;
-        Some(value.get("choice")?.to_string())
+        pending_join(saved.as_deref(), room).map(|choice| choice.to_json())
     }
 
     // ---------------------------------------------------------- connection
@@ -212,27 +207,7 @@ impl NetGame {
 
     /// Socket and storage work for the page, as a JSON array (see the module docs).
     pub fn take_actions(&mut self) -> String {
-        let actions: Vec<Value> = self
-            .client
-            .take_actions()
-            .into_iter()
-            .map(|action| match action {
-                ClientAction::OpenSocket { socket, url } => {
-                    json!({ "type": "open", "socket": socket, "url": url })
-                }
-                ClientAction::Send { socket, text } => {
-                    json!({ "type": "send", "socket": socket, "text": text })
-                }
-                ClientAction::CloseSocket { socket } => {
-                    json!({ "type": "close", "socket": socket })
-                }
-                ClientAction::SaveSeat { token, room_epoch } => {
-                    json!({ "type": "saveSeat", "token": token, "roomEpoch": room_epoch })
-                }
-                ClientAction::ForgetSeat => json!({ "type": "forgetSeat" }),
-            })
-            .collect();
-        Value::Array(actions).to_string()
+        serde_json::to_string(&self.client.take_actions()).expect("client actions serialize")
     }
 
     /// UI notices as a JSON array (see the module docs). Arena preparation and baseline

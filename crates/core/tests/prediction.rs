@@ -174,7 +174,7 @@ struct Window {
 /// Replays `run` like a client: one predictor, restarted at every snapshot and driven
 /// `horizon` ticks ahead. Windows that cross a death or respawn are left out.
 fn client_replays(run: &[HostTick], horizon: usize) -> Vec<Window> {
-    let mut predictor = TankPredictor::new();
+    let mut predictor = TankPredictor::default();
     let mut windows = Vec::new();
     for start in (0..run.len() - horizon).step_by(SNAPSHOT_TICKS) {
         let (Some(scene), Some(hull)) = (&run[start].scene, &run[start].hull) else {

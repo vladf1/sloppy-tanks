@@ -314,10 +314,7 @@ pub(crate) fn fill_each<T: Default, S>(
     sources: &[S],
     mut update: impl FnMut(&mut T, &S),
 ) {
-    items.truncate(sources.len());
-    while items.len() < sources.len() {
-        items.push(T::default());
-    }
+    items.resize_with(sources.len(), T::default);
     for (item, source) in items.iter_mut().zip(sources) {
         update(item, source);
     }

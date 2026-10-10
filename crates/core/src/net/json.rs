@@ -3,7 +3,7 @@
 //! Messages keep the TypeScript key order and number spelling (`1`, not `1.0`), so
 //! existing clients and the traffic bots read the same bytes they did from the Node host.
 
-use crate::sim::math::js_round;
+use super::wire::units;
 
 /// Wire quantisation (`PRECISION` in `scene-codec.ts`): positions in millimetres, rotations
 /// and angles in ten-thousandths, timers and meters in hundredths.
@@ -16,9 +16,7 @@ pub const VALUE_SCALE: f64 = 100.0;
 /// # Panics
 /// On a non-finite value, like the TypeScript `wireNumber`: the simulation state is corrupt.
 pub fn wire_round(value: f64, scale: f64) -> f64 {
-    assert!(value.is_finite(), "Non-finite wire number");
-    let rounded = js_round(value * scale) / scale;
-    if rounded == 0.0 { 0.0 } else { rounded }
+    units(value, scale) as f64 / scale
 }
 
 pub fn position(value: f64) -> f64 {
@@ -40,67 +38,11 @@ pub fn write_number(out: &mut String, value: f64) {
     if !value.is_finite() {
         // JSON.stringify writes null for NaN and infinities.
         out.push_str("null");
-    } else if let Some(units) = wire_units(value) {
-        write_wire_units(out, units);
     } else if value == value.trunc() && value.abs() < 1e15 {
         let _ = write!(out, "{}", value as i64);
     } else {
         let _ = write!(out, "{value}");
     }
-}
-
-/// The finest wire quantisation: rotations' ten-thousandths.
-const WIRE_UNITS: f64 = ROTATION_SCALE;
-/// Below this many units a double is exact to far less than one unit, so the decimal
-/// of the units is the double's shortest spelling.
-const MAX_WIRE_UNITS: f64 = 1e15;
-
-/// `value` as whole ten-thousandths when it is exactly such a quotient, as every
-/// wire-rounded number is.
-fn wire_units(value: f64) -> Option<i64> {
-    let units = (value * WIRE_UNITS).round();
-    (units.abs() < MAX_WIRE_UNITS && units / WIRE_UNITS == value).then_some(units as i64)
-}
-
-/// Writes ten-thousandths as a decimal without trailing zeros, the spelling the
-/// general shortest-float formatter would choose, without its cost.
-fn write_wire_units(out: &mut String, units: i64) {
-    if units < 0 {
-        out.push('-');
-    }
-    let magnitude = units.unsigned_abs();
-    let scale = WIRE_UNITS as u64;
-    write_digits(out, magnitude / scale);
-    let mut fraction = magnitude % scale;
-    if fraction == 0 {
-        return;
-    }
-    out.push('.');
-    let mut place = scale / 10;
-    while fraction > 0 {
-        out.push(char::from(b'0' + (fraction / place) as u8));
-        fraction %= place;
-        place /= 10;
-    }
-}
-
-fn write_digits(out: &mut String, mut value: u64) {
-    let mut digits = [0u8; 20];
-    let mut start = digits.len();
-    loop {
-        start -= 1;
-        digits[start] = b'0' + (value % 10) as u8;
-        value /= 10;
-        if value == 0 {
-            break;
-        }
-    }
-    out.push_str(std::str::from_utf8(&digits[start..]).expect("ASCII digits"));
-}
-
-pub fn write_int(out: &mut String, value: u64) {
-    use std::fmt::Write;
-    let _ = write!(out, "{value}");
 }
 
 /// Appends a JSON string literal with `JSON.stringify` escaping.
@@ -154,7 +96,8 @@ impl<'a> ObjectWriter<'a> {
     }
 
     pub fn int(&mut self, key: &str, value: u64) -> &mut Self {
-        write_int(self.key(key), value);
+        use std::fmt::Write;
+        let _ = write!(self.key(key), "{value}");
         self
     }
 
@@ -168,13 +111,11 @@ impl<'a> ObjectWriter<'a> {
         self
     }
 
-    pub fn raw(&mut self, key: &str, json: &str) -> &mut Self {
-        self.key(key).push_str(json);
-        self
-    }
-
-    pub fn null(&mut self, key: &str) -> &mut Self {
-        self.key(key).push_str("null");
+    /// A nested object field, its fields written by `build`.
+    pub fn nested(&mut self, key: &str, build: impl FnOnce(&mut ObjectWriter<'_>)) -> &mut Self {
+        let mut writer = ObjectWriter::new(self.key(key));
+        build(&mut writer);
+        writer.finish();
         self
     }
 
@@ -210,43 +151,6 @@ mod tests {
         assert_eq!(print(0.0001), "0.0001");
         assert_eq!(print(1200.0), "1200");
         assert_eq!(print(f64::NAN), "null");
-    }
-
-    #[test]
-    fn wire_numbers_print_like_the_general_formatter() {
-        let general = |value: f64| {
-            if value == value.trunc() {
-                format!("{}", value as i64)
-            } else {
-                format!("{value}")
-            }
-        };
-        let check = |value: f64| {
-            let mut out = String::new();
-            write_number(&mut out, value);
-            assert_eq!(out, general(value), "{value:e}");
-        };
-        for units in -200_000..=200_000 {
-            check(units as f64 / 10_000.0);
-        }
-        let mut random = crate::sim::math::Random::new(7.0);
-        for _ in 0..200_000 {
-            let magnitude = 10f64.powf(random.next() * 12.0 - 4.0);
-            let raw = (random.next() - 0.5) * magnitude;
-            for scale in [POSITION_SCALE, ROTATION_SCALE, VALUE_SCALE] {
-                check(wire_round(raw, scale));
-            }
-            check(raw);
-        }
-        for value in [
-            0.1 + 0.2,
-            1e-7,
-            123_456_789.123_45,
-            99_999_999_999.999_9,
-            -0.0,
-        ] {
-            check(value);
-        }
     }
 
     #[test]

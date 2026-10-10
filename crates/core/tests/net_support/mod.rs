@@ -49,7 +49,7 @@ pub fn test_host(room_epoch: &str, seed: u32, content_version: Option<&str>) -> 
             token += 1;
             format!("credential-{token:020}")
         }),
-        seed: Some(seed),
+        seed,
         content_version: content_version.map(str::to_string),
     })
 }

@@ -43,6 +43,15 @@ impl Point3 {
             z: self.z,
         }
     }
+
+    /// Component-wise interpolation toward `other`.
+    pub fn lerp(self, other: Point3, t: f64) -> Point3 {
+        Point3::new(
+            self.x + (other.x - self.x) * t,
+            self.y + (other.y - self.y) * t,
+            self.z + (other.z - self.z) * t,
+        )
+    }
 }
 
 impl From<Point3> for Vec2 {

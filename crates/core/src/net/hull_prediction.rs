@@ -69,9 +69,7 @@ impl CorrectionStats {
         self.total += size;
         self.largest = self.largest.max(size);
         self.recent.push_back(size);
-        if self.recent.len() > CORRECTION_SAMPLES {
-            self.recent.pop_front();
-        }
+        self.recent.retain_back(CORRECTION_SAMPLES);
     }
 
     /// The 95th percentile of recent corrections, metres.
@@ -130,14 +128,6 @@ pub struct HullPrediction {
     correction: Vec2,
     heading_correction: f64,
     pub stats: CorrectionStats,
-}
-
-fn lerp(a: Point3, b: Point3, t: f64) -> Point3 {
-    Point3::new(
-        a.x + (b.x - a.x) * t,
-        a.y + (b.y - a.y) * t,
-        a.z + (b.z - a.z) * t,
-    )
 }
 
 impl HullPrediction {
@@ -200,9 +190,7 @@ impl HullPrediction {
         if requested.is_some() {
             self.run_sent = true;
         }
-        if self.sent.len() > MAX_UNACKED_SENDS {
-            self.sent.pop_front();
-        }
+        self.sent.retain_back(MAX_UNACKED_SENDS);
     }
 
     /// One snapshot: learn from its acknowledgement, then restart from the host's hull and
@@ -216,11 +204,9 @@ impl HullPrediction {
         let newest_input = self.inputs.back().map_or(Vec2::ZERO, |(_, input)| *input);
         while self
             .inputs
-            .front()
-            .is_some_and(|(tick, _)| *tick <= hull.tick)
-        {
-            self.inputs.pop_front();
-        }
+            .pop_front_if(|(tick, _)| *tick <= hull.tick)
+            .is_some()
+        {}
         let continuing = self.life == Some(hull.life) && self.current.is_some();
         // The recorded inputs must cover every tick from the host's to the predicted one;
         // otherwise (first hull, respawn, a client behind the host) restart from the host's
@@ -264,9 +250,6 @@ impl HullPrediction {
             previous = current;
             current = self.predictor.pose();
         }
-        if self.inputs.is_empty() {
-            previous = current;
-        }
         self.previous = previous;
         self.current = current;
         self.life = Some(hull.life);
@@ -295,11 +278,7 @@ impl HullPrediction {
             return;
         }
         self.acked = ack.input_seq;
-        while let Some(&sent) = self.sent.front() {
-            if sent.seq > ack.input_seq {
-                break;
-            }
-            self.sent.pop_front();
+        while let Some(sent) = self.sent.pop_front_if(|sent| sent.seq <= ack.input_seq) {
             if sent.seq != ack.input_seq {
                 continue;
             }
@@ -311,9 +290,7 @@ impl HullPrediction {
             }
             self.arrivals
                 .push_back(ack.arrival_tick as f64 - sent.sent_ms / SIMULATION_STEP_MS);
-            if self.arrivals.len() > MAX_ARRIVAL_SAMPLES {
-                self.arrivals.pop_front();
-            }
+            self.arrivals.retain_back(MAX_ARRIVAL_SAMPLES);
             let mut sorted: Vec<f64> = self.arrivals.iter().copied().collect();
             sorted.sort_by(f64::total_cmp);
             let late = sorted[((sorted.len() - 1) as f64 * ARRIVAL_PERCENTILE).round() as usize];
@@ -321,13 +298,12 @@ impl HullPrediction {
         }
     }
 
-    /// Advances the prediction to `now_ms`, driving each new tick with `input`. Returns
-    /// whether the hull is predicted.
-    pub fn advance(&mut self, now_ms: f64, input: Vec2) -> bool {
+    /// Advances the prediction to `now_ms`, driving each new tick with `input`.
+    pub fn advance(&mut self, now_ms: f64, input: Vec2) {
         let dt_ms = self.last_ms.map_or(0.0, |last| (now_ms - last).max(0.0));
         self.last_ms = Some(now_ms);
         let Some(mut offset) = self.offset else {
-            return false;
+            return;
         };
         // Follow the target at a bounded rate; a large error restarts the clock.
         let error = self.target_offset - offset;
@@ -343,7 +319,7 @@ impl HullPrediction {
         self.correction.z *= decay;
         self.heading_correction *= decay;
         if !self.active() {
-            return false;
+            return;
         }
         self.stats.seconds += dt_ms / 1000.0;
         let present = now_ms / SIMULATION_STEP_MS + offset;
@@ -375,14 +351,11 @@ impl HullPrediction {
             };
             self.predictor.step(drive.x, drive.z);
             self.inputs.push_back((self.tick, drive));
-            if self.inputs.len() > MAX_PENDING_TICKS {
-                self.inputs.pop_front();
-            }
+            self.inputs.retain_back(MAX_PENDING_TICKS);
             self.previous = self.current;
             self.current = self.predictor.pose();
             steps += 1;
         }
-        true
     }
 
     /// The hull to draw at `now_ms`: between the last two predicted ticks, with what is
@@ -393,7 +366,7 @@ impl HullPrediction {
         let alpha = self.present(now_ms).map_or(1.0, |present| {
             (present - (self.tick as f64 - 1.0)).clamp(0.0, 1.0)
         });
-        let mut position = lerp(previous.position, current.position, alpha);
+        let mut position = previous.position.lerp(current.position, alpha);
         position.x += self.correction.x;
         position.z += self.correction.z;
         let heading = previous.heading
@@ -402,7 +375,7 @@ impl HullPrediction {
         Some(DrawnHull {
             life,
             position,
-            velocity: lerp(previous.velocity, current.velocity, alpha),
+            velocity: previous.velocity.lerp(current.velocity, alpha),
             heading,
         })
     }

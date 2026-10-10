@@ -248,7 +248,7 @@ fn run(label: &str, room: &str, map: &str, seed: u32, seconds: u64, output: &Pat
             token += 1;
             format!("credential-{token:020}")
         }),
-        seed: Some(seed),
+        seed,
         content_version: None,
     });
     let verify = std::env::var_os("SLOPPY_VERIFY").is_some();

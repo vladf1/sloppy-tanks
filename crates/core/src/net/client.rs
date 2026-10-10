@@ -43,7 +43,7 @@
 //!    page visibility to [`set_hidden`](NetworkClient::set_hidden), `pagehide` to
 //!    [`stop`](NetworkClient::stop).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::hull_prediction::{HostUpdate, HullPrediction};
@@ -57,10 +57,10 @@ use super::protocol::{
     client_message,
 };
 use super::replication::{BinaryMessage, StateMirror, read_binary_message};
-use super::schema::{ReadResult, Record, id, parse_record, string, text_length};
+use super::schema::{ReadResult, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
-use crate::sim::ammunition::{AMMO_ORDER, has_ammo_for};
-use crate::sim::math::{Random, Vec2};
+use crate::sim::ammunition::step_ammo;
+use crate::sim::math::Vec2;
 use crate::sim::render_state::RenderState;
 use crate::sim::types::{
     AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, Weapon,
@@ -133,10 +133,17 @@ fn fatal_cause(code: Option<&str>) -> EndCause {
     }
 }
 
-/// What the page must do with sockets and storage, in order.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What the page must do with sockets and storage, in order. Serializes as the page reads
+/// it: `{"type": "open", "socket", "url"}`, `send`, `close`, `saveSeat`, `forgetSeat`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ClientAction {
     /// Open a WebSocket to `url` and report its events with this `socket` id.
+    #[serde(rename = "open")]
     OpenSocket {
         socket: u32,
         url: String,
@@ -145,6 +152,7 @@ pub enum ClientAction {
         socket: u32,
         text: String,
     },
+    #[serde(rename = "close")]
     CloseSocket {
         socket: u32,
     },
@@ -515,11 +523,9 @@ impl NetworkClient {
     }
 
     fn is_current(&self, socket: u32) -> bool {
-        !self.stopped
-            && self
-                .socket
-                .as_ref()
-                .is_some_and(|current| current.id == socket)
+        self.socket
+            .as_ref()
+            .is_some_and(|current| current.id == socket)
     }
 
     /// Joins (or rejoins) the room with `choice`, replacing any current socket.
@@ -533,11 +539,7 @@ impl NetworkClient {
         self.retry_started = None;
         self.attempt = 0;
         if let Some(settings) = self.config.delay {
-            let mut random = Random::new(f64::from(self.config.seed));
-            self.delay = Some(TransportDelay::new(
-                settings,
-                Box::new(move || random.next()),
-            ));
+            self.delay = Some(TransportDelay::new(settings, self.config.seed));
         }
         self.open(now_ms);
     }
@@ -549,13 +551,7 @@ impl NetworkClient {
         self.config.delay = Some(settings);
         match self.delay.as_mut() {
             Some(delay) => delay.settings = settings,
-            None => {
-                let mut random = Random::new(f64::from(self.config.seed));
-                self.delay = Some(TransportDelay::new(
-                    settings,
-                    Box::new(move || random.next()),
-                ));
-            }
+            None => self.delay = Some(TransportDelay::new(settings, self.config.seed)),
         }
     }
 
@@ -589,7 +585,7 @@ impl NetworkClient {
             current.open = true;
         }
         let choice = self.choice.as_ref().expect("an open socket has a choice");
-        let text = choice.join_message(self.token.as_deref(), Some(&self.room_epoch));
+        let text = choice.join_message(self.token.as_deref(), &self.room_epoch);
         self.raw(text, _now_ms);
     }
 
@@ -638,7 +634,6 @@ impl NetworkClient {
         if let Some(delay) = self.delay.as_mut() {
             delay.clear();
         }
-        self.clear_input();
         self.heartbeat_at = None;
         if code == 4001 {
             self.fail(
@@ -674,7 +669,6 @@ impl NetworkClient {
         }
         if let (Some(at), Some(socket)) = (self.heartbeat_at, self.socket.as_ref())
             && at <= now_ms
-            && !self.stopped
         {
             let socket = socket.id;
             let next = at + HEARTBEAT_MS;
@@ -699,9 +693,7 @@ impl NetworkClient {
             let outbound = delay.outbound.receive(now_ms);
             let inbound = delay.inbound.receive(now_ms);
             for text in outbound {
-                if let Some(socket) = self.socket.as_ref().filter(|socket| socket.open)
-                    && !self.stopped
-                {
+                if let Some(socket) = self.socket.as_ref().filter(|socket| socket.open) {
                     self.actions.push(ClientAction::Send {
                         socket: socket.id,
                         text,
@@ -709,7 +701,7 @@ impl NetworkClient {
                 }
             }
             for message in inbound {
-                if self.socket.is_some() && !self.stopped {
+                if self.socket.is_some() {
                     self.receive(&message, now_ms);
                 }
             }
@@ -721,25 +713,16 @@ impl NetworkClient {
             Message::Text(text) => self.handle(text, now_ms),
             Message::Binary(bytes) => self.handle_binary(bytes, now_ms),
         };
-        if let Err(error) = handled {
+        if handled.is_err() {
             // Anything the page cannot read means the page and server disagree.
-            let _ = error;
-            self.fail(
-                EndCause::Outdated,
-                "This page couldn't read the game state. Reload to get the latest version.",
-            );
+            self.receive_failure();
         }
     }
 
     fn handle(&mut self, text: &str, now_ms: f64) -> ReadResult<()> {
         let message = parse_record(text)?;
         self.last_message_at = now_ms;
-        let kind = message
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        match kind.as_str() {
+        match message.get("type").and_then(Value::as_str).unwrap_or("") {
             "welcome" => {
                 if message.get("version").and_then(Value::as_f64)
                     != Some(f64::from(PROTOCOL_VERSION))
@@ -771,6 +754,15 @@ impl NetworkClient {
                         "The server restarted the room. This is a fresh lobby.".into(),
                     ));
                 }
+                if self.mirror.room_epoch != self.room_epoch {
+                    self.ready_round = 0;
+                    self.notices.push(ClientNotice::ResetFeedback);
+                }
+                self.prediction.reset();
+                self.mirror.needs_full = true;
+                self.active = false;
+                self.control = None;
+                self.requested_full = false;
             }
             "pong" => {
                 let sent = message
@@ -783,7 +775,7 @@ impl NetworkClient {
             }
             "error" => {
                 let text = string(message.get("message"), 200, 0)?;
-                if message.get("fatal").is_some_and(truthy) {
+                if message.get("fatal").and_then(Value::as_bool) == Some(true) {
                     let cause = fatal_cause(message.get("code").and_then(Value::as_str));
                     if cause == EndCause::SeatExpired {
                         self.forget_seat();
@@ -797,25 +789,6 @@ impl NetworkClient {
                 self.forget_seat();
                 let reason = string(message.get("reason"), 80, 0)?;
                 self.fail(EndCause::RoomEnded, &room_end_text(&reason));
-                return Ok(());
-            }
-            _ => {}
-        }
-        self.on_message(&kind, message, now_ms)
-    }
-
-    fn on_message(&mut self, kind: &str, message: Record, now_ms: f64) -> ReadResult<()> {
-        match kind {
-            "welcome" => {
-                if self.mirror.room_epoch != self.room_epoch {
-                    self.ready_round = 0;
-                    self.notices.push(ClientNotice::ResetFeedback);
-                }
-                self.prediction.reset();
-                self.mirror.needs_full = true;
-                self.active = false;
-                self.control = None;
-                self.requested_full = false;
             }
             "lobby" => {
                 let lobby = Lobby::read(&message)?;
@@ -906,7 +879,7 @@ impl NetworkClient {
                 self.last_batch_ms = Some(now_ms);
                 self.applied_input = 0;
                 self.mirror
-                    .apply_full(&baseline, &self.room_epoch.clone(), self.round_id)?;
+                    .apply_full(&baseline, &self.room_epoch, self.round_id)?;
                 self.received_updates += 1;
                 self.observed_tick = self.mirror.tick;
                 self.requested_full = false;
@@ -997,18 +970,15 @@ impl NetworkClient {
         kind: &str,
         now_ms: f64,
         fields: impl FnOnce(&mut super::json::ObjectWriter<'_>),
-    ) -> bool {
+    ) {
         let text = client_message(kind, self.round_id, fields);
-        self.raw(text, now_ms)
+        self.raw(text, now_ms);
     }
 
     fn raw(&mut self, text: String, now_ms: f64) -> bool {
         let Some(socket) = self.socket.as_ref().filter(|socket| socket.open) else {
             return false;
         };
-        if self.stopped {
-            return false;
-        }
         let socket = socket.id;
         match self.delay.as_mut() {
             Some(delay) => delay.send(text, now_ms).is_ok(),
@@ -1028,7 +998,6 @@ impl NetworkClient {
     fn fail(&mut self, cause: EndCause, text: &str) {
         self.stop();
         self.active = false;
-        self.clear_input();
         self.notices.push(ClientNotice::Ended {
             cause,
             text: text.to_string(),
@@ -1135,7 +1104,7 @@ impl NetworkClient {
             self.send("resume", now_ms, |_| {});
         }
         // The host may start a new round while GPU compilation for the old one is pending.
-        if !current && self.mirror.state.is_some() && self.control.is_some() && self.connected {
+        if !current && self.connected {
             self.prepare(now_ms);
         }
     }
@@ -1308,10 +1277,7 @@ impl NetworkClient {
         // This frame's input drives the predicted hull before it is drawn, rounded as the
         // host will read it.
         let drive = if self.active_input() {
-            Vec2::new(
-                json::wire_round(input.move_x, json::VALUE_SCALE),
-                json::wire_round(input.move_z, json::VALUE_SCALE),
-            )
+            Vec2::new(json::value(input.move_x), json::value(input.move_z))
         } else {
             Vec2::ZERO
         };
@@ -1382,27 +1348,14 @@ impl NetworkClient {
                 AmmoSelection::Weapon(weapon) => weapon,
                 AmmoSelection::Step(step) => {
                     let current = self.pending_weapon.unwrap_or(viewer.selected_ammo);
-                    let count = AMMO_ORDER.len() as i64;
-                    let index = AMMO_ORDER
-                        .iter()
-                        .position(|weapon| *weapon == current)
-                        .map_or(-1, |index| index as i64);
-                    (1..=count)
-                        .map(|offset| {
-                            AMMO_ORDER[(index + i64::from(step) * offset + count).rem_euclid(count)
-                                as usize]
-                        })
-                        .find(|candidate| has_ammo_for(viewer.kind, &viewer.ammo, *candidate))
-                        .unwrap_or(current)
+                    step_ammo(viewer.kind, &viewer.ammo, current, step).unwrap_or(current)
                 }
             };
             self.pending_weapon = Some(weapon);
             self.pending.push(Action::Ammo(weapon));
         }
-        if self.pending.len() > MAX_QUEUED_ACTIONS {
-            let excess = self.pending.len() - MAX_QUEUED_ACTIONS;
-            self.pending.drain(..excess);
-        }
+        self.pending
+            .drain(..self.pending.len().saturating_sub(MAX_QUEUED_ACTIONS));
         let message = ControlInput {
             control_epoch,
             seq: self.seq + 1,
@@ -1427,16 +1380,5 @@ impl NetworkClient {
             self.pending.clear();
             self.pending_weapon = None;
         }
-    }
-}
-
-/// JavaScript truthiness for a JSON value.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
     }
 }

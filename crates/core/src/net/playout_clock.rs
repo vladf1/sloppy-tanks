@@ -95,13 +95,12 @@ impl PlayoutClock {
             at_ms: now_ms,
             path_ms: sample,
         });
+        let window_start = now_ms - LATENESS_WINDOW_MS;
         while self
             .arrivals
-            .front()
-            .is_some_and(|arrival| arrival.at_ms < now_ms - LATENESS_WINDOW_MS)
-        {
-            self.arrivals.pop_front();
-        }
+            .pop_front_if(|arrival| arrival.at_ms < window_start)
+            .is_some()
+        {}
         self.lateness.clear();
         self.lateness.extend(
             self.arrivals

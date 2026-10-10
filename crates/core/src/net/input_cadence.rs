@@ -4,6 +4,7 @@
 //! next 20 Hz slot, since that wait adds directly to how late the tank responds.
 
 use super::player_controls::{Aim, ControlInput};
+use crate::sim::math::angle_delta;
 
 const ACTIVE_INTERVAL_MS: f64 = 50.0;
 /// The shortest gap before a control change goes out. It bounds the send rate at 40 a
@@ -48,18 +49,15 @@ impl InputCadence {
             || input.move_x != 0.0
             || input.move_z != 0.0
             || input.fire
-            || !input.actions.is_empty()
             || input.move_x != previous.move_x
             || input.move_z != previous.move_z
-            || input.fire != previous.fire
             || elapsed >= IDLE_INTERVAL_MS
         {
             return true;
         }
         match (input.aim, previous.aim) {
             (Aim::Angle(angle), Aim::Angle(old)) => {
-                let difference = angle - old;
-                difference.sin().atan2(difference.cos()).abs() >= AIM_ANGLE_EPSILON
+                angle_delta(old, angle).abs() >= AIM_ANGLE_EPSILON
             }
             (Aim::Point { x, z }, Aim::Point { x: old_x, z: old_z }) => {
                 (x - old_x).hypot(z - old_z) >= AIM_POSITION_EPSILON

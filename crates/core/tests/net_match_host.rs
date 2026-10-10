@@ -18,8 +18,9 @@ use sloppy_core::net::protocol::{
 };
 use sloppy_core::net::replication::{StateMirror, StateStream, TimedEvent};
 use sloppy_core::net::scene_codec::Scene;
-use sloppy_core::net::shot_paths::{MAX_LIVE_PATHS, PATH_TOLERANCE, ShotPath};
+use sloppy_core::net::shot_paths::{MAX_LIVE_PATHS, PATH_TOLERANCE, ShotLaunch, ShotPath};
 use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::projectiles::RocketThrust;
 use sloppy_core::sim::types::{CoverKind, Driver, Shot, SimEvent, SimEventType, Team};
 use support::{clear_arena, tank_index};
 
@@ -229,6 +230,26 @@ fn path_entries(h: &Harness, name: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The path a launch entry of the JSON view starts; drawing it needs its motion and thrust.
+fn launch_path(entry: &Value) -> ShotPath {
+    let number = |key: &str| entry[key].as_f64().expect("path numbers");
+    ShotPath {
+        id: entry["id"].as_u64().expect("a shell id") as u32,
+        tick: number("tick"),
+        x: number("x"),
+        z: number("z"),
+        vx: number("vx"),
+        vz: number("vz"),
+        launch: ShotLaunch {
+            thrust: entry.get("thrust").map(|_| RocketThrust {
+                acceleration: number("thrust"),
+                top_speed: number("topSpeed"),
+            }),
+            ..ShotLaunch::default()
+        },
+    }
+}
+
 /// Alice alone at the origin of a cleared arena, having sent one input that fires.
 fn alice_fires_alone() -> (Harness, usize) {
     let mut h = harness();
@@ -270,8 +291,7 @@ fn a_shell_in_straight_flight_is_sent_once_and_its_path_finds_it_frames_later() 
             .collect();
         assert_eq!(sent.len(), 1, "one launch, nothing per frame");
         assert!(sent[0]["weapon"].is_string(), "the launch names its shell");
-        let path = ShotPath::read(sent[0].as_object().unwrap(), None).unwrap();
-        let drawn = path.at(tick);
+        let drawn = launch_path(sent[0]).at(tick);
         assert!((drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01);
     }
 }
@@ -294,8 +314,7 @@ fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
             .iter()
             .find(|entry| entry["id"] == shot.id && entry["end"].is_number())
             .expect("the frozen round ends the shell's path");
-        let path = ShotPath::read(launch.as_object().unwrap(), None).unwrap();
-        let drawn = path.at(end["end"].as_f64().unwrap());
+        let drawn = launch_path(launch).at(end["end"].as_f64().unwrap());
         assert!(
             (drawn.x - shot.x).hypot(drawn.z - shot.z) < 0.01,
             "and it ends where the shell stopped"

@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use super::prediction::HullState;
 use super::replication::{
-    BinaryMessage, DecodedFrame, FrameExtras, StateMirror, TimedEvent, read_binary_message,
+    BinaryMessage, DecodedFrame, StateMirror, TimedEvent, read_binary_message,
 };
 use super::scene_codec::{
     ENTITY_FIELDS, ENTITY_TYPES, EVENT_FIELDS, MATCH_FIELDS, json_number, write_event,
@@ -112,11 +112,41 @@ pub fn event_json(event: &TimedEvent) -> ReadResult<Value> {
     }))
 }
 
-/// A projectile path entry as the JSON protocol wrote it.
+/// A projectile path entry as the JSON protocol wrote it: a launch with the shell's
+/// constant fields, a change with its new motion, an end with its tick.
 pub fn path_json(entry: &PathEntry) -> Value {
-    let mut text = String::new();
-    entry.write(&mut text);
-    serde_json::from_str(&text).expect("path entries write JSON")
+    let (path, launch) = match entry {
+        PathEntry::Launch(path) => (path, true),
+        PathEntry::Change(path) => (path, false),
+        PathEntry::End { id, tick } => return json!({ "id": id, "end": json_number(*tick) }),
+    };
+    let mut object = Map::new();
+    object.insert("id".into(), Value::from(path.id));
+    for (key, value) in [
+        ("tick", path.tick),
+        ("x", path.x),
+        ("z", path.z),
+        ("vx", path.vx),
+        ("vz", path.vz),
+    ] {
+        object.insert(key.into(), json_number(value));
+    }
+    if launch {
+        let launch = &path.launch;
+        object.insert("team".into(), Value::from(launch.team.index()));
+        object.insert("weapon".into(), Value::from(launch.weapon.as_str()));
+        for (key, value) in [
+            ("y", launch.y),
+            ("visualY", launch.visual_y),
+            ("thrust", launch.thrust.map(|thrust| thrust.acceleration)),
+            ("topSpeed", launch.thrust.map(|thrust| thrust.top_speed)),
+        ] {
+            if let Some(value) = value {
+                object.insert(key.into(), json_number(value));
+            }
+        }
+    }
+    Value::Object(object)
 }
 
 /// A decoded frame in the JSON protocol's shape: `seq`, `tick`, `elapsed`, and `match`,
@@ -179,63 +209,50 @@ pub struct WireView {
 }
 
 impl WireView {
-    /// A binary message as JSON; frames advance this view's mirror. Text messages are
-    /// parsed as they are.
+    /// A binary message as JSON; frames advance this view's mirror.
     pub fn binary(&mut self, bytes: &[u8]) -> ReadResult<Value> {
-        self.binary_with_extras(bytes).map(|(value, _)| value)
-    }
-
-    /// Like [`binary`](Self::binary), also returning each frame's events and path entries.
-    pub fn binary_with_extras(&mut self, bytes: &[u8]) -> ReadResult<(Value, Vec<FrameExtras>)> {
         match read_binary_message(bytes)? {
             BinaryMessage::Full(baseline) => {
                 self.mirror
                     .apply_full(&baseline, baseline.room_epoch, baseline.round_id)?;
                 let state = self.mirror.state.as_ref().expect("just applied");
-                Ok((
-                    json!({
-                        "roomEpoch": baseline.room_epoch,
-                        "roundId": baseline.round_id,
-                        "type": "full",
-                        "seq": baseline.seq,
-                        "tick": baseline.tick,
-                        "eventCursor": baseline.event_cursor,
-                        "state": state.to_value(),
-                        "paths": self
-                            .mirror
-                            .shots
-                            .paths
-                            .iter()
-                            .map(|path| path_json(&PathEntry::Launch(*path)))
-                            .collect::<Vec<_>>(),
-                    }),
-                    Vec::new(),
-                ))
+                Ok(json!({
+                    "roomEpoch": baseline.room_epoch,
+                    "roundId": baseline.round_id,
+                    "type": "full",
+                    "seq": baseline.seq,
+                    "tick": baseline.tick,
+                    "eventCursor": baseline.event_cursor,
+                    "state": state.to_value(),
+                    "paths": self
+                        .mirror
+                        .shots
+                        .paths
+                        .iter()
+                        .map(|path| path_json(&PathEntry::Launch(*path)))
+                        .collect::<Vec<_>>(),
+                }))
             }
             BinaryMessage::Snapshot(mut batch) => {
                 let mut frames = Vec::new();
-                let mut extras = Vec::new();
                 // A batch for another round, or before any baseline, is skipped like the
                 // client skips it.
                 if batch.round_id == self.mirror.round_id && self.mirror.state.is_some() {
                     for _ in 0..batch.count {
                         let frame = self.mirror.decode(&mut batch, true)?;
                         frames.push(frame_json(&frame)?);
-                        extras.push(self.mirror.commit(frame));
+                        self.mirror.commit(frame);
                     }
                 }
-                Ok((
-                    json!({
-                        "type": "snapshot",
-                        "roundId": batch.round_id,
-                        "ack": batch.ack,
-                        "ackTick": batch.ack_tick,
-                        "ackArrival": batch.ack_arrival,
-                        "hull": batch.hull.as_ref().map(HullState::to_json),
-                        "snapshots": frames,
-                    }),
-                    extras,
-                ))
+                Ok(json!({
+                    "type": "snapshot",
+                    "roundId": batch.round_id,
+                    "ack": batch.ack,
+                    "ackTick": batch.ack_tick,
+                    "ackArrival": batch.ack_arrival,
+                    "hull": batch.hull.as_ref().map(HullState::to_json),
+                    "snapshots": frames,
+                }))
             }
         }
     }

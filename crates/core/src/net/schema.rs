@@ -8,13 +8,12 @@
 
 use serde_json::{Map, Value};
 
-pub type Invalid = String;
-pub type ReadResult<T> = Result<T, Invalid>;
+pub type ReadResult<T> = Result<T, String>;
 pub type Record = Map<String, Value>;
 
 /// `Number.MAX_SAFE_INTEGER`.
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-/// The default bound of `number()`.
+/// Largest magnitude of a replicated number (the TypeScript schema's `number()`).
 pub const NUMBER_BOUND: f64 = 1e9;
 
 pub fn record(value: &Value) -> ReadResult<&Record> {
@@ -44,11 +43,6 @@ pub fn number_in(value: Option<&Value>, min: f64, max: f64, integer: bool) -> Re
         }
         _ => Err("Invalid number".into()),
     }
-}
-
-/// `number()`: any finite number within ±1e9.
-pub fn number(value: Option<&Value>) -> ReadResult<f64> {
-    number_in(value, -NUMBER_BOUND, NUMBER_BOUND, false)
 }
 
 /// `id`: a safe non-negative integer.
@@ -100,17 +94,6 @@ pub fn optional<T>(
     }
 }
 
-/// `nullable(reader)`: `None` for `null`.
-pub fn nullable<T>(
-    value: Option<&Value>,
-    read: impl FnOnce(Option<&Value>) -> ReadResult<T>,
-) -> ReadResult<Option<T>> {
-    match value {
-        Some(Value::Null) => Ok(None),
-        other => read(other).map(Some),
-    }
-}
-
 /// `array(reader, max)`.
 pub fn array<T>(
     value: Option<&Value>,
@@ -150,6 +133,7 @@ mod tests {
 
     #[test]
     fn readers_keep_the_typescript_limits_and_messages() {
+        let number = |value: Option<&Value>| number_in(value, -NUMBER_BOUND, NUMBER_BOUND, false);
         let message = json!({ "a": 1.5, "b": "héllo", "c": null, "d": [1, 2, 3] });
         let map = record(&message).unwrap();
         assert_eq!(field(map, "a", number), Ok(1.5));
@@ -164,7 +148,6 @@ mod tests {
             Err("c: Invalid number".into())
         );
         assert_eq!(field(map, "missing", |v| optional(v, number)), Ok(None));
-        assert_eq!(field(map, "c", |v| nullable(v, number)), Ok(None));
         assert_eq!(
             field(map, "d", |v| array(v, 2, |item| id(Some(item)))),
             Err("d: Invalid list".into())

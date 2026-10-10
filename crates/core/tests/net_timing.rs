@@ -21,7 +21,7 @@ use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::{
     LivePaths, PATH_TOLERANCE, PathEntry, ShotLaunch, ShotPath, ShotPathRecorder,
 };
-use sloppy_core::net::transport_delay::DelayedChannel;
+use sloppy_core::net::transport_delay::{CHANNEL_CAPACITY, DelayedChannel};
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, weapon};
@@ -43,7 +43,7 @@ fn fifty_ms_host_batches_preserve_exactly_sixty_simulation_ticks_per_second() {
     let mut ticks = Vec::new();
     let mut now = 50.0;
     while now <= 10000.0 {
-        assert_eq!(clock.advance(now, |tick| ticks.push(tick)), Ok(true));
+        assert!(clock.advance(now, |tick| ticks.push(tick)));
         now += 50.0;
     }
     assert_eq!(ticks.len(), 600);
@@ -54,13 +54,13 @@ fn fifty_ms_host_batches_preserve_exactly_sixty_simulation_ticks_per_second() {
 #[test]
 fn catch_up_is_bounded_and_retains_debt_instead_of_skipping_physics() {
     let mut clock = FixedStepClock::new(1000.0);
-    assert_eq!(clock.advance(1200.0, |_| {}), Ok(true));
+    assert!(clock.advance(1200.0, |_| {}));
     assert_eq!(clock.tick, 6);
     assert!((clock.debt_ms - 100.0).abs() < 1e-6);
-    clock.advance(1250.0, |_| {}).unwrap();
+    assert!(clock.advance(1250.0, |_| {}));
     assert_eq!(clock.tick, 12);
     assert!((clock.debt_ms - 50.0).abs() < 1e-6);
-    clock.advance(1300.0, |_| {}).unwrap();
+    assert!(clock.advance(1300.0, |_| {}));
     assert_eq!(clock.tick, 18);
     assert!(clock.debt_ms < 1e-6);
 }
@@ -68,18 +68,11 @@ fn catch_up_is_bounded_and_retains_debt_instead_of_skipping_physics() {
 #[test]
 fn overload_fails_before_executing_an_unbounded_batch_and_backwards_clocks_add_no_time() {
     let mut clock = FixedStepClock::new(100.0);
-    clock.advance(90.0, |_| panic!("No tick is due")).unwrap();
-    clock.advance(150.0, |_| {}).unwrap();
+    assert!(clock.advance(90.0, |_| panic!("No tick is due")));
+    assert!(clock.advance(150.0, |_| {}));
     assert_eq!(clock.tick, 3);
-    assert_eq!(
-        clock.advance(500.0, |_| panic!("Overload must terminate")),
-        Ok(false)
-    );
+    assert!(!clock.advance(500.0, |_| panic!("Overload must terminate")));
     assert_eq!(clock.tick, 3);
-    assert_eq!(
-        clock.advance(f64::NAN, |_| {}),
-        Err("Invalid host clock".into())
-    );
 }
 
 #[test]
@@ -90,14 +83,15 @@ fn transport_jitter_preserves_reliable_message_order_and_due_time() {
     assert!(channel.receive(30.0).is_empty());
     assert!(channel.receive(99.0).is_empty());
     assert_eq!(channel.receive(100.0), vec!["old", "new"]);
-    assert_eq!(channel.len(), 0);
+    assert!(channel.receive(f64::INFINITY).is_empty());
 }
 
 #[test]
 fn delay_buffers_are_bounded_and_reset_discards_old_life_actions() {
-    let mut channel = DelayedChannel::with_capacity(2);
-    channel.send("mine", 0.0, 50.0).unwrap();
-    channel.send("fire", 0.0, 50.0).unwrap();
+    let mut channel = DelayedChannel::default();
+    for _ in 0..CHANNEL_CAPACITY {
+        channel.send("mine", 0.0, 50.0).unwrap();
+    }
     assert!(
         channel
             .send("overflow", 0.0, 1.0)
@@ -1214,13 +1208,17 @@ fn accelerating_rockets_and_a_steering_missile_follow_their_simulated_flight() {
     let rocket_paths = replay
         .entries
         .iter()
-        .filter(|entry| entry.id() == rocket && !matches!(entry, PathEntry::End { .. }))
+        .filter(|entry| {
+            matches!(entry, PathEntry::Launch(path) | PathEntry::Change(path) if path.id == rocket)
+        })
         .count();
     assert_eq!(rocket_paths, 1, "a rocket's speed-up is part of its path");
     let missile_paths = replay
         .entries
         .iter()
-        .filter(|entry| entry.id() != rocket && !matches!(entry, PathEntry::End { .. }))
+        .filter(|entry| {
+            matches!(entry, PathEntry::Launch(path) | PathEntry::Change(path) if path.id != rocket)
+        })
         .count();
     let missile_ticks = replay
         .sweeps

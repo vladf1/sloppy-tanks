@@ -4,45 +4,32 @@
 
 use std::collections::VecDeque;
 
+use crate::sim::math::Random;
+
 /// Share of messages that model a lost TCP segment when `stall` is set.
 const STALL_CHANCE: f64 = 0.02;
-const CHANNEL_CAPACITY: usize = 128;
-/// Page parameters that turn the delay on.
-pub const TRANSPORT_DELAY_PARAMS: [&str; 3] = ["latency", "jitter", "stall"];
+/// Most messages one direction holds in transit.
+pub const CHANNEL_CAPACITY: usize = 128;
 
 /// Ordered transport delay with bounded storage. Jitter never reorders reliable messages.
 #[derive(Clone, Debug)]
 pub struct DelayedChannel<T> {
     queue: VecDeque<(f64, T)>,
-    capacity: usize,
 }
 
 impl<T> Default for DelayedChannel<T> {
     fn default() -> Self {
-        Self::with_capacity(CHANNEL_CAPACITY)
+        Self {
+            queue: VecDeque::new(),
+        }
     }
 }
 
 impl<T> DelayedChannel<T> {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            queue: VecDeque::new(),
-            capacity,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.queue.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
     /// Queues `value` for delivery `delay_ms` after `now_ms`, never before the message
     /// ahead of it.
     pub fn send(&mut self, value: T, now_ms: f64, delay_ms: f64) -> Result<(), String> {
-        if self.queue.len() >= self.capacity {
+        if self.queue.len() >= CHANNEL_CAPACITY {
             return Err("Delayed channel capacity exceeded".into());
         }
         if !now_ms.is_finite() || !delay_ms.is_finite() || delay_ms < 0.0 {
@@ -57,8 +44,8 @@ impl<T> DelayedChannel<T> {
     /// Everything due by `now_ms`, in order.
     pub fn receive(&mut self, now_ms: f64) -> Vec<T> {
         let mut due = Vec::new();
-        while self.queue.front().is_some_and(|(at, _)| *at <= now_ms) {
-            due.push(self.queue.pop_front().expect("checked").1);
+        while let Some((_, value)) = self.queue.pop_front_if(|(at, _)| *at <= now_ms) {
+            due.push(value);
         }
         due
     }
@@ -99,31 +86,32 @@ impl DelaySettings {
     }
 }
 
-/// Both directions of a delayed connection. `random` supplies uniform numbers in [0, 1).
+/// Both directions of a delayed connection, with jitter and stalls drawn from a stream
+/// seeded by `seed`.
 pub struct TransportDelay {
     pub settings: DelaySettings,
     pub outbound: DelayedChannel<String>,
     pub inbound: DelayedChannel<super::protocol::Message>,
-    random: Box<dyn FnMut() -> f64 + Send>,
+    random: Random,
 }
 
 impl TransportDelay {
-    pub fn new(settings: DelaySettings, random: Box<dyn FnMut() -> f64 + Send>) -> Self {
+    pub fn new(settings: DelaySettings, seed: u32) -> Self {
         Self {
             settings,
             outbound: DelayedChannel::default(),
             inbound: DelayedChannel::default(),
-            random,
+            random: Random::new(f64::from(seed)),
         }
     }
 
     fn delay(&mut self) -> f64 {
-        let stalled = if self.settings.stall_ms > 0.0 && (self.random)() < STALL_CHANCE {
+        let stalled = if self.settings.stall_ms > 0.0 && self.random.next() < STALL_CHANCE {
             self.settings.stall_ms
         } else {
             0.0
         };
-        self.settings.half_ms + (self.random)() * self.settings.jitter_ms + stalled
+        self.settings.half_ms + self.random.next() * self.settings.jitter_ms + stalled
     }
 
     pub fn send(&mut self, text: String, now_ms: f64) -> Result<(), String> {

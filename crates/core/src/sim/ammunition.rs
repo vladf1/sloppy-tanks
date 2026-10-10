@@ -90,22 +90,31 @@ pub fn select_ammo(tank: &mut Tank, selection: Option<AmmoSelection>) {
             }
         }
         Some(AmmoSelection::Step(step)) if step != 0 => {
-            let count = AMMO_ORDER.len() as i32;
-            let start = AMMO_ORDER
-                .iter()
-                .position(|&w| w == tank.selected_ammo)
-                .map_or(-1, |i| i as i32);
-            for offset in 1..=count {
-                let candidate =
-                    AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize];
-                if has_ammo(tank, candidate) {
-                    tank.selected_ammo = candidate;
-                    break;
-                }
+            if let Some(next) = step_ammo(tank.kind, &tank.ammo, tank.selected_ammo, step) {
+                tank.selected_ammo = next;
             }
         }
         _ => {}
     }
+}
+
+/// The first weapon `step` places away from `current` along [`AMMO_ORDER`], wrapping
+/// around, that `kind` can fire with `ammo`. A weapon outside the order starts before
+/// its first entry.
+pub fn step_ammo(
+    kind: VehicleKind,
+    ammo: &AmmoInventory,
+    current: Weapon,
+    step: i8,
+) -> Option<Weapon> {
+    let count = AMMO_ORDER.len() as i32;
+    let start = AMMO_ORDER
+        .iter()
+        .position(|&w| w == current)
+        .map_or(-1, |i| i as i32);
+    (1..=count)
+        .map(|offset| AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize])
+        .find(|&candidate| has_ammo_for(kind, ammo, candidate))
 }
 
 pub fn consume_ammo(tank: &mut Tank, fired: Weapon) {

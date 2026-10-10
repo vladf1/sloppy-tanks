@@ -281,7 +281,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
                 room_epoch: random::uuid_v4(),
                 now_ms: now,
                 token: Box::new(random::token),
-                seed: Some(random::seed()),
+                seed: random::seed(),
                 // MatchHost defaults to this build's CONTENT_VERSION.
                 content_version: None,
             }));

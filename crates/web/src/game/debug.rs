@@ -42,6 +42,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::geometry::box_geometry;
+use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
@@ -65,7 +66,6 @@ const NOBODY: u32 = 999_999;
 /// Room fixture: fixed steps simulated, and how often each seat sends input.
 const SEAT_TICKS: u64 = 90;
 const SEAT_INPUT_EVERY_TICKS: u64 = 3;
-const MS_PER_TICK: f64 = 1000.0 / 60.0;
 
 thread_local! {
     /// The pixel probe box, if one is placed.
@@ -698,7 +698,7 @@ impl Game {
         let starts: Vec<[f64; 2]> = seats.iter().map(|&id| position(&room, id)).collect();
         room.start();
         for tick in 1..=SEAT_TICKS {
-            let now = tick as f64 * MS_PER_TICK;
+            let now = tick as f64 * SIMULATION_STEP_MS;
             if tick % SEAT_INPUT_EVERY_TICKS == 1 {
                 for (index, control) in controls.iter_mut().enumerate() {
                     let right = index == 0;
