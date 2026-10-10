@@ -5,13 +5,15 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { gameServer } from "./servers.mjs";
 
-/** Point a game server's hostname (deploy/servers.json) at a machine through Namecheap's
- * Dynamic DNS, then wait until public resolvers return the new address. It asks for the
- * domain's Dynamic DNS password (Namecheap: Advanced DNS > Dynamic DNS) and the IP,
- * defaulting to the machine in the list; the password is only sent to Namecheap. The
- * record must be an "A + Dynamic DNS Record" in Namecheap's Advanced DNS.
+/** Point one of a game server's hostnames (deploy/servers.json) at a machine through
+ * Namecheap's Dynamic DNS, then wait until public resolvers return the new address. It
+ * points the first hostname with a DNS record of its own (not made from `{dashed-ip}`)
+ * unless `--hostname` names another. It asks for the domain's Dynamic DNS password
+ * (Namecheap: Advanced DNS > Dynamic DNS) and the IP, defaulting to the machine in the
+ * list; the password is only sent to Namecheap. The record must be an
+ * "A + Dynamic DNS Record" in Namecheap's Advanced DNS.
  *
- *   pnpm run server:point-hostname [--dev]
+ *   pnpm run server:point-hostname [--dev] [--hostname <name>]
  *
  * Run it after the new machine checks out through its nip.io name, then provision again
  * so Caddy obtains the hostname's certificate at once (crates/server/README.md). */
@@ -90,14 +92,19 @@ async function waitForPublicDns(hostname, ip) {
 async function main() {
   const dev = process.argv.includes("--dev");
   const server = gameServer(dev);
-  if (!server.hostname) {
-    throw new Error(`${server.role} in deploy/servers.json has no hostname to point`);
+  const index = process.argv.indexOf("--hostname");
+  const hostname = index === -1 ? server.dnsNames[0] : process.argv[index + 1];
+  if (!hostname) {
+    throw new Error(`${server.role} in deploy/servers.json has no hostname with its own record`);
+  }
+  if (!server.dnsNames.includes(hostname)) {
+    throw new Error(
+      `${hostname} is not one of ${server.role}'s own hostnames: ${server.dnsNames.join(", ")}`,
+    );
   }
   if (!process.stdin.isTTY) throw new Error("Run it in a terminal: it asks for the password");
-  const { host, domain } = namecheapRecord(server.hostname);
-  console.log(
-    `Pointing ${server.hostname} (host ${host} in ${domain}) through Namecheap Dynamic DNS`,
-  );
+  const { host, domain } = namecheapRecord(hostname);
+  console.log(`Pointing ${hostname} (host ${host} in ${domain}) through Namecheap Dynamic DNS`);
 
   const ask = await prompts();
   let password;
@@ -120,10 +127,10 @@ async function main() {
   if (!response.ok || errors.length) {
     throw new Error(`Namecheap refused the update: ${errors.join("; ") || response.status}`);
   }
-  console.log(`Namecheap set ${server.hostname} to ${ip}; waiting for public resolvers`);
-  await waitForPublicDns(server.hostname, ip);
+  console.log(`Namecheap set ${hostname} to ${ip}; waiting for public resolvers`);
+  await waitForPublicDns(hostname, ip);
   console.log(
-    `${server.hostname} resolves to ${ip}. ` +
+    `${hostname} resolves to ${ip}. ` +
       `Next: pnpm run server:provision${dev ? " --dev" : ""} so Caddy obtains its certificate now.`,
   );
 }

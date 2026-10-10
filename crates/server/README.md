@@ -117,20 +117,24 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 Production and the dev site each have their own game server machine, an Ubuntu 26.04
 x64 VPS at Vultr, set up identically. `deploy/servers.json` lists both
-(`scripts/servers.mjs` reads it): each machine's public `ip` and an optional
-`hostname`. A machine runs the server as a container under Podman, behind Caddy in a
-container of its own, both supervised by systemd through Quadlet units. CI builds the
-server images; production pulls them by hand or automatically, and an SSH deploy from
-a checkout covers the dev server and any time CI or the registry cannot.
+(`scripts/servers.mjs` reads it): each machine's public `ip` and its `hostnames`. A
+machine runs the server as a container under Podman, behind Caddy in a container of
+its own, both supervised by systemd through Quadlet units. CI builds the server
+images; production pulls them by hand or automatically, and an SSH deploy from a
+checkout covers the dev server and any time CI or the registry cannot.
 
-A machine needs no DNS record of ours to be usable: Caddy obtains a Let's Encrypt
-certificate for its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58) as
-well as for its hostname, if any. Players use the hostname when there is one
-(production's `sloppy-tanks-server.fridman.me`, an A record at Namecheap) and the
-nip.io name otherwise. The scripts reach a machine over SSH by its ip and check its
-server through its nip.io name, which reaches that machine whatever the hostname's
-DNS says. The Pages workflow and the traffic bots name production's address too;
-`tests/servers.test.ts` keeps them equal to the list.
+Caddy serves every hostname in the list and obtains a Let's Encrypt certificate for
+each. `{dashed-ip}` in a hostname stands for the machine's address with dashes, so
+`{dashed-ip}.nip.io` is its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58;
+sslip.io works the same way). Such a name needs no DNS record of ours, so a machine is
+usable as soon as it is provisioned; any other hostname, such as production's
+`sloppy-tanks-server.fridman.me` (an A record at Namecheap), needs its own record
+pointing at the machine. Players use the first hostname. The scripts reach a machine
+over SSH by its ip and check its server through the first hostname made from
+`{dashed-ip}`, which reaches that machine whatever the other names' DNS says; a list
+without one is checked through its first hostname. The Pages workflow and the
+traffic bots name production's address too; `tests/servers.test.ts` keeps them equal
+to the list.
 
 ### Images and tags
 
@@ -241,21 +245,24 @@ while Caddy obtains the certificate. The scripts trust a new machine's host key 
 first contact and refuse a changed one; after replacing a machine at the same
 address, remove the old key with `ssh-keygen -R <ip>`.
 
-A hostname needs only its A record pointing at the machine and its entry in the
-list; provision again so Caddy serves it. To move production to another machine, put
+A hostname needs only its A record pointing at the machine and its place in the
+list; provision again so Caddy serves it. Keep a `{dashed-ip}` name in every machine's
+list, since moving a machine relies on it. To move production to another machine, put
 its address in production's entry and provision it: players stay on the old machine
 until the hostname's record points at the new one, while the scripts already check
 the new one through its nip.io name.
 
-`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the hostname
-through Namecheap's Dynamic DNS: it asks for the domain's Dynamic DNS password (Advanced
-DNS > Dynamic DNS) and the IP, defaulting to the machine in the list, and waits until
-Google's and Cloudflare's resolvers return it. The record must be an "A + Dynamic DNS
+`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the first
+hostname with its own record (`--hostname <name>` picks another) through Namecheap's
+Dynamic DNS: it asks for the domain's Dynamic DNS password (Advanced DNS > Dynamic
+DNS) and the IP, defaulting to the machine in the list, and waits until Google's and
+Cloudflare's resolvers return it. The record must be an "A + Dynamic DNS
 Record"; the password can repoint any host in the domain, so it stays off the
 machines. Provision again right after, so Caddy obtains the certificate at once instead
 of after its retry backoff. `SLOPPY_SERVERS` points the scripts at another list, such as
 one of local test machines: Caddy gives names ending in `.local` its own local
-certificates, and private addresses get no nip.io name.
+certificates, and a test list leaves out `{dashed-ip}` names, which no certificate
+authority could reach at a private address.
 
 ## Monitoring
 
