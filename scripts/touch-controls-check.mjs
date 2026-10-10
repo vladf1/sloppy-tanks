@@ -107,7 +107,7 @@ try {
   assert.deepEqual(await state(), {
     x: 0,
     fire: false,
-    pointers: { drive: null, aim: null, fire: null, arena: null },
+    pointers: { drive: null, arena: null },
   });
 
   const zoom = await page.evaluate(() => window.sloppy.view.zoom);
