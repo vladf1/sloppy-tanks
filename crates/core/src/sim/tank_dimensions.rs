@@ -12,7 +12,7 @@ pub use crate::models::TankDimensions;
 
 /// Hull bounds in the tank's local frame, measured once per chassis.
 pub fn tank_hull(kind: VehicleKind) -> &'static TankDimensions {
-    static DIMENSIONS: OnceLock<[TankDimensions; 4]> = OnceLock::new();
+    static DIMENSIONS: OnceLock<[TankDimensions; VehicleKind::ALL.len()]> = OnceLock::new();
     &DIMENSIONS.get_or_init(|| VehicleKind::ALL.map(crate::models::tank_dimensions))[kind.index()]
 }
 

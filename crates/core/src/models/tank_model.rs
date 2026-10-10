@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use glam::DVec3;
 
+use super::cybertruck_model::cybertruck_model;
 use super::humvee_model::humvee_model;
 use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
@@ -89,10 +90,12 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
         // Team paint, its shade and bare steel: the colors the worn finish recognises.
         let team_paint = vehicle_paint(team);
         let colors = [team_paint, shade_of(team_paint), STEEL];
-        let mut root = if kind == VehicleKind::Humvee {
-            humvee_model(colors)
-        } else {
-            tracked_model(kind, team, colors, open_turret_ring)
+        let mut root = match kind {
+            VehicleKind::Humvee => humvee_model(colors),
+            // Stainless whatever its team; no team paint for the worn finish to find.
+            VehicleKind::Cybertruck => cybertruck_model(kind.as_str(), false),
+            VehicleKind::GoldCybertruck => cybertruck_model(kind.as_str(), true),
+            _ => tracked_model(kind, team, colors, open_turret_ring),
         };
         root.scale = DVec3::splat(vehicle(kind).scale);
         apply_tank_surface(&mut root, &colors);

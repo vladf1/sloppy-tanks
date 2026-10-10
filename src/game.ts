@@ -65,6 +65,7 @@ export async function prepareGame(
       humanTeam: choices.humanTeam,
       gameMode: choices.gameMode,
       autoplay: params.has("autoplay"),
+      cybertrucks: debugPage(location.search),
       cssWidth: innerWidth,
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,

@@ -10,7 +10,7 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
+    CYBERTRUCK_WHEEL_JOINTS, CYBERTRUCK_WHEELS, FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
     create_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
     tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
@@ -61,6 +61,11 @@ const HIT_SHAKE: [f64; 4] = [0.12, 0.09, 0.035, 0.045];
 const TANK_MODEL_DROP: f64 = 0.4;
 /// Barrel travel at full recoil.
 const RECOIL_TRAVEL: f64 = 0.2;
+/// A Cybertruck on three wheels tips about the diagonal through the wheels beside
+/// the bare corner, its roll and pitch (radians) dropping that corner about 0.3 m
+/// and lifting the opposite wheel, and its roll shudders as the hub drags.
+const LOST_WHEEL_SAG: [f64; 2] = [0.2, 0.09];
+const LOST_WHEEL_SHUDDER: f64 = 0.03;
 /// Track tread scroll: metres of scroll per metre driven, and its wrap length.
 const TRACK_SCROLL: f64 = 0.4;
 const TRACK_PERIOD: f64 = 0.25;
@@ -103,6 +108,8 @@ const WRECK_PARTS: [WreckPart; 5] = [
     WreckPart::TurretBarrel,
     WreckPart::Barrel,
 ];
+/// A Cybertruck wrecks whole, and can shed a wheel.
+const TRUCK_WRECK_PARTS: [WreckPart; 2] = [WreckPart::Intact, WreckPart::Wheel];
 
 const DEBRIS_SHAPES: [FragmentShape; 10] = [
     FragmentShape::Armor,
@@ -151,6 +158,8 @@ struct TankModel {
     turret: JointBasis,
     barrel: JointBasis,
     track: JointBasis,
+    /// A Cybertruck's wheels, any of which a shell can knock off.
+    wheels: Option<[usize; 4]>,
     muzzle_height: f64,
 }
 
@@ -225,6 +234,9 @@ impl Library {
                 turret: basis(renderer, model, &source, part::TURRET),
                 barrel: basis(renderer, model, &source, part::BARREL),
                 track: basis(renderer, model, &source, part::TRACK_GROUP),
+                wheels: kind.neutral().then(|| {
+                    CYBERTRUCK_WHEEL_JOINTS.map(|name| joint_index(renderer, model, name))
+                }),
                 muzzle_height: tank_visual_muzzle(kind).y,
             }
         })
@@ -793,12 +805,22 @@ impl Presentation {
     /// instead of mid-fight.
     pub fn begin_prepare(&mut self, state: &RenderState) {
         self.preparation = Preparation::default();
+        // The easter egg's trucks only where a round has them; they wreck whole.
+        let trucks = state.tanks.iter().any(|tank| tank.kind.neutral());
         for kind in VehicleKind::ALL {
+            if kind.neutral() && !trucks {
+                continue;
+            }
             for team in [Team::Blue, Team::Red] {
                 self.library.tank(&mut self.renderer, kind, team);
                 self.library.bar(&mut self.renderer, team);
                 self.library.mine(&mut self.renderer, team);
-                for part in WRECK_PARTS {
+                let parts: &[WreckPart] = if kind.neutral() {
+                    &TRUCK_WRECK_PARTS
+                } else {
+                    &WRECK_PARTS
+                };
+                for &part in parts {
                     self.library.wreck(&mut self.renderer, kind, team, part);
                 }
             }
@@ -1578,10 +1600,26 @@ impl Presentation {
             // the barrel inherits the tilt and keeps its recoil.
             let (hull, turret, barrel, track) =
                 (&model.hull, &model.turret, &model.barrel, &model.track);
+            // A truck on three wheels drops onto the bare corner.
+            let (mut sag_pitch, mut sag_roll) = (0.0, 0.0);
+            if let (Some(wheels), Some(lost)) = (model.wheels, tank.lost_wheel) {
+                for (index, joint) in wheels.into_iter().enumerate() {
+                    renderer.set_node_visible(view.instance, joint, index != lost);
+                }
+                let [across, along] = CYBERTRUCK_WHEELS[lost];
+                let shudder = (self.time * 38.0).sin() * LOST_WHEEL_SHUDDER;
+                // A positive roll lifts local +X; a positive pitch drops the nose.
+                sag_roll = -across.signum() * (LOST_WHEEL_SAG[0] + shudder);
+                sag_pitch = along.signum() * LOST_WHEEL_SAG[1];
+            } else if let Some(wheels) = model.wheels {
+                for joint in wheels {
+                    renderer.set_node_visible(view.instance, joint, true);
+                }
+            }
             let hull_rotation = euler_yxz(
-                suspension.pitch.angle as f32,
+                (suspension.pitch.angle + sag_pitch) as f32,
                 tank.heading as f32,
-                suspension.roll.angle as f32,
+                (suspension.roll.angle + sag_roll) as f32,
             );
             let aim = if seated { look_yaw } else { tank.aim };
             let turret_rotation =
@@ -1593,7 +1631,7 @@ impl Presentation {
                 barrel.position.y,
                 -(tank.recoil * RECOIL_TRAVEL) as f32,
             ));
-            let scroll = if tank.kind == VehicleKind::Humvee {
+            let scroll = if tank.kind.wheeled() {
                 0.0
             } else {
                 (self.time * velocity.x.hypot(velocity.z) * TRACK_SCROLL) % TRACK_PERIOD
@@ -2095,6 +2133,13 @@ impl Presentation {
         let instance = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)?;
+        // A truck that crashed on three wheels stays without the one it lost.
+        if let Some(joint) = fragment
+            .lost_wheel
+            .and_then(|wheel| self.renderer.model_node(model, CYBERTRUCK_WHEEL_JOINTS[wheel]))
+        {
+            self.renderer.set_node_visible(instance, joint, false);
+        }
         Some(FragmentView {
             instance,
             look,

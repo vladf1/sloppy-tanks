@@ -8,6 +8,9 @@ use super::arena::CoverDef;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
+use super::cybertruck::{
+    CYBERTRUCK_RESPAWN_SECONDS, GOLD_BLAST_DAMAGE, GOLD_BLAST_RADIUS, quiet_crash,
+};
 use super::data::group;
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
@@ -60,7 +63,12 @@ impl Simulation {
     ) {
         let mut amount = amount;
         let tank = &self.tanks[tank_index];
-        if !tank.alive || tank.protection > 0.0 || (tank.team == team && tank.id != owner) {
+        // A neutral truck takes anyone's fire.
+        let neutral = tank.kind.neutral();
+        if !tank.alive
+            || tank.protection > 0.0
+            || (tank.team == team && tank.id != owner && !neutral)
+        {
             return;
         }
         let attacker = self.tank_index(owner);
@@ -106,6 +114,7 @@ impl Simulation {
             && self.tanks[a].team == team
             && self.tanks[a].team != victim_team
             && hull_damage > 0.0
+            && !neutral
         {
             self.tanks[a].damage_dealt += hull_damage;
             let kill_bonus = if victim_hp <= 0.0 { KILL_XP } else { 0.0 };
@@ -133,12 +142,17 @@ impl Simulation {
         clear_ammo(tank);
         tank.deaths += 1;
         tank.life += 1;
-        tank.respawn = SIMULATION_RULES.respawn_seconds;
+        tank.respawn = if neutral {
+            CYBERTRUCK_RESPAWN_SECONDS
+        } else {
+            SIMULATION_RULES.respawn_seconds
+        };
         tank.previous = position.planar();
         let (life, kind) = (tank.life, tank.kind);
         if let Some(killer) = attacker
             && killer != tank_index
             && self.tanks[killer].team != victim_team
+            && !neutral
         {
             self.tanks[killer].kills += 1;
             record_kill(self, killer, tank_index, owner_life, source);
@@ -150,7 +164,7 @@ impl Simulation {
                     killer_tank.best_life_kills.max(killer_tank.life_kills);
             }
         }
-        if self.game_mode == GameMode::Team {
+        if self.game_mode == GameMode::Team && !neutral {
             let allow_victory = !self.endless_match;
             award_kill(
                 &mut self.match_state,
@@ -161,7 +175,13 @@ impl Simulation {
             );
         }
         self.check_solo_result();
-        let burnout = tank_burnout(self.seed, victim_id, life);
+        // A truck goes up in a blast, it is there to be blown up, unless it crashed
+        // on three wheels and only burns.
+        let burnout = if neutral {
+            quiet_crash(&self.tanks[tank_index])
+        } else {
+            tank_burnout(self.seed, victim_id, life)
+        };
         if !burnout {
             blast_debris(self, position.planar(), 3.0, 60.0);
         }
@@ -179,6 +199,19 @@ impl Simulation {
             _ => 3.0,
         });
         self.events.push(death);
+        // Gold foil over a full battery: it goes off like a fuel drum, on the
+        // shooter's account, and can set off the next.
+        if kind == VehicleKind::GoldCybertruck {
+            self.explode(
+                position.planar(),
+                GOLD_BLAST_RADIUS,
+                GOLD_BLAST_DAMAGE,
+                owner,
+                team,
+                owner_life,
+                DamageCause::Explosion,
+            );
+        }
     }
 
     /// Damage a cover: timber marks, destruction, debris and drum or tower chains.

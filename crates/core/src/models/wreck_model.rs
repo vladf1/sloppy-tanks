@@ -4,14 +4,15 @@
 //! group with its transform baked, and batch once. Bounded by chassis × teams ×
 //! assemblies; geometry is shared across rounds, instances clone the node.
 
+use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use glam::{DMat4, DVec3};
+use glam::{DMat4, DQuat, DVec3};
 
 use super::batching::batch;
 use super::model_primitives::Cache;
 use super::tank_model::tank_model_variant;
-use super::{Team, VehicleKind, part};
+use super::{CYBERTRUCK_WHEEL_JOINTS, Team, VehicleKind, part};
 use crate::geometry::math::{compose, decompose};
 use crate::geometry::node_bounds;
 use crate::scene::Node;
@@ -20,7 +21,7 @@ pub use crate::sim::types::WreckPart;
 
 /// Intact wrecks are centred on this fixed point rather than their bounds, so
 /// they rest where the live vehicle stood.
-const INTACT_CENTER: DVec3 = DVec3::new(0.0, 0.55, 0.0);
+pub const INTACT_WRECK_CENTER: DVec3 = DVec3::new(0.0, 0.55, 0.0);
 
 static WRECKS: Cache<(VehicleKind, Team, WreckPart), Node> = Cache::new();
 
@@ -56,9 +57,21 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
             vec![turret]
         }
         WreckPart::TurretBarrel => vec![turret],
+        // Every wheel is alike; turned so its axle runs along Y, the axis of the
+        // cylinder it rolls on.
+        WreckPart::Wheel => {
+            let wheel = hull
+                .find(CYBERTRUCK_WHEEL_JOINTS[0])
+                .expect("only a Cybertruck loses a wheel");
+            vec![Node {
+                position: DVec3::ZERO,
+                rotation: DQuat::from_rotation_z(-FRAC_PI_2),
+                ..wheel.clone()
+            }]
+        }
     };
     let center = if wreck_part == WreckPart::Intact {
-        INTACT_CENTER
+        INTACT_WRECK_CENTER
     } else {
         node_bounds(&result, DMat4::IDENTITY).center()
     };
@@ -77,6 +90,17 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
 /// its shear exactly as Three.js did.
 fn collect_meshes(node: &Node, parent_world: DMat4, out: &mut Vec<Node>) {
     let world = parent_world * compose(node.position, node.rotation, node.scale);
+    // A Cybertruck's wheels stay joints, so its wreck can leave out the one it lost.
+    if CYBERTRUCK_WHEEL_JOINTS.contains(&node.name.as_str()) {
+        let (position, rotation, scale) = decompose(&world);
+        out.push(Node {
+            position,
+            rotation,
+            scale,
+            ..node.clone()
+        });
+        return;
+    }
     if node.drawable.is_some() {
         let (position, rotation, scale) = decompose(&world);
         out.push(Node {

@@ -7,6 +7,7 @@ use rapier3d::parry::shape::Ball;
 use rapier3d::prelude::{ColliderHandle, Pose, Ray};
 
 use super::combat_rules::COMBAT;
+use super::cybertruck::strike_truck;
 use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
@@ -547,6 +548,7 @@ fn resolve_contact(
                     .any(|tank| simulation.records(tank) && tank.id == shot.owner)
                 && target.team != shot.team
                 && target.protection <= 0.0
+                && !target.kind.neutral()
             {
                 simulation.shots[si].recap_hit = true;
                 simulation.combat_record.direct_hits += 1;
@@ -576,6 +578,14 @@ fn resolve_contact(
                     }),
                 );
             }
+            // A truck the round left standing may lose the wheel it was struck by.
+            strike_truck(
+                simulation,
+                ti,
+                Vec2::new(shot.x, shot.z),
+                Vec2::new(shot.vx, shot.vz),
+                (shot.owner, shot.team, shot.owner_life),
+            );
             let mut impact = impact_event(
                 shot.x,
                 shot.z,

@@ -1,6 +1,7 @@
 const PAGE_PARAMETERS = [
   "Page parameters (add to the URL):",
-  "  ?debug               this help, nerd stats (N), extra levels in the map lists",
+  "  ?debug               this help, nerd stats (N), extra levels in the map lists,",
+  "                       and Cybertrucks to shoot in single player",
   "  ?webgl               the WebGL2 engine instead of WebGPU",
   "  ?map=<id>            preselect a map in Battle Setup (village, harbor, quarry, ...)",
   "  ?autoplay            skip Battle Setup; single player drives itself",

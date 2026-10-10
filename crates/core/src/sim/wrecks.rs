@@ -4,6 +4,7 @@ use std::f64::consts::PI;
 
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyHandle};
 
+use super::cybertruck::careen_tumble;
 use super::data::{ARENA, group, vehicle};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, track_debris_contacts};
@@ -12,8 +13,9 @@ use super::physics::{interaction_groups, to_rotation, vector};
 use super::simulation::{Simulation, WreckView};
 use super::simulation_rules::GRAVITY;
 use super::tank_destruction::humvee_tumble;
-use super::tank_dimensions::HUMVEE_BODY_LENGTH_SCALE;
+use super::tank_dimensions::{HUMVEE_BODY_LENGTH_SCALE, tank_hull};
 use super::types::{CoverKind, Fragment, Team, VehicleKind, WreckPart};
+use crate::models::INTACT_WRECK_CENTER;
 
 const WRECK_COLOR: u32 = 0x46534c;
 /// Seconds before a wreck piece's hard removal deadline.
@@ -23,7 +25,7 @@ const WRECK_DEADLINE: f64 = 18.0;
 pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool) {
     let tank = &simulation.tanks[tank_index];
     let origin = simulation.body_translation(tank.body);
-    let (kind, id, life, heading, aim, team, old_body) = (
+    let (kind, id, life, heading, aim, team, old_body, careen) = (
         tank.kind,
         tank.id,
         tank.life,
@@ -31,15 +33,20 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
         tank.aim,
         tank.team,
         tank.body,
+        tank.careen,
     );
     let scale = vehicle(kind).scale;
     let mass = vehicle(kind).mass * 1.6;
     let humvee = kind == VehicleKind::Humvee;
-    if burnout || humvee {
+    if burnout || kind.wheeled() {
         let velocity = simulation.body_linvel(old_body);
-        // Exploding Humvees tumble whole; quiet burnouts only hop and rock.
-        let tumble = humvee && !burnout;
-        let motion = humvee_tumble(simulation.seed, id, life);
+        // Exploding wheeled vehicles tumble whole; quiet burnouts only hop and rock,
+        // but a truck on three wheels always rolls over onto the bare corner.
+        let tumble = kind.wheeled() && (!burnout || careen.is_some());
+        let motion = match &careen {
+            Some(careen) => careen_tumble(careen),
+            None => humvee_tumble(simulation.seed, id, life),
+        };
         let rock = (id + life) as f64;
         let hop_height = if tumble {
             motion.height
@@ -77,22 +84,35 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
         } else {
             2.7
         };
-        let half_extents = [
-            (if humvee { 1.16 } else { 1.22 }) * scale,
-            (if humvee { 0.9 } else { 0.75 }) * scale,
-            half_length * scale,
-        ];
+        // The trucks measure their own hull, whose box sits above the wreck's
+        // origin (the model's `INTACT_WRECK_CENTER`).
+        let (half_extents, center) = if kind.neutral() {
+            let hull = tank_hull(kind);
+            let mut center = hull.center.to_array();
+            center[1] -= INTACT_WRECK_CENTER.y * scale;
+            ((hull.size / 2.0).to_array(), center)
+        } else {
+            let half_extents = [
+                (if humvee { 1.16 } else { 1.22 }) * scale,
+                (if humvee { 0.9 } else { 0.75 }) * scale,
+                half_length * scale,
+            ];
+            (half_extents, [0.0; 3])
+        };
         add_wreck_piece(
             simulation,
             body,
             heading,
-            half_extents,
+            (half_extents, center),
             mass,
             5.0 + DEBRIS_CLEANUP_SECONDS,
             kind,
             team,
             WreckPart::Intact,
         );
+        if let Some(wreck) = simulation.fragments.last_mut() {
+            wreck.lost_wheel = careen.map(|careen| careen.wheel);
+        }
         return;
     }
     let detached = simulation.rng.next() < 0.4;
@@ -249,7 +269,7 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
             simulation,
             body,
             yaw,
-            half_extents,
+            (half_extents, [0.0; 3]),
             mass * share,
             flight + 2.7 + DEBRIS_CLEANUP_SECONDS,
             kind,
@@ -259,14 +279,14 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
     }
 }
 
-/// Give a launched wreck body its yaw and solid box collider, then record it as a metal
-/// fragment with the wreck deadline.
+/// Give a launched wreck body its yaw and solid box collider (half extents and centre
+/// in the body's frame), then record it as a metal fragment with the wreck deadline.
 #[allow(clippy::too_many_arguments)]
 fn add_wreck_piece(
     simulation: &mut Simulation,
     body: RigidBodyHandle,
     yaw: f64,
-    half_extents: [f64; 3],
+    (half_extents, [cx, cy, cz]): ([f64; 3], [f64; 3]),
     mass: f64,
     life: f64,
     kind: VehicleKind,
@@ -279,6 +299,7 @@ fn add_wreck_piece(
     let [x, y, z] = half_extents.map(|extent| extent as f32);
     let collider = simulation.world.insert_collider(
         ColliderBuilder::cuboid(x, y, z)
+            .translation(vector(cx, cy, cz))
             .collision_groups(interaction_groups(group::WRECK))
             .mass(mass as f32)
             .friction(0.95)

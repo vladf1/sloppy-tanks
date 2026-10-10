@@ -112,8 +112,12 @@ pub fn update_bot_goal(
         &sight,
         query_filter(group::TANK_QUERY),
     ) {
+        // Neutral trucks are no one's enemy.
         if let Some(enemy) = simulation.tanks.iter().position(|candidate| {
-            candidate.alive && candidate.team != team && candidate.collider == handle
+            candidate.alive
+                && candidate.team != team
+                && !candidate.kind.neutral()
+                && candidate.collider == handle
         }) {
             enemies.push(enemy);
         }
@@ -344,6 +348,7 @@ pub fn update_bot_goal(
             candidate.alive
                 && candidate.team == team
                 && i != tank_index
+                && !candidate.kind.neutral()
                 && candidate.brain.personality != BotPersonality::Support
         });
         let closest = best_by(allies, |&i| -distance(position, simulation.tank_planar(i)));

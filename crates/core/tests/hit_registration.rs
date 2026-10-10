@@ -231,7 +231,11 @@ fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
     let mut hits = 0;
     let mut misses = 0;
     for kind in VehicleKind::ALL {
-        let target = s.tanks.iter().position(|tank| tank.kind == kind).unwrap();
+        // The roster has no Cybertrucks; the easter egg adds them.
+        let target = match s.tanks.iter().position(|tank| tank.kind == kind) {
+            Some(target) => target,
+            None => s.add_cybertruck(kind, Vec2::ZERO),
+        };
         for sample in 0..400 {
             let x = random.range(-20.0, 20.0);
             let z = random.range(-20.0, 20.0);

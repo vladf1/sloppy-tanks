@@ -115,6 +115,10 @@ pub const fn first_person_eye(kind: VehicleKind) -> Eye {
             height: 2.45,
             forward: -0.45,
         },
+        VehicleKind::Cybertruck | VehicleKind::GoldCybertruck => Eye {
+            height: 1.95,
+            forward: 0.2,
+        },
     }
 }
 

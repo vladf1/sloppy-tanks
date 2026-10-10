@@ -37,6 +37,7 @@ mod batching;
 mod model_primitives;
 
 // Vehicles.
+mod cybertruck_model;
 mod humvee_model;
 mod tank_details;
 mod tank_dimensions;
@@ -95,11 +96,14 @@ pub use batching::{batch, is_paintable, painted, vertex_material};
 pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint, put, shadowed};
 
 // Vehicles.
+pub use cybertruck_model::{
+    CYBERTRUCK_WHEEL_JOINTS, CYBERTRUCK_WHEEL_RADIUS, CYBERTRUCK_WHEEL_WIDTH, CYBERTRUCK_WHEELS,
+};
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
 pub use tank_model::{tank_model, tank_model_variant};
 pub use tank_surfaces::armor_wear_texture;
-pub use wreck_model::{WreckPart, wreck_model};
+pub use wreck_model::{INTACT_WRECK_CENTER, WreckPart, wreck_model};
 
 // Cover, trees and props.
 pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};

@@ -191,6 +191,8 @@ struct GameConfig {
     human_team: Option<Team>,
     game_mode: Option<GameMode>,
     autoplay: bool,
+    /// Neutral Cybertrucks roam the rounds (the `?debug` easter egg).
+    cybertrucks: bool,
 }
 
 /// Personal bests live in the page's `localStorage`; private browsing or a full
@@ -268,6 +270,7 @@ impl Game {
         }
         let setup = options_setup(&options).merged(SimulationSetup {
             round: Some(FIRST_ROUND),
+            cybertrucks: Some(config.cybertrucks),
             ..SimulationSetup::default()
         });
         let sim = Simulation::new(seed, setup);
@@ -514,7 +517,11 @@ impl Game {
             human_team: sim.human_team,
             score_limit: SCORE_LIMIT,
             team_names: TEAM_NAMES,
-            active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
+            active_enemies: sim
+                .tanks
+                .iter()
+                .filter(|t| !t.human && t.alive && !t.kind.neutral())
+                .count(),
             speed_tuning: &sim.speed_tuning,
             human: human_json(&self.hud_tank, sim.elapsed),
             scoreboard: Scoreboard::Simulated(&sim.tanks),
@@ -594,8 +601,8 @@ impl Game {
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), JsValue> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
-        if kind == VehicleKind::Humvee {
-            return Err(js_error("The player cannot drive a Humvee"));
+        if !VehicleKind::PLAYABLE.contains(&kind) {
+            return Err(js_error("The player cannot drive that vehicle"));
         }
         self.sim.human_kind = kind;
         self.options.human_kind = kind;

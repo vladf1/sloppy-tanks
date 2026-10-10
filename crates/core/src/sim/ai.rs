@@ -6,6 +6,7 @@ use super::bot_personalities::{
 };
 use super::bot_strategy::update_bot_goal;
 use super::combat_rules::COMBAT;
+use super::cybertruck::cybertruck_command;
 use super::data::weapon;
 use super::difficulty::enemy_difficulty;
 use super::hitboxes::{ShotProbe, tank_hit_time};
@@ -58,6 +59,9 @@ pub fn friendly_blocks_shot(
 
 /// Choose goals on decision ticks, then produce the same input command used by human controls.
 pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> VehicleCommand {
+    if simulation.tanks[tank_index].kind.neutral() {
+        return cybertruck_command(simulation, tank_index, dt);
+    }
     let role = tank_index / 2;
     let tank = &simulation.tanks[tank_index];
     let profile = bot_profile(tank);

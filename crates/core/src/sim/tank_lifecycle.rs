@@ -50,7 +50,7 @@ pub fn tank_body_parts(
     (body, [hull, tank_contact_collider(kind)])
 }
 
-fn create_tank_body(
+pub(crate) fn create_tank_body(
     simulation: &mut Simulation,
     kind: VehicleKind,
     position: Vec2,
@@ -173,11 +173,13 @@ impl Simulation {
             tank.kind
         };
         let team = tank.team;
+        // Neutral trucks neither threaten a spawn lane nor guard one.
+        let combatant = |i: usize| self.tanks[i].alive && !self.tanks[i].kind.neutral();
         let enemies: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| self.tanks[i].alive && self.tanks[i].team != team)
+            .filter(|&i| combatant(i) && self.tanks[i].team != team)
             .collect();
         let friends: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| i != tank_index && self.tanks[i].alive && self.tanks[i].team == team)
+            .filter(|&i| i != tank_index && combatant(i) && self.tanks[i].team == team)
             .collect();
         let p = position.unwrap_or_else(|| {
             best_by(spawn_positions(team, self.map_scale()), |&candidate| {
@@ -203,6 +205,7 @@ impl Simulation {
         let tank = &mut self.tanks[tank_index];
         tank.hp = max;
         tank.alive = true;
+        tank.careen = None;
         tank.protection = SIMULATION_RULES.spawn_protection_seconds;
         clear_ammo(tank);
         tank.shield = 0.0;

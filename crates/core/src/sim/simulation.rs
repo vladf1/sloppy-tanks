@@ -12,6 +12,7 @@ use super::arena::{CoverDef, PICKUP_LAYOUT};
 use super::barrel_physics::barrel_collider;
 use super::bot_personalities::{BotPersonality, shuffled_bot_names};
 use super::combat_record::CombatRecord;
+use super::cybertruck::{cybertruck_spawn, step_cybertrucks};
 use super::data::{ARENA, LASER_DEFENSE, SOLO_TIME, STEP, group, vehicle};
 use super::debris_cleanup::{
     DEBRIS_CLEANUP_SECONDS, cleanup_candidate, debris_moving, prepare_debris_cleanup,
@@ -104,6 +105,8 @@ pub struct SimulationSetup {
     pub ammo_crate_multiplier: Option<f64>,
     pub max_fragments: Option<usize>,
     pub after_step: Option<Option<AfterStep>>,
+    /// Neutral Cybertrucks roam single-player rounds (the debug easter egg).
+    pub cybertrucks: Option<bool>,
     /// The round the constructor prepares (default 2, matching the TS setup).
     pub round: Option<u32>,
 }
@@ -131,6 +134,7 @@ impl SimulationSetup {
             ammo_crate_multiplier: other.ammo_crate_multiplier.or(self.ammo_crate_multiplier),
             max_fragments: other.max_fragments.or(self.max_fragments),
             after_step: other.after_step.or(self.after_step),
+            cybertrucks: other.cybertrucks.or(self.cybertrucks),
             round: other.round.or(self.round),
         }
     }
@@ -169,6 +173,7 @@ impl SimulationSetup {
         );
         set(&mut simulation.max_fragments, self.max_fragments);
         set(&mut simulation.after_step, self.after_step);
+        set(&mut simulation.cybertrucks, self.cybertrucks);
     }
 }
 
@@ -230,6 +235,8 @@ pub struct Simulation {
     pub human_health_multiplier: f64,
     pub power_up_duration_multiplier: f64,
     pub ammo_crate_multiplier: f64,
+    /// Rounds add neutral Cybertrucks (single player only; `sim::cybertruck`).
+    pub cybertrucks: bool,
     current_map: &'static ArenaMap,
     pub reinforcement_delay: f64,
     pub max_fragments: usize,
@@ -290,6 +297,7 @@ impl Simulation {
             human_health_multiplier: 1.0,
             power_up_duration_multiplier: 1.0,
             ammo_crate_multiplier: 1.0,
+            cybertrucks: false,
             current_map: &super::maps::MAPS[0],
             reinforcement_delay: 0.0,
             max_fragments: MAX_FRAGMENTS,
@@ -462,6 +470,10 @@ impl Simulation {
                 };
                 self.add_tank(team, human, kind, slot);
             }
+        }
+        // After the roster, so its ids, names and roles stay those of a round without.
+        if self.cybertrucks && !self.multiplayer() {
+            self.add_cybertrucks();
         }
         self.world.step();
     }
@@ -680,12 +692,15 @@ impl Simulation {
         }
         for i in 0..self.tanks.len() {
             if !self.tanks[i].alive {
-                if self.game_mode == GameMode::Solo {
+                // Solo enemies come back through reinforcement; trucks in any mode.
+                let neutral = self.tanks[i].kind.neutral();
+                if self.game_mode == GameMode::Solo && !neutral {
                     continue;
                 }
                 self.tanks[i].respawn -= STEP;
                 if self.tanks[i].respawn <= 0.0 {
-                    self.respawn(i, None);
+                    let at = neutral.then(|| cybertruck_spawn(self, self.tanks[i].id));
+                    self.respawn(i, at);
                 }
                 continue;
             }
@@ -748,14 +763,18 @@ impl Simulation {
         update_movable_cover(self);
         step_projectiles(self, STEP, true);
         step_mines(self, STEP);
+        if self.cybertrucks {
+            step_cybertrucks(self);
+        }
         for i in 0..self.tanks.len() {
             repair_veteran(self, i, STEP);
         }
         // Collecting changes stats, never positions, so each hull is read once for every crate.
         self.pickup_tank_positions.clear();
+        // Neutral trucks drive over crates without taking them.
         self.pickup_tank_positions
             .extend(self.tanks.iter().map(|tank| {
-                tank.alive
+                (tank.alive && !tank.kind.neutral())
                     .then(|| from_vector(self.world.bodies[tank.body].translation()).planar())
             }));
         for p in 0..self.pickups.len() {
@@ -826,8 +845,10 @@ impl Simulation {
         if self.reinforcement_delay > 0.0 {
             return;
         }
+        // Neutral trucks are no enemies and keep their own slots.
+        let enemy = |tank: &Tank| !tank.human && !tank.kind.neutral();
         let living: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| !self.tanks[i].human && self.tanks[i].alive)
+            .filter(|&i| enemy(&self.tanks[i]) && self.tanks[i].alive)
             .collect();
         if living.len() >= SOLO.active_enemies {
             return;
@@ -854,7 +875,7 @@ impl Simulation {
         let Some(replacement) = self
             .tanks
             .iter()
-            .position(|tank| !tank.human && !tank.alive)
+            .position(|tank| enemy(tank) && !tank.alive)
         else {
             return;
         };

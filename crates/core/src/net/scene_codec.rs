@@ -54,11 +54,13 @@ pub const PICKUPS: usize = 4;
 pub const ENTITY_LIMITS: [usize; 5] = [32, 1024, FRAGMENT_CAPACITY, 256, 64];
 
 // Wire names of the simulation's enums, shared by writers and readers.
-pub const VEHICLE_KINDS: [(&str, VehicleKind); 4] = [
+pub const VEHICLE_KINDS: [(&str, VehicleKind); 6] = [
     ("scout", VehicleKind::Scout),
     ("balanced", VehicleKind::Balanced),
     ("heavy", VehicleKind::Heavy),
     ("humvee", VehicleKind::Humvee),
+    ("cybertruck", VehicleKind::Cybertruck),
+    ("gold-cybertruck", VehicleKind::GoldCybertruck),
 ];
 pub const WEAPONS: [(&str, Weapon); 6] = [
     ("standard", Weapon::Standard),
@@ -115,12 +117,13 @@ pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
     ("drum-shell", FragmentShape::DrumShell),
     ("drum-lid", FragmentShape::DrumLid),
 ];
-pub const WRECK_PARTS: [(&str, WreckPart); 5] = [
+pub const WRECK_PARTS: [(&str, WreckPart); 6] = [
     ("intact", WreckPart::Intact),
     ("hull", WreckPart::Hull),
     ("turret", WreckPart::Turret),
     ("turret-barrel", WreckPart::TurretBarrel),
     ("barrel", WreckPart::Barrel),
+    ("wheel", WreckPart::Wheel),
 ];
 pub const PICKUP_KINDS: [(&str, PickupKind); 9] = [
     ("spread", PickupKind::Spread),
@@ -216,13 +219,13 @@ const TIMBER_HITS_BYTES: usize = MAX_TIMBER_HITS * 4 * 10 + 10;
 const TIMBER_PART_BYTES: usize = 256 + MAX_TIMBER_MARKS * 50;
 const SCORES_BYTES: usize = 20;
 
-const VEHICLE_NAMES: [&str; 4] = names(&VEHICLE_KINDS);
+const VEHICLE_NAMES: [&str; 6] = names(&VEHICLE_KINDS);
 const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
 const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
-const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
+const WRECK_NAMES: [&str; 6] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
 const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
 const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
@@ -1216,6 +1219,8 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
             fields.fixed(VELOCITY_Z)?,
         ),
         drive: Vec2::new(fields.fixed(DRIVE_X)?, fields.fixed(DRIVE_Z)?),
+        // Cybertrucks never reach a room.
+        lost_wheel: None,
         heading: fields.fixed(HEADING)?,
         aim: fields.fixed(AIM)?,
         hp: fields.fixed(HP)?,
@@ -1321,6 +1326,7 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
         wreck: fields.opt_choice(WRECK, &VEHICLE_KINDS)?,
         part: fields.opt_choice(PART, &WRECK_PARTS)?,
         team: fields.opt_team(TEAM)?,
+        lost_wheel: None,
     })
 }
 

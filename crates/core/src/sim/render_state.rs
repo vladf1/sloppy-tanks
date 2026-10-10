@@ -64,6 +64,9 @@ pub struct RenderTank {
     /// The move input the tank last drove with (x, z); zero for a wreck. Client
     /// prediction holds it for the tanks it cannot steer.
     pub drive: Vec2,
+    /// The wheel (`CYBERTRUCK_WHEELS` order) a shell knocked off a Cybertruck.
+    #[serde(default)]
+    pub lost_wheel: Option<usize>,
 }
 
 // Manual so a state refilled in place keeps each tank's name allocation.
@@ -203,6 +206,9 @@ pub struct RenderFragment {
     pub wreck: Option<VehicleKind>,
     pub part: Option<WreckPart>,
     pub team: Option<Team>,
+    /// The wheel a Cybertruck wreck lost (`Fragment::lost_wheel`).
+    #[serde(default)]
+    pub lost_wheel: Option<usize>,
     pub position: Point3,
     pub rotation: Quat4,
 }
@@ -418,6 +424,7 @@ impl Simulation {
             Vec2::ZERO
         };
         view.velocity = self.tank_velocity(tank);
+        view.lost_wheel = tank.careen.map(|careen| careen.wheel);
     }
 
     fn fill_fragment(&self, view: &mut RenderFragment, fragment: &Fragment) {
@@ -438,6 +445,7 @@ impl Simulation {
         view.wreck = fragment.wreck;
         view.part = fragment.part;
         view.team = fragment.team;
+        view.lost_wheel = fragment.lost_wheel;
         view.position = self.body_translation(fragment.body);
         view.rotation = self.body_rotation(fragment.body);
     }

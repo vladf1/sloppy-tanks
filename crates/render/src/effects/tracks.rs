@@ -6,7 +6,7 @@
 use glam::{Mat4, Vec3};
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::math::angle_delta;
-use sloppy_core::sim::{RenderState, VehicleKind};
+use sloppy_core::sim::RenderState;
 
 use super::pool::{PoolBuffer, record};
 use super::spawn_pad_decks::SpawnPadDecks;
@@ -132,9 +132,9 @@ impl TrackTrails {
             let distance = (x - previous.x).hypot(z - previous.z);
             let turn = angle_delta(previous.heading, tank.heading);
             let scale = vehicle(tank.kind).scale;
-            let humvee = tank.kind == VehicleKind::Humvee;
+            let wheeled = tank.kind.wheeled();
             // Tracked vehicles keep the separated tread-pad rhythm.
-            let spacing = if humvee { HUMVEE_SPACING } else { SPACING } * scale;
+            let spacing = if wheeled { HUMVEE_SPACING } else { SPACING } * scale;
             let length = distance + turn.abs() * 1.5 * scale;
             if distance > TELEPORT_DISTANCE
                 || turn.abs() > TELEPORT_TURN
@@ -155,7 +155,7 @@ impl TrackTrails {
                         for side in [-1.0, 1.0] {
                             let mx = cx + cos * side * scale;
                             let mz = cz - sin * side * scale;
-                            self.lay(mx, mz, angle, scale, humvee);
+                            self.lay(mx, mz, angle, scale, wheeled);
                         }
                     }
                     d += spacing;
@@ -198,7 +198,7 @@ impl TrackTrails {
 mod tests {
     use super::*;
     use sloppy_core::sim::render_state::RenderTank;
-    use sloppy_core::sim::{MatchPhase, Point3, Vec2};
+    use sloppy_core::sim::{MatchPhase, Point3, Vec2, VehicleKind};
 
     fn state(kind: VehicleKind) -> RenderState {
         let mut state = RenderState::default();

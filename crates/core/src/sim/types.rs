@@ -6,6 +6,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::bot_personalities::BotPersonality;
+use super::cybertruck::Careen;
 use super::debris_physics::DebrisMaterial;
 use super::humvee_tactics::HumveeTactics;
 pub use super::math::{Point3, Quat4, Vec2};
@@ -65,14 +66,22 @@ pub enum VehicleKind {
     Balanced,
     Heavy,
     Humvee,
+    /// The debug single-player easter egg: a neutral truck that roams as a target
+    /// and never fires (`sim::cybertruck`).
+    Cybertruck,
+    /// Its gold-foil sibling, which goes off like a fuel drum when destroyed.
+    #[serde(rename = "gold-cybertruck")]
+    GoldCybertruck,
 }
 
 impl VehicleKind {
-    pub const ALL: [VehicleKind; 4] = [
+    pub const ALL: [VehicleKind; 6] = [
         VehicleKind::Scout,
         VehicleKind::Balanced,
         VehicleKind::Heavy,
         VehicleKind::Humvee,
+        VehicleKind::Cybertruck,
+        VehicleKind::GoldCybertruck,
     ];
     /// The chassis a player may drive (every kind but the bot-only Humvee).
     pub const PLAYABLE: [VehicleKind; 3] = [
@@ -91,7 +100,24 @@ impl VehicleKind {
             VehicleKind::Balanced => "balanced",
             VehicleKind::Heavy => "heavy",
             VehicleKind::Humvee => "humvee",
+            VehicleKind::Cybertruck => "cybertruck",
+            VehicleKind::GoldCybertruck => "gold-cybertruck",
         }
+    }
+
+    /// Wheels rather than tracks: tyre marks, no tread scroll, and a wreck that
+    /// tumbles whole.
+    pub const fn wheeled(self) -> bool {
+        matches!(
+            self,
+            VehicleKind::Humvee | VehicleKind::Cybertruck | VehicleKind::GoldCybertruck
+        )
+    }
+
+    /// A target on no side: it never fires, bots ignore it, and destroying it earns
+    /// no experience, kills or score.
+    pub const fn neutral(self) -> bool {
+        matches!(self, VehicleKind::Cybertruck | VehicleKind::GoldCybertruck)
     }
 }
 
@@ -418,6 +444,8 @@ pub struct Tank {
     pub last_combat: f64,
     pub command: VehicleCommand,
     pub brain: Brain,
+    /// A Cybertruck careening on three wheels; kept through its crash until it respawns.
+    pub careen: Option<Careen>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -615,6 +643,8 @@ pub enum WreckPart {
     TurretBarrel,
     /// The gun alone.
     Barrel,
+    /// A Cybertruck's wheel, knocked loose.
+    Wheel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -655,6 +685,8 @@ pub struct Fragment {
     pub wreck: Option<VehicleKind>,
     pub part: Option<WreckPart>,
     pub team: Option<Team>,
+    /// The wheel (`CYBERTRUCK_WHEELS` order) a Cybertruck wreck lost before it crashed.
+    pub lost_wheel: Option<usize>,
 }
 
 impl Fragment {

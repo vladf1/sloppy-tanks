@@ -45,8 +45,14 @@ export const PHASES = ["ready", "playing", "paused", "results"] as const;
 export type Phase = (typeof PHASES)[number];
 export type Team = 0 | 1;
 export type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing" | "tow";
-export type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
-export type PlayerVehicleKind = Exclude<VehicleKind, "humvee">;
+export type VehicleKind =
+  | "scout"
+  | "balanced"
+  | "heavy"
+  | "humvee"
+  | "cybertruck"
+  | "gold-cybertruck";
+export type PlayerVehicleKind = Exclude<VehicleKind, "humvee" | "cybertruck" | "gold-cybertruck">;
 export type GameMode = "team" | "solo";
 export type Difficulty = "easy" | "normal" | "hard";
 export type CoverKind =

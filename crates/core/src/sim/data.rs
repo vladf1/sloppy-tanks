@@ -83,6 +83,11 @@ const HEAVY: VehicleStats = vehicle_stats(
     Weapon::Standard,
 );
 const HUMVEE: VehicleStats = vehicle_stats("HUNTER", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
+/// Two standard shells; it carries a weapon only because every vehicle names one.
+const CYBERTRUCK: VehicleStats =
+    vehicle_stats("CYBERTRUCK", 45.0, 1.15, 0.9, 0.95, Weapon::Standard);
+const GOLD_CYBERTRUCK: VehicleStats =
+    vehicle_stats("GOLD CYBERTRUCK", 45.0, 1.15, 0.9, 0.95, Weapon::Standard);
 
 pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
     match kind {
@@ -90,6 +95,8 @@ pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
         VehicleKind::Balanced => &BALANCED,
         VehicleKind::Heavy => &HEAVY,
         VehicleKind::Humvee => &HUMVEE,
+        VehicleKind::Cybertruck => &CYBERTRUCK,
+        VehicleKind::GoldCybertruck => &GOLD_CYBERTRUCK,
     }
 }
 
