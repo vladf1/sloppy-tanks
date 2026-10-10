@@ -199,11 +199,7 @@ pub fn aim(
 ) -> (f64, Option<(f64, f64)>) {
     if rig.first_person.enabled {
         if turn {
-            let stick = if input.aim_stick_held {
-                f64::from(input.touch_aim)
-            } else {
-                0.0
-            };
+            let stick = f64::from(input.stick_turn);
             rig.first_person.turn(input.look_pixels, stick, dt);
         }
         (rig.first_person.yaw, None)

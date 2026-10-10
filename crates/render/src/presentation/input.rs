@@ -28,22 +28,19 @@ pub mod slot {
     /// Pointer in NDC over the canvas (x right, y up, -1..1).
     pub const POINTER_X: usize = 10;
     pub const POINTER_Y: usize = 11;
-    // Slots 12 and 14 are unused.
     /// First person on touch: the drive stick's sideways push, which turns the view.
-    pub const TOUCH_AIM_X: usize = 13;
-    /// 1 while that push turns the view.
-    pub const AIM_STICK_HELD: usize = 15;
+    pub const STICK_TURN: usize = 12;
     /// Horizontal mouse travel in CSS pixels since the last frame, for first
     /// person; the page leaves it 0 while a freed cursor waits for a click.
-    pub const LOOK_PIXELS: usize = 16;
+    pub const LOOK_PIXELS: usize = 13;
     /// Zoom change in metres (shift-wheel ±2, pinch).
-    pub const ZOOM: usize = 17;
+    pub const ZOOM: usize = 14;
     /// 1 when V or the view button toggled first person.
-    pub const TOGGLE_VIEW: usize = 18;
+    pub const TOGGLE_VIEW: usize = 15;
     /// Plain wheel since the last frame: -1 previous ammo, +1 next, 0 none.
     /// Throttled here like the TypeScript scroll interval.
-    pub const WHEEL_AMMO: usize = 19;
-    pub const LENGTH: usize = 20;
+    pub const WHEEL_AMMO: usize = 16;
+    pub const LENGTH: usize = 17;
 }
 
 /// One frame of raw control state.
@@ -59,8 +56,7 @@ pub struct InputFrame {
     pub ammo_slot: u8,
     pub ammo_step: i8,
     pub pointer: (f32, f32),
-    pub touch_aim: f32,
-    pub aim_stick_held: bool,
+    pub stick_turn: f32,
     pub look_pixels: f64,
     pub zoom: f64,
     pub toggle_view: bool,
@@ -104,8 +100,7 @@ impl InputFrame {
                 get(slot::POINTER_X).clamp(-1.0, 1.0),
                 get(slot::POINTER_Y).clamp(-1.0, 1.0),
             ),
-            touch_aim: get(slot::TOUCH_AIM_X),
-            aim_stick_held: on(slot::AIM_STICK_HELD),
+            stick_turn: get(slot::STICK_TURN),
             look_pixels: get(slot::LOOK_PIXELS) as f64,
             zoom: get(slot::ZOOM) as f64,
             toggle_view: on(slot::TOGGLE_VIEW),

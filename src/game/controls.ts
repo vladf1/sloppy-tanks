@@ -303,8 +303,7 @@ export class Controls {
     out[INPUT.wheelAmmo] = this.wheelAmmo;
     out[INPUT.pointerX] = this.nx;
     out[INPUT.pointerY] = this.ny;
-    out[INPUT.touchAimX] = this.stickTurns ? touch.moveX : 0;
-    out[INPUT.aimStickHeld] = this.stickTurns && touch.moveX ? 1 : 0;
+    out[INPUT.stickTurn] = this.stickTurns ? touch.moveX : 0;
     out[INPUT.lookPixels] = this.takeLook();
     this.mine = false;
     this.ammoSelection = undefined;

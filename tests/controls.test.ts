@@ -161,15 +161,14 @@ test("phone first person turns with the stick's sideways push instead of strafin
   f.controls.touch.moveStick(1, 0.6, -0.8);
   const overhead = frame(f.controls).input;
   assert.ok(overhead[INPUT.touchMoveX] > 0.4, "overhead the stick still moves sideways");
-  assert.equal(overhead[INPUT.aimStickHeld], 0);
+  assert.equal(overhead[INPUT.stickTurn], 0);
   f.controls.stickTurns = true;
   const seated = frame(f.controls).input;
   assert.equal(seated[INPUT.touchMoveX], 0, "no strafing");
   assert.ok(seated[INPUT.touchMoveZ] < -0.5, "forward still drives");
-  assert.ok(seated[INPUT.touchAimX] > 0.4, "sideways turns the view");
-  assert.equal(seated[INPUT.aimStickHeld], 1);
+  assert.ok(seated[INPUT.stickTurn] > 0.4, "sideways turns the view");
   f.controls.touch.moveStick(1, 0, -1);
-  assert.equal(frame(f.controls).input[INPUT.aimStickHeld], 0, "a straight push does not turn");
+  assert.equal(frame(f.controls).input[INPUT.stickTurn], 0, "a straight push does not turn");
   f.dispose();
 });
 
