@@ -75,8 +75,6 @@ try {
     [
       // The nerd stats link is for ?debug pages only (checked at the end).
       "#nerd-stats",
-      ".touch-aim",
-      ".touch-fire",
       ".touch-mine",
       "#label0",
       "#objective",

@@ -75,9 +75,6 @@ try {
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
     );
-    for (const selector of [".touch-aim", ".touch-fire"]) {
-      assert.equal(await page.locator(selector).isVisible(), false, `${selector} hidden`);
-    }
     const selectors = [".touch-drive", ".touch-mine", ".bottom", ".hud-actions", ".scoreboard"];
     const rects = await Promise.all(selectors.map(box));
     rects.forEach((rect, i) => {

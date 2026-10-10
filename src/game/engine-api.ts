@@ -4,7 +4,8 @@
 import type { MapId } from "./map-options";
 
 /** Slots of the packed raw input frame (`sloppy_render::presentation::input::slot`).
- * Booleans are 0 or 1; one-shot slots count presses since the previous frame. */
+ * Booleans are 0 or 1; one-shot slots count presses since the previous frame. Slots 12
+ * and 14 are unused. */
 export const INPUT = {
   up: 0,
   down: 1,
@@ -18,9 +19,7 @@ export const INPUT = {
   ammoStep: 9,
   pointerX: 10,
   pointerY: 11,
-  touchAiming: 12,
   touchAimX: 13,
-  touchAimY: 14,
   aimStickHeld: 15,
   lookPixels: 16,
   zoom: 17,

@@ -384,8 +384,6 @@ try {
   const drive = await center(".touch-drive"),
     mine = await center(".touch-mine"),
     arena = await bob.locator("#game").boundingBox();
-  assert.equal(await bob.locator(".touch-aim").isVisible(), false, "no aim stick");
-  assert.equal(await bob.locator(".touch-fire").isVisible(), false, "no FIRE button");
   const target = { x: arena.x + arena.width * 0.7, y: arena.y + arena.height * 0.35 };
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x - 55, drive.y);

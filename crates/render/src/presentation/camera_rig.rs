@@ -25,8 +25,6 @@ const FOLLOW_HEIGHT: f64 = 0.7;
 const OVERVIEW_ZOOM: f64 = ARENA * 1.8;
 /// NDC probes of the visible ground that wrecks land inside.
 const WRECK_PROBES: [(f32, f32); 4] = [(-0.8, -0.7), (0.8, -0.7), (-0.8, 0.65), (0.8, 0.65)];
-/// Touch aim projects this many CSS pixels of stick deflection around the tank.
-const TOUCH_AIM_PIXELS: f64 = 180.0;
 
 /// The followed tank's pose, as the camera needs it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -306,20 +304,6 @@ impl CameraRig {
         self.aim_point
     }
 
-    /// Touch aim projects relative to the tank so aiming follows the screen
-    /// direction at any zoom. `stick` is the aim stick vector; `client` is the
-    /// canvas size in CSS pixels.
-    pub fn touch_aim(&mut self, position: DVec3, stick: Vec2, client: Vec2) -> Vec3 {
-        let origin = self
-            .overhead
-            .project(Vec3::new(position.x as f32, 0.0, position.z as f32));
-        let pixels = TOUCH_AIM_PIXELS as f32;
-        self.aim(Vec2::new(
-            origin.x + stick.x * pixels / client.x.max(1.0),
-            origin.y - stick.y * pixels / client.y.max(1.0),
-        ))
-    }
-
     /// Screen angle (clockwise from up, radians) of damage arriving at `at` from
     /// `origin`, or `None` when they coincide.
     pub fn damage_angle(&self, at: (f64, f64), origin: (f64, f64)) -> Option<f64> {
@@ -469,22 +453,5 @@ mod tests {
         assert_eq!(rig.preferences(), [1.0, CAMERA.max_zoom]);
         rig.restore_preferences(false, None);
         assert_eq!(rig.preferences(), [0.0, CAMERA.max_zoom]);
-    }
-
-    #[test]
-    fn touch_aim_follows_the_stick_around_the_tank() {
-        let mut rig = CameraRig::default();
-        rig.set_aspect(1024.0 / 768.0);
-        rig.update(&viewer(-20.0, 10.0), 1.0, 0.0, false, true);
-        let client = Vec2::new(1024.0, 768.0);
-        let tank = DVec3::new(-20.0, 0.0, 10.0);
-        let right = rig.touch_aim(tank, Vec2::new(1.0, 0.0), client);
-        assert!(
-            right.x > -20.0 + 3.0 && (right.z - 10.0).abs() < 1.5,
-            "{right:?}"
-        );
-        // Stick up (negative y) aims up the screen, away from the camera.
-        let up = rig.touch_aim(tank, Vec2::new(0.0, -1.0), client);
-        assert!(up.z < 10.0 - 3.0, "{up:?}");
     }
 }

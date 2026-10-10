@@ -148,7 +148,7 @@ try {
   await expectVisible(
     bob.page,
     [".touch-drive", "#pause", "#view-mode", ".scoreboard"],
-    [".touch-aim", ".touch-fire", "#network-players"],
+    ["#network-players"],
   );
   await bob.page.screenshot({ path: `${output}/join-arena.png` });
   await bob.page.locator("#pause").tap();

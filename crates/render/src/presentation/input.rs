@@ -17,7 +17,7 @@ pub mod slot {
     /// Touch drive stick, screen-relative (x right, z down), length ≤ 1.
     pub const TOUCH_MOVE_X: usize = 4;
     pub const TOUCH_MOVE_Z: usize = 5;
-    /// Primary button or the touch aim stick past its fire ring.
+    /// Primary button or a finger on the arena.
     pub const FIRE: usize = 6;
     /// Mine presses since the last frame (right button, touch ✹).
     pub const MINE: usize = 7;
@@ -28,12 +28,10 @@ pub mod slot {
     /// Pointer in NDC over the canvas (x right, y up, -1..1).
     pub const POINTER_X: usize = 10;
     pub const POINTER_Y: usize = 11;
-    /// 1 while the touch aim stick decides the aim (the mouse moved last: 0).
-    pub const TOUCH_AIMING: usize = 12;
-    /// Touch aim stick direction (unit, screen-relative, y down).
+    // Slots 12 and 14 are unused.
+    /// First person on touch: the drive stick's sideways push, which turns the view.
     pub const TOUCH_AIM_X: usize = 13;
-    pub const TOUCH_AIM_Y: usize = 14;
-    /// 1 while a finger holds the aim stick (first person turns with it).
+    /// 1 while that push turns the view.
     pub const AIM_STICK_HELD: usize = 15;
     /// Horizontal mouse travel in CSS pixels since the last frame, for first
     /// person; the page leaves it 0 while a freed cursor waits for a click.
@@ -61,8 +59,7 @@ pub struct InputFrame {
     pub ammo_slot: u8,
     pub ammo_step: i8,
     pub pointer: (f32, f32),
-    pub touch_aiming: bool,
-    pub touch_aim: (f32, f32),
+    pub touch_aim: f32,
     pub aim_stick_held: bool,
     pub look_pixels: f64,
     pub zoom: f64,
@@ -107,8 +104,7 @@ impl InputFrame {
                 get(slot::POINTER_X).clamp(-1.0, 1.0),
                 get(slot::POINTER_Y).clamp(-1.0, 1.0),
             ),
-            touch_aiming: on(slot::TOUCH_AIMING),
-            touch_aim: (get(slot::TOUCH_AIM_X), get(slot::TOUCH_AIM_Y)),
+            touch_aim: get(slot::TOUCH_AIM_X),
             aim_stick_held: on(slot::AIM_STICK_HELD),
             look_pixels: get(slot::LOOK_PIXELS) as f64,
             zoom: get(slot::ZOOM) as f64,

@@ -39,8 +39,8 @@ export class Controls {
   wheelAmmo = 0;
   /** Horizontal mouse travel in pixels since the last `takeLook()`, for first person. */
   look = 0;
-  /** Touch controls in first person: the drive stick's sideways push turns the view, as
-   * the engine's aim-stick turn would, and only its forward push drives (no strafing). */
+  /** Touch controls in first person: the drive stick's sideways push turns the view and
+   * only its forward push drives (no strafing). */
   stickTurns = false;
   /** Touch controls are on: a finger turns the first-person view, which a pointer lock
    * would freeze in place. A mouse on the same device (a touch laptop, a tablet with a
@@ -154,7 +154,6 @@ export class Controls {
       if (e.pointerType === "touch" || !this.active()) {
         return;
       }
-      this.touch.aiming = false;
       canvas.focus();
       // The click that takes the pointer back only aims; it does not fire.
       if (this.aimWaitsForClick) {
@@ -261,7 +260,6 @@ export class Controls {
   }
   /** Aim at a point on the canvas, as the mouse does (phones aim by touching it). */
   aimAt(clientX: number, clientY: number): void {
-    this.touch.aiming = false;
     const r = this.canvas.getBoundingClientRect();
     this.nx = ((clientX - r.left) / r.width) * 2 - 1;
     this.ny = 1 - ((clientY - r.top) / r.height) * 2;
@@ -288,7 +286,7 @@ export class Controls {
     out[INPUT.down] = held(this.keys, "KeyS", "ArrowDown");
     out[INPUT.left] = held(this.keys, "KeyA", "ArrowLeft");
     out[INPUT.right] = held(this.keys, "KeyD", "ArrowRight");
-    out[INPUT.touchMoveX] = touch.moveX;
+    out[INPUT.touchMoveX] = this.stickTurns ? 0 : touch.moveX;
     out[INPUT.touchMoveZ] = touch.moveZ;
     out[INPUT.fire] = this.fire || touch.fire ? 1 : 0;
     out[INPUT.mine] = this.mine ? 1 : 0;
@@ -299,16 +297,9 @@ export class Controls {
     out[INPUT.wheelAmmo] = this.wheelAmmo;
     out[INPUT.pointerX] = this.nx;
     out[INPUT.pointerY] = this.ny;
-    out[INPUT.touchAiming] = touch.aiming ? 1 : 0;
-    out[INPUT.touchAimX] = touch.aimX;
-    out[INPUT.touchAimY] = touch.aimY;
-    out[INPUT.aimStickHeld] = touch.pointers.aim === null ? 0 : 1;
+    out[INPUT.touchAimX] = this.stickTurns ? touch.moveX : 0;
+    out[INPUT.aimStickHeld] = this.stickTurns && touch.moveX ? 1 : 0;
     out[INPUT.lookPixels] = this.takeLook();
-    if (this.stickTurns) {
-      out[INPUT.touchMoveX] = 0;
-      out[INPUT.touchAimX] = touch.moveX;
-      out[INPUT.aimStickHeld] = touch.moveX ? 1 : 0;
-    }
     this.mine = false;
     this.ammoSelection = undefined;
     this.wheelAmmo = 0;

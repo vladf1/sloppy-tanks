@@ -119,9 +119,8 @@ test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and
     f.emit(f.canvas, "pointerdown", { button: 2 });
     f.emit(f.canvas, "wheel", { deltaY: 1 });
     f.controls.touch.begin("drive", 1);
-    f.controls.touch.begin("aim", 2);
-    f.controls.touch.move("drive", 1, 1, 0);
-    f.controls.touch.move("aim", 2, 1, 0);
+    f.controls.touch.begin("arena", 2);
+    f.controls.touch.moveStick(1, 1, 0);
     assert.equal(f.controls.fire, true);
     assert.equal(f.controls.wheelAmmo, 1);
     if (interruption === "clear") f.controls.clear();
@@ -132,8 +131,8 @@ test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and
     } else f.emit(f.win, "blur", {});
     const input = frame(f.controls);
     assert.deepEqual(
-      [input.moveX, input.fire, input.mine, input.wheel, input.input[INPUT.aimStickHeld], f.pauses],
-      [0, 0, 0, 0, 0, pauses],
+      [input.moveX, input.fire, input.mine, input.wheel, f.pauses],
+      [0, 0, 0, 0, pauses],
       label,
     );
     f.dispose();
@@ -143,20 +142,14 @@ test("blur, hidden, Escape and clear discard held and queued keyboard, mouse and
 test("touch joins the packed input and one-shot actions are sent once", () => {
   const f = fixture();
   f.controls.touch.begin("drive", 1);
-  f.controls.touch.begin("aim", 2);
-  f.controls.touch.move("drive", 1, 0.56, 0);
-  f.controls.touch.move("aim", 2, 1, 0);
-  // The aim stick only aims; a held FIRE button fires.
-  f.controls.touch.begin("fire", 3);
+  f.controls.touch.moveStick(1, 0.56, 0);
+  // A finger on the arena fires while it is down.
+  f.controls.touch.begin("arena", 3);
   f.controls.mine = true;
   f.controls.ammoSelection = "rocket";
   const first = frame(f.controls);
   assert.ok(Math.abs(first.input[INPUT.touchMoveX] - 0.5) < 1e-6);
-  assert.deepEqual(
-    [first.fire, first.mine, first.ammoSlot, first.input[INPUT.touchAiming]],
-    [1, 1, 3, 1],
-  );
-  assert.deepEqual([first.input[INPUT.touchAimX], first.input[INPUT.aimStickHeld]], [1, 1]);
+  assert.deepEqual([first.fire, first.mine, first.ammoSlot], [1, 1, 3]);
   const second = frame(f.controls);
   assert.deepEqual([second.fire, second.mine, second.ammoSlot], [1, 0, 0]);
   f.dispose();
@@ -165,7 +158,7 @@ test("touch joins the packed input and one-shot actions are sent once", () => {
 test("phone first person turns with the stick's sideways push instead of strafing", () => {
   const f = fixture();
   f.controls.touch.begin("drive", 1);
-  f.controls.touch.move("drive", 1, 0.6, -0.8);
+  f.controls.touch.moveStick(1, 0.6, -0.8);
   const overhead = frame(f.controls).input;
   assert.ok(overhead[INPUT.touchMoveX] > 0.4, "overhead the stick still moves sideways");
   assert.equal(overhead[INPUT.aimStickHeld], 0);
@@ -175,7 +168,7 @@ test("phone first person turns with the stick's sideways push instead of strafin
   assert.ok(seated[INPUT.touchMoveZ] < -0.5, "forward still drives");
   assert.ok(seated[INPUT.touchAimX] > 0.4, "sideways turns the view");
   assert.equal(seated[INPUT.aimStickHeld], 1);
-  f.controls.touch.move("drive", 1, 0, -1);
+  f.controls.touch.moveStick(1, 0, -1);
   assert.equal(frame(f.controls).input[INPUT.aimStickHeld], 0, "a straight push does not turn");
   f.dispose();
 });

@@ -24,7 +24,7 @@ impl FirstPersonLook {
         }
     }
 
-    /// Positive mouse pixels or aim-stick X turn to the right, which lowers yaw.
+    /// Positive mouse pixels or stick X turn to the right, which lowers yaw.
     pub fn turn(&mut self, pixels: f64, stick_x: f64, dt: f64) {
         let turn = pixels * FIRST_PERSON.mouse_radians_per_pixel
             + stick_x * FIRST_PERSON.touch_turn_radians_per_second * dt;

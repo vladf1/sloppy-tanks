@@ -521,7 +521,7 @@ impl Game {
             let angle = if look.enabled {
                 if alive {
                     let stick = if input.aim_stick_held {
-                        f64::from(input.touch_aim.0)
+                        f64::from(input.touch_aim)
                     } else {
                         0.0
                     };
@@ -529,17 +529,10 @@ impl Game {
                 }
                 look.yaw
             } else {
-                let aim = if input.touch_aiming {
-                    self.view.rig.touch_aim(
-                        glam::DVec3::new(position.0, 0.0, position.1),
-                        Vec2::new(input.touch_aim.0, input.touch_aim.1),
-                        self.client,
-                    )
-                } else {
-                    self.view
-                        .rig
-                        .aim(Vec2::new(input.pointer.0, input.pointer.1))
-                };
+                let aim = self
+                    .view
+                    .rig
+                    .aim(Vec2::new(input.pointer.0, input.pointer.1));
                 (f64::from(aim.x) - position.0).atan2(f64::from(aim.z) - position.1)
             };
             let mut steps = 0;

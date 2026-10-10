@@ -54,7 +54,7 @@
 
 use crate::events::{PendingEvent, drain_events};
 
-use glam::{DVec3, Vec2};
+use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sloppy_core::net::client::{
@@ -940,22 +940,12 @@ impl NetGame {
         let rig = &mut self.view.rig;
         let (angle, aim_point) = if rig.first_person.enabled {
             let stick = if input.aim_stick_held {
-                f64::from(input.touch_aim.0)
+                f64::from(input.touch_aim)
             } else {
                 0.0
             };
             rig.first_person.turn(input.look_pixels, stick, dt);
             (rig.first_person.yaw, None)
-        } else if input.touch_aiming {
-            let target = rig.touch_aim(
-                DVec3::new(x, 0.0, z),
-                Vec2::new(input.touch_aim.0, input.touch_aim.1),
-                self.client_size,
-            );
-            (
-                (f64::from(target.x) - x).atan2(f64::from(target.z) - z),
-                None,
-            )
         } else {
             let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
             let (tx, tz) = (f64::from(target.x), f64::from(target.z));

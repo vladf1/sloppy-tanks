@@ -34,9 +34,6 @@
 .touch-drive {
   left: max(24px, env(safe-area-inset-left));
 }
-.touch-aim {
-  right: max(24px, env(safe-area-inset-right));
-}
 .stick-base {
   position: absolute;
   inset: 18px;
@@ -70,33 +67,8 @@
   background: #102b4699;
   border-color: #e6f4ffcc;
 }
-/* Fire sits up and in from the aim stick, where the right thumb lands when it leaves
-   the stick. Neither is shown at the moment (see the end of this file). */
-.touch-fire {
-  position: absolute;
-  right: max(196px, calc(env(safe-area-inset-right) + 172px));
-  bottom: max(150px, calc(env(safe-area-inset-bottom) + 122px));
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  border: 2px solid #ffe08acc;
-  color: #3a2600;
-  background: #ffcf54c4;
-  box-shadow: 0 3px 18px #07182744;
-  font-size: 15px;
-  font-weight: 900;
-  letter-spacing: 1px;
-  pointer-events: auto;
-  touch-action: none;
-}
-.touch-fire.held {
-  background: #ffcf54;
-  border-color: #fff3c4;
-  box-shadow: 0 0 18px #ffcf5499;
-  transform: scale(0.94);
-}
-/* The mine button takes the bottom-right corner the aim stick used to hold, level
-   with the drive stick's centre, which keeps it clear of Stats for nerds below. */
+/* The mine button takes the bottom-right corner, level with the drive stick's centre,
+   which keeps it clear of Stats for nerds below. */
 .touch-mine {
   position: absolute;
   right: max(24px, env(safe-area-inset-right));
@@ -240,12 +212,6 @@
   .touch-enabled .ammo-slot b {
     font-size: 18px;
   }
-}
-
-/* Every touch device aims and fires by touching the arena (touch-controls.ts), so the
-   aim stick and FIRE button stay hidden. */
-.touch-enabled :is(.touch-aim, .touch-fire) {
-  display: none;
 }
 
 /* Phones (src/game/phone-mode.ts) keep only the drive stick: their limited edition has
