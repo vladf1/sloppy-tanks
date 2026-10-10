@@ -65,6 +65,8 @@ const SCRAP_FINISH: (f64, f64) = (0.0, 0.85);
 
 /// Decals sit this far over the board they mark, enough to win the depth test.
 const DECAL_LIFT: f64 = 0.003;
+/// Splinters on the ground rest this far up, over the floors and the harbor paving.
+const LITTER_LIFT: f64 = 0.035;
 
 /// One crate face (or a loose section's own frame): the plane's origin, the
 /// direction its boards run (`u`), up the face (`v`) and out of it (`n`).
@@ -131,12 +133,14 @@ struct Bend {
     angle: f64,
 }
 
-/// What breaks a board: the face's breaches, extra torn spans along it (board
-/// coordinates, for loose sections' ragged edges) and an optional bend.
+/// What breaks a board: the face's breaches, extra torn spans and cracks along it
+/// (board coordinates: a span, or a centre, half-length and seed) and an optional
+/// bend.
 #[derive(Default)]
 struct Damage<'a> {
     breaches: &'a [Breach],
     gaps: Vec<(f64, f64)>,
+    cracks: Vec<(f64, f64, i32)>,
     bend: Option<Bend>,
 }
 
@@ -166,7 +170,7 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
     let dir = DVec2::new(board.angle.cos(), board.angle.sin());
     let perp = DVec2::new(-dir.y, dir.x);
     let mut removed: Vec<(f64, f64)> = damage.gaps.clone();
-    let mut cracks: Vec<(f64, f64, i32)> = Vec::new();
+    let mut cracks = damage.cracks.clone();
     for breach in damage.breaches {
         let offset = DVec2::new(breach.u - board.u, breach.v - board.v);
         let (t, s) = (offset.dot(dir), offset.dot(perp));
@@ -705,6 +709,39 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
         }
     }
 
+    // Splinters blown out of each breach lie on the ground at the wall's foot.
+    for (wall, face) in faces[..4].iter().enumerate() {
+        for breach in &breaches[wall] {
+            let mut rng = random(breach.seed, 600);
+            let count = 5 + (rng.next() * 5.0) as usize;
+            for _ in 0..count {
+                let (length, width, thickness) = (
+                    rng.range(0.07, 0.38),
+                    rng.range(0.025, 0.08),
+                    rng.range(0.012, 0.02),
+                );
+                let color = match (rng.next() * 3.0) as usize {
+                    0 => RAW_WOOD,
+                    1 => TORN_WOOD,
+                    _ => tone(&mut rng),
+                };
+                let mut chip = scrap(Arc::new(box_geometry(length, thickness, width)), color);
+                chip.position = face.at(
+                    clamp(
+                        breach.u + rng.range(-0.7, 0.7),
+                        -face.half - 0.4,
+                        face.half + 0.4,
+                    ),
+                    thickness / 2.0 + LITTER_LIFT,
+                    rng.range(CRATE_BATTEN + 0.08, 1.1),
+                );
+                chip.rotation = DQuat::from_rotation_y(rng.range(0.0, PI))
+                    * DQuat::from_rotation_z(rng.range(-0.08, 0.08));
+                group.children.push(chip);
+            }
+        }
+    }
+
     // The lid: boards across the top inside a frame along its long edges.
     let lid = &faces[LID];
     let rows = (c.d / CRATE_BOARD_PITCH).round().clamp(4.0, 12.0);
@@ -713,6 +750,35 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     // The snapped strap no longer holds its end of the lid; one or two boards
     // inside the frame spring up there, pivoting at the strap that still holds.
     let sprung = 1 + (rng.next() * (rows - 2.0).max(1.0)) as usize;
+    // Hits on the walls shake the lid: its boards along a struck wall split along
+    // the grain, and a worn crate loses a piece of one by its weakest wall, a dark
+    // slot that shows from above. In lid coordinates x runs along the boards and
+    // y towards -z.
+    let mut shaken: Vec<Damage> = (0..rows as usize).map(|_| Damage::default()).collect();
+    let edge_row =
+        |v: f64| (((v + c.d / 2.0) / pitch).floor() as usize).clamp(1, rows as usize - 2);
+    for (wall, struck) in breaches[..4].iter().enumerate() {
+        for (index, breach) in struck.iter().enumerate() {
+            let mut rng = random(breach.seed, 500);
+            let (row, t) = match wall {
+                0 => (1, breach.u),
+                1 => (rows as usize - 2, -breach.u),
+                2 => (edge_row(breach.u), c.w / 2.0 - rng.range(0.2, 0.45)),
+                _ => (edge_row(-breach.u), -c.w / 2.0 + rng.range(0.2, 0.45)),
+            };
+            shaken[row]
+                .cracks
+                .push((t, rng.range(0.22, 0.45), hash(breach.seed, 501)));
+            if worn && wall == weakest && index == 0 {
+                let open = rng.range(0.22, 0.4);
+                shaken[row].gaps.push(match wall {
+                    2 => (c.w / 2.0 - open * 2.2, c.w),
+                    3 => (-c.w, -c.w / 2.0 + open * 2.2),
+                    _ => (t - open, t + open * rng.range(0.8, 1.3)),
+                });
+            }
+        }
+    }
     for row in 0..rows as usize {
         let v = -c.d / 2.0 + pitch * (row as f64 + 0.5);
         let board = Board {
@@ -732,6 +798,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             side: snapped,
             angle: if row == sprung { 0.11 } else { 0.05 },
         });
+        let shock = std::mem::take(&mut shaken[row]);
         lay_board(
             group,
             lid,
@@ -739,7 +806,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             &Damage {
                 breaches: &breaches[LID],
                 bend,
-                ..Damage::default()
+                ..shock
             },
         );
     }
@@ -1094,8 +1161,7 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, seed: u32) 
                 &board,
                 &Damage {
                     gaps: vec![(-half - 1.0, -half + left), (half - right, half + 1.0)],
-                    breaches: &[],
-                    bend: None,
+                    ..Damage::default()
                 },
             );
         }
