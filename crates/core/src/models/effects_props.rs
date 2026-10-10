@@ -20,8 +20,8 @@ use crate::scene::{Effect, Material};
 ///   `along_x = sin(direction)`, `along_z = cos(direction)`; presentation eases
 ///   `gust` in 0.15..1 and `direction` in ±0.65 rad toward new random targets
 ///   every 3–7 s with smoothstep `p*p*(3-2p)`.
-/// - per instance: `phase = z * 0.12 + x * 0.04` from the instance translation
-///   (see [`super::flag_phase`]); the instances are pure translations.
+/// - per instance: `phase = z * 0.12 + x * 0.04` from the instance translation;
+///   the instances are pure translations.
 /// - per vertex: the plane's `uv` (1.4 x 0.9 m, 16 x 6 segments).
 ///
 /// Vertex stage, all f32:
@@ -48,7 +48,7 @@ use crate::scene::{Effect, Material};
 /// model position = instance_translation + p  // the undeformed plane is replaced
 /// ```
 /// The shadow pass uses the same displaced position. The deformed cloth stays
-/// within [`super::FLAG_CLOTH_BOUNDS_RADIUS`] of its instance origin.
+/// within 2 m of its instance origin.
 pub const FLAG_CLOTH: &str = "flag-cloth";
 
 /// Burnt wreck darkening (`ageWreckMaterial` in `wreck-aging.ts`). Params:
@@ -80,15 +80,6 @@ pub const WRECK_AGING: &str = "wreck-aging";
 /// This stable spatial mask thins the shadow with the fade without a translucent
 /// shadow pass.
 pub const DEBRIS_FADE: &str = "debris-fade";
-
-/// Pickup surfaces (`pickup-visuals.ts`). Params: none.
-///
-/// Frame uniform `pickup_opacity` (TS `setPickupOpacity`: 1 in the overhead view,
-/// the first-person pickup opacity otherwise), shared by every pickup material.
-/// Alpha = material opacity * `pickup_opacity` (the materials are transparent).
-/// The pictogram faces glow through their `emissive_map` (the atlas, as in
-/// Three); everything else is standard shading.
-pub const PICKUP_SURFACE: &str = "pickup-surface";
 
 /// Seconds after death over which a wreck darkens fully.
 const WRECK_AGING_SECONDS: f64 = 2.5;

@@ -51,10 +51,6 @@ pub(super) const ROLES: [Role; 10] = [
     Role::Red,
 ];
 
-/// Each part samples a window of the tileable wear image, offset per part so
-/// neighbouring panels do not repeat the same rubbed patches.
-const UV_WINDOW_START: [f64; 2] = [0.0, 0.0];
-const UV_WINDOW_SIZE: [f64; 2] = [1.0, 1.0];
 /// Texture units per model unit when a part is small enough to allow it.
 const UV_DENSITY: f64 = 0.3;
 
@@ -64,6 +60,11 @@ pub(super) fn place(at: [f64; 3], euler: [f64; 3]) -> DMat4 {
         quat_from_euler(euler[0], euler[1], euler[2]),
         DVec3::from_array(at),
     )
+}
+
+/// A translation only.
+pub(super) fn at(position: [f64; 3]) -> DMat4 {
+    DMat4::from_translation(DVec3::from_array(position))
 }
 
 /// The frame with the given axes and origin (local x, y, z map to `x`, `y`, `z`).
@@ -137,7 +138,7 @@ impl Faces {
 /// smooth around the axis; `smooth` averages the normals at inner points instead
 /// (molded rubber). The profile runs so its outside is on the right of travel in
 /// (radius, axial), like `LatheGeometry`.
-pub(super) fn revolve(profile: &[[f64; 2]], segments: u32, phase: f64, smooth: bool) -> Mesh {
+pub(super) fn revolve(profile: &[[f64; 2]], segments: u32, smooth: bool) -> Mesh {
     let band_normal = |j: usize| {
         let d = DVec2::from(profile[j + 1]) - DVec2::from(profile[j]);
         DVec2::new(d.y, -d.x).normalize_or_zero()
@@ -160,7 +161,7 @@ pub(super) fn revolve(profile: &[[f64; 2]], segments: u32, phase: f64, smooth: b
             [own, own]
         };
         for i in 0..segments {
-            let angles = [i, i + 1].map(|k| phase + f64::from(k) * 2.0 * PI / f64::from(segments));
+            let angles = [i, i + 1].map(|k| f64::from(k) * 2.0 * PI / f64::from(segments));
             let corners = [
                 (point(profile[j], angles[0]), normal(ends[0], angles[0])),
                 (point(profile[j], angles[1]), normal(ends[0], angles[1])),
@@ -182,13 +183,7 @@ pub(super) fn revolve(profile: &[[f64; 2]], segments: u32, phase: f64, smooth: b
             }
         }
     }
-    let count = positions.len();
-    Mesh {
-        positions,
-        normals,
-        uvs: vec![[0.0; 2]; count],
-        ..Mesh::default()
-    }
+    Faces { positions, normals }.mesh()
 }
 
 /// A flat outline in local x/y (with optional holes) extruded along +z from 0 to
@@ -257,12 +252,9 @@ impl Kit {
         }
     }
 
-    /// A box with chamfered edges (`bevel` 0 gives a plain box).
+    /// A plain box.
     pub fn block(&mut self, role: Role, size: [f64; 3], transform: DMat4) {
-        let [w, h, d] = size;
-        let mut mesh = slab(&rect(0.0, 0.0, w, h), &[], d, 0.0);
-        mesh.translate(0.0, 0.0, -d / 2.0);
-        self.add(role, &mesh, transform);
+        self.chamfered(role, size, 0.0, transform);
     }
 
     /// A box with chamfered edges.
@@ -380,7 +372,7 @@ fn moved(mut mesh: Mesh, transform: DMat4) -> Mesh {
 
 /// Planar UVs for one part: each face is projected onto the plane it faces most
 /// (sides use z/y, tops z/x, ends x/y), scaled so the whole part fits the
-/// texture window, and shifted by a per-part offset so neighbours differ.
+/// texture, and shifted by a per-part offset so neighbours differ.
 fn part_uvs(mesh: &mut Mesh, index: usize) {
     let points: Vec<DVec3> = mesh.positions.iter().map(|p| widen(*p)).collect();
     let min = points.iter().copied().fold(DVec3::INFINITY, DVec3::min);
@@ -388,13 +380,13 @@ fn part_uvs(mesh: &mut Mesh, index: usize) {
     let extent = max - min;
     let (u_extent, v_extent) = (extent.z.max(extent.x), extent.y.max(extent.x));
     let scale = UV_DENSITY
-        .min(UV_WINDOW_SIZE[0] / u_extent.max(1e-6))
-        .min(UV_WINDOW_SIZE[1] / v_extent.max(1e-6));
-    // A golden-ratio walk spreads the parts' samples over the window.
+        .min(1.0 / u_extent.max(1e-6))
+        .min(1.0 / v_extent.max(1e-6));
+    // A golden-ratio walk spreads the parts' samples over the texture.
     let walk = |k: f64| (index as f64 * k).fract();
     let start = [
-        UV_WINDOW_START[0] + walk(0.618_034) * (UV_WINDOW_SIZE[0] - u_extent * scale),
-        UV_WINDOW_START[1] + walk(0.754_878) * (UV_WINDOW_SIZE[1] - v_extent * scale),
+        walk(0.618_034) * (1.0 - u_extent * scale),
+        walk(0.754_878) * (1.0 - v_extent * scale),
     ];
     mesh.uvs = points
         .iter()

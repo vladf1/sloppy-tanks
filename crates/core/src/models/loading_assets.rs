@@ -1,7 +1,7 @@
 //! Replaces `loading-assets.ts`, which waited for whatever textures scenery
 //! construction had started loading: here the textures a scene needs are read
-//! from its built node tree, so the page can fetch (or generate) them before the
-//! first frame.
+//! from its built node tree, so presentation can generate them before the first
+//! frame.
 
 use crate::scene::{Node, TextureSource};
 

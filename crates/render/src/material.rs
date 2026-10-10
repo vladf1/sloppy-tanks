@@ -6,29 +6,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use sloppy_core::scene::{Effect, Material, Shading, Side, TextureRef};
-
-/// Materials whose paint can be baked into vertex colors: opaque standard surfaces
-/// without per-pixel alpha, vertex colors, an emissive map or custom shading
-/// (the models' `vertex_material` rule).
-pub fn is_paintable(material: &Material) -> bool {
-    material.shading == Shading::Standard
-        && !material.transparent
-        && material.opacity == 1.0
-        && material.alpha_test == 0.0
-        && !material.vertex_colors
-        && material.emissive_map.is_none()
-        && material.effect == Effect::None
-}
-
-/// The shared white, vertex-colored stand-in for a paintable material.
-pub fn painted(material: &Material) -> Material {
-    Material {
-        color: sloppy_core::scene::Color(0xffffff),
-        vertex_colors: true,
-        ..material.clone()
-    }
-}
+pub use sloppy_core::models::{is_paintable, painted};
+use sloppy_core::scene::{Effect, Material, Side, TextureRef};
 
 fn hash_texture(texture: Option<&TextureRef>, state: &mut impl Hasher) {
     match texture {

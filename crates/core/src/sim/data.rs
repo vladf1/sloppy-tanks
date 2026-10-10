@@ -47,6 +47,8 @@ pub struct VehicleStats {
     pub speed: f64,
     pub speed_kmh: f64,
     pub mass: f64,
+    /// Uniform model scale: real vehicle proportions fitted to the arena's 1.95 m
+    /// reference width.
     pub scale: f64,
     pub weapon: Weapon,
 }

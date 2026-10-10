@@ -2,15 +2,14 @@
 //! with pictograms from one atlas.
 //!
 //! Pickup materials are always transparent so first person can fade them through
-//! the [`super::effects_props::PICKUP_SURFACE`] opacity uniform without switching
-//! pipelines mid-round; at full opacity they look opaque.
+//! the instance opacity without switching pipelines mid-round; at full opacity
+//! they look opaque.
 
 use std::sync::Arc;
 
-use super::effects_props::PICKUP_SURFACE;
 use super::model_primitives::Cache;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
-use crate::scene::{Color, Effect, Material, Node, TextureRef, Wrap};
+use crate::scene::{Color, Material, Node, TextureRef, Wrap};
 use crate::sim::ammunition::is_special_ammo;
 use crate::sim::types::PickupKind;
 
@@ -83,10 +82,6 @@ fn hardware_material() -> Arc<Material> {
         roughness: 0.55,
         metalness: 0.5,
         transparent: true,
-        effect: Effect::Custom {
-            name: PICKUP_SURFACE,
-            params: Vec::new(),
-        },
         ..Material::default()
     })
 }
@@ -109,10 +104,6 @@ fn face_material() -> Arc<Material> {
             emissive_intensity: FACE_EMISSIVE_INTENSITY,
             tone_mapped: false,
             transparent: true,
-            effect: Effect::Custom {
-                name: PICKUP_SURFACE,
-                params: Vec::new(),
-            },
             ..Material::default()
         }
     })

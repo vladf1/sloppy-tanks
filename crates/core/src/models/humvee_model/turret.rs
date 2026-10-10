@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 use glam::DVec3;
 
 use super::LAUNCHER_Y;
-use super::kit::{Kit, Role, frame, place, revolve, slab};
+use super::kit::{Kit, Role, at, frame, place, revolve, slab};
 
 /// The ring sits on the roof plate.
 const RING_BASE: f64 = 1.745;
@@ -75,14 +75,8 @@ pub(super) fn turret_kit() -> Kit {
         [0.56, RING_BASE],
     ];
     let up = place([0.0; 3], [0.0, 0.0, PI / 2.0]);
-    kit.add(Role::Shade, &revolve(&ring, 24, 0.0, false), up);
-    kit.cylinder(
-        Role::Gap,
-        0.56,
-        0.004,
-        24,
-        place([0.0, 1.765, 0.0], [0.0; 3]),
-    );
+    kit.add(Role::Shade, &revolve(&ring, 24, false), up);
+    kit.cylinder(Role::Gap, 0.56, 0.004, 24, at([0.0, 1.765, 0.0]));
     for plate in &PLATES {
         let bearings: &[f64] = if plate.bearing == 0.0 {
             &[0.0]
@@ -131,7 +125,7 @@ fn shield(kit: &mut Kit, plate: &Plate, bearing: f64) {
         to_plate,
     );
     if let Some((half, bottom, top)) = plate.window {
-        let pane = place([0.0, (bottom + top) / 2.0, PLATE_THICKNESS * 0.4], [0.0; 3]);
+        let pane = at([0.0, (bottom + top) / 2.0, PLATE_THICKNESS * 0.4]);
         kit.block(
             Role::Glass,
             [half * 2.0 + 0.02, top - bottom + 0.02, 0.012],
@@ -139,7 +133,7 @@ fn shield(kit: &mut Kit, plate: &Plate, bearing: f64) {
         );
     }
     // Bolted stiffener along the plate's foot.
-    let foot = place([0.0, 0.03, PLATE_THICKNESS + 0.01], [0.0; 3]);
+    let foot = at([0.0, 0.03, PLATE_THICKNESS + 0.01]);
     kit.block(
         Role::Shade,
         [plate.width - 0.06, 0.04, 0.02],
@@ -150,34 +144,19 @@ fn shield(kit: &mut Kit, plate: &Plate, bearing: f64) {
 /// Traversing unit under the tube, the ITAS sight on its left and the
 /// fire-control box on its right.
 fn launcher_mount(kit: &mut Kit) {
-    kit.cylinder(
-        Role::Steel,
-        0.05,
-        0.14,
-        10,
-        place([0.0, 1.85, 0.32], [0.0; 3]),
-    );
-    kit.chamfered(
-        Role::Shade,
-        [0.22, 0.16, 0.3],
-        0.015,
-        place([0.0, 1.96, 0.32], [0.0; 3]),
-    );
+    kit.cylinder(Role::Steel, 0.05, 0.14, 10, at([0.0, 1.85, 0.32]));
+    kit.chamfered(Role::Shade, [0.22, 0.16, 0.3], 0.015, at([0.0, 1.96, 0.32]));
     // Elevation and traverse handles reach back to the gunner.
     for x in [-0.14, 0.14] {
-        kit.block(
-            Role::Steel,
-            [0.025, 0.025, 0.24],
-            place([x, 1.95, 0.08], [0.0; 3]),
-        );
-        kit.cylinder(Role::Gap, 0.022, 0.1, 8, place([x, 1.95, -0.04], [0.0; 3]));
+        kit.block(Role::Steel, [0.025, 0.025, 0.24], at([x, 1.95, 0.08]));
+        kit.cylinder(Role::Gap, 0.022, 0.1, 8, at([x, 1.95, -0.04]));
     }
-    let sight = place([0.27, 1.99, 0.36], [0.0; 3]);
+    let sight = at([0.27, 1.99, 0.36]);
     kit.rounded(Role::Shade, [0.24, 0.26, 0.5], 0.03, sight);
     kit.block(
         Role::Glass,
         [0.17, 0.11, 0.012],
-        sight * place([0.0, 0.035, 0.252], [0.0; 3]),
+        sight * at([0.0, 0.035, 0.252]),
     );
     let lens = sight * place([0.0, -0.075, 0.25], [PI / 2.0, 0.0, 0.0]);
     kit.cylinder(Role::Steel, 0.05, 0.02, 14, lens);
@@ -192,7 +171,7 @@ fn launcher_mount(kit: &mut Kit) {
         kit.block(
             Role::Shade,
             [0.012, 0.12, 0.08],
-            sight * place([x, 0.05, 0.285], [0.0; 3]),
+            sight * at([x, 0.05, 0.285]),
         );
     }
     let eyepiece = sight * place([-0.03, 0.02, -0.29], [PI / 2.0, 0.0, 0.0]);
@@ -201,13 +180,9 @@ fn launcher_mount(kit: &mut Kit) {
         Role::Shade,
         [0.16, 0.2, 0.26],
         0.012,
-        place([-0.22, 1.93, 0.3], [0.0; 3]),
+        at([-0.22, 1.93, 0.3]),
     );
-    kit.block(
-        Role::Gap,
-        [0.1, 0.06, 0.01],
-        place([-0.22, 1.97, 0.432], [0.0; 3]),
-    );
+    kit.block(Role::Gap, [0.1, 0.06, 0.01], at([-0.22, 1.97, 0.432]));
 }
 
 /// The launch tube along +z with its collars, flared rear and open mouth.
@@ -234,28 +209,24 @@ pub(super) fn barrel_kit() -> Kit {
         [0.104, 1.5],
     ];
     let along_z = place([0.0, LAUNCHER_Y, 0.0], [0.0, -PI / 2.0, 0.0]);
-    kit.add(Role::Shade, &revolve(&tube, 16, 0.0, false), along_z);
+    kit.add(Role::Shade, &revolve(&tube, 16, false), along_z);
     let mouth = place([0.0, LAUNCHER_Y, 1.505], [PI / 2.0, 0.0, 0.0]);
     kit.cylinder(Role::Gap, 0.104, 0.01, 16, mouth);
     // Carrying handle on top and the umbilical connector at the rear.
     let top = LAUNCHER_Y + 0.118;
     for z in [0.3, 0.62] {
-        kit.block(
-            Role::Steel,
-            [0.03, 0.07, 0.03],
-            place([0.0, top + 0.03, z], [0.0; 3]),
-        );
+        kit.block(Role::Steel, [0.03, 0.07, 0.03], at([0.0, top + 0.03, z]));
     }
     kit.block(
         Role::Steel,
         [0.03, 0.025, 0.36],
-        place([0.0, top + 0.07, 0.46], [0.0; 3]),
+        at([0.0, top + 0.07, 0.46]),
     );
     kit.chamfered(
         Role::Gap,
         [0.08, 0.06, 0.1],
         0.01,
-        place([-0.12, LAUNCHER_Y - 0.02, -0.3], [0.0; 3]),
+        at([-0.12, LAUNCHER_Y - 0.02, -0.3]),
     );
     kit
 }

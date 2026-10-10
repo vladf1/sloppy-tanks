@@ -118,12 +118,6 @@ pub const DEBRIS_FADE: EffectDefinition = EffectDefinition {
     )
 };
 
-/// Pickup materials faded by the pickup opacity (`pickup-visuals.ts`).
-pub const PICKUP_SURFACE: EffectDefinition = effect(
-    effects_props::PICKUP_SURFACE,
-    include_str!("../shaders/effects/pickup_surface.wgsl"),
-);
-
 /// Meadow tufts swaying in the wind (`village-vegetation.ts`).
 pub const MEADOW_SWAY: EffectDefinition = effect(
     effects_scenery::MEADOW_SWAY,
@@ -175,7 +169,7 @@ pub const SAND_DRIFT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
     WAVE,
     PULSE,
     PUFF,
@@ -184,7 +178,6 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
     DUST,
     WRECK_AGING,
     DEBRIS_FADE,
-    PICKUP_SURFACE,
     MEADOW_SWAY,
     FOLIAGE,
     CHIMNEY_SMOKE,

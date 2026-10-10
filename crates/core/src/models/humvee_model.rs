@@ -6,17 +6,13 @@
 //! `muzzle` marker at the launcher mouth.
 //!
 //! Each assembly is merged once into one shared mesh per paint role (`kit`), so
-//! the body, a wheel and the launcher cost a few meshes each; every team and the
-//! wreck reuse the same geometry with their own palette.
+//! the body, a wheel and the launcher cost a few meshes each; every team reuses
+//! the same geometry with its own palette.
 
 use std::sync::{Arc, OnceLock};
 
-use glam::DVec3;
-
 use super::model_primitives::{material, paint, put, shadowed};
-use super::tank_model::{DARK, STEEL, WRECK_PAINT, WRECK_STEEL, shade_of};
-use super::tank_surfaces::{Finish, apply_tank_surface, vehicle_paint};
-use super::{Team, VehicleKind, part};
+use super::{VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
@@ -31,17 +27,17 @@ use kit::Role;
 pub const HUMVEE_BODY_LENGTH_SCALE: f64 = 1.16;
 /// Height of the roof launcher tube's axis.
 const LAUNCHER_Y: f64 = 2.13;
-/// Wheel centres: track half-width, axle height and (unstretched) axle stations.
+/// Wheel centres: track half-width, axle height and (unstretched) axle stations,
+/// which the body's wheel openings follow.
 const WHEEL_X: f64 = 1.0;
 const AXLE_Y: f64 = 0.25;
-const AXLES: [f64; 2] = [-1.32, 1.3];
+const REAR_AXLE: f64 = -1.32;
+const FRONT_AXLE: f64 = 1.3;
 /// The launcher mouth, where missiles appear.
 const MUZZLE_Z: f64 = 1.7;
 
-const WRECK_RUBBER: u32 = 0x1d252b;
 /// Tire rubber: dark grey, light enough for the sidewall's shape to show.
 const RUBBER: u32 = 0x25292a;
-const WRECK_GLASS: u32 = 0x1a2328;
 const GLASS: u32 = 0x29444b;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
@@ -71,35 +67,27 @@ fn assemblies() -> &'static Assemblies {
     })
 }
 
-/// Paint for one Humvee: team or burnt colors.
+/// Paint for one Humvee: its team's paint, shade and steel.
 struct Palette {
     base: u32,
     shade: u32,
     steel: u32,
-    rubber: u32,
-    glass: u32,
-    wreck: bool,
 }
 
 impl Palette {
-    /// Lamps go dark and canvas burns on a wreck.
-    fn lit(&self, color: u32) -> u32 {
-        if self.wreck { self.shade } else { color }
-    }
-
     fn material(&self, role: Role) -> Arc<Material> {
         let glossy = |color| material(color, GLASS_METALNESS, GLASS_ROUGHNESS);
         match role {
             Role::Paint => paint(self.base),
             Role::Shade => paint(self.shade),
             Role::Steel => paint(self.steel),
-            Role::Rubber => material(self.rubber, 0.0, MATTE_ROUGHNESS),
+            Role::Rubber => material(RUBBER, 0.0, MATTE_ROUGHNESS),
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
-            Role::Canvas => material(self.lit(CANVAS), 0.0, MATTE_ROUGHNESS),
-            Role::Glass => glossy(self.glass),
-            Role::Headlamp => glossy(self.lit(HEADLAMP)),
-            Role::Amber => glossy(self.lit(AMBER)),
-            Role::Red => glossy(self.lit(RED_LAMP)),
+            Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
+            Role::Glass => glossy(GLASS),
+            Role::Headlamp => glossy(HEADLAMP),
+            Role::Amber => glossy(AMBER),
+            Role::Red => glossy(RED_LAMP),
         }
     }
 
@@ -111,30 +99,20 @@ impl Palette {
     }
 }
 
-/// `humveeModel(team, wreck)`.
-pub fn humvee_model(team: Team, wreck: bool) -> Node {
-    let base = if wreck {
-        WRECK_PAINT
-    } else {
-        vehicle_paint(team)
-    };
-    let palette = Palette {
-        base,
-        shade: if wreck { DARK } else { shade_of(base) },
-        steel: if wreck { WRECK_STEEL } else { STEEL },
-        rubber: if wreck { WRECK_RUBBER } else { RUBBER },
-        glass: if wreck { WRECK_GLASS } else { GLASS },
-        wreck,
-    };
+/// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the vehicle
+/// scale and worn finish.
+pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
+    let [base, shade, steel] = colors;
+    let palette = Palette { base, shade, steel };
     let shared = assemblies();
-    let mut root = Node::group(VehicleKind::Humvee.name());
+    let mut root = Node::group(VehicleKind::Humvee.as_str());
     let mut hull = Node::group(part::HULL);
     hull.scale.z = HUMVEE_BODY_LENGTH_SCALE;
     let mut track_group = Node::group(part::TRACK_GROUP);
     // Wheels retain their circular section while the shell and wheelbase lengthen.
     track_group.scale.z = 1.0 / HUMVEE_BODY_LENGTH_SCALE;
     for side in [-1.0, 1.0] {
-        for z in AXLES {
+        for z in [REAR_AXLE, FRONT_AXLE] {
             // The left wheels are the right ones turned half a revolution.
             let mut wheel = Node::group("");
             if side < 0.0 {
@@ -154,19 +132,6 @@ pub fn humvee_model(team: Team, wreck: bool) -> Node {
     hull.children.extend(palette.parts(&shared.body));
     root.children.push(hull);
     root.children.push(turret(&palette));
-    root.scale = DVec3::splat(VehicleKind::Humvee.scale());
-    let finish = if wreck {
-        Finish::Wrecked
-    } else {
-        Finish::Fresh {
-            steel: palette.steel,
-        }
-    };
-    apply_tank_surface(
-        &mut root,
-        &[palette.base, palette.shade, palette.steel],
-        finish,
-    );
     root
 }
 
@@ -196,6 +161,7 @@ mod tests {
     use glam::DMat4;
 
     use super::*;
+    use crate::models::{Team, tank_model};
 
     /// Triangles allowed for a whole Humvee: body, four wheels, shields, launcher.
     const TRIANGLE_BUDGET: usize = 15_000;
@@ -216,16 +182,15 @@ mod tests {
 
     #[test]
     fn humvee_stays_within_its_triangle_and_mesh_budget() {
-        let (triangles, meshes) = meshes(&humvee_model(Team::Blue, false));
+        let (triangles, meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
         assert!(triangles < TRIANGLE_BUDGET, "{triangles} triangles");
         let distinct: HashSet<_> = meshes.into_iter().collect();
         assert!(distinct.len() <= MESH_BUDGET, "{} meshes", distinct.len());
     }
 
     #[test]
-    fn teams_and_wrecks_share_one_geometry() {
-        let blue = meshes(&humvee_model(Team::Blue, false));
-        assert_eq!(blue, meshes(&humvee_model(Team::Red, false)));
-        assert_eq!(blue, meshes(&humvee_model(Team::Red, true)));
+    fn teams_share_one_geometry() {
+        let blue = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
+        assert_eq!(blue, meshes(&tank_model(VehicleKind::Humvee, Team::Red)));
     }
 }

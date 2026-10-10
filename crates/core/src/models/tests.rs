@@ -1,6 +1,7 @@
-//! Vehicle models compared with the TypeScript/Three.js implementation. Expected
-//! values were printed by running `tankModel`, `tankHull`/`tankVisualMuzzle` and
-//! `wreckModel` (with the browser's painted materials) in Node.
+//! Vehicle model checks. The hull bounds and muzzles still match what the
+//! TypeScript `tankHull`/`tankVisualMuzzle` measured in Node; the mesh counts and
+//! wreck batch hashes are golden values of the current Rust models, regenerated
+//! when a vehicle model changes on purpose.
 
 use glam::DVec3;
 
@@ -72,7 +73,7 @@ fn tank_dimensions_match_typescript() {
 }
 
 #[test]
-fn vehicle_models_match_typescript_counts() {
+fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
         (VehicleKind::Scout, 0, 197, 23392, 7868, 159, 9, 3, 28),
@@ -86,7 +87,7 @@ fn vehicle_models_match_typescript_counts() {
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
-        assert_eq!(model.name, kind.name());
+        assert_eq!(model.name, kind.as_str());
         assert_eq!(
             counts(&model),
             (meshes, vertices, triangles),
@@ -108,7 +109,7 @@ fn vehicle_models_match_typescript_counts() {
         (VehicleKind::Humvee, (30, 43644, 14548)),
     ];
     for (kind, expected) in open {
-        let model = tank_model_variant(kind, Team::Blue, false, true);
+        let model = tank_model_variant(kind, Team::Blue, true);
         assert_eq!(counts(&model), expected, "{kind:?} with open turret ring");
     }
 }
@@ -165,7 +166,7 @@ const NORMAL_CHECKSUM_TOLERANCE: f64 = 1e-3;
 type BatchSummary = (usize, u32, f64, u32, u32);
 
 #[test]
-fn wreck_batches_match_typescript() {
+fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[

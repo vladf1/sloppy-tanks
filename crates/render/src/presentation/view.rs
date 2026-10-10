@@ -11,7 +11,7 @@ use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, custom_floor,
-    custom_spawn_pads, flags_model, part, pickup_cube, tank_model, tank_visual_muzzle,
+    custom_spawn_pads, flags_model, part, pickup_cube, tank_model,
     timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
     wreck_brightness, wreck_model,
 };
@@ -22,6 +22,7 @@ use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
+use sloppy_core::sim::tank_dimensions::tank_visual_muzzle;
 use sloppy_core::sim::timber_layout::{TimberPart, TimberWall, timber_parts};
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;

@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use glam::DVec3;
+
 use crate::geometry::{Mesh, box_geometry};
 use crate::scene::{Material, Node, TextureRef, Wrap};
 
-use super::model_primitives::{Cache, shadowed};
+use super::model_primitives::{Cache, shadowed, span_between};
 
 /// The two harbor surface tiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -78,4 +80,11 @@ pub fn harbor_box(w: f64, h: f64, d: f64, color: u32, kind: HarborSurface) -> No
 /// `harborBox(w, h, d, color)` in painted steel.
 pub fn steel_box(w: f64, h: f64, d: f64, color: u32) -> Node {
     harbor_box(w, h, d, color, HarborSurface::Steel)
+}
+
+/// `beam(group, a, b, width, color)`: a painted steel member between two points.
+pub fn steel_beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
+    let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
+    let mesh = steel_box(width, from.distance(to), width, color);
+    group.children.push(span_between(mesh, from, to));
 }

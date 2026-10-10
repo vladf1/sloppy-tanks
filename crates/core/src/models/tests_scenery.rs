@@ -30,6 +30,8 @@ use std::fmt::Write as _;
 use glam::DMat4;
 
 use super::effects_scenery::{CHIMNEY_SMOKE, QUARRY_SOIL, SAND_DRIFT, WATER};
+use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
+use super::quarry_surfaces::{sand_drift_material, sandstone_footing, sandstone_material};
 use super::*;
 use crate::geometry::VERTEX_ALPHA;
 use crate::scene::{Effect, Material, Node, Shading, Side, TextureRef, TextureSource};
