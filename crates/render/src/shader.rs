@@ -9,8 +9,10 @@
 //! effects. The cheap per-material features ([`MaterialFeatures`]) are uniform
 //! branches, and the side a material draws follows from the pipeline's culling.
 
-use sloppy_core::scene::{Blending, Material, Shading, Side};
+use bytemuck::{Pod, Zeroable};
+use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
 
+use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
 use crate::material::shadow_side;
 
@@ -155,6 +157,61 @@ impl MaterialFeatures {
                 .filter(|&(_, used)| used)
                 .fold(0, |bits, (bit, _)| bits | bit),
         )
+    }
+}
+
+/// Byte offset of `MaterialUniform::params`, for pools that animate them. Taken
+/// from the layout, so a field added before `params` cannot send the pools' writes
+/// into another field.
+pub const MATERIAL_PARAMS_OFFSET: u64 = std::mem::offset_of!(MaterialUniform, params) as u64;
+
+/// `material.wgsl`'s `MaterialUniform`, field for field (checked against naga's
+/// layout of the WGSL struct in the tests).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct MaterialUniform {
+    pub color: [f32; 4],
+    pub emissive: [f32; 4],
+    pub surface: [f32; 4],
+    pub map_transform: [f32; 4],
+    pub bump_transform: [f32; 4],
+    pub emissive_transform: [f32; 4],
+    pub params: [[f32; 4]; 4],
+    /// x: `MaterialFeatures` bits.
+    pub features: [u32; 4],
+}
+
+impl MaterialUniform {
+    pub fn of(material: &Material) -> Self {
+        let [r, g, b] = hex_to_linear(material.color.0);
+        let [er, eg, eb] = hex_to_linear(material.emissive.0);
+        let i = material.emissive_intensity;
+        let transform = |t: Option<&TextureRef>| {
+            t.map_or([1.0, 1.0, 0.0, 0.0], |t| {
+                [t.repeat[0], t.repeat[1], t.offset[0], t.offset[1]]
+            })
+        };
+        let mut params = [[0.0; 4]; 4];
+        if let Effect::Custom { params: values, .. } = &material.effect {
+            for (i, value) in values.iter().take(16).enumerate() {
+                params[i / 4][i % 4] = *value;
+            }
+        }
+        Self {
+            color: [r, g, b, material.opacity],
+            emissive: [er * i, eg * i, eb * i, 0.0],
+            surface: [
+                material.roughness,
+                material.metalness,
+                material.alpha_test,
+                material.bump_scale,
+            ],
+            map_transform: transform(material.map.as_ref()),
+            bump_transform: transform(material.bump_map.as_ref()),
+            emissive_transform: transform(material.emissive_map.as_ref()),
+            params,
+            features: [MaterialFeatures::of(material).0, 0, 0, 0],
+        }
     }
 }
 
@@ -552,8 +609,6 @@ pub(crate) mod webgl_check {
 
 #[cfg(test)]
 mod tests {
-    use sloppy_core::scene::TextureRef;
-
     use super::webgl_check::{check_variant, translate_for_webgl, validate};
     use super::*;
 
@@ -708,6 +763,51 @@ mod tests {
             let declaration = format!("const MATERIAL_{name}: u32 = {bit}u;");
             assert!(MATERIAL_WGSL.contains(&declaration), "{declaration}");
         }
+    }
+
+    #[test]
+    fn material_uniform_matches_the_wgsl_layout() {
+        use std::mem::offset_of;
+
+        let code = shader_source(&ShaderKey::default(), &EffectRegistry::default());
+        let module = naga::front::wgsl::parse_str(&code).expect("valid WGSL");
+        let (members, span) = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { members, span }
+                    if ty.name.as_deref() == Some("MaterialUniform") =>
+                {
+                    Some((members, *span))
+                }
+                _ => None,
+            })
+            .expect("the surface shader declares MaterialUniform");
+        let wgsl: Vec<(&str, usize)> = members
+            .iter()
+            .map(|member| (member.name.as_deref().unwrap_or(""), member.offset as usize))
+            .collect();
+        let rust = [
+            ("color", offset_of!(MaterialUniform, color)),
+            ("emissive", offset_of!(MaterialUniform, emissive)),
+            ("surface", offset_of!(MaterialUniform, surface)),
+            ("map_transform", offset_of!(MaterialUniform, map_transform)),
+            (
+                "bump_transform",
+                offset_of!(MaterialUniform, bump_transform),
+            ),
+            (
+                "emissive_transform",
+                offset_of!(MaterialUniform, emissive_transform),
+            ),
+            ("params", offset_of!(MaterialUniform, params)),
+            ("features", offset_of!(MaterialUniform, features)),
+        ];
+        assert_eq!(wgsl, rust);
+        assert_eq!(span as usize, size_of::<MaterialUniform>());
+        // The pools' per-frame effect clocks land where the effects read `params`.
+        let (_, params) = wgsl.iter().find(|(name, _)| *name == "params").unwrap();
+        assert_eq!(MATERIAL_PARAMS_OFFSET, *params as u64);
     }
 
     #[test]

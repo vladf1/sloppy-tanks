@@ -1,8 +1,9 @@
 //! WebGPU bind group layouts, mesh page buffers and material bind groups.
 
 use super::Gpu;
-use crate::gpu::resources::{MATERIAL_PARAMS_OFFSET, MaterialTextures, MaterialUniform};
+use crate::gpu::resources::MaterialTextures;
 use crate::mesh_pages::PageFamily;
+use crate::shader::{MATERIAL_PARAMS_OFFSET, MaterialUniform};
 
 /// Bind group layouts shared by every pipeline.
 pub struct Layouts {

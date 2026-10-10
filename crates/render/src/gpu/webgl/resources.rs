@@ -8,11 +8,10 @@ use glow::{HasContext, PixelUnpackData};
 use super::context::{Gpu, block, unit};
 use super::textures::texel_storage;
 use crate::draw_list::{InstanceRecord, RECORD_TEXELS, RECORDS_PER_ROW};
-use crate::gpu::resources::{
-    EXTRA_TEXTURE_SLOTS, MATERIAL_PARAMS_OFFSET, MaterialTextures, MaterialUniform,
-};
+use crate::gpu::resources::{EXTRA_TEXTURE_SLOTS, MaterialTextures};
 use crate::mesh_pages::PageFamily;
 use crate::model::Vertex;
+use crate::shader::{MATERIAL_PARAMS_OFFSET, MaterialUniform};
 use crate::shadow_merge::ShadowVertex;
 
 /// The merged casters' per-instance record base (`shadow_merged.wgsl` `base`).

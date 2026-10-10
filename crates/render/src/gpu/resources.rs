@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Effect, Material, TextureRef};
@@ -17,7 +16,6 @@ use sloppy_core::scene::{Effect, Material, TextureRef};
 use super::Slab;
 use super::backend::{Gpu, MaterialBinding, PageBuffers, Sampler, TextureView};
 use crate::camera::Sphere;
-use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
 use crate::gpu::textures::TextureStore;
 use crate::mesh_pages::{
@@ -25,7 +23,7 @@ use crate::mesh_pages::{
     stream_shared_indices,
 };
 use crate::model::MeshData;
-use crate::shader::MaterialFeatures;
+use crate::shader::MaterialUniform;
 use crate::shadow_merge::ShadowGroup;
 
 /// Secondary effect textures a material binds (`Material::extra_textures`).
@@ -403,58 +401,6 @@ impl MeshStore {
 
     pub fn buffers(&self) -> usize {
         self.plan.buffer_count()
-    }
-}
-
-/// Byte offset of `MaterialUniform::params`, for pools that animate them.
-pub const MATERIAL_PARAMS_OFFSET: u64 = 5 * 16;
-
-/// WGSL `MaterialUniform`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MaterialUniform {
-    pub color: [f32; 4],
-    pub emissive: [f32; 4],
-    pub surface: [f32; 4],
-    pub map_transform: [f32; 4],
-    pub bump_transform: [f32; 4],
-    pub emissive_transform: [f32; 4],
-    pub params: [[f32; 4]; 4],
-    /// x: `MaterialFeatures` bits.
-    pub features: [u32; 4],
-}
-
-impl MaterialUniform {
-    pub fn of(material: &Material) -> Self {
-        let [r, g, b] = hex_to_linear(material.color.0);
-        let [er, eg, eb] = hex_to_linear(material.emissive.0);
-        let i = material.emissive_intensity;
-        let transform = |t: Option<&TextureRef>| {
-            t.map_or([1.0, 1.0, 0.0, 0.0], |t| {
-                [t.repeat[0], t.repeat[1], t.offset[0], t.offset[1]]
-            })
-        };
-        let mut params = [[0.0; 4]; 4];
-        if let Effect::Custom { params: values, .. } = &material.effect {
-            for (i, value) in values.iter().take(16).enumerate() {
-                params[i / 4][i % 4] = *value;
-            }
-        }
-        Self {
-            color: [r, g, b, material.opacity],
-            emissive: [er * i, eg * i, eb * i, 0.0],
-            surface: [
-                material.roughness,
-                material.metalness,
-                material.alpha_test,
-                material.bump_scale,
-            ],
-            map_transform: transform(material.map.as_ref()),
-            bump_transform: transform(material.bump_map.as_ref()),
-            emissive_transform: transform(material.emissive_map.as_ref()),
-            params,
-            features: [MaterialFeatures::of(material).0, 0, 0, 0],
-        }
     }
 }
 
