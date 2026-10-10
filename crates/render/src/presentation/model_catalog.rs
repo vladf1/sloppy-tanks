@@ -1,13 +1,9 @@
-//! The one adapter between presentation and the cover, tree, prop and scenery
-//! model builders in `sloppy_core::models`.
+//! The adapter between presentation and the cover, tree and scenery model
+//! builders in `sloppy_core::models`.
 //!
 //! - [`cover_model`] ← `models::cover_model(cover, Full, stage)`, batched like
-//!   `physicalCoverModel` in `presentation.ts`; trees name their crown, cut face
-//!   and shedding boughs ([`TreeParts`]).
-//! - [`timber_part_model`] ← `models::timber_part_model(part)`.
-//! - [`tower_piece_model`] ← `models::tower_piece_model(piece, color)`.
-//! - [`surface_debris_piece`] ← `siding_box` / `trunk_fragment` (`presentation.ts`
-//!   debris meshes).
+//!   `physicalCoverModel` in `presentation.ts`; trees list their shedding boughs
+//!   ([`TreeParts`]).
 //! - [`scenery`] ← `models::build_scenery(theme)`, split into what bakes static,
 //!   the parts [`Scenery::update`] animates (movers), the water surface the
 //!   renderer draws with its planar reflection, and the chimney smoke that
@@ -17,17 +13,13 @@ use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, build_scenery, siding_box, tree_part, trunk_fragment,
+    WATERWHEEL, batch, branch_drop_stage, build_scenery, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
+use sloppy_core::sim::CoverKind;
 use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
-use sloppy_core::sim::timber_layout::TimberPart;
-use sloppy_core::sim::tower_layout::TowerPiece;
-use sloppy_core::sim::{CoverKind, FragmentShape};
-
-pub use sloppy_core::models::{cover_damage_stage, tree_branch_stage};
 
 use super::theme::Theme;
 
@@ -43,20 +35,15 @@ use super::theme::Theme;
 /// - Named nodes are joints presentation may hide (see [`TreeParts`]).
 pub struct CoverModel {
     pub root: Node,
-    /// Equal for covers that look identical, so they share one prepared model
-    /// and draw instanced ([`cover_key`]).
-    pub key: String,
     pub tree: Option<TreeParts>,
 }
 
 /// The parts of a tree that damage and felling animate (`tree-models.ts`
-/// `userData.crown`, `cutSurface`, `branches`).
+/// `userData.crown`, `cutSurface`, `branches`). The crown is the trunk-and-crown
+/// joint [`tree_part::CROWN`]: hidden when felled, its subtree is also the falling
+/// crown fragment, placed `-tree_center_y` below the body. The stump's cut face,
+/// [`tree_part::CUT_SURFACE`], shows only once felled.
 pub struct TreeParts {
-    /// Joint name of the trunk-and-crown group: hidden when felled; its subtree is
-    /// also the falling crown fragment, placed `-tree_center_y` below the body.
-    pub crown: &'static str,
-    /// Joint name of the stump's cut face, shown only once felled.
-    pub cut_surface: &'static str,
     /// Boughs shed with damage, in crown order, each visible while `drop_stage`
     /// exceeds the branch damage stage (0 healthy, 1 hurt, 2 at 35% health).
     pub branches: Vec<TreeBranch>,
@@ -117,11 +104,7 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
     let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage).node;
     batch(&mut root);
     let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
-    CoverModel {
-        root,
-        key: cover_key(cover, stage),
-        tree,
-    }
+    CoverModel { root, tree }
 }
 
 fn tree_parts(root: &Node) -> TreeParts {
@@ -141,36 +124,7 @@ fn tree_parts(root: &Node) -> TreeParts {
                 .collect()
         })
         .unwrap_or_default();
-    TreeParts {
-        crown: tree_part::CROWN,
-        cut_surface: tree_part::CUT_SURFACE,
-        branches,
-    }
-}
-
-/// `timberPartModel(part)`: a group whose frame is the part's centre (the
-/// fragment body pose places it).
-pub fn timber_part_model(part: &TimberPart) -> Node {
-    core_models::timber_part_model(part)
-}
-
-/// A falling watchtower piece, drawn as the part of the tower it was.
-pub fn tower_piece_model(piece: TowerPiece, color: u32) -> Node {
-    core_models::tower_piece_model(piece, color)
-}
-
-/// The textured debris pieces (`presentation.ts`): `sidingBox(1.5, 0.18, 0.45)`
-/// for wood, `sidingBox(1, 1, 1)` for panels and beams, `trunkFragment()` for
-/// logs. Unit-colored (white) so the instance tint paints each piece.
-pub fn surface_debris_piece(shape: FragmentShape) -> Node {
-    let piece = match shape {
-        FragmentShape::Wood => siding_box(1.5, 0.18, 0.45, 0xffffff),
-        FragmentShape::Log => (*trunk_fragment()).clone(),
-        _ => siding_box(1.0, 1.0, 1.0, 0xffffff),
-    };
-    let mut root = Node::group("debris");
-    root.children.push(piece);
-    root
+    TreeParts { branches }
 }
 
 /// A themed scenery split for drawing.
@@ -397,6 +351,7 @@ pub fn smoke_instances(smoke: &Node) -> Vec<crate::model::InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sloppy_core::models::{cover_damage_stage, tree_branch_stage};
     use sloppy_core::sim::render_state::RenderCover;
 
     #[test]

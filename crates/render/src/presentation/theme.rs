@@ -24,8 +24,6 @@ pub const SHADOW_RECEIVER_FLOOR: f32 = -10.0;
 const QUARRY_SHADOW_HALF: f32 = 68.0;
 const QUARRY_SHADOW_LOW: f32 = -2.0;
 const QUARRY_SHADOW_HIGH: f32 = 9.0;
-/// Every theme reflects its sky at full strength (see `environment_radiance`).
-const REFLECTIONS: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {
@@ -68,35 +66,22 @@ pub struct ThemeLook {
     pub fill_color: u32,
     pub fill_ground: u32,
     pub fill_intensity: f32,
-    pub exposure: f32,
-    pub reflections: f32,
     pub shadow: ShadowCamera,
 }
 
 pub fn theme_look(theme: Theme) -> ThemeLook {
+    /// The theme's value; extra levels take the village look.
+    fn pick<T>(theme: Theme, quarry: T, harbor: T, village: T) -> T {
+        match theme {
+            Theme::Quarry => quarry,
+            Theme::Harbor => harbor,
+            Theme::Village | Theme::Custom => village,
+        }
+    }
     let quarry = theme == Theme::Quarry;
-    let harbor = theme == Theme::Harbor;
-    let pick = |q: u32, h: u32, v: u32| {
-        if quarry {
-            q
-        } else if harbor {
-            h
-        } else {
-            v
-        }
-    };
-    let pickf = |q: f32, h: f32, v: f32| {
-        if quarry {
-            q
-        } else if harbor {
-            h
-        } else {
-            v
-        }
-    };
     let sun_position = Vec3::new(
         if quarry { -50.0 } else { -45.0 },
-        pickf(43.0, 55.0, 68.0),
+        pick(theme, 43.0, 55.0, 68.0),
         if quarry { 28.0 } else { 25.0 },
     );
     let shadow = if quarry {
@@ -118,17 +103,15 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         )
     };
     ThemeLook {
-        sky: pick(0xd6c9b0, 0xa7bdc5, 0xaacbc2),
-        fog_near: pickf(110.0, 150.0, 210.0),
-        fog_far: pickf(380.0, 260.0, 380.0),
-        sun_color: pick(0xffd6ab, 0xffbf85, 0xffd59b),
+        sky: pick(theme, 0xd6c9b0, 0xa7bdc5, 0xaacbc2),
+        fog_near: pick(theme, 110.0, 150.0, 210.0),
+        fog_far: pick(theme, 380.0, 260.0, 380.0),
+        sun_color: pick(theme, 0xffd6ab, 0xffbf85, 0xffd59b),
         sun_intensity: if quarry { 3.0 } else { 2.8 },
         sun_position,
-        fill_color: pick(0xb9cff2, 0xafcfee, 0xbdd5f5),
-        fill_ground: pick(0x8a7b68, 0x63778e, 0x75859b),
+        fill_color: pick(theme, 0xb9cff2, 0xafcfee, 0xbdd5f5),
+        fill_ground: pick(theme, 0x8a7b68, 0x63778e, 0x75859b),
         fill_intensity: if quarry { 1.1 } else { 1.65 },
-        exposure: 1.0,
-        reflections: REFLECTIONS,
         shadow,
     }
 }

@@ -123,17 +123,17 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
-| Area                           | Starting points                                                                                             |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                      |
-| Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                   |
-| Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                          |
-| Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                          |
-| Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/mod.rs` |
-| Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`        |
-| Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                           |
-| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                 |
-| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                               |
+| Area                           | Starting points                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                                        |
+| Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                                     |
+| Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                                            |
+| Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                                            |
+| Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/{model_catalog,theme}.rs` |
+| Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`                          |
+| Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                                             |
+| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                                   |
+| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                                                 |
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 

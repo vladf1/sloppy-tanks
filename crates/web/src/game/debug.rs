@@ -574,7 +574,6 @@ impl Game {
                 "scale": reticle.scale, "position": v3(reticle.position),
             },
             "theme": inspection.theme,
-            "playerRing": inspection.player_ring,
             "tanks": inspection.tanks.iter().map(|tank| json!({
                 "id": tank.id, "shown": tank.shown, "barShown": tank.bar_shown,
                 "chevrons": tank.chevrons, "position": v3(tank.position),
@@ -584,8 +583,7 @@ impl Game {
             })).collect::<Vec<_>>(),
             "covers": inspection.covers.iter().map(|cover| json!({
                 "id": cover.id, "shown": cover.shown, "stage": cover.stage,
-                "combined": cover.combined, "modelKey": cover.model_key,
-                "crown": cover.crown, "cut": cover.cut, "visibleJoints": cover.visible_joints,
+                "modelKey": cover.model_key, "crown": cover.crown, "cut": cover.cut,
             })).collect::<Vec<_>>(),
             "pickups": inspection.pickups.iter().map(|pickup| json!({
                 "id": pickup.id, "baseShown": pickup.base_shown, "gem": pickup.gem,
@@ -598,12 +596,9 @@ impl Game {
                 "scale": v3(fragment.scale), "timberMarks": fragment.timber_marks,
             })).collect::<Vec<_>>(),
             "mines": inspection.mines,
-            "branches": inspection.branches,
-            "pickupEffects": inspection.pickup_effects,
             "laser": {
                 "lenses": inspection.laser_lenses,
                 "cores": inspection.laser_cores,
-                "beams": inspection.laser_beams,
             },
             "effects": {
                 "particles": effects.particles,

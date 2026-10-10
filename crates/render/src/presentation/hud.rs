@@ -7,7 +7,8 @@ use sloppy_core::sim::simulation_rules::SIMULATION_RULES;
 
 use super::view_settings::FEEDBACK;
 
-/// Which of the bar's three fill colors shows.
+/// Which of the bar's three fill colors shows; declared in the order of the
+/// bar's fill joints (`joint::BAR_FILLS`), which the bar indexes by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HealthColor {
     Team,
@@ -41,13 +42,14 @@ pub fn health_bar_state(hp: f64, maximum: f64, team: Team) -> HealthBar {
 pub struct ProtectionMeters {
     pub shield_visible: bool,
     pub shield_fill: f64,
-    pub shield_y: f64,
     pub spawn_visible: bool,
     pub spawn_fill: f64,
     pub spawn_y: f64,
 }
 
-const METER_LOW_Y: f64 = 0.38;
+/// Meter heights on the bar: the shield meter always sits low (the bar model
+/// places it there), and the spawn meter rises above a shown shield.
+pub const METER_LOW_Y: f64 = 0.38;
 const METER_HIGH_Y: f64 = 0.72;
 
 pub fn protection_meters(
@@ -60,7 +62,6 @@ pub fn protection_meters(
     ProtectionMeters {
         shield_visible,
         shield_fill: (shield_points / SHIELD_CAPACITY).clamp(0.0, 1.0),
-        shield_y: METER_LOW_Y,
         spawn_visible: alive && protection > 0.0,
         spawn_fill: (protection / SIMULATION_RULES.spawn_protection_seconds).clamp(0.0, 1.0),
         spawn_y: if shield_visible {

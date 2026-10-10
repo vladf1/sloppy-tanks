@@ -243,12 +243,17 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presentation::PRESENTATION_EFFECTS;
     use crate::shader::webgl_check::validate_effect;
 
+    /// Every builtin and presentation effect compiles in the variants its materials use.
     #[test]
     fn every_builtin_effect_is_valid_wgsl() {
-        let registry = EffectRegistry::default();
-        for id in 1..=BUILTIN_EFFECTS.len() as u16 {
+        let mut registry = EffectRegistry::default();
+        for effect in PRESENTATION_EFFECTS {
+            registry.register(effect);
+        }
+        for id in 1..=(BUILTIN_EFFECTS.len() + PRESENTATION_EFFECTS.len()) as u16 {
             validate_effect(&registry, id);
         }
     }

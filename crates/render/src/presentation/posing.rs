@@ -89,6 +89,12 @@ pub fn dvec3(point: Point3) -> DVec3 {
     DVec3::new(point.x, point.y, point.z)
 }
 
+/// The blend every interpolated pose and camera uses (core's `math::lerp` rounds
+/// differently).
+pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
 /// Three's `Euler(x, y, z)` in its default XYZ order.
 pub fn euler_xyz(x: f32, y: f32, z: f32) -> Quat {
     Quat::from_rotation_x(x) * Quat::from_rotation_y(y) * Quat::from_rotation_z(z)
