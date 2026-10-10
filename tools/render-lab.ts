@@ -1,16 +1,14 @@
 // Render lab: one calibration scene drawn by the engine's wgpu renderer (lights, fog,
 // ACES, PCF shadows, planar water, custom effects, jointed and faded models), beside a
 // reference image of the same scene from the game's former Three.js r185 setup and an
-// amplified difference image. The references were captured from the Three.js side
-// before it left the project (`scripts/README.md`, Labs); without them the lab still
-// draws and reports the renderer, and the difference stays blank.
+// amplified difference image (references: `lab-references.ts`, `scripts/README.md` Labs).
 // Build the labs engine with `pnpm run wasm:labs`, then open
 // /sloppy-tanks/tools/render-lab.html on the dev server.
 // `?freeze=<seconds>` pins the effect/water clock for screenshots (the references use
 // 1.25).
 import type { RenderLab } from "../src/generated/engine-labs/engine.js";
 import { compareImages, loadReference, pixels } from "./lab-references";
-import { loadLabsEngine } from "./labs-engine";
+import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
 
 type Vec3 = [number, number, number];
 interface TextureSpec {
@@ -470,37 +468,12 @@ async function createRust(): Promise<RenderLab> {
   return lab;
 }
 
-async function waitFor(check: () => boolean): Promise<void> {
-  while (!check()) {
-    await new Promise((resolve) => setTimeout(resolve, 16));
-  }
-}
-
-/** Compile every pipeline in small steps, reporting progress, then warm up. */
-async function prepareRust(lab: RenderLab): Promise<void> {
-  for (;;) {
-    const [compiled, remaining, compiling] = lab.prepare_step(4);
-    status.textContent = `Compiling pipelines… ${remaining} left`;
-    if (remaining === 0) break;
-    if (compiled === 0 && compiling === 0) throw new Error("Pipeline preparation made no progress");
-    // Background compiles finish on their own; poll them on a short timer.
-    await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
-  }
-  // Textures upload while preparing; one still loading after the last pipeline
-  // compiled needs more steps.
-  await waitFor(() => {
-    lab.prepare_step(0);
-    const error = lab.error();
-    if (error) throw new Error(error);
-    return lab.textures_pending() === 0;
-  });
-  lab.warm_up();
-}
-
 async function main() {
   if (!navigator.gpu) throw new Error("WebGPU is required.");
   const rust = await createRust();
-  await prepareRust(rust);
+  await prepareLab(rust, 4, (remaining) => {
+    status.textContent = `Compiling pipelines… ${remaining} left`;
+  });
   let time = frozen ?? 0;
   let pose: Pose = "default";
   const references = new Map<Pose, ImageData | undefined>();
@@ -517,16 +490,13 @@ async function main() {
   /** Draw and diff against the pose's reference in the same task. */
   function compare(t = time) {
     rust.frame(t);
-    const reference = references.get(pose);
-    const image = pixels(rustCanvas);
-    if (reference && reference.width === image.width && reference.height === image.height) {
-      referenceCanvas.getContext("2d")!.putImageData(reference, 0, 0);
-    } else {
-      referenceCanvas
-        .getContext("2d")!
-        .clearRect(0, 0, referenceCanvas.width, referenceCanvas.height);
-    }
-    return { time: t, pose, ...compareImages(image, reference, diffCanvas) };
+    const comparison = compareImages(
+      pixels(rustCanvas),
+      references.get(pose),
+      referenceCanvas,
+      diffCanvas,
+    );
+    return { time: t, pose, ...comparison };
   }
   const api = {
     compare,
@@ -582,12 +552,6 @@ async function main() {
     };
     requestAnimationFrame(loop);
   }
-}
-
-function fail(error: unknown) {
-  document.body.dataset.state = "error";
-  status.textContent = String(error instanceof Error ? error.message : error);
-  console.error(error);
 }
 
 main().catch(fail);

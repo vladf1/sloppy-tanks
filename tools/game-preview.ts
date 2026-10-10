@@ -4,30 +4,11 @@
 // /sloppy-tanks/tools/game-preview.html on the dev server.
 // `?map=village|harbor|quarry|stress-test|superstress`, `?seed=424242`,
 // `?autoplay`, `?fp` (start in first person), `?zoom=34`.
-// `window.preview` exposes the diagnostics the browser checks read.
+import { FRAME, INPUT, PHASES } from "../src/game/engine-api";
+import { nextPrepareStep } from "../src/game/task-yield";
 import init, { Game } from "../src/generated/engine/engine.js";
 import wasmUrl from "../src/generated/engine/engine_bg.wasm?url";
 
-// Packed input slots (`sloppy_render::presentation::input::slot`).
-const INPUT = {
-  up: 0,
-  down: 1,
-  left: 2,
-  right: 3,
-  fire: 6,
-  mine: 7,
-  ammoSlot: 8,
-  ammoStep: 9,
-  pointerX: 10,
-  pointerY: 11,
-  lookPixels: 16,
-  zoom: 17,
-  toggleView: 18,
-  wheelAmmo: 19,
-  length: 20,
-} as const;
-// Frame result slots (`crates/web/src/game.rs` `frame_slot`).
-const FRAME = { phase: 0, alive: 1, events: 4, clearInput: 5 } as const;
 const ZOOM_STEP = 2;
 const PREPARE_BUDGET = 4;
 
@@ -127,15 +108,12 @@ function takeInput(): Float32Array {
   return input;
 }
 
-const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
 async function main(): Promise<void> {
   if (!navigator.gpu) throw new Error("WebGPU is required.");
   bindInput();
   await init({ module_or_path: wasmUrl });
   const seed = params.has("seed") ? Number(params.get("seed")) : 424242;
   const map = params.get("map") ?? "village";
-  const started = performance.now();
   const game = await Game.create(
     canvas,
     JSON.stringify({
@@ -151,30 +129,19 @@ async function main(): Promise<void> {
   );
   status.textContent = `Preparing ${map}…`;
   let progress: Float64Array;
+  let gpuPending = false;
   do {
-    await nextTask();
+    await nextPrepareStep(gpuPending);
     progress = game.prepare_step(PREPARE_BUDGET);
+    gpuPending = progress[4] === 1;
     status.textContent = `Preparing ${map}: ${progress[1]} pipelines, ${progress[2]} textures left`;
   } while (!progress[3]);
-  const readyMs = performance.now() - started;
   if (params.has("zoom")) game.debug_set_zoom(Number(params.get("zoom")));
   if (params.has("reflections")) game.debug_set_reflections(Number(params.get("reflections")));
   game.start();
   if (params.has("fp")) game.toggle_first_person();
   addEventListener("resize", () => game.resize(innerWidth, innerHeight, devicePixelRatio, false));
-  let events = 0;
   let frames = 0;
-  const preview = {
-    game,
-    readyMs,
-    frames: () => frames,
-    events: () => events,
-    debug: () => JSON.parse(game.debug_json()),
-    hud: () => JSON.parse(game.hud_json()),
-    stats: () => JSON.parse(game.stats_json()),
-    error: () => game.error() ?? null,
-  };
-  Object.assign(window, { preview });
   document.body.dataset.state = "playing";
   canvas.focus();
   const loop = (now: number) => {
@@ -182,16 +149,16 @@ async function main(): Promise<void> {
       const result = game.frame(now, takeInput());
       frames++;
       if (result[FRAME.events] > 0) {
-        events += JSON.parse(game.drain_events()).events.length;
+        game.drain_events();
       }
       if (result[FRAME.clearInput]) {
         fire = false;
       }
       if (frames % 30 === 0) {
-        const stats = preview.stats();
-        const phase = ["ready", "playing", "paused", "results"][result[FRAME.phase]];
+        const stats = JSON.parse(game.stats_json());
+        const phase = PHASES[result[FRAME.phase]];
         status.textContent =
-          `${map} · ${phase}${result[FRAME.alive] ? "" : " (destroyed)"} · ` +
+          `${map} · ${phase}${result[FRAME.humanAlive] ? "" : " (destroyed)"} · ` +
           `${stats.fps.toFixed(0)} fps · ${stats.drawCalls} draws · ${stats.triangles} tris · ` +
           `sim ${stats.simMs.toFixed(2)} ms · render ${stats.renderMs.toFixed(2)} ms`;
       }

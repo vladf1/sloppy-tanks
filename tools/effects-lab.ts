@@ -1,22 +1,19 @@
 // Effects lab: one scripted scene (tanks laying tracks and dust, every munition in
 // flight, and one event of every kind) fed to the engine's wgpu effects, beside a
 // reference frame of the same script from the game's former Three.js effect classes
-// and an amplified difference image. The references were captured before Three.js left
-// the project (`scripts/README.md`, Labs); the Three side drew its cosmetic randomness
-// from its own stream, so only the overall match is meaningful (the last calibration
-// measured a mean error of about 2 of 255 at t = 4). Without the references the lab
-// still draws and reports the effects.
+// and an amplified difference image (references: `lab-references.ts`, `scripts/README.md`
+// Labs). The Three side drew its cosmetic randomness from its own stream, so only the
+// overall match is meaningful.
 // Build the labs engine with `pnpm run wasm:labs`, then open
 // /sloppy-tanks/tools/effects-lab.html on the dev server.
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.
 import type { EffectsLab } from "../src/generated/engine-labs/engine.js";
+import type { VehicleKind, Weapon } from "../src/game/engine-api";
 import { compareImages, loadReference, pixels } from "./lab-references";
-import { loadLabsEngine } from "./labs-engine";
+import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
 
 type Vec3 = [number, number, number];
-type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
-type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing" | "tow";
 /** A simulation event as the engine reads it (`SimEvent`, camelCase JSON). */
 type SimEvent = { type: string; x: number; z: number } & Record<string, unknown>;
 interface RenderShot {
@@ -165,23 +162,9 @@ async function createRust(): Promise<EffectsLab> {
   lab.set_seed(7);
   lab.set_camera(new Float32Array(CAMERA.position), new Float32Array(CAMERA.target));
   lab.set_state(JSON.stringify(stateAt(0)));
-  for (;;) {
-    const [compiled, remaining, compiling] = lab.prepare_step(4);
+  await prepareLab(lab, 4, (remaining) => {
     status.textContent = `Compiling pipelines… ${remaining} left`;
-    if (remaining === 0) break;
-    if (compiled === 0 && compiling === 0) throw new Error("Pipeline preparation made no progress");
-    // Background compiles finish on their own; poll them on a short timer.
-    await new Promise((resolve) => setTimeout(resolve, compiled === 0 ? 16 : 0));
-  }
-  // Textures upload while preparing; one still loading after the last pipeline
-  // compiled needs more steps.
-  while (lab.textures_pending() > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 16));
-    lab.prepare_step(0);
-    const error = lab.error();
-    if (error) throw new Error(error);
-  }
-  lab.warm_up();
+  });
   lab.reset();
   return lab;
 }
@@ -212,14 +195,8 @@ async function main() {
   function compare() {
     // Redraw the current state, then diff in the same task.
     step(0);
-    if (reference) {
-      referenceCanvas.getContext("2d")!.putImageData(reference, 0, 0);
-    } else {
-      referenceCanvas
-        .getContext("2d")!
-        .clearRect(0, 0, referenceCanvas.width, referenceCanvas.height);
-    }
-    return { time: t, ...compareImages(pixels(rustCanvas), reference, diffCanvas) };
+    const comparison = compareImages(pixels(rustCanvas), reference, referenceCanvas, diffCanvas);
+    return { time: t, ...comparison };
   }
   const api = {
     compare,
@@ -275,12 +252,6 @@ async function main() {
     };
     requestAnimationFrame(loop);
   }
-}
-
-function fail(error: unknown) {
-  document.body.dataset.state = "error";
-  status.textContent = String(error instanceof Error ? error.message : error);
-  console.error(error);
 }
 
 main().catch(fail);

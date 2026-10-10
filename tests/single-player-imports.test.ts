@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
-import { build, type Metafile } from "esbuild";
+import { importChain, moduleGraph } from "./import-graph";
 
 const ENTRY = "src/main.ts";
 // Single player runs the Rust engine. These DOM shell modules are all it may load: game
@@ -46,58 +45,14 @@ const SHELL = new Set([
 /** Audio, and the development-only tuning panel, are the libraries single player loads. */
 const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?(howler|tweakpane|@tweakpane)[@\\/]/;
 
-/** The import path from the entry, for a readable failure. */
-function importChain(inputs: Metafile["inputs"], target: string): string[] {
-  const parents = new Map<string, string>([[ENTRY, ""]]);
-  const queue = [ENTRY];
-  for (const file of queue) {
-    for (const { path } of inputs[file]?.imports ?? []) {
-      if (!parents.has(path)) {
-        parents.set(path, file);
-        queue.push(path);
-      }
-    }
-  }
-  const chain = [target];
-  while (parents.get(chain[0])) {
-    chain.unshift(parents.get(chain[0])!);
-  }
-  return chain;
-}
-
 test("single player reaches only the shell and the Rust engine", async () => {
-  const { metafile } = await build({
-    absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
-    entryPoints: [ENTRY],
-    bundle: true,
-    splitting: true,
-    write: false,
-    metafile: true,
-    format: "esm",
-    outdir: "unused",
-    loader: { ".css": "empty" },
-    logLevel: "silent",
-    plugins: [
-      {
-        // The generated engine glue is checked by building it; multiplayer code has
-        // its own boundary in multiplayer-client-imports.test.ts.
-        name: "external",
-        setup(build) {
-          build.onResolve(
-            { filter: /generated\/engine(-webgl)?\/|(^|\/)net\/|\?url$/ },
-            (args) => ({
-              path: args.path,
-              external: true,
-            }),
-          );
-        },
-      },
-    ],
-  });
-  const modules = Object.keys(metafile.inputs);
+  // The generated engine glue is checked by building it; multiplayer code has its own
+  // boundary in multiplayer-client-imports.test.ts.
+  const inputs = await moduleGraph(ENTRY, /generated\/engine(-webgl)?\/|(^|\/)net\/|\?url$/, true);
+  const modules = Object.keys(inputs);
   assert.ok(modules.includes("src/game.ts"), "The game entry was walked");
   const leaks = modules
     .filter((id) => !SHELL.has(id) && !LIBRARIES.test(id))
-    .map((id) => importChain(metafile.inputs, id).join(" -> "));
+    .map((id) => importChain(inputs, ENTRY, id).join(" -> "));
   assert.deepEqual(leaks, []);
 });

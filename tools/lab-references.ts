@@ -46,10 +46,12 @@ export interface Comparison {
   cellMeanDiff?: number[];
 }
 
-/** Compare a frame with its reference, drawing the amplified difference into `diff`. */
+/** Compare a frame with its reference, drawing the reference into `shown` and the
+ * amplified difference into `diff` (both stay clear without a matching reference). */
 export function compareImages(
   image: ImageData,
   reference: ImageData | undefined,
+  shown: HTMLCanvasElement,
   diff: HTMLCanvasElement,
 ): Comparison {
   const count = image.data.length / 4;
@@ -61,9 +63,11 @@ export function compareImages(
     });
   const context = diff.getContext("2d")!;
   if (!reference || reference.width !== image.width || reference.height !== image.height) {
+    shown.getContext("2d")!.clearRect(0, 0, shown.width, shown.height);
     context.clearRect(0, 0, diff.width, diff.height);
     return { reference: false, rustMeanRgb: mean(image.data) };
   }
+  shown.getContext("2d")!.putImageData(reference, 0, 0);
   const output = new ImageData(image.width, image.height);
   const cells = Array.from({ length: GRID * GRID }, () => ({ sum: 0, count: 0 }));
   let sum = 0;

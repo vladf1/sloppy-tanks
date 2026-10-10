@@ -323,7 +323,7 @@ guarantees for other devices.
   colors, labels and pickup atlas layout they paint with (the engine's own copies
   are in `crates/core`; change both together).
 - `generate-previews.mjs` renders the tank selection previews from the game's vehicle
-  models with the labs engine (`tools/tank-previews.html`; run `pnpm run wasm --
+  models with the labs engine (`tools/tank-surface-check.html`; run `pnpm run wasm --
 --labs` first) and packs `public/previews/tanks.webp`. `SLOPPY_PREVIEWS_OUT` writes
   a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and

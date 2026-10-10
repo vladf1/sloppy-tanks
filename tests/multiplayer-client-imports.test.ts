@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
-import { build, type Metafile, type Plugin } from "esbuild";
+import { importChain, moduleGraph } from "./import-graph";
 
 const CLIENT = "src/net/client.ts";
 const ROOM_BROWSER = "src/net/room-browser.ts";
@@ -55,51 +54,7 @@ const SHELL = new Set([
 ]);
 /** Audio is the one library a room page loads. */
 const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?howler[@\\/]/;
-/** The engine build is generated (`pnpm run wasm`); the test only needs its import. */
-const generatedEngine: Plugin = {
-  name: "generated-engine",
-  setup(context) {
-    context.onResolve({ filter: /generated\/engine(-webgl)?\/|\?url$/ }, ({ path }) => ({
-      path,
-      external: true,
-    }));
-  },
-};
-
-/** The runtime import path from `entry`, for a readable failure. */
-function importChain(inputs: Metafile["inputs"], entry: string, target: string): string[] {
-  const parents = new Map<string, string>([[entry, ""]]);
-  const queue = [entry];
-  for (const file of queue) {
-    for (const { path, kind } of inputs[file]?.imports ?? []) {
-      if (kind === "import-statement" && !parents.has(path)) {
-        parents.set(path, file);
-        queue.push(path);
-      }
-    }
-  }
-  const chain = [target];
-  while (parents.get(chain[0])) {
-    chain.unshift(parents.get(chain[0])!);
-  }
-  return chain;
-}
-
-async function staticGraph(entry: string): Promise<Metafile["inputs"]> {
-  const { metafile } = await build({
-    absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
-    entryPoints: [entry],
-    bundle: true,
-    write: false,
-    metafile: true,
-    format: "esm",
-    outdir: "unused",
-    loader: { ".css": "empty" },
-    plugins: [generatedEngine],
-    logLevel: "silent",
-  });
-  return metafile.inputs;
-}
+const staticGraph = (entry: string) => moduleGraph(entry, /generated\/engine(-webgl)?\/|\?url$/);
 
 for (const entry of [CLIENT, ROOM_BROWSER]) {
   test(`${entry} reaches only the room page shell and the Rust engine`, async () => {

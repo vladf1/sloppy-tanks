@@ -83,8 +83,8 @@ function fixture(network = false) {
   };
   Object.defineProperty(globalThis, "window", { value: win, configurable: true });
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
-  const room: NetworkStatsSource = {
+  // The renderer's counters, which a room and single player report alike.
+  const render = {
     graphicsApi: "WebGPU",
     drawCalls: 42,
     triangles: 628263,
@@ -93,6 +93,10 @@ function fixture(network = false) {
     mainTriangles: 193912,
     meshes: 9,
     textures: 11,
+  };
+  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
+  const room: NetworkStatsSource = {
+    ...render,
     scene: {
       tanks: 3,
       alive: 2,
@@ -132,14 +136,7 @@ function fixture(network = false) {
     dynamicBodies: 4,
     sleepingBodies: 1,
     colliders: 4,
-    graphicsApi: "WebGPU",
-    drawCalls: 42,
-    triangles: 628263,
-    shadowTriangles: 241429,
-    reflectionTriangles: 192922,
-    mainTriangles: 193912,
-    meshes: 9,
-    textures: 11,
+    ...render,
     gpuBytes: 412.3 * 1048576,
     meshSlackBytes: 12.5 * 1048576,
     tanks: 3,

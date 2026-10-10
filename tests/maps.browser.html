@@ -69,15 +69,7 @@
       // without growing GPU resources or keeping the mesh pages another map needed, and
       // both waters reflect a probe box in the actual framebuffer while the dry arena
       // center skips the reflection pass.
-      import {
-        canvasPixel,
-        check,
-        choose,
-        draw,
-        fixtureGame,
-        prepare,
-        read,
-      } from "./engine-fixture";
+      import { canvasPixel, check, choose, draw, fixtureGame, read } from "./engine-fixture";
       const canvas = document.querySelector("#game");
       const result = document.querySelector("#result");
       const game = await fixtureGame(canvas, { seed: 417, map: "harbor" });
@@ -92,10 +84,7 @@
 
       /** A fresh round of `mode`, prepared and playing (nobody moves: no steps run). */
       async function loadMap(mode) {
-        if (!(await choose(game, { mapMode: mode }))) {
-          game.restart();
-          await prepare(game);
-        }
+        await choose(game, { mapMode: mode });
         game.start();
         game.debug_set_autoplay(false);
       }
@@ -257,9 +246,9 @@
         for (let i = 0; i < 10; i++) {
           await frame();
           draw(game, 0, overview);
-          const { drawCalls, reflectionDrawCalls } = read.stats(game);
-          if (previous && previous.drawCalls === drawCalls) break;
-          previous = { drawCalls, reflectionDrawCalls };
+          const { drawCalls } = read.stats(game);
+          if (previous === drawCalls) break;
+          previous = drawCalls;
         }
         return read.stats(game);
       }
@@ -273,6 +262,7 @@
         const camera = { position: [x, level + 14, z + 18], target: [x, level, z] };
         let red = [];
         let green = [];
+        const changed = () => red[0] - green[0] >= 15 && green[1] - red[1] >= 15;
         try {
           const sample = async (color) => {
             await frame();
@@ -290,15 +280,12 @@
           for (let attempt = 0; attempt < 5; attempt++) {
             red = await sample(0xff0000);
             green = await sample(0x00ff00);
-            if (red[0] - green[0] >= 15 && green[1] - red[1] >= 15) break;
+            if (changed()) break;
           }
         } finally {
           game.debug_probe(0, 0, 0, 0, 0);
         }
-        check(
-          red[0] - green[0] >= 15 && green[1] - red[1] >= 15,
-          `${mode}: reflected probe did not change color (${red} / ${green})`,
-        );
+        check(changed(), `${mode}: reflected probe did not change color (${red} / ${green})`);
         const reflected = await settled(true);
         game.debug_set_water_reflection(false);
         const unreflected = await settled(true);
