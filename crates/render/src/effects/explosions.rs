@@ -39,7 +39,7 @@ const DUST: u32 = 0xaa9273;
 
 /// Wood dust: a struck face's puff and a burst crate's cloud last this long.
 const WOOD_HIT_LIFETIME: f64 = 0.9;
-const WOOD_BURST_LIFETIME: f64 = 2.5;
+const WOOD_BURST_LIFETIME: f64 = 2.1;
 /// Warm sawdust rolling low, and the paler dust that rises and blows out.
 const SAWDUST: u32 = 0xbda483;
 const SAWDUST_LIGHT: u32 = 0xcfbc9d;
@@ -589,7 +589,7 @@ impl ExplosionEffects {
                     let angle = b.phase + jf * TAU / 5.0 + (j % 2) as f64 * 0.3;
                     let roll = (0.8 + 1.7 * (1.0 - (-age * 3.5).exp())) * s;
                     let drift = age * 0.45 * s;
-                    let size = (0.95 + 1.0 * age.sqrt()) * s;
+                    let size = (0.85 + 0.8 * age.sqrt()) * s;
                     self.puff(
                         [
                             b.x + angle.cos() * roll + dx * drift,
@@ -598,7 +598,7 @@ impl ExplosionEffects {
                         ],
                         size,
                         scaled(linear(SAWDUST), 0.88 + jf * 0.035),
-                        (age / 0.08).min(1.0) * fade * 0.5,
+                        (age / 0.08).min(1.0) * fade * 0.33,
                         PUFF_HEIGHT,
                     );
                 }
@@ -606,9 +606,9 @@ impl ExplosionEffects {
                 let jet = (0.5 + 2.6 * (1.0 - (-t * 3.2).exp())) * s;
                 self.puff(
                     [b.x + dx * jet, (0.45 + t * 0.15) * b.y, b.z + dz * jet],
-                    (0.65 + 0.95 * t.sqrt()) * s,
+                    (0.55 + 0.8 * t.sqrt()) * s,
                     linear(SAWDUST_LIGHT),
-                    (t / 0.05).min(1.0) * fade * 0.5,
+                    (t / 0.05).min(1.0) * fade * 0.33,
                     PUFF_HEIGHT,
                 );
                 // ...and a plume rises over the wreck.
@@ -625,9 +625,9 @@ impl ExplosionEffects {
                             b.y * (0.5 + jf * 0.2) + age * 0.65 * s,
                             b.z + angle.sin() * 0.35 * s + dz * age * 0.6,
                         ],
-                        (0.6 + 0.85 * age.sqrt()) * s,
+                        (0.5 + 0.7 * age.sqrt()) * s,
                         scaled(linear(SAWDUST_LIGHT), 0.97 - jf * 0.05),
-                        (age / 0.1).min(1.0) * fade * 0.4,
+                        (age / 0.1).min(1.0) * fade * 0.26,
                         PUFF_HEIGHT,
                     );
                 }
