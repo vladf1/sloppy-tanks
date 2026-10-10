@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Random } from "./asset-data";
+import { encodePixelsWebp } from "./encode-webp";
+import { fbm, lattice, mix, smooth } from "./texture-noise";
 
 // The timber wall atlas (`timber_model.rs` `GRAIN_ROWS`, `END_CELLS`): three rows of
 // flat-sawn plank faces, each tileable left to right so a long beam repeats it along
@@ -13,52 +14,9 @@ const row = height / 4;
 const data = new Uint8ClampedArray(width * height * 4);
 const rng = new Random(90211);
 
-/** Value noise on a lattice that wraps every `period` cells in x (0 = no wrap). */
-function lattice(seed: number) {
-  const table = new Float32Array(4096);
-  const local = new Random(seed);
-  for (let i = 0; i < table.length; i++) table[i] = local.next();
-  const at = (ix: number, iy: number, period: number) => {
-    const x = period ? ((ix % period) + period) % period : ix;
-    return table[((x * 73856093) ^ (iy * 19349663)) & 4095];
-  };
-  return (x: number, y: number, period = 0) => {
-    const ix = Math.floor(x);
-    const iy = Math.floor(y);
-    const fx = x - ix;
-    const fy = y - iy;
-    const sx = fx * fx * (3 - 2 * fx);
-    const sy = fy * fy * (3 - 2 * fy);
-    const a = at(ix, iy, period);
-    const b = at(ix + 1, iy, period);
-    const c = at(ix, iy + 1, period);
-    const d = at(ix + 1, iy + 1, period);
-    return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
-  };
-}
-
 const noise = lattice(1);
 const fibre = lattice(2);
 const blotch = lattice(3);
-
-/** Fractal noise whose x period is `period` lattice cells at the first octave. */
-function fbm(x: number, y: number, period: number, octaves = 4) {
-  let sum = 0;
-  let amplitude = 0.5;
-  let scale = 1;
-  for (let i = 0; i < octaves; i++) {
-    sum += amplitude * noise(x * scale, y * scale, period * scale);
-    amplitude *= 0.5;
-    scale *= 2;
-  }
-  return sum;
-}
-
-const mix = (a: number, b: number, t: number) => a + (b - a) * t;
-const smooth = (e0: number, e1: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
-  return t * t * (3 - 2 * t);
-};
 
 // Earlywood, latewood and knot colours of seasoned pine (sRGB 0-255).
 const EARLY = [208, 172, 128];
@@ -102,7 +60,7 @@ for (let band = 0; band < 3; band++) {
       // Across the board (0-1) and along it (wraps every image width).
       const across = py / row;
       const along = x / width;
-      const warp = fbm(along * 6, across * 3 + band * 7, 6) - 0.5;
+      const warp = fbm(noise, along * 6, across * 3 + band * 7, 6) - 0.5;
       const cut = depth + swing * Math.sin(u + phase) + 0.2 * Math.sin(2 * u + phase * 1.7);
       const offset = across - pith + warp * 0.06;
       let r = Math.sqrt(offset * offset + cut * cut * 0.18) * rings;
@@ -151,7 +109,8 @@ for (let index = 0; index < 4; index++) {
       const dx = px - cx;
       const dy = py - cy;
       const angle = Math.atan2(dy, dx);
-      const wobble = (fbm(Math.cos(angle) * 2 + index * 5, Math.sin(angle) * 2, 0, 3) - 0.5) * 2.2;
+      const wobble =
+        (fbm(noise, Math.cos(angle) * 2 + index * 5, Math.sin(angle) * 2, 0, 3) - 0.5) * 2.2;
       const r = Math.sqrt(dx * dx + dy * dy) * rings + wobble;
       const late = ring(r);
       let crack = 0;
@@ -175,14 +134,6 @@ for (let index = 0; index < 4; index++) {
   }
 }
 
-const header = `P7\nWIDTH ${width}\nHEIGHT ${height}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n`;
-const pam = Buffer.concat([Buffer.from(header, "ascii"), Buffer.from(data.buffer)]);
 const folder = new URL("../assets/texture-sources/wood/", import.meta.url);
 await mkdir(folder, { recursive: true });
-await writeFile(
-  new URL("timber.webp", folder),
-  execFileSync("cwebp", ["-quiet", "-lossless", "-z", "9", "-o", "-", "--", "-"], {
-    input: pam,
-    maxBuffer: 32 * 1024 * 1024,
-  }),
-);
+await writeFile(new URL("timber.webp", folder), encodePixelsWebp(data, width, height));

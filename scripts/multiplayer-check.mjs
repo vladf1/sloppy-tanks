@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
-  DEFAULT_GAME_URL,
-  checkMultiplayerMenu,
+  center,
   click,
+  collectErrors,
+  gameUrl,
   launchChrome,
+  setTouchMode,
+  touchScreen,
+} from "./browser-helpers.mjs";
+import {
+  checkMultiplayerMenu,
   openMultiplayerTab,
   recordRoomFrames,
 } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/browser";
 await mkdir(output, { recursive: true });
-const url = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+const url = new URL(gameUrl);
 if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
 for (const [env, key] of [
   ["SLOPPY_LATENCY", "latency"],
@@ -58,10 +64,7 @@ async function openPlayer() {
       get: () => window.fixtureHidden ?? false,
     });
   });
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
+  collectErrors(page, errors, { consoleErrors: true });
   frames.set(page, recordRoomFrames(page, errors));
   return page;
 }
@@ -355,42 +358,21 @@ try {
   assert.equal((await state(bob)).player, beforeDrop.player, "Automatic reconnect retains seat");
   assert.equal(await bob.locator(".network-connection").isVisible(), false);
   // Settings mid-battle hand the tank to a bot; closing them takes it back.
-  await bob.locator("#settings-open").click();
-  await bob.locator("#touch-mode").selectOption("on");
-  await bob.locator(".settings-save").click();
+  await setTouchMode(bob, "on");
   await bob.locator(".touch-controls").waitFor({ state: "visible" });
   await driver(bob, "human");
-  const session = await bob.context().newCDPSession(bob),
-    fingers = new Map();
-  const center = async (selector) => {
-    const b = await bob.locator(selector).boundingBox();
-    assert.ok(b);
-    return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-  };
-  const touch = async (type, id, x, y) => {
-    const released = fingers.get(id);
-    if (type === "touchEnd") fingers.delete(id);
-    else fingers.set(id, { id, x, y, radiusX: 5, radiusY: 5, force: 1 });
-    await session.send("Input.dispatchTouchEvent", {
-      type,
-      touchPoints: type === "touchEnd" ? [released] : [...fingers.values()],
-    });
-    await bob.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
-  };
+  const { touch, tap } = await touchScreen(bob);
   // Touch plays as on phones: drive with the stick, aim and fire with a finger on the
   // arena, tap the mine button.
-  const drive = await center(".touch-drive"),
-    mine = await center(".touch-mine"),
+  const drive = await center(bob, ".touch-drive"),
+    mine = await center(bob, ".touch-mine"),
     arena = await bob.locator("#game").boundingBox();
   const target = { x: arena.x + arena.width * 0.7, y: arena.y + arena.height * 0.35 };
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x - 55, drive.y);
   await touch("touchStart", 2, target.x, target.y);
   await touch("touchMove", 2, target.x + 1, target.y);
-  await touch("touchStart", 3, mine.x, mine.y);
-  await touch("touchEnd", 3);
+  await tap(3, mine);
   await bob.waitForFunction(() => window.sloppyMultiplayer.display.viewer.mineCooldown > 0);
   assert.equal(await bob.evaluate(() => window.sloppyMultiplayer.controls.touch.fire), true);
   await bob.screenshot({ path: `${output}/touch.png` });
@@ -400,9 +382,8 @@ try {
   // First person in a room: ◎ takes no pointer lock (it would freeze the finger), and
   // the drive stick's sideways push turns the view.
   const view = () => bob.evaluate(() => window.sloppyMultiplayer.view);
-  const toggle = await center("#view-mode");
-  await touch("touchStart", 4, toggle.x, toggle.y);
-  await touch("touchEnd", 4);
+  const toggle = await center(bob, "#view-mode");
+  await tap(4, toggle);
   await bob.waitForFunction(() => window.sloppyMultiplayer.view.firstPerson);
   assert.equal(await bob.evaluate(() => document.pointerLockElement), null);
   const yaw = (await view()).yaw;
@@ -412,8 +393,7 @@ try {
   const turned = (await view()).yaw;
   await touch("touchEnd", 1);
   assert.ok(Math.abs(turned - yaw) > 0.8, `the stick turns the view in a room: ${yaw} → ${turned}`);
-  await touch("touchStart", 4, toggle.x, toggle.y);
-  await touch("touchEnd", 4);
+  await tap(4, toggle);
   await bob.waitForFunction(() => !window.sloppyMultiplayer.view.firstPerson);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ idle: observations.idle, response: observations.response }));

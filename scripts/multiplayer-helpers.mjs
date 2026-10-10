@@ -1,43 +1,13 @@
 import assert from "node:assert/strict";
-import { chromium } from "playwright";
-import { chooseMap, headless } from "./browser-helpers.mjs";
+import { click } from "./browser-helpers.mjs";
 import { createWireView } from "./wire-view.mjs";
 
-/** The Vite dev server's default page; checks use `SLOPPY_URL` for any other. */
-export const DEFAULT_GAME_URL = "http://127.0.0.1:5173/sloppy-tanks/";
-const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-/** A fresh 8-character room code, so repeated runs never share a room. */
-export function randomRoomCode() {
-  return [...crypto.getRandomValues(new Uint8Array(8))]
-    .map((n) => ROOM_CODE_ALPHABET[n & 31])
-    .join("");
-}
-
-/** Headless Chrome whose pages keep their timers and frames while another page is in front,
- * so several players on one machine all keep sending input. */
-export function launchChrome() {
-  return chromium.launch({
-    channel: "chrome",
-    headless,
-    args: [
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "--disable-backgrounding-occluded-windows",
-    ],
-  });
-}
-
-/** A physical coordinate click, which exercises the same pointer routing a player uses;
- * locator clicks can bypass pointer-event and hit-testing bugs. */
-export async function click(page, selector) {
-  const target = page.locator(selector);
-  await target.waitFor();
-  await target.scrollIntoViewIfNeeded();
-  assert.ok(await target.isEnabled(), `${selector} is enabled`);
-  const bounds = await target.boundingBox();
-  assert.ok(bounds, selector);
-  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+/** Poll `condition` every 50 ms for up to a minute, then assert it. */
+export async function until(condition, message) {
+  const deadline = Date.now() + 60000;
+  while (!condition() && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(condition(), message);
 }
 
 /**
@@ -176,9 +146,4 @@ export async function openMultiplayerTab(page) {
 /** The lazily loaded room list fills in a saved or random name when it is ready. */
 export async function waitForRoomBrowser(page) {
   await page.waitForFunction(() => document.querySelector("#player-name")?.value);
-}
-
-/** Pick a map for a new room: the multiplayer tab shares Battle Setup's map choice. */
-export async function chooseRoomMap(page, map) {
-  await chooseMap(page, map);
 }

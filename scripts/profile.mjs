@@ -1,10 +1,9 @@
 // @ts-check
 import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { gameUrl, headless } from "./browser-helpers.mjs";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const label = process.argv[2] ?? "before";
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 if (!["before", "after"].includes(label))
   throw new Error("Use before or after as the measurement label.");
 const width = Number(process.env.SLOPPY_WIDTH ?? 1280);
@@ -56,7 +55,7 @@ const checkErrors = () => {
 };
 /** @param {string} scenario @param {number} seed */
 async function setup(scenario, seed) {
-  await page.goto(`${url}?autoplay`);
+  await page.goto(`${gameUrl}?autoplay`);
   await page.waitForFunction(() => !!window.sloppy);
   await page.evaluate(
     ({ scenario, seed }) => {

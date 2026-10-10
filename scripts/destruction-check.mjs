@@ -27,14 +27,15 @@ const results = {};
 const draw = (camera = []) => page.evaluate((camera) => window.engine.draw(camera), camera);
 try {
   await freezeLoop(page);
-  // This fixture needs a shattered tank, rather than the seed-dependent intact burnout.
+  // The seed keeps the first round's breach and tree debris deterministic; the wreck
+  // section reseeds before it adds its tank.
   await seedGame(page, 12345);
   await page.goto(gameUrl);
   await chooseMap(page, "village");
   await startRound(page);
   await page.evaluate(() => {
     document
-      .querySelectorAll("#overlay, #hud, #fps, #loading")
+      .querySelectorAll("#overlay, #hud")
       .forEach((element) => (element.style.display = "none"));
     window.sloppy.autoplay(false);
     window.sloppy.zoom(20);
@@ -42,8 +43,8 @@ try {
   const moveTo = (x, z) =>
     page.evaluate(
       ({ x, z }) => {
-        const { sloppy, engine } = window;
-        sloppy.game.debug_place_tank(engine.state().human.id, x, z, NaN);
+        const { sloppy } = window;
+        sloppy.game.debug_place_tank(sloppy.sim.human.id, x, z, NaN);
         // Settle the camera on the new position.
         for (let i = 0; i < 60; i++) sloppy.game.debug_render(1, 1 / 60, false, new Float32Array());
       },
@@ -192,7 +193,7 @@ try {
     game.debug_configure(4242, 12, 0);
     sloppy.start(); // A fresh arena, then only the pieces under test.
     game.debug_clear_arena(new Uint32Array());
-    game.debug_place_tank(engine.state().human.id, 0, 40, NaN);
+    game.debug_place_tank(sloppy.sim.human.id, 0, 40, NaN);
     for (const [kind, x] of [
       ["cargo", -6],
       ["timber", -2],

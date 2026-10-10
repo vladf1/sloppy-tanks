@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { click, collectErrors, gameUrl, headless, menuReady } from "./browser-helpers.mjs";
 
 // Manual regression evidence: include startup and first-use effects, no warm-up
 // discard and no sleeps in the simulation. Never put this workload in normal CI.
-const url = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 const seconds = Number(process.env.SLOPPY_PACING_SECONDS ?? 30);
 const limit = Number(process.env.SLOPPY_MAX_FRAME_MS ?? 250);
 const output = process.env.SLOPPY_ARTIFACT_DIR ?? "artifacts/performance/frame-pacing";
@@ -16,10 +15,7 @@ try {
   for (const map of ["village", "harbor", "quarry"]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     const errors = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
-    });
+    collectErrors(page, errors, { consoleErrors: true });
     await page.addInitScript(() => {
       let seed = 12345;
       Math.random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
@@ -47,17 +43,12 @@ try {
           }
         });
     });
-    await page.goto(`${url}?map=${map}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${gameUrl}?map=${map}`, { waitUntil: "domcontentloaded" });
     // Startup-check separately holds WASM/GPU work and exercises early GO.
     // Enable the same bot input before the first tick for reproducible combat.
-    await page.waitForFunction(
-      () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-    );
+    await menuReady(page);
     await page.evaluate(() => window.sloppy.autoplay());
-    await page.locator("#start").scrollIntoViewIfNeeded();
-    const box = await page.locator("#start").boundingBox();
-    assert.ok(box);
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await click(page, "#start");
     try {
       await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
     } catch (error) {

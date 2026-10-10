@@ -5,7 +5,14 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { webkit } from "playwright";
-import { gameUrl, headless, installEngineHelpers } from "./browser-helpers.mjs";
+import {
+  click,
+  collectErrors,
+  gameUrl,
+  headless,
+  installEngineHelpers,
+  menuReady,
+} from "./browser-helpers.mjs";
 
 const output = "artifacts/performance/webkit-startup";
 mkdirSync(output, { recursive: true });
@@ -31,10 +38,7 @@ try {
     });
     await installEngineHelpers(context);
     const page = await context.newPage();
-    page.on("pageerror", (error) => errors.push(`${map}: ${error.message}`));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(`${map}: ${message.text()}`);
-    });
+    collectErrors(page, errors, { consoleErrors: true, prefix: `${map}: ` });
     // Every startup stage Battle Setup reports, to read the shader progress total.
     await page.addInitScript(() => {
       window.startupStages = [];
@@ -45,17 +49,13 @@ try {
     });
     const started = Date.now();
     await page.goto(`${gameUrl}?map=${map}`, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(
-      () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-      null,
-      { timeout: READY_TIMEOUT_MS },
-    );
+    await menuReady(page, { timeout: READY_TIMEOUT_MS });
     const readyMs = Date.now() - started;
     const prepared = await page.evaluate(() => ({
       userAgent: navigator.userAgent,
       map: window.sloppy.sim.mapMode,
       stages: window.startupStages,
-      stats: window.engine.stats(),
+      stats: window.sloppy.stats(),
       gpuError: window.sloppy.error(),
     }));
     assert.match(prepared.userAgent, /AppleWebKit/);
@@ -75,9 +75,7 @@ try {
     assert.equal(prepared.stats.latePipelines, 0);
 
     // A physical click on GO, as a player starts a round.
-    const go = await page.locator("#start").boundingBox();
-    assert.ok(go);
-    await page.mouse.click(go.x + go.width / 2, go.y + go.height / 2);
+    await click(page, "#start");
     await page.waitForFunction(
       () =>
         !document.querySelector("#startup-overlay") &&
@@ -106,7 +104,7 @@ try {
       human: window.sloppy.sim.human,
       shots: window.sloppy.sim.shotsFired,
       gpuError: window.sloppy.error(),
-      stats: window.engine.stats(),
+      stats: window.sloppy.stats(),
     }));
     const moved = Math.hypot(after.human.x - before.x, after.human.z - before.z);
     assert.ok(moved > 1, `W drives the tank: ${moved.toFixed(2)} m`);

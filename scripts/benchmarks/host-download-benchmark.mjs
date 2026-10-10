@@ -7,21 +7,19 @@ const execFileAsync = promisify(execFile);
 const RUNS = 13;
 const MAX_TIME_SECONDS = 60;
 const ACCEPT_ENCODING = "br, gzip";
+/** Every curl request's transport: HTTP/2 over IPv4, failing loudly. */
+const CURL = ["--fail", "--silent", "--show-error", "--ipv4", "--http2"];
 const deployments = [
   {
     id: "github-pages",
     name: "GitHub Pages",
     origin: "https://sloppy-tanks.fridman.me",
-    prefix: "",
-    entry: "https://sloppy-tanks.fridman.me/",
   },
   {
     // The production Cloudflare site is gone; the dev site is the remaining Pages host.
     id: "cloudflare-pages",
     name: "Cloudflare Pages (dev site)",
     origin: "https://sloppy-tanks-dev.fridman.me",
-    prefix: "",
-    entry: "https://sloppy-tanks-dev.fridman.me/",
   },
 ];
 
@@ -64,25 +62,24 @@ const audioPaths = [
 function curlText(url) {
   return execFileSync(
     "curl",
-    ["--fail", "--silent", "--show-error", "--ipv4", "--http2", "--compressed", "--max-time", "20", url],
+    [...CURL, "--compressed", "--max-time", "20", url],
     { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
   );
 }
 
 function urlFor(deployment, path) {
-  return `${deployment.origin}${deployment.prefix}/${path.replace(/^\/+/, "")}`;
+  return `${deployment.origin}/${path}`;
 }
 
 function discover(deployment) {
-  const html = curlText(deployment.entry);
+  const entry = urlFor(deployment, "");
+  const html = curlText(entry);
   const match = html.match(/import\((?:"|')([^"']+assets\/game-[^"']+\.js)(?:"|')\)/);
   if (!match) {
-    throw new Error(`Could not find game chunk in ${deployment.entry}`);
+    throw new Error(`Could not find game chunk in ${entry}`);
   }
-  const chunkPath = match[1].startsWith("/") ? match[1] : `${deployment.prefix}/${match[1]}`;
-  const chunkResourcePath = chunkPath.startsWith(`${deployment.prefix}/`)
-    ? chunkPath.slice(deployment.prefix.length + 1)
-    : chunkPath.replace(/^\/+/, "");
+  const chunkResourcePath = match[1].replace(/^\/+/, "");
+  const chunkPath = `/${chunkResourcePath}`;
   const paths = [
     { path: "", type: "html", label: "HTML entry" },
     { path: "favicon.svg", type: "startup", label: "Favicon" },
@@ -94,20 +91,11 @@ function discover(deployment) {
   return { htmlBytes: Buffer.byteLength(html), chunkPath, paths };
 }
 
-function parseCurlJson(value) {
-  const line = value.trim().split("\n").at(-1);
-  return JSON.parse(line);
-}
-
 function requestResource(url, resource) {
   return new Promise((resolve) => {
     const started = performance.now();
     const args = [
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--ipv4",
-      "--http2",
+      ...CURL,
       "--raw",
       "--location",
       "--max-time",
@@ -120,42 +108,24 @@ function requestResource(url, resource) {
       '{"http_code":"%{http_code}","http_version":"%{http_version}","remote_ip":"%{remote_ip}","time_namelookup":%{time_namelookup},"time_connect":%{time_connect},"time_appconnect":%{time_appconnect},"time_starttransfer":%{time_starttransfer},"time_total":%{time_total},"size_download":%{size_download},"speed_download":%{speed_download},"num_connects":%{num_connects},"num_redirects":%{num_redirects}}',
       url,
     ];
-    const child = execFile("curl", args, { maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      const ended = performance.now();
+    execFile("curl", args, { maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      const base = { ...resource, url, processWallMs: performance.now() - started };
       if (error) {
-        resolve({
-          ...resource,
-          url,
-          ok: false,
-          error: error.message,
-          stderr: stderr.trim(),
-          processWallMs: ended - started,
-        });
+        resolve({ ...base, ok: false, error: error.message, stderr: stderr.trim() });
         return;
       }
       try {
-        const metrics = parseCurlJson(stdout);
-        resolve({
-          ...resource,
-          url,
-          ok: metrics.http_code === "200",
-          ...metrics,
-          processWallMs: ended - started,
-        });
+        const metrics = JSON.parse(stdout.trim().split("\n").at(-1));
+        resolve({ ...base, ok: metrics.http_code === "200", ...metrics });
       } catch (parseError) {
         resolve({
-          ...resource,
-          url,
+          ...base,
           ok: false,
           error: `Invalid curl metrics: ${parseError.message}`,
           stdout: stdout.trim(),
           stderr: stderr.trim(),
-          processWallMs: ended - started,
         });
       }
-    });
-    child.on("error", (error) => {
-      resolve({ ...resource, url, ok: false, error: error.message, processWallMs: performance.now() - started });
     });
   });
 }
@@ -164,11 +134,7 @@ async function identityBytes(url) {
   const { stdout } = await execFileAsync(
     "curl",
     [
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--ipv4",
-      "--http2",
+      ...CURL,
       "--max-time",
       "20",
       "--header",
@@ -266,7 +232,7 @@ async function main() {
         results[deployment.id] = {
           id: deployment.id,
           name: deployment.name,
-          entry: deployment.entry,
+          entry: urlFor(deployment, ""),
           discovery,
           identity,
           batches: [],

@@ -3,50 +3,30 @@
 // plus the local speed sliders staying out of rooms and literal player names in the feed.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { chromium } from "playwright";
-import {
-  gameUrl,
-  headless,
-  installEngineHelpers,
-  seedGame,
-  startRound,
-} from "./browser-helpers.mjs";
+import { freezeLoop, gameUrl, launchGame, seedGame, startRound } from "./browser-helpers.mjs";
 
 const out = "artifacts/performance/multiplayer/seats";
 await mkdir(out, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome", headless });
-const errors = [];
+const { browser, page, errors } = await launchGame({
+  viewport: { width: 1280, height: 800 },
+  consoleErrors: true,
+});
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await installEngineHelpers(page);
   await seedGame(page, 4242);
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  await page.addInitScript(() => {
-    let frame;
-    const raf = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (callback) => {
-      if (callback.name !== "loop") return raf(callback);
-      frame = callback;
-      return 1;
-    };
-    window.advanceFrame = () => frame(performance.now());
-  });
+  await freezeLoop(page);
   await page.goto(gameUrl);
   await startRound(page);
   const advance = () =>
     page.evaluate(() => {
-      for (let i = 0; i < 4; i++) window.advanceFrame();
+      for (let i = 0; i < 4; i++) window.runLoop(performance.now());
     });
   await page.evaluate(() => {
     const { sloppy, engine } = window;
-    const { human, tanks } = engine.state();
+    const { human, tanks } = sloppy.sim;
     const victim = tanks.find((tank) => !tank.human && tank.team !== human.team);
     engine.setTank(victim.id, { name: "<img src=x onerror=alert(1)>", protection: 0, shield: 0 });
     sloppy.game.debug_damage_tank(victim.id, 10000, human.id, human.team);
-    for (let i = 0; i < 4; i++) window.advanceFrame();
+    for (let i = 0; i < 4; i++) window.runLoop(performance.now());
   });
   assert.equal(await page.locator("#feed img").count(), 0);
   assert.match(await page.locator("#feed").innerText(), /YOU.*<img src=x onerror=alert\(1\)>/);

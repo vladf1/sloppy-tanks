@@ -1,6 +1,6 @@
 // Battle reports after END BATTLE, team/solo outcomes and records across reloads, plus
 // Solo Assault from Battle Setup: live kill scoreboard, pause, time limit and death.
-import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
+import { click, gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 
@@ -77,13 +77,6 @@ try {
       { width, height },
     );
   }
-  async function click(selector) {
-    const locator = page.locator(selector);
-    await locator.scrollIntoViewIfNeeded();
-    const box = await locator.boundingBox();
-    assert.ok(box);
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  }
   await open();
   for (const mode of ["team", "solo"]) {
     await page.evaluate((mode) => {
@@ -97,7 +90,7 @@ try {
       elapsed: window.sloppy.sim.elapsed,
       kills: window.sloppy.sim.human.kills,
     }));
-    await click("#end-battle");
+    await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
     assert.equal(await page.locator(".results h2").innerText(), "BATTLE ENDED");
     assert.deepEqual(
@@ -107,7 +100,7 @@ try {
       })),
       before,
     );
-    await click("#play-again");
+    await click(page, "#play-again");
     await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   }
   await page.evaluate(() => {
@@ -133,7 +126,7 @@ try {
   assert.ok(fits, "a full report must fit without scrolling to its buttons");
   await page.screenshot({ path: `${output}/battle-report-720p.png` });
   await resize(1440, 1100);
-  await click("#play-again");
+  await click(page, "#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.equal(await page.evaluate(() => window.sloppy.sim.combatRecord.busiestMinute), 0);
   await finish("team", 21);
@@ -153,7 +146,7 @@ try {
   assert.equal(layout.scrollWidth, layout.width, "report must fit inside the scroll container");
   await page.locator("#restart").scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${output}/battle-report-bottom.png` });
-  await click("#restart");
+  await click(page, "#restart");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "ready");
   await resize(1440, 1100);
   // Solo Assault through Battle Setup: endless reinforcements keep the round going.
@@ -170,10 +163,10 @@ try {
   await page.evaluate(() => {
     const { sloppy, engine } = window;
     const game = sloppy.game;
-    const human = engine.state().human;
+    const human = sloppy.sim.human;
     engine.setHuman({ protection: 999 });
     for (let i = 0; i < 55; i++) {
-      const t = engine.state().tanks.find((t) => !t.human && t.alive);
+      const t = sloppy.sim.tanks.find((t) => !t.human && t.alive);
       engine.setTank(t.id, { protection: 0 });
       game.debug_damage_tank(t.id, 9999, human.id, human.team);
       engine.setSim({ reinforcementDelay: 0 });
@@ -189,18 +182,18 @@ try {
   await page.waitForTimeout(200);
   assert.equal(await page.evaluate(() => window.sloppy.sim.match.time), frozen, "pause freezes");
   await page.evaluate(() => window.engine.setSim({ match: { time: 0.001 } }));
-  await click("#resume");
+  await click(page, "#resume");
   await page.waitForFunction(
     () => document.querySelector("#overlay h2")?.textContent === "SURVIVED",
   );
   assert.equal(await recapKills(), "55", "the time limit keeps the final kills");
   await page.screenshot({ path: `${output}/solo-survived.png` });
-  await click("#restart");
+  await click(page, "#restart");
   await startRound(page);
   await page.evaluate(() => {
     const { sloppy, engine } = window;
     engine.setSim({ elapsed: 42 });
-    const { human, tanks } = engine.state();
+    const { human, tanks } = sloppy.sim;
     const enemy = tanks.find((t) => t.team !== human.team);
     engine.setHuman({ protection: 0, shield: 0 });
     sloppy.game.debug_damage_tank(human.id, 9999, enemy.id, enemy.team);
@@ -211,7 +204,7 @@ try {
   assert.equal(await recapKills(), "0", "a new round starts without kills");
   assert.equal(await page.locator(".recap-feats").count(), 0, "no filler when nothing was earned");
   await page.screenshot({ path: `${output}/battle-report-solo.png` });
-  await click("#play-again");
+  await click(page, "#play-again");
   await page.waitForFunction(() => window.sloppy.sim.match.phase === "playing");
   assert.deepEqual(errors, []);
   console.log(

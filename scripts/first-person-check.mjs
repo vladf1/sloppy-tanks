@@ -1,4 +1,4 @@
-import { gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
+import { click, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 const output = "artifacts/performance/first-person";
@@ -85,18 +85,16 @@ try {
   assert.ok(moved > 1 && along > 0.8, `W follows the view: ${JSON.stringify({ moved, along })}`);
   await page.screenshot({ path: `${output}/driving.png` });
 
+  const captured = () =>
+    page.evaluate(() => document.pointerLockElement === document.querySelector("#game"));
   // A physical press fires, and captures the pointer where the browser allows it.
   await page.mouse.move(800, 450);
   await page.mouse.down();
   await page.waitForFunction(() => window.sloppy.sim.human.cooldown > 0);
   await page.mouse.up();
-  const locked = await page.evaluate(
-    () => document.pointerLockElement === document.querySelector("#game"),
-  );
+  const locked = await captured();
 
   const phase = () => page.evaluate(() => window.sloppy.sim.match.phase);
-  const captured = () =>
-    page.evaluate(() => document.pointerLockElement === document.querySelector("#game"));
   const freed = () =>
     page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: 2000 });
 
@@ -126,8 +124,7 @@ try {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   const heldFrames = await page.evaluate(() => window.sloppy.frames);
-  const resume = await page.locator("#resume").boundingBox();
-  await page.mouse.click(resume.x + resume.width / 2, resume.y + resume.height / 2);
+  await click(page, "#resume");
   assert.equal(await phase(), "playing");
   await page.mouse.move(800, 450);
   await page.mouse.down();
@@ -177,8 +174,7 @@ try {
   await freed();
   assert.equal(await phase(), "playing");
   await page.screenshot({ path: `${output}/respawn.png` });
-  const choice = await heavy.boundingBox();
-  await page.mouse.click(choice.x + choice.width / 2, choice.y + choice.height / 2);
+  await click(page, heavy);
   assert.equal(await page.evaluate(() => window.sloppy.sim.humanKind), "heavy");
   await page.waitForFunction(() => window.sloppy.sim.human.alive, null, { timeout: 10000 });
   await page.waitForFunction(() => window.sloppy.view.inFirstPerson, null, { timeout: 2000 });

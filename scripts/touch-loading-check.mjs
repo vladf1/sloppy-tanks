@@ -2,7 +2,7 @@
 // production build splits them into separate files, so build and serve one here.
 import assert from "node:assert/strict";
 import { build, preview } from "vite";
-import { launchGame, startRound } from "./browser-helpers.mjs";
+import { launchGame, nextFrames, setTouchMode, startRound } from "./browser-helpers.mjs";
 
 const outDir = "artifacts/performance/touch-loading/build";
 await build({ logLevel: "warn", build: { outDir } });
@@ -69,9 +69,7 @@ try {
   await page.locator(".touch-controls").waitFor({ state: "visible" });
   const assetsAfterEnable = downloads.length;
   for (let i = 0; i < 3; i++) {
-    await page.locator("#settings-open").click();
-    await page.locator("#touch-mode").selectOption("off");
-    await page.locator(".settings-save").click();
+    await setTouchMode(page, "off");
     assert.equal(await page.locator(".touch-controls").isVisible(), false);
     const mutations = await page.evaluate(async () => {
       let count = 0;
@@ -111,14 +109,8 @@ try {
   // Turning Off while a deferred download is pending must not construct an overlay.
   const delayed = await browser.newContext({ hasTouch: false });
   const delayedPage = await delayed.newPage();
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  let requested;
-  const pending = new Promise((resolve) => {
-    requested = resolve;
-  });
+  const { promise: gate, resolve: release } = Promise.withResolvers();
+  const { promise: pending, resolve: requested } = Promise.withResolvers();
   await delayedPage.route(/\/touch-controls[^/]*\.js$/, async (route) => {
     requested();
     await gate;
@@ -127,25 +119,17 @@ try {
   await delayedPage.goto(url);
   await startRound(delayedPage);
   await delayedPage.locator("#game").waitFor({ state: "visible" });
-  await delayedPage.locator("#settings-open").click();
-  await delayedPage.locator("#touch-mode").selectOption("on");
-  await delayedPage.locator(".settings-save").click();
+  await setTouchMode(delayedPage, "on");
   await pending;
-  await delayedPage.locator("#settings-open").click();
-  await delayedPage.locator("#touch-mode").selectOption("off");
-  await delayedPage.locator(".settings-save").click();
+  await setTouchMode(delayedPage, "off");
   const finished = delayedPage.waitForEvent("requestfinished", (request) =>
     /\/touch-controls[^/]*\.js$/.test(request.url()),
   );
   release();
   await finished;
-  await delayedPage.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
+  await nextFrames(delayedPage);
   assert.equal(await delayedPage.locator(".touch-controls").count(), 0);
-  await delayedPage.locator("#settings-open").click();
-  await delayedPage.locator("#touch-mode").selectOption("on");
-  await delayedPage.locator(".settings-save").click();
+  await setTouchMode(delayedPage, "on");
   await delayedPage.locator(".touch-controls").waitFor({ state: "visible" });
   console.log("Deferred download: Off prevents construction; subsequent On still works.");
   await delayed.close();

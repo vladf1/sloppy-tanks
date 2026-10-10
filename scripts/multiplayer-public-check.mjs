@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { StateMirror } from "./state-mirror.mjs";
+import { click, collectErrors, launchChrome } from "./browser-helpers.mjs";
 import {
   checkMultiplayerMenu,
-  click,
-  launchChrome,
   openMultiplayerTab,
   recordRoomFrames,
+  until,
 } from "./multiplayer-helpers.mjs";
 const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
 const output = "artifacts/performance/multiplayer/public";
@@ -22,10 +22,7 @@ try {
     client.page = page;
     clients.push(client);
     await page.addInitScript(() => Object.defineProperty(document, "hidden", { get: () => false }));
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
-    });
+    collectErrors(page, errors, { consoleErrors: true });
   }
   // The host creates a room on Battle Setup; its link opens Battle Setup for the guest
   // with the room selected.
@@ -53,9 +50,7 @@ try {
   );
   // The live HUD can appear before arena preparation and its resume baseline finish.
   const ready = (c) => c.fullEpoch >= 2 && c.inputs.at(-1)?.controlEpoch === c.fullEpoch;
-  const readyDeadline = Date.now() + 60000;
-  while (!clients.every(ready) && Date.now() < readyDeadline) await first.waitForTimeout(50);
-  assert.ok(clients.every(ready), "Both arenas are ready for input after resume");
+  await until(() => clients.every(ready), "Both arenas are ready for input after resume");
   for (const [index, c] of clients.entries()) {
     // Focus loss clears held controls; drive each visible player independently.
     await c.page.bringToFront();
@@ -117,26 +112,10 @@ try {
   );
 } finally {
   for (const { page } of clients) {
-    if (
-      await page
-        .locator("#pause")
-        .isVisible()
-        .catch(() => false)
-    )
-      await page
-        .locator("#pause")
-        .click()
-        .catch(() => {});
-    if (
-      await page
-        .locator("#leave-room")
-        .isVisible()
-        .catch(() => false)
-    )
-      await page
-        .locator("#leave-room")
-        .click()
-        .catch(() => {});
+    for (const selector of ["#pause", "#leave-room"]) {
+      const button = page.locator(selector);
+      if (await button.isVisible().catch(() => false)) await button.click().catch(() => {});
+    }
   }
   await writeFile(
     `${output}/result.json`,

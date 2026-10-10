@@ -216,7 +216,7 @@ On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`; the laser pictogram uses `node --import tsx scripts/generate-laser-pickup.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
+For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 

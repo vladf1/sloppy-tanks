@@ -3,8 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import {
   chooseMap,
   chosenMap,
+  click,
   gameUrl as url,
   launchGame,
+  menuReady,
   startRound,
 } from "./browser-helpers.mjs";
 
@@ -14,16 +16,11 @@ const viewport = { width: 1440, height: 1000 };
 const first = await launchGame({ viewport });
 const { browser, errors } = first;
 const results = {};
-async function fresh(size = viewport) {
-  const context = await browser.newContext({ viewport: size });
+async function fresh() {
+  const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
   return { context, page };
-}
-async function ready(page) {
-  await page.waitForFunction(
-    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-  );
 }
 async function playing(page) {
   await page.waitForFunction(
@@ -31,14 +28,11 @@ async function playing(page) {
   );
 }
 try {
-  // The menu must remain interactive with the entire physics download held back.
+  // The menu must remain interactive with the entire engine download held back.
   const delayed = { context: first.context, page: first.page };
-  let releasePhysics;
-  const physics = new Promise((resolve) => {
-    releasePhysics = resolve;
-  });
+  const { promise: engine, resolve: releaseEngine } = Promise.withResolvers();
   await delayed.page.route(/\.wasm(?:\?|$)/, async (route) => {
-    await physics;
+    await engine;
     await route.continue();
   });
   await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
@@ -47,9 +41,7 @@ try {
   await delayed.page.locator('[data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
-  const startBox = await delayed.page.locator("#start").boundingBox();
-  assert.ok(startBox);
-  await delayed.page.mouse.click(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2);
+  await click(delayed.page, "#start");
   assert.equal(await delayed.page.locator("#start").isDisabled(), true);
   assert.match(
     await delayed.page.locator("#startup-status").textContent(),
@@ -65,7 +57,7 @@ try {
   // A last-minute choice during the queued start must reach the actual round.
   await chooseMap(delayed.page, "quarry");
   assert.equal(await delayed.page.locator("canvas").count(), 0);
-  releasePhysics();
+  releaseEngine();
   await playing(delayed.page);
   results.delayed = await delayed.page.evaluate(() => ({
     tank: window.sloppy.sim.human.kind,
@@ -108,10 +100,7 @@ try {
       return pipeline;
     };
   });
-  let releaseTextures;
-  const textures = new Promise((resolve) => {
-    releaseTextures = resolve;
-  });
+  const { promise: textures, resolve: releaseTextures } = Promise.withResolvers();
   await graphics.page.route(/\/textures\/.*\.webp(?:\?|$)/, async (route) => {
     await textures;
     await route.continue();
@@ -122,12 +111,7 @@ try {
     await graphics.page.locator("#startup-status").textContent(),
     /Building the arena|Preparing graphics|Shaders loaded|Compiling shaders/,
   );
-  const graphicsBox = await graphics.page.locator("#start").boundingBox();
-  assert.ok(graphicsBox);
-  await graphics.page.mouse.click(
-    graphicsBox.x + graphicsBox.width / 2,
-    graphicsBox.y + graphicsBox.height / 2,
-  );
+  await click(graphics.page, "#start");
   assert.equal(await graphics.page.locator("#start").isDisabled(), true);
   assert.equal(await graphics.page.locator("#game").isVisible(), false);
   await chooseMap(graphics.page, "harbor");
@@ -150,7 +134,7 @@ try {
     if (request.url().includes("/textures/pickups/")) pickupTextures.push(request.url());
   });
   await warm.page.goto(url);
-  await ready(warm.page);
+  await menuReady(warm.page);
   // Startup fetches the pickup atlas early and the engine reuses that download.
   assert.equal(pickupTextures.length, 1, "one pickup texture download");
   assert.ok(pickupTextures[0].endsWith("/textures/pickups/atlas.webp"));
@@ -225,7 +209,7 @@ try {
   // Changing choices after preparation rebuilds the selected arena before playing.
   const changed = await fresh();
   await changed.page.goto(url);
-  await ready(changed.page);
+  await menuReady(changed.page);
   await changed.page.locator('input[value="solo"]').check();
   await chooseMap(changed.page, "harbor");
   await changed.page.locator('[data-kind="heavy"]').click();
@@ -242,7 +226,7 @@ try {
   );
   // The chosen map is remembered and prepared behind the next visit's menu.
   await changed.page.reload();
-  await ready(changed.page);
+  await menuReady(changed.page);
   assert.equal(await chosenMap(changed.page), "harbor");
   assert.equal(await changed.page.evaluate(() => window.sloppy.sim.mapMode), "harbor");
   await changed.context.close();
@@ -257,7 +241,7 @@ try {
     });
   });
   await blockedStorage.page.goto(url + "?debug");
-  await ready(blockedStorage.page);
+  await menuReady(blockedStorage.page);
   assert.equal(await chosenMap(blockedStorage.page), "village");
   await blockedStorage.page.locator('input[value="solo"]').check();
   await blockedStorage.page.locator('input[value="hard"]').check();
@@ -281,7 +265,7 @@ try {
   assert.equal(await failure.page.locator("#start").isEnabled(), true);
   await failure.page.locator('input[value="easy"]').check();
   await failure.page.locator("#start").click();
-  await ready(failure.page);
+  await menuReady(failure.page);
   assert.equal(await failure.page.locator('input[value="easy"]').isChecked(), true);
   await failure.context.close();
   results.retry = "passed";
@@ -291,7 +275,7 @@ try {
   // Without them the standard maps stay a row of buttons.
   const plain = await fresh();
   await plain.page.goto(url + "?map=superstress");
-  await ready(plain.page);
+  await menuReady(plain.page);
   assert.equal(await chosenMap(plain.page), "village");
   assert.equal(await plain.page.locator('.map-picker[data-name="mapMode"]').isVisible(), false);
   assert.equal(await plain.page.locator('.map-row input[name="mapMode"]').count(), 3);
@@ -319,7 +303,7 @@ try {
   // Extra levels force team play; a standard map restores the player's preferred mode.
   const extra = await fresh();
   await extra.page.goto(url + "?debug");
-  await ready(extra.page);
+  await menuReady(extra.page);
   assert.equal(await extra.page.locator(".map-row").first().isVisible(), false);
   await extra.page.locator('input[value="solo"]').check();
   await chooseMap(extra.page, "superstress");
@@ -345,65 +329,60 @@ try {
   results.automaticStarts = "passed";
   console.log("Autoplay and extra-level startup passed.");
 
-  for (const viewport of [{ width: 1440, height: 1000 }]) {
-    const layout = await fresh(viewport);
-    let releaseEngine;
-    const engine = new Promise((resolve) => {
-      releaseEngine = resolve;
-    });
-    await layout.page.route(/\/src\/game\.ts(?:\?|$)/, async (route) => {
-      await engine;
-      await route.continue();
-    });
-    await layout.page.addInitScript(() => {
-      window.menuStyles = () =>
-        [...document.querySelectorAll("#startup-overlay, #startup-overlay h1")].map((element) => {
-          const style = getComputedStyle(element);
-          const rect = element.getBoundingClientRect();
-          return {
-            font: style.font,
-            color: style.color,
-            background: style.backgroundColor,
-            boxSizing: style.boxSizing,
-            width: rect.width,
-            height: rect.height,
-            x: rect.x,
-            y: rect.y,
-          };
-        });
-    });
-    await layout.page.goto(url, { waitUntil: "domcontentloaded" });
-    await layout.page.locator("#startup-overlay h1").waitFor();
-    await layout.page.evaluate(() => document.fonts.ready);
-    const before = await layout.page.evaluate(() => window.menuStyles());
-    assert.equal(before.length, 2, "authored menu is visible before the engine loads");
-    await layout.page.screenshot({ path: `${output}/loading-menu-${viewport.width}.png` });
-    releaseEngine();
-    await ready(layout.page);
-    assert.deepEqual(await layout.page.evaluate(() => window.menuStyles()), before);
-    await layout.page.screenshot({ path: `${output}/menu-${viewport.width}.png` });
-    assert.equal(
-      await layout.page.evaluate(
-        () => document.querySelector("#startup-overlay").scrollWidth <= innerWidth,
-      ),
-      true,
-    );
-    assert.equal(
-      await layout.page.locator(".vehicle strong").evaluateAll((titles) =>
-        titles.every((title) => {
-          const range = document.createRange();
-          range.selectNodeContents(title);
-          const text = range.getBoundingClientRect();
-          const card = title.closest(".vehicle").getBoundingClientRect();
-          return text.left >= card.left + 1 && text.right <= card.right - 1;
-        }),
-      ),
-      true,
-      "vehicle titles fit within their cards without clipping",
-    );
-    results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
-    await layout.context.close();
-  }
+  const layout = await fresh();
+  const { promise: game, resolve: releaseGame } = Promise.withResolvers();
+  await layout.page.route(/\/src\/game\.ts(?:\?|$)/, async (route) => {
+    await game;
+    await route.continue();
+  });
+  await layout.page.addInitScript(() => {
+    window.menuStyles = () =>
+      [...document.querySelectorAll("#startup-overlay, #startup-overlay h1")].map((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          font: style.font,
+          color: style.color,
+          background: style.backgroundColor,
+          boxSizing: style.boxSizing,
+          width: rect.width,
+          height: rect.height,
+          x: rect.x,
+          y: rect.y,
+        };
+      });
+  });
+  await layout.page.goto(url, { waitUntil: "domcontentloaded" });
+  await layout.page.locator("#startup-overlay h1").waitFor();
+  await layout.page.evaluate(() => document.fonts.ready);
+  const before = await layout.page.evaluate(() => window.menuStyles());
+  assert.equal(before.length, 2, "authored menu is visible before the engine loads");
+  await layout.page.screenshot({ path: `${output}/loading-menu-${viewport.width}.png` });
+  releaseGame();
+  await menuReady(layout.page);
+  assert.deepEqual(await layout.page.evaluate(() => window.menuStyles()), before);
+  await layout.page.screenshot({ path: `${output}/menu-${viewport.width}.png` });
+  assert.equal(
+    await layout.page.evaluate(
+      () => document.querySelector("#startup-overlay").scrollWidth <= innerWidth,
+    ),
+    true,
+  );
+  assert.equal(
+    await layout.page.locator(".vehicle strong").evaluateAll((titles) =>
+      titles.every((title) => {
+        const range = document.createRange();
+        range.selectNodeContents(title);
+        const text = range.getBoundingClientRect();
+        const card = title.closest(".vehicle").getBoundingClientRect();
+        return text.left >= card.left + 1 && text.right <= card.right - 1;
+      }),
+    ),
+    true,
+    "vehicle titles fit within their cards without clipping",
+  );
+  results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
+  await layout.context.close();
   assert.deepEqual(errors, []);
   writeFileSync(`${output}/checks.json`, JSON.stringify({ ...results, errors }, null, 2));
   console.log(JSON.stringify(results));

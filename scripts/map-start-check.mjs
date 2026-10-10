@@ -9,6 +9,7 @@ import {
   freezeLoop,
   gameUrl as url,
   launchGame,
+  menuReady,
   seedGame,
   startRound,
 } from "./browser-helpers.mjs";
@@ -33,9 +34,7 @@ try {
     // Prepare normally, then drive the real game loop with chosen RAF timestamps.
     await freezeLoop(page);
     await page.goto(url);
-    await page.waitForFunction(
-      () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-    );
+    await menuReady(page);
     await chooseMap(page, map);
     await page.evaluate(() => {
       window.beforeStart = performance.now();
@@ -49,7 +48,7 @@ try {
       const frames = [];
       const frame = (timestamp) => {
         window.runLoop(timestamp);
-        const state = engine.state();
+        const state = sloppy.sim;
         const view = engine.view();
         const models = new Map(view.tanks.map((tank) => [tank.id, tank]));
         frames.push({

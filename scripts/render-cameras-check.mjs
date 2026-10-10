@@ -4,8 +4,7 @@
 // drawn before and after a detour through other views is the same image. Autoplay
 // starts each round without Battle Setup; the check runs the real game loop at fixed
 // frame steps and draws still frames through `Game.debug_render`.
-import { freezeLoop, gameUrl as url, launchGame } from "./browser-helpers.mjs";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { freezeLoop, gameUrl as url, launchGame, pixels } from "./browser-helpers.mjs";
 import fs from "node:fs";
 import assert from "node:assert/strict";
 
@@ -20,13 +19,6 @@ const { browser, context, errors } = await launchGame({
   viewport: { width: WIDTH, height: HEIGHT },
   consoleErrors: true,
 });
-
-async function pixels(png) {
-  const canvas = createCanvas(WIDTH, HEIGHT);
-  const context = canvas.getContext("2d");
-  context.drawImage(await loadImage(png), 0, 0);
-  return context.getImageData(0, 0, WIDTH, HEIGHT).data;
-}
 
 /** Share of pixels whose largest channel difference exceeds 20, and the largest. */
 function difference(a, b) {
@@ -48,14 +40,14 @@ try {
     await page.goto(`${url}?autoplay&map=${map}`);
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
     await page.evaluate(() => {
-      for (const element of document.querySelectorAll("#overlay, #hud, #fps, #loading")) {
+      for (const element of document.querySelectorAll("#overlay, #hud")) {
         element.style.display = "none";
       }
     });
-    const prepared = await page.evaluate(() => window.engine.stats());
+    const prepared = await page.evaluate(() => window.sloppy.stats());
     const counters = () =>
       page.evaluate(() => {
-        const { drawCalls, pipelines, latePipelines } = window.engine.stats();
+        const { drawCalls, pipelines, latePipelines } = window.sloppy.stats();
         return { drawCalls, pipelines, latePipelines, error: window.sloppy.error() };
       });
     const phases = {};
@@ -103,7 +95,7 @@ try {
     phases.afterFirstPerson = await counters();
     await page.evaluate(() => window.sloppy.firstPerson());
     await drawFrames(90);
-    const { minZoom, maxZoom } = await page.evaluate(() => window.engine.state().view);
+    const { minZoom, maxZoom } = await page.evaluate(() => window.sloppy.view);
     for (const zoom of [minZoom, maxZoom]) {
       await page.evaluate((zoom) => window.sloppy.zoom(zoom), zoom);
       await drawFrames(30);

@@ -16,7 +16,7 @@ interface Env {
 }
 
 /** Durable Object location hints; each region runs at most one swarm object. */
-export const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
+const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
 type Region = (typeof REGIONS)[number];
 const MAX_BOTS_PER_REGION = 32;
 const DEFAULT_MINUTES = 5;
@@ -192,7 +192,6 @@ export class BotSwarm extends DurableObject<Env> {
       room: room ?? null,
       connected: !!socket,
       phase: socket ? bot.phase : "seeking",
-      rttMs: bot.stats.rttMs ?? null,
       lastError: bot.lastError ?? null,
       ...bot.stats,
     }));
@@ -228,7 +227,7 @@ export class BotSwarm extends DurableObject<Env> {
       this.seats.push({ bot: new BotPlayer(name), connecting: false });
     }
     for (const seat of this.seats.splice(config.bots)) {
-      this.disconnect(seat, true);
+      this.disconnect(seat);
     }
     this.timer ??= setInterval(() => {
       const now = Date.now();
@@ -428,15 +427,13 @@ export class BotSwarm extends DurableObject<Env> {
     }
   }
 
-  private disconnect(seat: Seat, leave: boolean): void {
+  private disconnect(seat: Seat): void {
     const socket = seat.socket;
     seat.socket = undefined;
     if (!socket) {
       return;
     }
-    if (leave) {
-      seat.bot.leave();
-    }
+    seat.bot.leave();
     seat.bot.disconnected();
     try {
       socket.close(1000, "Bot stopped");
@@ -446,12 +443,10 @@ export class BotSwarm extends DurableObject<Env> {
   }
 
   private release(): void {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
+    clearInterval(this.timer ?? null);
+    this.timer = undefined;
     for (const seat of this.seats) {
-      this.disconnect(seat, true);
+      this.disconnect(seat);
     }
     this.seats = [];
     this.blocked.clear();

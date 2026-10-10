@@ -4,17 +4,26 @@
 // and the arena shows only the drive stick, zoom, first person and pause (a touch on
 // the arena aims and fires), in landscape and portrait, with a farther camera, no page zoom and short pause
 // and results dialogs. phone-multiplayer-check.mjs plays the Multiplayer tab.
-import { gameUrl as url, launchGame, startRound } from "./browser-helpers.mjs";
+import {
+  aimAfterTap,
+  assertApart,
+  assertTouchable,
+  box,
+  center,
+  gameUrl as url,
+  launchGame,
+  nextFrames,
+  startRound,
+  touchScreen,
+} from "./browser-helpers.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 
 const output = "artifacts/performance/phone";
 mkdirSync(output, { recursive: true });
-const { browser, context, page, errors } = await launchGame({
-  viewport: { width: 874, height: 402 },
-  hasTouch: true,
-  isMobile: true,
-});
+const PHONE = { width: 874, height: 402 };
+const phone = { viewport: PHONE, screen: PHONE, hasTouch: true, isMobile: true };
+const { browser, page, errors } = await launchGame(phone);
 const visible = (selectors) =>
   page.evaluate(
     (selectors) =>
@@ -49,7 +58,7 @@ try {
   await page.locator('[data-kind="heavy"]').tap();
   await page.locator('input[name="mapMode"][value="harbor"]').tap({ force: true });
   await startRound(page, { touch: true });
-  const hud = await page.evaluate(() => JSON.parse(window.sloppy.game.hud_json()));
+  const hud = await page.evaluate(() => window.sloppy.hud());
   assert.equal(hud.difficulty, "easy");
   assert.equal(hud.gameMode, "team");
   assert.match(hud.mapName, /harbor/i);
@@ -84,29 +93,7 @@ try {
     ],
   );
 
-  const session = await context.newCDPSession(page);
-  const fingers = new Map();
-  const touch = async (type, id, x, y) => {
-    const released = fingers.get(id);
-    if (type === "touchEnd") fingers.delete(id);
-    else fingers.set(id, { id, x, y, radiusX: 5, radiusY: 5, force: 1 });
-    await session.send("Input.dispatchTouchEvent", {
-      type,
-      touchPoints: type === "touchEnd" ? [released] : [...fingers.values()],
-    });
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
-  };
-  const box = async (selector) => {
-    const rect = await page.locator(selector).boundingBox();
-    assert.ok(rect, selector);
-    return rect;
-  };
-  const center = async (selector) => {
-    const rect = await box(selector);
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  };
+  const { touch, tap } = await touchScreen(page);
   /** The controls and score are on screen and apart, and the controls take touches. */
   const checkLayout = async (width, height) => {
     const selectors = [
@@ -117,38 +104,20 @@ try {
       "#zoom-in",
       ".scoreboard",
     ];
-    const rects = await Promise.all(selectors.map(box));
+    const rects = await Promise.all(selectors.map((selector) => box(page, selector)));
     // One row across the top: zoom at the left of the scoreboard, first person and pause
     // at its right.
     const [, view, , zoomOut, zoomIn, scoreboard] = rects;
     assert.ok(zoomOut.x < zoomIn.x && zoomIn.x + zoomIn.width <= scoreboard.x, "zoom left");
     assert.ok(view.x >= scoreboard.x + scoreboard.width, "first person and pause right");
     assert.ok(Math.abs(zoomIn.y - view.y) < 1, "zoom and first person share the top row");
-    rects.forEach((rect, i) => {
-      assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen`);
-      assert.ok(rect.x + rect.width <= width && rect.y + rect.height <= height, selectors[i]);
-      rects.slice(i + 1).forEach((other, j) => {
-        const apart =
-          rect.x + rect.width <= other.x ||
-          other.x + other.width <= rect.x ||
-          rect.y + rect.height <= other.y ||
-          other.y + other.height <= rect.y;
-        assert.ok(apart, `${selectors[i]} and ${selectors[i + j + 1]} do not overlap`);
-      });
-    });
+    assertApart(rects, selectors, width, height);
     // The scoreboard only shows; the controls take touches.
-    for (const selector of [".touch-drive", "#view-mode", "#pause", "#zoom-out", "#zoom-in"]) {
-      const point = await center(selector);
-      assert.equal(
-        await page.evaluate(
-          ({ selector, point }) =>
-            document.querySelector(selector).contains(document.elementFromPoint(point.x, point.y)),
-          { selector, point },
-        ),
-        true,
-        `${selector} can receive physical touches`,
-      );
-    }
+    await assertTouchable(
+      page,
+      [".touch-drive", "#view-mode", "#pause", "#zoom-out", "#zoom-in"],
+      `at ${width}x${height}`,
+    );
   };
   const state = () =>
     page.evaluate(() => ({
@@ -163,27 +132,16 @@ try {
     ["#zoom-in", 38],
     ["#zoom-out", 40],
   ]) {
-    const point = await center(button);
-    await touch("touchStart", 5, point.x, point.y);
-    await touch("touchEnd", 5);
+    await tap(5, await center(page, button));
     await page.waitForFunction((expected) => window.sloppy.view.zoom === expected, expected);
   }
   assert.equal(await zoom(), 40);
-  const drive = await center(".touch-drive");
+  const drive = await center(page, ".touch-drive");
   await touch("touchStart", 1, drive.x, drive.y);
   await touch("touchMove", 1, drive.x + 40, drive.y);
   // A touch on the arena aims there and fires until it lifts.
-  const aimAfterTap = async (x, y) => {
-    await touch("touchStart", 2, x, y);
-    await touch("touchMove", 2, x + 1, y);
-    assert.equal((await state()).fire, true, "an arena finger fires");
-    await page.waitForTimeout(400);
-    await touch("touchEnd", 2);
-    assert.equal((await state()).fire, false, "lifting it stops firing");
-    return page.evaluate(() => window.engine.state().human.aim);
-  };
-  const left = await aimAfterTap(120, 170);
-  const right = await aimAfterTap(724, 170);
+  const left = await aimAfterTap(page, touch, 120, 170);
+  const right = await aimAfterTap(page, touch, 724, 170);
   assert.ok(Math.sign(left) !== Math.sign(right), `taps turn the turret: ${left} → ${right}`);
   await touch("touchStart", 2, 724, 170);
   assert.ok((await state()).x > 0.4, "drives while firing");
@@ -202,9 +160,8 @@ try {
   // First person: ◎ seats the camera in the turret, a sideways drag on the arena
   // turns the view while that finger fires, and the gun sight shows.
   const firstPerson = () => page.evaluate(() => window.sloppy.view.firstPerson);
-  const toggleView = await center("#view-mode");
-  await touch("touchStart", 4, toggleView.x, toggleView.y);
-  await touch("touchEnd", 4);
+  const toggleView = await center(page, "#view-mode");
+  await tap(4, toggleView);
   await page.waitForFunction(() => window.sloppy.view.firstPerson.enabled);
   // The turret view has no zoom, so its buttons step aside.
   await expectVisible(["#view-mode", "#pause"], ["#zoom-out", "#zoom-in"]);
@@ -234,8 +191,7 @@ try {
     `holding the stick sideways keeps turning: ${beforeStick} → ${afterStick}`,
   );
   await touch("touchEnd", 1);
-  await touch("touchStart", 4, toggleView.x, toggleView.y);
-  await touch("touchEnd", 4);
+  await tap(4, toggleView);
   await page.waitForFunction(() => !window.sloppy.view.firstPerson.enabled);
   await page.waitForTimeout(1200);
   assert.equal(
@@ -248,9 +204,7 @@ try {
   await page.waitForFunction(() => innerWidth === 402);
   await checkLayout(402, 874);
   // Layout can settle before the next frame resizes the drawing buffer.
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
+  await nextFrames(page);
   // The picture is drawn at the canvas's displayed shape, so circles stay round.
   const canvasShape = await page.evaluate(() => {
     const canvas = document.querySelector("#game");
@@ -287,10 +241,7 @@ try {
   // Screen; opened from there (`navigator.standalone`), the game has no bars to hide.
   for (const standalone of [false, true]) {
     const iphone = await browser.newContext({
-      viewport: { width: 874, height: 402 },
-      screen: { width: 874, height: 402 },
-      hasTouch: true,
-      isMobile: true,
+      ...phone,
       userAgent:
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
     });
@@ -315,17 +266,10 @@ try {
   }
   // A ?debug page offers the tiny "nerds" link: in from the screen's corner, with a touch
   // target well beyond its text, and a physical touch on it opens the panel.
-  const debugUrl = new URL(url);
-  debugUrl.searchParams.set("debug", "");
-  const debugPhone = await browser.newContext({
-    viewport: { width: 874, height: 402 },
-    screen: { width: 874, height: 402 },
-    hasTouch: true,
-    isMobile: true,
-  });
+  const debugPhone = await browser.newContext(phone);
   const debugPage = await debugPhone.newPage();
   debugPage.on("pageerror", (error) => errors.push(error.message));
-  await debugPage.goto(debugUrl.href);
+  await debugPage.goto(url + "?debug");
   await debugPage.locator("#startup-overlay[data-state=ready]").waitFor();
   await startRound(debugPage, { touch: true });
   const nerds = debugPage.locator("#nerd-stats .nerd-stats-toggle");

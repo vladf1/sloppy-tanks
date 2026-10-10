@@ -1,15 +1,15 @@
 import { encodeWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
-import { SPECIAL_AMMO, WEAPONS } from "./asset-data";
+import { SPECIAL_AMMO } from "./asset-data";
 
 // Original vector pictograms rasterized offline; the game only loads these WebP images.
 const output = new URL("../assets/texture-sources/pickups/", import.meta.url);
 await mkdir(output, { recursive: true });
-for (const kind of SPECIAL_AMMO) {
+for (const { weapon: kind, label, color: accent } of SPECIAL_AMMO) {
   const canvas = createCanvas(256, 256),
     c = canvas.getContext("2d");
-  const color = `#${WEAPONS[kind].color.toString(16).padStart(6, "0")}`;
+  const color = `#${accent.toString(16).padStart(6, "0")}`;
   c.fillStyle = color;
   c.fillRect(0, 0, 256, 256);
   c.fillStyle = "#14283a";
@@ -87,6 +87,6 @@ for (const kind of SPECIAL_AMMO) {
   c.fillStyle = "#14283a";
   c.font = "900 25px sans-serif";
   c.textAlign = "center";
-  c.fillText(WEAPONS[kind].label, 128, 223);
+  c.fillText(label, 128, 223);
   await writeFile(new URL(`${kind}.webp`, output), encodeWebp(canvas));
 }

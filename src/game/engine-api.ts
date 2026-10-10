@@ -1,6 +1,6 @@
 /** The page's contract with the Rust engine (`crates/web/src/game.rs`): packed input
  * and frame-result slots, and the shapes of its JSON reports. This module imports
- * nothing, so shell modules can use it without loading the engine. */
+ * only types, so shell modules can use it without loading the engine. */
 import type { MapId } from "./map-options";
 
 /** Slots of the packed raw input frame (`sloppy_render::presentation::input::slot`).
