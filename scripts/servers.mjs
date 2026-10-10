@@ -4,8 +4,8 @@ import { BlockList, isIP } from "node:net";
 /**
  * The multiplayer game servers: one machine each for production and the dev site, listed
  * in deploy/servers.json and set up by deploy/server/ (crates/server/README.md). Each entry
- * has the machine's public `ip`, which every script reaches it by over SSH as root, an
- * optional `hostname` for players, and the server's environment `settings`.
+ * has the machine's public `ip`, which every script reaches it by over SSH as root, and
+ * an optional `hostname` for players; nothing else differs between the machines.
  *
  * Caddy on the machine serves the hostname and the machine's nip.io name (`1-2-3-4.nip.io`
  * resolves to 1.2.3.4), so a new machine has a certificate and a working address as soon as
@@ -61,7 +61,7 @@ export function gameServer(dev) {
 }
 
 /** How the scripts reach a machine from its deploy/servers.json entry. */
-export function serverMachine(role, { ip, hostname, settings }) {
+export function serverMachine(role, { ip, hostname }) {
   const nip = ip && !privateAddresses.check(ip) ? nipName(ip) : undefined;
   const sites = [hostname, nip].filter(Boolean);
   if (!sites.length) throw new Error(`${role} in deploy/servers.json needs an ip`);
@@ -78,6 +78,5 @@ export function serverMachine(role, { ip, hostname, settings }) {
     url: `wss://${sites[0]}`,
     /** Where the scripts check the server through Caddy: the name that reaches this machine. */
     checkUrl: `https://${nip ?? sites[0]}`,
-    settings,
   };
 }

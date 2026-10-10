@@ -1,16 +1,10 @@
 {
   "production": {
     "ip": null,
-    "hostname": "sloppy-tanks-server.fridman.me",
-    "settings": {
-      "ALLOWED_ORIGINS": "https://sloppy-tanks-dev.fridman.me,https://sloppy-tanks-dev.pages.dev,https://fridman.me,http://fridman.me,https://sloppy-tanks.fridman.me,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:4179,http://127.0.0.1:4180,http://localhost:5173,http://localhost:5174"
-    }
+    "hostname": "sloppy-tanks-server.fridman.me"
   },
   "dev": {
     "ip": null,
-    "hostname": null,
-    "settings": {
-      "ALLOWED_ORIGINS": "https://sloppy-tanks-dev.fridman.me,https://sloppy-tanks-dev.pages.dev,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:4179,http://127.0.0.1:4180,http://localhost:5173,http://localhost:5174"
-    }
+    "hostname": null
   }
 }

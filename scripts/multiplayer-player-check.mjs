@@ -8,7 +8,6 @@ import { contentVersion, protocolVersion } from "./content-version.mjs";
 import { createWireView } from "./wire-view.mjs";
 
 const endpoint = process.env.SLOPPY_SERVER_URL ?? "ws://127.0.0.1:8787";
-const origin = process.env.SLOPPY_ORIGIN ?? "http://127.0.0.1:5173";
 const seconds = Number(process.env.SLOPPY_PLAYER_SECONDS ?? 15);
 const count = Number(process.env.SLOPPY_PLAYER_CLIENTS ?? 4);
 const maps = (process.env.SLOPPY_PLAYER_MAPS ?? "village,harbor,quarry").split(",");
@@ -53,7 +52,7 @@ class Player {
   async connect() {
     this.expectedClose = false;
     this.welcome = undefined;
-    const socket = new WebSocket(`${endpoint}/room/${this.room}`, { origin });
+    const socket = new WebSocket(`${endpoint}/room/${this.room}`);
     this.socket = socket;
     socket.on("error", (error) => report.errors.push(error.message));
     socket.on("close", (status, reason) => {

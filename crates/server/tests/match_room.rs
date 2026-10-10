@@ -25,7 +25,7 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn start() -> (MultiplayerServer, String) {
     let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-    let mut options = ServerOptions::new(vec![ORIGIN.to_string()], true);
+    let mut options = ServerOptions::new(true);
     let sink = lines.clone();
     options.log = Arc::new(move |line| sink.lock().unwrap().push(line.to_string()));
     let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")

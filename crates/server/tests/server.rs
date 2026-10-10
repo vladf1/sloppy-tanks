@@ -28,7 +28,7 @@ const WAIT: Duration = Duration::from_secs(5);
 type Lines = Arc<Mutex<Vec<String>>>;
 
 fn options(lines: &Lines) -> ServerOptions {
-    let mut options = ServerOptions::new(vec![ORIGIN.to_string()], true);
+    let mut options = ServerOptions::new(true);
     // The rate-limit test opens sockets faster than their closes are counted.
     options.max_sockets_per_ip = 1000;
     let sink = lines.clone();
@@ -356,12 +356,15 @@ async fn reports_the_image_build_stamps_like_the_page() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rejects_foreign_origins_plain_http_rooms_and_invalid_codes() {
+async fn serves_any_origin_and_rejects_plain_http_rooms_and_invalid_codes() {
     let (server, base, _) = start().await;
-    let foreign = get(&base, "/rooms", &[("Origin", "https://evil.example")]).await;
+    // No origin allowlist: rooms carry no cookies or credentials a foreign page could
+    // borrow, and /stats publishes the room codes anyway.
+    let foreign = get(&base, "/rooms", &[("Origin", "https://other.example")]).await;
+    assert_eq!(foreign.status, 200);
     assert_eq!(
-        (foreign.status, foreign.body.as_str()),
-        (403, "Origin not allowed")
+        foreign.headers["access-control-allow-origin"],
+        "https://other.example"
     );
     let plain = get(&base, "/room/ABCDEFGH", &[("Origin", ORIGIN)]).await;
     assert_eq!(
@@ -372,8 +375,6 @@ async fn rejects_foreign_origins_plain_http_rooms_and_invalid_codes() {
         get(&base, "/room/abc", &[("Origin", ORIGIN)]).await.status,
         404
     );
-    let refused = open(&base, "ABCDEFGH", &[("Origin", "https://evil.example")]).await;
-    assert_eq!(refused.status(), 403);
     let Opened::Refused(missing) = open(&base, "abc", &[]).await else {
         panic!("opened an invalid code")
     };

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Idempotent setup of one game server machine on Ubuntu: Podman, the server's and Caddy's
 # Quadlet units, the image updater, key-only SSH and the firewall. Run as root from a
-# directory holding this script, the other files in deploy/server/ and the machine's
-# server.env, where `node scripts/server.mjs provision` uploads them (it writes the
-# machine's names into the Caddyfile). It starts no server image: the first deploy pins one.
+# directory holding this script and the other files in deploy/server/, where
+# `node scripts/server.mjs provision` uploads them (it writes the machine's names into
+# the Caddyfile). It starts no server image: the first deploy pins one.
 set -euo pipefail
 cd "$(dirname "$0")"
 export DEBIAN_FRONTEND=noninteractive
@@ -22,12 +22,9 @@ systemctl reload ssh
 
 install -d -m 755 /etc/sloppy-tanks/caddy /var/lib/sloppy-tanks
 install -d -m 700 /var/lib/caddy/data /var/lib/caddy/config
-# A restart ends live rooms, so the server restarts below only if its settings changed.
-server_config() {
-  { cat /etc/sloppy-tanks/server.env /etc/containers/systemd/sloppy-tanks.container 2>/dev/null || true; } | sha256sum
-}
-server_config_before=$(server_config)
-install -m 644 server.env /etc/sloppy-tanks/server.env
+# A restart ends live rooms, so the server restarts below only if its unit changed.
+server_unit_changed=false
+cmp -s sloppy-tanks.container /etc/containers/systemd/sloppy-tanks.container || server_unit_changed=true
 # Check the Caddyfile with the Caddy it is for before it replaces a working one.
 caddy_image=$(sed -n 's/^Image=//p' caddy.container)
 podman run --rm --network none --volume "$PWD:/etc/caddy:ro" "$caddy_image" \
@@ -49,7 +46,7 @@ else
 fi
 # Quadlet generates the server's service only once a deploy has pinned an image.
 if [[ -f /etc/containers/systemd/sloppy-tanks.container.d/image.conf ]]; then
-  if [[ $(server_config) != "$server_config_before" ]]; then
+  if $server_unit_changed; then
     systemctl restart sloppy-tanks
   else
     systemctl start sloppy-tanks

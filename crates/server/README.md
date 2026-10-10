@@ -16,9 +16,8 @@ pnpm run dev               # in another terminal; open ?multiplayer on the print
 ```
 
 The client uses `ws://127.0.0.1:8787` locally. `pnpm run server:check:players`
-runs real player sockets on all maps against a running server. Use
-`SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me` with a listed
-`SLOPPY_ORIGIN` such as `https://sloppy-tanks-dev.pages.dev` to test production's.
+runs real player sockets on all maps against a running server;
+`SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me` tests production's.
 `pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects
 a remote server for that browser check. For sustained traffic from other
 regions, the traffic bots (a separate Cloudflare Worker) join open rooms on
@@ -45,8 +44,8 @@ there before changing either.
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
 It cross-compiles with `--vps` as above in the normal Cargo target directory, so
 compiled dependencies are reused locally and from CI's Cargo cache, and the image
-only copies in the static binary, listening on `0.0.0.0:8787`. Try it with `docker run --rm -p 8787:8787
-sloppy-tanks-server` and `ALLOWED_ORIGINS` as needed. The server machines run these
+only copies in the static binary, listening on `0.0.0.0:8787`. Try it with
+`docker run --rm -p 8787:8787 sloppy-tanks-server`. The server machines run these
 images (see [Deployment](#deployment)).
 
 Both builds stamp the content version the browser engine also carries
@@ -61,12 +60,11 @@ accepted in production builds.
 
 Settings come from the environment:
 
-| Variable          | Default              | Meaning                                                     |
-| ----------------- | -------------------- | ----------------------------------------------------------- |
-| `HOST` / `PORT`   | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
-| `ALLOWED_ORIGINS` | local Vite origins   | Exact comma-separated origin allowlist                      |
-| `MAX_ROOMS`       | `10`                 | Live rooms; new room codes beyond it get 503                |
-| `TRUST_PROXY`     | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy   |
+| Variable        | Default              | Meaning                                                     |
+| --------------- | -------------------- | ----------------------------------------------------------- |
+| `HOST` / `PORT` | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
+| `MAX_ROOMS`     | `10`                 | Live rooms; new room codes beyond it get 503                |
+| `TRUST_PROXY`   | `true` on loopback   | Rate-limit on the last `X-Forwarded-For` hop set by Caddy   |
 
 A malformed value stops startup instead of silently turning a limit off.
 
@@ -105,9 +103,10 @@ refreshed. The client refreshes every five seconds while the visible browser
 dialog is open, and stops on joining, creating or leaving the page. Ordinary
 single player never loads or polls it.
 
-The server checks exact allowed origins, 8-character room codes,
-protocol/content versions, message sizes (4096 bytes) and rates (65
-messages/second/socket) before accepting authority. Per process it allows 60
+The server checks 8-character room codes, protocol/content versions, message sizes
+(4096 bytes) and rates (65 messages/second/socket) before accepting authority. It
+accepts any page origin: a room holds no cookies or credentials that another site's
+page could borrow, and `/stats` lists room codes publicly anyway. Per process it allows 60
 room connections/minute/IP, 120 room entries/minute overall, 120 listing
 requests/minute/IP, 16 open sockets per room and 32 per IP, and `MAX_ROOMS` live
 rooms; joining an existing room is never refused by the room cap. Each limiter
@@ -117,9 +116,9 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 ## Deployment
 
 Production and the dev site each have their own game server machine, an Ubuntu 26.04
-x64 VPS at Vultr. `deploy/servers.json` lists both (`scripts/servers.mjs` reads it):
-each machine's public `ip`, an optional `hostname` and the server's environment
-`settings`. A machine runs the server as a container under Podman, behind Caddy in a
+x64 VPS at Vultr, set up identically. `deploy/servers.json` lists both
+(`scripts/servers.mjs` reads it): each machine's public `ip` and an optional
+`hostname`. A machine runs the server as a container under Podman, behind Caddy in a
 container of its own, both supervised by systemd through Quadlet units. CI builds the
 server images; production pulls them by hand or automatically, and an SSH deploy from
 a checkout covers the dev server and any time CI or the registry cannot.
@@ -157,17 +156,16 @@ connects to the machines. Fork pull requests build the image without pushing.
 ### On a machine
 
 `deploy/server/` holds the setup, which `server:provision` uploads with the
-machine's `server.env` (its settings) and its Caddyfile (its names):
+machine's names written into the Caddyfile:
 
 - `provision.sh` installs Podman from Ubuntu's archive, the units and the updater,
   turns off SSH password login and allows only SSH, 80 and 443 through `ufw`. It is
   safe to run again: it validates the Caddyfile with the pinned Caddy before
   replacing the live one, reloads Caddy in place (restarting it only for a new Caddy
-  image) and restarts the server only when its settings or unit changed.
+  image) and restarts the server only when its unit changed.
 - `sloppy-tanks.container` is the server's Quadlet unit in
   `/etc/containers/systemd/`, from which systemd generates `sloppy-tanks.service`.
-  It runs the image on loopback port 8787 with `/etc/sloppy-tanks/server.env`, a
-  read-only root, no capabilities, no new privileges and a 700 MB memory cap without
+  It runs the image on loopback port 8787 with a read-only root, no capabilities, no new privileges and a 700 MB memory cap without
   swap. Output goes to the unit's journal. It runs the image ID pinned in
   `/var/lib/sloppy-tanks/image`, which the updater copies into the drop-in
   `sloppy-tanks.container.d/image.conf`, so a crash or reboot restarts exactly what

@@ -10,6 +10,5 @@
   "vars": {
     // The production game server (deploy/servers.json; a test keeps the two equal).
     "SERVER_URL": "https://sloppy-tanks-server.fridman.me",
-    "BOT_ORIGIN": "https://sloppy-tanks-dev.pages.dev",
   },
 }

@@ -63,7 +63,7 @@ async function waitForHealth(expected, describe) {
   }
 }
 
-/** Uploads deploy/server/ with this machine's settings and names, and runs provision.sh. */
+/** Uploads deploy/server/ with this machine's names in the Caddyfile, and runs provision.sh. */
 function provision() {
   console.log(
     `Provisioning the ${server.role} server on ${server.ssh} (${server.sites.join(", ")})`,
@@ -83,18 +83,11 @@ function provision() {
       join(staging, "Caddyfile"),
       caddyfile.replaceAll("{$SITES}", server.sites.join(", ")),
     );
-    writeFileSync(
-      join(staging, "server.env"),
-      Object.entries(server.settings)
-        .map(([name, value]) => `${name}=${value}\n`)
-        .join(""),
-    );
     ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
     run("scp", [
       ...SSH_OPTIONS,
       ...files,
       join(staging, "Caddyfile"),
-      join(staging, "server.env"),
       `${server.ssh}:/root/sloppy-tanks-provision/`,
     ]);
   } finally {
