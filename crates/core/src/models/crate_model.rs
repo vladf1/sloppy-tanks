@@ -1,6 +1,7 @@
 //! Cargo crates built from sawn boards like the timber walls: sheathing planks
 //! with dark seams between framing battens and a diagonal brace on each wall, a
-//! boarded lid inside a frame, skids and two steel straps, over a dark interior.
+//! boarded lid inside a frame, a floor on skids and two steel straps, around a
+//! dark hold.
 //!
 //! Each recorded shell hit breaches the face it struck: the planks, battens and
 //! brace inside the breach break away, leaving stepped, grain-split ends with
@@ -41,6 +42,7 @@ pub struct CrateShape {
 
 /// Dark gap between neighbouring boards, where the interior shows.
 const SEAM: f64 = 0.012;
+const FLOOR_THICKNESS: f64 = 0.04;
 const BRACE_WIDTH: f64 = 0.13;
 const STRAP_WIDTH: f64 = 0.07;
 const STRAP_THICKNESS: f64 = 0.012;
@@ -50,14 +52,15 @@ const STRAP_SPREAD: f64 = 0.3;
 const BATTEN_COLOR: u32 = 0xd2b07c;
 const SKID_COLOR: u32 = 0x6e5139;
 const STRAP_COLOR: u32 = 0x3b4044;
-const INTERIOR_COLOR: u32 = 0x1c140c;
 /// Fresh wood where boards tore, and the darker fibres under it.
+/// The inside of the walls, out of the sun.
+const HOLD_COLOR: u32 = 0x2b1f14;
 const RAW_WOOD: u32 = 0xe4c899;
 const TORN_WOOD: u32 = 0xc9a26e;
 const CRACK_LIP_COLOR: u32 = 0xb98a55;
 const CRACK_COLOR: u32 = 0x2b1d12;
-/// Splinters, torn fibres and the interior share one matte finish, so batching
-/// merges them into one draw.
+/// Splinters, torn fibres and the hold share one matte finish, so batching merges
+/// them into one draw.
 const SCRAP_FINISH: (f64, f64) = (0.0, 0.85);
 
 /// Decals sit this far over the board they mark, enough to win the depth test.
@@ -548,7 +551,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     let snapped = if rng.next() < 0.5 { -1.0 } else { 1.0 };
     let tone = |rng: &mut Random| scale_hex_color(c.color, rng.range(0.86, 1.06));
 
-    // Skids, and the dark hold the boards close over.
+    // Skids under the crate.
     let skids: &[f64] = if c.w >= 2.6 {
         &[-0.36, 0.0, 0.36]
     } else {
@@ -564,15 +567,37 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
         skid.position = DVec3::new(c.w * share, CRATE_BASE / 2.0, 0.0);
         group.children.push(skid);
     }
-    let mut hold = scrap(
-        Arc::new(box_geometry(
-            c.w - 2.0 * CRATE_PLANK - 0.004,
-            top - CRATE_BASE,
-            c.d - 2.0 * CRATE_PLANK - 0.004,
-        )),
-        INTERIOR_COLOR,
+    // The floor; through a breach the walls' and lid's own inner faces show,
+    // shaded by the lid.
+    let mut floor = timber_member(
+        DVec3::new(
+            c.w - 2.0 * CRATE_PLANK,
+            FLOOR_THICKNESS,
+            c.d - 2.0 * CRATE_PLANK,
+        ),
+        hash(seed, 450),
+        scale_hex_color(c.color, 0.7),
     );
-    hold.position = DVec3::new(0.0, (CRATE_BASE + top) / 2.0, 0.0);
+    floor.position = DVec3::new(0.0, CRATE_BASE + FLOOR_THICKNESS / 2.0, 0.0);
+    group.children.push(floor);
+    // A liner turned inside out just within the walls: only its far side shows,
+    // so seams and breaches look into the crate's dark hold, not out of the other
+    // side.
+    let mut liner = box_geometry(
+        c.w - 2.0 * CRATE_PLANK - 0.006,
+        top - CRATE_BASE - FLOOR_THICKNESS,
+        c.d - 2.0 * CRATE_PLANK - 0.006,
+    );
+    if let Some(indices) = &mut liner.indices {
+        for triangle in indices.chunks_mut(3) {
+            triangle.swap(1, 2);
+        }
+    }
+    for normal in &mut liner.normals {
+        *normal = normal.map(|n| -n);
+    }
+    let mut hold = scrap(Arc::new(liner), HOLD_COLOR);
+    hold.position = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
     group.children.push(hold);
 
     // Walls: sheathing planks, then the frame and brace over them.
