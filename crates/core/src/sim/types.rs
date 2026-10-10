@@ -520,11 +520,12 @@ pub struct Cover {
     pub color: u32,
     /// Chosen at collapse so rubble stays stable when its model is rebuilt.
     pub debris_seed: Option<f64>,
-    /// Bounded, persistent impact marks in local wall coordinates.
+    /// Bounded, persistent impact marks of a timber wall or a cargo crate, in
+    /// coordinates relative to the cover.
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// Direction of the last hit on a timber wall or the watchtower, which its
-    /// pieces are thrown or topple along when it breaks.
+    /// Direction of the last hit on a timber wall, a cargo crate or the
+    /// watchtower, which its pieces are thrown or topple along when it breaks.
     pub kick: Option<Vec2>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
@@ -770,7 +771,9 @@ pub struct SimEvent {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<u32>,
-    /// Laser beam origin.
+    /// Where the effect came from: a laser's beam origin, or for a cargo crate's
+    /// impact or destruction a point a metre back along the shell or blast that
+    /// struck it, which its splinters fly away from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<Point3>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

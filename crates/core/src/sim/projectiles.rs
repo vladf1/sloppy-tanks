@@ -594,7 +594,7 @@ fn resolve_contact(
             if let Some(ci) = cover {
                 if matches!(
                     simulation.covers[ci].kind,
-                    CoverKind::Timber | CoverKind::Tower
+                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
                 ) {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {
@@ -651,6 +651,14 @@ fn resolve_contact(
             );
             impact.cover_kind = chipped.map(|cover| cover.kind);
             impact.height = chipped.map(|cover| cover.h);
+            // A crate's splinters burst from the struck face, back along the shell.
+            if let Some(cover) = chipped.filter(|cover| cover.kind == CoverKind::Cargo) {
+                let y = shot.combat_y();
+                impact.height = Some(y);
+                impact.from = cover
+                    .kick
+                    .map(|kick| Point3::new(shot.x - kick.x, y, shot.z - kick.z));
+            }
             simulation.events.push(impact);
         }
         Contact::Expiry => {}

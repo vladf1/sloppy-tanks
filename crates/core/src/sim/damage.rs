@@ -29,7 +29,7 @@ use super::types::{
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
 
-/// Remembered impact marks per timber wall.
+/// Remembered impact marks per timber wall or cargo crate.
 const MAX_TIMBER_MARKS: usize = 6;
 
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and
@@ -198,7 +198,7 @@ impl Simulation {
         let previous_hp = cover.hp;
         cover.hp -= amount;
         if cover.hp > 0.0 {
-            if cover.kind == CoverKind::Timber && amount > 0.0 {
+            if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) && amount > 0.0 {
                 let marks = &mut cover.timber_hits;
                 if marks.len() < MAX_TIMBER_MARKS {
                     let size = if marks.is_empty() {
@@ -272,6 +272,11 @@ impl Simulation {
         destroy.id = Some(id);
         destroy.size = Some(if kind == CoverKind::Tower { 7.0 } else { 2.0 });
         destroy.color = Some(color);
+        if kind == CoverKind::Cargo {
+            destroy.from = self.covers[cover_index]
+                .kick
+                .map(|kick| Point3::new(x - kick.x, h * 0.5, z - kick.z));
+        }
         self.events.push(destroy);
         if !break_scenery(self, cover_index, pose, previous_hp) {
             for _ in 0..3 {
@@ -397,7 +402,10 @@ impl Simulation {
                 && distance(position, Vec2::new(cover.x, cover.z))
                     < radius + cover.w.max(cover.d) * COMBAT.cover_blast_allowance
             {
-                if matches!(cover.kind, CoverKind::Timber | CoverKind::Tower) {
+                if matches!(
+                    cover.kind,
+                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
+                ) {
                     let dx = cover.x - position.x;
                     let dz = cover.z - position.z;
                     let length = dx.hypot(dz);
