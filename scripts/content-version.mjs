@@ -74,6 +74,14 @@ export async function contentVersion() {
   );
 }
 
+/** The server crate's own build inputs. Its guide and other Markdown never reach the
+ * binary, and a new hash promotes a new image whose rollout restarts the server and
+ * ends live rooms, so a docs edit must leave the build unchanged. */
+export async function serverSources() {
+  const files = await filesUnder("crates/server");
+  return files.filter((path) => !path.startsWith("crates/server/tests/") && !path.endsWith(".md"));
+}
+
 /** Everything that makes up the deployed server, including server-only code, its
  * dependencies and build settings, which never affect client compatibility. A change
  * here needs a server redeploy to take effect even when `contentVersion` matches. */
@@ -81,9 +89,7 @@ export async function serverBuild() {
   return hashFiles(
     [
       ...(await contentSources()),
-      ...(await filesUnder("crates/server")).filter(
-        (path) => !path.startsWith("crates/server/tests/"),
-      ),
+      ...(await serverSources()),
       "Cargo.toml",
       ".cargo/config.toml",
       "rust-toolchain.toml",
