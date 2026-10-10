@@ -1,8 +1,9 @@
 //! Analytic, pooled cosmetic blasts (`explosion-effects.ts`): smoke and fire
 //! billboards plus a ground ring per blast, two instanced draws in total, with no
-//! textures, lights or physics bodies.
+//! textures, lights or physics bodies. Cargo crates raise wood dust in the same
+//! slots: a puff from a struck face, a rolling cloud when one bursts.
 
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 use glam::{Mat4, Vec3};
 use sloppy_core::geometry::math::{lerp_color, smoothstep};
@@ -11,6 +12,7 @@ use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use super::spawn_pad_decks::SpawnPadDecks;
+use super::wood_chips::{CRATE_HEIGHT, HIT_HEIGHT};
 use crate::color::hex_to_linear;
 
 pub const MAX_EXPLOSIONS: usize = 24;
@@ -34,6 +36,25 @@ const FLAME: u32 = 0xf87924;
 const SMOKE: u32 = 0x62666a;
 const TANK_SMOKE: u32 = 0x34373a;
 const DUST: u32 = 0xaa9273;
+
+/// Wood dust: a struck face's puff and a burst crate's cloud last this long.
+const WOOD_HIT_LIFETIME: f64 = 0.9;
+const WOOD_BURST_LIFETIME: f64 = 2.5;
+/// Warm sawdust rolling low, and the paler dust that rises and blows out.
+const SAWDUST: u32 = 0xbda483;
+const SAWDUST_LIGHT: u32 = 0xcfbc9d;
+/// A burst's ring spreads at this scale; its cloud scales with the crate's height.
+const WOOD_RING_SCALE: f64 = 0.6;
+
+/// The dust a cargo crate raises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WoodDust {
+    /// A puff of sawdust blown out of a struck face, back toward the gun.
+    Hit,
+    /// A crate bursting apart: a cloud rolling out low, a jet blowing on along the
+    /// killing shot and a plume rising over the wreck.
+    Burst,
+}
 
 /// A blast silhouette: smoke column, rolling cloud or drifting plume, and its fire.
 #[derive(Clone, Copy, Debug)]
@@ -178,6 +199,12 @@ struct Blast {
     burnout: bool,
     variant: usize,
     tempo: f64,
+    wood: Option<WoodDust>,
+    /// A wood blast's height (the struck point, or the crate's top) and its unit
+    /// horizontal direction (out of the struck face, or along the killing shot),
+    /// zero when unknown.
+    y: f64,
+    direction: [f64; 2],
 }
 
 fn linear(hex: u32) -> [f64; 3] {
@@ -218,8 +245,14 @@ impl Default for ExplosionEffects {
 impl ExplosionEffects {
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
+        let wood = match (event.kind, event.cover_kind) {
+            (SimEventType::Impact, Some(CoverKind::Cargo)) => Some(WoodDust::Hit),
+            (SimEventType::Destroy, Some(CoverKind::Cargo)) => Some(WoodDust::Burst),
+            _ => None,
+        };
         // Barrels also emit an explosion; do not double their fireball/dust budget.
         if !fire
+            && wood.is_none()
             && (event.kind != SimEventType::Destroy
                 || matches!(event.cover_kind, Some(CoverKind::Tree | CoverKind::Drum)))
         {
@@ -261,6 +294,32 @@ impl ExplosionEffects {
         }
         blast.phase = random.next_f64() * TAU;
         blast.fire = fire;
+        blast.wood = wood;
+        blast.y = 0.0;
+        blast.direction = [0.0; 2];
+        if let Some(wood) = wood {
+            let (y, direction) = match wood {
+                WoodDust::Hit => (
+                    event.height.unwrap_or(HIT_HEIGHT),
+                    event.from.map(|from| [from.x - event.x, from.z - event.z]),
+                ),
+                WoodDust::Burst => (
+                    event.height.unwrap_or(CRATE_HEIGHT),
+                    event.from.map(|from| [event.x - from.x, event.z - from.z]),
+                ),
+            };
+            blast.y = y;
+            blast.scale = match wood {
+                WoodDust::Hit => 1.0,
+                WoodDust::Burst => (y / CRATE_HEIGHT).clamp(0.8, 1.3),
+            };
+            if let Some([dx, dz]) = direction {
+                let length = dx.hypot(dz);
+                if length > 1e-6 {
+                    blast.direction = [dx / length, dz / length];
+                }
+            }
+        }
     }
 
     pub fn reset(&mut self) {
@@ -315,14 +374,19 @@ impl ExplosionEffects {
         } else {
             None
         };
-        let lifetime = if b.burnout {
-            BURNOUT_LIFETIME
-        } else {
-            profile.map_or(EXPLOSION_LIFETIME, |p| p.lifetime)
+        let lifetime = match b.wood {
+            Some(WoodDust::Hit) => WOOD_HIT_LIFETIME,
+            Some(WoodDust::Burst) => WOOD_BURST_LIFETIME,
+            None if b.burnout => BURNOUT_LIFETIME,
+            None => profile.map_or(EXPLOSION_LIFETIME, |p| p.lifetime),
         };
         let t = b.age * b.tempo;
         if t >= lifetime {
             b.active = false;
+            return;
+        }
+        if let Some(wood) = b.wood {
+            self.wood_dust(b, wood, t, lifetime);
             return;
         }
         let s = b.scale;
@@ -445,18 +509,117 @@ impl ExplosionEffects {
                 );
             }
         }
-        if t < RING_SECONDS {
-            let radius = ((RING_START + RING_SPREAD * (1.0 - (-t * 5.0).exp())) * s) as f32;
-            // One height for the ring's whole spread, so it never steps mid-blast.
-            let reach = (RING_START + RING_SPREAD) * s;
-            let y = self.pads.decal_height(b.x, b.z, reach, RING_HEIGHT) as f32;
-            let world = Mat4::from_translation(Vec3::new(b.x as f32, y, b.z as f32))
-                * Mat4::from_scale(Vec3::new(radius * 2.0, 1.0, radius * 2.0));
-            self.rings.push(record(
-                world,
-                [1.0; 4],
-                [t as f32, b.phase as f32, 0.0, 0.0],
-            ));
+        self.ring(b, t, s);
+    }
+
+    /// The blast's ground ring over its first moments, spreading at scale `s`.
+    fn ring(&mut self, b: &Blast, t: f64, s: f64) {
+        if t >= RING_SECONDS {
+            return;
+        }
+        let radius = ((RING_START + RING_SPREAD * (1.0 - (-t * 5.0).exp())) * s) as f32;
+        // One height for the ring's whole spread, so it never steps mid-blast.
+        let reach = (RING_START + RING_SPREAD) * s;
+        let y = self.pads.decal_height(b.x, b.z, reach, RING_HEIGHT) as f32;
+        let world = Mat4::from_translation(Vec3::new(b.x as f32, y, b.z as f32))
+            * Mat4::from_scale(Vec3::new(radius * 2.0, 1.0, radius * 2.0));
+        self.rings.push(record(
+            world,
+            [1.0; 4],
+            [t as f32, b.phase as f32, 0.0, 0.0],
+        ));
+    }
+
+    /// A cargo crate's dust, in the blast's eight puff slots.
+    fn wood_dust(&mut self, b: &Blast, wood: WoodDust, t: f64, lifetime: f64) {
+        let s = b.scale;
+        // Without a known direction, the blast's own phase picks one.
+        let [dx, dz] = if b.direction == [0.0; 2] {
+            [b.phase.cos(), b.phase.sin()]
+        } else {
+            b.direction
+        };
+        let fade = 1.0 - smoothstep(t, lifetime * 0.25, lifetime);
+        match wood {
+            WoodDust::Hit => {
+                // Three small puffs blown out of the face, fanning along it.
+                for j in 0..3 {
+                    let side = j as f64 - 1.0;
+                    let age = t - j as f64 * 0.025;
+                    if age <= 0.0 {
+                        continue;
+                    }
+                    let reach = 0.1 + 0.7 * (1.0 - (-age * 4.5).exp()) * (1.0 - 0.25 * side.abs());
+                    let fan = side * (0.1 + age * 0.4);
+                    self.puff(
+                        [
+                            b.x + dx * reach - dz * fan,
+                            b.y + age * 0.3 - side.abs() * 0.08,
+                            b.z + dz * reach + dx * fan,
+                        ],
+                        0.14 + 0.36 * age.sqrt(),
+                        scaled(linear(SAWDUST), 0.95 + side * 0.04),
+                        (age / 0.04).min(1.0) * fade * 0.38,
+                        PUFF_HEIGHT,
+                    );
+                }
+            }
+            WoodDust::Burst => {
+                // Five billows roll out low from under the crate, held clear of the
+                // ground they would cut into...
+                for j in 0..5 {
+                    let jf = j as f64;
+                    let age = t - jf * 0.02;
+                    if age <= 0.0 {
+                        continue;
+                    }
+                    let angle = b.phase + jf * TAU / 5.0 + (j % 2) as f64 * 0.3;
+                    let roll = (0.8 + 1.7 * (1.0 - (-age * 3.5).exp())) * s;
+                    let drift = age * 0.45 * s;
+                    let size = (0.95 + 1.0 * age.sqrt()) * s;
+                    self.puff(
+                        [
+                            b.x + angle.cos() * roll + dx * drift,
+                            0.3 * s + size * 0.45,
+                            b.z + angle.sin() * roll + dz * drift,
+                        ],
+                        size,
+                        scaled(linear(SAWDUST), 0.88 + jf * 0.035),
+                        (age / 0.08).min(1.0) * fade * 0.5,
+                        PUFF_HEIGHT,
+                    );
+                }
+                // ...a jet blows on out of the far side along the shot...
+                let jet = (0.5 + 2.6 * (1.0 - (-t * 3.2).exp())) * s;
+                self.puff(
+                    [b.x + dx * jet, (0.45 + t * 0.15) * b.y, b.z + dz * jet],
+                    (0.65 + 0.95 * t.sqrt()) * s,
+                    linear(SAWDUST_LIGHT),
+                    (t / 0.05).min(1.0) * fade * 0.5,
+                    PUFF_HEIGHT,
+                );
+                // ...and a plume rises over the wreck.
+                for j in 0..2 {
+                    let jf = j as f64;
+                    let age = t - 0.06 - jf * 0.08;
+                    if age <= 0.0 {
+                        continue;
+                    }
+                    let angle = b.phase + PI * jf;
+                    self.puff(
+                        [
+                            b.x + angle.cos() * 0.35 * s + dx * age * 0.6,
+                            b.y * (0.5 + jf * 0.2) + age * 0.65 * s,
+                            b.z + angle.sin() * 0.35 * s + dz * age * 0.6,
+                        ],
+                        (0.6 + 0.85 * age.sqrt()) * s,
+                        scaled(linear(SAWDUST_LIGHT), 0.97 - jf * 0.05),
+                        (age / 0.1).min(1.0) * fade * 0.4,
+                        PUFF_HEIGHT,
+                    );
+                }
+                self.ring(b, t, WOOD_RING_SCALE * s);
+            }
         }
     }
 }
@@ -645,6 +808,48 @@ mod tests {
             assert_ne!(signatures[1], signatures[2]);
             assert_eq!(effects.puffs.capacity(), MAX_EXPLOSIONS * PUFFS_PER_BLAST);
         }
+    }
+
+    fn cargo(kind: SimEventType, height: f64) -> SimEvent {
+        SimEvent {
+            cover_kind: Some(CoverKind::Cargo),
+            height: Some(height),
+            // The shell flew toward +x.
+            from: Some(sloppy_core::sim::Point3::new(-1.0, height, 0.0)),
+            ..SimEvent::at(kind, 0.0, 0.0)
+        }
+    }
+
+    #[test]
+    fn crate_hits_puff_toward_the_gun_and_bursts_roll_a_lasting_cloud() {
+        let mut random = CosmeticRandom::constant(0.5);
+        let mut effects = ExplosionEffects::default();
+        effects.event(&cargo(SimEventType::Impact, 1.2), &mut random);
+        effects.update(0.3);
+        assert_eq!(effects.rings.len(), 0, "a hit raises no ground ring");
+        assert_eq!(effects.puffs.len(), 3);
+        assert!(effects.puffs.records().iter().all(|r| {
+            let at = r.translation();
+            at.x < 0.0 && at.y > 1.0 && r.tint[3] < 0.5
+        }));
+        effects.update(WOOD_HIT_LIFETIME);
+        assert_eq!(effects.active(), 0);
+
+        effects.event(&cargo(SimEventType::Destroy, 2.4), &mut random);
+        effects.update(0.3);
+        assert_eq!(effects.puffs.len(), PUFFS_PER_BLAST);
+        assert_eq!(effects.rings.len(), 1);
+        let drift = |effects: &ExplosionEffects| {
+            let puffs = effects.puffs.records();
+            puffs.iter().map(|r| r.translation().x).sum::<f32>() / puffs.len() as f32
+        };
+        assert!(drift(&effects) > 0.3, "the dust blows on along the shot");
+        effects.update(EXPLOSION_LIFETIME);
+        assert_eq!(effects.puffs.len(), PUFFS_PER_BLAST, "the cloud lingers");
+        assert!(drift(&effects) > 0.6);
+        effects.update(WOOD_BURST_LIFETIME);
+        assert_eq!(effects.puffs.len(), 0);
+        assert_eq!(effects.active(), 0);
     }
 
     #[test]
