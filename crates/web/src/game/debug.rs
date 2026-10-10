@@ -582,6 +582,7 @@ impl Game {
             },
             "effects": {
                 "particles": effects.particles,
+                "woodChips": effects.wood_chips,
                 "blasts": effects.blasts,
                 "puffs": effects.puffs,
                 "trackMarks": effects.track_marks,
