@@ -63,7 +63,6 @@ fn inward_wall_geometry(radius: f64, height: f64) -> Mesh {
         radial_segments: 24,
         height_segments: 1,
         open_ended: true,
-        ..CylinderGeometry::default()
     }
     .build();
     if let Some(indices) = &mut mesh.indices {

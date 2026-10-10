@@ -199,7 +199,6 @@ fn open_cylinder(radius_top: f64, radial_segments: u32) -> Mesh {
         radial_segments,
         height_segments: 1,
         open_ended: true,
-        ..CylinderGeometry::default()
     }
     .build()
 }

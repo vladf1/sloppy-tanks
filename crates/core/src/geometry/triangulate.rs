@@ -32,21 +32,12 @@ pub fn triangulate_shape(contour: &mut Vec<DVec2>, holes: &mut [Vec<DVec2>]) -> 
     remove_duplicate_end_point(contour);
     let mut vertices: Vec<f64> = contour.iter().flat_map(|p| [p.x, p.y]).collect();
     let mut hole_indices = Vec::with_capacity(holes.len());
-    let mut hole_index = contour.len();
     for hole in holes.iter_mut() {
         remove_duplicate_end_point(hole);
-    }
-    for hole in holes.iter() {
-        hole_indices.push(hole_index);
-        hole_index += hole.len();
+        hole_indices.push(vertices.len() / 2);
         vertices.extend(hole.iter().flat_map(|p| [p.x, p.y]));
     }
-    earcut(&vertices, &hole_indices)
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|t| [t[0], t[1], t[2]])
-        .collect()
+    earcut(&vertices, &hole_indices).as_chunks::<3>().0.to_vec()
 }
 
 fn remove_duplicate_end_point(points: &mut Vec<DVec2>) {
@@ -320,26 +311,28 @@ impl Earcut<'_> {
         }
     }
 
-    fn is_ear(&self, ear: usize) -> bool {
+    /// The ear's neighbours `a` and `c`, its corners and their bounding box, or `None`
+    /// when the corner is reflex and cannot be an ear.
+    fn ear_triangle(&self, ear: usize) -> Option<(usize, usize, [f64; 6], [f64; 4])> {
         let (a, b, c) = (self.prev(ear), ear, self.next(ear));
         if self.area(a, b, c) >= 0.0 {
-            return false;
+            return None;
         }
         let (ax, ay) = self.xy(a);
         let (bx, by) = self.xy(b);
         let (cx, cy) = self.xy(c);
         let (x0, y0) = (ax.min(bx).min(cx), ay.min(by).min(cy));
         let (x1, y1) = (ax.max(bx).max(cx), ay.max(by).max(cy));
+        Some((a, c, [ax, ay, bx, by, cx, cy], [x0, y0, x1, y1]))
+    }
+
+    fn is_ear(&self, ear: usize) -> bool {
+        let Some((a, c, corners, bbox)) = self.ear_triangle(ear) else {
+            return false;
+        };
         let mut p = self.next(c);
         while p != a {
-            let (px, py) = self.xy(p);
-            if px >= x0
-                && px <= x1
-                && py >= y0
-                && py <= y1
-                && point_in_triangle_except_first(ax, ay, bx, by, cx, cy, px, py)
-                && self.area(self.prev(p), p, self.next(p)) >= 0.0
-            {
+            if self.blocks_ear(p, a, c, corners, bbox) {
                 return false;
             }
             p = self.next(p);
@@ -362,17 +355,10 @@ impl Earcut<'_> {
     }
 
     fn is_ear_hashed(&self, ear: usize) -> bool {
-        let (a, b, c) = (self.prev(ear), ear, self.next(ear));
-        if self.area(a, b, c) >= 0.0 {
+        let Some((a, c, corners, bbox)) = self.ear_triangle(ear) else {
             return false;
-        }
-        let (ax, ay) = self.xy(a);
-        let (bx, by) = self.xy(b);
-        let (cx, cy) = self.xy(c);
-        let (x0, y0) = (ax.min(bx).min(cx), ay.min(by).min(cy));
-        let (x1, y1) = (ax.max(bx).max(cx), ay.max(by).max(cy));
-        let corners = [ax, ay, bx, by, cx, cy];
-        let bbox = [x0, y0, x1, y1];
+        };
+        let [x0, y0, x1, y1] = bbox;
         let min_z = z_order(x0, y0, self.min_x, self.min_y, self.inv_size);
         let max_z = z_order(x1, y1, self.min_x, self.min_y, self.inv_size);
         let mut p = self.nodes[ear].prev_z;

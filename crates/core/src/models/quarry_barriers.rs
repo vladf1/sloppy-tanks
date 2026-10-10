@@ -91,7 +91,6 @@ pub fn dragon_tooth(group: &mut Node, w: f64, h: f64, d: f64, x: f64, z: f64) {
             radial_segments: 6,
             tubular_segments: 12,
             arc: PI,
-            ..TorusGeometry::default()
         }
         .build()
     });

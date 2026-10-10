@@ -99,7 +99,7 @@ fn flat(mut node: Node) -> Node {
 
 fn polygon(points: &[[f64; 2]]) -> Mesh {
     let points: Vec<DVec2> = points.iter().map(|p| DVec2::new(p[0], p[1])).collect();
-    shape_geometry(&[Shape::from_points(&points)], 12)
+    shape_geometry(&[Shape::from_points(&points)])
 }
 
 fn translated(mut mesh: Mesh, x: f64, y: f64, z: f64) -> Mesh {
@@ -368,7 +368,6 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         inner_radius: 0.89,
         outer_radius: 1.02,
         theta_segments: REFILL_SEGMENTS,
-        phi_segments: 1,
         theta_start: PI / 2.0,
         theta_length: PI * 2.0,
     }

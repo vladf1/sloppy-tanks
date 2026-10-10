@@ -47,14 +47,11 @@ fn main() {
         },
         other => {
             let id = MapId::parse(other).expect("known map");
-            let base = SimulationSetup {
+            SimulationSetup {
                 map_mode: Some(id),
                 ..SimulationSetup::default()
-            };
-            match extra_level(id) {
-                Some(level) => base.merged(single_player_rules(level)),
-                None => base,
             }
+            .merged(extra_level(id).map(single_player_rules).unwrap_or_default())
         }
     };
     let mut simulation = Simulation::new(seed, setup);

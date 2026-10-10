@@ -210,7 +210,7 @@ fn add_mark(group: &mut Node, p: &TimberPart, mark_index: usize, mark: &TimberMa
                 }
             })
             .collect();
-        let mut mesh = shape_geometry(&[Shape::from_points(&outline)], 12);
+        let mut mesh = shape_geometry(&[Shape::from_points(&outline)]);
         if cap {
             mesh.rotate_x(-sign * PI / 2.0);
         } else {

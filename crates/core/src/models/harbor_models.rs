@@ -274,7 +274,7 @@ fn split_geometries() -> &'static [Arc<Mesh>; 4] {
             .iter()
             .map(|&[x, y]| DVec2::new(x * rng.range(0.65, 1.35), y))
             .collect();
-            Arc::new(shape_geometry(&[Shape::from_points(&points)], 12))
+            Arc::new(shape_geometry(&[Shape::from_points(&points)]))
         })
     })
 }

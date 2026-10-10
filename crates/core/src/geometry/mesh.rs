@@ -80,6 +80,16 @@ pub fn narrow(v: DVec3) -> [f32; 3] {
     [v.x as f32, v.y as f32, v.z as f32]
 }
 
+/// Items of `N` f64 values stored as f32, like `new Float32BufferAttribute(array, N)`.
+fn narrow_chunks<const N: usize>(values: &[f64]) -> Vec<[f32; N]> {
+    values
+        .as_chunks::<N>()
+        .0
+        .iter()
+        .map(|item| item.map(|v| v as f32))
+        .collect()
+}
+
 impl Mesh {
     /// A mesh from f64 arrays, narrowed like `new Float32BufferAttribute(array)`.
     pub fn from_f64(
@@ -89,27 +99,11 @@ impl Mesh {
         indices: Option<Vec<u32>>,
     ) -> Self {
         Self {
-            positions: positions
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
-                .collect(),
-            normals: normals
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|n| [n[0] as f32, n[1] as f32, n[2] as f32])
-                .collect(),
-            uvs: uvs
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|uv| [uv[0] as f32, uv[1] as f32])
-                .collect(),
-            colors: Vec::new(),
+            positions: narrow_chunks(positions),
+            normals: narrow_chunks(normals),
+            uvs: narrow_chunks(uvs),
             indices,
-            attributes: Vec::new(),
+            ..Self::default()
         }
     }
 
@@ -137,25 +131,8 @@ impl Mesh {
     /// `BufferGeometry.setAttribute` for a custom attribute: replaces one of the
     /// same name.
     pub fn set_attribute(&mut self, attribute: Attribute) {
-        self.delete_attribute(attribute.name);
+        self.attributes.retain(|other| other.name != attribute.name);
         self.attributes.push(attribute);
-    }
-
-    pub fn delete_attribute(&mut self, name: &str) {
-        self.attributes.retain(|attribute| attribute.name != name);
-    }
-
-    /// Vertex ids of every triangle, whether or not the mesh is indexed.
-    pub fn triangles(&self) -> impl Iterator<Item = [usize; 3]> + '_ {
-        let count = self.triangle_count();
-        (0..count).map(move |t| match &self.indices {
-            Some(indices) => [
-                indices[3 * t] as usize,
-                indices[3 * t + 1] as usize,
-                indices[3 * t + 2] as usize,
-            ],
-            None => [3 * t, 3 * t + 1, 3 * t + 2],
-        })
     }
 
     /// `BufferGeometry.applyMatrix4`: positions by the matrix, normals by its normal
@@ -287,20 +264,17 @@ impl Mesh {
     /// normalised sum of the face normals around its position (quantised to 1 cm)
     /// that lie within `crease_angle` of its own face normal.
     pub fn to_creased_normals(&self, crease_angle: f64) -> Mesh {
-        let mut result = if self.indices.is_some() {
-            self.to_non_indexed()
-        } else {
-            self.clone()
-        };
+        let mut result = self.to_non_indexed();
         let crease_dot = crease_angle.cos();
         let hash_multiplier = (1.0 + 1e-10) * 1e2;
-        let face_count = result.positions.len() / 3;
-        let face_normals: Vec<DVec3> = (0..face_count)
-            .map(|f| {
-                let [a, b, c] = [0, 1, 2].map(|k| widen(result.positions[3 * f + k]));
-                let n = (c - b).cross(a - b);
-                let length = n.length();
-                n * (1.0 / if length == 0.0 { 1.0 } else { length })
+        let face_normals: Vec<DVec3> = result
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|corners| {
+                let [a, b, c] = corners.map(widen);
+                normalize((c - b).cross(a - b))
             })
             .collect();
         // Faces around each quantised position, in ascending face order like the
@@ -317,17 +291,12 @@ impl Mesh {
         let mut normals = vec![[0.0f32; 3]; result.positions.len()];
         for (vertex, key) in keys.iter().enumerate() {
             let own = face_normals[vertex / 3];
-            let mut sum = DVec3::ZERO;
-            for &face in &buckets[key] {
-                let other = face_normals[face];
-                if own.x * other.x + own.y * other.y + own.z * other.z > crease_dot {
-                    sum.x += other.x;
-                    sum.y += other.y;
-                    sum.z += other.z;
-                }
-            }
-            let length = (sum.x * sum.x + sum.y * sum.y + sum.z * sum.z).sqrt();
-            normals[vertex] = narrow(sum * (1.0 / if length == 0.0 { 1.0 } else { length }));
+            let sum: DVec3 = buckets[key]
+                .iter()
+                .map(|&face| face_normals[face])
+                .filter(|other| own.dot(*other) > crease_dot)
+                .sum();
+            normals[vertex] = narrow(normalize(sum));
         }
         result.normals = normals;
         result

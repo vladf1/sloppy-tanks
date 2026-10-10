@@ -81,7 +81,6 @@ pub fn create_spawn_pads(scale: f64) -> Node {
         inner_radius: 2.05,
         outer_radius: 2.3,
         theta_segments: 12,
-        phi_segments: 1,
         theta_start: 0.06,
         theta_length: std::f64::consts::FRAC_PI_4 - 0.12,
     }
@@ -97,7 +96,7 @@ pub fn create_spawn_pads(scale: f64) -> Node {
         .line_to(-0.1, 0.0)
         .line_to(-0.48, -0.37)
         .close_path();
-    let mut arrow = shape_geometry(&[Shape::new(arrow_path)], 12);
+    let mut arrow = shape_geometry(&[Shape::new(arrow_path)]);
     arrow.rotate_x(-std::f64::consts::FRAC_PI_2);
     let arrow = Arc::new(arrow);
     for team in [Team::Blue, Team::Red] {

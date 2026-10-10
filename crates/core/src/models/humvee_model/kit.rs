@@ -217,7 +217,6 @@ pub(super) fn slab(outline: &[[f64; 2]], holes: &[&[[f64; 2]]], depth: f64, beve
         bevel_size: Some(bevel),
         bevel_offset: -bevel,
         bevel_segments: 1,
-        ..ExtrudeOptions::default()
     };
     let mut mesh = extrude_geometry(&[shape], &options);
     mesh.translate(0.0, 0.0, bevel);
