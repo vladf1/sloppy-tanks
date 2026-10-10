@@ -3,95 +3,50 @@
 //! [`crate::session::RoomSession`] owns sockets, limits and the 50 ms timer; a
 //! [`RoomHost`] owns everything about the match: seats, tokens, the protocol, the
 //! simulation and the room's own lifetime. The TypeScript server calls `MatchHost`
-//! (`src/net/match-host.ts`) through exactly these operations; the Rust port of
-//! `MatchHost` in `sloppy_core::net` implements this trait (through a small adapter in
-//! this crate if core must not depend on the server), and
-//! [`crate::lobby_host::LobbyHost`] is the lobby-only stand-in used until then.
+//! (`src/net/match-host.ts`) through exactly these operations;
+//! [`crate::match_room::MatchRoom`] adapts core's port of it to this trait.
+
+use sloppy_core::net::match_host::{ConnectionId, HostEvent, MatchHostOptions};
+use sloppy_core::net::room_list::RoomListing;
 
 use crate::protocol::Message;
-use crate::room_list::RoomListing;
 
-/// One socket's identity inside a room. It is never sent to clients (seat tokens and
-/// player ids are the host's own), and it is never reused within a server process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ConnectionId(pub u64);
-
-/// What a host asks the transport to do; `MatchHost`'s `HostTransport` callbacks.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HostAction {
-    /// Send one message to a connection. Unknown or closed connections are ignored.
-    Send {
-        connection: ConnectionId,
-        message: Message,
-    },
-    /// Close a connection with a WebSocket close code and reason. The session then
-    /// forgets the socket and calls [`RoomHost::disconnect`] for it.
-    Close {
-        connection: ConnectionId,
-        code: u16,
-        reason: String,
-    },
-    /// Lobby membership, phase or settings changed: publish the directory listing now
-    /// instead of waiting for the 20-second heartbeat.
-    Changed,
-}
-
-/// Actions a host produced during one call, applied in order after the call returns.
+/// Events a host produced during one call, applied in order after the call returns.
 ///
 /// Deferring them (instead of the TypeScript's synchronous callbacks) means the host
 /// is never re-entered while it runs: a `Close` it asks for reaches
 /// [`RoomHost::disconnect`] only after the current call has finished.
 #[derive(Debug, Default)]
 pub struct HostOutput {
-    actions: Vec<HostAction>,
+    events: Vec<HostEvent>,
 }
 
 impl HostOutput {
+    /// Sends one text message to a connection. Unknown or closed connections are ignored.
     pub fn send(&mut self, connection: ConnectionId, text: impl Into<String>) {
-        self.send_message(connection, Message::Text(text.into()));
-    }
-
-    pub fn send_message(&mut self, connection: ConnectionId, message: Message) {
-        self.actions.push(HostAction::Send {
+        self.events.push(HostEvent::Send {
             connection,
-            message,
+            message: Message::Text(text.into()),
         });
     }
 
+    /// Closes a connection with a WebSocket close code and reason. The session then
+    /// forgets the socket and calls [`RoomHost::disconnect`] for it.
     pub fn close(&mut self, connection: ConnectionId, code: u16, reason: impl Into<String>) {
-        self.actions.push(HostAction::Close {
+        self.events.push(HostEvent::Close {
             connection,
             code,
             reason: reason.into(),
         });
     }
 
-    pub fn changed(&mut self) {
-        self.actions.push(HostAction::Changed);
+    pub fn extend(&mut self, events: Vec<HostEvent>) {
+        self.events.extend(events);
     }
 
-    pub fn actions(&self) -> &[HostAction] {
-        &self.actions
+    pub fn take(&mut self) -> Vec<HostEvent> {
+        std::mem::take(&mut self.events)
     }
-
-    pub fn take(&mut self) -> Vec<HostAction> {
-        std::mem::take(&mut self.actions)
-    }
-}
-
-/// Everything a new match needs from the runtime (`HostOptions` in the TypeScript).
-pub struct HostOptions {
-    /// Random per match; clients use it to tell a restarted room from the one they left.
-    pub room_epoch: String,
-    /// The session clock at creation: monotonic milliseconds, the same clock every
-    /// `now_ms` argument uses. Only differences between readings are meaningful.
-    pub now_ms: u64,
-    /// Seed for the match's gameplay random stream.
-    pub seed: u32,
-    /// Content version joins must present ([`crate::protocol::CONTENT_VERSION`]).
-    pub content_version: String,
-    /// Makes a fresh unguessable seat token or player id (two random UUIDs in the TS).
-    pub token: Box<dyn FnMut() -> String + Send>,
 }
 
 /// One room's authority, driven by [`crate::session::RoomSession`].
@@ -108,7 +63,7 @@ pub struct HostOptions {
 /// # Time
 ///
 /// `now_ms` is the session's monotonic millisecond clock (whole milliseconds, like
-/// `Date.now()`), starting from [`HostOptions::now_ms`]. It never goes backwards.
+/// `Date.now()`), starting from [`MatchHostOptions::now_ms`]. It never goes backwards.
 ///
 /// # Failure
 ///
@@ -150,7 +105,7 @@ pub trait RoomHost: Send + 'static {
     fn advance(&mut self, now_ms: u64, out: &mut HostOutput);
 
     /// Ends the match now: send every connection `room-reset` with `reason` and close it
-    /// with code 1012, free the simulation, and report [`HostAction::Changed`]. Calling
+    /// with code 1012, free the simulation, and report [`HostEvent::Changed`]. Calling
     /// it again does nothing.
     fn dispose(&mut self, reason: &str, out: &mut HostOutput);
 
@@ -169,11 +124,15 @@ pub trait RoomHost: Send + 'static {
     fn connections(&self) -> u32;
 
     /// Simulation ticks run in the current round, for monitoring.
-    fn tick(&self) -> u64;
+    fn tick(&self) -> u64 {
+        0
+    }
 
     /// Elapsed time the fixed-step clock still owes the simulation, in milliseconds. A
     /// value that keeps rising means the room is falling behind real time.
-    fn debt_ms(&self) -> f64;
+    fn debt_ms(&self) -> f64 {
+        0.0
+    }
 
     /// Held movement or fire that ran out before the player's next input arrived, over
     /// this match so far, for monitoring.
@@ -186,16 +145,16 @@ pub trait RoomHost: Send + 'static {
 /// after the previous match in that room ended.
 pub trait HostFactory: Send + Sync + 'static {
     type Host: RoomHost;
-    fn create(&self, options: HostOptions) -> Self::Host;
+    fn create(&self, options: MatchHostOptions) -> Self::Host;
 }
 
 impl<F, H> HostFactory for F
 where
-    F: Fn(HostOptions) -> H + Send + Sync + 'static,
+    F: Fn(MatchHostOptions) -> H + Send + Sync + 'static,
     H: RoomHost,
 {
     type Host = H;
-    fn create(&self, options: HostOptions) -> H {
+    fn create(&self, options: MatchHostOptions) -> H {
         self(options)
     }
 }

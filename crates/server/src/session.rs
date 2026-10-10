@@ -11,10 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::host::{ConnectionId, HostAction, HostFactory, HostOptions, HostOutput, RoomHost};
-use crate::protocol::{CONTENT_VERSION, MAX_CLIENT_MESSAGE_BYTES, Message};
+use sloppy_core::net::fixed_step_clock;
+use sloppy_core::net::match_host::{ConnectionId, HostEvent, MatchHostOptions};
+use sloppy_core::net::room_list::{RoomListing, RoomPhase};
+
+use crate::host::{HostFactory, HostOutput, RoomHost};
+use crate::protocol::{MAX_CLIENT_MESSAGE_BYTES, Message};
 use crate::random;
-use crate::room_list::{RoomListing, RoomPhase};
 use crate::tcp_path::TcpReading;
 
 /// Open sockets per room, joined or not.
@@ -24,9 +27,9 @@ pub const JOIN_TIMEOUT_MS: u64 = 5000;
 /// Active rooms refresh their directory listing this often.
 pub const DIRECTORY_HEARTBEAT_MS: u64 = 20_000;
 pub const MAX_SOCKET_MESSAGES_PER_SECOND: u32 = 65;
-/// The room timer's cadence (`HOST_INTERVAL_MS` in `fixed-step-clock.ts`): snapshots
+/// The room timer's cadence, core's [`fixed_step_clock::HOST_INTERVAL_MS`]: snapshots
 /// go out at 20 Hz while the simulation steps at 60 Hz inside each callback.
-pub const HOST_INTERVAL_MS: u64 = 50;
+pub const HOST_INTERVAL_MS: u64 = fixed_step_clock::HOST_INTERVAL_MS as u64;
 
 /// Message types counted by name; anything else counts as `other`, so clients cannot
 /// grow the table.
@@ -91,25 +94,15 @@ pub fn message_type(text: &str) -> &'static str {
     "other"
 }
 
-fn count(counts: &mut MessageCounts, text: &str) {
-    *counts.entry(message_type(text)).or_default() += 1;
-}
-
-/// The socket could not take the message; the session closes it with 1011.
-#[derive(Debug)]
-pub struct SendFailed;
-
 /// The part of a WebSocket that a room needs.
 pub trait RoomSocket {
     /// Queues a message. Sending to a socket that is already closing is ignored.
-    fn send(&self, message: Message) -> Result<(), SendFailed>;
+    fn send(&self, message: Message);
     /// Starts the closing handshake. Later calls are ignored.
     fn close(&self, code: u16, reason: &str);
     /// The connection's TCP round trip and retransmissions so far, where the transport
     /// measures them.
-    fn tcp(&self) -> Option<TcpReading> {
-        None
-    }
+    fn tcp(&self) -> Option<TcpReading>;
 }
 
 /// Seat and socket changes a runtime may log; they never affect room behaviour.
@@ -123,7 +116,7 @@ pub enum RoomActivity {
     /// one, or 1006 when the connection dropped. `tcp` is the connection's final reading.
     Left {
         players: u32,
-        code: Option<u16>,
+        code: u16,
         tcp: Option<TcpReading>,
     },
     /// The server closed the socket.
@@ -140,9 +133,9 @@ pub trait RoomEvents: Send {
     /// A listing for the public room directory; forced on lobby changes, otherwise a
     /// heartbeat.
     fn listing(&mut self, entry: RoomListing);
-    fn activity(&mut self, _event: RoomActivity) {}
+    fn activity(&mut self, event: RoomActivity);
     /// The match was disposed and every socket released; the runtime may forget this room.
-    fn ended(&mut self, _reason: &str, _age_ms: u64) {}
+    fn ended(&mut self, reason: &str, age_ms: u64);
 }
 
 /// Monotonic milliseconds. Only differences between readings matter.
@@ -262,16 +255,8 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         }
     }
 
-    pub fn room(&self) -> &str {
-        &self.room
-    }
-
     pub fn connections(&self) -> usize {
         self.sockets.len()
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.sockets.len() >= MAX_PENDING_CONNECTIONS
     }
 
     /// When [`on_timer`](Self::on_timer) is due; `None` while no match is running.
@@ -287,25 +272,25 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
 
     /// Registers an open socket; `None` means the caller should refuse it at the room limit.
     pub fn accept(&mut self, socket: S) -> Option<ConnectionId> {
-        if self.is_full() {
+        if self.sockets.len() >= MAX_PENDING_CONNECTIONS {
             return None;
         }
         let now = (self.clock)();
         if !self.host_alive() {
-            let content_version = CONTENT_VERSION.to_string();
-            self.host = Some(self.factory.create(HostOptions {
+            self.host = Some(self.factory.create(MatchHostOptions {
                 room_epoch: random::uuid_v4(),
                 now_ms: now,
-                seed: random::seed(),
-                content_version,
                 token: Box::new(random::token),
+                seed: Some(random::seed()),
+                // MatchHost defaults to this build's CONTENT_VERSION.
+                content_version: None,
             }));
             self.failure = None;
             self.host_created_ms = now;
             self.sampled_lapses = 0;
             self.events.activity(RoomActivity::Created);
         }
-        let id = ConnectionId(NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed));
+        let id = NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed);
         self.sockets.insert(
             id,
             SocketEntry {
@@ -332,24 +317,25 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             entry.messages = 0;
         }
         entry.messages += 1;
+        let within_rate = entry.messages <= MAX_SOCKET_MESSAGES_PER_SECOND;
         let text = match message {
-            Incoming::Text(text) if text.len() <= MAX_CLIENT_MESSAGE_BYTES => text,
+            Incoming::Text(text) if within_rate && text.len() <= MAX_CLIENT_MESSAGE_BYTES => text,
             _ => {
                 self.drop_socket(id, 1008, "Invalid message or rate");
                 return;
             }
         };
-        if entry.messages > MAX_SOCKET_MESSAGES_PER_SECOND {
-            self.drop_socket(id, 1008, "Invalid message or rate");
-            return;
-        }
         self.load.received_bytes += text.len() as u64;
-        count(&mut self.load.received_messages, text);
+        *self
+            .load
+            .received_messages
+            .entry(message_type(text))
+            .or_default() += 1;
         self.with_host(|host, out| host.receive(id, text, now, out));
     }
 
     /// The transport closed; the seat stays reserved for the host's reconnect grace.
-    pub fn closed(&mut self, id: ConnectionId, code: Option<u16>) {
+    pub fn closed(&mut self, id: ConnectionId, code: u16) {
         if let Some(entry) = self.forget(id)
             && entry.joined
         {
@@ -373,11 +359,8 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
 
     /// Current state plus load since the previous call; `None` when no match is live.
     pub fn sample(&mut self) -> Option<RoomSample> {
-        if !self.host_alive() {
-            return None;
-        }
+        let host = self.host.as_ref().filter(|host| !host.is_disposed())?;
         let now = (self.clock)();
-        let host = self.host.as_ref()?;
         let entry = host.directory_entry(&self.room);
         let load = std::mem::take(&mut self.load);
         let tcp: Vec<TcpReading> = self
@@ -491,10 +474,10 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         }
     }
 
-    fn apply(&mut self, actions: Vec<HostAction>) {
-        for action in actions {
-            match action {
-                HostAction::Send {
+    fn apply(&mut self, events: Vec<HostEvent>) {
+        for event in events {
+            match event {
+                HostEvent::Send {
                     connection,
                     message,
                 } => {
@@ -508,10 +491,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
                         }
                         Message::Binary(bytes) => (Message::binary_type(bytes), false),
                     };
-                    if entry.socket.send(message).is_err() {
-                        self.drop_socket(connection, 1011, "Send failed");
-                        continue;
-                    }
+                    entry.socket.send(message);
                     self.load.sent_bytes += bytes;
                     *self.load.sent_messages.entry(kind).or_default() += 1;
                     if welcome {
@@ -520,12 +500,12 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
                         self.events.activity(RoomActivity::Joined { players });
                     }
                 }
-                HostAction::Close {
+                HostEvent::Close {
                     connection,
                     code,
                     reason,
                 } => self.drop_socket(connection, code, &reason),
-                HostAction::Changed => self.publish_listing(true),
+                HostEvent::Changed => self.publish_listing(true),
             }
         }
     }

@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
+use sloppy_core::net::room_list::RoomPhase;
 
 use crate::process_stats;
-use crate::room_list::RoomPhase;
 use crate::session::{MessageCounts, RoomActivity, RoomSample};
 use crate::tcp_path::{TcpReading, percent};
 
@@ -22,9 +22,9 @@ const SAMPLES_PER_SUMMARY: u32 = 6;
 pub const HISTORY_READINGS: usize = 300;
 /// Lifecycle events kept for the dashboard log.
 pub const RECENT_EVENTS: usize = 100;
-/// The runtime lag probe's timer interval; `/stats` delay figures include it, as Node's
-/// event-loop delay histogram did, and the dashboard's lag figures subtract it.
-pub const LOOP_DELAY_RESOLUTION_MS: f64 = 10.0;
+/// The runtime lag probe's timer interval; `/stats` delay figures include it, and the
+/// dashboard's lag figures subtract it.
+pub const LAG_PROBE_INTERVAL_MS: u64 = 10;
 
 const MB: f64 = 1024.0 * 1024.0;
 
@@ -86,13 +86,10 @@ fn describe(event: &RoomActivity) -> String {
     match event {
         RoomActivity::Created => "created".into(),
         RoomActivity::Joined { players } => format!("player joined ({players} connected)"),
-        RoomActivity::Left { players, code, tcp } => match code {
-            Some(code) => format!(
-                "player disconnected (code {code}) ({players} connected){}",
-                tcp_note(tcp)
-            ),
-            None => format!("player disconnected ({players} connected){}", tcp_note(tcp)),
-        },
+        RoomActivity::Left { players, code, tcp } => format!(
+            "player disconnected (code {code}) ({players} connected){}",
+            tcp_note(tcp)
+        ),
         RoomActivity::Closed {
             players,
             code: 1000,
@@ -220,10 +217,10 @@ pub struct ServerStats {
     pub cpu_percent: f64,
     #[serde(rename = "rssMB")]
     pub rss_mb: f64,
-    /// Bytes the server currently has allocated (Node: JavaScript heap used).
+    /// Bytes the server currently has allocated.
     #[serde(rename = "heapUsedMB")]
     pub heap_used_mb: f64,
-    /// Most bytes allocated at once since start (Node: JavaScript heap reserved).
+    /// Most bytes allocated at once since start.
     #[serde(rename = "heapTotalMB")]
     pub heap_total_mb: f64,
     /// Intervals of the runtime's 10 ms lag probe, interval included.
@@ -243,15 +240,13 @@ pub struct LivePoint {
     pub sockets: u32,
     pub cpu_percent: f64,
     /// Share of the second the runtime's worker threads spent running tasks rather than
-    /// parked (the average over workers; Node: event-loop utilization).
+    /// parked (the average over workers).
     pub loop_busy_percent: f64,
     /// How late the runtime ran its 10 ms lag probe, excluding the interval itself.
     pub loop_lag_p50_ms: f64,
     pub loop_lag_p90_ms: f64,
     pub loop_lag_p99_ms: f64,
     pub loop_lag_max_ms: f64,
-    /// Garbage-collection pauses; always zero in Rust, kept for the dashboard.
-    pub gc_ms: f64,
     #[serde(rename = "rssMB")]
     pub rss_mb: f64,
     #[serde(rename = "heapUsedMB")]
@@ -291,8 +286,7 @@ pub struct LiveReading {
     pub room_list: Vec<RoomLoad>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonitorEvent {
     /// Increases by one per event, so a reader can ask for what it has not seen.
     pub id: u64,
@@ -325,7 +319,7 @@ pub struct MonitorInput {
     pub segments: TcpSegments,
 }
 
-/// Intervals measured by the runtime lag probe (see `server::run_lag_probe`), kept
+/// Intervals measured by the runtime lag probe (see `server::lag_probe`), kept
 /// separately for the one-second reading and the ten-second sample.
 #[derive(Default)]
 pub struct LagRecorder {
@@ -584,17 +578,7 @@ impl ServerMonitor {
         self.counts.input_lapses += input_lapses;
         let (rtt_p50_ms, rtt_max_ms) = rtt_figures(&mut rtt_ms);
         let mut lag = self.lag.take_reading();
-        let lag_ms = |value: f64| round((value - LOOP_DELAY_RESOLUTION_MS).max(0.0), 1);
-        let (p50, p90, p99, max) = if lag.is_empty() {
-            (0.0, 0.0, 0.0, 0.0)
-        } else {
-            (
-                lag_ms(percentile(&mut lag, 50.0)),
-                lag_ms(percentile(&mut lag, 90.0)),
-                lag_ms(percentile(&mut lag, 99.0)),
-                lag_ms(percentile(&mut lag, 100.0)),
-            )
-        };
+        let lag_ms = |value: f64| round((value - LAG_PROBE_INTERVAL_MS as f64).max(0.0), 1);
         let busy_share =
             busy.saturating_sub(self.read_busy).as_secs_f64() / (seconds * workers.max(1) as f64);
         let point = LivePoint {
@@ -604,11 +588,10 @@ impl ServerMonitor {
             sockets: input.sockets,
             cpu_percent: cpu_percent(cpu.saturating_sub(self.read_cpu), seconds),
             loop_busy_percent: round((busy_share * 100.0).clamp(0.0, 100.0), 1),
-            loop_lag_p50_ms: p50,
-            loop_lag_p90_ms: p90,
-            loop_lag_p99_ms: p99,
-            loop_lag_max_ms: max,
-            gc_ms: 0.0,
+            loop_lag_p50_ms: lag_ms(percentile(&mut lag, 50.0)),
+            loop_lag_p90_ms: lag_ms(percentile(&mut lag, 90.0)),
+            loop_lag_p99_ms: lag_ms(percentile(&mut lag, 99.0)),
+            loop_lag_max_ms: lag_ms(percentile(&mut lag, 100.0)),
             rss_mb: megabytes(process_stats::rss_bytes()),
             heap_used_mb: megabytes(process_stats::heap_used_bytes() as u64),
             heap_total_mb: megabytes(process_stats::heap_peak_bytes() as u64),
@@ -699,29 +682,17 @@ impl ServerMonitor {
                 .room_list
                 .iter()
                 .map(|room| {
-                    let window = self.window.get(&room.room);
-                    let (ticks, total, max, sent, received) =
-                        window.map_or((0, 0.0, 0.0, 0, 0), |window| {
-                            (
-                                window.ticks,
-                                window.tick_total_ms,
-                                window.tick_max_ms,
-                                window.sent_bytes,
-                                window.received_bytes,
-                            )
-                        });
+                    // `read` just opened a window for every room it listed.
+                    let window = &self.window[&room.room];
                     RoomLoad {
+                        // A window without ticks has a zero total, so it averages zero.
                         tick_avg_ms: round(
-                            if ticks > 0 {
-                                total / f64::from(ticks)
-                            } else {
-                                0.0
-                            },
+                            window.tick_total_ms / f64::from(window.ticks.max(1)),
                             2,
                         ),
-                        tick_max_ms: round(max, 2),
-                        sent_kbps: kilobytes(sent, seconds),
-                        received_kbps: kilobytes(received, seconds),
+                        tick_max_ms: round(window.tick_max_ms, 2),
+                        sent_kbps: kilobytes(window.sent_bytes, seconds),
+                        received_kbps: kilobytes(window.received_bytes, seconds),
                         ..room.clone()
                     }
                 })
@@ -1107,7 +1078,7 @@ mod tests {
             room,
             &RoomActivity::Left {
                 players: 0,
-                code: Some(1006),
+                code: 1006,
                 tcp: Some(TcpReading {
                     rtt_us: Some(85_400),
                     data_segments_sent: 800,

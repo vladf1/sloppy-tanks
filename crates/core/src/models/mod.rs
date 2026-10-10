@@ -15,8 +15,8 @@
 //! - Map scenery: [`build_scenery`]`(theme)` once per theme, then
 //!   [`Scenery::update`] every frame (animated parts: [`WATERWHEEL`], the harbor
 //!   beacons, [`CHIMNEY_SMOKE_NODE`] fed by [`VillageScenery::set_covers`]). Extra
-//!   levels use [`custom_floor`] and [`custom_spawn_pads`]. Sun and fill settings are
-//!   in [`lighting`] with [`default_sun_shadow`] and [`fit_sun_shadow`].
+//!   levels use [`custom_floor`] and [`custom_spawn_pads`]. The sun's shadow box comes
+//!   from [`default_sun_shadow`] and [`fit_sun_shadow`].
 //! - Cover: [`cover_model`] from a [`CoverShape`] (convertible from
 //!   [`RenderCover`](crate::sim::render_state::RenderCover)); rebuild when
 //!   [`cover_damage_stage`] or the timber hit count changes. Trees:

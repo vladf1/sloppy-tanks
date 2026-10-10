@@ -5,13 +5,11 @@
 //! - [`room_task`] / [`session`]: one Tokio task per room driving a [`session::RoomSession`]
 //!   on the 50 ms cadence around a [`host::RoomHost`].
 //! - [`monitor`] / [`dashboard`]: readings, `/stats`, journal lines and `/dashboard`.
-//! - [`match_room`]: the real host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`];
-//!   [`lobby_host`] is a lobby-only host the session tests use.
+//! - [`match_room`]: the room host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`].
 
 pub mod config;
 pub mod dashboard;
 pub mod host;
-pub mod lobby_host;
 pub mod match_room;
 pub mod monitor;
 pub mod process_stats;
@@ -19,7 +17,6 @@ pub mod protocol;
 pub mod random;
 pub mod rate_limit;
 pub mod room_catalog;
-pub mod room_list;
 pub mod room_task;
 pub mod server;
 pub mod session;

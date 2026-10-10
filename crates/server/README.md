@@ -86,10 +86,9 @@ for `/rooms?debug` and shows the others only on a page opened with
 `?debug`, or when following that room's link. A Scrap Yard room sends
 roughly five times a standard room's snapshot bandwidth.
 
-Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy; level
-1's quick strategy sent about a quarter more than the former Node server's zlib
-level 1) with context takeover, which browsers negotiate natively; a client that
-does not offer it gets plain frames. Binary state messages (snapshot batches and
+Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy) with
+context takeover, which browsers negotiate natively; a client that does not offer it
+gets plain frames. Binary state messages (snapshot batches and
 baselines) are deflated from 64 bytes, since consecutive batches repeat each other and
 even small ones shrink with context takeover; text messages only from 1 KiB, below which
 the block overhead outweighs the saving (`src/websocket/deflate.rs`). Monitor byte counts
@@ -324,8 +323,7 @@ round trips,
 retransmissions (in room rows: since each seated player connected), and
 `inputLapses` the input lapses in the window (in room rows: this match so far);
 `totals` keeps the segment and lapse counts since start. Memory comes from a
-counting global allocator; `gcMs` stays 0 (there is no garbage collector) and
-remains only for the record's shape.
+counting global allocator.
 
 ### Dashboard
 

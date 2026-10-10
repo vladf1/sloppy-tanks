@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { Random } from "./asset-data";
 
 // Broadleaf crowns are built from alpha-tested sprig cards (`tree_models.rs`
-// `LEAF_CELLS`): a 2 × 2 atlas, lobed oak sprigs on the top row and small ovate
+// `OAK_CELLS`, `OVATE_CELLS`): a 2 × 2 atlas, lobed oak sprigs on the top row and small ovate
 // birch/aspen sprigs on the bottom row, each cell a twig rising from the bottom
 // centre into a rounded mass of leaves. Leaves behind are painted darker so a
 // card reads with depth; the crown's own shading comes from the mesh normals.

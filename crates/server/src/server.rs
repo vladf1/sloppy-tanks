@@ -26,8 +26,8 @@ use crate::config::BuildInfo;
 use crate::dashboard::{Dashboard, PAGE, PAGE_HEADERS};
 use crate::host::HostFactory;
 use crate::monitor::{
-    BusyProbe, LagRecorder, LiveReading, MonitorInput, READING_INTERVAL_MS, ServerMonitor,
-    ServerStats, WallClock,
+    BusyProbe, LAG_PROBE_INTERVAL_MS, LagRecorder, LiveReading, MonitorInput, READING_INTERVAL_MS,
+    ServerMonitor, ServerStats, WallClock,
 };
 use crate::protocol::{CONTENT_VERSION, PROTOCOL_VERSION, SERVER_BUILD, is_room_code};
 use crate::rate_limit::RateLimit;
@@ -55,8 +55,6 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// A room that does not answer a monitor sample by then is left out of the reading.
 const SAMPLE_TIMEOUT: Duration = Duration::from_millis(500);
-/// The runtime lag probe's interval.
-const LAG_PROBE_INTERVAL: Duration = Duration::from_millis(10);
 const LOCAL_ADDRESSES: [&str; 3] = ["127.0.0.1", "::1", "::ffff:127.0.0.1"];
 
 pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
@@ -238,20 +236,14 @@ impl MultiplayerServer {
 
     /// Takes a reading now (and shows it on the dashboard), as the one-second timer does.
     pub async fn read_now(&self) -> LiveReading {
-        let input = gather(&self.shared).await;
-        let mut monitor = self.shared.monitor.lock().expect("monitor");
-        let reading = monitor.read(input);
-        self.shared
-            .dashboard
-            .lock()
-            .expect("dashboard")
-            .broadcast(&reading, &monitor);
-        reading
+        publish(&self.shared, |monitor, input| (monitor.read(input), ()))
+            .await
+            .0
     }
 
     /// Takes a `/stats` sample now, as every tenth timer reading does.
     pub async fn sample_now(&self) -> ServerStats {
-        sample(&self.shared).await
+        publish(&self.shared, ServerMonitor::sample).await.1
     }
 
     /// Resets every room (`room-reset`, close code 1012), gives clients a second to finish
@@ -311,7 +303,7 @@ async fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
 
 async fn serve_connection(shared: Arc<Shared>, stream: tokio::net::TcpStream, peer: SocketAddr) {
     let bytes = ConnectionBytes::new(shared.wire.clone());
-    let io = TokioIo::new(CountingIo::tcp(stream, bytes.clone()));
+    let io = TokioIo::new(CountingIo::new(stream, bytes.clone()));
     let service = {
         let shared = shared.clone();
         service_fn(move |request| {
@@ -370,28 +362,26 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
 }
 
 fn client_ip(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> String {
-    if shared.options.trust_proxy {
-        let forwarded: Vec<&str> = headers
+    // The last hop is the last entry of the last `X-Forwarded-For` line.
+    if shared.options.trust_proxy
+        && let Some(hop) = headers
             .get_all("x-forwarded-for")
             .iter()
             .filter_map(|value| value.to_str().ok())
-            .collect();
-        let joined = forwarded.join(",");
-        if let Some(last) = joined
-            .rsplit(',')
-            .next()
+            .next_back()
+            .and_then(|value| value.rsplit(',').next())
             .map(str::trim)
             .filter(|hop| !hop.is_empty())
-        {
-            return last.to_string();
-        }
+    {
+        return hop.to_string();
     }
     peer.ip().to_string()
 }
 
-/// The player's address and source port as a proxy on this host forwards them
-/// (`X-Forwarded-For`, `X-Client-Port`), when the server trusts its proxy.
-fn forwarded_client(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> Option<SocketAddr> {
+/// The player's address (`ip`, from [`client_ip`]) and source port as a proxy on this
+/// host forwards them (`X-Forwarded-For`, `X-Client-Port`), when the server trusts its
+/// proxy.
+fn forwarded_client(shared: &Shared, headers: &HeaderMap, ip: &str) -> Option<SocketAddr> {
     if !shared.options.trust_proxy {
         return None;
     }
@@ -401,7 +391,7 @@ fn forwarded_client(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> O
         .trim()
         .parse()
         .ok()?;
-    let ip: IpAddr = client_ip(shared, headers, peer).parse().ok()?;
+    let ip: IpAddr = ip.parse().ok()?;
     Some(SocketAddr::new(ip.to_canonical(), port))
 }
 
@@ -415,10 +405,10 @@ fn is_upgrade(headers: &HeaderMap) -> bool {
             .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
 }
 
-/// The code in `/room/CODE`, or `None` for any other path.
+/// The valid room code in `/room/CODE`, or `None` for any other path.
 fn room_path(path: &str) -> Option<&str> {
     path.strip_prefix("/room/")
-        .filter(|code| !code.is_empty() && !code.contains('/'))
+        .filter(|code| is_room_code(code))
 }
 
 #[derive(Serialize)]
@@ -449,15 +439,9 @@ async fn route(
     if is_upgrade(request.headers()) {
         return upgrade(shared, &mut request, peer, bytes);
     }
-    let path = request.uri().path().to_string();
+    let path = request.uri().path();
     let headers = request.headers();
-    let origin = header_text(headers, "origin").to_string();
-    let cors: [(&str, &str); 3] = [
-        ("Access-Control-Allow-Origin", &origin),
-        ("Cache-Control", "no-store"),
-        ("Vary", "Origin"),
-    ];
-    match path.as_str() {
+    match path {
         // `/health/` too, matching the static page's `/health/` that GitHub Pages redirects to.
         "/health" | "/health/" => {
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
@@ -486,7 +470,7 @@ async fn route(
                 None if LOCAL_ADDRESSES.contains(&peer.ip().to_string().as_str())
                     && !headers.contains_key("x-forwarded-for") =>
                 {
-                    sample(shared).await
+                    publish(shared, ServerMonitor::sample).await.1
                 }
                 None => {
                     return reply(
@@ -539,6 +523,12 @@ async fn route(
             }
         }
         "/rooms" => {
+            let origin = header_text(headers, "origin");
+            let cors = [
+                ("Access-Control-Allow-Origin", origin),
+                ("Cache-Control", "no-store"),
+                ("Vary", "Origin"),
+            ];
             if request.method() != Method::GET {
                 return reply(405, Reply::None, &cors);
             }
@@ -574,10 +564,8 @@ async fn route(
                 .expect("rooms serialize");
             reply(200, Reply::Json(json), &cors)
         }
-        _ => match room_path(&path) {
-            Some(code) if is_room_code(code) => reply(426, Reply::Text("WebSocket required"), &[]),
-            _ => reply(404, Reply::Text("Not found"), &[]),
-        },
+        _ if room_path(path).is_some() => reply(426, Reply::Text("WebSocket required"), &[]),
+        _ => reply(404, Reply::Text("Not found"), &[]),
     }
 }
 
@@ -614,10 +602,7 @@ fn upgrade(
     bytes: Arc<ConnectionBytes>,
 ) -> Response<Body> {
     let headers = request.headers();
-    let Some(code) = room_path(request.uri().path())
-        .filter(|code| is_room_code(code))
-        .map(str::to_string)
-    else {
+    let Some(code) = room_path(request.uri().path()).map(str::to_string) else {
         return refuse(404, "Not Found");
     };
     let now = (shared.clock)();
@@ -665,11 +650,7 @@ fn upgrade(
     let mut offered: Vec<&str> = Vec::new();
     if !protocols.is_empty() {
         for protocol in protocols.split(',').map(str::trim) {
-            let token = !protocol.is_empty()
-                && protocol
-                    .bytes()
-                    .all(|byte| byte.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&byte));
-            if !token || offered.contains(&protocol) {
+            if !extension::is_token(protocol) || offered.contains(&protocol) {
                 return abort_handshake(
                     StatusCode::BAD_REQUEST,
                     "Invalid Sec-WebSocket-Protocol header",
@@ -709,7 +690,7 @@ fn upgrade(
     // already saw the new room and the address's socket. Reserve both before answering.
     let (handle, output) = socket::socket_pair();
     let handle = handle.measured_by(bytes.clone());
-    if let Some(client) = forwarded_client(shared, headers, peer) {
+    if let Some(client) = forwarded_client(shared, headers, &ip) {
         bytes.forwarded_from(client);
     }
     let reservation = match reserve(shared, &code, &handle) {
@@ -881,13 +862,9 @@ async fn serve_socket<IO>(
         // The room ended between the handshake and the socket's turn: try the code again.
         Ok(Admission::Ended) | Err(_) => admit(shared, &code, &handle).await,
     };
-    let link = match admitted {
-        Ok(link) => Some(link),
-        Err(reason) => {
-            handle.close(1013, reason);
-            None
-        }
-    };
+    let link = admitted
+        .inspect_err(|reason| handle.close(1013, reason))
+        .ok();
     let ending = socket::run(
         io,
         codec,
@@ -969,16 +946,21 @@ async fn gather(shared: &Shared) -> MonitorInput {
     }
 }
 
-async fn sample(shared: &Shared) -> ServerStats {
+/// Gathers the rooms' load, lets `take` read it into the monitor, and shows the reading
+/// on the dashboard.
+async fn publish<T>(
+    shared: &Shared,
+    take: impl FnOnce(&mut ServerMonitor, MonitorInput) -> (LiveReading, T),
+) -> (LiveReading, T) {
     let input = gather(shared).await;
     let mut monitor = shared.monitor.lock().expect("monitor");
-    let (reading, stats) = monitor.sample(input);
+    let (reading, value) = take(&mut monitor, input);
     shared
         .dashboard
         .lock()
         .expect("dashboard")
         .broadcast(&reading, &monitor);
-    stats
+    (reading, value)
 }
 
 async fn monitor_loop(shared: Arc<Shared>) {
@@ -987,24 +969,17 @@ async fn monitor_loop(shared: Arc<Shared>) {
     interval.tick().await;
     loop {
         interval.tick().await;
-        let input = gather(&shared).await;
-        let mut monitor = shared.monitor.lock().expect("monitor");
-        let reading = monitor.tick(input);
-        shared
-            .dashboard
-            .lock()
-            .expect("dashboard")
-            .broadcast(&reading, &monitor);
+        publish(&shared, |monitor, input| (monitor.tick(input), ())).await;
     }
 }
 
-/// Measures how late the runtime runs a 10 ms timer: the interval between wake-ups, like
-/// Node's event-loop delay histogram. Tokio's timer wheel has millisecond resolution, so
-/// an idle server reads a fraction of a millisecond of lag.
+/// Measures how late the runtime runs a 10 ms timer: the interval between wake-ups.
+/// Tokio's timer wheel has millisecond resolution, so an idle server reads a fraction of
+/// a millisecond of lag.
 async fn lag_probe(recorder: Arc<LagRecorder>) {
     let mut last = Instant::now();
     loop {
-        tokio::time::sleep(LAG_PROBE_INTERVAL).await;
+        tokio::time::sleep(Duration::from_millis(LAG_PROBE_INTERVAL_MS)).await;
         let now = Instant::now();
         recorder.record((now - last).as_secs_f64() * 1000.0);
         last = now;

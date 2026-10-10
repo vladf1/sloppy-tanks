@@ -2,7 +2,7 @@
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use super::deflate::{BINARY_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD, Deflate, InflateError};
+use super::deflate::{BINARY_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD, Deflate};
 use super::extension::DeflateParams;
 use super::is_valid_close_code;
 
@@ -50,6 +50,19 @@ const fn protocol(message: &'static str) -> ProtocolError {
         message,
     }
 }
+
+pub(super) const TOO_LARGE: ProtocolError = ProtocolError {
+    code: 1009,
+    message: "Max payload size exceeded",
+};
+const INVALID_UTF8: ProtocolError = ProtocolError {
+    code: 1007,
+    message: "Invalid UTF-8 sequence",
+};
+pub(super) const INVALID_COMPRESSED: ProtocolError = ProtocolError {
+    code: 1007,
+    message: "Invalid compressed data",
+};
 
 struct Partial {
     opcode: u8,
@@ -112,23 +125,15 @@ impl Codec {
         };
         // Refuse before buffering: a frame can never be larger than a whole message.
         if length > self.max_message_bytes as u64 {
-            return Err(ProtocolError {
-                code: 1009,
-                message: "Max payload size exceeded",
-            });
+            return Err(TOO_LARGE);
         }
         let length = length as usize;
-        let mask = if masked {
+        let mask: Option<[u8; 4]> = if masked {
             if buffer.len() < offset + 4 {
                 return Ok(None);
             }
             offset += 4;
-            Some([
-                buffer[offset - 4],
-                buffer[offset - 3],
-                buffer[offset - 2],
-                buffer[offset - 1],
-            ])
+            Some(buffer[offset - 4..offset].try_into().expect("four bytes"))
         } else {
             None
         };
@@ -183,10 +188,7 @@ impl Codec {
             _ => return Err(protocol("Invalid opcode")),
         };
         if partial.payload.len() + payload.len() > self.max_message_bytes {
-            return Err(ProtocolError {
-                code: 1009,
-                message: "Max payload size exceeded",
-            });
+            return Err(TOO_LARGE);
         }
         partial.payload.extend_from_slice(&payload);
         if !fin {
@@ -198,18 +200,7 @@ impl Codec {
                 .deflate
                 .as_mut()
                 .expect("compressed frames need the extension");
-            deflate
-                .decompress(&partial.payload, self.max_message_bytes)
-                .map_err(|error| match error {
-                    InflateError::TooLarge => ProtocolError {
-                        code: 1009,
-                        message: "Max payload size exceeded",
-                    },
-                    InflateError::Corrupt => ProtocolError {
-                        code: 1007,
-                        message: "Invalid compressed data",
-                    },
-                })?
+            deflate.decompress(&partial.payload, self.max_message_bytes)?
         } else {
             partial.payload
         };
@@ -218,10 +209,7 @@ impl Codec {
         }
         String::from_utf8(data)
             .map(|text| Some(Event::Text(text)))
-            .map_err(|_| ProtocolError {
-                code: 1007,
-                message: "Invalid UTF-8 sequence",
-            })
+            .map_err(|_| INVALID_UTF8)
     }
 
     /// Appends one text message as a single frame, compressed when negotiated and worth it.
@@ -248,20 +236,13 @@ impl Codec {
     }
 
     pub fn encode_close(&mut self, code: Option<u16>, reason: &str, output: &mut BytesMut) {
+        let reason = &reason[..reason.floor_char_boundary(MAX_CLOSE_REASON)];
         let mut payload = Vec::with_capacity(2 + reason.len());
         if let Some(code) = code {
             payload.extend_from_slice(&code.to_be_bytes());
-            payload.extend_from_slice(truncate_utf8(reason, MAX_CLOSE_REASON).as_bytes());
+            payload.extend_from_slice(reason.as_bytes());
         }
         self.encode_frame(0x80 | OP_CLOSE, &payload, output);
-    }
-
-    pub fn encode_ping(&mut self, payload: &[u8], output: &mut BytesMut) {
-        self.encode_frame(
-            0x80 | OP_PING,
-            &payload[..payload.len().min(MAX_CONTROL_PAYLOAD)],
-            output,
-        );
     }
 
     pub fn encode_pong(&mut self, payload: &[u8], output: &mut BytesMut) {
@@ -312,24 +293,10 @@ fn close_event(payload: &[u8]) -> Result<Event, ProtocolError> {
             if !is_valid_close_code(code) {
                 return Err(protocol("Invalid close code"));
             }
-            let reason = std::str::from_utf8(&payload[2..]).map_err(|_| ProtocolError {
-                code: 1007,
-                message: "Invalid UTF-8 sequence",
-            })?;
+            let reason = std::str::from_utf8(&payload[2..]).map_err(|_| INVALID_UTF8)?;
             Ok(Event::Close(Some(code), reason.to_string()))
         }
     }
-}
-
-fn truncate_utf8(text: &str, max: usize) -> &str {
-    if text.len() <= max {
-        return text;
-    }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 #[cfg(test)]
@@ -428,7 +395,7 @@ mod tests {
         let (mut server, mut client) = pair(None);
         let mut wire = BytesMut::new();
         client.encode_frame(OP_TEXT, b"hel", &mut wire);
-        client.encode_ping(b"p", &mut wire);
+        client.encode_frame(0x80 | OP_PING, b"p", &mut wire);
         client.encode_frame(0x80 | OP_CONTINUATION, b"lo", &mut wire);
         let mut buffer = BytesMut::new();
         let mut events = Vec::new();

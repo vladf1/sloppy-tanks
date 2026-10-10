@@ -2,7 +2,7 @@
 
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 
-use super::codec::Role;
+use super::codec::{INVALID_COMPRESSED, ProtocolError, Role, TOO_LARGE};
 use super::extension::DeflateParams;
 
 /// Consecutive snapshot batches repeat each other's structure and small differences, so
@@ -24,18 +24,9 @@ pub const BINARY_COMPRESSION_THRESHOLD: usize = 64;
 const SYNC_TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 const DEFAULT_WINDOW_BITS: u8 = 15;
 
-/// A compressed message could not be inflated: it would exceed the connection's message
-/// size limit, or it is not valid deflate data.
-#[derive(Debug)]
-pub enum InflateError {
-    TooLarge,
-    Corrupt,
-}
-
 pub struct Deflate {
     compress: Compress,
     decompress: Decompress,
-    compress_bits: u8,
     reset_compressor: bool,
     reset_decompressor: bool,
 }
@@ -65,7 +56,6 @@ impl Deflate {
             ),
             // A 15-bit window inflates anything a peer compressed with a smaller one.
             decompress: Decompress::new_with_window_bits(false, DEFAULT_WINDOW_BITS),
-            compress_bits,
             reset_compressor: own_reset,
             reset_decompressor: peer_reset,
         }
@@ -90,23 +80,22 @@ impl Deflate {
         debug_assert!(output.ends_with(&SYNC_TAIL));
         output.truncate(output.len().saturating_sub(SYNC_TAIL.len()));
         if self.reset_compressor {
-            self.compress = Compress::new_with_window_bits(
-                Compression::new(COMPRESSION_LEVEL),
-                false,
-                self.compress_bits,
-            );
+            // Keeps the level and window, like a fresh compressor.
+            self.compress.reset();
         }
         output
     }
 
-    /// Inflates one message payload into at most `limit` bytes.
-    pub fn decompress(&mut self, input: &[u8], limit: usize) -> Result<Vec<u8>, InflateError> {
+    /// Inflates one message payload into at most `limit` bytes; a larger or corrupt
+    /// message is a protocol error.
+    pub fn decompress(&mut self, input: &[u8], limit: usize) -> Result<Vec<u8>, ProtocolError> {
         let mut output = Vec::with_capacity((input.len() * 4).clamp(256, limit + 1));
         let result = self
             .inflate(input, limit, &mut output)
             .and_then(|()| self.inflate(&SYNC_TAIL, limit, &mut output));
         if self.reset_decompressor {
-            self.decompress = Decompress::new_with_window_bits(false, DEFAULT_WINDOW_BITS);
+            // Back to the default raw window, DEFAULT_WINDOW_BITS.
+            self.decompress.reset(false);
         }
         result.map(|()| output)
     }
@@ -116,16 +105,16 @@ impl Deflate {
         input: &[u8],
         limit: usize,
         output: &mut Vec<u8>,
-    ) -> Result<(), InflateError> {
+    ) -> Result<(), ProtocolError> {
         let mut consumed = 0;
         loop {
             let (before_in, before_out) = (self.decompress.total_in(), self.decompress.total_out());
             self.decompress
                 .decompress_vec(&input[consumed..], output, FlushDecompress::Sync)
-                .map_err(|_| InflateError::Corrupt)?;
+                .map_err(|_| INVALID_COMPRESSED)?;
             consumed += (self.decompress.total_in() - before_in) as usize;
             if output.len() > limit {
-                return Err(InflateError::TooLarge);
+                return Err(TOO_LARGE);
             }
             if consumed == input.len() && output.len() < output.capacity() {
                 return Ok(());
@@ -134,13 +123,13 @@ impl Deflate {
                 // Room for one byte past the limit shows that the message is too large.
                 let target = (output.capacity() * 2).min(limit + 1);
                 if target <= output.capacity() {
-                    return Err(InflateError::TooLarge);
+                    return Err(TOO_LARGE);
                 }
                 output.reserve_exact(target - output.len());
             } else if self.decompress.total_in() == before_in
                 && self.decompress.total_out() == before_out
             {
-                return Err(InflateError::Corrupt);
+                return Err(INVALID_COMPRESSED);
             }
         }
     }
@@ -211,10 +200,7 @@ mod tests {
         let (mut server, mut client) = pair(&DeflateParams::default());
         let bomb = server.compress(&vec![b'a'; 100_000]);
         assert!(bomb.len() < 1000);
-        assert!(matches!(
-            client.decompress(&bomb, 8192),
-            Err(InflateError::TooLarge)
-        ));
+        assert_eq!(client.decompress(&bomb, 8192).unwrap_err().code, 1009);
         let (mut server, mut client) = pair(&DeflateParams::default());
         let exact = server.compress(&vec![b'a'; 8192]);
         assert_eq!(client.decompress(&exact, 8192).unwrap().len(), 8192);

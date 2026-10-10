@@ -1,5 +1,5 @@
-//! `tests/room-session.test.ts`, driven with fake sockets, a manual clock and the
-//! lobby-only host.
+//! `tests/room-session.test.ts`, driven with fake sockets, a manual clock and the real
+//! host in its lobby, which builds no simulation.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -7,11 +7,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+use sloppy_core::net::match_host::{ConnectionId, MatchHostOptions};
+use sloppy_core::net::room_list::RoomListing;
 
-use crate::host::{ConnectionId, HostOptions, HostOutput, RoomHost};
-use crate::lobby_host::LobbyHost;
+use crate::host::{HostOutput, RoomHost};
+use crate::match_room::MatchRoom;
 use crate::protocol::{CONTENT_VERSION, Message, PROTOCOL_VERSION};
-use crate::room_list::RoomListing;
 use crate::session::*;
 use crate::tcp_path::TcpReading;
 
@@ -44,15 +45,14 @@ impl FakeSocket {
 }
 
 impl RoomSocket for FakeSocket {
-    fn send(&self, message: Message) -> Result<(), SendFailed> {
+    fn send(&self, message: Message) {
         let Message::Text(text) = message else {
-            panic!("the lobby host sends only text");
+            panic!("a lobby sends only text");
         };
         self.0
             .borrow_mut()
             .sent
             .push(serde_json::from_str(&text).expect("server messages are JSON"));
-        Ok(())
     }
     fn close(&self, code: u16, reason: &str) {
         self.0
@@ -90,7 +90,7 @@ impl RoomEvents for Recorder {
     }
 }
 
-type LobbySession = RoomSession<fn(HostOptions) -> LobbyHost, FakeSocket>;
+type LobbySession = RoomSession<fn(MatchHostOptions) -> MatchRoom, FakeSocket>;
 
 struct Harness {
     room: LobbySession,
@@ -103,7 +103,7 @@ impl Harness {
         let now = Arc::new(AtomicU64::new(1_000_000));
         let reader = now.clone();
         let events = Arc::new(Mutex::new(Recorded::default()));
-        let factory: fn(HostOptions) -> LobbyHost = LobbyHost::new;
+        let factory: fn(MatchHostOptions) -> MatchRoom = MatchRoom::new;
         let room = RoomSession::new(
             "ABCDEFGH",
             Arc::new(factory),
@@ -217,7 +217,7 @@ fn samples_the_tcp_figures_of_joined_sockets_and_logs_each_on_leaving() {
     assert_eq!(sample.data_segments_sent, 1010);
     assert_eq!(sample.retransmitted_segments, 6);
     assert_eq!((sample.input_lapses, sample.match_input_lapses), (0, 0));
-    harness.room.closed(far_id, Some(1001));
+    harness.room.closed(far_id, 1001);
     assert!(
         harness
             .events
@@ -226,7 +226,7 @@ fn samples_the_tcp_figures_of_joined_sockets_and_logs_each_on_leaving() {
             .activity
             .contains(&RoomActivity::Left {
                 players: 2,
-                code: Some(1001),
+                code: 1001,
                 tcp: reading(150_000, 100, 4),
             })
     );
@@ -239,7 +239,7 @@ fn refuses_sockets_past_the_pending_connection_cap() {
     for _ in 0..MAX_PENDING_CONNECTIONS {
         assert!(harness.room.accept(FakeSocket::default()).is_some());
     }
-    assert!(harness.room.is_full());
+    assert_eq!(harness.room.connections(), MAX_PENDING_CONNECTIONS);
     assert!(harness.room.accept(FakeSocket::default()).is_none());
     harness.room.reset("test");
 }
@@ -374,10 +374,10 @@ fn a_dropped_connection_keeps_its_seat_through_the_grace_then_the_room_expires()
     let mut harness = Harness::new();
     let (_, id) = harness.open();
     harness.send(id, &join("player"));
-    harness.room.closed(id, Some(1006));
+    harness.room.closed(id, 1006);
     let left = RoomActivity::Left {
         players: 0,
-        code: Some(1006),
+        code: 1006,
         tcp: None,
     };
     assert!(harness.events.lock().unwrap().activity.contains(&left));
@@ -412,7 +412,7 @@ fn keeps_fixed_deadlines_and_reanchors_after_a_late_callback() {
 }
 
 /// A host that panics in `advance`, to show a room failure stays inside its room.
-struct PanickingHost(LobbyHost, bool);
+struct PanickingHost(MatchRoom, bool);
 
 impl RoomHost for PanickingHost {
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
@@ -442,12 +442,6 @@ impl RoomHost for PanickingHost {
     fn connections(&self) -> u32 {
         self.0.connections()
     }
-    fn tick(&self) -> u64 {
-        0
-    }
-    fn debt_ms(&self) -> f64 {
-        0.0
-    }
 }
 
 #[test]
@@ -457,7 +451,7 @@ fn a_panicking_host_ends_its_room_with_simulation_error() {
         let reader = now.clone();
         let events = Arc::new(Mutex::new(Recorded::default()));
         let factory =
-            move |options: HostOptions| PanickingHost(LobbyHost::new(options), broken_dispose);
+            move |options: MatchHostOptions| PanickingHost(MatchRoom::new(options), broken_dispose);
         let mut room: RoomSession<_, FakeSocket> = RoomSession::new(
             "PANICKED",
             Arc::new(factory),

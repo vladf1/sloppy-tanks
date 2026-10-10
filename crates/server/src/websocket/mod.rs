@@ -15,7 +15,7 @@ pub mod codec;
 pub mod deflate;
 pub mod extension;
 
-pub use codec::{Codec, Event, ProtocolError, Role};
+pub use codec::{Codec, Event, Role};
 pub use extension::DeflateParams;
 
 /// The GUID RFC 6455 appends to the client's key.

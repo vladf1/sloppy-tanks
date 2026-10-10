@@ -1471,7 +1471,7 @@ impl Renderer {
             self.release_model(index);
         }
         // General pages this empties stay for the next round's uploads, which
-        // follow at once (`View::reset`); the next frame's `collect_released` trims
+        // follow at once (`Presentation::reset`); the next frame's `collect_released` trims
         // the ones those leave empty.
         self.meshes.collect_unused();
         self.materials.collect_unused();

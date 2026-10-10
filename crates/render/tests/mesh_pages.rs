@@ -278,7 +278,7 @@ fn a_map_tour_keeps_only_the_pages_the_current_map_needs() {
         for map in 0..ROUND_MODELS.len() {
             // A reset frees the last round's models; a map's first visit then
             // caches its theme's models and the round builds its own, refilling the
-            // general pages the old round emptied (`View::reset`), and the next
+            // general pages the old round emptied (`Presentation::reset`), and the next
             // frame trims the ones left empty.
             for mesh in round.drain(..) {
                 free(&mut planner, mesh);

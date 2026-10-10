@@ -4,7 +4,7 @@ import { gameServer } from "./servers.mjs";
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
  * with what the live server reports: the protocol and content version decide whether
  * clients built from here can join, and the server build catches server-only changes
- * (server/, bundled dependencies, build settings) that leave clients compatible.
+ * (crates/server/, bundled dependencies, build settings) that leave clients compatible.
  * Exit 0: nothing to deploy; 1: redeploy needed; 2: the server did not answer.
  * It also reports whether the live page that uses this server can join it; a page that
  * cannot is a warning, since the page deploy may simply not have caught up yet.

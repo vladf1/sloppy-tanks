@@ -41,7 +41,7 @@ impl DeflateParams {
 #[derive(Debug, PartialEq, Eq)]
 pub struct InvalidExtensions;
 
-fn is_token(text: &str) -> bool {
+pub(crate) fn is_token(text: &str) -> bool {
     !text.is_empty()
         && text
             .bytes()
