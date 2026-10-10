@@ -8,16 +8,18 @@ export const devPages = [
     title: "Tank surfaces",
     detail: "Vehicle textures and materials, drawn by the engine's renderer",
   },
-  ...["humvee", "cybertruck", "suspension", "maps", "destruction", "reinforcements"].map((name) => ({
-    path: `tests/${name}.browser.html`,
-    title: `${name[0].toUpperCase()}${name.slice(1)} check`,
-    detail:
-      name === "reinforcements"
-        ? "Automatic rendering regression with a pass/fail result"
-        : name === "maps" || name === "suspension"
-          ? "Interactive inspection with pass/fail checks (run by fixtures-check.mjs)"
-          : "Interactive browser inspection and regression fixture",
-  })),
+  ...["humvee", "cybertruck", "suspension", "maps", "destruction", "reinforcements"].map(
+    (name) => ({
+      path: `tests/${name}.browser.html`,
+      title: `${name[0].toUpperCase()}${name.slice(1)} check`,
+      detail:
+        name === "reinforcements"
+          ? "Automatic rendering regression with a pass/fail result"
+          : name === "maps" || name === "suspension"
+            ? "Interactive inspection with pass/fail checks (run by fixtures-check.mjs)"
+            : "Interactive browser inspection and regression fixture",
+    }),
+  ),
 ];
 
 /** Links into the game itself, listed beside the pages above; they need no build input. */

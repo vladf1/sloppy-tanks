@@ -74,17 +74,26 @@ fn roof_normal(z: f64) -> DVec3 {
     DVec3::new(0.0, 1.0, -slope).normalize()
 }
 
+/// The wheel opening hugs the tire as on the production truck, about 0.1 m clear
+/// all round: half-widths along the truck at its bottom, at its shoulder and along
+/// its flat top, and the heights of the shoulder and the top.
+const OPENING_BOTTOM: f64 = 0.56;
+const OPENING_SHOULDER: [f64; 2] = [0.5, 0.7];
+const OPENING_TOP: [f64; 2] = [0.3, 0.95];
+
 /// The angular wheel opening around an axle, as (z, y) from rear-bottom to
 /// front-bottom, `grow` larger all round; its bottoms meet the steel edges either
 /// side.
 fn wheel_opening(axle: f64, grow: f64, rear_bottom: f64, front_bottom: f64) -> [[f64; 2]; 6] {
+    let [shoulder, shoulder_y] = OPENING_SHOULDER;
+    let [top, top_y] = OPENING_TOP;
     [
-        [axle - 0.76 - grow, rear_bottom],
-        [axle - 0.66 - grow * 0.95, 0.78 + grow * 0.4],
-        [axle - 0.42 - grow * 0.4, 0.99 + grow],
-        [axle + 0.42 + grow * 0.4, 0.99 + grow],
-        [axle + 0.66 + grow * 0.95, 0.78 + grow * 0.4],
-        [axle + 0.76 + grow, front_bottom],
+        [axle - OPENING_BOTTOM - grow, rear_bottom],
+        [axle - shoulder - grow * 0.95, shoulder_y + grow * 0.4],
+        [axle - top - grow * 0.4, top_y + grow],
+        [axle + top + grow * 0.4, top_y + grow],
+        [axle + shoulder + grow * 0.95, shoulder_y + grow * 0.4],
+        [axle + OPENING_BOTTOM + grow, front_bottom],
     ]
 }
 
@@ -243,7 +252,8 @@ fn flank(kit: &mut Kit, side: DMat4) {
     let face = HALF_WIDTH + 0.001;
     // Door seams: the front door's leading edge behind the front wheel, the split
     // between the doors and the rear door's trailing edge ahead of the rear wheel.
-    for z in [1.06, 0.03, -1.1] {
+    let clear = OPENING_BOTTOM + 0.06;
+    for z in [AXLES[1] - clear, 0.03, AXLES[0] + clear] {
         let bottom = ROCKER + 0.12;
         kit.block(
             Role::Gap,
@@ -254,10 +264,10 @@ fn flank(kit: &mut Kit, side: DMat4) {
     // Rocker cladding stands proud between the wheel openings.
     let rocker = slab(
         &[
-            [AXLES[0] + 0.76, ROCKER - 0.1],
-            [AXLES[1] - 0.76, ROCKER - 0.1],
-            [AXLES[1] - 0.72, ROCKER + 0.13],
-            [AXLES[0] + 0.72, ROCKER + 0.13],
+            [AXLES[0] + OPENING_BOTTOM, ROCKER - 0.1],
+            [AXLES[1] - OPENING_BOTTOM, ROCKER - 0.1],
+            [AXLES[1] - OPENING_BOTTOM + 0.04, ROCKER + 0.13],
+            [AXLES[0] + OPENING_BOTTOM - 0.04, ROCKER + 0.13],
         ],
         &[],
         0.05,
@@ -325,7 +335,11 @@ fn wheel_wells(kit: &mut Kit, side: DMat4) {
         let mesh = slab(&liner, &[], HALF_WIDTH - 0.02, 0.0);
         let to_side = frame(DVec3::Z, DVec3::Y, DVec3::X, DVec3::ZERO);
         kit.add(Role::Gap, &mesh, side * to_side);
-        kit.block(Role::Gap, [0.03, 0.56, 1.36], side * at([0.62, 0.68, axle]));
+        kit.block(
+            Role::Gap,
+            [0.03, 0.5, 2.0 * OPENING_BOTTOM],
+            side * at([0.62, 0.72, axle]),
+        );
     }
 }
 
