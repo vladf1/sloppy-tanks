@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 use glam::DVec3;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
 
+use super::crate_layout::{CratePiece, CrateSection, crate_sections};
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
@@ -129,6 +130,84 @@ impl Breakup<'_> {
         self.pieces.push(id);
         simulation.fragments.len() - 1
     }
+
+    /// A section of a broken crate where it stood, thrown away from the shot that
+    /// broke it: the struck wall caves in and is carried through, the far wall and
+    /// lid blow out, the sides spread, and every section tumbles. Without a known
+    /// direction the crate bursts outwards.
+    fn crate_section(
+        &mut self,
+        simulation: &mut Simulation,
+        section: &CrateSection,
+        kick: Option<Vec2>,
+    ) {
+        let shape = match section.piece {
+            CratePiece::Skid | CratePiece::Plank => FragmentShape::Beam,
+            _ => FragmentShape::Panel,
+        };
+        let index = self.piece(
+            simulation,
+            shape,
+            section.center,
+            section.size,
+            None,
+            DebrisMaterial::Wood,
+        );
+        simulation.fragments[index].crate_piece = Some(section.piece);
+        let [nx, ny, nz] = section.normal;
+        let rng = &mut self.rng;
+        let lid = matches!(section.piece, CratePiece::LidFront | CratePiece::LidBack);
+        // (speed along the shot, speed out of the section's face, lift, spin)
+        let (carried, outward, lift, spin) = match section.piece {
+            CratePiece::Skid => (rng.range(1.0, 2.0), 0.0, rng.range(1.5, 2.5), 3.0),
+            CratePiece::Plank => (rng.range(9.0, 12.0), 0.0, rng.range(4.0, 6.0), 12.0),
+            _ if lid => (rng.range(2.0, 4.0), 0.0, rng.range(5.0, 8.0), 6.0),
+            _ => {
+                let lift = rng.range(3.0, 6.0);
+                match kick.map(|kick| nx * kick.x + nz * kick.z) {
+                    // The struck wall caves in and is carried through.
+                    Some(facing) if facing < -0.5 => (rng.range(6.0, 9.0), 0.5, lift, 8.0),
+                    // The far wall blows out ahead of it.
+                    Some(facing) if facing > 0.5 => {
+                        (rng.range(5.0, 8.0), rng.range(1.0, 2.0), lift, 8.0)
+                    }
+                    // The sides spread.
+                    Some(_) => (rng.range(2.5, 4.5), rng.range(2.5, 4.5), lift, 8.0),
+                    None => (0.0, rng.range(4.0, 7.0), lift, 8.0),
+                }
+            }
+        };
+        let (vx, vz) = match kick {
+            Some(kick) => (
+                kick.x * carried + nx * outward,
+                kick.z * carried + nz * outward,
+            ),
+            None => {
+                // Without a direction the crate bursts outwards; the lid, skid and
+                // plank scatter at random.
+                let angle = rng.range(0.0, PI * 2.0);
+                let speed = carried.max(outward).max(2.0);
+                if ny == 0.0 && section.piece != CratePiece::Plank {
+                    (nx * outward, nz * outward)
+                } else {
+                    (angle.cos() * speed, angle.sin() * speed)
+                }
+            }
+        };
+        let angular = [
+            rng.range(-spin, spin),
+            rng.range(-spin, spin) * 0.6,
+            rng.range(-spin, spin),
+        ];
+        let [rx, ry, rz] = section.rotation;
+        let body = simulation.fragments[index].body;
+        let rigid_body = &mut simulation.world.bodies[body];
+        rigid_body.set_rotation(to_rotation(Quat4::from_euler_xyz(rx, ry, rz)), true);
+        rigid_body.set_linvel(vector(vx, lift, vz), true);
+        rigid_body.set_angvel(vector(angular[0], angular[1], angular[2]), true);
+        // Thin boards thrown hard would otherwise tunnel through each other.
+        rigid_body.enable_ccd(true);
+    }
 }
 
 /// Break destroyed scenery into physical pieces. Returns false for kinds without authored
@@ -165,33 +244,12 @@ pub fn break_scenery(
     let wood = DebrisMaterial::Wood;
     match cover.kind {
         CoverKind::Cargo => {
-            // Two broad crate sides, a lid, and one broken frame beam (four bodies).
-            for side in [-1.0, 1.0] {
-                breakup.piece(
-                    simulation,
-                    FragmentShape::Panel,
-                    [0.0, cover.h / 2.0, (side * cover.d) / 2.0],
-                    [cover.w, cover.h - 0.22, 0.12],
-                    None,
-                    wood,
-                );
+            // Walls split where they tore, the ends, the lid in halves, a skid and
+            // a loose plank (ten bodies), each drawn as its section of the crate.
+            let splits = [breakup.rng.next(), breakup.rng.next(), breakup.rng.next()];
+            for section in crate_sections(cover.w, cover.d, cover.h, splits) {
+                breakup.crate_section(simulation, &section, cover.kick);
             }
-            breakup.piece(
-                simulation,
-                FragmentShape::Panel,
-                [0.0, cover.h, 0.0],
-                [cover.w, 0.12, cover.d],
-                None,
-                wood,
-            );
-            breakup.piece(
-                simulation,
-                FragmentShape::Beam,
-                [-cover.w * 0.34, 0.2, 0.0],
-                [0.25, 0.22, cover.d],
-                Some(0x805336),
-                wood,
-            );
         }
         CoverKind::Timber => {
             let stage = timber_damage_stage(previous_hp, cover.max_hp);

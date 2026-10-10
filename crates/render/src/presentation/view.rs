@@ -10,9 +10,10 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
-    create_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
-    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
+    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
+    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
+    wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -1730,7 +1731,7 @@ impl Presentation {
             let rebuild = self.covers.get(&cover.id).is_none_or(|view| {
                 cover.alive
                     && (view.stage != stage
-                        || (cover.kind == CoverKind::Timber
+                        || (matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo)
                             && view.hits != cover.timber_hits.len()))
             });
             if rebuild {
@@ -2054,12 +2055,16 @@ impl Presentation {
     }
 
     /// A physical debris view: an instanced piece, a wreck part, a timber member,
-    /// a watchtower piece or a falling crown.
+    /// a watchtower piece, a section of a crate or a falling crown.
     fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
             owned_look(&mut self.renderer, &timber_part_model(part))
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
+            owned_look(&mut self.renderer, &node)
+        } else if let (Some(piece), Some(size)) = (fragment.crate_piece, fragment.dimensions) {
+            let size = DVec3::new(size.x, size.y, size.z);
+            let node = crate_piece_model(piece, size, fragment.color, fragment.id);
             owned_look(&mut self.renderer, &node)
         } else if let Some(tree) = fragment.tree_cover_id {
             let view = self.covers.get(&tree)?;

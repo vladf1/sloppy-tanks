@@ -3,7 +3,7 @@
 //! `cover_model` returns the unbatched tree like the TypeScript: a group at the
 //! cover's x/z whose direct mesh children presentation batches (`batch`) before
 //! drawing. Trees are delegated to [`tree_model`]; timber walls and cargo crates
-//! are rebuilt when their damage stage (or timber hit count) changes.
+//! are rebuilt when their damage stage or hit count changes.
 
 use std::f64::consts::PI;
 
@@ -11,7 +11,8 @@ use glam::DVec3;
 
 use super::barrel_surfaces::explosive_barrel;
 use super::concrete_surfaces::concrete_wall;
-use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
+use super::crate_model::{CrateShape, cargo_crate};
+use super::harbor_models::{CargoShape, shipping_container};
 use super::house_model::house;
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
@@ -113,7 +114,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
                 color: c.color,
             },
         ),
-        CoverKind::Cargo => cargo_stack(group, crate_shape(c), damage_stage),
+        CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
         CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, c.color),
         CoverKind::Timber => {
             let parts = timber_parts(

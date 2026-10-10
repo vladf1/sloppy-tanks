@@ -15,6 +15,7 @@ pub mod bot_personalities;
 pub mod bot_strategy;
 pub mod combat_record;
 pub mod combat_rules;
+pub mod crate_layout;
 pub mod damage;
 pub mod data;
 pub mod debris_cleanup;

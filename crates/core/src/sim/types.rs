@@ -6,6 +6,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::bot_personalities::BotPersonality;
+use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
 use super::humvee_tactics::HumveeTactics;
 pub use super::math::{Point3, Quat4, Vec2};
@@ -648,6 +649,8 @@ pub struct Fragment {
     pub timber_part: Option<TimberPart>,
     /// The watchtower part this piece is drawn as.
     pub tower_piece: Option<TowerPiece>,
+    /// The section of a broken cargo crate this piece is drawn as.
+    pub crate_piece: Option<CratePiece>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

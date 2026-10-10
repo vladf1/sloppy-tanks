@@ -226,6 +226,7 @@ try {
       const fragments = engine.view().fragments;
       return {
         pieces: fragments.filter((f) => f.look === "piece" && f.shown),
+        owned: fragments.filter((f) => f.look === "owned" && f.shown),
         wrecks: fragments.filter((f) => f.look === "wreck"),
       };
     };
@@ -236,10 +237,15 @@ try {
   await page.screenshot({ path: `${out}/debris-sinking.png` });
   const gone = await page.evaluate(() => window.drawDebris(0));
   await page.screenshot({ path: `${out}/debris-gone.png` });
-  // Timber members fall as separate pieces, so instanced debris is cargo, splinters and drums.
+  // Timber members, crate sections and crowns are their own models, so instanced debris is
+  // the stump's splinter and the drum.
   assert.ok(
-    full.pieces.length >= 9 && full.wrecks.length >= 2,
-    JSON.stringify({ pieces: full.pieces.length, wrecks: full.wrecks.length }),
+    full.pieces.length >= 5 && full.owned.length >= 10 && full.wrecks.length >= 2,
+    JSON.stringify({
+      pieces: full.pieces.length,
+      owned: full.owned.length,
+      wrecks: full.wrecks.length,
+    }),
   );
   const close = (a, b) => a.every((value, i) => Math.abs(value - b[i]) < 1e-5);
   for (let i = 0; i < full.pieces.length; i++) {
@@ -248,11 +254,24 @@ try {
     assert.ok(Math.abs(half.pieces[i].opacity - 0.5) < 1e-6, "pieces fade");
     assert.equal(gone.pieces[i].opacity, 0);
   }
+  // Every model sinks; all but a felled crown also fade.
+  const fading = half.owned.filter((f) => f.opacity < 1);
+  assert.ok(
+    fading.length >= 10 && fading.every((f) => Math.abs(f.opacity - 0.5) < 1e-6),
+    JSON.stringify(half.owned.map((f) => f.opacity)),
+  );
+  for (let i = 0; i < full.owned.length; i++) {
+    assert.ok(half.owned[i].position[1] < full.owned[i].position[1], "models sink");
+  }
   for (let i = 0; i < full.wrecks.length; i++) {
     assert.ok(close(full.wrecks[i].scale, half.wrecks[i].scale), "wrecks keep their size");
     assert.ok(half.wrecks[i].position[1] < full.wrecks[i].position[1], "wrecks sink");
   }
-  results.debris = { pieces: full.pieces.length, wreckParts: full.wrecks.length };
+  results.debris = {
+    pieces: full.pieces.length,
+    models: full.owned.length,
+    wreckParts: full.wrecks.length,
+  };
   assert.equal(await page.evaluate(() => window.sloppy.error()), null, "no GPU error");
   assert.deepEqual(errors, []);
   writeFileSync(`${out}/results.json`, JSON.stringify({ ...results, errors }, null, 2));

@@ -475,7 +475,13 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
  {
     use FragmentShape::{Beam, DrumLid, DrumShell, Log, Panel};
     let cases: [(CoverKind, &[FragmentShape], usize); 5] = [
-        (CoverKind::Cargo, &[Panel, Panel, Panel, Beam], 33),
+        (
+            CoverKind::Cargo,
+            &[
+                Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam, Beam,
+            ],
+            33,
+        ),
         (CoverKind::Timber, &[Beam, Beam, Beam, Beam, Beam, Beam], 77),
         (CoverKind::Tree, &[Log, Beam], 99),
         (
@@ -524,8 +530,9 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
             );
             assert_eq!(
                 s.world.bodies[f.body].is_ccd_enabled(),
-                kind == CoverKind::Timber
+                matches!(kind, CoverKind::Timber | CoverKind::Cargo)
             );
+            assert_eq!(f.crate_piece.is_some(), kind == CoverKind::Cargo);
         }
         if kind == CoverKind::Tree {
             let trunk = s.fragments.iter().find(|f| f.shape == Some(Log)).unwrap();
@@ -557,6 +564,64 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
         );
         tick(&mut s, 15.0);
         assert_eq!(s.fragments.len(), 0, "{kind:?}");
+    }
+}
+
+#[test]
+fn a_shelled_crate_bursts_along_the_shot_and_its_sections_come_to_rest() {
+    let mut s = arena();
+    let c = s.add_cover(&CoverDef::new(
+        CoverKind::Cargo,
+        0.0,
+        0.0,
+        2.8,
+        2.8,
+        2.4,
+        80.0,
+        0xb47a49,
+    ));
+    s.nav.rebuild(&s.covers, None);
+    s.world.step();
+    // A shell from +z travelling towards -z.
+    s.covers[c].kick = Some(Vec2::new(0.0, -1.0));
+    s.damage_cover(c, 1000.0, 999, Team::Blue, None, None);
+    let start: Vec<Point3> = s
+        .fragments
+        .iter()
+        .map(|f| s.body_translation(f.body))
+        .collect();
+    tick(&mut s, 2.0);
+    let moved: Vec<Point3> = s
+        .fragments
+        .iter()
+        .map(|f| s.body_translation(f.body))
+        .collect();
+    let along = moved
+        .iter()
+        .zip(&start)
+        .map(|(m, s)| m.z - s.z)
+        .sum::<f64>()
+        / moved.len() as f64;
+    assert!(along < -1.5, "sections are carried along the shot: {along}");
+    let spread = moved
+        .iter()
+        .map(|p| p.x)
+        .fold(0.0f64, |a, x| a.max(x.abs()));
+    assert!(spread > 1.5, "the ends spread sideways: {spread}");
+    tick(&mut s, 3.0);
+    for f in &s.fragments {
+        let p = s.body_translation(f.body);
+        assert!(
+            p.y > 0.0 && p.y < 1.2,
+            "{:?} rests on the ground: {p:?}",
+            f.crate_piece
+        );
+        let v = s.body_linvel(f.body);
+        assert!(
+            v.x.hypot(v.y).hypot(v.z) < 0.5,
+            "{:?} settles",
+            f.crate_piece
+        );
     }
 }
 
