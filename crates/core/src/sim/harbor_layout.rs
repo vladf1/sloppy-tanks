@@ -50,16 +50,7 @@ pub fn harbor_layout() -> Vec<CoverDef> {
                     0xb88b53,
                 ));
             }
-            covers.push(cover(
-                CoverKind::Drum,
-                side * 24.0,
-                z,
-                1.2,
-                1.2,
-                1.7,
-                30.0,
-                0xff5b24,
-            ));
+            covers.push(CoverDef::drum(side * 24.0, z));
         }
         for x in [10.0, 34.0] {
             covers.push(cover(

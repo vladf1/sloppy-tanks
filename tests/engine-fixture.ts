@@ -6,8 +6,6 @@ import { createGame, type Game } from "../src/engine";
 import type { GameOptions } from "../src/game/game-options";
 import { nextPrepareStep } from "../src/game/task-yield";
 
-export type { Game };
-
 /** Pipelines compiled per preparation step; the page stays responsive between steps. */
 const PREPARE_BUDGET = 8;
 
@@ -15,8 +13,6 @@ export interface FixtureConfig {
   seed?: number;
   map?: string;
   gameMode?: "team" | "solo";
-  humanKind?: "scout" | "balanced" | "heavy";
-  humanTeam?: 0 | 1;
 }
 
 /** Create the engine on `canvas` at the window's size and prepare its arena. */
@@ -34,7 +30,7 @@ export async function fixtureGame(canvas: HTMLCanvasElement, config: FixtureConf
 }
 
 /** Compile the arena's pipelines and wait for its textures, yielding between steps. */
-export async function prepare(game: Game): Promise<void> {
+async function prepare(game: Game): Promise<void> {
   let gpuPending = false;
   for (;;) {
     await nextPrepareStep(gpuPending);
@@ -47,7 +43,7 @@ export async function prepare(game: Game): Promise<void> {
 }
 
 /** Battle Setup's choices as the engine holds them. */
-export function options(game: Game): GameOptions {
+function options(game: Game): GameOptions {
   const hud = JSON.parse(game.hud_json());
   return {
     humanKind: hud.human.kind,
@@ -58,11 +54,13 @@ export function options(game: Game): GameOptions {
   };
 }
 
-/** Rebuild the arena with changed choices and prepare it; returns whether it rebuilt. */
-export async function choose(game: Game, changes: Partial<GameOptions>): Promise<boolean> {
-  const rebuilt = game.set_options(JSON.stringify({ ...options(game), ...changes }));
+/** A fresh, prepared round with changed choices: the arena rebuilds, or restarts when
+ * the choices are the same. */
+export async function choose(game: Game, changes: Partial<GameOptions>): Promise<void> {
+  if (!game.set_options(JSON.stringify({ ...options(game), ...changes }))) {
+    game.restart();
+  }
   await prepare(game);
-  return rebuilt;
 }
 
 export interface Vec3Pose {

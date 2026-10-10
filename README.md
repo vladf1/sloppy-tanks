@@ -93,7 +93,7 @@ Losing focus clears held input, while a hidden page pauses the round. Standard a
 
 On iPads, car screens and other touchscreens, touch controls appear automatically: the same scheme as the phone edition, with the full game. Drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. Open Settings with the gear in the top right corner to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
 
-Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map and the two tabs, single-player rounds are Team Battles on Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom in the top-left corner, the first-person ◎ and pause buttons in the top-right, and the mid-screen notices. Touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. In first person (◎, remembered on the phone), the drive stick turns instead of strafing: push it sideways to turn the view (the tank follows when driving) and forward or back to drive; touching the arena fires, and dragging that finger fine-tunes the aim. The gun sight and hull compass show. Phones start with a farther camera until you zoom (the zoom is remembered), draw no overhead aiming reticle, and neither zoom the page nor show the long-press magnifier. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with bots filling the teams; a room link joins that room. In a room the menu keeps only the room code, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no aim stick, FIRE or mine button, ammo strip or Settings on a phone.
+Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map and the two tabs, single-player rounds are Team Battles on Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom in the top-left corner, the first-person ◎ and pause buttons in the top-right, and the mid-screen notices. Touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. In first person (◎, remembered on the phone), the drive stick turns instead of strafing: push it sideways to turn the view (the tank follows when driving) and forward or back to drive; touching the arena fires, and dragging that finger fine-tunes the aim. The gun sight and hull compass show. Phones start with a farther camera until you zoom (the zoom is remembered), draw no overhead aiming reticle, and neither zoom the page nor show the long-press magnifier. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with bots filling the teams; a room link joins that room. In a room the menu keeps only the room code, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no mine button, ammo strip or Settings on a phone.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
@@ -113,7 +113,7 @@ pnpm run format         # Prettier for source, tests, scripts, styles and docs; 
 pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
-[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements, and [docs/rust-rewrite.md](docs/rust-rewrite.md) records how the engine moved from TypeScript to Rust.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
 
 | Crate / directory | Target        | Owns                                                                                     |
 | ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
@@ -123,22 +123,22 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
-| Area                           | Starting points                                                                                             |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                      |
-| Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                   |
-| Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                          |
-| Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                          |
-| Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/mod.rs` |
-| Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`        |
-| Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                           |
-| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                 |
-| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                               |
+| Area                           | Starting points                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                                        |
+| Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                                     |
+| Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                                            |
+| Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                                            |
+| Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/{model_catalog,theme}.rs` |
+| Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`                          |
+| Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                                             |
+| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                                   |
+| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                                                 |
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
 Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
-and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer); both use the same
+and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer), each with its own
 game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
@@ -196,7 +196,6 @@ Single-player downloads no multiplayer page code and opens no game-server connec
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 [server guide](crates/server/README.md) describes local development and deployment.
-Multiplayer runs on a stand-alone Rust server on a VPS, with rooms held in memory.
 
 ## Assets
 
@@ -217,7 +216,7 @@ On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`; the laser pictogram uses `node --import tsx scripts/generate-laser-pickup.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
+For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 
@@ -264,8 +263,8 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
-Cloudflare Pages project. Install the Wrangler CLI and run `wrangler login` first
-(or provide a Pages:Edit API token). The publisher sets the account, project and
+Cloudflare Pages project. Run `pnpm exec wrangler login` first (or provide a
+Pages:Edit API token). The publisher sets the account, project and
 `main` deployment branch itself, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev multiplayer server, which

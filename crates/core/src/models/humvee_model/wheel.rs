@@ -79,18 +79,18 @@ pub(super) fn wheel_kit() -> Kit {
     let mut kit = Kit::default();
     kit.add(
         Role::Rubber,
-        &revolve(&CARCASS, TREAD_SEGMENTS, 0.0, true),
+        &revolve(&CARCASS, TREAD_SEGMENTS, true),
         glam::DMat4::IDENTITY,
     );
     lugs(&mut kit);
     kit.add(
         Role::Shade,
-        &revolve(&RIM, RIM_SEGMENTS, 0.0, false),
+        &revolve(&RIM, RIM_SEGMENTS, false),
         glam::DMat4::IDENTITY,
     );
     kit.add(
         Role::Steel,
-        &revolve(&HUB, 16, 0.0, false),
+        &revolve(&HUB, 16, false),
         glam::DMat4::IDENTITY,
     );
     // Hex bolt heads stand on the beadlock ring and the disc.

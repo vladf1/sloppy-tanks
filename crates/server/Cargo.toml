@@ -13,7 +13,6 @@ serde_json.workspace = true
 tokio.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-http-body.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
 flate2.workspace = true

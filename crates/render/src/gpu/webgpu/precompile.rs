@@ -11,12 +11,13 @@
 //! backend would build from it (same WGSL, bind group layouts, vertex buffers, states
 //! and targets); once that resolves, wgpu creates the identical pipeline, which the
 //! browser's pipeline and shader caches now answer at once. The mapping below mirrors
-//! wgpu 30's `backend/webgpu.rs`: a descriptor that differs only costs the stall
-//! again, since the pipeline drawn with is always wgpu's own.
+//! wgpu 30's `backend/webgpu.rs` for the formats and states the game's pipelines use;
+//! anything else is reported and compiles synchronously. A descriptor that differs
+//! only costs the stall again, since the pipeline drawn with is always wgpu's own.
 //!
 //! The WebGL backend has its own background compile (`webgl/programs.rs`).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::rc::Rc;
@@ -64,8 +65,10 @@ pub enum LayoutKind {
 
 impl LayoutKind {
     pub fn groups(self) -> &'static [&'static [wgpu::BindGroupLayoutEntry]] {
-        use super::resources::{FRAME_ENTRIES, MATERIAL_ENTRIES, OUTPUT_ENTRIES, TEXTURED_ENTRIES};
-        use super::textures::MIPMAP_SOURCE_ENTRIES;
+        use super::resources::{
+            FRAME_ENTRIES, MATERIAL_ENTRIES, MIPMAP_SOURCE_ENTRIES, OUTPUT_ENTRIES,
+            TEXTURED_ENTRIES,
+        };
         match self {
             LayoutKind::Surface => &[FRAME_ENTRIES, MATERIAL_ENTRIES],
             LayoutKind::Water => &[FRAME_ENTRIES, TEXTURED_ENTRIES],
@@ -79,7 +82,7 @@ impl LayoutKind {
 /// Everything a render pipeline is made from except its shader module, whose one
 /// WGSL source makes both wgpu's module and the precompiler's. Vertex and fragment
 /// stages share the module.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PipelineSpec {
     pub label: &'static str,
     pub layout: LayoutKind,
@@ -126,41 +129,32 @@ impl PipelineSpec {
 }
 
 /// A browser shader module made from the same WGSL as a wgpu one.
-#[derive(Clone)]
 pub struct RawModule(JsValue);
 
 /// A fixed set of pipelines compiling in the background from the moment the
 /// renderer exists, so the page builds the arena meanwhile; the owner creates the
 /// wgpu pipelines once [`Background::done`] (or at once when it cannot wait).
 pub struct Background {
-    done: Rc<Cell<bool>>,
-    /// The compiled pipelines, held so the browser's cache keeps them until wgpu asks.
-    _held: Rc<RefCell<Vec<JsValue>>>,
+    /// The compiled pipelines once all have finished, held so the browser's cache
+    /// keeps them until wgpu asks.
+    compiled: Rc<RefCell<Option<Vec<JsValue>>>>,
 }
 
 impl Background {
     pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &str)]) -> Self {
-        let precompiler = Precompiler::<()>::new(device);
-        let jobs: Vec<(PipelineSpec, RawModule)> = jobs
-            .iter()
-            .map(|(spec, source)| ((*spec).clone(), precompiler.module(spec.label, source)))
-            .collect();
-        let done = Rc::new(Cell::new(false));
-        let held = Rc::new(RefCell::new(Vec::new()));
-        let (finished, compiled) = (done.clone(), held.clone());
+        let compiled = Rc::new(RefCell::new(None));
+        let held = compiled.clone();
         // Issued now: a spawned task would only start once the page yields, after the
         // arena these compiles should overlap.
-        let jobs: Vec<_> = jobs.iter().map(|(spec, raw)| (spec, raw)).collect();
-        let compiling = precompiler.compile_all(&jobs);
+        let compiling = Precompiler::<()>::new(device).compile_all(jobs);
         wasm_bindgen_futures::spawn_local(async move {
-            *compiled.borrow_mut() = compiling.await;
-            finished.set(true);
+            *held.borrow_mut() = Some(compiling.await);
         });
-        Self { done, _held: held }
+        Self { compiled }
     }
 
     pub fn done(&self) -> bool {
-        self.done.get()
+        self.compiled.borrow().is_some()
     }
 }
 
@@ -210,11 +204,10 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         RawModule(self.device.create_shader_module(&descriptor))
     }
 
-    /// Queue `key` for compiling unless it was queued before.
+    /// Queue `key` for compiling; callers start only keys not [`queued`](Self::queued)
+    /// yet.
     pub fn start(&self, key: K, spec: &PipelineSpec, module: &RawModule) {
-        if !self.queue.borrow_mut().started.insert(key) {
-            return;
-        }
+        self.queue.borrow_mut().started.insert(key);
         match self.descriptor(spec, module) {
             Ok(descriptor) => self.queue.borrow_mut().waiting.push_back((key, descriptor)),
             Err(error) => {
@@ -277,10 +270,14 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     /// wgpu has created its own, so the browser's cache still has them.
     pub fn compile_all(
         &self,
-        specs: &[(&PipelineSpec, &RawModule)],
+        jobs: &[(&PipelineSpec, &str)],
     ) -> impl Future<Output = Vec<JsValue>> + 'static {
-        let mut promises = Vec::with_capacity(specs.len());
-        for (spec, module) in specs {
+        let modules: Vec<RawModule> = jobs
+            .iter()
+            .map(|(spec, source)| self.module(spec.label, source))
+            .collect();
+        let mut promises = Vec::with_capacity(jobs.len());
+        for ((spec, _), module) in jobs.iter().zip(&modules) {
             match self.descriptor(spec, module) {
                 Ok(descriptor) => {
                     promises.push(self.device.create_render_pipeline_async(&descriptor))
@@ -470,10 +467,14 @@ fn bind_group_layout_entry(entry: &wgpu::BindGroupLayoutEntry) -> Result<JsValue
                 wgpu::TextureSampleType::Uint => "uint",
                 wgpu::TextureSampleType::Depth => "depth",
             };
+            let view_dimension = match view_dimension {
+                wgpu::TextureViewDimension::D2 => "2d",
+                other => return Err(format!("view dimension {other:?}")),
+            };
             let texture = object(&[
                 ("multisampled", multisampled.into()),
                 ("sampleType", sample_type.into()),
-                ("viewDimension", view_dimension_name(view_dimension).into()),
+                ("viewDimension", view_dimension.into()),
             ]);
             set(&mapped, "texture", texture.into());
         }
@@ -482,39 +483,13 @@ fn bind_group_layout_entry(entry: &wgpu::BindGroupLayoutEntry) -> Result<JsValue
     Ok(mapped.into())
 }
 
-fn view_dimension_name(dimension: wgpu::TextureViewDimension) -> &'static str {
-    match dimension {
-        wgpu::TextureViewDimension::D1 => "1d",
-        wgpu::TextureViewDimension::D2 => "2d",
-        wgpu::TextureViewDimension::D2Array => "2d-array",
-        wgpu::TextureViewDimension::Cube => "cube",
-        wgpu::TextureViewDimension::CubeArray => "cube-array",
-        wgpu::TextureViewDimension::D3 => "3d",
-    }
-}
-
 fn vertex_format(format: wgpu::VertexFormat) -> Result<&'static str, String> {
     use wgpu::VertexFormat as F;
     Ok(match format {
-        F::Float32 => "float32",
         F::Float32x2 => "float32x2",
         F::Float32x3 => "float32x3",
         F::Float32x4 => "float32x4",
         F::Uint32 => "uint32",
-        F::Uint32x2 => "uint32x2",
-        F::Uint32x3 => "uint32x3",
-        F::Uint32x4 => "uint32x4",
-        F::Sint32 => "sint32",
-        F::Sint32x2 => "sint32x2",
-        F::Sint32x3 => "sint32x3",
-        F::Sint32x4 => "sint32x4",
-        F::Float16x2 => "float16x2",
-        F::Float16x4 => "float16x4",
-        F::Unorm8x4 => "unorm8x4",
-        F::Snorm8x4 => "snorm8x4",
-        F::Uint8x4 => "uint8x4",
-        F::Unorm16x2 => "unorm16x2",
-        F::Unorm16x4 => "unorm16x4",
         other => return Err(format!("vertex format {other:?}")),
     })
 }
@@ -525,14 +500,8 @@ fn texture_format(format: wgpu::TextureFormat) -> Result<&'static str, String> {
         F::Rgba8Unorm => "rgba8unorm",
         F::Rgba8UnormSrgb => "rgba8unorm-srgb",
         F::Bgra8Unorm => "bgra8unorm",
-        F::Bgra8UnormSrgb => "bgra8unorm-srgb",
         F::Rgba16Float => "rgba16float",
-        F::Rg16Float => "rg16float",
-        F::R16Float => "r16float",
-        F::Rgba32Float => "rgba32float",
         F::Depth32Float => "depth32float",
-        F::Depth24Plus => "depth24plus",
-        F::Depth24PlusStencil8 => "depth24plus-stencil8",
         other => return Err(format!("texture format {other:?}")),
     })
 }
@@ -607,35 +576,20 @@ fn depth_stencil(state: &wgpu::DepthStencilState) -> Result<Object, String> {
 fn blend_factor(factor: wgpu::BlendFactor) -> Result<&'static str, String> {
     use wgpu::BlendFactor as B;
     Ok(match factor {
-        B::Zero => "zero",
         B::One => "one",
-        B::Src => "src",
-        B::OneMinusSrc => "one-minus-src",
         B::SrcAlpha => "src-alpha",
         B::OneMinusSrcAlpha => "one-minus-src-alpha",
-        B::Dst => "dst",
-        B::OneMinusDst => "one-minus-dst",
-        B::DstAlpha => "dst-alpha",
-        B::OneMinusDstAlpha => "one-minus-dst-alpha",
-        B::SrcAlphaSaturated => "src-alpha-saturated",
-        B::Constant => "constant",
-        B::OneMinusConstant => "one-minus-constant",
         other => return Err(format!("blend factor {other:?}")),
     })
 }
 
 fn blend_component(component: &wgpu::BlendComponent) -> Result<Object, String> {
-    use wgpu::BlendOperation as O;
-    let operation = match component.operation {
-        O::Add => "add",
-        O::Subtract => "subtract",
-        O::ReverseSubtract => "reverse-subtract",
-        O::Min => "min",
-        O::Max => "max",
-    };
+    if component.operation != wgpu::BlendOperation::Add {
+        return Err(format!("blend operation {:?}", component.operation));
+    }
     Ok(object(&[
         ("dstFactor", blend_factor(component.dst_factor)?.into()),
-        ("operation", operation.into()),
+        ("operation", "add".into()),
         ("srcFactor", blend_factor(component.src_factor)?.into()),
     ]))
 }
@@ -654,8 +608,12 @@ fn color_target(target: &wgpu::ColorTargetState) -> Result<Object, String> {
 }
 
 fn primitive(state: &wgpu::PrimitiveState) -> Result<Object, String> {
-    if state.polygon_mode != wgpu::PolygonMode::Fill || state.conservative {
-        return Err("non-fill polygon mode".into());
+    if state.topology != wgpu::PrimitiveTopology::TriangleList
+        || state.strip_index_format.is_some()
+        || state.polygon_mode != wgpu::PolygonMode::Fill
+        || state.conservative
+    {
+        return Err("primitives other than filled triangle lists".into());
     }
     let cull = match state.cull_mode {
         None => "none",
@@ -666,25 +624,10 @@ fn primitive(state: &wgpu::PrimitiveState) -> Result<Object, String> {
         wgpu::FrontFace::Ccw => "ccw",
         wgpu::FrontFace::Cw => "cw",
     };
-    let topology = match state.topology {
-        wgpu::PrimitiveTopology::PointList => "point-list",
-        wgpu::PrimitiveTopology::LineList => "line-list",
-        wgpu::PrimitiveTopology::LineStrip => "line-strip",
-        wgpu::PrimitiveTopology::TriangleList => "triangle-list",
-        wgpu::PrimitiveTopology::TriangleStrip => "triangle-strip",
-    };
-    let mapped = object(&[
+    Ok(object(&[
         ("cullMode", cull.into()),
         ("frontFace", front_face.into()),
-        ("topology", topology.into()),
+        ("topology", "triangle-list".into()),
         ("unclippedDepth", state.unclipped_depth.into()),
-    ]);
-    if let Some(format) = state.strip_index_format {
-        let format = match format {
-            wgpu::IndexFormat::Uint16 => "uint16",
-            wgpu::IndexFormat::Uint32 => "uint32",
-        };
-        set(&mapped, "stripIndexFormat", format.into());
-    }
-    Ok(mapped)
+    ]))
 }

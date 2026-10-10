@@ -9,11 +9,11 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use crate::geometry::{Mesh, icosahedron_geometry, plane_geometry, widen};
-use crate::scene::{Material, Node, Side, TextureRef, TextureSource, Wrap};
+use crate::scene::{Material, Node, Side, TextureRef};
 
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
-use super::harbor_surfaces::steel_box;
-use super::model_primitives::{adopt_children, span_between};
+use super::harbor_surfaces::{steel_beam, steel_box};
+use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
 use super::quarry_surfaces::{RubbleStone, sandstone_rubble};
 use super::quarry_terrain::quarry_ground_drop;
@@ -22,24 +22,13 @@ use crate::sim::arena::spawn_positions;
 use crate::sim::math::Random;
 use crate::sim::types::Team;
 
-fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
-    let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let mesh = steel_box(width, from.distance(to), width, color);
-    group.children.push(span_between(mesh, from, to));
-}
-
 /// The "DUSTY DIG / 03 — ACTIVE QUARRY" board (drawn by the browser, see
 /// [`QUARRY_SIGN_TEXTURE`]) on two posts.
 fn site_sign(group: &mut Node) {
-    let map = TextureRef {
-        source: TextureSource::Generated(QUARRY_SIGN_TEXTURE),
-        wrap: Wrap::Clamp,
-        ..TextureRef::file("")
-    };
     let face = Node::mesh(
         Arc::new(plane_geometry(5.8, 2.9)),
         Arc::new(Material {
-            map: Some(map),
+            map: Some(TextureRef::generated(QUARRY_SIGN_TEXTURE)),
             ..Material::standard(0xffffff, 0.0, 0.95)
         }),
     );
@@ -66,18 +55,13 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
     let mut rng = Random::new(62541.0);
     // Spilled haul loads leave tight clusters of flat gravel across the work floor,
     // with a scatter of strays between them. Spawn pads stay clean.
-    let pads: Vec<(f64, f64)> = spawn_positions(Team::Blue, 1.0)
+    let pads: Vec<_> = spawn_positions(Team::Blue, 1.0)
         .into_iter()
         .chain(spawn_positions(Team::Red, 1.0))
-        .map(|p| (p.x, p.z))
         .collect();
     let mut stones = Vec::new();
     let mut stone = |rng: &mut Random, x: f64, z: f64, size: f64| {
-        if x.abs().max(z.abs()) > 58.5
-            || pads
-                .iter()
-                .any(|&(px, pz)| js_hypot(&[x - px, z - pz]) < 3.4)
-        {
+        if x.abs().max(z.abs()) > 58.5 || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.4) {
             return;
         }
         let h = rng.range(0.04, 0.07);
@@ -107,22 +91,17 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
             stone(&mut rng, cx + angle.cos() * r, cz + angle.sin() * r, size);
         }
     }
-    for _ in 0..240 {
-        let (x, z, size) = (
-            rng.range(-57.0, 57.0),
-            rng.range(-57.0, 57.0),
-            rng.range(0.12, 0.42),
-        );
-        stone(&mut rng, x, z, size);
-    }
-    // A few flat spalls knocked off the rock islands by earlier shelling.
-    for _ in 0..30 {
-        let (x, z, size) = (
-            rng.range(-57.0, 57.0),
-            rng.range(-57.0, 57.0),
-            rng.range(0.45, 0.8),
-        );
-        stone(&mut rng, x, z, size);
+    // Strays between the clusters, then a few flat spalls knocked off the rock
+    // islands by earlier shelling.
+    for (count, min_size, max_size) in [(240, 0.12, 0.42), (30, 0.45, 0.8)] {
+        for _ in 0..count {
+            let (x, z, size) = (
+                rng.range(-57.0, 57.0),
+                rng.range(-57.0, 57.0),
+                rng.range(min_size, max_size),
+            );
+            stone(&mut rng, x, z, size);
+        }
     }
     gravel.children.push(sandstone_rubble(&stones));
     equipment.children.push(scrub(&mut rng));
@@ -211,11 +190,7 @@ fn scrub(rng: &mut Random) -> Node {
                 z + angle.sin() * lean,
             ]);
             // Blades fade from shaded base to sunlit, straw-bleached tips.
-            let base = [
-                (tint[0] * 0.6) as f32,
-                (tint[1] * 0.6) as f32,
-                (tint[2] * 0.6) as f32,
-            ];
+            let base = tint.map(|c| (c * 0.6) as f32);
             tints.extend([
                 base,
                 base,
@@ -244,13 +219,13 @@ fn scrub(rng: &mut Random) -> Node {
 fn conveyor_and_yard(equipment: &mut Node) {
     // Idle screening conveyor: rust-red chords, dusty truss and a faded feed hopper.
     for z in [-71.4, -68.6] {
-        beam(equipment, [-62.0, 0.3, z], [-42.0, 6.3, z], 0.24, 0x8a5136);
-        beam(equipment, [-62.0, 1.6, z], [-42.0, 7.6, z], 0.14, 0xb08d46);
+        steel_beam(equipment, [-62.0, 0.3, z], [-42.0, 6.3, z], 0.24, 0x8a5136);
+        steel_beam(equipment, [-62.0, 1.6, z], [-42.0, 7.6, z], 0.14, 0xb08d46);
         for i in 0..8 {
             let x = -62.0 + f64::from(i) * 2.5;
             let y = 0.3 + f64::from(i) * 0.75;
-            beam(equipment, [x, y, z], [x + 2.5, y + 2.05, z], 0.09, 0x6b5a48);
-            beam(equipment, [x, y, z], [x, y + 1.3, z], 0.085, 0x6b5a48);
+            steel_beam(equipment, [x, y, z], [x + 2.5, y + 2.05, z], 0.09, 0x6b5a48);
+            steel_beam(equipment, [x, y, z], [x, y + 1.3, z], 0.085, 0x6b5a48);
         }
     }
     // Muted teal drive motor and rust head drum mark the working head end.
@@ -276,8 +251,8 @@ fn conveyor_and_yard(equipment: &mut Node) {
         put(equipment, roller, -62.0 + i * 1.4, 0.35 + i * 0.42, -70.0);
     }
     for z in [-71.3, -68.7] {
-        beam(equipment, [-46.0, -1.7, z], [-46.0, 5.4, z], 0.22, 0x68766e);
-        beam(equipment, [-53.0, -1.7, z], [-46.0, 5.4, z], 0.17, 0x68766e);
+        steel_beam(equipment, [-46.0, -1.7, z], [-46.0, 5.4, z], 0.22, 0x68766e);
+        steel_beam(equipment, [-53.0, -1.7, z], [-46.0, 5.4, z], 0.17, 0x68766e);
     }
     put(
         equipment,
@@ -404,14 +379,14 @@ fn light_tower(group: &mut Node, x: f64, z: f64, yaw: f64) {
     for side in [-1.0, 1.0] {
         let wheel = rotated(cylinder_part(0.36, 0.26, 0x343431, 10), FRAC_PI_2, 0.0, 0.0);
         put(&mut tower, wheel, -0.3, 0.36, side * 0.8);
-        beam(
+        steel_beam(
             &mut tower,
             [side * 1.2, 0.5, -0.6],
             [side * 1.55, 0.0, -1.1],
             0.08,
             0x5a564c,
         );
-        beam(
+        steel_beam(
             &mut tower,
             [side * 1.2, 0.5, 0.6],
             [side * 1.55, 0.0, 1.1],
@@ -419,7 +394,7 @@ fn light_tower(group: &mut Node, x: f64, z: f64, yaw: f64) {
             0x5a564c,
         );
     }
-    beam(
+    steel_beam(
         &mut tower,
         [1.3, 0.45, 0.0],
         [2.3, 0.35, 0.0],

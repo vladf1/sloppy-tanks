@@ -2,7 +2,7 @@
 
 use std::f64::consts::PI;
 
-use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyHandle};
 
 use super::data::{ARENA, group, vehicle};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
@@ -13,7 +13,7 @@ use super::simulation::{Simulation, WreckView};
 use super::simulation_rules::GRAVITY;
 use super::tank_destruction::humvee_tumble;
 use super::tank_dimensions::HUMVEE_BODY_LENGTH_SCALE;
-use super::types::{CoverKind, Fragment, VehicleKind, WreckPart};
+use super::types::{CoverKind, Fragment, Team, VehicleKind, WreckPart};
 
 const WRECK_COLOR: u32 = 0x46534c;
 /// Seconds before a wreck piece's hard removal deadline.
@@ -70,9 +70,6 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
                 .angular_damping((if tumble { motion.damping } else { 3.5 }) as f32)
                 .ccd_enabled(true),
         );
-        let rigid_body = &mut simulation.world.bodies[body];
-        rigid_body.set_additional_solver_iterations(2);
-        rigid_body.set_rotation(to_rotation(Quat4::yaw(heading)), true);
         let half_length = if humvee {
             2.18 * HUMVEE_BODY_LENGTH_SCALE
         } else if kind == VehicleKind::Scout {
@@ -80,37 +77,22 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
         } else {
             2.7
         };
-        let collider = simulation.world.insert_collider(
-            ColliderBuilder::cuboid(
-                ((if humvee { 1.16 } else { 1.22 }) * scale) as f32,
-                ((if humvee { 0.9 } else { 0.75 }) * scale) as f32,
-                (half_length * scale) as f32,
-            )
-            .collision_groups(interaction_groups(group::WRECK))
-            .mass(mass as f32)
-            .friction(0.95)
-            .restitution(0.05),
-            Some(body),
-        );
-        let fragment_id = simulation.next_id;
-        simulation.next_id += 1;
-        track_debris_contacts(
+        let half_extents = [
+            (if humvee { 1.16 } else { 1.22 }) * scale,
+            (if humvee { 0.9 } else { 0.75 }) * scale,
+            half_length * scale,
+        ];
+        add_wreck_piece(
             simulation,
             body,
-            collider,
-            fragment_id,
-            DebrisMaterial::Metal,
-        );
-        let mut fragment = wreck_fragment(
-            fragment_id,
-            body,
+            heading,
+            half_extents,
+            mass,
             5.0 + DEBRIS_CLEANUP_SECONDS,
-            simulation.elapsed,
+            kind,
+            team,
+            WreckPart::Intact,
         );
-        fragment.wreck = Some(kind);
-        fragment.team = Some(team);
-        fragment.part = Some(WreckPart::Intact);
-        simulation.fragments.push(fragment);
         return;
     }
     let detached = simulation.rng.next() < 0.4;
@@ -123,13 +105,9 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
     let half_separation = simulation.rng.range(7.0, 14.0);
     let angle = simulation.rng.range(-0.45, 0.45);
     let high = simulation.rng.next() < 0.25;
-    let view = if simulation.multiplayer() {
-        None
-    } else {
-        simulation.wreck_view
-    };
-    // Only on-screen explosions use view bounds; off-screen combat stays local.
-    let bounds = match view {
+    // Only on-screen explosions use view bounds; off-screen combat stays local. Online
+    // simulations never set a view.
+    let bounds = match simulation.wreck_view {
         Some(view)
             if origin.x > view.min_x
                 && origin.x < view.max_x
@@ -236,9 +214,6 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
         } else {
             aim
         };
-        let rigid_body = &mut simulation.world.bodies[body];
-        rigid_body.set_additional_solver_iterations(2);
-        rigid_body.set_rotation(to_rotation(Quat4::yaw(yaw)), true);
         let size = match part {
             WreckPart::Hull => [1.22, 0.42, 1.45],
             WreckPart::Barrel => [0.2, 0.2, 0.95],
@@ -263,51 +238,62 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
             _ if detached => 0.23,
             _ => 0.3,
         };
-        let collider = simulation.world.insert_collider(
-            ColliderBuilder::cuboid(
-                (size[0] * scale) as f32,
-                (size[1] * scale) as f32,
-                (size[2] * scale * length_scale) as f32,
-            )
-            .collision_groups(interaction_groups(group::WRECK))
-            .mass((mass * share) as f32)
-            .friction(0.95)
-            .restitution(0.05),
-            Some(body),
-        );
-        let fragment_id = simulation.next_id;
-        simulation.next_id += 1;
-        track_debris_contacts(
-            simulation,
-            body,
-            collider,
-            fragment_id,
-            DebrisMaterial::Metal,
-        );
+        let half_extents = [
+            size[0] * scale,
+            size[1] * scale,
+            size[2] * scale * length_scale,
+        ];
         // Preserve the old random cleanup-choice draw in the seeded combat stream.
         simulation.rng.next();
-        let mut fragment = wreck_fragment(
-            fragment_id,
+        add_wreck_piece(
+            simulation,
             body,
+            yaw,
+            half_extents,
+            mass * share,
             flight + 2.7 + DEBRIS_CLEANUP_SECONDS,
-            simulation.elapsed,
+            kind,
+            team,
+            part,
         );
-        fragment.wreck = Some(kind);
-        fragment.team = Some(team);
-        fragment.part = Some(part);
-        simulation.fragments.push(fragment);
     }
 }
 
-fn wreck_fragment(
-    id: u32,
-    body: rapier3d::prelude::RigidBodyHandle,
+/// Give a launched wreck body its yaw and solid box collider, then record it as a metal
+/// fragment with the wreck deadline.
+#[allow(clippy::too_many_arguments)]
+fn add_wreck_piece(
+    simulation: &mut Simulation,
+    body: RigidBodyHandle,
+    yaw: f64,
+    half_extents: [f64; 3],
+    mass: f64,
     life: f64,
-    elapsed: f64,
-) -> Fragment {
+    kind: VehicleKind,
+    team: Team,
+    part: WreckPart,
+) {
+    let rigid_body = &mut simulation.world.bodies[body];
+    rigid_body.set_additional_solver_iterations(2);
+    rigid_body.set_rotation(to_rotation(Quat4::yaw(yaw)), true);
+    let [x, y, z] = half_extents.map(|extent| extent as f32);
+    let collider = simulation.world.insert_collider(
+        ColliderBuilder::cuboid(x, y, z)
+            .collision_groups(interaction_groups(group::WRECK))
+            .mass(mass as f32)
+            .friction(0.95)
+            .restitution(0.05),
+        Some(body),
+    );
+    let id = simulation.allocate_id();
+    track_debris_contacts(simulation, body, collider, id, DebrisMaterial::Metal);
+    let elapsed = simulation.elapsed;
     let mut fragment = Fragment::new(id, body, life, 1.0, WRECK_COLOR);
     fragment.expires_at = Some(elapsed + WRECK_DEADLINE);
     fragment.created_at = Some(elapsed);
     fragment.material = Some(DebrisMaterial::Metal);
-    fragment
+    fragment.wreck = Some(kind);
+    fragment.team = Some(team);
+    fragment.part = Some(part);
+    simulation.fragments.push(fragment);
 }

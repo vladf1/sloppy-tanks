@@ -16,54 +16,16 @@ pub fn quarry_layout() -> Vec<CoverDef> {
     for side in [-1.0, 1.0] {
         covers.extend(boundary_walls(side, ARENA, 1.2, STONE));
         // Offset islands break cross-map fire without enclosing the central pickup.
-        covers.push(stone(
-            CoverKind::Rock,
-            side * 25.0,
-            side * 12.0,
-            14.0,
-            8.0,
-            4.6,
-        ));
-        covers.push(stone(
-            CoverKind::Rock,
-            side * 25.0,
-            -side * 12.0,
-            14.0,
-            8.0,
-            3.8,
-        ));
-        covers.push(stone(
-            CoverKind::Rock,
-            side * 4.0,
-            side * 28.0,
-            16.0,
-            9.0,
-            4.8,
-        ));
-        covers.push(stone(
-            CoverKind::Rock,
-            side * 40.5,
-            side * 37.0,
-            10.0,
-            12.0,
-            4.2,
-        ));
-        covers.push(stone(
-            CoverKind::Rock,
-            side * 24.5,
-            side * 37.0,
-            10.0,
-            12.0,
-            3.6,
-        ));
-        covers.push(stone(
-            CoverKind::Rock,
-            -side * 10.0,
-            side * 47.0,
-            13.0,
-            7.0,
-            3.4,
-        ));
+        for [x, z, w, d, h] in [
+            [25.0, 12.0, 14.0, 8.0, 4.6],
+            [25.0, -12.0, 14.0, 8.0, 3.8],
+            [4.0, 28.0, 16.0, 9.0, 4.8],
+            [40.5, 37.0, 10.0, 12.0, 4.2],
+            [24.5, 37.0, 10.0, 12.0, 3.6],
+            [-10.0, 47.0, 13.0, 7.0, 3.4],
+        ] {
+            covers.push(stone(CoverKind::Rock, side * x, side * z, w, d, h));
+        }
         // Four pallet-sized supply crates form an orderly storage bay in each cut.
         // Their individual colliders leave visible seams and open progressively under fire.
         for x in [31.2, 33.8] {
@@ -91,16 +53,7 @@ pub fn quarry_layout() -> Vec<CoverDef> {
             90.0,
             0xa18e6f,
         ));
-        covers.push(CoverDef::new(
-            CoverKind::Drum,
-            side * 15.0,
-            side * 27.0,
-            1.2,
-            1.2,
-            1.7,
-            30.0,
-            0xff5b24,
-        ));
+        covers.push(CoverDef::drum(side * 15.0, side * 27.0));
         // Crane-set, staggered ranks follow the verge with uneven gaps and offsets.
         // Mirror the same irregular belt for fair approaches; keep the haul road open.
         for [x, z, width, height] in [

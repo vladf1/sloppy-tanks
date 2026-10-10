@@ -71,7 +71,6 @@
       <button id="accelerate">Accelerate</button>
       <button id="brake">Brake</button>
       <button id="turn">Turn</button>
-      <button id="settle">Settle</button>
       <br /><button id="checks">Run checks</button>
       <output id="result">Loading…</output>
     </aside>
@@ -79,7 +78,7 @@
       // The render-only suspension on the engine: the player's tank alone in a
       // cleared arena, driven by fixed simulation steps; pitch, roll and the turret
       // pose come from the presentation (`Game.debug_view_json`).
-      import { check, choose, draw, fixtureGame, prepare, read } from "./engine-fixture";
+      import { check, choose, draw, fixtureGame, read } from "./engine-fixture";
       const game = await fixtureGame(document.querySelector("canvas"), { seed: 123 });
       const output = document.querySelector("output");
       const chassis = document.querySelector("#chassis");
@@ -138,12 +137,9 @@
 Pitch: ${((state.pitch * 180) / Math.PI).toFixed(2)}°
 Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
       }
-      async function reset(kind = "balanced") {
+      async function reset(kind) {
         busy = true;
-        if (!(await choose(game, { humanKind: kind }))) {
-          game.restart(); // The same chassis: a fresh world all the same.
-          await prepare(game);
-        }
+        await choose(game, { humanKind: kind });
         game.debug_set_autoplay(false);
         game.debug_clear_arena(new Uint32Array());
         human = read.state(game).human;
@@ -188,7 +184,6 @@ Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
           braking,
           rest,
         ]);
-      document.querySelector("#settle").onclick = () => playSequence([acceleration, braking, rest]);
       chassis.onchange = () => playSequence(sequence, looping);
       pause.onclick = () => {
         if (completed) {
@@ -260,7 +255,6 @@ Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
         }
       };
       async function runChecks() {
-        const results = [];
         for (const kind of ["scout", "balanced", "heavy"]) {
           await reset(kind);
           busy = true;
@@ -282,14 +276,12 @@ Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
           await reset(kind);
           const fresh = pose();
           check(fresh.pitch === 0 && fresh.roll === 0, `${kind}: reset clears motion`);
-          results.push(`${kind}: passed`);
         }
         check(!game.error(), `GPU error: ${game.error()}`);
         await reset(chassis.value);
         advance(7, 0, 1);
         output.textContent =
-          "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, unchanged instance count.\n" +
-          results.join("\n");
+          "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, unchanged instance count.";
       }
       await playSequence(demo, true);
       requestAnimationFrame(animate);

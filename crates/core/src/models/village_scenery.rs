@@ -4,19 +4,18 @@
 use std::sync::Arc;
 
 use crate::geometry::box_geometry;
-use crate::scene::{Material, Node, TextureRef, TextureSource, Wrap};
+use crate::scene::{Material, Node, TextureRef};
 
 use super::batching::batch;
 use super::effects_scenery::VILLAGE_SIGN_TEXTURE;
 use super::model_primitives::{box_part, put, rotated};
 use super::scenery::create_terrain;
-use super::village_atmosphere::{SmokeCover, set_chimney_smoke, village_atmosphere};
+use super::village_atmosphere::{
+    CHIMNEY_SMOKE_NODE, SmokeCover, set_chimney_smoke, village_atmosphere,
+};
 use super::village_landmarks::{WATERWHEEL, village_landmarks};
 use super::village_landscape::{valley_height, village_landscape};
 use super::village_vegetation::village_vegetation;
-
-/// Node name of the chimney smoke (see [`VillageScenery::set_covers`]).
-pub const CHIMNEY_SMOKE_NODE: &str = "village-chimney-smoke";
 
 /// Pine Village scenery, retained across matches (`VillageScenery`).
 pub struct VillageScenery {
@@ -96,15 +95,10 @@ fn approach_details() -> Node {
         -64.5,
     );
     // Small hanging sign is a landmark, not an in-game overlay.
-    let map = TextureRef {
-        source: TextureSource::Generated(VILLAGE_SIGN_TEXTURE),
-        wrap: Wrap::Clamp,
-        ..TextureRef::file("")
-    };
     let sign = Node::mesh(
         Arc::new(box_geometry(5.2, 1.3, 0.16)),
         Arc::new(Material {
-            map: Some(map),
+            map: Some(TextureRef::generated(VILLAGE_SIGN_TEXTURE)),
             ..Material::standard(0xffffff, 0.0, 1.0)
         }),
     );

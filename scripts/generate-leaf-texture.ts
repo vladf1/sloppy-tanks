@@ -1,17 +1,17 @@
-import { execFileSync } from "node:child_process";
-import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
+import { createCanvas } from "@napi-rs/canvas";
 import { writeFile } from "node:fs/promises";
 import { Random } from "./asset-data";
+import { encodePixelsWebp } from "./encode-webp";
 
 // Broadleaf crowns are built from alpha-tested sprig cards (`tree_models.rs`
-// `LEAF_CELLS`): a 2 × 2 atlas, lobed oak sprigs on the top row and small ovate
+// `OAK_CELLS`, `OVATE_CELLS`): a 2 × 2 atlas, lobed oak sprigs on the top row and small ovate
 // birch/aspen sprigs on the bottom row, each cell a twig rising from the bottom
 // centre into a rounded mass of leaves. Leaves behind are painted darker so a
 // card reads with depth; the crown's own shading comes from the mesh normals.
 const size = 1024;
 const cell = size / 2;
 const canvas = createCanvas(size, size);
-const c = canvas.getContext("2d");
+const ctx = canvas.getContext("2d");
 const rng = new Random(40213);
 
 // Light to dark sap greens; the material color tints them per family.
@@ -44,15 +44,7 @@ function ovateWidth(t: number, teeth: number) {
 }
 
 /** One leaf from its stalk tip `(x, y)` pointing along `angle`. */
-function leaf(
-  ctx: SKRSContext2D,
-  x: number,
-  y: number,
-  angle: number,
-  length: number,
-  oak: boolean,
-  light: number,
-) {
+function leaf(x: number, y: number, angle: number, length: number, oak: boolean, light: number) {
   const color = greens[Math.floor(rng.next() * greens.length)];
   const lobes = 3 + Math.floor(rng.next() * 2);
   const depth = rng.range(0.45, 0.6);
@@ -118,7 +110,7 @@ function leaf(
   }
 }
 
-function stroke(ctx: SKRSContext2D, from: number[], to: number[], width: number) {
+function stroke(from: number[], to: number[], width: number) {
   ctx.lineWidth = width;
   ctx.beginPath();
   ctx.moveTo(from[0], from[1]);
@@ -128,7 +120,6 @@ function stroke(ctx: SKRSContext2D, from: number[], to: number[], width: number)
 
 /** A sprig in the cell at `(left, top)`: forking twigs carrying leaves. */
 function sprig(left: number, top: number, oak: boolean) {
-  const ctx = c;
   ctx.save();
   ctx.beginPath();
   ctx.rect(left, top, cell, cell);
@@ -177,11 +168,11 @@ function sprig(left: number, top: number, oak: boolean) {
     });
   }
   ctx.strokeStyle = "#5d4c38";
-  for (const [from, to] of twigs) stroke(ctx, from, to, from === base ? 7 : 3.5);
+  for (const [from, to] of twigs) stroke(from, to, from === base ? 7 : 3.5);
   // Paint back to front: leaves behind the sprig are darker.
   leaves.sort((a, b) => a.depth - b.depth);
   for (const l of leaves) {
-    leaf(ctx, l.x, l.y, l.angle, l.length, oak, 0.68 + l.depth * 0.42);
+    leaf(l.x, l.y, l.angle, l.length, oak, 0.68 + l.depth * 0.42);
   }
   ctx.restore();
 }
@@ -198,7 +189,7 @@ for (const [column, row] of [
 // Transparent texels keep a leaf green, so mipmaps average toward foliage instead of
 // darkening the cut-out edges. Canvas pixels are premultiplied, so the bled colour
 // reaches cwebp as a raw RGBA PAM (lossless, `-exact`), not through the canvas.
-const { data } = c.getImageData(0, 0, size, size);
+const { data } = ctx.getImageData(0, 0, size, size);
 for (let i = 0; i < data.length; i += 4) {
   if (data[i + 3] === 0) {
     data[i] = 88;
@@ -206,12 +197,7 @@ for (let i = 0; i < data.length; i += 4) {
     data[i + 2] = 56;
   }
 }
-const header = `P7\nWIDTH ${size}\nHEIGHT ${size}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n`;
-const pam = Buffer.concat([Buffer.from(header, "ascii"), Buffer.from(data.buffer)]);
 await writeFile(
   new URL("../assets/texture-sources/trees/leaf-sprigs.webp", import.meta.url),
-  execFileSync("cwebp", ["-quiet", "-lossless", "-exact", "-z", "9", "-o", "-", "--", "-"], {
-    input: pam,
-    maxBuffer: 32 * 1024 * 1024,
-  }),
+  encodePixelsWebp(data, size, size),
 );

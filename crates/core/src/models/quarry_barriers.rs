@@ -3,14 +3,12 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::DMat4;
-
 use super::concrete_surfaces::concrete_material;
-use super::harbor_surfaces::{HarborSurface, harbor_box};
+use super::harbor_surfaces::steel_box;
 use super::model_primitives::{
-    Cache, apply_matrix_to_node, cylinder_part, material, put, shadowed,
+    Cache, adopt_children, cylinder_part, material, put, rotated, shadowed,
 };
-use crate::geometry::math::{compose, hex_to_linear, quat_from_euler};
+use crate::geometry::math::hex_to_linear;
 use crate::geometry::{BoxGeometry, Mesh, TorusGeometry};
 use crate::scene::{Material, Node};
 use crate::sim::quarry_barrier_shapes::{
@@ -91,7 +89,6 @@ pub fn dragon_tooth(group: &mut Node, w: f64, h: f64, d: f64, x: f64, z: f64) {
             radial_segments: 6,
             tubular_segments: 12,
             arc: PI,
-            ..TorusGeometry::default()
         }
         .build()
     });
@@ -123,33 +120,22 @@ const HEDGEHOG_CENTER_Y: f64 = 1.3;
 /// connecting plates, in a 2.9 x 2.7 x 3.2 m frame that the cover scales to its size.
 pub fn steel_hedgehog(group: &mut Node) {
     for beam in HEDGEHOG_BEAMS {
-        let mut parts = vec![harbor_box(
-            0.12,
-            beam.length,
-            0.44,
-            WEB,
-            HarborSurface::Steel,
-        )];
+        let mut assembly = rotated(Node::group(""), beam.rx, 0.0, beam.rz);
+        assembly.position.y = HEDGEHOG_CENTER_Y;
+        assembly
+            .children
+            .push(steel_box(0.12, beam.length, 0.44, WEB));
         for x in [-0.22, 0.22] {
-            let mut flange = harbor_box(0.1, beam.length, 0.52, FLANGE, HarborSurface::Steel);
-            flange.position.x = x;
-            parts.push(flange);
+            let flange = steel_box(0.1, beam.length, 0.52, FLANGE);
+            put(&mut assembly, flange, x, 0.0, 0.0);
         }
         // Bake assemblies into the cover's batch without separate draw calls.
-        let assembly: DMat4 = compose(
-            glam::DVec3::new(0.0, HEDGEHOG_CENTER_Y, 0.0),
-            quat_from_euler(beam.rx, 0.0, beam.rz),
-            glam::DVec3::ONE,
-        );
-        for mut part in parts {
-            apply_matrix_to_node(&mut part, &assembly);
-            group.children.push(part);
-        }
+        adopt_children(group, assembly);
     }
     for z in [-0.29, 0.29] {
         put(
             group,
-            harbor_box(0.64, 0.64, 0.08, FLANGE, HarborSurface::Steel),
+            steel_box(0.64, 0.64, 0.08, FLANGE),
             0.0,
             HEDGEHOG_CENTER_Y,
             z,

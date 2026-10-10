@@ -8,17 +8,7 @@ import {
   savedCameraPreferences,
   saveCameraPreferences,
 } from "../src/game/player-preferences";
-
-function withStorage(storage: object, check: () => void): void {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
-  try {
-    check();
-  } finally {
-    if (original) Object.defineProperty(globalThis, "localStorage", original);
-    else delete (globalThis as { localStorage?: unknown }).localStorage;
-  }
-}
+import { memoryStorage, withLocalStorage, withStorage } from "./local-storage";
 
 test("only playable tanks and known battle formats restore from storage", () => {
   assert.equal(preferredTank("scout"), "scout");
@@ -31,16 +21,12 @@ test("only playable tanks and known battle formats restore from storage", () => 
 });
 
 test("camera settings use the engine's preferred view and clamped zoom", () => {
-  const values = new Map<string, string>();
-  const storage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => values.set(key, value),
-  };
+  const storage = memoryStorage();
   withStorage(storage, () => {
     assert.deepEqual(savedCameraPreferences(), { firstPerson: false });
     saveCameraPreferences({ camera_preferences: () => new Float64Array([1, 17]) });
     assert.deepEqual(savedCameraPreferences(), { firstPerson: true, zoom: 17 });
-    assert.equal(values.get("sloppy-camera"), "first-person");
+    assert.equal(storage.values.get("sloppy-camera"), "first-person");
     saveCameraPreferences({ camera_preferences: () => new Float64Array([0, 52]) });
     assert.deepEqual(savedCameraPreferences(), { firstPerson: false, zoom: 52 });
   });
@@ -73,19 +59,14 @@ test("denied storage reads and full-storage writes do not interrupt play", () =>
 });
 
 test("a browser denying access to localStorage itself still opens the setup", () => {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
+  const denied = {
     get() {
       throw new Error("Storage access denied");
     },
-  });
-  try {
+  };
+  withLocalStorage(denied, () => {
     assert.equal(savedPreference("game-mode"), null);
     assert.deepEqual(savedCameraPreferences(), { firstPerson: false });
     assert.doesNotThrow(() => savePreference("game-mode", "solo"));
-  } finally {
-    if (original) Object.defineProperty(globalThis, "localStorage", original);
-    else delete (globalThis as { localStorage?: unknown }).localStorage;
-  }
+  });
 });

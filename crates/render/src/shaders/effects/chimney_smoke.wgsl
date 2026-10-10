@@ -22,14 +22,9 @@ fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {
     *clip = vec4f((*clip).xy + offset, (*clip).zw);
 }
 
-fn wisp_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
-    return t * t * (3.0 - 2.0 * t);
-}
-
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let t = f.extra0.z;
     (*s).color = vec3f(0.72, 0.75, 0.7);
-    (*s).opacity = (1.0 - wisp_smoothstep(0.2, 1.0, length(f.uv - 0.5) * 2.0))
-        * wisp_smoothstep(0.0, 0.15, t) * pow(1.0 - t, 1.5) * 0.2;
+    (*s).opacity = (1.0 - smoothstep(0.2, 1.0, length(f.uv - 0.5) * 2.0))
+        * smoothstep(0.0, 0.15, t) * pow(1.0 - t, 1.5) * 0.2;
 }

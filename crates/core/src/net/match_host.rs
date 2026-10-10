@@ -38,7 +38,6 @@ const MAX_UNACKNOWLEDGED_TICKS: u64 = 180;
 const MAX_RESYNCS_PER_SECOND: u32 = 2;
 /// Most distinct players one round may count on its scoreboard.
 const MAX_PARTICIPANTS: usize = 128;
-const DEFAULT_SEED: u32 = 4242;
 
 /// A socket's identity inside the room, chosen by the runtime and never reused.
 pub type ConnectionId = u64;
@@ -67,8 +66,8 @@ pub struct MatchHostOptions {
     pub now_ms: u64,
     /// Makes a fresh unguessable seat token or player id.
     pub token: Box<dyn FnMut() -> String + Send>,
-    /// Seed of the first round's gameplay stream (4242 by default in the TypeScript).
-    pub seed: Option<u32>,
+    /// Seed of the first round's gameplay stream.
+    pub seed: u32,
     /// Content version joins must present; [`CONTENT_VERSION`] when `None`.
     pub content_version: Option<String>,
 }
@@ -96,6 +95,17 @@ struct Client {
     full_count: u32,
     /// The stream position of this client's latest baseline; batches skip frames up to it.
     baseline_seq: u64,
+}
+
+/// The tank a seat's player claims in the simulation.
+fn assignment(player: &Player) -> PlayerAssignment {
+    PlayerAssignment {
+        player_id: player.player_id.clone(),
+        name: player.name.clone(),
+        team: player.team,
+        slot: player.slot as usize,
+        kind: player.kind,
+    }
 }
 
 /// One identity or lifecycle value `lifecycle_changed` compares between ticks.
@@ -237,7 +247,7 @@ impl MatchHost {
             room_epoch: options.room_epoch,
             created_ms: options.now_ms,
             token: options.token,
-            seed: options.seed.unwrap_or(DEFAULT_SEED),
+            seed: options.seed,
             content_version: options
                 .content_version
                 .unwrap_or_else(|| CONTENT_VERSION.to_string()),
@@ -260,10 +270,6 @@ impl MatchHost {
         }
     }
 
-    pub fn room_epoch(&self) -> &str {
-        &self.room_epoch
-    }
-
     /// The simulation tick of the current round.
     pub fn tick(&self) -> u64 {
         self.clock.as_ref().map_or(0, |clock| clock.tick)
@@ -277,11 +283,6 @@ impl MatchHost {
     /// Connections that hold a seat.
     pub fn connections(&self) -> usize {
         self.clients.len()
-    }
-
-    /// Reserved seats, including players inside their reconnect grace.
-    pub fn reserved(&self) -> usize {
-        self.seats.len()
     }
 
     /// Input lapses over every seat and round of this match, for monitoring: held
@@ -717,15 +718,7 @@ impl MatchHost {
     /// Claims a tank for a seat that joined a round already built.
     fn seat_tank(&mut self, seat: usize, now_ms: u64) -> Handled {
         let simulation = self.simulation.as_mut().expect("a round is built");
-        let player = &self.seats[seat].player;
-        let assignment = PlayerAssignment {
-            player_id: player.player_id.clone(),
-            name: player.name.clone(),
-            team: player.team,
-            slot: player.slot as usize,
-            kind: player.kind,
-        };
-        let index = claim_player_tank(simulation, &assignment);
+        let index = claim_player_tank(simulation, &assignment(&self.seats[seat].player));
         let tank_id = simulation.tanks[index].id;
         let controls =
             PlayerControls::new(simulation, tank_id, now_ms as f64, !simulation.humans_only)?;
@@ -797,13 +790,7 @@ impl MatchHost {
         let players: Vec<PlayerAssignment> = self
             .seats
             .iter()
-            .map(|seat| PlayerAssignment {
-                player_id: seat.player.player_id.clone(),
-                name: seat.player.name.clone(),
-                team: seat.player.team,
-                slot: seat.player.slot as usize,
-                kind: seat.player.kind,
-            })
+            .map(|seat| assignment(&seat.player))
             .collect();
         let seed = self.seed.wrapping_add(self.round_id as u32).wrapping_sub(1);
         let mut simulation = create_multiplayer_simulation(
@@ -990,9 +977,9 @@ impl MatchHost {
         }
         if self.phase == RoomPhase::Playing {
             let mut clock = self.clock.take().expect("a playing room has a clock");
-            let result = clock.advance(now_ms as f64, |tick| self.step(tick, now_ms));
+            let kept_up = clock.advance(now_ms as f64, |tick| self.step(tick, now_ms));
             self.clock = Some(clock);
-            if result != Ok(true) {
+            if !kept_up {
                 self.dispose("overload");
                 return;
             }
@@ -1147,8 +1134,7 @@ impl MatchHost {
         };
         let tank = &simulation.tanks[index];
         if entry.control_key.as_ref().is_some_and(|previous| {
-            previous.room_epoch == self.room_epoch
-                && previous.round_id == self.round_id
+            previous.round_id == self.round_id
                 && previous.tank_id == tank.id
                 && previous.life == tank.life
                 && previous.control_epoch == controls.control_epoch
@@ -1237,9 +1223,8 @@ impl MatchHost {
         self.broadcast_lobby();
     }
 
-    /// The current lobby message.
-    pub fn lobby(&self) -> Lobby {
-        Lobby {
+    fn broadcast_lobby(&mut self) {
+        let body = Lobby {
             room_epoch: self.room_epoch.clone(),
             round_id: self.round_id,
             phase: self.phase,
@@ -1248,10 +1233,7 @@ impl MatchHost {
             scoreboard: self.participants.clone(),
             settings: self.settings,
         }
-    }
-
-    fn broadcast_lobby(&mut self) {
-        let body = self.lobby().to_json();
+        .to_json();
         let connections: Vec<ConnectionId> = self.clients.iter().map(|(id, _)| *id).collect();
         for connection in connections {
             self.send(connection, body.clone());

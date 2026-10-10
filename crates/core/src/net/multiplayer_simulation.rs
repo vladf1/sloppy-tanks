@@ -2,6 +2,7 @@
 //! validation, the twelve (or an extra level's thirty) stable team slots, and seat
 //! hand-over between players and fill bots.
 
+use super::protocol::MAX_PLAYER_NAME_LENGTH;
 use super::schema::text_length;
 use crate::sim::difficulty::Difficulty;
 use crate::sim::extra_levels::extra_level;
@@ -11,7 +12,6 @@ use crate::sim::types::{Driver, PlayerAssignment, VehicleCommand, VehicleKind};
 
 pub const MAX_PLAYERS: usize = 8;
 pub const TEAM_SLOTS: usize = 6;
-pub const MAX_PLAYER_NAME_LENGTH: usize = 24;
 
 /// The room settings a match is built from.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -69,10 +69,7 @@ pub fn create_multiplayer_simulation(
     {
         setup = setup.merged(level);
     }
-    setup = setup.merged(SimulationSetup {
-        players: Some(roster),
-        ..SimulationSetup::default()
-    });
+    setup.players = Some(roster);
     Ok(Simulation::new(seed, setup))
 }
 
@@ -152,10 +149,8 @@ pub fn release_player_tank(simulation: &mut Simulation, tank_id: u32) {
         reassign_tank(simulation, index, None);
         return;
     }
-    if simulation.tanks[index].alive {
-        let body = simulation.tanks[index].body;
-        simulation.remove_body(body);
+    let tank = simulation.tanks.remove(index);
+    if tank.alive {
+        simulation.remove_body(tank.body);
     }
-    simulation.tanks[index].alive = false;
-    simulation.tanks.remove(index);
 }

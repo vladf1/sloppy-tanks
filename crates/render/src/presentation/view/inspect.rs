@@ -43,14 +43,10 @@ pub struct CoverInspection {
     pub id: u32,
     pub shown: bool,
     pub stage: u32,
-    /// A joint of the combined static-cover model rather than its own instance.
-    pub combined: bool,
     pub model_key: String,
     /// Trees: whether the crown and the cut stump surface show.
     pub crown: Option<bool>,
     pub cut: Option<bool>,
-    /// Joints drawn in its model instance (a combined cover counts its own span).
-    pub visible_joints: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +64,8 @@ pub struct PickupInspection {
 #[derive(Clone, Debug)]
 pub struct FragmentInspection {
     pub id: u32,
-    /// "piece", "wreck" or "owned" (timber members and falling crowns).
+    /// "piece", "wreck" or "owned" (timber members, watchtower pieces and falling
+    /// crowns).
     pub look: &'static str,
     pub shown: bool,
     pub opacity: f32,
@@ -83,17 +80,13 @@ pub struct ViewInspection {
     pub reticle: ReticleInspection,
     /// The theme whose scenery shows.
     pub theme: Option<&'static str>,
-    pub player_ring: bool,
     pub tanks: Vec<TankInspection>,
     pub covers: Vec<CoverInspection>,
     pub pickups: Vec<PickupInspection>,
     pub fragments: Vec<FragmentInspection>,
     pub mines: usize,
-    pub branches: usize,
-    pub pickup_effects: usize,
     pub laser_lenses: usize,
     pub laser_cores: usize,
-    pub laser_beams: usize,
 }
 
 fn joint_shown(state: &InstanceState, joint: usize) -> bool {
@@ -122,9 +115,6 @@ impl Presentation {
                 position,
             };
         }
-        inspection.player_ring = renderer
-            .instance_state(self.player_ring)
-            .is_some_and(|state| state.visible);
         for (&id, view) in &self.tanks {
             let (Some(model), Some(bar)) = (
                 renderer.instance_state(view.instance),
@@ -171,32 +161,16 @@ impl Presentation {
                 Some(joint) => state.visible && joint_shown(&state, joint),
                 None => state.visible,
             };
-            let span = match view.joint {
-                Some(joint) => {
-                    let nodes = self
-                        .cover_models
-                        .get(&view.key)
-                        .map_or(&[][..], |entry| renderer.model_nodes(entry.model));
-                    let end = nodes[joint + 1..]
-                        .iter()
-                        .position(|node| node.name.starts_with(super::COMBINED_JOINT))
-                        .map_or(nodes.len(), |offset| joint + 1 + offset);
-                    joint..end
-                }
-                None => 0..state.node_visible.len(),
-            };
             inspection.covers.push(CoverInspection {
                 id,
                 shown,
                 stage: view.stage,
-                combined: view.joint.is_some(),
                 model_key: view.key.clone(),
                 crown: view
                     .tree
                     .as_ref()
                     .map(|tree| joint_shown(&state, tree.crown)),
                 cut: view.tree.as_ref().map(|tree| joint_shown(&state, tree.cut)),
-                visible_joints: span.filter(|&joint| joint_shown(&state, joint)).count(),
             });
         }
         for (&id, view) in &self.pickups {
@@ -242,12 +216,9 @@ impl Presentation {
         inspection.fragments.sort_by_key(|fragment| fragment.id);
         inspection.theme = self.theme.map(|theme| theme.name());
         inspection.mines = self.mines.len();
-        inspection.branches = self.branches.len();
-        inspection.pickup_effects = self.pickup_effects.len();
-        let laser = &self.effects.systems().laser;
+        let laser = &self.effects.systems.laser;
         inspection.laser_lenses = laser.lens.len();
         inspection.laser_cores = laser.core.len();
-        inspection.laser_beams = laser.beams();
         inspection
     }
 }

@@ -11,7 +11,6 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-// Fixed destination: never infer a Pages project or branch from the checkout.
 const info = JSON.parse(
   readFileSync(new URL("../dist-dev/health/index.html", import.meta.url), "utf8"),
 );
@@ -42,6 +41,7 @@ run("node", ["scripts/server.mjs", "deploy", "--dev"]);
 console.log(
   `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,
 );
+// Fixed destination: never infer a Pages project or branch from the checkout.
 run("wrangler", [
   "pages",
   "deploy",

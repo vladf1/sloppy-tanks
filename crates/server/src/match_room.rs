@@ -2,72 +2,44 @@
 //! [`RoomHost`] contract.
 //!
 //! The core host is transport-free and queues its sends, closes and directory changes;
-//! this adapter forwards them, in order, into the session's [`HostOutput`] after each call.
+//! this adapter moves them, in order, into the session's [`HostOutput`] after each call.
 
-use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::match_host::{ConnectionId, MatchHost, MatchHostOptions};
+use sloppy_core::net::room_list::RoomListing;
 
-use crate::host::{ConnectionId, HostOptions, HostOutput, RoomHost};
-use crate::room_list::RoomListing;
+use crate::host::{HostOutput, RoomHost};
 
 pub struct MatchRoom {
     host: MatchHost,
 }
 
 impl MatchRoom {
-    pub fn new(options: HostOptions) -> Self {
+    pub fn new(options: MatchHostOptions) -> Self {
         Self {
-            host: MatchHost::new(MatchHostOptions {
-                room_epoch: options.room_epoch,
-                now_ms: options.now_ms,
-                token: options.token,
-                seed: Some(options.seed),
-                content_version: Some(options.content_version),
-            }),
-        }
-    }
-
-    /// The core host, for tests and diagnostics.
-    pub fn host(&self) -> &MatchHost {
-        &self.host
-    }
-
-    fn flush(&mut self, out: &mut HostOutput) {
-        for event in self.host.take_events() {
-            match event {
-                HostEvent::Send {
-                    connection,
-                    message,
-                } => out.send_message(ConnectionId(connection), message),
-                HostEvent::Close {
-                    connection,
-                    code,
-                    reason,
-                } => out.close(ConnectionId(connection), code, reason),
-                HostEvent::Changed => out.changed(),
-            }
+            host: MatchHost::new(options),
         }
     }
 }
 
 impl RoomHost for MatchRoom {
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
-        self.host.receive(connection.0, text, now_ms);
-        self.flush(out);
+        self.host.receive(connection, text, now_ms);
+        out.extend(self.host.take_events());
     }
 
     fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput) {
-        self.host.disconnect(connection.0, now_ms);
-        self.flush(out);
+        self.host.disconnect(connection, now_ms);
+        out.extend(self.host.take_events());
     }
 
     fn advance(&mut self, now_ms: u64, out: &mut HostOutput) {
         self.host.advance(now_ms);
-        self.flush(out);
+        out.extend(self.host.take_events());
     }
 
     fn dispose(&mut self, reason: &str, out: &mut HostOutput) {
         self.host.dispose(reason);
-        self.flush(out);
+        out.extend(self.host.take_events());
     }
 
     fn is_disposed(&self) -> bool {

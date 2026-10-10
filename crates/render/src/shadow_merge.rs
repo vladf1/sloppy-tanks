@@ -67,12 +67,6 @@ pub struct ShadowMerge {
     pub merged: Vec<bool>,
 }
 
-impl ShadowMerge {
-    pub fn is_empty(&self) -> bool {
-        self.groups.is_empty()
-    }
-}
-
 /// How a material's shadow can come from a merged caster: depth only, or an
 /// alpha-tested card; never with an effect that moves vertices, dithers the
 /// shadow or (for cards) could change the cut-out alpha, unless the effect
@@ -104,12 +98,10 @@ pub fn shadow_merge_kind(
     }
 }
 
-/// A depth copy has a fixed bandwidth cost; small static sets are cheaper to
-/// redraw. Small sets keep the existing view culling and avoid copying unused depth.
-pub fn cache_scenery_shadows(triangles: u64) -> bool {
-    const MIN_CACHED_TRIANGLES: u64 = 131_072;
-    triangles >= MIN_CACHED_TRIANGLES
-}
+/// The fewest fixed scenery shadow triangles worth caching. A depth copy has a fixed
+/// bandwidth cost; small static sets are cheaper to redraw. Small sets keep the
+/// existing view culling and avoid copying unused depth.
+pub const MIN_CACHED_SHADOW_TRIANGLES: u64 = 131_072;
 
 /// Where a frame's merged shadow item draws: by pipeline, then by the caster's
 /// vertex and index pages, so draws from one page go together, then by model and
@@ -163,18 +155,12 @@ fn part_geometry<'a>(part: &'a PreparedPart, meshes: &'a [MeshData]) -> Geometry
     }
 }
 
-/// The cull side a caster's shadow uses.
-pub fn caster_side(part: &PreparedPart) -> Side {
-    part.material
-        .shadow_side
-        .unwrap_or_else(|| shadow_side(part.material.side))
-}
-
 /// Merge the eligible parts of a prepared model. `kind(part_index)` says how a
 /// part may merge (see [`MergeKind`]; on movable models only non-instanced
 /// parts merge). `scenery` bakes world
 /// transforms (and InstancedMesh placements) into the vertices, grouped per
 /// `cell_size` cell; otherwise vertices stay in mesh space with a slot per part.
+/// Every group has triangles.
 pub fn merge_shadows(
     model: &PreparedModel,
     kind: impl Fn(usize) -> MergeKind,
@@ -221,7 +207,7 @@ pub fn merge_shadows(
             merge.slots.len() as u32 - 1
         };
         merge.merged[index] = true;
-        let side = caster_side(part);
+        let side = shadow_side(&part.material);
         for placement in placements {
             // Transformed on the fly, twice, rather than into a copy of the part.
             let moved = |p: &Vec3| {
@@ -285,7 +271,7 @@ pub fn merge_shadows(
 mod tests {
     use super::*;
     use crate::material::MaterialInterner;
-    use crate::model::{SceneryOptions, prepare_model, prepare_scenery};
+    use crate::model::{prepare_model, prepare_scenery};
     use glam::DVec3;
     use sloppy_core::geometry::box_geometry;
     use sloppy_core::scene::{Material, Node};
@@ -322,15 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn cache_requires_a_substantial_fixed_set() {
-        assert!(!cache_scenery_shadows(17_000));
-        assert!(!cache_scenery_shadows(131_071));
-        assert!(!cache_scenery_shadows(90_748));
-        assert!(cache_scenery_shadows(131_072));
-        assert!(cache_scenery_shadows(170_000));
-    }
-
-    #[test]
     fn fixed_casters_exclude_animated_or_alpha_changing_effects() {
         use crate::effects::registry::{PULSE, WAVE};
         use sloppy_core::scene::Effect;
@@ -352,10 +329,6 @@ mod tests {
             params: vec![0.0; 16],
         };
         assert_eq!(shadow_merge_kind(&effects, &material), MergeKind::Separate);
-    }
-
-    fn no_attributes(_: &Material) -> &'static [&'static str] {
-        &[]
     }
 
     fn caster(mesh: &Arc<sloppy_core::geometry::Mesh>, material: Material, x: f64) -> Node {
@@ -395,7 +368,7 @@ mod tests {
         ));
         root.children.push(turret);
         let mut interner = MaterialInterner::default();
-        let model = prepare_model(&root, &mut interner, &no_attributes);
+        let model = prepare_model(&root, &mut interner);
         let kind = |index: usize| {
             if model.parts[index].material.alpha_test == 0.0 {
                 MergeKind::Opaque
@@ -428,12 +401,7 @@ mod tests {
                 .push(caster(&cube, Material::standard(0x888888, 0.0, 0.9), x));
         }
         let mut interner = MaterialInterner::default();
-        let scenery = prepare_scenery(
-            &root,
-            &mut interner,
-            &no_attributes,
-            SceneryOptions::default(),
-        );
+        let scenery = prepare_scenery(&root, &mut interner);
         let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 60.0);
         assert_eq!(merge.groups.len(), 2);
         assert!(merge.slots.is_empty());

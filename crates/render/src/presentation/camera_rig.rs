@@ -5,12 +5,14 @@
 //! wreck landing bounds, and the listener direction for stereo panning.
 
 use glam::{DVec3, Mat3, Mat4, Quat, Vec2, Vec3};
+use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::sim::VehicleKind;
 use sloppy_core::sim::data::ARENA;
 use sloppy_core::sim::math::angle_delta;
 use sloppy_core::sim::simulation::WreckView;
 
 use super::first_person::{FirstPersonLook, seat_flight, seat_turn};
+use super::posing::{euler_yxz, lerp};
 use super::view_settings::{AIM_PLANE_HEIGHT, CAMERA, FIRST_PERSON, first_person_eye};
 use crate::camera::PerspectiveCamera;
 
@@ -23,11 +25,9 @@ const FOLLOW_HEIGHT: f64 = 0.7;
 const OVERVIEW_ZOOM: f64 = ARENA * 1.8;
 /// NDC probes of the visible ground that wrecks land inside.
 const WRECK_PROBES: [(f32, f32); 4] = [(-0.8, -0.7), (0.8, -0.7), (-0.8, 0.65), (0.8, 0.65)];
-/// Touch aim projects this many CSS pixels of stick deflection around the tank.
-const TOUCH_AIM_PIXELS: f64 = 180.0;
 
 /// The followed tank's pose, as the camera needs it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ViewerPose {
     pub kind: VehicleKind,
     pub alive: bool,
@@ -104,19 +104,6 @@ impl Default for CameraRig {
             aim_point: Vec3::ZERO,
         }
     }
-}
-
-fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    a + (b - a) * t
-}
-
-fn smoothstep(t: f64) -> f64 {
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// Three's `Euler(x, y, 0, "YXZ")` as a quaternion.
-fn yaw_pitch(yaw: f64, pitch: f64) -> Quat {
-    Quat::from_rotation_y(yaw as f32) * Quat::from_rotation_x(pitch as f32)
 }
 
 /// The world rotation of a camera posed with `lookAt`.
@@ -223,11 +210,13 @@ impl CameraRig {
             let overhead_pitch = (gaze.y as f64).asin();
             let overhead_yaw = (-gaze.x as f64).atan2(-gaze.z as f64);
             let turn = seat_turn(self.seat_blend);
-            let step = smoothstep(self.destroyed_step);
+            let step = smoothstep(self.destroyed_step, 0.0, 1.0);
             let seat_pitch = lerp(FIRST_PERSON.pitch, FIRST_PERSON.destroyed_pitch, step);
-            self.rotation = yaw_pitch(
-                overhead_yaw + angle_delta(overhead_yaw, yaw + std::f64::consts::PI) * turn,
-                lerp(overhead_pitch, seat_pitch, turn),
+            self.rotation = euler_yxz(
+                lerp(overhead_pitch, seat_pitch, turn) as f32,
+                (overhead_yaw + angle_delta(overhead_yaw, yaw + std::f64::consts::PI) * turn)
+                    as f32,
+                0.0,
             );
             let listener_yaw = if turn < 0.5 {
                 std::f64::consts::PI
@@ -313,20 +302,6 @@ impl CameraRig {
             self.aim_point = point;
         }
         self.aim_point
-    }
-
-    /// Touch aim projects relative to the tank so aiming follows the screen
-    /// direction at any zoom. `stick` is the aim stick vector; `client` is the
-    /// canvas size in CSS pixels.
-    pub fn touch_aim(&mut self, position: DVec3, stick: Vec2, client: Vec2) -> Vec3 {
-        let origin = self
-            .overhead
-            .project(Vec3::new(position.x as f32, 0.0, position.z as f32));
-        let pixels = TOUCH_AIM_PIXELS as f32;
-        self.aim(Vec2::new(
-            origin.x + stick.x * pixels / client.x.max(1.0),
-            origin.y - stick.y * pixels / client.y.max(1.0),
-        ))
     }
 
     /// Screen angle (clockwise from up, radians) of damage arriving at `at` from
@@ -478,22 +453,5 @@ mod tests {
         assert_eq!(rig.preferences(), [1.0, CAMERA.max_zoom]);
         rig.restore_preferences(false, None);
         assert_eq!(rig.preferences(), [0.0, CAMERA.max_zoom]);
-    }
-
-    #[test]
-    fn touch_aim_follows_the_stick_around_the_tank() {
-        let mut rig = CameraRig::default();
-        rig.set_aspect(1024.0 / 768.0);
-        rig.update(&viewer(-20.0, 10.0), 1.0, 0.0, false, true);
-        let client = Vec2::new(1024.0, 768.0);
-        let tank = DVec3::new(-20.0, 0.0, 10.0);
-        let right = rig.touch_aim(tank, Vec2::new(1.0, 0.0), client);
-        assert!(
-            right.x > -20.0 + 3.0 && (right.z - 10.0).abs() < 1.5,
-            "{right:?}"
-        );
-        // Stick up (negative y) aims up the screen, away from the camera.
-        let up = rig.touch_aim(tank, Vec2::new(0.0, -1.0), client);
-        assert!(up.z < 10.0 - 3.0, "{up:?}");
     }
 }

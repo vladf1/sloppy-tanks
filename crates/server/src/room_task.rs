@@ -6,15 +6,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use sloppy_core::net::match_host::ConnectionId;
+use sloppy_core::net::room_list::RoomListing;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
-use crate::host::{ConnectionId, HostFactory};
+use crate::host::HostFactory;
 use crate::monitor::ServerMonitor;
 use crate::room_catalog::RoomCatalog;
-use crate::room_list::RoomListing;
 use crate::session::{Clock, Incoming, RoomActivity, RoomEvents, RoomSample, RoomSession};
-use crate::socket::SocketHandle;
+use crate::socket::{SocketHandle, sleep_until_some};
 
 /// Commands queued for one room. The queue is bounded, so a flooding client slows its
 /// own socket's reads instead of growing server memory.
@@ -145,7 +146,7 @@ async fn run<F: HostFactory>(
         tokio::select! {
             // The timer goes first so a burst of messages cannot starve the simulation.
             biased;
-            () = sleep_until_some(deadline), if deadline.is_some() => session.on_timer(),
+            () = sleep_until_some(deadline) => session.on_timer(),
             command = inbox.recv() => match command {
                 Some(command) => handle(&mut session, command, &mut resets),
                 // Every sender is gone, which the registry prevents while the room lives.
@@ -204,7 +205,7 @@ fn handle<F: HostFactory>(
         }
         RoomCommand::Text { id, text } => session.message(id, Incoming::Text(&text)),
         RoomCommand::Binary { id } => session.message(id, Incoming::Binary),
-        RoomCommand::Closed { id, code } => session.closed(id, Some(code)),
+        RoomCommand::Closed { id, code } => session.closed(id, code),
         RoomCommand::Failed { id } => session.failed(id),
         RoomCommand::Reset { reason, done } => {
             session.reset(&reason);
@@ -213,12 +214,5 @@ fn handle<F: HostFactory>(
         RoomCommand::Sample { reply } => {
             let _ = reply.send(session.sample());
         }
-    }
-}
-
-async fn sleep_until_some(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
     }
 }

@@ -24,10 +24,9 @@ use glam::{DMat4, DVec3};
 
 use super::batching::{batch, paint_mesh};
 use super::effects_scenery::FOLIAGE;
-use super::model_primitives::{Cache, shadowed};
+use super::model_primitives::{Cache, shadowed, span_between};
 use crate::geometry::math::{
-    multiply_hex, normalize, quat_from_euler, quat_from_euler_yxz, quat_from_unit_vectors,
-    quat_rotate_z, smoothstep, transform_point,
+    multiply_hex, quat_from_euler, quat_from_euler_yxz, quat_rotate_z, smoothstep, transform_point,
 };
 use crate::geometry::{CylinderGeometry, Mesh, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef};
@@ -68,15 +67,6 @@ pub enum TreeDetail {
     Full,
     /// Distant scenery: fewer tiers, clumps and cards, no stump or bark limbs.
     Background,
-}
-
-/// A built tree and the traits the TypeScript kept in `userData`.
-#[derive(Clone, Debug)]
-pub struct TreeModel {
-    pub node: Node,
-    /// Index into [`TREE_FAMILIES`].
-    pub family: u32,
-    pub seed: u32,
 }
 
 /// What a tree's crown sheds when it is hit or felled, for presentation's falling
@@ -137,14 +127,10 @@ const FOLIAGE_CUTOFF: f32 = 0.35;
 static SURFACES: Cache<(TreeSurface, u32, bool), Material> = Cache::new();
 static GEOMETRY: Cache<TreeGeometry, Mesh> = Cache::new();
 
-fn surface(kind: TreeSurface, color: u32) -> Arc<Material> {
-    tree_surface(kind, color, false)
-}
-
 /// `surface(kind, color)`: shared textured tree materials. Foliage cards are
 /// alpha-tested, drawn from both sides with alpha to coverage and shaded by their
 /// vertex colors; `sway` gives them the [`FOLIAGE`] effect.
-fn tree_surface(kind: TreeSurface, color: u32, sway: bool) -> Arc<Material> {
+fn surface(kind: TreeSurface, color: u32, sway: bool) -> Arc<Material> {
     SURFACES.get_or_insert((kind, color, sway), || {
         let map = TextureRef {
             anisotropy: 4,
@@ -199,7 +185,6 @@ fn open_cylinder(radius_top: f64, radial_segments: u32) -> Mesh {
         radial_segments,
         height_segments: 1,
         open_ended: true,
-        ..CylinderGeometry::default()
     }
     .build()
 }
@@ -323,7 +308,6 @@ fn limb(
     radius: f64,
     root: bool,
 ) -> &mut Node {
-    let delta = to - from;
     let kind = if root {
         TreeGeometry::Root
     } else if radius < 0.15 {
@@ -331,19 +315,10 @@ fn limb(
     } else {
         TreeGeometry::Stem
     };
-    let node = add_mesh(
-        parent,
-        geometry(kind),
-        material,
-        DVec3::new(
-            (from.x + to.x) / 2.0,
-            (from.y + to.y) / 2.0,
-            (from.z + to.z) / 2.0,
-        ),
-        DVec3::new(radius, delta.length(), radius),
-    );
-    node.rotation = quat_from_unit_vectors(DVec3::Y, normalize(delta));
-    node
+    let mut node = shadowed(geometry(kind), material);
+    node.scale = DVec3::new(radius, (to - from).length(), radius);
+    parent.children.push(span_between(node, from, to));
+    parent.children.last_mut().expect("just pushed")
 }
 
 /// Leaf tint per family; it multiplies the foliage texture.
@@ -623,7 +598,7 @@ fn sprig_card(
 }
 
 /// `treeModel(c, detail)`.
-pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
+pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
     let TreeProportions {
         seed,
         mut rng,
@@ -638,11 +613,11 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
     let conifer = family < 3;
     let pale = family == 4 || family == 5;
     let bark = if pale {
-        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4])
+        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4], false)
     } else {
-        surface(TreeSurface::Bark, BARK_COLORS[family as usize])
+        surface(TreeSurface::Bark, BARK_COLORS[family as usize], false)
     };
-    let foliage = tree_surface(
+    let foliage = surface(
         if conifer {
             TreeSurface::ConiferSpray
         } else {
@@ -651,7 +626,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
         LEAF_COLORS[family as usize],
         full,
     );
-    let rings = surface(TreeSurface::Rings, RINGS_COLOR);
+    let rings = surface(TreeSurface::Rings, RINGS_COLOR, false);
     let mut group = Node {
         position: DVec3::new(c.x, 0.0, c.z),
         ..Node::default()
@@ -776,11 +751,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> TreeModel {
         crown.position = group.position;
         group = crown;
     }
-    TreeModel {
-        node: group,
-        family,
-        seed,
-    }
+    group
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -982,20 +953,6 @@ fn add_broadleaf_crown(
     }
 }
 
-/// `setTreeDestroyed(tree, destroyed)`: a felled tree hides its crown and shows the
-/// cut end grain on its stump. Background trees have neither and are unchanged.
-pub fn set_tree_destroyed(tree: &mut Node, destroyed: bool) {
-    if tree.find(tree_part::CUT_SURFACE).is_none() {
-        return;
-    }
-    if let Some(crown) = tree.find_mut(tree_part::CROWN) {
-        crown.visible = !destroyed;
-    }
-    if let Some(cut) = tree.find_mut(tree_part::CUT_SURFACE) {
-        cut.visible = destroyed;
-    }
-}
-
 /// The damage stage a tree's boughs show: two drop after the first damage, two
 /// more at 35% health (`setTreeDamage`).
 pub fn tree_branch_stage(health_ratio: f64) -> u32 {
@@ -1017,36 +974,6 @@ pub fn branch_drop_stage(node: &Node) -> Option<u32> {
     }
 }
 
-/// `setTreeDamage(tree, healthRatio, onDrop)`: show only the boughs that survive
-/// `stage`, returning the crown child indices of boughs that were visible and are
-/// now hidden (TS `onDrop`), in crown order. `previous_stage` is the stage last
-/// applied (TS `userData.branchDamageStage`, initially 0); nothing changes when
-/// the stage is the same.
-pub fn set_tree_damage(
-    tree: &mut Node,
-    previous_stage: u32,
-    health_ratio: f64,
-) -> (u32, Vec<usize>) {
-    let stage = tree_branch_stage(health_ratio);
-    let mut dropped = Vec::new();
-    if stage == previous_stage {
-        return (stage, dropped);
-    }
-    if let Some(crown) = tree.find_mut(tree_part::CROWN) {
-        for (index, bough) in crown.children.iter_mut().enumerate() {
-            let Some(drop_stage) = branch_drop_stage(bough) else {
-                continue;
-            };
-            let visible = drop_stage > stage;
-            if bough.visible && !visible {
-                dropped.push(index);
-            }
-            bough.visible = visible;
-        }
-    }
-    (stage, dropped)
-}
-
 static TRUNK_FRAGMENT: Cache<(), Node> = Cache::new();
 
 /// `trunkFragment()`: the instanced physical trunk section, a tapered cylinder with
@@ -1062,9 +989,9 @@ pub fn trunk_fragment() -> Arc<Node> {
         let cap = radial * 3;
         let ranges = [0..torso, torso..torso + cap, torso + cap..torso + 2 * cap];
         let materials = [
-            surface(TreeSurface::Bark, 0xffffff),
-            surface(TreeSurface::Rings, 0xffffff),
-            surface(TreeSurface::Rings, 0xffffff),
+            surface(TreeSurface::Bark, 0xffffff, false),
+            surface(TreeSurface::Rings, 0xffffff, false),
+            surface(TreeSurface::Rings, 0xffffff, false),
         ];
         let mut group = Node::group("trunk-fragment");
         for (range, material) in ranges.into_iter().zip(materials) {

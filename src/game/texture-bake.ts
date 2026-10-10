@@ -5,11 +5,10 @@ export interface TextureBaker {
   release_texture_bake(key: string): void;
 }
 
-/** The engine binary a bake worker instantiates: the page's compiled module, or its
- * URL for the worker to download and compile itself; and whether it is the WebGL
+/** The page's compiled engine module for a bake worker, and whether it is the WebGL
  * build, whose glue the worker must instantiate it with. */
 export interface EngineSource {
-  module: WebAssembly.Module | string;
+  module: WebAssembly.Module;
   webgl: boolean;
 }
 
@@ -17,7 +16,8 @@ export interface EngineSource {
 const MAX_BAKE_WORKERS = 4;
 
 /** Workers for one bake: leave a core to the page and one to the GPU process. */
-export function bakeWorkers(cores = navigator.hardwareConcurrency || 2): number {
+function bakeWorkers(): number {
+  const cores = navigator.hardwareConcurrency || 2;
   return Math.max(1, Math.min(MAX_BAKE_WORKERS, cores - 2));
 }
 
@@ -48,11 +48,8 @@ function bakeBand(engine: EngineSource, key: string, band: number, bands: number
 }
 
 /** Bake a generated texture in bands across workers; the bands stack top to bottom. */
-export async function bakeTexture(
-  engine: EngineSource,
-  key: string,
-  bands = bakeWorkers(),
-): Promise<Uint8Array> {
+async function bakeTexture(engine: EngineSource, key: string): Promise<Uint8Array> {
+  const bands = bakeWorkers();
   const parts = await Promise.all(
     Array.from({ length: bands }, (_, band) => bakeBand(engine, key, band, bands)),
   );

@@ -8,9 +8,9 @@ use std::f64::consts::PI;
 use glam::DVec3;
 
 use super::math::normalize;
-use super::mesh::Mesh;
+use super::mesh::{Mesh, narrow};
 
-pub fn polyhedron_geometry(vertices: &[f64], indices: &[u32], radius: f64, detail: u32) -> Mesh {
+fn polyhedron_geometry(vertices: &[f64], indices: &[u32], radius: f64, detail: u32) -> Mesh {
     let mut buffer: Vec<DVec3> = Vec::new();
     let vertex = |index: u32| {
         let at = index as usize * 3;
@@ -39,15 +39,10 @@ pub fn polyhedron_geometry(vertices: &[f64], indices: &[u32], radius: f64, detai
         .collect();
     correct_uvs(&buffer, &mut uvs);
     correct_seam(&mut uvs);
+    let positions: Vec<[f32; 3]> = buffer.iter().map(|&v| narrow(v)).collect();
     let mut mesh = Mesh {
-        positions: buffer
-            .iter()
-            .map(|v| [v.x as f32, v.y as f32, v.z as f32])
-            .collect(),
-        normals: buffer
-            .iter()
-            .map(|v| [v.x as f32, v.y as f32, v.z as f32])
-            .collect(),
+        normals: positions.clone(),
+        positions,
         uvs: uvs.iter().map(|uv| [uv[0] as f32, uv[1] as f32]).collect(),
         ..Mesh::default()
     };
@@ -59,13 +54,9 @@ pub fn polyhedron_geometry(vertices: &[f64], indices: &[u32], radius: f64, detai
     mesh
 }
 
-/// `Vector3.lerp`: `a + (b - a) * alpha`, per component.
+/// `Vector3.lerp`: `a + (b - a) * alpha` (glam's `lerp` rounds differently).
 fn lerp(a: DVec3, b: DVec3, alpha: f64) -> DVec3 {
-    DVec3::new(
-        a.x + (b.x - a.x) * alpha,
-        a.y + (b.y - a.y) * alpha,
-        a.z + (b.z - a.z) * alpha,
-    )
+    a + (b - a) * alpha
 }
 
 fn subdivide_face(buffer: &mut Vec<DVec3>, a: DVec3, b: DVec3, c: DVec3, detail: u32) {

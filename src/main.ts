@@ -4,26 +4,21 @@ import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
 import { startupErrorMessage } from "./game/startup-error";
-import { isExtraLevel, mapOption, showsExtraLevels } from "./game/map-options";
+import { debugPage, isExtraLevel, mapOption } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import { isPhone } from "./game/phone-mode";
 import type { RoomSelection } from "./net/pending-join";
-import type { PlayerVehicleKind } from "./game/engine-api";
+import { isPlayerKind } from "./net/room-protocol";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-const PLAYER_KINDS: readonly string[] = [
-  "scout",
-  "balanced",
-  "heavy",
-] satisfies PlayerVehicleKind[];
 // A room link opens Battle Setup with that room selected. When Battle Setup reloads
 // into a room it chose, it stays up while the room loads, until the arena can draw.
 const linkedRoom = new URLSearchParams(location.search).get("room")?.toUpperCase();
 const setupView = linkedRoom ? takeSetupView(linkedRoom) : undefined;
 // Offer the extra levels before any remembered choice picks one.
 const startupOverlay = document.querySelector<HTMLElement>("#startup-overlay");
-if (startupOverlay && showsExtraLevels(location.search)) {
+if (startupOverlay && debugPage(location.search)) {
   showExtraLevels(startupOverlay);
 }
 const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
@@ -99,14 +94,14 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   // A player back from a room keeps the map Battle Setup showed them, over a link's
   // `?map=`, so GO and a new room play the map the restored menu shows.
   const restoredMap = mapOption(view?.map ?? null)?.id;
-  if (restoredMap && (showsExtraLevels(location.search) || !isExtraLevel(restoredMap))) {
+  if (restoredMap && (debugPage(location.search) || !isExtraLevel(restoredMap))) {
     options.mapMode = restoredMap;
     options.gameMode = isExtraLevel(restoredMap)
       ? "team"
       : preferredGameMode(savedPreference("game-mode"));
   }
-  if (view?.kind && PLAYER_KINDS.includes(view.kind)) {
-    options.humanKind = view.kind as PlayerVehicleKind;
+  if (isPlayerKind(view?.kind)) {
+    options.humanKind = view.kind;
   }
   if (isPhone()) {
     // Battle Setup on a phone offers only the tank and map; the saved desktop

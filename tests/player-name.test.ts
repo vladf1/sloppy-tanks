@@ -1,25 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { preferredPlayerName, rememberPlayerName } from "../src/net/player-name";
-
-function withStorage(storage: Pick<Storage, "getItem" | "setItem">, run: () => void) {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
-  try {
-    run();
-  } finally {
-    if (original) Object.defineProperty(globalThis, "localStorage", original);
-    else delete (globalThis as { localStorage?: unknown }).localStorage;
-  }
-}
-
-function memoryStorage() {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-  };
-}
+import { memoryStorage, withStorage } from "./local-storage";
 
 test("the remembered name is trimmed to 24 characters", () => {
   withStorage(memoryStorage(), () => {

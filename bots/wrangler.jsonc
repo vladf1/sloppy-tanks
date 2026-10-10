@@ -2,8 +2,6 @@
   "name": "sloppy-tanks-bots",
   "main": "worker.ts",
   "compatibility_date": "2026-09-23",
-  // Bots reach the game server over the public internet, like a browser.
-  "compatibility_flags": ["global_fetch_strictly_public"],
   "durable_objects": { "bindings": [{ "name": "SWARM", "class_name": "BotSwarm" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BotSwarm"] }],
   "observability": { "enabled": true },

@@ -39,10 +39,6 @@ impl InstanceStore {
         self.capacity
     }
 
-    pub fn bytes(&self) -> u64 {
-        self.capacity as u64 * RECORD_SIZE
-    }
-
     pub fn binding(&self) -> wgpu::BindingResource<'_> {
         self.buffer.as_entire_binding()
     }

@@ -332,7 +332,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35b4e837a1d133645d1dcf283e146a4b9901e390a1c13545f959cfed3a72f24f"
 dependencies = [
  "approx",
- "bytemuck",
  "libm",
 ]
 
@@ -1087,7 +1086,6 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom",
- "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",

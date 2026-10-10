@@ -6,12 +6,11 @@ mod net_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use net_support::{apply_batch, assert_same, batch, same};
+use net_support::{apply_batch, apply_one, assert_same, baseline, batch, same, snapshot_batch};
 use serde_json::{Map, Value, json};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::replication::{
-    Baseline, BinaryMessage, PATHS_SECTION, REMOVED_SECTION, StateMirror, StateStream, TimedEvent,
-    UPDATES_SECTION, read_binary_message,
+    PATHS_SECTION, REMOVED_SECTION, StateMirror, StateStream, TimedEvent, UPDATES_SECTION,
 };
 use sloppy_core::net::scene_codec::{
     ENTITY_FIELDS, ENTITY_TYPES, MINE_FIELDS, MINES, MirrorScene, Scene, TANKS, mine, tank,
@@ -19,13 +18,13 @@ use sloppy_core::net::scene_codec::{
 use sloppy_core::net::shot_paths::{PathEntry, ShotLaunch, ShotPath};
 use sloppy_core::net::wire::{WireRecord, put_signed, put_varint, write_changes};
 use sloppy_core::net::wire_view::WireView;
+use sloppy_core::sim::Simulation;
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{
     CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_core::sim::types::{SimEvent, SimEventType};
-use sloppy_core::sim::{Simulation, render_state::RenderState};
 
 fn one_player() -> Vec<PlayerAssignment> {
     vec![PlayerAssignment {
@@ -69,13 +68,6 @@ fn full(stream: &mut StateStream, scene: &Scene, tick: u64) -> Vec<u8> {
     stream.full(tick, 0, [], || scene.clone())
 }
 
-fn baseline(message: &[u8]) -> Baseline<'_> {
-    match read_binary_message(message).unwrap() {
-        BinaryMessage::Full(baseline) => baseline,
-        BinaryMessage::Snapshot(_) => panic!("not a baseline"),
-    }
-}
-
 /// The next frame as a one-frame batch message.
 fn frame(stream: &mut StateStream, scene: &mut Scene, tick: u64) -> Vec<u8> {
     let body = stream.snapshot(scene, tick, &[], &[]);
@@ -92,10 +84,6 @@ fn view_from(full: &[u8]) -> WireView {
 /// A batch's single frame as the former JSON.
 fn frame_json(view: &mut WireView, message: &[u8]) -> Value {
     view.binary(message).unwrap()["snapshots"][0].clone()
-}
-
-fn render_json(state: &RenderState) -> Value {
-    serde_json::to_value(state).unwrap()
 }
 
 #[test]
@@ -309,25 +297,19 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
         put_varint(&mut changes, 5);
         records(out, TANKS, &[(tank, changes)]);
     });
-    let apply = |mirror: &mut StateMirror, message: &[u8]| {
-        let BinaryMessage::Snapshot(mut batch) = read_binary_message(message).unwrap() else {
-            unreachable!()
-        };
-        mirror.apply_snapshot(&mut batch)
-    };
-    assert!(apply(&mut mirror, &batch(1, 0, 1, &[(3, bad.clone())])).is_none());
+    assert!(apply_one(&mut mirror, &batch(1, 0, 1, &[(3, bad.clone())])).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     assert!(mirror.needs_full);
     mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     let good = frame_body(UPDATES_SECTION, |out| {
         records(out, TANKS, &[(tank, hp_change(-100))])
     });
-    assert!(apply(&mut mirror, &batch(1, 0, 9, &[(3, good.clone())])).is_none());
+    assert!(apply_one(&mut mirror, &batch(1, 0, 9, &[(3, good.clone())])).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     let mut truncated = batch(1, 0, 1, &[(3, good)]);
     truncated.pop();
-    assert!(apply(&mut mirror, &truncated).is_none());
+    assert!(apply_one(&mut mirror, &truncated).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
     assert!(!mirror.needs_full);
@@ -364,12 +346,6 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
     let mut mirror = StateMirror::default();
     let full_message = full(&mut StateStream::new("r", 1), &state, 0);
     mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
-    let apply = |mirror: &mut StateMirror, message: &[u8]| {
-        let BinaryMessage::Snapshot(mut batch) = read_binary_message(message).unwrap() else {
-            unreachable!()
-        };
-        mirror.apply_snapshot(&mut batch)
-    };
     let ricochet = ShotLaunch {
         team: Team::Red,
         weapon: Weapon::Ricochet,
@@ -378,7 +354,7 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         thrust: None,
     };
     let launch = PathEntry::Launch(path(900, 0.5, 0.0, 0.0, 30.0, 0.0, ricochet));
-    assert!(apply(&mut mirror, &paths_frame(1, 3, &[launch])).is_some());
+    assert!(apply_one(&mut mirror, &paths_frame(1, 3, &[launch])).is_some());
     let shot = mirror.render(viewer).unwrap().shots[0];
     assert_eq!(
         (shot.x, shot.z),
@@ -394,7 +370,7 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         thrust: None,
     };
     let bounce = PathEntry::Change(path(900, 4.0, 1.75, 0.0, -30.0, 0.0, blank));
-    let extras = apply(&mut mirror, &paths_frame(2, 6, &[bounce])).unwrap();
+    let extras = apply_one(&mut mirror, &paths_frame(2, 6, &[bounce])).unwrap();
     let PathEntry::Change(changed) = extras.paths[0] else {
         panic!("a new path for a flying shell");
     };
@@ -436,14 +412,14 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         let other = PathEntry::Launch(path(950, 7.0, 5.0, 5.0, 0.0, 9.0, standard));
         let mut probe = mirror.clone();
         assert!(
-            apply(&mut probe, &paths_frame(3, 9, &[other, bad])).is_none(),
+            apply_one(&mut probe, &paths_frame(3, 9, &[other, bad])).is_none(),
             "{why}"
         );
         assert_eq!(shells(&probe), before, "{why} leaves the shells");
         assert_eq!(probe.seq, 2, "{why} leaves the stream");
     }
     let end = PathEntry::End { id: 900, tick: 7.0 };
-    assert!(apply(&mut mirror, &paths_frame(3, 9, &[end])).is_some());
+    assert!(apply_one(&mut mirror, &paths_frame(3, 9, &[end])).is_some());
     assert!(mirror.render(viewer).unwrap().shots.is_empty());
 }
 
@@ -464,10 +440,7 @@ fn mirror_allows_one_change_per_entity_of_each_kind_in_a_frame() {
         put_varint(out, u64::from(tank));
     });
     let message = batch(1, 0, 1, &[(1, conflicting)]);
-    let BinaryMessage::Snapshot(mut conflict) = read_binary_message(&message).unwrap() else {
-        unreachable!()
-    };
-    assert!(mirror.apply_snapshot(&mut conflict).is_none());
+    assert!(apply_one(&mut mirror, &message).is_none());
     assert_eq!(mirror.state.as_ref().unwrap().to_value(), before);
     assert!(mirror.needs_full);
     mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
@@ -609,7 +582,7 @@ fn strip_nulls(value: &Value) -> Value {
 }
 
 fn reference_scene(sim: &Simulation) -> Value {
-    let view = render_json(&sim.render_state(Some(sim.tanks[0].id)));
+    let view = serde_json::to_value(sim.render_state(Some(sim.tanks[0].id))).unwrap();
     let kind_records =
         |kind: usize, nullable: &[&str], adjust: &dyn Fn(&mut Map<String, Value>)| {
             Value::Array(
@@ -933,10 +906,7 @@ fn snapshot_scratch_does_not_leak_updates_removals_or_events_into_the_next_frame
         .collect();
     let body = stream.snapshot(&mut scene, 1, &events, &[]);
     let message = batch(1, 0, 1, &[(1, body)]);
-    let BinaryMessage::Snapshot(mut decoded) = read_binary_message(&message).unwrap() else {
-        unreachable!()
-    };
-    let decoded = mirror.decode(&mut decoded, true).unwrap();
+    let decoded = mirror.decode(&mut snapshot_batch(&message), true).unwrap();
     let ids: Vec<u32> = decoded.changed.iter().map(|change| change.id).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     let changes = frame_json(&mut view, &message);

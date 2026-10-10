@@ -1,11 +1,8 @@
 //! Port of `tank-dimensions.ts`: hull bounds and muzzles measured from the models.
 //!
-//! Each chassis is measured once with the same geometry and transforms as
-//! rendering. The hull includes tracks; the independently rotating gun is not a
-//! hull target. Kept apart from hit boxes so rendering reads muzzles without the
-//! physics engine.
-
-use std::sync::OnceLock;
+//! Each chassis is measured with the same geometry and transforms as rendering;
+//! the simulation (`sim::tank_dimensions`) measures each kind once and caches it.
+//! The hull includes tracks; the independently rotating gun is not a hull target.
 
 use glam::{DMat4, DVec3};
 
@@ -15,7 +12,7 @@ use crate::geometry::node_bounds;
 
 /// The Humvee's combat launch height. The visual roof launcher stays high, but its
 /// combat lane sits inside the planar tank hit volume the simulation uses.
-pub const HUMVEE_COMBAT_MUZZLE_Y: f64 = 1.15;
+const HUMVEE_COMBAT_MUZZLE_Y: f64 = 1.15;
 
 /// Measurements in the vehicle's local frame (model scale applied).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,7 +28,7 @@ pub struct TankDimensions {
 }
 
 /// Measure one chassis from its team-0 model.
-fn measure(kind: VehicleKind) -> TankDimensions {
+pub fn tank_dimensions(kind: VehicleKind) -> TankDimensions {
     let model = tank_model(kind, Team::Blue);
     let (hull, hull_parent) = model
         .find_with_parent_world(part::HULL, DMat4::IDENTITY)
@@ -51,29 +48,4 @@ fn measure(kind: VehicleKind) -> TankDimensions {
         muzzle: combat_muzzle,
         visual_muzzle,
     }
-}
-
-/// Dimensions of every vehicle kind, measured on first use.
-pub fn tank_dimensions(kind: VehicleKind) -> &'static TankDimensions {
-    static DIMENSIONS: OnceLock<[TankDimensions; 4]> = OnceLock::new();
-    let all = DIMENSIONS.get_or_init(|| VehicleKind::ALL.map(measure));
-    &all[VehicleKind::ALL
-        .iter()
-        .position(|k| *k == kind)
-        .expect("ALL lists every kind")]
-}
-
-/// `tankHull(kind)`: hull bounds in the tank's local frame.
-pub fn tank_hull(kind: VehicleKind) -> &'static TankDimensions {
-    tank_dimensions(kind)
-}
-
-/// `tankMuzzle(kind)`: the combat launch point.
-pub fn tank_muzzle(kind: VehicleKind) -> DVec3 {
-    tank_dimensions(kind).muzzle
-}
-
-/// `tankVisualMuzzle(kind)`: the render-only launch point.
-pub fn tank_visual_muzzle(kind: VehicleKind) -> DVec3 {
-    tank_dimensions(kind).visual_muzzle
 }

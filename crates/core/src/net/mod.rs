@@ -25,7 +25,7 @@
 //! - [`prediction`], [`hull_prediction`]: the viewer's own hull, replayed from the host's
 //!   state ahead of it, and when and how it is stepped, corrected and drawn.
 //! - [`input_cadence`]: when input goes out; [`transport_delay`]: development latency.
-//! - [`client_setup`]: pending-join validation and serialization.
+//! - [`client_setup`]: pending-join validation.
 
 pub mod client;
 pub mod client_setup;

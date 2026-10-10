@@ -19,7 +19,7 @@ This is a manual benchmark. It is intentionally excluded from the repository-wid
 ## Scope and method
 
 - 13 alternating rounds per deployment.
-- 31 resources per round: the HTML entry, favicon, tank preview atlas, hashed game chunk, 14 default Pine Village textures (including the pickup atlas), and 13 audio files.
+- Each round requests the HTML entry, favicon, tank preview atlas, hashed game chunk, and every texture (including the pickup atlas) and audio file the script lists.
 - Optional Harbor/Quarry-only assets and unused public files are not part of the default `/` startup graph.
 - Each resource is fetched concurrently using a fresh curl process with HTTP/2, IPv4, no local cache, and `Accept-Encoding: br, gzip`.
 - Response bodies are consumed as raw encoded data so wire-byte totals include the encoding negotiated by each host.
@@ -27,7 +27,7 @@ This is a manual benchmark. It is intentionally excluded from the repository-wid
 
 ## Reported metrics
 
-- `batchWallMs`: wall time until the complete 31-resource batch finishes.
+- `batchWallMs`: wall time until a round's complete batch finishes.
 - `encodedBytes`: response body bytes transferred on the wire.
 - `identityBytes`: response bytes without content encoding.
 - `time_starttransfer`: per-resource time to first byte, including DNS/TCP/TLS and server wait.

@@ -52,8 +52,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Reads `HOST`, `PORT`, `MAX_ROOMS`, `TRUST_PROXY` and the
-    /// [`BuildInfo`] stamps. A typo must stop startup, not silently turn a limit off.
+    /// Reads `HOST`, `PORT`, `MAX_ROOMS` and the [`BuildInfo`] stamps. A typo must stop
+    /// startup, not silently turn a limit off.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let host = lookup("HOST").unwrap_or_else(|| DEFAULT_HOST.to_string());
         let port = match lookup("PORT") {
@@ -63,7 +63,8 @@ impl Settings {
                 .parse()
                 .map_err(|_| "PORT must be a port number".to_string())?,
         };
-        let loopback = matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost");
+        // Only a loopback listener can be sure its X-Forwarded-For came from the local proxy.
+        let trust_proxy = matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost");
         let max_rooms = match lookup("MAX_ROOMS").filter(|text| !text.is_empty()) {
             None => None,
             Some(text) => match text.parse::<usize>() {
@@ -71,8 +72,6 @@ impl Settings {
                 _ => return Err("MAX_ROOMS must be a positive integer".into()),
             },
         };
-        // Only a loopback listener can be sure its X-Forwarded-For came from the local proxy.
-        let trust_proxy = lookup("TRUST_PROXY").unwrap_or_else(|| loopback.to_string()) == "true";
         Ok(Self {
             host,
             port,
@@ -114,11 +113,6 @@ mod tests {
             "a public listener cannot trust X-Forwarded-For"
         );
         assert_eq!(custom.max_rooms, Some(3));
-        assert!(
-            settings(&[("HOST", "0.0.0.0"), ("TRUST_PROXY", "true")])
-                .unwrap()
-                .trust_proxy
-        );
         assert_eq!(settings(&[("MAX_ROOMS", "")]).unwrap().max_rooms, None);
         assert!(settings(&[("MAX_ROOMS", "0")]).is_err());
         assert!(settings(&[("MAX_ROOMS", "ten")]).is_err());

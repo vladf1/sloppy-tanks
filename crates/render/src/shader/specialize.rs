@@ -110,6 +110,11 @@ fn skip_space(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// The end of the identifier starting at `i`.
+fn ident_end(bytes: &[u8], i: usize) -> usize {
+    i + bytes[i..].iter().take_while(|&&b| is_ident(b)).count()
+}
+
 /// Whether `word` starts at `i` as a whole identifier.
 fn word_at(bytes: &[u8], i: usize, word: &str) -> bool {
     bytes[i..].starts_with(word.as_bytes())
@@ -140,7 +145,7 @@ fn flag_condition(bytes: &[u8], i: usize, flags: &[(&str, bool)]) -> Option<(boo
     if negated {
         i = skip_space(bytes, i + 1);
     }
-    let name_end = i + bytes[i..].iter().take_while(|&&b| is_ident(b)).count();
+    let name_end = ident_end(bytes, i);
     let name = std::str::from_utf8(&bytes[i..name_end]).ok()?;
     let value = flags.iter().find(|(flag, _)| *flag == name)?.1;
     let open = skip_space(bytes, name_end);
@@ -211,11 +216,7 @@ fn prune_functions(code: &str) -> String {
             b';' if depth == 0 => item_start = i + 1,
             _ if depth == 0 && word_at(bytes, i, "fn") => {
                 let name_start = skip_space(bytes, i + 2);
-                let name_end = name_start
-                    + bytes[name_start..]
-                        .iter()
-                        .take_while(|&&b| is_ident(b))
-                        .count();
+                let name_end = ident_end(bytes, name_start);
                 let open = i + bytes[i..].iter().position(|&b| b == b'{').unwrap();
                 let end = block_end(bytes, open);
                 let attributes = &code[item_start..i];
@@ -241,14 +242,10 @@ fn prune_functions(code: &str) -> String {
             .iter()
             .enumerate()
             .filter(|(_, callee)| {
-                let name = callee.name.as_bytes();
-                body.windows(name.len() + 1)
-                    .enumerate()
-                    .any(|(at, window)| {
-                        window.starts_with(name)
-                            && window[name.len()] == b'('
-                            && (at == 0 || !is_ident(body[at - 1]))
-                    })
+                (0..body.len()).any(|at| {
+                    word_at(body, at, &callee.name)
+                        && body.get(at + callee.name.len()) == Some(&b'(')
+                })
             })
             .map(|(index, _)| index)
             .collect()

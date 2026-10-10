@@ -2,8 +2,8 @@
 // carry ripples toward its free edge. Replaces the plane with the posed cloth in
 // its local frame and rebuilds the normal from the same neighbouring grid
 // triangles computeVertexNormals() would sum. instance_data = (gust strength,
-// wind x, wind z, -); each flag's phase comes from its instance translation
-// (`flag_phase`); frame.camera_position.w is the clock.
+// wind x, wind z, -); each flag's phase comes from its instance translation;
+// frame.camera_position.w is the clock.
 
 fn flag_point(u: f32, v: f32, t: f32, data: vec4f) -> vec3f {
     let gust = data.x;

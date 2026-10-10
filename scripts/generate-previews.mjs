@@ -1,8 +1,8 @@
 // Tank selection previews: renders the game's vehicle models with the engine
-// (`tools/tank-previews.html`, the labs build: run `pnpm run wasm -- --labs` first) in
-// headless Chrome and packs them into `public/previews/tanks.webp`, three chassis
-// columns with one row per team. `SLOPPY_PREVIEWS_OUT` writes elsewhere, for comparing
-// a candidate with the checked-in sheet before replacing it.
+// (`tools/tank-surface-check.html`, the labs build: run `pnpm run wasm -- --labs`
+// first) in headless Chrome and packs them into `public/previews/tanks.webp`, three
+// chassis columns with one row per team. `SLOPPY_PREVIEWS_OUT` writes elsewhere, for
+// comparing a candidate with the checked-in sheet before replacing it.
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
@@ -40,7 +40,7 @@ await server.listen();
 const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   const page = await browser.newPage();
-  await page.goto(`${server.resolvedUrls.local[0]}tools/tank-previews.html`);
+  await page.goto(`${server.resolvedUrls.local[0]}tools/tank-surface-check.html`);
   await page.waitForFunction(() => window.tankPreviewAssets || window.tankPreviewError, null, {
     timeout: 120000,
   });

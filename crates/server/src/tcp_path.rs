@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::os::fd::RawFd;
 
 /// One connection's TCP figures since it opened.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TcpReading {
     /// The lowest round trip the kernel measured over the last few minutes, in
     /// microseconds: the path's latency. The smoothed estimate would also count the
@@ -32,10 +32,6 @@ pub struct TcpReading {
 impl TcpReading {
     pub fn rtt_ms(&self) -> Option<f64> {
         self.rtt_us.map(|rtt_us| f64::from(rtt_us) / 1000.0)
-    }
-
-    pub fn retransmit_percent(&self) -> f64 {
-        percent(self.retransmitted_segments, self.data_segments_sent)
     }
 }
 
@@ -283,20 +279,33 @@ mod sock_diag {
     }
 }
 
+/// A loopback connection, `(client, server)`, after the server sent one small message,
+/// so the kernel has counted a data segment.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn loopback_pair() -> (std::net::TcpStream, std::net::TcpStream) {
+    use std::io::{Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    server.write_all(b"snapshot").unwrap();
+    let mut received = [0; 8];
+    client.read_exact(&mut received).unwrap();
+    (client, server)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn retransmits_are_a_share_of_the_data_segments_sent() {
+    fn round_trips_are_reported_in_milliseconds() {
         let reading = TcpReading {
             rtt_us: Some(85_400),
             data_segments_sent: 800,
             retransmitted_segments: 6,
         };
         assert_eq!(reading.rtt_ms(), Some(85.4));
-        assert_eq!(reading.retransmit_percent(), 0.75);
-        assert_eq!(TcpReading::default().retransmit_percent(), 0.0);
     }
 
     #[test]
@@ -309,15 +318,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_loopback_connection_reports_its_segments() {
-        use std::io::{Read, Write};
         use std::os::fd::AsRawFd;
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-        server.write_all(b"snapshot").unwrap();
-        let mut received = [0; 8];
-        client.read_exact(&mut received).unwrap();
+        let (_client, server) = loopback_pair();
         let reading = read(server.as_raw_fd()).expect("Linux reports TCP_INFO");
         assert!(reading.data_segments_sent >= 1);
         assert_eq!(reading.retransmitted_segments, 0);
@@ -327,14 +330,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_hosts_sockets_are_found_by_their_peer() {
-        use std::io::{Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-        server.write_all(b"snapshot").unwrap();
-        let mut received = [0; 8];
-        client.read_exact(&mut received).unwrap();
+        let (client, _server) = loopback_pair();
         let readings = read_by_peer().expect("Linux lists its TCP sockets");
         // The server's socket is the one whose peer is the client, as a proxy's socket
         // to a player is found by the player's address.

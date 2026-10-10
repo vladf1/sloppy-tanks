@@ -13,8 +13,8 @@
 use glam::Vec3;
 
 use super::backend::{FrameGroups, InstanceStore};
-use super::{Lifetime, Renderer};
-use crate::draw_list::{InstanceRecord, REFLECTION_VIEW, SHADOW_VIEW};
+use super::{RECORD_SIZE, Renderer};
+use crate::draw_list::SHADOW_VIEW;
 use crate::effects::pool::{PoolBuffer, PoolDesc};
 
 /// A registered pool; stale ids are ignored.
@@ -29,28 +29,23 @@ pub(super) struct PoolEntry {
     pub class: u32,
     pub material: u32,
     pub render_order: i32,
-    pub cast_shadow: bool,
-    pub reflected: bool,
-    pub capacity: u32,
     /// Instances drawn (the pool's live record count at the last sync).
     pub count: u32,
-    pub lifetime: Lifetime,
     pub records: InstanceStore,
     /// The frame bindings per view, with this pool's records as `instances`.
     pub groups: FrameGroups,
 }
 
 impl Renderer {
-    /// Register a pool. Its pipelines join the prepare/warm-up set at once, so
-    /// the first effect never compiles mid-round.
-    pub fn add_pool(&mut self, desc: &PoolDesc, lifetime: Lifetime) -> PoolId {
+    /// Register a pool for the renderer's lifetime. Its pipelines join the
+    /// prepare/warm-up set at once, so the first effect never compiles mid-round.
+    pub fn add_pool(&mut self, desc: &PoolDesc) -> PoolId {
         let gpu = &self.gpu;
         let material = self.interner.intern(&desc.material);
         let material =
             self.materials
                 .get_or_create(gpu, &mut self.textures, &self.effects, &material);
-        let attributes = self.effects.attributes(self.materials.get(material).effect);
-        let mesh = self.meshes.shared(gpu, &desc.mesh, attributes);
+        let mesh = self.meshes.shared(gpu, &desc.mesh);
         let capacity = desc.capacity.max(1);
         let records = InstanceStore::new(gpu, desc.label, capacity);
         let groups = self.frame.frame_groups(gpu, &records);
@@ -60,34 +55,24 @@ impl Renderer {
             class: u32::MAX,
             material,
             render_order: desc.render_order,
-            cast_shadow: desc.cast_shadow,
-            reflected: desc.reflected,
-            capacity,
             count: 0,
-            lifetime,
             records,
             groups,
         });
-        let class =
-            self.class_for_pool(mesh, material, desc.receive_shadow, desc.cast_shadow, index);
+        // Effect pools cast no shadows.
+        let class = self.class(
+            mesh,
+            material,
+            desc.receive_shadow,
+            false,
+            false,
+            Some(index),
+        );
         self.pools
             .get_mut(index, generation)
             .expect("just inserted")
             .class = class;
         PoolId { index, generation }
-    }
-
-    pub fn has_pool(&self, id: PoolId) -> bool {
-        self.pools.get(id.index, id.generation).is_some()
-    }
-
-    pub fn remove_pool(&mut self, id: PoolId) {
-        if self.pools.get(id.index, id.generation).is_none() {
-            return;
-        }
-        // Dropping the entry destroys its records.
-        let entry = self.pools.remove(id.index).expect("checked");
-        self.release_class(entry.class, entry.cast_shadow);
     }
 
     /// Upload the records an effect changed and set the drawn count.
@@ -96,18 +81,10 @@ impl Renderer {
             records.take_dirty(|_, _| {});
             return;
         };
-        // A pool buffer and its GPU buffer share one capacity.
-        let capacity = entry.capacity as usize;
-        entry.count = records.len().min(capacity) as u32;
-        let gpu = &self.gpu;
-        let store = &entry.records;
-        records.take_dirty(|first, slice: &[InstanceRecord]| {
-            let end = (first as usize + slice.len()).min(capacity);
-            let Some(count) = end.checked_sub(first as usize).filter(|&n| n > 0) else {
-                return;
-            };
-            store.write(gpu, first, &slice[..count]);
-        });
+        // A pool buffer and its GPU store share one capacity, so every record fits.
+        entry.count = records.len() as u32;
+        let (gpu, store) = (&self.gpu, &entry.records);
+        records.take_dirty(|first, slice| store.write(gpu, first, slice));
     }
 
     /// Overwrite the effect params (16 floats) the pool's material uniform
@@ -123,10 +100,8 @@ impl Renderer {
 
     /// Rebind every pool's frame groups after the frame's own resources changed.
     pub(super) fn rebuild_pool_groups(&mut self) {
-        for (_, entry) in self.pools.slots.iter_mut() {
-            if let Some(entry) = entry {
-                entry.groups = self.frame.frame_groups(&self.gpu, &entry.records);
-            }
+        for entry in self.pools.iter_mut() {
+            entry.groups = self.frame.frame_groups(&self.gpu, &entry.records);
         }
     }
 
@@ -143,21 +118,19 @@ impl Renderer {
             if pool.count == 0 {
                 continue;
             }
-            let transparent = classes[pool.class as usize]
-                .as_ref()
+            let transparent = classes
+                .at(pool.class)
                 .is_some_and(|class| class.transparent);
+            // Pools cast no shadows; they draw in the main view and reflection.
             for (view, cull) in culls.iter().enumerate() {
-                if !cull.active
-                    || (view == SHADOW_VIEW && !pool.cast_shadow)
-                    || (view == REFLECTION_VIEW && !pool.reflected)
-                {
+                if !cull.active || view == SHADOW_VIEW {
                     continue;
                 }
                 let depth = (Vec3::ZERO - cull.origin).dot(cull.forward);
                 builder.push_range(
                     view,
                     pool.class,
-                    transparent && view != SHADOW_VIEW,
+                    transparent,
                     pool.render_order,
                     depth,
                     0,
@@ -167,24 +140,12 @@ impl Renderer {
         }
     }
 
-    pub(super) fn release_round_pools(&mut self) {
-        let round: Vec<(u32, u32)> = self
-            .pools
-            .iter()
-            .filter(|(_, pool)| pool.lifetime == Lifetime::Round)
-            .map(|(index, _)| (index, self.pools.slots[index as usize].0))
-            .collect();
-        for (index, generation) in round {
-            self.remove_pool(PoolId { index, generation });
-        }
-    }
-
     /// What the pools' stores allocate: on WebGL a store rounds its capacity up to
     /// whole texture rows, so this can exceed the pools' capacities.
     pub(super) fn pool_bytes(&self) -> u64 {
         self.pools
             .iter()
-            .map(|(_, pool)| pool.records.bytes())
+            .map(|(_, pool)| u64::from(pool.records.capacity()) * RECORD_SIZE)
             .sum()
     }
 

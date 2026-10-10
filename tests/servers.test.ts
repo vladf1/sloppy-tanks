@@ -29,20 +29,6 @@ test("players use the first hostname while the scripts check by the one made fro
   assert.equal(server.checkUrl, "https://45-63-56-58.sslip.io");
 });
 
-test("a machine still to be created has its own hostnames but no SSH destination", () => {
-  const server = serverMachine("production", {
-    ip: null,
-    hostnames: ["sloppy-tanks-server.fridman.me", "{dashed-ip}.nip.io"],
-  });
-  assert.deepEqual(server.sites, ["sloppy-tanks-server.fridman.me"]);
-  assert.equal(server.url, "wss://sloppy-tanks-server.fridman.me");
-  assert.throws(() => server.ssh, /no ip yet/);
-  assert.throws(
-    () => serverMachine("dev", { ip: null, hostnames: ["{dashed-ip}.nip.io"] }),
-    /needs an ip/,
-  );
-});
-
 test("a local test machine without a name made from its address is checked by its hostname", () => {
   const server = serverMachine("production", {
     ip: "192.168.139.36",

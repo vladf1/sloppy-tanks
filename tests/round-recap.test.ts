@@ -26,7 +26,6 @@ function recap(overrides: Partial<RecapState> = {}): RecapState {
     stats: zero(),
     best: zero(),
     improved: [],
-    established: false,
     persisted: true,
     feats: [],
     shots: 0,
@@ -34,7 +33,6 @@ function recap(overrides: Partial<RecapState> = {}): RecapState {
     damageTaken: 0,
     shieldAbsorbed: 0,
     rankNames: ["Rookie", "Veteran", "Elite", "Heroic"],
-    recordsKey: "sloppy-records-v1:team:Pine Village:normal",
     ...overrides,
   };
 }
@@ -62,7 +60,6 @@ test("improved records are starred and unreached records show the best", () => {
       stats,
       best,
       improved: ["kills", "mineKills"],
-      established: true,
       shots: 20,
       directHits: 13,
       feats: [{ title: "MIND YOUR STEP", detail: "2 mine-blast kills" }],

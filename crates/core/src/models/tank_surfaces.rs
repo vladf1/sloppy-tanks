@@ -8,6 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::Team;
+use super::tank_model::STEEL;
 use crate::scene::{Material, Node, Shading, TextureRef};
 
 /// Service paint per team: halfway between the saturated `TEAM_COLORS` and a
@@ -45,16 +46,16 @@ pub fn armor_wear_texture() -> TextureRef {
 /// and live for the whole process, so their addresses identify them.
 static PAINTED: Mutex<Vec<(Arc<Material>, Arc<Material>)>> = Mutex::new(Vec::new());
 
-fn painted(source: &Arc<Material>, finish: Finish) -> Arc<Material> {
+fn painted(source: &Arc<Material>) -> Arc<Material> {
     let mut painted = PAINTED.lock().expect("painted material cache");
     if let Some((_, clone)) = painted.iter().find(|(s, _)| Arc::ptr_eq(s, source)) {
         return clone.clone();
     }
     let texture = armor_wear_texture();
-    let (metalness, roughness) = match finish {
-        Finish::Fresh { steel } if source.color.0 == steel => (STEEL_METALNESS, STEEL_ROUGHNESS),
-        Finish::Fresh { .. } => (source.metalness, PAINT_ROUGHNESS),
-        Finish::Wrecked => (source.metalness, source.roughness),
+    let (metalness, roughness) = if source.color.0 == STEEL {
+        (STEEL_METALNESS, STEEL_ROUGHNESS)
+    } else {
+        (source.metalness, PAINT_ROUGHNESS)
     };
     let clone = Arc::new(Material {
         map: Some(texture.clone()),
@@ -68,25 +69,17 @@ fn painted(source: &Arc<Material>, finish: Finish) -> Arc<Material> {
     clone
 }
 
-/// The finish a vehicle's worn parts take.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Finish {
-    /// Satin paint, and bare metal on parts painted `steel`.
-    Fresh { steel: u32 },
-    /// Burnt out: every part keeps its source material's matte surface.
-    Wrecked,
-}
-
 /// `applyTankSurface(root, colors)`: every standard-shaded part whose paint is one
-/// of `colors` switches to the shared worn clone of its material in `finish`.
-pub fn apply_tank_surface(root: &mut Node, colors: &[u32], finish: Finish) {
+/// of `colors` switches to the shared worn clone of its material: satin paint, and
+/// bare metal on parts painted [`STEEL`].
+pub fn apply_tank_surface(root: &mut Node, colors: &[u32]) {
     if let Some(drawable) = &mut root.drawable
         && drawable.material.shading == Shading::Standard
         && colors.contains(&drawable.material.color.0)
     {
-        drawable.material = painted(&drawable.material, finish);
+        drawable.material = painted(&drawable.material);
     }
     for child in &mut root.children {
-        apply_tank_surface(child, colors, finish);
+        apply_tank_surface(child, colors);
     }
 }

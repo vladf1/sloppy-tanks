@@ -48,23 +48,6 @@ pub(super) enum Coat {
     TailLight,
 }
 
-impl Coat {
-    /// Output order of merged meshes. Shade comes first so the hull's lower armor
-    /// and its team paint keep their places as the hull's first two children.
-    pub(super) const ALL: [Coat; 10] = [
-        Coat::Shade,
-        Coat::Paint,
-        Coat::Steel,
-        Coat::Dark,
-        Coat::Gunmetal,
-        Coat::Glass,
-        Coat::Canvas,
-        Coat::Wood,
-        Coat::Marking,
-        Coat::TailLight,
-    ];
-}
-
 fn finish_index<C: Finishes>(finish: C) -> usize {
     C::ALL
         .iter()
@@ -78,7 +61,20 @@ pub(super) trait Finishes: Copy + PartialEq + 'static {
 }
 
 impl Finishes for Coat {
-    const ALL: &'static [Self] = &Coat::ALL;
+    /// Output order of merged meshes. Shade comes first so the hull's lower armor
+    /// and its team paint keep their places as the hull's first two children.
+    const ALL: &'static [Self] = &[
+        Coat::Shade,
+        Coat::Paint,
+        Coat::Steel,
+        Coat::Dark,
+        Coat::Gunmetal,
+        Coat::Glass,
+        Coat::Canvas,
+        Coat::Wood,
+        Coat::Marking,
+        Coat::TailLight,
+    ];
 }
 
 /// Merged meshes of one assembly, in [`Finishes::ALL`] order, empty finishes left
@@ -94,6 +90,11 @@ pub(super) struct Kit<C: Finishes = Coat> {
 /// A rigid placement: translate to `at` after rotating by Euler angles (XYZ).
 pub(super) fn pose(at: DVec3, euler: DVec3) -> DMat4 {
     compose(at, quat_from_euler(euler.x, euler.y, euler.z), DVec3::ONE)
+}
+
+/// A placement that only moves to `at`.
+pub(super) fn shift(at: DVec3) -> DMat4 {
+    DMat4::from_translation(at)
 }
 
 /// A placement whose local +z points from `from` toward `to`, starting at `from`.
@@ -161,24 +162,17 @@ pub(super) fn chamfered_levels(levels: &[(Vec<DVec2>, f64)], bevel: f64) -> Vec<
     rings
 }
 
-/// An eight-point rectangle outline with corners cut by `cut`.
-pub(super) fn cut_rectangle(half_x: f64, half_z: f64, cut: f64) -> Vec<DVec2> {
-    [
-        (half_x - cut, -half_z),
-        (half_x, -half_z + cut),
-        (half_x, half_z - cut),
-        (half_x - cut, half_z),
-        (-half_x + cut, half_z),
-        (-half_x, half_z - cut),
-        (-half_x, -half_z + cut),
-        (-half_x + cut, -half_z),
-    ]
-    .map(|(x, z)| DVec2::new(x, z))
-    .to_vec()
-}
-
-fn transform_point(matrix: &DMat4, p: DVec3) -> DVec3 {
-    matrix.transform_point3(p)
+/// Planar texture coordinates of `p` on a face whose normal (or any vector along
+/// it) is `facing`: the two coordinates across its dominant axis.
+pub(super) fn planar_uv(p: DVec3, facing: DVec3) -> (f64, f64) {
+    let n = facing.abs();
+    if n.y >= n.x && n.y >= n.z {
+        (p.x, p.z)
+    } else if n.x >= n.z {
+        (p.z, p.y)
+    } else {
+        (p.x, p.y)
+    }
 }
 
 impl<C: Finishes> Kit<C> {
@@ -204,12 +198,10 @@ impl<C: Finishes> Kit<C> {
         buffer.extend(p.into_iter().zip(n));
     }
 
-    /// A flat triangle facing away from `inside`.
+    /// A flat triangle facing away from `inside` (degenerate ones are dropped by
+    /// `triangle`).
     fn flat(&mut self, coat: C, p: [DVec3; 3], inside: DVec3) {
         let face = (p[1] - p[0]).cross(p[2] - p[0]);
-        if face.length_squared() < MIN_AREA {
-            return;
-        }
         let center = (p[0] + p[1] + p[2]) / 3.0;
         let normal = face.normalize() * (center - inside).dot(face).signum();
         self.triangle(coat, p, [normal; 3]);
@@ -306,7 +298,7 @@ impl<C: Finishes> Kit<C> {
         let normal = placement.transform_vector3(DVec3::Z).normalize();
         for [a, b, c] in triangles {
             let p = [points[a], points[b], points[c]]
-                .map(|p| transform_point(&placement, DVec3::new(p.x, p.y, 0.0)));
+                .map(|p| placement.transform_point3(DVec3::new(p.x, p.y, 0.0)));
             self.triangle(coat, p, [normal; 3]);
         }
     }
@@ -318,7 +310,7 @@ impl<C: Finishes> Kit<C> {
             [(-h.x, -h.z), (h.x, -h.z), (h.x, h.z), (-h.x, h.z)].map(|(x, z)| DVec2::new(x, z));
         let rings = [ring(&outline, -h.y), ring(&outline, h.y)].map(|r| {
             r.into_iter()
-                .map(|p| transform_point(&placement, p))
+                .map(|p| placement.transform_point3(p))
                 .collect()
         });
         self.solid(coat, &rings);
@@ -333,10 +325,8 @@ impl<C: Finishes> Kit<C> {
     /// highlight along the lid and keeping soft loads from looking boxed.
     pub(super) fn chamfer_block(&mut self, coat: C, size: DVec3, bevel: f64, placement: DMat4) {
         let h = size / 2.0;
-        let outline = cut_rectangle(h.x, h.z, 0.0)
-            .into_iter()
-            .step_by(2)
-            .collect::<Vec<_>>();
+        let outline =
+            [(h.x, -h.z), (h.x, h.z), (-h.x, h.z), (-h.x, -h.z)].map(|(x, z)| DVec2::new(x, z));
         let narrow = inset(&outline, bevel);
         let rings = [
             ring(&narrow, -h.y),
@@ -346,7 +336,7 @@ impl<C: Finishes> Kit<C> {
         ]
         .map(|r| {
             r.into_iter()
-                .map(|p| transform_point(&placement, p))
+                .map(|p| placement.transform_point3(p))
                 .collect()
         });
         self.solid(coat, &rings);
@@ -356,7 +346,6 @@ impl<C: Finishes> Kit<C> {
     /// smooth normals around the axis and hard edges between profile segments.
     /// Profile points run from back to front; a radius of zero closes an end.
     pub(super) fn turned(&mut self, coat: C, profile: &[DVec2], sides: u32, placement: DMat4) {
-        let rotation = placement;
         for pair in profile.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let d = b - a;
@@ -378,14 +367,14 @@ impl<C: Finishes> Kit<C> {
                     corner(b, angles[1]),
                     corner(b, angles[0]),
                 ]
-                .map(|p| transform_point(&rotation, p));
+                .map(|p| placement.transform_point3(p));
                 let normals = [
                     normal_at(angles[0]),
                     normal_at(angles[1]),
                     normal_at(angles[1]),
                     normal_at(angles[0]),
                 ]
-                .map(|n| rotation.transform_vector3(n).normalize());
+                .map(|n| placement.transform_vector3(n).normalize());
                 self.triangle(
                     coat,
                     [points[0], points[1], points[2]],
@@ -431,15 +420,9 @@ impl<C: Finishes> Kit<C> {
             let mut mesh = Mesh::default();
             for triangle in buffer.as_chunks::<3>().0 {
                 let [a, b, c] = [triangle[0].0, triangle[1].0, triangle[2].0];
-                let face = (b - a).cross(c - a).abs();
+                let face = (b - a).cross(c - a);
                 for (p, n) in triangle {
-                    let (u, v) = if face.y >= face.x && face.y >= face.z {
-                        (p.x, p.z)
-                    } else if face.x >= face.z {
-                        (p.z, p.y)
-                    } else {
-                        (p.x, p.y)
-                    };
+                    let (u, v) = planar_uv(*p, face);
                     mesh.positions.push([p.x as f32, p.y as f32, p.z as f32]);
                     mesh.normals.push([n.x as f32, n.y as f32, n.z as f32]);
                     mesh.uvs
@@ -496,10 +479,8 @@ mod tests {
 
     #[test]
     fn insets_move_edges_inward_by_the_distance() {
-        let square = cut_rectangle(1.0, 1.0, 0.0)
-            .into_iter()
-            .step_by(2)
-            .collect::<Vec<_>>();
+        let square =
+            [(1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)].map(|(x, z)| DVec2::new(x, z));
         let inner = inset(&square, 0.1);
         for p in inner {
             assert!((p.x.abs() - 0.9).abs() < 1e-9 && (p.y.abs() - 0.9).abs() < 1e-9);

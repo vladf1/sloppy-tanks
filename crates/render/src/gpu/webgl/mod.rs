@@ -22,11 +22,13 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use glow::HasContext;
 
-use super::{FrameUniform, MergedDraw, RenderStats, Scene, WaterUniform, lut};
+use super::{
+    FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, RenderStats, Scene, WaterUniform, lut,
+};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
-use textures::{linear_sampler, storage};
+use textures::{linear_sampler, storage, texel_storage};
 
 /// Frames between `getError` checks: the call waits for the GPU process.
 const ERROR_CHECK_FRAMES: u32 = 300;
@@ -35,8 +37,6 @@ const ERROR_CHECK_FRAMES: u32 = 300;
 /// block and every texture and sampler that differs, up to a dozen calls into
 /// JavaScript, where a page rebinds one vertex array.
 pub const DRAW_GROUPING: Grouping = Grouping::MaterialFirst;
-
-const INITIAL_SHADOW_BASES: u32 = 1024;
 
 /// Bytes of the `Output` uniform (`output.wgsl`).
 const OUTPUT_UNIFORM_BYTES: u64 = 16;
@@ -49,6 +49,22 @@ fn check_framebuffer(gpu: &Gpu, label: &str) {
             "WebGL canvas unavailable: the {label} framebuffer is incomplete (0x{status:04x})"
         ));
     }
+}
+
+/// A framebuffer drawing into level 0 of `texture` at `attachment`, left bound.
+fn texture_framebuffer(gpu: &Gpu, attachment: u32, texture: glow::Texture) -> glow::Framebuffer {
+    let framebuffer = gpu.created(unsafe { gpu.gl.create_framebuffer() }, "framebuffer");
+    gpu.bind_framebuffer(Some(framebuffer));
+    unsafe {
+        gpu.gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            attachment,
+            glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+    }
+    framebuffer
 }
 
 /// A multisampled HDR color and depth target resolved into a texture: the main view
@@ -98,31 +114,9 @@ impl ColorTarget {
             );
         }
         check_framebuffer(gpu, label);
-        let resolved = storage(gpu, glow::RGBA16F, 1, width, height);
-        unsafe {
-            // The output pass reads it with `texelFetch` and no sampler.
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MIN_FILTER,
-                glow::NEAREST as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MAG_FILTER,
-                glow::NEAREST as i32,
-            );
-        }
-        let resolve_framebuffer = gpu.created(unsafe { gl.create_framebuffer() }, "framebuffer");
-        gpu.bind_framebuffer(Some(resolve_framebuffer));
-        unsafe {
-            gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(resolved),
-                0,
-            );
-        }
+        // The output pass reads it with `texelFetch`.
+        let resolved = texel_storage(gpu, glow::RGBA16F, width, height);
+        let resolve_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, resolved);
         check_framebuffer(gpu, label);
         Self {
             gpu: gpu.clone(),
@@ -181,17 +175,7 @@ struct DepthTarget {
 impl DepthTarget {
     fn new(gpu: &Gpu, label: &str, size: u32) -> Self {
         let texture = storage(gpu, glow::DEPTH_COMPONENT32F, 1, size, size);
-        let framebuffer = gpu.created(unsafe { gpu.gl.create_framebuffer() }, "framebuffer");
-        gpu.bind_framebuffer(Some(framebuffer));
-        unsafe {
-            gpu.gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::DEPTH_ATTACHMENT,
-                glow::TEXTURE_2D,
-                Some(texture),
-                0,
-            );
-        }
+        let framebuffer = texture_framebuffer(gpu, glow::DEPTH_ATTACHMENT, texture);
         check_framebuffer(gpu, label);
         Self {
             gpu: gpu.clone(),
@@ -220,21 +204,19 @@ impl Drop for DepthTarget {
 /// as each draw needs it, so there is nothing to build.
 pub struct FrameGroups;
 
-/// The canvas size, the main view's target, the sun's shadow maps and every
+/// The main view's target (canvas-sized), the sun's shadow maps and every
 /// per-frame binding: view uniforms, instance records and the merged shadows'
 /// record bases.
 pub struct Frame {
     gpu: Gpu,
-    width: u32,
-    height: u32,
     main: ColorTarget,
     shadow: DepthTarget,
     /// The cached fixed-scenery shadow, only while frames copy it.
     static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
     shadow_sampler: glow::Sampler,
-    lut_sampler: glow::Sampler,
-    reflection_sampler: glow::Sampler,
+    /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
+    linear_sampler: glow::Sampler,
     view_uniforms: [glow::Buffer; VIEW_COUNT],
     output_uniform: glow::Buffer,
     instance_records: InstanceStore,
@@ -268,15 +250,12 @@ impl Frame {
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
-            width: canvas.width,
-            height: canvas.height,
             main: ColorTarget::new(gpu, "main view", canvas.width, canvas.height),
             shadow: DepthTarget::new(gpu, "sun shadow map", shadow_size),
             static_shadow: None,
             lut,
             shadow_sampler: linear_sampler(gpu, true),
-            lut_sampler: linear_sampler(gpu, false),
-            reflection_sampler: linear_sampler(gpu, false),
+            linear_sampler: linear_sampler(gpu, false),
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
             output_uniform: uniform(OUTPUT_UNIFORM_BYTES),
             instance_records: InstanceStore::new(gpu, "instances", instances),
@@ -293,20 +272,18 @@ impl Frame {
     }
 
     pub fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
+        (self.main.width, self.main.height)
     }
 
     /// Resize the canvas drawing buffer and the main view's target.
     pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
         let width = width.clamp(1, gpu.max_size);
         let height = height.clamp(1, gpu.max_size);
-        if (self.width, self.height) == (width, height) {
+        if (self.main.width, self.main.height) == (width, height) {
             return;
         }
         gpu.canvas.set_width(width);
         gpu.canvas.set_height(height);
-        self.width = width;
-        self.height = height;
         // Replacing the target deletes the old one.
         self.main = ColorTarget::new(gpu, "main view", width, height);
     }
@@ -357,7 +334,7 @@ impl Frame {
 
     pub fn write_output(&self, gpu: &Gpu, exposure: f32) {
         // The canvas's rows run bottom-up: HDR row = height - y.
-        let settings = [exposure, self.height as f32, -1.0, 0.0];
+        let settings = [exposure, self.main.height as f32, -1.0, 0.0];
         gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&settings));
     }
 
@@ -410,48 +387,31 @@ impl Frame {
         }
         self.draw_scene(gpu, scene, stats);
         gpu.bind_framebuffer(None);
-        gpu.viewport(self.width, self.height);
+        gpu.viewport(self.main.width, self.main.height);
         self.draw_output(gpu, scene, stats);
         Ok(())
     }
 
     /// Draw every pass once, the output into an offscreen probe, so the browser
     /// compiles what each program draws with before gameplay needs it.
-    pub fn warm_up(
-        &mut self,
-        gpu: &Gpu,
-        scene: &Scene,
-        stats: &mut RenderStats,
-    ) -> Result<(), String> {
+    pub fn warm_up(&mut self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
         self.draw_scene(gpu, scene, stats);
-        let gl = &gpu.gl;
         let probe = storage(gpu, glow::RGBA8, 1, 4, 4);
-        let framebuffer = gpu.created(unsafe { gl.create_framebuffer() }, "framebuffer");
-        gpu.bind_framebuffer(Some(framebuffer));
-        unsafe {
-            gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(probe),
-                0,
-            );
-        }
+        let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, probe);
         gpu.viewport(4, 4);
         self.draw_output(gpu, scene, stats);
         unsafe {
-            gl.delete_framebuffer(framebuffer);
-            gl.delete_texture(probe);
+            gpu.gl.delete_framebuffer(framebuffer);
+            gpu.gl.delete_texture(probe);
         }
         gpu.check_error("warming up");
-        Ok(())
     }
 
     /// The sun shadow, water reflection and main view passes, into the main target.
     fn draw_scene(&mut self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
         // Bindings every view shares; the shadow map's is unused by shadow programs.
         gpu.bind_texture(unit::DFG_LUT, self.lut);
-        gpu.bind_sampler(unit::DFG_LUT, Some(self.lut_sampler));
+        gpu.bind_sampler(unit::DFG_LUT, Some(self.linear_sampler));
         gpu.bind_texture(unit::SHADOW_MAP, self.shadow.texture);
         gpu.bind_sampler(unit::SHADOW_MAP, Some(self.shadow_sampler));
         gpu.bind_texture(unit::INSTANCES, self.instance_records.texture());
@@ -492,8 +452,6 @@ impl Frame {
             + draws.encode_merged(scene.merged_draws, stats);
         stats.shadow_draw_calls = count + static_count;
         stats.shadow_triangles = stats.triangles;
-        stats.reflection_draw_calls = 0;
-        stats.reflection_triangles = 0;
         if let (true, Some(water)) = (scene.reflection, scene.water) {
             let target = &water.gpu.target;
             target.begin(gpu, scene.background);
@@ -516,7 +474,7 @@ impl Frame {
             let pipeline = &scene.pipelines.fixed().water;
             gpu.use_program(scene.pipelines.program(pipeline.program).raw);
             gpu.set_raster(&pipeline.raster);
-            water.gpu.bind(gpu, self.reflection_sampler);
+            water.gpu.bind(gpu, self.linear_sampler);
             draws.bind_pages(range.vertex_page, range.index_page);
             draws.draw_elements(range.first_index, range.index_count, 1);
             stats.draw_calls += 1;
@@ -546,11 +504,7 @@ impl Drop for Frame {
         let gl = &self.gpu.gl;
         unsafe {
             gl.delete_texture(self.lut);
-            for sampler in [
-                self.shadow_sampler,
-                self.lut_sampler,
-                self.reflection_sampler,
-            ] {
+            for sampler in [self.shadow_sampler, self.linear_sampler] {
                 gl.delete_sampler(sampler);
             }
             for buffer in self.view_uniforms {
@@ -701,7 +655,7 @@ impl DrawContext<'_> {
         let mut bound: Option<DrawBinding> = None;
         let mut count = 0;
         for draw in draws {
-            let Some(class) = &scene.classes[draw.class as usize] else {
+            let Some(class) = scene.classes.at(draw.class) else {
                 continue;
             };
             // An empty mesh has no page to bind and nothing to draw.
@@ -709,7 +663,7 @@ impl DrawContext<'_> {
             if range.is_empty() {
                 continue;
             }
-            let instances = match class.pool {
+            let instances = match class.key.pool {
                 Some(pool) => match scene.pools.at(pool) {
                     Some(entry) => entry.records.texture(),
                     None => continue,

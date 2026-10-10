@@ -6,13 +6,14 @@ import type { EngineEvent, HudState } from "./engine-api";
 import {
   type FeedRow,
   deathCause,
-  effectsLabel,
   isOwnKill,
   killFeedNames,
   newFeedRow,
-  rankTitle,
-  showFeedRow,
+  setText,
+  showFeed,
+  showTankStatus,
 } from "./hud-feedback";
+import { duration } from "./round-recap";
 import { hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -230,14 +231,11 @@ export class UI {
         this.deathCause = "";
         this.damageTime = 0;
       }
-    }
-    if (
-      (event.type === "pickup" || event.type === "promotion" || event.type === "death") &&
-      event.id === human.id
-    ) {
-      this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
-      this.toastTime = event.type === "pickup" ? 1.5 : 2;
-      this.toast.classList.add("visible");
+      if (event.type === "pickup" || event.type === "promotion" || event.type === "death") {
+        this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
+        this.toastTime = event.type === "pickup" ? 1.5 : 2;
+        this.toast.classList.add("visible");
+      }
     }
     if (event.type === "death") {
       this.feedRows.unshift(
@@ -266,12 +264,7 @@ export class UI {
       this.lastDead = dead;
       this.show(state);
     }
-    const set = (id: string, text: string) => {
-      const e = document.getElementById(id);
-      if (e && e.textContent !== text) {
-        e.textContent = text;
-      }
-    };
+    const set = (id: string, text: string) => setText(document, id, text);
     const solo = state.gameMode === "solo";
     set("label0", solo ? "KILLS" : "◆ BLUE");
     set("label1", solo ? "ACTIVE" : "RED Ⅱ");
@@ -286,67 +279,14 @@ export class UI {
     set("score0", String(solo ? tank.kills : match.scores[0]));
     set("score1", String(solo ? state.activeEnemies : match.scores[1]));
     const sec = state.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
-    set(
-      "time",
-      state.endlessMatch
-        ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
-        : match.overtime
-          ? "NEXT KILL"
-          : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`,
-    );
-    set("hp", String(Math.ceil(tank.hp)));
-    set("vehicle-name", tank.vehicleName);
-    const rank = tank.rank;
-    set("rank", tank.rankName.toUpperCase());
-    const rankLabel = document.getElementById("rank")!;
-    rankLabel.dataset.rank = String(rank);
-    rankLabel.title = rankTitle(tank);
-    AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
-      const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
-      const selected = !!slotState?.selected;
-      const count = slotState?.count === null ? "∞" : String(slotState?.count ?? 0);
-      set(`ammo-count-${weapon}`, count);
-      const slot = document.getElementById(`ammo-${weapon}`)! as HTMLButtonElement;
-      slot.disabled = dead || match.phase !== "playing";
-      slot.setAttribute("aria-pressed", String(selected));
-      slot.classList.toggle("selected", selected);
-      slot.classList.toggle("empty", !slotState?.available);
-      const label = `${index + 1}: ${name}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected ? ", selected" : ""}`;
-      if (slot.getAttribute("aria-label") !== label) {
-        slot.setAttribute("aria-label", label);
-      }
-    });
-    set(
-      "mine",
-      tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
-    );
-    set("effects", effectsLabel(tank));
+    set("time", !state.endlessMatch && match.overtime ? "NEXT KILL" : duration(sec));
+    showTankStatus(this.hud, tank, dead || match.phase !== "playing");
     set("respawn-count", String(Math.ceil(tank.respawn)));
-    this.hud
-      .querySelector(".status")!
-      .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
     this.hud.classList.toggle("paused", match.phase !== "playing");
-    const hpbar = document.getElementById("hpbar")!;
-    hpbar.style.width = `${tank.healthRatio * 100}%`;
-    hpbar.style.backgroundColor = `#${tank.healthColor.toString(16).padStart(6, "0")}`;
     this.toastTime -= dt;
     if (this.toastTime <= 0) {
       this.toast.classList.remove("visible");
     }
-    for (const row of this.feedRows) {
-      row.time -= dt;
-    }
-    this.feedRows = this.feedRows.filter((r) => r.time > 0).slice(0, 4);
-    while (this.feed.childElementCount > this.feedRows.length) {
-      this.feed.lastElementChild!.remove();
-    }
-    for (let i = 0; i < this.feedRows.length; i++) {
-      let row = this.feed.children[i] as HTMLElement | undefined;
-      if (!row) {
-        row = document.createElement("div");
-        this.feed.append(row);
-      }
-      showFeedRow(row, this.feedRows[i], i === 0);
-    }
+    this.feedRows = showFeed(this.feed, this.feedRows, dt);
   }
 }

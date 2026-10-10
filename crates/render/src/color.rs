@@ -2,21 +2,15 @@
 //! runs in linear sRGB, and the output pass applies ACES filmic tone mapping and the
 //! sRGB transfer function in `shaders/output.wgsl`.
 
-/// Three's `SRGBToLinear` for one 0..1 channel.
-pub fn srgb_to_linear(channel: f32) -> f32 {
-    if channel < 0.04045 {
-        channel * 0.077_399_38
-    } else {
-        (channel * 0.947_867_3 + 0.052_132_7).powf(2.4)
-    }
-}
+use sloppy_core::geometry::math::srgb_to_linear;
 
 /// An authored `0xRRGGBB` color in linear sRGB, like `new THREE.Color(hex)`.
 pub fn hex_to_linear(hex: u32) -> [f32; 3] {
     // Presentation decodes tints and light colors every frame; `powf` is a
     // software routine in Wasm, so each byte value is decoded once.
     static BYTES: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
-    let bytes = BYTES.get_or_init(|| std::array::from_fn(|i| srgb_to_linear(i as f32 / 255.0)));
+    let bytes =
+        BYTES.get_or_init(|| std::array::from_fn(|i| srgb_to_linear(i as f64 / 255.0) as f32));
     let channel = |shift: u32| bytes[((hex >> shift) & 0xff) as usize];
     [channel(16), channel(8), channel(0)]
 }

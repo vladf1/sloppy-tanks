@@ -29,12 +29,7 @@ struct WaterOut {
 }
 
 @vertex
-fn vs_water(
-    @location(0) position: vec3f,
-    @location(1) normal: vec3f,
-    @location(2) uv: vec2f,
-    @location(3) color: vec3f,
-) -> WaterOut {
+fn vs_water(@location(0) position: vec3f, @location(2) uv: vec2f) -> WaterOut {
     let world = position + vec3f(0.0, water.shore.z, 0.0);
     var out: WaterOut;
     out.clip = frame.view_projection * vec4f(world, 1.0);

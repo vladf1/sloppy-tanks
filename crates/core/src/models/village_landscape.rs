@@ -2,7 +2,7 @@
 //! creek, riverbank rocks, the background forest and the snowy mountain ridge.
 //!
 //! `creek_distance` and `valley_height` are also the ground queries of the meadow
-//! and the watermill stepping stones.
+//! and the footbridge approach's stepping stones.
 
 use std::sync::{Arc, OnceLock};
 
@@ -13,8 +13,7 @@ use crate::scene::{Material, Node};
 
 use super::batching::batch;
 use super::ground_surfaces::ground_uvs;
-use super::model_primitives::adopt_children;
-use super::model_primitives::put;
+use super::model_primitives::{adopt_children, put, shadow_receiver};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use super::water_surface::{WaterKind, water_surface};
 use crate::geometry::math::{hex_to_linear, lerp, lerp_color, smoothstep};
@@ -174,11 +173,9 @@ pub fn village_landscape(grass: Arc<Material>) -> Node {
     geometry.colors = colors;
     geometry.compute_vertex_normals();
     ground_uvs(&mut geometry, 0.0, 0.0);
-    let mut terrain = Node::mesh(Arc::new(geometry), grass);
-    if let Some(drawable) = &mut terrain.drawable {
-        drawable.receive_shadow = true;
-    }
-    group.children.push(terrain);
+    group
+        .children
+        .push(shadow_receiver(Arc::new(geometry), grass));
     group.children.push(water_surface(
         stream_geometry(),
         WaterKind::Creek,
@@ -208,7 +205,7 @@ const TREELINE: [[f64; 2]; 15] = [
 ];
 
 fn plant_tree(forest: &mut Node, shape: TreeShape) {
-    let mut tree = tree_model(&shape, TreeDetail::Background).node;
+    let mut tree = tree_model(&shape, TreeDetail::Background);
     tree.position.y = valley_height(shape.x, shape.z) + mountain_rise(shape.x, shape.z);
     adopt_children(forest, tree);
 }

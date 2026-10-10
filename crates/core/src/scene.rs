@@ -77,9 +77,18 @@ pub struct TextureRef {
 
 impl TextureRef {
     pub fn file(path: &'static str) -> Self {
+        Self::with_source(TextureSource::File(path), Wrap::Repeat)
+    }
+
+    /// Pixels generated at runtime by key (a bake or canvas drawing), clamped.
+    pub fn generated(key: &'static str) -> Self {
+        Self::with_source(TextureSource::Generated(key), Wrap::Clamp)
+    }
+
+    fn with_source(source: TextureSource, wrap: Wrap) -> Self {
         Self {
-            source: TextureSource::File(path),
-            wrap: Wrap::Repeat,
+            source,
+            wrap,
             repeat: [1.0, 1.0],
             offset: [0.0, 0.0],
             srgb: true,
@@ -90,15 +99,13 @@ impl TextureRef {
     }
 }
 
-/// Custom shading that Three.js expressed with TSL nodes. Model builders choose a
-/// variant and its parameters; the renderer owns the matching WGSL. Variants are
-/// added as those materials are ported; `None` is plain standard/basic shading.
+/// Custom shading that Three.js expressed with TSL nodes. `None` is plain
+/// standard/basic shading; `Custom` selects the renderer's registered
+/// `EffectDefinition` of that name, which owns the WGSL, and passes it `params`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Effect {
     #[default]
     None,
-    /// Named effect with numeric parameters, for materials whose parameters are still
-    /// settling during the port. Prefer a dedicated variant once it is stable.
     Custom {
         name: &'static str,
         params: Vec<f32>,

@@ -15,8 +15,6 @@ const SERVER_PATH =
     ? "../target/x86_64-unknown-linux-musl/server/sloppy-server"
     : "../target/server/sloppy-server";
 const SERVER = fileURLToPath(new URL(SERVER_PATH, import.meta.url));
-// One of the server's default local origins, as a Vite tab would send.
-const ORIGIN = "http://127.0.0.1:5173";
 const STEP_MS = 50;
 const DRIVE_MS = 4000;
 const START_TIMEOUT_MS = 10_000;
@@ -83,7 +81,7 @@ test("traffic bots create a room on the Rust server, drive with accepted input a
     };
   });
   for (const [index, seat] of bots.entries()) {
-    const socket = new WebSocket(`ws://${base}/room/${room}`, { origin: ORIGIN });
+    const socket = new WebSocket(`ws://${base}/room/${room}`);
     seat.socket = socket;
     socket.on("message", (data: Buffer, isBinary) => {
       if (!isBinary) {

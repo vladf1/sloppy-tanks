@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { build, preview } from "vite";
-import { chromium } from "playwright";
-import { headless } from "./browser-helpers.mjs";
+import { click, launchChrome } from "./browser-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { checkMultiplayerMenu, click, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
+import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const directory = "artifacts/performance/multiplayer";
 const outDir = `${directory}/loading-build`;
@@ -22,17 +21,14 @@ await build({
           if (modules.some((id) => /\/src\/net\//.test(id))) {
             item.viteMetadata?.importedCss.forEach((file) => networkStyles.add(file));
           }
-          // The Node room server, its authority and the traffic bots never ship to browsers.
+          // The traffic bots and Node-only packages (ws, esbuild) never ship to browsers.
           assert.ok(
-            !modules.some((id) =>
-              /\/(server|bots|node_modules\/(ws|esbuild))\/|\/src\/net\/match-host\.ts$/.test(id),
-            ),
-            `Server code leaked into ${item.fileName}`,
+            !modules.some((id) => /\/(bots|node_modules\/(ws|esbuild))\//.test(id)),
+            `Node-only code leaked into ${item.fileName}`,
           );
           chunks.set(item.fileName, {
             bytes: Buffer.byteLength(item.code),
             network: modules.some((id) => /\/src\/net\//.test(id)),
-            modules,
           });
         }
       },
@@ -40,7 +36,7 @@ await build({
   ],
 });
 const server = await preview({ build: { outDir }, preview: { host: "127.0.0.1", port: 4179 } });
-const browser = await chromium.launch({ channel: "chrome", headless });
+const browser = await launchChrome();
 const result = { requests: [], sockets: [], errors: [], chunks: Object.fromEntries(chunks) };
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -117,7 +113,7 @@ try {
     );
   }
   // The room page runs on the engine Wasm, one build of it (WebGPU, or the WebGL2
-  // fallback where this browser has no WebGPU); Rapier's JS build and binary stay out.
+  // fallback where this browser has no WebGPU), and downloads no other Wasm.
   const binaries = networkRequests
     .map((url) => new URL(url).pathname)
     .filter((path) => path.endsWith(".wasm"));
@@ -138,20 +134,8 @@ try {
     1,
     `The room page downloads the engine once: ${roomLinkBinaries.join(", ")}`,
   );
-  for (const url of networkRequests) {
-    const path = new URL(url).pathname;
-    const modules = [...chunks].find(([file]) => path.endsWith(`/${file}`))?.[1].modules ?? [];
-    assert.ok(
-      !modules.some((id) => /\/src\/game\/simulation\.ts$/.test(id)),
-      "Multiplayer must not download a client simulation",
-    );
-    assert.ok(
-      !modules.some((id) => /\/@dimforge\//.test(id)),
-      `Multiplayer must not download Rapier JS: ${path}`,
-    );
-  }
   result.networkRequests = networkRequests;
-  console.log("Multiplayer: the engine Wasm only; no TypeScript simulation or Rapier JS/WASM.");
+  console.log("Multiplayer: one engine Wasm, downloaded once, and no other Wasm.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.httpServer.close(resolve));

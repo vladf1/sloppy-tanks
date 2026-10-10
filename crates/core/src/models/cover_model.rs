@@ -24,7 +24,7 @@ use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::timber_layout::{
-    TimberHit, TimberJoin, TimberPart, TimberWall, timber_damage_stage, timber_parts,
+    TimberHit, TimberJoin, TimberWall, timber_damage_stage, timber_parts,
 };
 use crate::sim::types::CoverKind;
 
@@ -61,21 +61,6 @@ impl From<&RenderCover> for CoverShape {
     }
 }
 
-/// A built cover and the values the TypeScript kept in `userData`.
-#[derive(Clone, Debug)]
-pub struct CoverModel {
-    pub node: Node,
-    /// The damage stage the model shows (TS `userData.damageStage`, set for timber
-    /// and cargo; 0 otherwise). Rebuild when [`cover_damage_stage`] changes.
-    pub damage_stage: u32,
-    /// Timber hit marks drawn (TS `userData.timberHitCount`); rebuild when it changes.
-    pub timber_hit_count: usize,
-    /// The timber members drawn (TS `userData.timberParts`), unlengthened.
-    pub timber_parts: Vec<TimberPart>,
-    /// The tree family and seed for tree covers (TS `userData.family`/`seed`).
-    pub tree: Option<(u32, u32)>,
-}
-
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
 /// timber uses [`timber_damage_stage`]; other kinds have one look.
 pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
@@ -94,17 +79,11 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     }
 }
 
-/// `coverModel(c, detail, damageStage)`.
-pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> CoverModel {
-    let mut model = CoverModel {
-        node: Node::default(),
-        damage_stage: 0,
-        timber_hit_count: 0,
-        timber_parts: Vec::new(),
-        tree: None,
-    };
+/// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`] or
+/// the timber hit count changes.
+pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
     if c.kind == CoverKind::Tree {
-        let tree = tree_model(
+        return tree_model(
             &TreeShape {
                 x: c.x,
                 z: c.z,
@@ -114,11 +93,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
             },
             detail,
         );
-        model.node = tree.node;
-        model.tree = Some((tree.family, tree.seed));
-        return model;
     }
-    let group = &mut model.node;
+    let mut node = Node::default();
+    let group = &mut node;
     group.position = DVec3::new(c.x, 0.0, c.z);
     match c.kind {
         CoverKind::Teeth => dragon_tooth(group, c.w, c.h, c.d, c.x, c.z),
@@ -136,14 +113,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
                 color: c.color,
             },
         ),
-        CoverKind::Cargo => {
-            model.damage_stage = damage_stage;
-            cargo_stack(group, crate_shape(c), damage_stage);
-        }
+        CoverKind::Cargo => cargo_stack(group, crate_shape(c), damage_stage),
         CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, c.color),
         CoverKind::Timber => {
-            model.damage_stage = damage_stage;
-            model.timber_hit_count = c.timber_hits.len();
             let parts = timber_parts(
                 &TimberWall {
                     x: c.x,
@@ -158,7 +130,6 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
                 damage_stage,
             );
             add_timber_parts(group, &parts);
-            model.timber_parts = parts;
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
@@ -214,7 +185,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Cov
             }
         }
     }
-    model
+    node
 }
 
 fn crate_shape(c: &CoverShape) -> CrateShape {

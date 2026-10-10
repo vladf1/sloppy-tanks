@@ -9,8 +9,6 @@ export interface RoomSelection {
   choice: JoinChoice;
 }
 
-export { roomAddress };
-
 /** A page that already built a single-player arena reloads into the room instead of
  * running two renderers; the room page joins with the same choices. */
 export function joinAfterReload(selection: RoomSelection): void {

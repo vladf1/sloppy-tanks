@@ -6,14 +6,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
+use sloppy_core::net::match_host::ConnectionId;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
-use crate::host::ConnectionId;
 use crate::protocol::Message;
 use crate::room_task::RoomCommand;
-use crate::session::{RoomSocket, SendFailed};
+use crate::session::RoomSocket;
 use crate::tcp_path::TcpReading;
 use crate::websocket::{Codec, Event};
 use crate::wire::ConnectionBytes;
@@ -70,20 +70,19 @@ impl SocketHandle {
 }
 
 impl RoomSocket for SocketHandle {
-    fn send(&self, message: Message) -> Result<(), SendFailed> {
+    fn send(&self, message: Message) {
         if self.state.closing.load(Ordering::Relaxed) {
-            return Ok(());
+            return;
         }
-        if !self.state.reserve(message.len()) {
+        let bytes = message.len();
+        if !self.state.reserve(bytes) {
             self.close(4002, "Slow reader");
-            return Ok(());
+            return;
         }
         // A finished connection task has already reported its close to the room.
-        let bytes = message.len();
         if self.sender.send(Outbound::Message(message)).is_err() {
             self.state.queued.fetch_sub(bytes, Ordering::Relaxed);
         }
-        Ok(())
     }
 
     fn close(&self, code: u16, reason: &str) {
@@ -128,12 +127,11 @@ pub struct RoomLink {
 pub enum Ending {
     /// The peer sent a close frame with this code (1005 without one).
     Closed(u16),
-    /// The connection dropped without a close frame, or the close timed out (1006).
+    /// The connection dropped without a close frame, the close timed out, or the server
+    /// stopped (1006).
     Dropped,
     /// The peer broke the protocol; the connection was cut at once, as `ws` does.
     Failed,
-    /// The server stopped.
-    Terminated,
 }
 
 impl Ending {
@@ -189,7 +187,7 @@ where
             }
             true
         };
-    let ending = loop {
+    let ending = 'connection: loop {
         if let Some((code, reason)) = close_requested.take() {
             state.closing.store(true, Ordering::Relaxed);
             // Keep already encoded output intact (it can end in a partially written
@@ -202,14 +200,17 @@ where
             close_sent = true;
             close_deadline.get_or_insert_with(|| Instant::now() + CLOSE_TIMEOUT);
         }
-        if close_sent && peer_close.is_some() && pending.is_empty() {
-            break Ending::Closed(peer_close.unwrap_or(1005));
+        if let Some(code) = peer_close
+            && close_sent
+            && pending.is_empty()
+        {
+            break Ending::Closed(code);
         }
         let deadline = close_deadline;
         tokio::select! {
             biased;
-            () = stopped(&mut terminate) => break Ending::Terminated,
-            () = sleep_until_some(deadline), if deadline.is_some() => break Ending::Dropped,
+            () = stopped(&mut terminate) => break Ending::Dropped,
+            () = sleep_until_some(deadline) => break Ending::Dropped,
             command = receiver.recv(), if outbound_open && !close_sent => match command {
                 Some(Outbound::Message(message)) => {
                     let encode = &mut |out: &mut BytesMut| match &message {
@@ -239,7 +240,6 @@ where
                     Ok(0) | Err(_) => break Ending::Dropped,
                     Ok(_) => {}
                 }
-                let mut failed = false;
                 loop {
                     match codec.decode(&mut input) {
                         Ok(None) => break,
@@ -271,14 +271,8 @@ where
                             close_deadline.get_or_insert_with(|| Instant::now() + CLOSE_TIMEOUT);
                             break;
                         }
-                        Err(_) => {
-                            failed = true;
-                            break;
-                        }
+                        Err(_) => break 'connection Ending::Failed,
                     }
-                }
-                if failed {
-                    break Ending::Failed;
                 }
             }
         }
@@ -293,10 +287,11 @@ where
 /// Resolves once the server asks every connection to stop.
 pub async fn stopped(terminate: &mut watch::Receiver<bool>) {
     // A dropped sender means the server is gone, which also stops the connection.
-    let _ = terminate.wait_for(|stop| *stop).await.map(|_| ());
+    let _ = terminate.wait_for(|stop| *stop).await;
 }
 
-async fn sleep_until_some(deadline: Option<Instant>) {
+/// Resolves at `deadline`, or never without one.
+pub(crate) async fn sleep_until_some(deadline: Option<Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,
         None => std::future::pending().await,

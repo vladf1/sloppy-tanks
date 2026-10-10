@@ -19,7 +19,7 @@ use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::MAX_PARTICLES;
 use super::pickups::MAX_PICKUP_EFFECTS;
-use super::pool::PoolDesc;
+use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
 use super::registry::{BLAST_RING, DUST, PUFF, TRACK_MARK};
@@ -62,24 +62,6 @@ fn ground_quad() -> Mesh {
     let mut mesh = plane_geometry(1.0, 1.0);
     mesh.rotate_x(-FRAC_PI_2);
     mesh
-}
-
-fn pool(
-    label: &'static str,
-    mesh: &Arc<Mesh>,
-    material: &Arc<Material>,
-    capacity: usize,
-) -> PoolDesc {
-    PoolDesc {
-        label,
-        mesh: mesh.clone(),
-        material: material.clone(),
-        capacity: capacity as u32,
-        render_order: 0,
-        cast_shadow: false,
-        receive_shadow: false,
-        reflected: true,
-    }
 }
 
 /// Every effect pool, in `EffectSystems::for_each_pool` order.

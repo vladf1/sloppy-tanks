@@ -1,22 +1,20 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { randomRoomCode } from "../bots/bot-player.ts";
 import { StateMirror } from "./state-mirror.mjs";
+import { chooseMap, click, gameUrl, launchChrome } from "./browser-helpers.mjs";
 import {
-  DEFAULT_GAME_URL,
   assertJoinedBehindSetup,
   checkMultiplayerMenu,
-  chooseRoomMap,
-  click,
   joinFrames,
-  launchChrome,
   openMultiplayerTab,
-  randomRoomCode,
   recordJoinFrames,
   recordRoomFrames,
+  until,
   waitForRoomBrowser,
 } from "./multiplayer-helpers.mjs";
 
-const baseURL = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+const baseURL = new URL(gameUrl);
 if (process.env.SLOPPY_SERVER) baseURL.searchParams.set("server", process.env.SLOPPY_SERVER);
 const base = baseURL.href;
 const label = process.env.SLOPPY_CHECK_LABEL ?? "local";
@@ -26,12 +24,6 @@ await mkdir(output, { recursive: true });
 const browser = await launchChrome();
 const errors = [],
   clients = [];
-const until = async (condition, message) => {
-  const deadline = Date.now() + 60000;
-  while (!condition() && Date.now() < deadline)
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(condition(), message);
-};
 try {
   for (let i = 0; i < 2; i++) {
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
@@ -64,7 +56,7 @@ try {
   await alice.page.locator("#player-name").fill("Room browser Alice");
   // The tank cards are shared by both tabs and choose the multiplayer tank too.
   await click(alice.page, '[data-kind="heavy"]');
-  await chooseRoomMap(alice.page, "harbor");
+  await chooseMap(alice.page, "harbor");
   await alice.page.locator("#create-round-minutes").fill("3");
   await alice.page.screenshot({ path: `${output}/create.png` });
   // This page began building a single-player arena, so the room opens in a fresh page.
@@ -256,7 +248,7 @@ try {
   await alice.page.goto(extraLevels.href);
   await waitForRoomBrowser(alice.page);
   assert.equal(await alice.page.locator("#create-humans-only").isChecked(), true);
-  await chooseRoomMap(alice.page, "superstress");
+  await chooseMap(alice.page, "superstress");
   assert.equal(
     await alice.page.locator("#create-humans-only").isChecked(),
     false,

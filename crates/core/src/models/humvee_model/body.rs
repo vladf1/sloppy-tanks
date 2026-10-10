@@ -11,16 +11,13 @@ use std::f64::consts::PI;
 
 use glam::{DMat4, DVec3};
 
-use super::kit::{Kit, Role, frame, mirror_x, place, rect, slab, slope_y};
+use super::kit::{Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
+use super::{AXLE_Y, FRONT_AXLE, REAR_AXLE};
 
 /// Hull-frame extremes measured by `tank_dimensions`.
 const FRONT: f64 = 2.17;
 const REAR: f64 = -2.15;
 const ANTENNA_TOP: f64 = 2.37;
-/// Wheel centres along the (unstretched) hull.
-const FRONT_AXLE: f64 = 1.3;
-const REAR_AXLE: f64 = -1.32;
-const AXLE_Y: f64 = 0.25;
 /// Tub sides and bottom.
 const TUB_SIDE: f64 = 1.03;
 const SILL: f64 = 0.36;
@@ -75,18 +72,9 @@ pub(super) fn body_kit() -> Kit {
 }
 
 fn underbody(kit: &mut Kit) {
-    kit.block(
-        Role::Shade,
-        [1.4, 0.18, 3.7],
-        place([0.0, 0.33, 0.0], [0.0; 3]),
-    );
+    kit.block(Role::Shade, [1.4, 0.18, 3.7], at([0.0, 0.33, 0.0]));
     for axle in [FRONT_AXLE, REAR_AXLE] {
-        kit.chamfered(
-            Role::Shade,
-            [0.44, 0.24, 0.3],
-            0.03,
-            place([0.0, 0.25, axle], [0.0; 3]),
-        );
+        kit.chamfered(Role::Shade, [0.44, 0.24, 0.3], 0.03, at([0.0, 0.25, axle]));
         // Half shafts and the A-arms of the independent suspension.
         let shaft = place([0.0, AXLE_Y, axle], [0.0, 0.0, PI / 2.0]);
         kit.cylinder(Role::Steel, 0.045, 1.7, 8, shaft);
@@ -139,14 +127,10 @@ fn tub_and_cab(kit: &mut Kit) {
         Role::Paint,
         [2.1, 0.04, 1.78],
         0.012,
-        place([0.0, ROOF + 0.02, -0.22], [0.0; 3]),
+        at([0.0, ROOF + 0.02, -0.22]),
     );
     // Turret ring base: the ring itself turns with the turret.
-    kit.block(
-        Role::Shade,
-        [1.3, 0.03, 1.15],
-        place([0.0, ROOF + 0.045, 0.0], [0.0; 3]),
-    );
+    kit.block(Role::Shade, [1.3, 0.03, 1.15], at([0.0, ROOF + 0.045, 0.0]));
 }
 
 fn hood(kit: &mut Kit) {
@@ -183,12 +167,12 @@ fn hood(kit: &mut Kit) {
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
         }
         // Rubber hood latch at the front of each fender.
-        let latch = side * place([1.088, 0.955, 1.86], [0.0; 3]);
+        let latch = side * at([1.088, 0.955, 1.86]);
         kit.block(Role::Gap, [0.016, 0.09, 0.035], latch);
         kit.block(
             Role::Gap,
             [0.02, 0.025, 0.07],
-            latch * place([0.0, -0.045, 0.0], [0.0; 3]),
+            latch * at([0.0, -0.045, 0.0]),
         );
         // Lifting eye by the windshield.
         let eye = side
@@ -199,24 +183,20 @@ fn hood(kit: &mut Kit) {
         kit.torus(Role::Steel, 0.03, 0.009, eye);
     }
     // Engine air intake beside the windshield on the right, with its grille.
-    let intake = place([-0.82, 1.15, 0.98], [0.0; 3]);
+    let intake = at([-0.82, 1.15, 0.98]);
     kit.chamfered(Role::Paint, [0.3, 0.16, 0.2], 0.015, intake);
-    kit.block(
-        Role::Gap,
-        [0.24, 0.1, 0.01],
-        intake * place([0.0, 0.0, 0.1], [0.0; 3]),
-    );
+    kit.block(Role::Gap, [0.24, 0.1, 0.01], intake * at([0.0, 0.0, 0.1]));
     for i in 0..5 {
-        let slat = intake * place([0.0, -0.04 + f64::from(i) * 0.02, 0.105], [0.0; 3]);
+        let slat = intake * at([0.0, -0.04 + f64::from(i) * 0.02, 0.105]);
         kit.block(Role::Paint, [0.24, 0.008, 0.012], slat);
     }
     // Blackout drive light on the left fender.
-    let blackout = place([0.62, hood_y(FENDER_TOP, 1.9) + 0.04, 1.9], [0.0; 3]);
+    let blackout = at([0.62, hood_y(FENDER_TOP, 1.9) + 0.04, 1.9]);
     kit.chamfered(Role::Gap, [0.1, 0.08, 0.08], 0.01, blackout);
     kit.block(
         Role::Amber,
         [0.06, 0.02, 0.01],
-        blackout * place([0.0, 0.0, 0.042], [0.0; 3]),
+        blackout * at([0.0, 0.0, 0.042]),
     );
 }
 
@@ -229,42 +209,26 @@ fn front(kit: &mut Kit) {
     let lamps = [rect(-0.8, 0.67, 0.26, 0.24), rect(0.8, 0.67, 0.26, 0.24)];
     let holes: Vec<&[[f64; 2]]> = slots.iter().chain(&lamps).map(|h| h.as_slice()).collect();
     let panel = slab(&rect(0.0, 0.65, 2.06, 0.46), &holes, 0.05, 0.008);
-    kit.add(Role::Paint, &panel, place([0.0, 0.0, 1.93], [0.0; 3]));
-    kit.block(
-        Role::Gap,
-        [2.0, 0.42, 0.01],
-        place([0.0, 0.65, 1.92], [0.0; 3]),
-    );
+    kit.add(Role::Paint, &panel, at([0.0, 0.0, 1.93]));
+    kit.block(Role::Gap, [2.0, 0.42, 0.01], at([0.0, 0.65, 1.92]));
     for x in [-0.8, 0.8] {
         let lamp = place([x, 0.67, 1.945], [PI / 2.0, 0.0, 0.0]);
         kit.cylinder(Role::Steel, 0.105, 0.025, 16, lamp);
         kit.cylinder(Role::Headlamp, 0.085, 0.04, 16, lamp);
         // Composite marker and turn lamps on the fender corners above.
-        let marker = place(
-            [x * 1.1, hood_y(FENDER_TOP, HOOD_FRONT) + 0.03, 1.97],
-            [0.0; 3],
-        );
+        let marker = at([x * 1.1, hood_y(FENDER_TOP, HOOD_FRONT) + 0.03, 1.97]);
         kit.chamfered(Role::Gap, [0.15, 0.065, 0.08], 0.01, marker);
         kit.block(
             Role::Amber,
             [0.11, 0.04, 0.01],
-            marker * place([0.0, 0.0, 0.041], [0.0; 3]),
+            marker * at([0.0, 0.0, 0.041]),
         );
     }
     // Heavy bumper with recovery shackles and a tubular brush guard whose front
     // face is the hull's foremost point.
-    kit.chamfered(
-        Role::Shade,
-        [2.1, 0.2, 0.13],
-        0.015,
-        place([0.0, 0.44, 2.055], [0.0; 3]),
-    );
+    kit.chamfered(Role::Shade, [2.1, 0.2, 0.13], 0.015, at([0.0, 0.44, 2.055]));
     for x in [-0.66, 0.66] {
-        kit.block(
-            Role::Shade,
-            [0.12, 0.13, 0.05],
-            place([x, 0.44, 2.13], [0.0; 3]),
-        );
+        kit.block(Role::Shade, [0.12, 0.13, 0.05], at([x, 0.44, 2.13]));
         kit.torus(
             Role::Steel,
             0.042,
@@ -274,28 +238,16 @@ fn front(kit: &mut Kit) {
     }
     let guard_z = FRONT - 0.025;
     for x in [-0.56, 0.56] {
-        kit.block(
-            Role::Shade,
-            [0.05, 0.5, 0.05],
-            place([x, 0.79, guard_z], [0.0; 3]),
-        );
+        kit.block(Role::Shade, [0.05, 0.5, 0.05], at([x, 0.79, guard_z]));
     }
-    kit.block(
-        Role::Shade,
-        [1.17, 0.05, 0.05],
-        place([0.0, 1.015, guard_z], [0.0; 3]),
-    );
+    kit.block(Role::Shade, [1.17, 0.05, 0.05], at([0.0, 1.015, guard_z]));
     kit.block(
         Role::Shade,
         [1.17, 0.04, 0.04],
-        place([0.0, 0.6, guard_z - 0.005], [0.0; 3]),
+        at([0.0, 0.6, guard_z - 0.005]),
     );
     for x in [-0.33, -0.11, 0.11, 0.33] {
-        kit.block(
-            Role::Shade,
-            [0.03, 0.4, 0.03],
-            place([x, 0.8, guard_z - 0.01], [0.0; 3]),
-        );
+        kit.block(Role::Shade, [0.03, 0.4, 0.03], at([x, 0.8, guard_z - 0.01]));
     }
 }
 
@@ -314,7 +266,7 @@ fn windshield(kit: &mut Kit) {
     let surround = slab(&rect(0.0, length * 0.5, 2.04, length), &holes, 0.05, 0.012);
     kit.add(Role::Paint, &surround, to_glass);
     for x in [-0.49, 0.49] {
-        let pane = to_glass * place([x, length * 0.5, 0.012], [0.0; 3]);
+        let pane = to_glass * at([x, length * 0.5, 0.012]);
         kit.block(Role::Glass, [0.84, length - 0.12, 0.012], pane);
         // Wiper parked along the bottom of each pane.
         let wiper = to_glass * place([x - 0.05, 0.11, 0.035], [0.0, 0.0, 1.38]);
@@ -388,53 +340,38 @@ fn doors(kit: &mut Kit, side: DMat4) {
         doors.block(
             Role::Glass,
             [0.012, 0.37, z1 - z0 + 0.02],
-            place([DOOR_IN + 0.03, 1.36, (z0 + z1) / 2.0], [0.0; 3]),
+            at([DOOR_IN + 0.03, 1.36, (z0 + z1) / 2.0]),
         );
         doors.side_profile(Role::Paint, &plate, &[], DOOR_OUT, DOOR_OUT + 0.016, 0.006);
         // Hinges on the leading edge, the lever handle by the trailing edge.
         for y in [0.66, 1.06, 1.46] {
-            doors.block(
-                Role::Steel,
-                [0.04, 0.1, 0.07],
-                place([DOOR_OUT, y, leading], [0.0; 3]),
-            );
+            doors.block(Role::Steel, [0.04, 0.1, 0.07], at([DOOR_OUT, y, leading]));
         }
         let handle_z = trailing + (leading - trailing).signum() * 0.14;
         doors.block(
             Role::Steel,
             [0.03, 0.05, 0.05],
-            place([DOOR_OUT + 0.01, 1.1, handle_z], [0.0; 3]),
+            at([DOOR_OUT + 0.01, 1.1, handle_z]),
         );
         doors.block(
             Role::Steel,
             [0.022, 0.03, 0.17],
-            place(
-                [
-                    DOOR_OUT + 0.035,
-                    1.1,
-                    handle_z - 0.04 * (leading - trailing).signum(),
-                ],
-                [0.0; 3],
-            ),
+            at([
+                DOOR_OUT + 0.035,
+                1.1,
+                handle_z - 0.04 * (leading - trailing).signum(),
+            ]),
         );
     }
     // The B-pillar shows as a dark seam between the doors.
-    doors.block(
-        Role::Gap,
-        [0.01, 1.2, 0.035],
-        place([DOOR_IN, 1.02, 0.0], [0.0; 3]),
-    );
+    doors.block(Role::Gap, [0.01, 1.2, 0.035], at([DOOR_IN, 1.02, 0.0]));
     kit.absorb(&doors, side);
 }
 
 /// Rocker, fender trim, quarter armor, mirror and cargo-shell fittings on +x.
 fn flank(kit: &mut Kit, side: DMat4) {
     let mut flank = Kit::default();
-    flank.block(
-        Role::Shade,
-        [0.06, 0.12, 1.5],
-        place([1.06, 0.36, -0.01], [0.0; 3]),
-    );
+    flank.block(Role::Shade, [0.06, 0.12, 1.5], at([1.06, 0.36, -0.01]));
     // Trim lips around both wheel openings.
     for axle in [FRONT_AXLE, REAR_AXLE] {
         let inner = wheel_opening(axle);
@@ -460,59 +397,37 @@ fn flank(kit: &mut Kit, side: DMat4) {
     ];
     flank.side_profile(Role::Paint, &quarter, &[], TUB_SIDE, TUB_SIDE + 0.03, 0.01);
     // Mirror on an arm from the A-pillar.
-    flank.block(
-        Role::Steel,
-        [0.11, 0.025, 0.025],
-        place([1.09, 1.22, 0.84], [0.0; 3]),
-    );
-    let mirror = place([1.135, 1.33, 0.86], [0.0; 3]);
+    flank.block(Role::Steel, [0.11, 0.025, 0.025], at([1.09, 1.22, 0.84]));
+    let mirror = at([1.135, 1.33, 0.86]);
     flank.chamfered(Role::Shade, [0.04, 0.26, 0.15], 0.008, mirror);
     flank.block(
         Role::Glass,
         [0.03, 0.22, 0.006],
-        mirror * place([0.0, 0.0, -0.077], [0.0; 3]),
+        mirror * at([0.0, 0.0, -0.077]),
     );
     // Side marker reflectors: amber at the front fender, red at the tail.
-    flank.block(
-        Role::Amber,
-        [0.01, 0.05, 0.1],
-        place([1.083, 0.96, 1.78], [0.0; 3]),
-    );
+    flank.block(Role::Amber, [0.01, 0.05, 0.1], at([1.083, 0.96, 1.78]));
     flank.block(
         Role::Red,
         [0.01, 0.05, 0.1],
-        place([TUB_SIDE + 0.033, 0.88, -1.93], [0.0; 3]),
+        at([TUB_SIDE + 0.033, 0.88, -1.93]),
     );
     // Mud flap behind the rear wheel.
-    flank.block(
-        Role::Rubber,
-        [0.26, 0.3, 0.02],
-        place([0.98, 0.22, -1.9], [0.0; 3]),
-    );
+    flank.block(Role::Rubber, [0.26, 0.3, 0.02], at([0.98, 0.22, -1.9]));
     // Antenna mount at the rear corner: bracket, spring base and whip.
     let deck_y = 1.2;
     flank.chamfered(
         Role::Shade,
         [0.1, 0.1, 0.12],
         0.01,
-        place([0.82, deck_y + 0.04, -1.9], [0.0; 3]),
+        at([0.82, deck_y + 0.04, -1.9]),
     );
-    flank.cylinder(
-        Role::Gap,
-        0.032,
-        0.34,
-        8,
-        place([0.82, deck_y + 0.25, -1.92], [0.0; 3]),
-    );
+    flank.cylinder(Role::Gap, 0.032, 0.34, 8, at([0.82, deck_y + 0.25, -1.92]));
     let whip_height = 0.78;
-    let whip = place([0.82, ANTENNA_TOP - whip_height / 2.0, -1.92], [0.0; 3]);
+    let whip = at([0.82, ANTENNA_TOP - whip_height / 2.0, -1.92]);
     flank.cylinder(Role::Gap, 0.011, whip_height, 6, whip);
     // Step below the rear door and grab handle on the cargo shell.
-    flank.block(
-        Role::Steel,
-        [0.03, 0.03, 0.26],
-        place([1.07, 1.3, -1.05], [0.0; 3]),
-    );
+    flank.block(Role::Steel, [0.03, 0.03, 0.26], at([1.07, 1.3, -1.05]));
     kit.absorb(&flank, side);
 }
 
@@ -546,13 +461,13 @@ fn rear(kit: &mut Kit) {
         kit.block(
             Role::Steel,
             [0.03, length - 0.3, 0.03],
-            hatch * place([x, length * 0.5, 0.035], [0.0; 3]),
+            hatch * at([x, length * 0.5, 0.035]),
         );
     }
     kit.block(
         Role::Steel,
         [1.47, 0.03, 0.03],
-        hatch * place([0.0, length - 0.18, 0.035], [0.0; 3]),
+        hatch * at([0.0, length - 0.18, 0.035]),
     );
     kit.rounded(
         Role::Canvas,
@@ -570,68 +485,54 @@ fn rear(kit: &mut Kit) {
         Role::Shade,
         [0.26, 0.16, 0.16],
         0.012,
-        hatch * place([-0.56, length * 0.4, 0.1], [0.0; 3]),
+        hatch * at([-0.56, length * 0.4, 0.1]),
     );
     // Tail lamps: composite red and amber lenses in dark housings.
     for x in [-0.8, 0.8] {
-        let housing = place([x, 0.74, TAIL - 0.015], [0.0; 3]);
+        let housing = at([x, 0.74, TAIL - 0.015]);
         kit.chamfered(Role::Gap, [0.17, 0.22, 0.03], 0.006, housing);
         kit.block(
             Role::Red,
             [0.13, 0.08, 0.008],
-            housing * place([0.0, 0.05, -0.017], [0.0; 3]),
+            housing * at([0.0, 0.05, -0.017]),
         );
         kit.block(
             Role::Amber,
             [0.13, 0.05, 0.008],
-            housing * place([0.0, -0.04, -0.017], [0.0; 3]),
+            housing * at([0.0, -0.04, -0.017]),
         );
         kit.block(
             Role::Red,
             [0.05, 0.03, 0.008],
-            housing * place([0.0, -0.085, -0.017], [0.0; 3]),
+            housing * at([0.0, -0.085, -0.017]),
         );
     }
     // Jerrycans in a rack between the lamps.
     for x in [-0.27, 0.27] {
-        let can = place([x, 0.72, TAIL - 0.067], [0.0; 3]);
+        let can = at([x, 0.72, TAIL - 0.067]);
         kit.rounded(Role::Shade, [0.32, 0.46, 0.11], 0.025, can);
         for dx in [-0.08, 0.0, 0.08] {
-            kit.block(
-                Role::Shade,
-                [0.025, 0.04, 0.05],
-                can * place([dx, 0.24, 0.0], [0.0; 3]),
-            );
+            kit.block(Role::Shade, [0.025, 0.04, 0.05], can * at([dx, 0.24, 0.0]));
         }
-        kit.cylinder(
-            Role::Steel,
-            0.025,
-            0.05,
-            8,
-            can * place([0.11, 0.24, 0.0], [0.0; 3]),
-        );
-        kit.block(
-            Role::Gap,
-            [0.36, 0.035, 0.122],
-            can * place([0.0, 0.06, 0.0], [0.0; 3]),
-        );
+        kit.cylinder(Role::Steel, 0.025, 0.05, 8, can * at([0.11, 0.24, 0.0]));
+        kit.block(Role::Gap, [0.36, 0.035, 0.122], can * at([0.0, 0.06, 0.0]));
     }
     kit.block(
         Role::Steel,
         [0.76, 0.03, 0.13],
-        place([0.0, 0.475, TAIL - 0.06], [0.0; 3]),
+        at([0.0, 0.475, TAIL - 0.06]),
     );
     // Rear bumper: its back face is the hull's rearmost point.
     kit.block(
         Role::Shade,
         [2.08, 0.14, 0.14],
-        place([0.0, 0.38, REAR + 0.07], [0.0; 3]),
+        at([0.0, 0.38, REAR + 0.07]),
     );
     kit.chamfered(
         Role::Steel,
         [0.14, 0.1, 0.1],
         0.01,
-        place([0.0, 0.28, REAR + 0.06], [0.0; 3]),
+        at([0.0, 0.28, REAR + 0.06]),
     );
     kit.torus(
         Role::Steel,

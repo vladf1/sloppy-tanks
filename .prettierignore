@@ -1,12 +1,6 @@
-node_modules/
-dist/
-artifacts/
+# Prettier also skips everything .gitignore lists.
 public/
 pnpm-lock.yaml
 assets/texture-sources/
 scripts/benchmarks/
-dist-dev/
 .claude/
-bots/.wrangler/
-bots/.dev.vars
-src/generated/

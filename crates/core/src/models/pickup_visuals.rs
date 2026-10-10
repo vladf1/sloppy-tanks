@@ -2,16 +2,14 @@
 //! with pictograms from one atlas.
 //!
 //! Pickup materials are always transparent so first person can fade them through
-//! the [`super::effects_props::PICKUP_SURFACE`] opacity uniform without switching
-//! pipelines mid-round; at full opacity they look opaque.
+//! the instance opacity without switching pipelines mid-round; at full opacity
+//! they look opaque.
 
 use std::sync::Arc;
 
-use super::effects_props::PICKUP_SURFACE;
 use super::model_primitives::Cache;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
-use crate::scene::{Color, Effect, Material, Node, TextureRef, Wrap};
-use crate::sim::ammunition::is_special_ammo;
+use crate::scene::{Color, Material, Node, TextureRef, Wrap};
 use crate::sim::types::PickupKind;
 
 /// `PICKUP_ATLAS_TILES[kind]`: (column, row) of the kind's pictogram.
@@ -83,10 +81,6 @@ fn hardware_material() -> Arc<Material> {
         roughness: 0.55,
         metalness: 0.5,
         transparent: true,
-        effect: Effect::Custom {
-            name: PICKUP_SURFACE,
-            params: Vec::new(),
-        },
         ..Material::default()
     })
 }
@@ -109,10 +103,6 @@ fn face_material() -> Arc<Material> {
             emissive_intensity: FACE_EMISSIVE_INTENSITY,
             tone_mapped: false,
             transparent: true,
-            effect: Effect::Custom {
-                name: PICKUP_SURFACE,
-                params: Vec::new(),
-            },
             ..Material::default()
         }
     })
@@ -121,7 +111,7 @@ fn face_material() -> Arc<Material> {
 /// `faceGeometry(kind)`: the crate or cube with every face showing the kind's tile.
 fn face_geometry(kind: PickupKind) -> Arc<Mesh> {
     FACES.get_or_insert(kind, || {
-        let mut mesh = if is_special_ammo(kind) {
+        let mut mesh = if kind.special_ammo().is_some() {
             box_geometry(1.8, 1.05, 1.2)
         } else {
             box_geometry(1.25, 1.25, 1.25)
@@ -146,7 +136,7 @@ fn caster(mesh: Arc<Mesh>, material: Arc<Material>) -> Node {
 /// and its hardware for ammo. Presentation spins and bobs it (TS `userData.gem`).
 pub fn pickup_cube(kind: PickupKind) -> Node {
     let body = caster(face_geometry(kind), face_material());
-    if !is_special_ammo(kind) {
+    if kind.special_ammo().is_none() {
         return body;
     }
     let mut crate_group = Node::default();

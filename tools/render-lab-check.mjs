@@ -7,11 +7,11 @@
 //   RENDER_LAB_URL=http://127.0.0.1:5190/sloppy-tanks/tools/render-lab.html node tools/render-lab-check.mjs
 // Screenshots and the report go to artifacts/performance/render-lab/. With the
 // references, the mean error of each pose must stay within `RENDER_LAB_TOLERANCE`
-// (default 1.0 of 255) of the Three.js frames; the last calibration measured 0.15–0.25.
+// (default 1.0 of 255) of the Three.js frames.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { launchGame } from "../scripts/browser-helpers.mjs";
+import { launchLab, meanError, openLab, shoot, within } from "./lab-check.mjs";
 
 const url =
   process.env.RENDER_LAB_URL ?? "http://127.0.0.1:5190/sloppy-tanks/tools/render-lab.html";
@@ -20,24 +20,8 @@ const REFERENCE_TIME = "1.25";
 const tolerance = Number(process.env.RENDER_LAB_TOLERANCE ?? 1);
 const output = fileURLToPath(new URL("../artifacts/performance/render-lab/", import.meta.url));
 await mkdir(output, { recursive: true });
-const { browser, page, errors } = await launchGame({
-  viewport: { width: 2000, height: 1100 },
-  consoleErrors: true,
-});
+const { browser, page, errors } = await launchLab();
 const report = {};
-const shoot = async (name) => {
-  for (const id of ["rust", "reference", "diff"]) {
-    await page.locator(`#${id}`).screenshot({ path: `${output}${name}-${id}.png` });
-  }
-};
-const within = (comparison, name) => {
-  if (comparison.reference) {
-    assert.ok(
-      comparison.meanAbsDiff <= tolerance,
-      `${name}: mean |Δ| ${comparison.meanAbsDiff} exceeds ${tolerance} against the reference`,
-    );
-  }
-};
 try {
   // The lab engine's Wasm memory, to grow it by hand.
   await page.addInitScript(() => {
@@ -50,27 +34,22 @@ try {
       };
     }
   });
-  await page.goto(`${url}?freeze=${REFERENCE_TIME}`);
-  await page.waitForFunction(() => ["ready", "error"].includes(document.body.dataset.state), null, {
-    timeout: 90000,
-  });
-  const state = await page.locator("body").getAttribute("data-state");
-  assert.equal(state, "ready", await page.locator("#status").textContent());
+  await openLab(page, `${url}?freeze=${REFERENCE_TIME}`);
   report.comparison = await page.evaluate(() => window.renderLab.compare());
   report.stats = await page.evaluate(() => window.renderLab.stats());
-  within(report.comparison, "default");
-  await shoot("default");
+  within(report.comparison, "default", tolerance);
+  await shoot(page, output, "default");
   await page.screenshot({ path: `${output}page.png` });
   // The remaining references were captured with the second tank's turret turned.
   await page.evaluate(() => window.renderLab.poseJoint("tank", 1, "turret", 1.2));
   // The game's default overhead pose (zoom 34): shadows and PBR.
   report.overhead = await page.evaluate(() => window.renderLab.usePose("overhead"));
-  within(report.overhead, "overhead");
-  await shoot("overhead");
+  within(report.overhead, "overhead", tolerance);
+  await shoot(page, output, "overhead");
   // A close-up of the reflection, fog and effects from lower down.
   report.closeUp = await page.evaluate(() => window.renderLab.usePose("close"));
-  within(report.closeUp, "close-up");
-  await shoot("close");
+  within(report.closeUp, "close-up", tolerance);
+  await shoot(page, output, "close");
   // Looking away from the scene culls nearly everything.
   await page.evaluate(() => window.renderLab.setCamera([0, 9, 30], [0, 12, 80]));
   await page.evaluate(() => window.renderLab.compare());
@@ -78,8 +57,8 @@ try {
   assert.ok(report.culled.drawCalls < report.stats.drawCalls / 2, "frustum culling drops draws");
   // Resizing replaces the attachments; the image stays matched.
   report.resized = await page.evaluate(() => window.renderLab.usePose("resized"));
-  within(report.resized, "resized");
-  await shoot("resized");
+  within(report.resized, "resized", tolerance);
+  await shoot(page, output, "resized");
   await page.evaluate(() => window.renderLab.usePose("default"));
   // Fading uses the pre-compiled blended variant; no pipeline compiles late.
   await page.evaluate(() => window.renderLab.setOpacity("hull", 0.5));
@@ -143,11 +122,9 @@ try {
   assert.deepEqual(report.textureFailures, []);
   assert.equal(report.gpuError, null);
   assert.deepEqual(errors, []);
-  const error = (comparison) =>
-    comparison.reference ? comparison.meanAbsDiff.toFixed(2) : "no reference";
   console.log(
-    `PASS: mean |Δ| vs Three.js ${error(report.comparison)} (close-up ${error(report.closeUp)}), ` +
-      `overhead ${error(report.overhead)}, resized ${error(report.resized)}; ` +
+    `PASS: mean |Δ| vs Three.js ${meanError(report.comparison)} (close-up ${meanError(report.closeUp)}), ` +
+      `overhead ${meanError(report.overhead)}, resized ${meanError(report.resized)}; ` +
       `${report.stats.drawCalls} draws (${report.culled.drawCalls} culled view), ${report.stats.pipelines} pipelines. ` +
       `Report: ${output}report.json`,
   );

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
 
 // Deliberate allowlist: do not publish source directories or Node-only test runners.
@@ -48,10 +47,14 @@ export function devSite(): Plugin {
       },
     },
     generateBundle() {
+      // Vite content-hashes every file in /assets/, so Cloudflare Pages may cache those for
+      // good; HTML and unversioned public files keep its default revalidation.
       this.emitFile({
         type: "asset",
         fileName: "_headers",
-        source: `${readFileSync("public/_headers", "utf8")}\n/*\n  X-Robots-Tag: noindex, nofollow\n`,
+        source:
+          "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n" +
+          "/*\n  X-Robots-Tag: noindex, nofollow\n",
       });
     },
   };

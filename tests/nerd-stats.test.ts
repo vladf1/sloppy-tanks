@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NerdStats, engineStatsSections, nerdStatsShown } from "../src/game/nerd-stats";
+import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
 import type { EngineStats } from "../src/game/engine-api";
+import { debugPage } from "../src/game/map-options";
 import { networkStatsSections, type NetworkStatsSource } from "../src/net/network-stats";
 
 type Listener = () => void;
@@ -83,8 +84,8 @@ function fixture(network = false) {
   };
   Object.defineProperty(globalThis, "window", { value: win, configurable: true });
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
-  const room: NetworkStatsSource = {
+  // The renderer's counters, which a room and single player report alike.
+  const render = {
     graphicsApi: "WebGPU",
     drawCalls: 42,
     triangles: 628263,
@@ -93,6 +94,10 @@ function fixture(network = false) {
     mainTriangles: 193912,
     meshes: 9,
     textures: 11,
+  };
+  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
+  const room: NetworkStatsSource = {
+    ...render,
     scene: {
       tanks: 3,
       alive: 2,
@@ -117,9 +122,6 @@ function fixture(network = false) {
       lateBatches: 3,
       longestBatchGapMs: 412.4,
       predictionLeadMs: 120,
-      corrections: 40,
-      correctionTotalM: 0.8,
-      correctionMaxM: 0.12,
       correctionMPerS: 0.04,
       correctionP95M: 0.03,
       inputStarts: 25,
@@ -132,14 +134,7 @@ function fixture(network = false) {
     dynamicBodies: 4,
     sleepingBodies: 1,
     colliders: 4,
-    graphicsApi: "WebGPU",
-    drawCalls: 42,
-    triangles: 628263,
-    shadowTriangles: 241429,
-    reflectionTriangles: 192922,
-    mainTriangles: 193912,
-    meshes: 9,
-    textures: 11,
+    ...render,
     gpuBytes: 412.3 * 1048576,
     meshSlackBytes: 12.5 * 1048576,
     tanks: 3,
@@ -351,8 +346,8 @@ test("the panel's corner button closes it, and only an open panel", () => {
 });
 
 test("the panel is offered on a ?debug page only", () => {
-  assert.equal(nerdStatsShown(""), false);
-  assert.equal(nerdStatsShown("?multiplayer&room=ABCD2345"), false);
-  assert.equal(nerdStatsShown("?debug"), true);
-  assert.equal(nerdStatsShown("?room=ABCD2345&debug"), true);
+  assert.equal(debugPage(""), false);
+  assert.equal(debugPage("?multiplayer&room=ABCD2345"), false);
+  assert.equal(debugPage("?debug"), true);
+  assert.equal(debugPage("?room=ABCD2345&debug"), true);
 });

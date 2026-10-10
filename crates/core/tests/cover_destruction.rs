@@ -15,15 +15,11 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::{
     Cover, CoverKind, FragmentShape, Shot, SimEventType, Simulation, Team, Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, cover_at, event_count};
 
 /// The damage stage the renderer draws for `cover`.
 fn stage(cover: &Cover) -> u32 {
     cover_damage_stage(cover.kind, cover.hp, cover.max_hp)
-}
-
-fn at(cover: &Cover) -> Vec2 {
-    Vec2::new(cover.x, cover.z)
 }
 
 /// A shell from x = -3 heading east into a 10 m concrete wall at the origin.
@@ -105,14 +101,7 @@ fn only_ricochet_ammo_reflects_off_surviving_cover() {
             assert!(s.shots[0].vx < 0.0);
         } else {
             assert_eq!(s.shots.len(), 0, "{kind:?}");
-            assert_eq!(
-                s.events
-                    .iter()
-                    .filter(|e| e.kind == SimEventType::Ricochet)
-                    .count(),
-                0,
-                "{kind:?}"
-            );
+            assert_eq!(event_count(&s, SimEventType::Ricochet), 0, "{kind:?}");
         }
     }
 }
@@ -135,13 +124,13 @@ fn tower_collapse_opens_center_route_and_retains_side_rubble() {
         .iter()
         .position(|c| c.kind == CoverKind::Tower)
         .unwrap();
-    let place = at(&s.covers[tower]);
-    let before = s.nav.blocked[s.nav.index(place)];
+    let place = cover_at(&s, tower);
+    let before = s.nav.is_blocked(place);
     let version = s.nav.version;
     let (id, team) = (s.human().id, s.human_team);
     s.damage_cover(tower, 999.0, id, team, None, None);
-    assert_eq!(before, 1);
-    assert_eq!(s.nav.blocked[s.nav.index(place)], 0);
+    assert!(before);
+    assert!(!s.nav.is_blocked(place));
     assert!(s.nav.version > version);
     assert_eq!(
         s.covers
@@ -174,16 +163,12 @@ fn destroyed_village_cover_opens_routes_except_rooted_stumps_while_all_spawns_re
             })
             .unwrap_or_else(|| panic!("{kind:?} exists"));
         assert!(s.covers[c].destructible);
-        let place = at(&s.covers[c]);
-        assert_eq!(s.nav.blocked[s.nav.index(place)], 1, "{kind:?}");
+        let place = cover_at(&s, c);
+        assert!(s.nav.is_blocked(place), "{kind:?}");
         let (id, team) = (s.human().id, s.human_team);
         s.damage_cover(c, 1000.0, id, team, None, None);
         assert!(!s.covers[c].alive);
-        assert_eq!(
-            s.nav.blocked[s.nav.index(place)],
-            if kind == CoverKind::Tree { 1 } else { 0 },
-            "{kind:?}"
-        );
+        assert_eq!(s.nav.is_blocked(place), kind == CoverKind::Tree, "{kind:?}");
     }
     for team in [Team::Blue, Team::Red] {
         for p in spawn_positions(team, 1.0) {
@@ -212,10 +197,10 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
         .position(|c| c.kind == CoverKind::Container)
         .unwrap();
     let handle = sim.covers[cargo].collider;
-    let cargo_at = at(&sim.covers[cargo]);
+    let cargo_at = cover_at(&sim, cargo);
     let (id, team) = (sim.human().id, sim.human_team);
     assert_eq!(stage(&sim.covers[cargo]), 0);
-    assert_eq!(sim.nav.blocked[sim.nav.index(cargo_at)], 1);
+    assert!(sim.nav.is_blocked(cargo_at));
     sim.damage_cover(cargo, 40.0, id, team, None, None);
     assert!(sim.covers[cargo].alive);
     assert_eq!(stage(&sim.covers[cargo]), 1);
@@ -226,20 +211,19 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
         sim.cover_by_collider.contains_key(&handle),
         "damaged crates still stop shells"
     );
-    assert_eq!(
-        sim.nav.blocked[sim.nav.index(cargo_at)],
-        1,
+    assert!(
+        sim.nav.is_blocked(cargo_at),
         "damage does not open the route early"
     );
     sim.damage_cover(cargo, 20.0, id, team, None, None);
     assert!(!sim.covers[cargo].alive);
     assert!(!sim.cover_by_collider.contains_key(&handle));
-    assert_eq!(sim.nav.blocked[sim.nav.index(cargo_at)], 0);
+    assert!(!sim.nav.is_blocked(cargo_at));
     assert!(sim.fragments.iter().any(|f| {
         f.shape == Some(FragmentShape::Panel) && f.material == Some(DebrisMaterial::Wood)
     }));
     sim.damage_cover(container, 10000.0, id, team, None, None);
     assert!(sim.covers[container].alive);
-    let container_at = at(&sim.covers[container]);
-    assert_eq!(sim.nav.blocked[sim.nav.index(container_at)], 1);
+    let container_at = cover_at(&sim, container);
+    assert!(sim.nav.is_blocked(container_at));
 }

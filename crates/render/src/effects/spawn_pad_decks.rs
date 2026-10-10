@@ -334,11 +334,6 @@ impl SpawnPadDecks {
         }
     }
 
-    /// The top of the highest pad deck under `(x, z)`, or `None` off every pad.
-    pub fn top(&self, x: f64, z: f64) -> Option<f64> {
-        self.top_within(x, z, 0.0)
-    }
-
     /// The top of the highest pad deck within `radius` of `(x, z)`: what a mine
     /// of that radius, or a ring spreading that far, has to clear.
     pub fn top_within(&self, x: f64, z: f64, radius: f64) -> Option<f64> {
@@ -540,12 +535,13 @@ pub(crate) mod tests {
     fn open_ground_keeps_its_decal_height() {
         for theme in ["village", "harbor", "quarry", "stress-test"] {
             let decks = SpawnPadDecks::new(theme, 1.0);
+            let top = |x, z| decks.top_within(x, z, 0.0);
             for (x, z) in [(0.0, 0.0), (-40.0, -23.0), (53.0, 11.5), (-53.0, 30.0)] {
-                assert_eq!(decks.top(x, z), None, "{theme} {x} {z}");
+                assert_eq!(top(x, z), None, "{theme} {x} {z}");
                 assert_eq!(decks.decal_height(x, z, 0.0, 0.075), 0.075);
             }
-            assert!(decks.top(-53.0, -23.0).is_some(), "{theme} pad centre");
-            assert!(decks.top(53.0, 46.0).is_some(), "{theme} red pad");
+            assert!(top(-53.0, -23.0).is_some(), "{theme} pad centre");
+            assert!(top(53.0, 46.0).is_some(), "{theme} red pad");
         }
     }
 
@@ -553,7 +549,7 @@ pub(crate) mod tests {
     fn a_radius_reaches_the_pad_from_beside_it() {
         let decks = SpawnPadDecks::new("village", 1.0);
         // Five metres in front of a blue pad: past its chevrons.
-        assert_eq!(decks.top(-48.0, 0.0), None);
+        assert_eq!(decks.top_within(-48.0, 0.0, 0.0), None);
         assert_eq!(decks.top_within(-48.0, 0.0, 1.2), Some(0.09));
         assert!(decks.top_within(-48.0, 0.0, 3.5).unwrap() > 0.2);
     }

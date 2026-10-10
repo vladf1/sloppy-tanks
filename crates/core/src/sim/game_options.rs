@@ -18,20 +18,14 @@ pub struct GameOptions {
     pub difficulty: Difficulty,
 }
 
-/// A link's `?map=` wins; otherwise the player's last map is the one prepared behind the
-/// menu, so a returning player's GO needs no rebuild. Extra levels are offered only with
-/// `?debug`.
+/// The page requests a link's `?map=`, or else the player's last map, so a returning
+/// player's GO needs no rebuild. Extra levels are offered only with `?debug`.
 pub fn initial_game_options(
     seed: f64,
     requested_map: Option<&str>,
     extra_levels: bool,
     difficulty: Option<&str>,
-    last_map: Option<&str>,
 ) -> GameOptions {
-    let map = |id: Option<&str>| {
-        id.and_then(MapId::parse)
-            .filter(|&option| extra_levels || !is_extra_level(option))
-    };
     GameOptions {
         human_kind: VehicleKind::Balanced,
         human_team: if Random::new(seed).next() < 0.5 {
@@ -40,8 +34,9 @@ pub fn initial_game_options(
             Team::Red
         },
         game_mode: GameMode::Team,
-        map_mode: map(requested_map)
-            .or_else(|| map(last_map))
+        map_mode: requested_map
+            .and_then(MapId::parse)
+            .filter(|&option| extra_levels || !is_extra_level(option))
             .unwrap_or(MapId::Village),
         difficulty: parse_difficulty(difficulty),
     }

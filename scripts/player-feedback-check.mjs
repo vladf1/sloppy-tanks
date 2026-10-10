@@ -2,13 +2,8 @@
 // Fixture screenshots prove presentation only; they do not represent network combat.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { gameUrl } from "./browser-helpers.mjs";
-import {
-  click,
-  launchChrome,
-  openMultiplayerTab,
-  recordRoomFrames,
-} from "./multiplayer-helpers.mjs";
+import { click, collectErrors, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { openMultiplayerTab, recordRoomFrames } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/player-ux";
 await mkdir(output, { recursive: true });
@@ -20,11 +15,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errors = [];
 const room = recordRoomFrames(page, errors);
 const checks = [];
-page.on("pageerror", (error) => errors.push(error.message));
-page.on("console", (message) => {
-  if (message.type() === "error" && !message.location().url.endsWith("/favicon.ico"))
-    errors.push(message.text());
-});
+collectErrors(page, errors, { consoleErrors: true });
 try {
   await page.goto(url.href);
   await openMultiplayerTab(page);
@@ -65,8 +56,22 @@ try {
     ui.event = () => {};
     window.playerFeedbackFixture = {
       base,
-      update,
-      event,
+      /** Show an event about the player, then the HUD it left. */
+      announce(hud, fields) {
+        event(
+          {
+            id: hud.human.id,
+            x: 0,
+            z: 0,
+            own: true,
+            playerHit: false,
+            damageAngle: null,
+            ...fields,
+          },
+          hud,
+        );
+        update(hud, 0, true);
+      },
       restore() {
         ui.update = update;
         ui.event = event;
@@ -128,21 +133,12 @@ try {
     Object.assign(hud.human, { alive: false, hp: 0, healthRatio: 0, respawn: 2.4 });
     const owner = Math.max(...hud.scoreboard.map((tank) => tank.id)) + 1;
     hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", team: 1, kills: 1, deaths: 0 });
-    fixture.event(
-      {
-        type: "death",
-        id: hud.human.id,
-        owner,
-        x: 0,
-        z: 0,
-        own: true,
-        playerHit: false,
-        damageAngle: Math.PI / 3,
-        damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
-      },
-      hud,
-    );
-    fixture.update(hud, 0, true);
+    fixture.announce(hud, {
+      type: "death",
+      owner,
+      damageAngle: Math.PI / 3,
+      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
+    });
     fixture.dead = hud;
   });
   assert.equal(await page.locator("#network-respawn").isVisible(), true);
@@ -164,21 +160,11 @@ try {
     const killer = hud.scoreboard.at(-1);
     killer.name = "Iron Badger";
     window.sloppyMultiplayer.ui.resetFeedback();
-    fixture.event(
-      {
-        type: "death",
-        id: hud.human.id,
-        owner: killer.id,
-        x: 0,
-        z: 0,
-        own: true,
-        playerHit: false,
-        damageAngle: null,
-        damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
-      },
-      hud,
-    );
-    fixture.update(hud, 0, true);
+    fixture.announce(hud, {
+      type: "death",
+      owner: killer.id,
+      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
+    });
   });
   await page.screenshot({
     path: `${output}/multiplayer-fixture-death.png`,
@@ -190,20 +176,7 @@ try {
 
   await page.evaluate(() => {
     const fixture = window.playerFeedbackFixture;
-    const hud = fixture.base;
-    fixture.event(
-      {
-        type: "respawn",
-        id: hud.human.id,
-        x: 0,
-        z: 0,
-        own: true,
-        playerHit: false,
-        damageAngle: null,
-      },
-      hud,
-    );
-    fixture.update(hud, 0, true);
+    fixture.announce(fixture.base, { type: "respawn" });
   });
   assert.equal(await page.locator("#network-respawn").isVisible(), false);
   assert.equal(await page.locator("#network-death-cause").textContent(), "");
@@ -216,21 +189,12 @@ try {
 
   await page.evaluate(() => {
     const fixture = window.playerFeedbackFixture;
-    fixture.event(
-      {
-        type: "death",
-        id: fixture.dead.human.id,
-        owner: fixture.dead.human.id,
-        x: 0,
-        z: 0,
-        own: true,
-        playerHit: false,
-        damageAngle: 0,
-        damageSource: { cause: "mine", origin: { x: 0, z: 0 } },
-      },
-      fixture.dead,
-    );
-    fixture.update(fixture.dead, 0, true);
+    fixture.announce(fixture.dead, {
+      type: "death",
+      owner: fixture.dead.human.id,
+      damageAngle: 0,
+      damageSource: { cause: "mine", origin: { x: 0, z: 0 } },
+    });
   });
   assert.equal(
     await page.locator("#network-death-cause").textContent(),

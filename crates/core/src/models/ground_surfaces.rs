@@ -8,39 +8,28 @@ use super::village_roads::ROAD_SHOULDER;
 
 pub use crate::sim::maps::GroundKind;
 
-/// The ground albedo tile of a floor kind under `public/`.
-pub fn ground_texture_path(kind: GroundKind) -> &'static str {
-    match kind {
-        GroundKind::DryGrass => "textures/ground/dry-grass.webp",
-        GroundKind::PackedDirt => "textures/ground/packed-dirt.webp",
-    }
-}
-
 /// World metres per ground texture tile.
 const GROUND_TILE: f64 = 8.0;
 /// Ground maps ask for 4x anisotropy (`Math.min(4, renderer.getMaxAnisotropy())`);
 /// the renderer clamps to the adapter's limit.
 const GROUND_ANISOTROPY: u8 = 4;
 
-/// The ground albedo tile. Mirroring joins the generated edges without relying on
-/// perfect AI tiling; mipmaps keep distant ground stable and cheap.
-pub fn ground_texture(kind: GroundKind) -> TextureRef {
-    TextureRef {
+/// `groundMaterial(renderer, kind)`: a new (unshared) material, since callers tint
+/// or blend it; the texture is shared by value. The albedo tile mirrors, which
+/// joins the generated edges without relying on perfect AI tiling; mipmaps keep
+/// distant ground stable and cheap.
+pub fn ground_material(kind: GroundKind) -> Material {
+    let (path, color) = match kind {
+        GroundKind::DryGrass => ("textures/ground/dry-grass.webp", 0xe2e8d5),
+        GroundKind::PackedDirt => ("textures/ground/packed-dirt.webp", 0xe5dbcc),
+    };
+    let map = TextureRef {
         wrap: Wrap::Mirror,
         anisotropy: GROUND_ANISOTROPY,
-        ..TextureRef::file(ground_texture_path(kind))
-    }
-}
-
-/// `groundMaterial(renderer, kind)`: a new (unshared) material, since callers tint
-/// or blend it; the texture is shared by value.
-pub fn ground_material(kind: GroundKind) -> Material {
-    let color = match kind {
-        GroundKind::DryGrass => 0xe2e8d5,
-        GroundKind::PackedDirt => 0xe5dbcc,
+        ..TextureRef::file(path)
     };
     Material {
-        map: Some(ground_texture(kind)),
+        map: Some(map),
         ..Material::standard(color, 0.0, 1.0)
     }
 }

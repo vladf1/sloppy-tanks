@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use http_body::{Body, Frame};
+use hyper::body::{Body, Frame};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -165,20 +165,19 @@ impl Dashboard {
         public["hostLoad"] = json!((process_stats::load_average() * 100.0).round() / 100.0);
         public["hostMemoryUsedMB"] =
             json!((total_memory.saturating_sub(free_memory) + MB / 2) / MB);
-        let mut message = public.clone();
-        message["events"] = Value::Array(events);
-        self.latest = Some(public);
-        if viewers == 0 {
-            return;
+        if viewers > 0 {
+            let mut message = public.clone();
+            message["events"] = Value::Array(events);
+            let message = frame("reading", &message);
+            self.viewers.retain(|viewer| {
+                if viewer.backlog.load(Ordering::Relaxed) > MAX_VIEWER_BACKLOG_BYTES {
+                    return false;
+                }
+                viewer.backlog.fetch_add(message.len(), Ordering::Relaxed);
+                viewer.sender.send(message.clone()).is_ok()
+            });
         }
-        let message = frame("reading", &message);
-        self.viewers.retain(|viewer| {
-            if viewer.backlog.load(Ordering::Relaxed) > MAX_VIEWER_BACKLOG_BYTES {
-                return false;
-            }
-            viewer.backlog.fetch_add(message.len(), Ordering::Relaxed);
-            viewer.sender.send(message.clone()).is_ok()
-        });
+        self.latest = Some(public);
     }
 }
 
@@ -196,14 +195,11 @@ impl Body for EventStream {
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
-        match self.receiver.poll_recv(context) {
-            Poll::Ready(Some(bytes)) => {
-                self.backlog.fetch_sub(bytes.len(), Ordering::Relaxed);
-                Poll::Ready(Some(Ok(Frame::data(bytes))))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
+        self.receiver.poll_recv(context).map(|bytes| {
+            let bytes = bytes?;
+            self.backlog.fetch_sub(bytes.len(), Ordering::Relaxed);
+            Some(Ok(Frame::data(bytes)))
+        })
     }
 }
 

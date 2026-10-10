@@ -1,6 +1,6 @@
 import type { Difficulty, GameMode, Team, VehicleKind } from "./engine-api";
-import { isExtraLevel, mapOption, showsExtraLevels, type MapId } from "./map-options";
-import { bindMapChoice, setMapChoice } from "./map-picker";
+import { debugPage, isExtraLevel, mapOption, type MapId } from "./map-options";
+import { bindMapChoice, checkRadio, setMapChoice } from "./map-picker";
 import {
   preferredGameMode,
   preferredTank,
@@ -42,7 +42,7 @@ export function initialGameOptions(
   lastGameMode: string | null = null,
 ): GameOptions {
   const requestedMap = new URLSearchParams(search).get("map");
-  const extraLevels = showsExtraLevels(search);
+  const extraLevels = debugPage(search);
   const map = (id: string | null) => {
     const option = mapOption(id);
     return option && (extraLevels || !isExtraLevel(option.id)) ? option.id : undefined;
@@ -83,11 +83,9 @@ export function sameGameOptions(a: GameOptions, b: GameOptions): boolean {
 export function syncGameOptions(overlay: HTMLElement, options: GameOptions): void {
   showTank(overlay, options.humanKind);
   for (const key of ["gameMode", "difficulty"] as const) {
-    overlay.querySelectorAll<HTMLInputElement>(`input[name="${key}"]`).forEach((input) => {
-      input.checked = input.value === options[key];
-    });
+    checkRadio(overlay, key, options[key]);
   }
-  setMapChoice(overlay, "mapMode", options.mapMode);
+  setMapChoice(overlay, options.mapMode);
   showBattleFormat(overlay, options.mapMode);
   showTankTeam(overlay, options.humanTeam);
 }
@@ -165,7 +163,7 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
     });
   }
   // Runs before the menu's own change listeners, which the event reaches as it bubbles.
-  bindMapChoice(overlay, "mapMode", (value) => {
+  bindMapChoice(overlay, (value) => {
     const mapMode = mapOption(value)?.id;
     if (!mapMode) {
       return;
@@ -173,9 +171,7 @@ export function bindGameOptions(overlay: HTMLElement, options: GameOptions): voi
     options.mapMode = mapMode;
     savePreference("map", mapMode);
     options.gameMode = isExtraLevel(mapMode) ? "team" : standardGameMode;
-    overlay.querySelectorAll<HTMLInputElement>('input[name="gameMode"]').forEach((input) => {
-      input.checked = input.value === options.gameMode;
-    });
+    checkRadio(overlay, "gameMode", options.gameMode);
     showBattleFormat(overlay, mapMode);
   });
 }

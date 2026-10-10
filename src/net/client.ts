@@ -1,18 +1,24 @@
-import { createNetGame, engineModule, loadEngine, type NetGame } from "../engine";
+import { createNetGame, engineModule, loadEngine, throwGpuError, type NetGame } from "../engine";
 import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { savedVolume } from "../game/settings-dialog";
 import { saveCameraPreferences, savePreference, startingCamera } from "../game/player-preferences";
-import { TouchModeController, type TouchState } from "../game/touch-mode";
-import { returnToSetup, type JoinScreen } from "../game/join-screen";
-import { nextPrepareStep } from "../game/task-yield";
+import { TouchModeController } from "../game/touch-mode";
+import { returnToSetup, roomAddress, type JoinScreen } from "../game/join-screen";
+import { PREPARE_BUDGET, nextPrepareStep } from "../game/task-yield";
 import { startTextureBake } from "../game/texture-bake";
-import { INPUT, type MatchState as Match } from "../game/engine-api";
-import { debugPage, printDebugHelp } from "../game/debug-console";
-import { NerdStats, nerdStatsShown } from "../game/nerd-stats";
+import {
+  INPUT,
+  type EngineEvent,
+  type EventBatch,
+  type MatchState as Match,
+} from "../game/engine-api";
+import { printDebugHelp } from "../game/debug-console";
+import { debugPage } from "../game/map-options";
+import { NerdStats } from "../game/nerd-stats";
 import { WireLog } from "./wire-log";
-import { NetworkUI, type Hud, type HudEvent } from "./network-ui";
+import { NetworkUI, type Hud } from "./network-ui";
 import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
 import {
   ROOM_CODE,
@@ -22,11 +28,10 @@ import {
   type Lobby,
 } from "./room-protocol";
 import { serverAddress } from "./server-address";
-import { roomAddress, takePendingJoin, type RoomSelection } from "./pending-join";
+import { takePendingJoin, type RoomSelection } from "./pending-join";
 
 /** `NetGame.frame` result slots (`net_frame_slot` in `crates/web/src/net_game.rs`). */
 const FRAME = {
-  phase: 0,
   cockpit: 2,
   hullAngle: 3,
   events: 4,
@@ -42,12 +47,8 @@ const FRAME = {
 const LATENCY_SLIDER_PARAM = "latencySlider";
 /** The engine asks for timers at least this often (heartbeat, reconnect, dev delay). */
 const POLL_MS = 250;
-/** How often, in frames, to ask the engine for a recorded GPU error. */
-const ERROR_CHECK_EVERY_FRAMES = 30;
 /** A socket this far behind on sends is closed and reconnected instead. */
 const MAX_BUFFERED_BYTES = 16_384;
-/** Pipelines compiled per task while preparing an arena. */
-const PREPARE_BUDGET = 4;
 /** Renderer resolution cap from the display pixel ratio (`CAMERA.max_pixel_ratio`). */
 const MAX_PIXEL_RATIO = 1.5;
 
@@ -65,11 +66,6 @@ type Notice =
   | { type: "result"; match: Match; team: number }
   | { type: "resetFeedback" | "clearInput" | "reveal" | "prepare" | "baselineShown" }
   | { type: "arenaFailed"; error: string };
-interface DrainedEvents {
-  listener: { x: number; z: number };
-  listenerRight: { x: number; z: number };
-  events: HudEvent[];
-}
 
 /** Join the room chosen on Battle Setup. The room page builds out of sight and replaces
  * `setup` only once its arena can draw, so the arena's first stalled frames never show;
@@ -94,8 +90,7 @@ export async function startMultiplayer(
   }
   const address = serverAddress();
   if (!address) {
-    app.textContent =
-      "Multiplayer isn't enabled on this site yet. Open the development site to play with friends.";
+    app.textContent = "This site has no multiplayer server.";
     return;
   }
   if (selection) {
@@ -188,11 +183,7 @@ export async function startMultiplayer(
     },
     volume(value) {
       audio.volume(value);
-      try {
-        localStorage.setItem("sloppy-volume", String(value));
-      } catch {
-        /* Optional preference. */
-      }
+      savePreference("volume", String(value));
     },
   });
   const cssSize = (): [number, number] => {
@@ -243,7 +234,7 @@ export async function startMultiplayer(
   const input = new Float32Array(INPUT.length);
   const sockets = new Map<number, WebSocket>();
   /** Checks can observe displayed events (dev builds only). */
-  let onEvent: ((event: HudEvent) => void) | undefined;
+  let onEvent: ((event: EngineEvent) => void) | undefined;
   const activeInput = () => game.active_input();
   function pause(): void {
     if (joining || !game.pause(performance.now())) {
@@ -277,17 +268,10 @@ export async function startMultiplayer(
   const touch = new TouchModeController(
     root,
     controls,
-    {
-      get human() {
-        return { mineCooldown: hud?.human.mineCooldown ?? 0 };
-      },
-      get match(): TouchState["match"] {
-        return { phase: ui.menu ? "paused" : phase === "playing" ? "playing" : "ready" };
-      },
-    },
+    () => hud?.human.mineCooldown ?? 0,
     (amount) => (zoom += amount),
   );
-  const stats = nerdStatsShown(location.search)
+  const stats = debugPage(location.search)
     ? new NerdStats(
         root,
         networkStatsSections(
@@ -479,12 +463,11 @@ export async function startMultiplayer(
   }
   const resize = () => {
     const [width, height] = cssSize();
-    game.resize(width, height, devicePixelRatio, false);
+    game.resize(width, height, devicePixelRatio);
   };
-  const route = (drained: DrainedEvents) => {
-    audio.listenerRight = drained.listenerRight;
+  const route = (drained: EventBatch) => {
+    audio.play(drained);
     for (const event of drained.events) {
-      audio.event(event, drained.listener, event.playerHit, event.own);
       if (hud) {
         ui.event(event, hud);
       }
@@ -524,13 +507,7 @@ export async function startMultiplayer(
       if (input[INPUT.zoom] !== 0 || input[INPUT.toggleView] !== 0) {
         saveCameraPreferences(game);
       }
-      // Most GPU errors arrive asynchronously, so the engine records them for polling.
-      if (frames++ % ERROR_CHECK_EVERY_FRAMES === 0) {
-        const error = game.error();
-        if (error) {
-          throw new Error(error);
-        }
-      }
+      throwGpuError(game, frames++);
     } catch (error) {
       fail(error);
       return;
@@ -548,7 +525,7 @@ export async function startMultiplayer(
         hud = (JSON.parse(game.hud_json()) as Hud | null) ?? hud;
       }
       if (result[FRAME.events] > 0) {
-        route(JSON.parse(game.drain_events()) as DrainedEvents);
+        route(JSON.parse(game.drain_events()) as EventBatch);
       }
       if (hud && result[FRAME.hudDue]) {
         ui.update(hud, hudDt, game.connected());
@@ -624,13 +601,11 @@ export async function startMultiplayer(
         get hud() {
           return hud;
         },
-        set onEvent(listener: ((event: HudEvent) => void) | undefined) {
+        set onEvent(listener: ((event: EngineEvent) => void) | undefined) {
           onEvent = listener;
         },
         controls,
         ui,
-        pause,
-        resume,
       },
     });
     if (params.has(LATENCY_SLIDER_PARAM)) {

@@ -16,6 +16,7 @@ use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::json::{self, ObjectWriter};
 use super::multiplayer_simulation::set_driver;
 use super::schema::MAX_SAFE_INTEGER;
+use crate::sim::ammunition::AMMO_ORDER;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{AmmoSelection, Driver, VehicleCommand, Weapon};
 
@@ -29,14 +30,6 @@ pub const MAX_INPUT_LEAD_TICKS: u64 = 30;
 const MAX_WAITING_INPUTS: usize = MAX_INPUTS_PER_SECOND as usize;
 const MAX_AIM_COORDINATE: f64 = 1024.0;
 const MAX_INPUTS_PER_SECOND: u32 = 60;
-/// Weapons a player may select (the TOW is bot-only).
-pub const PLAYER_WEAPONS: [(&str, Weapon); 5] = [
-    ("standard", Weapon::Standard),
-    ("spread", Weapon::Spread),
-    ("rocket", Weapon::Rocket),
-    ("ricochet", Weapon::Ricochet),
-    ("piercing", Weapon::Piercing),
-];
 
 /// A one-shot action queued with held input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,10 +69,6 @@ impl ControlInput {
     }
 }
 
-fn rounded(value: f64, scale: f64) -> f64 {
-    json::wire_round(value, scale)
-}
-
 fn write_action(out: &mut String, action: Action) {
     let mut writer = ObjectWriter::new(out);
     match action {
@@ -103,28 +92,24 @@ pub fn encode_input(input: &ControlInput, round_id: u64) -> String {
             .string("type", "input")
             .int("roundId", round_id)
             .int("controlEpoch", input.control_epoch)
-            .number("moveX", rounded(input.move_x, json::VALUE_SCALE))
-            .number("moveZ", rounded(input.move_z, json::VALUE_SCALE))
+            .number("moveX", json::value(input.move_x))
+            .number("moveZ", json::value(input.move_z))
             .number("seq", input.seq as f64)
             .number("observedTick", input.observed_tick as f64);
         if let Some(tick) = input.tick {
             writer.int("tick", tick);
         }
-        let aim = writer.key("aim");
-        let mut aim_writer = ObjectWriter::new(aim);
-        match input.aim {
+        writer.nested("aim", |aim| match input.aim {
             Aim::Angle(angle) => {
-                let angle = rounded(angle, json::ROTATION_SCALE)
-                    .clamp(-std::f64::consts::PI, std::f64::consts::PI);
-                aim_writer.number("angle", angle);
+                let angle =
+                    json::rotation(angle).clamp(-std::f64::consts::PI, std::f64::consts::PI);
+                aim.number("angle", angle);
             }
             Aim::Point { x, z } => {
-                aim_writer
-                    .number("x", rounded(x, json::POSITION_SCALE))
-                    .number("z", rounded(z, json::POSITION_SCALE));
+                aim.number("x", json::position(x))
+                    .number("z", json::position(z));
             }
-        }
-        aim_writer.finish();
+        });
         if input.fire {
             writer.boolean("fire", true);
         }
@@ -169,10 +154,11 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
                     Some("mine") if action.len() == 1 => Some(Action::Mine),
                     Some("ammo") if action.len() == 2 => {
                         let weapon = action.get("weapon").and_then(Value::as_str)?;
-                        PLAYER_WEAPONS
-                            .iter()
-                            .find(|(name, _)| *name == weapon)
-                            .map(|(_, weapon)| Action::Ammo(*weapon))
+                        // Players select from AMMO_ORDER; the TOW is bot-only.
+                        AMMO_ORDER
+                            .into_iter()
+                            .find(|candidate| candidate.as_str() == weapon)
+                            .map(Action::Ammo)
                     }
                     _ => None,
                 }
@@ -305,14 +291,6 @@ impl PlayerControls {
         std::mem::take(&mut self.lapses)
     }
 
-    pub fn suspended(&self) -> bool {
-        self.suspended
-    }
-
-    fn tank_index(&self, simulation: &Simulation) -> Option<usize> {
-        simulation.tank_index(self.tank_id)
-    }
-
     /// Accepts one `input` message that arrived after tick `server_tick` was stepped, to
     /// drive from the next tick at the earliest. See [`accept_at`](Self::accept_at).
     pub fn accept(
@@ -335,8 +313,8 @@ impl PlayerControls {
         arrival_tick: u64,
         now_ms: f64,
     ) -> bool {
-        self.synchronize_life(simulation);
-        let Some(index) = self.tank_index(simulation) else {
+        self.refresh_life(simulation);
+        let Some(index) = simulation.tank_index(self.tank_id) else {
             return false;
         };
         let tank = &simulation.tanks[index];
@@ -404,11 +382,11 @@ impl PlayerControls {
         tick: u64,
         now_ms: f64,
     ) -> Option<VehicleCommand> {
-        self.synchronize_life(simulation);
+        self.refresh_life(simulation);
         if !self.suspended && now_ms - self.last_received_ms >= BOT_TAKEOVER_MS {
             self.suspend(simulation);
         }
-        let index = self.tank_index(simulation)?;
+        let index = simulation.tank_index(self.tank_id)?;
         let tank = &simulation.tanks[index];
         if self.suspended || tank.driver == Driver::Bot {
             return None;
@@ -479,7 +457,7 @@ impl PlayerControls {
             return;
         }
         self.suspended = true;
-        if let Some(index) = self.tank_index(simulation) {
+        if let Some(index) = simulation.tank_index(self.tank_id) {
             let driver = if self.bot_takeover {
                 Driver::Bot
             } else {
@@ -492,9 +470,9 @@ impl PlayerControls {
 
     /// Gives the tank back to the player under a new control epoch.
     pub fn resume(&mut self, simulation: &mut Simulation, now_ms: f64) {
-        self.synchronize_life(simulation);
+        self.refresh_life(simulation);
         self.suspended = false;
-        if let Some(index) = self.tank_index(simulation) {
+        if let Some(index) = simulation.tank_index(self.tank_id) {
             set_driver(simulation, index, Driver::Human).expect("controls drive a player tank");
         }
         self.last_received_ms = now_ms;
@@ -504,11 +482,7 @@ impl PlayerControls {
 
     /// Picks up post-step deaths and respawns before the next control epoch is published.
     pub fn refresh_life(&mut self, simulation: &Simulation) {
-        self.synchronize_life(simulation);
-    }
-
-    fn synchronize_life(&mut self, simulation: &Simulation) {
-        let Some(index) = self.tank_index(simulation) else {
+        let Some(index) = simulation.tank_index(self.tank_id) else {
             return;
         };
         let tank = &simulation.tanks[index];

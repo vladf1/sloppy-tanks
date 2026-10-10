@@ -91,7 +91,6 @@ fn heap_a_star_returns_exactly_the_routes_of_the_linear_scan_search_it_replaced(
     for layout in 0..12 {
         // Open ground has many equal-cost routes; scattered blocks and long walls force the
         // search to reopen cells through cheaper detours.
-        nav.blocked.fill(0);
         let density = 0.05 + layout as f64 * 0.03;
         for i in 0..cells {
             nav.blocked[i] = if random.next() < density { 1 } else { 0 };

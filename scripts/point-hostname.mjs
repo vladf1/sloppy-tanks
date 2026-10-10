@@ -111,13 +111,13 @@ async function main() {
   let ip;
   try {
     password = await ask.secret("Dynamic DNS password: ");
-    const answer = await ask.text(`IP [${server.ip ?? "none in the list"}]: `);
+    const answer = await ask.text(`IP [${server.ip}]: `);
     ip = answer || server.ip;
   } finally {
     ask.close();
   }
   if (!password) throw new Error("No password given");
-  if (isIP(ip ?? "") !== 4) throw new Error(`Not an IPv4 address: ${ip}`);
+  if (isIP(ip) !== 4) throw new Error(`Not an IPv4 address: ${ip}`);
 
   // The password goes in the query string, as Namecheap requires, so the URL is never printed.
   const url = new URL(UPDATE_URL);

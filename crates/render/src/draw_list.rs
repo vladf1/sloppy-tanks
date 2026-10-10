@@ -92,12 +92,6 @@ impl ViewDraws {
         self.opaque.clear();
         self.transparent.clear();
     }
-    pub fn len(&self) -> usize {
-        self.opaque.len() + self.transparent.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -338,30 +332,7 @@ impl DrawListBuilder {
         for (view, draws) in views.iter_mut().enumerate() {
             draws.clear();
             for item in sort_opaque(&mut opaque[view], buckets, order[view]) {
-                match item.source {
-                    Source::Range { first, count } => draws.opaque.push(Draw {
-                        class: item.class,
-                        first_instance: first,
-                        instance_count: count,
-                    }),
-                    Source::Record(index) => {
-                        let at = base + records.len() as u32;
-                        records.push(pending_records[index as usize]);
-                        match draws.opaque.last_mut() {
-                            Some(last)
-                                if last.class == item.class
-                                    && last.first_instance + last.instance_count == at =>
-                            {
-                                last.instance_count += 1;
-                            }
-                            _ => draws.opaque.push(Draw {
-                                class: item.class,
-                                first_instance: at,
-                                instance_count: 1,
-                            }),
-                        }
-                    }
-                }
+                emit(&mut draws.opaque, item, base, records, pending_records);
             }
             let transparent = &mut transparent[view];
             transparent.sort_unstable_by(|a, b| {
@@ -371,32 +342,43 @@ impl DrawListBuilder {
                     .then(a.class.cmp(&b.class))
             });
             for item in transparent.iter() {
-                let (first_instance, instance_count) = match item.source {
-                    Source::Range { first, count } => (first, count),
-                    Source::Record(index) => {
-                        records.push(pending_records[index as usize]);
-                        let at = base + records.len() as u32 - 1;
-                        // Neighbours in the sorted order that share a class draw as
-                        // one instanced call: instances rasterize in order, so the
-                        // blend order is unchanged (tank bars, pickup glows).
-                        if let Some(last) = draws.transparent.last_mut()
-                            && last.class == item.class
-                            && last.first_instance + last.instance_count == at
-                        {
-                            last.instance_count += 1;
-                            continue;
-                        }
-                        (at, 1)
-                    }
-                };
-                draws.transparent.push(Draw {
-                    class: item.class,
-                    first_instance,
-                    instance_count,
-                });
+                emit(&mut draws.transparent, item, base, records, pending_records);
             }
         }
     }
+}
+
+/// Append a sorted item's draw. A persistent range is a draw of its own; a record is
+/// copied to `records`, which start at `base` in the instance buffer, and neighbours
+/// in the sorted order that share a class draw as one instanced call: instances
+/// rasterize in order, so the blend order is unchanged (tank bars, pickup glows).
+fn emit(
+    draws: &mut Vec<Draw>,
+    item: &Item,
+    base: u32,
+    records: &mut Vec<InstanceRecord>,
+    pending: &[InstanceRecord],
+) {
+    let (first_instance, instance_count) = match item.source {
+        Source::Range { first, count } => (first, count),
+        Source::Record(index) => {
+            let at = base + records.len() as u32;
+            records.push(pending[index as usize]);
+            if let Some(last) = draws.last_mut()
+                && last.class == item.class
+                && last.first_instance + last.instance_count == at
+            {
+                last.instance_count += 1;
+                return;
+            }
+            (at, 1)
+        }
+    };
+    draws.push(Draw {
+        class: item.class,
+        first_instance,
+        instance_count,
+    });
 }
 
 /// Where an opaque item sorts within its render order: each class's records, then
@@ -799,7 +781,7 @@ mod tests {
         assert_eq!(draws, [(5, 2), (6, 1), (5, 1)]);
         builder.clear();
         finish(&mut builder, 0, &mut views, &orders(512, same_state));
-        assert!(views[MAIN_VIEW].is_empty());
+        assert!(views[MAIN_VIEW].opaque.is_empty() && views[MAIN_VIEW].transparent.is_empty());
     }
 
     #[test]

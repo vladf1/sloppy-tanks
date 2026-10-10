@@ -6,7 +6,6 @@ pub const MAX_FRAGMENTS: usize = 80;
 pub const FRAGMENT_CAPACITY: usize = 256;
 
 pub struct SimulationRules {
-    pub default_seed: f64,
     pub default_tank_count: usize,
     pub spawn_protection_seconds: f64,
     pub respawn_seconds: f64,
@@ -21,7 +20,6 @@ pub struct SimulationRules {
 }
 
 pub const SIMULATION_RULES: SimulationRules = SimulationRules {
-    default_seed: 12345.0,
     default_tank_count: 12,
     spawn_protection_seconds: 2.0,
     respawn_seconds: 3.0,

@@ -4,7 +4,7 @@
 //! Level behaviour lives here and reaches the game only through `Simulation::after_step`,
 //! `restore_cover` and the map's scale.
 
-use super::arena::{BOUNDARY_THICKNESS, CoverDef};
+use super::arena::{CoverDef, boundary_walls};
 use super::data::ARENA;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::map_options::MapId;
@@ -47,7 +47,7 @@ enum Piece {
 fn sized(kind: Piece, x: f64, z: f64) -> CoverDef {
     match kind {
         Piece::Cargo => CoverDef::new(CoverKind::Cargo, x, z, 2.8, 2.8, 2.4, 80.0, 0xb47a49),
-        Piece::Drum => CoverDef::new(CoverKind::Drum, x, z, 1.2, 1.2, 1.7, 30.0, 0xff5b24),
+        Piece::Drum => CoverDef::drum(x, z),
         Piece::Tree => CoverDef::new(CoverKind::Tree, x, z, 2.6, 2.6, 5.8, 80.0, 0x218f55),
         Piece::House => CoverDef::new(
             CoverKind::House,
@@ -59,7 +59,7 @@ fn sized(kind: Piece, x: f64, z: f64) -> CoverDef {
             f64::INFINITY,
             0xb87b4c,
         ),
-        Piece::Tower => CoverDef::new(CoverKind::Tower, x, z, 6.0, 5.0, 7.5, 180.0, 0xbd864a),
+        Piece::Tower => CoverDef::tower(x, z),
     }
 }
 
@@ -138,24 +138,9 @@ impl Yard {
 fn superstress_layout() -> Vec<CoverDef> {
     let mut yard = Yard { covers: Vec::new() };
     // A hard square fence keeps every body and chain reaction inside the yard.
-    let wall = |x, z, w, d| {
-        CoverDef::new(
-            CoverKind::Boundary,
-            x,
-            z,
-            w,
-            d,
-            2.2,
-            f64::INFINITY,
-            0x7b7162,
-        )
-    };
-    let (centre, length) = (
-        YARD + BOUNDARY_THICKNESS / 2.0,
-        YARD * 2.0 + BOUNDARY_THICKNESS * 2.0,
-    );
-    yard.pair(wall(centre, 0.0, BOUNDARY_THICKNESS, length));
-    yard.pair(wall(0.0, centre, length, BOUNDARY_THICKNESS));
+    for wall in boundary_walls(1.0, YARD, 2.2, 0x7b7162) {
+        yard.pair(wall);
+    }
 
     // The laser pickup sits in a powder-keg plaza inside a ring of timber with open corners.
     yard.put(Piece::Drum, 10.0, 0.0);
@@ -207,8 +192,6 @@ fn superstress_layout() -> Vec<CoverDef> {
 
 pub static SUPERSTRESS_MAP: ArenaMap = ArenaMap {
     id: MapId::Superstress,
-    name: "Scrap Yard",
-    description: "Compact yard · 30 tanks · cover rebuilds and debris lingers",
     theme: None,
     floor: Some(GroundKind::PackedDirt),
     outer_floor: Some(GroundKind::DryGrass),

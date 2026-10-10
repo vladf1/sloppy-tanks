@@ -12,6 +12,10 @@ use crate::scene::{Effect, Instance, Material, Node};
 use super::effects_scenery::{CHIMNEY_SMOKE, SMOKE_ORIGIN, SMOKE_PHASE};
 use super::house_model::chimney_flue;
 
+/// Node name of the chimney smoke (see
+/// [`VillageScenery::set_covers`](super::village_scenery::VillageScenery::set_covers)).
+pub const CHIMNEY_SMOKE_NODE: &str = "village-chimney-smoke";
+
 /// Chimneys that can smoke at once, and wisps per chimney.
 pub const SMOKE_SOURCES: usize = 24;
 pub const WISPS_PER_SOURCE: usize = 8;
@@ -46,7 +50,10 @@ pub fn village_atmosphere() -> Node {
         SMOKE_PHASE,
         1,
         (0..WISP_CAPACITY)
-            .map(|i| ((i % 8) as f64 / 8.0 + (i / 8) as f64 * 0.013) as f32)
+            .map(|i| {
+                let (wisp, source) = (i % WISPS_PER_SOURCE, i / WISPS_PER_SOURCE);
+                (wisp as f64 / WISPS_PER_SOURCE as f64 + source as f64 * 0.013) as f32
+            })
             .collect(),
     ));
     let material = Material {
@@ -60,7 +67,7 @@ pub fn village_atmosphere() -> Node {
         ..Material::basic(0xffffff)
     };
     let mut node = Node::mesh(Arc::new(quad), Arc::new(material));
-    node.name = "village-chimney-smoke".into();
+    node.name = CHIMNEY_SMOKE_NODE.into();
     let drawable = node.drawable.as_mut().expect("smoke mesh");
     drawable.frustum_culled = false;
     drawable.instances = Some(Vec::new());

@@ -8,58 +8,35 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { launchGame } from "../scripts/browser-helpers.mjs";
+import { launchLab, meanError, openLab, shoot, within } from "./lab-check.mjs";
 
 const url =
   process.env.EFFECTS_LAB_URL ?? "http://127.0.0.1:5194/sloppy-tanks/tools/effects-lab.html";
 const output = fileURLToPath(new URL("../artifacts/performance/effects-lab/", import.meta.url));
 await mkdir(output, { recursive: true });
-const { browser, page, errors } = await launchGame({
-  viewport: { width: 2000, height: 1100 },
-  consoleErrors: true,
-});
+const { browser, page, errors } = await launchLab();
 const report = {};
 /** The effects' cosmetic randomness differs from the Three side's, so the references
- * match only overall: the last calibration measured 1.9–2.1 (4.2 in the close-up). */
+ * match only overall. */
 const tolerance = Number(process.env.EFFECTS_LAB_TOLERANCE ?? 4);
-const within = (comparison, name) => {
-  if (comparison.reference) {
-    assert.ok(
-      comparison.meanAbsDiff <= tolerance,
-      `${name}: mean |Δ| ${comparison.meanAbsDiff} exceeds ${tolerance} against the reference`,
-    );
-  }
-};
-const shoot = async (name) => {
-  for (const id of ["rust", "reference", "diff"]) {
-    await page.locator(`#${id}`).screenshot({ path: `${output}${name}-${id}.png` });
-  }
-};
 try {
   for (const [name, query] of [
     ["village", "?t=4"],
     ["quarry", "?t=4&theme=quarry"],
   ]) {
-    await page.goto(`${url}${query}`);
-    await page.waitForFunction(
-      () => ["ready", "error"].includes(document.body.dataset.state),
-      null,
-      { timeout: 90000 },
-    );
-    const state = await page.locator("body").getAttribute("data-state");
-    assert.equal(state, "ready", await page.locator("#status").textContent());
+    await openLab(page, `${url}${query}`);
     report[name] = {
       comparison: await page.evaluate(() => window.effectsLab.compare()),
       stats: await page.evaluate(() => window.effectsLab.stats()),
     };
-    await shoot(name);
+    await shoot(page, output, name);
     await page.screenshot({ path: `${output}${name}-page.png` });
     assert.equal(report[name].stats.latePipelines, 0, "warm-up compiled every effect");
-    within(report[name].comparison, name);
+    within(report[name].comparison, name, tolerance);
   }
   // A close view of the blasts.
   report.close = await page.evaluate(() => window.effectsLab.closeUp());
-  await shoot("close");
+  await shoot(page, output, "close");
   // Keep the script running through several periods: pools stay bounded.
   report.long = await page.evaluate(() => window.effectsLab.advance(20));
   const capacity = report.long.poolList.length;
@@ -75,7 +52,7 @@ try {
   });
   assert.ok(report.flood.effects.particles <= 1200);
   assert.ok(report.flood.effects.puffs <= 192);
-  await shoot("flood");
+  await shoot(page, output, "flood");
   // Reset clears every transient pool; only shots still in flight (with the smoke
   // trailing their rockets) and the laser tank's lens redraw, and empty pools add no
   // draws.
@@ -102,8 +79,6 @@ try {
   await writeFile(`${output}report.json`, JSON.stringify(report, null, 1));
   await browser.close();
 }
-const error = (comparison) =>
-  comparison.reference ? comparison.meanAbsDiff.toFixed(2) : "no reference";
 console.log(
-  `effects lab ok: mean |Δ| vs Three.js village ${error(report.village.comparison)}, quarry ${error(report.quarry.comparison)}, close-up ${error(report.close)}; ${output}`,
+  `effects lab ok: mean |Δ| vs Three.js village ${meanError(report.village.comparison)}, quarry ${meanError(report.quarry.comparison)}, close-up ${meanError(report.close)}; ${output}`,
 );

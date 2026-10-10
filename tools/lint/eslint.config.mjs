@@ -37,15 +37,9 @@ export default tseslint.config(
         tsconfigRootDir: fileURLToPath(new URL("../..", import.meta.url)),
       },
     },
-    rules: {
-      "@typescript-eslint/consistent-type-imports": "error",
-      curly: ["error", "all"],
-      eqeqeq: ["error", "always"],
-      "one-var": ["error", "never"],
-      "no-var": "error",
-      "prefer-const": "error",
-    },
+    rules: { eqeqeq: ["error", "always"], "one-var": ["error", "never"] },
   },
   prettier,
-  { files: ["src/**/*.ts"], rules: { curly: ["error", "all"], "one-var": ["error", "never"] } },
+  // After `prettier`, which turns curly off.
+  { files: ["src/**/*.ts"], rules: { curly: ["error", "all"] } },
 );

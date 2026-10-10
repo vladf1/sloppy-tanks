@@ -1,3 +1,4 @@
+import { typingOrShortcut } from "./controls";
 import type { EngineStats } from "./engine-api";
 
 export type StatsRow = [label: string, value: string | number, tip: string];
@@ -7,14 +8,34 @@ export type StatsSections = Partial<Record<string, StatsRow[]>>;
 const SINGLE_PLAYER_SECTIONS = ["Performance", "Physics", "Render", "Battle", "Configuration"];
 const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configuration"];
 
-/** One row per scene pass: the expanded panel is 32 characters wide, too narrow
- * for the three counts on one row. */
-export function passTriangleRows(stats: {
-  shadowTriangles: number;
-  reflectionTriangles: number;
-  mainTriangles: number;
-}): StatsRow[] {
+/** The renderer counts both panels show. */
+export type RenderStats = Pick<
+  EngineStats,
+  | "graphicsApi"
+  | "drawCalls"
+  | "triangles"
+  | "shadowTriangles"
+  | "reflectionTriangles"
+  | "mainTriangles"
+  | "meshes"
+  | "textures"
+>;
+
+/** Both panels' Render rows. One row per scene pass: the expanded panel is 32 characters
+ * wide, too narrow for the three counts on one row. */
+export function renderRows(stats: RenderStats): StatsRow[] {
   return [
+    [
+      "Graphics API",
+      stats.graphicsApi,
+      "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
+    ],
+    ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
+    [
+      "Triangles / frame",
+      stats.triangles.toLocaleString(),
+      "Triangles submitted per rendered frame.",
+    ],
     [
       "Shadow triangles",
       stats.shadowTriangles.toLocaleString(),
@@ -29,6 +50,16 @@ export function passTriangleRows(stats: {
       "Main triangles",
       stats.mainTriangles.toLocaleString(),
       "Triangles submitted to the main scene pass per rendered frame.",
+    ],
+    [
+      "GPU geometries",
+      stats.meshes,
+      "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
+    ],
+    [
+      "GPU textures",
+      stats.textures,
+      "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
     ],
   ];
 }
@@ -51,28 +82,7 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
       ["Colliders", stats.colliders, "Collision shapes in the physics world."],
     ],
     Render: [
-      [
-        "Graphics API",
-        stats.graphicsApi,
-        "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
-      ],
-      ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
-      [
-        "Triangles / frame",
-        stats.triangles.toLocaleString(),
-        "Triangles submitted per rendered frame.",
-      ],
-      ...passTriangleRows(stats),
-      [
-        "GPU geometries",
-        stats.meshes,
-        "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
-      ],
-      [
-        "GPU textures",
-        stats.textures,
-        "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
-      ],
+      ...renderRows(stats),
       [
         "GPU memory",
         `${(stats.gpuBytes / 1048576).toFixed(1)} MB`,
@@ -123,12 +133,6 @@ export function engineStatsSections(stats: EngineStats): StatsSections {
  * panel's title once open. */
 const LINK_LABEL = "nerd stats";
 const PANEL_TITLE = "Stats for Nerds";
-
-/** The panel, its corner link and its N shortcut are a debugging aid, on a page opened
- * with `?debug` only. */
-export function nerdStatsShown(search: string): boolean {
-  return new URLSearchParams(search).has("debug");
-}
 
 /** Counts refresh twice a second, only while the panel is open. */
 export class NerdStats {
@@ -215,16 +219,7 @@ export class NerdStats {
       }
     });
     window.addEventListener("keydown", (event) => {
-      const target = event.target as HTMLElement | null;
-      if (
-        event.code !== "KeyN" ||
-        event.repeat ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.altKey ||
-        target?.isContentEditable ||
-        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
-      ) {
+      if (event.code !== "KeyN" || event.repeat || typingOrShortcut(event)) {
         return;
       }
       if (!this.active()) {

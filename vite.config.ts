@@ -4,7 +4,7 @@ import { baseRedirect } from "./scripts/base-redirect.ts";
 import { pageHealth } from "./scripts/page-health.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
 
-const base = process.env.DEPLOY_BASE ?? "/sloppy-tanks/";
+const base = process.env.DEPLOY_BASE || "/sloppy-tanks/";
 
 /** The inline <head> script: `window.sloppyGraphics` and `window.sloppyEngineBinary`
  * (declared in src/engine.ts). */

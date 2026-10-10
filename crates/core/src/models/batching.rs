@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::model_primitives::shadowed;
 use crate::geometry::math::{compose, hex_to_linear};
 use crate::geometry::{Mesh, merge_geometries};
 use crate::scene::{Color, Effect, Material, Node, Shading, Side, TextureRef};
@@ -33,18 +34,33 @@ struct VertexMaterialKey {
 
 static VERTEX_MATERIALS: Mutex<Vec<(VertexMaterialKey, Arc<Material>)>> = Mutex::new(Vec::new());
 
+/// Whether a material's paint can be baked into vertex colors: opaque standard
+/// surfaces without per-pixel alpha, vertex colors, an emissive map or custom
+/// shading. The renderer batches parts at runtime by the same rule.
+pub fn is_paintable(material: &Material) -> bool {
+    material.shading == Shading::Standard
+        && material.effect == Effect::None
+        && !material.transparent
+        && material.opacity == 1.0
+        && material.alpha_test == 0.0
+        && !material.vertex_colors
+        && material.emissive_map.is_none()
+}
+
+/// The white, vertex-colored stand-in for a paintable material.
+pub fn painted(material: &Material) -> Material {
+    Material {
+        color: Color(0xffffff),
+        vertex_colors: true,
+        ..material.clone()
+    }
+}
+
 /// `vertexMaterial(source)`: the shared vertex-color clone for opaque standard
 /// paint, or the source itself for anything else (unlit, transparent, cut-out,
 /// already vertex-colored, emissive-mapped, or a custom effect).
 pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
-    if source.shading != Shading::Standard
-        || source.effect != Effect::None
-        || source.transparent
-        || source.opacity != 1.0
-        || source.alpha_test != 0.0
-        || source.vertex_colors
-        || source.emissive_map.is_some()
-    {
+    if !is_paintable(source) {
         return source.clone();
     }
     let key = VertexMaterialKey {
@@ -66,11 +82,7 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if let Some((_, material)) = materials.iter().find(|(k, _)| *k == key) {
         return material.clone();
     }
-    let material = Arc::new(Material {
-        color: Color(0xffffff),
-        vertex_colors: true,
-        ..(**source).clone()
-    });
+    let material = Arc::new(painted(source));
     materials.push((key, material.clone()));
     material
 }
@@ -146,12 +158,7 @@ pub fn batch(group: &mut Node) {
             .collect();
         // Like mergeGeometries, parts with mismatched attributes produce nothing.
         if let Some(merged) = merge_geometries(&baked.iter().collect::<Vec<_>>()) {
-            let mut node = Node::mesh(Arc::new(merged), material);
-            if let Some(drawable) = &mut node.drawable {
-                drawable.cast_shadow = true;
-                drawable.receive_shadow = true;
-            }
-            group.children.push(node);
+            group.children.push(shadowed(Arc::new(merged), material));
         }
     }
 }

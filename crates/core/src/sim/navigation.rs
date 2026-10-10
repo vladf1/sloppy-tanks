@@ -1,6 +1,9 @@
 //! Grid navigation for bots: an occupancy grid inflated by hull clearance and a
 //! deterministic four-neighbor A*.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use super::data::ARENA;
 use super::math::Vec2;
 use super::tree_proportions::tree_proportions;
@@ -56,10 +59,9 @@ pub struct Navigation {
     /// The cell at each discovery order of the current search.
     discovered: Vec<u32>,
     /// Min-heap of `estimate * CELLS + discovery order`; see `find`.
-    open: Vec<u64>,
+    open: BinaryHeap<Reverse<u64>>,
     obstacles: Vec<Footprint>,
     pub version: u32,
-    pub paths: u32,
 }
 
 impl Default for Navigation {
@@ -75,10 +77,9 @@ impl Navigation {
             cells: vec![SearchCell::default(); CELLS],
             search: 0,
             discovered: vec![0; CELLS],
-            open: Vec::new(),
+            open: BinaryHeap::new(),
             obstacles: Vec::new(),
             version: 0,
-            paths: 0,
         }
     }
 
@@ -196,7 +197,6 @@ impl Navigation {
     /// of an append-only list picks among equal estimates; seeded routes depend on that order.
     pub fn find_into(&mut self, from: Vec2, to: Vec2, path: &mut Vec<Vec2>) {
         path.clear();
-        self.paths += 1;
         let start = self.nearest(self.index(from));
         let goal = self.nearest(self.index(to));
         self.search = self.search.wrapping_add(1);
@@ -224,14 +224,13 @@ impl Navigation {
             }
             state.cost = cost;
             state.parent = parent as u32;
-            push_heap(
-                &mut nav.open,
+            nav.open.push(Reverse(
                 (cost as i64 + heuristic(cell)) as u64 * CELLS as u64 + state.order as u64,
-            );
+            ));
         };
         reach(self, start, 0, start);
         let mut reached = start;
-        while let Some(key) = pop_heap(&mut self.open) {
+        while let Some(Reverse(key)) = self.open.pop() {
             let current = self.discovered[(key % CELLS as u64) as usize] as usize;
             let state = &mut self.cells[current];
             if state.closed == search {
@@ -280,44 +279,6 @@ fn cell_at(x: f64, z: f64) -> usize {
     let column = 0f64.max(last.min(((x + HALF_ARENA) / CELL_SIZE).floor()));
     let row = 0f64.max(last.min(((z + HALF_ARENA) / CELL_SIZE).floor()));
     row as usize * GRID_SIZE + column as usize
-}
-
-fn push_heap(heap: &mut Vec<u64>, key: u64) {
-    let mut i = heap.len();
-    heap.push(key);
-    while i > 0 {
-        let up = (i - 1) >> 1;
-        if heap[up] <= key {
-            break;
-        }
-        heap[i] = heap[up];
-        i = up;
-    }
-    heap[i] = key;
-}
-
-fn pop_heap(heap: &mut Vec<u64>) -> Option<u64> {
-    let top = *heap.first()?;
-    let last = heap.pop()?;
-    if !heap.is_empty() {
-        let mut i = 0;
-        loop {
-            let mut child = 2 * i + 1;
-            if child >= heap.len() {
-                break;
-            }
-            if child + 1 < heap.len() && heap[child + 1] < heap[child] {
-                child += 1;
-            }
-            if heap[child] >= last {
-                break;
-            }
-            heap[i] = heap[child];
-            i = child;
-        }
-        heap[i] = last;
-    }
-    Some(top)
 }
 
 #[cfg(test)]

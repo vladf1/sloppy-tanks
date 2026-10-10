@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::geometry::{Mesh, rounded_box_geometry};
-use crate::scene::{Material, Node, Side, TextureRef, Wrap};
+use crate::scene::{Material, Node, Side, TextureRef};
 
 use super::model_primitives::{Cache, shadowed};
 
@@ -24,7 +24,6 @@ pub fn concrete_material() -> Arc<Material> {
     MATERIAL
         .get_or_init(|| {
             let texture = TextureRef {
-                wrap: Wrap::Repeat,
                 anisotropy: 4,
                 ..TextureRef::file(CONCRETE_TEXTURE)
             };

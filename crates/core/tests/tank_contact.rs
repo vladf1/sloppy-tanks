@@ -7,20 +7,13 @@ mod support;
 
 use std::f64::consts::PI;
 
-use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{MOVE_ACCELERATION, STEP, group, vehicle};
 use sloppy_core::sim::math::Quat4;
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::tank_dimensions::tank_hull;
-use sloppy_core::sim::{CoverKind, Simulation, Team, VehicleKind};
-use support::clear_arena;
-
-const TANKS: [VehicleKind; 3] = [
-    VehicleKind::Scout,
-    VehicleKind::Balanced,
-    VehicleKind::Heavy,
-];
+use sloppy_core::sim::{Simulation, Team, VehicleKind};
+use support::{clear_arena, concrete};
 
 /// World-space Z bounds of a hull whose model is turned `yaw` radians about Y, as
 /// `Box3.setFromObject` measured them.
@@ -70,14 +63,9 @@ fn push_along_z(s: &mut Simulation, index: usize, target: f64) {
     body.apply_impulse(vector(0.0, 0.0, change * mass), true);
 }
 
-fn step_world(s: &mut Simulation) {
-    s.world.integration_parameters.dt = STEP as f32;
-    s.world.step();
-}
-
 #[test]
 fn boosted_tanks_stop_at_visible_hull_edges_in_head_on_and_side_contacts_including_rotated_hulls() {
-    for kind in TANKS {
+    for kind in VehicleKind::PLAYABLE {
         for axis_x in [true, false] {
             for angle in [0.0, PI / 3.0] {
                 for team in [Team::Blue, Team::Red] {
@@ -101,7 +89,7 @@ fn boosted_tanks_stop_at_visible_hull_edges_in_head_on_and_side_contacts_includi
                             let speed = vehicle(kind).speed * 1.5 * if i == 0 { 1.0 } else { -1.0 };
                             push_toward(&mut s, i, dir_x * speed, dir_z * speed);
                         }
-                        step_world(&mut s);
+                        s.world.step();
                         let p = s.body_translation(s.tanks[0].body);
                         let q = s.body_translation(s.tanks[1].body);
                         minimum = minimum.min((q.x - p.x) * dir_x + (q.z - p.z) * dir_z);
@@ -155,8 +143,8 @@ fn model_sized_contact_collider_is_recreated_on_class_changing_respawn_and_clean
 
 #[test]
 fn different_chassis_meeting_at_right_angles_cannot_overlap_their_visible_hulls() {
-    for a_kind in TANKS {
-        for b_kind in TANKS {
+    for a_kind in VehicleKind::PLAYABLE {
+        for b_kind in VehicleKind::PLAYABLE {
             let mut s = empty_arena(&[(Team::Blue, a_kind), (Team::Red, b_kind)]);
             let mut expected = 0.0;
             for i in 0..2 {
@@ -172,7 +160,7 @@ fn different_chassis_meeting_at_right_angles_cannot_overlap_their_visible_hulls(
                         vehicle(s.tanks[i].kind).speed * 1.5 * if i == 0 { 1.0 } else { -1.0 };
                     push_along_z(&mut s, i, target);
                 }
-                step_world(&mut s);
+                s.world.step();
                 minimum = minimum.min(
                     s.body_translation(s.tanks[1].body).z - s.body_translation(s.tanks[0].body).z,
                 );
@@ -187,27 +175,18 @@ fn different_chassis_meeting_at_right_angles_cannot_overlap_their_visible_hulls(
 
 #[test]
 fn long_hulls_stop_at_walls_using_their_visible_nose_and_tail() {
-    for kind in TANKS {
+    for kind in VehicleKind::PLAYABLE {
         for side in [-1.0, 1.0] {
             let mut s = empty_arena(&[(Team::Blue, kind)]);
             let body = &mut s.world.bodies[s.tanks[0].body];
             body.set_translation(vector(0.0, 0.65, -side * 7.0), true);
             body.lock_rotations(true, true);
-            s.add_cover(&CoverDef::new(
-                CoverKind::Concrete,
-                0.0,
-                0.0,
-                20.0,
-                0.5,
-                3.0,
-                f64::INFINITY,
-                0,
-            ));
+            s.add_cover(&concrete(0.0, 0.0, 20.0, 0.5));
             let (min_z, max_z) = hull_z_bounds(kind, 0.0);
             let reach = if side == 1.0 { max_z } else { -min_z };
             for frame in 0..180 {
                 push_along_z(&mut s, 0, vehicle(kind).speed * side * 1.5);
-                step_world(&mut s);
+                s.world.step();
                 let z = s.body_translation(s.tanks[0].body).z;
                 assert!(
                     z * side + reach <= -0.25 + 0.015,
@@ -221,7 +200,7 @@ fn long_hulls_stop_at_walls_using_their_visible_nose_and_tail() {
 
 #[test]
 fn big_rig_is_the_widest_chassis_while_tank_sizes_remain_comparable() {
-    let widths = TANKS.map(|kind| tank_hull(kind).size.x);
+    let widths = VehicleKind::PLAYABLE.map(|kind| tank_hull(kind).size.x);
     assert!(widths[2] > widths[1] && widths[2] > widths[0]);
     let widest = widths.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let narrowest = widths.iter().copied().fold(f64::INFINITY, f64::min);

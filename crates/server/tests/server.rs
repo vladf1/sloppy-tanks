@@ -1,48 +1,32 @@
 //! End-to-end checks over real localhost sockets (`tests/node-server.test.ts`), with the
-//! lobby-only host and a test host that sends large and incompressible messages.
+//! real host in its lobby and a test host that sends large and incompressible messages.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+mod support;
+
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use sloppy_core::net::match_host::{ConnectionId, MatchHostOptions};
+use sloppy_core::net::room_list::RoomListing;
 use sloppy_server::config::BuildInfo;
 use sloppy_server::dashboard::MAX_DASHBOARD_VIEWERS;
-use sloppy_server::host::{ConnectionId, HostOptions, HostOutput, RoomHost};
-use sloppy_server::lobby_host::LobbyHost;
+use sloppy_server::host::{HostOutput, RoomHost};
+use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
-use sloppy_server::room_list::RoomListing;
-use sloppy_server::server::{MultiplayerServer, ServerOptions};
+use sloppy_server::server::MultiplayerServer;
 use sloppy_server::websocket::{Codec, Event, Role, extension};
+use support::{HttpResponse, Lines, ORIGIN, get, http, options, parse_response, rooms, start_with};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
-const ORIGIN: &str = "http://127.0.0.1:5173";
 const WAIT: Duration = Duration::from_secs(5);
 
-type Lines = Arc<Mutex<Vec<String>>>;
-
-fn options(lines: &Lines) -> ServerOptions {
-    let mut options = ServerOptions::new(true);
-    // The rate-limit test opens sockets faster than their closes are counted.
-    options.max_sockets_per_ip = 1000;
-    let sink = lines.clone();
-    options.log = Arc::new(move |line| sink.lock().unwrap().push(line.to_string()));
-    options
-}
-
 async fn start() -> (MultiplayerServer, String, Lines) {
-    let lines = Lines::default();
-    let server = MultiplayerServer::listen(options(&lines), LobbyHost::new, "127.0.0.1:0")
-        .await
-        .unwrap();
-    let base = server.local_addr().to_string();
-    (server, base, lines)
+    start_with(MatchRoom::new).await
 }
 
 /// Whether `line` is the lifecycle line `expected`, which on Linux ends with the room
@@ -75,62 +59,6 @@ fn join(name: &str) -> String {
     format!(
         r#"{{"type":"join","version":{PROTOCOL_VERSION},"contentVersion":"{CONTENT_VERSION}","name":"{name}","kind":"balanced"}}"#
     )
-}
-
-struct HttpResponse {
-    status: u16,
-    headers: HashMap<String, String>,
-    body: String,
-}
-
-/// One HTTP/1.1 request on a fresh connection, read to its end.
-async fn http(base: &str, request_line: &str, headers: &[(&str, &str)]) -> HttpResponse {
-    let mut stream = TcpStream::connect(base).await.unwrap();
-    let mut request = format!("{request_line} HTTP/1.1\r\nHost: {base}\r\nConnection: close\r\n");
-    for (name, value) in headers {
-        request.push_str(&format!("{name}: {value}\r\n"));
-    }
-    request.push_str("\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut raw = Vec::new();
-    tokio::time::timeout(WAIT, stream.read_to_end(&mut raw))
-        .await
-        .unwrap()
-        .unwrap();
-    parse_response(&String::from_utf8(raw).unwrap())
-}
-
-fn parse_response(text: &str) -> HttpResponse {
-    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text, ""));
-    let mut lines = head.split("\r\n");
-    let status = lines
-        .next()
-        .unwrap()
-        .split(' ')
-        .nth(1)
-        .unwrap()
-        .parse()
-        .unwrap();
-    let headers = lines
-        .filter_map(|line| line.split_once(':'))
-        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-        .collect();
-    HttpResponse {
-        status,
-        headers,
-        body: body.to_string(),
-    }
-}
-
-async fn get(base: &str, path: &str, headers: &[(&str, &str)]) -> HttpResponse {
-    http(base, &format!("GET {path}"), headers).await
-}
-
-async fn rooms(base: &str, query: &str) -> Vec<Value> {
-    let response = get(base, &format!("/rooms{query}"), &[("Origin", ORIGIN)]).await;
-    assert_eq!(response.status, 200);
-    let body: Value = serde_json::from_str(&response.body).unwrap();
-    body["rooms"].as_array().unwrap().clone()
 }
 
 /// A browser-like client on the crate's own codec, offering permessage-deflate.
@@ -173,12 +101,6 @@ async fn open(base: &str, room: &str, headers: &[(&str, &str)]) -> Opened {
          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
     );
     let mut headers: Vec<(&str, &str)> = headers.to_vec();
-    if !headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("origin"))
-    {
-        headers.push(("Origin", ORIGIN));
-    }
     if !headers
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("sec-websocket-extensions"))
@@ -343,7 +265,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
         dirty: false,
         built_at: Some("2026-10-02T14:02:23.799Z".into()),
     };
-    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
         .await
         .unwrap();
     let health = get(&server.local_addr().to_string(), "/health", &[]).await;
@@ -366,15 +288,12 @@ async fn serves_any_origin_and_rejects_plain_http_rooms_and_invalid_codes() {
         foreign.headers["access-control-allow-origin"],
         "https://other.example"
     );
-    let plain = get(&base, "/room/ABCDEFGH", &[("Origin", ORIGIN)]).await;
+    let plain = get(&base, "/room/ABCDEFGH", &[]).await;
     assert_eq!(
         (plain.status, plain.body.as_str()),
         (426, "WebSocket required")
     );
-    assert_eq!(
-        get(&base, "/room/abc", &[("Origin", ORIGIN)]).await.status,
-        404
-    );
+    assert_eq!(get(&base, "/room/abc", &[]).await.status, 404);
     let Opened::Refused(missing) = open(&base, "abc", &[]).await else {
         panic!("opened an invalid code")
     };
@@ -388,7 +307,6 @@ async fn serves_any_origin_and_rejects_plain_http_rooms_and_invalid_codes() {
             ("Connection", "Upgrade"),
             ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
             ("Sec-WebSocket-Version", "99"),
-            ("Origin", ORIGIN),
         ],
     )
     .await;
@@ -467,10 +385,16 @@ async fn hosts_a_room_lists_it_and_forgets_it_after_the_last_leave() {
 async fn extra_level_rooms_are_listed_only_when_asked_for() {
     let (server, base, _) = start().await;
     let mut player = open(&base, "YARDROOM", &[]).await.client();
-    let mut create: Value = serde_json::from_str(&join("yard")).unwrap();
-    create["create"] = serde_json::json!({ "mapMode": "superstress", "difficulty": "normal", "humansOnly": false, "roundMinutes": 5 });
-    player.send(&create.to_string()).await;
+    player.send(&join("yard")).await;
     player.next("welcome").await;
+    // The first player hosts the lobby; choosing the Scrap Yard there starts no battle.
+    player
+        .send(r#"{"type":"settings","roundId":0,"mapMode":"superstress","difficulty":"normal","humansOnly":false,"roundMinutes":5}"#)
+        .await;
+    // The join's own lobby message may come first.
+    while player.next("lobby").await["settings"]["mapMode"] != "superstress" {
+        player.messages.clear();
+    }
     let codes = |rooms: Vec<Value>| -> Vec<String> {
         rooms
             .iter()
@@ -479,7 +403,7 @@ async fn extra_level_rooms_are_listed_only_when_asked_for() {
     };
     assert!(codes(rooms(&base, "").await).is_empty());
     assert_eq!(codes(rooms(&base, "?debug").await), ["YARDROOM"]);
-    player.send(r#"{"type":"leave","roundId":1}"#).await;
+    player.send(r#"{"type":"leave","roundId":0}"#).await;
     player.closed().await;
     eventually("the room to end", || server.room_codes().is_empty()).await;
     server.close().await;
@@ -697,7 +621,7 @@ async fn caps_live_rooms_and_open_sockets_per_address() {
     let mut options = options(&lines);
     options.max_rooms = 1;
     options.max_sockets_per_ip = 2;
-    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
         .await
         .unwrap();
     let base = server.local_addr().to_string();
@@ -782,13 +706,10 @@ async fn shutdown_resets_live_rooms() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_independent_client_without_deflate_gets_plain_frames() {
     let (server, base, _) = start().await;
-    let mut request = format!("ws://{base}/room/PLAINWSS")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert("Origin", HeaderValue::from_static(ORIGIN));
-    let (mut socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let (mut socket, response) =
+        tokio_tungstenite::connect_async(format!("ws://{base}/room/PLAINWSS"))
+            .await
+            .unwrap();
     assert!(response.headers().get("sec-websocket-extensions").is_none());
     socket
         .send(Message::text(join("tungstenite")))
@@ -830,7 +751,7 @@ async fn an_independent_client_without_deflate_gets_plain_frames() {
 
 /// Echoes messages and, on request, floods its connection with incompressible text.
 struct EchoHost {
-    options: HostOptions,
+    options: MatchHostOptions,
     clients: Vec<ConnectionId>,
     disposed: Option<String>,
 }
@@ -895,12 +816,12 @@ impl RoomHost for EchoHost {
         self.disposed.as_deref()
     }
     fn directory_entry(&self, room: &str) -> RoomListing {
-        let lobby = LobbyHost::new(HostOptions {
+        let lobby = MatchRoom::new(MatchHostOptions {
             room_epoch: String::new(),
             now_ms: 0,
-            seed: 0,
-            content_version: String::new(),
             token: Box::new(String::new),
+            seed: 0,
+            content_version: None,
         });
         RoomListing {
             players: self.clients.len() as u32,
@@ -910,26 +831,15 @@ impl RoomHost for EchoHost {
     fn connections(&self) -> u32 {
         self.clients.len() as u32
     }
-    fn tick(&self) -> u64 {
-        0
-    }
-    fn debt_ms(&self) -> f64 {
-        0.0
-    }
 }
 
 async fn start_echo() -> (MultiplayerServer, String, Lines) {
-    let lines = Lines::default();
-    let factory = |options: HostOptions| EchoHost {
+    start_with(|options: MatchHostOptions| EchoHost {
         options,
         clients: Vec::new(),
         disposed: None,
-    };
-    let server = MultiplayerServer::listen(options(&lines), factory, "127.0.0.1:0")
-        .await
-        .unwrap();
-    let base = server.local_addr().to_string();
-    (server, base, lines)
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1052,13 +962,9 @@ async fn inflates_compressed_client_messages() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tungstenite_sees_closing_codes_from_the_room() {
     let (server, base, _) = start().await;
-    let mut request = format!("ws://{base}/room/CLOSING2")
-        .into_client_request()
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{base}/room/CLOSING2"))
+        .await
         .unwrap();
-    request
-        .headers_mut()
-        .insert("Origin", HeaderValue::from_static(ORIGIN));
-    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket.send(Message::text("{not json")).await.unwrap();
     let mut close = None;
     while let Some(message) = socket.next().await {
@@ -1080,7 +986,7 @@ async fn simultaneous_upgrades_share_one_address_reservation() {
     let mut options = options(&lines);
     options.max_sockets_per_ip = 1;
     options.max_rooms = 32;
-    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
         .await
         .unwrap();
     let address = server.local_addr();
@@ -1096,7 +1002,7 @@ async fn simultaneous_upgrades_share_one_address_reservation() {
                 (b'A' + index % 26) as char
             );
             let request = format!(
-                "GET /room/{room} HTTP/1.1\r\nHost: {address}\r\nOrigin: {ORIGIN}\r\n\
+                "GET /room/{room} HTTP/1.1\r\nHost: {address}\r\n\
                  Upgrade: websocket\r\nConnection: Upgrade\r\n\
                  Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
                  Sec-WebSocket-Version: 13\r\n\r\n"
@@ -1137,7 +1043,7 @@ async fn refused_handshake_releases_its_address_reservation() {
     let lines = Lines::default();
     let mut options = options(&lines);
     options.max_sockets_per_ip = 1;
-    let server = MultiplayerServer::listen(options, LobbyHost::new, "127.0.0.1:0")
+    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
         .await
         .unwrap();
     let base = server.local_addr().to_string();

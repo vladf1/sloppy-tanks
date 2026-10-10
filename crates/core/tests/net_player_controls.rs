@@ -27,7 +27,7 @@ use sloppy_core::sim::types::{
 };
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{GameMode, Simulation, SimulationSetup};
-use support::clear_arena;
+use support::{clear_arena, tank_index};
 
 fn alice_room() -> (Simulation, u32) {
     let sim = create_multiplayer_simulation(
@@ -62,8 +62,12 @@ fn input(epoch: u64, seq: i64, extra: Value) -> Value {
     )
 }
 
-fn index(sim: &Simulation, id: u32) -> usize {
-    sim.tank_index(id).unwrap()
+fn ack(input_seq: i64, applied_tick: u64, arrival_tick: u64) -> Ack {
+    Ack {
+        input_seq,
+        applied_tick,
+        arrival_tick,
+    }
 }
 
 #[test]
@@ -79,7 +83,7 @@ fn input_holds_until_its_lease_expires_then_idles_and_eventually_hands_control_t
     assert!(!controls.command(&mut sim, 299, 4999.0).unwrap().fire);
     let epoch = controls.control_epoch;
     assert!(controls.command(&mut sim, 300, 5000.0).is_none());
-    let i = index(&sim, tank);
+    let i = tank_index(&sim, tank);
     assert_eq!(sim.tanks[i].driver, Driver::Bot);
     assert!(sim.tanks[i].human);
     assert!(controls.control_epoch > epoch);
@@ -160,14 +164,7 @@ fn ordered_actions_survive_coalesced_inputs_run_once_and_stale_clicks_expire_ind
         10.0
     ));
     assert!(controls.command(&mut sim, 1, 20.0).unwrap().mine);
-    assert_eq!(
-        controls.ack,
-        Ack {
-            input_seq: 2,
-            applied_tick: 1,
-            arrival_tick: 1,
-        }
-    );
+    assert_eq!(controls.ack, ack(2, 1, 1));
     let second = controls.command(&mut sim, 2, 30.0).unwrap();
     assert_eq!(second.move_x, -1.0);
     assert_eq!(
@@ -177,14 +174,7 @@ fn ordered_actions_survive_coalesced_inputs_run_once_and_stale_clicks_expire_ind
     assert!(!second.mine);
     assert!(controls.command(&mut sim, 3, 40.0).unwrap().mine);
     assert!(!controls.command(&mut sim, 4, 50.0).unwrap().mine);
-    assert_eq!(
-        controls.ack,
-        Ack {
-            input_seq: 2,
-            applied_tick: 1,
-            arrival_tick: 1,
-        }
-    );
+    assert_eq!(controls.ack, ack(2, 1, 1));
     controls.accept(
         &sim,
         &input(e, 3, json!({ "actions": [{ "type": "mine" }] })),
@@ -254,14 +244,7 @@ fn validation_rejects_malformed_out_of_range_stale_duplicate_and_over_capacity_m
         ),
         "rejected input did not consume its sequence"
     );
-    assert_eq!(
-        controls.ack,
-        Ack {
-            input_seq: 1,
-            applied_tick: 1,
-            arrival_tick: 1,
-        }
-    );
+    assert_eq!(controls.ack, ack(1, 1, 1));
 }
 
 #[test]
@@ -269,7 +252,7 @@ fn point_aim_is_recomputed_from_authority() {
     let (mut sim, tank) = alice_room();
     let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();
     let e = controls.control_epoch;
-    let i = index(&sim, tank);
+    let i = tank_index(&sim, tank);
     controls.accept(
         &sim,
         &input(e, 1, json!({ "aim": { "x": 10, "z": 10 } })),
@@ -305,7 +288,7 @@ fn death_respawn_suspension_and_reconnect_epochs_discard_old_held_input_and_queu
         json!({ "actions": [{ "type": "mine" }] }),
     );
     controls.accept(&sim, &old, 0, 0.0);
-    let i = index(&sim, tank);
+    let i = tank_index(&sim, tank);
     sim.tanks[i].protection = 0.0;
     sim.damage_tank(i, 10000.0, 0, Team::Red, None, None);
     let dead = controls.command(&mut sim, 1, 10.0).unwrap();
@@ -351,19 +334,14 @@ fn rate_limited_traffic_cannot_extend_an_input_lease() {
 fn human_only_suspension_and_input_timeout_never_enable_ai_and_resume_clears_old_actions() {
     let (mut sim, tank) = alice_room();
     let mut controls = PlayerControls::new(&sim, tank, 0.0, false).unwrap();
-    let packet = json!({
-        "controlEpoch": controls.control_epoch,
-        "seq": 1,
-        "observedTick": 0,
-        "moveX": 1,
-        "moveZ": 0,
-        "aim": { "angle": 0 },
-        "fire": true,
-        "actions": [{ "type": "mine" }],
-    });
+    let packet = input(
+        controls.control_epoch,
+        1,
+        json!({ "aim": { "angle": 0 }, "actions": [{ "type": "mine" }] }),
+    );
     assert!(controls.accept(&sim, &packet, 0, 0.0));
     controls.suspend(&mut sim);
-    let i = index(&sim, tank);
+    let i = tank_index(&sim, tank);
     assert_eq!(sim.tanks[i].driver, Driver::Idle);
     assert!(!controls.accept(&sim, &packet, 0, 1.0));
     sim.start();
@@ -465,11 +443,9 @@ fn players() -> [PlayerAssignment; 2] {
     ]
 }
 
-fn options(map: MapId) -> MultiplayerOptions {
-    MultiplayerOptions {
-        map_mode: Some(map),
-        ..MultiplayerOptions::default()
-    }
+/// A room seating Alice and Bob.
+fn alice_and_bob_room(options: MultiplayerOptions) -> Simulation {
+    create_multiplayer_simulation(4242.0, &players(), options).unwrap()
 }
 
 #[test]
@@ -487,8 +463,9 @@ fn humans_only_creates_just_assigned_seats_including_sparse_slots() {
             4242.0,
             &roster,
             MultiplayerOptions {
+                map_mode: Some(map),
                 humans_only: Some(true),
-                ..options(map)
+                ..MultiplayerOptions::default()
             },
         )
         .unwrap();
@@ -597,8 +574,7 @@ fn multiplayer_fills_twelve_stable_slots_validates_ownership_and_enforces_capaci
 
 #[test]
 fn two_player_commands_move_independently_omitted_commands_idle_and_actions_are_one_tick() {
-    let mut sim =
-        create_multiplayer_simulation(4242.0, &players(), MultiplayerOptions::default()).unwrap();
+    let mut sim = alice_and_bob_room(MultiplayerOptions::default());
     arena(&mut sim);
     let (a, b) = (sim.tanks[0].id, sim.tanks[1].id);
     for _ in 0..90 {
@@ -658,15 +634,10 @@ fn two_player_commands_move_independently_omitted_commands_idle_and_actions_are_
 
 #[test]
 fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis() {
-    let mut sim = create_multiplayer_simulation(
-        4242.0,
-        &players(),
-        MultiplayerOptions {
-            difficulty: Some(Difficulty::Hard),
-            ..MultiplayerOptions::default()
-        },
-    )
-    .unwrap();
+    let mut sim = alice_and_bob_room(MultiplayerOptions {
+        difficulty: Some(Difficulty::Hard),
+        ..MultiplayerOptions::default()
+    });
     let humans: Vec<usize> = (0..sim.tanks.len())
         .filter(|&i| sim.tanks[i].human)
         .collect();
@@ -716,8 +687,7 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
 
 #[test]
 fn old_life_ordnance_cannot_award_replacement_xp_or_life_kills_and_the_recap_stays_empty() {
-    let mut sim =
-        create_multiplayer_simulation(4242.0, &players(), MultiplayerOptions::default()).unwrap();
+    let mut sim = alice_and_bob_room(MultiplayerOptions::default());
     arena(&mut sim);
     let old_life = sim.tanks[0].life;
     fire_weapon(&mut sim, 0);
@@ -758,15 +728,10 @@ fn old_life_ordnance_cannot_award_replacement_xp_or_life_kills_and_the_recap_sta
 
 #[test]
 fn fill_bot_damage_applies_equally_on_both_teams_and_never_changes_player_seat_damage() {
-    let mut sim = create_multiplayer_simulation(
-        4242.0,
-        &players(),
-        MultiplayerOptions {
-            difficulty: Some(Difficulty::Hard),
-            ..MultiplayerOptions::default()
-        },
-    )
-    .unwrap();
+    let mut sim = alice_and_bob_room(MultiplayerOptions {
+        difficulty: Some(Difficulty::Hard),
+        ..MultiplayerOptions::default()
+    });
     let humans: Vec<usize> = (0..sim.tanks.len())
         .filter(|&i| sim.tanks[i].human)
         .collect();
@@ -790,8 +755,7 @@ fn fill_bot_damage_applies_equally_on_both_teams_and_never_changes_player_seat_d
 
 #[test]
 fn debris_cleanup_preserves_proximity_to_either_player_rather_than_just_the_first_viewer() {
-    let mut sim =
-        create_multiplayer_simulation(4242.0, &players(), MultiplayerOptions::default()).unwrap();
+    let mut sim = alice_and_bob_room(MultiplayerOptions::default());
     arena(&mut sim);
     set_translation(&mut sim, 0, -50.0, 0.65, 0.0);
     set_translation(&mut sim, 1, 50.0, 0.65, 0.0);
@@ -802,15 +766,13 @@ fn debris_cleanup_preserves_proximity_to_either_player_rather_than_just_the_firs
         sim.world.bodies[body].sleep();
         sim.fragments[i].life = 5.0;
     }
-    assert_eq!(cleanup_candidate(&sim, None), Some(1));
+    assert_eq!(cleanup_candidate(&sim), Some(1));
 }
 
 #[test]
 fn viewer_specific_state_cannot_affect_multiplayer_wreck_placement_or_simulation() {
-    let mut a =
-        create_multiplayer_simulation(4242.0, &players(), MultiplayerOptions::default()).unwrap();
-    let mut b =
-        create_multiplayer_simulation(4242.0, &players(), MultiplayerOptions::default()).unwrap();
+    let mut a = alice_and_bob_room(MultiplayerOptions::default());
+    let mut b = alice_and_bob_room(MultiplayerOptions::default());
     a.set_wreck_view(Some(sloppy_core::sim::simulation::WreckView {
         min_x: -1.0,
         max_x: 1.0,

@@ -10,16 +10,15 @@
 mod support;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::data::{LASER_DEFENSE, STEP};
 use sloppy_core::sim::math::{Random, Vec2};
-use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::weapons::{collect_pickup, step_projectiles};
 use sloppy_core::sim::{
-    CoverKind, MatchPhase, Pickup, PickupKind, Shot, SimEventType, Simulation, Team,
-    VehicleCommand, VehicleKind, Weapon,
+    MatchPhase, PickupKind, Shot, SimEventType, Simulation, Team, VehicleCommand, VehicleKind,
+    Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, concrete, decide, event_count, set_translation, supply};
 
 /// Mulberry32 advances its state by 0x6d2b79f5 per draw.
 const MULBERRY_INCREMENT: f64 = 1_831_565_813.0;
@@ -51,11 +50,6 @@ fn draws_since(before: &Random, after: &Random) -> u64 {
     ((after.state - before.state) / MULBERRY_INCREMENT).round() as u64
 }
 
-fn set_translation(s: &mut Simulation, index: usize, x: f64, z: f64) {
-    let body = s.tanks[index].body;
-    s.world.bodies[body].set_translation(vector(x, 0.65, z), true);
-}
-
 /// The human alone at the origin on the blue team, laser active (index 0).
 fn fixture() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
@@ -71,14 +65,12 @@ fn fixture() -> Simulation {
     s.tanks[0].previous = Vec2::new(0.0, 0.0);
     s.world.step();
     s.start();
-    s.events.clear();
     s
 }
 
 /// A red shell heading north at the defender; `adjust` applies the test's overrides.
 fn incoming(s: &mut Simulation, weapon: Weapon, adjust: impl FnOnce(&mut Shot)) -> u32 {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     let mut shot = Shot {
         id,
         x: 0.0,
@@ -99,40 +91,9 @@ fn incoming(s: &mut Simulation, weapon: Weapon, adjust: impl FnOnce(&mut Shot)) 
     id
 }
 
-fn laser_pickup(s: &mut Simulation) -> Pickup {
-    let id = s.next_id;
-    s.next_id += 1;
-    Pickup {
-        id,
-        kind: PickupKind::Laser,
-        x: 0.0,
-        z: 0.0,
-        available: true,
-        cooldown: 0.0,
-        cooldown_duration: 0.0,
-    }
-}
-
-fn collect(s: &mut Simulation, tank: usize, pickup: &mut Pickup) -> bool {
-    collect_pickup(s, tank, pickup)
-}
-
-fn laser_events(s: &Simulation) -> usize {
-    s.events
-        .iter()
-        .filter(|e| e.kind == SimEventType::Laser)
-        .count()
-}
-
 #[test]
 fn laser_stops_every_munition_without_splash_kill_credit_or_changing_cannon_cooldown() {
-    for weapon in [
-        Weapon::Standard,
-        Weapon::Spread,
-        Weapon::Rocket,
-        Weapon::Ricochet,
-        Weapon::Piercing,
-    ] {
+    for weapon in AMMO_ORDER {
         let mut s = fixture();
         s.rng = zapping_rng();
         s.tanks[0].cooldown = 0.6;
@@ -178,7 +139,7 @@ fn fifty_percent_chance_is_rolled_once_per_shot_and_tank_and_misses_can_still_hi
         .unwrap();
     assert_eq!(last.shot.laser_checked_by, vec![s.tanks[0].id]);
     assert_eq!(s.tanks[0].hp, hp - 40.0);
-    assert_eq!(laser_events(&s), 0);
+    assert_eq!(event_count(&s, SimEventType::Laser), 0);
 }
 
 #[test]
@@ -242,16 +203,7 @@ fn swept_range_entry_catches_fast_shells_before_impact_while_earlier_cover_still
         s.rng = zapping_rng();
         let before = s.rng.clone();
         if wall {
-            s.add_cover(&CoverDef::new(
-                CoverKind::Concrete,
-                0.0,
-                -9.0,
-                5.0,
-                0.4,
-                3.0,
-                f64::INFINITY,
-                0,
-            ));
+            s.add_cover(&concrete(0.0, -9.0, 5.0, 0.4));
         }
         s.world.step();
         incoming(&mut s, Weapon::Standard, |shot| {
@@ -281,16 +233,7 @@ fn cover_occludes_lasers_within_range_and_shells_already_hitting_the_hull_take_p
         s.rng = zapping_rng();
         let before = s.rng.clone();
         if mode == "cover" {
-            s.add_cover(&CoverDef::new(
-                CoverKind::Concrete,
-                0.0,
-                -3.0,
-                5.0,
-                0.5,
-                3.0,
-                f64::INFINITY,
-                0,
-            ));
+            s.add_cover(&concrete(0.0, -3.0, 5.0, 0.5));
         }
         s.world.step();
         incoming(&mut s, Weapon::Standard, |shot| {
@@ -349,15 +292,15 @@ fn multiple_missed_defenses_do_not_exhaust_the_contact_budget_or_freeze_projecti
 #[test]
 fn laser_refreshes_to_twenty_seconds_pauses_expires_and_clears_on_death_respawn_and_reset() {
     let mut s = fixture();
-    let mut p = laser_pickup(&mut s);
+    let mut p = supply(&mut s, PickupKind::Laser, 0.0, 0.0);
     s.tanks[0].laser = 2.0;
     s.tanks[0].cooldown = 0.4;
-    assert!(collect(&mut s, 0, &mut p));
+    assert!(collect_pickup(&mut s, 0, &mut p));
     assert_eq!(s.tanks[0].laser, 20.0);
     assert_eq!(p.cooldown, 45.0);
     assert_eq!(p.cooldown_duration, 45.0);
     assert_eq!(s.tanks[0].cooldown, 0.4);
-    assert!(!collect(&mut s, 0, &mut p));
+    assert!(!collect_pickup(&mut s, 0, &mut p));
     s.match_state.phase = MatchPhase::Paused;
     for _ in 0..60 {
         s.step(VehicleCommand::idle(), false);
@@ -368,15 +311,15 @@ fn laser_refreshes_to_twenty_seconds_pauses_expires_and_clears_on_death_respawn_
     s.tanks[0].laser = STEP;
     s.step(VehicleCommand::idle(), false);
     assert_eq!(s.tanks[0].laser, 0.0);
-    let mut fresh = laser_pickup(&mut s);
-    collect(&mut s, 0, &mut fresh);
+    let mut fresh = supply(&mut s, PickupKind::Laser, 0.0, 0.0);
+    collect_pickup(&mut s, 0, &mut fresh);
     let (id, team) = (s.tanks[0].id, s.tanks[0].team);
     s.damage_tank(0, 999.0, id, team, None, None);
     assert_eq!(s.tanks[0].laser, 0.0);
     s.respawn(0, None);
     assert_eq!(s.tanks[0].laser, 0.0);
-    let mut fresh = laser_pickup(&mut s);
-    collect(&mut s, 0, &mut fresh);
+    let mut fresh = supply(&mut s, PickupKind::Laser, 0.0, 0.0);
+    collect_pickup(&mut s, 0, &mut fresh);
     s.reset(None);
     assert!(s.tanks.iter().all(|t| t.laser == 0.0));
     assert!(s.snapshot().tanks.iter().all(|t| t.laser == 0.0));
@@ -401,14 +344,11 @@ fn one_central_rare_pickup_starts_delayed_and_refills_much_slower_than_ordinary_
             .filter(|p| p.kind != PickupKind::Laser)
             .all(|p| p.available)
     );
-    drop(s);
 
     let mut arena = fixture();
-    let p = laser_pickup(&mut arena);
+    let mut p = supply(&mut arena, PickupKind::Laser, 0.0, 0.0);
+    collect_pickup(&mut arena, 0, &mut p);
     arena.pickups = vec![p];
-    let mut supply = arena.pickups[0].clone();
-    collect(&mut arena, 0, &mut supply);
-    arena.pickups[0] = supply;
     set_translation(&mut arena, 0, 15.0, 0.0);
     arena.tanks[0].previous = Vec2::new(15.0, 0.0);
     assert_eq!(arena.pickups[0].cooldown, LASER_DEFENSE.respawn);
@@ -429,14 +369,13 @@ fn bots_seek_an_available_laser_when_useful_and_leave_it_while_theirs_is_fresh()
     let mut s = fixture();
     s.tanks[0].human = false;
     s.tanks[0].laser = 0.0;
-    let mut p = laser_pickup(&mut s);
+    let mut p = supply(&mut s, PickupKind::Laser, 0.0, 0.0);
     p.z = 4.0;
     s.pickups = vec![p];
     bot_command(&mut s, 0, STEP);
     assert_eq!(s.tanks[0].brain.pickup_target, s.pickups[0].id);
     s.tanks[0].laser = 6.0;
-    s.tanks[0].brain.decision = 0.0;
-    bot_command(&mut s, 0, STEP);
+    decide(&mut s, 0);
     assert_eq!(s.tanks[0].brain.pickup_target, 0);
 }
 
@@ -461,7 +400,7 @@ fn a_zap_recharges_before_the_next_so_two_shells_together_cannot_both_be_stopped
     }
     sweep(&mut s, 30);
     assert_eq!(draws_since(&before, &s.rng), 1);
-    assert_eq!(laser_events(&s), 1);
+    assert_eq!(event_count(&s, SimEventType::Laser), 1);
     assert_eq!(s.tanks[0].hp, 60.0);
 }
 

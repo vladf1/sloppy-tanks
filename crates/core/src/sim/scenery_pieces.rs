@@ -74,8 +74,7 @@ impl Breakup<'_> {
     ) -> usize {
         let cover = self.cover;
         simulation.reserve_fragments(1);
-        let id = simulation.next_id;
-        simulation.next_id += 1;
+        let id = simulation.allocate_id();
         let body = simulation.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(vector(cover.x + x, y, cover.z + z))
@@ -99,15 +98,10 @@ impl Breakup<'_> {
         );
         let angle = self.rng.range(0.0, PI * 2.0);
         let outward = x.hypot(z);
-        let nx = if outward > 0.1 {
-            x / outward
+        let (nx, nz) = if outward > 0.1 {
+            (x / outward, z / outward)
         } else {
-            angle.cos()
-        };
-        let nz = if outward > 0.1 {
-            z / outward
-        } else {
-            angle.sin()
+            (angle.cos(), angle.sin())
         };
         let speed = self.rng.range(2.0, 5.0);
         let rigid_body = &mut simulation.world.bodies[body];
@@ -156,14 +150,10 @@ pub fn break_scenery(
         CoverKind::Tree => 9,
         CoverKind::Timber => 7,
         CoverKind::Cargo | CoverKind::Drum => 3,
-        _ => 0,
+        _ => return false,
     };
-    if legacy_count == 0 {
-        return false;
-    }
-    // The old fragment path consumed 3 placement/size draws and 8 body/lifetime
-    // draws per piece. Preserve that stream so cosmetic authoring cannot reshuffle
-    // seeded combat and bot decisions. New piece motion uses its own stream below.
+    // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
+    // combat and bot decisions. New piece motion uses its own stream below.
     for _ in 0..legacy_count * LEGACY_DRAWS_PER_PIECE {
         simulation.rng.next();
     }

@@ -15,9 +15,8 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, Shot, SimEventType, Simulation, Team, VehicleCommand, VehicleKind,
-    Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, cover_at};
 
 fn arena() -> Simulation {
     let mut sim = Simulation::with_seed(123.0);
@@ -27,30 +26,13 @@ fn arena() -> Simulation {
 }
 
 fn barrel(sim: &mut Simulation, x: f64, z: f64) -> usize {
-    sim.add_cover(&CoverDef::new(
-        CoverKind::Drum,
-        x,
-        z,
-        1.2,
-        1.2,
-        1.7,
-        30.0,
-        0xff5b24,
-    ))
-}
-
-fn cover_at(sim: &Simulation, cover: usize) -> Vec2 {
-    Vec2::new(sim.covers[cover].x, sim.covers[cover].z)
+    sim.add_cover(&CoverDef::drum(x, z))
 }
 
 #[test]
 fn every_tank_can_push_barrels_and_hard_shoves_can_tip_and_roll_them_before_they_settle_and_wake() {
     let mut rolling_cases = 0;
-    for kind in [
-        VehicleKind::Scout,
-        VehicleKind::Balanced,
-        VehicleKind::Heavy,
-    ] {
+    for kind in VehicleKind::PLAYABLE {
         let mut sim = arena();
         let drum = barrel(&mut sim, 0.0, 0.0);
         let tank = sim.add_tank(Team::Blue, true, kind, 0);
@@ -137,11 +119,10 @@ fn a_displaced_tipped_barrel_updates_navigation_and_can_be_shot_to_chain_explode
     barrel(&mut sim, 15.0, 0.0);
     sim.step(VehicleCommand::idle(), false);
     assert_eq!(sim.nav.blocked[old], 0);
-    assert_eq!(sim.nav.blocked[sim.nav.index(cover_at(&sim, drum))], 1);
+    assert!(sim.nav.is_blocked(cover_at(&sim, drum)));
     let position = sim.body_translation(drum_body);
     let handle = sim.covers[drum].collider;
-    let id = sim.next_id;
-    sim.next_id += 1;
+    let id = sim.allocate_id();
     sim.shots.push(Shot {
         id,
         owner: 999,
@@ -152,10 +133,7 @@ fn a_displaced_tipped_barrel_updates_navigation_and_can_be_shot_to_chain_explode
         vx: 25.0,
         vz: 0.0,
         damage: 40.0,
-        bounces: 0,
         life: 2.0,
-        weapon: Weapon::Standard,
-        piercing: 0,
         ..Shot::default()
     });
     step_projectiles(&mut sim, 0.2, false);

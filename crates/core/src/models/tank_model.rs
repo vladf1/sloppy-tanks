@@ -16,24 +16,23 @@ use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
-    Assembly, ROOF_RISE, assembly, gun_rise, muzzle_z, ring_radius, tube_radius,
+    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, muzzle_z, ring_radius, tube_radius,
 };
 use super::tank_kit::Coat;
-use super::tank_surfaces::{Finish, apply_tank_surface, vehicle_paint};
+use super::tank_surfaces::{apply_tank_surface, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
 use crate::scene::{Material, Node};
+use crate::sim::data::vehicle;
 
 #[path = "tank_running_gear.rs"]
 mod running_gear;
 use running_gear::running_gear;
 
-/// Wreck paint and the shared dark/steel trim colors.
-pub(crate) const WRECK_PAINT: u32 = 0x3c4650;
+/// The shared dark and steel trim colors.
 pub(crate) const DARK: u32 = 0x13232c;
 pub(crate) const STEEL: u32 = 0x637581;
-pub(crate) const WRECK_STEEL: u32 = 0x37424c;
 /// Shade paint is team paint darkened in linear space by this factor.
 pub(crate) const SHADE_FACTOR: f64 = 0.62;
 const GLASS_TINT: u32 = 0x8adeec;
@@ -50,7 +49,7 @@ pub(crate) fn shade_of(color: u32) -> u32 {
     scale_hex_color(color, SHADE_FACTOR)
 }
 
-static MODELS: Cache<(VehicleKind, Team, bool, bool), Node> = Cache::new();
+static MODELS: Cache<(VehicleKind, Team, bool), Node> = Cache::new();
 
 /// The turret-ring well's wall: an open cylinder turned inside out. Reversed
 /// triangles and normals face the wall inward, so it draws with ordinary
@@ -63,7 +62,6 @@ fn inward_wall_geometry(radius: f64, height: f64) -> Mesh {
         radial_segments: 24,
         height_segments: 1,
         open_ended: true,
-        ..CylinderGeometry::default()
     }
     .build();
     if let Some(indices) = &mut mesh.indices {
@@ -80,24 +78,25 @@ fn inward_wall_geometry(radius: f64, height: f64) -> Mesh {
 /// The vehicle model for a kind and team: shared, built once. Clone the node to
 /// move its parts independently.
 pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
-    tank_model_variant(kind, team, false, false)
+    tank_model_variant(kind, team, false)
 }
 
-/// `tankModel(kind, team, wreck, openTurretRing)`: `wreck` swaps the paint for
-/// burnt colors; `open_turret_ring` cuts the ring well into the hull roof (used by
-/// hull-only wrecks whose turret flew off).
-pub fn tank_model_variant(
-    kind: VehicleKind,
-    team: Team,
-    wreck: bool,
-    open_turret_ring: bool,
-) -> Arc<Node> {
-    MODELS.get_or_insert((kind, team, wreck, open_turret_ring), || {
-        if kind == VehicleKind::Humvee {
-            humvee_model(team, wreck)
+/// `tankModel(kind, team, false, openTurretRing)`: `open_turret_ring` cuts the ring
+/// well into the hull roof (used by hull-only wrecks whose turret flew off). Wrecks
+/// keep the team paint; presentation darkens them.
+pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool) -> Arc<Node> {
+    MODELS.get_or_insert((kind, team, open_turret_ring), || {
+        // Team paint, its shade and bare steel: the colors the worn finish recognises.
+        let team_paint = vehicle_paint(team);
+        let colors = [team_paint, shade_of(team_paint), STEEL];
+        let mut root = if kind == VehicleKind::Humvee {
+            humvee_model(colors)
         } else {
-            tracked_model(kind, team, wreck, open_turret_ring)
-        }
+            tracked_model(kind, team, colors, open_turret_ring)
+        };
+        root.scale = DVec3::splat(vehicle(kind).scale);
+        apply_tank_surface(&mut root, &colors);
+        root
     })
 }
 
@@ -115,63 +114,43 @@ pub(super) struct Chassis {
     pub(super) deck: f64,
 }
 
-fn tracked_model(kind: VehicleKind, team: Team, wreck: bool, open_turret_ring: bool) -> Node {
-    let scout = kind == VehicleKind::Scout;
-    let heavy = kind == VehicleKind::Heavy;
-    let color = if wreck {
-        WRECK_PAINT
-    } else {
-        vehicle_paint(team)
-    };
+impl Chassis {
+    /// This chassis' value of a measurement given for each tracked kind.
+    pub(super) fn pick(&self, scout: f64, balanced: f64, heavy: f64) -> f64 {
+        match self.kind {
+            VehicleKind::Scout => scout,
+            VehicleKind::Heavy => heavy,
+            _ => balanced,
+        }
+    }
+}
+
+/// A tracked tank in `colors` (paint, shade, steel), before the vehicle scale and
+/// worn finish.
+fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ring: bool) -> Node {
+    let [color, shade, steel] = colors;
     // Dimensions include the tracks and skirts, not just the center armor slab.
     // Hull length/overall width: compact scout ~1.94, Abrams/Type 99 ~2.17.
-    let overall_width = if scout {
-        2.3
-    } else if heavy {
-        2.5
-    } else {
-        2.42
+    let (overall_width, length, deck) = match kind {
+        VehicleKind::Scout => (2.3, 4.415, 0.58),
+        VehicleKind::Heavy => (2.5, 5.425, 0.67),
+        _ => (2.42, 5.244, 0.65),
     };
     let chassis = Chassis {
         kind,
-        scout,
-        heavy,
+        scout: kind == VehicleKind::Scout,
+        heavy: kind == VehicleKind::Heavy,
         color,
-        shade: if wreck { DARK } else { shade_of(color) },
-        steel: if wreck { WRECK_STEEL } else { STEEL },
+        shade,
+        steel,
         overall_width,
         width: overall_width - 0.42,
-        length: if scout {
-            4.415
-        } else if heavy {
-            5.425
-        } else {
-            5.244
-        },
-        deck: if scout {
-            0.58
-        } else if heavy {
-            0.67
-        } else {
-            0.65
-        },
+        length,
+        deck,
     };
-    let mut root = Node::group(kind.name());
+    let mut root = Node::group(kind.as_str());
     root.children.push(hull(&chassis, open_turret_ring));
     root.children.push(turret(&chassis, team));
-    root.scale = DVec3::splat(kind.scale());
-    let finish = if wreck {
-        Finish::Wrecked
-    } else {
-        Finish::Fresh {
-            steel: chassis.steel,
-        }
-    };
-    apply_tank_surface(
-        &mut root,
-        &[chassis.color, chassis.shade, chassis.steel],
-        finish,
-    );
     root
 }
 
@@ -232,12 +211,12 @@ fn turret_ring_well(hull: &mut Node, deck: f64, opening: f64, ring_radius: f64) 
     let mut rim_mesh = ring_geometry(opening, ring_radius, 24);
     rim_mesh.rotate_x(-PI / 2.0);
     let rim = shadowed(Arc::new(rim_mesh), material(0x4a5358, 0.55, 0.8));
-    put(hull, rim, 0.0, roof_y, -0.12);
+    put(hull, rim, 0.0, roof_y, RING_Z);
     let wall_mesh = inward_wall_geometry(opening, roof_y - floor_y);
     let wall = shadow_receiver(Arc::new(wall_mesh), material(0x3b454a, 0.15, 0.9));
-    put(hull, wall, 0.0, (roof_y + floor_y) / 2.0, -0.12);
+    put(hull, wall, 0.0, (roof_y + floor_y) / 2.0, RING_Z);
     let floor = cylinder_part(opening, 0.02, 0x293238, 24);
-    put(hull, floor, 0.0, floor_y - 0.01, -0.12);
+    put(hull, floor, 0.0, floor_y - 0.01, RING_Z);
 }
 
 /// The turret with its armor, roof equipment, barrel and team marking.

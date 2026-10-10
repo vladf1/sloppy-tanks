@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bytes::BytesMut;
+use serde::Serialize;
 use serde_json::{Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
 use sloppy_core::net::protocol::{CONTENT_VERSION, Message, PROTOCOL_VERSION};
@@ -105,20 +106,22 @@ fn message_type(message: &Message) -> String {
     }
 }
 
+/// A projected frame's line in the frames file: the player, the tick and a hash of the
+/// state the player sees.
+fn frame_line(name: &str, tick: u64, state: &impl Serialize) -> String {
+    let mut hasher = DefaultHasher::new();
+    serde_json::to_string(state)
+        .expect("JSON")
+        .hash(&mut hasher);
+    format!("{name} {tick} {:016x}", hasher.finish())
+}
+
 impl Player {
     fn hash_frame(&mut self) {
         let Some(tank) = self.tank_id else { return };
         if let Ok(state) = self.mirror.render(tank) {
-            let mut hasher = DefaultHasher::new();
-            serde_json::to_string(&state)
-                .expect("JSON")
-                .hash(&mut hasher);
-            self.frames.push(format!(
-                "{} {} {:016x}",
-                self.name,
-                self.mirror.tick,
-                hasher.finish()
-            ));
+            self.frames
+                .push(frame_line(&self.name, self.mirror.tick, &state));
         }
     }
 
@@ -187,19 +190,14 @@ impl Player {
                 }
                 self.path_bytes += bytes.len() as u64;
                 for (tick, state) in rendered {
-                    let mut hasher = DefaultHasher::new();
-                    serde_json::to_string(&state)
-                        .expect("JSON")
-                        .hash(&mut hasher);
-                    self.frames
-                        .push(format!("{} {tick} {:016x}", self.name, hasher.finish()));
+                    self.frames.push(frame_line(&self.name, tick, &state));
                 }
             }
         }
     }
 
-    /// Bot-like driving: random maneuvers, a sweeping turret, input at 20 Hz while
-    /// active and once a second when idle, and a ping every second.
+    /// Bot-like driving: random maneuvers, a sweeping turret, input every interval while
+    /// the player has a tank, and a ping every second.
     fn update(&mut self, random: &mut Random, now: u64, out: &mut Vec<String>) {
         if now >= self.maneuver_until {
             self.maneuver_until = now + 400 + (random.next() * 2600.0) as u64;
@@ -250,11 +248,12 @@ fn run(label: &str, room: &str, map: &str, seed: u32, seconds: u64, output: &Pat
             token += 1;
             format!("credential-{token:020}")
         }),
-        seed: Some(seed),
+        seed,
         content_version: None,
     });
+    let verify = std::env::var_os("SLOPPY_VERIFY").is_some();
     let truth = Truth::default();
-    if std::env::var_os("SLOPPY_VERIFY").is_some() {
+    if verify {
         let truth = truth.clone();
         host.tick_hook = Some(Box::new(move |simulation, tick| {
             truth
@@ -363,7 +362,6 @@ fn run(label: &str, room: &str, map: &str, seed: u32, seconds: u64, output: &Pat
         host.receive(index as u64 + 1, &join.to_string(), now);
         deliver(&mut host, &mut players, &mut traffic, false);
     }
-    let verify = std::env::var_os("SLOPPY_VERIFY").is_some();
     let mut mismatches: Vec<String> = Vec::new();
     let intervals = WARMUP_INTERVALS + seconds * 1000 / INTERVAL_MS;
     for interval in 0..intervals {
@@ -427,13 +425,7 @@ fn run(label: &str, room: &str, map: &str, seed: u32, seconds: u64, output: &Pat
     let sum = |totals: &BTreeMap<String, u64>| totals.values().sum::<u64>() as f64;
     let simulation = host.simulation.as_ref().expect("a round");
     let per_client_second = |count: u64| count as f64 / PLAYERS as f64 / measured_seconds;
-    let paths = players.iter().fold([0; 3], |sum, p| {
-        [
-            sum[0] + p.paths[0],
-            sum[1] + p.paths[1],
-            sum[2] + p.paths[2],
-        ]
-    });
+    let paths: [u64; 3] = std::array::from_fn(|kind| players.iter().map(|p| p.paths[kind]).sum());
     let path_bytes: u64 = players.iter().map(|p| p.path_bytes).sum();
     let report = json!({
         "room": room,

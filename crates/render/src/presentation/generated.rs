@@ -15,7 +15,6 @@ use std::collections::HashSet;
 
 use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
 use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_soil, sand_accum};
-use sloppy_core::scene::{Node, TextureRef, TextureSource};
 
 /// Soil rows baked per step: a 2048-row bake is ~300 ms natively, so 128 rows
 /// keep each step near 20 ms while the loading screen yields between steps.
@@ -45,33 +44,6 @@ impl SoilBake {
         self.rows = end;
         (self.rows == QUARRY_SOIL_SIZE).then(|| std::mem::take(&mut self.pixels))
     }
-}
-
-/// Every generated texture key a scenery tree samples.
-pub fn generated_keys(root: &Node) -> Vec<&'static str> {
-    let mut keys = Vec::new();
-    let mut add = |texture: &Option<TextureRef>| {
-        if let Some(TextureRef {
-            source: TextureSource::Generated(key),
-            ..
-        }) = texture
-            && !keys.contains(key)
-        {
-            keys.push(*key);
-        }
-    };
-    root.traverse(glam::DMat4::IDENTITY, &mut |node, _| {
-        if let Some(drawable) = &node.drawable {
-            let material = &drawable.material;
-            add(&material.map);
-            add(&material.emissive_map);
-            add(&material.bump_map);
-            for (_, texture) in &material.extra_textures {
-                add(&Some(texture.clone()));
-            }
-        }
-    });
-    keys
 }
 
 /// Generated textures presentation has supplied or is baking.
@@ -145,13 +117,18 @@ mod browser {
     use super::*;
     use crate::gpu::{Renderer, image_data};
     use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture, canvas_texture};
+    use sloppy_core::models::node_textures;
+    use sloppy_core::scene::{Node, TextureSource};
     use wasm_bindgen::JsCast;
 
     impl GeneratedTextures {
         /// Supply the canvas textures a scenery tree uses now, and start baking
         /// its soil (finished by [`Self::step`]).
         pub fn request_scenery(&mut self, renderer: &mut Renderer, root: &Node) {
-            for key in generated_keys(root) {
+            for source in node_textures(root) {
+                let TextureSource::Generated(key) = source else {
+                    continue;
+                };
                 if !self.done.insert(key) {
                     continue;
                 }
@@ -277,7 +254,6 @@ mod browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::models::quarry_soil_pixels;
 
     #[test]
     fn the_page_claims_a_soil_bake_once_before_it_starts() {
@@ -326,6 +302,6 @@ mod tests {
             steps += 1;
         }
         assert_eq!(steps, QUARRY_SOIL_SIZE.div_ceil(SOIL_ROWS_PER_STEP * 3 + 7));
-        assert!(result.unwrap() == quarry_soil_pixels());
+        assert!(result.unwrap() == bake_quarry_soil(sand_accum(), 0, QUARRY_SOIL_SIZE));
     }
 }

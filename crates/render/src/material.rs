@@ -1,46 +1,13 @@
-//! Material classification: which list a material draws in, which shader variant
-//! it needs, and the painted variants that let differently colored parts share one
-//! batch (the `vertexMaterial` rule from `batching.ts`).
+//! Material classification: the painted variants that let differently colored parts
+//! share one batch (the `vertexMaterial` rule from `batching.ts`), interning by value,
+//! and the faces a material casts its shadow from.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use sloppy_core::scene::{Effect, Material, Shading, Side, TextureRef};
-
-use crate::color::hex_to_linear;
-
-/// Whether a material draws in Three's transparent list (sorted back to front).
-pub fn is_transparent(material: &Material) -> bool {
-    material.transparent
-}
-
-/// Materials whose paint can be baked into vertex colors: opaque standard surfaces
-/// without per-pixel alpha, vertex colors, an emissive map or custom shading
-/// (the models' `vertex_material` rule).
-pub fn is_paintable(material: &Material) -> bool {
-    material.shading == Shading::Standard
-        && !material.transparent
-        && material.opacity == 1.0
-        && material.alpha_test == 0.0
-        && !material.vertex_colors
-        && material.emissive_map.is_none()
-        && material.effect == Effect::None
-}
-
-/// The shared white, vertex-colored stand-in for a paintable material.
-pub fn painted(material: &Material) -> Material {
-    Material {
-        color: sloppy_core::scene::Color(0xffffff),
-        vertex_colors: true,
-        ..material.clone()
-    }
-}
-
-/// The linear paint a part bakes into its vertices when its material is painted.
-pub fn paint_color(material: &Material) -> [f32; 3] {
-    hex_to_linear(material.color.0)
-}
+pub use sloppy_core::models::{is_paintable, painted};
+use sloppy_core::scene::{Effect, Material, Side, TextureRef};
 
 fn hash_texture(texture: Option<&TextureRef>, state: &mut impl Hasher) {
     match texture {
@@ -131,10 +98,6 @@ impl MaterialInterner {
         material.clone()
     }
 
-    pub fn intern_value(&mut self, material: Material) -> Arc<Material> {
-        self.intern(&Arc::new(material))
-    }
-
     /// Forget materials nobody else holds any more (after a round reset).
     pub fn retain_used(&mut self) {
         self.by_hash.retain(|_, bucket| {
@@ -144,14 +107,15 @@ impl MaterialInterner {
     }
 }
 
-/// Culling and depth-only faces per Three: a front-side material casts from its
-/// back faces (`_shadowSide`), a back-side one from its front faces.
-pub fn shadow_side(side: Side) -> Side {
-    match side {
+/// Culling and depth-only faces per Three: an explicit `shadow_side` wins, otherwise
+/// a front-side material casts from its back faces (`_shadowSide`), a back-side one
+/// from its front faces.
+pub fn shadow_side(material: &Material) -> Side {
+    material.shadow_side.unwrap_or(match material.side {
         Side::Front => Side::Back,
         Side::Back => Side::Front,
         Side::Double => Side::Double,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -164,11 +128,10 @@ mod tests {
         let blue = Material::standard(0x0000ff, 0.05, 0.65);
         assert!(is_paintable(&red));
         let mut interner = MaterialInterner::default();
-        let a = interner.intern_value(painted(&red));
-        let b = interner.intern_value(painted(&blue));
+        let a = interner.intern(&Arc::new(painted(&red)));
+        let b = interner.intern(&Arc::new(painted(&blue)));
         assert!(Arc::ptr_eq(&a, &b));
-        assert_eq!(paint_color(&red), [1.0, 0.0, 0.0]);
-        let rough = interner.intern_value(painted(&Material::standard(0xff0000, 0.05, 0.9)));
+        let rough = interner.intern(&Arc::new(painted(&Material::standard(0xff0000, 0.05, 0.9))));
         assert!(!Arc::ptr_eq(&a, &rough));
     }
 
@@ -189,6 +152,6 @@ mod tests {
             ..Material::default()
         };
         assert!(!is_paintable(&wavy));
-        assert_eq!(shadow_side(Side::Front), Side::Back);
+        assert_eq!(shadow_side(&Material::default()), Side::Back);
     }
 }

@@ -1,13 +1,15 @@
-//! Renderer and presentation rows of Stats for nerds, shared by the page's game types.
+//! Renderer, presentation and frame-timing rows of Stats for nerds, shared by the page's
+//! game types and the render lab.
 
 use serde_json::{Map, Value, json};
+use sloppy_render::gpu::Renderer;
 use sloppy_render::presentation::Presentation;
 
-/// Draw calls, triangles, GPU resources and entity views, with `Game.stats_json()`'s
-/// field names.
-pub fn presentation_stats(view: &Presentation) -> Map<String, Value> {
-    let render = view.renderer.stats();
-    let counts = view.stats();
+use crate::page::FrameTimes;
+
+/// Draw calls, triangles and GPU resources.
+pub fn renderer_stats(renderer: &Renderer) -> Map<String, Value> {
+    let render = renderer.stats();
     let value = json!({
         "graphicsApi": sloppy_render::GRAPHICS_API,
         "drawCalls": render.draw_calls,
@@ -32,7 +34,20 @@ pub fn presentation_stats(view: &Presentation) -> Map<String, Value> {
         "drawClasses": render.draw_classes,
         "gpuBytes": render.gpu_bytes,
         "meshSlackBytes": render.mesh_slack_bytes,
-        "view": {
+    });
+    match value {
+        Value::Object(fields) => fields,
+        _ => Map::new(),
+    }
+}
+
+/// The renderer rows, the entity views and the last frame's timings.
+pub fn presentation_stats(view: &Presentation, times: &FrameTimes) -> Map<String, Value> {
+    let mut stats = renderer_stats(&view.renderer);
+    let counts = view.stats();
+    stats.insert(
+        "view".into(),
+        json!({
             "tanks": counts.tanks,
             "covers": counts.covers,
             "coverModels": counts.cover_models,
@@ -41,10 +56,11 @@ pub fn presentation_stats(view: &Presentation) -> Map<String, Value> {
             "mines": counts.mines,
             "pickupEffects": counts.pickup_effects,
             "branches": counts.branches,
-        },
-    });
-    match value {
-        Value::Object(fields) => fields,
-        _ => Map::new(),
-    }
+        }),
+    );
+    stats.insert("frameMs".into(), times.frame_ms.into());
+    stats.insert("fps".into(), times.fps().into());
+    stats.insert("simMs".into(), times.sim_ms.into());
+    stats.insert("renderMs".into(), times.render_ms.into());
+    stats
 }

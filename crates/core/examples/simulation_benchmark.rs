@@ -23,14 +23,11 @@ fn main() {
         .and_then(|text| text.parse().ok())
         .unwrap_or(79.0);
     let id = MapId::parse(map).expect("known map id");
-    let base = SimulationSetup {
+    let setup = SimulationSetup {
         map_mode: Some(id),
         ..SimulationSetup::default()
-    };
-    let setup = match extra_level(id) {
-        Some(level) => base.merged(single_player_rules(level)),
-        None => base,
-    };
+    }
+    .merged(extra_level(id).map(single_player_rules).unwrap_or_default());
     let mut simulation = Simulation::new(seed, setup);
     simulation.start();
     let mut tick_ms = Vec::with_capacity(MEASURE_TICKS);

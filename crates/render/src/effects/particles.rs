@@ -1,11 +1,11 @@
 //! Chips, sparks and embers (`particle-effects.ts`): one bounded instanced
 //! draw of small icosahedra, plus the pooled blasts it forwards events to.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::explosions::ExplosionEffects;
-use super::pool::{PoolBuffer, euler_xyz, pose, record};
+use super::pool::{PoolBuffer, pose, record};
 use super::random::CosmeticRandom;
 use crate::color::hex_to_linear;
 
@@ -13,15 +13,12 @@ pub const MAX_PARTICLES: usize = 1200;
 const PARTICLE_GRAVITY: f64 = 8.0;
 /// Particles never draw below the ground.
 const MIN_HEIGHT: f64 = 0.1;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParticleShape {
-    Splinter,
-}
+/// Splinters are long thin chips.
+const SPLINTER_STRETCH: Vec3 = Vec3::new(0.4, 2.4, 0.4);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Particle {
-    pub shape: Option<ParticleShape>,
+    pub splinter: bool,
     pub x: f64,
     pub y: f64,
     pub z: f64,
@@ -110,7 +107,6 @@ const HURT_COLORS: [u32; 3] = [0xffffff, 0xffcb58, 0xffcb58];
 const EMBER_COLORS: [u32; 2] = [0xffde82, 0xffa238];
 const SPARK_COLOR: u32 = 0xffdf91;
 
-/// Cosmetic randomness is deliberately independent from the seeded simulation.
 #[derive(Clone, Debug)]
 pub struct ParticleEffects {
     pub particles: Vec<Particle>,
@@ -247,14 +243,14 @@ impl ParticleEffects {
             } else {
                 style.size[0] + random.next_f64() * style.size[1]
             };
-            let shape = (timber || tree).then_some(ParticleShape::Splinter);
+            let splinter = timber || tree;
             let hex = if fiery {
                 EMBER_COLORS[i % 2]
             } else {
                 color_at(i)
             };
             self.particles.push(Particle {
-                shape,
+                splinter,
                 x,
                 y,
                 z,
@@ -287,25 +283,19 @@ impl ParticleEffects {
         self.records.clear();
         let time = time as f32;
         // Every chip turns the same way this frame.
-        let chip_turn = euler_xyz(Vec3::new(0.0, time, 0.0));
+        let chip_turn = Quat::from_rotation_y(time);
         for (i, q) in self.particles.iter().enumerate() {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = (q.size * q.life / q.max) as f32;
-            let world = match q.shape {
-                None => {
-                    Mat4::from_scale_rotation_translation(Vec3::splat(size), chip_turn, position)
-                }
-                Some(shape) => {
-                    let spin = i as f32;
-                    let stretch = match shape {
-                        ParticleShape::Splinter => Vec3::new(0.4, 2.4, 0.4),
-                    };
-                    pose(
-                        position,
-                        Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
-                        stretch * size,
-                    )
-                }
+            let world = if q.splinter {
+                let spin = i as f32;
+                pose(
+                    position,
+                    Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
+                    SPLINTER_STRETCH * size,
+                )
+            } else {
+                Mat4::from_scale_rotation_translation(Vec3::splat(size), chip_turn, position)
             };
             let [r, g, b] = q.color;
             self.records.push(record(world, [r, g, b, 1.0], [0.0; 4]));
@@ -358,12 +348,7 @@ mod tests {
             particles.explosions.puffs.records()[0].tint[0] < 1.0,
             "collapse produces dust, not the bright fire core"
         );
-        assert!(
-            particles
-                .particles
-                .iter()
-                .all(|p| p.shape == Some(ParticleShape::Splinter))
-        );
+        assert!(particles.particles.iter().all(|p| p.splinter));
     }
 
     #[test]
@@ -377,8 +362,8 @@ mod tests {
         );
         let time = 7.3;
         particles.update(0.02, time);
-        assert!(particles.particles.iter().any(|q| q.shape.is_none()));
-        assert!(particles.particles.iter().any(|q| q.shape.is_some()));
+        assert!(particles.particles.iter().any(|q| !q.splinter));
+        assert!(particles.particles.iter().any(|q| q.splinter));
         let time = time as f32;
         for (i, (q, record)) in particles
             .particles
@@ -389,12 +374,13 @@ mod tests {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = (q.size * q.life / q.max) as f32;
             let spin = i as f32;
-            let (euler, scale) = match q.shape {
-                None => (Vec3::new(0.0, time, 0.0), Vec3::splat(size)),
-                Some(_) => (
+            let (euler, scale) = if q.splinter {
+                (
                     Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
-                    Vec3::new(0.4, 2.4, 0.4) * size,
-                ),
+                    SPLINTER_STRETCH * size,
+                )
+            } else {
+                (Vec3::new(0.0, time, 0.0), Vec3::splat(size))
             };
             assert_eq!(record.world(), pose(position, euler, scale));
         }
@@ -441,12 +427,7 @@ mod tests {
     #[test]
     fn cover_hits_chip_trees_timber_and_cargo() {
         let mut random = CosmeticRandom::constant(0.5);
-        let chips = |p: &ParticleEffects| {
-            p.particles
-                .iter()
-                .filter(|q| q.shape == Some(ParticleShape::Splinter))
-                .count()
-        };
+        let chips = |p: &ParticleEffects| p.particles.iter().filter(|q| q.splinter).count();
         for cover in [CoverKind::Tree, CoverKind::Timber, CoverKind::Cargo] {
             let mut hit = ParticleEffects::default();
             hit.event(&with_cover(SimEventType::Impact, cover), &mut random);

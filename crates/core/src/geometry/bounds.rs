@@ -3,7 +3,7 @@
 use glam::{DMat4, DVec3};
 
 use super::math::transform_point;
-use super::mesh::Mesh;
+use super::mesh::{Mesh, widen};
 use crate::scene::Node;
 
 /// An axis-aligned box. `Aabb::EMPTY` has inverted infinite bounds, like a fresh
@@ -14,21 +14,11 @@ pub struct Aabb {
     pub max: DVec3,
 }
 
-impl Default for Aabb {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 impl Aabb {
     pub const EMPTY: Self = Self {
         min: DVec3::INFINITY,
         max: DVec3::NEG_INFINITY,
     };
-
-    pub fn new(min: DVec3, max: DVec3) -> Self {
-        Self { min, max }
-    }
 
     pub fn from_points(points: impl IntoIterator<Item = DVec3>) -> Self {
         let mut bounds = Self::EMPTY;
@@ -95,11 +85,7 @@ impl Aabb {
 impl Mesh {
     /// `BufferGeometry.computeBoundingBox`: bounds of the stored f32 positions.
     pub fn bounding_box(&self) -> Aabb {
-        Aabb::from_points(
-            self.positions
-                .iter()
-                .map(|p| DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))),
-        )
+        Aabb::from_points(self.positions.iter().map(|&p| widen(p)))
     }
 }
 

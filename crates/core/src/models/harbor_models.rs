@@ -39,8 +39,6 @@ pub struct CrateShape {
     pub color: u32,
 }
 
-/// Node name of each torn-wood decal on a damaged crate.
-pub const CARGO_SPLIT: &str = "cargo-split";
 const LOCK_SILVER: u32 = 0xc4c4ad;
 
 /// Corner radius of a container's small fittings (ribs, rails, doors, bars).
@@ -274,7 +272,7 @@ fn split_geometries() -> &'static [Arc<Mesh>; 4] {
             .iter()
             .map(|&[x, y]| DVec2::new(x * rng.range(0.65, 1.35), y))
             .collect();
-            Arc::new(shape_geometry(&[Shape::from_points(&points)], 12))
+            Arc::new(shape_geometry(&[Shape::from_points(&points)]))
         })
     })
 }
@@ -289,7 +287,7 @@ fn cargo_damage(group: &mut Node, c: CrateShape, stage: u32, rng: &mut Random) {
         for (i, color) in [0xc9a271u32, 0x35291c].into_iter().enumerate() {
             let i = i as f64;
             let mut mesh = Node::mesh(geometry.clone(), material(color, 0.0, 0.9));
-            mesh.name = CARGO_SPLIT.into();
+            mesh.name = "cargo-split".into();
             mesh.rotation = rotation;
             mesh.scale = DVec3::new(breadth * if i == 0.0 { 1.9 } else { 1.0 }, length, 1.0);
             // Separate both layers from the wood and each other to avoid flickering.

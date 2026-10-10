@@ -13,16 +13,15 @@ use std::collections::HashMap;
 use rapier3d::prelude::*;
 use serde_json::{Value, json};
 
-use super::scene_codec::VEHICLE_KINDS;
+use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::ReadResult;
 use super::wire::{WireReader, put_varint};
 use crate::sim::damage::tree_stump;
-use crate::sim::data::{ARENA, STEP, group};
+use crate::sim::data::{STEP, group};
 use crate::sim::math::{Point3, Quat4, Vec2};
 use crate::sim::physics::{from_vector, interaction_groups, to_rotation, to_vector, vector};
 use crate::sim::render_state::{RenderCover, RenderState, RenderTank};
-use crate::sim::simulation::{Simulation, cover_parts};
-use crate::sim::simulation_rules::GRAVITY;
+use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
 use crate::sim::types::{CoverKind, VehicleKind};
@@ -52,24 +51,22 @@ fn put_f32s(out: &mut Vec<u8>, point: Point3) {
     }
 }
 
-fn read_f32(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    let bytes = reader.bytes(4)?;
-    let value = f32::from_le_bytes(bytes.try_into().expect("four bytes"));
-    if value.is_finite() {
-        Ok(value as f64)
-    } else {
-        Err("Invalid hull number".into())
-    }
-}
-
-fn read_f64(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    let bytes = reader.bytes(8)?;
-    let value = f64::from_le_bytes(bytes.try_into().expect("eight bytes"));
+fn finite(value: f64) -> ReadResult<f64> {
     if value.is_finite() {
         Ok(value)
     } else {
         Err("Invalid hull number".into())
     }
+}
+
+fn read_f32(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let bytes = reader.bytes(4)?;
+    finite(f32::from_le_bytes(bytes.try_into().expect("four bytes")) as f64)
+}
+
+fn read_f64(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let bytes = reader.bytes(8)?;
+    finite(f64::from_le_bytes(bytes.try_into().expect("eight bytes")))
 }
 
 fn read_point(reader: &mut WireReader<'_>) -> ReadResult<Point3> {
@@ -105,12 +102,7 @@ impl HullState {
     pub fn write(&self, out: &mut Vec<u8>) {
         put_varint(out, self.tick);
         put_varint(out, u64::from(self.life));
-        out.push(
-            VEHICLE_KINDS
-                .iter()
-                .position(|(_, kind)| *kind == self.kind)
-                .expect("every chassis has a wire name") as u8,
-        );
+        out.push(index_of(&VEHICLE_KINDS, self.kind) as u8);
         put_f32s(out, self.position);
         put_f32s(out, self.velocity);
         out.extend_from_slice(&(self.spin as f32).to_le_bytes());
@@ -201,32 +193,17 @@ pub struct TankPredictor {
 
 impl Default for TankPredictor {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TankPredictor {
-    pub fn new() -> Self {
-        let mut world = PhysicsWorld::new();
-        world.gravity = vector(0.0, -GRAVITY, 0.0);
-        world.integration_parameters.dt = STEP as f32;
-        // The same ground slab as `Simulation::reset`.
-        let ground =
-            world.insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
-        world.insert_collider(
-            ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
-                .collision_groups(interaction_groups(group::GROUND)),
-            Some(ground),
-        );
         Self {
-            world,
+            world: arena_world(),
             hull: None,
             covers: HashMap::new(),
             tanks: HashMap::new(),
             stale: Vec::new(),
         }
     }
+}
 
+impl TankPredictor {
     /// Matches the obstacles to a received scene: standing cover and stumps, movable
     /// cover at its replicated pose, and every live tank other than the viewer's.
     pub fn sync_scene(&mut self, state: &RenderState) {
@@ -307,6 +284,16 @@ impl TankPredictor {
         body
     }
 
+    /// A tank body at `position` with its colliders, as the host builds one.
+    fn insert_tank(&mut self, kind: VehicleKind, position: Point3) -> RigidBodyHandle {
+        let (body, colliders) = tank_body_parts(kind, position.planar(), SPEED_SCALE);
+        let body = self.world.insert_body(body);
+        for collider in colliders {
+            self.world.insert_collider(collider, Some(body));
+        }
+        body
+    }
+
     fn place_other_tank(&mut self, tank: &RenderTank) {
         let rebuild = self
             .tanks
@@ -316,15 +303,7 @@ impl TankPredictor {
             if let Some(old) = self.tanks.remove(&tank.id) {
                 self.world.remove_body(old.body);
             }
-            let (body, colliders) = tank_body_parts(
-                tank.kind,
-                Vec2::new(tank.position.x, tank.position.z),
-                SPEED_SCALE,
-            );
-            let body = self.world.insert_body(body);
-            for collider in colliders {
-                self.world.insert_collider(collider, Some(body));
-            }
+            let body = self.insert_tank(tank.kind, tank.position);
             self.tanks.insert(
                 tank.id,
                 OtherTank {
@@ -364,15 +343,7 @@ impl TankPredictor {
             if let Some(old) = self.hull.take() {
                 self.world.remove_body(old.body);
             }
-            let (body, colliders) = tank_body_parts(
-                state.kind,
-                Vec2::new(state.position.x, state.position.z),
-                SPEED_SCALE,
-            );
-            let body = self.world.insert_body(body);
-            for collider in colliders {
-                self.world.insert_collider(collider, Some(body));
-            }
+            let body = self.insert_tank(state.kind, state.position);
             self.hull = Some(PredictedHull {
                 body,
                 life: state.life,
@@ -400,10 +371,6 @@ impl TankPredictor {
         if let Some(old) = self.hull.take() {
             self.world.remove_body(old.body);
         }
-    }
-
-    pub fn has_hull(&self) -> bool {
-        self.hull.is_some()
     }
 
     /// One fixed tick with the host's per-tank order: timers, then the drive impulse, then

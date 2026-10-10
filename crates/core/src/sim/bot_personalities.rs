@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ammunition::{AMMO_ORDER, equipped_weapon, has_ammo};
+use super::ammunition::{AMMO_ORDER, has_ammo};
 use super::data::weapon;
 use super::math::{Random, Vec2};
 use super::types::{Tank, Team, VehicleKind, Weapon};
@@ -47,7 +47,6 @@ impl BotPersonality {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BotProfile {
-    pub label: &'static str,
     pub chassis: VehicleKind,
     pub range: f64,
     pub sight: f64,
@@ -63,7 +62,6 @@ pub struct BotProfile {
 pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile {
     match personality {
         BotPersonality::Scout => &BotProfile {
-            label: "SCOUT",
             chassis: VehicleKind::Scout,
             range: 11.0,
             sight: 30.0,
@@ -74,7 +72,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: false,
         },
         BotPersonality::Guard => &BotProfile {
-            label: "GUARD",
             chassis: VehicleKind::Balanced,
             range: 18.0,
             sight: 30.0,
@@ -85,7 +82,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: false,
         },
         BotPersonality::Sniper => &BotProfile {
-            label: "SNIPER",
             chassis: VehicleKind::Balanced,
             range: 24.0,
             sight: 44.0,
@@ -96,7 +92,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: true,
         },
         BotPersonality::Heavy => &BotProfile {
-            label: "HEAVY",
             chassis: VehicleKind::Heavy,
             range: 18.0,
             sight: 30.0,
@@ -107,7 +102,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: false,
         },
         BotPersonality::Minelayer => &BotProfile {
-            label: "MINELAYER",
             chassis: VehicleKind::Scout,
             range: 8.0,
             sight: 30.0,
@@ -118,7 +112,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: false,
         },
         BotPersonality::Support => &BotProfile {
-            label: "SUPPORT",
             chassis: VehicleKind::Balanced,
             range: 22.0,
             sight: 34.0,
@@ -129,7 +122,6 @@ pub const fn bot_profile_for(personality: BotPersonality) -> &'static BotProfile
             stationary: false,
         },
         BotPersonality::Artillery => &BotProfile {
-            label: "ARTILLERY",
             chassis: VehicleKind::Heavy,
             range: 26.0,
             sight: 42.0,
@@ -201,9 +193,8 @@ pub fn preferred_ammo(tank: &Tank) -> Weapon {
         .unwrap_or(Weapon::Standard)
 }
 
-/// Seconds between a bot's shots with `fired` (its equipped weapon by default).
-pub fn bot_reload(tank: &Tank, jitter: f64, fired: Option<Weapon>) -> f64 {
-    let fired = fired.unwrap_or_else(|| equipped_weapon(tank));
+/// Seconds between a bot's shots with `fired`.
+pub fn bot_reload(tank: &Tank, jitter: f64, fired: Weapon) -> f64 {
     let base = bot_profile(tank).reload
         * if tank.brain.ultra_aggressive {
             0.48

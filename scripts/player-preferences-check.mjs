@@ -1,8 +1,16 @@
 // Returning players keep their choices through reloads and between local/online play.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { chooseMap, chosenMap, gameUrl, launchGame, startRound } from "./browser-helpers.mjs";
-import { click, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
+import {
+  chooseMap,
+  chosenMap,
+  click,
+  gameUrl,
+  launchGame,
+  menuReady,
+  startRound,
+} from "./browser-helpers.mjs";
+import { waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/player-ux";
 await mkdir(output, { recursive: true });
@@ -55,9 +63,7 @@ try {
   assert.equal(await page.locator('input[name="gameMode"][value="solo"]').isChecked(), true);
   assert.equal(await page.locator('input[name="difficulty"][value="easy"]').isChecked(), true);
   assert.equal(await chosenMap(page), "quarry");
-  await page.waitForFunction(
-    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-  );
+  await menuReady(page);
   await page.screenshot({ path: `${output}/remembered-setup.png` });
   await start();
   const original = await camera();

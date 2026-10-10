@@ -1,4 +1,5 @@
 import type { HudState } from "./engine-api";
+import { savedPreference } from "./player-preferences";
 
 type SpeedKey = keyof HudState["speedTuning"];
 
@@ -13,12 +14,8 @@ export const SETTINGS_BUTTON = `<button id="settings-open" class="quiet" type="b
 
 /** The saved sound level, shared by single player and rooms. */
 export function savedVolume(): number {
-  try {
-    const value = Number(localStorage.getItem("sloppy-volume") ?? DEFAULT_VOLUME);
-    return Number.isFinite(value) ? value : DEFAULT_VOLUME;
-  } catch {
-    return DEFAULT_VOLUME;
-  }
+  const value = Number(savedPreference("volume") ?? DEFAULT_VOLUME);
+  return Number.isFinite(value) ? value : DEFAULT_VOLUME;
 }
 
 export interface SettingsHandlers {

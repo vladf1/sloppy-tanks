@@ -1,9 +1,10 @@
 //! GPU meshes and materials. A shared `Arc<Mesh>` or interned `Arc<Material>` is
 //! uploaded once, keyed by pointer identity (the store keeps a clone, so the
 //! pointer cannot be reused while the entry lives). Entries used only by released
-//! round resources are freed on `reset_round` once no caller still holds the
-//! `Arc` — the Rust form of disposing only `userData.owned` resources. Meshes live
-//! in shared mesh pages (`crate::mesh_pages`), not buffers of their own.
+//! resources are freed once no caller still holds the `Arc` (meshes at the next
+//! frame's collection, materials on `reset_round`) — the Rust form of disposing
+//! only `userData.owned` resources. Meshes live in shared mesh pages
+//! (`crate::mesh_pages`), not buffers of their own.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,7 +14,8 @@ use glam::Vec3;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Effect, Material, TextureRef};
 
-use super::backend::{Gpu, MaterialBinding, PageBuffers};
+use super::Slab;
+use super::backend::{Gpu, MaterialBinding, PageBuffers, Sampler, TextureView};
 use crate::camera::Sphere;
 use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
@@ -32,12 +34,22 @@ pub const EXTRA_TEXTURE_SLOTS: usize = 2;
 pub struct GpuMesh {
     /// Where its vertices and absolute indices live in the mesh pages.
     pub range: MeshRange,
-    pub extra_attributes: u8,
     pub bounds: Sphere,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
-    source: Option<(Arc<Mesh>, Vec<&'static str>)>,
+    source: Option<Arc<Mesh>>,
     /// Live draw classes using this mesh.
     pub users: u32,
+}
+
+impl GpuMesh {
+    /// A shared mesh that nothing draws and no caller holds.
+    fn unused(&self) -> bool {
+        self.users == 0
+            && self
+                .source
+                .as_ref()
+                .is_some_and(|source| Arc::strong_count(source) == 1)
+    }
 }
 
 /// Batch placements for a registration's owned meshes and merged shadow groups, in
@@ -51,9 +63,8 @@ pub struct Reservation {
 /// (`crate::mesh_pages`).
 #[derive(Default)]
 pub struct MeshStore {
-    slots: Vec<Option<GpuMesh>>,
-    free: Vec<u32>,
-    shared: HashMap<(usize, Vec<&'static str>), u32>,
+    slots: Slab<GpuMesh>,
+    shared: HashMap<usize, u32>,
     /// A shared mesh lost its last draw class since the last collection.
     released: bool,
     /// Which page each mesh's vertices and indices live in, and where.
@@ -63,9 +74,9 @@ pub struct MeshStore {
 }
 
 /// Vertices converted per write when a shared mesh streams to the GPU. The converted
-/// chunk is a passing heap allocation (384 KiB of vertices, plus effect vec4s), small
-/// enough to fit the free space loading leaves rather than grow the Wasm memory, which
-/// keeps any growth for good.
+/// chunk is a passing heap allocation (384 KiB of vertices), small enough to fit the
+/// free space loading leaves rather than grow the Wasm memory, which keeps any growth
+/// for good.
 const UPLOAD_CHUNK_VERTICES: usize = 8 * 1024;
 
 /// Indices rebased per write when a shared mesh streams to the GPU: 16 KiB on the
@@ -73,19 +84,6 @@ const UPLOAD_CHUNK_VERTICES: usize = 8 * 1024;
 const UPLOAD_CHUNK_INDICES: usize = 4 * 1024;
 
 impl MeshStore {
-    fn insert(&mut self, mesh: GpuMesh) -> u32 {
-        match self.free.pop() {
-            Some(index) => {
-                self.slots[index as usize] = Some(mesh);
-                index
-            }
-            None => {
-                self.slots.push(Some(mesh));
-                self.slots.len() as u32 - 1
-            }
-        }
-    }
-
     /// Create the buffers of a page the planner just added.
     fn create_page(&mut self, gpu: &Gpu, page: u16) {
         let info = self.plan.page(page);
@@ -103,10 +101,6 @@ impl MeshStore {
             self.pages[page as usize].as_ref().expect("live mesh page"),
             self.plan.page(page),
         )
-    }
-
-    fn page_buffers(&self, page: u16) -> &PageBuffers {
-        self.pages[page as usize].as_ref().expect("live mesh page")
     }
 
     /// Where `count` elements of `family` go: the reserved batch placement, whose
@@ -141,9 +135,7 @@ impl MeshStore {
         let sizes: Vec<MeshSize> = owned
             .iter()
             .map(|data| MeshSize {
-                family: PageFamily::Surface {
-                    extra: data.extra_attributes,
-                },
+                family: PageFamily::Surface,
                 vertices: data.vertices.len() as u32,
                 indices: data.indices.len() as u32,
             })
@@ -171,15 +163,14 @@ impl MeshStore {
         }
     }
 
-    /// Place and write one mesh: `vertices`, and `extra` (its effect vec4s), at its
-    /// vertex range, and `indices`, made absolute in place, at its index range. A
-    /// mesh without vertices or indices gets [`MeshRange::EMPTY`] and draws nothing.
+    /// Place and write one mesh: `vertices` at its vertex range and `indices`, made
+    /// absolute in place, at its index range. A mesh without vertices or indices gets
+    /// [`MeshRange::EMPTY`] and draws nothing.
     fn upload(
         &mut self,
         gpu: &Gpu,
         family: PageFamily,
         vertices: &[u8],
-        extra: &[u8],
         indices: &mut [u32],
         reserved: MeshPlacement,
     ) -> MeshRange {
@@ -192,18 +183,12 @@ impl MeshStore {
             return MeshRange::EMPTY;
         }
         let vertex_count = size.vertices;
-        debug_assert_eq!(
-            extra.len() as u64,
-            u64::from(vertex_count) * family.extra_stride()
-        );
         let vertex = self.place(gpu, family, vertex_count, reserved.vertex);
         let index = self.place(gpu, PageFamily::Index, indices.len() as u32, reserved.index);
         rebase_indices(indices, vertex.first);
-        let page = self.page_buffers(vertex.page);
-        let at = u64::from(vertex.first);
-        page.write(gpu, at * family.stride(), vertices);
-        page.write_extra(gpu, at * family.extra_stride(), extra);
-        self.page_buffers(index.page).write(
+        let page = self.page(vertex.page).0;
+        page.write(gpu, u64::from(vertex.first) * family.stride(), vertices);
+        self.page(index.page).0.write(
             gpu,
             u64::from(index.first) * 4,
             bytemuck::cast_slice(indices),
@@ -221,11 +206,9 @@ impl MeshStore {
     /// Stream an unmodified shared mesh to its pages a chunk at a time: the quarry's
     /// merged walls alone would need a 20 MB upload copy in linear memory, which
     /// never shrinks. Its indices are rebased a chunk at a time on the stack.
-    fn upload_shared(&mut self, gpu: &Gpu, mesh: &Mesh, attributes: &[&str]) -> MeshRange {
+    fn upload_shared(&mut self, gpu: &Gpu, mesh: &Mesh) -> MeshRange {
         let vertex_count = mesh.positions.len() as u32;
-        let family = PageFamily::Surface {
-            extra: attributes.len() as u8,
-        };
+        let family = PageFamily::Surface;
         let size = MeshSize {
             family,
             vertices: vertex_count,
@@ -240,19 +223,14 @@ impl MeshStore {
         let index_count = size.indices;
         let vertex = self.place(gpu, family, vertex_count, None);
         let index = self.place(gpu, PageFamily::Index, index_count, None);
-        let page = self.page_buffers(vertex.page);
+        let page = self.page(vertex.page).0;
         for start in (0..vertex_count as usize).step_by(UPLOAD_CHUNK_VERTICES) {
             let range = start..(start + UPLOAD_CHUNK_VERTICES).min(vertex_count as usize);
-            let (vertices, extras) = crate::model::shared_vertices(mesh, attributes, range);
+            let vertices = crate::model::shared_vertices(mesh, range);
             let at = u64::from(vertex.first) + start as u64;
             page.write(gpu, at * family.stride(), bytemuck::cast_slice(&vertices));
-            page.write_extra(
-                gpu,
-                at * family.extra_stride(),
-                bytemuck::cast_slice(&extras),
-            );
         }
-        let indices = self.page_buffers(index.page);
+        let indices = self.page(index.page).0;
         stream_shared_indices(
             mesh.indices.as_deref(),
             vertex_count,
@@ -277,22 +255,16 @@ impl MeshStore {
     /// general pages, or an own page when large, never to a registration's batch
     /// pages: deduplicated by `Arc` identity, it can outlive the model that
     /// registered it.
-    pub fn shared(
-        &mut self,
-        gpu: &Gpu,
-        mesh: &Arc<Mesh>,
-        attributes: &'static [&'static str],
-    ) -> u32 {
-        let key = (Arc::as_ptr(mesh) as usize, attributes.to_vec());
+    pub fn shared(&mut self, gpu: &Gpu, mesh: &Arc<Mesh>) -> u32 {
+        let key = Arc::as_ptr(mesh) as usize;
         if let Some(&index) = self.shared.get(&key) {
             return index;
         }
-        let range = self.upload_shared(gpu, mesh, attributes);
-        let index = self.insert(GpuMesh {
+        let range = self.upload_shared(gpu, mesh);
+        let (index, _) = self.slots.insert(GpuMesh {
             range,
-            extra_attributes: attributes.len() as u8,
             bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
-            source: Some((mesh.clone(), attributes.to_vec())),
+            source: Some(mesh.clone()),
             users: 0,
         });
         self.shared.insert(key, index);
@@ -302,24 +274,20 @@ impl MeshStore {
     /// Upload merged geometry owned by one model, at its reserved placement if it has
     /// one; release it with `release`. Its indices are rebased in place.
     pub fn owned(&mut self, gpu: &Gpu, data: &mut MeshData, reserved: MeshPlacement) -> u32 {
-        let family = PageFamily::Surface {
-            extra: data.extra_attributes,
-        };
         let range = self.upload(
             gpu,
-            family,
+            PageFamily::Surface,
             bytemuck::cast_slice(&data.vertices),
-            bytemuck::cast_slice(&data.extra),
             &mut data.indices,
             reserved,
         );
-        self.insert(GpuMesh {
+        let (index, _) = self.slots.insert(GpuMesh {
             range,
-            extra_attributes: data.extra_attributes,
             bounds: data.bounds,
             source: None,
             users: 0,
-        })
+        });
+        index
     }
 
     /// Upload a model's merged shadow group, at its reserved placement if it has
@@ -335,7 +303,6 @@ impl MeshStore {
             gpu,
             PageFamily::Shadow,
             bytemuck::cast_slice(&group.vertices),
-            &[],
             &mut group.indices,
             reserved,
         )
@@ -359,19 +326,12 @@ impl MeshStore {
         }
     }
 
-    /// Destroy the general pages no mesh uses (`PagePlanner::trim`).
-    fn trim_pages(&mut self) {
-        for page in self.plan.trim() {
-            self.pages[page as usize] = None;
-        }
-    }
-
     pub fn get(&self, index: u32) -> &GpuMesh {
-        self.slots[index as usize].as_ref().expect("live mesh")
+        self.slots.at(index).expect("live mesh")
     }
 
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMesh {
-        self.slots[index as usize].as_mut().expect("live mesh")
+        self.slots.at_mut(index).expect("live mesh")
     }
 
     /// A draw class stopped using a mesh. Models come and go mid-round (cover
@@ -395,17 +355,17 @@ impl MeshStore {
         if std::mem::take(&mut self.released) {
             self.collect_unused();
         }
-        self.trim_pages();
+        for page in self.plan.trim() {
+            self.pages[page as usize] = None;
+        }
     }
 
     pub fn release(&mut self, index: u32) {
-        if let Some(mesh) = self.slots[index as usize].take() {
+        if let Some(mesh) = self.slots.remove(index) {
             self.free_range(mesh.range);
-            if let Some((source, attributes)) = mesh.source {
-                self.shared
-                    .remove(&(Arc::as_ptr(&source) as usize, attributes));
+            if let Some(source) = mesh.source {
+                self.shared.remove(&(Arc::as_ptr(&source) as usize));
             }
-            self.free.push(index);
         }
     }
 
@@ -414,12 +374,7 @@ impl MeshStore {
         let unused: Vec<u32> = self
             .slots
             .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let mesh = slot.as_ref()?;
-                let (source, _) = mesh.source.as_ref()?;
-                (mesh.users == 0 && Arc::strong_count(source) == 1).then_some(index as u32)
-            })
+            .filter_map(|(index, mesh)| mesh.unused().then_some(index))
             .collect();
         for index in unused {
             self.release(index);
@@ -427,22 +382,12 @@ impl MeshStore {
     }
 
     pub fn count(&self) -> usize {
-        self.slots.iter().flatten().count()
+        self.slots.len()
     }
 
     /// Shared meshes that nothing draws and no caller holds, awaiting collection.
     pub fn unused(&self) -> usize {
-        self.slots
-            .iter()
-            .flatten()
-            .filter(|mesh| {
-                mesh.users == 0
-                    && mesh
-                        .source
-                        .as_ref()
-                        .is_some_and(|(source, _)| Arc::strong_count(source) == 1)
-            })
-            .count()
+        self.slots.iter().filter(|(_, mesh)| mesh.unused()).count()
     }
 
     /// GPU bytes of the mesh pages (merged shadows included): their capacity, which
@@ -461,10 +406,10 @@ impl MeshStore {
     }
 }
 
-/// WGSL `MaterialUniform`.
 /// Byte offset of `MaterialUniform::params`, for pools that animate them.
 pub const MATERIAL_PARAMS_OFFSET: u64 = 5 * 16;
 
+/// WGSL `MaterialUniform`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialUniform {
@@ -474,7 +419,6 @@ pub struct MaterialUniform {
     pub map_transform: [f32; 4],
     pub bump_transform: [f32; 4],
     pub emissive_transform: [f32; 4],
-    pub extra_transforms: [[f32; 4]; EXTRA_TEXTURE_SLOTS],
     pub params: [[f32; 4]; 4],
     /// x: `MaterialFeatures` bits.
     pub features: [u32; 4],
@@ -508,34 +452,32 @@ impl MaterialUniform {
             map_transform: transform(material.map.as_ref()),
             bump_transform: transform(material.bump_map.as_ref()),
             emissive_transform: transform(material.emissive_map.as_ref()),
-            extra_transforms: std::array::from_fn(|slot| transform(extra_texture(material, slot))),
             params,
             features: [MaterialFeatures::of(material).0, 0, 0, 0],
         }
     }
 }
 
-/// The texture in an effect's extra slot, if the material names one.
-fn extra_texture(material: &Material, slot: usize) -> Option<&TextureRef> {
-    material
-        .extra_textures
-        .get(slot)
-        .map(|(_, texture)| texture)
+/// A material's texture slots in binding order: map, bump, emissive, then the
+/// effect's extra textures.
+fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
+    let extra = |slot: usize| {
+        material
+            .extra_textures
+            .get(slot)
+            .map(|(_, texture)| texture)
+    };
+    [
+        material.map.as_ref(),
+        material.bump_map.as_ref(),
+        material.emissive_map.as_ref(),
+        extra(0),
+        extra(1),
+    ]
 }
 
-/// Every texture a material samples.
-fn material_textures(material: &Material) -> impl Iterator<Item = &TextureRef> {
-    [&material.map, &material.bump_map, &material.emissive_map]
-        .into_iter()
-        .flatten()
-        .chain(
-            material
-                .extra_textures
-                .iter()
-                .take(EXTRA_TEXTURE_SLOTS)
-                .map(|(_, texture)| texture),
-        )
-}
+/// A material's textures and their samplers, in binding order.
+pub type MaterialTextures<'a> = [(&'a TextureView, Sampler); 3 + EXTRA_TEXTURE_SLOTS];
 
 pub struct GpuMaterial {
     pub material: Arc<Material>,
@@ -550,8 +492,7 @@ pub struct GpuMaterial {
 
 #[derive(Default)]
 pub struct MaterialStore {
-    slots: Vec<Option<GpuMaterial>>,
-    free: Vec<u32>,
+    slots: Slab<GpuMaterial>,
     by_ptr: HashMap<usize, u32>,
     warned: Vec<&'static str>,
 }
@@ -562,22 +503,15 @@ fn bound_textures<'a>(
     gpu: &Gpu,
     textures: &'a mut TextureStore,
     material: &Material,
-) -> [(&'a super::backend::TextureView, super::backend::Sampler); 3 + EXTRA_TEXTURE_SLOTS] {
-    let slots = [
-        material.map.as_ref(),
-        material.bump_map.as_ref(),
-        material.emissive_map.as_ref(),
-        extra_texture(material, 0),
-        extra_texture(material, 1),
-    ];
+) -> MaterialTextures<'a> {
+    let slots = texture_slots(material);
     let samplers = slots.map(|texture| textures.sampler(gpu, texture));
     let textures = &*textures;
-    let views = slots.map(|texture| match texture {
-        Some(texture) => textures.view(texture).0,
-        None => textures.placeholder(),
-    });
     let mut samplers = samplers.into_iter();
-    views.map(|view| (view, samplers.next().expect("one sampler per slot")))
+    slots.map(|texture| {
+        let sampler = samplers.next().expect("one sampler per slot");
+        (textures.view(texture), sampler)
+    })
 }
 
 impl MaterialStore {
@@ -593,7 +527,7 @@ impl MaterialStore {
         if let Some(&index) = self.by_ptr.get(&key) {
             return index;
         }
-        for texture in material_textures(material) {
+        for texture in texture_slots(material).into_iter().flatten() {
             textures.request(texture);
         }
         let effect = match &material.effect {
@@ -617,16 +551,7 @@ impl MaterialStore {
             generation,
             users: 0,
         };
-        let index = match self.free.pop() {
-            Some(index) => {
-                self.slots[index as usize] = Some(entry);
-                index
-            }
-            None => {
-                self.slots.push(Some(entry));
-                self.slots.len() as u32 - 1
-            }
-        };
+        let (index, _) = self.slots.insert(entry);
         self.by_ptr.insert(key, index);
         index
     }
@@ -635,7 +560,7 @@ impl MaterialStore {
     /// bound: a replaced texture (a generated image supplied again) destroys the old
     /// one, which an already loaded material still names.
     pub fn refresh(&mut self, gpu: &Gpu, textures: &mut TextureStore) {
-        for entry in self.slots.iter_mut().flatten() {
+        for entry in self.slots.iter_mut() {
             if entry.generation != textures.generation {
                 let generation = textures.generation;
                 let bound = bound_textures(gpu, textures, &entry.material);
@@ -646,29 +571,29 @@ impl MaterialStore {
     }
 
     pub fn get(&self, index: u32) -> &GpuMaterial {
-        self.slots[index as usize].as_ref().expect("live material")
+        self.slots.at(index).expect("live material")
     }
 
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMaterial {
-        self.slots[index as usize].as_mut().expect("live material")
+        self.slots.at_mut(index).expect("live material")
     }
 
     /// Free materials no draw uses and nobody but the store and the interner holds.
     pub fn collect_unused(&mut self) {
-        for index in 0..self.slots.len() {
-            let unused = self.slots[index]
-                .as_ref()
-                .is_some_and(|entry| entry.users == 0 && Arc::strong_count(&entry.material) <= 2);
-            if unused {
-                // Dropping the binding destroys its uniform buffer.
-                let entry = self.slots[index].take().expect("checked");
-                self.by_ptr.remove(&(Arc::as_ptr(&entry.material) as usize));
-                self.free.push(index as u32);
-            }
+        let unused: Vec<u32> = self
+            .slots
+            .iter()
+            .filter(|(_, entry)| entry.users == 0 && Arc::strong_count(&entry.material) <= 2)
+            .map(|(index, _)| index)
+            .collect();
+        for index in unused {
+            // Dropping the binding destroys its uniform buffer.
+            let entry = self.slots.remove(index).expect("checked");
+            self.by_ptr.remove(&(Arc::as_ptr(&entry.material) as usize));
         }
     }
 
     pub fn count(&self) -> usize {
-        self.slots.iter().flatten().count()
+        self.slots.len()
     }
 }

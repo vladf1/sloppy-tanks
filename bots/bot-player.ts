@@ -91,12 +91,6 @@ function wire(value: number): number {
 function pick<T>(items: readonly T[], random: Random): T {
   return items[Math.floor(random() * items.length)];
 }
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Expected object");
-  }
-  return value as Record<string, unknown>;
-}
 
 export class BotPlayer {
   readonly stats: BotStats = {
@@ -121,7 +115,7 @@ export class BotPlayer {
   private send?: (text: string) => void;
   private observedTick = 0;
   private seq = 0;
-  private control?: { tankId: number; controlEpoch: number; driver: string };
+  private control?: { controlEpoch: number; driver: string };
   private phaseSinceMs = 0;
   private lastInputMs = -Infinity;
   /** The last input sent drove or fired, so the next one releases it promptly. */
@@ -197,7 +191,7 @@ export class BotPlayer {
       return;
     }
     this.stats.bytesIn += data.length;
-    const message = record(JSON.parse(data));
+    const message = JSON.parse(data) as Record<string, unknown>;
     switch (message.type) {
       case "welcome":
         this.playerId = String(message.playerId);
@@ -227,7 +221,6 @@ export class BotPlayer {
       case "control":
         if (message.roundId === this.roundId) {
           this.control = {
-            tankId: Number(message.tankId),
             controlEpoch: Number(message.controlEpoch),
             driver: String(message.driver),
           };

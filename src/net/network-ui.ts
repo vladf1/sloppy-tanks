@@ -2,26 +2,26 @@ import { hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
 import {
+  FEED_ROWS,
   type FeedRow,
   deathCause,
-  effectsLabel,
   isOwnKill,
   killFeedNames,
   newFeedRow,
-  rankTitle,
-  showFeedRow,
+  setText,
+  showFeed,
+  showTankStatus,
 } from "../game/hud-feedback";
-import { isExtraLevel, MAP_OPTIONS, mapOption, showsExtraLevels } from "../game/map-options";
+import { debugPage, isExtraLevel, MAP_OPTIONS, mapOption } from "../game/map-options";
+import { duration } from "../game/round-recap";
 import type {
   EngineEvent,
-  HumanState,
+  HudState,
   MatchState,
   PlayerVehicleKind,
-  Team,
   Weapon,
 } from "../game/engine-api";
 import {
-  DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,
   PLAYER_KINDS,
   isPlayerKind,
@@ -35,20 +35,14 @@ import "./multiplayer.css";
 
 /** The engine's HUD record for the viewer's tank and the scoreboard. The engine works
  * out health colours, ranks and ammo, so the page only displays them. */
-export interface Hud {
-  match: MatchState;
-  elapsed: number;
-  human: HumanState;
-  scoreboard: { id: number; name: string; team: Team; kills: number; deaths: number }[];
-}
-/** A displayed event with the viewer-relative flags (`drain_events()`). */
-export type HudEvent = EngineEvent;
+export type Hud = Pick<HudState, "match" | "human" | "scoreboard">;
 
-/** Battle Setup's tank cards (`battle-setup.html`); the engine owns the vehicles' stats. */
+/** Battle Setup's tank cards (`battle-setup.html`), as the room menu names them; the
+ * engine owns the vehicles' stats. */
 const TANK_LABELS: Record<PlayerVehicleKind, { name: string; tag: string }> = {
-  scout: { name: "SKIPPER", tag: "Light scout" },
-  balanced: { name: "BRUISER", tag: "Balanced tank" },
-  heavy: { name: "BIG RIG", tag: "Heavy tank" },
+  scout: { name: "Skipper", tag: "light scout" },
+  balanced: { name: "Bruiser", tag: "balanced tank" },
+  heavy: { name: "Big Rig", tag: "heavy tank" },
 };
 const TEAM_NAMES = ["BLUE", "RED"] as const;
 
@@ -84,13 +78,6 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
   outdated: { title: "GAME UPDATED" },
   renderer: { title: "RENDERER STOPPED" },
 };
-/** Battle Setup's card name, such as "Big Rig". */
-function tankName(kind: PlayerVehicleKind): string {
-  return TANK_LABELS[kind].name
-    .split(" ")
-    .map((word) => word[0] + word.slice(1).toLowerCase())
-    .join(" ");
-}
 const CONTROLS_HELP = [
   "WASD / arrows: drive",
   "Mouse: aim",
@@ -127,7 +114,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     </div>
     <div id="player-fields" class="network-fields" hidden>
       <label>Team<select id="player-team"><option value="auto">Auto · fewer humans</option><option value="0">Blue</option><option value="1">Red</option></select></label>
-      <label>Tank<select id="player-kind">${PLAYER_KINDS.map((kind) => `<option value="${kind}">${tankName(kind)} · ${TANK_LABELS[kind].tag.toLowerCase()}</option>`).join("")}</select></label>
+      <label>Tank<select id="player-kind">${PLAYER_KINDS.map((kind) => `<option value="${kind}">${TANK_LABELS[kind].name} · ${TANK_LABELS[kind].tag}</option>`).join("")}</select></label>
     </div>
   </section>
   <div id="network-scoreboard" hidden></div>
@@ -164,7 +151,6 @@ export class NetworkUI {
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
-  private isJoined = false;
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
   /** The finished round, read from the final replicated state. */
@@ -194,7 +180,6 @@ export class NetworkUI {
     this.panel = root.querySelector("#overlay")!;
     this.panel.innerHTML = MENU_MARKUP;
     this.panel.querySelectorAll(".room-code").forEach((code) => (code.textContent = room));
-    this.input("room-round-minutes").value = String(DEFAULT_ROUND_MINUTES);
     const players = document.createElement("aside");
     players.id = "network-players";
     players.hidden = true;
@@ -260,7 +245,7 @@ export class NetworkUI {
     }
     for (const field of ["player-team", "player-kind"]) {
       this.root.querySelector("#" + field)!.addEventListener("change", () => {
-        if (this.isJoined) {
+        if (this.lastLobby) {
           this.actions.choose(this.choice());
         }
       });
@@ -301,10 +286,7 @@ export class NetworkUI {
     this.root.querySelector("#" + name)!.addEventListener("click", action);
   }
   private set(name: string, text: string): void {
-    const node = this.root.querySelector("#" + name);
-    if (node && node.textContent !== text) {
-      node.textContent = text;
-    }
+    setText(this.root, name, text);
   }
   private choice(): Pick<JoinChoice, "team" | "kind"> {
     const side = this.input("player-team").value;
@@ -385,7 +367,6 @@ export class NetworkUI {
       }
     }
     this.lastLobby = lobby;
-    this.isJoined = true;
     const host = lobby.hostId === playerId;
     const playing = lobby.phase === "playing";
     if (lobby.phase !== "results") {
@@ -407,7 +388,10 @@ export class NetworkUI {
     if (mine) {
       this.input("player-team").value = String(mine.team);
       this.input("player-kind").value = mine.kind;
-      this.set("next-choice", (mine.team === 0 ? "Blue" : "Red") + " · " + tankName(mine.kind));
+      this.set(
+        "next-choice",
+        (mine.team === 0 ? "Blue" : "Red") + " · " + TANK_LABELS[mine.kind].name,
+      );
     }
     this.renderEditing();
     this.offerExtraLevels(isExtraLevel(lobby.settings.mapMode));
@@ -491,7 +475,7 @@ export class NetworkUI {
   private offerExtraLevels(playingOne: boolean): void {
     const select = this.input("room-map");
     const offered = select.querySelector("optgroup");
-    if (offered || !(playingOne || showsExtraLevels(location.search))) {
+    if (offered || !(playingOne || debugPage(location.search))) {
       return;
     }
     const group = document.createElement("optgroup");
@@ -678,9 +662,9 @@ export class NetworkUI {
   }
   private addFeed(names: string[], ownKill = false): void {
     this.feed.unshift(newFeedRow(names, ownKill));
-    this.feed.length = Math.min(4, this.feed.length);
+    this.feed.length = Math.min(FEED_ROWS, this.feed.length);
   }
-  event(event: HudEvent, hud: Hud): void {
+  event(event: EngineEvent, hud: Hud): void {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
@@ -721,37 +705,8 @@ export class NetworkUI {
     this.set("score0", String(match.scores[0]));
     this.set("score1", String(match.scores[1]));
     const seconds = Math.max(0, Math.ceil(match.time));
-    this.set(
-      "time",
-      match.overtime
-        ? "NEXT KILL"
-        : Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0"),
-    );
-    this.set("hp", String(Math.max(0, Math.ceil(tank.hp))));
-    this.set("vehicle-name", tank.vehicleName);
-    this.set("rank", tank.rankName.toUpperCase());
-    const rank = this.root.querySelector<HTMLElement>("#rank")!;
-    rank.dataset.rank = String(tank.rank);
-    rank.title = rankTitle(tank);
-    const bar = this.root.querySelector<HTMLElement>("#hpbar")!;
-    bar.style.width = tank.healthRatio * 100 + "%";
-    bar.style.backgroundColor = "#" + tank.healthColor.toString(16).padStart(6, "0");
-    for (const ammo of tank.ammo) {
-      this.set("ammo-count-" + ammo.weapon, ammo.count === null ? "∞" : String(ammo.count));
-      const slot = this.button("ammo-" + ammo.weapon);
-      slot.disabled = !tank.alive || !connected || this.menu;
-      slot.classList.toggle("selected", ammo.selected);
-      slot.classList.toggle("empty", !ammo.available);
-      slot.setAttribute("aria-pressed", String(ammo.selected));
-    }
-    this.set(
-      "mine",
-      tank.mineCooldown > 0 ? "MINE " + tank.mineCooldown.toFixed(1) + "s" : "MINE READY · RMB",
-    );
-    this.set("effects", effectsLabel(tank));
-    this.root
-      .querySelector(".status")!
-      .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
+    this.set("time", match.overtime ? "NEXT KILL" : duration(seconds));
+    showTankStatus(this.root, tank, !tank.alive || !connected || this.menu);
     this.root
       .querySelector("#hud")!
       .classList.toggle("paused", this.menu || !connected || match.phase !== "playing");
@@ -763,19 +718,7 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.toggle("visible", this.toastTime > 0);
     this.hurtTime -= dt;
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = this.hurtTime <= 0;
-    this.feed = this.feed.filter((row) => (row.time -= dt) > 0);
-    const feed = this.root.querySelector("#feed")!;
-    while (feed.children.length > this.feed.length) {
-      feed.lastElementChild!.remove();
-    }
-    this.feed.forEach((row, index) => {
-      let node = feed.children[index] as HTMLElement | undefined;
-      if (!node) {
-        node = document.createElement("div");
-        feed.append(node);
-      }
-      showFeedRow(node, row, index === 0);
-    });
+    this.feed = showFeed(this.root.querySelector("#feed")!, this.feed, dt);
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {
       this.set("network-status", "");

@@ -420,6 +420,8 @@ body:has(#settings[open]) .hud-actions {
   border-top: 3px solid var(--ammo-color);
   border-radius: 4px;
   background: #091c30;
+  color: #f5faff;
+  min-height: 48px;
   font-variant-numeric: tabular-nums;
 }
 .ammo-slot small {
@@ -489,10 +491,6 @@ body:has(#settings[open]) .hud-actions {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-/* Outranks `.respawn > p`, which hides the panel's notes: this one must stay announced. */
-.respawn > .sr-only {
-  display: block;
 }
 /* The viewer's own kills stand out from the rest of the feed. */
 #feed .own-kill {
@@ -621,12 +619,14 @@ body:has(#settings[open]) .hud-actions {
     transform: translateX(365%);
   }
 }
-:is(#startup-overlay, #overlay)[data-state="ready"] .startup-track span {
+:is(#startup-overlay, #overlay)[data-state="ready"] .startup-track span,
+#multiplayer-panel .room-status[data-state="ready"] .startup-track span {
   width: 100%;
   animation: none;
   background: #8cdda0;
 }
-:is(#startup-overlay, #overlay)[data-state="error"] .startup-track span {
+:is(#startup-overlay, #overlay)[data-state="error"] .startup-track span,
+#multiplayer-panel .room-status[data-state="error"] .startup-track span {
   width: 100%;
   animation: none;
   background: #ffb2a7;
@@ -651,16 +651,20 @@ body:has(#settings[open]) .hud-actions {
   background: currentColor;
   box-shadow: 0 0 0 3px #ffcf3820;
 }
-:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status {
+:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status,
+.room-status[data-state="ready"] #rooms-message {
   color: #a2e6b0;
 }
-:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status::before {
+:is(#startup-overlay, #overlay)[data-state="ready"] #startup-status::before,
+.room-status[data-state="ready"] #rooms-message::before {
   box-shadow: 0 0 0 3px #a2e6b020;
 }
-:is(#startup-overlay, #overlay)[data-state="error"] #startup-status {
+:is(#startup-overlay, #overlay)[data-state="error"] #startup-status,
+.room-status[data-state="error"] #rooms-message {
   color: #ffb2a7;
 }
-:is(#startup-overlay, #overlay)[data-state="error"] #startup-status::before {
+:is(#startup-overlay, #overlay)[data-state="error"] #startup-status::before,
+.room-status[data-state="error"] #rooms-message::before {
   box-shadow: 0 0 0 3px #ffb2a720;
 }
 #start:disabled {
@@ -680,7 +684,6 @@ body:has(#settings[open]) .hud-actions {
   letter-spacing: 2.5px;
   color: #a6dfff;
   font-weight: 700;
-  margin-bottom: 18px;
 }
 h1 {
   font:
@@ -703,7 +706,6 @@ h2 {
 .vehicle {
   text-align: left;
   position: relative;
-  padding: 18px 18px 13px;
   background: #21486c;
   color: #f0f8ff;
   border: 1px solid #71826977;
@@ -715,7 +717,6 @@ h2 {
 }
 .vehicle.selected {
   border: 2px solid #ffcf38;
-  padding: 17px 17px 12px;
   background: #28618a;
 }
 .vehicle strong {
@@ -741,7 +742,6 @@ h2 {
 .tank-preview {
   display: block;
   width: 100%;
-  height: 155px;
   object-fit: contain;
   margin: 6px 0;
   filter: drop-shadow(0 12px 8px #06182766);
@@ -775,10 +775,6 @@ h2 {
 }
 .menu-help {
   text-align: center;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #c0dbee;
-  margin-top: 24px;
 }
 .compact {
   max-width: 480px;
@@ -796,9 +792,6 @@ h2 {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-}
-.dialog-head .eyebrow {
-  margin: 0;
 }
 .dialog-eyebrow b {
   color: #f5faff;
@@ -861,26 +854,12 @@ h2 {
   box-shadow: inset 0 0 0 2px #ff6f5e;
   color: #fff;
 }
-.respawn p {
-  font-size: 13px;
-  color: #c4dfef;
-}
 @media (max-width: 800px) {
   .menu {
     padding: 22px;
   }
-  .menu-help,
   .menu-footer {
     display: none;
-  }
-  .vehicle {
-    padding: 12px;
-  }
-  .vehicle.selected {
-    padding: 11px;
-  }
-  .tank-preview {
-    height: 100px;
   }
   .brand {
     left: 10px;
@@ -901,9 +880,6 @@ h2 {
   h1 {
     font-size: 44px;
   }
-  .quiet span {
-    display: none;
-  }
 }
 
 /* Leave the airborne wreck visible while choosing the next spawn. */
@@ -920,8 +896,7 @@ h2 {
   max-width: 760px;
 }
 .respawn .spec,
-.respawn .vehicle small,
-.respawn > p {
+.respawn .vehicle small {
   display: none;
 }
 .respawn h2 {
@@ -938,20 +913,14 @@ h2 {
   font-size: 20px;
 }
 
-.ammo-slot {
-  color: #f5faff;
-  min-height: 48px;
-}
 .ammo-slot kbd {
   display: block;
   font:
     600 10px/1.2 Arial,
     sans-serif;
   color: #c4dfef;
-  margin-bottom: 0;
 }
 .ammo-slot.empty {
-  opacity: 1;
   color: #9cb2c6;
   background: #091522;
   border-top-color: #566d80;
@@ -1095,10 +1064,8 @@ h2 {
    action. */
 .menu.start {
   --tray: #1b3c5f;
-  --card: #21486c;
   --card-hover: #2b6189;
   --card-selected: #28618a;
-  --card-border: #71826977;
   --well: #0c2239;
   --accent: #ffcf38;
   --label: #a6dfff;
@@ -1207,15 +1174,13 @@ h2 {
   letter-spacing: 0;
   text-align: right;
 }
-.start .vehicle {
-  padding: 12px 16px 10px;
-}
 /* Name and role share the top line, leaving the card's height to the tank. */
 .start .vehicle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
+  padding: 12px 16px 10px;
 }
 .start .vehicle strong {
   font-size: 24px;
@@ -1454,7 +1419,6 @@ h2 {
 .map-picker-list {
   position: fixed;
   inset: auto;
-  box-sizing: border-box;
   margin: 0;
   padding: 4px;
   overflow-y: auto;
@@ -1574,7 +1538,6 @@ h2 {
 }
 .start .startup-progress {
   grid-column: span 2;
-  box-sizing: border-box;
   align-self: end;
   display: grid;
   align-content: center;
@@ -1879,7 +1842,8 @@ h2 {
   padding-top: 14px;
 }
 /* The multiplayer status well follows its own state, not the single-player arena's:
-   yellow and sweeping while the list loads or a room joins, green once the list is in. */
+   yellow and sweeping while the list loads or a room joins, green once the list is in
+   (its ready and error states sit with the arena's). */
 #rooms-message {
   white-space: pre-line;
 }
@@ -1887,28 +1851,6 @@ h2 {
   width: 38%;
   background: linear-gradient(90deg, transparent, #ffcf38, #ffe79b);
   animation: startup-sweep 1.4s ease-in-out infinite;
-}
-#multiplayer-panel .room-status[data-state="ready"] .startup-track span {
-  width: 100%;
-  animation: none;
-  background: #8cdda0;
-}
-#multiplayer-panel .room-status[data-state="error"] .startup-track span {
-  width: 100%;
-  animation: none;
-  background: #ffb2a7;
-}
-.room-status[data-state="ready"] #rooms-message {
-  color: #a2e6b0;
-}
-.room-status[data-state="ready"] #rooms-message::before {
-  box-shadow: 0 0 0 3px #a2e6b020;
-}
-.room-status[data-state="error"] #rooms-message {
-  color: #ffb2a7;
-}
-.room-status[data-state="error"] #rooms-message::before {
-  box-shadow: 0 0 0 3px #ffb2a720;
 }
 /* One action: Create for the new room, Join for an open room. */
 .room-action {
@@ -2033,9 +1975,6 @@ h2 {
   }
   .vehicles {
     gap: 8px;
-  }
-  .vehicle strong {
-    font-size: 18px;
   }
   .spec {
     flex-direction: column;

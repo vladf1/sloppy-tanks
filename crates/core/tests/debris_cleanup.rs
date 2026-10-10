@@ -1,10 +1,13 @@
 //! Debris budget and fade (the former `tests/debris-cleanup.test.ts`): which piece is evicted
 //! first, gradual cleanup under pressure, and the hard expiry of moving debris.
 
+mod support;
+
 use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::debris_cleanup::{cleanup_candidate, prepare_debris_cleanup};
 use sloppy_core::sim::physics::vector;
-use sloppy_core::sim::{FragmentShape, Simulation, VehicleCommand};
+use sloppy_core::sim::{FragmentShape, Simulation};
+use support::idle;
 
 /// The default-seed arena with every tank removed.
 fn arena() -> Simulation {
@@ -34,17 +37,13 @@ fn index_of(sim: &Simulation, id: u32) -> Option<usize> {
     sim.fragments.iter().position(|f| f.id == id)
 }
 
-fn idle(sim: &mut Simulation) {
-    sim.step(VehicleCommand::idle(), false);
-}
-
 #[test]
 fn budget_eviction_preserves_nearby_moving_debris_ahead_of_distant_settled_pieces() {
     let mut sim = arena();
     let nearby = fragment(&mut sim, 0.0, true);
     let distant = fragment(&mut sim, 40.0, false);
     let distant_body = sim.fragments[index_of(&sim, distant).unwrap()].body;
-    assert_eq!(cleanup_candidate(&sim, None), index_of(&sim, distant));
+    assert_eq!(cleanup_candidate(&sim), index_of(&sim, distant));
     sim.max_fragments = 2;
     fragment(&mut sim, 2.0, true);
     assert!(index_of(&sim, nearby).is_some());

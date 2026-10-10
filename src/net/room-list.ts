@@ -1,15 +1,14 @@
+import type { Difficulty } from "../game/engine-api";
 import { MAP_IDS, type MapId } from "../game/map-options";
 import {
-  DEFAULT_ROUND_MINUTES,
   MAX_ROUND_MINUTES,
   ROOM_CODE,
+  ROOM_SEATS,
   isRoundMinutes,
-  type Difficulty,
   type RoomPhase,
 } from "./room-protocol";
 
 export const MAX_LISTED_ROOMS = 256;
-const ROOM_SEATS = 8;
 const DIFFICULTIES: readonly Difficulty[] = ["easy", "normal", "hard"];
 const PHASES: readonly RoomPhase[] = ["lobby", "playing", "results"];
 
@@ -42,7 +41,7 @@ function oneOf<T>(values: readonly T[], value: unknown, field: string): T {
 }
 
 /** One listing, copying only the declared fields. Throws on anything malformed. */
-export function readRoomListing(value: unknown): RoomListing {
+function readRoomListing(value: unknown): RoomListing {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     fail("entry");
   }
@@ -59,7 +58,6 @@ export function readRoomListing(value: unknown): RoomListing {
   ) {
     fail("contentVersion");
   }
-  const roundMinutes = entry.roundMinutes ?? DEFAULT_ROUND_MINUTES;
   const time = entry.time;
   if (typeof time !== "number" || !(time >= 0 && time <= MAX_ROUND_MINUTES * 60)) {
     fail("time");
@@ -77,7 +75,7 @@ export function readRoomListing(value: unknown): RoomListing {
     mapMode: oneOf(MAP_IDS, entry.mapMode, "mapMode"),
     difficulty: oneOf(DIFFICULTIES, entry.difficulty, "difficulty"),
     humansOnly: entry.humansOnly,
-    roundMinutes: isRoundMinutes(roundMinutes) ? roundMinutes : fail("roundMinutes"),
+    roundMinutes: isRoundMinutes(entry.roundMinutes) ? entry.roundMinutes : fail("roundMinutes"),
     players: wholeNumber(entry.players, ROOM_SEATS, "players"),
     reserved: wholeNumber(entry.reserved, ROOM_SEATS, "reserved"),
     phase: oneOf(PHASES, entry.phase, "phase"),

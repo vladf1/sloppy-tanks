@@ -12,9 +12,10 @@
 //!
 //! - `full`: `[FULL_MESSAGE] roundId tick seq eventCursor roomEpoch(text)` then the scene
 //!   ([`Scene::write`]) and every shell's path ([`LivePaths::write_baseline`]).
-//! - `snapshot`: `[SNAPSHOT_MESSAGE] roundId tick ack firstSeq count` then `count` frames
+//! - `snapshot`: `[SNAPSHOT_MESSAGE] roundId tick ack firstSeq count ackTick ackArrival`,
+//!   a hull byte (1 when the seat's [`HullState`] follows, else 0), then `count` frames
 //!   with consecutive sequence numbers. `tick` is the last frame's, so a reader that needs
-//!   only the newest tick (the traffic bots) stops after the header.
+//!   only the newest tick (the traffic bots) stops after `count`.
 //!
 //! A frame is `tickBack` (the header tick minus the frame's), `signed` elapsed difference
 //! in milliseconds, a section mask ([`MATCH_SECTION`] ...) and the sections:
@@ -35,11 +36,11 @@ use super::scene_codec::{
     MATCH_FIELDS, MINES, MirrorScene, Scene, Stored, TANKS, read_cover, read_event, read_fragment,
     read_match, read_mine, read_pickup, read_tank, write_event, write_record,
 };
-use super::schema::ReadResult;
+use super::schema::{NUMBER_BOUND, ReadResult};
 use super::shot_paths::{LivePaths, PathEntry, ShotPath};
 use super::wire::{
-    ChangedFields, WireReader, WireRecord, put_signed, put_text, put_varint, read_changes, units,
-    write_changes,
+    ChangedFields, WireReader, WireRecord, put_signed, put_text, put_varint, read_changes,
+    thousandths, write_changes,
 };
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
 use crate::sim::types::{Match, Mine, Pickup, SimEvent};
@@ -62,10 +63,6 @@ pub struct TimedEvent {
     pub event_id: u64,
     pub tick: f64,
     pub event: SimEvent,
-}
-
-fn thousandths(value: f64) -> i64 {
-    units(value, POSITION_SCALE)
 }
 
 /// The host's per-round stream: numbers frames and diffs each captured scene against the
@@ -197,7 +194,6 @@ impl StateStream {
             entries.clear();
             entries.extend(records.iter().map(|record| record.id));
             entries.sort_unstable();
-            let count_at = updates.len();
             let mut count = 0u64;
             let mut last = 0u32;
             let mut changes = Vec::new();
@@ -214,7 +210,6 @@ impl StateStream {
             }
             if count > 0 {
                 updated_kinds |= 1 << kind;
-                debug_assert_eq!(count_at, updates.len());
                 put_varint(updates, count);
                 updates.extend_from_slice(&changes);
             }
@@ -433,7 +428,7 @@ impl<T> KindChanges<T> {
         let added = self
             .updates
             .iter()
-            .filter(|stored| !store.contains(stored.id))
+            .filter(|stored| !store.contains(stored.wire.id))
             .count();
         store.len() + added - self.removals.len()
     }
@@ -455,14 +450,16 @@ struct FrameChanges {
     pickups: KindChanges<Pickup>,
 }
 
-fn update<T>(
+/// Reads record `id`'s changes into `changes`, returning the fields it changed, whether
+/// it is new to the mirror, and its resulting wire record.
+fn update<'a, T>(
     store: &EntityStore<T>,
-    changes: &mut KindChanges<T>,
+    changes: &'a mut KindChanges<T>,
     kind: usize,
     id: u32,
     reader: &mut WireReader<'_>,
     read: fn(&WireRecord) -> ReadResult<T>,
-) -> ReadResult<(ChangedFields, bool)> {
+) -> ReadResult<(ChangedFields, bool, &'a WireRecord)> {
     let held = store.get(id);
     let mut wire = held.map_or_else(
         || WireRecord {
@@ -473,8 +470,22 @@ fn update<T>(
     );
     let changed = read_changes(ENTITY_FIELDS[kind], &mut wire, reader)?;
     let value = read(&wire)?;
-    changes.updates.push(Stored { id, wire, value });
-    Ok((changed, held.is_none()))
+    changes.updates.push(Stored { wire, value });
+    let pushed = &changes.updates.last().expect("just pushed").wire;
+    Ok((changed, held.is_none(), pushed))
+}
+
+/// Queues the removal of record `id`, which the mirror must hold and the frame must not
+/// also change.
+fn remove<T>(store: &EntityStore<T>, changes: &mut KindChanges<T>, id: u32) -> ReadResult<()> {
+    if changes.updates.iter().any(|stored| stored.wire.id == id) {
+        return Err("Duplicate change".into());
+    }
+    if !store.contains(id) {
+        return Err("Unknown removal".into());
+    }
+    changes.removals.push(id);
+    Ok(())
 }
 
 /// One record a frame changed, for the JSON view.
@@ -587,7 +598,7 @@ impl StateMirror {
             .checked_add(reader.signed()?)
             .ok_or_else(|| "Invalid number".to_string())?;
         let elapsed = elapsed_units as f64 / POSITION_SCALE;
-        if elapsed.abs() > 1e9 {
+        if elapsed.abs() > NUMBER_BOUND {
             return Err("elapsed: Invalid number".into());
         }
         let sections = reader.varint()?;
@@ -647,7 +658,7 @@ impl StateMirror {
                     .ok_or_else(|| "Invalid entity id".to_string())?;
                 let changes = &mut frame.changes;
                 let label = |error: String| format!("{}: {error}", ENTITY_TYPES[kind]);
-                let (changed, added) = match kind {
+                let (changed, added, record) = match kind {
                     TANKS => update(
                         &state.tanks,
                         &mut changes.tanks,
@@ -691,19 +702,12 @@ impl StateMirror {
                 }
                 .map_err(label)?;
                 if view {
-                    let record = match kind {
-                        TANKS => changes.tanks.updates.last().map(|s| s.wire.clone()),
-                        COVERS => changes.covers.updates.last().map(|s| s.wire.clone()),
-                        FRAGMENTS => changes.fragments.updates.last().map(|s| s.wire.clone()),
-                        MINES => changes.mines.updates.last().map(|s| s.wire.clone()),
-                        _ => changes.pickups.updates.last().map(|s| s.wire.clone()),
-                    };
                     frame.changed.push(ChangedRecord {
                         kind,
                         id,
                         changed,
                         added,
-                        record: record.expect("just pushed"),
+                        record: record.clone(),
                     });
                 }
             }
@@ -722,41 +726,13 @@ impl StateMirror {
                     .checked_add(step)
                     .ok_or_else(|| "Unknown removal".to_string())?;
                 let changes = &mut frame.changes;
-                let (known, updated) = match kind {
-                    TANKS => (
-                        state.tanks.contains(id),
-                        &changes.tanks.updates.iter().any(|s| s.id == id),
-                    ),
-                    COVERS => (
-                        state.covers.contains(id),
-                        &changes.covers.updates.iter().any(|s| s.id == id),
-                    ),
-                    FRAGMENTS => (
-                        state.fragments.contains(id),
-                        &changes.fragments.updates.iter().any(|s| s.id == id),
-                    ),
-                    MINES => (
-                        state.mines.contains(id),
-                        &changes.mines.updates.iter().any(|s| s.id == id),
-                    ),
-                    _ => (
-                        state.pickups.contains(id),
-                        &changes.pickups.updates.iter().any(|s| s.id == id),
-                    ),
-                };
-                if *updated {
-                    return Err("Duplicate change".into());
-                }
-                if !known {
-                    return Err("Unknown removal".into());
-                }
                 match kind {
-                    TANKS => changes.tanks.removals.push(id),
-                    COVERS => changes.covers.removals.push(id),
-                    FRAGMENTS => changes.fragments.removals.push(id),
-                    MINES => changes.mines.removals.push(id),
-                    _ => changes.pickups.removals.push(id),
-                }
+                    TANKS => remove(&state.tanks, &mut changes.tanks, id),
+                    COVERS => remove(&state.covers, &mut changes.covers, id),
+                    FRAGMENTS => remove(&state.fragments, &mut changes.fragments, id),
+                    MINES => remove(&state.mines, &mut changes.mines, id),
+                    _ => remove(&state.pickups, &mut changes.pickups, id),
+                }?;
                 frame.removed[kind].push(id);
             }
         }

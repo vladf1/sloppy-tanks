@@ -1,5 +1,5 @@
 //! Port of `harbor-vessels.ts`: moored container ships and quay gantry cranes
-//! beyond the harbor wall. Ships bob and crane loads sway; see [`HarborFleet`].
+//! beyond the harbor wall. Ships bob and crane loads sway; see [`harbor_fleet`].
 
 use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
@@ -13,15 +13,7 @@ use super::batching::batch;
 use super::harbor_models::{CargoShape, ship_container};
 use super::harbor_surfaces::{HarborSurface, harbor_box, harbor_material, steel_box};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, paint, put, rotated};
-use super::model_primitives::{adopt_children, span_between};
-
-/// `harborBeam(group, a, b, width, color)`: a square beam between authored
-/// endpoints (crane braces, rails, rigging and mooring lines).
-pub fn harbor_beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
-    let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let beam = box_part(width, from.distance(to), width, color, 0.0);
-    group.children.push(span_between(beam, from, to));
-}
+use super::model_primitives::{adopt_children, beam};
 
 /// Hull cross-section outline (x along the ship, z across): a tapered stern and a
 /// pointed bow.
@@ -156,7 +148,7 @@ fn container_ship(color: u32, variant: usize) -> Node {
                 side * 2.8,
             );
         }
-        harbor_beam(
+        beam(
             &mut ship,
             [-32.0, 3.65, side * 6.3],
             [25.0, 3.65, side * 6.3],
@@ -165,7 +157,7 @@ fn container_ship(color: u32, variant: usize) -> Node {
         );
         let mut x = -32.0;
         while x < 26.0 {
-            harbor_beam(
+            beam(
                 &mut ship,
                 [x, 2.8, side * 6.3],
                 [x, 3.65, side * 6.3],
@@ -204,14 +196,14 @@ fn container_ship(color: u32, variant: usize) -> Node {
             z,
         );
     }
-    harbor_beam(
+    beam(
         &mut ship,
         [-22.0, 12.7, 0.0],
         [-22.0, 18.0, 0.0],
         0.1,
         0xe6dec4,
     );
-    harbor_beam(
+    beam(
         &mut ship,
         [-22.0, 16.8, -2.0],
         [-22.0, 16.8, 2.0],
@@ -233,7 +225,7 @@ fn container_ship(color: u32, variant: usize) -> Node {
         3.1,
         0.0,
     );
-    harbor_beam(
+    beam(
         &mut ship,
         [29.0, 3.0, 0.0],
         [34.0, 2.8, 0.0],
@@ -269,7 +261,7 @@ fn gantry_crane() -> Node {
         for z in [-2.8, 2.8] {
             let wheel = rotated(cylinder_part(0.65, 0.6, 0x2b3940, 12), 0.0, 0.0, FRAC_PI_2);
             put(&mut group, wheel, side * 5.0, 0.6, z);
-            harbor_beam(
+            beam(
                 &mut group,
                 [side * 5.0, 1.0, z],
                 [side * 3.4, 18.0, z * 0.7],
@@ -279,43 +271,27 @@ fn gantry_crane() -> Node {
         }
         for step in 0..4 {
             let y = 2.0 + f64::from(step) * 4.0;
-            harbor_beam(
-                &mut group,
-                [side * 4.8, y, -2.5],
-                [side * 4.1, y + 4.0, 2.5],
-                0.23,
-                gold,
-            );
-            harbor_beam(
-                &mut group,
-                [side * 4.8, y, 2.5],
-                [side * 4.1, y + 4.0, -2.5],
-                0.23,
-                gold,
-            );
+            for z in [-2.5, 2.5] {
+                beam(
+                    &mut group,
+                    [side * 4.8, y, z],
+                    [side * 4.1, y + 4.0, -z],
+                    0.23,
+                    gold,
+                );
+            }
         }
         // Parallel boom trusses extend over water, never across the playfield.
         for y in [18.0, 20.0] {
-            harbor_beam(&mut group, [side, y, 3.0], [side, y, -21.0], 0.32, gold);
+            beam(&mut group, [side, y, 3.0], [side, y, -21.0], 0.32, gold);
         }
         for step in 0..8 {
             let z = 3.0 - f64::from(step) * 3.0;
-            harbor_beam(
-                &mut group,
-                [side, 18.0, z],
-                [side, 20.0, z - 3.0],
-                0.19,
-                gold,
-            );
-            harbor_beam(
-                &mut group,
-                [side, 20.0, z],
-                [side, 18.0, z - 3.0],
-                0.19,
-                gold,
-            );
+            for (y0, y1) in [(18.0, 20.0), (20.0, 18.0)] {
+                beam(&mut group, [side, y0, z], [side, y1, z - 3.0], 0.19, gold);
+            }
         }
-        harbor_beam(
+        beam(
             &mut group,
             [side * 3.4, 17.7, 0.0],
             [side, 20.0, -13.0],
@@ -348,7 +324,7 @@ fn gantry_crane() -> Node {
     batch(&mut group);
     let mut load = Node::group("");
     for x in [-0.8, 0.8] {
-        harbor_beam(&mut load, [x, 0.0, 0.0], [x, -8.0, 0.0], 0.045, dark);
+        beam(&mut load, [x, 0.0, 0.0], [x, -8.0, 0.0], 0.045, dark);
     }
     put(&mut load, steel_box(4.5, 0.5, 2.8, gold), 0.0, -8.0, 0.0);
     for x in [-1.8, 1.8] {
@@ -380,38 +356,34 @@ const CRANES: [(f64, f64, f64, f64); 4] = [
     (65.5, -20.0, -FRAC_PI_2, 0.75),
 ];
 
-/// `HarborFleet`: the ships (first children) then the cranes.
-pub struct HarborFleet;
-
-impl HarborFleet {
-    /// The fleet group: three ships, then four cranes.
-    pub fn build() -> Node {
-        let mut group = Node::group("");
-        for (i, &(x, z, yaw, scale, color)) in SHIPS.iter().enumerate() {
-            let mut ship = rotated(container_ship(color, i), 0.0, yaw, 0.0);
-            ship.scale = DVec3::splat(scale);
-            put(&mut group, ship, x, 0.0, z);
-        }
-        for &(x, z, yaw, scale) in &CRANES {
-            let mut crane = rotated(gantry_crane(), 0.0, yaw, 0.0);
-            crane.scale = DVec3::splat(scale);
-            put(&mut group, crane, x, 0.0, z);
-        }
-        group
+/// `HarborFleet`: the fleet group, three ships (the first children), then four
+/// cranes.
+pub fn harbor_fleet() -> Node {
+    let mut group = Node::group("");
+    for (i, &(x, z, yaw, scale, color)) in SHIPS.iter().enumerate() {
+        let mut ship = rotated(container_ship(color, i), 0.0, yaw, 0.0);
+        ship.scale = DVec3::splat(scale);
+        put(&mut group, ship, x, 0.0, z);
     }
+    for &(x, z, yaw, scale) in &CRANES {
+        let mut crane = rotated(gantry_crane(), 0.0, yaw, 0.0);
+        crane.scale = DVec3::splat(scale);
+        put(&mut group, crane, x, 0.0, z);
+    }
+    group
+}
 
-    /// `update(time)`: ships bob and roll slightly, crane loads sway.
-    pub fn update(fleet: &mut Node, time: f64) {
-        for (i, &(_, _, yaw, _, _)) in SHIPS.iter().enumerate() {
-            let ship = &mut fleet.children[i];
-            let i = i as f64;
-            ship.position.y = (time * 0.55 + i * 2.0).sin() * 0.07;
-            ship.set_rotation_euler((time * 0.42 + i).sin() * 0.0018, yaw, 0.0);
-        }
-        for i in 0..CRANES.len() {
-            let crane = &mut fleet.children[SHIPS.len() + i];
-            let load = crane.children.last_mut().expect("crane load");
-            load.set_rotation_euler(0.0, 0.0, (time * 0.7 + i as f64).sin() * 0.025);
-        }
+/// `HarborFleet.update(time)`: ships bob and roll slightly, crane loads sway.
+pub fn update_harbor_fleet(fleet: &mut Node, time: f64) {
+    for (i, &(_, _, yaw, _, _)) in SHIPS.iter().enumerate() {
+        let ship = &mut fleet.children[i];
+        let i = i as f64;
+        ship.position.y = (time * 0.55 + i * 2.0).sin() * 0.07;
+        ship.set_rotation_euler((time * 0.42 + i).sin() * 0.0018, yaw, 0.0);
+    }
+    for i in 0..CRANES.len() {
+        let crane = &mut fleet.children[SHIPS.len() + i];
+        let load = crane.children.last_mut().expect("crane load");
+        load.set_rotation_euler(0.0, 0.0, (time * 0.7 + i as f64).sin() * 0.025);
     }
 }

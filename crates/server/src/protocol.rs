@@ -4,9 +4,8 @@
 //! `src/net/protocol.ts`); this module re-exports them beside the server-only build stamp.
 
 pub use sloppy_core::net::protocol::{
-    CONTENT_VERSION, DEFAULT_ROUND_MINUTES, EMPTY_GRACE_MS, MAX_BATTLE_OVERRUN_MS,
-    MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, MAX_ROUND_MINUTES, Message, PROTOCOL_VERSION,
-    ROOM_IDLE_MS, is_room_code,
+    CONTENT_VERSION, EMPTY_GRACE_MS, MAX_BATTLE_OVERRUN_MS, MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS,
+    Message, PROTOCOL_VERSION, ROOM_IDLE_MS, is_room_code,
 };
 
 /// Fingerprint of everything built into this server, so a deploy check can tell
@@ -15,13 +14,6 @@ pub const SERVER_BUILD: &str = match option_env!("SLOPPY_SERVER_BUILD") {
     Some(build) => build,
     None => "dev",
 };
-
-/// Maps listed only on `/rooms?debug` (`isExtraLevel` in `src/game/map-options.ts`).
-pub const EXTRA_LEVEL_MAPS: [&str; 2] = ["stress-test", "superstress"];
-
-pub fn is_extra_level(map_mode: &str) -> bool {
-    EXTRA_LEVEL_MAPS.contains(&map_mode)
-}
 
 #[cfg(test)]
 mod tests {

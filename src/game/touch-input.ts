@@ -1,8 +1,6 @@
-export type StickKind = "drive" | "aim";
-/** A finger-owned touch control: the drive stick, a finger on the arena, which aims
- * there and fires while it is down, and the aim stick and held fire button, which no
- * layout shows at the moment (`touch-controls.css`). */
-export type TouchKind = StickKind | "fire" | "arena";
+/** A finger-owned touch control: the drive stick, or a finger on the arena, which aims
+ * there and fires while it is down. */
+export type TouchKind = "drive" | "arena";
 export type TouchMode = "auto" | "on" | "off";
 export const STICK_DEADZONE = 0.12;
 
@@ -10,20 +8,15 @@ export const STICK_DEADZONE = 0.12;
 export class TouchInput {
   moveX = 0;
   moveZ = 0;
-  aimX = 0;
-  aimY = -1;
-  aiming = false;
   changed = () => {};
   readonly pointers: Record<TouchKind, number | null> = {
     drive: null,
-    aim: null,
-    fire: null,
     arena: null,
   };
 
-  /** Held while the fire button or an arena finger is down. */
+  /** Held while an arena finger is down. */
   get fire(): boolean {
-    return this.pointers.fire !== null || this.pointers.arena !== null;
+    return this.pointers.arena !== null;
   }
 
   begin(kind: TouchKind, pointerId: number): boolean {
@@ -34,20 +27,15 @@ export class TouchInput {
     return true;
   }
 
-  move(kind: StickKind, pointerId: number, x: number, y: number): void {
-    if (this.pointers[kind] !== pointerId) {
+  /** The drive stick's push in stick radii (x right, y down), from its own finger. */
+  moveStick(pointerId: number, x: number, y: number): void {
+    if (this.pointers.drive !== pointerId) {
       return;
     }
     const distance = Math.hypot(x, y);
-    if (kind === "drive") {
-      const speed = Math.max(0, (Math.min(1, distance) - STICK_DEADZONE) / (1 - STICK_DEADZONE));
-      this.moveX = distance ? (x / distance) * speed : 0;
-      this.moveZ = distance ? (y / distance) * speed : 0;
-    } else if (distance > STICK_DEADZONE) {
-      this.aimX = x / distance;
-      this.aimY = y / distance;
-      this.aiming = true;
-    }
+    const speed = Math.max(0, (Math.min(1, distance) - STICK_DEADZONE) / (1 - STICK_DEADZONE));
+    this.moveX = distance ? (x / distance) * speed : 0;
+    this.moveZ = distance ? (y / distance) * speed : 0;
   }
 
   end(kind: TouchKind, pointerId: number): void {
@@ -64,8 +52,7 @@ export class TouchInput {
   clear(): void {
     const held = Object.values(this.pointers).some((pointer) => pointer !== null);
     this.moveX = this.moveZ = 0;
-    this.aiming = false;
-    this.pointers.drive = this.pointers.aim = this.pointers.fire = this.pointers.arena = null;
+    this.pointers.drive = this.pointers.arena = null;
     if (held) {
       this.changed();
     }

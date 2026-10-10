@@ -2,12 +2,12 @@
 
 mod support;
 
-use sloppy_core::sim::VehicleCommand;
-use support::{clear_arena, place_tank, simulation, tank_xz};
+use sloppy_core::sim::{Simulation, VehicleCommand};
+use support::{clear_arena, place_tank, tank_xz};
 
 #[test]
 fn clear_arena_keeps_only_the_requested_tanks() {
-    let mut s = simulation();
+    let mut s = Simulation::with_seed(12345.0);
     let human = s.human_index().unwrap();
     clear_arena(&mut s, &[human, 0]);
     assert_eq!(s.tanks.len(), 2);

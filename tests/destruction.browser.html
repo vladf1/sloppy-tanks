@@ -50,7 +50,7 @@
       // Interactive destruction showcase on the engine: one of every destructible cover
       // on the quarry floor, shells, blasts, a landing wreck and a drum chain, drawn
       // from a fixed camera. The rules behind it are the engine's tests.
-      import { choose, draw, fixtureGame, prepare, read } from "./engine-fixture";
+      import { choose, draw, fixtureGame, read } from "./engine-fixture";
       const game = await fixtureGame(document.querySelector("canvas"), { seed: 731 });
       const output = document.querySelector("output");
       const CAMERA = { position: [17, 22, 30], target: [0, 1, 0] };
@@ -85,10 +85,7 @@
           `concrete x=${concrete?.x.toFixed(2)} · steel x=${steel?.x.toFixed(2)}`;
       }
       async function reset() {
-        if (!(await choose(game, { mapMode: "quarry" }))) {
-          game.restart();
-          await prepare(game);
-        }
+        await choose(game, { mapMode: "quarry" });
         game.debug_set_autoplay(false);
         game.debug_clear_arena(new Uint32Array());
         const { human } = read.state(game);

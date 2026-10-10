@@ -10,7 +10,8 @@
 // orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
 // white, and the two frames give every pixel's coverage and its unblended color.
-import { loadLabsEngine } from "./labs-engine";
+import { pixels } from "./lab-references";
+import { loadLabsEngine, prepareLab } from "./labs-engine";
 
 export const PREVIEW_WIDTH = 640;
 export const PREVIEW_HEIGHT = 400;
@@ -75,16 +76,6 @@ const SCENE = {
   objects: [],
 };
 
-/** RGBA of the canvas's current frame; read in the task that drew it. */
-function frame(canvas: HTMLCanvasElement): Uint8ClampedArray {
-  const copy = document.createElement("canvas");
-  copy.width = canvas.width;
-  copy.height = canvas.height;
-  const context = copy.getContext("2d", { willReadFrequently: true })!;
-  context.drawImage(canvas, 0, 0);
-  return context.getImageData(0, 0, canvas.width, canvas.height).data;
-}
-
 /** Coverage and color from one frame over black and one over white. */
 function matte(black: Uint8ClampedArray, white: Uint8ClampedArray): ImageData {
   const image = new ImageData(PREVIEW_WIDTH * SUPERSAMPLE, PREVIEW_HEIGHT * SUPERSAMPLE);
@@ -126,21 +117,9 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
         names.push(name);
       }
     }
-    for (;;) {
-      const [compiled, remaining, compiling] = lab.prepare_step(PREPARE_BUDGET);
-      if (remaining === 0) break;
-      // Pipelines compiling on the browser's background threads are progress too.
-      if (compiled === 0 && compiling === 0) {
-        throw new Error("Pipeline preparation made no progress");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    while (lab.textures_pending() > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 16));
-    }
+    await prepareLab(lab, PREPARE_BUDGET);
     const failures = lab.texture_failures();
     if (failures.length) throw new Error(`Textures failed: ${failures.join(", ")}`);
-    lab.warm_up();
     const previews: Record<string, string> = {};
     const large = document.createElement("canvas");
     large.width = canvas.width;
@@ -154,10 +133,10 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       for (const other of names) lab.set_visible(other, other === name);
       lab.set_background(0x000000);
       lab.frame(0);
-      const black = frame(canvas);
+      const black = pixels(canvas).data;
       lab.set_background(0xffffff);
       lab.frame(0);
-      const white = frame(canvas);
+      const white = pixels(canvas).data;
       large.getContext("2d")!.putImageData(matte(black, white), 0, 0);
       context.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
       context.drawImage(large, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);

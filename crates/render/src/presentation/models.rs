@@ -18,11 +18,13 @@ use sloppy_core::geometry::{
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
+    shadowed, siding_box, trunk_fragment,
 };
 use sloppy_core::scene::{Blending, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
+use super::hud::METER_LOW_Y;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 
 /// Joint names.
@@ -97,7 +99,7 @@ fn flat(mut node: Node) -> Node {
 
 fn polygon(points: &[[f64; 2]]) -> Mesh {
     let points: Vec<DVec2> = points.iter().map(|p| DVec2::new(p[0], p[1])).collect();
-    shape_geometry(&[Shape::from_points(&points)], 12)
+    shape_geometry(&[Shape::from_points(&points)])
 }
 
 fn translated(mut mesh: Mesh, x: f64, y: f64, z: f64) -> Mesh {
@@ -190,11 +192,16 @@ pub fn tank_bar(team: Team) -> Node {
         node.visible = false;
         bar.children.push(node);
     }
-    bar.children.push(protection_meter(
-        joint::BAR_SHIELD,
-        joint::BAR_SHIELD_FILL,
-        pickup(PickupKind::Shield).color,
-        true,
+    bar.children.push(at(
+        protection_meter(
+            joint::BAR_SHIELD,
+            joint::BAR_SHIELD_FILL,
+            pickup(PickupKind::Shield).color,
+            true,
+        ),
+        0.0,
+        METER_LOW_Y,
+        0.0,
     ));
     bar.children.push(protection_meter(
         joint::BAR_SPAWN,
@@ -230,12 +237,8 @@ pub fn tank_bar(team: Team) -> Node {
 fn reticle_material(color: u32, opacity: f32) -> Arc<Material> {
     Arc::new(Material {
         side: Side::Double,
-        depth_test: false,
-        depth_write: false,
-        transparent: true,
-        tone_mapped: false,
         opacity,
-        ..Material::basic(color)
+        ..(*hud_material(color)).clone()
     })
 }
 
@@ -365,7 +368,6 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         inner_radius: 0.89,
         outer_radius: 1.02,
         theta_segments: REFILL_SEGMENTS,
-        phi_segments: 1,
         theta_start: PI / 2.0,
         theta_length: PI * 2.0,
     }
@@ -428,7 +430,6 @@ pub fn pickup_effect_glow() -> Node {
     root
 }
 
-/// A mine painted like the pickups' bases, with a blinking team cap.
 /// How far to raise a mine at `(x, z)` so it lies on a spawn pad's deck rather
 /// than inside it; zero on open ground. Only the drawn model moves: the mine's
 /// simulated position and trigger radius stay on the ground plane.
@@ -436,6 +437,7 @@ pub fn mine_lift(pads: &SpawnPadDecks, x: f64, z: f64) -> f64 {
     pads.top_within(x, z, MINE_RADIUS).unwrap_or(0.0)
 }
 
+/// A mine painted like the pickups' bases, with a blinking team cap.
 pub fn mine(team: Team) -> Node {
     let mut root = Node::group("mine");
     put(
@@ -458,35 +460,32 @@ pub fn mine(team: Team) -> Node {
     root
 }
 
-/// The instanced debris pieces presentation owns; wood, planks and logs use
-/// scenery surfaces and come from the model catalog. `None` for those.
-pub fn debris_piece(shape: FragmentShape) -> Option<Node> {
-    let white = paint(0xffffff);
-    let geometry = match shape {
-        FragmentShape::Armor => arc(rounded_box_geometry(
+/// The instanced debris pieces (`presentation.ts`), unit-colored (white) so the
+/// instance tint paints each piece. Wood, panels, beams and logs use scenery
+/// surfaces: `sidingBox(1.5, 0.18, 0.45)`, `sidingBox(1, 1, 1)` and
+/// `trunkFragment()`.
+pub fn debris_piece(shape: FragmentShape) -> Node {
+    let piece = |geometry: Mesh| shadowed(arc(geometry), paint(0xffffff));
+    let node = match shape {
+        FragmentShape::Armor => piece(rounded_box_geometry(
             1.25,
             0.16,
             0.85,
             1,
             DEFAULT_BOX_RADIUS,
         )),
-        FragmentShape::Wheel => arc(cylinder_geometry(0.48, 0.48, 0.28, 10)),
-        FragmentShape::Track => arc(rounded_box_geometry(0.5, 0.2, 1.5, 1, DEFAULT_BOX_RADIUS)),
-        FragmentShape::Shard => arc(tetrahedron_geometry(0.75, 0)),
-        FragmentShape::DrumShell => arc(barrel_scrap_geometry(BarrelScrap::Shell)),
-        FragmentShape::DrumLid => arc(barrel_scrap_geometry(BarrelScrap::Lid)),
-        FragmentShape::Wood | FragmentShape::Panel | FragmentShape::Beam | FragmentShape::Log => {
-            return None;
-        }
+        FragmentShape::Wheel => piece(cylinder_geometry(0.48, 0.48, 0.28, 10)),
+        FragmentShape::Track => piece(rounded_box_geometry(0.5, 0.2, 1.5, 1, DEFAULT_BOX_RADIUS)),
+        FragmentShape::Shard => piece(tetrahedron_geometry(0.75, 0)),
+        FragmentShape::DrumShell => piece(barrel_scrap_geometry(BarrelScrap::Shell)),
+        FragmentShape::DrumLid => piece(barrel_scrap_geometry(BarrelScrap::Lid)),
+        FragmentShape::Wood => siding_box(1.5, 0.18, 0.45, 0xffffff),
+        FragmentShape::Panel | FragmentShape::Beam => siding_box(1.0, 1.0, 1.0, 0xffffff),
+        FragmentShape::Log => (*trunk_fragment()).clone(),
     };
-    let mut node = Node::mesh(geometry, white);
-    if let Some(drawable) = &mut node.drawable {
-        drawable.cast_shadow = true;
-        drawable.receive_shadow = true;
-    }
     let mut root = Node::group("debris");
     root.children.push(node);
-    Some(root)
+    root
 }
 
 #[cfg(test)]
@@ -598,20 +597,5 @@ mod tests {
             }
             assert_eq!(mine_lift(&decks, 0.0, 0.0), 0.0);
         }
-    }
-
-    #[test]
-    fn every_debris_shape_has_a_model() {
-        for shape in [
-            FragmentShape::Armor,
-            FragmentShape::Wheel,
-            FragmentShape::Track,
-            FragmentShape::Shard,
-            FragmentShape::DrumShell,
-            FragmentShape::DrumLid,
-        ] {
-            assert!(debris_piece(shape).is_some(), "{shape:?}");
-        }
-        assert!(debris_piece(FragmentShape::Log).is_none());
     }
 }

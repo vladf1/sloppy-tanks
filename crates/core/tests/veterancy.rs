@@ -17,14 +17,10 @@ use sloppy_core::sim::weapons::{
     collect_pickup, fire_weapon, place_mine, step_mines, step_projectiles, weapon_interval,
 };
 use sloppy_core::sim::{
-    CoverKind, MatchPhase, Mine, Pickup, PickupKind, Shot, SimEventType, Simulation,
-    VehicleCommand, VehicleKind, Weapon,
+    CoverKind, MatchPhase, Mine, PickupKind, Shot, SimEventType, Simulation, VehicleCommand,
+    VehicleKind, Weapon,
 };
-use support::clear_arena;
-
-const PLAYER: usize = 0;
-const ENEMY: usize = 1;
-const ALLY: usize = 2;
+use support::{ALLY, ENEMY, PLAYER, damage_from, player_enemy_ally, supply};
 
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-8, "{a} != {b}");
@@ -39,16 +35,7 @@ fn move_tank(s: &mut Simulation, index: usize, x: f64, z: f64) {
 
 /// The human, one enemy and one ally, 20 m apart along +x.
 fn fixture() -> Simulation {
-    let mut s = Simulation::with_seed(123.0);
-    let player = s.human_index().unwrap();
-    let team = s.tanks[player].team;
-    let enemy = s.tanks.iter().position(|t| t.team != team).unwrap();
-    let ally = s
-        .tanks
-        .iter()
-        .position(|t| !t.human && t.team == team)
-        .unwrap();
-    clear_arena(&mut s, &[player, enemy, ally]);
+    let mut s = player_enemy_ally();
     for i in 0..s.tanks.len() {
         s.tanks[i].protection = 0.0;
         move_tank(&mut s, i, i as f64 * 20.0, 0.0);
@@ -73,17 +60,15 @@ fn promotions(s: &Simulation, id: Option<u32>) -> usize {
 #[test]
 fn hull_damage_earns_shared_xp_and_only_the_finisher_gets_the_kill_bonus_without_overkill() {
     let mut s = fixture();
-    let (player_id, player_team) = id_team(&s, PLAYER);
-    let (ally_id, ally_team) = id_team(&s, ALLY);
     let hp = s.tanks[ENEMY].hp;
-    s.damage_tank(ENEMY, 30.0, player_id, player_team, None, None);
-    s.damage_tank(ENEMY, 10.0, ally_id, ally_team, None, None);
+    damage_from(&mut s, ENEMY, 30.0, PLAYER, None, None);
+    damage_from(&mut s, ENEMY, 10.0, ALLY, None, None);
     assert_eq!(s.tanks[PLAYER].xp, 30.0);
     assert_eq!(s.tanks[ALLY].xp, 10.0);
-    s.damage_tank(ENEMY, 9999.0, ally_id, ally_team, None, None);
+    damage_from(&mut s, ENEMY, 9999.0, ALLY, None, None);
     assert_eq!(s.tanks[ALLY].xp, hp - 30.0 + 50.0);
     assert_eq!(s.tanks[ALLY].kills, 1);
-    s.damage_tank(ENEMY, 9999.0, player_id, player_team, None, None);
+    damage_from(&mut s, ENEMY, 9999.0, PLAYER, None, None);
     assert_eq!(s.tanks[PLAYER].xp, 30.0);
 }
 
@@ -156,15 +141,12 @@ fn all_five_weapons_snapshot_rank_damage_and_reload_bonuses_stack_with_rapid_fir
                 refill_ammo(&mut s.tanks[t], special, 1.0);
             }
             let rookie = weapon_interval(&s.tanks[t]);
-            let bot_rookie = bot_reload(&s.tanks[t], 0.0, Some(fired));
+            let bot_rookie = bot_reload(&s.tanks[t], 0.0, fired);
             s.tanks[t].xp = RANKS[3].xp;
             s.tanks[t].rapid = 12.0;
             s.tanks[t].cooldown = 0.0;
             near(weapon_interval(&s.tanks[t]), rookie / 1.2 / 2.0);
-            near(
-                bot_reload(&s.tanks[t], 0.0, Some(fired)),
-                bot_rookie / 1.2 / 2.0,
-            );
+            near(bot_reload(&s.tanks[t], 0.0, fired), bot_rookie / 1.2 / 2.0);
             s.shots.clear();
             fire_weapon(&mut s, t);
             assert_eq!(
@@ -221,8 +203,7 @@ fn mines_snapshot_damage_and_old_ordnance_never_gives_xp_to_dead_owners_or_repla
         move_tank(&mut s, fresh, 0.0, 10.0);
         s.tanks[fresh].protection = 0.0;
         s.world.step();
-        let id = s.next_id;
-        s.next_id += 1;
+        let id = s.allocate_id();
         s.shots.push(Shot {
             id,
             owner: player_id,
@@ -234,9 +215,6 @@ fn mines_snapshot_damage_and_old_ordnance_never_gives_xp_to_dead_owners_or_repla
             vz: 40.0,
             damage: 30.0,
             life: 2.0,
-            bounces: 0,
-            piercing: 0,
-            weapon: Weapon::Standard,
             ..Shot::default()
         });
         let mut i = 0;
@@ -271,8 +249,7 @@ fn mine_and_drum_chains_retain_the_initiating_tanks_xp_and_life_attribution() {
             10.0,
             0,
         ));
-        let id = s.next_id;
-        s.next_id += 1;
+        let id = s.allocate_id();
         s.mines.push(Mine {
             id,
             owner: enemy_id,
@@ -354,8 +331,7 @@ fn elite_and_heroic_repair_only_after_five_quiet_seconds_and_shield_hits_or_firi
     s.tanks[PLAYER].hp = s.max_health(&s.tanks[PLAYER]) - 0.01;
     repair_veteran(&mut s, PLAYER, 1.0);
     assert_eq!(s.tanks[PLAYER].hp, s.max_health(&s.tanks[PLAYER]));
-    let (player_id, player_team) = id_team(&s, PLAYER);
-    s.damage_tank(PLAYER, 9999.0, player_id, player_team, None, None);
+    damage_from(&mut s, PLAYER, 9999.0, PLAYER, None, None);
     repair_veteran(&mut s, PLAYER, 10.0);
     assert_eq!(s.tanks[PLAYER].hp, 0.0);
 }
@@ -366,11 +342,7 @@ fn promoted_max_hull_and_repair_pickups_respect_every_chassis_and_solo_scaling()
     for solo in [false, true] {
         for t in [PLAYER, ENEMY] {
             s.game_mode = if solo { GameMode::Solo } else { GameMode::Team };
-            for kind in [
-                VehicleKind::Scout,
-                VehicleKind::Balanced,
-                VehicleKind::Heavy,
-            ] {
+            for kind in VehicleKind::PLAYABLE {
                 s.tanks[t].kind = kind;
                 s.tanks[t].xp = RANKS[3].xp;
                 s.tanks[t].hp = 1.0;
@@ -378,17 +350,7 @@ fn promoted_max_hull_and_repair_pickups_respect_every_chassis_and_solo_scaling()
                     vehicle(kind).health * if solo && t == ENEMY { 0.4 } else { 1.0 } * 1.2 * 100.0,
                 ) / 100.0;
                 near(s.max_health(&s.tanks[t]), expected);
-                let id = s.next_id;
-                s.next_id += 1;
-                let mut repair = Pickup {
-                    id,
-                    kind: PickupKind::Repair,
-                    x: 0.0,
-                    z: 0.0,
-                    available: true,
-                    cooldown: 0.0,
-                    cooldown_duration: 0.0,
-                };
+                let mut repair = supply(&mut s, PickupKind::Repair, 0.0, 0.0);
                 collect_pickup(&mut s, t, &mut repair);
                 near(s.tanks[t].hp, expected);
             }
@@ -401,8 +363,7 @@ fn death_stops_xp_respawn_resets_rank_before_new_hull_and_round_reset_clears_all
     let mut s = fixture();
     for t in [PLAYER, ALLY] {
         earn_experience(&mut s, t, RANKS[3].xp, None);
-        let (id, team) = id_team(&s, t);
-        s.damage_tank(t, 9999.0, id, team, None, None);
+        damage_from(&mut s, t, 9999.0, t, None, None);
         earn_experience(&mut s, t, 30.0, None);
         assert_eq!(s.tanks[t].xp, RANKS[3].xp);
         s.human_kind = VehicleKind::Heavy;

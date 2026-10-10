@@ -30,19 +30,14 @@ use std::fmt::Write as _;
 use glam::DMat4;
 
 use super::effects_scenery::{CHIMNEY_SMOKE, QUARRY_SOIL, SAND_DRIFT, WATER};
+use super::harbor_models::{CargoShape, CrateShape, cargo_stack, shipping_container};
+use super::quarry_scenery::quarry_scenery;
+use super::quarry_surfaces::{sand_drift_material, sandstone_footing, sandstone_material};
 use super::*;
 use crate::geometry::VERTEX_ALPHA;
+use crate::geometry::reference_tests::fnv;
 use crate::scene::{Effect, Material, Node, Shading, Side, TextureRef, TextureSource};
 use crate::sim::quarry_rock_shape::quarry_rock_shape;
-
-fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for word in words {
-        h ^= word;
-        h = h.wrapping_mul(16_777_619);
-    }
-    h
-}
 
 fn float_hash<'a>(values: impl IntoIterator<Item = &'a f32>) -> String {
     format!("{:08x}", fnv(values.into_iter().map(|v| v.to_bits())))
@@ -74,11 +69,6 @@ fn texture_name(texture: &Option<TextureRef>) -> &str {
 fn material_summary(m: &Material) -> String {
     let effect_map = matches!(&m.effect, Effect::Custom { name, .. }
         if [WATER, QUARRY_SOIL, SAND_DRIFT].contains(name));
-    let side = match m.side {
-        Side::Front => 0,
-        Side::Back => 1,
-        Side::Double => 2,
-    };
     [
         if m.shading == Shading::Basic {
             "basic".into()
@@ -100,7 +90,7 @@ fn material_summary(m: &Material) -> String {
         u8::from(m.transparent).to_string(),
         format!("{:.3}", f64::from(m.opacity)),
         u8::from(m.depth_write).to_string(),
-        side.to_string(),
+        (m.side as u8).to_string(),
         u8::from(m.tone_mapped).to_string(),
         u8::from(m.fog).to_string(),
         format!("{:06x}", m.emissive.0),
@@ -215,22 +205,6 @@ fn dump(node: &Node, path: &str, full: bool, lines: &mut Vec<String>) {
     }
 }
 
-/// Shorten a full TypeScript dump line like `dump(.., full = false)`.
-fn compact(line: &str) -> String {
-    let mut fields: Vec<String> = line.split('|').map(str::to_string).collect();
-    if fields.len() >= 7 && fields[4..7].join("|") == "0,0,0|0,0,0,1|1,1,1" {
-        fields.splice(4..7, ["=".to_string()]);
-    }
-    for field in &mut fields {
-        if let Some(summary) = field.strip_prefix("M=")
-            && summary.contains(',')
-        {
-            *field = format!("M={}", summary_hash(summary));
-        }
-    }
-    fields.join("|")
-}
-
 fn sections() -> Vec<(String, Node)> {
     let mut sections = Vec::new();
     let village = VillageScenery::new();
@@ -278,19 +252,19 @@ fn sections() -> Vec<(String, Node)> {
     sections.push(("harbor".into(), harbor.root.clone()));
     harbor.update(5.3);
     sections.push(("harbor-5.3".into(), harbor.root.children[1].clone()));
-    sections.push(("quarry".into(), QuarryScenery::new().root));
-    for (kind, extent, y) in [
-        (GroundKind::DryGrass, 120.0, 0.008),
-        (GroundKind::PackedDirt, 140.0, -0.002),
-        (GroundKind::PackedDirt, 78.0, 0.008),
-        (GroundKind::DryGrass, 140.0, -0.002),
+    sections.push(("quarry".into(), quarry_scenery()));
+    for (name, kind, extent, y) in [
+        ("dry-grass", GroundKind::DryGrass, 120.0, 0.008),
+        ("packed-dirt", GroundKind::PackedDirt, 140.0, -0.002),
+        ("packed-dirt", GroundKind::PackedDirt, 78.0, 0.008),
+        ("dry-grass", GroundKind::DryGrass, 140.0, -0.002),
     ] {
         sections.push((
-            format!("floor-{}-{extent}", kind.as_str()),
-            custom_floor(kind, Some(extent), y),
+            format!("floor-{name}-{extent}"),
+            create_arena_floor(kind, extent, y),
         ));
     }
-    sections.push(("pads-0.65".into(), custom_spawn_pads(0.65)));
+    sections.push(("pads-0.65".into(), create_spawn_pads(0.65)));
     let crates = [
         CrateShape {
             x: 4.0,
@@ -405,13 +379,12 @@ fn scenery_matches_typescript() {
     if let Some(file) = &full {
         std::fs::write(file, dumped.join("\n") + "\n").unwrap();
     }
-    let reference = reference();
     let mut expected: Vec<(String, Vec<String>)> = Vec::new();
-    for line in reference.lines() {
+    for line in EXPECTED.lines() {
         if let Some(name) = line.strip_prefix("# ") {
             expected.push((name.to_string(), Vec::new()));
         } else if let Some((_, lines)) = expected.last_mut() {
-            lines.push(compact(line));
+            lines.push(line.to_string());
         }
     }
     let mut mismatches = Vec::new();
@@ -473,15 +446,9 @@ fn forest_normals_match_typescript_on_a_grid() {
     assert_eq!(hashes, FOREST_NORMALS);
 }
 
-fn reference() -> String {
-    std::env::var("SCENERY_REFERENCE")
-        .map(|file| std::fs::read_to_string(file).unwrap())
-        .unwrap_or_else(|_| EXPECTED.to_string())
-}
-
 /// A `key|hash` line of the reference's `soil` section.
 fn soil_hash(key: &str) -> String {
-    reference()
+    EXPECTED
         .lines()
         .find_map(|line| line.strip_prefix(&format!("{key}|")).map(str::to_string))
         .unwrap_or_else(|| panic!("no soil reference {key}"))
@@ -539,10 +506,10 @@ fn scenery_build_times() {
     }
     let start = Instant::now();
     let floors = [
-        custom_floor(GroundKind::DryGrass, Some(120.0), 0.008),
-        custom_floor(GroundKind::PackedDirt, Some(140.0), -0.002),
+        create_arena_floor(GroundKind::DryGrass, 120.0, 0.008),
+        create_arena_floor(GroundKind::PackedDirt, 140.0, -0.002),
     ];
-    let pads = custom_spawn_pads(0.65);
+    let pads = create_spawn_pads(0.65);
     println!(
         "extra-level floors and pads: {:.1} ms ({} floors, {} pad batches)",
         start.elapsed().as_secs_f64() * 1e3,

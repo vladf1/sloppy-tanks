@@ -2,17 +2,12 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import {
-  DEFAULT_GAME_URL,
-  chooseRoomMap,
-  click,
-  launchChrome,
-  waitForRoomBrowser,
-} from "./multiplayer-helpers.mjs";
+import { chooseMap, click, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
 await mkdir(output, { recursive: true });
-const url = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+const url = new URL(gameUrl);
 // Other sessions may hold the usual local ports; SLOPPY_RESTART_PORT picks another.
 const PORT = Number(process.env.SLOPPY_RESTART_PORT ?? 8790);
 url.searchParams.set("multiplayer", "");
@@ -65,7 +60,7 @@ try {
   await page.goto(url.href);
   await waitForRoomBrowser(page);
   await page.locator("#player-name").fill("Restart tester");
-  await chooseRoomMap(page, "harbor");
+  await chooseMap(page, "harbor");
   await click(page, "#create-room");
   await page.waitForFunction(
     () =>

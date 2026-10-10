@@ -6,7 +6,7 @@
 mod support;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::ammunition::{AMMO_ORDER, empty_ammo, select_ammo};
+use sloppy_core::sim::ammunition::{AMMO_ORDER, select_ammo};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::{BotPersonality, bot_ammo, preferred_ammo};
 use sloppy_core::sim::data::{STEP, pickup as pickup_stats, vehicle, weapon};
@@ -17,7 +17,7 @@ use sloppy_core::sim::{
     AmmoInventory, AmmoSelection, BotMode, CoverKind, MatchPhase, Pickup, PickupKind, Shot,
     SimEventType, Simulation, SpecialAmmo, Team, VehicleCommand, Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, concrete, decide, event_count, set_translation, shot_by_id, supply};
 
 /// The first `count` roster tanks, all human-driven, in a column 16 m apart along +z.
 fn arena(count: usize) -> Simulation {
@@ -39,11 +39,6 @@ fn arena(count: usize) -> Simulation {
     s
 }
 
-fn set_translation(s: &mut Simulation, index: usize, x: f64, z: f64) {
-    let body = s.tanks[index].body;
-    s.world.bodies[body].set_translation(vector(x, 0.65, z), true);
-}
-
 fn pickup_kind(ammo: SpecialAmmo) -> PickupKind {
     match ammo {
         SpecialAmmo::Spread => PickupKind::Spread,
@@ -53,34 +48,19 @@ fn pickup_kind(ammo: SpecialAmmo) -> PickupKind {
     }
 }
 
-fn supply(s: &mut Simulation, kind: PickupKind) -> Pickup {
-    let id = s.next_id;
-    s.next_id += 1;
-    Pickup {
-        id,
-        kind,
-        x: 0.0,
-        z: 0.0,
-        available: true,
-        cooldown: 0.0,
-        cooldown_duration: 0.0,
-    }
-}
-
 fn ammo_crate(s: &mut Simulation, ammo: SpecialAmmo) -> Pickup {
-    supply(s, pickup_kind(ammo))
+    supply(s, pickup_kind(ammo), 0.0, 0.0)
 }
 
 /// Collect a fresh crate of `kind` with the first tank.
 fn pickup(s: &mut Simulation, kind: PickupKind) {
-    let mut crate_ = supply(s, kind);
+    let mut crate_ = supply(s, kind, 0.0, 0.0);
     collect_pickup(s, 0, &mut crate_);
 }
 
 /// A shell on the x axis owned by the absent tank `999 + team`.
 fn shot(s: &mut Simulation, fired: Weapon, x: f64, vx: f64, team: Team) -> Shot {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Shot {
         id,
         weapon: fired,
@@ -98,17 +78,6 @@ fn shot(s: &mut Simulation, fired: Weapon, x: f64, vx: f64, team: Team) -> Shot 
     }
 }
 
-fn shot_by_id(s: &Simulation, id: u32) -> &Shot {
-    s.shots
-        .iter()
-        .find(|shot| shot.id == id)
-        .expect("shot still in flight")
-}
-
-fn count(s: &Simulation, kind: SimEventType) -> usize {
-    s.events.iter().filter(|e| e.kind == kind).count()
-}
-
 fn command(ammo_selection: Option<AmmoSelection>, fire: bool) -> VehicleCommand {
     VehicleCommand {
         fire,
@@ -122,8 +91,7 @@ fn each_weapon_emits_the_correct_shot_costs_one_unit_and_respects_cooldown() {
     for fired in AMMO_ORDER {
         let mut s = arena(1);
         if let Some(special) = fired.special() {
-            let mut c = ammo_crate(&mut s, special);
-            collect_pickup(&mut s, 0, &mut c);
+            pickup(&mut s, pickup_kind(special));
         }
         select_ammo(&mut s.tanks[0], Some(AmmoSelection::Weapon(fired)));
         let before = s.tanks[0].ammo;
@@ -150,7 +118,7 @@ fn each_weapon_emits_the_correct_shot_costs_one_unit_and_respects_cooldown() {
         }
         match fired.special() {
             Some(special) => assert_eq!(s.tanks[0].ammo.get(special), before.get(special) - 1.0),
-            None => assert_eq!(s.tanks[0].ammo, empty_ammo()),
+            None => assert_eq!(s.tanks[0].ammo, AmmoInventory::default()),
         }
         let after = s.tanks[0].ammo;
         let cooldown = s.tanks[0].cooldown;
@@ -175,7 +143,7 @@ fn standard_remains_unlimited_over_sustained_firing() {
         s.shots.clear();
     }
     assert_eq!(s.shots_fired, 500);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
 }
 
@@ -190,7 +158,7 @@ fn stress_multipliers_extend_power_ups_and_weapon_crate_payloads_tenfold() {
         PickupKind::Shield,
         PickupKind::Laser,
     ] {
-        let mut c = supply(&mut s, kind);
+        let mut c = supply(&mut s, kind, 0.0, 0.0);
         assert!(collect_pickup(&mut s, 0, &mut c), "{kind:?}");
         let tank = &s.tanks[0];
         let value = match kind {
@@ -272,8 +240,7 @@ fn selection_precedes_held_fire_depletion_falls_back_and_switching_cannot_bypass
 fn death_respawn_and_reset_clear_inventories_and_snapshots_own_their_inventory_copy() {
     let mut s = arena(1);
     for ammo in SpecialAmmo::ALL {
-        let mut c = ammo_crate(&mut s, ammo);
-        collect_pickup(&mut s, 0, &mut c);
+        pickup(&mut s, pickup_kind(ammo));
     }
     select_ammo(
         &mut s.tanks[0],
@@ -283,7 +250,7 @@ fn death_respawn_and_reset_clear_inventories_and_snapshots_own_their_inventory_c
     assert_eq!(snapshot.selected_ammo, Weapon::Piercing);
     let (id, team) = (s.tanks[0].id, s.tanks[0].team);
     s.damage_tank(0, 999.0, id, team, None, None);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
     assert_eq!(s.pickups.len(), 0);
     assert_eq!(snapshot.ammo.piercing, 24.0);
@@ -291,7 +258,7 @@ fn death_respawn_and_reset_clear_inventories_and_snapshots_own_their_inventory_c
     select_ammo(&mut s.tanks[0], Some(AmmoSelection::Step(1)));
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
     s.respawn(0, None);
-    assert_eq!(s.tanks[0].ammo, empty_ammo());
+    assert_eq!(s.tanks[0].ammo, AmmoInventory::default());
     s.tanks[0].ammo.rocket = 7.0;
     s.tanks[0].selected_ammo = Weapon::Rocket;
     s.reset(None);
@@ -348,14 +315,12 @@ fn crates_equip_the_first_advanced_ammo_and_report_actual_receipt_without_cleari
 #[test]
 fn collecting_another_ammo_type_preserves_selection_when_advanced_ammo_is_already_stocked() {
     let mut s = arena(1);
-    let mut spread = ammo_crate(&mut s, SpecialAmmo::Spread);
-    collect_pickup(&mut s, 0, &mut spread);
+    pickup(&mut s, PickupKind::Spread);
     select_ammo(
         &mut s.tanks[0],
         Some(AmmoSelection::Weapon(Weapon::Standard)),
     );
-    let mut rocket = ammo_crate(&mut s, SpecialAmmo::Rocket);
-    collect_pickup(&mut s, 0, &mut rocket);
+    pickup(&mut s, PickupKind::Rocket);
     assert_eq!(s.tanks[0].selected_ammo, Weapon::Standard);
     assert_eq!(s.tanks[0].ammo.spread, weapon(Weapon::Spread).per_crate);
     assert_eq!(s.tanks[0].ammo.rocket, weapon(Weapon::Rocket).per_crate);
@@ -455,7 +420,7 @@ fn empty_selection_emits_feedback_without_switching_and_final_special_shot_annou
         notice(&s)
     );
     fire_weapon(&mut s, 0);
-    assert_eq!(count(&s, SimEventType::Notice), 1);
+    assert_eq!(event_count(&s, SimEventType::Notice), 1);
     s.events.clear();
     s.match_state.phase = MatchPhase::Paused;
     s.step(
@@ -488,7 +453,7 @@ fn simultaneous_collection_skips_full_tanks_awards_one_recipient_and_refills_aft
         ],
         [24.0, 12.0, 0.0]
     );
-    assert_eq!(count(&s, SimEventType::Pickup), 1);
+    assert_eq!(event_count(&s, SimEventType::Pickup), 1);
     for i in 0..3 {
         set_translation(&mut s, i, 20.0, 20.0);
     }
@@ -519,8 +484,8 @@ fn piercing_intercepts_standard_rocket_and_piercing_shells_in_either_order() {
             if both {
                 assert_eq!(shot_by_id(&s, b_id).piercing, 0, "{label}");
             }
-            assert_eq!(count(&s, SimEventType::Impact), 1, "{label}");
-            assert_eq!(count(&s, SimEventType::Explosion), 0, "{label}");
+            assert_eq!(event_count(&s, SimEventType::Impact), 1, "{label}");
+            assert_eq!(event_count(&s, SimEventType::Explosion), 0, "{label}");
             // Start the next tick still within interception radius; do not resolve this pair twice.
             step_projectiles(&mut s, 0.01, false);
             assert_eq!(s.events.len(), 1, "{label}");
@@ -547,7 +512,7 @@ fn a_spent_piercing_shell_uses_normal_interception_and_opposing_damage_ownership
     s.shots = vec![second, first, a];
     step_projectiles(&mut s, 0.4, false);
     assert_eq!(s.shots.len(), 0);
-    assert_eq!(count(&s, SimEventType::Explosion), 1);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 1);
     assert!(!s.tanks[0].alive);
     assert!(!s.tanks[1].alive);
     assert_eq!(s.tanks[0].kills, 1);
@@ -565,16 +530,7 @@ fn piercing_stops_on_tanks_and_cover_and_cannot_intercept_through_thin_cover() {
     step_projectiles(&mut s, 0.3, false);
     assert_eq!(s.shots.len(), 0);
     assert_eq!(s.tanks[0].hp, hp - 40.0);
-    s.add_cover(&CoverDef::new(
-        CoverKind::Concrete,
-        0.0,
-        0.0,
-        0.1,
-        10.0,
-        3.0,
-        f64::INFINITY,
-        0,
-    ));
+    s.add_cover(&concrete(0.0, 0.0, 0.1, 10.0));
     s.world.step();
     s.events.clear();
     let a = shot(&mut s, Weapon::Piercing, -0.3, 20.0, Team::Blue);
@@ -647,7 +603,7 @@ fn bot_roles_select_stocked_ammo_use_standard_on_cover_and_fall_back_after_deple
         bot_command(&mut s, bot, STEP).ammo_selection,
         Some(AmmoSelection::Weapon(Weapon::Standard))
     );
-    s.tanks[bot].ammo = empty_ammo();
+    s.tanks[bot].ammo = AmmoInventory::default();
     s.tanks[bot].ammo.rocket = 1.0;
     s.tanks[bot].selected_ammo = Weapon::Rocket;
     fire_weapon(&mut s, bot);
@@ -666,8 +622,7 @@ fn bots_drive_to_useful_crates_consume_ammo_and_ignore_a_full_crate() {
     let mut p = ammo_crate(&mut s, SpecialAmmo::Rocket);
     p.z = 6.0;
     s.pickups.push(p);
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_eq!(s.tanks[bot].brain.mode, BotMode::Pickup);
     let mut i = 0;
     while i < 180 && s.pickups[0].available {
@@ -682,7 +637,6 @@ fn bots_drive_to_useful_crates_consume_ammo_and_ignore_a_full_crate() {
     assert_eq!(s.tanks[bot].ammo.rocket, 11.0);
     s.tanks[bot].ammo.rocket = 24.0;
     s.pickups[0].available = true;
-    s.tanks[bot].brain.decision = 0.0;
-    bot_command(&mut s, bot, STEP);
+    decide(&mut s, bot);
     assert_ne!(s.tanks[bot].brain.mode, BotMode::Pickup);
 }

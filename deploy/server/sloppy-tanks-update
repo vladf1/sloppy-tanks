@@ -54,6 +54,8 @@ fi
 
 pinned() { [[ -f $1 ]] && sed -n 's/^IMAGE=//p' "$1" || true; }
 pin() { printf 'IMAGE=%s\n' "$2" >"$1.new" && mv -f "$1.new" "$1"; }
+# keep_as FILE TAG IMAGE: pins IMAGE in FILE and tags it $PINNED:TAG, out of a prune's reach.
+keep_as() { pin "$1" "$3"; podman tag "$3" "$PINNED:$2"; }
 label() { podman image inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
 # Podman prints IDs without their sha256: prefix but accepts it, and lists them with it.
 image_id() {
@@ -61,9 +63,7 @@ image_id() {
   id=$(podman image inspect --format '{{.Id}}' "$1") && echo "sha256:${id#sha256:}"
 }
 describe() {
-  local release
-  release=$(label "$1" $LABELS.release)
-  echo "${1:0:19} (${release:+v$release, }server build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
+  echo "${1:0:19} (v$(label "$1" $LABELS.release), server build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
 }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 
@@ -83,7 +83,7 @@ use_pin() {
 # only the registry's tags are considered.
 remove_old_images() {
   local keep ref id
-  keep=$({ cat "$image_file" "$previous_file" 2>/dev/null || true; } | sed -n 's/^IMAGE=//p')
+  keep=$(pinned "$image_file"; pinned "$previous_file")
   podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
       if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
@@ -116,12 +116,8 @@ switch_to() {
     echo "$UNIT already runs $(describe "$new")"
     return 0
   fi
-  if [[ -n $current && $current != "$new" ]]; then
-    pin "$previous_file" "$current"
-    podman tag "$current" "$PINNED:previous"
-  fi
-  pin "$image_file" "$new"
-  podman tag "$new" "$PINNED:current"
+  if [[ -n $current && $current != "$new" ]]; then keep_as "$previous_file" previous "$current"; fi
+  keep_as "$image_file" current "$new"
   use_pin "$new"
   echo "Restarting $UNIT on $(describe "$new")"
   systemctl restart "$UNIT"
@@ -132,13 +128,9 @@ switch_to() {
   fi
   echo "$UNIT did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
   if [[ -n $current && $current != "$new" ]]; then
-    pin "$image_file" "$current"
-    podman tag "$current" "$PINNED:current"
+    keep_as "$image_file" current "$current"
     use_pin "$current"
-    if [[ -n $previous ]]; then
-      pin "$previous_file" "$previous"
-      podman tag "$previous" "$PINNED:previous"
-    fi
+    if [[ -n $previous ]]; then keep_as "$previous_file" previous "$previous"; fi
     systemctl restart "$UNIT"
     if healthy "$current"; then
       echo "Rolled back to $(describe "$current")" >&2

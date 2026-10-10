@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
 
-/// The system allocator plus a count of live bytes, which stands in for Node's
-/// `heapUsed` (and its high-water mark for `heapTotal`). The binary installs it; test
-/// builds leave it out and report zero.
+/// The system allocator plus a count of live bytes, which the dashboard shows as heap
+/// used (and its high-water mark as heap total). The binary installs it; test builds
+/// leave it out and report zero.
 pub struct CountingAllocator;
 
 // SAFETY: every call forwards to `System` with the caller's layout and pointer unchanged;
@@ -111,11 +111,6 @@ pub fn rss_bytes() -> u64 {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn rss_bytes() -> u64 {
-    0
-}
-
 #[cfg(target_os = "linux")]
 fn page_size() -> u64 {
     // SAFETY: sysconf has no preconditions.
@@ -123,7 +118,7 @@ fn page_size() -> u64 {
     if size > 0 { size as u64 } else { 4096 }
 }
 
-/// The host's one-minute load average (`os.loadavg()[0]`).
+/// The host's one-minute load average.
 pub fn load_average() -> f64 {
     let mut loads = [0f64; 3];
     // SAFETY: getloadavg writes at most the given number of samples.
@@ -135,8 +130,7 @@ pub fn cpu_count() -> usize {
     std::thread::available_parallelism().map_or(1, usize::from)
 }
 
-/// Total and available host memory in bytes (`os.totalmem()` / `os.freemem()`, which
-/// libuv reads from MemAvailable on Linux).
+/// Total and available host memory in bytes (MemAvailable on Linux).
 #[cfg(target_os = "linux")]
 pub fn host_memory() -> (u64, u64) {
     let text = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
@@ -171,11 +165,6 @@ pub fn host_memory() -> (u64, u64) {
     let free_pages: u32 = sysctl(c"vm.page_free_count");
     let page: u64 = sysctl::<libc::c_int>(c"hw.pagesize") as u64;
     (total, u64::from(free_pages) * page)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn host_memory() -> (u64, u64) {
-    (0, 0)
 }
 
 /// Where the process runs, for the dashboard, such as "Docker container · Linux 7.0.0".

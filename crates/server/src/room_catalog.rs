@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::is_extra_level;
-use crate::room_list::{MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, RoomListing};
+use sloppy_core::net::room_list::{MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, RoomListing};
+use sloppy_core::sim::map_options::{MapId, is_extra_level};
 
 struct ListedRoom {
     entry: RoomListing,
@@ -54,7 +54,9 @@ impl RoomCatalog {
         let mut rooms: Vec<RoomListing> = self
             .rooms
             .values()
-            .filter(|room| extra_levels || !is_extra_level(&room.entry.map_mode))
+            .filter(|room| {
+                extra_levels || !MapId::parse(&room.entry.map_mode).is_some_and(is_extra_level)
+            })
             .map(|room| room.entry.clone())
             .collect();
         rooms.sort_by(|a, b| b.players.cmp(&a.players).then_with(|| a.room.cmp(&b.room)));
@@ -65,7 +67,7 @@ impl RoomCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::room_list::RoomPhase;
+    use sloppy_core::net::room_list::RoomPhase;
 
     fn entry() -> RoomListing {
         RoomListing {

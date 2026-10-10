@@ -12,6 +12,7 @@ const { browser, page, errors } = await launchGame();
 const checks = [];
 /** A shooter id that is no tank: damage it deals credits nobody. */
 const NOBODY = 999999;
+const PICKUPS = ["rapid", "spread", "rocket", "ricochet", "piercing", "repair", "shield", "speed"];
 try {
   await freezeLoop(page);
   await page.goto(gameUrl);
@@ -65,7 +66,7 @@ try {
     const { sloppy, engine } = window;
     const game = sloppy.game;
     sloppy.autoplay(false);
-    const { human, tanks } = engine.state();
+    const { human, tanks } = sloppy.sim;
     const enemy = tanks.find((tank) => tank.team !== human.team);
     game.debug_clear_arena(new Uint32Array([enemy.id]));
     game.debug_place_tank(human.id, 0, 0, NaN);
@@ -314,7 +315,7 @@ try {
   );
   // A rocket inside the laser's reach vaporizes with a beam and the saved zap.
   await page.evaluate(
-    ({ id, enemyTeam }) => {
+    ({ id, enemyTeam, nobody }) => {
       const game = window.sloppy.game;
       game.debug_clear_shots();
       game.debug_place_tank(id, 0, 0, NaN);
@@ -328,14 +329,14 @@ try {
           vx: 12,
           vz: 12,
           team: enemyTeam,
-          owner: 999999,
+          owner: nobody,
           weapon: "rocket",
           damage: 65,
           life: 3.5,
         }),
       );
     },
-    { id: ids.human, enemyTeam: ids.enemyTeam },
+    { id: ids.human, enemyTeam: ids.enemyTeam, nobody: NOBODY },
   );
   await advance(1);
   assert.equal(await page.evaluate(() => window.sloppy.sim.shots), 0);
@@ -357,20 +358,10 @@ try {
   checks.push("Laser pickup by W key, beam, zap and expiry; effects keep the panel height");
 
   // Every ordinary pickup leaves a dim podium with refill progress until it returns.
-  await page.evaluate(() => {
+  await page.evaluate((kinds) => {
     const game = window.sloppy.game;
     game.debug_clear_shots();
     window.engine.setHuman({ hp: window.sloppy.hud().human.maxHp * 0.24 });
-    const kinds = [
-      "rapid",
-      "spread",
-      "rocket",
-      "ricochet",
-      "piercing",
-      "repair",
-      "shield",
-      "speed",
-    ];
     const cooldowns = [13, 11, 9, 7, 5, 3, 1, 0];
     game.debug_set_pickups(
       JSON.stringify(
@@ -384,7 +375,7 @@ try {
         })),
       ),
     );
-  });
+  }, PICKUPS);
   await advance();
   const pads = () =>
     page.evaluate(() =>
@@ -408,22 +399,12 @@ try {
     [false, false, false, false, false, false, false, true],
   );
   await page.screenshot({ path: `${out}/refill-pads.png` });
-  await page.evaluate(() => {
+  await page.evaluate((kinds) => {
     const game = window.sloppy.game;
-    const kinds = [
-      "rapid",
-      "spread",
-      "rocket",
-      "ricochet",
-      "piercing",
-      "repair",
-      "shield",
-      "speed",
-    ];
     game.debug_set_pickups(
       JSON.stringify(kinds.map((kind, i) => ({ kind, x: (i - 3.5) * 4, z: -6, available: true }))),
     );
-  });
+  }, PICKUPS);
   await advance();
   assert.ok((await pads()).every((p) => p.gem && p.lit));
   checks.push(

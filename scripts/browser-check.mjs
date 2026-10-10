@@ -44,7 +44,7 @@ try {
   const before = await page.evaluate(() => window.sloppy.snapshot());
   const pose = () =>
     page.evaluate(() => {
-      const { x, z, heading } = window.engine.state().human;
+      const { x, z, heading } = window.sloppy.sim.human;
       return { x, z, heading };
     });
   const start = await pose();
@@ -84,7 +84,7 @@ try {
   const beforeCollapse = await page.evaluate(() => {
     window.sloppy.overview();
     window.sloppy.collapse();
-    return window.engine.stats();
+    return window.sloppy.stats();
   });
   await page.waitForTimeout(650);
   const collapsed = await page.evaluate(() => {
@@ -94,7 +94,7 @@ try {
     return {
       rubble: rubble.length,
       shown: rubble.every((cover) => views.get(cover.id)?.shown),
-      stats: engine.stats(),
+      stats: window.sloppy.stats(),
     };
   });
   assert.ok(collapsed.rubble > 0 && collapsed.shown, "new rubble receives visible models");
@@ -113,7 +113,7 @@ try {
     for (let i = 0; i < 10; i++) {
       game.debug_configure(207, 12, 0);
       sloppy.start();
-      for (const tank of engine.state().tanks) {
+      for (const tank of sloppy.sim.tanks) {
         engine.setTank(tank.id, { protection: 0, shield: 0 });
         game.debug_damage_tank(tank.id, 999, tank.id, tank.team);
       }
@@ -122,7 +122,7 @@ try {
       engine.draw();
       const live = [...window.gpuBuffers.values()];
       memory.push({
-        ...engine.stats(),
+        ...sloppy.stats(),
         gpuBuffers: live.length,
         gpuBufferBytes: live.reduce((sum, size) => sum + size, 0),
       });
@@ -141,7 +141,7 @@ try {
   const mineResources = await page.evaluate(() => {
     const { sloppy, engine } = window;
     const game = sloppy.game;
-    const { x, z, team } = engine.state().human;
+    const { x, z, team } = sloppy.sim.human;
     const memory = [];
     for (let i = 0; i < 30; i++) {
       game.debug_add_mine(x, z, team, 0);
@@ -149,7 +149,7 @@ try {
       if (engine.view().mines !== 1) throw new Error("the mine needs a view");
       game.debug_clear_mines();
       engine.draw();
-      memory.push({ ...engine.stats(), views: engine.view().mines });
+      memory.push({ ...sloppy.stats(), views: engine.view().mines });
     }
     return memory;
   });

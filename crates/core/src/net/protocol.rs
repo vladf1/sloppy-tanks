@@ -27,6 +27,7 @@
 use serde_json::Value;
 
 use super::json::ObjectWriter;
+use super::scene_codec::name;
 use super::schema::{
     ReadResult, Record, array, boolean, choice, field, id, id32, nested, number_in, optional,
     string,
@@ -64,6 +65,8 @@ pub const EMPTY_GRACE_MS: u64 = 30_000;
 pub const ROOM_IDLE_MS: u64 = 5 * 60_000;
 pub const DEFAULT_ROUND_MINUTES: u32 = 20;
 pub const MAX_ROUND_MINUTES: u32 = 99;
+/// Longest player name, in UTF-16 units.
+pub const MAX_PLAYER_NAME_LENGTH: usize = 24;
 /// A room hosts no new battle after this long; one already under way may finish.
 pub const MAX_ROOM_MS: u64 = 4 * 60 * 60_000;
 /// How far a battle may run past [`MAX_ROOM_MS`]: its longest length plus overtime, so an
@@ -115,7 +118,7 @@ impl Message {
         self.len() == 0
     }
 
-    /// The message's type: the text's `"type"`, or the binary state message's name.
+    /// The binary state message's name: `"full"`, `"snapshot"` or `"other"`.
     pub fn binary_type(bytes: &[u8]) -> &'static str {
         match bytes.first() {
             Some(&FULL_MESSAGE) => "full",
@@ -136,19 +139,6 @@ pub fn read_team(value: Option<&Value>) -> ReadResult<Team> {
 
 pub fn read_player_kind(value: Option<&Value>) -> ReadResult<VehicleKind> {
     choice(value, &PLAYER_KINDS)
-}
-
-pub fn read_map_mode(value: Option<&Value>) -> ReadResult<MapId> {
-    choice(value, &MAP_MODES)
-}
-
-pub fn read_difficulty(value: Option<&Value>) -> ReadResult<Difficulty> {
-    choice(value, &DIFFICULTIES)
-}
-
-/// `roundMinutesReader`: whole minutes from 1 to [`MAX_ROUND_MINUTES`].
-pub fn read_round_minutes(value: Option<&Value>) -> ReadResult<u32> {
-    number_in(value, 1.0, f64::from(MAX_ROUND_MINUTES), true).map(|minutes| minutes as u32)
 }
 
 /// The host's choices for the next battle.
@@ -172,15 +162,17 @@ impl Default for RoomSettings {
 }
 
 impl RoomSettings {
-    /// `settingsReader`: an omitted `roundMinutes` means the default length.
+    /// `settingsReader`: `roundMinutes` is whole minutes from 1 to [`MAX_ROUND_MINUTES`];
+    /// omitted, it means the default length.
     pub fn read(source: &Record) -> ReadResult<Self> {
         Ok(Self {
-            map_mode: field(source, "mapMode", read_map_mode)?,
-            difficulty: field(source, "difficulty", read_difficulty)?,
+            map_mode: field(source, "mapMode", |v| choice(v, &MAP_MODES))?,
+            difficulty: field(source, "difficulty", |v| choice(v, &DIFFICULTIES))?,
             humans_only: field(source, "humansOnly", boolean)?,
             round_minutes: field(source, "roundMinutes", |value| match value {
                 None => Ok(DEFAULT_ROUND_MINUTES),
-                some => read_round_minutes(some),
+                some => number_in(some, 1.0, f64::from(MAX_ROUND_MINUTES), true)
+                    .map(|minutes| minutes as u32),
             })?,
         })
     }
@@ -191,10 +183,6 @@ impl RoomSettings {
             .string("difficulty", self.difficulty.as_str())
             .boolean("humansOnly", self.humans_only)
             .int("roundMinutes", u64::from(self.round_minutes));
-    }
-
-    pub fn to_json(&self) -> String {
-        super::json::object(|writer| self.write_fields(writer))
     }
 }
 
@@ -217,7 +205,7 @@ impl JoinRequest {
         Ok(Self {
             version: field(source, "version", id)?,
             content_version: field(source, "contentVersion", |v| string(v, 128, 1))?,
-            name: field(source, "name", |v| string(v, 24, 1))?,
+            name: field(source, "name", |v| string(v, MAX_PLAYER_NAME_LENGTH, 1))?,
             kind: field(source, "kind", read_player_kind)?,
             team: field(source, "team", |v| optional(v, read_team))?,
             token: field(source, "token", |v| optional(v, |v| string(v, 128, 16)))?,
@@ -249,7 +237,7 @@ impl Player {
     pub fn read(source: &Record) -> ReadResult<Self> {
         Ok(Self {
             player_id: field(source, "playerId", |v| string(v, 128, 1))?,
-            name: field(source, "name", |v| string(v, 24, 1))?,
+            name: field(source, "name", |v| string(v, MAX_PLAYER_NAME_LENGTH, 1))?,
             team: field(source, "team", read_team)?,
             slot: field(source, "slot", id32)?,
             kind: field(source, "kind", read_player_kind)?,
@@ -314,20 +302,17 @@ impl Lobby {
     }
 
     pub fn to_json(&self) -> String {
-        let mut out = String::new();
-        let mut writer = ObjectWriter::new(&mut out);
-        writer
-            .string("roomEpoch", &self.room_epoch)
-            .int("roundId", self.round_id)
-            .string("type", "lobby")
-            .string("phase", self.phase.as_str())
-            .string("hostId", &self.host_id);
-        write_players(writer.key("players"), &self.players);
-        write_players(writer.key("scoreboard"), &self.scoreboard);
-        let settings = self.settings.to_json();
-        writer.raw("settings", &settings);
-        writer.finish();
-        out
+        super::json::object(|writer| {
+            writer
+                .string("roomEpoch", &self.room_epoch)
+                .int("roundId", self.round_id)
+                .string("type", "lobby")
+                .string("phase", self.phase.as_str())
+                .string("hostId", &self.host_id);
+            write_players(writer.key("players"), &self.players);
+            write_players(writer.key("scoreboard"), &self.scoreboard);
+            writer.nested("settings", |settings| self.settings.write_fields(settings));
+        })
     }
 }
 
@@ -349,11 +334,7 @@ pub const DRIVERS: [(&str, Driver); 3] = [
 ];
 
 pub fn driver_name(driver: Driver) -> &'static str {
-    match driver {
-        Driver::Human => "human",
-        Driver::Bot => "bot",
-        Driver::Idle => "idle",
-    }
+    name(&DRIVERS, driver)
 }
 
 /// Which tank a seat drives and who drives it now (`Control`).
@@ -471,7 +452,7 @@ impl JoinChoice {
     /// `pendingChoiceReader`: the choices a page stores before reloading into a room.
     pub fn read(source: &Record) -> ReadResult<Self> {
         Ok(Self {
-            name: field(source, "name", |v| string(v, 24, 1))?,
+            name: field(source, "name", |v| string(v, MAX_PLAYER_NAME_LENGTH, 1))?,
             kind: field(source, "kind", read_player_kind)?,
             team: field(source, "team", |v| optional(v, read_team))?,
             create: field(source, "create", |v| {
@@ -481,30 +462,39 @@ impl JoinChoice {
         })
     }
 
+    /// The choice as the JSON the page passes back to `connect`.
+    pub fn to_json(&self) -> String {
+        super::json::object(|writer| self.write_fields(writer))
+    }
+
+    fn write_fields(&self, writer: &mut ObjectWriter<'_>) {
+        writer
+            .string("name", &self.name)
+            .string("kind", self.kind.as_str());
+        if let Some(team) = self.team {
+            writer.int("team", team.index() as u64);
+        }
+        if let Some(create) = &self.create {
+            writer.nested("create", |settings| create.write_fields(settings));
+        }
+        if let Some(existing) = self.existing_room {
+            writer.boolean("existingRoom", existing);
+        }
+    }
+
     /// The `join` message for this choice, with a held seat's credentials if any.
-    pub fn join_message(&self, token: Option<&str>, room_epoch: Option<&str>) -> String {
+    pub fn join_message(&self, token: Option<&str>, room_epoch: &str) -> String {
         super::json::object(|writer| {
             writer
                 .string("type", "join")
                 .int("version", u64::from(PROTOCOL_VERSION))
-                .string("contentVersion", CONTENT_VERSION)
-                .string("name", &self.name)
-                .string("kind", self.kind.as_str());
-            if let Some(team) = self.team {
-                writer.int("team", team.index() as u64);
-            }
-            if let Some(create) = &self.create {
-                let settings = create.to_json();
-                writer.raw("create", &settings);
-            }
-            if let Some(existing) = self.existing_room {
-                writer.boolean("existingRoom", existing);
-            }
+                .string("contentVersion", CONTENT_VERSION);
+            self.write_fields(writer);
             if let Some(token) = token {
                 writer.string("token", token);
             }
-            if let Some(epoch) = room_epoch.filter(|epoch| !epoch.is_empty()) {
-                writer.string("roomEpoch", epoch);
+            if !room_epoch.is_empty() {
+                writer.string("roomEpoch", room_epoch);
             }
         })
     }

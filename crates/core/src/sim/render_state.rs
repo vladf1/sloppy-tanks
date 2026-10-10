@@ -103,7 +103,7 @@ impl From<CoverMotion> for RenderCoverMotion {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderCover {
     pub id: u32,
@@ -145,31 +145,6 @@ impl Clone for RenderCover {
             timber_hits,
             ..*source
         };
-    }
-}
-
-impl Default for RenderCover {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            kind: CoverKind::Boundary,
-            x: 0.0,
-            z: 0.0,
-            w: 0.0,
-            h: 0.0,
-            d: 0.0,
-            hp: 0.0,
-            max_hp: 0.0,
-            alive: false,
-            destructible: false,
-            color: 0,
-            debris_seed: None,
-            timber_hits: Vec::new(),
-            timber_join: None,
-            motion: None,
-            position: Point3::ZERO,
-            rotation: Quat4::IDENTITY,
-        }
     }
 }
 
@@ -314,10 +289,7 @@ pub(crate) fn fill_each<T: Default, S>(
     sources: &[S],
     mut update: impl FnMut(&mut T, &S),
 ) {
-    items.truncate(sources.len());
-    while items.len() < sources.len() {
-        items.push(T::default());
-    }
+    items.resize_with(sources.len(), T::default);
     for (item, source) in items.iter_mut().zip(sources) {
         update(item, source);
     }
@@ -354,7 +326,6 @@ impl Simulation {
             self.fill_tank(view, tank)
         });
         fill_each(&mut state.covers, &self.covers, |view, cover| {
-            let has_body = self.world.bodies.contains(cover.body);
             view.id = cover.id;
             view.kind = cover.kind;
             view.x = cover.x;
@@ -371,15 +342,13 @@ impl Simulation {
             view.timber_hits.clone_from(&cover.timber_hits);
             view.timber_join = cover.timber_join;
             view.motion = cover.motion.map(RenderCoverMotion::from);
-            view.position = if has_body {
-                self.body_translation(cover.body)
+            (view.position, view.rotation) = if self.world.bodies.contains(cover.body) {
+                (
+                    self.body_translation(cover.body),
+                    self.body_rotation(cover.body),
+                )
             } else {
-                Point3::new(cover.x, 0.0, cover.z)
-            };
-            view.rotation = if has_body {
-                self.body_rotation(cover.body)
-            } else {
-                Quat4::IDENTITY
+                (Point3::new(cover.x, 0.0, cover.z), Quat4::IDENTITY)
             };
         });
         fill_each(&mut state.fragments, &self.fragments, |view, fragment| {
@@ -411,7 +380,9 @@ impl Simulation {
         state
     }
 
-    fn fill_tank(&self, view: &mut RenderTank, tank: &Tank) {
+    /// Fill `view` with `tank` as [`Simulation::fill_render_state`] does, reusing its
+    /// allocations.
+    pub fn fill_tank(&self, view: &mut RenderTank, tank: &Tank) {
         view.id = tank.id;
         view.name.clone_from(&tank.name);
         view.kind = tank.kind;

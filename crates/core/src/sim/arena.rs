@@ -66,25 +66,27 @@ impl CoverDef {
             debris_seed: None,
         }
     }
+
+    /// The explosive drum every map places.
+    pub const fn drum(x: f64, z: f64) -> Self {
+        Self::new(CoverKind::Drum, x, z, 1.2, 1.2, 1.7, 30.0, 0xff5b24)
+    }
+
+    /// The destructible watchtower.
+    pub const fn tower(x: f64, z: f64) -> Self {
+        Self::new(CoverKind::Tower, x, z, 6.0, 5.0, 7.5, 180.0, 0xbd864a)
+    }
 }
 
 fn authored_layout() -> Vec<CoverDef> {
     let mut result = Vec::new();
     let infinite = f64::INFINITY;
     let cover = CoverDef::new;
+    let tree = |x, z, h| cover(CoverKind::Tree, x, z, 2.6, 2.6, h, 80.0, 0x169f65);
     for s in [-1.0, 1.0] {
         result.extend(boundary_walls(s, ARENA, 2.2, 0xa68c68));
         for z in [-45.0, -9.0, 9.0, 45.0] {
-            result.push(cover(
-                CoverKind::Tree,
-                s * 36.0,
-                z,
-                2.6,
-                2.6,
-                5.8,
-                80.0,
-                0x169f65,
-            ));
+            result.push(tree(s * 36.0, z, 5.8));
         }
         for z in [-39.0, -13.0, 13.0, 39.0] {
             result.push(cover(
@@ -111,16 +113,7 @@ fn authored_layout() -> Vec<CoverDef> {
             ));
         }
         for z in [-28.0, 28.0] {
-            result.push(cover(
-                CoverKind::Tree,
-                s * 23.0,
-                z,
-                2.6,
-                2.6,
-                6.0,
-                80.0,
-                0x169f65,
-            ));
+            result.push(tree(s * 23.0, z, 6.0));
             // Open cottage gardens provide flanking space; each timber bay breaks independently.
             let depth = 0.9;
             let back_x = 33.2;
@@ -178,16 +171,7 @@ fn authored_layout() -> Vec<CoverDef> {
             });
             back.timber_bays = Some(3);
             result.push(back);
-            result.push(cover(
-                CoverKind::Drum,
-                s * 25.0,
-                z - s,
-                1.2,
-                1.2,
-                1.7,
-                30.0,
-                0xff5b24,
-            ));
+            result.push(CoverDef::drum(s * 25.0, z - s));
         }
         for x in [-6.0, -2.0, 2.0, 6.0] {
             result.push(cover(
@@ -201,27 +185,9 @@ fn authored_layout() -> Vec<CoverDef> {
                 0xb47a49,
             ));
         }
-        result.push(cover(
-            CoverKind::Tower,
-            s * 12.75,
-            -s * 28.0,
-            6.0,
-            5.0,
-            7.5,
-            180.0,
-            0xbd864a,
-        ));
+        result.push(CoverDef::tower(s * 12.75, -s * 28.0));
         for z in [-2.0, 2.0] {
-            result.push(cover(
-                CoverKind::Drum,
-                s * 6.0,
-                z,
-                1.2,
-                1.2,
-                1.7,
-                30.0,
-                0xff5b24,
-            ));
+            result.push(CoverDef::drum(s * 6.0, z));
         }
         result.push(cover(
             CoverKind::House,

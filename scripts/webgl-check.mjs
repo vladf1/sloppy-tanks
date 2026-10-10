@@ -1,5 +1,5 @@
-// The WebGL2 fallback engine. `?webgl` asks for it on any browser: on every standard
-// map the page must download only the WebGL build, start a round through Battle
+// The WebGL2 fallback engine. `?webgl` asks for it on any browser: on every standard and
+// extra map the page must download only the WebGL build, start a round through Battle
 // Setup, drive and fire, and draw the arena (shadows included) without page, console,
 // GL or engine errors, and without clearing an index buffer through a vector of
 // zeros in the Wasm heap. Without `?webgl` the page must pick the build this browser
@@ -11,12 +11,13 @@
 // stop changing, and a lost context and a GL error must reach `Game.error()`.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import {
   chooseMap,
   freezeLoop,
   gameUrl,
   launchGame,
+  menuReady,
+  pixels,
   seedGame,
   startRound,
 } from "./browser-helpers.mjs";
@@ -51,12 +52,8 @@ const ERROR_CHECK_DRAWS = 320;
 const ZERO_INDEX_UPLOAD_BYTES = 1024;
 mkdirSync(output, { recursive: true });
 
-async function pixels(png) {
-  const canvas = createCanvas(WIDTH, HEIGHT);
-  const context = canvas.getContext("2d");
-  context.drawImage(await loadImage(png), 0, 0);
-  return context.getImageData(0, 0, WIDTH, HEIGHT).data;
-}
+/** The game page with `search` in place of the URL's query. */
+const pageUrl = (search) => Object.assign(new URL(gameUrl), { search }).href;
 
 /** Share of sampled pixels that differ clearly from the frame's mean color. */
 async function detail(png) {
@@ -116,12 +113,8 @@ async function newPage() {
 
 /** Open the game at `search` and wait for Battle Setup to be ready. */
 async function open(page, search) {
-  const url = new URL(gameUrl);
-  url.search = search;
-  await page.goto(url.href);
-  await page.waitForFunction(
-    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-  );
+  await page.goto(pageUrl(search));
+  await menuReady(page);
 }
 
 /** Play a moment of a round: drive, fire, and report what the frame drew. */
@@ -132,7 +125,7 @@ async function play(page, name) {
   await page.keyboard.up("KeyW");
   await page.mouse.click(WIDTH / 2, HEIGHT / 3);
   await page.waitForTimeout(1500);
-  const stats = await page.evaluate(() => JSON.parse(window.sloppy.game.stats_json()));
+  const stats = await page.evaluate(() => window.sloppy.stats());
   const shot = await page.screenshot({ path: `${output}/${name}.png` });
   return {
     graphicsApi: stats.graphicsApi,
@@ -140,8 +133,8 @@ async function play(page, name) {
     shadowDrawCalls: stats.shadowDrawCalls,
     latePipelines: stats.latePipelines,
     detail: await detail(shot),
-    engineError: await page.evaluate(() => window.sloppy.game.error() ?? null),
-    human: await page.evaluate(() => Boolean(window.engine.state().human)),
+    engineError: await page.evaluate(() => window.sloppy.error()),
+    human: await page.evaluate(() => Boolean(window.sloppy.sim.human)),
     zeroIndexUploadBytes: await page.evaluate(() => window.zeroIndexUploadBytes),
   };
 }
@@ -164,17 +157,15 @@ async function stillQuarry(search, name) {
   const { page } = await newPage();
   await seedGame(page, 424242);
   await freezeLoop(page);
-  const url = new URL(gameUrl);
-  url.search = `?autoplay&map=quarry${search}`;
-  await page.goto(url.href);
+  await page.goto(pageUrl(`?autoplay&map=quarry${search}`));
   await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
   const api = await page.evaluate((pose) => {
-    for (const element of document.querySelectorAll("#overlay, #hud, #fps, #loading")) {
+    for (const element of document.querySelectorAll("#overlay, #hud")) {
       element.style.display = "none";
     }
     window.engine.draw(pose);
     window.engine.draw(pose);
-    return window.engine.stats().graphicsApi;
+    return window.sloppy.stats().graphicsApi;
   }, STILL_POSE);
   const png = await page.screenshot({ path: `${output}/${name}.png` });
   await page.close();
@@ -223,7 +214,7 @@ try {
   await probe.close();
   const { page, binaries } = await newPage();
   await open(page, "");
-  const { graphicsApi } = await page.evaluate(() => JSON.parse(window.sloppy.game.stats_json()));
+  const { graphicsApi } = await page.evaluate(() => window.sloppy.stats());
   console.log(JSON.stringify({ webgpuAdapter: webgpu, graphicsApi, binaries }));
   assert.equal(graphicsApi, webgpu ? "WebGPU" : "WebGL");
   const build = webgpu ? /^engine_bg[-.]/ : /^engine-webgl_bg[-.]/;
@@ -247,8 +238,6 @@ try {
     assert.equal(result.graphicsApi, "WebGL");
     assertDrew(result, "device fallback");
     await page.close();
-  }
-  if (webgpu) {
     const webgl = await stillQuarry("&webgl", "still-quarry-webgl");
     const native = await stillQuarry("", "still-quarry-webgpu");
     assert.deepEqual([webgl.api, native.api], ["WebGL", "WebGPU"]);
@@ -306,9 +295,7 @@ try {
         return result;
       };
     });
-    const url = new URL(gameUrl);
-    url.search = "?webgl&debug&autoplay&map=superstress";
-    await page.goto(url.href);
+    await page.goto(pageUrl("?webgl&debug&autoplay&map=superstress"));
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
     const resets = await page.evaluate(
       ({ resets, pose }) => {
@@ -319,8 +306,8 @@ try {
           samples.push({
             objects: window.glObjects(),
             memory: window.engineMemory?.buffer.byteLength,
-            error: window.sloppy.game.error() ?? null,
-            draws: window.engine.stats().drawCalls,
+            error: window.sloppy.error(),
+            draws: window.sloppy.stats().drawCalls,
           });
         }
         return samples;
@@ -349,7 +336,7 @@ try {
         await page.evaluate((pose) => {
           window.sloppy.exactResolution();
           window.engine.draw(pose);
-          return { objects: window.glObjects(), error: window.sloppy.game.error() ?? null };
+          return { objects: window.glObjects(), error: window.sloppy.error() };
         }, STILL_POSE),
       );
     }
@@ -364,7 +351,7 @@ try {
       if (!extension) return "unavailable";
       extension.loseContext();
       await new Promise((resolve) => setTimeout(resolve, 50));
-      return window.sloppy.game.error() ?? null;
+      return window.sloppy.error();
     });
     console.log(JSON.stringify({ contextLoss: lost }));
     if (lost !== "unavailable") assert.match(lost, /WebGL context was lost/);
@@ -374,17 +361,15 @@ try {
   {
     const { page } = await newPage();
     await freezeLoop(page);
-    const url = new URL(gameUrl);
-    url.search = "?webgl&autoplay";
-    await page.goto(url.href);
+    await page.goto(pageUrl("?webgl&autoplay"));
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
     const error = await page.evaluate(
       ({ draws, pose }) => {
         const gl = document.querySelector("canvas").getContext("webgl2");
         // INVALID_ENUM, and no state the backend's cache tracks changes.
         gl.enable(0);
-        for (let i = 0; i < draws && !window.sloppy.game.error(); i++) window.engine.draw(pose);
-        return window.sloppy.game.error() ?? null;
+        for (let i = 0; i < draws && !window.sloppy.error(); i++) window.engine.draw(pose);
+        return window.sloppy.error();
       },
       { draws: ERROR_CHECK_DRAWS, pose: STILL_POSE },
     );

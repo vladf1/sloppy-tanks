@@ -1,8 +1,11 @@
-// The few game values the offline asset generators paint with: weapon and pickup
-// accent colors and labels, the pickup atlas layout, and the seeded stream that keeps
-// generated textures stable. The game reads the same values from the engine
-// (`crates/core/src/sim/data.rs`, `crates/core/src/models/pickup_visuals.rs`); change
-// both together, then regenerate the assets.
+import { AMMO_OPTIONS } from "../src/game/ammo-options.ts";
+
+// The few game values the offline asset generators paint with: pickup accent colors,
+// the pickup atlas layout, and the seeded stream that keeps generated textures stable;
+// ammunition labels and colors come from the HUD's `ammo-options.ts`. The game reads
+// the same values from the engine (`crates/core/src/sim/data.rs`,
+// `crates/core/src/models/pickup_visuals.rs`); change both together, then regenerate
+// the assets.
 
 /** Mulberry32, as the engine's `Random`: a fixed seed reproduces a texture exactly. */
 export class Random {
@@ -19,29 +22,19 @@ export class Random {
 }
 
 /** The limited ammunition types, in the ammo bar's order after Standard. */
-export const SPECIAL_AMMO = ["spread", "rocket", "ricochet", "piercing"] as const;
-export type SpecialAmmo = (typeof SPECIAL_AMMO)[number];
+export const [, ...SPECIAL_AMMO] = AMMO_OPTIONS;
+export type SpecialAmmo = (typeof SPECIAL_AMMO)[number]["weapon"];
 
-export const WEAPONS: Record<SpecialAmmo, { label: string; color: number }> = {
-  spread: { label: "SPREAD", color: 0xff38d4 },
-  rocket: { label: "ROCKET", color: 0xff591c },
-  ricochet: { label: "RICOCHET", color: 0xb19afc },
-  piercing: { label: "PIERCING", color: 0x54e6dc },
+/** Accent colors of the pickups that are not ammunition. */
+export const PICKUP_COLORS = {
+  rapid: 0xffcf54,
+  shield: 0x72dbef,
+  speed: 0xbbe574,
+  repair: 0x88ddb0,
+  laser: 0x7bfff2,
 };
 
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
-
-export const PICKUPS: Record<PickupKind, { color: number }> = {
-  rapid: { color: 0xffcf54 },
-  spread: { color: WEAPONS.spread.color },
-  rocket: { color: WEAPONS.rocket.color },
-  ricochet: { color: WEAPONS.ricochet.color },
-  piercing: { color: WEAPONS.piercing.color },
-  shield: { color: 0x72dbef },
-  speed: { color: 0xbbe574 },
-  repair: { color: 0x88ddb0 },
-  laser: { color: 0x7bfff2 },
-};
 
 // The pickup atlas: source pixels stay intact; the engine maps UVs with the same layout.
 export const PICKUP_ATLAS_PATH = "textures/pickups/atlas.webp";

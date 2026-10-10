@@ -1,4 +1,8 @@
+import { AMMO_OPTIONS } from "./ammo-options";
 import type { DamageCause, EngineEvent, HumanState } from "./engine-api";
+
+/** The kill feed shows this many of its newest rows. */
+export const FEED_ROWS = 4;
 
 const DAMAGE_LABELS: Record<DamageCause, string> = {
   standard: "Standard shell",
@@ -91,6 +95,72 @@ export function showFeedRow(
     arrow.setAttribute("aria-label", "destroyed");
     row.append(arrow, name);
   }
+}
+
+/** Ages the kill feed by `dt` seconds and shows its newest live rows in `feed`, reusing
+ * row elements. Returns the rows still showing. */
+export function showFeed(feed: Element, rows: FeedRow[], dt: number): FeedRow[] {
+  const live = rows.filter((row) => (row.time -= dt) > 0);
+  live.length = Math.min(FEED_ROWS, live.length);
+  while (feed.childElementCount > live.length) {
+    feed.lastElementChild!.remove();
+  }
+  live.forEach((row, index) => {
+    let node = feed.children[index] as HTMLElement | undefined;
+    if (!node) {
+      node = document.createElement("div");
+      feed.append(node);
+    }
+    showFeedRow(node, row, index === 0);
+  });
+  return live;
+}
+
+/** Writes `text` into the element `#id` under `root`, unless it already shows it. */
+export function setText(root: ParentNode, id: string, text: string): void {
+  const node = root.querySelector(`#${id}`);
+  if (node && node.textContent !== text) {
+    node.textContent = text;
+  }
+}
+
+/** Both HUDs' tank status (`hudMarkup` under `root`): hull, tank and rank, the health bar,
+ * the ammo slots, which `slotsDisabled` makes unusable, the mine, power-ups and the low
+ * hull warning. */
+export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled: boolean): void {
+  setText(root, "hp", String(Math.max(0, Math.ceil(tank.hp))));
+  setText(root, "vehicle-name", tank.vehicleName);
+  setText(root, "rank", tank.rankName.toUpperCase());
+  const rank = root.querySelector<HTMLElement>("#rank")!;
+  rank.dataset.rank = String(tank.rank);
+  rank.title = rankTitle(tank);
+  const hpbar = root.querySelector<HTMLElement>("#hpbar")!;
+  hpbar.style.width = `${tank.healthRatio * 100}%`;
+  hpbar.style.backgroundColor = `#${tank.healthColor.toString(16).padStart(6, "0")}`;
+  AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
+    const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
+    const selected = !!slotState?.selected;
+    const count = slotState?.count === null ? "∞" : String(slotState?.count ?? 0);
+    setText(root, `ammo-count-${weapon}`, count);
+    const slot = root.querySelector<HTMLButtonElement>(`#ammo-${weapon}`)!;
+    slot.disabled = slotsDisabled;
+    slot.setAttribute("aria-pressed", String(selected));
+    slot.classList.toggle("selected", selected);
+    slot.classList.toggle("empty", !slotState?.available);
+    const label = `${index + 1}: ${name}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected ? ", selected" : ""}`;
+    if (slot.getAttribute("aria-label") !== label) {
+      slot.setAttribute("aria-label", label);
+    }
+  });
+  setText(
+    root,
+    "mine",
+    tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
+  );
+  setText(root, "effects", effectsLabel(tank));
+  root
+    .querySelector(".status")!
+    .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
 }
 
 export function effectsLabel(

@@ -4,20 +4,15 @@
 
 mod support;
 
-use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::weapons::{place_mine, step_mines, step_projectiles};
-use sloppy_core::sim::{
-    CoverKind, Mine, Shot, SimEventType, Simulation, Team, VehicleKind, Weapon,
-};
-use support::{clear_arena, place_tank};
+use sloppy_core::sim::{Mine, Shot, SimEventType, Simulation, Team, VehicleKind};
+use support::{clear_arena, concrete, event_count, place_tank};
 
 fn arena() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
     clear_arena(&mut s, &[]);
-    s.mines.clear();
-    s.events.clear();
     s
 }
 
@@ -38,8 +33,7 @@ fn duel(layer_x: f64, gap: f64) -> Simulation {
 }
 
 fn mine(s: &mut Simulation, x: f64, owner: u32, team: Team, arm: f64) -> Mine {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     Mine {
         id,
         owner,
@@ -55,8 +49,7 @@ fn mine(s: &mut Simulation, x: f64, owner: u32, team: Team, arm: f64) -> Mine {
 
 /// A fast standard shell fired north by an absent blue shooter.
 fn shell(s: &mut Simulation, x: f64) {
-    let id = s.next_id;
-    s.next_id += 1;
+    let id = s.allocate_id();
     s.shots.push(Shot {
         id,
         x,
@@ -64,18 +57,11 @@ fn shell(s: &mut Simulation, x: f64) {
         vx: 0.0,
         vz: 600.0,
         damage: 40.0,
-        bounces: 0,
         life: 1.0,
-        piercing: 0,
-        weapon: Weapon::Standard,
         owner: 999,
         team: Team::Blue,
         ..Shot::default()
     });
-}
-
-fn count(s: &Simulation, kind: SimEventType) -> usize {
-    s.events.iter().filter(|e| e.kind == kind).count()
 }
 
 #[test]
@@ -89,7 +75,7 @@ fn fast_shells_detonate_enemy_and_friendly_mines_armed_or_arming_exactly_once() 
             step_projectiles(&mut s, STEP, false);
             assert_eq!(s.mines.len(), 0);
             assert_eq!(s.shots.len(), 0);
-            assert_eq!(count(&s, SimEventType::Explosion), 1);
+            assert_eq!(event_count(&s, SimEventType::Explosion), 1);
         }
     }
 }
@@ -101,16 +87,7 @@ fn cover_and_clean_misses_protect_mines_while_grazing_hits_register() {
         let m = mine(&mut s, 0.0, 5, Team::Red, 0.0);
         s.mines.push(m);
         if scenario == "cover" {
-            s.add_cover(&CoverDef::new(
-                CoverKind::Concrete,
-                0.0,
-                -2.0,
-                3.0,
-                0.3,
-                3.0,
-                f64::INFINITY,
-                0,
-            ));
+            s.add_cover(&concrete(0.0, -2.0, 3.0, 0.3));
         }
         s.world.step();
         let x = match scenario {
@@ -144,7 +121,7 @@ fn shooting_a_mine_chains_nearby_mines_once_and_credits_the_shooter() {
     shell(&mut s, 0.0);
     step_projectiles(&mut s, STEP, false);
     assert_eq!(s.mines.len(), 0);
-    assert_eq!(count(&s, SimEventType::Explosion), 2);
+    assert_eq!(event_count(&s, SimEventType::Explosion), 2);
     assert!(!s.tanks[target].alive);
     assert_eq!(s.match_state.scores[0], 1);
 }

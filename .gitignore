@@ -4,7 +4,6 @@ dist/
 .DS_Store
 artifacts/
 dist-dev/
-bots/.wrangler/
 bots/.dev.vars
 /target/
 src/generated/

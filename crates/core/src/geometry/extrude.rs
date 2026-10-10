@@ -9,17 +9,17 @@ use super::mesh::Mesh;
 use super::shape::Shape;
 use super::triangulate::{is_clockwise, triangulate_shape};
 
-/// `THREE.ShapeGeometry(shapes, curveSegments)`: flat, indexed, facing +z, with the
-/// shape's x/y as UVs. The outline is wound clockwise and holes counter-clockwise
-/// before triangulation, as in Three.
-pub fn shape_geometry(shapes: &[Shape], curve_segments: u32) -> Mesh {
+/// `THREE.ShapeGeometry(shapes)`: flat, indexed, facing +z, with the shape's x/y as
+/// UVs. The outline is wound clockwise and holes counter-clockwise before
+/// triangulation, as in Three.
+pub fn shape_geometry(shapes: &[Shape]) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
     for shape in shapes {
         let index_offset = (positions.len() / 3) as u32;
-        let (mut outline, mut holes) = shape.extract_points(curve_segments);
+        let (mut outline, mut holes) = shape.extract_points();
         if !is_clockwise(&outline) {
             outline.reverse();
         }
@@ -44,7 +44,6 @@ pub fn shape_geometry(shapes: &[Shape], curve_segments: u32) -> Mesh {
 /// `ExtrudeGeometry` options with Three's defaults.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExtrudeOptions {
-    pub curve_segments: u32,
     pub steps: u32,
     pub depth: f64,
     pub bevel_enabled: bool,
@@ -58,7 +57,6 @@ pub struct ExtrudeOptions {
 impl Default for ExtrudeOptions {
     fn default() -> Self {
         Self {
-            curve_segments: 12,
             steps: 1,
             depth: 1.0,
             bevel_enabled: true,
@@ -173,11 +171,6 @@ fn ring_movements(ring: &[DVec2]) -> Vec<DVec2> {
         .collect()
 }
 
-/// `pt.clone().addScaledVector(vec, size)`.
-fn scale_point(point: DVec2, direction: DVec2, size: f64) -> DVec2 {
-    DVec2::new(point.x + direction.x * size, point.y + direction.y * size)
-}
-
 fn extrude_shape(shape: &Shape, options: &ExtrudeOptions, out: &mut Vec<f64>, uvs: &mut Vec<f64>) {
     let steps = options.steps;
     let depth = options.depth;
@@ -193,7 +186,7 @@ fn extrude_shape(shape: &Shape, options: &ExtrudeOptions, out: &mut Vec<f64>, uv
         (0, 0.0, 0.0, 0.0)
     };
 
-    let (mut contour, mut holes) = shape.extract_points(options.curve_segments);
+    let (mut contour, mut holes) = shape.extract_points();
     if !is_clockwise(&contour) {
         contour.reverse();
         for hole in &mut holes {
@@ -226,44 +219,40 @@ fn extrude_shape(shape: &Shape, options: &ExtrudeOptions, out: &mut Vec<f64>, uv
         let t = f64::from(b) / f64::from(bevel_segments);
         let z = bevel_thickness * (t * std::f64::consts::PI / 2.0).cos();
         let size = bevel_size * (t * std::f64::consts::PI / 2.0).sin() + bevel_offset;
-        (t, z, size)
+        (z, size)
     };
 
     let faces = if bevel_segments == 0 {
         triangulate_shape(&mut contour.clone(), &mut holes.clone())
     } else {
-        let mut contracted_contour = Vec::new();
-        let mut expanded_holes = Vec::new();
-        for b in 0..bevel_segments {
-            let (t, z, size) = bevel_layer(b);
-            for (point, movement) in contour.iter().zip(&contour_movements) {
-                let vert = scale_point(*point, *movement, size);
-                push(vert.x, vert.y, -z);
-                if t == 0.0 {
-                    contracted_contour.push(vert);
-                }
-            }
-            for (hole, movements) in holes.iter().zip(&holes_movements) {
-                let mut hole_vertices = Vec::new();
-                for (point, movement) in hole.iter().zip(movements) {
-                    let vert = scale_point(*point, *movement, size);
-                    push(vert.x, vert.y, -z);
-                    if t == 0.0 {
-                        hole_vertices.push(vert);
-                    }
-                }
-                if t == 0.0 {
-                    expanded_holes.push(hole_vertices);
-                }
-            }
-        }
+        // The lids lie on the first, outermost bevel layer.
+        let (_, size) = bevel_layer(0);
+        let scaled = |ring: &[DVec2], movements: &[DVec2]| -> Vec<DVec2> {
+            ring.iter()
+                .zip(movements)
+                .map(|(point, movement)| *point + *movement * size)
+                .collect()
+        };
+        let mut contracted_contour = scaled(&contour, &contour_movements);
+        let mut expanded_holes: Vec<Vec<DVec2>> = holes
+            .iter()
+            .zip(&holes_movements)
+            .map(|(hole, movements)| scaled(hole, movements))
+            .collect();
         triangulate_shape(&mut contracted_contour, &mut expanded_holes)
     };
+    for b in 0..bevel_segments {
+        let (z, size) = bevel_layer(b);
+        for (point, movement) in vertices.iter().zip(&vertices_movements) {
+            let vert = *point + *movement * size;
+            push(vert.x, vert.y, -z);
+        }
+    }
 
     let full_size = bevel_size + bevel_offset;
     let layer_point = |i: usize| {
         if bevel_enabled {
-            scale_point(vertices[i], vertices_movements[i], full_size)
+            vertices[i] + vertices_movements[i] * full_size
         } else {
             vertices[i]
         }
@@ -279,16 +268,10 @@ fn extrude_shape(shape: &Shape, options: &ExtrudeOptions, out: &mut Vec<f64>, uv
         }
     }
     for b in (0..bevel_segments).rev() {
-        let (_, z, size) = bevel_layer(b);
-        for (point, movement) in contour.iter().zip(&contour_movements) {
-            let vert = scale_point(*point, *movement, size);
+        let (z, size) = bevel_layer(b);
+        for (point, movement) in vertices.iter().zip(&vertices_movements) {
+            let vert = *point + *movement * size;
             push(vert.x, vert.y, depth + z);
-        }
-        for (hole, movements) in holes.iter().zip(&holes_movements) {
-            for (point, movement) in hole.iter().zip(movements) {
-                let vert = scale_point(*point, *movement, size);
-                push(vert.x, vert.y, depth + z);
-            }
         }
     }
 

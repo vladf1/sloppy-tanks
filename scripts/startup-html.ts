@@ -6,9 +6,13 @@ import { mapChoiceMarkup } from "./map-picker-markup.ts";
 import { buildLabel, pageBuild } from "./page-health.ts";
 
 const entry = fileURLToPath(new URL("../src/main.ts", import.meta.url));
-const game = fileURLToPath(new URL("../src/game.ts", import.meta.url));
-const multiplayer = fileURLToPath(new URL("../src/net/client.ts", import.meta.url));
-const roomBrowser = fileURLToPath(new URL("../src/net/room-browser.ts", import.meta.url));
+/** The modules the startup script imports lazily: each is a build entry of its own, and an
+ * external `id` in the inline build. The game comes first. */
+const lazyEntries = [
+  { source: "src/game.ts", id: "sloppy:game" },
+  { source: "src/net/client.ts", id: "sloppy:multiplayer" },
+  { source: "src/net/room-browser.ts", id: "sloppy:rooms" },
+].map((lazy) => ({ ...lazy, file: fileURLToPath(new URL(`../${lazy.source}`, import.meta.url)) }));
 
 /**
  * A parser-blocking script right after Battle Setup that opens the tab a
@@ -32,9 +36,9 @@ export function startupHtml(base: string): Plugin {
     },
     buildStart() {
       if (!building) return;
-      this.emitFile({ type: "chunk", id: game, preserveSignature: "strict" });
-      this.emitFile({ type: "chunk", id: multiplayer, preserveSignature: "strict" });
-      this.emitFile({ type: "chunk", id: roomBrowser, preserveSignature: "strict" });
+      for (const { file } of lazyEntries) {
+        this.emitFile({ type: "chunk", id: file, preserveSignature: "strict" });
+      }
     },
     transformIndexHtml: {
       order: "post",
@@ -59,35 +63,34 @@ export function startupHtml(base: string): Plugin {
           );
         }
         if (!html.includes("<!-- startup-script -->")) return html;
-        const gameChunk = Object.values(context.bundle ?? {}).find(
-          (chunk) => chunk.type === "chunk" && chunk.facadeModuleId === game,
-        );
-        if (context.bundle && !gameChunk) throw new Error("Missing game entry chunk");
-        const gameUrl = `${base}${gameChunk?.fileName ?? "src/game.ts"}`;
-        const multiplayerChunk = Object.values(context.bundle ?? {}).find(
-          (chunk) => chunk.type === "chunk" && chunk.facadeModuleId === multiplayer,
-        );
-        if (context.bundle && !multiplayerChunk) throw new Error("Missing multiplayer entry chunk");
-        const multiplayerUrl = `${base}${multiplayerChunk?.fileName ?? "src/net/client.ts"}`;
-        const roomBrowserChunk = Object.values(context.bundle ?? {}).find(
-          (chunk) => chunk.type === "chunk" && chunk.facadeModuleId === roomBrowser,
-        );
-        if (context.bundle && !roomBrowserChunk) throw new Error("Missing room browser chunk");
-        const roomBrowserUrl = `${base}${roomBrowserChunk?.fileName ?? "src/net/room-browser.ts"}`;
+        const chunks = lazyEntries.map(({ source, file }) => {
+          const chunk = Object.values(context.bundle ?? {}).find(
+            (item) => item.type === "chunk" && item.facadeModuleId === file,
+          );
+          if (context.bundle && !chunk) throw new Error(`Missing ${source} entry chunk`);
+          return chunk;
+        });
+        const [gameChunk] = chunks;
+        /** The chunks statically reachable from `fileName`, in visiting order, and their
+         * stylesheets, each after the stylesheets it depends on. */
+        const staticGraph = (fileName?: string) => {
+          const files = new Set<string>();
+          const styles = new Set<string>();
+          const visit = (file: string) => {
+            const chunk = context.bundle?.[file];
+            if (chunk?.type !== "chunk" || files.has(file)) return;
+            files.add(file);
+            chunk.imports.forEach(visit);
+            chunk.viteMetadata?.importedCss.forEach((css) => styles.add(base + css));
+          };
+          if (fileName) visit(fileName);
+          return { files, styles };
+        };
         // These entries are external to the inline build, so Vite cannot attach
         // its usual dynamic-import CSS loader. Load each entry's static CSS
         // graph before starting it, and only when that mode is selected.
         const entryImport = (url: string, fileName?: string) => {
-          const visited = new Set<string>();
-          const styles = new Set<string>();
-          const collectStyles = (file: string) => {
-            const chunk = context.bundle?.[file];
-            if (chunk?.type !== "chunk" || visited.has(file)) return;
-            visited.add(file);
-            chunk.imports.forEach(collectStyles);
-            chunk.viteMetadata?.importedCss.forEach((css) => styles.add(base + css));
-          };
-          if (fileName) collectStyles(fileName);
+          const { styles } = staticGraph(fileName);
           const load = `import(${JSON.stringify(url)})`;
           if (!styles.size) return load;
           return `Promise.all([${load},...${JSON.stringify([...styles])}.map(href=>new Promise((resolve,reject)=>{const link=document.createElement("link");link.rel="stylesheet";link.href=href;link.onload=resolve;link.onerror=()=>reject(new Error("Could not load "+href));document.head.append(link)}))]).then(([entry])=>entry)`;
@@ -110,12 +113,8 @@ export function startupHtml(base: string): Plugin {
               enforce: "pre",
               resolveId(id, importer) {
                 const target = importer && id.startsWith(".") ? resolve(dirname(importer), id) : id;
-                if (`${target}.ts` === game) return { id: "sloppy:game", external: true };
-                if (`${target}.ts` === multiplayer) {
-                  return { id: "sloppy:multiplayer", external: true };
-                }
-                if (`${target}.ts` === roomBrowser) return { id: "sloppy:rooms", external: true };
-                return null;
+                const lazy = lazyEntries.find(({ file }) => file === `${target}.ts`);
+                return lazy ? { id: lazy.id, external: true } : null;
               },
             },
           ],
@@ -141,38 +140,28 @@ export function startupHtml(base: string): Plugin {
         const style = `<style>${String(css.source).replace(/<\/style/gi, "<\\/style")}</style>`;
         // The startup script imports the game only after the menu paints, and the
         // game's own imports would be discovered only after it downloads. Fetch
-        // the whole static graph now, in parallel with the physics binary.
-        const preloads = new Set<string>();
-        const collect = (fileName: string) => {
-          const chunk = context.bundle?.[fileName];
-          if (chunk?.type !== "chunk" || preloads.has(fileName)) return;
-          preloads.add(fileName);
-          chunk.imports.forEach(collect);
-        };
-        if (gameChunk) collect(gameChunk.fileName);
+        // the whole static graph now, in parallel with the engine binary.
+        const preloads = staticGraph(gameChunk?.fileName).files;
         const links = preloads.size
-          ? `<script>if(!new URLSearchParams(location.search).has("room")&&!new URLSearchParams(location.search).has("multiplayer")){for(const href of ${JSON.stringify([...preloads].map((file) => base + file))}){const link=document.createElement("link");link.rel="modulepreload";link.crossOrigin="anonymous";link.href=href;document.head.append(link);}}</script>`
+          ? `<script>{const p=new URLSearchParams(location.search);if(!p.has("room")&&!p.has("multiplayer")){for(const href of ${JSON.stringify([...preloads].map((file) => base + file))}){const link=document.createElement("link");link.rel="modulepreload";link.crossOrigin="anonymous";link.href=href;document.head.append(link);}}}</script>`
           : "";
+        // The dev server has no bundle; it serves each entry from its source.
+        const imports = new Map(
+          lazyEntries.map(({ id, source }, i) => {
+            const fileName = chunks[i]?.fileName;
+            return [id, entryImport(`${base}${fileName ?? source}`, fileName)];
+          }),
+        );
         // Minified code can contain `$&`, which a replacement string would expand.
+        const startup = code.replace(
+          /import\((["'`])(sloppy:\w+)\1\)/g,
+          (load, _quote, id: string) => imports.get(id) ?? load,
+        );
         return html
           .replace("</head>", () => `${links}${style}</head>`)
           .replace(
             "<!-- startup-script -->",
-            () =>
-              `<script type="module">${code
-                .replace(
-                  /import\((["'`])sloppy:game\1\)/g,
-                  entryImport(gameUrl, gameChunk?.fileName),
-                )
-                .replace(
-                  /import\((["'`])sloppy:multiplayer\1\)/g,
-                  entryImport(multiplayerUrl, multiplayerChunk?.fileName),
-                )
-                .replace(
-                  /import\((["'`])sloppy:rooms\1\)/g,
-                  entryImport(roomBrowserUrl, roomBrowserChunk?.fileName),
-                )
-                .replace(/<\/script/gi, "<\\/script")}</script>`,
+            () => `<script type="module">${startup.replace(/<\/script/gi, "<\\/script")}</script>`,
           );
       },
     },

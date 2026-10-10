@@ -1,11 +1,10 @@
 //! Fixture hooks for the browser checks and `tests/*.browser.html` (`debug_*`).
 //!
-//! The checks used to reach into the TypeScript simulation and Three.js scene; these
-//! calls give them the same arrangements through the engine: an emptied arena, placed
-//! and patched tanks, damage through the shared damage paths, pickups, shells and
-//! mines, fixed simulation steps without a frame, still frames with an optional fixed
-//! camera, and a read-only inspection of what every entity's view shows. Arranging
-//! state here bypasses the gameplay rules on purpose; none of it runs in play.
+//! These calls arrange the engine for the checks: an emptied arena, placed and patched
+//! tanks, damage through the shared damage paths, pickups, shells and mines, fixed
+//! simulation steps without a frame, still frames with an optional fixed camera, and a
+//! read-only inspection of what every entity's view shows. Arranging state here
+//! bypasses the gameplay rules on purpose; none of it runs in play.
 //!
 //! - `debug_clear_arena(keep)`: remove every cover, pickup, shell, mine and tank
 //!   except the human and the tanks with ids in `keep`; navigation sees open floor.
@@ -28,8 +27,7 @@
 //! - `debug_step(ticks, moveX, moveZ)`: fixed simulation steps with the human's
 //!   command, without drawing; `debug_render(alpha, dt, overview, camera)` draws one
 //!   frame, from `camera = [px, py, pz, tx, ty, tz]` when given.
-//! - `debug_rebuild_view()`: rebuild every entity view and prepare again;
-//!   `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
+//! - `debug_screen_point(x, y, z)`: where a world point shows, in CSS pixels.
 //! - `debug_view_json()`: `Presentation::inspect` as JSON; `debug_covers_json()`: the
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
@@ -44,6 +42,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::geometry::box_geometry;
+use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
@@ -58,7 +57,7 @@ use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
 use wasm_bindgen::prelude::*;
 
-use super::{Game, js_error};
+use super::{Game, js_error, parse};
 
 /// A bot that should hold still waits this long before deciding anything.
 const FROZEN_BRAIN_SECONDS: f64 = 999.0;
@@ -67,15 +66,10 @@ const NOBODY: u32 = 999_999;
 /// Room fixture: fixed steps simulated, and how often each seat sends input.
 const SEAT_TICKS: u64 = 90;
 const SEAT_INPUT_EVERY_TICKS: u64 = 3;
-const MS_PER_TICK: f64 = 1000.0 / 60.0;
 
 thread_local! {
     /// The pixel probe box, if one is placed.
     static PROBE: Cell<Option<(ModelId, InstanceId)>> = const { Cell::new(None) };
-}
-
-fn parse<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, JsValue> {
-    serde_json::from_str(json).map_err(|error| js_error(error.to_string()))
 }
 
 #[derive(Deserialize, Default)]
@@ -153,7 +147,6 @@ struct CoverSpec {
     d: f64,
     h: f64,
     /// Null (or missing) for indestructible cover.
-    #[serde(default)]
     hp: Option<f64>,
     color: u32,
 }
@@ -337,22 +330,17 @@ impl Game {
     /// Add a cover and its navigation footprint; returns its id.
     pub fn debug_add_cover(&mut self, spec_json: &str) -> Result<u32, JsValue> {
         let spec: CoverSpec = parse(spec_json)?;
-        let index = self.sim.add_cover(&CoverDef {
-            kind: spec.kind,
-            x: spec.x,
-            z: spec.z,
-            w: spec.w,
-            d: spec.d,
-            h: spec.h,
-            hp: spec.hp.unwrap_or(f64::INFINITY),
-            color: spec.color,
-            timber_join: None,
-            timber_bays: None,
-            debris_seed: None,
-        });
-        let covers = std::mem::take(&mut self.sim.covers);
-        self.sim.nav.rebuild(&covers, None);
-        self.sim.covers = covers;
+        let index = self.sim.add_cover(&CoverDef::new(
+            spec.kind,
+            spec.x,
+            spec.z,
+            spec.w,
+            spec.d,
+            spec.h,
+            spec.hp.unwrap_or(f64::INFINITY),
+            spec.color,
+        ));
+        self.sim.nav.rebuild(&self.sim.covers, None);
         Ok(self.sim.covers[index].id)
     }
 
@@ -393,8 +381,7 @@ impl Game {
         sim.pickups = specs
             .into_iter()
             .map(|spec| {
-                let id = sim.next_id;
-                sim.next_id += 1;
+                let id = sim.allocate_id();
                 Pickup {
                     id,
                     kind: spec.kind,
@@ -412,8 +399,7 @@ impl Game {
     /// Put a shell in flight; returns its id.
     pub fn debug_add_shot(&mut self, shot_json: &str) -> Result<u32, JsValue> {
         let spec: ShotSpec = parse(shot_json)?;
-        let id = self.sim.next_id;
-        self.sim.next_id += 1;
+        let id = self.sim.allocate_id();
         self.sim.shots.push(Shot {
             id,
             x: spec.x,
@@ -437,8 +423,7 @@ impl Game {
 
     /// Lay a mine owned by the human; returns its id.
     pub fn debug_add_mine(&mut self, x: f64, z: f64, team: u8, arm: f64) -> u32 {
-        let id = self.sim.next_id;
-        self.sim.next_id += 1;
+        let id = self.sim.allocate_id();
         let owner = self.sim.human().id;
         self.sim.mines.push(Mine {
             id,
@@ -465,7 +450,6 @@ impl Game {
         self.sim.mines.clear();
     }
 
-    /// Solo Assault's reinforcement check, as the next tick would run it.
     /// A blast credited to nobody on blue, through the shared explosion path.
     pub fn debug_explode(&mut self, x: f64, z: f64, radius: f64, damage: f64) {
         self.sim.explode(
@@ -479,6 +463,7 @@ impl Game {
         );
     }
 
+    /// Solo Assault's reinforcement check, as the next tick would run it.
     pub fn debug_reinforce(&mut self) {
         self.sim.reinforce_solo();
     }
@@ -551,20 +536,15 @@ impl Game {
             .camera()
             .project(glam::Vec3::new(x, y, z));
         vec![
-            (ndc.x + 1.0) * 0.5 * self.client.x,
-            (1.0 - ndc.y) * 0.5 * self.client.y,
+            (ndc.x + 1.0) * 0.5 * self.canvas.css.x,
+            (1.0 - ndc.y) * 0.5 * self.canvas.css.y,
         ]
-    }
-
-    /// Rebuild every entity view for the current world and prepare it again.
-    pub fn debug_rebuild_view(&mut self) {
-        self.reset_view();
     }
 
     /// What every entity's view shows after the last frame (`Presentation::inspect`).
     pub fn debug_view_json(&mut self) -> String {
         let inspection = self.view.inspect();
-        let effects = self.view.effects.stats();
+        let effects = self.view.effects.systems.stats();
         let v3 = |v: glam::Vec3| [v.x, v.y, v.z];
         let reticle = &inspection.reticle;
         json!({
@@ -574,7 +554,6 @@ impl Game {
                 "scale": reticle.scale, "position": v3(reticle.position),
             },
             "theme": inspection.theme,
-            "playerRing": inspection.player_ring,
             "tanks": inspection.tanks.iter().map(|tank| json!({
                 "id": tank.id, "shown": tank.shown, "barShown": tank.bar_shown,
                 "chevrons": tank.chevrons, "position": v3(tank.position),
@@ -584,8 +563,7 @@ impl Game {
             })).collect::<Vec<_>>(),
             "covers": inspection.covers.iter().map(|cover| json!({
                 "id": cover.id, "shown": cover.shown, "stage": cover.stage,
-                "combined": cover.combined, "modelKey": cover.model_key,
-                "crown": cover.crown, "cut": cover.cut, "visibleJoints": cover.visible_joints,
+                "modelKey": cover.model_key, "crown": cover.crown, "cut": cover.cut,
             })).collect::<Vec<_>>(),
             "pickups": inspection.pickups.iter().map(|pickup| json!({
                 "id": pickup.id, "baseShown": pickup.base_shown, "gem": pickup.gem,
@@ -598,12 +576,9 @@ impl Game {
                 "scale": v3(fragment.scale), "timberMarks": fragment.timber_marks,
             })).collect::<Vec<_>>(),
             "mines": inspection.mines,
-            "branches": inspection.branches,
-            "pickupEffects": inspection.pickup_effects,
             "laser": {
                 "lenses": inspection.laser_lenses,
                 "cores": inspection.laser_cores,
-                "beams": inspection.laser_beams,
             },
             "effects": {
                 "particles": effects.particles,
@@ -637,7 +612,7 @@ impl Game {
         Value::from(covers).to_string()
     }
 
-    /// Enable or skip the water's reflection pass (the reflection check's baseline).
+    /// The water's height, reflection flag and calm extent, or null without water.
     pub fn debug_water_json(&self) -> String {
         match self.view.renderer.water_settings() {
             Some(water) => json!({
@@ -650,6 +625,7 @@ impl Game {
         }
     }
 
+    /// Enable or skip the water's reflection pass (the reflection check's baseline).
     pub fn debug_set_water_reflection(&mut self, enabled: bool) {
         self.view.renderer.set_water_reflection(enabled);
     }
@@ -719,7 +695,7 @@ impl Game {
         let starts: Vec<[f64; 2]> = seats.iter().map(|&id| position(&room, id)).collect();
         room.start();
         for tick in 1..=SEAT_TICKS {
-            let now = tick as f64 * MS_PER_TICK;
+            let now = tick as f64 * SIMULATION_STEP_MS;
             if tick % SEAT_INPUT_EVERY_TICKS == 1 {
                 for (index, control) in controls.iter_mut().enumerate() {
                     let right = index == 0;

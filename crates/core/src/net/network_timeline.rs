@@ -35,7 +35,6 @@ pub struct NetworkTimeline {
     events: VecDeque<TimedEvent>,
     paths: Vec<DisplayedPath>,
     newest_tick: u64,
-    display_tick: f64,
 }
 
 fn at_tick(mut state: RenderState, tick: u64) -> RenderState {
@@ -48,7 +47,6 @@ impl NetworkTimeline {
     pub fn reset(&mut self, state: &RenderState, tick: u64, now_ms: f64, shots: &LivePaths) {
         self.newest_tick = tick;
         self.clock.reset(tick, now_ms);
-        self.display_tick = self.clock.display_ms / SIMULATION_STEP_MS;
         self.events.clear();
         self.paths.clear();
         self.paths
@@ -104,12 +102,12 @@ impl NetworkTimeline {
     /// Received simulation still ahead of the display; negative while remote poses
     /// extrapolate.
     pub fn margin_ms(&self) -> f64 {
-        (self.newest_tick as f64 - self.display_tick) * SIMULATION_STEP_MS
+        (self.newest_tick as f64 - self.display_tick()) * SIMULATION_STEP_MS
     }
 
     /// The display tick of the last read (fractional).
     pub fn display_tick(&self) -> f64 {
-        self.display_tick
+        self.clock.display_ms / SIMULATION_STEP_MS
     }
 
     /// Fills `output` with the scene to draw at `now_ms`, overwriting all of it in place,
@@ -121,26 +119,20 @@ impl NetworkTimeline {
         dt: f64,
         output: &mut RenderState,
     ) -> Vec<SimEvent> {
-        self.display_tick = self.clock.read(now_ms) / SIMULATION_STEP_MS;
+        let display = self.clock.read(now_ms) / SIMULATION_STEP_MS;
         let newest_ms = self.newest_tick as f64 * SIMULATION_STEP_MS;
         // The fallback local hull extrapolates toward the server's present: newest path
         // time plus one way.
         let local_time = ((newest_ms + MAX_LOCAL_LEAD_MS).min(self.clock.path_server_ms(now_ms))
             + MAX_LOCAL_LEAD_MS.min(rtt_ms / 2.0))
             / 1000.0;
-        self.poses
-            .read(self.display_tick / 60.0, local_time, dt, output);
+        self.poses.read(display / 60.0, local_time, dt, output);
         let mut events = Vec::new();
-        while self
-            .events
-            .front()
-            .is_some_and(|event| event.tick <= self.display_tick)
-        {
-            events.push(self.events.pop_front().expect("checked").event);
+        while let Some(timed) = self.events.pop_front_if(|event| event.tick <= display) {
+            events.push(timed.event);
         }
         // A shell whose end has not arrived flies on its path only as far as hulls
         // extrapolate past the newest frame.
-        let display = self.display_tick;
         let horizon =
             self.newest_tick as f64 + MAX_EXTRAPOLATION_SECONDS * 1000.0 / SIMULATION_STEP_MS;
         output.shots.clear();

@@ -2,7 +2,9 @@
 //! printed by running the same Three.js constructors and operations in Node: vertex
 //! and index counts, and FNV-1a hashes over the f32 bit patterns of every position,
 //! normal and UV (and over every index), so any single differing bit fails. A few
-//! plain sample values keep failures readable.
+//! plain sample values keep failures readable. Outlines that Three.js built from
+//! arcs and Béziers are kept as the points it sampled from them, which is all
+//! `ShapeGeometry` and `ExtrudeGeometry` read.
 
 use std::f64::consts::PI;
 
@@ -11,7 +13,7 @@ use glam::{DVec2, DVec3};
 use super::math::{compose, quat_from_euler, scale_hex_color};
 use super::*;
 
-fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
+pub(crate) fn fnv(words: impl IntoIterator<Item = u32>) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for word in words {
         h ^= word;
@@ -49,42 +51,56 @@ fn points(values: &[[f64; 2]]) -> Vec<DVec2> {
     values.iter().map(|p| DVec2::new(p[0], p[1])).collect()
 }
 
-fn belt_shape() -> Shape {
-    let mut path = Path::new();
-    path.move_to(-0.9, -0.33)
-        .line_to(0.9, -0.33)
-        .absarc(0.9, 0.0, 0.33, -PI / 2.0, PI / 2.0, false)
-        .line_to(-0.9, 0.33)
-        .absarc(-0.9, 0.0, 0.33, PI / 2.0, PI * 1.5, false);
-    Shape::new(path)
-}
+/// The belt outline as Three.js sampled it (`curveSegments` 6): runs along
+/// y = ±0.33 joined by `absarc` half circles of radius 0.33 around (±0.9, 0), 12
+/// segments each.
+#[rustfmt::skip]
+const BELT: [[f64; 2]; 27] = [
+    [-0.9, -0.33], [0.9, -0.33],
+    [0.9854102848838319, -0.31875552267539253], [1.065, -0.2857883832488648],
+    [1.1333452377915607, -0.23334523779156066], [1.1857883832488647, -0.165],
+    [1.2187555226753926, -0.08541028488383183], [1.23, 0.0],
+    [1.2187555226753926, 0.0854102848838319], [1.1857883832488647, 0.16499999999999995],
+    [1.1333452377915607, 0.23334523779156066], [1.065, 0.2857883832488648],
+    [0.985410284883832, 0.31875552267539253], [0.9, 0.33],
+    [-0.9, 0.33],
+    [-0.9854102848838319, 0.31875552267539253], [-1.065, 0.2857883832488648],
+    [-1.1333452377915607, 0.23334523779156072], [-1.1857883832488647, 0.16500000000000012],
+    [-1.2187555226753926, 0.08541028488383179], [-1.23, 4.041334437186266e-17],
+    [-1.2187555226753926, -0.08541028488383187], [-1.1857883832488647, -0.16499999999999992],
+    [-1.1333452377915607, -0.23334523779156066], [-1.065, -0.2857883832488648],
+    [-0.9854102848838319, -0.31875552267539253], [-0.9000000000000001, -0.33],
+];
+
+/// The holed shape's outline as Three.js sampled it (`curveSegments` 5): from the
+/// origin along x, a quadratic Bézier up to (2, 2), a cubic Bézier over to (0, 2)
+/// (5 segments each), then `closePath`.
+#[rustfmt::skip]
+const HOLED_OUTLINE: [[f64; 2]; 13] = [
+    [0.0, 0.0], [2.0, 0.0],
+    [2.1920000000000006, 0.4000000000000001], [2.2880000000000003, 0.8],
+    [2.2880000000000003, 1.2], [2.192, 1.6], [2.0, 2.0],
+    [1.6480000000000006, 2.2400000000000007], [1.2239999999999998, 2.36],
+    [0.776, 2.3600000000000003], [0.35199999999999987, 2.24], [0.0, 2.0],
+    [0.0, 0.0],
+];
+
+/// Its hole: a clockwise `absarc` circle of radius 0.4 around (1, 1), 10 segments.
+#[rustfmt::skip]
+const HOLE: [[f64; 2]; 11] = [
+    [1.4, 1.0], [1.323606797749979, 0.7648858990830107],
+    [1.123606797749979, 0.6195773934819386], [0.876393202250021, 0.6195773934819385],
+    [0.676393202250021, 0.7648858990830107], [0.6, 1.0],
+    [0.676393202250021, 1.2351141009169893], [0.8763932022500209, 1.3804226065180614],
+    [1.1236067977499788, 1.3804226065180614], [1.323606797749979, 1.2351141009169893],
+    [1.4, 1.0],
+];
 
 fn holed_shape() -> Shape {
-    let mut path = Path::new();
-    path.move_to(0.0, 0.0)
-        .line_to(2.0, 0.0)
-        .quadratic_curve_to(2.6, 1.0, 2.0, 2.0)
-        .bezier_curve_to(DVec2::new(1.5, 2.5), DVec2::new(0.5, 2.5), 0.0, 2.0)
-        .close_path();
-    let mut hole = Path::new();
-    hole.absarc(1.0, 1.0, 0.4, 0.0, PI * 2.0, true);
     Shape {
-        outline: path,
-        holes: vec![hole],
+        outline: Path::from_points(&points(&HOLED_OUTLINE)),
+        holes: vec![Path::from_points(&points(&HOLE))],
     }
-}
-
-fn tire_profile() -> Vec<DVec2> {
-    points(&[
-        [0.235, -0.14],
-        [0.36, -0.16],
-        [0.46, -0.12],
-        [0.48, -0.065],
-        [0.48, 0.065],
-        [0.46, 0.12],
-        [0.36, 0.16],
-        [0.235, 0.14],
-    ])
 }
 
 fn tapered_cylinder() -> Mesh {
@@ -103,10 +119,9 @@ fn extrude_belt() -> Mesh {
     let options = ExtrudeOptions {
         depth: 0.54,
         bevel_enabled: false,
-        curve_segments: 6,
         ..ExtrudeOptions::default()
     };
-    let mut mesh = extrude_geometry(&[belt_shape()], &options);
+    let mut mesh = extrude_geometry(&[Shape::from_points(&points(&BELT))], &options);
     mesh.translate(0.0, 0.0, -0.27).rotate_y(PI / 2.0);
     mesh
 }
@@ -146,7 +161,6 @@ fn generated() -> Vec<(&'static str, Mesh)> {
                 inner_radius: 0.89,
                 outer_radius: 1.02,
                 theta_segments: 48,
-                phi_segments: 1,
                 theta_start: PI / 2.0,
                 ..RingGeometry::default()
             }
@@ -185,7 +199,6 @@ fn generated() -> Vec<(&'static str, Mesh)> {
                 radial_segments: 6,
                 tubular_segments: 12,
                 arc: PI,
-                ..TorusGeometry::default()
             }
             .build(),
         ),
@@ -193,24 +206,16 @@ fn generated() -> Vec<(&'static str, Mesh)> {
         ("icosahedron_detail", icosahedron_geometry(0.18, 1)),
         ("octahedron", octahedron_geometry(1.0, 0)),
         ("tetrahedron", tetrahedron_geometry(0.75, 0)),
-        ("lathe", {
-            let mut mesh = lathe_geometry(&tire_profile(), 20, 0.0, PI * 2.0);
-            mesh.rotate_z(PI / 2.0);
-            mesh
-        }),
         (
             "shape_arrow",
-            shape_geometry(
-                &[Shape::from_points(&points(&[
-                    [-0.28, -0.55],
-                    [0.28, 0.0],
-                    [-0.28, 0.55],
-                    [-0.48, 0.37],
-                    [-0.1, 0.0],
-                    [-0.48, -0.37],
-                ]))],
-                12,
-            ),
+            shape_geometry(&[Shape::from_points(&points(&[
+                [-0.28, -0.55],
+                [0.28, 0.0],
+                [-0.28, 0.55],
+                [-0.48, 0.37],
+                [-0.1, 0.0],
+                [-0.48, -0.37],
+            ]))]),
         ),
         ("extrude_belt", extrude_belt()),
     ];
@@ -234,14 +239,13 @@ fn generated() -> Vec<(&'static str, Mesh)> {
     let bevel_options = ExtrudeOptions {
         depth: 0.5,
         steps: 2,
-        curve_segments: 5,
         ..ExtrudeOptions::default()
     };
     meshes.push((
         "extrude_bevel_hole",
         extrude_geometry(&[holed_shape()], &bevel_options),
     ));
-    meshes.push(("shape_hole", shape_geometry(&[holed_shape()], 5)));
+    meshes.push(("shape_hole", shape_geometry(&[holed_shape()])));
 
     let mut recomputed = tapered_cylinder();
     recomputed.scale(1.0, 2.0, 0.5);
@@ -288,7 +292,6 @@ const EXPECTED: &[(&str, Summary)] = &[
     ("icosahedron_detail", (240, None, 0x75f1b8f1, Some(0x388a4419), Some(0xc36c3222), None)),
     ("octahedron", (24, None, 0x8fefde65, Some(0xea4d8f85), Some(0x3b55ff85), None)),
     ("tetrahedron", (12, None, 0x66a29961, Some(0x88f2bda5), Some(0x0acc9465), None)),
-    ("lathe", (168, Some(840), 0x9359eb28, Some(0xca0b109c), Some(0x86196044), Some(0x78a8a4b5))),
     ("shape_arrow", (6, Some(12), 0x8edf170f, Some(0x9011a50d), Some(0x04f00531), Some(0x40850553))),
     ("extrude_belt", (300, None, 0xf2134e41, Some(0xb5ceeaa5), Some(0xcce05719), None)),
     ("extrude_profile", (48, None, 0x615c8ddd, Some(0x15dd20b3), Some(0x0eb37e1a), None)),
@@ -320,25 +323,6 @@ fn sample_values_match_three_js() {
     let boxed = mesh("box");
     assert_eq!(boxed.positions[0], [0.6, 0.25, 1.0]);
     assert_eq!(&boxed.indices.as_ref().unwrap()[..6], &[0, 4, 1, 4, 5, 1]);
-
-    let lathe = mesh("lathe");
-    assert_eq!(
-        lathe.positions[0],
-        wide([
-            0.14000000059604645,
-            -8.57252763722393e-18,
-            0.23499999940395355
-        ])
-    );
-    assert_eq!(
-        lathe.normals[84],
-        wide([
-            -0.10748184472322464,
-            1.2833660881645921e-16,
-            -0.9942070245742798
-        ])
-    );
-    assert_eq!(&lathe.indices.as_ref().unwrap()[..6], &[0, 8, 1, 9, 1, 8]);
 
     let belt = mesh("extrude_belt");
     assert_eq!(
@@ -442,11 +426,6 @@ fn catmull_rom_matches_three_js() {
     assert!(close(
         creek.tangent(37.0 / 160.0),
         [-0.9997837668896065, 0.0, 0.020794697978794987]
-    ));
-    assert!((creek.length() - 456.48016783428596).abs() < 1e-9);
-    assert!(close(
-        creek.point_at(0.3),
-        [16.651632056626287, -2.65, -82.01183464017014]
     ));
 }
 

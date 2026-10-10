@@ -3,7 +3,8 @@
 //! streams baselines and snapshots, acknowledges input, lists itself as playing, and a
 //! dropped player rejoins the same seat.
 
-use std::sync::{Arc, Mutex};
+mod support;
+
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -11,40 +12,14 @@ use serde_json::{Value, json};
 use sloppy_core::net::wire_view::WireView;
 use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
-use sloppy_server::server::{MultiplayerServer, ServerOptions};
+use support::{rooms, start_with};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-const ORIGIN: &str = "http://127.0.0.1:5173";
 const WAIT: Duration = Duration::from_secs(10);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-async fn start() -> (MultiplayerServer, String) {
-    let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-    let mut options = ServerOptions::new(true);
-    let sink = lines.clone();
-    options.log = Arc::new(move |line| sink.lock().unwrap().push(line.to_string()));
-    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
-        .await
-        .unwrap();
-    let base = server.local_addr().to_string();
-    (server, base)
-}
-
-async fn connect(base: &str, room: &str) -> Socket {
-    let mut request = format!("ws://{base}/room/{room}")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert("Origin", HeaderValue::from_static(ORIGIN));
-    let (socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    socket
-}
 
 struct Player {
     socket: Socket,
@@ -54,6 +29,17 @@ struct Player {
 }
 
 impl Player {
+    async fn connect(base: &str, room: &str) -> Player {
+        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{base}/room/{room}"))
+            .await
+            .unwrap();
+        Player {
+            socket,
+            messages: Vec::new(),
+            view: WireView::default(),
+        }
+    }
+
     async fn send(&mut self, value: Value) {
         self.socket
             .send(Message::Text(value.to_string().into()))
@@ -104,28 +90,10 @@ fn join(name: &str, extra: Value) -> Value {
     join
 }
 
-async fn rooms(base: &str) -> Vec<Value> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = TcpStream::connect(base).await.unwrap();
-    let request = format!(
-        "GET /rooms HTTP/1.1\r\nHost: {base}\r\nOrigin: {ORIGIN}\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut raw = String::new();
-    stream.read_to_string(&mut raw).await.unwrap();
-    let body = raw.split_once("\r\n\r\n").unwrap().1;
-    let value: Value = serde_json::from_str(body).unwrap();
-    value["rooms"].as_array().unwrap().clone()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
-    let (server, base) = start().await;
-    let mut alice = Player {
-        socket: connect(&base, "MATCHRM2").await,
-        messages: Vec::new(),
-        view: WireView::default(),
-    };
+    let (server, base, _) = start_with(MatchRoom::new).await;
+    let mut alice = Player::connect(&base, "MATCHRM2").await;
     alice
         .send(join(
             "alice",
@@ -151,11 +119,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     );
     alice.next("snapshot").await;
 
-    let mut bob = Player {
-        socket: connect(&base, "MATCHRM2").await,
-        messages: Vec::new(),
-        view: WireView::default(),
-    };
+    let mut bob = Player::connect(&base, "MATCHRM2").await;
     bob.send(join("bob", json!({ "existingRoom": true }))).await;
     let bob_welcome = bob.next("welcome").await;
     let bob_control = bob.next("control").await;
@@ -195,7 +159,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     );
     alice.next("pong").await;
 
-    let listed = rooms(&base).await;
+    let listed = rooms(&base, "").await;
     let room = listed
         .iter()
         .find(|room| room["room"] == "MATCHRM2")
@@ -216,11 +180,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
                     .any(|player| player["name"] == "bob" && player["connected"] == false)
         })
         .await;
-    let mut back = Player {
-        socket: connect(&base, "MATCHRM2").await,
-        messages: Vec::new(),
-        view: WireView::default(),
-    };
+    let mut back = Player::connect(&base, "MATCHRM2").await;
     back.send(join(
         "bob",
         json!({ "token": token, "roomEpoch": epoch, "existingRoom": true }),

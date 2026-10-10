@@ -5,7 +5,7 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::AsRawFd;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -180,21 +180,20 @@ impl ConnectionBytes {
     }
 }
 
-/// A stream that counts what passes through it.
-pub struct CountingIo<T> {
-    inner: T,
+/// A TCP connection that counts what passes through it.
+pub struct CountingIo {
+    inner: TcpStream,
     bytes: Arc<ConnectionBytes>,
-    /// The TCP socket `inner` owns, so it stays open as long as this stream exists.
-    socket: Option<RawFd>,
     next_reading: Instant,
 }
 
-impl<T> CountingIo<T> {
-    pub fn new(inner: T, bytes: Arc<ConnectionBytes>) -> Self {
+impl CountingIo {
+    /// Counts a TCP connection's bytes and, once it is a room socket, reads its round
+    /// trip and retransmissions while it writes and once more as it closes.
+    pub fn new(inner: TcpStream, bytes: Arc<ConnectionBytes>) -> Self {
         Self {
             inner,
             bytes,
-            socket: None,
             next_reading: Instant::now(),
         }
     }
@@ -202,38 +201,28 @@ impl<T> CountingIo<T> {
     /// Reads the socket's TCP figures once it is a room socket, at most once per
     /// interval unless `force` is set. A proxied connection is measured elsewhere.
     fn measure(&mut self, force: bool) {
-        let Some(socket) = self.socket.filter(|_| self.bytes.client.get().is_none()) else {
+        if self.bytes.client.get().is_some() {
             return;
-        };
+        }
         let now = Instant::now();
         if !self.bytes.tracked.load(Ordering::Relaxed) || (!force && now < self.next_reading) {
             return;
         }
         self.next_reading = now + TCP_READING_INTERVAL;
-        if let Some(reading) = tcp_path::read(socket) {
+        if let Some(reading) = tcp_path::read(self.inner.as_raw_fd()) {
             self.bytes.record(reading);
         }
     }
 }
 
-impl CountingIo<TcpStream> {
-    /// Counts a TCP connection's bytes and, once it is a room socket, reads its round
-    /// trip and retransmissions while it writes and once more as it closes.
-    pub fn tcp(stream: TcpStream, bytes: Arc<ConnectionBytes>) -> Self {
-        let mut io = Self::new(stream, bytes);
-        io.socket = Some(io.inner.as_raw_fd());
-        io
-    }
-}
-
-impl<T> Drop for CountingIo<T> {
+impl Drop for CountingIo {
     /// The final reading, while `inner` still holds the socket open.
     fn drop(&mut self) {
         self.measure(true);
     }
 }
 
-impl<T: AsyncRead + Unpin> AsyncRead for CountingIo<T> {
+impl AsyncRead for CountingIo {
     fn poll_read(
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
@@ -250,7 +239,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for CountingIo<T> {
     }
 }
 
-impl<T: AsyncWrite + Unpin> AsyncWrite for CountingIo<T> {
+impl AsyncWrite for CountingIo {
     fn poll_write(
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
@@ -294,19 +283,12 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for CountingIo<T> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use std::io::{Read, Write};
-
     use super::*;
 
     #[test]
     fn a_proxied_connection_is_measured_on_the_proxys_socket_to_the_player() {
         // A loopback pair stands in for the proxy's socket to the player.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut player = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut proxy, _) = listener.accept().unwrap();
-        proxy.write_all(b"snapshot").unwrap();
-        let mut received = [0; 8];
-        player.read_exact(&mut received).unwrap();
+        let (player, _proxy) = tcp_path::loopback_pair();
         let totals = Arc::new(WireTotals::default());
         let connection = ConnectionBytes::new(totals.clone());
         connection.forwarded_from(player.local_addr().unwrap());

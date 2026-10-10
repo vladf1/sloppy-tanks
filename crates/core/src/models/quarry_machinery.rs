@@ -10,8 +10,7 @@ use glam::DVec3;
 use crate::scene::{Material, Node};
 
 use super::batching::batch;
-use super::harbor_surfaces::steel_box;
-use super::model_primitives::span_between;
+use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::{Cache, box_part, cylinder_part, material, put, rotated};
 use super::tank_surfaces::armor_wear_texture;
 use crate::geometry::math::{normalize, quat_from_unit_vectors};
@@ -70,13 +69,6 @@ fn weather_paint(node: &mut Node) {
     }
 }
 
-/// `beam(group, a, b, width, color)`: a painted steel member between two points.
-fn beam(group: &mut Node, a: [f64; 3], b: [f64; 3], width: f64, color: u32) {
-    let (from, to) = (DVec3::from_array(a), DVec3::from_array(b));
-    let mesh = steel_box(width, from.distance(to), width, color);
-    group.children.push(span_between(mesh, from, to));
-}
-
 /// `piston(group, a, b)`: a hydraulic ram (barrel and polished rod) from a to b.
 fn piston(group: &mut Node, a: [f64; 3], b: [f64; 3]) {
     let from = DVec3::from_array(a);
@@ -84,12 +76,7 @@ fn piston(group: &mut Node, a: [f64; 3], b: [f64; 3]) {
     let length = direction.length();
     for (fraction, radius, color) in [(0.65, 0.21, STEEL), (1.0, 0.105, 0xb8b8af)] {
         let mut mesh = cylinder_part(radius, length * fraction, color, 10);
-        let s = fraction / 2.0;
-        mesh.position = DVec3::new(
-            from.x + direction.x * s,
-            from.y + direction.y * s,
-            from.z + direction.z * s,
-        );
+        mesh.position = from + direction * (fraction / 2.0);
         mesh.rotation = quat_from_unit_vectors(DVec3::Y, normalize(direction));
         group.children.push(mesh);
     }
@@ -232,11 +219,11 @@ pub fn quarry_excavator() -> Node {
     );
     // Two boom plates enclose visible pins and paired hydraulic rams.
     for z in [0.45, 1.35] {
-        beam(&mut group, [1.2, 3.4, z], [6.0, 8.8, z], 0.68, PAINT);
-        beam(&mut group, [6.0, 8.8, z], [10.8, 3.3, z], 0.53, PAINT);
+        steel_beam(&mut group, [1.2, 3.4, z], [6.0, 8.8, z], 0.68, PAINT);
+        steel_beam(&mut group, [6.0, 8.8, z], [10.8, 3.3, z], 0.53, PAINT);
         piston(&mut group, [1.6, 3.6, z + 0.15], [4.6, 7.3, z + 0.15]);
         piston(&mut group, [5.8, 8.5, z - 0.12], [9.35, 5.45, z - 0.12]);
-        beam(&mut group, [10.8, 3.3, z], [11.7, 1.4, z], 0.27, STEEL);
+        steel_beam(&mut group, [10.8, 3.3, z], [11.7, 1.4, z], 0.27, STEEL);
     }
     for [x, y] in [[1.2, 3.4], [6.0, 8.8], [10.8, 3.3]] {
         let pin = rotated(cylinder_part(0.32, 1.6, STEEL, 12), FRAC_PI_2, 0.0, 0.0);

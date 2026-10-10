@@ -239,7 +239,7 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   element buffer is the index page it last drew from. Batch and
   own pages go with their last mesh, and a general page once a frame's collection
   finds it empty, so a reset's new round first refills the general pages the old
-  one emptied. `View::reset` drops the old round's views before `reset_round`:
+  one emptied. `Presentation::reset` drops the old round's views before `reset_round`:
   cover models hold their source meshes, and a round that uploads before those
   are freed lands in new pages while the old ones empty a frame later.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
@@ -385,7 +385,7 @@ offline.
   which directories changed.
   Change the machines only through `deploy/servers.json`, `deploy/server/` and the
   `server:*` scripts described in `crates/server/README.md`. The traffic bots in
-  `bots/` remain a Cloudflare Worker that targets the production server;
+  `bots/` are a Cloudflare Worker that targets the production server;
   `pnpm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add

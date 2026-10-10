@@ -22,6 +22,8 @@ mod lab;
 #[cfg(target_arch = "wasm32")]
 mod net_game;
 #[cfg(target_arch = "wasm32")]
+mod page;
+#[cfg(target_arch = "wasm32")]
 mod stats;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]

@@ -28,10 +28,9 @@ use crate::shadow_merge::ShadowVertex;
 
 const MIB: u64 = 1 << 20;
 
-/// Vertex data a general vertex page holds, effect vec4s included: 175k `Vertex` or
-/// 350k `ShadowVertex`. A larger page leaves more of the newest one as slack; a
-/// smaller one means more pages, and every further page costs a binding switch per
-/// pass that draws from it.
+/// Vertex data a general vertex page holds: 175k `Vertex` or 350k `ShadowVertex`. A
+/// larger page leaves more of the newest one as slack; a smaller one means more
+/// pages, and every further page costs a binding switch per pass that draws from it.
 pub const GENERAL_VERTEX_PAGE_BYTES: u64 = 8 * MIB;
 
 /// Indices a general index page holds: 524k. Index data is about an eighth of the
@@ -46,9 +45,6 @@ pub const GENERAL_INDEX_PAGE_BYTES: u64 = 2 * MIB;
 /// always takes at least two meshes.
 pub const BATCH_PAGE_MIN_BYTES: u64 = GENERAL_VERTEX_PAGE_BYTES / 2;
 
-/// The same for a registration's indices: half a general index page.
-pub const BATCH_INDEX_PAGE_MIN_BYTES: u64 = GENERAL_INDEX_PAGE_BYTES / 2;
-
 /// The largest batch page. It stays below the 128 MiB per-resource floor of D3D11,
 /// which ANGLE uses for WebGL on Windows, and WebGPU's default 256 MiB
 /// `max_buffer_size` (`context.rs` asks for the default limits). Batches split at
@@ -62,9 +58,8 @@ pub const NO_PAGE: u16 = u16::MAX;
 /// What a page holds. Each family has its own pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PageFamily {
-    /// The surface `Vertex` (48 B), with `extra` effect vec4s per vertex in a second
-    /// buffer of the same vertex numbering.
-    Surface { extra: u8 },
+    /// The surface `Vertex` (48 B).
+    Surface,
     /// The merged-shadow `ShadowVertex` (24 B).
     Shadow,
     /// `u32` indices of every family, absolute in their mesh's vertex page.
@@ -72,53 +67,37 @@ pub enum PageFamily {
 }
 
 impl PageFamily {
-    /// Bytes per element of the page's main buffer.
+    /// Bytes per element.
     pub fn stride(self) -> u64 {
         match self {
-            Self::Surface { .. } => size_of::<Vertex>() as u64,
+            Self::Surface => size_of::<Vertex>() as u64,
             Self::Shadow => size_of::<ShadowVertex>() as u64,
             Self::Index => size_of::<u32>() as u64,
         }
     }
 
-    /// Bytes per element of its effect attribute buffer; 0 when it has none.
-    pub fn extra_stride(self) -> u64 {
-        match self {
-            Self::Surface { extra } => u64::from(extra) * size_of::<[f32; 4]>() as u64,
-            Self::Shadow | Self::Index => 0,
-        }
-    }
-
-    /// Bytes per element over both buffers.
-    pub fn element_bytes(self) -> u64 {
-        self.stride() + self.extra_stride()
-    }
-
     fn general_page_bytes(self) -> u64 {
         match self {
             Self::Index => GENERAL_INDEX_PAGE_BYTES,
-            Self::Surface { .. } | Self::Shadow => GENERAL_VERTEX_PAGE_BYTES,
+            Self::Surface | Self::Shadow => GENERAL_VERTEX_PAGE_BYTES,
         }
     }
 
     /// Elements in a general page.
     pub fn general_capacity(self) -> u32 {
-        (self.general_page_bytes() / self.element_bytes()) as u32
+        (self.general_page_bytes() / self.stride()) as u32
     }
 
     /// Elements in the largest batch page.
     fn max_page_capacity(self) -> u32 {
-        (MAX_PAGE_BYTES / self.element_bytes()) as u32
+        (MAX_PAGE_BYTES / self.stride()) as u32
     }
 
-    /// Half a general page ([`BATCH_PAGE_MIN_BYTES`], [`BATCH_INDEX_PAGE_MIN_BYTES`]):
-    /// one mesh larger than this gets an own page, and one registration's meshes that
-    /// add up to it get batch pages.
+    /// Half a general page ([`BATCH_PAGE_MIN_BYTES`] for vertices): one mesh larger
+    /// than this gets an own page, and one registration's meshes that add up to it get
+    /// batch pages.
     fn large_bytes(self) -> u64 {
-        match self {
-            Self::Index => BATCH_INDEX_PAGE_MIN_BYTES,
-            Self::Surface { .. } | Self::Shadow => BATCH_PAGE_MIN_BYTES,
-        }
+        self.general_page_bytes() / 2
     }
 }
 
@@ -143,7 +122,7 @@ impl MeshSize {
 /// enough for batch pages ([`PagePlanner::place_batch`]).
 pub fn wants_batch(family: PageFamily, counts: impl IntoIterator<Item = u32>) -> bool {
     let elements: u64 = counts.into_iter().map(u64::from).sum();
-    elements * family.element_bytes() >= family.large_bytes()
+    elements * family.stride() >= family.large_bytes()
 }
 
 // ------------------------------------------------------------------ allocator
@@ -220,16 +199,6 @@ impl RangeAllocator {
             (false, false) => self.free.insert(index, (start, end)),
         }
     }
-
-    /// Elements free now.
-    pub fn free_elements(&self) -> u32 {
-        self.free.iter().map(|&(start, end)| end - start).sum()
-    }
-
-    /// The free ranges, address-ordered.
-    pub fn free_ranges(&self) -> &[(u32, u32)] {
-        &self.free
-    }
 }
 
 // ------------------------------------------------------------------ planner
@@ -284,10 +253,6 @@ impl Page {
     /// `PageBuffers::vertex_buffers` in `gpu/webgpu/resources.rs`).
     pub fn written(&self) -> u32 {
         self.written
-    }
-
-    pub fn ranges(&self) -> &RangeAllocator {
-        &self.ranges
     }
 
     fn allocate(&mut self, count: u32) -> Option<u32> {
@@ -363,7 +328,7 @@ impl PagePlanner {
     /// pages in page order, adding a general page only when none has room.
     pub fn place(&mut self, family: PageFamily, count: u32) -> Placement {
         debug_assert!(count > 0, "place at least one element");
-        if u64::from(count) * family.element_bytes() > family.large_bytes() {
+        if u64::from(count) * family.stride() > family.large_bytes() {
             let page = self.create(family, PageKind::Own, count);
             let first = self.page_mut(page).allocate(count).expect("exact page");
             return Placement {
@@ -504,23 +469,20 @@ impl PagePlanner {
     /// GPU bytes the pages reserve.
     pub fn capacity_bytes(&self) -> u64 {
         self.pages()
-            .map(|(_, page)| u64::from(page.capacity()) * page.family.element_bytes())
+            .map(|(_, page)| u64::from(page.capacity()) * page.family.stride())
             .sum()
     }
 
     /// Bytes of the meshes the pages hold.
     pub fn live_bytes(&self) -> u64 {
         self.pages()
-            .map(|(_, page)| u64::from(page.live) * page.family.element_bytes())
+            .map(|(_, page)| u64::from(page.live) * page.family.stride())
             .sum()
     }
 
-    /// GPU buffers: one per page, plus the effect attribute buffer of surface pages
-    /// with effect vec4s.
+    /// GPU buffers: one per page.
     pub fn buffer_count(&self) -> usize {
-        self.pages()
-            .map(|(_, page)| 1 + (page.family.extra_stride() > 0) as usize)
-            .sum()
+        self.pages().count()
     }
 }
 
@@ -616,7 +578,7 @@ mod tests {
     use super::*;
     use crate::effects::random::CosmeticRandom;
 
-    const SURFACE: PageFamily = PageFamily::Surface { extra: 0 };
+    const SURFACE: PageFamily = PageFamily::Surface;
 
     #[test]
     fn allocation_is_first_fit_and_exact_fits_remove_the_hole() {
@@ -625,14 +587,14 @@ mod tests {
         assert_eq!(ranges.allocate(20), Some(10));
         assert_eq!(ranges.allocate(30), Some(30));
         ranges.free(10, 20);
-        assert_eq!(ranges.free_ranges(), [(10, 30), (60, 100)]);
+        assert_eq!(ranges.free, [(10, 30), (60, 100)]);
         // The first hole that fits, not the best one.
         assert_eq!(ranges.allocate(5), Some(10));
         assert_eq!(ranges.allocate(40), Some(60));
-        assert_eq!(ranges.free_ranges(), [(15, 30)]);
+        assert_eq!(ranges.free, [(15, 30)]);
         // An exact fit removes the hole.
         assert_eq!(ranges.allocate(15), Some(15));
-        assert_eq!(ranges.free_ranges(), []);
+        assert_eq!(ranges.free, []);
         assert_eq!(ranges.allocate(1), None);
     }
 
@@ -644,19 +606,18 @@ mod tests {
         }
         ranges.free(0, 10);
         ranges.free(20, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 10), (20, 30)]);
+        assert_eq!(ranges.free, [(0, 10), (20, 30)]);
         // Right neighbour: 10..20 joins 20..30 and then the left one.
         ranges.free(10, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 30)]);
+        assert_eq!(ranges.free, [(0, 30)]);
         // Left neighbour.
         ranges.free(30, 10);
-        assert_eq!(ranges.free_ranges(), [(0, 40)]);
-        assert_eq!(ranges.free_elements(), 40);
+        assert_eq!(ranges.free, [(0, 40)]);
         // Right only.
         assert_eq!(ranges.allocate(40), Some(0));
         ranges.free(35, 5);
         ranges.free(30, 5);
-        assert_eq!(ranges.free_ranges(), [(30, 40)]);
+        assert_eq!(ranges.free, [(30, 40)]);
     }
 
     #[test]
@@ -671,7 +632,7 @@ mod tests {
         for &first in firsts.iter().step_by(2) {
             ranges.free(first, 8);
         }
-        assert_eq!(ranges.free_ranges(), [(0, 64)]);
+        assert_eq!(ranges.free, [(0, 64)]);
     }
 
     #[test]
@@ -722,9 +683,10 @@ mod tests {
                     _ => {}
                 }
             }
-            assert_eq!(ranges.free_ranges(), runs, "step {step}");
+            assert_eq!(ranges.free, runs, "step {step}");
             let allocated: u32 = live.iter().map(|&(_, count)| count).sum();
-            assert_eq!(ranges.free_elements() + allocated, CAPACITY);
+            let free: u32 = ranges.free.iter().map(|&(start, end)| end - start).sum();
+            assert_eq!(free + allocated, CAPACITY);
         }
     }
 
@@ -784,13 +746,6 @@ mod tests {
         assert!(!wants_batch(PageFamily::Shadow, [enough]));
         assert!(!wants_batch(PageFamily::Index, [(MIB / 4) as u32 - 1]));
         assert!(wants_batch(PageFamily::Index, [(MIB / 4) as u32]));
-        // Effect vec4s count toward the bytes.
-        let effect = PageFamily::Surface { extra: 2 };
-        assert!(!wants_batch(effect, [enough / 2]));
-        assert!(wants_batch(
-            effect,
-            [BATCH_PAGE_MIN_BYTES.div_ceil(80) as u32]
-        ));
     }
 
     #[test]
@@ -839,18 +794,6 @@ mod tests {
         assert_eq!(planner.page(0).written(), 150);
         planner.place(SURFACE, 40);
         assert_eq!(planner.page(0).written(), 160);
-    }
-
-    #[test]
-    fn effect_pages_size_and_count_both_buffers() {
-        let mut planner = PagePlanner::default();
-        let family = PageFamily::Surface { extra: 1 };
-        assert_eq!(family.general_capacity(), (8 << 20) / 64);
-        planner.place(family, 10);
-        planner.place(SURFACE, 10);
-        assert_eq!(planner.buffer_count(), 3);
-        assert_eq!(planner.capacity_bytes(), 2 * (8 << 20) - (8 << 20) % 48);
-        assert_eq!(planner.live_bytes(), 10 * 64 + 10 * 48);
     }
 
     #[test]
@@ -930,10 +873,8 @@ mod tests {
     #[test]
     fn a_large_registration_reserves_batch_pages_per_family() {
         let mut planner = PagePlanner::default();
-        // Enough of a family for a batch, in two meshes: 48 and 64 bytes a vertex.
+        // Enough of a family for a batch, in two meshes of 48 bytes a vertex.
         let surface = BATCH_PAGE_MIN_BYTES.div_ceil(2 * 48) as u32;
-        let effect = PageFamily::Surface { extra: 1 };
-        let effect_vertices = BATCH_PAGE_MIN_BYTES.div_ceil(64) as u32;
         let size = |family, vertices, indices| MeshSize {
             family,
             vertices,
@@ -941,13 +882,12 @@ mod tests {
         };
         // A registration's owned meshes, then its shadow groups, as `MeshStore` lists
         // them: two surface meshes that add up to a batch, an undrawable one between
-        // them, one effect mesh that is a batch alone, and a shadow group too small for
-        // one. Their indices together reach an index batch.
+        // them, and a shadow group too small for one. Their indices together reach an
+        // index batch.
         let meshes = [
             size(SURFACE, surface, 3 * surface),
             size(SURFACE, 500, 0),
             size(SURFACE, surface, 3 * surface),
-            size(effect, effect_vertices, 6),
             size(PageFamily::Shadow, 1000, 3000),
         ];
         let placements = planner.reserve(&meshes);
@@ -962,13 +902,9 @@ mod tests {
             .iter()
             .map(|p| p.vertex.map(|v| (v.page, v.first)))
             .collect();
-        assert_eq!(
-            vertex,
-            [Some((0, 0)), None, Some((0, surface)), Some((1, 0)), None]
-        );
+        assert_eq!(vertex, [Some((0, 0)), None, Some((0, surface)), None]);
         assert_eq!(planner.page(0).capacity(), 2 * surface);
-        assert_eq!(planner.page(1).family, effect);
-        // The four drawable meshes' indices share one index batch, in order.
+        // The three drawable meshes' indices share one index batch, in order.
         let index: Vec<Option<(u16, u32)>> = placements
             .iter()
             .map(|p| p.index.map(|i| (i.page, i.first)))
@@ -976,14 +912,13 @@ mod tests {
         assert_eq!(
             index,
             [
-                Some((2, 0)),
+                Some((1, 0)),
                 None,
-                Some((2, 3 * surface)),
-                Some((2, 6 * surface)),
-                Some((2, 6 * surface + 6)),
+                Some((1, 3 * surface)),
+                Some((1, 6 * surface)),
             ]
         );
-        assert_eq!(planner.page(2).capacity(), 6 * surface + 6 + 3000);
+        assert_eq!(planner.page(1).capacity(), 6 * surface + 3000);
         // Each batch page is created by its first placement and holds exactly its
         // meshes, all of which the upload writes.
         let created = placements
@@ -992,14 +927,14 @@ mod tests {
             .flatten()
             .filter(|p| p.new_page)
             .count();
-        assert_eq!(created, 3);
+        assert_eq!(created, 2);
         for (_, page) in planner.pages() {
             assert_eq!(page.kind, PageKind::Batch);
             assert_eq!(page.live(), page.capacity());
             assert_eq!(page.written(), page.capacity());
         }
         // The shadow group's vertices go to a general page when it uploads.
-        assert_eq!(planner.place(PageFamily::Shadow, 1000).page, 3);
+        assert_eq!(planner.place(PageFamily::Shadow, 1000).page, 2);
     }
 
     #[test]
@@ -1008,7 +943,7 @@ mod tests {
         // Under half a general vertex page of vertices with over half a general index
         // page of indices.
         let vertices = BATCH_PAGE_MIN_BYTES as u32 / 48 - 1;
-        let indices = BATCH_INDEX_PAGE_MIN_BYTES as u32 / 4;
+        let indices = (GENERAL_INDEX_PAGE_BYTES / 2) as u32 / 4;
         let meshes = [
             MeshSize {
                 family: SURFACE,

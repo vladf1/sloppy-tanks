@@ -3,9 +3,9 @@
 // browser side: preparing the arena behind Battle Setup, one engine frame per
 // animation frame with the packed raw input, and engine events and HUD state for
 // sound and the DOM.
-import { createGame, engineModule, type Game } from "./engine";
+import { createGame, engineModule, throwGpuError, type Game } from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
-import { debugPage, printDebugHelp } from "./game/debug-console";
+import { printDebugHelp } from "./game/debug-console";
 import { AudioSystem } from "./game/audio";
 import { Cockpit } from "./game/cockpit";
 import { Controls } from "./game/controls";
@@ -19,18 +19,20 @@ import {
   type Phase,
 } from "./game/engine-api";
 import { sameGameOptions, type GameOptions } from "./game/game-options";
-import { saveCameraPreferences, startingCamera } from "./game/player-preferences";
-import { isExtraLevel, showsExtraLevels } from "./game/map-options";
-import { NerdStats, engineStatsSections, nerdStatsShown } from "./game/nerd-stats";
+import {
+  saveCameraPreferences,
+  savedPreference,
+  savePreference,
+  startingCamera,
+} from "./game/player-preferences";
+import { debugPage, isExtraLevel } from "./game/map-options";
+import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
-import { afterPaint, nextPrepareStep } from "./game/task-yield";
+import { PREPARE_BUDGET, afterPaint, nextPrepareStep } from "./game/task-yield";
 import { startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
-/** Pipelines compiled per preparation call; the menu stays responsive between calls. */
-const PREPARE_BUDGET = 4;
-/** How often the loop asks the renderer whether the GPU reported an error. */
-const ERROR_CHECK_EVERY_FRAMES = 30;
 /** `window.sloppy.exactResolution()` renders at this size whatever the window. */
 const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
 
@@ -57,7 +59,7 @@ export async function prepareGame(
       seed,
       assetBase: import.meta.env.BASE_URL,
       map: choices.mapMode,
-      extraLevels: showsExtraLevels(location.search) || isExtraLevel(choices.mapMode),
+      extraLevels: debugPage(location.search) || isExtraLevel(choices.mapMode),
       difficulty: choices.difficulty,
       humanKind: choices.humanKind,
       humanTeam: choices.humanTeam,
@@ -159,7 +161,7 @@ export async function prepareGame(
   let hud: HudState | undefined;
   let hudDt = 0;
   const readHud = () => (hud = JSON.parse(game.hud_json()) as HudState);
-  const stats = nerdStatsShown(location.search)
+  const stats = debugPage(location.search)
     ? new NerdStats(
         root,
         () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
@@ -187,30 +189,19 @@ export async function prepareGame(
     }
     return audioSystem;
   };
-  const settings = (key: string, value: number) => {
+  const settings = (key: "volume" | "tank-speed" | "bullet-speed", value: number) => {
     if (key === "tank-speed" || key === "bullet-speed") {
       value = game.set_speed(key, value);
     }
-    try {
-      localStorage.setItem("sloppy-" + key, String(value));
-    } catch {
-      /* Session-only preference. */
-    }
+    savePreference(key, String(value));
     if (key === "volume") {
       volume = value;
       audioSystem?.volume(value);
     }
   };
-  const saved = (key: string, fallback: string) => {
-    try {
-      return Number(localStorage.getItem("sloppy-" + key) ?? fallback);
-    } catch {
-      return Number(fallback);
-    }
-  };
-  settings("volume", saved("volume", ".6"));
+  settings("volume", savedVolume());
   for (const key of ["tank-speed", "bullet-speed"] as const) {
-    settings(key, saved(key, "1"));
+    settings(key, Number(savedPreference(key) ?? 1));
   }
 
   // Whether the last frame steered in first person (toggling the view sets it too).
@@ -372,14 +363,7 @@ export async function prepareGame(
   const touchControls = new TouchModeController(
     root,
     controls,
-    {
-      get human() {
-        return { mineCooldown: hud?.human.mineCooldown ?? 0 };
-      },
-      get match() {
-        return { phase };
-      },
-    },
+    () => hud?.human.mineCooldown ?? 0,
     zoom,
   );
   let exactResolution = false;
@@ -425,12 +409,7 @@ export async function prepareGame(
         if (input[INPUT.zoom] !== 0 || input[INPUT.toggleView] !== 0) {
           saveCameraPreferences(game);
         }
-        if (counters.frames % ERROR_CHECK_EVERY_FRAMES === 0) {
-          const error = game.error();
-          if (error) {
-            throw new Error(error);
-          }
-        }
+        throwGpuError(game, counters.frames);
       } catch (error) {
         fail(error);
         return;

@@ -46,7 +46,6 @@
         game.debug_set_autoplay(false);
         draw(game, 1 / 60);
         const human = read.state(game).human;
-        let replacements = 0;
         const shown = (id) => read.view(game).tanks.find((tank) => tank.id === id);
         for (let kill = 0; kill < 120; kill++) {
           const victim = read.state(game).tanks.find((t) => !t.human && t.alive);
@@ -58,7 +57,6 @@
           check(!shown(victim.id).shown, "Destroyed tank hidden before replacement");
           game.debug_set_sim(JSON.stringify({ reinforcementDelay: 0 }));
           game.debug_step(1, 0, 0);
-          replacements++;
           draw(game, 1 / 60);
           // A repeated still frame (no time passes, nothing expires) adds no views.
           const instances = read.stats(game).instances;
@@ -82,7 +80,7 @@
           check(state.match.phase === "playing", "No kill-count victory");
         }
         const kills = read.state(game).human.kills;
-        check(replacements === 120 && kills === 120, `All kills counted (${kills})`);
+        check(kills === 120, `All kills counted (${kills})`);
         game.debug_set_sim(JSON.stringify({ match: { time: 0.001 } }));
         game.debug_step(1, 0, 0);
         const ended = read.state(game);

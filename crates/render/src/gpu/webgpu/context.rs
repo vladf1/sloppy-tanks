@@ -43,8 +43,6 @@ impl Gpu {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
                 ..Default::default()
             })
             .await
@@ -52,7 +50,6 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Sloppy Tanks renderer"),
-                required_limits: wgpu::Limits::default(),
                 ..Default::default()
             })
             .await
@@ -71,25 +68,15 @@ impl Gpu {
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
             validation.set(format!("{api} error: {error}"));
         }));
-        // Every WebGPU canvas takes rgba8unorm, so WebGPU never fails here, once it has
-        // claimed the canvas; the page could not fall back on it any more.
+        // Every WebGPU canvas offers rgba8unorm and bgra8unorm (wgpu's browser backend
+        // lists both), so this never fails once WebGPU has claimed the canvas, where
+        // the page could no longer fall back.
         let mut config = surface
             .get_default_config(&adapter, width, height)
-            .unwrap_or_else(|| wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                color_space: Default::default(),
-                width,
-                height,
-                present_mode: wgpu::PresentMode::Fifo,
-                desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
-                view_formats: vec![],
-            });
+            .expect("a WebGPU canvas offers rgba8unorm and bgra8unorm");
         // The output pass encodes sRGB itself (Three's sRGBTransferOETF), so the
         // canvas keeps its preferred non-sRGB format.
         config.format = config.format.remove_srgb_suffix();
-        config.view_formats = vec![];
         config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
         surface.configure(&device, &config);
         let gpu = Self {
@@ -119,7 +106,8 @@ pub struct ColorTarget {
     pub resolved_view: wgpu::TextureView,
 }
 
-fn attachment(
+/// A single-level 2D texture.
+pub(super) fn texture_2d(
     device: &wgpu::Device,
     label: &str,
     width: u32,
@@ -145,33 +133,17 @@ fn attachment(
 }
 
 impl ColorTarget {
-    pub fn new(device: &wgpu::Device, label: &str, width: u32, height: u32, samples: u32) -> Self {
-        let color = attachment(
-            device,
-            label,
-            width,
-            height,
-            HDR_FORMAT,
-            samples,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        );
-        let depth = attachment(
-            device,
-            label,
-            width,
-            height,
-            DEPTH_FORMAT,
-            samples,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        );
-        let resolved = attachment(
-            device,
-            label,
-            width,
-            height,
+    pub fn new(device: &wgpu::Device, label: &str, width: u32, height: u32) -> Self {
+        let texture = |format, samples, usage| {
+            texture_2d(device, label, width, height, format, samples, usage)
+        };
+        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment);
+        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, attachment);
+        let resolved = texture(
             HDR_FORMAT,
             1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         Self {
             color_view: color.create_view(&Default::default()),

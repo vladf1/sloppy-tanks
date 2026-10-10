@@ -41,10 +41,8 @@ jobs:
         with:
           cargo-cache: site
           wasm-bindgen: "true"
-      - if: ${{ !inputs.deploy-base }}
-        run: pnpm run check:site
-      - if: inputs.deploy-base
-        run: pnpm run check:site
+      # Pull requests have no inputs, so these are empty, which every reader treats as unset.
+      - run: pnpm run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
           VITE_MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}

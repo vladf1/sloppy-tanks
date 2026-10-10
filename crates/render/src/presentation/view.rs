@@ -6,11 +6,13 @@ use std::collections::{HashMap, VecDeque};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::{DMat4, DVec3, Mat4, Quat, Vec3};
+use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
+use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, custom_floor, custom_spawn_pads, flags_model,
-    part, pickup_cube, tank_model, tank_visual_muzzle, tree_foliage, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, create_arena_floor,
+    create_spawn_pads, flags_model, part, pickup_cube, tank_model, timber_part_model,
+    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -19,6 +21,7 @@ use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
+use sloppy_core::sim::tank_dimensions::tank_visual_muzzle;
 use sloppy_core::sim::timber_layout::{TimberPart, TimberWall, timber_parts};
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
@@ -27,16 +30,13 @@ use sloppy_core::sim::{
     VehicleKind, WreckPart,
 };
 
+use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
-use super::fragment_counts::FragmentCounts;
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
-use super::hud::{HealthColor, health_bar_state, protection_meters, spawn_pulse};
-use super::model_catalog::{
-    self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_damage_stage, cover_key,
-    tree_branch_stage,
-};
+use super::hud::{health_bar_state, protection_meters, spawn_pulse};
+use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
 use super::models::{self as own, joint};
-use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, quat, vec3};
+use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, lerp, quat, vec3};
 use super::preparation::Preparation;
 use super::suspension::TankSuspension;
 use super::theme::{
@@ -44,22 +44,16 @@ use super::theme::{
     theme_look,
 };
 use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT};
-use super::{CosmeticRandom, PRESENTATION_EFFECTS};
 use crate::color::hex_to_linear;
-use crate::effects::Effects;
 use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
+use crate::effects::{CosmeticRandom, Effects};
 use crate::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PrepareProgress, Renderer, SunShadow,
     WaterSettings,
 };
 
 mod inspect;
-
-pub use inspect::{
-    CoverInspection, FragmentInspection, PickupInspection, ReticleInspection, TankInspection,
-    ViewInspection,
-};
 
 /// Hit shake: render-only recoil when a tank takes damage.
 const HIT_SHAKE: [f64; 4] = [0.12, 0.09, 0.035, 0.045];
@@ -97,17 +91,10 @@ const MAX_DEBRIS_MARKS: usize = 8;
 const DEBRIS_MARK_SIZE: f64 = 0.8;
 /// Debris sinks by its height plus this margin while it fades.
 const SINK_MARGIN: f32 = 0.03;
-/// Harbor water plane edge and heights come from `WaterSettings`.
+/// An extra level's yard floor sits just above the ground plane, its outer apron
+/// just below.
 const CUSTOM_FLOOR_Y: f64 = 0.008;
 const CUSTOM_OUTER_FLOOR_Y: f64 = -0.002;
-
-fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    a + (b - a) * t
-}
-
-fn linear(hex: u32) -> [f32; 3] {
-    hex_to_linear(hex)
-}
 
 const WRECK_PARTS: [WreckPart; 5] = [
     WreckPart::Intact,
@@ -115,18 +102,6 @@ const WRECK_PARTS: [WreckPart; 5] = [
     WreckPart::Turret,
     WreckPart::TurretBarrel,
     WreckPart::Barrel,
-];
-
-const PICKUP_KINDS: [PickupKind; 9] = [
-    PickupKind::Spread,
-    PickupKind::Rocket,
-    PickupKind::Ricochet,
-    PickupKind::Piercing,
-    PickupKind::Rapid,
-    PickupKind::Shield,
-    PickupKind::Speed,
-    PickupKind::Repair,
-    PickupKind::Laser,
 ];
 
 const DEBRIS_SHAPES: [FragmentShape; 10] = [
@@ -142,58 +117,29 @@ const DEBRIS_SHAPES: [FragmentShape; 10] = [
     FragmentShape::DrumLid,
 ];
 
+/// World heights of the eight corners of `bounds` under `world`.
+fn corner_heights(bounds: &Aabb, world: &Mat4) -> impl Iterator<Item = f32> {
+    (0..8).map(move |i| {
+        let corner = DVec3::select(
+            BVec3::new(i & 1 != 0, i & 2 != 0, i & 4 != 0),
+            bounds.max,
+            bounds.min,
+        );
+        world.transform_point3(corner.as_vec3()).y
+    })
+}
+
 /// Height of `bounds` under `world`, like `Box3.setFromObject` after a pose.
 fn world_height(bounds: &Aabb, world: &Mat4) -> f32 {
-    let mut low = f32::INFINITY;
-    let mut high = f32::NEG_INFINITY;
-    for i in 0..8 {
-        let corner = Vec3::new(
-            if i & 1 == 0 {
-                bounds.min.x
-            } else {
-                bounds.max.x
-            } as f32,
-            if i & 2 == 0 {
-                bounds.min.y
-            } else {
-                bounds.max.y
-            } as f32,
-            if i & 4 == 0 {
-                bounds.min.z
-            } else {
-                bounds.max.z
-            } as f32,
-        );
-        let y = world.transform_point3(corner).y;
-        low = low.min(y);
-        high = high.max(y);
-    }
+    let (low, high) = corner_heights(bounds, world)
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), y| {
+            (low.min(y), high.max(y))
+        });
     high - low
 }
 
 fn lowest(bounds: &Aabb, world: &Mat4) -> f32 {
-    (0..8)
-        .map(|i| {
-            let corner = Vec3::new(
-                if i & 1 == 0 {
-                    bounds.min.x
-                } else {
-                    bounds.max.x
-                } as f32,
-                if i & 2 == 0 {
-                    bounds.min.y
-                } else {
-                    bounds.max.y
-                } as f32,
-                if i & 4 == 0 {
-                    bounds.min.z
-                } else {
-                    bounds.max.z
-                } as f32,
-            );
-            world.transform_point3(corner).y
-        })
-        .fold(f32::INFINITY, f32::min)
+    corner_heights(bounds, world).fold(f32::INFINITY, f32::min)
 }
 
 // ------------------------------------------------------------------ shared models
@@ -212,7 +158,7 @@ struct BarModel {
     model: ModelId,
     fills: [JointBasis; 3],
     ranks: [usize; 3],
-    shield: JointBasis,
+    shield: usize,
     shield_fill: JointBasis,
     spawn: JointBasis,
     spawn_fill: JointBasis,
@@ -292,7 +238,7 @@ impl Library {
                 model,
                 fills: joint::BAR_FILLS.map(|name| basis(renderer, model, &source, name)),
                 ranks: joint::BAR_RANKS.map(|name| joint_index(renderer, model, name)),
-                shield: basis(renderer, model, &source, joint::BAR_SHIELD),
+                shield: joint_index(renderer, model, joint::BAR_SHIELD),
                 shield_fill: basis(renderer, model, &source, joint::BAR_SHIELD_FILL),
                 spawn: basis(renderer, model, &source, joint::BAR_SPAWN),
                 spawn_fill: basis(renderer, model, &source, joint::BAR_SPAWN_FILL),
@@ -342,8 +288,7 @@ impl Library {
 
     fn debris(&mut self, renderer: &mut Renderer, shape: FragmentShape) -> &BoundedModel {
         self.debris.entry(shape).or_insert_with(|| {
-            let source = own::debris_piece(shape)
-                .unwrap_or_else(|| model_catalog::surface_debris_piece(shape));
+            let source = own::debris_piece(shape);
             BoundedModel {
                 model: renderer.add_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),
@@ -560,12 +505,10 @@ pub struct Presentation {
     hit_confirm_until: f64,
     spawn_cue: f64,
     player_was_alive: bool,
-    samples: Vec<InstanceId>,
     sample_models: Vec<ModelId>,
     random: CosmeticRandom,
     /// Canvas-drawn and baked textures the scenery and cover sample.
     textures: GeneratedTextures,
-    scratch: Vec<u32>,
     /// Ids present this frame, for dropping views of departed entities.
     live: std::collections::HashSet<u32>,
     preparation: Preparation,
@@ -582,12 +525,13 @@ impl Presentation {
             let instance = renderer
                 .add_instance(model, Mat4::IDENTITY, Lifetime::Shared)
                 .expect("model just added");
-            // World-space HUD never appears in water reflections.
-            renderer.set_reflected(instance, false);
             renderer.set_visible(instance, false);
             (model, instance)
         };
         let (reticle_model, reticle) = hud(&mut renderer, &own::reticle());
+        // The reticle never appears in water reflections; the player ring and spawn
+        // pulse on the ground do.
+        renderer.set_reflected(reticle, false);
         let reticle = ReticleModel {
             instance: reticle,
             ready: joint_index(&renderer, reticle_model, joint::RETICLE_READY),
@@ -595,10 +539,8 @@ impl Presentation {
             confirmed: joint_index(&renderer, reticle_model, joint::RETICLE_CONFIRMED),
         };
         let (_, player_ring) = hud(&mut renderer, &own::player_ring());
-        renderer.set_reflected(player_ring, true);
         let (_, pulse) = hud(&mut renderer, &own::spawn_pulse());
-        renderer.set_reflected(pulse, true);
-        let mut random = CosmeticRandom::new(seed);
+        let mut random = CosmeticRandom::seeded(seed);
         let flags = Flags::new(&mut renderer, &mut random);
         let mut presentation = Self {
             renderer,
@@ -630,11 +572,9 @@ impl Presentation {
             hit_confirm_until: 0.0,
             spawn_cue: 0.0,
             player_was_alive: false,
-            samples: Vec::new(),
             sample_models: Vec::new(),
             random,
             textures: GeneratedTextures::default(),
-            scratch: Vec::new(),
             live: std::collections::HashSet::new(),
             preparation: Preparation::default(),
         };
@@ -736,7 +676,7 @@ impl Presentation {
     fn custom_pads(&mut self, scale: f64) -> InstanceId {
         *self.pads.entry(scale.to_bits()).or_insert_with(|| {
             self.renderer
-                .add_scenery(&custom_spawn_pads(scale), Lifetime::Shared)
+                .add_scenery(&create_spawn_pads(scale), Lifetime::Shared)
         })
     }
 
@@ -749,7 +689,7 @@ impl Presentation {
         let key = format!("{kind:?}:{extent}:{y}");
         *self.floors.entry(key).or_insert_with(|| {
             self.renderer
-                .add_scenery(&custom_floor(kind, Some(extent), y), Lifetime::Shared)
+                .add_scenery(&create_arena_floor(kind, extent, y), Lifetime::Shared)
         })
     }
 
@@ -828,14 +768,13 @@ impl Presentation {
         self.mines.clear();
         self.pickup_effects.clear();
         self.branches.clear();
-        self.samples.clear();
         self.sample_models.clear();
         self.renderer.reset_round();
         self.apply_theme(state);
         self.hit_until.clear();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
-        self.effects.reset(&mut self.renderer, state);
+        self.effects.reset(&mut self.renderer);
         self.add_covers(&state.covers);
         for tank in &state.tanks {
             self.add_tank(tank);
@@ -849,9 +788,9 @@ impl Presentation {
     // -------------------------------------------------------------- prepare
 
     /// Register one model per first-use look this round can show (every wreck
-    /// part, damaged cargo and timber stages, timber beams, falling crowns and
-    /// boughs, mines, pickup glows, debris pieces), so `prepare_step` compiles
-    /// their pipelines before combat instead of mid-fight.
+    /// part, damaged cargo and timber stages, timber beams, mines, pickup glows,
+    /// debris pieces), so `prepare_step` compiles their pipelines before combat
+    /// instead of mid-fight.
     pub fn begin_prepare(&mut self, state: &RenderState) {
         self.preparation = Preparation::default();
         for kind in VehicleKind::ALL {
@@ -864,7 +803,7 @@ impl Presentation {
                 }
             }
         }
-        for kind in PICKUP_KINDS {
+        for kind in PickupKind::ALL {
             self.library.pickup(&mut self.renderer, kind);
         }
         for shape in DEBRIS_SHAPES {
@@ -898,7 +837,7 @@ impl Presentation {
                     join: cover.timber_join,
                 };
                 for part in timber_parts(&wall, 0) {
-                    let node = model_catalog::timber_part_model(&part);
+                    let node = timber_part_model(&part);
                     self.sample_models
                         .push(self.renderer.add_model(&node, Lifetime::Round));
                 }
@@ -906,7 +845,6 @@ impl Presentation {
             // Falling crowns and boughs reuse the live tree's materials, whose
             // faded variants every movable model registers up front.
         }
-        self.effects.warm_up_samples(&mut self.renderer);
     }
 
     /// Create up to `budget` pipelines whose background compile has finished and queue
@@ -932,9 +870,6 @@ impl Presentation {
             self.renderer.warm_up()?;
             for model in self.sample_models.drain(..) {
                 self.renderer.remove_model(model);
-            }
-            for instance in self.samples.drain(..) {
-                self.renderer.remove_instance(instance);
             }
             self.renderer.await_gpu();
         }
@@ -1037,7 +972,7 @@ impl Presentation {
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
-            let CoverModel { mut root, tree, .. } = model_catalog::cover_model(&built, stage);
+            let CoverModel { mut root, tree } = model_catalog::cover_model(&built, stage);
             if movable {
                 // The body's centre is half the cover's height up; drop the parts.
                 let drop = cover.h / (2.0 * root.scale.y);
@@ -1151,9 +1086,7 @@ impl Presentation {
         let mut built = Vec::with_capacity(covers.len());
         for cover in covers {
             let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-            let CoverModel {
-                root: model, tree, ..
-            } = model_catalog::cover_model(cover, stage);
+            let CoverModel { root: model, tree } = model_catalog::cover_model(cover, stage);
             self.textures.request_scenery(&mut self.renderer, &model);
             let mut joint = Node::group(combined_joint(cover.id));
             joint.children.push(model.clone());
@@ -1241,7 +1174,7 @@ impl Presentation {
         ) {
             return;
         }
-        self.effects.event(event);
+        self.effects.systems.event(event);
         if event.cover_kind == Some(CoverKind::Tree) {
             self.tree_event(event);
         }
@@ -1256,15 +1189,11 @@ impl Presentation {
         {
             self.hit_until.remove(&id);
         }
-        if event.kind == SimEventType::Hurt {
-            let Some(id) = event.id.filter(|_| event.size.unwrap_or(0.0) > 0.0) else {
-                return;
-            };
+        if event.kind == SimEventType::Hurt
+            && let Some(id) = event.id.filter(|_| event.size.unwrap_or(0.0) > 0.0)
+        {
             self.hit_until
                 .insert(id, self.time + FEEDBACK.recoil_seconds);
-        }
-        if event.kind == SimEventType::Respawn {
-            return;
         }
         if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
@@ -1296,7 +1225,7 @@ impl Presentation {
         let Some(tree) = tree else {
             return;
         };
-        self.effects.shed_leaves(event, &tree.leaves);
+        self.effects.systems.shed_leaves(event, &tree.leaves);
         if event.kind == SimEventType::Impact {
             // The crown leans away from the shell first.
             let push = Vec3::new(
@@ -1345,9 +1274,7 @@ impl Presentation {
             DEBRIS_MARK_SIZE,
         );
         part.marks.push(mark);
-        let node = model_catalog::timber_part_model(part);
-        let bounds = node_bounds(&node, DMat4::IDENTITY);
-        let model = self.renderer.add_model(&node, Lifetime::Round);
+        let (model, look) = owned_look(&mut self.renderer, &timber_part_model(part));
         let Some(instance) = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
@@ -1360,7 +1287,7 @@ impl Presentation {
             self.renderer.remove_model(old);
         }
         view.instance = instance;
-        view.look = FragmentLook::Owned(model, bounds);
+        view.look = look;
         // The next fragment update poses the new instance.
         let (position, rotation) = view.pose;
         self.renderer.set_transform(
@@ -1384,7 +1311,7 @@ impl Presentation {
             self.renderer.remove_instance(oldest.glow);
         }
         let (ring_model, glow_model) = self.library.effect_models(&mut self.renderer);
-        let tint = linear(event.color.unwrap_or(0xffffff));
+        let tint = hex_to_linear(event.color.unwrap_or(0xffffff));
         let (x, z) = (event.x as f32, event.z as f32);
         let ring = self
             .renderer
@@ -1424,15 +1351,13 @@ impl Presentation {
         overview: bool,
     ) -> Result<(), String> {
         self.time += dt;
-        if self.textures.busy() {
-            self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
-        }
+        self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
         self.flags
             .update(&mut self.renderer, self.time, &mut self.random);
         self.update_scenery();
         self.update_pickup_effects(state, alpha, dt);
         self.update_camera(state, alpha, dt, overview);
-        self.update_player_indicators(state, alpha, dt, overview);
+        self.update_player_indicators(state, dt, overview);
         self.update_tanks(state, alpha, dt);
         self.place_first_person_eye(state);
         self.update_branches(dt);
@@ -1440,13 +1365,8 @@ impl Presentation {
         self.update_pickups(state, dt);
         self.update_fragments(state);
         self.update_mines(state);
-        self.effects.update(
-            &mut self.renderer,
-            state,
-            alpha as f32,
-            dt as f32,
-            self.time,
-        );
+        self.effects
+            .update(&mut self.renderer, state, alpha, dt, self.time);
         // A destroyed player in first person keeps the view without aiming, and
         // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;
@@ -1483,13 +1403,7 @@ impl Presentation {
                 position: dvec3(tank.position),
                 aim: tank.aim,
             },
-            None => ViewerPose {
-                kind: VehicleKind::Balanced,
-                alive: false,
-                previous: DVec3::ZERO,
-                position: DVec3::ZERO,
-                aim: 0.0,
-            },
+            None => ViewerPose::default(),
         }
     }
 
@@ -1499,13 +1413,7 @@ impl Presentation {
             .update(&Self::viewer_pose(state), alpha, dt, overview, has_model);
     }
 
-    fn update_player_indicators(
-        &mut self,
-        state: &RenderState,
-        alpha: f64,
-        dt: f64,
-        overview: bool,
-    ) {
+    fn update_player_indicators(&mut self, state: &RenderState, dt: f64, overview: bool) {
         let viewer = Self::viewer_pose(state);
         let cooldown = state.viewer().map_or(0.0, |tank| tank.cooldown);
         let confirmed = self.hit_confirm_until > self.time;
@@ -1543,16 +1451,10 @@ impl Presentation {
         self.player_was_alive = viewer.alive;
         self.spawn_cue = (self.spawn_cue - dt).max(0.0);
         let ring_visible = viewer.alive && !overview && !in_first_person;
-        let position = if viewer.alive {
-            viewer.position
-        } else {
-            viewer.previous
-        };
-        let at = Vec3::new(
-            lerp(viewer.previous.x, position.x, alpha) as f32,
-            0.0,
-            lerp(viewer.previous.z, position.z, alpha) as f32,
-        );
+        // The camera rig has just interpolated the viewer's pose (the overview, where
+        // it follows nothing, hides the ring).
+        let follow = self.rig.follow;
+        let at = Vec3::new(follow.x as f32, 0.0, follow.z as f32);
         let vehicle_scale = vehicle(viewer.kind).scale as f32;
         self.renderer.set_visible(self.player_ring, ring_visible);
         // The ring grows with the vehicle but keeps its heights above the spawn pads.
@@ -1595,21 +1497,8 @@ impl Presentation {
             if rebuild {
                 self.add_tank(tank);
             }
-            let (model_joints, bar_joints) = {
-                let model = &self.library.tanks[&(tank.kind, tank.team)];
-                let bar = &self.library.bars[&tank.team];
-                (
-                    (model.hull, model.turret, model.barrel, model.track),
-                    (
-                        bar.fills,
-                        bar.ranks,
-                        bar.shield,
-                        bar.shield_fill,
-                        bar.spawn,
-                        bar.spawn_fill,
-                    ),
-                )
-            };
+            let model = &self.library.tanks[&(tank.kind, tank.team)];
+            let bar = &self.library.bars[&tank.team];
             let view = self.tanks.get_mut(&tank.id).expect("tank view");
             let renderer = &mut self.renderer;
             let viewer = tank.id == state.viewer_id;
@@ -1617,38 +1506,34 @@ impl Presentation {
             renderer.set_visible(view.instance, tank.alive);
             // The camera flies through the player's bar on the way into the turret.
             renderer.set_visible(view.bar, tank.alive && !(viewer && seat_blend > 0.0));
-            let (fills, ranks, shield, shield_fill, spawn, spawn_fill) = bar_joints;
             let meters =
                 protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
-            renderer.set_node_visible(view.bar, shield.index, meters.shield_visible);
+            renderer.set_node_visible(view.bar, bar.shield, meters.shield_visible);
             renderer.set_node_transform(
                 view.bar,
-                shield.index,
-                Some(shield.with_position(Vec3::new(
-                    shield.position.x,
-                    meters.shield_y as f32,
-                    shield.position.z,
-                ))),
+                bar.shield_fill.index,
+                Some(
+                    bar.shield_fill
+                        .with_scale(Vec3::new(meters.shield_fill as f32, 1.0, 1.0)),
+                ),
             );
+            renderer.set_node_visible(view.bar, bar.spawn.index, meters.spawn_visible);
             renderer.set_node_transform(
                 view.bar,
-                shield_fill.index,
-                Some(shield_fill.with_scale(Vec3::new(meters.shield_fill as f32, 1.0, 1.0))),
-            );
-            renderer.set_node_visible(view.bar, spawn.index, meters.spawn_visible);
-            renderer.set_node_transform(
-                view.bar,
-                spawn.index,
-                Some(spawn.with_position(Vec3::new(
-                    spawn.position.x,
+                bar.spawn.index,
+                Some(bar.spawn.with_position(Vec3::new(
+                    bar.spawn.position.x,
                     meters.spawn_y as f32,
-                    spawn.position.z,
+                    bar.spawn.position.z,
                 ))),
             );
             renderer.set_node_transform(
                 view.bar,
-                spawn_fill.index,
-                Some(spawn_fill.with_scale(Vec3::new(meters.spawn_fill as f32, 1.0, 1.0))),
+                bar.spawn_fill.index,
+                Some(
+                    bar.spawn_fill
+                        .with_scale(Vec3::new(meters.spawn_fill as f32, 1.0, 1.0)),
+                ),
             );
             if !tank.alive {
                 self.hit_until.remove(&tank.id);
@@ -1691,7 +1576,8 @@ impl Presentation {
             renderer.set_transform(view.instance, world);
             // The turret rides the hull's tilted ring, then turns to its own aim;
             // the barrel inherits the tilt and keeps its recoil.
-            let (hull, turret, barrel, track) = model_joints;
+            let (hull, turret, barrel, track) =
+                (&model.hull, &model.turret, &model.barrel, &model.track);
             let hull_rotation = euler_yxz(
                 suspension.pitch.angle as f32,
                 tank.heading as f32,
@@ -1737,12 +1623,8 @@ impl Presentation {
             );
             renderer.set_transform(view.bar, bar_world);
             let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
-            let tone = match health.tone {
-                HealthColor::Team => 0,
-                HealthColor::Warning => 1,
-                HealthColor::Critical => 2,
-            };
-            for (index, fill) in fills.iter().enumerate() {
+            let tone = health.tone as usize;
+            for (index, fill) in bar.fills.iter().enumerate() {
                 let shown = index == tone && health.ratio > 0.0;
                 renderer.set_node_visible(view.bar, fill.index, shown);
                 if shown {
@@ -1754,21 +1636,16 @@ impl Presentation {
                 }
             }
             let rank = rank_index(tank.xp);
-            for (i, joint) in ranks.iter().enumerate() {
+            for (i, joint) in bar.ranks.iter().enumerate() {
                 renderer.set_node_visible(view.bar, *joint, i < rank);
             }
         }
         // Tanks that left the roster (never in single player, but in rooms).
-        self.scratch.clear();
         self.live.clear();
         self.live.extend(state.tanks.iter().map(|tank| tank.id));
-        self.scratch
-            .extend(self.tanks.keys().filter(|id| !self.live.contains(*id)));
-        for id in self.scratch.drain(..) {
-            if let Some(view) = self.tanks.remove(&id) {
-                self.renderer.remove_instance(view.instance);
-                self.renderer.remove_instance(view.bar);
-            }
+        for (_, view) in self.tanks.extract_if(|id, _| !self.live.contains(id)) {
+            self.renderer.remove_instance(view.instance);
+            self.renderer.remove_instance(view.bar);
         }
     }
 
@@ -1930,7 +1807,7 @@ impl Presentation {
         let Some(source) = entry
             .tree
             .as_ref()
-            .and_then(|tree| entry.source.find(tree.crown))
+            .and_then(|_| entry.source.find(tree_part::CROWN))
             .and_then(|crown| crown.children.get(crown_child))
         else {
             return;
@@ -1985,16 +1862,13 @@ impl Presentation {
 
     fn update_branches(&mut self, dt: f64) {
         let dt32 = dt as f32;
-        let mut index = 0;
-        while index < self.branches.len() {
-            let branch = &mut self.branches[index];
+        let renderer = &mut self.renderer;
+        self.branches.retain_mut(|branch| {
             branch.life -= dt;
             if branch.life <= 0.0 {
-                let branch = self.branches.remove(index).expect("in range");
-                self.renderer.remove_model(branch.model);
-                continue;
+                renderer.remove_model(branch.model);
+                return false;
             }
-            index += 1;
             if !branch.landed {
                 branch.velocity.y -= (BRANCH_GRAVITY * dt) as f32;
                 branch.velocity *= (-BRANCH_DRAG * dt32).exp();
@@ -2024,7 +1898,7 @@ impl Presentation {
             if branch.landed {
                 branch.position.y = branch.resting_y - cleanup * branch.sink;
             }
-            self.renderer.set_transform(
+            renderer.set_transform(
                 branch.instance,
                 Mat4::from_scale_rotation_translation(
                     branch.scale,
@@ -2032,7 +1906,8 @@ impl Presentation {
                     branch.position,
                 ),
             );
-        }
+            true
+        });
     }
 
     fn update_pickups(&mut self, state: &RenderState, dt: f64) {
@@ -2043,17 +1918,12 @@ impl Presentation {
             1.0
         } as f32;
         // Pickups that left the arena (rules and fixtures may replace them).
-        self.scratch.clear();
         self.live.clear();
         self.live
             .extend(state.pickups.iter().map(|pickup| pickup.id));
-        self.scratch
-            .extend(self.pickups.keys().filter(|id| !self.live.contains(*id)));
-        for id in self.scratch.drain(..) {
-            if let Some(view) = self.pickups.remove(&id) {
-                self.renderer.remove_instance(view.base);
-                self.renderer.remove_instance(view.gem);
-            }
+        for (_, view) in self.pickups.extract_if(|id, _| !self.live.contains(id)) {
+            self.renderer.remove_instance(view.base);
+            self.renderer.remove_instance(view.gem);
         }
         for pickup in &state.pickups {
             if !self.pickups.contains_key(&pickup.id) {
@@ -2093,20 +1963,16 @@ impl Presentation {
     }
 
     fn update_fragments(&mut self, state: &RenderState) {
-        self.scratch.clear();
         self.live.clear();
         self.live.extend(state.fragments.iter().map(|f| f.id));
-        self.scratch
-            .extend(self.fragments.keys().filter(|id| !self.live.contains(*id)));
-        for id in self.scratch.drain(..) {
-            if let Some(view) = self.fragments.remove(&id) {
-                self.renderer.remove_instance(view.instance);
-                if let FragmentLook::Owned(model, _) = view.look {
-                    self.renderer.remove_model(model);
-                }
+        for (_, view) in self.fragments.extract_if(|id, _| !self.live.contains(id)) {
+            self.renderer.remove_instance(view.instance);
+            if let FragmentLook::Owned(model, _) = view.look {
+                self.renderer.remove_model(model);
             }
         }
-        let mut pieces = FragmentCounts::default();
+        // Pieces drawn so far this frame, per shape.
+        let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
             if !self.fragments.contains_key(&fragment.id) {
                 match self.fragment_view(fragment) {
@@ -2124,7 +1990,8 @@ impl Presentation {
             match view.look {
                 FragmentLook::Piece => {
                     let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
-                    let count = pieces.add(shape);
+                    pieces[shape as usize] += 1;
+                    let count = pieces[shape as usize];
                     // The piece pool is sized for the largest debris budget.
                     self.renderer
                         .set_visible(view.instance, count <= FRAGMENT_CAPACITY);
@@ -2146,7 +2013,7 @@ impl Presentation {
                         Mat4::from_scale_rotation_translation(scale, rotation, position),
                     );
                     self.renderer
-                        .set_tint(view.instance, linear(fragment.color));
+                        .set_tint(view.instance, hex_to_linear(fragment.color));
                 }
                 FragmentLook::Wreck(..) | FragmentLook::Owned(..) => {
                     let (scale, bounds) = match &view.look {
@@ -2190,15 +2057,10 @@ impl Presentation {
     /// a watchtower piece or a falling crown.
     fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
-            let node = model_catalog::timber_part_model(part);
-            let bounds = node_bounds(&node, DMat4::IDENTITY);
-            let model = self.renderer.add_model(&node, Lifetime::Round);
-            (model, FragmentLook::Owned(model, bounds))
+            owned_look(&mut self.renderer, &timber_part_model(part))
         } else if let Some(piece) = fragment.tower_piece {
-            let node = model_catalog::tower_piece_model(piece, fragment.color);
-            let bounds = node_bounds(&node, DMat4::IDENTITY);
-            let model = self.renderer.add_model(&node, Lifetime::Round);
-            (model, FragmentLook::Owned(model, bounds))
+            let node = tower_piece_model(piece, fragment.color);
+            owned_look(&mut self.renderer, &node)
         } else if let Some(tree) = fragment.tree_cover_id {
             let view = self.covers.get(&tree)?;
             let entry = self.cover_models.get(&view.key)?;
@@ -2209,15 +2071,14 @@ impl Presentation {
                     .map(|branch| branch.crown_child)
                     .collect()
             });
+            // Only a tree's model has the crown.
             let crown = crown_fragment(
                 &entry.source,
-                entry.tree.as_ref()?.crown,
+                tree_part::CROWN,
                 fragment.tree_center_y.unwrap_or(0.0),
                 &shed,
             )?;
-            let bounds = node_bounds(&crown, DMat4::IDENTITY);
-            let model = self.renderer.add_model(&crown, Lifetime::Round);
-            (model, FragmentLook::Owned(model, bounds))
+            owned_look(&mut self.renderer, &crown)
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
             let part = fragment.part.unwrap_or(WreckPart::Hull);
@@ -2245,15 +2106,10 @@ impl Presentation {
     }
 
     fn update_mines(&mut self, state: &RenderState) {
-        self.scratch.clear();
         self.live.clear();
         self.live.extend(state.mines.iter().map(|mine| mine.id));
-        self.scratch
-            .extend(self.mines.keys().filter(|id| !self.live.contains(*id)));
-        for id in self.scratch.drain(..) {
-            if let Some(view) = self.mines.remove(&id) {
-                self.renderer.remove_instance(view.instance);
-            }
+        for (_, view) in self.mines.extract_if(|id, _| !self.live.contains(id)) {
+            self.renderer.remove_instance(view.instance);
         }
         let blink = (self.time * 10.0).sin() > 0.0;
         self.pad_decks.sync(state);
@@ -2312,13 +2168,13 @@ fn tree_view(
             .find(|&index| nodes[index].name == name)
             .unwrap_or_else(|| panic!("tree joint {name}"))
     };
-    let crown = find(parts.crown);
+    let crown = find(tree_part::CROWN);
     let joints = range
         .clone()
         .filter(|&index| TreeParts::is_branch(&nodes[index].name));
     TreeView {
         crown,
-        cut: find(parts.cut_surface),
+        cut: find(tree_part::CUT_SURFACE),
         branches: parts
             .branches
             .iter()
@@ -2351,6 +2207,13 @@ fn age_materials(node: &mut Node) {
     for child in &mut node.children {
         age_materials(child);
     }
+}
+
+/// A debris look with a model of its own, built for this round.
+fn owned_look(renderer: &mut Renderer, node: &Node) -> (ModelId, FragmentLook) {
+    let bounds = node_bounds(node, DMat4::IDENTITY);
+    let model = renderer.add_model(node, Lifetime::Round);
+    (model, FragmentLook::Owned(model, bounds))
 }
 
 /// The falling crown of a felled tree: its trunk-and-crown subtree, lowered so
@@ -2386,8 +2249,9 @@ fn environment(look: &ThemeLook) -> Environment {
         sun_intensity: look.sun_intensity,
         sun_position: look.sun_position,
         sun_target: Vec3::ZERO,
-        exposure: look.exposure,
-        reflections: look.reflections,
+        exposure: 1.0,
+        // Every theme reflects its sky at full strength (see `environment_radiance`).
+        reflections: 1.0,
     }
 }
 
@@ -2418,7 +2282,7 @@ impl Flags {
             self.wind_duration = 3.0 + random.next_f64() * 4.0;
         }
         let progress = ((time - self.wind_start) / self.wind_duration).max(0.0);
-        let blend = progress * progress * (3.0 - 2.0 * progress);
+        let blend = smoothstep(progress, 0.0, 1.0);
         let gust = lerp(self.wind_from.0, self.wind_to.0, blend) as f32;
         let direction = lerp(self.wind_from.1, self.wind_to.1, blend);
         let (sin, cos) = direction.sin_cos();

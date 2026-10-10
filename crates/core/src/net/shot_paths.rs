@@ -14,11 +14,10 @@
 //! from the frame's in thousandths, and its position and velocity in millimetres; a launch
 //! adds the team, the weapon, a mask of the heights and thrust it has, and those values.
 
-use super::json::{self, ObjectWriter, POSITION_SCALE};
-use super::protocol::read_team;
-use super::scene_codec::WEAPONS;
-use super::schema::{ReadResult, Record, choice, field, id32, number, number_in, optional};
-use super::wire::{WireReader, put_signed, put_varint, units};
+use super::json::{self, POSITION_SCALE};
+use super::scene_codec::{WEAPONS, index_of, read_index};
+use super::schema::{NUMBER_BOUND, ReadResult};
+use super::wire::{WireReader, put_signed, put_varint, thousandths};
 use crate::sim::data::STEP;
 use crate::sim::math::angle_delta;
 use crate::sim::projectiles::RocketThrust;
@@ -36,11 +35,9 @@ const SPEED_TOLERANCE: f64 = 0.02;
 /// clients refuse state that holds more. Rooms rarely come near it; past it, new shells
 /// fly and hit undrawn until a path ends.
 pub const MAX_LIVE_PATHS: usize = 512;
-/// Latest tick a path may name.
-const MAX_TICK: f64 = 1e9;
 
 /// What a shell keeps for its whole flight.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShotLaunch {
     pub team: Team,
     pub weapon: Weapon,
@@ -96,66 +93,6 @@ impl ShotPath {
             weapon: self.launch.weapon,
             team: self.launch.team,
         }
-    }
-
-    /// `{"id":..,"tick":..,"x":..,"z":..,"vx":..,"vz":..}`, followed for a launch by the
-    /// shell's constant fields.
-    pub fn write(&self, out: &mut String, launch: bool) {
-        let mut writer = ObjectWriter::new(out);
-        writer
-            .int("id", u64::from(self.id))
-            .number("tick", self.tick)
-            .number("x", self.x)
-            .number("z", self.z)
-            .number("vx", self.vx)
-            .number("vz", self.vz);
-        if launch {
-            let launch = &self.launch;
-            writer
-                .int("team", launch.team.index() as u64)
-                .string("weapon", launch.weapon.as_str());
-            if let Some(y) = launch.y {
-                writer.number("y", y);
-            }
-            if let Some(visual) = launch.visual_y {
-                writer.number("visualY", visual);
-            }
-            if let Some(thrust) = launch.thrust {
-                writer
-                    .number("thrust", thrust.acceleration)
-                    .number("topSpeed", thrust.top_speed);
-            }
-        }
-        writer.finish();
-    }
-
-    /// A path record; launch fields come from `launch` when given, else from the record.
-    pub fn read(source: &Record, launch: Option<ShotLaunch>) -> ReadResult<Self> {
-        let launch = match launch {
-            Some(launch) => launch,
-            None => ShotLaunch {
-                team: field(source, "team", read_team)?,
-                weapon: field(source, "weapon", |v| choice(v, &WEAPONS))?,
-                y: field(source, "y", |v| optional(v, number))?,
-                visual_y: field(source, "visualY", |v| optional(v, number))?,
-                thrust: match source.get("thrust") {
-                    None => None,
-                    Some(_) => Some(RocketThrust {
-                        acceleration: field(source, "thrust", |v| number_in(v, 0.0, 1e6, false))?,
-                        top_speed: field(source, "topSpeed", |v| number_in(v, 0.0, 1e6, false))?,
-                    }),
-                },
-            },
-        };
-        Ok(Self {
-            id: field(source, "id", id32)?,
-            tick: field(source, "tick", |v| number_in(v, 0.0, MAX_TICK, false))?,
-            x: field(source, "x", number)?,
-            z: field(source, "z", number)?,
-            vx: field(source, "vx", number)?,
-            vz: field(source, "vz", number)?,
-            launch,
-        })
     }
 
     /// The path a shell starting a sweep at `tick` would be drawn on, rounded for the wire.
@@ -226,27 +163,6 @@ pub enum PathEntry {
     End { id: u32, tick: f64 },
 }
 
-impl PathEntry {
-    pub fn id(&self) -> u32 {
-        match self {
-            PathEntry::Launch(path) | PathEntry::Change(path) => path.id,
-            PathEntry::End { id, .. } => *id,
-        }
-    }
-
-    pub fn write(&self, out: &mut String) {
-        match self {
-            PathEntry::Launch(path) => path.write(out, true),
-            PathEntry::Change(path) => path.write(out, false),
-            PathEntry::End { id, tick } => {
-                let mut writer = ObjectWriter::new(out);
-                writer.int("id", u64::from(*id)).number("end", *tick);
-                writer.finish();
-            }
-        }
-    }
-}
-
 /// The shells in flight on a client, as their current paths. Entries apply in order; a
 /// change or an end needs its shell, a launch a new id.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -267,7 +183,7 @@ impl LivePaths {
         }
         let mut live = Self::default();
         for _ in 0..count {
-            let path = ShotPath::read_binary(reader, None, tick)?;
+            let path = ShotPath::read_binary(reader, tick)?;
             if live.position(path.id).is_some() {
                 return Err("Invalid projectile path".into());
             }
@@ -304,7 +220,7 @@ impl LivePaths {
             let kind = reader.varint()?;
             let entry = match kind {
                 LAUNCH_ENTRY => {
-                    let path = ShotPath::read_binary(reader, None, tick)?;
+                    let path = ShotPath::read_binary(reader, tick)?;
                     if self.position(path.id).is_some() {
                         return Err("Duplicate projectile".into());
                     }
@@ -357,13 +273,9 @@ const HAS_Y: u64 = 1;
 const HAS_VISUAL_Y: u64 = 2;
 const HAS_THRUST: u64 = 4;
 
-fn thousandths(value: f64) -> i64 {
-    units(value, POSITION_SCALE)
-}
-
 fn read_thousandths(reader: &mut WireReader<'_>) -> ReadResult<f64> {
     let value = reader.signed()? as f64 / POSITION_SCALE;
-    if value.abs() <= MAX_TICK {
+    if value.abs() <= NUMBER_BOUND {
         Ok(value)
     } else {
         Err("Invalid number".into())
@@ -393,21 +305,10 @@ impl ShotPath {
         }
         let launch = &self.launch;
         put_varint(out, launch.team.index() as u64);
-        let weapon = WEAPONS
-            .iter()
-            .position(|(_, weapon)| *weapon == launch.weapon)
-            .expect("every weapon has a wire name");
-        put_varint(out, weapon as u64);
-        let mut has = 0;
-        for (present, flag) in [
-            (launch.y.is_some(), HAS_Y),
-            (launch.visual_y.is_some(), HAS_VISUAL_Y),
-            (launch.thrust.is_some(), HAS_THRUST),
-        ] {
-            if present {
-                has |= flag;
-            }
-        }
+        put_varint(out, index_of(&WEAPONS, launch.weapon) as u64);
+        let has = (u64::from(launch.y.is_some()) * HAS_Y)
+            | (u64::from(launch.visual_y.is_some()) * HAS_VISUAL_Y)
+            | (u64::from(launch.thrust.is_some()) * HAS_THRUST);
         put_varint(out, has);
         for value in [launch.y, launch.visual_y].into_iter().flatten() {
             put_signed(out, thousandths(value));
@@ -427,70 +328,51 @@ impl ShotPath {
             z: read_thousandths(reader)?,
             vx: read_thousandths(reader)?,
             vz: read_thousandths(reader)?,
-            launch: ShotLaunch {
-                team: Team::Blue,
-                weapon: Weapon::Standard,
-                y: None,
-                visual_y: None,
-                thrust: None,
-            },
+            launch: ShotLaunch::default(),
         })
     }
 
-    /// A path in launch form, or with `launch` when given.
-    fn read_binary(
-        reader: &mut WireReader<'_>,
-        launch: Option<ShotLaunch>,
-        tick: u64,
-    ) -> ReadResult<Self> {
+    /// A path in launch form.
+    fn read_binary(reader: &mut WireReader<'_>, tick: u64) -> ReadResult<Self> {
         let id = reader.varint32()?;
         let mut path = Self::read_motion(reader, id, tick)?;
-        path.launch = match launch {
-            Some(launch) => launch,
-            None => {
-                let team = match reader.varint()? {
-                    0 => Team::Blue,
-                    1 => Team::Red,
-                    _ => return Err("team: Invalid choice".into()),
-                };
-                let weapon = WEAPONS
-                    .get(reader.varint()? as usize)
-                    .map(|(_, weapon)| *weapon)
-                    .ok_or_else(|| "weapon: Invalid choice".to_string())?;
-                let has = reader.varint()?;
-                if has & !(HAS_Y | HAS_VISUAL_Y | HAS_THRUST) != 0 {
-                    return Err("Invalid projectile path".into());
-                }
-                let mut optional = |flag| -> ReadResult<Option<f64>> {
-                    if has & flag != 0 {
-                        read_thousandths(reader).map(Some)
-                    } else {
-                        Ok(None)
-                    }
-                };
-                let y = optional(HAS_Y)?;
-                let visual_y = optional(HAS_VISUAL_Y)?;
-                let thrust = match (optional(HAS_THRUST)?, optional(HAS_THRUST)?) {
-                    (Some(acceleration), Some(top_speed))
-                        if (0.0..=1e6).contains(&acceleration)
-                            && (0.0..=1e6).contains(&top_speed) =>
-                    {
-                        Some(RocketThrust {
-                            acceleration,
-                            top_speed,
-                        })
-                    }
-                    (None, None) => None,
-                    _ => return Err("thrust: Invalid number".into()),
-                };
-                ShotLaunch {
-                    team,
-                    weapon,
-                    y,
-                    visual_y,
-                    thrust,
-                }
+        let team = match reader.varint()? {
+            0 => Team::Blue,
+            1 => Team::Red,
+            _ => return Err("team: Invalid choice".into()),
+        };
+        let weapon = read_index(reader, &WEAPONS).map_err(|error| format!("weapon: {error}"))?;
+        let has = reader.varint()?;
+        if has & !(HAS_Y | HAS_VISUAL_Y | HAS_THRUST) != 0 {
+            return Err("Invalid projectile path".into());
+        }
+        let mut optional = |flag| -> ReadResult<Option<f64>> {
+            if has & flag != 0 {
+                read_thousandths(reader).map(Some)
+            } else {
+                Ok(None)
             }
+        };
+        let y = optional(HAS_Y)?;
+        let visual_y = optional(HAS_VISUAL_Y)?;
+        let thrust = match (optional(HAS_THRUST)?, optional(HAS_THRUST)?) {
+            (Some(acceleration), Some(top_speed))
+                if (0.0..=1e6).contains(&acceleration) && (0.0..=1e6).contains(&top_speed) =>
+            {
+                Some(RocketThrust {
+                    acceleration,
+                    top_speed,
+                })
+            }
+            (None, None) => None,
+            _ => return Err("thrust: Invalid number".into()),
+        };
+        path.launch = ShotLaunch {
+            team,
+            weapon,
+            y,
+            visual_y,
+            thrust,
         };
         Ok(path)
     }
@@ -523,6 +405,16 @@ impl PathEntry {
 struct Followed {
     path: ShotPath,
     swept_to: f64,
+}
+
+impl Followed {
+    /// The entry that ends the shell's path where its last sweep left it.
+    fn end(&self) -> PathEntry {
+        PathEntry::End {
+            id: self.path.id,
+            tick: json::position(self.swept_to),
+        }
+    }
 }
 
 /// The host's side: turns projectile sweeps into path entries for the next frame.
@@ -613,12 +505,8 @@ impl ShotPathRecorder {
     /// Ends every path where its shell last flew to, for a round that stops stepping with
     /// shells still in flight: clients would otherwise carry them on past their final pose.
     pub fn end_all(&mut self) {
-        for followed in self.followed.drain(..) {
-            self.entries.push(PathEntry::End {
-                id: followed.path.id,
-                tick: json::position(followed.swept_to),
-            });
-        }
+        self.entries
+            .extend(self.followed.drain(..).map(|followed| followed.end()));
     }
 
     /// Ends the path of every followed shell that is no longer flying in `shots`.
@@ -635,10 +523,7 @@ impl ShotPathRecorder {
         self.followed.retain(|followed| {
             let alive = flying.binary_search(&followed.path.id).is_ok();
             if !alive {
-                entries.push(PathEntry::End {
-                    id: followed.path.id,
-                    tick: json::position(followed.swept_to),
-                });
+                entries.push(followed.end());
             }
             alive
         });

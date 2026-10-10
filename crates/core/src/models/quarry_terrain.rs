@@ -6,9 +6,10 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::geometry::{Mesh, plane_geometry_segments};
-use crate::scene::{Effect, Material, Node, TextureRef, TextureSource, Wrap};
+use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
 use super::effects_scenery::{GRIT, GRIT_TEXTURE, QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
+use super::model_primitives::shadow_receiver;
 use super::quarry_soil::{ACCUM_CELLS, QUARRY_TERRAIN_EXTENT};
 use crate::geometry::math::js_hypot;
 use crate::sim::arena::BOUNDARY_THICKNESS;
@@ -20,8 +21,6 @@ use crate::sim::types::CoverKind;
 const EXTENT: f64 = QUARRY_TERRAIN_EXTENT;
 /// Grid resolution of the floor mesh (1.5 m cells).
 const FLOOR_SEGMENTS: u32 = 140;
-/// Node name of the quarry floor.
-pub const QUARRY_FLOOR: &str = "quarry-compacted-haul-roads";
 
 /// `sandAccum()`: windblown sand piled against cover, splatted once per layout
 /// into an `ACCUM_CELLS`² grid (f32, like the Float32Array) and sampled per pixel.
@@ -68,15 +67,13 @@ pub fn sand_accum() -> &'static [f32] {
     })
 }
 
-/// The baked work-yard soil ([`QUARRY_SOIL_TEXTURE`], pixels from
-/// `quarry_soil::quarry_soil_pixels` or banded `bake_quarry_soil`): sRGB color,
-/// alpha = grittiness, clamped, mipmapped, 8x anisotropy.
+/// The baked work-yard soil ([`QUARRY_SOIL_TEXTURE`], pixels baked in row bands by
+/// `bake_quarry_soil`): sRGB color, alpha = grittiness, clamped, mipmapped, 8x
+/// anisotropy.
 pub fn quarry_soil_texture() -> TextureRef {
     TextureRef {
-        source: TextureSource::Generated(QUARRY_SOIL_TEXTURE),
-        wrap: Wrap::Clamp,
         anisotropy: 8,
-        ..TextureRef::file("")
+        ..TextureRef::generated(QUARRY_SOIL_TEXTURE)
     }
 }
 
@@ -111,6 +108,20 @@ pub fn plain_soil_colors(mesh: &mut Mesh) {
     mesh.colors = vec![[1.0; 3]; mesh.positions.len()];
 }
 
+/// Map a soil mesh's world x/z onto the soil bake, from its narrowed positions.
+pub fn soil_uvs(mesh: &mut Mesh) {
+    mesh.uvs = mesh
+        .positions
+        .iter()
+        .map(|p| {
+            [
+                (f64::from(p[0]) / EXTENT + 0.5) as f32,
+                (0.5 - f64::from(p[2]) / EXTENT) as f32,
+            ]
+        })
+        .collect();
+}
+
 /// Where the work yard's floor starts banking down: the boundary wall's outer face.
 pub const QUARRY_BANK_TOP: f64 = ARENA + BOUNDARY_THICKNESS;
 /// Depth of the machinery apron below the work yard.
@@ -137,11 +148,8 @@ pub fn quarry_terrain() -> Node {
     }
     geometry.compute_vertex_normals();
     plain_soil_colors(&mut geometry);
-    let mut floor = Node::mesh(Arc::new(geometry), Arc::new(soil_material()));
-    floor.name = QUARRY_FLOOR.into();
+    let mut floor = shadow_receiver(Arc::new(geometry), Arc::new(soil_material()));
+    floor.name = "quarry-compacted-haul-roads".into();
     floor.position.y = 0.008;
-    if let Some(drawable) = &mut floor.drawable {
-        drawable.receive_shadow = true;
-    }
     floor
 }

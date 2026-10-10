@@ -1,6 +1,6 @@
 /** The page's contract with the Rust engine (`crates/web/src/game.rs`): packed input
  * and frame-result slots, and the shapes of its JSON reports. This module imports
- * nothing, so shell modules can use it without loading the engine. */
+ * only types, so shell modules can use it without loading the engine. */
 import type { MapId } from "./map-options";
 
 /** Slots of the packed raw input frame (`sloppy_render::presentation::input::slot`).
@@ -18,15 +18,12 @@ export const INPUT = {
   ammoStep: 9,
   pointerX: 10,
   pointerY: 11,
-  touchAiming: 12,
-  touchAimX: 13,
-  touchAimY: 14,
-  aimStickHeld: 15,
-  lookPixels: 16,
-  zoom: 17,
-  toggleView: 18,
-  wheelAmmo: 19,
-  length: 20,
+  stickTurn: 12,
+  lookPixels: 13,
+  zoom: 14,
+  toggleView: 15,
+  wheelAmmo: 16,
+  length: 17,
 } as const;
 
 /** Slots of `Game.frame`'s result (`frame_slot` in `game.rs`). */
@@ -134,16 +131,13 @@ export interface AmmoSlot {
 
 export interface HumanState {
   id: number;
-  name: string;
   kind: VehicleKind;
   vehicleName: string;
-  team: Team;
   alive: boolean;
   hp: number;
   maxHp: number;
   healthRatio: number;
   healthColor: number;
-  xp: number;
   rank: number;
   rankName: string;
   rankDamage: number;
@@ -152,9 +146,7 @@ export interface HumanState {
   rankRepair: number;
   /** Seconds out of combat before a veteran repairs. */
   repairDelay: number;
-  equipped: Weapon;
   ammo: AmmoSlot[];
-  cooldown: number;
   mineCooldown: number;
   protection: number;
   shield: number;
@@ -171,13 +163,7 @@ export interface HumanState {
 export interface ScoreboardRow {
   id: number;
   name: string;
-  team: Team;
-  kind: VehicleKind;
-  human: boolean;
-  alive: boolean;
   kills: number;
-  deaths: number;
-  rank: number;
 }
 
 export type RecapMetric =
@@ -200,7 +186,6 @@ export interface RecapState {
   stats: Record<RecapMetric, number>;
   best: Record<RecapMetric, number>;
   improved: RecapMetric[];
-  established: boolean;
   persisted: boolean;
   feats: { title: string; detail: string }[];
   shots: number;
@@ -208,7 +193,6 @@ export interface RecapState {
   damageTaken: number;
   shieldAbsorbed: number;
   rankNames: string[];
-  recordsKey: string;
 }
 
 /** `hud_json`: everything the HUD and menus show. */
@@ -233,7 +217,6 @@ export interface HudState {
 /** `stats_json`: Stats for nerds. */
 export interface EngineStats {
   frameMs: number;
-  averageFrameMs: number;
   fps: number;
   simMs: number;
   renderMs: number;
@@ -271,7 +254,6 @@ export interface EngineStats {
   pickups: number;
   pickupsReady: number;
   particles: number;
-  effectInstances: number;
   elapsed: number;
   pixelRatio: number;
 }

@@ -1,9 +1,7 @@
 //! Ammunition choice, inventory and crate refills.
 
 use super::data::{vehicle, weapon};
-use super::types::{
-    AmmoInventory, AmmoSelection, PickupKind, SpecialAmmo, Tank, VehicleKind, Weapon,
-};
+use super::types::{AmmoInventory, AmmoSelection, SpecialAmmo, Tank, VehicleKind, Weapon};
 
 pub const AMMO_ORDER: [Weapon; 5] = [
     Weapon::Standard,
@@ -23,15 +21,6 @@ pub const PROJECTILE_ORDER: [Weapon; 6] = [
 
 pub const AMMO_RESPAWN_SECONDS: f64 = 13.0;
 pub const AMMO_SCROLL_INTERVAL_MS: f64 = 120.0;
-
-pub fn empty_ammo() -> AmmoInventory {
-    AmmoInventory::default()
-}
-
-/// Whether a crate kind carries special ammunition.
-pub fn is_special_ammo(kind: PickupKind) -> bool {
-    kind.special_ammo().is_some()
-}
 
 pub fn has_ammo_for(kind: VehicleKind, ammo: &AmmoInventory, selected: Weapon) -> bool {
     match selected {
@@ -58,12 +47,18 @@ pub fn can_collect_ammo(tank: &Tank, kind: SpecialAmmo, multiplier: f64) -> bool
 }
 
 pub fn equipped_weapon(tank: &Tank) -> Weapon {
-    let primary = vehicle(tank.kind).weapon;
+    equipped_weapon_for(tank.kind, &tank.ammo, tank.selected_ammo)
+}
+
+/// The weapon a tank fires now: its fixed gun, or the selected special ammo while any
+/// remains (also for tanks known only by their replicated values).
+pub fn equipped_weapon_for(kind: VehicleKind, ammo: &AmmoInventory, selected: Weapon) -> Weapon {
+    let primary = vehicle(kind).weapon;
     if primary != Weapon::Standard {
         return primary;
     }
-    if has_ammo(tank, tank.selected_ammo) && tank.selected_ammo != Weapon::Tow {
-        tank.selected_ammo
+    if has_ammo_for(kind, ammo, selected) && selected != Weapon::Tow {
+        selected
     } else {
         Weapon::Standard
     }
@@ -84,22 +79,31 @@ pub fn select_ammo(tank: &mut Tank, selection: Option<AmmoSelection>) {
             }
         }
         Some(AmmoSelection::Step(step)) if step != 0 => {
-            let count = AMMO_ORDER.len() as i32;
-            let start = AMMO_ORDER
-                .iter()
-                .position(|&w| w == tank.selected_ammo)
-                .map_or(-1, |i| i as i32);
-            for offset in 1..=count {
-                let candidate =
-                    AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize];
-                if has_ammo(tank, candidate) {
-                    tank.selected_ammo = candidate;
-                    break;
-                }
+            if let Some(next) = step_ammo(tank.kind, &tank.ammo, tank.selected_ammo, step) {
+                tank.selected_ammo = next;
             }
         }
         _ => {}
     }
+}
+
+/// The first weapon `step` places away from `current` along [`AMMO_ORDER`], wrapping
+/// around, that `kind` can fire with `ammo`. A weapon outside the order starts before
+/// its first entry.
+pub fn step_ammo(
+    kind: VehicleKind,
+    ammo: &AmmoInventory,
+    current: Weapon,
+    step: i8,
+) -> Option<Weapon> {
+    let count = AMMO_ORDER.len() as i32;
+    let start = AMMO_ORDER
+        .iter()
+        .position(|&w| w == current)
+        .map_or(-1, |i| i as i32);
+    (1..=count)
+        .map(|offset| AMMO_ORDER[(start + step as i32 * offset + count).rem_euclid(count) as usize])
+        .find(|&candidate| has_ammo_for(kind, ammo, candidate))
 }
 
 pub fn consume_ammo(tank: &mut Tank, fired: Weapon) {
@@ -121,7 +125,7 @@ pub fn refill_ammo(tank: &mut Tank, kind: SpecialAmmo, multiplier: f64) -> f64 {
 }
 
 pub fn clear_ammo(tank: &mut Tank) {
-    tank.ammo = empty_ammo();
+    tank.ammo = AmmoInventory::default();
     tank.selected_ammo = Weapon::Standard;
     tank.command.ammo_selection = None;
 }

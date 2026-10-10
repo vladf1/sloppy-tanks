@@ -2,6 +2,8 @@
 //! drum chains, the match clock and score limit, resets, rosters, bots in opened ruins and
 //! friendly-fire lanes (the former `tests/game.test.ts`).
 
+mod support;
+
 use sloppy_core::sim::ai::{bot_command, friendly_blocks_shot};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::BotPersonality;
@@ -13,9 +15,10 @@ use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
-    AmmoSelection, BotMode, CoverKind, DamageCause, MatchPhase, Pickup, PickupKind, SimEventType,
+    AmmoSelection, BotMode, CoverKind, DamageCause, MatchPhase, PickupKind, SimEventType,
     Simulation, Team, VehicleCommand, VehicleKind, Weapon,
 };
+use support::{damage_from, idle, set_translation, supply};
 
 fn game() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
@@ -37,11 +40,6 @@ fn place(s: &mut Simulation, index: usize, x: f64, z: f64) -> usize {
     index
 }
 
-fn set_translation(s: &mut Simulation, index: usize, x: f64, y: f64, z: f64) {
-    let body = s.tanks[index].body;
-    s.world.bodies[body].set_translation(vector(x, y, z), true);
-}
-
 /// Removes every cover but the boundary walls, then lines the tanks up out of the way.
 fn clear(s: &mut Simulation) {
     for i in 0..s.covers.len() {
@@ -57,16 +55,12 @@ fn clear(s: &mut Simulation) {
     }
 }
 
-fn human(s: &Simulation) -> usize {
-    s.human_index().expect("local play has a human")
-}
-
-fn step(s: &mut Simulation) {
-    s.step(VehicleCommand::idle(), false);
-}
-
 fn drum(x: f64) -> CoverDef {
     CoverDef::new(CoverKind::Drum, x, 0.0, 1.0, 1.0, 2.0, 30.0, 0)
+}
+
+fn timber(x: f64, z: f64) -> CoverDef {
+    CoverDef::new(CoverKind::Timber, x, z, 2.0, 1.0, 2.0, 80.0, 0)
 }
 
 #[test]
@@ -120,7 +114,7 @@ fn self_explosion_damages_owner_and_self_kill_awards_no_point() {
 #[test]
 fn protection_prevents_damage_expires_after_two_seconds_and_firing_cancels_it() {
     let mut s = game();
-    let a = human(&s);
+    let a = s.human_index().unwrap();
     s.tanks[a].protection = 2.0;
     let enemy_team = s.tanks[a].team.opponent();
     s.damage_tank(a, 1000.0, 999, enemy_team, None, None);
@@ -129,7 +123,7 @@ fn protection_prevents_damage_expires_after_two_seconds_and_firing_cancels_it() 
     assert_eq!(s.tanks[a].protection, 0.0);
     s.tanks[a].protection = 2.0;
     for _ in 0..121 {
-        step(&mut s);
+        idle(&mut s);
     }
     assert_eq!(s.tanks[a].protection, 0.0);
 }
@@ -137,16 +131,16 @@ fn protection_prevents_damage_expires_after_two_seconds_and_firing_cancels_it() 
 #[test]
 fn respawn_occurs_after_three_seconds_with_protection_and_selected_class() {
     let mut s = game();
-    let a = human(&s);
+    let a = s.human_index().unwrap();
     let enemy_team = s.tanks[a].team.opponent();
     s.damage_tank(a, 1000.0, 999, enemy_team, None, None);
     s.human_kind = VehicleKind::Heavy;
     for _ in 0..179 {
-        step(&mut s);
+        idle(&mut s);
     }
     assert!(!s.tanks[a].alive);
     for _ in 0..3 {
-        step(&mut s);
+        idle(&mut s);
     }
     assert!(s.tanks[a].alive);
     assert_eq!(s.tanks[a].hp, 140.0);
@@ -219,10 +213,8 @@ fn endless_team_matches_ignore_both_the_score_limit_and_match_timer() {
     s.match_state.time = STEP;
     let victim = s.tanks.iter().position(|t| t.team == Team::Red).unwrap();
     let killer = s.tanks.iter().position(|t| t.team == Team::Blue).unwrap();
-    s.tanks[victim].protection = 0.0;
-    let (id, team) = (s.tanks[killer].id, s.tanks[killer].team);
-    s.damage_tank(victim, 9999.0, id, team, None, None);
-    step(&mut s);
+    damage_from(&mut s, victim, 9999.0, killer, None, None);
+    idle(&mut s);
     assert_eq!(s.match_state.scores, [100, 99]);
     assert_eq!(s.match_state.time, STEP);
     assert_eq!(s.match_state.phase, MatchPhase::Playing);
@@ -243,8 +235,7 @@ fn complete_reset_restores_counts_cover_pickups_scores_nav_and_rng() {
     let initial_covers = covers(&s);
     let blocked = s.nav.blocked.clone();
     let rng = s.rng.state;
-    let h = human(&s);
-    let (id, team) = (s.tanks[h].id, s.human_team);
+    let (id, team) = (s.human().id, s.human_team);
     // Collapsing towers append rubble; like the TS copy, only the original covers are hit.
     for c in 0..s.covers.len() {
         s.damage_cover(c, 999.0, id, team, None, None);
@@ -276,8 +267,7 @@ fn bots_cross_opened_tower_footprint_and_continue_combat_through_ruins() {
     let towers: Vec<usize> = (0..s.covers.len())
         .filter(|&c| s.covers[c].kind == CoverKind::Tower)
         .collect();
-    let h = human(&s);
-    let (id, team) = (s.tanks[h].id, s.human_team);
+    let (id, team) = (s.human().id, s.human_team);
     for &c in &towers {
         s.damage_cover(c, 999.0, id, team, None, None);
     }
@@ -295,17 +285,8 @@ fn bots_cross_opened_tower_footprint_and_continue_combat_through_ruins() {
         .unwrap();
     let scout = place(&mut s, scout_index, tower_x, tower_z - 5.0);
     s.tanks[scout].brain.personality = BotPersonality::Scout;
-    let pickup_id = s.next_id;
-    s.next_id += 1;
-    s.pickups.push(Pickup {
-        id: pickup_id,
-        kind: PickupKind::Rapid,
-        x: tower_x,
-        z: tower_z + 5.0,
-        available: true,
-        cooldown: 0.0,
-        cooldown_duration: 0.0,
-    });
+    let pickup = supply(&mut s, PickupKind::Rapid, tower_x, tower_z + 5.0);
+    s.pickups.push(pickup);
     let mut crossed = false;
     for _ in 0..60 * 45 {
         s.step(VehicleCommand::idle(), true);
@@ -415,9 +396,9 @@ fn bots_hold_fire_for_allies_and_resume_when_their_firing_lane_clears() {
     brain.mode = BotMode::Fight;
     assert!(!bot_command(&mut s, bot, STEP).fire);
     assert_eq!(s.tanks[bot].brain.fire_delay, 0.0);
-    set_translation(&mut s, ally, 12.0, 0.65, -5.0);
+    set_translation(&mut s, ally, 12.0, -5.0);
     assert!(bot_command(&mut s, bot, STEP).fire);
-    set_translation(&mut s, ally, 0.0, 0.65, 16.0);
+    set_translation(&mut s, ally, 0.0, 16.0);
     assert!(!friendly_blocks_shot(&s, bot, 0.0, Weapon::Standard, 35.0));
 }
 
@@ -447,16 +428,7 @@ fn a_bot_keeps_its_turret_on_a_visible_target_instead_of_breaching_cover_beside_
     s.tanks[bot].aim = 0.0;
     // Timber about 0.34 rad off the enemy's bearing: inside the breach cone, outside the
     // fire cone, so a bot that is still reacting used to swing to it and never come back.
-    s.add_cover(&CoverDef::new(
-        CoverKind::Timber,
-        3.0,
-        8.5,
-        2.0,
-        1.0,
-        2.0,
-        80.0,
-        0,
-    ));
+    s.add_cover(&timber(3.0, 8.5));
     let enemy_id = s.tanks[enemy].id;
     let brain = &mut s.tanks[bot].brain;
     brain.personality = BotPersonality::Guard;
@@ -498,16 +470,7 @@ fn breaching_checks_the_standard_shell_lane_even_when_spread_ammo_is_preferred()
     brain.decision = 10.0;
     brain.fire_delay = 0.0;
     brain.goal = Vec2::new(0.0, 13.0);
-    s.add_cover(&CoverDef::new(
-        CoverKind::Timber,
-        0.0,
-        13.0,
-        2.0,
-        1.0,
-        2.0,
-        80.0,
-        0,
-    ));
+    s.add_cover(&timber(0.0, 13.0));
     assert!(!friendly_blocks_shot(&s, bot, 0.0, Weapon::Standard, 13.0));
     assert!(friendly_blocks_shot(&s, bot, 0.0, Weapon::Spread, 13.0));
     let command = bot_command(&mut s, bot, STEP);

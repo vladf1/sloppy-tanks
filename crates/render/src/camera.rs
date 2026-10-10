@@ -54,50 +54,29 @@ impl PerspectiveCamera {
         self.projection() * self.view()
     }
 
-    /// Three's `Raycaster.setFromCamera`: a ray from the eye through an NDC point
-    /// (x right, y up, both -1..1).
-    pub fn ray(&self, ndc: Vec2) -> Ray {
-        let inverse = self.view_projection().inverse();
-        let point = inverse * Vec4::new(ndc.x, ndc.y, 0.5, 1.0);
-        let point = point.xyz() / point.w;
-        Ray {
-            origin: self.position,
-            direction: (point - self.position).normalize(),
-        }
-    }
-
     /// Screen pixel (origin top-left) to NDC for a canvas of `size` pixels.
     pub fn pixel_to_ndc(pixel: Vec2, size: Vec2) -> Vec2 {
         Vec2::new(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0)
     }
 
-    /// The ground point under a screen position, for mouse aiming: the ray through
-    /// `ndc` meets the horizontal plane at height `y`.
+    /// The ground point under a screen position, for mouse aiming: the ray from the
+    /// eye through `ndc` (x right, y up, both -1..1; Three's `Raycaster.setFromCamera`)
+    /// meets the horizontal plane at height `y` (Three's `Ray.intersectPlane`).
+    /// `None` when the ray is parallel to the plane or points away.
     pub fn pick_ground(&self, ndc: Vec2, y: f32) -> Option<Vec3> {
-        self.ray(ndc).intersect_horizontal_plane(y)
+        let inverse = self.view_projection().inverse();
+        let point = inverse.project_point3(Vec3::new(ndc.x, ndc.y, 0.5));
+        let direction = (point - self.position).normalize();
+        if direction.y.abs() < 1e-8 {
+            return (self.position.y == y).then_some(self.position);
+        }
+        let t = (y - self.position.y) / direction.y;
+        (t >= 0.0).then(|| self.position + direction * t)
     }
 
     /// World point to NDC (Three's `Vector3.project`); z is clip depth 0..1.
     pub fn project(&self, point: Vec3) -> Vec3 {
         self.view_projection().project_point3(point)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Ray {
-    pub origin: Vec3,
-    pub direction: Vec3,
-}
-
-impl Ray {
-    /// Three's `Ray.intersectPlane` for the plane `y = height`; `None` when the
-    /// ray is parallel to it or points away.
-    pub fn intersect_horizontal_plane(&self, height: f32) -> Option<Vec3> {
-        if self.direction.y.abs() < 1e-8 {
-            return (self.origin.y == height).then_some(self.origin);
-        }
-        let t = (height - self.origin.y) / self.direction.y;
-        (t >= 0.0).then(|| self.origin + self.direction * t)
     }
 }
 
@@ -128,13 +107,11 @@ impl Sphere {
     pub fn from_points(points: impl Iterator<Item = Vec3>) -> Sphere {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        let mut any = false;
         for point in points {
             min = min.min(point);
             max = max.max(point);
-            any = true;
         }
-        if !any {
+        if min.x > max.x {
             return Sphere::default();
         }
         let center = (min + max) * 0.5;
@@ -185,13 +162,6 @@ impl Frustum {
         self.planes
             .iter()
             .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= -sphere.radius)
-    }
-
-    /// Whether `sphere` lies wholly inside every plane.
-    pub fn contains_sphere(&self, sphere: &Sphere) -> bool {
-        self.planes
-            .iter()
-            .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= sphere.radius)
     }
 
     /// Whether `sphere`, moved in a straight line by `sweep`, may touch the
@@ -366,21 +336,8 @@ pub fn mirror_view(camera: &PerspectiveCamera, plane_height: f32) -> Option<(Mat
     // The plane in the mirrored camera's view space.
     let plane_normal = glam::Mat3::from_mat4(view) * normal;
     let point = view.transform_point3(reflector);
-    let clip = Vec4::new(
-        plane_normal.x,
-        plane_normal.y,
-        plane_normal.z,
-        -point.dot(plane_normal),
-    );
-    let sign = |v: f32| {
-        if v > 0.0 {
-            1.0
-        } else if v < 0.0 {
-            -1.0
-        } else {
-            0.0
-        }
-    };
+    let clip = plane_normal.extend(-point.dot(plane_normal));
+    let sign = |v: f32| if v == 0.0 { 0.0 } else { v.signum() };
     let e = projection.to_cols_array();
     let q = Vec4::new(
         (sign(clip.x) + e[8]) / e[0],

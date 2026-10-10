@@ -12,7 +12,7 @@ use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, icosahedron_geometry, widen
 use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
 use super::effects_scenery::{GRIT, SAND_DRIFT, SANDSTONE, SOIL};
-use super::model_primitives::{Cache, shadowed};
+use super::model_primitives::{Cache, shadow_receiver, shadowed};
 use super::quarry_terrain::{quarry_grit_texture, quarry_soil_texture};
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_shape;
@@ -250,9 +250,5 @@ pub fn sandstone_footing(w: f64, d: f64, variant: u32) -> Node {
         geometry.compute_vertex_normals();
         geometry
     });
-    let mut node = Node::mesh(mesh, sand_drift_material());
-    if let Some(drawable) = &mut node.drawable {
-        drawable.receive_shadow = true;
-    }
-    node
+    shadow_receiver(mesh, sand_drift_material())
 }

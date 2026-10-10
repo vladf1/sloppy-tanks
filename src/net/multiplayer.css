@@ -63,7 +63,8 @@
   display: grid;
   gap: 10px;
 }
-.network-label {
+.network-label,
+.network-fields label {
   color: var(--label);
   font-size: 10px;
   font-weight: 700;
@@ -99,10 +100,6 @@
   gap: 6px;
   min-width: 0;
   margin: 0;
-  color: var(--label);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
   text-transform: uppercase;
 }
 .multiplayer .network-fields input,
@@ -179,10 +176,13 @@
 }
 .roster-name {
   min-width: 0;
+  font-weight: 700;
+}
+.roster-name,
+.network-player span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 700;
 }
 .roster-player small {
   flex: none;
@@ -200,7 +200,8 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.roster-player.reconnecting {
+.roster-player.reconnecting,
+.network-player.reconnecting {
   opacity: 0.55;
 }
 #network-scoreboard {
@@ -309,17 +310,9 @@
 .network-player[data-team="1"] {
   border-color: #ff8a79;
 }
-.network-player span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .network-player b {
   min-width: 2ch;
   text-align: right;
-}
-.network-player.reconnecting {
-  opacity: 0.55;
 }
 #network-status {
   position: fixed;

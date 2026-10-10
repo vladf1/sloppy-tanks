@@ -36,8 +36,6 @@ pub struct QuarryDust {
     pub records: PoolBuffer,
     wisps: Vec<Wisp>,
     timer: f64,
-    /// Shown only on the quarry (the former `mesh.visible`).
-    pub visible: bool,
 }
 
 impl Default for QuarryDust {
@@ -46,7 +44,6 @@ impl Default for QuarryDust {
             records: PoolBuffer::new(QUARRY_DUST_CAPACITY),
             wisps: Vec::with_capacity(QUARRY_DUST_CAPACITY),
             timer: 0.0,
-            visible: false,
         }
     }
 }
@@ -64,7 +61,6 @@ impl QuarryDust {
         self.wisps.clear();
         self.timer = 0.0;
         self.records.clear();
-        self.visible = false;
     }
 
     fn spawn(&mut self, random: &mut CosmeticRandom) {
@@ -72,36 +68,26 @@ impl QuarryDust {
             return;
         }
         // Larger, fainter sheets stay well above the tanks so readability never suffers.
-        if random.next_f64() < HIGH_SHEET_CHANCE {
+        let (x, y, z, vx, life, size, alpha) = if random.next_f64() < HIGH_SHEET_CHANCE {
             let x = -50.0 + random.next_f64() * 100.0;
             let z = -50.0 + random.next_f64() * 100.0;
             let y = 2.4 + random.next_f64() * 2.4;
             let vx = 1.5 + random.next_f64() * 1.5;
             let life = 6.0 + random.next_f64() * 3.0;
             let size = 5.0 + random.next_f64() * 3.5;
-            let phase = random.next_f64() * TAU;
-            self.wisps.push(Wisp {
-                x,
-                y,
-                z,
-                vx,
-                life,
-                max: life,
-                size,
-                phase,
-                alpha: 0.45,
-            });
-            return;
-        }
-        let side = if random.next_f64() < 0.5 { -1.0 } else { 1.0 };
-        let z = side * (63.0 + random.next_f64() * 8.0);
-        // Rest on the dipped apron outside the wall, the grade the terrain bakes.
-        let ground = -((z.abs() - 60.0) * 0.3).min(1.8);
-        let x = -70.0 + random.next_f64() * 140.0;
-        let y = ground + 0.5 + random.next_f64() * 0.9;
-        let vx = 1.2 + random.next_f64() * 1.2;
-        let life = 5.0 + random.next_f64() * 3.0;
-        let size = 2.5 + random.next_f64() * 2.0;
+            (x, y, z, vx, life, size, 0.45)
+        } else {
+            let side = if random.next_f64() < 0.5 { -1.0 } else { 1.0 };
+            let z = side * (63.0 + random.next_f64() * 8.0);
+            // Rest on the dipped apron outside the wall, the grade the terrain bakes.
+            let ground = -((z.abs() - 60.0) * 0.3).min(1.8);
+            let x = -70.0 + random.next_f64() * 140.0;
+            let y = ground + 0.5 + random.next_f64() * 0.9;
+            let vx = 1.2 + random.next_f64() * 1.2;
+            let life = 5.0 + random.next_f64() * 3.0;
+            let size = 2.5 + random.next_f64() * 2.0;
+            (x, y, z, vx, life, size, 1.0)
+        };
         let phase = random.next_f64() * TAU;
         self.wisps.push(Wisp {
             x,
@@ -112,18 +98,17 @@ impl QuarryDust {
             max: life,
             size,
             phase,
-            alpha: 1.0,
+            alpha,
         });
     }
 
     pub fn update(&mut self, state: &RenderState, dt: f64, random: &mut CosmeticRandom) {
         if state.map_theme != "quarry" {
-            if !self.records.is_empty() || self.visible {
+            if !self.records.is_empty() {
                 self.reset();
             }
             return;
         }
-        self.visible = true;
         // Frozen while paused or between rounds, like the track dust pool.
         if state.match_state.phase != MatchPhase::Playing {
             return;
@@ -181,7 +166,7 @@ mod tests {
             dust.update(&state, 1.0 / 60.0, &mut random);
             assert!(dust.len() <= QUARRY_DUST_CAPACITY);
         }
-        assert!(dust.visible && dust.len() > 5);
+        assert!(dust.len() > 5);
         for r in dust.records.records() {
             assert!(r.tint[3] >= 0.0 && f64::from(r.tint[3]) <= QUARRY_DUST_MAX_OPACITY);
         }
@@ -194,6 +179,6 @@ mod tests {
         let mut village = state.clone();
         village.map_theme = "village".into();
         dust.update(&village, 1.0 / 60.0, &mut random);
-        assert!(!dust.visible && dust.is_empty());
+        assert!(dust.is_empty());
     }
 }

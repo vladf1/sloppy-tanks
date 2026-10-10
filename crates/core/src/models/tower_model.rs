@@ -21,6 +21,7 @@ use super::building_kit::{
     Glazing, Opening, Palette, Surface, add_building, door, uv_per_metre, wall, window,
 };
 use super::concrete_surfaces::concrete_wall;
+use super::house_model::wall_frames;
 use super::model_primitives::{adopt_children, put, rotated};
 use super::tank_kit::{Kit, aim, pose};
 use super::timber_model::timber_member;
@@ -444,39 +445,15 @@ fn railing_half(group: &mut Node, side: f64) {
 /// propped awning shutters, the front with a door onto the walkway beside the
 /// ladder, lined inside so a fallen wall is solid from behind.
 fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece) {
-    let (frame, half, front) = match piece {
-        TowerPiece::FrontWall => (
-            pose(DVec3::new(0.0, 0.0, CABIN_Z), DVec3::ZERO),
-            CABIN_X,
-            true,
-        ),
-        TowerPiece::BackWall => (
-            pose(DVec3::new(0.0, 0.0, -CABIN_Z), DVec3::new(0.0, PI, 0.0)),
-            CABIN_X,
-            false,
-        ),
-        TowerPiece::EastWall => (
-            pose(
-                DVec3::new(CABIN_X, 0.0, 0.0),
-                DVec3::new(0.0, PI / 2.0, 0.0),
-            ),
-            CABIN_Z,
-            false,
-        ),
-        _ => (
-            pose(
-                DVec3::new(-CABIN_X, 0.0, 0.0),
-                DVec3::new(0.0, -PI / 2.0, 0.0),
-            ),
-            CABIN_Z,
-            false,
-        ),
+    let [front_wall, back_wall, east_wall, west_wall] = wall_frames(2.0 * CABIN_X, 2.0 * CABIN_Z);
+    let (frame, half) = match piece {
+        TowerPiece::FrontWall => front_wall,
+        TowerPiece::BackWall => back_wall,
+        TowerPiece::EastWall => east_wall,
+        _ => west_wall,
     };
-    let glazing = Glazing {
-        cols: 2,
-        rows: 2,
-        double_hung: false,
-    };
+    let front = piece == TowerPiece::FrontWall;
+    let glazing = Glazing { double_hung: false };
     let centres: Vec<f64> = if front {
         vec![-1.25, 0.05]
     } else if half > 2.0 {
@@ -515,12 +492,7 @@ fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece) {
     let inside = frame * pose(DVec3::new(0.0, 0.0, -CABIN_WALL), DVec3::new(0.0, PI, 0.0));
     let holes: Vec<Vec<DVec2>> = openings
         .iter()
-        .map(|o| {
-            let (u0, u1) = (-o.u - o.width / 2.0, -o.u + o.width / 2.0);
-            [(u0, o.y), (u0, o.top()), (u1, o.top()), (u1, o.y)]
-                .map(|(u, y)| DVec2::new(u, y))
-                .to_vec()
-        })
+        .map(|o| Opening { u: -o.u, ..*o }.corners())
         .collect();
     kit.face_with_holes(Surface::Siding, &outline, &holes, inside);
     // End, top and bottom edges between the face and the lining.
@@ -649,28 +621,19 @@ fn hip_roof(kit: &mut Kit<Surface>) {
         DVec3::new(2.0 * ex - 0.02, 0.01, 2.0 * ez - 0.02),
         DMat4::from_translation(DVec3::new(0.0, eave - 0.005, 0.0)),
     );
-    for (size, at) in [
-        (
-            DVec3::new(2.0 * ex + 0.06, ROOF_EDGE + 0.04, 0.03),
-            DVec3::new(0.0, 0.0, ez + 0.015),
-        ),
-        (
-            DVec3::new(2.0 * ex + 0.06, ROOF_EDGE + 0.04, 0.03),
-            DVec3::new(0.0, 0.0, -ez - 0.015),
-        ),
-        (
-            DVec3::new(0.03, ROOF_EDGE + 0.04, 2.0 * ez),
-            DVec3::new(ex + 0.015, 0.0, 0.0),
-        ),
-        (
-            DVec3::new(0.03, ROOF_EDGE + 0.04, 2.0 * ez),
-            DVec3::new(-ex - 0.015, 0.0, 0.0),
-        ),
-    ] {
+    let (board, y) = (ROOF_EDGE + 0.04, eave + ROOF_EDGE / 2.0 - 0.02);
+    for sign in [1.0, -1.0] {
         kit.block(
             Surface::Trim,
-            size,
-            DMat4::from_translation(at + DVec3::Y * (eave + ROOF_EDGE / 2.0 - 0.02)),
+            DVec3::new(2.0 * ex + 0.06, board, 0.03),
+            DMat4::from_translation(DVec3::new(0.0, y, sign * (ez + 0.015))),
+        );
+    }
+    for sign in [1.0, -1.0] {
+        kit.block(
+            Surface::Trim,
+            DVec3::new(0.03, board, 2.0 * ez),
+            DMat4::from_translation(DVec3::new(sign * (ex + 0.015), y, 0.0)),
         );
     }
     // Seams stand on each slope from the eave to the hip or ridge.

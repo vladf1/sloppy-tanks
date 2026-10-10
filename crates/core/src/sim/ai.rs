@@ -103,9 +103,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         .position(|enemy| enemy.id == brain.target && enemy.alive);
     match target {
         Some(target) if brain.memory > 0.0 => {
-            let actual = simulation
-                .body_translation(simulation.tanks[target].body)
-                .planar();
+            let actual = simulation.tank_planar(target);
             let seen = simulation.visible(position, actual);
             target_in_sight = seen;
             humvee_lane =
@@ -117,11 +115,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
             if seen || aggressive {
                 simulation.tanks[tank_index].brain.last_seen = actual;
             }
-            let q = if seen || aggressive {
-                actual
-            } else {
-                simulation.tanks[tank_index].brain.last_seen
-            };
+            let q = simulation.tanks[tank_index].brain.last_seen;
             let velocity = if seen {
                 simulation
                     .body_linvel(simulation.tanks[target].body)
@@ -186,7 +180,6 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
                     < BREACH_ROUTE_ANGLE
         });
         if let Some(weak) = weak {
-            command.ammo_selection = Some(AmmoSelection::Weapon(Weapon::Standard));
             let desired = (weak.x - position.x).atan2(weak.z - position.z);
             command.aim = turn(desired);
             command.fire = angle_delta(command.aim, desired).abs() < BREACH_FIRE_ANGLE;
@@ -229,7 +222,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
             simulation.rng.range(2.0, 3.0)
         } else {
             let jitter = simulation.rng.range(0.1, 0.25);
-            bot_reload(&simulation.tanks[tank_index], jitter, Some(firing_weapon))
+            bot_reload(&simulation.tanks[tank_index], jitter, firing_weapon)
         };
         let reload = enemy_difficulty(simulation, &simulation.tanks[tank_index]).reload;
         simulation.tanks[tank_index].brain.fire_delay = fire_delay * reload;

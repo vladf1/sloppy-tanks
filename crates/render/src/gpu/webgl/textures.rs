@@ -67,6 +67,20 @@ pub fn storage(gpu: &Gpu, format: u32, levels: u32, width: u32, height: u32) -> 
     texture
 }
 
+/// Single-level storage read with `texelFetch` and no sampler, so the texture's own
+/// filters decide whether it is complete: nearest, which every format allows (32-bit
+/// floats are not filterable).
+pub fn texel_storage(gpu: &Gpu, format: u32, width: u32, height: u32) -> glow::Texture {
+    let texture = storage(gpu, format, 1, width, height);
+    for name in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
+        unsafe {
+            gpu.gl
+                .tex_parameter_i32(glow::TEXTURE_2D, name, glow::NEAREST as i32)
+        };
+    }
+    texture
+}
+
 /// The mip blit's program while it links, then linked.
 enum Blit {
     Linking(Linking),
@@ -131,7 +145,8 @@ impl Uploader {
     }
 
     /// Upload `pixels` as a texture with `levels` mip levels; flips rows while
-    /// copying when `flip_y` (`ImageData` only: bitmaps are flipped when decoded).
+    /// copying when `flip_y`, which is never set for bitmaps: they are flipped when
+    /// decoded.
     pub fn upload(
         &self,
         gpu: &Gpu,
@@ -147,11 +162,11 @@ impl Uploader {
             glow::RGBA8
         };
         let texture = storage(gpu, format, levels, width, height);
+        gpu.set_flip_y(flip_y);
         let gl = &gpu.gl;
         unsafe {
             match pixels {
                 Pixels::Bitmap(bitmap) => {
-                    gpu.set_flip_y(false);
                     gl.tex_sub_image_2d_with_image_bitmap(
                         glow::TEXTURE_2D,
                         0,
@@ -163,7 +178,6 @@ impl Uploader {
                     );
                 }
                 Pixels::Image(image) => {
-                    gpu.set_flip_y(flip_y);
                     gl.tex_sub_image_2d_with_image_data(
                         glow::TEXTURE_2D,
                         0,

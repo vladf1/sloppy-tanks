@@ -7,23 +7,20 @@ mod net_support;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use net_support::{WIRE_SLACK, same_height};
+use net_support::{Sweep, assert_drawn_where_simulated, fire_from, test_host};
 
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
 use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
-use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
-use sloppy_core::net::shot_paths::PATH_TOLERANCE;
 use sloppy_core::net::transport_delay::DelaySettings;
-use sloppy_core::sim::data::STEP;
+use sloppy_core::sim::Tank;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::render_state::RenderShot;
-use sloppy_core::sim::types::{AmmoInventory, Driver, VehicleKind, Weapon};
-use sloppy_core::sim::weapons::fire_weapon;
+use sloppy_core::sim::types::{Driver, VehicleKind, Weapon};
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
@@ -77,20 +74,21 @@ fn settings(map: MapId) -> RoomSettings {
     }
 }
 
+/// A page's session for room ABCDEFGH on the local server.
+fn client(saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> NetworkClient {
+    NetworkClient::new(ClientConfig {
+        server_url: "ws://127.0.0.1:8787/".into(),
+        room: "ABCDEFGH".into(),
+        saved_seat,
+        delay,
+        seed: 7,
+    })
+}
+
 impl Network {
     fn new() -> Self {
-        let mut token = 0;
         Self {
-            host: MatchHost::new(MatchHostOptions {
-                room_epoch: "epoch-1".into(),
-                now_ms: 0,
-                token: Box::new(move || {
-                    token += 1;
-                    format!("credential-{token:020}")
-                }),
-                seed: Some(4242),
-                content_version: None,
-            }),
+            host: test_host("epoch-1", 4242, None),
             peers: Vec::new(),
             now: 0.0,
             next_connection: 0,
@@ -103,15 +101,9 @@ impl Network {
         }
     }
 
-    fn add(&mut self, delay: Option<DelaySettings>) -> usize {
+    fn add(&mut self, saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> usize {
         self.peers.push(Peer {
-            client: NetworkClient::new(ClientConfig {
-                server_url: "ws://127.0.0.1:8787/".into(),
-                room: "ABCDEFGH".into(),
-                saved_seat: None,
-                delay,
-                seed: 7,
-            }),
+            client: client(saved_seat, delay),
             socket: None,
             notices: Vec::new(),
             saved: None,
@@ -290,17 +282,18 @@ impl Network {
             })
     }
 
-    fn tank_driver(&self, index: usize) -> Driver {
+    /// The host's tank that peer `index` controls.
+    fn tank(&self, index: usize) -> &Tank {
         let control = self.peers[index].client.control().unwrap();
         let sim = self.host.simulation.as_ref().unwrap();
-        sim.tanks[sim.tank_index(control.tank_id).unwrap()].driver
+        &sim.tanks[sim.tank_index(control.tank_id).unwrap()]
     }
 }
 
 #[test]
 fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(200.0);
     let peer = &net.peers[alice];
@@ -319,12 +312,9 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
         "a created room reveals once its arena draws"
     );
     assert!(net.peers[alice].client.active_input());
-    assert_eq!(net.tank_driver(alice), Driver::Human);
-    let start = {
-        let sim = net.host.simulation.as_ref().unwrap();
-        let control = net.peers[alice].client.control().unwrap();
-        sim.body_translation(sim.tanks[sim.tank_index(control.tank_id).unwrap()].body)
-    };
+    assert_eq!(net.tank(alice).driver, Driver::Human);
+    let sim = net.host.simulation.as_ref().unwrap();
+    let start = sim.body_translation(net.tank(alice).body);
     net.peers[alice].input = LocalInput {
         move_z: 1.0,
         fire: true,
@@ -342,9 +332,7 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
     assert!(net.peers[alice].frames > 100, "frames were drawn");
     let sim = net.host.simulation.as_ref().unwrap();
     assert!(sim.shots_fired > 0);
-    let control = net.peers[alice].client.control().unwrap();
-    let tank = &sim.tanks[sim.tank_index(control.tank_id).unwrap()];
-    let moved = sim.body_translation(tank.body);
+    let moved = sim.body_translation(net.tank(alice).body);
     assert!(
         (moved.x - start.x).hypot(moved.z - start.z) > 1.0,
         "the tank drove"
@@ -360,11 +348,10 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
 #[test]
 fn a_baseline_shows_until_the_next_frame_draws_the_timeline_with_the_own_aim() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(500.0);
-    let now = net.now;
-    net.peers[alice].client.resume(now);
+    net.peers[alice].client.resume(net.now);
     net.settle();
     let client = &net.peers[alice].client;
     assert!(client.active_input(), "the fresh baseline was drawn");
@@ -391,7 +378,7 @@ fn a_baseline_shows_until_the_next_frame_draws_the_timeline_with_the_own_aim() {
 #[test]
 fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
     net.run(1000.0);
     let stats = net.peers[alice].client.stats(net.now);
@@ -408,14 +395,11 @@ fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
         "{stats:?}"
     );
     // A hidden page and the menu change what is sent, not how late it is.
-    let now = net.now;
-    net.peers[alice].client.set_hidden(true, now);
+    net.peers[alice].client.set_hidden(true, net.now);
     net.run(2000.0);
-    let now = net.now;
-    net.peers[alice].client.set_hidden(false, now);
+    net.peers[alice].client.set_hidden(false, net.now);
     net.run(1000.0);
-    let now = net.now;
-    net.peers[alice].client.pause(now);
+    net.peers[alice].client.pause(net.now);
     net.run(1000.0);
     assert_eq!(net.peers[alice].client.stats(net.now).late_batches, 1);
 }
@@ -423,16 +407,15 @@ fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
 #[test]
 fn pause_hands_the_tank_to_a_bot_and_resume_takes_it_back_with_a_fresh_baseline() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
     net.run(300.0);
-    let now = net.now;
-    net.peers[alice].client.pause(now);
+    net.peers[alice].client.pause(net.now);
     net.settle();
     assert!(net.peers[alice].client.menu_open());
     assert!(!net.peers[alice].client.active_input());
     net.run(300.0);
-    assert_eq!(net.tank_driver(alice), Driver::Bot);
+    assert_eq!(net.tank(alice).driver, Driver::Bot);
     let baselines = |net: &Network| {
         net.peers[alice]
             .notices
@@ -441,10 +424,9 @@ fn pause_hands_the_tank_to_a_bot_and_resume_takes_it_back_with_a_fresh_baseline(
             .count()
     };
     let before = baselines(&net);
-    let now = net.now;
-    net.peers[alice].client.resume(now);
+    net.peers[alice].client.resume(net.now);
     net.run(300.0);
-    assert_eq!(net.tank_driver(alice), Driver::Human);
+    assert_eq!(net.tank(alice).driver, Driver::Human);
     assert!(baselines(&net) > before, "resume draws a fresh baseline");
     assert!(net.peers[alice].client.active_input());
 }
@@ -452,17 +434,16 @@ fn pause_hands_the_tank_to_a_bot_and_resume_takes_it_back_with_a_fresh_baseline(
 #[test]
 fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
     net.run(300.0);
     let shown_time = |net: &Network| net.peers[alice].client.display().unwrap().match_state.time;
-    let now = net.now;
-    net.peers[alice].client.pause(now);
+    net.peers[alice].client.pause(net.now);
     let (time, frames) = (shown_time(&net), net.peers[alice].frames);
     // Longer than the host waits for an unacknowledged stream: pings acknowledge it.
     net.run(4000.0);
     assert!(net.peers[alice].client.menu_open());
-    assert_eq!(net.tank_driver(alice), Driver::Bot);
+    assert_eq!(net.tank(alice).driver, Driver::Bot);
     assert!(
         net.peers[alice].client.connected,
         "the watching seat stays connected"
@@ -476,8 +457,7 @@ fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream()
         "the shown match clock keeps running"
     );
     // A hidden page gets no stream; shown again behind the menu, it watches once more.
-    let now = net.now;
-    net.peers[alice].client.set_hidden(true, now);
+    net.peers[alice].client.set_hidden(true, net.now);
     net.run(1000.0);
     let frames = net.peers[alice].frames;
     net.run(1000.0);
@@ -485,8 +465,7 @@ fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream()
         net.peers[alice].frames, frames,
         "a hidden page draws nothing"
     );
-    let now = net.now;
-    net.peers[alice].client.set_hidden(false, now);
+    net.peers[alice].client.set_hidden(false, net.now);
     net.run(1000.0);
     let time = shown_time(&net);
     net.run(1000.0);
@@ -495,11 +474,10 @@ fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream()
         "the battle plays behind the menu again"
     );
     assert!(net.peers[alice].client.menu_open());
-    assert_eq!(net.tank_driver(alice), Driver::Bot);
+    assert_eq!(net.tank(alice).driver, Driver::Bot);
     // Hidden and shown again before a snapshot goes missing: the display still resumes.
-    let now = net.now;
-    net.peers[alice].client.set_hidden(true, now);
-    net.peers[alice].client.set_hidden(false, now);
+    net.peers[alice].client.set_hidden(true, net.now);
+    net.peers[alice].client.set_hidden(false, net.now);
     net.run(1000.0);
     let time = shown_time(&net);
     net.run(1000.0);
@@ -512,8 +490,8 @@ fn the_battle_keeps_playing_behind_the_menu_and_a_hidden_page_stops_the_stream()
 #[test]
 fn a_dropped_socket_reconnects_within_the_grace_and_keeps_its_seat() {
     let mut net = Network::new();
-    let alice = net.add(None);
-    let bob = net.add(None);
+    let alice = net.add(None, None);
+    let bob = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Quarry))));
     net.connect(bob, choice("bob", None));
     net.run(300.0);
@@ -522,9 +500,8 @@ fn a_dropped_socket_reconnects_within_the_grace_and_keeps_its_seat() {
     // The network drops bob's socket without a close handshake.
     let (socket, connection) = net.peers[bob].socket.take().unwrap();
     net.routes.remove(&connection);
-    let now = net.now;
-    net.host.disconnect(connection, now as u64);
-    net.peers[bob].client.socket_closed(socket, 1006, now);
+    net.host.disconnect(connection, net.now as u64);
+    net.peers[bob].client.socket_closed(socket, 1006, net.now);
     net.settle();
     assert!(!net.peers[bob].client.connected);
     assert!(net.peers[bob].notices.iter().any(|notice| matches!(
@@ -537,32 +514,23 @@ fn a_dropped_socket_reconnects_within_the_grace_and_keeps_its_seat() {
     assert_eq!(client.player_id, player, "the seat was kept");
     assert_eq!(client.control().unwrap().tank_id, tank);
     assert_eq!(net.host.connections(), 2);
-    assert_eq!(net.tank_driver(bob), Driver::Human);
+    assert_eq!(net.tank(bob).driver, Driver::Human);
     assert!(net.peers[bob].client.active_input());
 }
 
 #[test]
 fn a_page_reload_rejoins_its_saved_seat() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(200.0);
     let saved = net.peers[alice].saved.clone().unwrap();
     let player = net.peers[alice].client.player_id.clone();
     // The old page goes away; its socket closes.
-    let now = net.now;
     net.peers[alice].client.stop();
     net.settle();
     net.run(100.0);
-    let reloaded = net.add(None);
-    net.peers[reloaded].client = NetworkClient::new(ClientConfig {
-        server_url: "ws://127.0.0.1:8787".into(),
-        room: "ABCDEFGH".into(),
-        saved_seat: Some(saved),
-        delay: None,
-        seed: 1,
-    });
-    let _ = now;
+    let reloaded = net.add(Some(saved), None);
     net.connect(
         reloaded,
         JoinChoice {
@@ -578,11 +546,11 @@ fn a_page_reload_rejoins_its_saved_seat() {
 #[test]
 fn heartbeats_ping_every_second_and_measure_round_trips() {
     let mut net = Network::new();
-    let alice = net.add(Some(DelaySettings {
+    let delay = DelaySettings {
         half_ms: 40.0,
-        jitter_ms: 0.0,
-        stall_ms: 0.0,
-    }));
+        ..DelaySettings::default()
+    };
+    let alice = net.add(None, Some(delay));
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(3000.0);
     let stats = net.peers[alice].client.stats(net.now);
@@ -598,14 +566,13 @@ fn heartbeats_ping_every_second_and_measure_round_trips() {
 #[test]
 fn the_transport_delay_changes_mid_session_without_reconnecting() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(2000.0);
     assert!(net.peers[alice].client.stats(net.now).rtt_ms < 40.0);
     let delayed = |half_ms| DelaySettings {
         half_ms,
-        jitter_ms: 0.0,
-        stall_ms: 0.0,
+        ..DelaySettings::default()
     };
     net.peers[alice].client.set_delay(delayed(40.0));
     net.run(3000.0);
@@ -622,7 +589,7 @@ fn the_transport_delay_changes_mid_session_without_reconnecting() {
 #[test]
 fn a_room_reset_ends_the_connection_and_forgets_the_seat() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(200.0);
     net.host.dispose("server-restart");
@@ -641,18 +608,11 @@ fn a_room_reset_ends_the_connection_and_forgets_the_seat() {
 #[test]
 fn a_second_tab_takes_the_seat_and_the_first_ends_as_other_tab() {
     let mut net = Network::new();
-    let first = net.add(None);
+    let first = net.add(None, None);
     net.connect(first, choice("alice", Some(settings(MapId::Village))));
     net.run(200.0);
     let saved = net.peers[first].saved.clone().unwrap();
-    let second = net.add(None);
-    net.peers[second].client = NetworkClient::new(ClientConfig {
-        server_url: "ws://127.0.0.1:8787".into(),
-        room: "ABCDEFGH".into(),
-        saved_seat: Some(saved),
-        delay: None,
-        seed: 1,
-    });
+    let second = net.add(Some(saved), None);
     net.connect(second, choice("alice", None));
     net.run(200.0);
     assert_eq!(
@@ -665,24 +625,20 @@ fn a_second_tab_takes_the_seat_and_the_first_ends_as_other_tab() {
 #[test]
 fn an_expired_seat_or_a_gone_room_ends_with_its_own_cause() {
     let mut net = Network::new();
-    let stale = net.add(None);
-    net.peers[stale].client = NetworkClient::new(ClientConfig {
-        server_url: "ws://127.0.0.1:8787".into(),
-        room: "ABCDEFGH".into(),
-        saved_seat: Some(SavedSeat {
+    let stale = net.add(
+        Some(SavedSeat {
             token: "credential-never-issued".into(),
             room_epoch: "epoch-1".into(),
         }),
-        delay: None,
-        seed: 1,
-    });
+        None,
+    );
     net.connect(stale, choice("zed", None));
     net.run(100.0);
     assert_eq!(
         net.ended(stale).map(|(cause, _)| cause),
         Some(EndCause::SeatExpired)
     );
-    let gone = net.add(None);
+    let gone = net.add(None, None);
     net.connect(
         gone,
         JoinChoice {
@@ -699,13 +655,7 @@ fn an_expired_seat_or_a_gone_room_ends_with_its_own_cause() {
 
 #[test]
 fn a_server_that_never_answers_ends_as_lost_after_the_reconnect_window() {
-    let mut client = NetworkClient::new(ClientConfig {
-        server_url: "ws://127.0.0.1:1".into(),
-        room: "ABCDEFGH".into(),
-        saved_seat: None,
-        delay: None,
-        seed: 1,
-    });
+    let mut client = client(None, None);
     let mut now = 0.0;
     client.connect(choice("alice", None), now);
     let mut opened = 0;
@@ -754,11 +704,12 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
         } else {
             stall
         };
-        let alice = net.add(Some(DelaySettings {
+        let delay = DelaySettings {
             half_ms: rtt / 2.0,
             jitter_ms: jitter,
             stall_ms: 0.0,
-        }));
+        };
+        let alice = net.add(None, Some(delay));
         let mut room = settings(MapId::Harbor);
         room.humans_only = true;
         net.connect(alice, choice("alice", Some(room)));
@@ -826,67 +777,10 @@ fn the_own_hull_responds_at_once_and_snapshots_barely_correct_it() {
     }
 }
 
-/// One sweep the host simulated: shell `id` flew straight from `from` at tick `start` to
-/// `to` at tick `end` (fractional ticks), at combat height `y` and render height `visual_y`.
-struct HostSweep {
-    id: u32,
-    start: f64,
-    end: f64,
-    from: Vec2,
-    to: Vec2,
-    y: Option<f64>,
-    visual_y: Option<f64>,
-}
-
-impl HostSweep {
-    /// Where the host had the shell at `tick`, inside this sweep.
-    fn at(&self, tick: f64) -> Vec2 {
-        let span = self.end - self.start;
-        let alpha = if span > 0.0 {
-            ((tick - self.start) / span).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        Vec2::new(
-            self.from.x + (self.to.x - self.from.x) * alpha,
-            self.from.z + (self.to.z - self.from.z) * alpha,
-        )
-    }
-}
-
-/// Sweeps of shell `id` that contain display tick `tick`, with slack for the wire's
-/// thousandth-of-a-tick rounding.
-fn sweeps_at(sweeps: &[HostSweep], id: u32, tick: f64) -> impl Iterator<Item = &HostSweep> {
-    sweeps.iter().filter(move |sweep| {
-        sweep.id == id && sweep.start - 1e-3 <= tick && tick <= sweep.end + 1e-3
-    })
-}
-
-/// The host's tank `id` fires `weapon` at `aim` radians.
-fn fire_from(sim: &mut sloppy_core::sim::Simulation, id: u32, weapon: Weapon, aim: f64) {
-    let Some(index) = sim.tank_index(id) else {
-        return;
-    };
-    let tank = &mut sim.tanks[index];
-    if !tank.alive {
-        return;
-    }
-    tank.ammo = AmmoInventory {
-        spread: 99.0,
-        rocket: 99.0,
-        ricochet: 99.0,
-        piercing: 99.0,
-    };
-    tank.selected_ammo = weapon;
-    tank.aim = aim;
-    tank.cooldown = 0.0;
-    fire_weapon(sim, index);
-}
-
 #[test]
 fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
     let mut net = Network::new();
-    let alice = net.add(None);
+    let alice = net.add(None, None);
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(300.0);
     let shooter = net.peers[alice].client.control().unwrap().tank_id;
@@ -899,30 +793,18 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
             .projectile_moves
             .as_ref()
             .expect("a room records sweeps");
-        let mut log = log.lock().unwrap();
-        for sweep in moves {
-            let shot = &sweep.shot;
-            let start = tick as f64 - 1.0 + sweep.offset / STEP;
-            log.push(HostSweep {
-                id: shot.id,
-                start,
-                end: start + sweep.seconds / STEP,
-                from: Vec2::new(
-                    shot.x - shot.vx * sweep.seconds,
-                    shot.z - shot.vz * sweep.seconds,
-                ),
-                to: Vec2::new(shot.x, shot.z),
-                y: shot.y,
-                visual_y: shot.visual_y,
-            });
-        }
+        log.lock().unwrap().extend(Sweep::record(moves, tick));
         if tick % 10 == 0 {
             let weapon = if tick % 20 == 0 {
                 Weapon::Ricochet
             } else {
                 Weapon::Rocket
             };
-            fire_from(sim, shooter, weapon, tick as f64 * 2.4);
+            if let Some(index) = sim.tank_index(shooter)
+                && sim.tanks[index].alive
+            {
+                fire_from(sim, index, weapon, tick as f64 * 2.4);
+            }
         }
     }));
     // Join once a ricochet that has bounced, a rocket and a few other shells are airborne.
@@ -946,7 +828,7 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
         net.run(FRAME_MS);
         waited += FRAME_MS;
     };
-    let bob = net.add(None);
+    let bob = net.add(None, None);
     net.connect(
         bob,
         JoinChoice {
@@ -986,56 +868,12 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
         );
     }
     let newest = net.host.tick() as f64;
-    let mut compared = 0;
-    for (tick, shots) in &reads {
-        let tick = *tick;
-        if tick > newest - 3.0 {
-            continue;
-        }
-        // Every drawn shell flies there, at the host's position and heights.
-        for shot in shots {
-            let distance = sweeps_at(&sweeps, shot.id, tick)
-                .map(|sweep| {
-                    assert!(
-                        same_height(shot.y, sweep.y) && same_height(shot.visual_y, sweep.visual_y),
-                        "shell {} is drawn at height {:?}/{:?}, flies at {:?}/{:?}",
-                        shot.id,
-                        shot.y,
-                        shot.visual_y,
-                        sweep.y,
-                        sweep.visual_y
-                    );
-                    let at = sweep.at(tick);
-                    (at.x - shot.x).hypot(at.z - shot.z)
-                })
-                .reduce(f64::min)
-                .unwrap_or_else(|| {
-                    panic!("shell {} is drawn at tick {tick} but not flying", shot.id)
-                });
-            assert!(
-                distance <= PATH_TOLERANCE + WIRE_SLACK,
-                "shell {} is drawn {distance} m from where the host flies it at tick {tick}",
-                shot.id
-            );
-            compared += 1;
-        }
-        // From the baseline on, every shell flying well inside a sweep is drawn. The display
-        // starts a buffer behind the baseline, which holds only each shell's current path
-        // (and only the baseline pose for tanks): until the display reaches the baseline, a
-        // shell that turned or ended just before it is missing, never misplaced.
-        if tick < baseline {
-            continue;
-        }
-        for sweep in sweeps.iter() {
-            if sweep.start + 0.01 < tick && tick < sweep.end - 0.01 {
-                assert!(
-                    shots.iter().any(|shot| shot.id == sweep.id),
-                    "shell {} flies at tick {tick} but bob does not draw it",
-                    sweep.id
-                );
-            }
-        }
-    }
+    // Every drawn shell flies there, at the host's position and heights, and from the
+    // baseline on every shell flying well inside a sweep is drawn. The display starts a
+    // buffer behind the baseline, which holds only each shell's current path (and only the
+    // baseline pose for tanks): until the display reaches the baseline, a shell that turned
+    // or ended just before it is missing, never misplaced.
+    let (compared, _) = assert_drawn_where_simulated(&sweeps, &reads, newest, baseline);
     assert!(compared > 100, "compared {compared} drawn shells");
     // Each shell in flight at the join is drawn on until its last sweep.
     for id in &in_flight {

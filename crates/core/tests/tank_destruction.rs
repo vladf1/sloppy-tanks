@@ -15,17 +15,6 @@ use sloppy_core::sim::{
 };
 use support::{clear_arena, place_tank};
 
-fn part_name(part: Option<WreckPart>) -> &'static str {
-    match part {
-        Some(WreckPart::Intact) => "intact",
-        Some(WreckPart::Hull) => "hull",
-        Some(WreckPart::Turret) => "turret",
-        Some(WreckPart::TurretBarrel) => "turret-barrel",
-        Some(WreckPart::Barrel) => "barrel",
-        None => "",
-    }
-}
-
 #[test]
 fn burnouts_stay_near_one_fifth_of_deaths_with_repeatable_selection() {
     let mut count = 0;
@@ -145,14 +134,12 @@ fn tank_breakup_varies_assemblies_travels_widely_and_lands_after_flight() {
         let enemy = s.tanks[0].team.opponent();
         s.damage_tank(0, 1000.0, 999, enemy, None, None);
         let pieces = s.fragments.clone();
-        let mut names: Vec<&str> = pieces.iter().map(|f| part_name(f.part)).collect();
-        names.sort();
-        assert!(names.contains(&"hull"));
-        assert!(
-            names.contains(&"turret-barrel")
-                || (names.contains(&"turret") && names.contains(&"barrel"))
-        );
-        variants.insert(names.join("/"));
+        let mut parts: Vec<_> = pieces.iter().map(|f| f.part.unwrap()).collect();
+        parts.sort_by_key(|&part| part as u8);
+        let has = |part| parts.contains(&part);
+        assert!(has(WreckPart::Hull));
+        assert!(has(WreckPart::TurretBarrel) || (has(WreckPart::Turret) && has(WreckPart::Barrel)));
+        variants.insert(format!("{parts:?}"));
         assert!(pieces.len() <= 3);
         if s.body_linvel(pieces[1].body).y.powi(2) / 44.0 >= 20.0 {
             high_launches += 1;
@@ -169,12 +156,10 @@ fn tank_breakup_varies_assemblies_travels_widely_and_lands_after_flight() {
                     .sqrt();
             assert!((6.99..=14.01).contains(&speed), "spin {speed}");
             // The first of equally large components wins, like the stable sort it replaces.
-            let mut dominant = components[0];
-            for component in &components[1..] {
-                if component.1.abs() > dominant.1.abs() {
-                    dominant = *component;
-                }
-            }
+            let dominant = components
+                .into_iter()
+                .reduce(|best, c| if c.1.abs() > best.1.abs() { c } else { best })
+                .unwrap();
             axes.insert(dominant.0);
         }
         let targets: Vec<Vec2> = pieces[..2]
@@ -301,25 +286,12 @@ fn humvee_low_rolls_settle_on_a_side_at_either_heading_without_consuming_combat_
             .iter()
             .position(|tank| tank.kind == VehicleKind::Humvee)
             .expect("the seed-2 roster has a Humvee");
-        let covers: Vec<_> = simulation.covers.iter().map(|cover| cover.body).collect();
-        for body in covers {
-            simulation.remove_body(body);
-        }
-        let others: Vec<_> = simulation
-            .tanks
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != hunter)
-            .map(|(_, tank)| tank.body)
-            .collect();
-        for body in others {
-            simulation.remove_body(body);
-        }
-        simulation.tanks[hunter].heading = heading;
-        let body = simulation.tanks[hunter].body;
+        clear_arena(&mut simulation, &[hunter]);
+        simulation.tanks[0].heading = heading;
+        let body = simulation.tanks[0].body;
         simulation.world.bodies[body].set_translation(vector(0.0, 0.65, 0.0), true);
         simulation.world.bodies[body].set_linvel(vector(0.0, 0.0, 0.0), true);
-        break_tank(&mut simulation, hunter, false);
+        break_tank(&mut simulation, 0, false);
         assert_eq!(simulation.rng.next(), control.rng.next());
         let wreck = simulation
             .fragments

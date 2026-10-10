@@ -36,18 +36,11 @@ fn local_presentation_views_stay_live_and_reuse_arrays_without_exposing_physics_
     for entity in view
         .tanks
         .iter()
-        .map(|tank| serde_json::to_value(tank).unwrap())
-        .chain(
-            view.covers
-                .iter()
-                .map(|cover| serde_json::to_value(cover).unwrap()),
-        )
-        .chain(
-            view.fragments
-                .iter()
-                .map(|piece| serde_json::to_value(piece).unwrap()),
-        )
+        .map(serde_json::to_value)
+        .chain(view.covers.iter().map(serde_json::to_value))
+        .chain(view.fragments.iter().map(serde_json::to_value))
     {
+        let entity = entity.unwrap();
         let fields = entity.as_object().expect("entity record");
         assert!(!fields.contains_key("body"));
         assert!(!fields.contains_key("collider"));

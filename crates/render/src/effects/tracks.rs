@@ -21,9 +21,9 @@ const HUMVEE_SPACING: f64 = 0.16;
 pub const HUMVEE_TRACK_STRENGTH: f32 = 0.18;
 /// Planar travel (m), turn (rad) or height (m) beyond which a pose is a teleport
 /// or a jump rather than driving.
-const TELEPORT_DISTANCE: f64 = 5.0;
-const TELEPORT_TURN: f64 = 0.8;
-const AIRBORNE_HEIGHT: f64 = 1.25;
+pub(super) const TELEPORT_DISTANCE: f64 = 5.0;
+pub(super) const TELEPORT_TURN: f64 = 0.8;
+pub(super) const AIRBORNE_HEIGHT: f64 = 1.25;
 const MARK_HEIGHT: f64 = 0.075;
 
 #[derive(Clone, Copy, Debug)]
@@ -155,7 +155,7 @@ impl TrackTrails {
                         for side in [-1.0, 1.0] {
                             let mx = cx + cos * side * scale;
                             let mz = cz - sin * side * scale;
-                            self.lay(state, mx, mz, angle, scale, humvee);
+                            self.lay(mx, mz, angle, scale, humvee);
                         }
                     }
                     d += spacing;
@@ -169,7 +169,7 @@ impl TrackTrails {
         }
     }
 
-    fn lay(&mut self, state: &RenderState, x: f64, z: f64, angle: f64, scale: f64, humvee: bool) {
+    fn lay(&mut self, x: f64, z: f64, angle: f64, scale: f64, humvee: bool) {
         let (width, length) = if humvee { (0.18, 0.3) } else { (0.48, 0.16) };
         let y = self.pads.decal_height(x, z, 0.0, MARK_HEIGHT);
         let world = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32))
@@ -184,7 +184,7 @@ impl TrackTrails {
         if self.records.push(record(
             world,
             [1.0; 4],
-            [state.elapsed as f32, strength, 0.0, 0.0],
+            [self.clock as f32, strength, 0.0, 0.0],
         )) {
             let queue = (self.oldest + slot) % TRACK_CAPACITY;
             self.slots[queue] = slot as u32;
@@ -295,7 +295,7 @@ mod tests {
             for slot in 0..trails.len() {
                 let p = origin(&trails.records, slot);
                 let y = f64::from(p.y);
-                match decks.top(f64::from(p.x), f64::from(p.z)) {
+                match decks.top_within(f64::from(p.x), f64::from(p.z), 0.0) {
                     Some(deck) => {
                         pad += 1;
                         assert!(

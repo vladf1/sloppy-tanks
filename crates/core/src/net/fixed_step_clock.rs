@@ -38,14 +38,11 @@ impl FixedStepClock {
     /// Runs the ticks now due (at most [`MAX_STEPS_PER_BATCH`]), passing each new tick
     /// number to `step`. Returns false, running nothing, when the debt exceeds
     /// [`MAX_TICK_DEBT_MS`]. A clock that goes backwards adds no time.
-    pub fn advance(&mut self, now_ms: f64, mut step: impl FnMut(u64)) -> Result<bool, String> {
-        if !now_ms.is_finite() {
-            return Err("Invalid host clock".into());
-        }
+    pub fn advance(&mut self, now_ms: f64, mut step: impl FnMut(u64)) -> bool {
         self.debt_ms += (now_ms - self.last_ms).max(0.0);
         self.last_ms = self.last_ms.max(now_ms);
         if self.debt_ms > MAX_TICK_DEBT_MS + CLOCK_EPSILON_MS {
-            return Ok(false);
+            return false;
         }
         let mut steps = 0;
         while self.debt_ms + CLOCK_EPSILON_MS >= SIMULATION_STEP_MS && steps < MAX_STEPS_PER_BATCH {
@@ -54,6 +51,6 @@ impl FixedStepClock {
             self.debt_ms = (self.debt_ms - SIMULATION_STEP_MS).max(0.0);
             steps += 1;
         }
-        Ok(true)
+        true
     }
 }

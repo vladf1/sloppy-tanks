@@ -22,16 +22,14 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::tank_driving::drive_tank;
 use sloppy_core::sim::weapons::{collect_pickup, fire_weapon};
 use sloppy_core::sim::{
-    BotMode, CoverKind, DamageCause, DamageSource, GameMode, Pickup, PickupKind, SimEventType,
-    Simulation, SpecialAmmo, VehicleCommand, VehicleKind, Weapon,
+    BotMode, CoverKind, DamageCause, DamageSource, GameMode, PickupKind, SimEventType, Simulation,
+    SpecialAmmo, VehicleCommand, VehicleKind, Weapon,
 };
-use support::clear_arena;
+use support::{clear_arena, concrete, decide, pickup, set_translation, tank_xz};
 
-struct Duel {
-    simulation: Simulation,
-    hunter: usize,
-    target: usize,
-}
+/// The HMMWV and its enemy in `duel`.
+const HUNTER: usize = 0;
+const TARGET: usize = 1;
 
 fn humvee_index(simulation: &Simulation) -> usize {
     simulation
@@ -39,17 +37,6 @@ fn humvee_index(simulation: &Simulation) -> usize {
         .iter()
         .position(|tank| tank.kind == VehicleKind::Humvee)
         .expect("a team round has a HMMWV")
-}
-
-fn set_translation(simulation: &mut Simulation, index: usize, x: f64, z: f64) {
-    let body = simulation.tanks[index].body;
-    simulation.world.bodies[body].set_translation(vector(x, 0.65, z), true);
-}
-
-fn position(simulation: &Simulation, index: usize) -> Vec2 {
-    simulation
-        .body_translation(simulation.tanks[index].body)
-        .planar()
 }
 
 fn tactics(simulation: &Simulation, index: usize) -> &HumveeTactics {
@@ -60,9 +47,9 @@ fn tactics(simulation: &Simulation, index: usize) -> &HumveeTactics {
         .expect("humvee tactics")
 }
 
-/// A HMMWV at the origin facing north and one enemy `range` metres ahead on an otherwise
-/// empty map. Cover is added before navigation is rebuilt.
-fn duel(range: f64, covers: &[CoverDef]) -> Duel {
+/// A HMMWV (`HUNTER`) at the origin facing north and one enemy (`TARGET`) `range` metres
+/// ahead on an otherwise empty map. Cover is added before navigation is rebuilt.
+fn duel(range: f64, covers: &[CoverDef]) -> Simulation {
     let mut simulation = Simulation::with_seed(123.0);
     let hunter = humvee_index(&simulation);
     let hunter_team = simulation.tanks[hunter].team;
@@ -72,26 +59,21 @@ fn duel(range: f64, covers: &[CoverDef]) -> Duel {
         .position(|tank| tank.team != hunter_team)
         .expect("enemy");
     clear_arena(&mut simulation, &[hunter, target]);
-    let (hunter, target) = (0, 1);
     for cover in covers {
         simulation.add_cover(cover);
     }
     simulation.nav.rebuild(&simulation.covers, None);
-    set_translation(&mut simulation, hunter, 0.0, 0.0);
-    set_translation(&mut simulation, target, 0.0, range);
-    simulation.tanks[hunter].previous = Vec2::new(0.0, 0.0);
-    simulation.tanks[target].previous = Vec2::new(0.0, range);
-    simulation.tanks[hunter].aim = 0.0;
-    simulation.tanks[hunter].heading = 0.0;
-    simulation.tanks[hunter].cooldown = 0.0;
-    simulation.tanks[hunter].protection = 0.0;
-    simulation.tanks[target].protection = 0.0;
+    set_translation(&mut simulation, HUNTER, 0.0, 0.0);
+    set_translation(&mut simulation, TARGET, 0.0, range);
+    simulation.tanks[HUNTER].previous = Vec2::new(0.0, 0.0);
+    simulation.tanks[TARGET].previous = Vec2::new(0.0, range);
+    simulation.tanks[HUNTER].aim = 0.0;
+    simulation.tanks[HUNTER].heading = 0.0;
+    simulation.tanks[HUNTER].cooldown = 0.0;
+    simulation.tanks[HUNTER].protection = 0.0;
+    simulation.tanks[TARGET].protection = 0.0;
     simulation.world.step();
-    Duel {
-        simulation,
-        hunter,
-        target,
-    }
+    simulation
 }
 
 fn retreat_command() -> VehicleCommand {
@@ -142,24 +124,20 @@ fn team_rounds_include_tow_hmmwvs_while_solo_rounds_do_not() {
 
 #[test]
 fn a_hmmwv_fires_an_unlimited_tow_that_leaves_a_fresh_bruiser_alive() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(12.0, &[]);
-    simulation.tanks[hunter].brain.target = simulation.tanks[target].id;
+    let mut simulation = duel(12.0, &[]);
+    simulation.tanks[HUNTER].brain.target = simulation.tanks[TARGET].id;
     simulation.start();
-    fire_weapon(&mut simulation, hunter);
+    fire_weapon(&mut simulation, HUNTER);
     let shot = &simulation.shots[0];
     assert_eq!(shot.weapon, Weapon::Tow);
     assert_eq!(shot.damage, weapon(Weapon::Tow).damage);
     assert!(shot.visual_y.unwrap_or(0.0) > shot.y.unwrap_or(0.0));
-    assert_eq!(shot.target_id, Some(simulation.tanks[target].id));
-    assert_eq!(simulation.tanks[hunter].ammo.rocket, 0.0);
+    assert_eq!(shot.target_id, Some(simulation.tanks[TARGET].id));
+    assert_eq!(simulation.tanks[HUNTER].ammo.rocket, 0.0);
     for _ in 0..40 {
         step_projectiles(&mut simulation, STEP, true);
     }
-    let target_tank = &simulation.tanks[target];
+    let target_tank = &simulation.tanks[TARGET];
     assert!(target_tank.alive);
     assert_eq!(
         target_tank.hp,
@@ -175,36 +153,32 @@ fn a_hmmwv_fires_an_unlimited_tow_that_leaves_a_fresh_bruiser_alive() {
 
 #[test]
 fn hmmwvs_drive_forward_except_during_recovery_and_guide_tows_with_a_capped_turn() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(24.0, &[]);
-    simulation.tanks[hunter].brain.target = simulation.tanks[target].id;
+    let mut simulation = duel(24.0, &[]);
+    simulation.tanks[HUNTER].brain.target = simulation.tanks[TARGET].id;
     simulation.start();
-    drive(&mut simulation, hunter, &retreat_command());
-    let body = simulation.tanks[hunter].body;
+    drive(&mut simulation, HUNTER, &retreat_command());
+    let body = simulation.tanks[HUNTER].body;
     assert!(
         simulation.body_linvel(body).z >= 0.0,
         "normal retreat never drives backward"
     );
     assert_ne!(
-        simulation.tanks[hunter].heading, 0.0,
+        simulation.tanks[HUNTER].heading, 0.0,
         "normal retreat starts a forward-facing pivot"
     );
-    simulation.tanks[hunter].brain.recovery = 1.0;
+    simulation.tanks[HUNTER].brain.recovery = 1.0;
     simulation.world.bodies[body].set_linvel(vector(0.0, 0.0, 0.0), true);
-    drive(&mut simulation, hunter, &retreat_command());
+    drive(&mut simulation, HUNTER, &retreat_command());
     assert!(
         simulation.body_linvel(body).z < 0.0,
         "stuck recovery may use reverse gear"
     );
-    simulation.tanks[hunter].brain.recovery = 0.0;
+    simulation.tanks[HUNTER].brain.recovery = 0.0;
 
-    fire_weapon(&mut simulation, hunter);
+    fire_weapon(&mut simulation, HUNTER);
     let shot = &simulation.shots[0];
     let before = shot.vx.atan2(shot.vz);
-    set_translation(&mut simulation, target, 12.0, 24.0);
+    set_translation(&mut simulation, TARGET, 12.0, 24.0);
     step_projectiles(&mut simulation, 0.1, false);
     let shot = &simulation.shots[0];
     let after = shot.vx.atan2(shot.vz);
@@ -216,31 +190,27 @@ fn hmmwvs_drive_forward_except_during_recovery_and_guide_tows_with_a_capped_turn
 fn hmmwvs_never_spend_tows_on_cover_or_hidden_tanks() {
     for kind in [CoverKind::Tree, CoverKind::Timber] {
         let height = if kind == CoverKind::Tree { 6.0 } else { 2.0 };
-        let Duel {
-            mut simulation,
-            hunter,
-            target,
-        } = duel(
+        let mut simulation = duel(
             10.0,
             &[CoverDef::new(kind, 0.0, 5.0, 2.0, 2.0, height, 80.0, 0)],
         );
-        simulation.tanks[hunter].brain.target = simulation.tanks[target].id;
-        simulation.tanks[hunter].brain.memory = 1.0;
-        assert!(!simulation.visible(position(&simulation, hunter), position(&simulation, target)));
-        fire_weapon(&mut simulation, hunter);
+        simulation.tanks[HUNTER].brain.target = simulation.tanks[TARGET].id;
+        simulation.tanks[HUNTER].brain.memory = 1.0;
+        assert!(!simulation.visible(tank_xz(&simulation, HUNTER), tank_xz(&simulation, TARGET)));
+        fire_weapon(&mut simulation, HUNTER);
         assert_eq!(
             simulation.shots.len(),
             0,
             "{kind:?}: hidden tank must not attract a TOW"
         );
 
-        let brain = &mut simulation.tanks[hunter].brain;
+        let brain = &mut simulation.tanks[HUNTER].brain;
         brain.target = 0;
         brain.memory = 0.0;
         brain.decision = 999.0;
         brain.path = Vec::new();
         brain.goal = Vec2::new(0.0, 10.0);
-        let command = bot_command(&mut simulation, hunter, STEP);
+        let command = bot_command(&mut simulation, HUNTER, STEP);
         assert!(
             !command.fire,
             "{kind:?}: HMMWV must not use TOWs as breach shots"
@@ -300,15 +270,7 @@ fn a_rejected_tow_launch_preserves_protection_reload_recoil_and_combat_time() {
 fn hmmwvs_leave_unusable_ammo_crates_for_other_vehicles() {
     let mut simulation = Simulation::with_seed(123.0);
     let hunter = humvee_index(&simulation);
-    let mut pickup = Pickup {
-        id: 999,
-        kind: PickupKind::Ricochet,
-        x: 0.0,
-        z: 0.0,
-        available: true,
-        cooldown: 0.0,
-        cooldown_duration: 0.0,
-    };
+    let mut pickup = pickup(999, PickupKind::Ricochet, 0.0, 0.0);
     assert!(!can_collect_ammo(
         &simulation.tanks[hunter],
         SpecialAmmo::Ricochet,
@@ -321,16 +283,12 @@ fn hmmwvs_leave_unusable_ammo_crates_for_other_vehicles() {
 
 #[test]
 fn tow_guidance_cannot_transfer_to_a_new_life_of_the_marked_target() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(24.0, &[]);
-    simulation.tanks[hunter].brain.target = simulation.tanks[target].id;
-    fire_weapon(&mut simulation, hunter);
+    let mut simulation = duel(24.0, &[]);
+    simulation.tanks[HUNTER].brain.target = simulation.tanks[TARGET].id;
+    fire_weapon(&mut simulation, HUNTER);
     assert!(!simulation.shots.is_empty());
-    simulation.tanks[target].life += 1;
-    set_translation(&mut simulation, target, 12.0, 24.0);
+    simulation.tanks[TARGET].life += 1;
+    set_translation(&mut simulation, TARGET, 12.0, 24.0);
     step_projectiles(&mut simulation, STEP, false);
     let shot = &simulation.shots[0];
     assert_eq!(shot.vx, 0.0);
@@ -339,151 +297,110 @@ fn tow_guidance_cannot_transfer_to_a_new_life_of_the_marked_target() {
 
 #[test]
 fn humvees_plan_an_escape_fire_once_withdraw_and_wait_before_attacking_again() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(28.0, &[]);
-    let target_id = simulation.tanks[target].id;
-    let brain = &mut simulation.tanks[hunter].brain;
+    let mut simulation = duel(28.0, &[]);
+    let target_id = simulation.tanks[TARGET].id;
+    let brain = &mut simulation.tanks[HUNTER].brain;
     brain.target = target_id;
     brain.memory = 5.0;
     brain.last_seen = Vec2::new(0.0, 28.0);
     brain.decision = 0.0;
     brain.reaction = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
-    assert_eq!(tactics(&simulation, hunter).phase, HumveePhase::Attack);
+    bot_command(&mut simulation, HUNTER, STEP);
+    assert_eq!(tactics(&simulation, HUNTER).phase, HumveePhase::Attack);
     assert!(
         distance(
-            tactics(&simulation, hunter).escape,
-            position(&simulation, target)
+            tactics(&simulation, HUNTER).escape,
+            tank_xz(&simulation, TARGET)
         ) > 28.0
     );
-    let firing_point = simulation.tanks[hunter].brain.goal;
-    simulation.tanks[hunter].brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
+    let firing_point = simulation.tanks[HUNTER].brain.goal;
+    decide(&mut simulation, HUNTER);
     assert_eq!(
-        simulation.tanks[hunter].brain.goal, firing_point,
+        simulation.tanks[HUNTER].brain.goal, firing_point,
         "target acquisition must not overwrite the firing position"
     );
-    fire_weapon(&mut simulation, hunter);
-    assert_eq!(tactics(&simulation, hunter).phase, HumveePhase::Withdraw);
+    fire_weapon(&mut simulation, HUNTER);
+    assert_eq!(tactics(&simulation, HUNTER).phase, HumveePhase::Withdraw);
     assert_eq!(
-        simulation.tanks[hunter].brain.goal,
-        tactics(&simulation, hunter).escape
+        simulation.tanks[HUNTER].brain.goal,
+        tactics(&simulation, HUNTER).escape
     );
-    assert!(tactics(&simulation, hunter).ready_at > simulation.tanks[hunter].cooldown);
-    simulation.tanks[hunter].cooldown = 0.0;
-    simulation.tanks[hunter].brain.fire_delay = 0.0;
-    simulation.tanks[hunter].brain.decision = 0.0;
-    assert!(!bot_command(&mut simulation, hunter, STEP).fire);
-    let escape = tactics(&simulation, hunter).escape;
-    set_translation(&mut simulation, hunter, escape.x, escape.z);
-    simulation.tanks[hunter].brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
+    assert!(tactics(&simulation, HUNTER).ready_at > simulation.tanks[HUNTER].cooldown);
+    simulation.tanks[HUNTER].cooldown = 0.0;
+    simulation.tanks[HUNTER].brain.fire_delay = 0.0;
+    assert!(!decide(&mut simulation, HUNTER).fire);
+    let escape = tactics(&simulation, HUNTER).escape;
+    set_translation(&mut simulation, HUNTER, escape.x, escape.z);
+    decide(&mut simulation, HUNTER);
     assert_ne!(
-        tactics(&simulation, hunter).phase,
+        tactics(&simulation, HUNTER).phase,
         HumveePhase::Attack,
         "arrival does not bypass the withdrawal pause"
     );
-    let plan = tactics(&simulation, hunter);
+    let plan = tactics(&simulation, HUNTER);
     simulation.elapsed = plan.ready_at.max(plan.deadline) + 0.1;
-    simulation.tanks[hunter].brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
+    decide(&mut simulation, HUNTER);
     assert_eq!(
-        tactics(&simulation, hunter).phase,
+        tactics(&simulation, HUNTER).phase,
         HumveePhase::Attack,
         "open terrain withdrawal remains bounded"
     );
-    let last_shot = tactics(&simulation, hunter).last_shot.expect("last shot");
+    let last_shot = tactics(&simulation, HUNTER).last_shot.expect("last shot");
     assert!(
-        distance(simulation.tanks[hunter].brain.goal, last_shot) >= 5.0,
+        distance(simulation.tanks[HUNTER].brain.goal, last_shot) >= 5.0,
         "next attack uses a different position"
     );
 }
 
 #[test]
 fn a_humvee_shot_from_out_of_sight_withdraws_from_a_close_shooter_instead_of_charging() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(
-        10.0,
-        &[CoverDef::new(
-            CoverKind::Concrete,
-            0.0,
-            5.0,
-            6.0,
-            1.0,
-            3.0,
-            f64::INFINITY,
-            0,
-        )],
-    );
-    let shooter = position(&simulation, target);
-    assert!(!simulation.visible(position(&simulation, hunter), shooter));
+    let mut simulation = duel(10.0, &[concrete(0.0, 5.0, 6.0, 1.0)]);
+    let shooter = tank_xz(&simulation, TARGET);
+    assert!(!simulation.visible(tank_xz(&simulation, HUNTER), shooter));
     // An ordinary HMMWV: hunters track enemies through cover anyway.
-    let brain = &mut simulation.tanks[hunter].brain;
+    let brain = &mut simulation.tanks[HUNTER].brain;
     brain.ultra_aggressive = false;
     brain.target = 0;
     brain.memory = 0.0;
     brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
-    assert_eq!(simulation.tanks[hunter].brain.target, 0);
-    let (owner, team) = (simulation.tanks[target].id, simulation.tanks[target].team);
+    bot_command(&mut simulation, HUNTER, STEP);
+    assert_eq!(simulation.tanks[HUNTER].brain.target, 0);
+    let (owner, team) = (simulation.tanks[TARGET].id, simulation.tanks[TARGET].team);
     let source = DamageSource {
         cause: DamageCause::Standard,
         origin: Vec2::new(0.0, 1.0),
     };
-    simulation.damage_tank(hunter, 1.0, owner, team, None, Some(source));
-    bot_command(&mut simulation, hunter, STEP);
-    let brain = &simulation.tanks[hunter].brain;
+    simulation.damage_tank(HUNTER, 1.0, owner, team, None, Some(source));
+    bot_command(&mut simulation, HUNTER, STEP);
+    let brain = &simulation.tanks[HUNTER].brain;
     assert_eq!(brain.target, owner);
     assert_eq!(brain.mode, BotMode::Retreat);
-    assert_eq!(tactics(&simulation, hunter).phase, HumveePhase::Withdraw);
+    assert_eq!(tactics(&simulation, HUNTER).phase, HumveePhase::Withdraw);
     assert!(
-        distance(tactics(&simulation, hunter).escape, shooter) > 10.0,
+        distance(tactics(&simulation, HUNTER).escape, shooter) > 10.0,
         "the escape leads away from the shooter"
     );
 }
 
 #[test]
 fn humvees_prefer_a_concealed_escape_and_do_not_escort_idle_allies() {
-    let Duel {
-        mut simulation,
-        hunter,
-        target,
-    } = duel(
-        28.0,
-        &[CoverDef::new(
-            CoverKind::Concrete,
-            7.0,
-            3.0,
-            5.0,
-            2.0,
-            3.0,
-            f64::INFINITY,
-            0,
-        )],
-    );
-    simulation.tanks[hunter].brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
-    let escape = tactics(&simulation, hunter).escape;
-    assert_eq!(tactics(&simulation, hunter).phase, HumveePhase::Attack);
-    assert!(!simulation.visible(escape, position(&simulation, target)));
+    let mut simulation = duel(28.0, &[concrete(7.0, 3.0, 5.0, 2.0)]);
+    decide(&mut simulation, HUNTER);
+    let escape = tactics(&simulation, HUNTER).escape;
+    assert_eq!(tactics(&simulation, HUNTER).phase, HumveePhase::Attack);
+    assert!(!simulation.visible(escape, tank_xz(&simulation, TARGET)));
     assert!(
         simulation
             .nav
-            .clear_line(simulation.tanks[hunter].brain.goal, escape)
+            .clear_line(simulation.tanks[HUNTER].brain.goal, escape)
     );
-    simulation.tanks[target].team = simulation.tanks[hunter].team;
-    let brain = &mut simulation.tanks[hunter].brain;
+    simulation.tanks[TARGET].team = simulation.tanks[HUNTER].team;
+    let brain = &mut simulation.tanks[HUNTER].brain;
     brain.target = 0;
     brain.memory = 0.0;
     brain.decision = 0.0;
-    bot_command(&mut simulation, hunter, STEP);
-    assert_ne!(simulation.tanks[hunter].brain.mode, BotMode::Escort);
+    bot_command(&mut simulation, HUNTER, STEP);
+    assert_ne!(simulation.tanks[HUNTER].brain.mode, BotMode::Escort);
 }
 
 #[test]

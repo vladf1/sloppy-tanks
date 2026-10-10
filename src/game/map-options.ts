@@ -1,5 +1,6 @@
 /** The maps offered by Battle Setup, room settings and `?map=` links. This module imports
- * nothing: the inline startup script and the server both read it. */
+ * nothing: the inline startup script and the build's map-picker markup
+ * (`scripts/map-picker-markup.ts`) both read it. */
 export const MAP_OPTIONS = [
   {
     id: "village",
@@ -23,8 +24,8 @@ export const MAP_OPTIONS = [
     tint: "#a8733a",
   },
   // Extra levels are offered only with `?debug`. Each brings its own arena, bot
-  // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); this menu
-  // list mirrors `crates/core/src/sim/map_options.rs`.
+  // roster and rules from the engine (`crates/core/src/sim/extra_levels.rs`); the ids,
+  // names and extra flags mirror `crates/core/src/sim/map_options.rs`.
   {
     id: "stress-test",
     name: "Stress Grid",
@@ -59,7 +60,8 @@ export function isExtraLevel(id: MapId): id is ExtraLevelId {
   return "extra" in mapOption(id)!;
 }
 
-/** Battle Setup offers the extra levels only on a page opened with `?debug`. */
-export function showsExtraLevels(search: string): boolean {
+/** A page opened with `?debug`: nerd stats, extra levels in the map lists, and the
+ * console aids `printDebugHelp` lists. */
+export function debugPage(search: string): boolean {
   return new URLSearchParams(search).has("debug");
 }

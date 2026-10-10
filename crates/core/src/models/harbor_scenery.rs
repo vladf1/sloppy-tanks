@@ -7,22 +7,23 @@ use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use crate::geometry::{plane_geometry, ring_geometry};
-use crate::scene::{Material, Node, TextureRef, TextureSource, Wrap};
+use crate::scene::{Material, Node, TextureRef};
 
 use super::batching::batch;
 use super::effects_scenery::harbor_label_texture;
 use super::harbor_surfaces::{HarborSurface, harbor_box};
-use super::harbor_vessels::{HarborFleet, harbor_beam};
+use super::harbor_vessels::{harbor_fleet, update_harbor_fleet};
 use super::harbor_water::harbor_water;
 use super::house_surfaces::siding_box;
 use super::model_primitives::{
-    DEFAULT_BOX_RADIUS, TEAM_COLORS, box_part, cylinder_part, paint, put, rotated,
+    DEFAULT_BOX_RADIUS, TEAM_COLORS, beam, box_part, cylinder_part, paint, put, rotated,
 };
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
 use crate::sim::data::ARENA;
 use crate::sim::types::{Team, Vec2};
 
-/// Indices of the animated groups among [`HarborScenery::root`]'s children.
+/// Index of the fleet among [`HarborScenery::root`]'s children; the beacons are
+/// the last child.
 const FLEET_CHILD: usize = 1;
 
 /// Harbor Havoc scenery, built once and reused across rounds (`HarborScenery`).
@@ -30,7 +31,6 @@ pub struct HarborScenery {
     /// Children: the water, the fleet, the painted labels, the batched details,
     /// then the beacons.
     pub root: Node,
-    beacons: usize,
 }
 
 impl Default for HarborScenery {
@@ -42,15 +42,10 @@ impl Default for HarborScenery {
 /// `paintLabel(group, text, x, z, width, depth)`: painted lettering flat on the
 /// apron, drawn by the browser (see `effects_scenery::harbor_label_texture`).
 fn paint_label(group: &mut Node, text: &'static str, x: f64, z: f64, width: f64, depth: f64) {
-    let map = TextureRef {
-        source: TextureSource::Generated(harbor_label_texture(text)),
-        wrap: Wrap::Clamp,
-        ..TextureRef::file("")
-    };
     let label = Node::mesh(
         Arc::new(plane_geometry(width, depth)),
         Arc::new(Material {
-            map: Some(map),
+            map: Some(TextureRef::generated(harbor_label_texture(text))),
             transparent: true,
             depth_write: false,
             ..Material::standard(0xffffff, 0.0, 1.0)
@@ -72,7 +67,7 @@ impl HarborScenery {
     pub fn new() -> Self {
         let mut root = Node::group("");
         root.children.push(harbor_water());
-        root.children.push(HarborFleet::build());
+        root.children.push(harbor_fleet());
         let mut details = Node::group("");
         let mut beacons = Node::group("");
         put(
@@ -354,21 +349,21 @@ impl HarborScenery {
                 }
             }
             let rope = 0xbaa377;
-            harbor_beam(
+            beam(
                 &mut details,
                 [side * QUAY_EDGE, 0.4, -24.0],
                 [side * 72.0, 2.3, if side < 0.0 { -27.0 } else { -4.0 }],
                 0.075,
                 rope,
             );
-            harbor_beam(
+            beam(
                 &mut details,
                 [side * QUAY_EDGE, 0.4, 24.0],
                 [side * 72.0, 2.3, if side < 0.0 { 12.0 } else { 34.0 }],
                 0.075,
                 rope,
             );
-            harbor_beam(
+            beam(
                 &mut details,
                 [side * 24.0, WALL_TOP + 0.4, -BOLLARD_LINE],
                 [side * 20.0 - 8.0, 3.0, -73.0],
@@ -412,19 +407,9 @@ impl HarborScenery {
         }
         batch(&mut details);
         batch(&mut beacons);
-        // Painted edge stripes sit on the actual 1.2 m perimeter wall.
-        for child in &mut details.children {
-            if let Some(drawable) = &mut child.drawable {
-                drawable.receive_shadow = true;
-            }
-        }
         root.children.push(details);
-        let beacon_child = root.children.len();
         root.children.push(beacons);
-        let mut scenery = Self {
-            root,
-            beacons: beacon_child,
-        };
+        let mut scenery = Self { root };
         scenery.update(0.0);
         scenery
     }
@@ -432,7 +417,7 @@ impl HarborScenery {
     /// `update(time)`: ships bob, crane loads sway and the beacons blink. The water
     /// animates in its shader from the same clock.
     pub fn update(&mut self, time: f64) {
-        HarborFleet::update(&mut self.root.children[FLEET_CHILD], time);
-        self.root.children[self.beacons].visible = (time * 2.5).sin() > -0.3;
+        update_harbor_fleet(&mut self.root.children[FLEET_CHILD], time);
+        self.root.children.last_mut().expect("beacons").visible = (time * 2.5).sin() > -0.3;
     }
 }

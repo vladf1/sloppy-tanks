@@ -13,6 +13,7 @@
 //! field `i`), a varint mask of deleted fields when flagged, then each present field's
 //! value in table order.
 
+use super::json::POSITION_SCALE;
 use super::schema::ReadResult;
 use crate::sim::math::js_round;
 
@@ -42,6 +43,11 @@ pub fn put_text(out: &mut Vec<u8>, text: &str) {
 pub fn units(value: f64, scale: f64) -> i64 {
     assert!(value.is_finite(), "Non-finite wire number");
     js_round(value * scale) as i64
+}
+
+/// `value` in whole thousandths, as positions, elapsed times and ticks travel.
+pub fn thousandths(value: f64) -> i64 {
+    units(value, POSITION_SCALE)
 }
 
 /// Reads a message front to back; every read fails cleanly on truncated or invalid data.

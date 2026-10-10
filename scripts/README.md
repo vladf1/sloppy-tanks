@@ -1,9 +1,9 @@
 # Scripts
 
 Browser checks, measurements and asset tools. None of these run in CI: `pnpm run
-check` covers lint, formatting, types, the build and `tests/*.test.ts`. A passing
-gate does not verify controls, menu transitions, rendering or cleanup, so run the
-matching browser check when changing those paths.
+check` covers formatting, lint, types, the site and server builds, clippy and the Rust
+and page-shell tests. A passing gate does not verify controls, menu transitions,
+rendering or cleanup, so run the matching browser check when changing those paths.
 
 ## Browser checks
 
@@ -34,28 +34,30 @@ keyboard and touch input, DOM and CSS, sounds, GPU rendering); rules the simulat
 or presentation can show natively belong in the Rust tests (`cargo test`) or
 `tests/*.test.ts`.
 
-Shared setup lives in `browser-helpers.mjs`: `launchGame()` opens Chrome with the
-shared headless flag, `startRound()` starts rounds through the real Battle Setup
-menu (the startup overlay otherwise swallows pointer and wheel input), and
-`freezeLoop()` holds the game's one `loop` animation callback, which hands the packed
-input to `Game.frame`, so a check advances exact engine frames.
+Shared setup lives in `browser-helpers.mjs`: `launchGame()` opens Chrome
+(`launchChrome()`) with the shared headless flag, `startRound()` starts rounds through
+the real Battle Setup menu (the startup overlay otherwise swallows pointer and wheel
+input), `freezeLoop()` holds the game's one `loop` animation callback, which hands the
+packed input to `Game.frame`, so a check advances exact engine frames, and `click()`
+and `touchScreen()` send physical coordinate clicks and CDP multi-touch.
 
 Checks read and arrange the engine through the dev-only `window.sloppy` (see
-`docs/rust-rewrite.md`) and the `Game.debug_*` fixture hooks
+[below](#windowsloppy-development-builds)) and the `Game.debug_*` fixture hooks
 (`crates/web/src/game/debug.rs`): an emptied arena, placed and patched tanks, damage
 through the shared damage paths, pickups, shells, mines, fixed simulation steps, still
-frames from a fixed camera, a pixel probe and two room seats. `launchGame()` installs
-`window.engine` in every page: `state()` (simulation and camera), `view()` (what every
-entity's view showed in the last frame: reticle rings, health-bar chevrons, cover
-stages and stumps, pickup podiums, debris opacity, laser beams, effect counts),
-`covers()`, `stats()` (renderer counters: draws, pipelines, late pipelines,
-allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
+frames from a fixed camera, a pixel probe and two room seats. `window.sloppy.sim` is
+the simulation and camera and `window.sloppy.stats()` the renderer counters (draws,
+pipelines, late pipelines, allocations). `launchGame()` installs `window.engine` in
+every page: `view()` (what every entity's view showed in the last frame: reticle rings,
+health-bar chevrons, cover stages and stumps, pickup podiums, debris opacity, laser
+beams, effect counts), `covers()`, `draw(camera)` and `setTank`/`setHuman`/`setSim`
+patches.
 
 | Script                             | Verifies                                                                                                                                                                                                                                                            |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `browser-check.mjs`                | Keyboard driving, mouse fire, tank choice, pause and zoom; rubble without late pipelines; stable renderer allocations and live WebGPU buffers across destructive resets and mines                                                                                   |
 | `first-person-check.mjs`           | V/◎ toggle, mouse turns the turret view, W follows the view, click fire, first Esc frees the cursor and a second pauses, death keeps the pointer, Esc then a physical respawn choice, overhead restore                                                              |
-| `startup-check.mjs`                | Menu before physics/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                                                                                            |
+| `startup-check.mjs`                | Menu before engine/GPU load, early GO with late choices, arena reuse, one atlas download, retry, layout                                                                                                                                                             |
 | `map-start-check.mjs`              | First frames on every map, both teams: no stale time, tanks at their spawns, no arrival tracks                                                                                                                                                                      |
 | `hud-feedback-check.mjs`           | Wheel/key ammo selection, reticle, hit, rank, laser and pickup feedback, stable HUD layout, all sounds                                                                                                                                                              |
 | `touch-controls-check.mjs`         | Tablet and car-screen touch: drive stick, arena aim and fire, mine and ammo taps while firing, first person, zoom, pause, preference and layout at four sizes                                                                                                       |
@@ -65,7 +67,7 @@ allocations), `draw(camera)` and `setTank`/`setHuman`/`setSim` patches.
 | `destruction-check.mjs`            | Timber stages and breach, scars on loose members, tree stumps and falling crowns, distinct tower rubble, debris sink and fade                                                                                                                                       |
 | `fixtures-check.mjs`               | PASS from the reinforcements, maps (switches, mesh page slack, water reflections) and suspension fixtures                                                                                                                                                           |
 | `multiplayer-simulation-check.mjs` | Two room seats driven through `PlayerControls`, each drawn from its own viewer (camera, models, bars); isolated speed sliders and literal player names                                                                                                              |
-| `webgl-check.mjs`                  | The WebGL2 engine (`?webgl`) on every standard map: only its binary downloads, a round drives, fires and draws with shadows without errors; the page picks the build the browser supports by itself; a failing WebGPU device falls back to WebGL on the same canvas |
+| `webgl-check.mjs`                  | The WebGL2 engine (`?webgl`) on every standard and extra map: only its binary downloads, a round drives, fires and draws with shadows without errors; the page picks the build the browser supports; a failing WebGPU device falls back to WebGL on the same canvas |
 | `webkit-startup-check.mjs`         | WebKit: ready menu on the village and quarry with at most 150 distinct pipelines, a physical GO click, W driving at 45+ fps and a mouse shot, no page, console or GPU errors or late pipelines                                                                      |
 | `touch-loading-check.mjs`          | Touch UI code and styles load only when touch controls are enabled                                                                                                                                                                                                  |
 
@@ -89,6 +91,30 @@ turning lean, a turret riding the hull's tilt), `humvee` (an orbit view of the T
 humvee) and `destruction` (an interactive showcase of every destructible). Fixtures
 with a pass/fail verdict show it in a `#result` element starting with `PASS` or
 `FAIL`, which `fixtures-check.mjs` reads.
+
+### `window.sloppy` (development builds)
+
+| Member                                        | Backed by / meaning                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `game`                                        | The wasm `Game` itself                                                     |
+| `sim`, `view` (getters), `debug()`            | `debug_json()`: a fresh copy per read (match, human, tanks, camera, zoom…) |
+| `hud()`, `stats()`, `snapshot()`              | `hud_json()`, `stats_json()`, `debug_snapshot()`                           |
+| `error()`                                     | `error()`: the first GPU error or null                                     |
+| `frames`, `events`                            | Engine frames run and events drained by the page                           |
+| `audio`, `controls`                           | The page's `AudioSystem` and `Controls`                                    |
+| `start()`, `restart()`                        | A fresh round now / a fresh world behind Battle Setup                      |
+| `autoplay(v)`, `overview(v)`, `autoRounds(v)` | `debug_set_autoplay/overview/auto_rounds`                                  |
+| `zoom(z)`, `reflections(v)`, `firstPerson()`  | `debug_set_zoom`, `debug_set_reflections`, `toggle_first_person`           |
+| `giveAmmo(n)`, `killHuman()`                  | `debug_give_ammo`, `debug_kill_human`                                      |
+| `stress()`, `collapse()`, `soak(s)`           | `debug_stress`, `debug_collapse`, `debug_soak` (synchronous)               |
+| `record()`, `stop()`, `report()`, `samples`   | Frame recorder (per-frame `stats_json` while recording)                    |
+| `exactResolution()`                           | `resize(2560, 1440, 1, true)` until reload                                 |
+
+`sim` and `view` are read-only snapshots: checks that assigned simulation fields
+(`sim.human.ammo.rocket = 10`) use the methods instead. Zoom from the wheel or touch
+buttons reaches the engine with the next frame's input, so checks wait a frame.
+`profile.mjs` uses `game.debug_configure(seed, tanks, team)` and
+`game.debug_stress_burst()`.
 
 ## Labs
 
@@ -119,8 +145,8 @@ village, 2.08 quarry, 4.22 close-up, where the two sides' cosmetic randomness di
 ## Multiplayer experiments
 
 These checks default to the Vite URL `http://127.0.0.1:5173/sloppy-tanks/`; set
-`SLOPPY_URL` for another. Room codes, the Chrome launch, physical clicks and
-WebSocket-frame recording are shared in `multiplayer-helpers.mjs`. Server rules
+`SLOPPY_URL` for another. WebSocket-frame recording, the room menu checks and polling
+waits are shared in `multiplayer-helpers.mjs`. Server rules
 (seats, idle watchdog, humans-only, reconnect, host transfer, expiry) are covered by
 the engine's tests (`crates/core/tests/net_match_host.rs`, `net_player_controls.rs`,
 `crates/server/tests/`); these checks cover what only a browser or a real socket
@@ -131,10 +157,10 @@ Checks that follow a room's state apply those with `state-mirror.mjs`, which als
 asserts the snapshot stream stays contiguous.
 
 `pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
-multiplayer requests, sockets or UI in single-player, server or traffic-bot code in
-any browser chunk, and any download of a TypeScript simulation or Rapier JS/WASM when
-opening a room: rooms run on the engine Wasm. `tests/multiplayer-client-imports.test.ts`
-guards the import boundary in `pnpm test` and prints the offending import chain.
+multiplayer requests, sockets or UI in single-player, traffic-bot or Node-only code in
+any browser chunk, and any Wasm beyond one engine build, downloaded once, when opening
+a room. `tests/multiplayer-client-imports.test.ts` guards the import boundary in
+`pnpm test` and prints the offending import chain.
 It also checks that a room link opens Battle Setup rather than a room page, that
 multiplayer's extracted stylesheet loads only once a room is entered, that inactive
 menu actions stay hidden, and that the menu fits desktop viewports.
@@ -163,9 +189,6 @@ Those parameters delay messages inside the client, so TCP never loses anything, 
 Chrome DevTools' packet loss only affects WebRTC. For real loss below TCP on a Mac,
 `sudo scripts/network/lossy-network.sh on` drops 2% of the packets from the server
 ([details](network/README.md)).
-
-`multiplayer-simulation-check.mjs`, included in `check:browser`, verifies two local
-seats and viewer isolation without a server.
 
 With Vite and the local server running, `player-feedback-check.mjs` checks the
 online HUD's power-up timers, critical hull and death explanation using controlled
@@ -199,13 +222,13 @@ menu. Each phone's room list keeps only the rooms the check made, so other rooms
 server cannot change the pick.
 
 `node scripts/multiplayer-restart-check.mjs` starts an isolated native server
-(`target/server/sloppy-server`) on port 8790, or `SLOPPY_RESTART_PORT`, that admits the
-`SLOPPY_URL` origin, kills and restarts it during a round
+(`target/server/sloppy-server`) on port 8790, or `SLOPPY_RESTART_PORT`, kills and
+restarts it during a round
 (a crash, not a graceful stop) and checks that the connection dialog shows, that the
 browser returns to a fresh lobby and prepares another map, and that a graceful stop
 then shows the room-closed dialog with its way back to Battle Setup. Run
 `pnpm run server:build` first and run Vite.
-`node --import tsx scripts/multiplayer-public-check.mjs` verifies the published dev
+`node scripts/multiplayer-public-check.mjs` verifies the published dev
 client (`SLOPPY_PUBLIC_URL`) with two players plus its test directory, fixture and
 build metadata.
 
@@ -295,13 +318,15 @@ guarantees for other devices.
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
   run through the pnpm commands in the root README's Assets section.
-  `encode-webp.ts` is their shared lossless encoder, and `asset-data.ts` holds the
-  colors, labels and pickup atlas layout they paint with (the engine's own copies
-  are in `crates/core`; change both together).
+  `encode-webp.ts` is their shared lossless encoder, `texture-noise.ts` their seeded
+  value noise, and `asset-data.ts` holds the pickup colors and atlas layout they paint
+  with, taking the ammunition labels and colors from the HUD's
+  `src/game/ammo-options.ts` (the engine's own copies are in `crates/core`; change
+  both together).
 - `generate-previews.mjs` renders the tank selection previews from the game's vehicle
-  models with the labs engine (`tools/tank-previews.html`; run `pnpm run wasm --
---labs` first) and packs `public/previews/tanks.webp`. `SLOPPY_PREVIEWS_OUT` writes
-  a candidate elsewhere for comparison. The renderer has no orthographic camera or
+  models with the labs engine (`tools/tank-surface-check.html`; `pnpm run generate:previews`
+  builds that engine first) and packs `public/previews/tanks.webp`.
+  `SLOPPY_PREVIEWS_OUT` writes a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and
   each tank is drawn over black and over white to recover its coverage. The
   checked-in sheet is still the Three.js rendering: the engine's differs by about 13

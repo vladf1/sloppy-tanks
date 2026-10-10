@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use crate::sim::math::{Point3, Quat4, Vec2, angle_delta};
+use crate::sim::math::{Quat4, Vec2, angle_delta};
 use crate::sim::render_state::{RenderState, RenderTank, fill_each};
 
 const MAX_SAMPLES: usize = 32;
@@ -28,15 +28,6 @@ fn interpolate_rotation(a: Quat4, b: Quat4, alpha: f64) -> Quat4 {
         z: z / length,
         w: w / length,
     }
-}
-
-fn lerp(a: Point3, b: Option<Point3>, fraction: f64) -> Point3 {
-    let b = b.unwrap_or(a);
-    Point3::new(
-        a.x + (b.x - a.x) * fraction,
-        a.y + (b.y - a.y) * fraction,
-        a.z + (b.z - a.z) * fraction,
-    )
 }
 
 /// Interpolates received scene samples at a delayed display time. Membership comes from
@@ -68,10 +59,6 @@ impl RenderTimeline {
         self.samples.retain_back(MAX_SAMPLES);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
-    }
-
     /// Fills `output` for the delayed display `time` (seconds); `local_time` is where the
     /// local hull aims. Needs at least one sample. Every field is overwritten, reusing the
     /// output's allocations, so steady-state frames do not allocate.
@@ -99,7 +86,9 @@ impl RenderTimeline {
                     && candidate.alive == tank.alive
             });
             out.clone_from(tank);
-            out.position = lerp(tank.position, next.map(|n| n.position), fraction);
+            out.position = tank
+                .position
+                .lerp(next.map_or(tank.position, |n| n.position), fraction);
             out.heading = tank.heading
                 + angle_delta(tank.heading, next.map_or(tank.heading, |n| n.heading)) * fraction;
             out.aim = tank.aim + angle_delta(tank.aim, next.map_or(tank.aim, |n| n.aim)) * fraction;
@@ -115,7 +104,9 @@ impl RenderTimeline {
                 .iter()
                 .find(|candidate| candidate.id == cover.id && candidate.alive == cover.alive);
             out.clone_from(cover);
-            out.position = lerp(cover.position, next.map(|n| n.position), fraction);
+            out.position = cover
+                .position
+                .lerp(next.map_or(cover.position, |n| n.position), fraction);
             out.rotation = interpolate_rotation(
                 cover.rotation,
                 next.map_or(cover.rotation, |n| n.rotation),
@@ -128,7 +119,9 @@ impl RenderTimeline {
                 .iter()
                 .find(|candidate| candidate.id == fragment.id);
             out.clone_from(fragment);
-            out.position = lerp(fragment.position, next.map(|n| n.position), fraction);
+            out.position = fragment
+                .position
+                .lerp(next.map_or(fragment.position, |n| n.position), fraction);
             out.rotation = interpolate_rotation(
                 fragment.rotation,
                 next.map_or(fragment.rotation, |n| n.rotation),
@@ -144,29 +137,20 @@ impl RenderTimeline {
             (old, None) => old,
         };
         if let Some(authoritative) = authoritative {
-            let continuous = self.local.as_ref().is_some_and(|local| {
-                local.life == authoritative.life && local.alive == authoritative.alive
-            });
             let mut target = authoritative.position;
             if authoritative.alive {
                 let ahead = (local_time - newest.elapsed).clamp(0.0, MAX_EXTRAPOLATION_SECONDS);
                 target.x += authoritative.velocity.x * ahead;
                 target.z += authoritative.velocity.z * ahead;
             }
-            let blend = if continuous {
-                1.0 - (-CORRECTION_RATE * dt).exp()
-            } else {
-                1.0
-            };
+            let mut heading = authoritative.heading;
             // Local translation and hull rotation need the same frame-rate smoothing.
             // Copying heading from authority here made only our own tank turn at packet Hz.
-            let heading = match (&self.local, continuous) {
-                (Some(local), true) => {
-                    local.heading + angle_delta(local.heading, authoritative.heading) * blend
-                }
-                _ => authoritative.heading,
-            };
-            if let (Some(local), true) = (&self.local, continuous) {
+            if let Some(local) = self.local.as_ref().filter(|local| {
+                local.life == authoritative.life && local.alive == authoritative.alive
+            }) {
+                let blend = 1.0 - (-CORRECTION_RATE * dt).exp();
+                heading = local.heading + angle_delta(local.heading, authoritative.heading) * blend;
                 target.x = local.position.x + (target.x - local.position.x) * blend;
                 target.z = local.position.z + (target.z - local.position.z) * blend;
             }

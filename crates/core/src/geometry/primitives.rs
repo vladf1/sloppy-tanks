@@ -1,14 +1,16 @@
 //! Ports of Three.js r185 BoxGeometry, RoundedBoxGeometry (addon), PlaneGeometry,
 //! CircleGeometry, RingGeometry, CylinderGeometry, ConeGeometry, SphereGeometry and
 //! TorusGeometry. Parameter structs default to Three's constructor defaults; the
-//! free functions cover the common call shapes. Material groups are not kept.
+//! free functions cover the common call shapes. Parameters the game never varied
+//! (full circles, spheres, cylinders and tube sections, one-ring rings) keep those
+//! defaults. Material groups are not kept.
 
 use std::f64::consts::PI;
 
 use glam::DVec3;
 
 use super::math::{angle_to, js_sign, normalize};
-use super::mesh::{Mesh, widen};
+use super::mesh::{Mesh, narrow, widen};
 
 /// Accumulates f64 attribute values as Three's generators push them into JS arrays.
 #[derive(Default)]
@@ -28,6 +30,22 @@ impl Builder {
 
     fn triangle(&mut self, a: u32, b: u32, c: u32) {
         self.indices.extend_from_slice(&[a, b, c]);
+    }
+
+    /// Two triangles per cell of a grid of `columns` x `rows` cells whose vertices
+    /// were pushed row by row from vertex `first`.
+    fn grid(&mut self, first: u32, columns: u32, rows: u32) {
+        let row = columns + 1;
+        for iy in 0..rows {
+            for ix in 0..columns {
+                let a = first + ix + row * iy;
+                let b = first + ix + row * (iy + 1);
+                let c = first + (ix + 1) + row * (iy + 1);
+                let d = first + (ix + 1) + row * iy;
+                self.triangle(a, b, d);
+                self.triangle(b, c, d);
+            }
+        }
     }
 
     fn vertex_count(&self) -> u32 {
@@ -99,7 +117,6 @@ fn box_plane(
     let segment_width = width / f64::from(grid_x);
     let segment_height = height / f64::from(grid_y);
     let (width_half, height_half, depth_half) = (width / 2.0, height / 2.0, depth / 2.0);
-    let grid_x1 = grid_x + 1;
     let first = builder.vertex_count();
     for iy in 0..=grid_y {
         let y = f64::from(iy) * segment_height - height_half;
@@ -118,16 +135,7 @@ fn box_plane(
             builder.vertex(position, normal, uv);
         }
     }
-    for iy in 0..grid_y {
-        for ix in 0..grid_x {
-            let a = first + ix + grid_x1 * iy;
-            let b = first + ix + grid_x1 * (iy + 1);
-            let c = first + (ix + 1) + grid_x1 * (iy + 1);
-            let d = first + (ix + 1) + grid_x1 * iy;
-            builder.triangle(a, b, d);
-            builder.triangle(b, c, d);
-        }
-    }
+    builder.grid(first, grid_x, grid_y);
 }
 
 pub fn box_geometry(width: f64, height: f64, depth: f64) -> Mesh {
@@ -139,6 +147,18 @@ pub fn box_geometry(width: f64, height: f64, depth: f64) -> Mesh {
     }
     .build()
 }
+
+/// Per box face, in `BoxGeometry` order: its normal, the axes its u and v follow
+/// (each projected along the other) and whether each is flipped, as the addon's
+/// per-face `getUv` calls.
+const ROUNDED_BOX_FACES: [(DVec3, [usize; 2], [bool; 2]); 6] = [
+    (DVec3::X, [2, 1], [false, true]),
+    (DVec3::NEG_X, [2, 1], [true, true]),
+    (DVec3::Y, [0, 2], [true, false]),
+    (DVec3::NEG_Y, [0, 2], [true, true]),
+    (DVec3::Z, [0, 1], [true, true]),
+    (DVec3::NEG_Z, [0, 1], [false, true]),
+];
 
 /// `RoundedBoxGeometry` (three/addons): a unit box with `2 * segments + 1` grid
 /// divisions whose vertices are pushed onto rounded edges of `radius` (clamped to
@@ -167,69 +187,27 @@ pub fn rounded_box_geometry(
     let mut mesh = unit.to_non_indexed();
     let half = DVec3::new(width, height, depth) / 2.0 - radius;
     let half_segment_size = 0.5 / f64::from(total_segments);
+    let sizes = [width, height, depth];
     let face_vertices = mesh.positions.len() / 6;
     for i in 0..mesh.positions.len() {
         let position = widen(mesh.positions[i]);
-        let normal = normalize(DVec3::new(
-            position.x - js_sign(position.x) * half_segment_size,
-            position.y - js_sign(position.y) * half_segment_size,
-            position.z - js_sign(position.z) * half_segment_size,
-        ));
-        mesh.positions[i] = [
-            (half.x * js_sign(position.x) + normal.x * radius) as f32,
-            (half.y * js_sign(position.y) + normal.y * radius) as f32,
-            (half.z * js_sign(position.z) + normal.z * radius) as f32,
+        let sign = DVec3::new(
+            js_sign(position.x),
+            js_sign(position.y),
+            js_sign(position.z),
+        );
+        let normal = normalize(position - sign * half_segment_size);
+        mesh.positions[i] = narrow(half * sign + normal * radius);
+        mesh.normals[i] = narrow(normal);
+        let (face, [u_axis, v_axis], [flip_u, flip_v]) = ROUNDED_BOX_FACES[i / face_vertices];
+        let uv = |axis: usize, projection_axis: usize, flip: bool| {
+            let value = rounded_box_uv(face, normal, axis, projection_axis, radius, sizes[axis]);
+            if flip { 1.0 - value } else { value }
+        };
+        mesh.uvs[i] = [
+            uv(u_axis, v_axis, flip_u) as f32,
+            uv(v_axis, u_axis, flip_v) as f32,
         ];
-        mesh.normals[i] = [normal.x as f32, normal.y as f32, normal.z as f32];
-        let rounded_uv = |face: DVec3, uv_axis: usize, projection_axis: usize, side: f64| {
-            rounded_box_uv(face, normal, uv_axis, projection_axis, radius, side)
-        };
-        let (x, y, z) = (0, 1, 2);
-        let uv = match i / face_vertices {
-            0 => {
-                let face = DVec3::X;
-                [
-                    rounded_uv(face, z, y, depth),
-                    1.0 - rounded_uv(face, y, z, height),
-                ]
-            }
-            1 => {
-                let face = DVec3::NEG_X;
-                [
-                    1.0 - rounded_uv(face, z, y, depth),
-                    1.0 - rounded_uv(face, y, z, height),
-                ]
-            }
-            2 => {
-                let face = DVec3::Y;
-                [
-                    1.0 - rounded_uv(face, x, z, width),
-                    rounded_uv(face, z, x, depth),
-                ]
-            }
-            3 => {
-                let face = DVec3::NEG_Y;
-                [
-                    1.0 - rounded_uv(face, x, z, width),
-                    1.0 - rounded_uv(face, z, x, depth),
-                ]
-            }
-            4 => {
-                let face = DVec3::Z;
-                [
-                    1.0 - rounded_uv(face, x, y, width),
-                    1.0 - rounded_uv(face, y, x, height),
-                ]
-            }
-            _ => {
-                let face = DVec3::NEG_Z;
-                [
-                    rounded_uv(face, x, y, width),
-                    1.0 - rounded_uv(face, y, x, height),
-                ]
-            }
-        };
-        mesh.uvs[i] = [uv[0] as f32, uv[1] as f32];
     }
     mesh
 }
@@ -269,7 +247,6 @@ pub fn plane_geometry_segments(
     let mut builder = Builder::default();
     let (width_half, height_half) = (width / 2.0, height / 2.0);
     let (grid_x, grid_y) = (width_segments, height_segments);
-    let grid_x1 = grid_x + 1;
     let segment_width = width / f64::from(grid_x);
     let segment_height = height / f64::from(grid_y);
     for iy in 0..=grid_y {
@@ -286,16 +263,7 @@ pub fn plane_geometry_segments(
             );
         }
     }
-    for iy in 0..grid_y {
-        for ix in 0..grid_x {
-            let a = ix + grid_x1 * iy;
-            let b = ix + grid_x1 * (iy + 1);
-            let c = (ix + 1) + grid_x1 * (iy + 1);
-            let d = (ix + 1) + grid_x1 * iy;
-            builder.triangle(a, b, d);
-            builder.triangle(b, c, d);
-        }
-    }
+    builder.grid(0, grid_x, grid_y);
     builder.build()
 }
 
@@ -303,18 +271,13 @@ pub fn plane_geometry(width: f64, height: f64) -> Mesh {
     plane_geometry_segments(width, height, 1, 1)
 }
 
-/// `THREE.CircleGeometry`: a fan around a center vertex, facing +z.
-pub fn circle_geometry_arc(
-    radius: f64,
-    segments: u32,
-    theta_start: f64,
-    theta_length: f64,
-) -> Mesh {
+/// `THREE.CircleGeometry(radius, segments)`: a fan around a center vertex, facing +z.
+pub fn circle_geometry(radius: f64, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut builder = Builder::default();
     builder.vertex([0.0; 3], [0.0, 0.0, 1.0], [0.5, 0.5]);
     for s in 0..=segments {
-        let segment = theta_start + f64::from(s) / f64::from(segments) * theta_length;
+        let segment = f64::from(s) / f64::from(segments) * (PI * 2.0);
         let x = radius * segment.cos();
         let y = radius * segment.sin();
         builder.vertex(
@@ -329,17 +292,12 @@ pub fn circle_geometry_arc(
     builder.build()
 }
 
-pub fn circle_geometry(radius: f64, segments: u32) -> Mesh {
-    circle_geometry_arc(radius, segments, 0.0, PI * 2.0)
-}
-
-/// `THREE.RingGeometry`, facing +z.
+/// `THREE.RingGeometry` with one ring of quads (`phiSegments` 1), facing +z.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RingGeometry {
     pub inner_radius: f64,
     pub outer_radius: f64,
     pub theta_segments: u32,
-    pub phi_segments: u32,
     pub theta_start: f64,
     pub theta_length: f64,
 }
@@ -350,7 +308,6 @@ impl Default for RingGeometry {
             inner_radius: 0.5,
             outer_radius: 1.0,
             theta_segments: 32,
-            phi_segments: 1,
             theta_start: 0.0,
             theta_length: PI * 2.0,
         }
@@ -360,11 +317,10 @@ impl Default for RingGeometry {
 impl RingGeometry {
     pub fn build(&self) -> Mesh {
         let theta_segments = self.theta_segments.max(3);
-        let phi_segments = self.phi_segments.max(1);
         let mut builder = Builder::default();
-        let mut radius = self.inner_radius;
-        let radius_step = (self.outer_radius - self.inner_radius) / f64::from(phi_segments);
-        for _ in 0..=phi_segments {
+        // The outer row is one radius step out from the inner row, as Three steps it.
+        let radius_step = self.outer_radius - self.inner_radius;
+        for radius in [self.inner_radius, self.inner_radius + radius_step] {
             for i in 0..=theta_segments {
                 let segment =
                     self.theta_start + f64::from(i) / f64::from(theta_segments) * self.theta_length;
@@ -379,22 +335,8 @@ impl RingGeometry {
                     ],
                 );
             }
-            radius += radius_step;
         }
-        for j in 0..phi_segments {
-            let level = j * (theta_segments + 1);
-            for i in 0..theta_segments {
-                let segment = i + level;
-                let (a, b, c, d) = (
-                    segment,
-                    segment + theta_segments + 1,
-                    segment + theta_segments + 2,
-                    segment + 1,
-                );
-                builder.triangle(a, b, d);
-                builder.triangle(b, c, d);
-            }
-        }
+        builder.grid(0, theta_segments, 1);
         builder.build()
     }
 }
@@ -409,8 +351,8 @@ pub fn ring_geometry(inner_radius: f64, outer_radius: f64, theta_segments: u32) 
     .build()
 }
 
-/// `THREE.CylinderGeometry` (and ConeGeometry with `radius_top == 0`): the torso,
-/// then the top cap, then the bottom cap, along the y axis.
+/// `THREE.CylinderGeometry` (and ConeGeometry with `radius_top == 0`), all the way
+/// round: the torso, then the top cap, then the bottom cap, along the y axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CylinderGeometry {
     pub radius_top: f64,
@@ -419,8 +361,6 @@ pub struct CylinderGeometry {
     pub radial_segments: u32,
     pub height_segments: u32,
     pub open_ended: bool,
-    pub theta_start: f64,
-    pub theta_length: f64,
 }
 
 impl Default for CylinderGeometry {
@@ -432,8 +372,6 @@ impl Default for CylinderGeometry {
             radial_segments: 32,
             height_segments: 1,
             open_ended: false,
-            theta_start: 0.0,
-            theta_length: PI * 2.0,
         }
     }
 }
@@ -455,7 +393,7 @@ impl CylinderGeometry {
 
     fn theta(&self, x: u32) -> (f64, f64) {
         let u = f64::from(x) / f64::from(self.radial_segments);
-        (u, u * self.theta_length + self.theta_start)
+        (u, u * (PI * 2.0))
     }
 
     fn torso(&self, builder: &mut Builder) {
@@ -554,91 +492,53 @@ pub fn cone_geometry(radius: f64, height: f64, radial_segments: u32) -> Mesh {
     cylinder_geometry(0.0, radius, height, radial_segments)
 }
 
-/// `THREE.SphereGeometry`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SphereGeometry {
-    pub radius: f64,
-    pub width_segments: u32,
-    pub height_segments: u32,
-    pub phi_start: f64,
-    pub phi_length: f64,
-    pub theta_start: f64,
-    pub theta_length: f64,
-}
-
-impl Default for SphereGeometry {
-    fn default() -> Self {
-        Self {
-            radius: 1.0,
-            width_segments: 32,
-            height_segments: 16,
-            phi_start: 0.0,
-            phi_length: PI * 2.0,
-            theta_start: 0.0,
-            theta_length: PI,
-        }
-    }
-}
-
-impl SphereGeometry {
-    pub fn build(&self) -> Mesh {
-        let width_segments = self.width_segments.max(3);
-        let height_segments = self.height_segments.max(2);
-        let theta_end = (self.theta_start + self.theta_length).min(PI);
-        let mut builder = Builder::default();
-        for iy in 0..=height_segments {
-            let v = f64::from(iy) / f64::from(height_segments);
-            let theta = self.theta_start + v * self.theta_length;
-            let y = self.radius * theta.cos();
-            let ring_radius = (self.radius * self.radius - y * y).sqrt();
-            let u_offset = if iy == 0 && self.theta_start == 0.0 {
-                0.5 / f64::from(width_segments)
-            } else if iy == height_segments && theta_end == PI {
-                -0.5 / f64::from(width_segments)
-            } else {
-                0.0
-            };
-            for ix in 0..=width_segments {
-                let u = f64::from(ix) / f64::from(width_segments);
-                let phi = self.phi_start + u * self.phi_length;
-                let vertex = DVec3::new(-ring_radius * phi.cos(), y, ring_radius * phi.sin());
-                builder.vertex(
-                    vertex.to_array(),
-                    normalize(vertex).to_array(),
-                    [u + u_offset, 1.0 - v],
-                );
-            }
-        }
-        let columns = width_segments + 1;
-        for iy in 0..height_segments {
-            for ix in 0..width_segments {
-                let a = iy * columns + ix + 1;
-                let b = iy * columns + ix;
-                let c = (iy + 1) * columns + ix;
-                let d = (iy + 1) * columns + ix + 1;
-                if iy != 0 || self.theta_start > 0.0 {
-                    builder.triangle(a, b, d);
-                }
-                if iy != height_segments - 1 || theta_end < PI {
-                    builder.triangle(b, c, d);
-                }
-            }
-        }
-        builder.build()
-    }
-}
-
+/// `THREE.SphereGeometry(radius, widthSegments, heightSegments)`.
 pub fn sphere_geometry(radius: f64, width_segments: u32, height_segments: u32) -> Mesh {
-    SphereGeometry {
-        radius,
-        width_segments,
-        height_segments,
-        ..SphereGeometry::default()
+    let width_segments = width_segments.max(3);
+    let height_segments = height_segments.max(2);
+    let mut builder = Builder::default();
+    for iy in 0..=height_segments {
+        let v = f64::from(iy) / f64::from(height_segments);
+        let theta = v * PI;
+        let y = radius * theta.cos();
+        let ring_radius = (radius * radius - y * y).sqrt();
+        let u_offset = if iy == 0 {
+            0.5 / f64::from(width_segments)
+        } else if iy == height_segments {
+            -0.5 / f64::from(width_segments)
+        } else {
+            0.0
+        };
+        for ix in 0..=width_segments {
+            let u = f64::from(ix) / f64::from(width_segments);
+            let phi = u * (PI * 2.0);
+            let vertex = DVec3::new(-ring_radius * phi.cos(), y, ring_radius * phi.sin());
+            builder.vertex(
+                vertex.to_array(),
+                normalize(vertex).to_array(),
+                [u + u_offset, 1.0 - v],
+            );
+        }
     }
-    .build()
+    let columns = width_segments + 1;
+    for iy in 0..height_segments {
+        for ix in 0..width_segments {
+            let a = iy * columns + ix + 1;
+            let b = iy * columns + ix;
+            let c = (iy + 1) * columns + ix;
+            let d = (iy + 1) * columns + ix + 1;
+            if iy != 0 {
+                builder.triangle(a, b, d);
+            }
+            if iy != height_segments - 1 {
+                builder.triangle(b, c, d);
+            }
+        }
+    }
+    builder.build()
 }
 
-/// `THREE.TorusGeometry`, lying in the XY plane.
+/// `THREE.TorusGeometry` with a full tube cross-section, lying in the XY plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TorusGeometry {
     pub radius: f64,
@@ -646,8 +546,6 @@ pub struct TorusGeometry {
     pub radial_segments: u32,
     pub tubular_segments: u32,
     pub arc: f64,
-    pub theta_start: f64,
-    pub theta_length: f64,
 }
 
 impl Default for TorusGeometry {
@@ -658,8 +556,6 @@ impl Default for TorusGeometry {
             radial_segments: 12,
             tubular_segments: 48,
             arc: PI * 2.0,
-            theta_start: 0.0,
-            theta_length: PI * 2.0,
         }
     }
 }
@@ -669,7 +565,7 @@ impl TorusGeometry {
         let mut builder = Builder::default();
         let (radial, tubular) = (self.radial_segments, self.tubular_segments);
         for j in 0..=radial {
-            let v = self.theta_start + (f64::from(j) / f64::from(radial)) * self.theta_length;
+            let v = (f64::from(j) / f64::from(radial)) * (PI * 2.0);
             for i in 0..=tubular {
                 let u = f64::from(i) / f64::from(tubular) * self.arc;
                 let vertex = DVec3::new(

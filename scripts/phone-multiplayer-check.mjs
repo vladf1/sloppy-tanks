@@ -6,22 +6,16 @@
 // the phone camera, controls and short menu.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
-import { chooseMap } from "./browser-helpers.mjs";
-import { DEFAULT_GAME_URL, launchChrome, recordRoomFrames } from "./multiplayer-helpers.mjs";
+import { chooseMap, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { recordRoomFrames, until } from "./multiplayer-helpers.mjs";
 
-const base = new URL(process.env.SLOPPY_URL ?? DEFAULT_GAME_URL);
+const base = new URL(gameUrl);
 if (process.env.SLOPPY_SERVER) base.searchParams.set("server", process.env.SLOPPY_SERVER);
 const output = "artifacts/performance/phone-multiplayer";
 await mkdir(output, { recursive: true });
 const PHONE = { width: 874, height: 402 };
 const browser = await launchChrome();
 const errors = [];
-const until = async (condition, message) => {
-  const deadline = Date.now() + 60000;
-  while (!condition() && Date.now() < deadline)
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(condition(), message);
-};
 /** Whether each selector shows. The hidden tab panel keeps its box, so visibility counts. */
 const expectVisible = async (page, shown, hidden) => {
   const state = await page.evaluate(
@@ -148,7 +142,7 @@ try {
   await expectVisible(
     bob.page,
     [".touch-drive", "#pause", "#view-mode", ".scoreboard"],
-    [".touch-aim", ".touch-fire", "#network-players"],
+    ["#network-players"],
   );
   await bob.page.screenshot({ path: `${output}/join-arena.png` });
   await bob.page.locator("#pause").tap();

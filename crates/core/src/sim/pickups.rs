@@ -14,7 +14,8 @@ pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, supply: &m
         return false;
     }
     let kind = supply.kind;
-    if kind == PickupKind::Repair && tank.hp >= simulation.max_health(tank) {
+    let max_health = simulation.max_health(tank);
+    if kind == PickupKind::Repair && tank.hp >= max_health {
         return false;
     }
     let multiplier = simulation.ammo_crate_multiplier;
@@ -24,7 +25,6 @@ pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, supply: &m
         return false;
     }
     let records = simulation.records(tank);
-    let max_health = simulation.max_health(tank);
     supply.available = false;
     if records {
         simulation.combat_record.pickups += 1;
@@ -60,10 +60,7 @@ pub fn collect_pickup(simulation: &mut Simulation, tank_index: usize, supply: &m
         }
         PickupKind::Rapid => tank.rapid = duration,
         PickupKind::Speed => tank.speed = duration,
-        PickupKind::Laser => {
-            tank.laser = duration;
-            label = "LASER DEFENSE".to_string();
-        }
+        PickupKind::Laser => tank.laser = duration,
     }
     let mut event = SimEvent::at(SimEventType::Pickup, x, z);
     event.id = Some(tank.id);

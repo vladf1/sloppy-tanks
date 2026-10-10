@@ -117,7 +117,7 @@ static TEXTURED: Cache<(&'static str, u32), Material> = Cache::new();
 
 /// A textured finish tinted `color`; batching bakes the tint into vertex colours,
 /// so every building shares one material per texture.
-fn textured(path: &'static str, color: u32, bump: f32, roughness: f32) -> Arc<Material> {
+pub(super) fn textured(path: &'static str, color: u32, bump: f32, roughness: f32) -> Arc<Material> {
     TEXTURED.get_or_insert((path, color), || {
         let map = TextureRef {
             anisotropy: 8,
@@ -135,9 +135,10 @@ fn textured(path: &'static str, color: u32, bump: f32, roughness: f32) -> Arc<Ma
     })
 }
 
-/// The clapboard tint that keeps a wall at `paint` on average.
-fn clapboard_tint(paint: u32) -> u32 {
-    let (paint, average) = (hex_to_linear(paint), hex_to_linear(CLAPBOARD_AVERAGE));
+/// The tint that keeps a texture whose average sRGB colour is `average` at `paint`
+/// on average (clapboard walls, timber members).
+pub(super) fn tint_over(paint: u32, average: u32) -> u32 {
+    let (paint, average) = (hex_to_linear(paint), hex_to_linear(average));
     linear_to_hex([0, 1, 2].map(|i| (paint[i] / average[i]).min(1.0)))
 }
 
@@ -162,7 +163,7 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
     match surface {
         Surface::Siding => textured(
             CLAPBOARD_TEXTURE,
-            clapboard_tint(palette.siding),
+            tint_over(palette.siding, CLAPBOARD_AVERAGE),
             0.03,
             0.78,
         ),
@@ -213,7 +214,7 @@ pub(super) struct Opening {
 }
 
 impl Opening {
-    fn corners(&self) -> Vec<DVec2> {
+    pub(super) fn corners(&self) -> Vec<DVec2> {
         let (u0, u1) = (self.u - self.width / 2.0, self.u + self.width / 2.0);
         let (y0, y1) = (self.y, self.y + self.height);
         // Clockwise, against the outline's winding, as holes are given.
@@ -272,11 +273,9 @@ pub(super) fn wall(
     }
 }
 
-/// Glazing bars of one window: `cols` by `rows` lites per sash.
+/// Glazing bars of one window: two by two lites per sash.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Glazing {
-    pub cols: u32,
-    pub rows: u32,
     /// Two sashes with a meeting rail (double-hung) or one fixed sash.
     pub double_hung: bool,
 }
@@ -416,10 +415,12 @@ pub(super) fn window(
     } else {
         vec![(y0 + 0.07, y1 - 0.06)]
     };
+    // Lites across and up each sash.
+    const LITES: u32 = 2;
     let (inner0, inner1) = (u0 + STILE, u1 - STILE);
     for (bottom, top) in sashes {
-        for col in 1..glazing.cols {
-            let x = inner0 + (inner1 - inner0) * f64::from(col) / f64::from(glazing.cols);
+        for col in 1..LITES {
+            let x = inner0 + (inner1 - inner0) * f64::from(col) / f64::from(LITES);
             member(
                 kit,
                 DVec2::new(BAR, top - bottom),
@@ -428,8 +429,8 @@ pub(super) fn window(
                 0.03,
             );
         }
-        for row in 1..glazing.rows {
-            let y = bottom + (top - bottom) * f64::from(row) / f64::from(glazing.rows);
+        for row in 1..LITES {
+            let y = bottom + (top - bottom) * f64::from(row) / f64::from(LITES);
             member(
                 kit,
                 DVec2::new(inner1 - inner0, BAR),

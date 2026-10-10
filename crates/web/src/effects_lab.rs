@@ -1,12 +1,13 @@
 //! `EffectsLab`: the runtime effects driven from `tools/effects-lab.ts`. The page
-//! scripts a small scene (tanks driving, shots in flight, one event of every
-//! kind) and feeds the same state and events to this renderer and to the former
-//! Three.js effect classes for a side-by-side comparison.
+//! scripts a small scene (tanks driving, shots in flight, one event of every kind),
+//! feeds its state and events to this renderer and compares the frames with references
+//! captured from the former Three.js effect classes.
 
 use std::collections::HashMap;
 
 use glam::{Mat4, Vec3};
 use serde::Deserialize;
+use serde_json::json;
 use sloppy_core::geometry::plane_geometry;
 use sloppy_core::models::tank_model;
 use sloppy_core::scene::{Material, Node};
@@ -14,9 +15,11 @@ use sloppy_core::sim::maps::GroundKind;
 use sloppy_core::sim::render_state::{RenderShot, RenderTank};
 use sloppy_core::sim::{MatchPhase, Point3, RenderState, SimEvent, Team, Vec2, VehicleKind};
 use sloppy_render::camera::PerspectiveCamera;
-use sloppy_render::effects::Effects;
-use sloppy_render::gpu::{InstanceId, Lifetime, ModelId, Renderer, RendererOptions};
+use sloppy_render::effects::{CosmeticRandom, Effects};
+use sloppy_render::gpu::{InstanceId, Lifetime, ModelId, Renderer};
 use wasm_bindgen::prelude::*;
+
+use crate::page::{js_error, parse};
 
 /// Tanks rest 0.4 m below their body origin (`presentation.ts` `updateTanks`).
 const HULL_DROP: f32 = 0.4;
@@ -52,7 +55,6 @@ struct LabState {
     #[serde(rename = "match")]
     match_state: LabMatch,
     map_theme: String,
-    #[serde(default)]
     map_floor: Option<GroundKind>,
     tanks: Vec<LabTank>,
     shots: Vec<RenderShot>,
@@ -67,10 +69,6 @@ pub struct EffectsLab {
     tanks: HashMap<u32, (InstanceId, Mat4)>,
 }
 
-fn js_error(message: impl Into<String>) -> JsValue {
-    js_sys::Error::new(&message.into()).into()
-}
-
 #[wasm_bindgen]
 impl EffectsLab {
     pub async fn create(
@@ -78,9 +76,7 @@ impl EffectsLab {
         asset_base: String,
     ) -> Result<EffectsLab, JsValue> {
         console_error_panic_hook::set_once();
-        let mut renderer = Renderer::new(canvas, RendererOptions { asset_base })
-            .await
-            .map_err(js_error)?;
+        let mut renderer = Renderer::new(canvas, asset_base).await.map_err(js_error)?;
         let mut ground = plane_geometry(GROUND_SIZE, GROUND_SIZE);
         ground.rotate_x(-std::f64::consts::FRAC_PI_2);
         let mut node = Node::mesh(
@@ -106,13 +102,12 @@ impl EffectsLab {
     }
 
     pub fn set_seed(&mut self, seed: u32) {
-        self.effects.set_seed(u64::from(seed));
+        self.effects.systems.random = CosmeticRandom::seeded(u64::from(seed));
     }
 
     /// Replace the effects' view of the match (TS `RenderState` subset, JSON).
     pub fn set_state(&mut self, json: &str) -> Result<(), JsValue> {
-        let lab: LabState =
-            serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
+        let lab: LabState = parse(json)?;
         let state = &mut self.state;
         state.elapsed = lab.elapsed;
         state.match_state.phase = lab.match_state.phase;
@@ -158,25 +153,23 @@ impl EffectsLab {
 
     /// One simulation event (TS `SimEvent` JSON).
     pub fn event(&mut self, json: &str) -> Result<(), JsValue> {
-        let event: SimEvent =
-            serde_json::from_str(json).map_err(|error| js_error(error.to_string()))?;
-        self.effects.event(&event);
+        let event: SimEvent = parse(json)?;
+        self.effects.systems.event(&event);
         Ok(())
     }
 
     pub fn reset(&mut self) {
-        self.effects.reset(&mut self.renderer, &self.state);
+        self.effects.reset(&mut self.renderer);
     }
 
     /// Advance effects by `dt` and draw at `time` (seconds).
-    pub fn frame(&mut self, alpha: f32, dt: f32, time: f64) -> Result<(), JsValue> {
+    pub fn frame(&mut self, alpha: f64, dt: f64, time: f64) -> Result<(), JsValue> {
         for tank in &self.state.tanks {
             let Some(&(instance, root)) = self.tanks.get(&tank.id) else {
                 continue;
             };
-            let a = f64::from(alpha);
-            let x = tank.previous.x + (tank.position.x - tank.previous.x) * a;
-            let z = tank.previous.z + (tank.position.z - tank.previous.z) * a;
+            let x = tank.previous.x + (tank.position.x - tank.previous.x) * alpha;
+            let z = tank.previous.z + (tank.position.z - tank.previous.z) * alpha;
             let world = Mat4::from_translation(Vec3::new(
                 x as f32,
                 tank.position.y as f32 - HULL_DROP,
@@ -194,7 +187,6 @@ impl EffectsLab {
     /// Create up to `budget` pipelines compiled in the background; returns
     /// `[compiled, remaining, compiling]` (`compiling`: still in background compiles).
     pub fn prepare_step(&mut self, budget: u32) -> Vec<u32> {
-        self.effects.warm_up_samples(&mut self.renderer);
         let progress = self.renderer.prepare_step(budget);
         vec![progress.compiled, progress.remaining, progress.compiling]
     }
@@ -220,42 +212,32 @@ impl EffectsLab {
     /// Renderer counters, effect counts and per-pool instances as JSON.
     pub fn stats(&mut self) -> String {
         let s = self.renderer.stats();
-        let e = self.effects.stats();
-        let pools: Vec<String> = self
-            .renderer
-            .pool_summary()
-            .iter()
-            .map(|(label, count)| format!("[\"{label}\",{count}]"))
-            .collect();
-        format!(
-            concat!(
-                "{{\"drawCalls\":{},\"triangles\":{},\"pipelines\":{},\"latePipelines\":{},",
-                "\"pools\":{},\"poolInstances\":{},\"gpuBytes\":{},\"effects\":{{",
-                "\"particles\":{},\"blasts\":{},\"puffs\":{},\"blastRings\":{},\"trackMarks\":{},",
-                "\"trackDust\":{},\"gravel\":{},\"quarryDust\":{},\"projectiles\":{},",
-                "\"laserBeams\":{},\"pickupEffects\":{},\"instances\":{}}},\"poolList\":[{}]}}"
-            ),
-            s.draw_calls,
-            s.triangles,
-            s.pipelines,
-            s.late_pipelines,
-            s.pools,
-            s.pool_instances,
-            s.gpu_bytes,
-            e.particles,
-            e.blasts,
-            e.puffs,
-            e.blast_rings,
-            e.track_marks,
-            e.track_dust,
-            e.gravel,
-            e.quarry_dust,
-            e.projectiles,
-            e.laser_beams,
-            e.pickup_effects,
-            e.instances,
-            pools.join(","),
-        )
+        let e = self.effects.systems.stats();
+        json!({
+            "drawCalls": s.draw_calls,
+            "triangles": s.triangles,
+            "pipelines": s.pipelines,
+            "latePipelines": s.late_pipelines,
+            "pools": s.pools,
+            "poolInstances": s.pool_instances,
+            "gpuBytes": s.gpu_bytes,
+            "effects": {
+                "particles": e.particles,
+                "blasts": e.blasts,
+                "puffs": e.puffs,
+                "blastRings": e.blast_rings,
+                "trackMarks": e.track_marks,
+                "trackDust": e.track_dust,
+                "gravel": e.gravel,
+                "quarryDust": e.quarry_dust,
+                "projectiles": e.projectiles,
+                "laserBeams": e.laser_beams,
+                "pickupEffects": e.pickup_effects,
+                "instances": e.instances,
+            },
+            "poolList": self.renderer.pool_summary(),
+        })
+        .to_string()
     }
 
     pub fn error(&self) -> Option<String> {

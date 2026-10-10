@@ -43,8 +43,7 @@ fn take_child(parent: &mut Node, name: &str) -> Node {
 }
 
 fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
-    let mut source =
-        (*tank_model_variant(kind, team, false, wreck_part == WreckPart::Hull)).clone();
+    let mut source = (*tank_model_variant(kind, team, wreck_part == WreckPart::Hull)).clone();
     let hull = take_child(&mut source, part::HULL);
     let mut turret = take_child(&mut source, part::TURRET);
     let mut result = Node::group("wreck");
@@ -67,7 +66,7 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
         child.position -= center;
     }
     let mut flat = Node::group("wreck");
-    flat.children = flatten_meshes(&result);
+    collect_meshes(&result, DMat4::IDENTITY, &mut flat.children);
     batch(&mut flat);
     flat
 }
@@ -76,12 +75,6 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
 /// applied (`mesh.applyMatrix4(mesh.parent.matrixWorld)`): the product is
 /// decomposed back into position, rotation and scale, so a sheared product loses
 /// its shear exactly as Three.js did.
-fn flatten_meshes(root: &Node) -> Vec<Node> {
-    let mut meshes = Vec::new();
-    collect_meshes(root, DMat4::IDENTITY, &mut meshes);
-    meshes
-}
-
 fn collect_meshes(node: &Node, parent_world: DMat4, out: &mut Vec<Node>) {
     let world = parent_world * compose(node.position, node.rotation, node.scale);
     if node.drawable.is_some() {
