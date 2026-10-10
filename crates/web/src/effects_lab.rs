@@ -223,6 +223,7 @@ impl EffectsLab {
             "gpuBytes": s.gpu_bytes,
             "effects": {
                 "particles": e.particles,
+                "woodChips": e.wood_chips,
                 "blasts": e.blasts,
                 "puffs": e.puffs,
                 "blastRings": e.blast_rings,

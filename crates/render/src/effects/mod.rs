@@ -1,5 +1,6 @@
 //! Runtime visual effects: particles, blasts, tread marks and dust, gravel,
-//! quarry wind dust, projectiles in flight, laser defense and pickup rings, plus
+//! quarry wind dust, crate splinters and packing straw, falling leaves,
+//! projectiles in flight, laser defense and pickup rings, plus
 //! the explosion light flash, and the WGSL effect registry their materials use.
 //!
 //! Every effect is a bounded CPU system that writes instance records into a
@@ -26,6 +27,7 @@ pub mod spawn_pad_decks;
 pub mod track_dust;
 pub mod track_gravel;
 pub mod tracks;
+pub mod wood_chips;
 
 use glam::Vec3;
 use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
@@ -43,6 +45,7 @@ use quarry_dust::QuarryDust;
 use rocket_smoke::RocketSmoke;
 use track_dust::TrackDust;
 use tracks::TrackTrails;
+use wood_chips::WoodChips;
 
 use crate::presentation::view_settings::FEEDBACK;
 
@@ -67,6 +70,8 @@ pub struct Flash {
 pub struct EffectStats {
     /// Chips, sparks, embers and falling leaves: every exported "particles" count.
     pub particles: u32,
+    /// Crate splinters and packing straw (their pools' instances).
+    pub wood_chips: u32,
     pub blasts: u32,
     pub puffs: u32,
     pub blast_rings: u32,
@@ -87,6 +92,7 @@ pub struct EffectSystems {
     pub random: CosmeticRandom,
     pub particles: ParticleEffects,
     pub leaves: LeafFall,
+    pub wood: WoodChips,
     pub tracks: TrackTrails,
     pub track_dust: TrackDust,
     pub quarry_dust: QuarryDust,
@@ -101,6 +107,7 @@ impl EffectSystems {
     pub fn reset(&mut self) {
         self.particles.reset();
         self.leaves.reset();
+        self.wood.reset();
         self.tracks.reset();
         self.track_dust.reset();
         self.quarry_dust.reset();
@@ -129,6 +136,7 @@ impl EffectSystems {
             self.pickups
                 .add(event.x, event.z, event.color.unwrap_or(WHITE), event.id);
         }
+        self.wood.event(event, &mut self.random);
         if self.particles.event(event, &mut self.random) {
             self.flash = Flash {
                 position: Vec3::new(event.x as f32, FLASH_HEIGHT, event.z as f32),
@@ -157,6 +165,7 @@ impl EffectSystems {
         self.laser.update(state, alpha, dt);
         self.particles.update(dt, time);
         self.leaves.update(dt, &mut self.random);
+        self.wood.update(dt, &mut self.random);
     }
 
     /// Every pool buffer, in `looks::pool_descs` order.
@@ -181,6 +190,8 @@ impl EffectSystems {
         visit(&mut self.pickups.glows);
         visit(&mut self.particles.records);
         visit(&mut self.leaves.records);
+        visit(&mut self.wood.wood_records);
+        visit(&mut self.wood.straw_records);
         visit(&mut self.particles.explosions.rings);
         visit(&mut self.particles.explosions.puffs);
     }
@@ -191,6 +202,7 @@ impl EffectSystems {
         let explosions = &self.particles.explosions;
         EffectStats {
             particles: (self.particles.particles.len() + self.leaves.len()) as u32,
+            wood_chips: self.wood.len() as u32,
             blasts: explosions.active() as u32,
             puffs: explosions.puffs.len() as u32,
             blast_rings: explosions.rings.len() as u32,
@@ -388,6 +400,31 @@ mod tests {
     }
 
     #[test]
+    fn crate_hits_and_bursts_throw_lit_wood_and_dust_without_a_flash() {
+        let mut systems = EffectSystems::default();
+        for kind in [SimEventType::Impact, SimEventType::Destroy] {
+            let mut event = SimEvent::at(kind, 0.0, 0.0);
+            event.cover_kind = Some(CoverKind::Cargo);
+            event.from = Some(Point3::new(0.0, 1.2, 1.0));
+            systems.event(&event);
+        }
+        assert!(systems.particles.particles.is_empty());
+        assert_eq!(systems.particles.explosions.active(), 2);
+        assert_eq!(systems.flash.intensity, 0.0);
+        systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        let stats = systems.stats();
+        assert_eq!(stats.particles, 0);
+        assert_eq!(stats.wood_chips as usize, systems.wood.len());
+        assert_eq!(
+            systems.wood.wood_records.len() + systems.wood.straw_records.len(),
+            systems.wood.len()
+        );
+        systems.reset();
+        let cleared = systems.stats();
+        assert_eq!(cleared.wood_chips + cleared.instances, 0);
+    }
+
+    #[test]
     fn a_busy_round_stays_bounded_and_reset_clears_every_pool() {
         let mut systems = EffectSystems::default();
         let mut state = RenderState::default();
@@ -447,15 +484,28 @@ mod tests {
             let mut laser = SimEvent::at(SimEventType::Laser, 3.0, 3.0);
             laser.from = Some(Point3::ZERO);
             systems.event(&laser);
+            if frame % 10 == 0 {
+                for kind in [SimEventType::Impact, SimEventType::Destroy] {
+                    let mut crate_event = SimEvent::at(kind, frame as f64 % 30.0, 8.0);
+                    crate_event.cover_kind = Some(CoverKind::Cargo);
+                    systems.event(&crate_event);
+                }
+            }
             systems.update(&state, 1.0, dt, state.elapsed);
             let stats = systems.stats();
             peak.instances = peak.instances.max(stats.instances);
             peak.particles = peak.particles.max(stats.particles);
             peak.track_marks = peak.track_marks.max(stats.track_marks);
+            peak.wood_chips = peak.wood_chips.max(stats.wood_chips);
         }
         let stats = systems.stats();
         assert!(peak.particles as usize <= particles::MAX_PARTICLES);
         assert!(peak.particles > 1000, "the particle pool saturates");
+        let wood_capacity = wood_chips::MAX_WOOD_CHIPS + wood_chips::MAX_STRAW;
+        assert_eq!(
+            peak.wood_chips as usize, wood_capacity,
+            "the wood pools saturate"
+        );
         assert!(stats.track_marks > 1000 && stats.track_dust > 0 && stats.quarry_dust > 0);
         assert_eq!(stats.projectiles, 40);
         assert!(stats.puffs > 0 && stats.blast_rings > 0 && stats.pickup_effects > 0);

@@ -304,7 +304,10 @@ pub(crate) fn strike_truck(
     else {
         return;
     };
-    let roll = mix(tank.id ^ tank.life.rotate_left(16), (simulation.elapsed / STEP) as u32);
+    let roll = mix(
+        tank.id ^ tank.life.rotate_left(16),
+        (simulation.elapsed / STEP) as u32,
+    );
     if reach > WHEEL_HIT_REACH || !roll.is_multiple_of(WHEEL_LOSS_ODDS) {
         return;
     }
@@ -362,9 +365,8 @@ fn launch_wheel(simulation: &mut Simulation, tank_index: usize, wheel: usize, di
     let travel = DVec3::new(-axle.z, 0.0, axle.x);
     let outward = x.signum() * (side.x * axle.x + side.z * axle.z);
     let lean = DQuat::from_axis_angle(travel, -WHEEL_LEAN * outward.signum());
-    let rotation = lean
-        * DQuat::from_rotation_y((-axle.z).atan2(axle.x))
-        * DQuat::from_rotation_z(-FRAC_PI_2);
+    let rotation =
+        lean * DQuat::from_rotation_y((-axle.z).atan2(axle.x)) * DQuat::from_rotation_z(-FRAC_PI_2);
     // Rolling: spin = up x velocity / radius.
     simulation.reserve_fragments(1);
     let wheel_body = simulation.world.insert_body(
@@ -400,7 +402,13 @@ fn launch_wheel(simulation: &mut Simulation, tank_index: usize, wheel: usize, di
         Some(wheel_body),
     );
     let id = simulation.allocate_id();
-    let mut fragment = Fragment::new(id, wheel_body, WHEEL_SECONDS + DEBRIS_CLEANUP_SECONDS, 1.0, 0);
+    let mut fragment = Fragment::new(
+        id,
+        wheel_body,
+        WHEEL_SECONDS + DEBRIS_CLEANUP_SECONDS,
+        1.0,
+        0,
+    );
     fragment.wreck = Some(kind);
     fragment.part = Some(WreckPart::Wheel);
     fragment.team = Some(team);

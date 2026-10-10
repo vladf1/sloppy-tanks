@@ -83,7 +83,8 @@ export type EventType =
   | "hurt"
   | "ricochet"
   | "laser"
-  | "promotion";
+  | "promotion"
+  | "shatter";
 
 export interface Point {
   x: number;

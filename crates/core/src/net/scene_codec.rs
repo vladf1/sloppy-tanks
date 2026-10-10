@@ -21,6 +21,7 @@ use super::wire::{
     Field, FieldKind, Slot, WireReader, WireRecord, names, put_signed, put_varint, read_changes,
     thousandths, wire_fields, write_changes,
 };
+use crate::sim::crate_layout::CratePiece;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
 use crate::sim::map_options::{MapId, is_extra_level};
@@ -104,6 +105,18 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("roof", TowerPiece::Roof),
     ("ladder", TowerPiece::Ladder),
 ];
+pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
+    ("wall", CratePiece::Wall),
+    ("wall-left", CratePiece::WallLeft),
+    ("wall-middle", CratePiece::WallMiddle),
+    ("wall-right", CratePiece::WallRight),
+    ("lid", CratePiece::Lid),
+    ("lid-front", CratePiece::LidFront),
+    ("lid-middle", CratePiece::LidMiddle),
+    ("lid-back", CratePiece::LidBack),
+    ("skid", CratePiece::Skid),
+    ("plank", CratePiece::Plank),
+];
 
 pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
     ("armor", FragmentShape::Armor),
@@ -158,7 +171,7 @@ pub const TIMBER_PART_KINDS: [(&str, TimberPartKind); 2] = [
     ("beam", TimberPartKind::Beam),
     ("post", TimberPartKind::Post),
 ];
-pub const EVENT_TYPES: [(&str, SimEventType); 13] = [
+pub const EVENT_TYPES: [(&str, SimEventType); 14] = [
     ("debris-impact", SimEventType::DebrisImpact),
     ("notice", SimEventType::Notice),
     ("shot", SimEventType::Shot),
@@ -172,6 +185,7 @@ pub const EVENT_TYPES: [(&str, SimEventType); 13] = [
     ("ricochet", SimEventType::Ricochet),
     ("laser", SimEventType::Laser),
     ("promotion", SimEventType::Promotion),
+    ("shatter", SimEventType::Shatter),
 ];
 pub const DAMAGE_CAUSES: [(&str, DamageCause); 10] = [
     ("standard", DamageCause::Standard),
@@ -224,13 +238,14 @@ const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
 const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
+const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 6] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
 const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
 const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
 const MAP_NAMES: [&str; 5] = names(&MAP_MODES);
-const EVENT_NAMES: [&str; 13] = names(&EVENT_TYPES);
+const EVENT_NAMES: [&str; 14] = names(&EVENT_TYPES);
 const CAUSE_NAMES: [&str; 10] = names(&DAMAGE_CAUSES);
 const DEATH_STYLE_NAMES: [&str; 1] = names(&DEATH_STYLES);
 
@@ -342,6 +357,7 @@ wire_fields!(
         WRECK = Field::new("wreck", FieldKind::Choice(&VEHICLE_NAMES)),
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
+        CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
     }
 );
 
@@ -817,6 +833,7 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         None => record.clear(TIMBER_PART),
     }
     set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
+    set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
     }
@@ -1319,6 +1336,7 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .transpose()
             .map_err(|e| format!("timberPart: {e}"))?,
         tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
+        crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,

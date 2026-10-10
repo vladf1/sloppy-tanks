@@ -27,6 +27,7 @@ use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
+use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
 
 /// Tread marks draw after the ground decals they lie on (`renderOrder = 1`).
 const TRACK_RENDER_ORDER: i32 = 1;
@@ -209,6 +210,32 @@ pub fn pool_descs() -> Vec<PoolDesc> {
                 ..Material::standard(0xffffff, 0.0, 0.9)
             },
             MAX_LEAVES,
+        )
+    });
+    // Crate splinters, faceted and lit like the boards they came from; the
+    // instance tint is the wood's color.
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "wood chips",
+            splinter_mesh(),
+            Material {
+                flat_shading: true,
+                ..Material::standard(0xffffff, 0.0, 0.85)
+            },
+            MAX_WOOD_CHIPS,
+        )
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "packing straw",
+            straw_mesh(),
+            Material {
+                side: Side::Double,
+                ..Material::standard(0xffffff, 0.0, 0.8)
+            },
+            MAX_STRAW,
         )
     });
     pools.push(PoolDesc::new(

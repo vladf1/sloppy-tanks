@@ -111,6 +111,7 @@ mod tests {
             (SimEventType::Ricochet, "ricochet"),
             (SimEventType::Laser, "laser"),
             (SimEventType::Promotion, "promotion"),
+            (SimEventType::Shatter, "shatter"),
         ];
         let mut events: Vec<_> = kinds
             .iter()

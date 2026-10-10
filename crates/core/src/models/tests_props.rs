@@ -2,7 +2,8 @@
 //!
 //! The expected values at the end of this file were printed by a Node script that
 //! built `coverModel` for covers of every map layout (village, harbor, quarry,
-//! Stress Grid, Scrap Yard) at every damage stage the game shows, synthetic trees
+//! Stress Grid, Scrap Yard) at every damage stage the game shows (cargo crates
+//! have since been rebuilt from boards and left the comparison), synthetic trees
 //! of every family, timber walls with hits, rubble seeds, every pickup kind, the
 //! flags, the barrel scraps and the trunk fragment. Textures were stubbed to carry
 //! their path. Each mesh is summarised by FNV-1a hashes of its attributes, its
@@ -256,7 +257,11 @@ fn cover_models_match_typescript() {
 
 #[test]
 fn every_cover_kind_is_covered() {
-    for kind in CoverKind::ALL {
+    // Cargo crates were rebuilt from boards; `crate_model`'s own tests cover them.
+    for kind in CoverKind::ALL
+        .into_iter()
+        .filter(|&kind| kind != CoverKind::Cargo)
+    {
         assert!(COVER_CASES.iter().any(|case| case.kind == kind), "{kind:?}");
     }
     let families: std::collections::BTreeSet<u32> = COVER_CASES
@@ -457,22 +462,7 @@ pub(super) const COVER_CASES: &[CoverCase] = &[
     CoverCase { kind: CoverKind::Boundary, x: 0.0, z: -60.5, w: 122.0, d: 1.0, h: 1.2, color: 0x879698, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (1, 324, 108, 0xb50a5fd6), exact: 0x206dd692, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Container, x: -30.0, z: -32.0, w: 6.0, d: 14.0, h: 3.6, color: 0xd37c38, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (110, 35340, 11784, 0xc95b00cc), exact: 0x199b3cb4, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Container, x: -13.0, z: -8.0, w: 12.0, d: 5.0, h: 3.6, color: 0x6689ad, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (99, 31776, 10596, 0xe43a1bb1), exact: 0xcc9ec0e9, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (11, 264, 132, 0xee012fe8), exact: 0x6e8679f5, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 1, expected: (23, 396, 240, 0x0b26bc80), exact: 0x6a4546ec, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 2, expected: (31, 588, 336, 0x9b17b7d6), exact: 0x19301545, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (11, 264, 132, 0xff639390), exact: 0x1c1706b0, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 1, expected: (23, 396, 240, 0x778f6585), exact: 0x9da9bd82, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: -22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 2, expected: (33, 636, 360, 0x3c5ec1a8), exact: 0x1b4664dd, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (11, 264, 132, 0xc7412fe8), exact: 0x13321063, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 1, expected: (23, 396, 240, 0x8f8588b5), exact: 0x374309e2, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -28.4, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 2, expected: (32, 612, 348, 0xd5a0e67d), exact: 0xd6efc608, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (11, 264, 132, 0xeb239390), exact: 0xc4fe68a6, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 1, expected: (23, 396, 240, 0x30da315c), exact: 0x2fe8aa4c, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -31.6, z: 22.0, w: 3.1, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 2, expected: (32, 612, 348, 0xdbefa384), exact: 0x732a2407, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Concrete, x: -10.0, z: -55.0, w: 8.0, d: 1.1, h: 1.5, color: 0xb5b5a5, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (8, 2592, 864, 0x6f19440c), exact: 0x5399a12d, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -4.0, z: -20.0, w: 3.0, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (11, 264, 132, 0xf84d3884), exact: 0xba9c3d0f, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -4.0, z: -20.0, w: 3.0, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 1, expected: (23, 396, 240, 0xdf6fb43a), exact: 0x17580f77, timber_parts: (0, 0x811c9dc5), tree: None },
-    CoverCase { kind: CoverKind::Cargo, x: -4.0, z: -20.0, w: 3.0, d: 3.0, h: 2.6, color: 0xb88b53, debris_seed: None, hits: &[], join: None, background: false, stage: 2, expected: (32, 612, 348, 0x15bab6d5), exact: 0x0154dbaa, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Concrete, x: -43.0, z: 0.0, w: 1.2, d: 10.0, h: 1.7, color: 0xb5b5a5, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (10, 3240, 1080, 0xb999d1d4), exact: 0xa7c0f4b0, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Rock, x: -25.0, z: -12.0, w: 14.0, d: 8.0, h: 4.6, color: 0xd2bd99, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (3, 1392, 512, 0x3fb8cc30), exact: 0x2373ee6a, timber_parts: (0, 0x811c9dc5), tree: None },
     CoverCase { kind: CoverKind::Rock, x: -25.0, z: 12.0, w: 14.0, d: 8.0, h: 3.8, color: 0xd2bd99, debris_seed: None, hits: &[], join: None, background: false, stage: 0, expected: (3, 1392, 512, 0xf4c84c5c), exact: 0xce2a4d6d, timber_parts: (0, 0x811c9dc5), tree: None },

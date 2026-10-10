@@ -217,7 +217,12 @@ fn kit(gold: bool) -> &'static Kit {
             mesh.translate(0.0, y, z);
             mesh
         };
-        let mut wheel_tire = cylinder_geometry(CYBERTRUCK_WHEEL_RADIUS, CYBERTRUCK_WHEEL_RADIUS, CYBERTRUCK_WHEEL_WIDTH, 16);
+        let mut wheel_tire = cylinder_geometry(
+            CYBERTRUCK_WHEEL_RADIUS,
+            CYBERTRUCK_WHEEL_RADIUS,
+            CYBERTRUCK_WHEEL_WIDTH,
+            16,
+        );
         wheel_tire.rotate_z(FRAC_PI_2);
         let mut cover = cylinder_geometry(
             CYBERTRUCK_WHEEL_RADIUS * 0.74,
@@ -336,8 +341,14 @@ mod tests {
         let bounds = crate::geometry::node_bounds(&wheel, DMat4::IDENTITY);
         let size = bounds.size();
         assert!(bounds.center().length() < 1e-6, "{:?}", bounds.center());
-        assert!((size.x - 2.0 * CYBERTRUCK_WHEEL_RADIUS).abs() < 0.01, "{size:?}");
-        assert!((size.z - 2.0 * CYBERTRUCK_WHEEL_RADIUS).abs() < 0.01, "{size:?}");
+        assert!(
+            (size.x - 2.0 * CYBERTRUCK_WHEEL_RADIUS).abs() < 0.01,
+            "{size:?}"
+        );
+        assert!(
+            (size.z - 2.0 * CYBERTRUCK_WHEEL_RADIUS).abs() < 0.01,
+            "{size:?}"
+        );
         assert!(size.y < CYBERTRUCK_WHEEL_WIDTH + 0.02, "{size:?}");
     }
 }

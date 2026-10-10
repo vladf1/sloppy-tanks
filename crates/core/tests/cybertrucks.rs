@@ -58,7 +58,10 @@ fn truck_shots(s: &Simulation) -> usize {
         .filter(|t| t.kind.neutral())
         .map(|t| t.id)
         .collect();
-    s.shots.iter().filter(|shot| trucks.contains(&shot.owner)).count()
+    s.shots
+        .iter()
+        .filter(|shot| trucks.contains(&shot.owner))
+        .count()
 }
 
 /// A player's standard shell crossing from -X toward local point `(x, z)` of the parked
@@ -132,7 +135,11 @@ fn trucks_roam_without_firing_and_bots_ignore_them() {
         s.step(VehicleCommand::idle(), true);
         assert_eq!(truck_shots(&s), 0);
         for tank in s.tanks.iter().filter(|t| !t.kind.neutral()) {
-            assert!(!ids.contains(&tank.brain.target), "{} hunts a truck", tank.name);
+            assert!(
+                !ids.contains(&tank.brain.target),
+                "{} hunts a truck",
+                tank.name
+            );
         }
     }
     for (&i, from) in trucks.iter().zip(start) {
@@ -163,7 +170,10 @@ fn a_gold_truck_goes_up_like_a_fuel_drum() {
     place_tank(&mut s, ENEMY, 3.5, 0.0, Some(0.0));
     let before = s.tanks[ENEMY].hp;
     damage_from(&mut s, TRUCK, 500.0, PLAYER, None, None);
-    assert!(s.tanks[ENEMY].hp < before, "the blast spared the enemy beside it");
+    assert!(
+        s.tanks[ENEMY].hp < before,
+        "the blast spared the enemy beside it"
+    );
 }
 
 #[test]
@@ -209,7 +219,12 @@ fn a_shell_near_a_wheel_can_knock_it_off_and_the_truck_crashes() {
     let wheel = wheel_fragment(&s).expect("the wheel outlasts the crash");
     let body = &s.world.bodies[s.fragments[wheel].body];
     let at = from_vector(body.translation());
-    println!("launched {launched:?} at {at:?} linvel {:?} angvel {:?} rot {:?}", body.linvel(), body.angvel(), body.rotation());
+    println!(
+        "launched {launched:?} at {at:?} linvel {:?} angvel {:?} rot {:?}",
+        body.linvel(),
+        body.angvel(),
+        body.rotation()
+    );
     for second in 0..16 {
         for _ in 0..30 {
             idle(&mut s);
@@ -219,7 +234,16 @@ fn a_shell_near_a_wheel_can_knock_it_off_and_the_truck_crashes() {
             let at = from_vector(body.translation());
             let v = body.linvel();
             let axle = *body.rotation() * rapier3d::prelude::Vector::Y;
-            println!("t+{second} at ({:.1}, {:.3}, {:.1}) speed {:.2} spin {:.2} tilt {:.3} heading {:.2}", at.x, at.y, at.z, v.x.hypot(v.z), body.angvel().length(), axle.y.asin(), v.x.atan2(v.z));
+            println!(
+                "t+{second} at ({:.1}, {:.3}, {:.1}) speed {:.2} spin {:.2} tilt {:.3} heading {:.2}",
+                at.x,
+                at.y,
+                at.z,
+                v.x.hypot(v.z),
+                body.angvel().length(),
+                axle.y.asin(),
+                v.x.atan2(v.z)
+            );
         }
     }
     assert!(distance(at.planar(), launched.planar()) > 3.0, "{at:?}");
