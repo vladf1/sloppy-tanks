@@ -5,7 +5,7 @@ mod support;
 
 use rapier3d::prelude::Vector;
 use sloppy_core::models::CYBERTRUCK_WHEEL_RADIUS;
-use sloppy_core::sim::cybertruck::{CYBERTRUCK_COUNT, CYBERTRUCK_RESPAWN_SECONDS};
+use sloppy_core::sim::cybertruck::{CYBERTRUCK_COUNT, CYBERTRUCK_RESPAWN_SECONDS, GOLD_EVERY};
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::math::{Point3, Vec2, distance};
 use sloppy_core::sim::physics::from_vector;
@@ -128,7 +128,11 @@ fn rounds_add_neutral_trucks_only_when_asked() {
     let s = with_trucks(5.0);
     let trucks: Vec<_> = s.tanks.iter().filter(|t| t.kind.neutral()).collect();
     assert_eq!(trucks.len(), CYBERTRUCK_COUNT);
-    assert_eq!(trucks.last().unwrap().kind, VehicleKind::GoldCybertruck);
+    let gold = trucks
+        .iter()
+        .filter(|t| t.kind == VehicleKind::GoldCybertruck)
+        .count();
+    assert_eq!(gold, CYBERTRUCK_COUNT / GOLD_EVERY);
     // On the opposing side only so the player's shells strike them.
     assert!(trucks.iter().all(|t| t.team == s.human_team.opponent()));
 }

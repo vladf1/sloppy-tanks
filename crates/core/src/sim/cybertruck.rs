@@ -29,13 +29,14 @@ use super::types::{
 };
 use crate::models::{CYBERTRUCK_WHEEL_RADIUS, CYBERTRUCK_WHEEL_WIDTH, CYBERTRUCK_WHEELS};
 
-/// Trucks a round starts with; the last is wrapped in gold foil.
-pub const CYBERTRUCK_COUNT: usize = 3;
+/// Trucks a round starts with; every `GOLD_EVERY`th is wrapped in gold foil.
+pub const CYBERTRUCK_COUNT: usize = 6;
+pub const GOLD_EVERY: usize = 3;
 /// A gold truck's blast when destroyed: a little bigger than a fuel drum's.
 pub const GOLD_BLAST_RADIUS: f64 = 7.5;
 pub const GOLD_BLAST_DAMAGE: f64 = 70.0;
 /// Seconds a destroyed truck stays gone.
-pub const CYBERTRUCK_RESPAWN_SECONDS: f64 = 20.0;
+pub const CYBERTRUCK_RESPAWN_SECONDS: f64 = 6.0;
 /// Throttle while cruising, and flat out while fleeing.
 const CRUISE: f64 = 0.65;
 const FLEE: f64 = 1.0;
@@ -111,7 +112,7 @@ fn spots(simulation: &Simulation) -> Vec<Vec2> {
 const SPAWN_CLEARANCE: f64 = 6.0;
 
 /// Where truck `salt` appears: one of the spots in the half of the map farther from
-/// the player, clear of every vehicle.
+/// the player, clear of every vehicle; with every spot taken, the roomiest.
 pub(crate) fn cybertruck_spawn(simulation: &Simulation, salt: u32) -> Vec2 {
     // A dead player has no body; it waits where it fell.
     let player = simulation
@@ -125,19 +126,29 @@ pub(crate) fn cybertruck_spawn(simulation: &Simulation, salt: u32) -> Vec2 {
         .filter(|tank| tank.alive)
         .map(|tank| simulation.body_translation(tank.body).planar())
         .collect();
-    let mut far: Vec<Vec2> = spots(simulation)
-        .into_iter()
-        .filter(|&spot| {
-            vehicles
-                .iter()
-                .all(|&at| distance(spot, at) > SPAWN_CLEARANCE)
-        })
+    let room = |spot: Vec2| {
+        vehicles
+            .iter()
+            .map(|&at| distance(spot, at))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let spots = spots(simulation);
+    let mut far: Vec<Vec2> = spots
+        .iter()
+        .copied()
+        .filter(|&spot| room(spot) > SPAWN_CLEARANCE)
         .collect();
+    if far.is_empty() {
+        return spots
+            .into_iter()
+            .max_by(|a, b| room(*a).total_cmp(&room(*b)))
+            .unwrap_or(Vec2::ZERO);
+    }
     far.sort_by(|a, b| distance(*b, player).total_cmp(&distance(*a, player)));
     // The farther half of the map, picked by the truck and the clock.
-    let choices = far.len().div_ceil(2).max(1);
+    let choices = far.len().div_ceil(2);
     let pick = mix(salt, (simulation.elapsed * 10.0) as u32) as usize % choices;
-    far.get(pick).copied().unwrap_or(Vec2::ZERO)
+    far[pick]
 }
 
 impl Simulation {
@@ -177,7 +188,7 @@ impl Simulation {
     pub(crate) fn add_cybertrucks(&mut self) {
         for truck in 0..CYBERTRUCK_COUNT {
             let at = cybertruck_spawn(self, truck as u32 + 1);
-            let kind = if truck + 1 == CYBERTRUCK_COUNT {
+            let kind = if (truck + 1).is_multiple_of(GOLD_EVERY) {
                 VehicleKind::GoldCybertruck
             } else {
                 VehicleKind::Cybertruck
