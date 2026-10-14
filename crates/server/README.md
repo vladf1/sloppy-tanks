@@ -127,7 +127,7 @@ each. `{dashed-ip}` in a hostname stands for the machine's address with dashes, 
 `{dashed-ip}.nip.io` is its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58;
 sslip.io works the same way). Such a name needs no DNS record of ours, so a machine is
 usable as soon as it is provisioned; any other hostname, such as production's
-`sloppy-tanks-server.fridman.me` (a plain A record, edited by hand), needs its own record
+`sloppy-tanks-server.fridman.me` (a DNS-only A record at Cloudflare), needs its own record
 pointing at the machine. Players use the first hostname. The scripts reach a machine
 over SSH by its ip and check its server through the first hostname made from
 `{dashed-ip}`, which reaches that machine whatever the other names' DNS says; a list
@@ -251,19 +251,17 @@ its address in production's entry and provision it: players stay on the old mach
 until the hostname's record points at the new one, while the scripts already check
 the new one through its nip.io name.
 
-Then move the hostname by hand: set the A record of `sloppy-tanks-server` to the new
-address in fridman.me's DNS dashboard (Namecheap's Advanced DNS today; the domain's DNS
-is planned to move to Cloudflare). Wait until Cloudflare's and Google's resolvers both
-return the new address:
-
-```sh
-dig +short @1.1.1.1 sloppy-tanks-server.fridman.me
-dig +short @8.8.8.8 sloppy-tanks-server.fridman.me
-```
-
-Provision again right after, so Caddy obtains the certificate at once instead of after
-its retry backoff. On Cloudflare the record must stay DNS only, not proxied: Caddy
-answers the ACME challenges itself and serves players' wss connections directly.
+`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the first
+hostname with its own record (`--hostname <name>` picks another) through Cloudflare's
+API: it asks for an API token and the IP, defaulting to the machine in the list, sets the
+existing A record and waits until Google's and Cloudflare's resolvers return it;
+`--dry-run` shows the record and the change without making it. Create the token in
+Cloudflare's dashboard (My Profile > API Tokens, the "Edit zone DNS" template, limited
+to the zone fridman.me) and keep it off the machines: it can repoint any record in the
+zone. The record stays DNS only, not proxied, and the script turns proxying off if it
+finds it on: Caddy answers the ACME challenges itself and serves players' wss
+connections directly. Provision again right after, so Caddy obtains the certificate at
+once instead of after its retry backoff.
 
 `SLOPPY_SERVERS` points the scripts at another list, such as one of local test machines:
 Caddy gives names ending in `.local` its own local certificates, and a test list leaves

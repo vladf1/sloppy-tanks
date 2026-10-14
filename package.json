@@ -55,6 +55,7 @@
     "server:rollback": "node scripts/server.mjs rollback",
     "server:auto-update": "node scripts/server.mjs auto-update",
     "server:provision": "node scripts/server.mjs provision",
+    "server:point-hostname": "node scripts/point-hostname.mjs",
     "server:logs": "node scripts/server.mjs logs",
     "server:stats": "node scripts/server.mjs stats",
     "server:status": "node scripts/server.mjs status",
