@@ -253,15 +253,26 @@ the new one through its nip.io name.
 
 `pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the first
 hostname with its own record (`--hostname <name>` picks another) through Cloudflare's
-API: it asks for an API token and the IP, defaulting to the machine in the list, sets the
-existing A record and waits until Google's and Cloudflare's resolvers return it;
-`--dry-run` shows the record and the change without making it. Create the token in
-Cloudflare's dashboard (My Profile > API Tokens, the "Edit zone DNS" template, limited
-to the zone fridman.me) and keep it off the machines: it can repoint any record in the
-zone. The record stays DNS only, not proxied, and the script turns proxying off if it
-finds it on: Caddy answers the ACME challenges itself and serves players' wss
-connections directly. Provision again right after, so Caddy obtains the certificate at
-once instead of after its retry backoff.
+API, where fridman.me's DNS lives: it asks for an API token and the IP, defaulting to
+the machine in the list, sets the existing A record and waits until Google's and
+Cloudflare's resolvers return it; `--dry-run` shows the record and the change without
+making it. The record stays DNS only, not proxied, and the script turns proxying off if
+it finds it on: Caddy answers the ACME challenges itself and serves players' wss
+connections directly; Cloudflare's edge certificates would only cover a proxied record.
+
+```sh
+pnpm run server:provision                   # after changing production's ip in deploy/servers.json
+pnpm run server:point-hostname --dry-run    # shows the record and the change
+pnpm run server:point-hostname              # moves it and waits for public resolvers
+pnpm run server:provision                   # so Caddy obtains the certificate at once
+```
+
+The token is made once and reused; keep it in a password manager and off the machines,
+since it can repoint any record in the zone. Wrangler's login cannot read DNS records,
+so it needs a token of its own: in Cloudflare's dashboard, My Profile > API Tokens >
+Create Token, the "Edit zone DNS" template with Zone Resources set to Include, Specific
+zone, fridman.me. The template's Zone > DNS > Edit is all the script needs. Cloudflare
+shows the token once; it does not expire unless given a TTL.
 
 `SLOPPY_SERVERS` points the scripts at another list, such as one of local test machines:
 Caddy gives names ending in `.local` its own local certificates, and a test list leaves
