@@ -292,16 +292,27 @@ try {
     game.start();
     engine.draw();
     const initial = sloppy.stats();
+    // The spawn lanes run along the end walls, inside the yard and far from the
+    // towers, so frozen tanks never block a rebuild's footprint.
     for (const tank of sloppy.sim.tanks) {
       engine.setTank(tank.id, { frozen: true, protection: 999 });
-      game.debug_place_tank(tank.id, -40, 40, NaN);
     }
     const tower = engine.covers().find((cover) => cover.kind === "tower");
+    // A collapse leaves its two footings 2.55 m either side of the tower's centre;
+    // the yard's other tower stands across the plaza.
+    const footingReach = 4;
     const cycles = [];
     for (let cycle = 0; cycle < 3; cycle++) {
       game.debug_damage_cover(tower.id, 9999);
       engine.draw();
-      const rubble = engine.covers().filter((cover) => cover.kind === "rubble" && cover.alive);
+      const rubble = engine
+        .covers()
+        .filter(
+          (cover) =>
+            cover.kind === "rubble" &&
+            cover.alive &&
+            Math.hypot(cover.x - tower.x, cover.z - tower.z) < footingReach,
+        );
       const views = new Map(engine.view().covers.map((cover) => [cover.id, cover]));
       const fallen = rubble.map((cover) => views.get(cover.id));
       // Begin the rebuild delay, then advance its clock without simulating seven
