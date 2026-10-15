@@ -1,5 +1,6 @@
 // Destruction as drawn by the real renderer: timber damage stages and breach, rooted
-// tree stumps with falling crowns, tower rubble, and debris that sinks and fades.
+// tree stumps with falling crowns, tower rubble and rebuilding, debris that sinks
+// and fades, and crate effects and physics cleared by a round reset.
 // Damage, events, particles, navigation, physics and rubble materials are covered by
 // the engine's tests (cover_hit_effects, tree damage, timber_walls,
 // destruction_physics, debris_cleanup, tower_rubble_wears_concrete_and_timber); this
@@ -279,6 +280,91 @@ try {
     models: full.owned.length,
     wreckParts: full.wrecks.length,
   };
+
+  // Scrap Yard reuses rubble identities after its towers rebuild. Each collapse
+  // chooses a new rubble look, so an existing view must replace its old model.
+  results.rebuilding = await page.evaluate(async () => {
+    const { choose } = await import(new URL("tests/engine-fixture.ts", location.href).href);
+    const { sloppy, engine } = window;
+    const game = sloppy.game;
+    game.debug_configure(417, 30, 0);
+    await choose(game, { mapMode: "superstress" });
+    game.start();
+    engine.draw();
+    const initial = sloppy.stats();
+    // The spawn lanes run along the end walls, inside the yard and far from the
+    // towers, so frozen tanks never block a rebuild's footprint.
+    for (const tank of sloppy.sim.tanks) {
+      engine.setTank(tank.id, { frozen: true, protection: 999 });
+    }
+    const tower = engine.covers().find((cover) => cover.kind === "tower");
+    // A collapse leaves its two footings 2.55 m either side of the tower's centre;
+    // the yard's other tower stands across the plaza.
+    const footingReach = 4;
+    const cycles = [];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      game.debug_damage_cover(tower.id, 9999);
+      engine.draw();
+      const rubble = engine
+        .covers()
+        .filter(
+          (cover) =>
+            cover.kind === "rubble" &&
+            cover.alive &&
+            Math.hypot(cover.x - tower.x, cover.z - tower.z) < footingReach,
+        );
+      const views = new Map(engine.view().covers.map((cover) => [cover.id, cover]));
+      const fallen = rubble.map((cover) => views.get(cover.id));
+      // Begin the rebuild delay, then advance its clock without simulating seven
+      // seconds of unrelated combat. Native tests cover the delay and clearance.
+      game.debug_step(1, 0, 0);
+      engine.setSim({ elapsed: sloppy.sim.elapsed + 7 });
+      game.debug_step(1, 0, 0);
+      engine.draw();
+      const rebuilt = new Map(engine.view().covers.map((cover) => [cover.id, cover]));
+      cycles.push({
+        fallen,
+        towerShown: rebuilt.get(tower.id).shown,
+        rubbleHidden: rubble.every((cover) => !rebuilt.get(cover.id).shown),
+        coverModels: sloppy.stats().view.coverModels,
+        unusedMeshes: sloppy.stats().unusedMeshes,
+      });
+    }
+    const cargo = engine.covers().find((cover) => cover.kind === "cargo" && cover.alive);
+    game.debug_damage_cover(cargo.id, 9999);
+    engine.draw();
+    const woodBeforeReset = engine.view().effects.woodChips;
+    await choose(game, { mapMode: "superstress" });
+    game.start();
+    engine.draw();
+    return { cycles, woodBeforeReset, initial, reset: sloppy.stats(), view: engine.view() };
+  });
+  const { cycles, woodBeforeReset, initial, reset, view } = results.rebuilding;
+  for (const [i, cycle] of cycles.entries()) {
+    assert.equal(cycle.fallen.length, 2, "each collapse draws both rubble footings");
+    assert.ok(
+      cycle.fallen.every((cover) => cover.shown),
+      "rubble shows after collapse",
+    );
+    assert.ok(cycle.towerShown && cycle.rubbleHidden, "rebuilt tower replaces its rubble");
+    assert.equal(cycle.coverModels, cycles[0].coverModels, "old rubble models are released");
+    assert.equal(cycle.unusedMeshes, 0, "no unused rubble meshes remain");
+    if (i === 0) continue;
+    for (let pile = 0; pile < cycle.fallen.length; pile++) {
+      assert.equal(cycle.fallen[pile].id, cycles[0].fallen[pile].id, "rubble identity is reused");
+      assert.notEqual(
+        cycle.fallen[pile].modelKey,
+        cycles[i - 1].fallen[pile].modelKey,
+        "reused rubble receives the new collapse's look",
+      );
+    }
+  }
+  assert.ok(woodBeforeReset > 0, "crate destruction creates wood chips");
+  assert.equal(view.effects.woodChips, 0, "reset clears crate splinters and straw");
+  assert.equal(view.fragments.length, 0, "reset clears physical debris views");
+  assert.equal(reset.bodies, initial.bodies, "reset restores the initial body count");
+  assert.equal(reset.colliders, initial.colliders, "reset restores the initial collider count");
+  results.rebuilding = { cycles, woodBeforeReset, resetBodies: reset.bodies };
   assert.equal(await page.evaluate(() => window.sloppy.error()), null, "no GPU error");
   assert.deepEqual(errors, []);
   writeFileSync(`${out}/results.json`, JSON.stringify({ ...results, errors }, null, 2));

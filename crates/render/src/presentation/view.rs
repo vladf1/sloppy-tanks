@@ -352,6 +352,8 @@ struct CoverView {
     key: String,
     stage: u32,
     hits: usize,
+    /// Rebuilt towers reuse rubble identities but choose a new look on collapse.
+    debris_seed: Option<f64>,
     movable: bool,
     scale: Vec3,
     world: Mat4,
@@ -1063,6 +1065,7 @@ impl Presentation {
                 key,
                 stage,
                 hits: cover.timber_hits.len(),
+                debris_seed: cover.debris_seed,
                 movable: cover.motion.is_some(),
                 scale,
                 world,
@@ -1199,6 +1202,7 @@ impl Presentation {
                     key,
                     stage,
                     hits: cover.timber_hits.len(),
+                    debris_seed: cover.debris_seed,
                     movable: false,
                     scale: Vec3::ONE,
                     world: Mat4::IDENTITY,
@@ -1801,6 +1805,7 @@ impl Presentation {
             let rebuild = self.covers.get(&cover.id).is_none_or(|view| {
                 cover.alive
                     && (view.stage != stage
+                        || view.debris_seed != cover.debris_seed
                         || (matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo)
                             && view.hits != cover.timber_hits.len()))
             });
