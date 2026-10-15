@@ -111,6 +111,17 @@ impl PoolBuffer {
         true
     }
 
+    /// Replace one live record without uploading its unchanged neighbours.
+    pub fn set(&mut self, slot: usize, record: InstanceRecord) {
+        self.records[slot] = record;
+        self.mark(slot as u32..slot as u32 + 1);
+    }
+
+    /// Retire a dense tail. Pending uploads are clipped to the live count.
+    pub fn truncate(&mut self, len: usize) {
+        self.records.truncate(len);
+    }
+
     /// Remove `slot` by moving the last record into it, keeping one dense draw.
     pub fn swap_remove(&mut self, slot: usize) {
         self.records.swap_remove(slot);
@@ -210,6 +221,32 @@ mod tests {
         pool.clear();
         assert!(pool.is_empty() && pool.dirty().is_empty());
         assert_eq!(pool.records.capacity(), capacity, "clearing keeps storage");
+    }
+
+    #[test]
+    fn changing_and_retiring_records_uploads_only_the_live_changes() {
+        let mut pool = PoolBuffer::new(4);
+        for i in 0..4 {
+            pool.push(at(i as f32));
+        }
+        pool.take_dirty(|_, _| {});
+        pool.set(1, at(10.0));
+        pool.set(3, at(30.0));
+        pool.truncate(3);
+        let mut uploaded = Vec::new();
+        pool.take_dirty(|first, records| {
+            uploaded.push((
+                first,
+                records
+                    .iter()
+                    .map(|r| r.translation().x)
+                    .collect::<Vec<_>>(),
+            ));
+        });
+        assert_eq!(uploaded, [(1, vec![10.0])]);
+        assert_eq!(pool.records()[2].translation().x, 2.0);
+        assert!(pool.push(at(40.0)), "a retired slot can be reused");
+        assert!(!pool.push(at(50.0)), "the capacity stays bounded");
     }
 
     #[test]

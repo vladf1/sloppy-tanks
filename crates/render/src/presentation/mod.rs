@@ -13,6 +13,7 @@
 //! instance of a part into one instanced draw; themed scenery is baked static.
 
 pub mod camera_rig;
+pub mod debris;
 pub mod first_person;
 pub mod generated;
 pub mod hud;

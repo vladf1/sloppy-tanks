@@ -90,6 +90,25 @@ impl Leaf {
             * Quat::from_rotation_y(self.yaw as f32)
             * Quat::from_rotation_x(roll)
     }
+
+    fn record(&self) -> crate::draw_list::InstanceRecord {
+        let shrink = self
+            .rest
+            .map_or(1.0, |rest| (1.0 + rest.min(0.0) / SHRINK).max(0.0));
+        let length = (self.length * shrink) as f32;
+        let scale = Vec3::new(length, length, length * self.width as f32);
+        let rotation = match self.rest {
+            Some(_) => self.rest_rotation,
+            None => self.rotation(),
+        };
+        let world = glam::Mat4::from_scale_rotation_translation(
+            scale,
+            rotation,
+            Vec3::new(self.x as f32, self.y as f32, self.z as f32),
+        );
+        let [r, g, b] = self.color;
+        record(world, [r, g, b, 1.0], [0.0; 4])
+    }
 }
 
 /// A leaf blade along local X, `[-0.5, 0.5]` long and about half as wide, folded
@@ -166,10 +185,13 @@ impl LeafFall {
         let base = hex_to_linear(foliage.color);
         let yellow = hex_to_linear(YELLOW);
         let brown = hex_to_linear(BROWN);
+        let evicted = (self.leaves.len() + count).saturating_sub(MAX_LEAVES);
+        if evicted > 0 {
+            self.leaves.drain(..evicted);
+            // Surviving leaves shifted slots; rebuild their records on update.
+            self.records.clear();
+        }
         for _ in 0..count {
-            if self.leaves.len() == MAX_LEAVES {
-                self.leaves.remove(0);
-            }
             let mut next = || random.next_f64();
             let angle = next() * TAU;
             let distance = next().sqrt() * foliage.radius;
@@ -219,9 +241,12 @@ impl LeafFall {
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
         let drag = (-DRAG * dt).exp();
         let terminal = -GRAVITY / DRAG;
+        let mut slot = 0;
+        let mut rewrite_from = self.records.len();
         self.leaves.retain_mut(|leaf| {
+            let moving = leaf.rest.is_none();
             leaf.age += dt;
-            match &mut leaf.rest {
+            let alive = match &mut leaf.rest {
                 Some(rest) => {
                     *rest -= dt;
                     *rest > -SHRINK
@@ -245,27 +270,26 @@ impl LeafFall {
                     }
                     true
                 }
-            }
-        });
-        self.records.clear();
-        for leaf in &self.leaves {
-            let shrink = leaf
-                .rest
-                .map_or(1.0, |rest| (1.0 + rest.min(0.0) / SHRINK).max(0.0));
-            let length = (leaf.length * shrink) as f32;
-            let scale = Vec3::new(length, length, length * leaf.width as f32);
-            let rotation = match leaf.rest {
-                Some(_) => leaf.rest_rotation,
-                None => leaf.rotation(),
             };
-            let world = glam::Mat4::from_scale_rotation_translation(
-                scale,
-                rotation,
-                Vec3::new(leaf.x as f32, leaf.y as f32, leaf.z as f32),
-            );
-            let [r, g, b] = leaf.color;
-            self.records.push(record(world, [r, g, b, 1.0], [0.0; 4]));
+            if !alive || (moving && leaf.rest.is_some()) {
+                rewrite_from = rewrite_from.min(slot);
+            }
+            if alive {
+                slot += 1;
+            }
+            alive
+        });
+        for (slot, leaf) in self.leaves.iter().enumerate() {
+            if slot >= rewrite_from || leaf.rest.is_none_or(|rest| rest < 0.0) {
+                let record = leaf.record();
+                if slot < self.records.len() {
+                    self.records.set(slot, record);
+                } else {
+                    self.records.push(record);
+                }
+            }
         }
+        self.records.truncate(slot);
     }
 }
 
@@ -324,6 +348,65 @@ mod tests {
         }
         assert!(fall.is_empty());
         assert!(fall.records.is_empty());
+    }
+
+    #[test]
+    fn resting_leaves_upload_only_when_they_shrink_or_shift_slots() {
+        let mut random = CosmeticRandom::seeded(17);
+        let mut fall = LeafFall::default();
+        fall.event(&tree_event(SimEventType::Impact), &crown(), &mut random);
+        for leaf in &mut fall.leaves {
+            leaf.rest = Some(3.0);
+            leaf.y = REST_HEIGHT;
+        }
+        fall.update(1.0 / 60.0, &mut random);
+        fall.records.take_dirty(|_, _| {});
+        let resting = fall.records.records().to_vec();
+        fall.update(1.0 / 60.0, &mut random);
+        assert!(fall.records.dirty().is_empty());
+        assert_eq!(fall.records.records(), resting);
+
+        fall.leaves[2].rest = Some(0.0);
+        fall.update(1.0 / 60.0, &mut random);
+        let mut uploaded = Vec::new();
+        fall.records
+            .take_dirty(|slot, records| uploaded.push((slot, records.len())));
+        assert_eq!(uploaded, [(2, 1)]);
+        assert_ne!(fall.records.records()[2], resting[2]);
+
+        fall.leaves[1].rest = Some(-SHRINK);
+        fall.update(1.0 / 60.0, &mut random);
+        assert_eq!(fall.records.len(), HIT_LEAVES - 1);
+        assert_eq!(
+            fall.records.records(),
+            fall.leaves.iter().map(Leaf::record).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn records_follow_leaves_through_bursts_eviction_expiry_and_reset() {
+        let mut random = CosmeticRandom::seeded(41);
+        let mut fall = LeafFall::default();
+        for frame in 0..1200 {
+            if frame < 30 || frame == 360 {
+                let before = fall.leaves.clone();
+                fall.event(&tree_event(SimEventType::Destroy), &crown(), &mut random);
+                let evicted = (before.len() + FELL_LEAVES).saturating_sub(MAX_LEAVES);
+                assert_eq!(&fall.leaves[..before.len() - evicted], &before[evicted..]);
+            }
+            fall.update(1.0 / 60.0, &mut random);
+            assert_eq!(
+                fall.records.records(),
+                fall.leaves.iter().map(Leaf::record).collect::<Vec<_>>()
+            );
+            fall.records.take_dirty(|_, _| {});
+            if frame == 400 {
+                fall.reset();
+                assert!(fall.records.is_empty() && fall.records.dirty().is_empty());
+                fall.event(&tree_event(SimEventType::Impact), &crown(), &mut random);
+            }
+        }
+        assert!(fall.is_empty());
     }
 
     #[test]

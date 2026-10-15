@@ -12,8 +12,7 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
     create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
-    wreck_brightness, wreck_model,
+    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -34,6 +33,7 @@ use sloppy_core::sim::{
 
 use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
+use super::debris::FragmentAppearance;
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::hud::{health_bar_state, protection_meters, spawn_pulse};
 use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
@@ -396,6 +396,7 @@ struct FragmentView {
     instance: InstanceId,
     look: FragmentLook,
     sink: Option<f32>,
+    appearance: Option<FragmentAppearance>,
     /// It fades while it sinks; a felled crown only sinks, so its alpha-tested
     /// foliage never turns into a blended sheet.
     fades: bool,
@@ -1362,6 +1363,7 @@ impl Presentation {
         }
         view.instance = instance;
         view.look = look;
+        view.appearance = None;
         // The next fragment update poses the new instance.
         let (position, rotation) = view.pose;
         self.renderer.set_transform(
@@ -2058,19 +2060,26 @@ impl Presentation {
                     None => continue,
                 }
             }
-            let cleanup = debris_cleanup_progress(fragment.life) as f32;
             let view = self.fragments.get_mut(&fragment.id).expect("fragment view");
-            let rotation = quat(fragment.rotation);
-            let mut position = vec3(fragment.position);
+            if let FragmentLook::Piece = view.look {
+                let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
+                pieces[shape as usize] += 1;
+                // Visibility depends on this frame's ordering, even for a still piece.
+                self.renderer
+                    .set_visible(view.instance, pieces[shape as usize] <= FRAGMENT_CAPACITY);
+            }
+            let appearance = FragmentAppearance::new(fragment, state.elapsed);
+            if view.appearance == Some(appearance) {
+                continue;
+            }
+            view.appearance = Some(appearance);
+            let cleanup = appearance.cleanup;
+            let rotation = appearance.rotation;
+            let mut position = appearance.position;
             view.pose = (position, rotation);
             match view.look {
                 FragmentLook::Piece => {
                     let shape = fragment.shape.unwrap_or(FragmentShape::Shard);
-                    pieces[shape as usize] += 1;
-                    let count = pieces[shape as usize];
-                    // The piece pool is sized for the largest debris budget.
-                    self.renderer
-                        .set_visible(view.instance, count <= FRAGMENT_CAPACITY);
                     let size = fragment.size as f32;
                     let scale = fragment
                         .dimensions
@@ -2118,10 +2127,10 @@ impl Presentation {
                     if let FragmentLook::Wreck(..) = view.look {
                         // Burnt paint and team glow darken over the first seconds
                         // (`wreck-aging.ts`), fed per instance to the aging effect.
-                        let since = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
-                        let brightness = wreck_brightness(since) as f32;
-                        self.renderer
-                            .set_instance_data(view.instance, [brightness, 1.0, 0.0, 0.0]);
+                        self.renderer.set_instance_data(
+                            view.instance,
+                            [appearance.brightness, 1.0, 0.0, 0.0],
+                        );
                     }
                 }
             }
@@ -2182,6 +2191,7 @@ impl Presentation {
             instance,
             look,
             sink: None,
+            appearance: None,
             fades: fragment.tree_cover_id.is_none(),
             timber: fragment.timber_part.clone(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),

@@ -339,7 +339,7 @@ pub fn straw_mesh() -> Mesh {
 }
 
 /// Shells chipping and bursting cargo crates; `wood_records` and `straw_records`
-/// are rebuilt whenever a piece moves.
+/// keep resting pieces unchanged while moving or shifted pieces are rewritten.
 #[derive(Clone, Debug)]
 pub struct WoodChips {
     wood: VecDeque<Piece>,
@@ -580,22 +580,36 @@ impl WoodChips {
         self.changed = true;
     }
 
-    /// Advance every piece and rewrite the records when anything moved.
+    /// Advance every piece; resting pieces keep their records until they shrink.
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
         let step = dt.min(MAX_STEP);
-        let mut moved = self.changed;
-        for pieces in [&mut self.wood, &mut self.straw] {
-            let before = pieces.len();
+        for (pieces, records) in [
+            (&mut self.wood, &mut self.wood_records),
+            (&mut self.straw, &mut self.straw_records),
+        ] {
+            // Adding pieces may evict the oldest; removing one shifts every later
+            // slot. Otherwise only pieces whose poses changed need an upload.
+            let mut shifted = self.changed;
+            let mut slot = 0;
             pieces.retain_mut(|piece| {
                 let (live, moving) = advance(piece, dt, step, random);
-                moved |= moving;
-                live
+                if !live {
+                    shifted = true;
+                    return false;
+                }
+                if moving || shifted {
+                    let [r, g, b] = piece.color;
+                    let record = record(piece.world(), [r, g, b, 1.0], [0.0; 4]);
+                    if slot < records.len() {
+                        records.set(slot, record);
+                    } else {
+                        records.push(record);
+                    }
+                }
+                slot += 1;
+                true
             });
-            moved |= pieces.len() != before;
-        }
-        if moved {
-            write(&mut self.wood_records, &self.wood);
-            write(&mut self.straw_records, &self.straw);
+            records.truncate(slot);
         }
         self.changed = false;
     }
@@ -606,14 +620,6 @@ fn push(pieces: &mut VecDeque<Piece>, capacity: usize, piece: Piece) {
         pieces.pop_front();
     }
     pieces.push_back(piece);
-}
-
-fn write(records: &mut PoolBuffer, pieces: &VecDeque<Piece>) {
-    records.clear();
-    for piece in pieces {
-        let [r, g, b] = piece.color;
-        records.push(record(piece.world(), [r, g, b, 1.0], [0.0; 4]));
-    }
 }
 
 fn pick_cut(random: &mut CosmeticRandom, mix: Mix) -> Cut {
@@ -968,6 +974,59 @@ mod tests {
         chips.update(DT, &mut random);
         assert!(chips.wood_records.dirty().is_empty());
         assert_eq!(chips.wood_records.len(), chips.len());
+    }
+
+    #[test]
+    fn a_sliding_piece_does_not_upload_its_resting_neighbours() {
+        let mut random = CosmeticRandom::seeded(23);
+        let mut chips = WoodChips::default();
+        chips.event(
+            &crate_event(SimEventType::Impact, Some(Point3::new(1.0, 1.1, -1.0))),
+            &mut random,
+        );
+        run(&mut chips, &mut random, 2.6);
+        assert!(
+            chips
+                .wood()
+                .all(|piece| piece.landed() && piece.velocity == DVec3::ZERO)
+        );
+        chips.wood_records.take_dirty(|_, _| {});
+        let resting = chips.wood_records.records()[1..].to_vec();
+        chips.wood[0].velocity.x = 1.0;
+        chips.update(DT, &mut random);
+        assert_eq!(chips.wood_records.dirty().len(), 1);
+        assert_eq!(chips.wood_records.dirty()[0], 0..1);
+        assert_eq!(&chips.wood_records.records()[1..], resting);
+    }
+
+    #[test]
+    fn records_follow_pieces_through_eviction_expiry_and_reset() {
+        let mut random = CosmeticRandom::seeded(29);
+        let mut chips = WoodChips::default();
+        for frame in 0..900 {
+            // Fill both pools, then evict their oldest pieces while records exist.
+            if frame < 24 {
+                chips.event(&crate_event(SimEventType::Destroy, None), &mut random);
+            }
+            chips.update(DT, &mut random);
+            for (pieces, records) in [
+                (&chips.wood, &mut chips.wood_records),
+                (&chips.straw, &mut chips.straw_records),
+            ] {
+                assert_eq!(records.len(), pieces.len());
+                for (piece, actual) in pieces.iter().zip(records.records()) {
+                    let [r, g, b] = piece.color;
+                    assert_eq!(*actual, record(piece.world(), [r, g, b, 1.0], [0.0; 4]));
+                }
+                records.take_dirty(|_, _| {});
+            }
+        }
+        assert!(chips.is_empty());
+        chips.reset();
+        chips.event(&crate_event(SimEventType::Destroy, None), &mut random);
+        chips.update(DT, &mut random);
+        assert_eq!(chips.wood_records.len(), chips.wood.len());
+        assert_eq!(chips.straw_records.len(), chips.straw.len());
     }
 
     #[test]

@@ -240,8 +240,18 @@ try {
     };
   });
   const full = await page.evaluate(() => window.drawDebris(1));
+  assert.deepEqual(
+    await page.evaluate(() => window.drawDebris(1)),
+    full,
+    "still debris keeps its appearance",
+  );
   await page.screenshot({ path: `${out}/debris-full.png` });
   const half = await page.evaluate(() => window.drawDebris(0.5));
+  assert.deepEqual(
+    await page.evaluate(() => window.drawDebris(0.5)),
+    half,
+    "cached sinking debris keeps its fade and pose",
+  );
   await page.screenshot({ path: `${out}/debris-sinking.png` });
   const gone = await page.evaluate(() => window.drawDebris(0));
   await page.screenshot({ path: `${out}/debris-gone.png` });
