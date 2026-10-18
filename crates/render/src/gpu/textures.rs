@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 use super::backend::{Gpu, Sampler, Texture, TextureView, Uploader};
@@ -84,11 +84,26 @@ struct Loaded {
 /// files the reference flips upside down instead (`fetch_bitmap`).
 const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 
+// The single-player page starts the scene's texture downloads before the engine loads
+// (`startTextureDownloads` in src/main.ts) and leaves them in a map by URL. The store
+// takes each response over once rather than requesting the file again, so every
+// browser downloads it once. A URL the page did not start, or whose early request
+// failed or answered with an HTTP error, is fetched here.
+#[wasm_bindgen(inline_js = "export function textureDownload(url) {
+  const downloads = globalThis.sloppyTextureDownloads;
+  const early = downloads?.get(url);
+  downloads?.delete(url);
+  const retry = () => fetch(url);
+  return early ? early.then((response) => (response.ok ? response : retry()), retry) : retry();
+}")]
+extern "C" {
+    #[wasm_bindgen(js_name = textureDownload)]
+    fn texture_download(url: &str) -> js_sys::Promise;
+}
+
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
-        .await?
-        .dyn_into()?;
+    let response: web_sys::Response = JsFuture::from(texture_download(url)).await?.dyn_into()?;
     if !response.ok() {
         return Err(format!("HTTP {}", response.status()).into());
     }

@@ -37,7 +37,15 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
     });
 }
 
-function preloadImages(options: GameOptions): void {
+declare global {
+  interface Window {
+    /** Scene texture downloads by URL, each taken over once by the engine's texture
+     * store (`texture_download` in crates/render/src/gpu/textures.rs). */
+    sloppyTextureDownloads?: Map<string, Promise<Response>>;
+  }
+}
+
+function startTextureDownloads(options: GameOptions): void {
   // Surfaces of the cottages and watchtowers, on the maps that build them. Kept local:
   // this module's startup code runs before its later top-level constants exist.
   const buildingTextures = [
@@ -48,9 +56,10 @@ function preloadImages(options: GameOptions): void {
   ];
   const buildings = ["village", "stress-test", "superstress"].includes(options.mapMode);
   // Start scene image downloads alongside the engine request, before the engine's
-  // scenery discovers them. Small late requests otherwise delay warm-up. The engine
-  // fetches textures with fetch(), so these preloads are fetch-destination requests
-  // in the same CORS mode, which the engine's requests reuse.
+  // scenery discovers them. Small late requests otherwise delay warm-up. Requests from
+  // script rather than <link rel=preload>: WebKit never hands a preload response to
+  // the engine's later fetch(), so it downloaded every texture twice.
+  const downloads = (window.sloppyTextureDownloads ??= new Map());
   for (const path of [
     "textures/pickups/atlas.webp",
     "textures/tanks/armor-wear.webp",
@@ -77,12 +86,13 @@ function preloadImages(options: GameOptions): void {
       : []),
     ...(buildings ? buildingTextures : []),
   ]) {
-    const link = document.createElement("link");
-    link.rel = "preload";
-    link.as = "fetch";
-    link.crossOrigin = "anonymous";
-    link.href = `${import.meta.env.BASE_URL}${path}`;
-    document.head.append(link);
+    const url = `${import.meta.env.BASE_URL}${path}`;
+    if (!downloads.has(url)) {
+      const download = fetch(url);
+      // The engine requests a texture again if its early download fails.
+      download.catch(() => {});
+      downloads.set(url, download);
+    }
   }
 }
 
@@ -117,7 +127,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
   };
 
   if (autoStart) {
-    preloadImages(options);
+    startTextureDownloads(options);
     const setup = document.querySelector<HTMLElement>("#startup-overlay");
     if (setup) {
       setup.style.display = "none";
@@ -149,7 +159,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
       return;
     }
     arenaStarted = true;
-    preloadImages(options);
+    startTextureDownloads(options);
     // A second frame leaves a paint opportunity before any engine work begins.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {

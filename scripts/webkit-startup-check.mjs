@@ -1,7 +1,8 @@
 // The game in WebKit (Safari's engine) with WebGPU: Battle Setup becomes ready on the
-// village and the quarry with a sane count of distinct pipelines, a physical click on
-// GO starts the round, and keyboard driving and a mouse shot reach the simulation at
-// the display's frame rate, without page, console or GPU errors.
+// village and the quarry with a sane count of distinct pipelines, having downloaded
+// each texture once, a physical click on GO starts the round, and keyboard driving and
+// a mouse shot reach the simulation at the display's frame rate, without page, console
+// or GPU errors.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { webkit } from "playwright";
@@ -47,10 +48,25 @@ try {
         if (stage && window.startupStages.at(-1) !== stage) window.startupStages.push(stage);
       }).observe(document, { subtree: true, childList: true, characterData: true });
     });
+    // WebKit never hands a <link rel=preload> response to a later fetch(), so textures
+    // the page starts early must reach the engine as responses, not as preloads.
+    const textureRequests = new Map();
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.includes("/textures/")) {
+        textureRequests.set(path, (textureRequests.get(path) ?? 0) + 1);
+      }
+    });
     const started = Date.now();
     await page.goto(`${gameUrl}?map=${map}`, { waitUntil: "domcontentloaded" });
     await menuReady(page, { timeout: READY_TIMEOUT_MS });
     const readyMs = Date.now() - started;
+    assert.ok(textureRequests.size > 0, "the arena downloaded textures");
+    assert.deepEqual(
+      [...textureRequests].filter(([, count]) => count > 1),
+      [],
+      "each texture downloaded once",
+    );
     const prepared = await page.evaluate(() => ({
       userAgent: navigator.userAgent,
       map: window.sloppy.sim.mapMode,
@@ -114,6 +130,7 @@ try {
     await page.screenshot({ path: `${output}/${map}.png` });
     results[map] = {
       readyMs,
+      textures: textureRequests.size,
       shaderTotal,
       pipelines: prepared.stats.pipelines,
       moved: Number(moved.toFixed(2)),
