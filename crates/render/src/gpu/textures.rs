@@ -88,12 +88,13 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // (`startTextureDownloads` in src/main.ts) and leaves them in a map by URL. The store
 // takes each response over once rather than requesting the file again, so every
 // browser downloads it once. A URL the page did not start, or whose early request
-// failed, is fetched here.
+// failed or answered with an HTTP error, is fetched here.
 #[wasm_bindgen(inline_js = "export function textureDownload(url) {
   const downloads = globalThis.sloppyTextureDownloads;
   const early = downloads?.get(url);
   downloads?.delete(url);
-  return early ? early.catch(() => fetch(url)) : fetch(url);
+  const retry = () => fetch(url);
+  return early ? early.then((response) => (response.ok ? response : retry()), retry) : retry();
 }")]
 extern "C" {
     #[wasm_bindgen(js_name = textureDownload)]
