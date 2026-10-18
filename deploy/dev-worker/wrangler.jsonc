@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sloppy-tanks-dev-worker",
+  "account_id": "b49a59dfb5edf913223ad13eeab8d740",
+  "compatibility_date": "2026-10-17",
+  "workers_dev": true,
+  "main": "main.mjs",
+  "preview_urls": false,
+  "assets": {
+    "directory": "../../dist-dev",
+    "binding": "ASSETS",
+    "run_worker_first": ["/assets/*.wasm"],
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+  },
+}

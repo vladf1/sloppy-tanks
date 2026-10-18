@@ -282,3 +282,23 @@ The build goes to `dist-dev/` with the `/` base; production builds and deploymen
 stay separate. The Namecheap CNAME `sloppy-tanks-dev` points to
 `sloppy-tanks-dev.pages.dev`; Cloudflare must associate a custom domain before its
 CNAME changes, and all other DNS records stay as they are.
+
+### Additional dev Worker
+
+`pnpm run deploy:dev:worker` checks and builds the dev client, then publishes
+`dist-dev/` to the separate `sloppy-tanks-dev-worker` Worker using Workers Static
+Assets. Its configuration is `deploy/dev-worker/wrangler.jsonc`; Wrangler prints
+its `workers.dev` URL after deployment. The current URL is
+<https://sloppy-tanks-dev-worker.vova145.workers.dev/>. It serves the same game and test directory
+as the Pages dev build and preserves its cache and `noindex` headers. This command
+only publishes the static client: it does not deploy or start the multiplayer
+server, change DNS, or replace either Pages site.
+
+Wasm files get prebuilt Brotli and gzip variants. The Worker entry point,
+`deploy/dev-worker/main.mjs`, negotiates the encoding for `/assets/*.wasm`, streams the stored bytes with `encodeBody: "manual"`,
+and requests `no-transform` and immutable caching. HTML and other files use direct
+Static Assets. The decoded files and game build stay unchanged.
+
+To publish an already checked and built `dist-dev/`, run
+`node deploy/dev-worker/precompress.mjs`, then
+`pnpm exec wrangler deploy --config deploy/dev-worker/wrangler.jsonc`.
