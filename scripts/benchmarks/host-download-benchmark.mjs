@@ -16,9 +16,8 @@ const deployments = [
     origin: "https://sloppy-tanks.fridman.me",
   },
   {
-    // The production Cloudflare site is gone; the dev site is the remaining Pages host.
-    id: "cloudflare-pages",
-    name: "Cloudflare Pages (dev site)",
+    id: "cloudflare-workers",
+    name: "Cloudflare Workers (dev site)",
     origin: "https://sloppy-tanks-dev.fridman.me",
   },
 ];

@@ -47,7 +47,7 @@ export function devSite(): Plugin {
       },
     },
     generateBundle() {
-      // Vite content-hashes every file in /assets/, so Cloudflare Pages may cache those for
+      // Vite content-hashes every file in /assets/, so the dev host may cache those for
       // good; HTML and unversioned public files keep its default revalidation.
       this.emitFile({
         type: "asset",

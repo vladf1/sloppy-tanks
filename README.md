@@ -226,7 +226,8 @@ A GitHub Pages workflow publishes on pushes to `main`, after the quality gate pa
 pull-request check workflow's parallel jobs, which together run everything in
 `pnpm run check` and build the site.
 It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, the
-repository's Pages custom domain (a Namecheap CNAME to `vladf1.github.io`). The old
+repository's Pages custom domain (a DNS-only CNAME to `vladf1.github.io` in
+fridman.me's Cloudflare zone). The old
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
@@ -262,10 +263,10 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 ### Local dev deployment
 
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
-(including uncommitted changes), and publishes to the separate `sloppy-tanks-dev`
-Cloudflare Pages project. Run `pnpm exec wrangler login` first (or provide a
-Pages:Edit API token). The publisher sets the account, project and
-`main` deployment branch itself, independent of the local Git branch. No Git
+(including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
+Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
+can deploy Workers and their custom domains). The Worker's account, name and domain
+come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev multiplayer server, which
 runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at the
@@ -276,9 +277,17 @@ affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
-The provider URL is <https://sloppy-tanks-dev.pages.dev/>. Its `/health`
+The provider URL is <https://sloppy-tanks-dev.vova145.workers.dev/>. Its `/health`
 reports the same build details as production's, including whether local changes were present.
 The build goes to `dist-dev/` with the `/` base; production builds and deployments
-stay separate. The Namecheap CNAME `sloppy-tanks-dev` points to
-`sloppy-tanks-dev.pages.dev`; Cloudflare must associate a custom domain before its
-CNAME changes, and all other DNS records stay as they are.
+stay separate. The hostname is the Worker's custom domain: Wrangler keeps its DNS
+record in fridman.me's Cloudflare zone, and all other records stay as they are.
+
+The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
+`/assets/`, `noindex` everywhere). Only the engine binaries run its script,
+`deploy/dev-site/worker.mjs`. Cloudflare compresses static assets as it serves them,
+which gives the 3.7 MB engine a later first byte and a larger file than Brotli at
+quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies beside each `.wasm`
+(`deploy/dev-site/precompress.mjs`, a few seconds), and the script sends the one the
+client accepts, marked `no-transform`. Range requests, and clients that accept neither, get the
+original file.
