@@ -46,7 +46,6 @@
     "postinstall": "pnpm --dir tools/lint install --frozen-lockfile",
     "build:dev": "pnpm run wasm && pnpm run wasm:labs && pnpm run typecheck && DEPLOY_BASE=/ vite build --config vite.dev.config.ts",
     "deploy:dev": "pnpm run check && pnpm run build:dev && node scripts/deploy-dev.mjs",
-    "deploy:dev:worker": "pnpm run check && pnpm run build:dev && node deploy/dev-worker/precompress.mjs && wrangler deploy --config deploy/dev-worker/wrangler.jsonc",
     "server:build": "node scripts/build-server.mjs",
     "server:dev": "node scripts/build-server.mjs && ./target/server/sloppy-server",
     "server:build-docker-image": "node scripts/build-server-image.mjs",

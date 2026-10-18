@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import worker from "../deploy/dev-worker/main.mjs";
-import { preferredEncoding } from "../deploy/dev-worker/shared.mjs";
+import worker, { preferredEncoding } from "../deploy/dev-site/worker.mjs";
 
 test("encoding negotiation honors supported encodings, quality and exclusions", () => {
   assert.equal(preferredEncoding("gzip, deflate, br, zstd"), "br");
@@ -10,6 +9,7 @@ test("encoding negotiation honors supported encodings, quality and exclusions", 
   assert.equal(preferredEncoding("br;q=0.2, gzip;q=0.8"), "gzip");
   assert.equal(preferredEncoding("br;q=0.5, gzip;q=0.5"), "br");
   assert.equal(preferredEncoding("br;q=invalid, gzip;q=1"), "gzip");
+  assert.equal(preferredEncoding("br ;q=0, gzip"), "gzip");
   assert.equal(preferredEncoding("br;q=2, gzip;q=-1"), null);
   assert.equal(preferredEncoding("identity"), null);
   assert.equal(preferredEncoding("br;q=0, gzip;q=0, zstd;q=0"), null);

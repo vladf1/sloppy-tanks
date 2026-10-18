@@ -19,5 +19,5 @@
   the user the link is temporary and requires this Mac to remain awake and
   connected. Restart it after source changes; it serves the build, not the
   source. When asked to stop, stop only this tunnel's command. Do not change the
-  existing Pages deployments or save temporary hostnames as permanent project
-  URLs.
+  production or dev site deployments or save temporary hostnames as permanent
+  project URLs.

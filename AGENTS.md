@@ -356,9 +356,9 @@ offline.
 
 ## Local dev publishing
 
-- `pnpm run deploy:dev` checks the checkout, builds `dist-dev/`, and uploads it
-  to the dedicated Cloudflare Pages project `sloppy-tanks-dev` (setup and URLs
-  in `README.md`). It publishes current local files, including uncommitted
+- `pnpm run deploy:dev` checks the checkout, builds `dist-dev/`, and publishes it
+  to the dedicated Cloudflare Worker `sloppy-tanks-dev` (setup and URLs in
+  `README.md`). It publishes current local files, including uncommitted
   changes. Use this when asked to publish the dev site. Do not publish it to
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
@@ -409,4 +409,5 @@ offline.
 
 Create a Cloudflare tunnel **only when the user explicitly requests one**, and
 follow `docs/cloudflare-tunnel.md`. Do not create public links automatically
-for development or browser checks, and never change the Pages deployments.
+for development or browser checks, and never change the production or dev site
+deployments.

@@ -1,7 +1,7 @@
 # Host download benchmarks
 
 This folder contains HTTP-only comparisons of the live Sloppy Tanks hosts: the GitHub
-Pages production site and the Cloudflare Pages dev site. The dev site serves a
+Pages production site and the Cloudflare Workers dev site. The dev site serves a
 development build, so compare shared static assets rather than its game chunk.
 
 ## Run

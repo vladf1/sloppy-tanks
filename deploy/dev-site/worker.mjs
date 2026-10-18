@@ -1,8 +1,32 @@
+// The dev site's Worker. Static assets serve everything except the engine binaries,
+// which `run_worker_first` routes here: Cloudflare compresses those on every request,
+// so precompress.mjs stores Brotli and gzip copies at deploy time and this script sends
+// the one the client accepts.
+
+export default {
+  async fetch(request, env) {
+    const path = new URL(request.url).pathname;
+    if (!path.startsWith("/assets/") || !path.endsWith(".wasm")) {
+      return env.ASSETS.fetch(request);
+    }
+
+    const response = await fetchCompressedAsset(request, env.ASSETS, path);
+    if (response === null) {
+      return env.ASSETS.fetch(request);
+    }
+
+    response.headers.set("Content-Type", "application/wasm");
+    response.headers.set("Cache-Control", "public, max-age=31536000, immutable, no-transform");
+    response.headers.set("X-Sloppy-Wasm-Delivery", "precompressed");
+    return response;
+  },
+};
+
 export function preferredEncoding(acceptEncoding) {
   const qualityByEncoding = new Map();
 
   for (const entry of (acceptEncoding ?? "").toLowerCase().split(",")) {
-    const [encoding, ...parameters] = entry.trim().split(";");
+    const [coding, ...parameters] = entry.split(";");
     let quality = 1;
 
     for (const parameter of parameters) {
@@ -16,7 +40,7 @@ export function preferredEncoding(acceptEncoding) {
     if (!Number.isFinite(quality) || quality < 0 || quality > 1) {
       quality = 0;
     }
-    qualityByEncoding.set(encoding, quality);
+    qualityByEncoding.set(coding.trim(), quality);
   }
 
   const wildcardQuality = qualityByEncoding.get("*") ?? 0;
@@ -32,7 +56,7 @@ export function preferredEncoding(acceptEncoding) {
   return null;
 }
 
-export async function fetchCompressedAsset(request, assets, path) {
+async function fetchCompressedAsset(request, assets, path) {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return null;
   }

@@ -3,10 +3,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { gameServer } from "./servers.mjs";
 
 const repo = new URL("..", import.meta.url);
-const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "b49a59dfb5edf913223ad13eeab8d740" };
 
 function run(command, args) {
-  const result = spawnSync(command, args, { cwd: repo, stdio: "inherit", env });
+  const result = spawnSync(command, args, { cwd: repo, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
@@ -38,17 +37,14 @@ if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
 // server reports this checkout's content version.
 run("node", ["scripts/server.mjs", "deploy", "--dev"]);
 
-console.log(
-  `Publishing dev build ${info.builtAt} (${info.commit}${info.dirty ? ", local changes" : ""})`,
-);
-// Fixed destination: never infer a Pages project or branch from the checkout.
+const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
+console.log(`Publishing dev build ${info.builtAt} (${build})`);
+run("node", ["deploy/dev-site/precompress.mjs"]);
+// Fixed destination: the Worker's account, name and domain come from its config.
 run("wrangler", [
-  "pages",
   "deploy",
-  "dist-dev",
-  "--project-name",
-  "sloppy-tanks-dev",
-  "--branch",
-  "main",
-  "--commit-dirty=true",
+  "--config",
+  "deploy/dev-site/wrangler.jsonc",
+  "--message",
+  `Dev build ${info.builtAt} (${build})`,
 ]);
