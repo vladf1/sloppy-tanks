@@ -1,11 +1,14 @@
 // Showcase stills for judging the game's look build against build: every standard map
 // after a seeded stretch of autoplay, through the follow camera (with HUD), a hero
 // close-up of the player's tank, a low vista, the overview, first person and a blast,
-// plus Battle Setup. The same seed and frame count give the same battle on a build
-// that leaves gameplay alone, so two builds' stills line up shot for shot.
+// plus the interface: Battle Setup (both tabs), the settings dialog, respawn, pause and
+// the battle report, a tablet's touch HUD and the phone edition. The same seed and frame
+// count give the same battle on a build that leaves gameplay alone, so two builds'
+// stills line up shot for shot.
 //
 //   node scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
-//     [--shots follow,hero] [--frames 900] [--seed 4242] [--webgl]
+//     [--shots follow,hero,vista,overview,action,strip,first-person,menu,respawn,settings,
+//      recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
 //
 // It serves this checkout's `src/generated/engine/` through its own Vite dev server on a
 // free port (run `pnpm run wasm` first), so parallel checkouts never share a port.
@@ -13,7 +16,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { createServer } from "vite";
-import { freezeLoop, launchGame, menuReady, seedGame } from "./browser-helpers.mjs";
+import {
+  freezeLoop,
+  installEngineHelpers,
+  launchGame,
+  menuReady,
+  seedGame,
+} from "./browser-helpers.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -73,6 +82,36 @@ async function animate(page, count, dt = 1 / 60) {
   );
 }
 
+/** A page of `context` showing a seeded autoplay battle on `map` after `frames` frames. */
+async function battlePage(context, map, frames) {
+  const page = await context.newPage();
+  await seedGame(page, SEED);
+  await freezeLoop(page);
+  await page.goto(`${base}?autoplay&map=${map}${webglQuery}`);
+  await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing", null, {
+    timeout: 120_000,
+  });
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll("#overlay")) element.style.display = "none";
+    window.runLoop(1000);
+  });
+  await play(page, frames);
+  return page;
+}
+
+/** A context for another device; its pages' errors are not the build's errors. */
+async function deviceContext(viewport, { touch = false, phone = false } = {}) {
+  const device = await browser.newContext({
+    viewport,
+    screen: viewport,
+    hasTouch: touch,
+    isMobile: phone,
+    deviceScaleFactor: touch ? 2 : 1,
+  });
+  await installEngineHelpers(device);
+  return device;
+}
+
 async function shoot(page, map, shot, hud = false) {
   await page.evaluate((hud) => {
     for (const element of document.querySelectorAll("#hud")) {
@@ -100,21 +139,24 @@ try {
     await page.screenshot({ path: file });
     report.shots.push({ map: "menu", shot: "menu", file });
     await page.close();
+    // The multiplayer tab against a server that is not there: its offline state, the
+    // same on every machine. The refused connection is expected, so this page has its
+    // own context outside the collected errors.
+    const offline = await deviceContext({ width: WIDTH, height: HEIGHT });
+    const rooms = await offline.newPage();
+    await seedGame(rooms, SEED);
+    await rooms.goto(`${base}?map=village&server=ws://127.0.0.1:9${webglQuery}`);
+    await menuReady(rooms, { timeout: 120_000 });
+    await rooms.locator("#tab-multiplayer").click();
+    await rooms.waitForTimeout(2500);
+    const roomsFile = path.join(out, "menu-multiplayer.png");
+    await rooms.screenshot({ path: roomsFile });
+    report.shots.push({ map: "menu", shot: "menu-multiplayer", file: roomsFile });
+    await offline.close();
   }
 
   for (const map of values.maps.split(",").filter(Boolean)) {
-    const page = await context.newPage();
-    await seedGame(page, SEED);
-    await freezeLoop(page);
-    await page.goto(`${base}?autoplay&map=${map}${webglQuery}`);
-    await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing", null, {
-      timeout: 120_000,
-    });
-    await page.evaluate(() => {
-      for (const element of document.querySelectorAll("#overlay")) element.style.display = "none";
-      window.runLoop(1000);
-    });
-    await play(page, FRAMES);
+    const page = await battlePage(context, map, FRAMES);
 
     if (take("follow")) {
       await page.evaluate(() => window.engine.draw());
@@ -170,10 +212,27 @@ try {
       await animate(page, 90);
       await shoot(page, map, "first-person", true);
     }
-    if (map === "village" && take("recap")) {
+    const interfaceShots = ["respawn", "settings", "recap"].filter(take);
+    if (map === "village" && interfaceShots.length) {
       await page.evaluate(() => {
         for (const element of document.querySelectorAll("#overlay")) element.style.display = "";
       });
+    }
+    if (map === "village" && take("respawn")) {
+      await page.evaluate(() => window.sloppy.killHuman());
+      await play(page, 60);
+      await page.evaluate(() => window.engine.draw());
+      await shoot(page, map, "respawn", true);
+    }
+    if (map === "village" && take("settings")) {
+      // A script click: autoplay's idle overlay covers the HUD's buttons.
+      await page.evaluate(() => document.querySelector("#settings-open").click());
+      await page.waitForTimeout(500);
+      await shoot(page, map, "settings", true);
+      await page.evaluate(() => document.querySelector("#settings")?.close());
+      await page.waitForTimeout(200);
+    }
+    if (map === "village" && take("recap")) {
       await page.keyboard.press("Escape");
       await page.locator("#end-battle").waitFor();
       await page.waitForTimeout(400);
@@ -184,6 +243,36 @@ try {
       await shoot(page, map, "recap", true);
     }
     await page.close();
+  }
+
+  if (take("tablet")) {
+    // An iPad-sized touchscreen: the touch HUD (drive stick, mine and zoom buttons).
+    const tablet = await deviceContext({ width: 1180, height: 820 }, { touch: true });
+    const page = await battlePage(tablet, "village", 300);
+    await page.evaluate(() => window.engine.draw());
+    await shoot(page, "village", "tablet", true);
+    await tablet.close();
+  }
+  if (take("phone")) {
+    // The phone edition: Battle Setup in portrait, a battle in landscape.
+    const portrait = await deviceContext({ width: 402, height: 874 }, { touch: true, phone: true });
+    const menu = await portrait.newPage();
+    await seedGame(menu, SEED);
+    await menu.goto(`${base}?map=village${webglQuery}`);
+    await menuReady(menu, { timeout: 120_000 });
+    await menu.waitForTimeout(1500);
+    const menuFile = path.join(out, "phone-menu.png");
+    await menu.screenshot({ path: menuFile });
+    report.shots.push({ map: "phone", shot: "phone-menu", file: menuFile });
+    await portrait.close();
+    const landscape = await deviceContext(
+      { width: 874, height: 402 },
+      { touch: true, phone: true },
+    );
+    const page = await battlePage(landscape, "village", 300);
+    await page.evaluate(() => window.engine.draw());
+    await shoot(page, "village", "phone", true);
+    await landscape.close();
   }
 } finally {
   fs.writeFileSync(path.join(out, "report.json"), JSON.stringify(report, null, 2));
