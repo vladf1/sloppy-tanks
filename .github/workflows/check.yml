@@ -31,6 +31,10 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_OPTIONS: --use-openssl-ca
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
 jobs:
   site:
     name: Site (format, Wasm, types, Vite, lint)
