@@ -74,7 +74,7 @@ One implementation of the game, in Rust, shared by the browser and the server:
 
 ## Normal development and validation
 
-Use Node.js 24 LTS (`.nvmrc`), pnpm 11 or newer and Rust through rustup; if `pnpm`
+Use Node.js 24 LTS, pnpm 11 or newer and Rust through rustup; if `pnpm`
 is missing, install it with `brew install pnpm`. `rust-toolchain.toml` pins
 Rust with rustfmt, clippy and the `wasm32-unknown-unknown` and
 `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI must be 0.2.129, the
