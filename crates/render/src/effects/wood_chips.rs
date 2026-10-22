@@ -77,16 +77,6 @@ const HIGH_ARC: f64 = 0.2;
 const STRAW_TUFTS: usize = 6;
 const STRAW_FIBRES: [usize; 2] = [7, 4];
 
-/// A burst supply throws this many slats and strap ends, and with packing this
-/// many tufts of excelsior.
-const SUPPLY_PIECES: usize = 24;
-const SUPPLY_TUFTS: usize = 3;
-const SUPPLY_SLAT: Cut = Cut {
-    length: [0.28, 0.3],
-    width: [0.07, 0.05],
-    thickness: [0.02, 0.012],
-};
-
 /// Wood colors: split-open fresh wood, its darker heart and end grain, and a crate's
 /// weathered boards when the event names none.
 const FRESH_WOOD: [u32; 2] = [0xe2c596, 0xd2ad78];
@@ -585,52 +575,6 @@ impl WoodChips {
                 let velocity = DVec3::new(vx + jitter(), vy + jitter() * 0.8, vz + jitter());
                 let piece = straw_piece(random, position, velocity);
                 push(&mut self.straw, MAX_STRAW, piece);
-            }
-        }
-        self.changed = true;
-    }
-
-    /// A collected supply bursting open in the air over the tank that took it
-    /// (`effects::pickups`): slats of its `surface`, strips of its `paint` and
-    /// steel strap ends fly out and rain down round the tank, and with `packing` a
-    /// few tufts of excelsior flutter after them.
-    pub fn spill_supply(
-        &mut self,
-        at: DVec3,
-        [surface, paint, steel]: [u32; 3],
-        packing: bool,
-        random: &mut CosmeticRandom,
-    ) {
-        for i in 0..SUPPLY_PIECES {
-            let [hx, hz] = heading(random);
-            let speed = 1.2 + random.next_f64() * 2.6;
-            let velocity = DVec3::new(hx * speed, 0.8 + random.next_f64() * 2.6, hz * speed);
-            let position = at + DVec3::new(hx * 0.25, (random.next_f64() - 0.5) * 0.3, hz * 0.25);
-            let (cut, color) = match i % 5 {
-                0 | 1 => (SUPPLY_SLAT, paint),
-                2 => (SLIVER, steel),
-                _ => (SUPPLY_SLAT, surface),
-            };
-            let color = shade(hex_to_linear(color), 0.85 + random.next_f64() * 0.25);
-            let piece = wood_piece(random, cut, position, velocity, color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
-        }
-        if packing {
-            for _ in 0..SUPPLY_TUFTS {
-                let [hx, hz] = heading(random);
-                let speed = 1.0 + random.next_f64() * 1.5;
-                for _ in 0..STRAW_FIBRES[0] {
-                    let mut jitter = || (random.next_f64() - 0.5) * 2.0;
-                    let position =
-                        at + DVec3::new(jitter() * 0.15, jitter() * 0.1, jitter() * 0.15);
-                    let velocity = DVec3::new(
-                        hx * speed + jitter() * 0.6,
-                        1.5 + jitter() * 0.6,
-                        hz * speed + jitter() * 0.6,
-                    );
-                    let piece = straw_piece(random, position, velocity);
-                    push(&mut self.straw, MAX_STRAW, piece);
-                }
             }
         }
         self.changed = true;

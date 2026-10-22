@@ -2,10 +2,10 @@
 //! `pickup-atlas.ts`): every kind ships as its own piece of military stock, so its
 //! silhouette names it from the gameplay camera before its colour does: an open rack
 //! of shells, a cradle of rocket tubes, banded shell canisters, a strapped ammunition
-//! crate, stacked ammo cans, a bundle of armour plate, jerry cans, a tool chest and a
-//! transit case with its mast. Each stands on a wooden pallet and is painted from
-//! one atlas whose tile for the kind carries its surface, colour band and the large
-//! sprayed stencil on its top.
+//! crate, stacked ammo cans, a bundle of armour plate, jerry cans, a white medical
+//! case and a transit case with its mast. Each stands on a wooden pallet laid on a
+//! tarp and is painted from one atlas whose tile for the kind carries its surface,
+//! colour band and the large sprayed stencil on its top.
 //!
 //! Faces that show the kind map into the first kind's tile and the `pickup-face`
 //! effect moves them into the instance's tile (instance data `xy`); brass, steel,
@@ -40,26 +40,24 @@ pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
 }
 
 /// The kind's colour as supply paint: its band, stencil and the ring sprayed round
-/// its drop, the game's accent colour knocked back toward faded military paint so
-/// the prop, not the paint, leads (`PICKUP_PAINTS` in `scripts/asset-data.ts`).
-/// The signal smoke keeps the full accent colour.
+/// its drop, in the family of its signal smoke (red, orange, yellow, green, violet
+/// or white) knocked back toward faded military paint, so the prop, not the paint,
+/// leads (`PICKUP_PAINTS` in `scripts/asset-data.ts`).
 pub fn pickup_paint(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xc8508c,
-        PickupKind::Rocket => 0xd8642c,
-        PickupKind::Ricochet => 0x9b86cf,
-        PickupKind::Piercing => 0x4fb3aa,
-        PickupKind::Rapid => 0xe0a03a,
-        PickupKind::Shield => 0x4a80d0,
-        PickupKind::Speed => 0xe3cf3c,
-        PickupKind::Repair => 0x58b060,
+        PickupKind::Spread | PickupKind::Rocket => 0xcc4430,
+        PickupKind::Rapid => 0xdc7c2a,
+        PickupKind::Speed => 0xe2c43c,
+        PickupKind::Piercing | PickupKind::Repair => 0x4caa58,
+        PickupKind::Ricochet | PickupKind::Shield => 0x9068d0,
         PickupKind::Laser => 0xe9ecee,
     }
 }
 
 /// The packed atlas under `public/` (`scripts/generate-pickup-atlas.ts`): nine kind
 /// tiles in a 3x3 block; in a fourth column the pallet's planks, the ground's spray
-/// paint and swatches of steel, rubber and webbing; below them cartridge brass.
+/// paint and swatches of steel, rubber and webbing; below them cartridge brass and
+/// the tarp a drop is laid on.
 pub const PICKUP_ATLAS_PATH: &str = "textures/pickups/atlas.webp";
 pub const PICKUP_ICON_SIZE: f64 = 256.0;
 pub const PICKUP_ATLAS_PADDING: f64 = 16.0;
@@ -69,6 +67,7 @@ pub const PICKUP_PALLET_CELL: (u32, u32) = (3, 0);
 pub const PICKUP_PAINT_CELL: (u32, u32) = (3, 1);
 pub const PICKUP_SWATCH_CELL: (u32, u32) = (3, 2);
 pub const PICKUP_BRASS_CELL: (u32, u32) = (0, 3);
+pub const PICKUP_TARP_CELL: (u32, u32) = (1, 3);
 
 /// A UV inside the atlas cell at (`column`, `row`), `v` up as in a mesh.
 pub fn atlas_cell_uv((column, row): (u32, u32), u: f64, v: f64) -> [f64; 2] {
@@ -141,10 +140,15 @@ pub const PALLET_SIZE: [f64; 2] = [1.6, 1.2];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: u32 = 5;
 const PALLET_BOARD_WIDTH: f64 = 0.26;
-/// The smoke grenade marking the drop, on the ground beside the pallet's end: its
-/// top (x, height, z) where the signal smoke leaves it, and its radius.
-pub const SMOKE_MARKER: [f64; 3] = [0.92, 0.2, 0.36];
+/// The smoke grenade marking the drop, on the tarp at the pallet's far side (the
+/// overhead camera looks toward -z), so its smoke rises behind the load: its top
+/// (x, height, z) where the signal smoke leaves it, and its radius.
+pub const SMOKE_MARKER: [f64; 3] = [0.56, 0.2, -0.71];
 const MARKER_RADIUS: f64 = 0.075;
+/// The dark canvas tarp the pallet stands on, a frame of shade that sets the drop
+/// apart from any ground: its size (x, z) and thickness.
+const TARP_SIZE: [f64; 2] = [1.84, 1.5];
+const TARP_THICKNESS: f64 = 0.014;
 
 static SHARED: Cache<u8, Mesh> = Cache::new();
 static MATERIALS: Cache<u8, Material> = Cache::new();
@@ -532,7 +536,7 @@ fn armour_plates() -> Mesh {
 /// Speed: two jerry cans side by side, their embossed faces out, each with its
 /// carry handles and spout, one turned a little against the other.
 fn jerry_cans() -> Mesh {
-    let [w, h, d] = [0.7, 0.92, 0.36];
+    let [w, h, d] = [0.7, 1.04, 0.36];
     let mut parts = Vec::new();
     for (turn, offset) in [(0.06, -0.38), (-0.1, 0.4)] {
         let place = |part: Part| part.turned(turn).at(offset, 0.0, 0.0);
@@ -554,8 +558,8 @@ fn jerry_cans() -> Mesh {
     build(parts)
 }
 
-/// Repair: a two-tier tool chest, drawer pulls on its front and back, the cross
-/// plate on its top tier and a carry bar over it.
+/// Repair: a white two-tier medical and repair case, drawer pulls on its front and
+/// back, the cross plate on its top tier and a carry bar over it.
 fn tool_chest() -> Mesh {
     let [w, h, d] = [1.32, 0.46, 0.84];
     let [tw, th, td] = [1.12, 0.22, 0.66];
@@ -632,14 +636,22 @@ fn transit_case() -> Mesh {
     build(parts)
 }
 
-/// The pallet every pickup sits on: three stringers under five deck boards, the
+/// The pallet every pickup sits on: a tarp under three stringers and five deck
+/// boards, the
 /// stencilled lid the supply leaves behind on its deck, and the smoke grenade
 /// beside it, painted in the kind's colour.
 fn pallet_geometry() -> Mesh {
     let [w, d] = PALLET_SIZE;
     let deck = 0.035;
     let stringer = PALLET_HEIGHT - deck;
-    let mut parts = Vec::new();
+    let [tw, td] = TARP_SIZE;
+    let mut parts = vec![
+        Part::cube(
+            [tw, TARP_THICKNESS, td],
+            Paint::Face(PICKUP_TARP_CELL, TILE),
+        )
+        .at(0.0, TARP_THICKNESS / 2.0, 0.0),
+    ];
     for z in [-1.0, 0.0, 1.0] {
         parts.push(Part::cube([w, stringer, 0.12], wood(CHOCK)).at(
             0.0,
@@ -720,10 +732,10 @@ fn item_geometry(kind: PickupKind) -> Arc<Mesh> {
 /// The pallet's key in the mesh cache, clear of every kind's.
 const PALLET_KEY: u8 = 100;
 
-fn part(mesh: Arc<Mesh>, shadows: bool) -> Node {
+fn part(mesh: Arc<Mesh>) -> Node {
     let mut node = Node::mesh(mesh, pickup_material());
     if let Some(drawable) = &mut node.drawable {
-        drawable.cast_shadow = shadows;
+        drawable.cast_shadow = true;
         drawable.receive_shadow = true;
     }
     node
@@ -734,15 +746,7 @@ fn part(mesh: Arc<Mesh>, shadows: bool) -> Node {
 /// Presentation stands it on its pallet.
 pub fn pickup_cube(kind: PickupKind) -> Node {
     let mut group = Node::default();
-    group.children.push(part(item_geometry(kind), true));
-    group
-}
-
-/// [`pickup_cube`] casting no shadow: the supply a collection throws up over the
-/// tank that took it, gone too quickly for a shadow to read as anything but a stain.
-pub fn pickup_icon(kind: PickupKind) -> Node {
-    let mut group = Node::default();
-    group.children.push(part(item_geometry(kind), false));
+    group.children.push(part(item_geometry(kind)));
     group
 }
 
@@ -751,7 +755,7 @@ pub fn pickup_icon(kind: PickupKind) -> Node {
 pub fn pickup_pallet() -> Node {
     let mesh = SHARED.get_or_insert(PALLET_KEY, pallet_geometry);
     let mut group = Node::default();
-    group.children.push(part(mesh, true));
+    group.children.push(part(mesh));
     group
 }
 
@@ -781,6 +785,7 @@ mod tests {
             PICKUP_PALLET_CELL,
             PICKUP_SWATCH_CELL,
             PICKUP_BRASS_CELL,
+            PICKUP_TARP_CELL,
         ];
         let inside = |mesh: &Mesh| {
             mesh.uvs.iter().all(|&[u, v]| {
