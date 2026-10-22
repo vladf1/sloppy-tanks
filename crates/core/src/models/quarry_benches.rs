@@ -536,7 +536,7 @@ pub fn quarry_mesas() -> Node {
     while angle < PI * 2.0 - 0.2 {
         mesas.push(Mesa {
             angle,
-            distance: rng.range(215.0, 275.0),
+            distance: rng.range(192.0, 240.0),
             radius: rng.range(18.0, 38.0),
             height: rng.range(14.0, 30.0),
             base: rng.range(8.0, 14.0),

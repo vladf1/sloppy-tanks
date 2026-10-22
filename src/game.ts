@@ -354,6 +354,8 @@ export async function prepareGame(
       viewer.x = viewer.y = NaN;
     }
     ui.replaceDamageRing();
+    // The cockpit frame and the lit view button follow at once, not a frame later.
+    cockpit.update(firstPerson && alive, NaN, controls.aimWaitsForClick);
     return firstPerson;
   };
   const toggleView = () => {

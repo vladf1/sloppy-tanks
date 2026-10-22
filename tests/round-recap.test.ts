@@ -76,7 +76,7 @@ test("improved records are starred and unreached records show the best", () => {
   );
   assert.match(
     markup,
-    /recap-stat is-record" title="Enemy tanks wrecked"><dt>Kills<\/dt><dd>5<\/dd><span>★ NEW BEST/,
+    /recap-stat is-record" title="Enemy tanks destroyed"><dt>Kills<\/dt><dd>5<\/dd><span>★ NEW BEST/,
   );
   assert.match(markup, /<dd>400<\/dd><span>BEST 900<\/span>/);
   assert.match(markup, /recap-detail is-record[^>]*><dt>Mine kills<\/dt><dd>★ 2<\/dd>/);
@@ -91,12 +91,12 @@ test("storage that refuses records says so", () => {
   assert.match(markup, /<dt>Damage taken<\/dt><dd>250<\/dd>/);
 });
 
-test("the report counts wrecks in words and names the winning team plainly", () => {
+test("the report counts deaths in plain words and names the winning team plainly", () => {
   assert.deepEqual([0, 1, 2, 5].map(wreckLine), [
-    "Never wrecked",
-    "Wrecked once",
-    "Wrecked twice",
-    "Wrecked 5 times",
+    "Never destroyed",
+    "Destroyed once",
+    "Destroyed twice",
+    "Destroyed 5 times",
   ]);
   assert.equal(teamLabel("BLUE"), "Blue team");
 });

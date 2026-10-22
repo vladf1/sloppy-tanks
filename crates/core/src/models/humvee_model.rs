@@ -14,6 +14,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
 use super::tank_model::LENS_ROUGHNESS;
+use super::tank_surfaces::vehicle_glass;
 use super::{VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
@@ -40,18 +41,17 @@ const MUZZLE_Z: f64 = 1.7;
 
 /// Tire rubber: dark grey, light enough for the sidewall and lugs to show.
 const RUBBER: u32 = 0x2d3031;
-/// Armored glass: a light blue-green tint under a strong mirror finish, so the
-/// windows read as glass reflecting the sky rather than as painted panels.
-const GLASS: u32 = 0x5a8290;
+/// Armored glass: a deep blue-green tint that mirrors the sky toward grazing
+/// angles (`vehicle_glass`), so the windows read as glass rather than as painted
+/// panels.
+const GLASS: u32 = 0x1f3a40;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
 const HEADLAMP: u32 = 0xe5ddbc;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
-/// Rubber, seals and canvas are matte; glass and lenses are glossy.
+/// Rubber, seals and canvas are matte.
 const MATTE_ROUGHNESS: f64 = 0.92;
-const GLASS_METALNESS: f64 = 0.85;
-const GLASS_ROUGHNESS: f64 = 0.05;
 
 /// Geometry shared by every Humvee, one mesh per role and assembly.
 struct Assemblies {
@@ -71,17 +71,15 @@ fn assemblies() -> &'static Assemblies {
     })
 }
 
-/// Paint for one Humvee: its team's paint, shade, steel and recognition panel.
+/// Paint for one Humvee: its team's paint, shade and steel.
 struct Palette {
     base: u32,
     shade: u32,
     steel: u32,
-    signal: u32,
 }
 
 impl Palette {
     fn material(&self, role: Role) -> Arc<Material> {
-        let glossy = |color| material(color, GLASS_METALNESS, GLASS_ROUGHNESS);
         match role {
             Role::Paint => paint(self.base),
             Role::Shade => paint(self.shade),
@@ -89,12 +87,11 @@ impl Palette {
             Role::Rubber => material(RUBBER, 0.0, MATTE_ROUGHNESS),
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
-            Role::Glass => glossy(GLASS),
+            Role::Glass => vehicle_glass(GLASS),
             // Lamps draw with the matte fittings: three draws fewer per Humvee.
             Role::Headlamp => material(HEADLAMP, 0.0, LENS_ROUGHNESS),
             Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
             Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
-            Role::Signal => material(self.signal, 0.0, MATTE_ROUGHNESS),
         }
     }
 
@@ -106,16 +103,11 @@ impl Palette {
     }
 }
 
-/// `humveeModel(team, false)` in `colors` (paint, shade, steel) with its team's
-/// recognition panel, before the vehicle scale and worn finish.
-pub(super) fn humvee_model(colors: [u32; 3], signal: u32) -> Node {
+/// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the
+/// vehicle scale and worn finish.
+pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
     let [base, shade, steel] = colors;
-    let palette = Palette {
-        base,
-        shade,
-        steel,
-        signal,
-    };
+    let palette = Palette { base, shade, steel };
     let shared = assemblies();
     let mut root = Node::group(VehicleKind::Humvee.as_str());
     let mut hull = Node::group(part::HULL);

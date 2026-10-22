@@ -131,10 +131,7 @@ const CENTRE_DASH: f64 = 3.0;
 const CENTRE_GAP: f64 = 3.0;
 /// Lane and bay paint.
 const LINE_YELLOW: u32 = 0xe8b83e;
-/// Height of the hazard band painted at the foot of the walls.
-const KERB_BAND: f64 = 0.32;
 const LINE_WHITE: u32 = 0xe4e2d6;
-const HAZARD_DARK: u32 = 0x1f2224;
 
 /// Floor of the transit sheds on the outer quays.
 const WAREHOUSE_FLOOR: f64 = -0.5;
@@ -621,6 +618,65 @@ fn bollard(details: &mut Node, x: f64, z: f64) {
     );
 }
 
+/// Channel buoys marking the approaches round the port: x, z and whether it is a
+/// port-hand (red) can or a starboard-hand (green) one. They float in the open water
+/// past the berths and the tugs' loops, so a view across the wall has something
+/// between the quay and the far shore.
+const BUOYS: [(f64, f64, bool); 8] = [
+    (-74.0, -101.0, true),
+    (52.0, -106.0, false),
+    (-41.0, 86.0, true),
+    (12.0, 99.0, false),
+    (58.0, 83.0, true),
+    (-141.0, -18.0, false),
+    (139.0, 28.0, true),
+    (-96.0, 92.0, false),
+];
+const BUOY_RED: u32 = 0xc8473b;
+const BUOY_GREEN: u32 = 0x2f8a6a;
+/// Harbor water level (`harbor_water::HARBOR_WATER_HEIGHT`).
+const SEA_LEVEL: f64 = -2.2;
+
+/// A channel buoy floating at (x, z): a float with a white reflective band, the
+/// lattice tower painted like it with the lantern on top.
+fn buoy(details: &mut Node, x: f64, z: f64, red: bool) {
+    let color = if red { BUOY_RED } else { BUOY_GREEN };
+    put(
+        details,
+        cylinder_part(0.8, 1.1, color, 12),
+        x,
+        SEA_LEVEL + 0.25,
+        z,
+    );
+    put(
+        details,
+        cylinder_part(0.82, 0.16, POST_WHITE, 12),
+        x,
+        SEA_LEVEL + 0.62,
+        z,
+    );
+    put(
+        details,
+        cylinder_part(0.3, 1.5, color, 8),
+        x,
+        SEA_LEVEL + 1.55,
+        z,
+    );
+    let mark = if red {
+        box_part(0.5, 0.5, 0.5, color, 0.0)
+    } else {
+        cylinder_part(0.32, 0.5, color, 8)
+    };
+    put(details, mark, x, SEA_LEVEL + 2.55, z);
+    put(
+        details,
+        box_part(0.18, 0.22, 0.18, LAMP_LENS, 0.0),
+        x,
+        SEA_LEVEL + 2.95,
+        z,
+    );
+}
+
 /// A life-ring station on the wall top: a white post with the ring hung facing
 /// along `yaw`.
 fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
@@ -988,42 +1044,8 @@ impl HarborScenery {
                 let bay = if z == -32.0 || z == 32.0 { "B2" } else { "B1" };
                 paint_label(&mut labels, bay, side * 37.0, z, 2.5, 1.4);
             }
-            // Hazard paint along the inner edge of every wall top, and a kerb band
-            // at the foot of every inner face.
-            for x in (-57..=57).step_by(3) {
-                let x = f64::from(x);
-                for (offset, color) in [(0.0, LINE_YELLOW), (1.5, HAZARD_DARK)] {
-                    let along = x + offset;
-                    put(
-                        &mut markings,
-                        marking(1.5, 0.025, 0.65, color),
-                        along,
-                        1.215,
-                        side * 60.5,
-                    );
-                    put(
-                        &mut markings,
-                        marking(0.65, 0.025, 1.5, color),
-                        side * 60.5,
-                        1.215,
-                        along,
-                    );
-                    put(
-                        &mut markings,
-                        marking(1.5, KERB_BAND, 0.02, color),
-                        along,
-                        KERB_BAND / 2.0,
-                        side * (ARENA - 0.012),
-                    );
-                    put(
-                        &mut markings,
-                        marking(0.02, KERB_BAND, 1.5, color),
-                        side * (ARENA - 0.012),
-                        KERB_BAND / 2.0,
-                        along,
-                    );
-                }
-            }
+            // The hazard paint of the wall tops and kerbs is the parapet's own
+            // (`ApronMode::Parapet`), worn panel by panel.
             for x in [-48.0, -24.0, 0.0, 24.0, 48.0] {
                 // Mushroom bollards stand on the wall's outer edge, bolted to a base
                 // plate; fenders hang on the quay face.
@@ -1358,6 +1380,9 @@ impl HarborScenery {
             put(&mut details, shed, x, WAREHOUSE_FLOOR, 0.0);
         }
         quay_dressing(&mut details, &mut beacons);
+        for (x, z, red) in BUOYS {
+            buoy(&mut details, x, z, red);
+        }
         root.children.push(harbor_backdrop());
         batch(&mut details);
         batch_receivers(&mut ground);

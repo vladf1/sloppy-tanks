@@ -138,21 +138,6 @@ pub const STONE_SPARKS: Burst = Burst {
     hide: 0.0,
     cools: true,
 };
-/// Light thrown off a collected pickup: quick streaks fanning up and out in the
-/// kind's color (set per event), slowing to hang a moment before they fade.
-pub const PICKUP_SPARKS: Burst = Burst {
-    count: 16,
-    speed: [4.0, 9.0],
-    lift: 1.2,
-    life: [0.3, 0.6],
-    width: 0.075,
-    color: [1.0, 1.0, 1.0],
-    gravity: 3.0,
-    scatter: 0.7,
-    stagger: 0.06,
-    hide: 0.0,
-    cools: false,
-};
 /// A muzzle's burning propellant flecks.
 pub const MUZZLE_SPARKS: Burst = Burst {
     count: 4,

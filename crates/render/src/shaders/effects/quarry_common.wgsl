@@ -100,6 +100,8 @@ struct QuarryPebbles {
     shadow: f32,
     lean: vec2f,
     tint: vec3f,
+    // How far toward its buried rim a covered pixel lies (0 crown, 1 rim).
+    rim: f32,
 }
 
 // One layer of loose stones on a `cell` metre lattice: at most one stone per
@@ -110,8 +112,20 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let g = p / cell;
     let id = floor(g);
     let h = quarry_hash(id + salt);
-    let k = quarry_hash(id - salt * 1.7);
     let radius = mix(0.12, 0.3, h.y * h.y);
+    let pixel = footprint / (radius * cell);
+    var out: QuarryPebbles;
+    // An empty cell, or a stone faded under a pixel, covers and shades nothing
+    // and leans no normal; its tint is then never seen.
+    if h.x > density || pixel >= 0.7 {
+        out.cover = 0.0;
+        out.contact = 0.0;
+        out.shadow = 0.0;
+        out.lean = vec2f(0.0);
+        out.tint = vec3f(1.0);
+        return out;
+    }
+    let k = quarry_hash(id - salt * 1.7);
     let stretch = 1.0 + 0.5 * k.w;
     let center = id + 0.5 + (h.zw - 0.5) * (1.0 - 2.0 * radius * stretch);
     // Flattened, turned ovals rather than coins, each a little lumpy.
@@ -121,10 +135,8 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let local = vec2f(dot(d0, axis) / stretch, dot(d0, side)) / radius;
     let lump = 1.0 + 0.1 * sin(local.x * 2.7 + local.y * 1.3 + k.z * 6.0);
     let r = length(local) / lump;
-    let pixel = footprint / (radius * cell);
     let present = step(h.x, density) * (1.0 - quarry_smoothstep(0.25, 0.7, pixel));
     let edge = max(pixel, 0.12);
-    var out: QuarryPebbles;
     out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
     out.contact = quarry_smoothstep(1.55, 1.0, r) * (1.0 - out.cover) * present;
     // The ground a stone's height shades: its outline seen from the sun, a low
@@ -138,6 +150,9 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     // A low dome: the normal leans out from the centre, steepest at the rim.
     let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
     out.lean = (dome.x * axis + dome.y * side) * out.cover;
+    // The rim sinks into shade on the side turned from the sun.
+    let from_sun = dot(d0 / max(length(d0), 0.0001), -normalize(sun.xz + vec2f(0.0001, 0.0)));
+    out.rim = quarry_smoothstep(0.35, 1.0, r) * out.cover * (0.3 + 0.7 * clamp(from_sun * 0.6 + 0.5, 0.0, 1.0));
     // Pale limestone, the soil's own stone, cool grey grit, iron-stained, dark chert.
     var t = vec3f(1.18, 1.14, 1.08);
     t = select(t, vec3f(0.98, 0.93, 0.86), k.y > 0.3);

@@ -10,6 +10,8 @@ export class TouchControls {
   private readonly layer: HTMLElement;
   private readonly mine: HTMLButtonElement;
   private readonly stick: HTMLElement;
+  /** How to aim and fire, over the arena until the first touch there. */
+  private readonly fireHint: HTMLElement;
   private origin = { x: 0, y: 0 };
   private enabled = false;
   /** The cooldown a mine started with: the button fills over the engine's reload,
@@ -27,9 +29,11 @@ export class TouchControls {
       `<div class="touch-controls" hidden>
       <div class="touch-stick touch-drive" role="group" aria-label="Drive joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>DRIVE</span></div>
       <button class="touch-mine" type="button" aria-label="Drop mine"><svg class="touch-mine-icon" aria-hidden="true" focusable="false"><use href="#hud-mine" /></svg><small>MINE</small></button>
+      <div class="touch-fire-hint" aria-hidden="true"><i class="touch-fire-ring"></i><span><b>TOUCH THE ARENA</b>to aim and fire</span></div>
       </div>`,
     );
     this.layer = root.querySelector(".touch-controls")!;
+    this.fireHint = this.layer.querySelector(".touch-fire-hint")!;
     this.mine = this.layer.querySelector(".touch-mine")!;
     this.stick = this.layer.querySelector(".touch-drive")!;
     this.bindStick();
@@ -94,8 +98,15 @@ export class TouchControls {
       const x = (event.clientX - this.origin.x) / STICK_RADIUS;
       const y = (event.clientY - this.origin.y) / STICK_RADIUS;
       this.controls.touch.moveStick(event.pointerId, x, y);
-      const scale = STICK_RADIUS / Math.max(1, Math.hypot(x, y));
+      const push = Math.hypot(x, y);
+      const scale = STICK_RADIUS / Math.max(1, push);
       knob.style.transform = `translate(${x * scale}px, ${y * scale}px)`;
+      // The rim lights toward the drive, brighter the further the knob is pushed.
+      base.style.setProperty(
+        "--stick-angle",
+        `${Math.round((Math.atan2(x, -y) * 180) / Math.PI)}deg`,
+      );
+      base.style.setProperty("--stick-push", Math.min(1, push).toFixed(2));
     };
     element.addEventListener("pointerdown", (event) => {
       if (!this.enabled || !this.controls.active() || event.button !== 0) {
@@ -131,6 +142,7 @@ export class TouchControls {
     canvas.addEventListener("pointerdown", (event) => {
       // Only the finger that owns the shot aims; a second one cannot pull the turret.
       if (touching(event) && this.controls.touch.begin("arena", event.pointerId)) {
+        this.fireHint.classList.add("learned");
         lastX = event.clientX;
         this.controls.aimAt(event.clientX, event.clientY);
       }
@@ -154,7 +166,9 @@ export class TouchControls {
       return;
     }
     element.classList.remove("held");
-    element.querySelector<HTMLElement>(".stick-base")!.style.transform = "";
+    const base = element.querySelector<HTMLElement>(".stick-base")!;
+    base.style.transform = "";
+    base.style.removeProperty("--stick-push");
     element.querySelector<HTMLElement>(".stick-knob")!.style.transform = "";
   }
 

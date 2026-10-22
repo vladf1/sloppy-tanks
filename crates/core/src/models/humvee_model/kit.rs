@@ -36,11 +36,9 @@ pub(super) enum Role {
     Headlamp,
     Amber,
     Red,
-    /// Fluorescent team-colored air-recognition panel.
-    Signal,
 }
 
-pub(super) const ROLES: [Role; 11] = [
+pub(super) const ROLES: [Role; 10] = [
     Role::Paint,
     Role::Shade,
     Role::Steel,
@@ -51,7 +49,6 @@ pub(super) const ROLES: [Role; 11] = [
     Role::Headlamp,
     Role::Amber,
     Role::Red,
-    Role::Signal,
 ];
 
 /// Texture units per model unit when a part is small enough to allow it.

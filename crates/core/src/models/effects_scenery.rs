@@ -61,7 +61,8 @@ pub const WATER: &str = "water";
 /// which add their plating's weathering); the far shore its own light and haze,
 /// windows on its towers and boxes in its container stacks; spawn pads their
 /// tread plate, team paint and chasing light ring; cover containers a shade of
-/// their line's color per box.
+/// their line's color per box; the sea wall's parapet its precast panels, capping
+/// stones, stains, scuffs and worn hazard paint.
 /// Implemented in `effects/harbor_apron.wgsl`.
 pub const HARBOR_APRON: &str = "harbor-apron";
 
@@ -96,6 +97,11 @@ pub enum ApronMode {
     /// wear tile): each box standing in its own 20 m cell of the yard takes its own
     /// shade of its line's color, so a row of one color never reads as clones.
     Container = 10,
+    /// The sea wall's parapet round the apron (the harbor's boundary cover): a
+    /// precast body under a capping beam. Its panel and capping joints, form-tie
+    /// holes, rain and rust stains, tank scuffs and the worn hazard paint of its
+    /// kerb band and top edge are all the effect's, in world space.
+    Parapet = 11,
 }
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only
