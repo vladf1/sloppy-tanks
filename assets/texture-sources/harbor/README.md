@@ -14,7 +14,8 @@ Use case: photorealistic-natural. Asset type: seamless tileable square 1024x1024
 
 `public/textures/harbor/container.webp` is procedural, not generated imagery: the
 weathering multiplied by container and transit-shed paint (sun fade, touched-up
-patches, rust along the rails and running from chips, grime and scuffs). The
+patches, dents, rust along the rails, creeping up from the floor and running from
+chips, grime and scuffs). The
 corrugation is modelled, so the tile carries none. Regenerate it with:
 
 ```sh

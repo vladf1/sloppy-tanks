@@ -241,6 +241,20 @@ fn livery_strip(livery: &Panel, row: usize) -> Node {
     Node::mesh(mesh, livery_paint())
 }
 
+/// A shipping line's livery painted flat, facing +z: row `row` of the sheet,
+/// `width` metres wide (a quarter as tall) and centred on the origin.
+pub(super) fn livery_decal(width: f64, row: usize) -> Node {
+    let decal = Panel {
+        x: [-width / 2.0, width / 2.0],
+        y: [-width / 8.0, width / 8.0],
+        origin: -width / 2.0,
+        pitch: width,
+        depth: 0.0,
+        lift: 0.0,
+    };
+    livery_strip(&decal, row)
+}
+
 /// Which livery a container color wears.
 fn livery_for(color: u32) -> usize {
     (color.wrapping_mul(0x9e37_79b9) >> 28) as usize % CONTAINER_LIVERIES

@@ -48,13 +48,17 @@ pub const WATER: &str = "water";
 /// it never shows the tile. Extra texture [`DOCK_GRAIN`] is the dock concrete tile
 /// (sRGB, repeat), sampled at world x/z at several scales and angles for grain; the
 /// material color (and vertex color, for markings) tints it. Params: `[mode]`, an
-/// [`ApronMode`] as a float. Concrete adds six-metre slabs with sawn joints,
-/// per-slab tone, patched slabs, oil stains and damp patches (lower roughness);
-/// asphalt lanes add aggregate, polished wheel paths, tyre rubber along their axis,
-/// sealed cracks and repair patches. Paint modes keep their color, chip it with
-/// world-space wear (markings alpha-test the chips away, labels fade their alpha).
-/// Quay walls take a wet tide band, weed at the waterline and rust runs. Implemented
-/// in `effects/harbor_apron.wgsl`.
+/// [`ApronMode`] as a float. Concrete adds six-metre slabs with sawn and sealed
+/// expansion joints, per-slab tone and hue, macro variation, hairline cracks, oil
+/// spills with a wet core, damp patches and puddles (lower roughness); asphalt lanes
+/// add aggregate, ravelled edges, polished wheel paths with an oil strip between
+/// them, tar-sealed cracks and repair patches; both take cast-iron covers, contact
+/// grime against the fixed cover and rust under the container castings. Paint modes
+/// keep their color, dirty it and chip it with world-space wear that follows the
+/// traffic (markings alpha-test the chips away, labels fade their alpha).
+/// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs;
+/// ship hulls their plating's weathering; the far shore its own light and haze.
+/// Implemented in `effects/harbor_apron.wgsl`.
 pub const HARBOR_APRON: &str = "harbor-apron";
 
 /// What a [`HARBOR_APRON`] surface is (`params[0]`).
@@ -72,6 +76,13 @@ pub enum ApronMode {
     Label = 4,
     /// Vertical quay faces rising from the harbor water.
     QuayWall = 5,
+    /// Ship hull plating (vertex colors over the steel tile): welded seams, rust
+    /// runs, waterline slime and fender scrapes.
+    Hull = 6,
+    /// The far shore (vertex colors, flat shaded, fog off): lit and hazed in the
+    /// effect by its distance from the eye and emitted, so its layers keep their
+    /// separation whatever the scene fog; pure red vertices are warning lights.
+    Shore = 7,
 }
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only

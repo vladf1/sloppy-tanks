@@ -13,13 +13,14 @@ use super::batching::batch;
 use super::effects_scenery::ApronMode;
 use super::effects_scenery::harbor_label_texture;
 use super::harbor_backdrop::harbor_backdrop;
-use super::harbor_models::cladding;
+use super::harbor_models::{CargoShape, cladding, ship_container};
 use super::harbor_surfaces::{apron_box, apron_material, arrow_marking, marking};
 use super::harbor_vessels::{harbor_fleet, update_harbor_fleet};
 use super::harbor_water::harbor_water;
 use super::house_surfaces::siding_box;
 use super::model_primitives::{
-    DEFAULT_BOX_RADIUS, TEAM_COLORS, beam, box_part, cylinder_part, paint, put, rotated,
+    DEFAULT_BOX_RADIUS, TEAM_COLORS, adopt_children, beam, box_part, cylinder_part, paint, put,
+    rotated,
 };
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
 use crate::sim::data::ARENA;
@@ -67,7 +68,7 @@ fn batch_receivers(group: &mut Node) {
 
 /// Apron concrete under the playfield, the asphalt of its traffic lanes and the
 /// quay walls rising from the water.
-const APRON_COLOR: u32 = 0x989c99;
+const APRON_COLOR: u32 = 0xa5a7a1;
 const ASPHALT_COLOR: u32 = 0x4b5052;
 const QUAY_WALL_COLOR: u32 = 0x9c9e94;
 /// Traffic lanes: (centre, width) of the lanes running along z (centre x) and
@@ -81,12 +82,14 @@ const CENTRE_DASH: f64 = 3.0;
 const CENTRE_GAP: f64 = 3.0;
 /// Lane and bay paint.
 const LINE_YELLOW: u32 = 0xe8b83e;
+/// Height of the hazard band painted at the foot of the walls.
+const KERB_BAND: f64 = 0.32;
 const LINE_WHITE: u32 = 0xe4e2d6;
 const HAZARD_DARK: u32 = 0x2b3236;
 
 /// Floor of the transit sheds on the outer quays.
 const WAREHOUSE_FLOOR: f64 = -0.5;
-const WAREHOUSE_CLADDING: u32 = 0x4f7480;
+const WAREHOUSE_CLADDING: u32 = 0x6a8f9c;
 const WAREHOUSE_ROOF: u32 = 0x7d8a8c;
 const SKYLIGHT: u32 = 0xa9c4c8;
 const ROLLER_DOOR: u32 = 0x8f9a9b;
@@ -208,6 +211,9 @@ fn warehouse() -> Node {
     shed
 }
 
+/// Length of the outer quays the transit sheds and their yards stand on.
+const OUTER_QUAY_LENGTH: f64 = 132.0;
+
 /// Edge of the apron the lanes run to.
 const APRON_EDGE: f64 = 59.0;
 /// Lane runs shorter than this get no markings.
@@ -224,6 +230,22 @@ fn lane_runs(crossing: &[(f64, f64)]) -> Vec<(f64, f64)> {
     runs.push((start, APRON_EDGE));
     runs.retain(|(a, b)| b - a >= MIN_MARKED_RUN);
     runs
+}
+
+/// Lettering painted across the middle of the lanes along x, at (lane centre z,
+/// half its width): the centre line's dashes and the arrows stop short of it.
+const LANE_TITLES: [(&str, f64, f64, f64); 2] = [
+    ("HARBOR HAVOC", -45.0, 28.0, 4.0),
+    ("PORT 07", 45.0, 15.0, 3.5),
+];
+
+/// Whether lane paint at `along` on the lane along x centred at `centre` would
+/// run into its title.
+fn under_title(along_z: bool, centre: f64, along: f64, reach: f64) -> bool {
+    !along_z
+        && LANE_TITLES
+            .iter()
+            .any(|&(_, z, width, _)| z == centre && along.abs() < width / 2.0 + reach)
 }
 
 /// Lane paint, laid out along z (`along_z`) or along x: solid white edge lines,
@@ -253,12 +275,15 @@ fn lane_markings(markings: &mut Node) {
                 }
                 let mut dash = start + CENTRE_GAP / 2.0;
                 while dash + CENTRE_DASH <= end - CENTRE_GAP / 2.0 {
-                    put_on_lane(
-                        marking(0.13, 0.018, CENTRE_DASH, LINE_WHITE),
-                        centre,
-                        dash + CENTRE_DASH / 2.0,
-                        0.0,
-                    );
+                    let at = dash + CENTRE_DASH / 2.0;
+                    if !under_title(along_z, centre, at, CENTRE_DASH) {
+                        put_on_lane(
+                            marking(0.13, 0.018, CENTRE_DASH, LINE_WHITE),
+                            centre,
+                            at,
+                            0.0,
+                        );
+                    }
                     dash += CENTRE_DASH + CENTRE_GAP;
                 }
                 if length < 12.0 {
@@ -266,6 +291,9 @@ fn lane_markings(markings: &mut Node) {
                 }
                 // Keep-right traffic: arrows on each half of the lane, entering the run.
                 for (half, toward, at) in [(1.0, 0.0, start + 4.0), (-1.0, PI, end - 4.0)] {
+                    if under_title(along_z, centre, at, 2.5) {
+                        continue;
+                    }
                     put_on_lane(
                         arrow_marking(LINE_WHITE),
                         centre + half * width / 4.0,
@@ -313,6 +341,508 @@ fn mooring_line(group: &mut Node, a: [f64; 3], b: [f64; 3]) {
         let t1 = (i + 1) as f64 / ROPE_SEGMENTS as f64;
         beam(group, point(t0), point(t1), ROPE_WIDTH, ROPE);
     }
+}
+
+/// One-off paint that breaks the yard's mirror symmetry without touching play: a
+/// zebra crossing on the central lane, a hatched keep-clear box in the north-west
+/// bay and parking stalls for the reach stackers in the south-east one.
+fn yard_paint(markings: &mut Node) {
+    for bar in 0..14 {
+        put(
+            markings,
+            marking(0.5, 0.02, 3.0, LINE_WHITE),
+            -6.5 + f64::from(bar),
+            0.03,
+            29.0,
+        );
+    }
+    let (cx, cz, half) = (-43.0, -26.0, 3.0);
+    for (w, d, x, z) in [
+        (half * 2.0, 0.15, cx, cz - half),
+        (half * 2.0, 0.15, cx, cz + half),
+        (0.15, half * 2.0, cx - half, cz),
+        (0.15, half * 2.0, cx + half, cz),
+    ] {
+        put(markings, marking(w, 0.02, d, LINE_YELLOW), x, 0.03, z);
+    }
+    // Hatching at 45 degrees, each stroke clipped to the square's diagonal band.
+    let mut offset = -half * 2.0 + 0.9;
+    while offset < half * 2.0 - 0.5 {
+        let length = (half * 2.0 - offset.abs()) * std::f64::consts::SQRT_2 - 0.3;
+        let (x, z) = (cx + offset / 2.0, cz - offset / 2.0);
+        put(
+            markings,
+            rotated(
+                marking(0.14, 0.02, length, LINE_YELLOW),
+                0.0,
+                std::f64::consts::FRAC_PI_4,
+                0.0,
+            ),
+            x,
+            0.031,
+            z,
+        );
+        offset += 1.1;
+    }
+    for stall in 0..6 {
+        put(
+            markings,
+            marking(5.0, 0.02, 0.12, LINE_WHITE),
+            41.5,
+            0.03,
+            20.0 + f64::from(stall) * 2.6,
+        );
+    }
+    put(
+        markings,
+        marking(0.12, 0.02, 13.0, LINE_WHITE),
+        44.0,
+        0.03,
+        26.5,
+    );
+}
+
+/// Spans of the east and west quay faces (z from, z to) that a berth or a crane
+/// plinth stands against, where no fender hangs: west first.
+const SIDE_BERTHS: [[(f64, f64); 2]; 2] = [
+    [(36.5, 49.5), (10.75, 21.25)],
+    [(36.5, 49.5), (-25.25, -14.75)],
+];
+/// Fender rubber and steel, chain, and the galvanised quay ladders.
+const FENDER_RUBBER: u32 = 0x22282b;
+const FENDER_PANEL: u32 = 0x3b4448;
+const CABLE_GREY: u32 = 0x59605f;
+const LADDER: u32 = 0x9aa3a3;
+/// Life-ring stations along the wall tops, between the bollards.
+const LIFE_RING: u32 = 0xe8742c;
+const POST_WHITE: u32 = 0xe9e6dc;
+
+/// Something fixed to a quay face at (x, z), its local +z turned by `yaw` to
+/// point out over the water.
+fn on_quay_face(details: &mut Node, group: Node, x: f64, z: f64, yaw: f64) {
+    let mut group = rotated(group, 0.0, yaw, 0.0);
+    group.position = glam::DVec3::new(x, 0.0, z);
+    adopt_children(details, group);
+}
+
+/// A cone fender on the quay face: the rubber cone, its steel frontal panel with
+/// pads and yellow trim, and the chains that hang it from the wall top.
+fn fender(details: &mut Node, x: f64, z: f64, yaw: f64) {
+    static CONE: std::sync::OnceLock<Arc<crate::geometry::Mesh>> = std::sync::OnceLock::new();
+    let cone = CONE
+        .get_or_init(|| Arc::new(crate::geometry::cylinder_geometry(0.42, 0.62, 0.8, 12)))
+        .clone();
+    let mut fender = Node::group("");
+    let body = Node::mesh(cone, paint(FENDER_RUBBER));
+    put(
+        &mut fender,
+        rotated(body, FRAC_PI_2, 0.0, 0.0),
+        0.0,
+        -0.7,
+        0.4,
+    );
+    put(
+        &mut fender,
+        box_part(1.7, 1.9, 0.16, FENDER_PANEL, 0.0),
+        0.0,
+        -0.7,
+        0.88,
+    );
+    for y in [0.28, -1.68] {
+        put(
+            &mut fender,
+            box_part(1.8, 0.12, 0.2, BOLLARD_CAP, 0.0),
+            0.0,
+            y,
+            0.9,
+        );
+    }
+    for (pad_x, pad_y) in [(-0.45, -0.25), (0.45, -0.25), (-0.45, -1.15), (0.45, -1.15)] {
+        put(
+            &mut fender,
+            box_part(0.7, 0.75, 0.05, FENDER_RUBBER, 0.0),
+            pad_x,
+            pad_y,
+            0.98,
+        );
+    }
+    for side in [-0.7, 0.7] {
+        beam(
+            &mut fender,
+            [side, 0.3, 0.9],
+            [side * 1.25, WALL_TOP - 0.05, 0.05],
+            0.05,
+            CABLE_GREY,
+        );
+    }
+    on_quay_face(details, fender, x, z, yaw);
+}
+
+/// A galvanised ladder down the quay face into the water, with grab hoops above
+/// the wall top.
+fn ladder(details: &mut Node, x: f64, z: f64, yaw: f64) {
+    let mut ladder = Node::group("");
+    for side in [-0.25, 0.25] {
+        beam(
+            &mut ladder,
+            [side, -2.8, 0.1],
+            [side, WALL_TOP + 0.9, 0.1],
+            0.06,
+            LADDER,
+        );
+        beam(
+            &mut ladder,
+            [side, WALL_TOP + 0.9, 0.1],
+            [side, WALL_TOP + 0.9, -0.5],
+            0.05,
+            LADDER,
+        );
+        beam(
+            &mut ladder,
+            [side, WALL_TOP + 0.9, -0.5],
+            [side, WALL_TOP, -0.5],
+            0.05,
+            LADDER,
+        );
+    }
+    let mut y = -2.5;
+    while y < WALL_TOP {
+        put(
+            &mut ladder,
+            box_part(0.5, 0.045, 0.045, LADDER, 0.0),
+            0.0,
+            y,
+            0.1,
+        );
+        y += 0.3;
+    }
+    on_quay_face(details, ladder, x, z, yaw);
+}
+
+/// A mushroom bollard bolted to the wall top at (x, z).
+fn bollard(details: &mut Node, x: f64, z: f64) {
+    put(
+        details,
+        box_part(0.95, 0.08, 0.95, BOLLARD_DARK, 0.0),
+        x,
+        WALL_TOP + 0.04,
+        z,
+    );
+    put(
+        details,
+        cylinder_part(0.27, 0.5, BOLLARD_DARK, 12),
+        x,
+        WALL_TOP + 0.3,
+        z,
+    );
+    put(
+        details,
+        cylinder_part(0.42, 0.14, BOLLARD_CAP, 12),
+        x,
+        WALL_TOP + 0.6,
+        z,
+    );
+}
+
+/// A life-ring station on the wall top: a white post with the ring hung facing
+/// along `yaw`.
+fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
+    put(
+        details,
+        box_part(0.14, 1.2, 0.14, POST_WHITE, 0.0),
+        x,
+        WALL_TOP + 0.6,
+        z,
+    );
+    put(
+        details,
+        box_part(0.5, 0.08, 0.5, POST_WHITE, 0.0),
+        x,
+        WALL_TOP + 1.24,
+        z,
+    );
+    let ring = Node::mesh(
+        Arc::new(torus_geometry(0.32, 0.075, 6, 16)),
+        paint(LIFE_RING),
+    );
+    put(details, rotated(ring, 0.0, yaw, 0.0), x, WALL_TOP + 0.85, z);
+}
+
+/// A flood-light mast standing at (x, z), its two lamps on a crossarm across
+/// `toward` (a unit vector on the ground toward the apron), and its beacon.
+fn flood_mast(details: &mut Node, beacons: &mut Node, x: f64, z: f64, toward: [f64; 2]) {
+    let mut mast = Node::group("");
+    put(
+        &mut mast,
+        box_part(0.8, 0.3, 0.8, 0x7b8584, 0.0),
+        0.0,
+        0.15,
+        0.0,
+    );
+    put(
+        &mut mast,
+        cylinder_part(0.17, LAMP_HEIGHT, 0x45575c, 12),
+        0.0,
+        LAMP_HEIGHT / 2.0,
+        0.0,
+    );
+    put(
+        &mut mast,
+        box_part(2.6, 0.16, 0.2, 0x45575c, 0.0),
+        0.0,
+        LAMP_HEIGHT - 0.2,
+        0.0,
+    );
+    for dx in [-1.05, 1.05] {
+        let head = rotated(box_part(0.7, 0.42, 0.55, LAMP_HOUSING, 0.0), 0.35, 0.0, 0.0);
+        put(&mut mast, head, dx, LAMP_HEIGHT - 0.5, 0.15);
+        let lens = rotated(box_part(0.6, 0.05, 0.44, LAMP_LENS, 0.0), 0.35, 0.0, 0.0);
+        put(&mut mast, lens, dx, LAMP_HEIGHT - 0.73, 0.07);
+    }
+    // The lamps face local +z; turn them toward the apron.
+    let mut mast = rotated(mast, 0.0, toward[0].atan2(toward[1]), 0.0);
+    mast.position = glam::DVec3::new(x, 0.0, z);
+    adopt_children(details, mast);
+    put(
+        beacons,
+        cylinder_part(0.18, 0.3, 0xffb54a, 8),
+        x,
+        LAMP_HEIGHT + 0.15,
+        z,
+    );
+}
+
+/// A yard block of boxes along z on an outer quay: `columns` of them end to end
+/// from (x, z), `rows` side by side toward +x, each stack up to `tiers` high as the
+/// `seed`ed hash allows, painted from [`YARD_PAINT`].
+fn container_block(
+    details: &mut Node,
+    origin: [f64; 2],
+    columns: u32,
+    rows: u32,
+    tiers: u32,
+    seed: u32,
+) {
+    let [x, z] = origin;
+    for column in 0..columns {
+        for row in 0..rows {
+            let key = column * 7 + row * 13 + seed * 31;
+            let height = 1 + (key.wrapping_mul(2_654_435_761) >> 29) % tiers;
+            for tier in 0..height {
+                let color = YARD_PAINT[((key + tier * 5).wrapping_mul(2_246_822_519) >> 28)
+                    as usize
+                    % YARD_PAINT.len()];
+                let mut cargo = Node::group("");
+                ship_container(
+                    &mut cargo,
+                    CargoShape {
+                        w: 2.45,
+                        d: 6.1,
+                        h: 2.6,
+                        color,
+                    },
+                );
+                cargo.position = glam::DVec3::new(
+                    x + f64::from(row) * 2.7,
+                    WAREHOUSE_FLOOR + f64::from(tier) * 2.62,
+                    z + f64::from(column) * 6.4,
+                );
+                adopt_children(details, cargo);
+            }
+        }
+    }
+}
+const YARD_PAINT: [u32; 7] = [
+    0xc96f3b, 0x3d8a8c, 0x5f7fa6, 0xb7a26e, 0x9b4f45, 0xe0dccd, 0x4f6b3f,
+];
+
+/// A reefer: a white box with the refrigeration unit's grille and fan at one end.
+fn reefer(details: &mut Node, x: f64, y: f64, z: f64) {
+    let mut cargo = Node::group("");
+    ship_container(
+        &mut cargo,
+        CargoShape {
+            w: 2.45,
+            d: 6.1,
+            h: 2.6,
+            color: 0xd8dbd6,
+        },
+    );
+    put(
+        &mut cargo,
+        box_part(2.1, 2.1, 0.12, 0x5b6468, 0.0),
+        0.0,
+        1.3,
+        -3.08,
+    );
+    put(
+        &mut cargo,
+        rotated(cylinder_part(0.5, 0.06, 0x2c3336, 12), FRAC_PI_2, 0.0, 0.0),
+        0.0,
+        1.75,
+        -3.15,
+    );
+    put(
+        &mut cargo,
+        box_part(0.5, 0.35, 0.08, 0x2f8f6a, 0.0),
+        0.6,
+        0.6,
+        -3.16,
+    );
+    // The reefer line's band along both sides under the roof rail.
+    for side in [-1.0, 1.0] {
+        put(
+            &mut cargo,
+            box_part(0.04, 0.4, 5.6, 0x2f6f9a, 0.0),
+            side * 1.25,
+            2.1,
+            0.0,
+        );
+    }
+    cargo.position = glam::DVec3::new(x, y, z);
+    adopt_children(details, cargo);
+}
+
+/// A counterbalance forklift at (x, z), its forks toward local -z turned by `yaw`,
+/// carrying a loaded pallet.
+fn forklift(details: &mut Node, x: f64, z: f64, yaw: f64) {
+    let mut truck = Node::group("");
+    put(
+        &mut truck,
+        box_part(1.7, 0.75, 2.6, 0xdca53b, DEFAULT_BOX_RADIUS),
+        0.0,
+        0.65,
+        0.0,
+    );
+    for dx in [-0.9, 0.9] {
+        for dz in [-0.8, 0.9] {
+            let wheel = rotated(cylinder_part(0.43, 0.3, 0x2c383c, 12), 0.0, 0.0, FRAC_PI_2);
+            put(&mut truck, wheel, dx, 0.45, dz);
+        }
+        put(
+            &mut truck,
+            box_part(0.12, 1.7, 0.12, 0x344952, DEFAULT_BOX_RADIUS),
+            dx * 0.75,
+            1.6,
+            0.0,
+        );
+        put(
+            &mut truck,
+            box_part(0.12, 2.4, 0.14, 0x344952, DEFAULT_BOX_RADIUS),
+            dx * 0.55,
+            1.3,
+            -1.3,
+        );
+        put(
+            &mut truck,
+            box_part(0.14, 0.12, 1.8, 0x647174, DEFAULT_BOX_RADIUS),
+            dx * 0.55,
+            0.45,
+            -2.1,
+        );
+    }
+    put(
+        &mut truck,
+        box_part(1.7, 0.16, 1.7, 0xe5b441, DEFAULT_BOX_RADIUS),
+        0.0,
+        2.5,
+        0.0,
+    );
+    put(
+        &mut truck,
+        box_part(0.7, 0.7, 0.6, 0x344952, DEFAULT_BOX_RADIUS),
+        0.0,
+        1.35,
+        0.25,
+    );
+    put(
+        &mut truck,
+        box_part(1.5, 0.9, 0.5, 0x3a4246, 0.0),
+        0.0,
+        0.95,
+        1.35,
+    );
+    put(
+        &mut truck,
+        box_part(1.2, 0.14, 1.2, 0x96764e, 0.0),
+        0.0,
+        0.6,
+        -2.1,
+    );
+    put(
+        &mut truck,
+        box_part(1.1, 0.8, 1.1, 0x7c8f5c, 0.0),
+        0.0,
+        1.07,
+        -2.1,
+    );
+    let mut truck = rotated(truck, 0.0, yaw, 0.0);
+    truck.position = glam::DVec3::new(x, 0.0, z);
+    adopt_children(details, truck);
+}
+
+/// A stack of `levels` timber pallets at (x, z).
+fn pallet_stack(details: &mut Node, x: f64, z: f64, levels: u32) {
+    for level in 0..levels {
+        let level = f64::from(level);
+        for plank in 0..5 {
+            put(
+                details,
+                siding_box(1.2, 0.04, 0.2, 0xb89764),
+                x,
+                0.14 + level * 0.16,
+                z - 0.5 + f64::from(plank) * 0.25,
+            );
+        }
+        for dx in [-0.5, 0.0, 0.5] {
+            put(
+                details,
+                siding_box(0.12, 0.1, 1.2, 0x96764e),
+                x + dx,
+                0.07 + level * 0.16,
+                z,
+            );
+        }
+    }
+}
+
+/// Bollards, fenders, life rings, masts and berth clutter along the quays, laid
+/// out differently on each side so the port does not read as a mirror image.
+fn quay_dressing(details: &mut Node, beacons: &mut Node) {
+    for (index, side) in [-1.0, 1.0].into_iter().enumerate() {
+        // East and west quay faces: bollards along the wall top and fenders below,
+        // except where a berth or a crane plinth stands against the face.
+        for z in [-48.0, -24.0, 0.0, 24.0, 48.0] {
+            bollard(details, side * BOLLARD_LINE, z);
+            if SIDE_BERTHS[index]
+                .iter()
+                .any(|&(a, b)| z > a - 1.0 && z < b + 1.0)
+            {
+                continue;
+            }
+            fender(details, side * QUAY_EDGE, z, side * FRAC_PI_2);
+        }
+        ladder(details, side * QUAY_EDGE, -36.0, side * FRAC_PI_2);
+        ladder(details, side * QUAY_EDGE, 30.0, side * FRAC_PI_2);
+        ladder(details, side * 12.0, -QUAY_EDGE, PI);
+        ladder(details, side * 30.0, QUAY_EDGE, 0.0);
+        for (along, ring) in [(-36.0, true), (12.0, true), (36.0, false)] {
+            if ring {
+                life_ring(details, along * side, side * (QUAY_EDGE - 1.0), 0.0);
+                life_ring(details, side * (QUAY_EDGE - 1.0), along * -side, FRAC_PI_2);
+            }
+        }
+        flood_mast(details, beacons, side * 62.0, -side * 30.0, [-side, 0.0]);
+    }
+    // The outer quays' yards: container blocks either side of the transit sheds,
+    // stacked and painted differently on each.
+    container_block(details, [-125.0, 44.0], 2, 4, 3, 1);
+    for z in [45.0, 38.6] {
+        reefer(details, -110.0, WAREHOUSE_FLOOR, z);
+    }
+    container_block(details, [-125.0, -60.0], 2, 3, 2, 2);
+    container_block(details, [109.0, 44.0], 2, 3, 2, 3);
+    container_block(details, [109.0, -58.0], 2, 4, 3, 4);
 }
 
 impl HarborScenery {
@@ -365,6 +895,7 @@ impl HarborScenery {
             );
         }
         lane_markings(&mut markings);
+        yard_paint(&mut markings);
         for side in [-1.0, 1.0] {
             for z in [-32.0, -12.0, 12.0, 32.0] {
                 for dx in [-3.7, 3.7] {
@@ -379,22 +910,41 @@ impl HarborScenery {
                 let bay = if z == -32.0 || z == 32.0 { "B2" } else { "B1" };
                 paint_label(&mut root, bay, side * 37.0, z, 2.5, 1.4);
             }
+            // Hazard paint along the inner edge of every wall top, and a kerb band
+            // at the foot of every inner face.
             for x in (-57..=57).step_by(3) {
                 let x = f64::from(x);
-                put(
-                    &mut markings,
-                    marking(1.5, 0.025, 0.65, LINE_YELLOW),
-                    x,
-                    1.215,
-                    side * 60.5,
-                );
-                put(
-                    &mut markings,
-                    marking(1.5, 0.025, 0.65, HAZARD_DARK),
-                    x + 1.5,
-                    1.215,
-                    side * 60.5,
-                );
+                for (offset, color) in [(0.0, LINE_YELLOW), (1.5, HAZARD_DARK)] {
+                    let along = x + offset;
+                    put(
+                        &mut markings,
+                        marking(1.5, 0.025, 0.65, color),
+                        along,
+                        1.215,
+                        side * 60.5,
+                    );
+                    put(
+                        &mut markings,
+                        marking(0.65, 0.025, 1.5, color),
+                        side * 60.5,
+                        1.215,
+                        along,
+                    );
+                    put(
+                        &mut markings,
+                        marking(1.5, KERB_BAND, 0.02, color),
+                        along,
+                        KERB_BAND / 2.0,
+                        side * (ARENA - 0.012),
+                    );
+                    put(
+                        &mut markings,
+                        marking(0.02, KERB_BAND, 1.5, color),
+                        side * (ARENA - 0.012),
+                        KERB_BAND / 2.0,
+                        along,
+                    );
+                }
             }
             for x in [-48.0, -24.0, 0.0, 24.0, 48.0] {
                 // Mushroom bollards stand on the wall's outer edge, bolted to a base
@@ -421,8 +971,12 @@ impl HarborScenery {
                     WALL_TOP + 0.6,
                     z,
                 );
-                let fender = rotated(cylinder_part(0.65, 1.4, 0x25363d, 12), FRAC_PI_2, 0.0, 0.0);
-                put(&mut details, fender, x, -1.1, side * (QUAY_EDGE + 0.2));
+                fender(
+                    &mut details,
+                    x,
+                    side * QUAY_EDGE,
+                    if side < 0.0 { PI } else { 0.0 },
+                );
             }
             // Flood-light masts at the quay corners: a crossarm with two lamps
             // aimed down at the apron, and the blinking beacon on top.
@@ -503,8 +1057,9 @@ impl HarborScenery {
                 0.0,
             );
         }
-        paint_label(&mut root, "HARBOR HAVOC", 0.0, -48.0, 28.0, 4.0);
-        paint_label(&mut root, "PORT 07", 0.0, 48.0, 15.0, 3.5);
+        for (text, z, width, depth) in LANE_TITLES {
+            paint_label(&mut root, text, 0.0, z, width, depth);
+        }
         paint_label(&mut root, "LOADING", 0.0, 3.5, 8.0, 1.1);
         for team in [Team::Blue, Team::Red] {
             for Vec2 { x, z } in spawn_positions(team, 1.0) {
@@ -528,86 +1083,18 @@ impl HarborScenery {
                 );
             }
         }
-        // Working berths sit beyond the wall: forklifts, pallets, drainage and tied mooring lines.
+        // Working berths sit beyond the wall, each kept differently: on the west a
+        // forklift by a reefer stack and spent tyres, on the east a site office, a
+        // light tower, drums and a cable reel. Flush drainage grates line the apron
+        // and mooring lines run out to the ships.
         for side in [-1.0, 1.0] {
-            let x = side * 65.0;
             put(
                 &mut ground,
                 apron_box(7.0, 3.4, 13.0, QUAY_WALL_COLOR, ApronMode::QuayWall),
-                x,
+                side * 65.0,
                 -1.65,
                 43.0,
             );
-            put(
-                &mut details,
-                box_part(1.7, 0.75, 2.6, 0xdca53b, DEFAULT_BOX_RADIUS),
-                x,
-                0.65,
-                43.0,
-            );
-            for dx in [-0.9, 0.9] {
-                for z in [42.2, 43.9] {
-                    let wheel =
-                        rotated(cylinder_part(0.43, 0.3, 0x2c383c, 12), 0.0, 0.0, FRAC_PI_2);
-                    put(&mut details, wheel, x + dx, 0.45, z);
-                }
-                put(
-                    &mut details,
-                    box_part(0.12, 1.7, 0.12, 0x344952, DEFAULT_BOX_RADIUS),
-                    x + dx * 0.75,
-                    1.6,
-                    43.0,
-                );
-                put(
-                    &mut details,
-                    box_part(0.12, 2.4, 0.14, 0x344952, DEFAULT_BOX_RADIUS),
-                    x + dx * 0.55,
-                    1.3,
-                    41.7,
-                );
-                put(
-                    &mut details,
-                    box_part(0.14, 0.12, 1.8, 0x647174, DEFAULT_BOX_RADIUS),
-                    x + dx * 0.55,
-                    0.25,
-                    40.9,
-                );
-            }
-            put(
-                &mut details,
-                box_part(1.7, 0.16, 1.7, 0xe5b441, DEFAULT_BOX_RADIUS),
-                x,
-                2.5,
-                43.0,
-            );
-            put(
-                &mut details,
-                box_part(0.7, 0.7, 0.6, 0x344952, DEFAULT_BOX_RADIUS),
-                x,
-                1.35,
-                43.25,
-            );
-            for level in 0..3 {
-                let level = f64::from(level);
-                for plank in 0..5 {
-                    put(
-                        &mut details,
-                        siding_box(2.1, 0.12, 0.27, 0xb89764),
-                        x,
-                        0.3 + level * 0.3,
-                        46.2 + f64::from(plank) * 0.34,
-                    );
-                }
-                for dx in [-0.8, 0.8] {
-                    put(
-                        &mut details,
-                        siding_box(0.25, 0.18, 1.7, 0x96764e),
-                        x + dx,
-                        0.14 + level * 0.3,
-                        46.85,
-                    );
-                }
-            }
             // Flush grates remain traversable, with no fake solid cover in driving lanes.
             for z in [-39.0, 0.0, 39.0] {
                 put(
@@ -629,55 +1116,173 @@ impl HarborScenery {
             }
             mooring_line(
                 &mut details,
-                [side * QUAY_EDGE, 0.4, -24.0],
-                [side * 72.0, 2.3, if side < 0.0 { -27.0 } else { -4.0 }],
+                [side * BOLLARD_LINE, WALL_TOP + 0.5, -24.0],
+                [
+                    if side < 0.0 { -71.3 } else { 72.3 },
+                    2.3,
+                    if side < 0.0 { -27.0 } else { -4.0 },
+                ],
             );
             mooring_line(
                 &mut details,
-                [side * QUAY_EDGE, 0.4, 24.0],
-                [side * 72.0, 2.3, if side < 0.0 { 12.0 } else { 34.0 }],
+                [side * BOLLARD_LINE, WALL_TOP + 0.5, 24.0],
+                [
+                    if side < 0.0 { -71.3 } else { 72.3 },
+                    2.3,
+                    if side < 0.0 { 12.0 } else { 34.0 },
+                ],
+            );
+            mooring_line(
+                &mut details,
+                [side * BOLLARD_LINE, WALL_TOP + 0.5, 0.0],
+                [
+                    if side < 0.0 { -71.3 } else { 72.3 },
+                    2.3,
+                    if side < 0.0 { 8.0 } else { 6.0 },
+                ],
             );
             mooring_line(
                 &mut details,
                 [side * 24.0, WALL_TOP + 0.5, -BOLLARD_LINE],
                 [side * 20.0 - 8.0, 3.0, -73.0],
             );
-            // Berth clutter: drums, a cable reel and a stack of spent tyres.
-            for (i, (dx, dz)) in [(-2.4, -4.6), (-1.6, -5.1), (-2.2, -5.7)]
-                .into_iter()
-                .enumerate()
-            {
-                let color = [0x2f6fa8, 0xc8473b, 0x2f6fa8][i];
-                put(
-                    &mut details,
-                    cylinder_part(0.3, 0.9, color, 12),
-                    side * 65.0 + side * dx,
-                    0.45,
-                    43.0 + dz,
-                );
-            }
-            for dz in [-0.45, 0.45] {
-                let disc = rotated(cylinder_part(0.85, 0.08, 0x9b7a4e, 16), FRAC_PI_2, 0.0, 0.0);
-                put(&mut details, disc, side * 66.8, 0.85, 37.6 + dz);
-            }
-            let core = rotated(cylinder_part(0.5, 0.82, 0x2b3236, 12), FRAC_PI_2, 0.0, 0.0);
-            put(&mut details, core, side * 66.8, 0.85, 37.6);
-            for level in 0..3 {
-                let tyre = Node::mesh(Arc::new(torus_geometry(0.42, 0.17, 8, 14)), paint(0x23292b));
-                put(
-                    &mut details,
-                    rotated(tyre, FRAC_PI_2, 0.0, 0.0),
-                    side * 63.6,
-                    0.17 + f64::from(level) * 0.32,
-                    48.6,
-                );
-            }
+            mooring_line(
+                &mut details,
+                [side * 48.0, WALL_TOP + 0.5, -BOLLARD_LINE],
+                [if side < 0.0 { -38.0 } else { 22.0 }, 3.0, -73.2],
+            );
         }
+        forklift(&mut details, -64.2, 46.2, PI);
+        for (x, y, z) in [
+            (-66.9, 0.05, 39.6),
+            (-64.3, 0.05, 39.6),
+            (-66.9, 2.67, 39.6),
+        ] {
+            reefer(&mut details, x, y, z);
+        }
+        put(
+            &mut details,
+            box_part(0.5, 1.4, 0.4, 0xd9b44a, 0.0),
+            -62.5,
+            0.75,
+            43.3,
+        );
+        put(
+            &mut details,
+            box_part(0.42, 0.3, 0.06, 0x2f3b40, 0.0),
+            -62.5,
+            1.1,
+            43.08,
+        );
+        for level in 0..3 {
+            let tyre = Node::mesh(Arc::new(torus_geometry(0.42, 0.17, 8, 14)), paint(0x23292b));
+            put(
+                &mut details,
+                rotated(tyre, FRAC_PI_2, 0.0, 0.0),
+                -67.4,
+                0.17 + f64::from(level) * 0.32,
+                48.4,
+            );
+        }
+        pallet_stack(&mut details, 66.6, 46.3, 3);
+        pallet_stack(&mut details, 66.6, 48.3, 2);
+        let office = 0xd8d0b8;
+        put(
+            &mut details,
+            box_part(2.6, 2.7, 5.6, office, 0.0),
+            66.8,
+            1.4,
+            40.0,
+        );
+        put(
+            &mut details,
+            box_part(2.8, 0.15, 5.8, 0x8d9396, 0.0),
+            66.8,
+            2.83,
+            40.0,
+        );
+        put(
+            &mut details,
+            box_part(0.06, 0.9, 1.6, 0x335b6c, 0.0),
+            65.48,
+            1.75,
+            38.6,
+        );
+        put(
+            &mut details,
+            box_part(0.06, 1.9, 0.9, 0x6d7778, 0.0),
+            65.48,
+            1.1,
+            41.2,
+        );
+        for step in 0..3 {
+            let step = f64::from(step);
+            put(
+                &mut details,
+                box_part(0.8, 0.12, 1.0, 0x6d7778, 0.0),
+                64.6 + step * 0.25,
+                0.12 + step * 0.22,
+                41.2,
+            );
+        }
+        put(
+            &mut details,
+            box_part(1.4, 0.9, 2.2, 0xd9b44a, 0.0),
+            63.4,
+            0.5,
+            47.6,
+        );
+        put(
+            &mut details,
+            box_part(0.2, 6.5, 0.2, 0x45575c, 0.0),
+            63.4,
+            4.2,
+            47.6,
+        );
+        put(
+            &mut details,
+            box_part(1.6, 0.9, 0.3, LAMP_HOUSING, 0.0),
+            63.4,
+            7.6,
+            47.2,
+        );
+        put(
+            &mut details,
+            box_part(1.4, 0.7, 0.05, LAMP_LENS, 0.0),
+            63.4,
+            7.6,
+            47.03,
+        );
+        for (dx, dz, color) in [
+            (0.0, 0.0, 0xc8473b),
+            (0.7, 0.25, 0x2f6f8a),
+            (0.25, 0.8, 0x6b7a3a),
+        ] {
+            put(
+                &mut details,
+                cylinder_part(0.3, 0.9, color, 12),
+                67.6 + dx,
+                0.5,
+                44.0 + dz,
+            );
+        }
+        for dz in [-0.45, 0.45] {
+            let disc = rotated(cylinder_part(0.85, 0.08, 0x9b7a4e, 16), FRAC_PI_2, 0.0, 0.0);
+            put(&mut details, disc, 64.0, 0.85, 37.9 + dz);
+        }
+        let core = rotated(cylinder_part(0.5, 0.82, 0x2b3236, 12), FRAC_PI_2, 0.0, 0.0);
+        put(&mut details, core, 64.0, 0.85, 37.9);
         // Distant warehouses close the horizon without creating obstacles on the board.
         for x in [-115.0, 115.0] {
             put(
                 &mut ground,
-                apron_box(22.0, 3.0, 78.0, QUAY_WALL_COLOR, ApronMode::QuayWall),
+                apron_box(
+                    22.0,
+                    3.0,
+                    OUTER_QUAY_LENGTH,
+                    QUAY_WALL_COLOR,
+                    ApronMode::QuayWall,
+                ),
                 x,
                 -2.0,
                 0.0,
@@ -685,6 +1290,7 @@ impl HarborScenery {
             let shed = rotated(warehouse(), 0.0, if x < 0.0 { 0.0 } else { PI }, 0.0);
             put(&mut details, shed, x, WAREHOUSE_FLOOR, 0.0);
         }
+        quay_dressing(&mut details, &mut beacons);
         root.children.push(harbor_backdrop());
         batch(&mut details);
         batch_receivers(&mut ground);
