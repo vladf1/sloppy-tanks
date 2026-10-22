@@ -8,16 +8,25 @@
 //! compiles pipelines one at a time). So a variant's source keeps only the taken side
 //! of each flag branch and the functions its entry points still reach, and drops the
 //! comments.
+//!
+//! It also unrolls the counted loops (`unroll_loops`). WebKit guards every WGSL loop
+//! against running forever with a `volatile` iteration counter in the MSL it
+//! generates, and the Metal compiler can neither unroll such a loop nor keep what the
+//! loop indexes in registers: a shadow filter's tap arrays and a noise cell search's
+//! candidates went to stack memory, and the village's main view took 75-95 ms of GPU
+//! time on an M3 Max in WebKit against 5 ms once its loops were unrolled (and in
+//! Chrome, whose Metal compile unrolls them itself).
 
 use std::collections::HashMap;
 
 /// `code` with every `if FLAG { ... } [else ...]` whose condition is one of `flags`
-/// (optionally negated) replaced by the taken block, then without comments,
-/// unreachable functions and the declarations of flags nothing reads any more (so
-/// variants that fold to the same code are the same text for the browser's caches).
+/// (optionally negated) replaced by the taken block, then without comments, counted
+/// loops, unreachable functions and the declarations of flags nothing reads any more
+/// (so variants that fold to the same code are the same text for the browser's caches).
 pub fn specialize(code: &str, flags: &[(&str, bool)]) -> String {
     let code = strip_comments(code);
     let code = fold_flag_branches(&code, flags);
+    let code = unroll_loops(&code);
     let mut code = prune_functions(&code);
     for (name, value) in flags {
         let declaration = format!("const {name}: bool = {value};\n");
@@ -118,7 +127,7 @@ fn ident_end(bytes: &[u8], i: usize) -> usize {
 }
 
 /// Whether `word` starts at `i` as a whole identifier.
-fn word_at(bytes: &[u8], i: usize, word: &str) -> bool {
+pub(super) fn word_at(bytes: &[u8], i: usize, word: &str) -> bool {
     // Every byte of every variant's source is tested: reject on the first byte
     // before comparing the rest.
     word.as_bytes()
@@ -196,6 +205,186 @@ fn fold_flag_branches(code: &str, flags: &[(&str, bool)]) -> String {
         code.replace_range(found..end, &replacement);
         from = found;
     }
+}
+
+/// The most copies a loop unrolls into; a longer loop stays a loop.
+const MAX_UNROLLED_ITERATIONS: i64 = 16;
+
+/// A `for` statement's header: its variable, its `{`, and the values the variable
+/// takes when the bounds are integers known here (first, past the last, and the
+/// literal suffix that gives the variable its type).
+struct LoopHeader {
+    variable: String,
+    open: usize,
+    counts: Option<(i64, i64, String)>,
+}
+
+/// Replaces each `for (var i = A; i < B; i++) { body }` (or `<=`) whose bounds are
+/// integer literals or module `const` integers with one block per iteration,
+/// `{ let i = A; body } { let i = A + 1; body } ...`, the same statements in the same
+/// order. A loop whose body leaves early (`break`, `continue`), changes its variable
+/// or runs more than `MAX_UNROLLED_ITERATIONS` times stays a loop; the loops inside
+/// any loop are unrolled first.
+fn unroll_loops(code: &str) -> String {
+    let constants = integer_constants(code);
+    unroll_within(code, &constants)
+}
+
+/// Module-scope `const NAME = 3;` or `const NAME: u32 = 3u;` integers, with the
+/// literal suffix their type takes.
+fn integer_constants(code: &str) -> HashMap<String, (i64, String)> {
+    let mut constants = HashMap::new();
+    for line in code.lines() {
+        let Some(rest) = line.strip_prefix("const ") else {
+            continue;
+        };
+        let Some((left, value)) = rest.trim_end().trim_end_matches(';').split_once('=') else {
+            continue;
+        };
+        let (name, declared) = left.split_once(':').unwrap_or((left, ""));
+        let Some((value, suffix)) = integer_literal(value.trim()) else {
+            continue;
+        };
+        let suffix = match declared.trim() {
+            "u32" => "u".to_owned(),
+            "i32" | "" => suffix,
+            _ => continue,
+        };
+        constants.insert(name.trim().to_owned(), (value, suffix));
+    }
+    constants
+}
+
+/// An integer literal's value and its type suffix (`""`, `"i"` or `"u"`).
+fn integer_literal(text: &str) -> Option<(i64, String)> {
+    let (digits, suffix) = match text.strip_suffix(['i', 'u']) {
+        Some(digits) => (digits, text[digits.len()..].to_owned()),
+        None => (text, String::new()),
+    };
+    digits.parse().ok().map(|value| (value, suffix))
+}
+
+fn unroll_within(code: &str, constants: &HashMap<String, (i64, String)>) -> String {
+    let bytes = code.as_bytes();
+    let mut out = String::with_capacity(code.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if !word_at(bytes, i, "for") {
+            i += 1;
+            continue;
+        }
+        let Some(header) = loop_header(code, i, constants) else {
+            i += 3;
+            continue;
+        };
+        let end = block_end(bytes, header.open);
+        let body = unroll_within(&code[header.open + 1..end - 1], constants);
+        out.push_str(&code[copied..i]);
+        match header.counts {
+            Some((from, to, suffix))
+                if to - from <= MAX_UNROLLED_ITERATIONS
+                    && !leaves_early(&body)
+                    && !assigns(&body, &header.variable) =>
+            {
+                for value in from..to {
+                    out.push_str(&format!(
+                        "{{ let {} = {value}{suffix};{body}}}\n",
+                        header.variable
+                    ));
+                }
+            }
+            _ => {
+                out.push_str(&code[i..=header.open]);
+                out.push_str(&body);
+                out.push('}');
+            }
+        }
+        copied = end;
+        i = end;
+    }
+    out.push_str(&code[copied..]);
+    out
+}
+
+/// The header of the `for` statement at `at`, `None` if it is not one this reads.
+fn loop_header(
+    code: &str,
+    at: usize,
+    constants: &HashMap<String, (i64, String)>,
+) -> Option<LoopHeader> {
+    let bytes = code.as_bytes();
+    let paren = skip_space(bytes, at + 3);
+    if bytes.get(paren) != Some(&b'(') {
+        return None;
+    }
+    let close = paren + bytes[paren..].iter().position(|&b| b == b')')?;
+    let open = skip_space(bytes, close + 1);
+    if bytes.get(open) != Some(&b'{') {
+        return None;
+    }
+    let parts: Vec<&str> = code[paren + 1..close].split(';').map(str::trim).collect();
+    let [init, condition, step] = parts[..] else {
+        return None;
+    };
+    let (declaration, start) = init.strip_prefix("var ")?.split_once('=')?;
+    let (variable, declared) = declaration.split_once(':').unwrap_or((declaration, ""));
+    let variable = variable.trim().to_owned();
+    let value = |text: &str| {
+        let text = text.trim();
+        integer_literal(text).or_else(|| constants.get(text).cloned())
+    };
+    let counts = (|| {
+        let (from, suffix) = value(start)?;
+        let suffix = match declared.trim() {
+            "" => suffix,
+            "i32" => String::new(),
+            "u32" => "u".to_owned(),
+            _ => return None,
+        };
+        let bound = condition.strip_prefix(variable.as_str())?.trim_start();
+        let to = if let Some(last) = bound.strip_prefix("<=") {
+            value(last)?.0 + 1
+        } else {
+            value(bound.strip_prefix('<')?)?.0
+        };
+        let steps = [format!("{variable}++"), format!("{variable} += 1")];
+        (steps.iter().any(|s| s == step) && (suffix != "u" || from >= 0)).then_some((
+            from,
+            to.max(from),
+            suffix,
+        ))
+    })();
+    Some(LoopHeader {
+        variable,
+        open,
+        counts,
+    })
+}
+
+/// Whether `body` holds a `break` or `continue` (of its loop or one left inside it).
+fn leaves_early(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    (0..bytes.len()).any(|i| word_at(bytes, i, "break") || word_at(bytes, i, "continue"))
+}
+
+/// Whether `body` assigns `variable` or takes its address.
+fn assigns(body: &str, variable: &str) -> bool {
+    let bytes = body.as_bytes();
+    (0..bytes.len()).any(|i| {
+        if !word_at(bytes, i, variable) {
+            return false;
+        }
+        let before = body[..i].trim_end();
+        let after = body[i + variable.len()..].trim_start();
+        let assigned = after.starts_with("++")
+            || after.starts_with("--")
+            || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+                .iter()
+                .any(|op| after.starts_with(op))
+            || (after.starts_with('=') && !after.starts_with("=="));
+        assigned || (before.ends_with('&') && !before.ends_with("&&"))
+    })
 }
 
 /// Removes functions no entry point (`@vertex`, `@fragment`, `@compute`) reaches.
@@ -350,6 +539,52 @@ mod tests {
         assert!(!pruned.contains("fn helper("));
         assert!(!pruned.contains("fn my_helper("));
         assert!(!pruned.contains("fn named("));
+    }
+
+    #[test]
+    fn unrolls_counted_loops_into_one_block_per_iteration() {
+        let code = "fn f() -> f32 { var s = 0.0; for (var j = -1; j <= 1; j++) { for (var i = 0; i < 2; i++) { s += f32(i * j); } } return s; }";
+        let unrolled = unroll_loops(code);
+        assert!(!unrolled.contains("for ("));
+        assert_eq!(unrolled.matches("let j = ").count(), 3);
+        assert_eq!(unrolled.matches("let i = ").count(), 6);
+        assert_eq!(unrolled.matches("s += f32(i * j);").count(), 6);
+        let order: Vec<&str> = unrolled
+            .split("let ")
+            .skip(1)
+            .map(|declaration| declaration.split(';').next().unwrap())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "j = -1", "i = 0", "i = 1", "j = 0", "i = 0", "i = 1", "j = 1", "i = 0", "i = 1"
+            ]
+        );
+    }
+
+    #[test]
+    fn unrolls_to_constant_bounds_with_their_type() {
+        let code = "const N: u32 = 3u;\nconst M = 2;\nfn f() { for (var k = 0u; k < N; k++) { a(k); } for (var i = 0; i < M; i++) { b(i); } }";
+        let unrolled = unroll_loops(code);
+        assert!(!unrolled.contains("for ("));
+        assert!(unrolled.contains("let k = 0u;") && unrolled.contains("let k = 2u;"));
+        assert!(!unrolled.contains("let k = 3u;") && unrolled.contains("let i = 1;"));
+    }
+
+    #[test]
+    fn keeps_loops_it_cannot_unroll() {
+        let code = "fn f(n: i32) { for (var i = 0; i < n; i++) { a(); } for (var i = 0; i < 4; i++) { if b() { continue; } } for (var i = 0; i < 4; i++) { if b() { break; } } for (var i = 0; i < 4; i++) { i += 1; } for (var i = 0; i < 40; i++) { c(); } for (var i = 0; i < 4; i++) { for (var k = 0; k < 2; k++) { if d(k) { break; } } } }";
+        let unrolled = unroll_loops(code);
+        assert_eq!(unrolled.matches("for (").count(), 7);
+        assert!(!unrolled.contains("let "));
+    }
+
+    #[test]
+    fn unrolls_the_loops_inside_a_loop_it_keeps() {
+        let code = "fn f(n: i32) { for (var i = 0; i < n; i++) { for (var k = 0; k < 2; k++) { a(k); } } }";
+        let unrolled = unroll_loops(code);
+        assert_eq!(unrolled.matches("for (").count(), 1);
+        assert!(unrolled.contains("let k = 0;") && unrolled.contains("let k = 1;"));
     }
 
     #[test]
