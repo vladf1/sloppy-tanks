@@ -192,9 +192,9 @@ fn filmic(color: vec3f, exposure: f32) -> vec3f {
     let toned = filmic_curve(vec4f(exposed, peak));
     let hot = smoothstep(FILMIC_HOT.x, FILMIC_HOT.y, peak);
     let kept = toned.w * mix(exposed / peak, vec3f(1.0), hot * hot);
-    // Part of the way per channel: its toe deepens the lesser channels a little, so
-    // team paint stays rich rather than salmon, while saturated paint keeps its hue
-    // in the highlights. Muted ground takes no further boost in the grade.
+    // Part of the way per channel: its toe deepens the lesser channels of muted
+    // colours a little, so sunlit sand, grass and concrete keep a film's richness
+    // instead of reading pale, while saturated paint keeps its hue.
     return mix(toned.rgb, kept, FILMIC_HUE_KEEP);
 }
 
@@ -206,7 +206,7 @@ fn filmic_curve(x: vec4f) -> vec4f {
 // Exposed levels over which hot colours bleach toward white (`filmic`), and the share
 // of the hue-keeping mapping against the per-channel one.
 const FILMIC_HOT: vec2f = vec2f(1.5, 7.0);
-const FILMIC_HUE_KEEP: f32 = 0.45;
+const FILMIC_HUE_KEEP: f32 = 0.4;
 
 // Hue-keeping tone mapping (`aces_filmic`): the saturation (chroma over the brightest
 // channel) where it begins and is complete, the exposed level over which very hot

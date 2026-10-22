@@ -345,13 +345,12 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         }
     }
     let quarry = theme == Theme::Quarry;
-    // A late-morning sun over the village, a bright early-afternoon one over the
-    // harbor and a high desert sun over the quarry: high enough that open ground is
-    // lit well above the sky fill, so shade reads deep and cool beside it.
+    // A late-morning sun over the village, a low golden late-afternoon one over the
+    // harbor and a raking one across the quarry's layered rock.
     let sun_position = pick(
         theme,
-        Vec3::new(-44.0, 50.0, 24.0),
-        Vec3::new(-48.0, 38.0, 36.0),
+        Vec3::new(-50.0, 34.0, 29.0),
+        Vec3::new(-50.0, 30.0, 38.0),
         Vec3::new(-45.0, 46.0, 28.0),
     );
     let shadow = if quarry {
@@ -378,12 +377,12 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         sky: pick(theme, 0xd6c9b0, 0xa7bdc5, 0xaacbc2),
         fog_near: pick(theme, 110.0, 150.0, 210.0),
         fog_far: pick(theme, 380.0, 260.0, 380.0),
-        sun_color: pick(theme, 0xffe9cc, 0xffe2bc, 0xfff3e2),
-        sun_intensity: pick(theme, 4.2, 4.1, 4.0),
+        sun_color: pick(theme, 0xffeedc, 0xffcf9c, 0xffeacc),
+        sun_intensity: pick(theme, 4.1, 3.9, 4.0),
         sun_position,
-        fill_color: pick(theme, 0x98b2dc, 0x8eaadc, 0xa4b8d4),
-        fill_ground: pick(theme, 0xae946e, 0x8a8a86, 0x8c8c5e),
-        fill_intensity: pick(theme, 1.0, 1.3, 1.5),
+        fill_color: pick(theme, 0x9cb4da, 0xa0b2cc, 0x9eb6da),
+        fill_ground: pick(theme, 0xb89a72, 0x8e8a82, 0x8c8c5e),
+        fill_intensity: pick(theme, 1.55, 1.85, 1.8),
         shadow,
         atmosphere: theme_atmosphere(theme),
     }
@@ -391,18 +390,17 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
 
 /// Each map's sky, haze and light, a distinct time of day: a crisp, clear late
 /// morning over the pine village under a deep blue sky and white fair-weather
-/// cumulus; a breezy early afternoon over the harbor, a warm sun on grey concrete
-/// under a clear sea-blue sky with sky-blue shade; and a high, hot desert noon over
-/// the quarry, a deep blue sky paling to dust at the horizon over golden sand. Haze
+/// cumulus; a golden late afternoon over the harbor, its horizon peach toward the sun
+/// and blue away from it over a cool sea; and a bright, hot desert day over the
+/// quarry, a deep blue sky paling to dust at the horizon over bleached sand. Haze
 /// lies thick low down and thins with height, a capped far layer steps distant ranges
 /// back into solid bands of value, and cameras looking steeply down see through it.
-/// The light carries the mood, not a grade: a warm key well above a blue sky fill
-/// that is nearly the only light in shade, and a faint bounce tinted by the ground
-/// around, so shade reads deep and cool rather than a warm brown wash. The output
+/// The light carries the mood, not a grade: a warm key, a soft blue-grey sky fill that
+/// is the only light in shade, and a bounce tinted by the ground around. The output
 /// is a hue-keeping filmic curve with a firm toe (`Tone`), so blacks stay black,
 /// shade stays readable and team colours keep their saturation; the grade adds no
 /// colour cast, no shadow toning and no vignette, only calmer lime grass and orange
-/// earth and sharpened edges, and the harbor's grey dock takes no vibrance boost.
+/// earth and sharpened edges.
 fn theme_atmosphere(theme: Theme) -> Atmosphere {
     /// Mostly clear of haze: the arena and its walls, then a fade over the near backdrop.
     const HAZE_CLEAR_HALF_SIZE: f32 = ARENA as f32 + 8.0;
@@ -427,8 +425,8 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
         gamma: [1.0; 3],
         gain: [1.0; 3],
         saturation: 1.15,
-        vibrance: 0.2,
-        contrast: 1.18,
+        vibrance: 0.4,
+        contrast: 1.1,
         vignette: 0.0,
         black: 0.0,
         shadow_tint: 0xffffff,
@@ -443,7 +441,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
     match theme {
         Theme::Village | Theme::Custom => Atmosphere {
             enabled: true,
-            zenith: 0x1f64cc,
+            zenith: 0x2e6cc6,
             horizon: 0xc6dcee,
             sky_intensity: 1.15,
             sun_glow: 0xffeccc,
@@ -453,7 +451,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 coverage: 0.52,
                 lit: 0xffffff,
                 shade: 0x95a4b8,
-                shadow: 0.3,
+                shadow: 0.34,
             },
             haze: Haze {
                 density: 0.0016,
@@ -463,9 +461,9 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
                 arena_share: 0.2,
-                aerial: 0x7fa0cc,
-                far_density: 0.002,
-                far_start: 170.0,
+                aerial: 0x86a4c8,
+                far_density: 0.009,
+                far_start: 135.0,
                 sun_scatter: 0.3,
                 mist: 0.2,
             },
@@ -480,45 +478,45 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 relief: 1.0,
                 tone: 0.16,
                 dry_bleach: 0.14,
-                bounce: 0.05,
+                bounce: 0.08,
             },
             rim: 0.3,
             bloom: BLOOM,
-            exposure: 0.95,
-            occlusion: 0.8,
+            exposure: 1.06,
+            occlusion: 0.95,
             tone: TONE,
             grade: GRADE,
         },
         Theme::Harbor => Atmosphere {
             enabled: true,
-            zenith: 0x1452c4,
-            horizon: 0x9cbee6,
-            sky_intensity: 1.05,
-            sun_glow: 0xffdcb4,
+            zenith: 0x2e68c0,
+            horizon: 0xe2dcd4,
+            sky_intensity: 1.15,
+            sun_glow: 0xffd4a8,
             sun_glow_intensity: 1.05,
             sun_radius: 0.022,
             clouds: Clouds {
-                coverage: 0.42,
-                lit: 0xfff6ea,
-                shade: 0x8e9fb8,
-                shadow: 0.3,
+                coverage: 0.5,
+                lit: 0xfff0dc,
+                shade: 0x8c9cb0,
+                shadow: 0.33,
             },
             haze: Haze {
-                density: 0.0024,
-                falloff: 0.035,
+                density: 0.0009,
+                falloff: 0.04,
                 start: 55.0,
                 max: 0.8,
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
                 arena_share: 0.2,
-                aerial: 0x84a0c4,
-                far_density: 0.0022,
-                far_start: 170.0,
-                sun_scatter: 0.22,
-                mist: 0.15,
+                aerial: 0x7c9cc4,
+                far_density: 0.009,
+                far_start: 125.0,
+                sun_scatter: 0.3,
+                mist: 0.18,
             },
             ridges: Ridges {
-                color: 0x7d96b0,
+                color: 0x8aa2b4,
                 height: 0.026,
                 features: 4.0,
                 mesa: 0.0,
@@ -526,31 +524,28 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             },
             ground: Ground {
                 relief: 0.35,
-                tone: 0.16,
-                dry_bleach: 0.12,
-                bounce: 0.03,
+                tone: 0.1,
+                dry_bleach: 0.0,
+                bounce: 0.08,
             },
             rim: 0.3,
             bloom: BLOOM,
-            exposure: 0.94,
-            occlusion: 0.8,
+            exposure: 1.15,
+            occlusion: 0.95,
             tone: TONE,
-            // No boost for muted colours: the dock's concrete and asphalt stay grey
-            // under the warm sun, so the containers' paint and the sea carry the colour.
             grade: Grade {
-                saturation: 1.14,
-                contrast: 1.2,
-                vibrance: 0.0,
-                highlight_toning: 0.0,
+                saturation: 1.18,
+                highlight_tint: 0xffecd4,
+                highlight_toning: 0.12,
                 foliage: 0.6,
-                earth: 0.4,
+                earth: 0.3,
                 ..GRADE
             },
         },
         Theme::Quarry => Atmosphere {
             enabled: true,
-            zenith: 0x1a5ccc,
-            horizon: 0xd4dce6,
+            zenith: 0x2a68c8,
+            horizon: 0xd6dde4,
             sky_intensity: 1.1,
             sun_glow: 0xfff0d4,
             sun_glow_intensity: 1.1,
@@ -559,20 +554,20 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 coverage: 0.36,
                 lit: 0xfffaf0,
                 shade: 0xa8b0bc,
-                shadow: 0.24,
+                shadow: 0.3,
             },
             haze: Haze {
-                density: 0.0026,
+                density: 0.0013,
                 falloff: 0.035,
                 start: 55.0,
                 max: 0.78,
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
-                arena_share: 0.15,
-                aerial: 0xb4b0b0,
-                far_density: 0.0018,
-                far_start: 170.0,
-                sun_scatter: 0.4,
+                arena_share: 0.2,
+                aerial: 0x9ca2ae,
+                far_density: 0.0035,
+                far_start: 110.0,
+                sun_scatter: 0.45,
                 mist: 0.16,
             },
             ridges: Ridges {
@@ -586,19 +581,18 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 relief: 1.3,
                 tone: 0.14,
                 dry_bleach: 0.1,
-                bounce: 0.03,
+                bounce: 0.1,
             },
             rim: 0.28,
             bloom: BLOOM,
-            exposure: 0.62,
-            occlusion: 0.85,
+            exposure: 0.86,
+            occlusion: 0.95,
             tone: TONE,
             grade: Grade {
-                saturation: 1.25,
-                vibrance: 0.2,
-                contrast: 1.25,
+                saturation: 1.26,
+                vibrance: 0.45,
                 foliage: 0.5,
-                earth: 0.1,
+                earth: 0.22,
                 ..GRADE
             },
         },
@@ -618,7 +612,7 @@ mod tests {
         let harbor = theme_look(Theme::Harbor);
         assert_eq!((harbor.fog_near, harbor.fog_far), (150.0, 260.0));
         let quarry = theme_look(Theme::Quarry);
-        assert_eq!(quarry.fill_intensity, 1.0);
+        assert_eq!(quarry.fill_intensity, 1.55);
         assert!(quarry.shadow.right - quarry.shadow.left > 136.0);
         assert_eq!(Theme::from_name("superstress"), Theme::Custom);
     }

@@ -109,8 +109,8 @@ const BLOCKER_STEPS: vec3f = vec3f(1.0, 2.5, 5.0);
 const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
 // The filter radius (in units of the 7×7 tent) at contact and under far casters,
 // and the caster distances in metres over which it widens.
-const PENUMBRA_CONTACT_RADIUS: f32 = 0.55;
-const PENUMBRA_FAR_RADIUS: f32 = 1.7;
+const PENUMBRA_CONTACT_RADIUS: f32 = 1.0;
+const PENUMBRA_FAR_RADIUS: f32 = 2.1;
 const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
 // Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
 // hides much of the sky, so the shade is deepest there and opens toward the
@@ -340,17 +340,24 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                     // and burning wrecks visibly light the ground, walls and hulls
                     // around them in daylight.
                     decay *= FIRE_POOL_DECAY;
-                    gain = BLAST_LIGHT_GAIN;
+                    // In daylight a blast's light shows in shade and on the walls and
+                    // hulls around it; added over sunlit grass, amber only yellowed
+                    // the green into an acid blotch, so sunlit faces take less of it.
+                    gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
                 }
                 var color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
                 let l = offset / max(distance, 1e-6);
                 var lit_albedo = diffuse;
                 if atmosphere_on() {
                     color = fire_light_hue(color);
-                    // Firelight reads as an orange glow on any ground: amber light on
-                    // green grass alone multiplies to an acid lime, so the surface lends
-                    // it only part of its own hue.
+                    // Amber light on green grass multiplies to an acid yellow-green
+                    // blotch: the surface lends firelight only part of its own hue,
+                    // so the pool reads as an orange glow on any ground.
                     lit_albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
+                    // Even greyed, warm light added over green grass reads lime:
+                    // foliage takes only a share of it, walls, earth and hulls all.
+                    let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
+                    color *= 1.0 - FIRE_ON_GREEN_CUT * green;
                     // Fire is a wide, rolling source, not a point: its light wraps
                     // past the terminator, so the ground and the sides of hulls and
                     // walls around a blast glow rather than only the faces square to it.
@@ -414,12 +421,6 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w;
         let rim_color = frame.sky_horizon.rgb * 0.6 + frame.sky_sun.rgb * 0.4;
         indirect += rim_color * diffuse * rim;
-        // Sun rim: the sunlit side of a hull or wall turning away from the eye catches
-        // a brighter edge of the sun's own light, so tanks and cover separate from the
-        // ground on their lit side instead of reading as flat-lit cut-outs.
-        let lit_edge = clamp(dot(n, frame.sun_direction.xyz) * 1.5 + 0.1, 0.0, 1.0);
-        let edge = pow(facing, 4.0) * (1.0 - n.y * n.y) * lit_edge;
-        reflected.diffuse += sun * (diffuse + vec3f(0.04)) * (SUN_RIM * edge * RECIPROCAL_PI);
     }
     // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
     // terrain and buildings keep the hemisphere fill their themes were tuned with.
@@ -492,8 +493,6 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
-// The sun rim's strength (`shade_standard`), against the sun's direct light.
-const SUN_RIM: f32 = 0.55;
 // The clear-coat sun glint on satin paint (`shade_standard`): its strength, the
 // coat's roughness and its Fresnel at grazing angles.
 const PAINT_GLINT: f32 = 0.45;
@@ -520,22 +519,26 @@ const SHADE_SATURATION: f32 = 1.12;
 const EARTH_SHADE_SATURATION: f32 = 0.85;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
-const BLAST_LIGHT_GAIN: f32 = 6.5;
-const FIRE_POOL_DECAY: f32 = 0.62;
-// The share of a surface's own hue firelight gives up for its brightness.
-const FIRE_ALBEDO_GREY: f32 = 0.85;
+const BLAST_LIGHT_GAIN: f32 = 5.5;
+const FIRE_POOL_DECAY: f32 = 0.72;
 // How far past the terminator firelight wraps (0 = a point light's plain cosine).
-const FIRE_WRAP: f32 = 0.8;
+const FIRE_WRAP: f32 = 0.6;
 // Fire's own color at unit luminance, and how far a deep red-orange flash light turns
 // toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
 // pink screen tint rather than firelight.
-const FIRE_AMBER: vec3f = vec3f(1.0, 0.6, 0.28);
+const FIRE_AMBER: vec3f = vec3f(1.0, 0.48, 0.17);
+// The share of firelight a fully sunlit face, square to the sun, does without.
+const FIRE_SUNLIT_DIM: f32 = 0.75;
+// The share of a surface's own hue firelight gives up for its brightness.
+const FIRE_ALBEDO_GREY: f32 = 0.8;
+// The share of firelight a fully green surface (grass, leaves) does without.
+const FIRE_ON_GREEN_CUT: f32 = 0.8;
 const FIRE_AMBER_SHARE: f32 = 0.85;
 
 // The luminance a flash light's pool eases toward right beside it, against a sun of
 // about 3: firelight warms shade and the sunlit ground around a blast without washing
 // a near-camera muzzle flash or fireball across the frame.
-const FIRE_LIGHT_LIMIT: f32 = 6.0;
+const FIRE_LIGHT_LIMIT: f32 = 5.0;
 
 fn fire_light_hue(color: vec3f) -> vec3f {
     let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
@@ -554,7 +557,7 @@ const GROUND_SHEEN_MOST: f32 = 0.22;
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The share of the reflected sky's own colour glossy finishes keep, and how far it
 // turns to the sun's hue looking toward the sun.
-const REFLECTED_SKY_CHROMA: f32 = 0.45;
+const REFLECTED_SKY_CHROMA: f32 = 0.6;
 const REFLECTED_SUN_HUE: f32 = 0.7;
 // The lowest elevation of the drawn sky glossy finishes reflect.
 const REFLECTED_SKY_FLOOR: f32 = 0.22;
