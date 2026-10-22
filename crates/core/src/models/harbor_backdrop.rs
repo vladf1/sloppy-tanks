@@ -6,7 +6,7 @@
 //! simulation's random stream.
 //!
 //! The coast is split into quarter sectors, each merged into one mesh drawn with the
-//! apron effect's far-shore mode ([`ApronMode::Shore`]): it lights the vertex
+//! far-shore effect ([`ApronMode::Shore`], `HARBOR_SHORE`): it lights the vertex
 //! colors itself and hazes them by their distance from the eye, so the layers stay
 //! apart instead of drowning in the scene fog, and red warning lights on the
 //! cranes, masts and turbines shine through. A view draws only the sectors in
@@ -146,7 +146,7 @@ const SHORELINE_ROWS: usize = 3;
 const CRAG_ROWS: std::ops::RangeInclusive<usize> = 5..=7;
 /// Normals are smoothed across the coast's facets that meet at less than this
 /// angle, radians: rolling hills, with the quay walls and crags kept sharp.
-const COAST_CREASE: f64 = 0.7;
+const COAST_CREASE: f64 = 1.0;
 /// Bare rock showing through on the steepest ground.
 const ROCK: u32 = 0x7d786c;
 
@@ -169,9 +169,9 @@ fn shore_meshes() -> [Option<Node>; 4] {
             } else {
                 1.0
             };
-            let r = radius + offset + jitter * rough * if row < SHORELINE_ROWS { 0.6 } else { 4.0 };
-            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.06;
-            let shade = 0.84 + hash(step as u32 * 16 + row as u32, 23) * 0.26;
+            let r = radius + offset + jitter * rough * if row < SHORELINE_ROWS { 0.6 } else { 2.2 };
+            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.03;
+            let shade = 0.93 + hash(step as u32 * 16 + row as u32, 23) * 0.1;
             let craggy = CRAG_ROWS.contains(&row) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
             let color = if craggy && quay_amount(theta) == 0.0 {
                 ROCK
@@ -320,9 +320,9 @@ fn range_meshes() -> [Option<Node>; 4] {
             let theta = step_angle(step);
             let (depth, fraction, color) = ROWS[row];
             let jitter = hash(step as u32 * 8 + row as u32, 131) - 0.5;
-            let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 10.0;
-            let y = SEA_LEVEL - 4.0 + range_height(theta) * fraction * (1.0 + jitter * 0.25);
-            let shade = 0.85 + hash(step as u32 * 8 + row as u32, 137) * 0.3;
+            let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 5.0;
+            let y = SEA_LEVEL - 4.0 + range_height(theta) * fraction * (1.0 + jitter * 0.12);
+            let shade = 0.93 + hash(step as u32 * 8 + row as u32, 137) * 0.12;
             (
                 [r * theta.cos(), y, r * theta.sin()],
                 scale_hex_color(color, shade),
@@ -408,53 +408,111 @@ fn profile_row(theta: f64, row: usize) -> (f64, f64, u32) {
 const CITY_PAINT: [u32; 7] = [
     0xdfe3e4, 0xb8c6cf, 0x8fa4b4, 0xe8ddc9, 0x9db8c4, 0x70869a, 0xc9b9a3,
 ];
+/// Curtain-wall glass of the newer towers: dark blue-greys that mirror the sky
+/// through the effect's panes, so the skyline is not one pale pastel block.
+const CITY_GLASS: [u32; 3] = [0x48606f, 0x5a6f78, 0x3d5161];
+/// Rooftop plant and parapets.
+const CITY_PLANT: u32 = 0x8d9393;
 
-/// Towers across the bay to the east, banded with floors of glazing.
+/// One tower: a podium, its shaft banded with floors of glazing, a set-back
+/// crown on the taller ones, rooftop plant and, on the tallest, a mast with an
+/// aircraft warning light. Founded below the slope so it never floats on the
+/// facets.
+fn city_tower(i: u32, seed: u32, height: f64, w: f64, d: f64) -> Node {
+    let glass = hash(i, seed + 21) > 0.62;
+    let color = if glass {
+        CITY_GLASS[(hash(i, seed + 23) * CITY_GLASS.len() as f64) as usize % CITY_GLASS.len()]
+    } else {
+        CITY_PAINT[(hash(i, seed + 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()]
+    };
+    let mut tower = Node::group("");
+    let podium = (height * 0.22).clamp(3.0, 7.0);
+    put(
+        &mut tower,
+        box_part(
+            w * 1.25,
+            podium + FOOTING,
+            d * 1.2,
+            scale_hex_color(color, 0.8),
+            0.0,
+        ),
+        0.0,
+        (podium - FOOTING) / 2.0,
+        0.0,
+    );
+    // Its floors of windows are the far-shore effect's, drawn on the walls.
+    put(
+        &mut tower,
+        facade(box_part(w, height + FOOTING, d, color, 0.0)),
+        0.0,
+        (height - FOOTING) / 2.0,
+        0.0,
+    );
+    let mut roof = height;
+    if height > 18.0 && hash(i, seed + 29) > 0.35 {
+        let crown = height * (0.12 + 0.12 * hash(i, seed + 31));
+        put(
+            &mut tower,
+            facade(box_part(
+                w * 0.68,
+                crown,
+                d * 0.68,
+                scale_hex_color(color, 1.06),
+                0.0,
+            )),
+            w * 0.08,
+            height + crown / 2.0,
+            -d * 0.06,
+        );
+        roof += crown;
+    }
+    put(
+        &mut tower,
+        box_part(w * 0.36, 2.0, d * 0.4, CITY_PLANT, 0.0),
+        -w * 0.12,
+        roof + 1.0,
+        d * 0.1,
+    );
+    if roof > 26.0 {
+        put(
+            &mut tower,
+            box_part(0.35, 7.0, 0.35, 0xc9cccb, 0.0),
+            w * 0.18,
+            roof + 3.5,
+            0.0,
+        );
+        put(
+            &mut tower,
+            box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
+            w * 0.18,
+            roof + 7.2,
+            0.0,
+        );
+    }
+    tower
+}
+
+/// Towers across the bay to the east, banded with floors of glazing: a front row
+/// on the waterfront and a taller, hazier row behind it, highest round the
+/// centre, so the city reads as a skyline in depth rather than one cut-out row.
 fn city(sectors: &mut Sectors) {
-    for i in 0..44u32 {
-        let theta = -0.62 + 1.1 * hash(i, 3);
-        let inland = 10.0 + 50.0 * hash(i, 5);
-        let (x, y, z) = on_land(theta, inland);
-        let centre = 1.0 - (theta - (-0.05)).abs() / 0.6;
-        let height = 6.0 + hash(i, 7).powi(2) * 30.0 * (0.4 + 0.6 * centre.max(0.0));
-        let (w, d) = (5.0 + 5.0 * hash(i, 9), 5.0 + 5.0 * hash(i, 13));
-        let color = CITY_PAINT[(hash(i, 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()];
-        let yaw = -theta + hash(i, 19) * 0.3;
-        let mut tower = Node::group("");
-        // Founded below the slope so no tower floats on the facets.
-        // Its floors of windows are the far-shore effect's, drawn on the walls.
-        put(
-            &mut tower,
-            facade(box_part(w, height + FOOTING, d, color, 0.0)),
-            0.0,
-            (height - FOOTING) / 2.0,
-            0.0,
-        );
-        put(
-            &mut tower,
-            box_part(w * 0.4, 2.4, d * 0.4, 0x9aa0a0, 0.0),
-            w * 0.15,
-            height + 1.2,
-            0.0,
-        );
-        // The tall ones carry a mast with an aircraft warning light.
-        if height > 22.0 {
-            put(
-                &mut tower,
-                box_part(0.35, 6.0, 0.35, 0xc9cccb, 0.0),
-                -w * 0.2,
-                height + 3.0,
-                0.0,
+    for (rows, seed, first_inland, reach, tallest) in
+        [(36u32, 3u32, 10.0, 40.0, 30.0), (28, 61, 55.0, 60.0, 46.0)]
+    {
+        for i in 0..rows {
+            let theta = -0.62 + 1.1 * hash(i, seed);
+            let inland = first_inland + reach * hash(i, seed + 2);
+            let (x, y, z) = on_land(theta, inland);
+            let centre = 1.0 - (theta - (-0.05)).abs() / 0.6;
+            let height = 6.0 + hash(i, seed + 4).powi(2) * tallest * (0.4 + 0.6 * centre.max(0.0));
+            let (w, d) = (
+                5.0 + 6.0 * hash(i, seed + 6),
+                5.0 + 6.0 * hash(i, seed + 10),
             );
-            put(
-                &mut tower,
-                box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
-                -w * 0.2,
-                height + 6.2,
-                0.0,
-            );
+            let yaw = -theta + hash(i, seed + 16) * 0.3;
+            let tower = city_tower(i, seed, height, w, d);
+            place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
         }
-        place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
     }
     // A low waterfront of sheds and offices in front of the towers.
     for i in 0..26u32 {

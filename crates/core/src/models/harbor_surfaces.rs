@@ -10,7 +10,7 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
 use crate::scene::{Effect, Material, Node, Side, TextureRef, Wrap};
 
-use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON};
+use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON, HARBOR_SHORE};
 use super::harbor_models::{CONTAINER_METALNESS, CONTAINER_ROUGHNESS, container_wear};
 use super::model_primitives::{Cache, shadow_receiver, shadowed, span_between};
 
@@ -88,7 +88,11 @@ pub fn harbor_material(kind: HarborSurface, color: u32) -> Arc<Material> {
 pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
     APRON_MATERIALS.get_or_insert((mode, color), || {
         let effect = Effect::Custom {
-            name: HARBOR_APRON,
+            name: if mode == ApronMode::Shore {
+                HARBOR_SHORE
+            } else {
+                HARBOR_APRON
+            },
             params: vec![mode as u8 as f32],
         };
         let extra_textures = vec![(DOCK_GRAIN, dock_tile(Wrap::Repeat))];

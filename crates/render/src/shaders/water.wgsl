@@ -79,6 +79,8 @@ const TUG_HALF_BEAM = 2.3;
 const WAKE_SECONDS = 24.0;
 const KELVIN_SLOPE = 0.354;
 const WATER_PI = 3.14159265;
+// The way the wind blows over the harbor (unit x/z): its foam rows run along it.
+const WIND_ROWS = vec2f(0.94, 0.34);
 
 // Linear colors of the harbor's own grade: churned white foam, the bright teal a
 // sunlit swell shows through its crest, and the water body from the silty green
@@ -174,12 +176,11 @@ fn hull_shade(p: vec2f) -> f32 {
     var shade = 0.0;
     for (var i = 0; i < 3; i++) {
         // Only hulls whose shadow could reach this far are swept.
-        if hull_distance(p, i) > HULL_SHADOW_HEIGHT * length(reach) + 2.0 {
-            continue;
-        }
-        for (var k = 1; k <= 4; k++) {
-            let d = hull_distance(p - reach * (HULL_SHADOW_HEIGHT * f32(k) * 0.25), i);
-            shade = max(shade, 1.0 - smoothstep(-1.2, 1.4, d));
+        if hull_distance(p, i) <= HULL_SHADOW_HEIGHT * length(reach) + 2.0 {
+            for (var k = 1; k <= 4; k++) {
+                let d = hull_distance(p - reach * (HULL_SHADOW_HEIGHT * f32(k) * 0.25), i);
+                shade = max(shade, 1.0 - smoothstep(-1.2, 1.4, d));
+            }
         }
     }
     return shade;
@@ -485,7 +486,14 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // only a thin lap.
         let line_reach = mix(0.12 + breakup * 0.3, 0.3 + breakup * 0.55 + lace * 0.25, near.w) + footprint * 1.4;
         let line = (1.0 - smoothstep(0.04, line_reach, shore)) * mix(0.5, 1.0, churn)
-            * mix(slaps, 1.0, 0.35 + 0.65 * churn) * mix(1.0, smoothstep(0.25, 0.55, lace + breakup * 0.5), near.w * 0.6);
+            * mix(slaps, 1.0, mix(churn * churn, 0.35 + 0.65 * churn, near.w))
+            * mix(1.0, smoothstep(0.25, 0.55, lace + breakup * 0.5), near.w * 0.6);
+        // Off a quay's face the slapped swell sheds lace that drifts a few metres
+        // out before it dissolves, in patches with the swell, so the wall stands
+        // in moving water seen from the air (its foot hidden under the parapet)
+        // rather than on a ruled white outline.
+        let skirt_lace = smoothstep(0.42, 0.72, lace * 0.55 + breakup * 0.45 + gust * 0.2 + slaps * 0.15);
+        let skirt = near.w * (1.0 - smoothstep(0.3, 2.2 + breakup * 2.0 + churn * 1.5, shore)) * skirt_lace;
         // The collar frays into lace; from high up, where the lace cannot resolve,
         // it breaks into the swell's patches rather than a solid white band.
         let collar_lace = mix(smoothstep(0.42, 0.7, breakup + gust * 0.25), smoothstep(0.3, 0.55, breakup + lace * 0.45 - churn * 0.15), detail);
@@ -500,28 +508,31 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // From high up the wake softens rather than breaking into white flecks of
         // the ripple tile.
         let wake_foam = wake.x * wake_lace * mix(0.55, 1.0, detail);
-        // Whitecaps out on the open water: wind-streaked patches that form where
-        // two drifting swell fields crest together and dissolve as they part,
-        // more of them in the gusts, none in the lee of the quays, faded where a
-        // pixel would only see them shimmer. Only where a squall is passing over
-        // the basin: whole stretches of it lie calm, so the caps never spread
-        // evenly over the water. The noise runs only where caps can show.
-        let open_water = smoothstep(8.0, 26.0, shore) * (1.0 - smoothstep(0.4, 1.4, footprint));
+        // Wind rows out on the open water: foam drawn into long, loose streaks
+        // that run with the wind in rows a few metres apart, bunched where a
+        // squall is passing and dissolving as it moves on, so the open basin never
+        // reads as chips scattered evenly over it. None in the lee of the quays;
+        // faded where a pixel would only see them shimmer. Every layer drifts at
+        // one rate, so the rows never jump.
+        let open_water = smoothstep(9.0, 28.0, shore) * (1.0 - smoothstep(0.5, 1.6, footprint));
         var whitecap = 0.0;
         if open_water > 0.0 {
-            let squall = smoothstep(0.4, 0.72, water_noise(input.world.xz / 55.0 + vec2f(t * 0.012, -t * 0.007)));
+            let downwind = dot(input.world.xz, WIND_ROWS);
+            let across_wind = dot(input.world.xz, vec2f(-WIND_ROWS.y, WIND_ROWS.x));
+            let squall = smoothstep(0.42, 0.75, water_noise(vec2f(downwind, across_wind) / 60.0 + vec2f(t * 0.008, 0.0)));
             if squall > 0.0 {
-                let cap_drift = vec2f(t * 0.16, t * 0.06);
-                let cap_a = water_noise(input.world.xz * vec2f(0.3, 1.1) + cap_drift);
-                let cap_b = water_noise(input.world.xz * vec2f(0.8, 1.4) - cap_drift * 1.6 + 13.0);
-                let cap_field = cap_a * 0.6 + cap_b * 0.4 + (gust - 0.5) * 0.45;
-                // A bright breaking crest fading into the lace of its trailing foam.
-                whitecap = smoothstep(0.8, 0.97, cap_field) * open_water * squall
-                    * smoothstep(0.3, 0.75, lace + breakup * 0.3);
+                // Rows: thin across the wind, tens of metres long down it, their
+                // lines wandering a little so they never rule straight.
+                let wander = (water_noise(vec2f(downwind * 0.03, across_wind * 0.05) + 3.0) - 0.5) * 3.0;
+                let row = water_noise(vec2f(downwind * 0.035 - t * 0.04, (across_wind + wander) * 0.42));
+                let fine_row = water_noise(vec2f(downwind * 0.09 - t * 0.06, (across_wind + wander) * 1.1) + 11.0);
+                let line_field = row * 0.7 + fine_row * 0.3;
+                let streak = smoothstep(0.68, 0.9, line_field) * (1.0 - smoothstep(0.88, 0.98, line_field) * 0.4);
+                whitecap = streak * squall * open_water * mix(0.55, 1.0, smoothstep(0.2, 0.65, lace * 0.5 + breakup * 0.5));
             }
         }
-        let foam = clamp(line * 0.85 + collar * 0.75 + wash * 0.5 + flecks * 0.35 + wake_foam
-            + whitecap * 0.65, 0.0, 1.0);
+        let foam = clamp(line * 0.85 + collar * 0.75 + skirt * 0.42 + wash * 0.5 + flecks * 0.35 + wake_foam
+            + whitecap * 0.2, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0)) * mix(0.65, 1.0, sunlit);
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {
