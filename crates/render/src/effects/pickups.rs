@@ -1,10 +1,15 @@
-//! Pickup and promotion feedback (`presentation.ts` `pickupEffect`): an additive
-//! ring expanding over the ground and a glow shell around the collecting tank.
+//! Pickup and promotion feedback (`presentation.ts` `pickupEffect`): a soft
+//! shockwave spreading over the ground from the pickup and a band of light rising
+//! around the collecting tank, both in the pickup's color. Also the glow meshes a
+//! pad's idle light column shares with them: additive surfaces of revolution
+//! whose vertex colors fade them out, so no edge reads as a flat cut-out card.
 
 use std::collections::VecDeque;
-use std::f32::consts::FRAC_PI_2;
+use std::f64::consts::TAU;
 
 use glam::{Mat4, Vec3};
+use sloppy_core::geometry::Mesh;
+use sloppy_core::scene::{Blending, Material, Side};
 use sloppy_core::sim::RenderState;
 use sloppy_core::sim::data::vehicle;
 
@@ -14,14 +19,129 @@ use crate::color::hex_to_linear;
 /// `FEEDBACK.maxPickupEffects` and `FEEDBACK.pickupSeconds` (view-settings.ts).
 pub const MAX_PICKUP_EFFECTS: usize = 24;
 pub const PICKUP_SECONDS: f64 = 0.8;
-const RING_HEIGHT: f32 = 0.08;
+const RING_HEIGHT: f32 = 0.06;
+/// The shockwave's radius at the start and how far it spreads, decelerating.
 const RING_GROWTH: f64 = 3.0;
-const RING_OPACITY: f64 = 0.85;
-const GLOW_OPACITY: f64 = 0.2;
-const GLOW_HEIGHT: f32 = 1.1;
-/// The glow ellipsoid around a tank of scale 1, and how much it swells.
-const GLOW_SIZE: Vec3 = Vec3::new(1.65, 1.25, 1.9);
-const GLOW_GROWTH: f64 = 0.15;
+const RING_OPACITY: f64 = 0.95;
+/// The band of light around a tank of scale 1: its radius, which tightens as it
+/// rises, and its height, which it reaches early and then fades at.
+const BAND_RADIUS: f64 = 1.75;
+const BAND_TIGHTEN: f64 = 0.18;
+const BAND_HEIGHT: f64 = 2.6;
+const BAND_OPACITY: f64 = 0.9;
+/// Segments around every glow mesh: smooth from the battle camera, few triangles.
+const GLOW_SEGMENTS: u32 = 40;
+
+/// An additive glow surface of revolution around +y: each row is (radius, height,
+/// brightness); consecutive rows join into a band whose vertex colors carry the
+/// brightness, so the additive blend fades it to nothing where a row is 0.
+pub fn glow_lathe(rows: &[[f64; 3]], segments: u32) -> Mesh {
+    let mut mesh = Mesh::default();
+    let columns = segments + 1;
+    for &[radius, height, brightness] in rows {
+        for step in 0..columns {
+            let angle = TAU * f64::from(step) / f64::from(segments);
+            let (sin, cos) = angle.sin_cos();
+            mesh.positions
+                .push([(radius * cos) as f32, height as f32, (radius * sin) as f32]);
+            mesh.normals.push([cos as f32, 0.0, sin as f32]);
+            mesh.uvs
+                .push([f64::from(step) as f32 / segments as f32, height as f32]);
+            mesh.colors.push([brightness as f32; 3]);
+        }
+    }
+    let mut indices = Vec::new();
+    for row in 0..rows.len().saturating_sub(1) as u32 {
+        for step in 0..segments {
+            let a = row * columns + step;
+            let b = a + columns;
+            indices.extend([a, b, a + 1, a + 1, b, b + 1]);
+        }
+    }
+    mesh.indices = Some(indices);
+    mesh
+}
+
+/// The additive, unlit, double-sided paint every pickup glow uses; instance tints
+/// color it.
+pub fn glow_material() -> Material {
+    Material {
+        transparent: true,
+        depth_write: false,
+        side: Side::Double,
+        blending: Blending::Additive,
+        vertex_colors: true,
+        ..Material::basic(0xffffff)
+    }
+}
+
+/// A pad's idle light: a pool of light on its deck with a brighter lens ring, and
+/// a column rising from it toward the floating gem, fading as it climbs. Its base
+/// is at y = 0; instances stand it on the deck.
+pub fn pickup_beam_geometry() -> Mesh {
+    let mut pool = glow_lathe(
+        &[
+            [0.0, 0.0, 0.5],
+            [0.4, 0.0, 0.3],
+            [0.56, 0.0, 1.0],
+            [0.64, 0.0, 0.32],
+            [0.84, 0.0, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    );
+    let column = glow_lathe(
+        &[
+            [0.74, 0.0, 0.7],
+            [0.75, 0.1, 0.48],
+            [0.78, 0.5, 0.16],
+            [0.82, 1.05, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    );
+    let offset = pool.positions.len() as u32;
+    pool.positions.extend(column.positions);
+    pool.normals.extend(column.normals);
+    pool.uvs.extend(column.uvs);
+    pool.colors.extend(column.colors);
+    let column_indices = column.indices.unwrap_or_default();
+    if let Some(indices) = &mut pool.indices {
+        indices.extend(column_indices.into_iter().map(|index| index + offset));
+    }
+    pool
+}
+
+/// The collection shockwave, flat on the ground with radius 1: a bright leading
+/// edge and a soft wash trailing inside it.
+pub fn shockwave_geometry() -> Mesh {
+    glow_lathe(
+        &[
+            [0.55, 0.0, 0.0],
+            [0.86, 0.0, 0.3],
+            [0.97, 0.0, 1.0],
+            [1.04, 0.0, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    )
+}
+
+/// The rising band around the collecting tank, radius and height 1: brightest
+/// at the ground, gone at the top.
+pub fn band_geometry() -> Mesh {
+    glow_lathe(
+        &[
+            [1.0, 0.0, 0.85],
+            [1.0, 0.12, 0.6],
+            [1.0, 0.5, 0.2],
+            [1.0, 1.0, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    )
+}
+
+/// Ease-out cubic: fast at first, settling at the end.
+fn ease_out(progress: f64) -> f64 {
+    1.0 - (1.0 - progress).powi(3)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct PickupEffect {
@@ -88,11 +208,11 @@ impl PickupEffects {
         for effect in &self.effects {
             let progress = effect.age / PICKUP_SECONDS;
             let fade = (1.0 - progress).powi(2);
+            let spread = ease_out(progress);
             let [r, g, b] = effect.color;
             let ring =
                 Mat4::from_translation(Vec3::new(effect.x as f32, RING_HEIGHT, effect.z as f32))
-                    * Mat4::from_rotation_x(-FRAC_PI_2)
-                    * Mat4::from_scale(Vec3::splat((1.0 + progress * RING_GROWTH) as f32));
+                    * Mat4::from_scale(Vec3::splat((1.0 + spread * RING_GROWTH) as f32));
             self.rings.push(record(
                 ring,
                 [r, g, b, (RING_OPACITY * fade) as f32],
@@ -105,16 +225,18 @@ impl PickupEffects {
                 continue;
             };
             let p = tank.position;
-            let center = Vec3::new(
+            let base = Vec3::new(
                 (tank.previous.x + (p.x - tank.previous.x) * alpha) as f32,
-                GLOW_HEIGHT,
+                0.0,
                 (tank.previous.z + (p.z - tank.previous.z) * alpha) as f32,
             );
-            let size =
-                GLOW_SIZE * (vehicle(tank.kind).scale * (1.0 + progress * GLOW_GROWTH)) as f32;
+            let scale = vehicle(tank.kind).scale;
+            let radius = BAND_RADIUS * scale * (1.0 - BAND_TIGHTEN * spread);
+            let height = BAND_HEIGHT * scale * (0.35 + 0.65 * spread);
             self.glows.push(record(
-                Mat4::from_translation(center) * Mat4::from_scale(size),
-                [r, g, b, (GLOW_OPACITY * fade) as f32],
+                Mat4::from_translation(base)
+                    * Mat4::from_scale(Vec3::new(radius as f32, height as f32, radius as f32)),
+                [r, g, b, (BAND_OPACITY * (1.0 - progress).powf(1.5)) as f32],
                 [0.0; 4],
             ));
         }
@@ -148,10 +270,10 @@ mod tests {
             6.0,
             "the oldest effects were replaced"
         );
-        assert!((first.tint[3] - 0.85 * 0.25).abs() < 1e-6);
+        assert!((first.tint[3] - (RING_OPACITY * 0.25) as f32).abs() < 1e-6);
         state.tanks[0].alive = false;
         effects.update(&state, 1.0, 0.1);
-        assert!(effects.glows.is_empty(), "no glow without a living tank");
+        assert!(effects.glows.is_empty(), "no band without a living tank");
         effects.update(&state, 1.0, 0.3);
         assert!(effects.is_empty() && effects.rings.is_empty());
     }

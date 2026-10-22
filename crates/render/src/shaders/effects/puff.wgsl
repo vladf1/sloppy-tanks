@@ -64,52 +64,91 @@ fn puff_fire(t: f32) -> vec3f {
 fn puff_bands(t: f32) -> f32 {
     let f = t * 4.0;
     let step = floor(f) + smoothstep(0.3, 0.7, fract(f));
-    return mix(t, step / 4.0, 0.6);
+    return mix(t, step / 4.0, 0.4);
 }
 
+// Below this heat a puff's fire never reaches the ramp's first glow (temperature
+// 0.03 after the bands' 0.6 floor and the core and noise gains of at most 1.3).
+const PUFF_FIRE_MIN_HEAT: f32 = 0.038;
+
+// Smoke puffs pile up deep over a burning wreck and a blast, so most of a frame's
+// puff pixels are hidden or empty: the noise runs only inside the card's circle,
+// and the lighting and fire only where the puff has density. The skipped pixels
+// get exactly the zero opacity they would have computed.
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
-    let packed = f.instance_data.x;
-    let seed = fract(packed);
-    let underglow = floor(packed) / 15.0;
-    let heat = f.instance_data.y;
-    let erosion = f.instance_data.z;
-    let softness = f.instance_data.w;
-    let fiery = smoothstep(0.04, 0.25, heat);
     let point = f.uv * 2.0 - 1.0;
     let radius = length(point);
-    // Each puff turns its noise its own way, and the noise boils slowly upward.
-    let turn = seed * 6.2831853;
-    let c = cos(turn);
-    let sn = sin(turn);
-    let p = vec2f(c * point.x - sn * point.y, sn * point.x + c * point.y);
-    let offset = vec2f(seed * 37.1, seed * 91.7);
-    // Slow enough that a billow's outline drifts rather than trembles.
-    let boil = vec2f(0.0, frame.camera_position.w * (0.16 + 0.3 * fiery));
-    let n1 = puff_noise(p * 2.1 + offset - boil);
-    let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.5);
-    let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 1.8);
-    let noise = n1 * 0.55 + n2 * 0.3 + n3 * 0.15;
+    var density = 0.0;
+    if radius < 1.0 {
+        let packed = f.instance_data.x;
+        let seed = fract(packed);
+        let heat = f.instance_data.y;
+        let erosion = f.instance_data.z;
+        let softness = f.instance_data.w;
+        let fiery = smoothstep(0.04, 0.25, heat);
+        // Each puff turns its noise its own way, and the noise boils slowly upward.
+        let turn = seed * 6.2831853;
+        let c = cos(turn);
+        let sn = sin(turn);
+        let p = vec2f(c * point.x - sn * point.y, sn * point.x + c * point.y);
+        let offset = vec2f(seed * 37.1, seed * 91.7);
+        // Slow enough that a billow's outline drifts rather than trembles. A hot
+        // puff churns on as it cools, driven by its falling heat: a boil rate that
+        // changed with heat would scale the whole running time, so a cooling puff's
+        // noise would leap to a new pattern every frame and its density flicker,
+        // the more the longer the game has run.
+        let boil = vec2f(0.0, frame.camera_position.w * 0.16 - heat * 0.25);
+        // Cauliflower silhouette: the noise pushes the rim in and out; haze is softer.
+        // Erosion pulls the rim in, most where the noise is thin, so an old puff frays
+        // into wisps from the outside instead of going full of holes. Fine noise
+        // breaks the rim's outline so no billow reads as a clean disc.
+        let lumpiness = mix(0.56, 0.32, softness);
+        let rim = mix(0.8, 0.94, softness);
+        let n1 = puff_noise(p * 2.1 + offset - boil);
+        // The edge is linear in the finer octaves, each in 0..1: where even their
+        // most favourable values leave it past the rim, the puff is empty.
+        let slope = lumpiness - 0.55 * erosion;
+        let least_edge = radius - 0.5 * lumpiness - 0.02 + 0.8 * erosion + slope * 0.55 * n1
+            + min(0.3 * slope, 0.0) + min(0.15 * slope + 0.04, 0.0);
+        if least_edge < rim {
+            let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.5);
+            let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 1.8);
+            let noise = n1 * 0.55 + n2 * 0.3 + n3 * 0.15;
+            let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.04
+                + erosion * (0.25 + 0.55 * (1.0 - noise));
+            let feather = mix(0.2, 0.56, softness) + erosion * 0.16 + fiery * 0.02;
+            // The card's own edge is always clear, however far the noise pushes the
+            // rim, so no puff shows the straight side of its quad.
+            let window = 1.0 - smoothstep(0.8, 1.0, radius);
+            density = (1.0 - smoothstep(rim - feather, rim, edge)) * window;
+            if density > 0.0 {
+                (*s).color = puff_color((*s).color, point, radius, floor(packed) / 15.0, heat, softness, fiery, n1, n2, noise, f.view_direction);
+            }
+        }
+    }
+    (*s).opacity *= density;
+}
 
-    // Cauliflower silhouette: the noise pushes the rim in and out; haze is softer.
-    // Erosion pulls the rim in, most where the noise is thin, so an old puff frays
-    // into wisps from the outside instead of going full of holes. Fine noise
-    // breaks the rim's outline so no billow reads as a clean disc.
-    let lumpiness = mix(0.72, 0.42, softness);
-    let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.06
-        + erosion * (0.25 + 0.55 * (1.0 - noise));
-    let rim = mix(0.8, 0.94, softness);
-    let feather = mix(0.14, 0.5, softness * softness) + erosion * 0.16 + fiery * 0.04;
-    // The card's own edge is always clear, however far the noise pushes the rim,
-    // so no puff shows the straight side of its quad.
-    let window = 1.0 - smoothstep(0.8, 1.0, radius);
-    let density = (1.0 - smoothstep(rim - feather, rim, edge)) * window;
-
+// A visible puff pixel's color: the lit lumpy ball, its fire and its underglow.
+fn puff_color(
+    albedo: vec3f,
+    point: vec2f,
+    radius: f32,
+    underglow: f32,
+    heat: f32,
+    softness: f32,
+    fiery: f32,
+    n1: f32,
+    n2: f32,
+    noise: f32,
+    view_direction: vec3f,
+) -> vec3f {
     // A lumpy ball: noise tilts the sphere normal into billows, lit like the scene.
     let bulge = sqrt(max(1.0 - radius * radius, 0.0));
     let lumps = vec2f(n2 - 0.5, n1 - 0.5) * 1.2;
     let normal = normalize(
         frame.camera_right.xyz * (point.x + lumps.x) + frame.camera_up.xyz * (point.y + lumps.y)
-            + f.view_direction * (bulge + 0.3),
+            + view_direction * (bulge + 0.3),
     );
     let sun = dot(normal, frame.sun_direction.xyz);
     let direct = smoothstep(-0.25, 0.85, sun) * (0.55 + 0.45 * noise);
@@ -120,7 +159,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let belly = mix(0.35, 1.0, smoothstep(-0.55, 0.65, normal.y));
     let self_shadow = mix(0.62, 1.08, smoothstep(-0.9, 0.7, point.y + (n1 - 0.5) * 0.6));
     let occlusion = (0.5 + 0.5 * smoothstep(0.2, 0.75, noise)) * belly * self_shadow;
-    let albedo = (*s).color;
     var color = albedo * (frame.sun_color.rgb * direct * 1.6 * mix(0.7, 1.0, self_shadow) + hemisphere * occlusion * 0.85)
         * RECIPROCAL_PI;
     // The shade side cools toward the sky's blue; the sunlit rim of a billow
@@ -129,24 +167,27 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let rim_light = smoothstep(0.45, 0.95, radius) * smoothstep(0.1, 0.7, sun) * (1.0 - softness);
     color += albedo * frame.sun_color.rgb * rim_light * 0.22;
 
-    // Fire: hottest at the core and in the dense noise, settling into toon bands.
-    // As a fire puff cools its rim goes first, through deep red into the soot it
-    // carries, so a fireball keeps a dark smoky rim and then turns to smoke.
-    let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
-    // Broad noise only, so the bands cool in large lobes rather than speckles.
-    let broad = n1 * 0.85 + n2 * 0.15;
-    let temperature = puff_bands(heat * (0.3 + 0.7 * core) * (0.35 + 0.95 * broad));
-    let glow = smoothstep(0.03, 0.28, temperature);
-    // Each lobe of a fireball is brighter on its upper face and deepens into
-    // its folds, so the fire keeps its rolling volume.
-    let lobe = 0.5 + 0.7 * smoothstep(-0.35, 0.85, dot(normal, frame.camera_up.xyz) * 0.7 + (n2 - 0.5) * 0.9)
-        * (0.75 + 0.25 * smoothstep(0.3, 0.7, noise));
-    color = mix(color, puff_fire(temperature) * mix(1.0, lobe, fiery), glow);
-    // Smoke over a fire glows from below with its light.
-    let lit_from_below = underglow * (1.0 - glow) * clamp(0.75 - normal.y, 0.15, 1.0)
-        * smoothstep(0.6, -0.6, point.y);
-    color += vec3f(1.7, 0.45, 0.07) * lit_from_below * (0.4 + 0.6 * noise);
-
-    (*s).color = color;
-    (*s).opacity *= density;
+    var glow = 0.0;
+    if heat > PUFF_FIRE_MIN_HEAT {
+        // Fire: hottest at the core and in the dense noise, settling into toon bands.
+        // As a fire puff cools its rim goes first, through deep red into the soot it
+        // carries, so a fireball keeps a dark smoky rim and then turns to smoke.
+        let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
+        // Broad noise only, so the bands cool in large lobes rather than speckles.
+        let broad = n1 * 0.85 + n2 * 0.15;
+        let temperature = puff_bands(heat * (0.18 + 0.82 * core * core) * (0.4 + 0.9 * broad));
+        glow = smoothstep(0.03, 0.28, temperature);
+        // Each lobe of a fireball is brighter on its upper face and deepens into
+        // its folds, so the fire keeps its rolling volume.
+        let lobe = 0.5 + 0.7 * smoothstep(-0.35, 0.85, dot(normal, frame.camera_up.xyz) * 0.7 + (n2 - 0.5) * 0.9)
+            * (0.75 + 0.25 * smoothstep(0.3, 0.7, noise));
+        color = mix(color, puff_fire(temperature) * mix(1.0, lobe, fiery), glow);
+    }
+    if underglow > 0.0 {
+        // Smoke over a fire glows from below with its light.
+        let lit_from_below = underglow * (1.0 - glow) * clamp(0.75 - normal.y, 0.15, 1.0)
+            * smoothstep(0.6, -0.6, point.y);
+        color += vec3f(1.7, 0.45, 0.07) * lit_from_below * (0.4 + 0.6 * noise);
+    }
+    return color;
 }

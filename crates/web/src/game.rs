@@ -376,7 +376,13 @@ impl Game {
         self.accumulator = 0.0;
         // Animation frames queued before GO (behind a slow arena rebuild) carry older
         // timestamps; measuring from now keeps them from advancing the new round.
-        self.times.last_ms = Some(now_ms());
+        // Autoplay keeps its seeded timeline frame-exact whatever the page's load
+        // time instead: its first frame starts the round with a full catch-up.
+        self.times.last_ms = Some(if self.autoplay {
+            f64::NEG_INFINITY
+        } else {
+            now_ms()
+        });
     }
 
     pub fn resume(&mut self) {
@@ -414,15 +420,7 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
-        // Destroying an enemy holds the whole action (simulation, effects, camera)
-        // for a beat. Autoplay has no player to feel it and keeps the seeded
-        // timeline frame-exact.
         let dt = self.times.advance(now);
-        let dt = if self.autoplay {
-            dt
-        } else {
-            self.view.hit_stop_time(dt)
-        };
         let mut result = vec![0.0; frame_slot::LENGTH];
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
