@@ -46,8 +46,9 @@ pub struct Spark {
     gravity: f32,
     /// Flicker phase; zero for a steady spark.
     flicker: f32,
-    /// Linear HDR color at birth; it cools toward deep red as the spark dies.
+    /// Linear HDR color at birth; a hot spark cools toward deep red as it dies.
     color: [f32; 3],
+    cools: bool,
     /// Seconds of flight its streak stretches over.
     stretch: f32,
     /// Seconds before it leaves the fire, unseen until then.
@@ -76,6 +77,8 @@ pub struct Burst {
     pub stagger: f32,
     /// The fire they leave hides them within this radius (m).
     pub hide: f32,
+    /// Hot metal cools to red as it dies; light keeps its color and only fades.
+    pub cools: bool,
 }
 
 /// A blast's hot sparks: fast yellow-orange streaks that leave the fireball and
@@ -91,6 +94,7 @@ pub const BLAST_SPARKS: Burst = Burst {
     scatter: 0.9,
     stagger: 0.14,
     hide: 3.0,
+    cools: true,
 };
 /// Embers carried up on a fire's heat, flickering as they die.
 pub const EMBERS: Burst = Burst {
@@ -104,6 +108,7 @@ pub const EMBERS: Burst = Burst {
     scatter: 0.6,
     stagger: 0.3,
     hide: 0.0,
+    cools: true,
 };
 /// A shell striking steel: a bright, quick spray glancing off the armour.
 pub const METAL_SPARKS: Burst = Burst {
@@ -117,6 +122,7 @@ pub const METAL_SPARKS: Burst = Burst {
     scatter: 0.1,
     stagger: 0.03,
     hide: 0.0,
+    cools: true,
 };
 /// A shell striking stone or concrete.
 pub const STONE_SPARKS: Burst = Burst {
@@ -130,6 +136,22 @@ pub const STONE_SPARKS: Burst = Burst {
     scatter: 0.1,
     stagger: 0.03,
     hide: 0.0,
+    cools: true,
+};
+/// Light thrown off a collected pickup: quick streaks fanning up and out in the
+/// kind's color (set per event), slowing to hang a moment before they fade.
+pub const PICKUP_SPARKS: Burst = Burst {
+    count: 16,
+    speed: [4.0, 9.0],
+    lift: 1.2,
+    life: [0.3, 0.6],
+    width: 0.075,
+    color: [1.0, 1.0, 1.0],
+    gravity: 3.0,
+    scatter: 0.7,
+    stagger: 0.06,
+    hide: 0.0,
+    cools: false,
 };
 /// A muzzle's burning propellant flecks.
 pub const MUZZLE_SPARKS: Burst = Burst {
@@ -143,6 +165,7 @@ pub const MUZZLE_SPARKS: Burst = Burst {
     scatter: 0.05,
     stagger: 0.02,
     hide: 0.0,
+    cools: true,
 };
 
 #[derive(Clone, Debug)]
@@ -218,6 +241,7 @@ impl Sparks {
                 gravity: burst.gravity,
                 flicker,
                 color: burst.color.map(|c| c * shade),
+                cools: burst.cools,
                 stretch,
                 delay,
                 origin,
@@ -269,7 +293,11 @@ impl Sparks {
             let length = (speed * spark.stretch * flown).clamp(STRETCH[0], STRETCH[1]);
             let direction = spark.velocity / speed.max(1e-4);
             // Hot sparks cool to orange and deep red as they die; embers flicker.
-            let cool = [1.0, 0.4 + 0.6 * fade, 0.1 + 0.9 * fade * fade];
+            let cool = if spark.cools {
+                [1.0, 0.4 + 0.6 * fade, 0.1 + 0.9 * fade * fade]
+            } else {
+                [1.0; 3]
+            };
             let flicker = if spark.flicker > 0.0 {
                 0.55 + 0.45 * (spark.flicker + spark.life * 23.0).sin()
             } else {
