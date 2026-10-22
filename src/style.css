@@ -4365,8 +4365,13 @@ html:not(.phone) #toast[data-tone="death"] {
   html:not(.phone) .start[data-play="multiplayer"] .setup-panels {
     border-radius: 16px 0 16px 16px;
   }
-  html:not(.phone) .start :is(.menu-footer, .menu-build) {
-    grid-column: 1 / -1;
+  /* Fixed rows under the sheets, so a short screen's missing title row never draws
+     the build line up into it. */
+  html:not(.phone) .start .menu-footer {
+    grid-area: 4 / 1 / 5 / -1;
+  }
+  html:not(.phone) .start .menu-build {
+    grid-area: 5 / 1 / 6 / -1;
   }
   html:not(.phone) .start .menu-footer {
     margin-top: 14px;
