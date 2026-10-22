@@ -208,7 +208,7 @@ Runtime textures, tank previews and sounds are checked in under `public/`. Devel
 | `pnpm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
 | `pnpm run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
 | `pnpm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
-| `pnpm run generate:pickup-atlas` | The shared pickup atlas from the icons in `assets/texture-sources/pickups/`; also run by `generate:textures` and `generate:ammo` |
+| `pnpm run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
 | `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
 | `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
 | `pnpm run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |

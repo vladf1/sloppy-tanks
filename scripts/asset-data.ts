@@ -49,8 +49,9 @@ export const PICKUP_PALLET_CELL = [3, 0] as const;
 export const PICKUP_SWATCH_CELL = [3, 2] as const;
 export const PICKUP_BRASS_CELL = [0, 3] as const;
 /** The surface each kind's supply shows under its paint: pine crates, olive drab
- * tubes, black ammo cans, jerry cans, black fibre shell canisters, rolled armour
- * steel, a ribbed gunmetal tool chest and a ribbed olive drab radio case. */
+ * tubes, black ammo cans, olive drab jerry cans, black fibre shell canisters,
+ * rolled armour steel, a ribbed gunmetal tool chest and a ribbed olive drab radio
+ * case. */
 export const PICKUP_SURFACES = {
   spread: "planks",
   rocket: "olive",
@@ -65,11 +66,11 @@ export const PICKUP_SURFACES = {
   PickupKind,
   "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "chest" | "case"
 >;
-/** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): the big painted
- * block on top of its load. Nine hues with none repeated (raspberry, burnt orange,
- * violet, teal, lime, pale steel blue, fuel yellow, green and off-white), as worn
- * enamel; the raspberry leans to purple and the steel blue is pale and grey, so
- * neither reads as a team's red or blue. */
+/** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): one broad band of
+ * worn enamel on its supply. Nine hues with none repeated (raspberry, burnt
+ * orange, violet, teal, lime, pale steel blue, fuel yellow, green and off-white);
+ * the raspberry leans to purple and the steel blue is pale and grey, so neither
+ * reads as a team's red or blue. */
 export const PICKUP_PAINTS = {
   spread: 0xb44c88,
   rocket: 0xcc602c,
@@ -81,14 +82,28 @@ export const PICKUP_PAINTS = {
   repair: 0x3c9a4e,
   laser: 0xe6e2d6,
 } as const satisfies Record<PickupKind, number>;
-/** The lot marking stencilled over and under each kind's emblem. */
+/** Where each kind wears its band: across the middle of the lid and down the
+ * sides (`across`), round the canisters near their caps (`ring`) or over the top
+ * of the jerry cans and their upper faces (`upper`). */
+export const PICKUP_BANDS = {
+  spread: "across",
+  rocket: "across",
+  ricochet: "ring",
+  piercing: "across",
+  rapid: "across",
+  shield: "across",
+  speed: "upper",
+  repair: "across",
+  laser: "across",
+} as const satisfies Record<PickupKind, "across" | "ring" | "upper">;
+/** Each kind's stencil: the big code sprayed in its band and the lot line under it. */
 export const PICKUP_MARKINGS = {
-  spread: ["12 GA", "FLECHETTE"],
-  rocket: ["RKT HE", "66 MM"],
-  ricochet: ["105 MM", "HESH"],
-  piercing: ["120 MM", "APFSDS"],
-  rapid: ["CTG 7.62", "LINKED"],
-  shield: ["ARMOR", "PLATE"],
+  spread: ["12GA", "FLECHETTE"],
+  rocket: ["HE", "RKT 66MM"],
+  ricochet: ["HESH", "105MM"],
+  piercing: ["AP", "APFSDS"],
+  rapid: ["7.62", "LINKED"],
+  shield: ["ARM", "PLATE"],
   speed: ["FUEL", "20 L"],
   repair: ["TOOL", "KIT"],
   laser: ["APS", "RADIO SET"],

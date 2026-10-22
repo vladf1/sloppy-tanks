@@ -69,29 +69,57 @@ mod inspect;
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
 /// A tank takes a supply by driving over it: the load, already pressed down under
-/// the hull's edge, is broken open under it and `PARCELS` boxes of its supply are
-/// heaved aboard, each leaving the load `PARCEL_STAGGER` seconds after the last,
-/// arcing up `PARCEL_ARC` metres over the straight line to the turret's hatch and
-/// dropping into it over `PARCEL_FLIGHT` seconds, turning a little as it flies and
-/// swallowed down through the hatch in its last `PARCEL_SINK` of the flight. At most
-/// `MAX_PARCELS` fly at once. The crushed grenade vents one puff of its smoke and
+/// the hull's edge, bursts open under it. Its lid board pops off and two splinters
+/// of it fly out from under the hull's side (`LOOSE_*`), land, hop once and lie
+/// there until they fade; and `STOWED` pieces of its own stock (cans, a tube,
+/// shells, a tool box) are tossed up from beside the hull, one `STOW_STAGGER`
+/// seconds after the other, rising first and then over in an arc `STOW_ARC` metres
+/// above the straight line, onto the tank's rear deck over `STOW_FLIGHT` seconds,
+/// where they settle with a little bump and ride along until they fade
+/// (`STOW_HOLD`, `PIECE_FADE`). The crushed grenade vents one puff of its smoke and
 /// the hull dips as it rides over the drop (`COLLECT_ROCK`, rad/s). A pallet under
 /// a hull is crushed by up to `PALLET_CRUSH` of its height and springs back once
-/// the hull has passed.
+/// the hull has passed. At most `MAX_SUPPLY_PIECES` pieces are out at once.
 const COLLECT_ROCK: f64 = 0.3;
 const PALLET_CRUSH: f64 = 0.7;
-const PARCELS: usize = 3;
-const MAX_PARCELS: usize = 9;
-const PARCEL_STAGGER: f64 = 0.1;
-const PARCEL_ARC: f64 = 1.1;
-const PARCEL_FLIGHT: f64 = 0.45;
-const PARCEL_SINK: f64 = 0.22;
-/// How far below the hatch's rim a parcel has gone when it disappears, how far
-/// outside the hull's footprint parcels leave from, and their size against the
-/// load's.
-const PARCEL_DEPTH: f64 = 0.7;
-const PARCEL_MARGIN: f64 = 0.2;
-const PARCEL_SCALE: f64 = 0.78;
+const STOWED: usize = 2;
+const MAX_SUPPLY_PIECES: usize = 15;
+const STOW_DELAY: f64 = 0.03;
+const STOW_STAGGER: f64 = 0.09;
+const STOW_ARC: f64 = 1.25;
+const STOW_FLIGHT: f64 = 0.42;
+const STOW_HOLD: f64 = 1.5;
+/// How hard a stowed piece bumps as it lands (share of its height) and over how
+/// long it settles.
+const STOW_BUMP: f64 = 0.16;
+const STOW_SETTLE: f64 = 0.18;
+/// Where pieces stow: in the back of the turret, where crews strap their kit and
+/// a bustle rack carries it (`STOW_BACK` of the way from the turret's pivot to
+/// its rear, `STOW_ACROSS` of its width either side of its middle), riding round
+/// with it, so the overhead camera sees them whichever way the hull faces; on a
+/// vehicle with no turret to speak of, on its rear deck `DECK_END` metres in from
+/// the hull's end, `STOW_ACROSS` of the hull's width either side. Either way each
+/// rests on the highest surface under it.
+const STOW_BACK: f64 = 0.62;
+const STOW_ACROSS: f64 = 0.2;
+const DECK_END: f64 = 0.45;
+/// How far outside the hull's footprint pieces leave from, their height there, and
+/// the stowed pieces' size against the load's.
+const PIECE_MARGIN: f64 = 0.3;
+const PIECE_RISE: f64 = 0.35;
+const STOW_SCALE: f64 = 0.8;
+/// The broken load's lid board and splinters: their launch speed out from the hull
+/// and up, how far each splinter's bearing strays from the board's, their size
+/// against the board, gravity, what the hop keeps of the landing speed (across,
+/// up), how long they lie and how long any piece takes to fade.
+const LOOSE_SPEED: [f64; 2] = [2.4, 4.6];
+const SPLINTER_SPEED: [f64; 2] = [3.1, 3.8];
+const SPLINTER_BEARING: f64 = 0.65;
+const SPLINTER_SCALE: [f32; 3] = [0.75, 0.9, 0.22];
+const LOOSE_GRAVITY: f64 = 9.8;
+const LOOSE_HOP: [f64; 2] = [0.35, 0.22];
+const LOOSE_HOLD: f64 = 2.2;
+const PIECE_FADE: f64 = 0.4;
 /// A tank driving onto a stocked crate presses it down under its hull before it is
 /// close enough to take it: from when the crate's centre is `PRESS_REACH` outside
 /// the hull's footprint until it is `PRESS_DEPTH` inside it, down to `PRESS_FLOOR`
@@ -107,6 +135,12 @@ const TANK_PRESS_RANGE: f32 = 5.5;
 const RESTOCK_DROP: f64 = 2.4;
 const RESTOCK_FALL: f64 = 0.36;
 const RESTOCK_SQUASH: f64 = 0.16;
+/// An emptied pallet keeps one of its load's lid boards, band and code up, lying
+/// on its deck (where, its turn and its size against the board thrown off), so a
+/// player can read what will come back there.
+const MARKER_AT: [f32; 2] = [0.1, 0.06];
+const MARKER_TURN: f32 = 0.2;
+const MARKER_SCALE: f32 = 1.55;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -192,8 +226,10 @@ struct TankModel {
     barrel: JointBasis,
     track: JointBasis,
     muzzle_height: f64,
-    /// The middle of the turret's roof in the model's frame, where supplies go in.
-    hatch: Vec3,
+    /// Where a collected supply's pieces land: two spots in the frame of the
+    /// turret (or, without one, the hull) as `stow_on_turret` says.
+    stow: [Vec3; 2],
+    stow_on_turret: bool,
 }
 
 struct BarModel {
@@ -213,10 +249,12 @@ struct PickupModel {
 }
 
 /// What every supply drop shares: the bare pallet and its grenade in its scuffed
-/// ground, and the parcel a collection sends aboard.
+/// ground, each kind's piece a collection sends aboard (by `PickupKind::ALL`'s
+/// order) and the board its broken load throws off.
 struct PadModels {
     base: ModelId,
-    parcel: ModelId,
+    parcels: Vec<BoundedModel>,
+    board: BoundedModel,
 }
 
 struct MineModel {
@@ -304,37 +342,191 @@ fn sight_blocked(eye: Vec3, target: Vec3, covers: &[RenderCover]) -> bool {
         })
 }
 
+/// A stowed piece `age` seconds after it left `from`: rising first and then over in
+/// its arc onto the stowage spot (`deck`, the hull's turn), tumbling a little as it
+/// flies and squaring up to land at `turn` against the hull, then settling with a
+/// bump and riding there.
+fn stowed_pose(
+    from: Vec3,
+    (deck, hull): (Vec3, Quat),
+    half: f32,
+    turn: f32,
+    age: f64,
+    scale: Vec3,
+) -> Mat4 {
+    let t = (age / STOW_FLIGHT).min(1.0);
+    let to = deck + hull * Vec3::Y * half;
+    // Across slowly at first, so it is up over the hull's side before it crosses.
+    let run = smoothstep(t, 0.0, 1.0) as f32;
+    let lift = (STOW_ARC * 4.0 * t * (1.0 - t)) as f32;
+    let mut position = from.lerp(to, run);
+    position.y = from.y + (to.y - from.y) * t as f32 + lift;
+    let tumble = (1.0 - t) as f32;
+    let rotation = hull
+        * Quat::from_rotation_y(turn + 0.9 * tumble)
+        * Quat::from_rotation_x(1.5 * tumble)
+        * Quat::from_rotation_z(-0.6 * tumble);
+    let settled = age - STOW_FLIGHT;
+    let squash = if settled > 0.0 && settled < STOW_SETTLE * 3.0 {
+        (STOW_BUMP
+            * (-settled * 3.0 / STOW_SETTLE).exp()
+            * (settled * std::f64::consts::TAU / STOW_SETTLE).cos()) as f32
+    } else {
+        0.0
+    };
+    // Squashed about its foot, so it stays on the deck.
+    let size = scale * Vec3::new(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
+    Mat4::from_scale_rotation_translation(size, rotation, position - hull * Vec3::Y * half * squash)
+}
+
+/// A loose piece `age` seconds after it left `from` at `velocity`: flying and
+/// flipping over by `flips` half turns, landing flat on the ground at its `half`
+/// thickness, one low hop, then lying still.
+fn loose_pose(
+    from: Vec3,
+    velocity: Vec3,
+    scale: Vec3,
+    half: f32,
+    spin: f32,
+    flips: f32,
+    age: f64,
+) -> Mat4 {
+    let gravity = LOOSE_GRAVITY;
+    let rise = f64::from(velocity.y);
+    let drop = f64::from(from.y - half).max(0.0);
+    let land = (rise + (rise * rise + 2.0 * gravity * drop).sqrt()) / gravity;
+    let hop_rise = (rise - gravity * land).abs() * LOOSE_HOP[1];
+    let hop = 2.0 * hop_rise / gravity;
+    let across = Vec3::new(velocity.x, 0.0, velocity.z);
+    let landed = from + across * land as f32;
+    let position = if age < land {
+        from + velocity * age as f32 - Vec3::Y * (0.5 * gravity * age * age) as f32
+    } else {
+        let a = age.min(land + hop) - land;
+        let height = (hop_rise * a - 0.5 * gravity * a * a).max(0.0);
+        landed.with_y(half) + across * (LOOSE_HOP[0] * a) as f32 + Vec3::Y * height as f32
+    };
+    let flight = (age / (land + hop)).min(1.0) as f32;
+    let flip = std::f32::consts::PI * flips * (age / land).min(1.0) as f32;
+    let heading = velocity.x.atan2(velocity.z);
+    let rotation = Quat::from_rotation_y(heading + spin * flight) * Quat::from_rotation_x(flip);
+    Mat4::from_scale_rotation_translation(scale, rotation, position)
+}
+
 fn joint_index(renderer: &Renderer, model: ModelId, name: &str) -> usize {
     renderer
         .model_node(model, name)
         .unwrap_or_else(|| panic!("model joint {name}"))
 }
 
-/// The middle of a vehicle's turret roof in its model's frame: over the turret's
-/// pivot, at the top of its broad parts (antennas, rails and other thin fittings
-/// stand above the roof and do not count).
-fn turret_hatch(source: &Node) -> Vec3 {
-    /// A part narrower than this (m², its footprint) is a fitting, not the roof.
-    const ROOF_FOOTPRINT: f64 = 0.3;
-    let Some((turret, parent)) = source.find_with_parent_world(part::TURRET, DMat4::IDENTITY)
-    else {
-        return Vec3::ZERO;
-    };
-    let pivot = turret.world_matrix(parent).w_axis;
-    let mut roof = f64::NEG_INFINITY;
-    turret.traverse(parent, &mut |node, world| {
-        if let Some(drawable) = &node.drawable {
-            let bounds = drawable.mesh.bounding_box().transformed(&world);
-            let size = bounds.size();
-            if size.x * size.z > ROOF_FOOTPRINT {
-                roof = roof.max(bounds.max.y);
+/// The top of whatever `node` (in `parent`'s frame, without its gun) has over
+/// each of `spots` (x, z in the model's frame), found by dropping a ray onto its
+/// triangles; `None` where nothing lies under a spot.
+fn drop_onto<const N: usize>(node: &Node, parent: DMat4, spots: [[f64; 2]; N]) -> [Option<f64>; N] {
+    let mut tops = [None::<f64>; N];
+    let world = node.world_matrix(parent);
+    let mut visit = |node: &Node, world: DMat4| {
+        let Some(drawable) = &node.drawable else {
+            return;
+        };
+        let mesh = &drawable.mesh;
+        let point = |index: usize| {
+            let [x, y, z] = mesh.positions[index];
+            world.transform_point3(DVec3::new(f64::from(x), f64::from(y), f64::from(z)))
+        };
+        let count = mesh.positions.len();
+        let triangles: Vec<[usize; 3]> = match &mesh.indices {
+            Some(indices) => indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| t.map(|i| i as usize))
+                .collect(),
+            None => (0..count / 3)
+                .map(|t| [3 * t, 3 * t + 1, 3 * t + 2])
+                .collect(),
+        };
+        for [a, b, c] in triangles {
+            let (a, b, c) = (point(a), point(b), point(c));
+            let det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+            if det.abs() < 1e-9 {
+                continue;
+            }
+            for ([x, z], top) in spots.iter().zip(&mut tops) {
+                // Barycentric weights of the spot in the triangle's plan.
+                let wa = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+                let wb = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+                let wc = 1.0 - wa - wb;
+                if wa >= 0.0 && wb >= 0.0 && wc >= 0.0 {
+                    let y = wa * a.y + wb * b.y + wc * c.y;
+                    *top = Some(top.map_or(y, |top: f64| top.max(y)));
+                }
             }
         }
-    });
-    if !roof.is_finite() {
-        roof = node_bounds(turret, parent).max.y;
+    };
+    if node.drawable.is_some() {
+        visit(node, world);
     }
-    Vec3::new(pivot.x as f32, roof as f32, pivot.z as f32)
+    for child in node.children.iter().filter(|c| c.name != part::BARREL) {
+        child.traverse(world, &mut visit);
+    }
+    tops
+}
+
+/// A vehicle's two stowage spots (see `STOW_BACK`) in the own frame of its turret,
+/// or of its hull when the turret has nothing under them, and which.
+fn stowage(source: &Node, kind: VehicleKind) -> ([Vec3; 2], bool) {
+    let dimensions = tank_hull(kind);
+    let back = -(tank_visual_muzzle(kind).z - dimensions.center.z).signum();
+    if let Some((turret, parent)) = source.find_with_parent_world(part::TURRET, DMat4::IDENTITY) {
+        let world = turret.world_matrix(parent);
+        let pivot = world.w_axis.truncate();
+        // The turret's reach behind its pivot and its width, without its gun.
+        let (mut rear, mut low_x, mut high_x) = (0.0_f64, f64::MAX, f64::MIN);
+        for child in turret.children.iter().filter(|c| c.name != part::BARREL) {
+            child.traverse(world, &mut |node, world| {
+                if let Some(drawable) = &node.drawable {
+                    for &[x, y, z] in &drawable.mesh.positions {
+                        let p = world.transform_point3(DVec3::new(
+                            f64::from(x),
+                            f64::from(y),
+                            f64::from(z),
+                        ));
+                        rear = rear.max((p.z - pivot.z) * back);
+                        low_x = low_x.min(p.x);
+                        high_x = high_x.max(p.x);
+                    }
+                }
+            });
+        }
+        let z = pivot.z + back * rear * STOW_BACK;
+        let across = (high_x - low_x).max(0.0) * STOW_ACROSS;
+        let spots = [[pivot.x - across, z], [pivot.x + across, z]];
+        if let [Some(left), Some(right)] = drop_onto(turret, parent, spots) {
+            let own = world.inverse();
+            let spots = [(spots[0], left), (spots[1], right)]
+                .map(|([x, z], y)| own.transform_point3(DVec3::new(x, y, z)).as_vec3());
+            return (spots, true);
+        }
+    }
+    let Some((hull, parent)) = source.find_with_parent_world(part::HULL, DMat4::IDENTITY) else {
+        return ([Vec3::ZERO; 2], false);
+    };
+    let z = dimensions.center.z + back * (dimensions.size.z / 2.0 - DECK_END);
+    let across = dimensions.size.x * STOW_ACROSS;
+    let spots = [
+        [dimensions.center.x - across, z],
+        [dimensions.center.x + across, z],
+    ];
+    let top = dimensions.center.y + dimensions.size.y / 2.0;
+    let tops = drop_onto(hull, parent, spots);
+    let own = hull.world_matrix(parent).inverse();
+    let spots = [0, 1].map(|i| {
+        let [x, z] = spots[i];
+        own.transform_point3(DVec3::new(x, tops[i].unwrap_or(top), z))
+            .as_vec3()
+    });
+    (spots, false)
 }
 
 fn basis(renderer: &Renderer, model: ModelId, source: &Node, name: &str) -> JointBasis {
@@ -347,6 +539,7 @@ impl Library {
         self.tanks.entry((kind, team)).or_insert_with(|| {
             let source = tank_model(kind, team);
             let model = renderer.add_model(&source, Lifetime::Shared);
+            let (stow, stow_on_turret) = stowage(&source, kind);
             TankModel {
                 model,
                 joints: renderer.model_nodes(model).len(),
@@ -356,7 +549,8 @@ impl Library {
                 barrel: basis(renderer, model, &source, part::BARREL),
                 track: basis(renderer, model, &source, part::TRACK_GROUP),
                 muzzle_height: tank_visual_muzzle(kind).y,
-                hatch: turret_hatch(&source),
+                stow,
+                stow_on_turret,
             }
         })
     }
@@ -421,11 +615,22 @@ impl Library {
         })
     }
 
-    /// The pallet every supply drop shares; instance data paints it by kind.
+    /// The pallet every supply drop shares, the pieces a collection throws; instance
+    /// data paints them by kind.
     fn pickup_pad(&mut self, renderer: &mut Renderer) -> &PadModels {
-        self.pickup_pad.get_or_insert_with(|| PadModels {
-            base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
-            parcel: renderer.add_model(&own::pickup_parcel_model(), Lifetime::Shared),
+        self.pickup_pad.get_or_insert_with(|| {
+            let mut bounded = |source: Node| BoundedModel {
+                model: renderer.add_model(&source, Lifetime::Shared),
+                bounds: node_bounds(&source, DMat4::IDENTITY),
+            };
+            PadModels {
+                parcels: PickupKind::ALL
+                    .into_iter()
+                    .map(|kind| bounded(own::pickup_parcel_model(kind)))
+                    .collect(),
+                board: bounded(own::pickup_board_model()),
+                base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
+            }
         })
     }
 }
@@ -540,6 +745,9 @@ struct FragmentView {
 struct PickupView {
     base: InstanceId,
     gem: InstanceId,
+    /// The lid board left on the emptied pallet, and where it lies on the deck.
+    marker: InstanceId,
+    marker_rest: Mat4,
     /// Where the pallet and the item on it stand at rest.
     ground: Mat4,
     rest: Mat4,
@@ -560,17 +768,39 @@ struct MineView {
     light: usize,
 }
 
-/// A parcel of a collected supply on its way aboard the tank that took it.
-struct Parcel {
+/// A piece of a collected supply: one of its stock tossed aboard the tank that
+/// took it, or a board of its broken load thrown loose.
+struct SupplyPiece {
     instance: InstanceId,
-    /// When it left the load (view time), where from, the tank it is bound for
-    /// and how it turns as it flies (rad over the flight, about y and across).
+    model: ModelId,
+    /// When it left the load (view time) and where from.
     start: f64,
     from: Vec3,
-    tank: u32,
-    turn: [f32; 2],
-    /// Whether it is still in the air (else it waits, hidden, to be thrown again).
-    flying: bool,
+    flight: PieceFlight,
+    /// Whether it is out (else it waits, hidden, to be thrown again).
+    active: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PieceFlight {
+    /// Tossed onto stowage spot `slot` of tank `tank`: its half height and its
+    /// turn against the turret or hull once stowed (rad).
+    Stow {
+        tank: u32,
+        slot: usize,
+        half: f32,
+        turn: f32,
+    },
+    /// Thrown loose: its launch velocity, its scale, the half thickness it rests
+    /// on, its spin about the vertical over the flight (rad) and the half turns it
+    /// flips over before it lands.
+    Loose {
+        velocity: Vec3,
+        scale: Vec3,
+        half: f32,
+        spin: f32,
+        flips: f32,
+    },
 }
 
 struct FallingBranch {
@@ -685,9 +915,9 @@ pub struct Presentation {
     /// last filled.
     chimneys: Vec<(u32, bool)>,
     pickups: HashMap<u32, PickupView>,
-    /// Parcels of collected supplies, flying or waiting to fly (bounded by
-    /// `MAX_PARCELS`, reused).
-    parcels: Vec<Parcel>,
+    /// Pieces of collected supplies, out or waiting to be thrown (bounded by
+    /// `MAX_SUPPLY_PIECES`, reused).
+    supply_pieces: Vec<SupplyPiece>,
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
     pad_decks: SpawnPadDecks,
@@ -764,7 +994,7 @@ impl Presentation {
             settled: SettledShards::default(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
-            parcels: Vec::with_capacity(MAX_PARCELS),
+            supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
             branches: VecDeque::new(),
@@ -1035,7 +1265,7 @@ impl Presentation {
         // Round models go with the round.
         self.settled.clear();
         self.pickups.clear();
-        self.parcels.clear();
+        self.supply_pieces.clear();
         self.mines.clear();
         self.branches.clear();
         self.sample_models.clear();
@@ -1490,9 +1720,25 @@ impl Presentation {
         let gem = renderer
             .add_instance(gem_model, rest, Lifetime::Round)
             .expect("supply model");
+        let board = &self.library.pickup_pad.as_ref().expect("pickup pad").board;
+        let half = board.bounds.size().y as f32 / 2.0;
+        let marker_rest = Mat4::from_scale_rotation_translation(
+            Vec3::splat(MARKER_SCALE),
+            Quat::from_rotation_y(MARKER_TURN),
+            Vec3::new(
+                MARKER_AT[0],
+                PALLET_HEIGHT as f32 + half * MARKER_SCALE,
+                MARKER_AT[1],
+            ),
+        );
+        let marker = renderer
+            .add_instance(board.model, ground * marker_rest, Lifetime::Round)
+            .expect("marker model");
+        renderer.set_visible(marker, false);
         let [u, v] = pickup_tile_offset(kind);
         let wear = supply_wear(id);
         renderer.set_instance_data(gem, [u, v, 1.0, wear]);
+        renderer.set_instance_data(marker, [u, v, 1.0, wear]);
         // The pallet's deck, stringer ends and smoke grenade wear the kind's paint.
         renderer.set_instance_data(base, [u, v, 1.0, wear]);
         self.pickups.insert(
@@ -1500,6 +1746,8 @@ impl Presentation {
             PickupView {
                 base,
                 gem,
+                marker,
+                marker_rest,
                 ground,
                 rest,
                 shown: None,
@@ -1731,7 +1979,7 @@ impl Presentation {
         self.update_branches(dt);
         self.update_covers(state);
         self.update_pickups(state);
-        self.update_parcels();
+        self.update_supply_pieces();
         self.update_fragments(state);
         self.warm_section();
         self.update_mines(state);
@@ -2299,6 +2547,7 @@ impl Presentation {
         for (_, view) in self.pickups.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.base);
             self.renderer.remove_instance(view.gem);
+            self.renderer.remove_instance(view.marker);
         }
         for supply in &state.pickups {
             if !self.pickups.contains_key(&supply.id) {
@@ -2324,6 +2573,7 @@ impl Presentation {
                 }
                 view.shown = Some(stocked);
                 renderer.set_visible(view.gem, stocked);
+                renderer.set_visible(view.marker, !stocked);
             }
             view.progress = if stocked {
                 1.0
@@ -2344,6 +2594,9 @@ impl Presentation {
                 view.crush = crush;
                 let flatten = Mat4::from_scale(Vec3::new(1.0, 1.0 - crush, 1.0));
                 renderer.set_transform(view.base, view.ground * flatten);
+                // The marker board rides down with the crushed deck.
+                let lowered = Mat4::from_translation(Vec3::Y * -crush * PALLET_HEIGHT as f32);
+                renderer.set_transform(view.marker, view.ground * lowered * view.marker_rest);
             }
             if !stocked {
                 continue;
@@ -2416,11 +2669,12 @@ impl Presentation {
         (press, center)
     }
 
-    /// A tank drove over a supply and took it: the load is broken open under the
-    /// hull and its parcels are heaved aboard into the turret's hatch, the crushed
-    /// grenade vents a puff of its smoke and the hull dips as it rides over; the
-    /// bare pallet stays behind. The event names the kind only by its colour, which
-    /// is unique per kind, the pallet by where it stands and the tank by its id.
+    /// A tank drove over a supply and took it: the load bursts open under the hull,
+    /// its lid board and splinters fly out and two pieces of its stock are tossed
+    /// onto the tank's rear deck, the crushed grenade vents a puff of its smoke and
+    /// the hull dips as it rides over; the bare pallet stays behind. The event names
+    /// the kind only by its colour, which is unique per kind, the pallet by where it
+    /// stands and the tank by its id.
     fn collect_supply(&mut self, event: &SimEvent) {
         let Some(kind) = PickupKind::ALL
             .into_iter()
@@ -2434,18 +2688,23 @@ impl Presentation {
             .and_then(|id| self.tanks.get(&id))
             .filter(|view| view.world != Mat4::ZERO)
             .map(|view| view.world.w_axis.truncate());
-        // The grenade, crushed at the pallet's back corner, vents once; the load's
-        // dust skirts out low on the side away from the hull.
+        // The load bursts out from under the hull on the side away from it: the
+        // crushed grenade vents there once and the ground's dust kicks up round it.
         let away = hull
             .map(|hull| Vec3::new(at.x - hull.x, 0.0, at.z - hull.z))
             .filter(|away| away.length() > 1e-3)
             .map_or(Vec3::X, Vec3::normalize);
-        let systems = &mut self.effects.systems;
-        systems
-            .pickups
-            .vent(event.x, event.z, [away.x, away.z], pickup_signal(kind));
+        let burst = event.id.map_or(at, |id| self.beside_hull(id, at));
+        self.effects.systems.pickups.vent(
+            f64::from(burst.x),
+            f64::from(burst.z),
+            [away.x, away.z],
+            pickup_signal(kind),
+        );
+        let from = burst.with_y((PALLET_HEIGHT * SUPPLY_SCALE + PIECE_RISE) as f32);
+        self.throw_loose(kind, from, away);
         if let (Some(id), Some(hull)) = (event.id, hull) {
-            self.throw_parcels(kind, at, away, id);
+            self.stow_pieces(kind, from, id);
             // The hull dips as it rides over the drop.
             if let Some(motion) = self
                 .tanks
@@ -2461,122 +2720,241 @@ impl Presentation {
         }
     }
 
-    /// Heave `PARCELS` of `kind`'s supply from the load at `at` toward the hatch of
-    /// tank `id`: up from beside the hull on the drop's side, clear of its tracks
-    /// whatever the hull has already rolled over, reusing parcels that have landed
-    /// and, past `MAX_PARCELS`, the oldest in the air.
-    fn throw_parcels(&mut self, kind: PickupKind, at: Vec3, away: Vec3, id: u32) {
+    /// Where a load at `at` under or beside tank `id` bursts out: the point where
+    /// the line from the hull's middle out over the load leaves its footprint (and
+    /// a margin), or the load itself when it lies further out, so nothing thrown
+    /// passes through the hull.
+    fn beside_hull(&self, id: u32, at: Vec3) -> Vec3 {
         let Some(view) = self.tanks.get(&id).filter(|view| view.world != Mat4::ZERO) else {
-            return;
+            return at;
         };
-        // Where the line from the hull's middle out over the drop leaves its
-        // footprint (and a margin), in the tank's frame and back in the world.
         let hull = tank_hull(view.kind);
-        let inverse = view.world.inverse();
+        let Some(model) = self.library.tanks.get(&(view.kind, view.team)) else {
+            return at;
+        };
+        // The hull's frame on the ground: its heading without its rocking.
+        let nodes = self.renderer.model_nodes(model.model);
+        let frame = joint_world(nodes, &view.pose, view.world, model.hull.index);
+        let (_, rotation, _) = frame.to_scale_rotation_translation();
+        let (heading, _, _) = rotation.to_euler(glam::EulerRot::YXZ);
+        let (scale, _, origin) = view.world.to_scale_rotation_translation();
+        let ground = Mat4::from_scale_rotation_translation(
+            scale,
+            Quat::from_rotation_y(heading),
+            Vec3::new(origin.x, 0.0, origin.z),
+        );
+        let inverse = ground.inverse();
         let center = Vec3::new(hull.center.x as f32, 0.0, hull.center.z as f32);
         let local = (inverse.transform_point3(at) - center) * Vec3::new(1.0, 0.0, 1.0);
         let half = Vec3::new(
-            (hull.size.x / 2.0 + PARCEL_MARGIN) as f32,
+            (hull.size.x / 2.0 + PIECE_MARGIN) as f32,
             0.0,
-            (hull.size.z / 2.0 + PARCEL_MARGIN) as f32,
+            (hull.size.z / 2.0 + PIECE_MARGIN) as f32,
         );
         let direction = local.try_normalize().unwrap_or(Vec3::X);
         let exit = (half.x / direction.x.abs().max(1e-4)).min(half.z / direction.z.abs().max(1e-4));
-        let edge = view
-            .world
-            .transform_point3(center + direction * exit.max(local.length()));
-        let model = self.library.pickup_pad(&mut self.renderer).parcel;
+        let edge = ground.transform_point3(center + direction * exit.max(local.length()));
+        Vec3::new(edge.x, 0.0, edge.z)
+    }
+
+    /// A free piece of the pool for an instance of `model`: an idle one of that
+    /// model, a new one while the pool has room, an idle one of another model
+    /// remade for this one, or else the oldest piece of this model still out.
+    fn supply_piece(&mut self, model: ModelId) -> Option<usize> {
+        let pieces = &mut self.supply_pieces;
+        if let Some(slot) = pieces.iter().position(|p| !p.active && p.model == model) {
+            return Some(slot);
+        }
+        let fresh = |renderer: &mut Renderer| {
+            let instance = renderer.add_instance(model, Mat4::IDENTITY, Lifetime::Round)?;
+            Some(SupplyPiece {
+                instance,
+                model,
+                start: 0.0,
+                from: Vec3::ZERO,
+                flight: PieceFlight::Stow {
+                    tank: 0,
+                    slot: 0,
+                    half: 0.0,
+                    turn: 0.0,
+                },
+                active: false,
+            })
+        };
+        if pieces.len() < MAX_SUPPLY_PIECES {
+            pieces.push(fresh(&mut self.renderer)?);
+            return Some(pieces.len() - 1);
+        }
+        if let Some(slot) = pieces.iter().position(|p| !p.active) {
+            self.renderer.remove_instance(pieces[slot].instance);
+            pieces[slot] = fresh(&mut self.renderer)?;
+            return Some(slot);
+        }
+        pieces
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.model == model)
+            .min_by(|a, b| a.1.start.total_cmp(&b.1.start))
+            .map(|(slot, _)| slot)
+    }
+
+    /// Send a piece of `model` painted for `kind` off from `from` now plus `delay`.
+    fn throw_piece(
+        &mut self,
+        model: ModelId,
+        kind: PickupKind,
+        from: Vec3,
+        delay: f64,
+        flight: PieceFlight,
+    ) {
+        let Some(slot) = self.supply_piece(model) else {
+            return;
+        };
         let [u, v] = pickup_tile_offset(kind);
-        let across = Vec3::new(-away.z, 0.0, away.x);
-        let rise = (PALLET_HEIGHT * SUPPLY_SCALE + 0.3) as f32;
-        let base = Vec3::new(edge.x, 0.0, edge.z);
-        for index in 0..PARCELS {
-            let lane = index as f32 - (PARCELS as f32 - 1.0) / 2.0;
-            let from = base + across * (0.5 * lane) + Vec3::Y * rise;
-            let start = self.time + PARCEL_STAGGER * index as f64;
-            let turn = [0.9 * lane + 0.4, 0.5 - 0.35 * index as f32];
-            let slot = if let Some(slot) = self.parcels.iter().position(|parcel| !parcel.flying) {
-                slot
-            } else if self.parcels.len() < MAX_PARCELS {
-                let Some(instance) =
-                    self.renderer
-                        .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
-                else {
-                    return;
-                };
-                self.parcels.push(Parcel {
-                    instance,
-                    start,
-                    from,
-                    tank: id,
-                    turn,
-                    flying: false,
-                });
-                self.parcels.len() - 1
-            } else {
-                self.parcels
-                    .iter()
-                    .enumerate()
-                    .min_by(|a, b| a.1.start.total_cmp(&b.1.start))
-                    .map_or(0, |(slot, _)| slot)
-            };
-            let parcel = &mut self.parcels[slot];
-            *parcel = Parcel {
-                instance: parcel.instance,
-                start,
+        let piece = &mut self.supply_pieces[slot];
+        piece.start = self.time + delay;
+        piece.from = from;
+        piece.flight = flight;
+        piece.active = true;
+        self.renderer
+            .set_instance_data(piece.instance, [u, v, 1.0, 0.37 * slot as f32]);
+        self.renderer.set_opacity(piece.instance, 1.0);
+        self.renderer.set_visible(piece.instance, false);
+    }
+
+    /// The broken load's lid board, popped off out and up away from the hull, and
+    /// two splinters of it thrown either side.
+    fn throw_loose(&mut self, kind: PickupKind, from: Vec3, away: Vec3) {
+        let board = &self.library.pickup_pad(&mut self.renderer).board;
+        let (model, half) = (board.model, board.bounds.size().y as f32 / 2.0);
+        let scale = (SUPPLY_SCALE * STOW_SCALE) as f32;
+        let throws = [
+            (0.0, LOOSE_SPEED, Vec3::splat(scale), 1.0_f32, 2.0_f32),
+            (
+                -SPLINTER_BEARING,
+                SPLINTER_SPEED,
+                Vec3::from(SPLINTER_SCALE) * scale,
+                -2.6,
+                1.0,
+            ),
+            (
+                SPLINTER_BEARING * 0.8,
+                SPLINTER_SPEED,
+                Vec3::from(SPLINTER_SCALE) * scale,
+                3.1,
+                3.0,
+            ),
+        ];
+        for (bearing, [out, up], size, spin, flips) in throws {
+            let direction = Quat::from_rotation_y(bearing as f32) * away;
+            let velocity = direction * out as f32 + Vec3::Y * up as f32;
+            self.throw_piece(
+                model,
+                kind,
                 from,
-                tank: id,
-                turn,
-                flying: true,
-            };
-            self.renderer
-                .set_instance_data(parcel.instance, [u, v, 1.0, 0.37 * index as f32]);
-            self.renderer.set_visible(parcel.instance, false);
+                0.0,
+                PieceFlight::Loose {
+                    velocity,
+                    scale: size,
+                    half: half * size.y,
+                    spin,
+                    flips,
+                },
+            );
         }
     }
 
-    /// Fly every parcel in the air one frame: up out of the load in an arc over the
-    /// hull to the hatch of the tank it is bound for, wherever that tank has moved,
-    /// and down through the hatch. A parcel whose tank is gone just drops from view.
-    fn update_parcels(&mut self) {
-        let scale = Vec3::splat((SUPPLY_SCALE * PARCEL_SCALE) as f32);
-        for parcel in self.parcels.iter_mut().filter(|parcel| parcel.flying) {
-            let age = self.time - parcel.start;
-            let hatch = self
-                .tanks
-                .get(&parcel.tank)
-                .filter(|view| view.world != Mat4::ZERO)
-                .and_then(|view| {
-                    let model = self.library.tanks.get(&(view.kind, view.team))?;
-                    Some(view.world.transform_point3(model.hatch))
-                });
-            let (Some(hatch), true) = (hatch, age < PARCEL_FLIGHT) else {
-                if age >= 0.0 {
-                    parcel.flying = false;
-                    self.renderer.set_visible(parcel.instance, false);
-                }
+    /// Toss `STOWED` pieces of `kind`'s stock from `from` onto tank `id`, one to
+    /// each stowage spot.
+    fn stow_pieces(&mut self, kind: PickupKind, from: Vec3, id: u32) {
+        let parcel = &self.library.pickup_pad(&mut self.renderer).parcels[kind as usize];
+        let (model, half) = (parcel.model, parcel.bounds.size().y as f32 / 2.0);
+        let half = half * (SUPPLY_SCALE * STOW_SCALE) as f32;
+        for index in 0..STOWED {
+            let turn = [0.08, -0.12][index % 2];
+            self.throw_piece(
+                model,
+                kind,
+                from,
+                STOW_DELAY + STOW_STAGGER * index as f64,
+                PieceFlight::Stow {
+                    tank: id,
+                    slot: index,
+                    half,
+                    turn,
+                },
+            );
+        }
+    }
+
+    /// Move every piece out one frame: stowed pieces arcing onto their tank's rear
+    /// deck, wherever it has driven, and riding there; loose ones flying, landing,
+    /// hopping once and lying; each fading at the end. A stowed piece whose tank is
+    /// gone just drops from view.
+    fn update_supply_pieces(&mut self) {
+        let stow_scale = Vec3::splat((SUPPLY_SCALE * STOW_SCALE) as f32);
+        for index in 0..self.supply_pieces.len() {
+            let piece = &self.supply_pieces[index];
+            if !piece.active {
                 continue;
-            };
+            }
+            let age = self.time - piece.start;
             if age < 0.0 {
                 continue;
             }
-            // Thrown in a ballistic arc: a steady run along the line with a
-            // parabola over it, so it tops out over the hull's side and comes down
-            // into the hatch.
-            let s = (age / PARCEL_FLIGHT) as f32;
-            let run = s;
-            let rim = hatch + Vec3::Y * 0.05;
-            let sink = smoothstep(f64::from(s), 1.0 - PARCEL_SINK, 1.0) as f32;
-            let lift = PARCEL_ARC as f32 * 4.0 * run * (1.0 - run) - PARCEL_DEPTH as f32 * sink;
-            let position = parcel.from.lerp(rim, run) + Vec3::Y * lift;
-            let rotation = Quat::from_rotation_y(parcel.turn[0] * s)
-                * Quat::from_rotation_x(parcel.turn[1] * s * (1.0 - s) * 2.0);
-            // Swallowed by the hatch as it goes in.
-            let squeeze = 1.0 - 0.9 * sink;
-            let pose = Mat4::from_scale_rotation_translation(scale * squeeze, rotation, position);
-            self.renderer.set_transform(parcel.instance, pose);
-            self.renderer.set_visible(parcel.instance, true);
+            let pose = match piece.flight {
+                PieceFlight::Stow {
+                    tank,
+                    slot,
+                    half,
+                    turn,
+                } => self
+                    .stow_spot(tank, slot)
+                    .map(|spot| stowed_pose(piece.from, spot, half, turn, age, stow_scale)),
+                PieceFlight::Loose {
+                    velocity,
+                    scale,
+                    half,
+                    spin,
+                    flips,
+                } => Some(loose_pose(
+                    piece.from, velocity, scale, half, spin, flips, age,
+                )),
+            };
+            let span = match piece.flight {
+                PieceFlight::Stow { .. } => STOW_FLIGHT + STOW_HOLD,
+                PieceFlight::Loose { .. } => LOOSE_HOLD,
+            };
+            let instance = piece.instance;
+            let Some(pose) = pose.filter(|_| age < span + PIECE_FADE) else {
+                self.supply_pieces[index].active = false;
+                self.renderer.set_visible(instance, false);
+                continue;
+            };
+            let fade = 1.0 - smoothstep(age, span, span + PIECE_FADE);
+            self.renderer.set_transform(instance, pose);
+            self.renderer.set_opacity(instance, fade as f32);
+            self.renderer.set_visible(instance, true);
         }
+    }
+
+    /// Stowage spot `slot` on tank `id` as drawn: where it is and the turn of the
+    /// turret (or hull) it rides on, rocking and all.
+    fn stow_spot(&self, id: u32, slot: usize) -> Option<(Vec3, Quat)> {
+        let view = self
+            .tanks
+            .get(&id)
+            .filter(|view| view.world != Mat4::ZERO)?;
+        let model = self.library.tanks.get(&(view.kind, view.team))?;
+        let nodes = self.renderer.model_nodes(model.model);
+        let joint = if model.stow_on_turret {
+            model.turret.index
+        } else {
+            model.hull.index
+        };
+        let frame = joint_world(nodes, &view.pose, view.world, joint);
+        let (_, rotation, _) = frame.to_scale_rotation_translation();
+        Some((frame.transform_point3(model.stow[slot]), rotation))
     }
 
     fn update_fragments(&mut self, state: &RenderState) {

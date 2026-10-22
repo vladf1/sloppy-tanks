@@ -18,7 +18,7 @@ use sloppy_core::geometry::{
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint,
-    pickup_pallet, pickup_parcel, put, shadowed, siding_box, trunk_fragment,
+    pickup_board, pickup_pallet, pickup_parcel, put, shadowed, siding_box, trunk_fragment,
 };
 use sloppy_core::scene::{Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
@@ -471,11 +471,19 @@ pub fn pickup_base() -> Node {
     root
 }
 
-/// The parcel a collected drop sends aboard the tank that took it
+/// The piece of `kind`'s stock a collected drop sends aboard the tank that took it
 /// (`sloppy_core::models::pickup_parcel`).
-pub fn pickup_parcel_model() -> Node {
+pub fn pickup_parcel_model(kind: PickupKind) -> Node {
     let mut root = Node::group("pickup-parcel");
-    root.children.push(pickup_parcel());
+    root.children.push(pickup_parcel(kind));
+    root
+}
+
+/// A board a collected drop's load throws off as it breaks open
+/// (`sloppy_core::models::pickup_board`).
+pub fn pickup_board_model() -> Node {
+    let mut root = Node::group("pickup-board");
+    root.children.push(pickup_board());
     root
 }
 
