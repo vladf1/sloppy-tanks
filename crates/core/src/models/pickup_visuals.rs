@@ -39,25 +39,47 @@ pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
     }
 }
 
-/// The kind's colour as supply paint: its band, stencil and the ring sprayed round
-/// its drop, in the family of its signal smoke (red, orange, yellow, green, violet
-/// or white) knocked back toward faded military paint, so the prop, not the paint,
-/// leads (`PICKUP_PAINTS` in `scripts/asset-data.ts`).
+/// The kind's signal colour: the smoke its drop is marked with and the ring sprayed
+/// round it. Nine hues spread round the wheel (and white), so the colour alone
+/// names a kind from across the field, in the family of its HUD colour; rose and
+/// teal stand in for the HUD's pink and cyan, which no smoke grenade comes in.
+pub fn pickup_signal(kind: PickupKind) -> u32 {
+    match kind {
+        PickupKind::Spread => 0xe2465e,
+        PickupKind::Rocket => 0xf06a24,
+        PickupKind::Rapid => 0xf4b631,
+        PickupKind::Speed => 0xd6e23c,
+        PickupKind::Repair => 0x3fc45c,
+        PickupKind::Piercing => 0x34b4a4,
+        PickupKind::Shield => 0x4482e8,
+        PickupKind::Ricochet => 0x9a62e2,
+        PickupKind::Laser => 0xf0f0ea,
+    }
+}
+
+/// The kind's colour as supply paint: the narrow band round its load and its smoke
+/// canister, its signal colour knocked back toward faded military enamel
+/// (`PICKUP_PAINTS` in `scripts/asset-data.ts`). The stencils themselves are
+/// sprayed in stencil cream or black, as real stores are.
 pub fn pickup_paint(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread | PickupKind::Rocket => 0xcc4430,
-        PickupKind::Rapid => 0xdc7c2a,
-        PickupKind::Speed => 0xe2c43c,
-        PickupKind::Piercing | PickupKind::Repair => 0x4caa58,
-        PickupKind::Ricochet | PickupKind::Shield => 0x9068d0,
-        PickupKind::Laser => 0xe9ecee,
+        PickupKind::Spread => 0xa83c4a,
+        PickupKind::Rocket => 0xbc5a26,
+        PickupKind::Rapid => 0xc8962e,
+        PickupKind::Speed => 0xaab436,
+        PickupKind::Repair => 0x4a9450,
+        PickupKind::Piercing => 0x3a8c80,
+        PickupKind::Shield => 0x3e68b0,
+        PickupKind::Ricochet => 0x7656a8,
+        PickupKind::Laser => 0xd8d8d0,
     }
 }
 
 /// The packed atlas under `public/` (`scripts/generate-pickup-atlas.ts`): nine kind
 /// tiles in a 3x3 block; in a fourth column the pallet's planks, the ground's spray
-/// paint and swatches of steel, rubber and webbing; below them cartridge brass and
-/// the tarp a drop is laid on.
+/// paint and swatches of steel, rubber and webbing; below them cartridge brass, the
+/// tarp a drop is laid on and the nine stencils sprayed on an empty pallet, in a
+/// 3x3 block of their own laid out like the kind tiles.
 pub const PICKUP_ATLAS_PATH: &str = "textures/pickups/atlas.webp";
 pub const PICKUP_ICON_SIZE: f64 = 256.0;
 pub const PICKUP_ATLAS_PADDING: f64 = 16.0;
@@ -68,6 +90,11 @@ pub const PICKUP_PAINT_CELL: (u32, u32) = (3, 1);
 pub const PICKUP_SWATCH_CELL: (u32, u32) = (3, 2);
 pub const PICKUP_BRASS_CELL: (u32, u32) = (0, 3);
 pub const PICKUP_TARP_CELL: (u32, u32) = (1, 3);
+pub const PICKUP_GLYPH_CELL: (u32, u32) = (2, 3);
+/// The share of the glyph cell one kind's stencil takes, and the region of the
+/// first kind's (u0, v0, u1, v1, `v` up) an empty pallet's stencil maps to.
+const GLYPH_SPAN: f64 = 1.0 / 3.0;
+pub const PICKUP_GLYPH_REGION: [f64; 4] = [0.0, 1.0 - GLYPH_SPAN, GLYPH_SPAN, 1.0];
 
 /// A UV inside the atlas cell at (`column`, `row`), `v` up as in a mesh.
 pub fn atlas_cell_uv((column, row): (u32, u32), u: f64, v: f64) -> [f64; 2] {
@@ -95,6 +122,17 @@ pub fn pickup_tile_offset(kind: PickupKind) -> [f32; 2] {
     [
         (f64::from(column) * PICKUP_ATLAS_STRIDE / PICKUP_ATLAS_SIZE) as f32,
         (-f64::from(row) * PICKUP_ATLAS_STRIDE / PICKUP_ATLAS_SIZE) as f32,
+    ]
+}
+
+/// Where `kind`'s stencil sits in the glyph cell relative to the first kind's, in
+/// atlas UV: the marking's effect adds it, passed as the instance data's `yz`.
+pub fn pickup_glyph_offset(kind: PickupKind) -> [f32; 2] {
+    let (column, row) = pickup_atlas_tile(kind);
+    let step = GLYPH_SPAN * PICKUP_ICON_SIZE / PICKUP_ATLAS_SIZE;
+    [
+        (f64::from(column) * step) as f32,
+        (-f64::from(row) * step) as f32,
     ]
 }
 
@@ -135,19 +173,21 @@ const PRIMER: Region = [0.3, 0.02, 0.7, 0.05];
 /// Pallet-cell boards for wooden chocks and spacers.
 const CHOCK: Region = [0.0, 0.0, 1.0, 0.25];
 
-/// The pallet's size (x, z), its height, its deck boards and their width.
+/// The pallet's size (x, z), its height, its deck boards and their width (close
+/// laid, so the stencil sprayed across an empty deck lies on wood).
 pub const PALLET_SIZE: [f64; 2] = [1.6, 1.2];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: u32 = 5;
-const PALLET_BOARD_WIDTH: f64 = 0.26;
-/// The smoke grenade marking the drop, on the tarp at the pallet's far side (the
-/// overhead camera looks toward -z), so its smoke rises behind the load: its top
-/// (x, height, z) where the signal smoke leaves it, and its radius.
-pub const SMOKE_MARKER: [f64; 3] = [0.56, 0.2, -0.71];
-const MARKER_RADIUS: f64 = 0.075;
+const PALLET_BOARD_WIDTH: f64 = 0.3;
+/// The smoke grenade marking the drop, standing on the tarp beside the pallet's
+/// right side, where the overhead camera sees it past the load and its smoke leans
+/// away behind it: its top (x, height, z) where the signal smoke leaves it, and its
+/// radius.
+pub const SMOKE_MARKER: [f64; 3] = [0.9, 0.27, -0.2];
+const MARKER_RADIUS: f64 = 0.08;
 /// The dark canvas tarp the pallet stands on, a frame of shade that sets the drop
 /// apart from any ground: its size (x, z) and thickness.
-const TARP_SIZE: [f64; 2] = [1.84, 1.5];
+const TARP_SIZE: [f64; 2] = [2.0, 1.4];
 const TARP_THICKNESS: f64 = 0.014;
 
 static SHARED: Cache<u8, Mesh> = Cache::new();
@@ -636,10 +676,9 @@ fn transit_case() -> Mesh {
     build(parts)
 }
 
-/// The pallet every pickup sits on: a tarp under three stringers and five deck
-/// boards, the
-/// stencilled lid the supply leaves behind on its deck, and the smoke grenade
-/// beside it, painted in the kind's colour.
+/// The pallet every pickup sits on: a tarp under three stringers and five close-laid
+/// deck boards, and the smoke grenade beside it, painted in the kind's colour. An
+/// emptied pallet shows the kind's stencil sprayed across its deck (the marking's).
 fn pallet_geometry() -> Mesh {
     let [w, d] = PALLET_SIZE;
     let deck = 0.035;
@@ -659,36 +698,37 @@ fn pallet_geometry() -> Mesh {
             z * (d / 2.0 - 0.06),
         ));
     }
+    // Each board is built lengthwise along x and turned, so its grain runs down
+    // its length and each takes one plank of the cell.
     let pitch = (w - PALLET_BOARD_WIDTH) / f64::from(PALLET_BOARDS - 1);
     for board in 0..PALLET_BOARDS {
         let x = -w / 2.0 + PALLET_BOARD_WIDTH / 2.0 + pitch * f64::from(board);
-        let band = f64::from(board % 4) * 0.25;
+        let plank = f64::from(board % 4) * 0.25;
         parts.push(
             Part::cube(
-                [PALLET_BOARD_WIDTH, deck, d],
-                wood([band, 0.0, band + 0.25, 1.0]),
+                [d, deck, PALLET_BOARD_WIDTH],
+                wood([0.0, plank, 1.0, plank + 0.25]),
             )
+            .turned(FRAC_PI_2)
             .at(x, stringer + deck / 2.0, 0.0),
         );
     }
-    // The lid: hidden under a stocked supply, it shows what returns to a spent drop.
-    let lid = [0.92, 0.025, 0.72];
-    parts.push(
-        Part::cube(lid, kind(PLAIN))
-            .top(Paint::Above(
-                KIND,
-                STENCIL,
-                [-lid[0] / 2.0, -lid[2] / 2.0, lid[0] / 2.0, lid[2] / 2.0],
-            ))
-            .turned(0.12)
-            .at(-0.08, PALLET_HEIGHT + lid[1] / 2.0, 0.02),
-    );
+    // The smoke grenade: a canister in the kind's paint, its fuse head and lever.
     let [mx, top, mz] = SMOKE_MARKER;
+    let fuse = 0.05;
     parts.push(
-        Part::drum(MARKER_RADIUS, top, 8, kind(BAND))
+        Part::drum(MARKER_RADIUS, top - fuse, 10, kind(BAND))
             .top(swatch(GUNMETAL))
-            .at(mx, top / 2.0, mz),
+            .at(mx, (top - fuse) / 2.0, mz),
     );
+    parts.push(
+        Part::drum(MARKER_RADIUS * 0.55, fuse, 8, swatch(GUNMETAL)).at(mx, top - fuse / 2.0, mz),
+    );
+    parts.push(Part::cube([0.024, top * 0.7, 0.03], swatch(GUNMETAL)).at(
+        mx + MARKER_RADIUS + 0.008,
+        top * 0.6,
+        mz,
+    ));
     build(parts)
 }
 
@@ -751,7 +791,7 @@ pub fn pickup_cube(kind: PickupKind) -> Node {
 }
 
 /// The pallet under every pickup, shared by every kind; its instance data's `xy`
-/// paints the left-behind lid and the smoke grenade for the kind.
+/// paints the smoke grenade for the kind.
 pub fn pickup_pallet() -> Node {
     let mesh = SHARED.get_or_insert(PALLET_KEY, pallet_geometry);
     let mut group = Node::default();

@@ -11,9 +11,9 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, PALLET_HEIGHT, TreeShape, aged_wreck_material, cover_damage_stage,
     crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
-    pickup_cube, pickup_paint, pickup_tile_offset, tank_model, timber_debris_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
-    wreck_brightness, wreck_model,
+    pickup_cube, pickup_glyph_offset, pickup_signal, pickup_tile_offset, tank_model,
+    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
+    tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -70,20 +70,19 @@ mod inspect;
 const TANK_MODEL_DROP: f64 = 0.4;
 /// A collected supply is heaved up out of its pallet beside the tank that took it
 /// and swung onto its turret roof, where it lands with a thump that settles the
-/// hull, rides a moment and is taken in through the hatch: how long the swing
-/// takes, how high it arcs over the roof, its size as it is heaved up and as it
-/// rides, how long it rides
-/// and how long it takes to stow. The thump rocks the hull back (rad/s) and
-/// squashes the load this much.
-const SUPPLY_SWING_SECONDS: f64 = 0.36;
-const SUPPLY_SWING_ARC: f64 = 0.6;
-const SUPPLY_HEAVE_SCALE: f64 = 0.8;
-const SUPPLY_STOW_SCALE: f64 = 0.45;
-const SUPPLY_RIDE_SECONDS: f64 = 0.75;
-const SUPPLY_STOW_SECONDS: f64 = 0.3;
+/// hull, squashes and is taken straight in through the hatch, the whole beat under
+/// half a second: how long the swing takes, how high it arcs over the roof, its
+/// size as it is heaved up and as it lands, how long it takes to stow and how far
+/// it sinks doing so. The thump rocks the hull back (rad/s) and squashes the load
+/// this much.
+const SUPPLY_SWING_SECONDS: f64 = 0.24;
+const SUPPLY_SWING_ARC: f64 = 0.45;
+const SUPPLY_HEAVE_SCALE: f64 = 0.7;
+const SUPPLY_STOW_SCALE: f64 = 0.42;
+const SUPPLY_STOW_SECONDS: f64 = 0.2;
+const SUPPLY_HATCH_DEPTH: f64 = 0.3;
 const SUPPLY_THUMP_ROCK: f64 = 1.1;
-const SUPPLY_THUMP_SQUASH: f64 = 0.16;
-const SUPPLY_THUMP_SECONDS: f64 = 0.14;
+const SUPPLY_THUMP_SQUASH: f64 = 0.22;
 /// Where on the roof it rides: this far behind the turret ring, along the aim, and
 /// the roof this far above the gun's muzzle.
 const SUPPLY_ROOF_BACK: f64 = 0.35;
@@ -191,14 +190,11 @@ struct PickupModel {
     gem: ModelId,
 }
 
-/// What every supply drop shares: the pallet, the ground marking the instance
-/// tint paints in the kind's colour, and the marking's joints.
+/// What every supply drop shares: the pallet and the ground marking the instance
+/// tint paints in the kind's colour.
 struct PadModels {
     base: ModelId,
     rim: ModelId,
-    ring: usize,
-    ring_dim: usize,
-    refill: usize,
 }
 
 struct MineModel {
@@ -378,15 +374,9 @@ impl Library {
     /// The pallet and marking every supply drop shares; instance tints paint the
     /// marking by kind.
     fn pickup_pad(&mut self, renderer: &mut Renderer) -> &PadModels {
-        self.pickup_pad.get_or_insert_with(|| {
-            let rim = renderer.add_model(&own::pickup_rim(), Lifetime::Shared);
-            PadModels {
-                base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
-                ring: joint_index(renderer, rim, joint::PICKUP_RING),
-                ring_dim: joint_index(renderer, rim, joint::PICKUP_RING_DIM),
-                refill: joint_index(renderer, rim, joint::PICKUP_REFILL),
-                rim,
-            }
+        self.pickup_pad.get_or_insert_with(|| PadModels {
+            base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
+            rim: renderer.add_model(&own::pickup_rim(), Lifetime::Shared),
         })
     }
 }
@@ -502,6 +492,8 @@ struct PickupView {
     base: InstanceId,
     rim: InstanceId,
     gem: InstanceId,
+    /// The marking's stencil offset for the kind (`pickup_glyph_offset`).
+    glyph: [f32; 2],
     /// Whether the views show the supply stocked (None: not yet set).
     shown: Option<bool>,
 }
@@ -1454,7 +1446,11 @@ impl Presentation {
             )
             .expect("pallet model");
         let rim = renderer
-            .add_instance(rim_model, Mat4::from_translation(ground), Lifetime::Round)
+            .add_instance(
+                rim_model,
+                Mat4::from_rotation_translation(turn, ground),
+                Lifetime::Round,
+            )
             .expect("marking model");
         let gem = renderer
             .add_instance(
@@ -1463,10 +1459,12 @@ impl Presentation {
                 Lifetime::Round,
             )
             .expect("supply model");
-        renderer.set_tint(rim, hex_to_linear(pickup_paint(kind)));
+        renderer.set_tint(rim, hex_to_linear(pickup_signal(kind)));
+        let glyph = pickup_glyph_offset(kind);
+        renderer.set_instance_data(rim, [1.0, glyph[0], glyph[1], 0.0]);
         let [u, v] = pickup_tile_offset(kind);
         renderer.set_instance_data(gem, [u, v, 0.0, 0.0]);
-        // The pallet's left-behind lid and smoke grenade wear the kind's paint too.
+        // The pallet's smoke grenade wears the kind's paint too.
         renderer.set_instance_data(base, [u, v, 0.0, 0.0]);
         self.pickups.insert(
             id,
@@ -1474,6 +1472,7 @@ impl Presentation {
                 base,
                 rim,
                 gem,
+                glyph,
                 shown: None,
             },
         );
@@ -2257,16 +2256,16 @@ impl Presentation {
                 self.add_pickup(supply.id, supply.kind, supply.x, supply.z);
             }
             let view = self.pickups.get_mut(&supply.id).expect("pickup view");
-            let pad = self.library.pickup_pad.as_ref().expect("pickup pad");
             let renderer = &mut self.renderer;
             let stocked = supply.available;
+            let [gu, gv] = view.glyph;
             renderer.set_opacity(view.gem, opacity);
             if view.shown != Some(stocked) {
                 view.shown = Some(stocked);
                 renderer.set_visible(view.gem, stocked);
-                renderer.set_node_visible(view.rim, pad.ring, stocked);
-                renderer.set_node_visible(view.rim, pad.ring_dim, !stocked);
-                renderer.set_node_visible(view.rim, pad.refill, !stocked);
+                if stocked {
+                    renderer.set_instance_data(view.rim, [1.0, gu, gv, 0.0]);
+                }
             }
             if !stocked {
                 let fallback = if supply.kind == PickupKind::Laser {
@@ -2279,9 +2278,8 @@ impl Presentation {
                 } else {
                     fallback
                 };
-                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 1.0);
-                let ticks = (progress * f64::from(own::REFILL_TICKS)) as f32;
-                renderer.set_instance_data(view.rim, [ticks, 0.0, 0.0, 0.0]);
+                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 1.0) as f32;
+                renderer.set_instance_data(view.rim, [progress, gu, gv, 0.0]);
             }
         }
     }
@@ -2321,6 +2319,12 @@ impl Presentation {
                 })
             })
             .map_or(0.0, |(&id, _)| supply_turn(id));
+        // The ground beat: a low burst of the kind's smoke and the ground's dust
+        // rolls out over the drop, and its grenade gives a last puff.
+        self.effects
+            .systems
+            .pickups
+            .collect(event.x, event.z, turn, pickup_signal(kind));
         let pallet = Vec3::new(event.x as f32, PALLET_HEIGHT as f32, event.z as f32);
         self.pickup_rises.push_back(PickupRise {
             instance,
@@ -2364,8 +2368,7 @@ impl Presentation {
         let mut rises = std::mem::take(&mut self.pickup_rises);
         rises.retain_mut(|rise| {
             rise.age += dt;
-            let done = SUPPLY_SWING_SECONDS + SUPPLY_RIDE_SECONDS + SUPPLY_STOW_SECONDS;
-            if rise.age >= done {
+            if rise.age >= SUPPLY_SWING_SECONDS + SUPPLY_STOW_SECONDS {
                 self.renderer.remove_instance(rise.instance);
                 return false;
             }
@@ -2397,23 +2400,18 @@ impl Presentation {
             let up = swing as f32;
             let start = Vec3::new(rise.x as f32, rise.deck, rise.z as f32);
             let mut center = start.lerp(target, along);
-            let arc = SUPPLY_SWING_ARC as f32 + (target.y - start.y).abs() * 0.5;
+            let arc = SUPPLY_SWING_ARC as f32 + (target.y - start.y).abs() * 0.3;
             center.y = start.y + (target.y - start.y) * up + arc * 4.0 * up * (1.0 - up);
             let size = SUPPLY_HEAVE_SCALE
                 + (SUPPLY_STOW_SCALE - SUPPLY_HEAVE_SCALE) * smoothstep(swing, 0.0, 1.0);
-            // A short squash as it lands.
-            let thump = rise.age - SUPPLY_SWING_SECONDS;
-            let squash = if (0.0..SUPPLY_THUMP_SECONDS).contains(&thump) {
-                SUPPLY_THUMP_SQUASH * (std::f64::consts::PI * thump / SUPPLY_THUMP_SECONDS).sin()
-            } else {
-                0.0
-            };
-            // Stowed: it sinks into the hatch as it goes.
-            let stow = ((rise.age - SUPPLY_SWING_SECONDS - SUPPLY_RIDE_SECONDS)
-                / SUPPLY_STOW_SECONDS)
-                .clamp(0.0, 1.0);
-            let height = size * (1.0 - squash) * (1.0 - stow);
-            let width = size * (1.0 + squash * 0.5);
+            // Landed, it squashes on the roof and is taken straight in through the
+            // hatch, sinking out of sight.
+            let stow = ((rise.age - SUPPLY_SWING_SECONDS) / SUPPLY_STOW_SECONDS).clamp(0.0, 1.0);
+            let squash = SUPPLY_THUMP_SQUASH * (std::f64::consts::PI * stow.min(0.5) * 2.0).sin();
+            let sink = stow * stow;
+            center.y -= (SUPPLY_HATCH_DEPTH * sink) as f32;
+            let height = size * (1.0 - squash) * (1.0 - sink);
+            let width = size * (1.0 + squash * 0.5) * (1.0 - 0.35 * sink);
             // It turns from its pallet to lie square across the roof.
             let mut yaw = heading - rise.turn;
             yaw = (yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
@@ -2427,8 +2425,6 @@ impl Presentation {
                     center,
                 ),
             );
-            self.renderer
-                .set_opacity(rise.instance, (1.0 - stow * stow) as f32);
             true
         });
         self.pickup_rises = rises;

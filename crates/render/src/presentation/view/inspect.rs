@@ -58,7 +58,7 @@ pub struct PickupInspection {
     pub ring: bool,
     pub ring_dim: bool,
     pub refill: bool,
-    /// Refill arc segments drawn.
+    /// How much of the marking is freshly re-sprayed (0..1).
     pub segments: f32,
 }
 
@@ -175,22 +175,24 @@ impl Presentation {
             });
         }
         for (&id, view) in &self.pickups {
-            let (Some(base), Some(rim), Some(gem), Some(pad)) = (
+            let (Some(base), Some(rim), Some(gem)) = (
                 renderer.instance_state(view.base),
                 renderer.instance_state(view.rim),
                 renderer.instance_state(view.gem),
-                self.library.pickup_pad.as_ref(),
             ) else {
                 continue;
             };
+            // The marking is one part: freshly painted while stocked, faded and
+            // re-sprayed (its progress in `data.x`) while restocking.
+            let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
                 // The full gem, not the small ghost a recharging pad shows.
                 gem: gem.visible && gem.world.x_axis.length() > 0.9,
-                ring: joint_shown(&rim, pad.ring),
-                ring_dim: joint_shown(&rim, pad.ring_dim),
-                refill: joint_shown(&rim, pad.refill),
+                ring: rim.visible && stocked,
+                ring_dim: rim.visible && !stocked,
+                refill: rim.visible && !stocked,
                 segments: rim.data[0],
             });
         }

@@ -40,10 +40,11 @@ pub const FLAG_CLOTH: EffectDefinition = effect(
     include_str!("shaders/flag_cloth.wgsl"),
 );
 
-/// A restocking supply drop's refill ticks, sprayed in one by one.
-pub const PICKUP_REFILL: EffectDefinition = effect(
-    models::PICKUP_REFILL_EFFECT,
-    include_str!("shaders/pickup_refill.wgsl"),
+/// A supply drop's marking: the kind's deck stencil and the circle re-sprayed while
+/// it restocks.
+pub const PICKUP_MARKING: EffectDefinition = effect(
+    models::PICKUP_MARKING_EFFECT,
+    include_str!("shaders/pickup_marking.wgsl"),
 );
 
 /// Every pickup kind of a shape from one mesh: the instance picks the atlas tile.
@@ -53,4 +54,4 @@ pub const PICKUP_FACE: EffectDefinition = effect(
 );
 
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 3] = [FLAG_CLOTH, PICKUP_REFILL, PICKUP_FACE];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 3] = [FLAG_CLOTH, PICKUP_MARKING, PICKUP_FACE];

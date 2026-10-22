@@ -13,13 +13,14 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use sloppy_core::geometry::{
-    Mesh, RingGeometry, Shape, circle_geometry, cylinder_geometry, merge_geometries,
-    plane_geometry, ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
+    Mesh, Shape, circle_geometry, cylinder_geometry, merge_geometries, plane_geometry,
+    ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
 };
 use sloppy_core::models::{
-    BarrelScrap, DEFAULT_BOX_RADIUS, PICKUP_ATLAS_PATH, PICKUP_PAINT_CELL, TEAM_COLORS,
-    atlas_cell_uv, barrel_scrap_geometry, cylinder_part, paint, pickup_pallet, put, shadowed,
-    siding_box, trunk_fragment,
+    BarrelScrap, DEFAULT_BOX_RADIUS, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH,
+    PICKUP_GLYPH_CELL, PICKUP_GLYPH_REGION, PICKUP_PAINT_CELL, TEAM_COLORS, atlas_cell_uv,
+    barrel_scrap_geometry, cylinder_part, paint, pickup_pallet, put, shadowed, siding_box,
+    trunk_fragment,
 };
 use sloppy_core::scene::{Effect, Material, Node, Side, TextureRef};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
@@ -43,17 +44,16 @@ pub mod joint {
     pub const RETICLE_READY: &str = "reticle-ready";
     pub const RETICLE_RELOADING: &str = "reticle-reloading";
     pub const RETICLE_CONFIRMED: &str = "reticle-confirmed";
-    /// A supply drop's sprayed circle, full or faded, and its refill ticks.
-    pub const PICKUP_RING: &str = "pickup-ring";
-    pub const PICKUP_RING_DIM: &str = "pickup-ring-dim";
-    pub const PICKUP_REFILL: &str = "pickup-refill";
+    /// A supply drop's marking: its sprayed circle and the stencil an emptied
+    /// pallet shows.
+    pub const PICKUP_MARKING: &str = "pickup-marking";
     /// The blinking cap of a mine.
     pub const MINE_LIGHT: &str = "mine-light";
 }
 
 /// Custom effects presentation registers (WGSL beside this file).
 pub const FLAG_CLOTH_EFFECT: &str = sloppy_core::models::effects_props::FLAG_CLOTH;
-pub const PICKUP_REFILL_EFFECT: &str = "pickup-refill";
+pub const PICKUP_MARKING_EFFECT: &str = "pickup-marking";
 
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
@@ -455,37 +455,37 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The supply drop's ground marking, sprayed in the kind's paint round its pallet:
-/// one bold hand-sprayed circle (its radii, crossing the tarp's corners, so
-/// neighbouring drops barely touch), darkened while the pickup is being restocked,
-/// and outside it a ring of tick marks (radii, count, the gap between ticks as a
-/// share of one, and how faint a tick still to fill is) sprayed in one by one until
-/// the supply returns. Paint on the ground, lit and shadowed like it, its ragged
-/// edges anti-aliased by alpha to coverage, never glowing.
-const MARKING_RADII: [f64; 2] = [1.0, 1.24];
+/// The supply drop's ground marking, sprayed in the kind's signal colour: one bold
+/// hand-sprayed circle round the pallet (its radii, just clear of the tarp's
+/// corners) over a dark primer edge that reads on sand and asphalt alike, and the
+/// kind's stencil sprayed across the pallet's deck, which the load hides until it is
+/// taken. While the supply is restocked the circle's paint is faded and fresh paint
+/// sweeps round it until the supply returns. Paint on the ground, lit and shadowed
+/// like it, its ragged edges anti-aliased by alpha to coverage, never glowing.
+const MARKING_RADII: [f64; 2] = [1.05, 1.24];
 const MARKING_SEGMENTS: u32 = 64;
-/// The spent ring's darkening of the kind's paint (linear).
-const MARKING_FADED: u32 = 0x5a5a5a;
 const MARKING_CUTOFF: f32 = 0.35;
-const REFILL_RADII: [f64; 2] = [1.28, 1.38];
-pub const REFILL_TICKS: u32 = 24;
-const REFILL_GAP: f32 = 0.42;
-const REFILL_FAINT: f32 = 0.18;
+/// How far the faded paint of a restocking drop is greyed and darkened.
+const MARKING_FADED: [f32; 2] = [0.7, 0.78];
 /// How high the paint lies over the ground; a depth bias keeps it there.
 const MARKING_HEIGHT: f64 = 0.012;
+/// The stencil on the deck: its size (x, z) and how far it lies over the boards.
+const DECK_STENCIL: [f64; 2] = [1.24, 0.93];
+const DECK_STENCIL_LIFT: f64 = 0.003;
 const PAINT_ROUGHNESS: f32 = 0.95;
 
-/// The pallet under every pickup, shared by every kind: planks and a spent smoke
-/// grenade (`sloppy_core::models::pickup_pallet`).
+/// The pallet under every pickup, shared by every kind: planks, a tarp and the
+/// smoke grenade (`sloppy_core::models::pickup_pallet`).
 pub fn pickup_base() -> Node {
     let mut root = Node::group("pickup");
     root.children.push(pickup_pallet());
     root
 }
 
-/// The sprayed circle: the atlas's paint cell bent once round the pallet; the
-/// generator paints it seamless across the cell, its strokes, gaps and overspray in
-/// alpha.
+/// The marking's mesh, about the drop's centre at paint height: the sprayed circle,
+/// the atlas's paint cell bent once round the pallet (the generator paints it
+/// seamless across the cell, its strokes and overspray in alpha), and the deck
+/// stencil, mapped to the first kind's stencil in the glyph cell.
 fn marking_geometry() -> Mesh {
     let [inner, outer] = MARKING_RADII;
     let mut mesh = Mesh::default();
@@ -505,6 +505,24 @@ fn marking_geometry() -> Mesh {
         let a = step * 2;
         indices.extend([a, a + 2, a + 1, a + 2, a + 3, a + 1]);
     }
+    // The deck stencil, its top edge toward -z (up the screen from the camera).
+    let [w, d] = DECK_STENCIL;
+    debug_assert!(w < PALLET_SIZE[0] && d < PALLET_SIZE[1]);
+    let y = (PALLET_HEIGHT + DECK_STENCIL_LIFT - MARKING_HEIGHT) as f32;
+    let [u0, v0, u1, v1] = PICKUP_GLYPH_REGION;
+    let first = mesh.positions.len() as u32;
+    for (x, z, u, v) in [
+        (-w / 2.0, d / 2.0, u0, v0),
+        (w / 2.0, d / 2.0, u1, v0),
+        (w / 2.0, -d / 2.0, u1, v1),
+        (-w / 2.0, -d / 2.0, u0, v1),
+    ] {
+        mesh.positions.push([x as f32, y, z as f32]);
+        mesh.normals.push([0.0, 1.0, 0.0]);
+        let [u, v] = atlas_cell_uv(PICKUP_GLYPH_CELL, u, v);
+        mesh.uvs.push([u as f32, v as f32]);
+    }
+    indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
     mesh.indices = Some(indices);
     mesh
 }
@@ -527,73 +545,48 @@ fn ground_paint(color: u32) -> Material {
     }
 }
 
-/// A supply drop's marking: the sprayed circle, full or darkened while the pickup
-/// is restocked, and the refill ticks shown while it is
-/// (`instance_data.x`: ticks sprayed, its fraction the next tick's coverage).
+/// A supply drop's marking, one draw for every drop: `instance_data.x` is how much
+/// of the circle is freshly sprayed (1 while stocked), `yz` moves the deck stencil
+/// to the kind's (`pickup_glyph_offset`).
 pub fn pickup_rim() -> Node {
     let mut root = Node::group("pickup-rim");
-    let circle = arc(marking_geometry());
     let atlas = TextureRef {
         wrap: sloppy_core::scene::Wrap::Clamp,
         anisotropy: 4,
         ..TextureRef::file(PICKUP_ATLAS_PATH)
     };
-    for (name, color) in [
-        (joint::PICKUP_RING, 0xffffff),
-        (joint::PICKUP_RING_DIM, MARKING_FADED),
-    ] {
-        let material = Material {
-            map: Some(atlas.clone()),
-            alpha_test: MARKING_CUTOFF,
-            alpha_to_coverage: true,
-            ..ground_paint(color)
-        };
-        let mut ring = named(
-            at(
-                shadow_receiver(circle.clone(), Arc::new(material)),
-                0.0,
-                MARKING_HEIGHT,
-                0.0,
-            ),
-            name,
-        );
-        ring.visible = name == joint::PICKUP_RING;
-        root.children.push(ring);
-    }
-    let refill = RingGeometry {
-        inner_radius: REFILL_RADII[0],
-        outer_radius: REFILL_RADII[1],
-        theta_segments: REFILL_TICKS * 2,
-        theta_start: PI / 2.0,
-        theta_length: PI * 2.0,
-    }
-    .build();
-    // Opaque with an alpha test: the effect cuts the gaps between ticks and fades
-    // the ticks still to spray.
+    let [paint_u0, _] = atlas_cell_uv(PICKUP_PAINT_CELL, 0.0, 0.0);
+    let [paint_u1, _] = atlas_cell_uv(PICKUP_PAINT_CELL, 1.0, 0.0);
+    let [glyph_u1, _] = atlas_cell_uv(PICKUP_GLYPH_CELL, 1.0, 0.0);
     let material = Material {
-        alpha_test: 0.5,
+        map: Some(atlas),
+        alpha_test: MARKING_CUTOFF,
+        alpha_to_coverage: true,
         effect: Effect::Custom {
-            name: PICKUP_REFILL_EFFECT,
+            name: PICKUP_MARKING_EFFECT,
             params: vec![
-                REFILL_TICKS as f32,
-                REFILL_RADII[1] as f32,
-                REFILL_GAP,
-                REFILL_FAINT,
+                paint_u0 as f32,
+                (paint_u1 - paint_u0) as f32,
+                // Anything left of this is the glyph cell's.
+                ((glyph_u1 + paint_u0) / 2.0) as f32,
+                0.0,
+                MARKING_FADED[0],
+                MARKING_FADED[1],
+                0.0,
+                0.0,
             ],
         },
         ..ground_paint(0xffffff)
     };
-    let mut node = named(
+    root.children.push(named(
         at(
-            flat(shadow_receiver(arc(refill), Arc::new(material))),
+            shadow_receiver(arc(marking_geometry()), Arc::new(material)),
             0.0,
             MARKING_HEIGHT,
             0.0,
         ),
-        joint::PICKUP_REFILL,
-    );
-    node.visible = false;
-    root.children.push(node);
+        joint::PICKUP_MARKING,
+    ));
     root
 }
 
@@ -686,13 +679,7 @@ mod tests {
         assert!(found.iter().any(|n| n == joint::RETICLE_CONFIRMED));
         let mut found = Vec::new();
         names(&pickup_rim(), &mut found);
-        for name in [
-            joint::PICKUP_RING,
-            joint::PICKUP_RING_DIM,
-            joint::PICKUP_REFILL,
-        ] {
-            assert!(found.iter().any(|n| n == name), "{name}");
-        }
+        assert!(found.iter().any(|n| n == joint::PICKUP_MARKING));
     }
 
     #[test]

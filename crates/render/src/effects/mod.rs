@@ -354,6 +354,11 @@ mod browser {
                 );
                 super::explosions::clear_sight_line(puffs, eye, target);
             }
+            // A collection's ground beat plays round the tank that took the supply,
+            // so it is added after the sight line to the viewer is cleared.
+            if self.systems.pickups.draw_collections(state, puffs) {
+                puffs.sort_back_to_front(eye);
+            }
             self.sync(renderer);
         }
 
