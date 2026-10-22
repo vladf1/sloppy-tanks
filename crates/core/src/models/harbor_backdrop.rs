@@ -269,8 +269,9 @@ fn ring_sectors(
 /// backdrop part keeps its uvs within 0..1): [`FACADE_FLAG`] draws a grid of
 /// windows over a tower's walls, [`STACK_FLAG`] the boxes of a container stack,
 /// each tier and bay its own line's color, and [`TERRAIN_FLAG`] the countryside
-/// (fields, woods and rock) over the green of the coast; the pines carry
-/// [`TREE_FLAG`] in their own mesh.
+/// (fields, woods and rock) over the green of the coast, [`TANK_FLAG`],
+/// [`SILO_FLAG`] and [`CLAD_FLAG`] the welded, slipformed and clad surfaces of the
+/// industry; the pines carry [`TREE_FLAG`] in their own mesh.
 fn flagged(mut part: Node, flag: f32) -> Node {
     if let Some(drawable) = &mut part.drawable {
         let mut mesh = (*drawable.mesh).clone();
@@ -289,6 +290,10 @@ const TERRAIN_FLAG: f32 = 30.0;
 const TREE_FLAG: f32 = 40.0;
 /// The tank farm's steel: welded courses, rust runs and a deep shaded side.
 const TANK_FLAG: f32 = 50.0;
+/// Slipformed concrete: rain-streaked bins rounded by a deep shaded side.
+const SILO_FLAG: f32 = 60.0;
+/// Profiled sheet cladding: ribbed walls dirtied at the foot.
+const CLAD_FLAG: f32 = 70.0;
 
 /// Ridge height of the mountain range at an angle, metres above the sea.
 fn range_height(theta: f64) -> f64 {
@@ -495,7 +500,7 @@ fn grain_terminal(sectors: &mut Sectors) {
             let foot = y - FOOTING;
             let silo = flagged(
                 cylinder_part(SILO_RADIUS, top - foot, 0xb5ad9b, 14),
-                TANK_FLAG,
+                SILO_FLAG,
             );
             place_at(sectors, theta, silo, x, (top + foot) / 2.0, z);
             place_at(
@@ -522,7 +527,7 @@ fn grain_terminal(sectors: &mut Sectors) {
     );
     let house = top + 10.0 - hy;
     let headhouse = rotated(
-        box_part(8.0, house + FOOTING, 9.0, 0xaaa391, 0.0),
+        facade(box_part(8.0, house + FOOTING, 9.0, 0xaaa391, 0.0)),
         0.0,
         -head_theta,
         0.0,
@@ -550,7 +555,10 @@ fn grain_terminal(sectors: &mut Sectors) {
     {
         let (x, y, z) = on_land(theta, inland);
         let shed = rotated(
-            box_part(length, 9.0 + FOOTING, 16.0, [0x8f9ea3, 0xa7a294][i], 0.0),
+            flagged(
+                box_part(length, 9.0 + FOOTING, 16.0, [0x7f9198, 0x9c8f78][i], 0.0),
+                CLAD_FLAG,
+            ),
             0.0,
             -theta + FRAC_PI_2,
             0.0,

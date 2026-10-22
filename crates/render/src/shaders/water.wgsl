@@ -51,6 +51,9 @@ const HULLS = array<vec4f, 3>(
 // beam at the transom.
 const HULL_BOWS = array<f32, 3>(1.0, -1.0, 1.0);
 const HULL_ROUNDING = 1.0;
+// Height above the water of the hulls' shadow-casting bulk (freeboard and the
+// lower tiers of cargo), metres.
+const HULL_SHADOW_HEIGHT = 7.0;
 const PIERS = array<vec4f, 8>(
     vec4f(-40.0, -65.0, 7.0, 4.5),
     vec4f(40.0, -65.0, 7.0, 4.5),
@@ -116,6 +119,10 @@ const HARBOR_GLOSSY_FAR = 190.0;
 const HARBOR_SMEAR = 0.011;
 const HARBOR_SKY_SHARE = 0.3;
 const HARBOR_MIRROR_MAX = 0.9;
+// Shadow-map texels between the water shadow's taps, and how dark the water body
+// goes in the shade of a hull or crane (the sky still lights it).
+const WATER_SHADOW_SPREAD = 1.5;
+const WATER_SHADE = 0.3;
 // The share of the scene's haze the harbor's own water takes.
 const HARBOR_FOG_SHARE = 0.72;
 
@@ -141,6 +148,43 @@ fn water_noise(p: vec2f) -> f32 {
     );
 }
 
+// Metres from `p` to the waterline of hull `i`, negative inside: its half beam
+// where the point lies along the hull, so the water hugs the pointed bow and the
+// tapered stern, not a box round them.
+fn hull_distance(p: vec2f, i: i32) -> f32 {
+    let hull = HULLS[i];
+    let along_x = hull.z > hull.w;
+    let q = p - hull.xy;
+    let along = select(q.y, q.x, along_x);
+    let across = select(q.x, q.y, along_x);
+    let reach = select(hull.w, hull.z, along_x);
+    let breadth = select(hull.z, hull.w, along_x);
+    let u = along * HULL_BOWS[i] / reach;
+    let bow = select(mix(1.0, 0.69, (u - 0.66) / 0.2), mix(0.69, 0.0, (u - 0.86) / 0.14), u > 0.86);
+    let taper = select(select(1.0, mix(1.0, 0.69, (-u - 0.89) / 0.11), u < -0.89), bow, u > 0.66);
+    return rounded_box_distance(vec2f(along, across), vec4f(0.0, 0.0, reach, breadth * clamp(taper, 0.0, 1.0)), HULL_ROUNDING);
+}
+
+// How deep in the moored hulls' shadow `p` lies, 0..1: the sun-lit shadow map ends
+// at the arena's margin, so each hull's freeboard and cargo are swept away from the
+// sun as its outline raised step by step, with a soft edge for the rippled water.
+fn hull_shade(p: vec2f) -> f32 {
+    let sun = frame.sun_direction.xyz;
+    let reach = -sun.xz / max(sun.y, 0.2);
+    var shade = 0.0;
+    for (var i = 0; i < 3; i++) {
+        // Only hulls whose shadow could reach this far are swept.
+        if hull_distance(p, i) > HULL_SHADOW_HEIGHT * length(reach) + 2.0 {
+            continue;
+        }
+        for (var k = 1; k <= 4; k++) {
+            let d = hull_distance(p - reach * (HULL_SHADOW_HEIGHT * f32(k) * 0.25), i);
+            shade = max(shade, 1.0 - smoothstep(-1.2, 1.4, d));
+        }
+    }
+    return shade;
+}
+
 // What the water meets near a harbor point: x the metres to the nearest quay
 // face, hull or pier; y how much of the churn that face throws up (a hull's bow
 // and stern most, its flat sides least); z unused (a moored hull trails no wash);
@@ -152,15 +196,8 @@ fn harbor_shore(p: vec2f) -> vec4f {
         let along_x = hull.z > hull.w;
         let q = p - hull.xy;
         let along = select(q.y, q.x, along_x);
-        let across = select(q.x, q.y, along_x);
         let reach = select(hull.w, hull.z, along_x);
-        let breadth = select(hull.z, hull.w, along_x);
-        // The waterline's half beam where this point lies along the hull, so the
-        // water hugs the pointed bow and the tapered stern, not a box round them.
-        let u = along * HULL_BOWS[i] / reach;
-        let bow = select(mix(1.0, 0.69, (u - 0.66) / 0.2), mix(0.69, 0.0, (u - 0.86) / 0.14), u > 0.86);
-        let taper = select(select(1.0, mix(1.0, 0.69, (-u - 0.89) / 0.11), u < -0.89), bow, u > 0.66);
-        let d = rounded_box_distance(vec2f(along, across), vec4f(0.0, 0.0, reach, breadth * clamp(taper, 0.0, 1.0)), HULL_ROUNDING);
+        let d = hull_distance(p, i);
         if d < out.x {
             out.x = d;
             // Moored, so no bow wave: the swell slaps white round the bow and the
@@ -257,6 +294,27 @@ fn tug_wakes(p: vec2f, time: f32) -> vec3f {
         }
     }
     return out;
+}
+
+// The sun's shadow on the water: what the moored hulls, the cranes and the quay
+// throw across the basin, from four hardware-filtered taps spread wide, since a
+// shadow on rippled water has a soft edge. Outside the shadow map the sun is clear.
+fn water_shadow(world: vec3f) -> f32 {
+    let size = frame.shadow.z;
+    if size <= 0.0 {
+        return 1.0;
+    }
+    let position = frame.shadow_matrix * vec4f(world, 1.0);
+    let projected = position.xyz / position.w;
+    let coord = vec3f(projected.x, 1.0 - projected.y, projected.z + frame.shadow.x);
+    let spread = WATER_SHADOW_SPREAD * max(frame.shadow.w, 1.0) / size;
+    var sum = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let corner = vec2f(f32(i & 1), f32(i >> 1u)) * 2.0 - 1.0;
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + corner * spread, coord.z);
+    }
+    let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
+    return select(1.0, sum * 0.25, inside);
 }
 
 @vertex
@@ -401,7 +459,11 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // even at grazing angles some of the water body shows through the swell.
         let reflectance = HARBOR_F0 + (1.0 - HARBOR_F0) * pow(1.0 - theta, 5.0);
         let mirror_weight = clamp(reflectance * mix(1.3, 0.9, gust) * (1.0 - aerated * 0.5), 0.0, HARBOR_MIRROR_MAX);
-        let albedo = mix(scatter, reflected + specular, mirror_weight) + glitter;
+        // In the shade of a hull or crane the sun's glints and its light through the
+        // swell go out; the mirrored sky stays.
+        let sunlit = min(water_shadow(input.world), 1.0 - hull_shade(input.world.xz) * 0.9);
+        let albedo = mix(scatter * mix(WATER_SHADE, 1.0, sunlit), reflected * mix(0.75, 1.0, sunlit) + specular * sunlit, mirror_weight)
+            + glitter * sunlit;
         // Foam: a crisp line where the water slaps every face, a broken collar
         // beside it that is heaviest at a hull's bow and stern, wash lapping
         // outwards in rings, streaks trailing off the hulls' ends and the tugs'
@@ -452,7 +514,7 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         }
         let foam = clamp(line * 0.85 + collar * 0.75 + wash * 0.5 + flecks * 0.35 + wake_foam
             + whitecap * 0.65, 0.0, 1.0);
-        let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0));
+        let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0)) * mix(0.65, 1.0, sunlit);
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {
         let reflectance = pow(1.0 - theta, 5.0) * 0.82 + 0.18;
