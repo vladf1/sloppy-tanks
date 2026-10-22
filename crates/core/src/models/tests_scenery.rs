@@ -288,11 +288,16 @@ fn sections() -> Vec<(String, Node)> {
     sections
 }
 
-/// Subtrees only one side builds: Three's reflector targets.
+/// Subtrees only one side builds: Three's reflector targets, and the farmhouse,
+/// which is the village cottage (`house_model`, tested there) since the cottages
+/// were redesigned.
 fn skipped(section: &str, path: &str) -> bool {
-    (section == "village" && path.starts_with("r.4.1."))
+    (section == "village" && (path.starts_with("r.4.1.") || path.starts_with(FARMHOUSE)))
         || (section == "harbor" && path.starts_with("r.0."))
 }
+
+/// The farmstead's farmhouse cottage in the village dump.
+const FARMHOUSE: &str = "r.7.0.1.0";
 
 /// Lines whose child count differs only because of a skipped subtree.
 fn loose_children(section: &str, path: &str) -> bool {

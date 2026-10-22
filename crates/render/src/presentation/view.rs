@@ -11,8 +11,8 @@ use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
-    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
+    create_arena_floor, create_spawn_pads, flags_model, house_pieces, part, pickup_cube,
+    tank_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
     wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
@@ -20,6 +20,7 @@ use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
+use sloppy_core::sim::house_layout::HousePiece;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -601,6 +602,12 @@ pub struct Presentation {
     /// Section looks this round's crates can break into, still to build; one is
     /// built a frame, so a crate breaking builds none.
     section_warmups: Vec<SectionKey>,
+    /// The pieces of each collapsing cottage still to be given a view: the whole
+    /// set is built once, when its first piece appears.
+    house_pieces: HashMap<u32, Vec<(HousePiece, Node)>>,
+    /// Whether every cottage chimney that smokes still stands, as the smoke was
+    /// last filled.
+    chimneys: Vec<(u32, bool)>,
     pickups: HashMap<u32, PickupView>,
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
@@ -675,6 +682,8 @@ impl Presentation {
             fragments: HashMap::new(),
             sections: HashMap::new(),
             section_warmups: Vec::new(),
+            house_pieces: HashMap::new(),
+            chimneys: Vec::new(),
             pickups: HashMap::new(),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
@@ -913,6 +922,9 @@ impl Presentation {
                     self.renderer.set_part_instances(model, 0, &wisps);
                 }
             }
+            if shown {
+                self.chimneys = model_catalog::standing_chimneys(&state.covers);
+            }
         }
         if self.theme != Some(theme) {
             let water = self
@@ -950,6 +962,7 @@ impl Presentation {
         self.cover_models.clear();
         self.fragments.clear();
         self.sections.clear();
+        self.house_pieces.clear();
         self.pickups.clear();
         self.mines.clear();
         self.pickup_effects.clear();
@@ -2036,7 +2049,28 @@ impl Presentation {
         }
     }
 
+    /// Stop the smoke of a cottage whose chimney has toppled or fallen, and start it
+    /// again when the cottage stands again.
+    fn update_chimney_smoke(&mut self, state: &RenderState) {
+        let chimneys = model_catalog::standing_chimneys(&state.covers);
+        if chimneys == self.chimneys {
+            return;
+        }
+        self.chimneys = chimneys;
+        let Some(theme) = self.theme else {
+            return;
+        };
+        if let Some(view) = self.scenery.get_mut(theme.name())
+            && let Some((model, _)) = view.smoke
+            && let Some(smoke) = model_catalog::refill_smoke(&mut view.scenery, &state.covers)
+        {
+            let wisps = model_catalog::smoke_instances(&smoke);
+            self.renderer.set_part_instances(model, 0, &wisps);
+        }
+    }
+
     fn update_covers(&mut self, state: &RenderState) {
+        self.update_chimney_smoke(state);
         let mut shed = Vec::new();
         for cover in &state.covers {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
@@ -2290,7 +2324,7 @@ impl Presentation {
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
             if !self.fragments.contains_key(&fragment.id) {
-                match self.fragment_view(fragment) {
+                match self.fragment_view(fragment, &state.covers) {
                     Some(view) => {
                         self.fragments.insert(fragment.id, view);
                     }
@@ -2371,10 +2405,17 @@ impl Presentation {
     }
 
     /// A physical debris view: an instanced piece, a wreck part, a timber member,
-    /// a watchtower piece, a section of a crate or a falling crown.
-    fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
+    /// a watchtower or cottage piece, a section of a crate or a falling crown.
+    fn fragment_view(
+        &mut self,
+        fragment: &RenderFragment,
+        covers: &[RenderCover],
+    ) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
             owned_look(&mut self.renderer, &timber_part_model(part))
+        } else if let (Some(piece), Some(house)) = (fragment.house_piece, fragment.house_id) {
+            let node = self.house_piece(piece, house, covers)?;
+            owned_look(&mut self.renderer, &node)
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
             owned_look(&mut self.renderer, &node)
@@ -2425,6 +2466,36 @@ impl Presentation {
             timber: fragment.timber_part.clone(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),
         })
+    }
+
+    /// A collapsing cottage's piece model, building the cottage's whole set when
+    /// its first piece appears.
+    fn house_piece(
+        &mut self,
+        piece: HousePiece,
+        house: u32,
+        covers: &[RenderCover],
+    ) -> Option<Node> {
+        let pieces = match self.house_pieces.entry(house) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let cover = covers.iter().find(|cover| cover.id == house)?;
+                entry.insert(house_pieces(
+                    cover.x,
+                    cover.z,
+                    cover.w,
+                    cover.d,
+                    cover.h,
+                    &cover.timber_hits,
+                ))
+            }
+        };
+        let index = pieces.iter().position(|(p, _)| *p == piece)?;
+        let (_, node) = pieces.swap_remove(index);
+        if pieces.is_empty() {
+            self.house_pieces.remove(&house);
+        }
+        Some(node)
     }
 
     fn update_mines(&mut self, state: &RenderState) {
