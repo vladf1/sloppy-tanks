@@ -79,8 +79,16 @@ export function recapMarkup(
       : metric === "longestLife"
         ? duration(value)
         : value.toLocaleString("en-US");
-  const tile = (label: string, value: string, hint: string, footer = "", isRecord = false) =>
-    `<div class="recap-stat${isRecord ? " is-record" : ""}" title="${hint}"><dt>${label}</dt><dd>${value}</dd>${footer ? `<span>${footer}</span>` : ""}</div>`;
+  const standout = standoutTile(recap);
+  const tile = (
+    label: string,
+    value: string,
+    hint: string,
+    footer = "",
+    isRecord = false,
+    key = "",
+  ) =>
+    `<div class="recap-stat${isRecord ? " is-record" : ""}${key && key === standout ? " is-standout" : ""}" title="${hint}"><dt>${label}</dt><dd>${value}</dd>${footer ? `<span>${footer}</span>` : ""}</div>`;
   // The hero tile carries the tank (drawn in by the page) and the kills measured
   // against the personal best: a bar that fills toward it, gold once it is beaten.
   const hero = (markup: string) =>
@@ -127,12 +135,13 @@ export function recapMarkup(
           METRICS[metric].hint,
           recordFooter(metric),
           improved.has(metric),
+          metric,
         );
         return index === 0 ? hero(markup) : markup;
       })
       .join(
         "",
-      )}${tile("Accuracy", hitRate, "Direct hits / projectiles fired, splash excluded", `${recap.directHits} / ${recap.shots} HITS`)}</dl>
+      )}${tile("Accuracy", hitRate, "Direct hits / projectiles fired, splash excluded", `${recap.directHits} / ${recap.shots} HITS`, false, "accuracy")}</dl>
     <dl class="recap-details"${extras.length ? "" : " hidden"}>${extras
       .map(
         (extra) =>
@@ -140,6 +149,28 @@ export function recapMarkup(
       )
       .join("")}</dl>
     <p class="recap-note">${note}</p>`;
+}
+
+/** Accuracy worth lighting: at least this share of direct hits over enough shots. */
+const STANDOUT_ACCURACY = 0.6;
+const STANDOUT_SHOTS = 5;
+/** A spree worth lighting, in kills in one life. */
+const STANDOUT_SPREE = 3;
+
+/** The one small tile the report lights as the round's standout: a personal best first,
+ * then sharp shooting, then a long spree; none when nothing stands out. Kills has the
+ * hero tile of its own. */
+export function standoutTile(
+  recap: Pick<RecapState, "improved" | "stats" | "shots" | "directHits">,
+): string {
+  const record = featuredMetrics.slice(1).find((metric) => recap.improved.includes(metric));
+  if (record) {
+    return record;
+  }
+  if (recap.shots >= STANDOUT_SHOTS && recap.directHits / recap.shots >= STANDOUT_ACCURACY) {
+    return "accuracy";
+  }
+  return recap.stats.bestLife >= STANDOUT_SPREE ? "bestLife" : "";
 }
 
 /** The hero tile's measure of the round's kills against the personal best. */
@@ -229,5 +260,9 @@ export function scoreboardMarkup(
       .join("");
     return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}, ${scores[index]}"><header><b>${teamNames[index]}</b><span></span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
   };
-  return `<div class="results-board">${team(0)}${team(1)}</div>`;
+  // The rule behind the MVP tag, so a tie on kills never looks arbitrary.
+  const key = mvp
+    ? `<p class="board-key"><span class="board-tag mvp-tag">MVP</span>Most kills · fewest deaths breaks a tie</p>`
+    : "";
+  return `<div class="results-board">${team(0)}${team(1)}${key}</div>`;
 }

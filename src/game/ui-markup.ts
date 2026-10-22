@@ -69,7 +69,7 @@ export function hudMarkup(): string {
         <div id="cockpit" aria-hidden="true"><p class="aim-hint" hidden>Click to aim · Esc for menu</p></div>
         <div class="scoreboard"><div class="team mint"><small id="label0">BLUE</small><b id="score0">0</b><i class="team-progress"><i id="progress0"></i></i></div>
         <div class="clock"><b id="time">5:00</b><small id="objective"></small></div>
-        <div class="team coral"><small id="label1">RED</small><b id="score1">0</b><i class="team-progress"><i id="progress1"></i></i></div></div>
+        <div class="team coral"><small id="label1">RED</small><b id="score1">0</b><i class="team-progress"><i id="progress1"></i></i></div><b class="your-side" aria-hidden="true">YOUR TEAM</b></div>
         <div class="hud-actions"><button id="view-mode" class="quiet" type="button" aria-label="First-person view" title="First-person view (V)" aria-pressed="false">${hudIcon("hud-eye")}</button><button id="fullscreen" class="quiet" type="button" aria-label="Enter fullscreen" title="Enter fullscreen" aria-pressed="false">${hudIcon("hud-expand")}</button><button id="pause" class="quiet" type="button" aria-label="Pause" title="Pause (Esc)">${hudIcon("hud-pause")}</button>${SETTINGS_BUTTON}</div>
         <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
         <div id="hull-pill" aria-hidden="true"><small id="hull-pill-name"></small>${hudIcon("hud-hull", "hull-pill-icon")}<b id="hull-pill-hp">100</b>${HULL_BAR}</div>
@@ -80,7 +80,7 @@ export function hudMarkup(): string {
         ).join(
           "",
         )}</div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
-        <div class="hull-compass" aria-hidden="true"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><span class="compass-copy"><b>FIRST PERSON</b><small class="compass-key"><kbd>V</kbd>overhead view</small></span></div>
+        <div class="hull-compass" aria-hidden="true" title="First person: V returns to the overhead view"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><kbd class="compass-key">V</kbd></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div></div>
         </div></div>
         <div id="overlay"></div>`;
@@ -255,7 +255,7 @@ function pauseOverviewMarkup(hud: HudState): string {
   const fact = (label: string, value: string, note = "") =>
     `<div><dt>${label}</dt><dd>${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
   return `${objective}
-    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Kills / deaths", `${viewer.kills} / ${viewer.deaths}`)}${place ? fact("Team rank", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
+    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Kills / deaths", `${viewer.kills} / ${viewer.deaths}`, "this battle")}${place ? fact("Team rank", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
 }
 
 /** Pause's line under its title: who leads, in words, and how many kills your team

@@ -48,6 +48,9 @@ export class RoomBrowser {
   private readonly create: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
   private readonly retry: HTMLButtonElement;
+  /** The offline list's own retry, beside its way into single player. */
+  private readonly retryNow: HTMLButtonElement | null;
+  private readonly retryLine: HTMLElement | null;
   private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
@@ -107,6 +110,9 @@ export class RoomBrowser {
     this.refresh.addEventListener("click", () => void this.poll());
     this.retry = this.element("#retry-rooms");
     this.retry.addEventListener("click", () => void this.poll());
+    this.retryNow = this.panel.querySelector(".room-empty .retry-now");
+    this.retryNow?.addEventListener("click", () => void this.poll());
+    this.retryLine = this.panel.querySelector("#rooms-retry-line");
     const length = this.element<HTMLInputElement>("#create-round-minutes");
     for (const step of this.panel.querySelectorAll<HTMLButtonElement>(".room-length .step")) {
       step.addEventListener("click", () => {
@@ -276,6 +282,9 @@ export class RoomBrowser {
       this.refresh.disabled = true;
       // A retry under way shows on its button, which waits until the answer is in.
       this.retry.disabled = true;
+      if (this.retryNow) {
+        this.retryNow.disabled = true;
+      }
       const controller = new AbortController();
       this.controller = controller;
       let timedOut = false;
@@ -331,6 +340,9 @@ export class RoomBrowser {
         this.loading = false;
         this.refresh.disabled = false;
         this.retry.disabled = false;
+        if (this.retryNow) {
+          this.retryNow.disabled = false;
+        }
       }
     }
     if (this.shown) {
@@ -338,8 +350,9 @@ export class RoomBrowser {
     }
   }
 
-  /** The offline status: the list itself says the rooms are offline, so the well counts
-   * down to the next try in whole seconds, beside its button to try now. */
+  /** The offline status, counting down to the next try in whole seconds. Beside the tab
+   * the empty list says it once, with its reason, the countdown and both ways forward;
+   * the status well (which a phone shows instead) carries the same words. */
   private showRetryCountdown(reason: string, delayMs: number): void {
     const retryAt = performance.now() + delayMs;
     const tick = () => {
@@ -349,6 +362,9 @@ export class RoomBrowser {
         "Reconnecting to the game server",
         `${reason} · next try in ${seconds} s`,
       );
+      if (this.retryLine) {
+        this.retryLine.textContent = `Rooms list here once it answers · next try in ${seconds} s`;
+      }
     };
     tick();
     this.countdown = setInterval(tick, 1000);

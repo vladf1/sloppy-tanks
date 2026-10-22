@@ -62,7 +62,7 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   assert.match(markup, /class="dialog-score"/);
   assert.doesNotMatch(markup, /KILL SHARE|share-bar/);
   assert.match(markup, /<dt>Objective<\/dt><dd>First to 100<\/dd>/);
-  assert.match(markup, /<dt>Kills \/ deaths<\/dt><dd>2 \/ 1<\/dd>/);
+  assert.match(markup, /<dt>Kills \/ deaths<\/dt><dd>2 \/ 1<small>this battle<\/small><\/dd>/);
   assert.match(markup, /<dt>Difficulty<\/dt><dd>Normal<\/dd>/);
   // The line under the title says who leads in words and what the team still needs.
   assert.match(

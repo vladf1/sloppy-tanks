@@ -10,6 +10,7 @@ import {
   deathReport,
   effectsLabel,
   feedIcon,
+  hullColor,
   hullTone,
   isOwnKill,
   killFeedNames,
@@ -194,6 +195,19 @@ test("the hull bar's colour follows the hull's state, never the team", () => {
     "critical",
     "critical",
   ]);
+});
+
+test("the panel's hull colour ramps from green through orange to red as the hull drains", () => {
+  assert.equal(hullColor(1), "#5fe39a");
+  assert.equal(hullColor(0.7), "#5fe39a");
+  assert.equal(hullColor(0.4), "#ff8636");
+  assert.equal(hullColor(0.25), "#ff4d5e");
+  assert.equal(hullColor(0), "#ff4d5e");
+  // Each step down the hull moves the colour away from green: less green, never more.
+  const green = (ratio: number) => parseInt(hullColor(ratio).slice(3, 5), 16);
+  for (let ratio = 0.7; ratio > 0.25; ratio -= 0.05) {
+    assert.ok(green(ratio - 0.05) <= green(ratio), String(ratio));
+  }
 });
 
 test("every kill-feed row carries an icon, the wreck mark when the weapon is unknown", () => {

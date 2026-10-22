@@ -7,6 +7,7 @@ import {
   recapMarkup,
   scoreboardMarkup,
   standingLine,
+  standoutTile,
   teamLabel,
   teamPlace,
   countLine,
@@ -172,4 +173,23 @@ test("pause places the viewer on their own team by kills, then fewest wrecks", (
   const rows = [row(1, 1, 2, 1), row(2, 1, 2, 0), row(3, 1, 0, 0), row(4, 0, 9, 0)];
   assert.deepEqual(teamPlace(rows, 1), { place: 2, of: 3 });
   assert.equal(teamPlace(rows, 99), null);
+});
+
+test("the report lights one standout tile: a record, then sharp shooting, then a spree", () => {
+  assert.equal(standoutTile(recap({ improved: ["damage"], shots: 10, directHits: 9 })), "damage");
+  assert.equal(standoutTile(recap({ shots: 10, directHits: 8 })), "accuracy");
+  // A lucky shot or two is not sharp shooting.
+  assert.equal(standoutTile(recap({ shots: 2, directHits: 2 })), "");
+  assert.equal(standoutTile(recap({ stats: { ...zero(), bestLife: 3 } })), "bestLife");
+  assert.equal(standoutTile(recap()), "");
+  const markup = recapMarkup(round, recap({ shots: 10, directHits: 8 }));
+  assert.equal(markup.match(/is-standout/g)?.length, 1);
+  assert.match(markup, /recap-stat is-standout" title="Direct hits/);
+});
+
+test("the scoreboard explains how its MVP is picked, only when there is one", () => {
+  const rows = [row(3, "OUTLAW", 1, 2, 0), row(2, "YOU", 1, 2, 1)];
+  assert.match(scoreboardMarkup(rows, 2, ["BLUE", "RED"], [0, 4]), /fewest deaths breaks a tie/);
+  const scoreless = rows.map((row) => ({ ...row, kills: 0 }));
+  assert.doesNotMatch(scoreboardMarkup(scoreless, 2, ["BLUE", "RED"], [0, 0]), /board-key/);
 });
