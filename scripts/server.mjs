@@ -138,8 +138,8 @@ async function deploy() {
   console.log(
     `Deploying the ${server.role} server (content ${version}, build ${build}) to ${server.ssh}`,
   );
-  // The image script builds the page the server serves (from the Wasm `pnpm run wasm`
-  // built), which names the image beside the server build.
+  // The image script builds the Wasm engines and the page the server serves, which
+  // names the image beside the server build.
   run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
   const site = await siteBuild(SERVER_SITE_DIRECTORY);
   const image = `${SERVER_IMAGE}:${imageBuild(build, site)}`;

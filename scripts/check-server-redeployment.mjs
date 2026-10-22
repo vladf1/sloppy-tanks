@@ -6,8 +6,8 @@ import { gameServer } from "./servers.mjs";
  * with what the live server reports: the protocol and content version decide whether
  * clients built from here can join, and the server build catches server-only changes
  * (crates/server/, bundled dependencies, build settings) that leave clients compatible.
- * `--site` also builds the server's copy of the page (scripts/server-site.mjs, after
- * `pnpm run wasm`) and compares its site build, which only a build can tell.
+ * `--site` also builds the Wasm engines and the server's copy of the page
+ * (scripts/server-site.mjs) and compares its site build, which only a build can tell.
  * Exit 0: nothing to deploy; 1: redeploy needed; 2: the server did not answer.
  * It also reports whether the live page that uses this server can join it; a page that
  * cannot is a warning, since the page deploy may simply not have caught up yet.
@@ -38,7 +38,7 @@ const local = {
   protocol: await protocolVersion(),
   contentVersion: await contentVersion(),
   serverBuild: await serverBuild(),
-  siteBuild: compareSite ? await buildServerSite() : undefined,
+  siteBuild: compareSite ? await buildServerSite({ buildWasm: true }) : undefined,
 };
 let live;
 try {

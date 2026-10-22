@@ -97,10 +97,13 @@ export async function serverBuild() {
       "scripts/build-server.mjs",
       // CI names server images by this hash (beside the page's site build) and skips images
       // the registry already holds, so the image recipe, its build context and the
-      // arguments it gets must change it too.
+      // arguments it gets must change it too. The site build hashes the page's files but
+      // not their Brotli and gzip copies, so the scripts that make those count here.
       "Dockerfile",
       ".dockerignore",
       "scripts/build-server-image.mjs",
+      "scripts/server-site.mjs",
+      "scripts/precompress.mjs",
     ],
     dependencyTree("sloppy-server", "x86_64-unknown-linux-musl"),
   );

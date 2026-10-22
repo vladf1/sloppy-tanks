@@ -20,8 +20,16 @@ const COMPRESSIBLE = /\.(html|js|mjs|css|svg|json|webmanifest|txt|md|wasm)$/;
 /** Below this a stored copy saves a few hundred bytes at most. */
 const MIN_PRECOMPRESSED_BYTES = 1024;
 
-/** Builds `dist-server/` with Brotli and gzip copies and returns its site build. */
-export async function buildServerSite() {
+/** Builds `dist-server/` with Brotli and gzip copies and returns its site build.
+ * `buildWasm` first builds the engines from this checkout, as a local image build must:
+ * the content version below covers only `crates/core`, so engines left from before a
+ * renderer or shader change would pass it. CI's site job built them moments earlier. */
+export async function buildServerSite({ buildWasm = false } = {}) {
+  if (buildWasm) {
+    const wasm = spawnSync("node", ["scripts/build-wasm.mjs"], { cwd: repo, stdio: "inherit" });
+    if (wasm.error) throw wasm.error;
+    if (wasm.status !== 0) throw new Error(`The Wasm build exited with ${wasm.status}`);
+  }
   // The image ships this page beside a server built from the same checkout, and the two
   // refuse each other unless the engine was built from these sources.
   const stamp = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(

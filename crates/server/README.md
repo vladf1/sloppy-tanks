@@ -43,7 +43,7 @@ there before changing either.
 
 `pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>-<site build>` and `:latest`
-(`Dockerfile`), with the game page it serves (`pnpm run wasm` first). It
+(`Dockerfile`), with the game page it serves, built with fresh Wasm engines. It
 cross-compiles with `--vps` as above in the normal Cargo target directory, so
 compiled dependencies are reused locally and from CI's Cargo cache, and the image
 only copies in the static binary, listening on `0.0.0.0:8787`, and the page. Try it

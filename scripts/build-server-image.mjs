@@ -8,8 +8,8 @@ import { buildServerSite, SERVER_SITE_DIRECTORY } from "./server-site.mjs";
 /** Build the multiplayer server's linux/amd64 Docker image from `Dockerfile`. The binary
  * comes from `scripts/build-server.mjs --vps`, built in the normal Cargo target directory
  * so its compiled dependencies are reused, and the game page it serves from
- * `scripts/server-site.mjs` (which needs `pnpm run wasm` first); the image only copies
- * both in. CI passes `--prebuilt` with both already in place from its other jobs. The
+ * `scripts/server-site.mjs`, after building the Wasm engines; the image only copies both
+ * in. CI passes `--prebuilt` with both already in place from its other jobs. The
  * image labels carry the same content version and server build the binary stamps, and
  * the site build `/health` reports for the page.
  *
@@ -55,7 +55,9 @@ const push = process.argv.includes("--push");
 const prebuilt = process.argv.includes("--prebuilt");
 const version = await contentVersion();
 const build = await serverBuild();
-const site = prebuilt ? await siteBuild(SERVER_SITE_DIRECTORY) : await buildServerSite();
+const site = prebuilt
+  ? await siteBuild(SERVER_SITE_DIRECTORY)
+  : await buildServerSite({ buildWasm: true });
 const commit = git("rev-parse", "HEAD") + (git("status", "--porcelain") ? "-dirty" : "");
 const image = `${name}:${imageBuild(build, site)}`;
 const extraTags = [...option("--tag"), ...(push ? [] : ["latest"])].map((tag) => `${name}:${tag}`);
