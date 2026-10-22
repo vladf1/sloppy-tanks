@@ -16,10 +16,10 @@ use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
-    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, muzzle_z, ring_radius, tube_radius,
+    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, hatch_tops, muzzle_z, ring_radius, tube_radius,
 };
 use super::tank_kit::Coat;
-use super::tank_surfaces::{Grime, Livery, apply_livery, vehicle_paint};
+use super::tank_surfaces::{Grime, Livery, apply_livery, ember_material, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
@@ -30,15 +30,16 @@ use crate::sim::data::vehicle;
 mod running_gear;
 use running_gear::running_gear;
 
-/// The shared dark and steel trim colors.
+/// The shared dark and steel trim colors: a neutral worn steel, so bare metal
+/// reads as metal beside either team's paint rather than as a blue trim.
 pub(crate) const DARK: u32 = 0x13232c;
-pub(crate) const STEEL: u32 = 0x637581;
+pub(crate) const STEEL: u32 = 0x6f706c;
 /// Shade paint is team paint darkened in linear space by this factor.
 pub(crate) const SHADE_FACTOR: f64 = 0.62;
 const GLASS_TINT: u32 = 0x8adeec;
 const MARKING_WHITE: u32 = 0xdce7ee;
-/// Machine guns and cable: dark blued steel.
-const GUNMETAL: u32 = 0x2b3134;
+/// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
+const GUNMETAL: u32 = 0x2c2e2f;
 /// Olive-drab canvas of tarps, bags and the mantlet's dust cover.
 const CANVAS: u32 = 0x4f5236;
 const WOOD: u32 = 0x6a4c30;
@@ -46,7 +47,7 @@ const TAIL_LIGHT: u32 = 0x9a2016;
 /// Fluorescent air-recognition panels per team: brighter and more saturated than
 /// the service paint, so a tank's team reads from the overhead camera even under
 /// camouflage. Not the glowing `TEAM_COLORS`: the panel is lit cloth.
-const SIGNAL_PANEL: [u32; 2] = [0x1f8fff, 0xff3a2c];
+const SIGNAL_PANEL: [u32; 2] = [0x1f8fff, 0xf0281c];
 const SIGNAL_ROUGHNESS: f64 = 0.9;
 /// Dust bands: tracked hulls are dusty up to the fenders, the Humvee to its doors.
 const TRACKED_GRIME: Grime = Grime {
@@ -150,9 +151,8 @@ impl Chassis {
     }
 }
 
-/// A tracked tank in `colors` (paint, shade, steel), before the vehicle scale and
-/// worn finish.
-fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ring: bool) -> Node {
+/// The measurements of a tracked chassis painted in `colors` (paint, shade, steel).
+fn chassis(kind: VehicleKind, team: Team, colors: [u32; 3]) -> Chassis {
     let [color, shade, steel] = colors;
     // Dimensions include the tracks and skirts, not just the center armor slab.
     // Hull length/overall width: compact scout ~1.94, Abrams/Type 99 ~2.17.
@@ -161,7 +161,7 @@ fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ri
         VehicleKind::Heavy => (2.5, 5.425, 0.67),
         _ => (2.42, 5.244, 0.65),
     };
-    let chassis = Chassis {
+    Chassis {
         kind,
         scout: kind == VehicleKind::Scout,
         heavy: kind == VehicleKind::Heavy,
@@ -173,7 +173,13 @@ fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ri
         width: overall_width - 0.42,
         length,
         deck,
-    };
+    }
+}
+
+/// A tracked tank in `colors` (paint, shade, steel), before the vehicle scale and
+/// worn finish.
+fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ring: bool) -> Node {
+    let chassis = chassis(kind, team, colors);
     let mut root = Node::group(kind.as_str());
     root.children.push(hull(&chassis, open_turret_ring));
     root.children.push(turret(&chassis, team));
@@ -242,16 +248,67 @@ fn turret_ring_well(hull: &mut Node, deck: f64, opening: f64, ring_radius: f64) 
     let wall_mesh = inward_wall_geometry(opening, roof_y - floor_y);
     let wall = shadow_receiver(Arc::new(wall_mesh), material(0x3b454a, 0.15, 0.9));
     put(hull, wall, 0.0, (roof_y + floor_y) / 2.0, RING_Z);
-    let floor = cylinder_part(opening, 0.02, 0x293238, 24);
+    // The well only opens on wrecks: its floor smoulders.
+    let mut floor = cylinder_part(opening, 0.02, 0x293238, 24);
+    if let Some(drawable) = &mut floor.drawable {
+        drawable.material = ember_material();
+    }
     put(hull, floor, 0.0, floor_y - 0.01, RING_Z);
 }
 
-/// The turret with its armor, roof equipment, barrel and team marking.
+/// How a tracked tank's wreck sits apart from the live model: its turret knocked
+/// round on the ring and its gun sagging on the trunnions, with embers glowing in
+/// the hatches the blast blew open.
+pub(super) struct WreckPose {
+    /// Turret traverse about the ring centre (radians) and the ring centre.
+    pub(super) turret_yaw: f64,
+    pub(super) ring: DVec3,
+    /// Gun droop about the trunnion axis (radians, muzzle down) and a point on it.
+    pub(super) gun_droop: f64,
+    pub(super) trunnion: DVec3,
+    /// Glowing discs over the open hatches, in the turret's frame.
+    pub(super) embers: Node,
+}
+
+/// Ember disc thickness, and how much of a hatch opening it fills.
+const EMBER_DISC: f64 = 0.006;
+const EMBER_FILL: f64 = 0.94;
+
+/// The wreck pose of a tracked chassis (`None` for the Humvee).
+pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
+    if kind == VehicleKind::Humvee {
+        return None;
+    }
+    let c = chassis(kind, Team::Blue, [0; 3]);
+    let mut embers = Node::group("embers");
+    for (top, radius) in hatch_tops(&c) {
+        let mut disc = cylinder_part(radius * EMBER_FILL, EMBER_DISC, 0x000000, 16);
+        if let Some(drawable) = &mut disc.drawable {
+            drawable.material = ember_material();
+        }
+        put(&mut embers, disc, top.x, top.y + EMBER_DISC / 2.0, top.z);
+    }
+    Some(WreckPose {
+        turret_yaw: c.pick(0.38, -0.3, 0.24),
+        ring: DVec3::new(0.0, 0.0, RING_Z),
+        gun_droop: c.pick(0.07, 0.085, 0.06),
+        trunnion: DVec3::new(0.0, c.deck + gun_rise(&c), c.pick(1.0, 1.13, 1.3)),
+        embers,
+    })
+}
+
+/// The turret with its armor, roof equipment, barrel and its alternative liveries
+/// (team marking, unit numbers, extra stowage), the first shown by default.
 fn turret(c: &Chassis, team: Team) -> Node {
     let mut turret = Node::group(part::TURRET);
     add_assembly(&mut turret, c, Assembly::Turret);
     turret.children.push(barrel(c));
-    add_assembly(&mut turret, c, Assembly::Marking(team));
+    for (variant, name) in (0u8..).zip(part::LIVERIES) {
+        let mut livery = Node::group(name);
+        livery.visible = variant == 0;
+        add_assembly(&mut livery, c, Assembly::Marking(team, variant));
+        turret.children.push(livery);
+    }
     turret
 }
 

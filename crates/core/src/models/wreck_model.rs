@@ -11,12 +11,12 @@
 
 use std::sync::Arc;
 
-use glam::{DMat4, DVec3};
+use glam::{DMat4, DQuat, DVec3};
 
 use super::batching::batch;
 use super::model_primitives::Cache;
-use super::tank_model::tank_model_variant;
-use super::tank_surfaces::is_signal_panel;
+use super::tank_model::{WreckPose, tank_model_variant, wreck_pose};
+use super::tank_surfaces::{is_camouflaged, is_signal_panel, scorched_paint_material};
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::geometry::math::{compose, decompose, hex_to_linear};
@@ -53,6 +53,12 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
     let mut source = (*tank_model_variant(kind, team, wreck_part == WreckPart::Hull)).clone();
     let hull = take_child(&mut source, part::HULL);
     let mut turret = take_child(&mut source, part::TURRET);
+    let pose = wreck_pose(kind);
+    if let Some(pose) = &pose
+        && matches!(wreck_part, WreckPart::Intact | WreckPart::TurretBarrel)
+    {
+        knock_askew(&mut turret, pose, wreck_part == WreckPart::Intact);
+    }
     let mut result = Node::group("wreck");
     result.children = match wreck_part {
         WreckPart::Intact => vec![hull, turret],
@@ -87,11 +93,68 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
             && drawable.material.vertex_colors
         {
             let mut mesh = (*drawable.mesh).clone();
-            scorch(&mut mesh);
+            if is_camouflaged(&drawable.material) {
+                burn_paint(&mut mesh);
+                drawable.material = scorched_paint_material();
+            } else {
+                scorch(&mut mesh);
+            }
             drawable.mesh = Arc::new(mesh);
         }
     }
     flat
+}
+
+/// Turn a wreck's turret on its ring and droop its gun on the trunnions, rotating
+/// the parts about those axes; with `hatches_blown`, embers glow in its hatches.
+fn knock_askew(turret: &mut Node, pose: &WreckPose, hatches_blown: bool) {
+    let about = |pivot: DVec3, rotation: DQuat| {
+        DMat4::from_translation(pivot)
+            * DMat4::from_quat(rotation)
+            * DMat4::from_translation(-pivot)
+    };
+    let traverse = about(pose.ring, DQuat::from_rotation_y(pose.turret_yaw));
+    let droop = about(pose.trunnion, DQuat::from_rotation_x(pose.gun_droop));
+    if let Some(barrel) = turret
+        .children
+        .iter_mut()
+        .find(|child| child.name == part::BARREL)
+    {
+        set_matrix(barrel, droop * barrel.local_matrix());
+    }
+    if hatches_blown {
+        turret.children.push(pose.embers.clone());
+    }
+    let local = turret.local_matrix();
+    set_matrix(turret, traverse * local);
+}
+
+fn set_matrix(node: &mut Node, matrix: DMat4) {
+    let (position, rotation, scale) = decompose(&matrix);
+    node.position = position;
+    node.rotation = rotation;
+    node.scale = scale;
+}
+
+/// The pale ash base the scorch tile darkens, and the team paint left on the
+/// lower sides.
+const ASH: u32 = 0xb3aba1;
+const PAINT_LEFT: f64 = 0.35;
+
+/// Vertex colors of a wreck's burnt paint: ash on upward faces, a trace of the
+/// darkened team paint in blotches on the sides.
+fn burn_paint(mesh: &mut Mesh) {
+    let ash = hex_to_linear(ASH);
+    let normals = mesh.normals.clone();
+    for (i, color) in mesh.colors.iter_mut().enumerate() {
+        let p = DVec3::from(mesh.positions[i].map(f64::from)) * SCORCH_FREQUENCY;
+        let up = normals.get(i).map_or(0.0, |n| f64::from(n[1]).max(0.0));
+        let left = PAINT_LEFT * (1.0 - up) * smooth01((value_noise(p) - 0.35) / 0.3);
+        for c in 0..3 {
+            let paint = f64::from(color[c]) * 0.7;
+            color[c] = (ash[c] + (paint - ash[c]) * left) as f32;
+        }
+    }
 }
 
 /// Soot and blistered rust (sRGB) of a burnt-out hull.
@@ -156,6 +219,10 @@ fn value_noise(p: DVec3) -> f64 {
 /// decomposed back into position, rotation and scale, so a sheared product loses
 /// its shear exactly as Three.js did.
 fn collect_meshes(node: &Node, parent_world: DMat4, out: &mut Vec<Node>) {
+    // Hidden alternatives (the liveries a wreck does not wear) stay out.
+    if !node.visible {
+        return;
+    }
     let world = parent_world * compose(node.position, node.rotation, node.scale);
     if node.drawable.is_some() {
         let (position, rotation, scale) = decompose(&world);

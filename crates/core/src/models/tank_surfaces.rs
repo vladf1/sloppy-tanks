@@ -10,8 +10,11 @@
 //! (`armor-camo.webp`, `scripts/generate-tank-textures.ts`), projected in model
 //! space so the scheme runs on across neighbouring parts. Bare steel and gun metal
 //! share a metal material and the rest (rubber edges, canvas, wood, markings,
-//! openings) a matte one, so each joint of a vehicle costs few draws. Glass and
-//! lenses keep their own glossy materials.
+//! openings) a matte one, so each joint of a vehicle costs few draws. Team-colored
+//! recognition panels and turret bands glow faintly in their team's color, one
+//! material per team (each team's meshes are its own already), so a tank's side
+//! still reads in shade and at range. Glass and lenses keep their own glossy
+//! materials.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -19,15 +22,17 @@ use std::sync::{Arc, OnceLock};
 use glam::{DMat4, DVec3};
 
 use super::Team;
+use super::model_primitives::Cache;
 use crate::geometry::Mesh;
 use crate::geometry::math::hex_to_linear;
-use crate::scene::{Effect, Material, Node, Shading, TextureRef};
+use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a deep cobalt and a signal crimson, darker and less
+/// Service paint per team: a bright cobalt and a deep signal crimson, less
 /// saturated than the glowing `TEAM_COLORS` so the armor reads as painted steel
-/// while staying instantly team-coded. The team colors stay on markings, flags,
-/// bars and projectiles.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2c6cb0, 0xb6382e];
+/// while staying instantly team-coded. The blue is kept light enough not to fall
+/// to black in shade, the red deep enough not to wash out to salmon in sun. The
+/// team colors stay on markings, flags, bars and projectiles.
+pub const VEHICLE_PAINT: [u32; 2] = [0x3478c4, 0x9e2f26];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -38,10 +43,15 @@ pub fn vehicle_paint(team: Team) -> u32 {
 pub const ARMOR_WEAR_TEXTURE: &str = "textures/tanks/armor-wear.webp";
 /// The livery's camouflage and wear tile under `public/`.
 pub const ARMOR_CAMO_TEXTURE: &str = "textures/tanks/armor-camo.webp";
+/// The burnt-out paint of wrecks, on the camouflage's UVs.
+pub const ARMOR_SCORCH_TEXTURE: &str = "textures/tanks/armor-scorch.webp";
+/// Burnt paint: dull, rough, a little relief where it blistered.
+const SCORCH_ROUGHNESS: f32 = 0.92;
+const SCORCH_BUMP_SCALE: f32 = 0.02;
 const TEXTURE_ANISOTROPY: u8 = 4;
-/// Camouflage tiles per metre of armor: one tile spans about 3.1 m, so a tank
-/// carries two or three disruptive blotches along its hull.
-const PAINT_UV_PER_METRE: f64 = 0.32;
+/// Camouflage tiles per metre of armor: one tile spans 4 m and carries a few large
+/// shapes, so a hull shows two or three that survive the overhead camera.
+const PAINT_UV_PER_METRE: f64 = 0.25;
 /// The camouflage tile's mean multiplier (its base tone); the vertex paint is
 /// divided by it so the base tone shows the intended team paint.
 const PAINT_TEXTURE_MEAN: f64 = 0.8;
@@ -68,18 +78,23 @@ const MUD: u32 = 0x4e4031;
 const DUST_STRENGTH: f64 = 0.8;
 /// Tracks and tyres (already vertex-colored) take mud but little dry dust.
 const DUST_ON_RUNNING_GEAR: f64 = 0.25;
-const MUD_STRENGTH: f64 = 0.6;
-const MUD_BAND: f64 = 0.42;
-/// Dust settled on upward faces.
-const TOP_FILM: f64 = 0.12;
+const MUD_STRENGTH: f64 = 0.68;
+const MUD_BAND: f64 = 0.55;
+/// Dust settled on upward faces: a trace, so the overhead camera still sees the
+/// team paint rather than a brown film.
+const TOP_FILM: f64 = 0.05;
 /// Darkening at the ground line and on the undersides.
 const GROUND_SHADE: f64 = 0.7;
 const UNDERSIDE_SHADE: f64 = 0.62;
 /// Plate-to-plate paint value variation (fraction either way).
 const PLATE_VARIATION: f64 = 0.07;
-/// Worn paint on chamfered plate edges: rubbed back toward a pale primer.
-const WORN_EDGE: u32 = 0xc4b8a6;
-const EDGE_WEAR: f64 = 0.42;
+/// Worn paint on chamfered plate edges: the paint rubbed lighter toward a pale
+/// primer, a hand-painted bevel highlight that outlines every plate.
+const WORN_EDGE: u32 = 0xd8ccb8;
+const EDGE_WEAR: f64 = 0.5;
+const EDGE_LIFT: f64 = 1.45;
+/// Recognition panels and turret bands glow this much in their team color.
+const SIGNAL_GLOW: f32 = 0.45;
 /// A chamfer strip: a flat triangle at least this long and at most this wide,
 /// facing diagonally (no axis component above `EDGE_FACING`).
 const EDGE_MIN_LENGTH: f64 = 0.08;
@@ -116,8 +131,9 @@ enum Finish {
     Paint,
     Metal,
     Matte,
-    /// Recognition panels: matte cloth, kept apart so wrecks can burn them off.
-    Signal,
+    /// Recognition panels and turret bands in a team's signal color: matte, glowing
+    /// faintly, kept apart so wrecks can burn them off.
+    Signal(u32),
 }
 
 fn white_vertex_material(metalness: f32, roughness: f32) -> Material {
@@ -154,20 +170,74 @@ fn finish_material(finish: Finish) -> Arc<Material> {
         Finish::Matte => {
             MATTE.get_or_init(|| Arc::new(white_vertex_material(0.0, MATTE_ROUGHNESS)))
         }
-        Finish::Signal => signal_material(),
+        Finish::Signal(color) => return signal_material(color),
     }
     .clone()
 }
 
-fn signal_material() -> &'static Arc<Material> {
-    static SIGNAL: OnceLock<Arc<Material>> = OnceLock::new();
-    SIGNAL.get_or_init(|| Arc::new(white_vertex_material(0.0, MATTE_ROUGHNESS)))
+/// The recognition material of a team's signal color: matte cloth that glows
+/// faintly in that color.
+fn signal_material(color: u32) -> Arc<Material> {
+    static SIGNALS: Cache<u32, Material> = Cache::new();
+    SIGNALS.get_or_insert(color, || Material {
+        emissive: Color(color),
+        emissive_intensity: SIGNAL_GLOW,
+        ..white_vertex_material(0.0, MATTE_ROUGHNESS)
+    })
 }
 
-/// Whether a repainted part is a cloth recognition panel, which burns away on a
-/// wreck.
+/// Whether a part wears the camouflaged team paint.
+pub fn is_camouflaged(material: &Material) -> bool {
+    material.map.as_ref().map(|map| &map.source) == Some(&armor_camo_texture().source)
+}
+
+/// The material of a wreck's burnt paint: the scorch tile over a vertex-colored ash
+/// base, on the camouflage's UVs.
+pub fn scorched_paint_material() -> Arc<Material> {
+    static SCORCHED: OnceLock<Arc<Material>> = OnceLock::new();
+    SCORCHED
+        .get_or_init(|| {
+            let scorch = TextureRef {
+                anisotropy: TEXTURE_ANISOTROPY,
+                ..TextureRef::file(ARMOR_SCORCH_TEXTURE)
+            };
+            Arc::new(Material {
+                map: Some(scorch.clone()),
+                bump_map: Some(scorch),
+                bump_scale: SCORCH_BUMP_SCALE,
+                ..white_vertex_material(0.0, SCORCH_ROUGHNESS)
+            })
+        })
+        .clone()
+}
+
+/// Embers glowing in a wreck's open hatches and turret well: charred black under a
+/// strong orange glow that the wreck's aging dims as it cools.
+const EMBER: u32 = 0x1c0c06;
+const EMBER_GLOW: u32 = 0xff5a16;
+const EMBER_GLOW_INTENSITY: f32 = 2.6;
+
+/// The shared material of smouldering embers.
+pub fn ember_material() -> Arc<Material> {
+    static EMBERS: OnceLock<Arc<Material>> = OnceLock::new();
+    EMBERS
+        .get_or_init(|| {
+            Arc::new(Material {
+                emissive: Color(EMBER_GLOW),
+                emissive_intensity: EMBER_GLOW_INTENSITY,
+                ..Material::standard(EMBER, 0.0, 0.95)
+            })
+        })
+        .clone()
+}
+
+/// Whether a repainted part is a recognition panel or turret band, which burns
+/// away on a wreck.
 pub fn is_signal_panel(material: &Arc<Material>) -> bool {
-    Arc::ptr_eq(material, signal_material())
+    material.vertex_colors
+        && material.emissive.0 != 0
+        && material.emissive_intensity == SIGNAL_GLOW
+        && material.map.is_none()
 }
 
 /// The livery of one vehicle: its painted colors (team paint and shade), the
@@ -188,13 +258,14 @@ impl Livery<'_> {
             && material.alpha_test == 0.0
             && material.emissive_map.is_none();
         let color = material.color.0;
-        if !opaque || material.vertex_colors || material.roughness < GLOSSY_BELOW {
+        let ember = std::ptr::eq(material, &*ember_material());
+        if !opaque || ember || material.vertex_colors || material.roughness < GLOSSY_BELOW {
             return None;
         }
         Some(if self.paint.contains(&color) {
             Finish::Paint
         } else if color == self.signal {
-            Finish::Signal
+            Finish::Signal(color)
         } else if self.metal.contains(&color) || material.metalness >= 0.45 {
             Finish::Metal
         } else {
@@ -375,7 +446,12 @@ fn weathered(
             let mut color =
                 grimed(paint, *point, face, finish, grime, dust_scale).map(|c| c * variation);
             if edge {
-                color = mix(color, hex_to_linear(WORN_EDGE), EDGE_WEAR);
+                let lifted = paint.map(|c| c * EDGE_LIFT);
+                color = mix(
+                    mix(color, lifted, EDGE_WEAR),
+                    hex_to_linear(WORN_EDGE),
+                    EDGE_WEAR * 0.5,
+                );
             }
             if finish == Finish::Paint {
                 color = color.map(|c| c / PAINT_TEXTURE_MEAN);

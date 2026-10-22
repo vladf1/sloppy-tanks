@@ -152,6 +152,10 @@ pub mod part {
     /// The launch point inside the barrel (TS `userData.muzzle`): the bore disc
     /// mesh of tanks, an empty marker for the Humvee.
     pub const MUZZLE: &str = "muzzle";
+    /// Alternative liveries inside a tracked tank's turret (unit numbers and extra
+    /// stowage); presentation shows one per tank so team-mates are not clones. The
+    /// first is the one shown by default.
+    pub const LIVERIES: [&str; 3] = ["livery-0", "livery-1", "livery-2"];
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].

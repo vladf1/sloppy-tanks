@@ -3,13 +3,15 @@
 // chassis. `scripts/generate-previews.mjs` packs them into `public/previews/tanks.webp`;
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
-// The lighting and framing are the former Three.js card renderer's: a hemisphere light,
-// a warm key light from the front left and a cool rim light from behind (a distant point
-// light without falloff, which lights like a directional one), no shadows, ACES tone
-// mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
+// The lighting and framing follow the former Three.js card renderer's: a hemisphere
+// light, a bright warm key light from the front left and a strong cool rim light from
+// behind (a distant point light without falloff, which lights like a directional one),
+// ACES tone mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
 // orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
-// white, and the two frames give every pixel's coverage and its unblended color.
+// white, and the two frames give every pixel's coverage and its unblended color. A soft
+// contact shadow, the tracks' footprint projected through the same view and blurred, is
+// painted under each tank so it sits on the card instead of floating over it.
 import { pixels } from "./lab-references";
 import { loadLabsEngine, prepareLab } from "./labs-engine";
 
@@ -49,10 +51,22 @@ function camera() {
 const rim = [4, 3, -4];
 const rimLength = Math.hypot(...rim);
 
+/** Each chassis' track footprint (width, length in metres, the vehicle scale applied;
+ * `tank_dimensions`), its ground height, and the contact shadow's look. */
+const FOOTPRINTS: Record<(typeof PREVIEW_KINDS)[number], [number, number]> = {
+  scout: [1.91, 3.72],
+  balanced: [1.95, 4.27],
+  heavy: [2.14, 4.7],
+};
+const GROUND_Y = -0.17;
+const SHADOW_GROW = 0.35;
+const SHADOW_BLUR = 14;
+const SHADOW_OPACITY = 0.62;
+
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 2.4 },
-  sun: { color: 0xfff1d5, intensity: 3.5, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 2.2 },
+  sun: { color: 0xfff0d2, intensity: 4.3, position: [-3, 7, 5], target: [0, 0, 0] },
   shadow: {
     enabled: false,
     mapSize: 512,
@@ -63,8 +77,8 @@ const SCENE = {
     normalBias: 0,
   },
   pointLight: {
-    color: 0x91cfff,
-    intensity: 2,
+    color: 0x9fd6ff,
+    intensity: 3.6,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
@@ -75,6 +89,52 @@ const SCENE = {
   camera: camera(),
   objects: [],
 };
+
+/** The canvas pixel (at preview size) of a world point through the near-orthographic
+ * card camera. */
+function project([x, y, z]: Vec3): [number, number] {
+  const { position, target } = SCENE.camera;
+  const forward = target.map((value, i) => value - position[i]);
+  const normalize = (v: number[]) => v.map((value) => value / Math.hypot(...v));
+  const f = normalize(forward);
+  const right = normalize([f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0]);
+  const up = [
+    right[1] * f[2] - right[2] * f[1],
+    right[2] * f[0] - right[0] * f[2],
+    right[0] * f[1] - right[1] * f[0],
+  ];
+  const offset = [x - target[0], y - target[1], z - target[2]];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const pixelsPerMetre = PREVIEW_HEIGHT / (2 * HALF_HEIGHT);
+  return [
+    PREVIEW_WIDTH / 2 + dot(offset, right) * pixelsPerMetre,
+    PREVIEW_HEIGHT / 2 - dot(offset, up) * pixelsPerMetre,
+  ];
+}
+
+/** A soft contact shadow under a chassis: its grown footprint, blurred. */
+function contactShadow(context: CanvasRenderingContext2D, kind: (typeof PREVIEW_KINDS)[number]) {
+  const [width, length] = FOOTPRINTS[kind];
+  const [hx, hz] = [width / 2 + SHADOW_GROW, length / 2 + SHADOW_GROW];
+  const corners: Vec3[] = [
+    [-hx, GROUND_Y, -hz],
+    [hx, GROUND_Y, -hz],
+    [hx, GROUND_Y, hz],
+    [-hx, GROUND_Y, hz],
+  ];
+  context.save();
+  context.filter = `blur(${SHADOW_BLUR}px)`;
+  context.fillStyle = `rgba(0, 0, 0, ${SHADOW_OPACITY})`;
+  context.beginPath();
+  for (const [i, corner] of corners.entries()) {
+    const [px, py] = project(corner);
+    if (i === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+  context.fill();
+  context.restore();
+}
 
 /** Coverage and color from one frame over black and one over white. */
 function matte(black: Uint8ClampedArray, white: Uint8ClampedArray): ImageData {
@@ -139,6 +199,7 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       const white = pixels(canvas).data;
       large.getContext("2d")!.putImageData(matte(black, white), 0, 0);
       context.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+      contactShadow(context, name.split("-")[1] as (typeof PREVIEW_KINDS)[number]);
       context.drawImage(large, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
       previews[name] = output.toDataURL("image/png");
     }
