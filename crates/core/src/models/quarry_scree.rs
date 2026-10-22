@@ -10,7 +10,7 @@ use crate::geometry::{Mesh, icosahedron_geometry, merge_geometries, narrow, wide
 use crate::scene::{Material, Node};
 
 use super::quarry_benches::ScreeSpot;
-use super::quarry_surfaces::{roughen_stone, sandstone_material};
+use super::quarry_surfaces::{roughen_stone, rubble_layer, sandstone_material};
 use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop, soil_uvs};
 use crate::sim::math::Random;
 
@@ -104,6 +104,7 @@ pub fn quarry_scree_rubble(spot: &ScreeSpot) -> Mesh {
         let shade = rng.range(0.74, 1.08);
         geometry.colors =
             vec![[shade as f32, shade as f32, (shade * 0.97) as f32]; geometry.positions.len()];
+        geometry.uvs = vec![[rubble_layer(i), 0.3]; geometry.positions.len()];
         pieces.push(geometry);
     }
     merge_geometries(&pieces.iter().collect::<Vec<_>>()).expect("uniform rubble pieces")
