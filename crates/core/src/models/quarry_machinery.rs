@@ -2,7 +2,7 @@
 //! quarry apron, in sun-faded industrial yellow with weathered accents. All
 //! assemblies are static, merged into a handful of material batches.
 
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
 use glam::DVec3;
@@ -13,7 +13,7 @@ use super::batching::batch;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::{Cache, box_part, cylinder_part, material, put, rotated};
 use super::tank_surfaces::armor_wear_texture;
-use crate::geometry::math::{normalize, quat_from_unit_vectors};
+use crate::geometry::math::{hex_to_linear, normalize, quat_from_unit_vectors, smoothstep};
 
 // Sun-faded industrial yellow, dusty steel, rusty red and one muted teal accent.
 const PAINT: u32 = 0xc69a4b;
@@ -25,6 +25,8 @@ const TEAL: u32 = 0x4e7d7c;
 const DUST: u32 = 0xc9b78d;
 /// The cab roof's pale paint, weathered like the fleet yellow.
 const CAB_ROOF: u32 = 0xd2c6a2;
+/// Caked quarry dust baked over the lower machine and its upward faces.
+const GRIME: u32 = 0x9c8566;
 
 /// `accent(w, h, d, color, metal, rough)`: a weathered accent box (rust eats light,
 /// dust film kills reflections).
@@ -252,12 +254,81 @@ pub fn quarry_excavator() -> Node {
     }
     let bucket = rotated(bucket, 0.0, 0.0, -0.22);
     put(&mut group, bucket, 11.5, 0.6, 0.9);
+    excavator_details(&mut group);
     weather_paint(&mut group);
-    if let Some(bucket) = group.children.last_mut() {
+    // The bucket group sits before the details appended after it.
+    if let Some(bucket) = group.children.iter_mut().find(|c| c.drawable.is_none()) {
         batch(bucket);
     }
     batch(&mut group);
+    grime(&mut group, 2.2);
     group
+}
+
+/// Handrails round the house, counterweight hazard chevrons, track rollers,
+/// boarding steps, mirrors and work lights for the parked excavator.
+fn excavator_details(group: &mut Node) {
+    let top = 3.43;
+    let rail = top + 0.95;
+    for (a, b) in [
+        ([-4.0, rail, -2.05], [-0.7, rail, -2.05]),
+        ([-4.0, rail, 2.05], [2.6, rail, 2.05]),
+        ([-4.0, rail, -2.05], [-4.0, rail, 2.05]),
+    ] {
+        steel_beam(group, a, b, 0.06, PAINT);
+    }
+    for [x, z] in [
+        [-4.0, -2.05],
+        [-2.3, -2.05],
+        [-0.7, -2.05],
+        [-4.0, 2.05],
+        [-2.3, 2.05],
+        [-0.6, 2.05],
+        [1.0, 2.05],
+        [2.6, 2.05],
+        [-4.0, 0.0],
+    ] {
+        steel_beam(group, [x, top, z], [x, rail, z], 0.05, PAINT);
+    }
+    // Black and yellow chevrons across the counterweight's rear face.
+    for i in 0..8 {
+        let color = if i % 2 == 0 { 0xd2a336 } else { 0x2a2a26 };
+        let mut stripe = box_part(0.03, 0.22, 0.75, color, 0.0);
+        stripe.set_rotation_euler(0.7, 0.0, 0.0);
+        put(group, stripe, -4.2, 2.55, -1.75 + f64::from(i) * 0.5);
+    }
+    // Carrier rollers on the track frames and a boarding step.
+    for z in [-2.25, 2.25] {
+        for x in [-1.9, 0.0, 1.9] {
+            let roller = rotated(cylinder_part(0.18, 0.5, STEEL, 8), FRAC_PI_2, 0.0, 0.0);
+            put(group, roller, x, 1.72, z * 0.82);
+        }
+    }
+    for (i, y) in [0.75, 1.3].into_iter().enumerate() {
+        put(
+            group,
+            steel_box(0.9, 0.06, 0.45, STEEL),
+            1.2 - i as f64 * 0.1,
+            y,
+            -3.2,
+        );
+    }
+    steel_beam(group, [1.65, 0.6, -3.2], [1.65, 1.75, -2.95], 0.05, STEEL);
+    // Mirror arm off the cab and two work lights on the boom foot.
+    steel_beam(group, [1.95, 5.3, -2.2], [2.45, 5.5, -2.55], 0.05, STEEL);
+    put(
+        group,
+        box_part(0.05, 0.45, 0.3, 0x2d302e, 0.0),
+        2.45,
+        5.35,
+        -2.6,
+    );
+    for z in [0.3, 1.5] {
+        let lamp = rotated(steel_box(0.3, 0.26, 0.34, 0x353e3c), 0.0, 0.0, -0.4);
+        put(group, lamp, 2.05, 4.35, z);
+        let lens = rotated(box_part(0.02, 0.2, 0.26, 0xf0e6c4, 0.0), 0.0, 0.0, -0.4);
+        put(group, lens, 2.22, 4.38, z);
+    }
 }
 
 /// `quarryDumpTruck()` (`quarry-haul-truck`): the parked haul truck. Presentation
@@ -357,8 +428,169 @@ pub fn quarry_dump_truck() -> Node {
         5.42,
         0.0,
     );
+    truck_details(&mut group);
     // Same sun-faded fleet yellow as the excavator, not steel-tinted brown.
     weather_paint(&mut group);
     batch(&mut group);
+    grime(&mut group, 2.4);
     group
+}
+
+/// Tread lugs, rims, grille, deck rails, ladder, stacks, mirrors, beacon, fuel
+/// tank and hazard paint: the details that sell a 100-tonne haul truck.
+fn truck_details(group: &mut Node) {
+    for z in [-2.6, 2.6] {
+        for x in [-3.8, 1.5, 3.6] {
+            // Chevron lugs around the tread.
+            for i in 0..16 {
+                let angle = f64::from(i) * PI / 8.0;
+                let yaw = if i % 2 == 0 { 0.22 } else { -0.22 };
+                let mut lug = box_part(0.34, 0.1, 1.05, RUBBER, 0.0);
+                lug.set_rotation_euler(0.0, yaw, angle + FRAC_PI_2);
+                put(
+                    group,
+                    lug,
+                    x + angle.cos() * 1.42,
+                    1.4 + angle.sin() * 1.42,
+                    z,
+                );
+            }
+            // Dark rim with a ring of wheel nuts on the outer face.
+            let rim = rotated(cylinder_part(1.0, 1.18, 0x3b3a35, 16), FRAC_PI_2, 0.0, 0.0);
+            put(group, rim, x, 1.4, z);
+            let face = z.signum() * 0.61;
+            for k in 0..8 {
+                let angle = f64::from(k) * PI / 4.0;
+                let nut = rotated(cylinder_part(0.06, 0.08, 0x8f8a7c, 6), FRAC_PI_2, 0.0, 0.0);
+                put(
+                    group,
+                    nut,
+                    x + angle.cos() * 0.48,
+                    1.4 + angle.sin() * 0.48,
+                    z + face,
+                );
+            }
+        }
+        // Fenders over the front wheels carry the walkway.
+        put(group, steel_box(3.1, 0.14, 1.35, PAINT), -3.8, 2.95, z);
+    }
+    // Radiator grille with heavy horizontal bars and hazard-striped bumper.
+    put(
+        group,
+        box_part(0.06, 1.25, 2.7, 0x26261f, 0.0),
+        -5.6,
+        2.95,
+        0.0,
+    );
+    for i in 0..6 {
+        put(
+            group,
+            steel_box(0.1, 0.07, 2.7, STEEL),
+            -5.63,
+            2.4 + f64::from(i) * 0.22,
+            0.0,
+        );
+    }
+    for i in 0..9 {
+        let color = if i % 2 == 0 { 0xd2a336 } else { 0x2a2a26 };
+        put(
+            group,
+            box_part(0.03, 0.45, 0.55, color, 0.0),
+            -5.84,
+            2.25,
+            -2.2 + f64::from(i) * 0.55,
+        );
+    }
+    // Walkway handrail across the front deck, and a boarding ladder.
+    for z in [-2.4, -1.2, 0.0, 1.2, 2.4] {
+        steel_beam(group, [-5.45, 3.05, z], [-5.45, 4.0, z], 0.06, PAINT);
+    }
+    steel_beam(group, [-5.45, 4.0, -2.4], [-5.45, 4.0, 2.4], 0.07, PAINT);
+    steel_beam(group, [-5.45, 3.55, -2.4], [-5.45, 3.55, 2.4], 0.05, PAINT);
+    for side in [-1.35, -1.85] {
+        steel_beam(group, [-6.25, 0.45, side], [-5.75, 2.55, side], 0.07, STEEL);
+    }
+    for i in 0..5 {
+        let t = f64::from(i) / 4.0;
+        steel_beam(
+            group,
+            [-6.2 + t * 0.42, 0.65 + t * 1.75, -1.35],
+            [-6.2 + t * 0.42, 0.65 + t * 1.75, -1.85],
+            0.05,
+            STEEL,
+        );
+    }
+    // Twin exhaust stacks, mirrors on arms and an amber beacon on the canopy.
+    for z in [-1.7, -2.05] {
+        let stack = cylinder_part(0.12, 1.5, 0x4a453c, 8);
+        put(group, stack, -2.35, 5.85, z);
+    }
+    put(
+        group,
+        cylinder_part(0.15, 0.08, 0x2a2622, 8),
+        -2.35,
+        6.62,
+        -1.7,
+    );
+    for side in [-1.0, 1.0] {
+        steel_beam(
+            group,
+            [-5.5, 4.9, side * 2.2],
+            [-6.15, 5.15, side * 2.75],
+            0.05,
+            STEEL,
+        );
+        put(
+            group,
+            box_part(0.06, 0.55, 0.32, 0x2d302e, 0.0),
+            -6.15,
+            5.0,
+            side * 2.8,
+        );
+    }
+    put(
+        group,
+        cylinder_part(0.16, 0.26, 0xe0912e, 10),
+        -4.8,
+        6.23,
+        1.9,
+    );
+    // Fuel tank slung between the axles, with straps.
+    let tank = rotated(cylinder_part(0.5, 2.0, 0x8c8676, 12), 0.0, 0.0, FRAC_PI_2);
+    put(group, tank, -1.15, 1.35, -2.3);
+    for x in [-1.75, -0.55] {
+        let strap = rotated(cylinder_part(0.53, 0.08, 0x3b3a35, 12), 0.0, 0.0, FRAC_PI_2);
+        put(group, strap, x, 1.35, -2.3);
+    }
+}
+
+/// Bake dust and grime into a batched assembly's vertex paint: caked dust low on
+/// the machine, a dust film on every upward face. `soil_line` is the height the
+/// splashed dirt reaches, in the assembly's frame.
+fn grime(group: &mut Node, soil_line: f64) {
+    let dust = hex_to_linear(GRIME);
+    for child in &mut group.children {
+        let Some(drawable) = &mut child.drawable else {
+            continue;
+        };
+        if drawable.mesh.colors.is_empty() {
+            continue;
+        }
+        let mut mesh = (*drawable.mesh).clone();
+        for ((color, p), n) in mesh
+            .colors
+            .iter_mut()
+            .zip(&mesh.positions)
+            .zip(&mesh.normals)
+        {
+            let y = f64::from(p[1]);
+            let low = 1.0 - smoothstep(y, 0.0, soil_line);
+            let up = smoothstep(f64::from(n[1]), 0.55, 0.95);
+            let amount = (low * 0.7 + up * 0.32).min(0.8);
+            for k in 0..3 {
+                color[k] = (f64::from(color[k]) * (1.0 - amount) + dust[k] * amount) as f32;
+            }
+        }
+        drawable.mesh = Arc::new(mesh);
+    }
 }

@@ -6,9 +6,9 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
-use crate::geometry::Mesh;
 use crate::geometry::math::{js_round, smoothstep};
-use crate::scene::Node;
+use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, merge_geometries};
+use crate::scene::{Material, Node};
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
 use crate::sim::data::ARENA;
 use crate::sim::math::Random;
@@ -17,9 +17,11 @@ use crate::sim::types::{Team, Vec2};
 use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;
 use super::harbor_surfaces::steel_box;
-use super::model_primitives::{TEAM_COLORS, box_part, cylinder_part, put, rotated};
+use super::model_primitives::{
+    TEAM_COLORS, box_part, cylinder_part, put, rotated, shadow_receiver,
+};
 use super::quarry_benches::{
-    quarry_bench, quarry_butte, quarry_scree_spots, quarry_stockpile_geometry,
+    quarry_bench, quarry_butte, quarry_mesas, quarry_scree_spots, quarry_stockpile_geometry,
     quarry_stockpile_reach, quarry_stockpile_spot, quarry_talus_geometry, quarry_talus_point,
     quarry_talus_strips,
 };
@@ -29,7 +31,7 @@ use super::quarry_ramp::{
 };
 use super::quarry_scree::quarry_scree;
 use super::quarry_site_details::quarry_site_details;
-use super::quarry_surfaces::{RubbleStone, sandstone_rock, sandstone_rubble};
+use super::quarry_surfaces::{RubbleStone, sand_drift_material, sandstone_rock, sandstone_rubble};
 use super::quarry_terrain::{QUARRY_BANK_TOP, quarry_ground_drop, quarry_terrain, soil_uvs};
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
@@ -316,6 +318,9 @@ pub fn quarry_scenery() -> Node {
         put(&mut geology, rock, x, y, z);
     }
     flank_boulders(&mut geology);
+    wall_drifts(&mut geology, &spoil);
+    wall_top_sand(&mut geology, &spoil);
+    wall_dust(&mut geology);
     // Collapsed runouts interrupt the first terrace; the stacked sentinel gives
     // the north apron one recognizable landmark. All footprints stay outside
     // the playable boundary on the machinery apron.
@@ -344,22 +349,14 @@ pub fn quarry_scenery() -> Node {
         put(&mut geology, rock, chip.x, y, chip.z);
     }
     geology.children.push(quarry_butte());
+    geology.children.push(quarry_mesas());
 
     let excavator = rotated(quarry_excavator(), 0.0, -0.3, 0.0);
     put(&mut root, excavator, -24.0, -1.75, -68.0);
     // The south apron sits behind the gameplay camera, so the haul truck parks
     // on the east apron where the eastern spawn band sees it past the teeth.
     let mut truck = rotated(quarry_dump_truck(), 0.0, FRAC_PI_2 + 0.18, 0.0);
-    // Load the truck with a few large chunks instead of dozens of individual stones.
-    for i in 0..5u32 {
-        put(
-            &mut truck,
-            sandstone_rock(2.6, 1.25, 2.2, i % 4),
-            -0.6 + f64::from(i % 3) * 1.8,
-            3.8,
-            if i % 2 == 1 { -1.0 } else { 1.0 },
-        );
-    }
+    truck.children.push(truck_load());
     put(&mut root, truck, 69.0, -1.75, 18.0);
     boundary_dressing(&mut equipment);
     for team in [Team::Blue, Team::Red] {
@@ -403,7 +400,9 @@ pub fn quarry_scenery() -> Node {
     // Gravel a few centimetres high: shadows would only cost a pass, never read.
     let mut gravel = Node::group("");
     quarry_site_details(&mut equipment, &mut gravel);
-    batch(&mut geology);
+    // Geology stays unbatched: the renderer merges static scenery per material
+    // and 60 m cell, so the long faces and drifts cull per cell instead of
+    // drawing whole from anywhere.
     batch(&mut equipment);
     batch(&mut gravel);
     for mesh in &mut gravel.children {
@@ -415,6 +414,47 @@ pub fn quarry_scenery() -> Node {
     root.children.push(equipment);
     root.children.push(gravel);
     root
+}
+
+/// The haul truck's bed (truck frame): floor height, x span and half width.
+const TRUCK_BED: (f64, [f64; 2], f64) = (3.04, [-2.05, 4.95], 2.3);
+
+/// Blasted sandstone heaped in the haul truck's bed: one merged rubble mesh of
+/// angular blocks, crowned in the middle and spilling against the sides.
+fn truck_load() -> Node {
+    let mut rng = Random::new(6113.0);
+    let (floor, [x0, x1], half) = TRUCK_BED;
+    let (cx, length) = ((x0 + x1) / 2.0, (x1 - x0) / 2.0);
+    let stones: Vec<RubbleStone> = (0..90)
+        .map(|i| {
+            let size = if i < 30 {
+                rng.range(0.8, 1.3)
+            } else {
+                rng.range(0.35, 0.8)
+            };
+            let x = cx + rng.range(-1.0, 1.0) * (length - size * 0.4);
+            let z = rng.range(-1.0, 1.0) * (half - size * 0.4);
+            let crown = (1.0 - ((x - cx) / length).powi(2)) * (1.0 - (z / half).powi(2));
+            // Big blocks settle first; smaller ones fill in over them.
+            let top = floor + 0.3 + 2.1 * crown;
+            let y = if i < 30 {
+                rng.range(floor + 0.3, top - 0.2)
+            } else {
+                top - size * rng.range(0.1, 0.4)
+            };
+            RubbleStone {
+                x,
+                y,
+                z,
+                w: size,
+                h: size * rng.range(0.6, 0.9),
+                d: size * rng.range(0.7, 1.1),
+                rot_y: rng.range(-PI, PI),
+                shade: rng.range(0.85, 1.12),
+            }
+        })
+        .collect();
+    sandstone_rubble(&stones)
 }
 
 /// Half-buried flank boulders break the east/west aprons. A separate stream keeps
@@ -452,6 +492,230 @@ fn flank_boulders(geology: &mut Node) {
         put(geology, rock, x, y, z);
         placed += 1;
     }
+}
+
+/// Drift profile against the inner wall face: (metres from the face, height).
+/// Low enough that tanks grinding along the wall only skim it.
+const INNER_DRIFT: [(f64, f64); 5] = [
+    (-0.1, 0.26),
+    (0.25, 0.21),
+    (0.6, 0.11),
+    (0.95, 0.035),
+    (1.3, 0.0),
+];
+/// Drift heaped on the bank outside the wall, over the falling ground.
+const OUTER_DRIFT: [(f64, f64); 5] = [
+    (-0.1, 0.5),
+    (0.5, 0.38),
+    (1.3, 0.18),
+    (2.2, 0.05),
+    (3.0, 0.0),
+];
+/// Length of one culled drift chunk along the wall, in metres.
+const DRIFT_CHUNK: f64 = 30.0;
+
+/// Windblown sand banked against both faces of the boundary wall, wavering in
+/// height along it. Soil-textured, so it melts into the baked floor; receives
+/// shadows only. Chunked so the renderer culls it per cell.
+fn wall_drifts(geology: &mut Node, soil: &Arc<Material>) {
+    let inner = ARENA;
+    let outer = ARENA + BOUNDARY_THICKNESS;
+    for side in [-1.0f64, 1.0] {
+        for along_x in [false, true] {
+            for (face, profile, outward) in
+                [(inner, &INNER_DRIFT, -1.0), (outer, &OUTER_DRIFT, 1.0)]
+            {
+                let mut start = -outer;
+                while start < outer - 0.01 {
+                    let end = (start + DRIFT_CHUNK).min(outer);
+                    let segments = ((end - start) / 0.9).ceil() as u32;
+                    let mut positions = Vec::new();
+                    let mut indices = Vec::new();
+                    let columns = profile.len() as u32;
+                    for i in 0..=segments {
+                        let t = start + (end - start) * f64::from(i) / f64::from(segments);
+                        let swell = 0.55
+                            + 0.3 * (t * 0.21 + side * 1.7 + face).sin()
+                            + 0.15 * (t * 0.77 + side).sin();
+                        for &(distance, height) in profile {
+                            let across = side * (face + outward * distance);
+                            let (x, z) = if along_x { (t, across) } else { (across, t) };
+                            let y = 0.008 - quarry_ground_drop(x, z) + height * swell;
+                            positions.extend([x, y, z]);
+                        }
+                        if i < segments {
+                            for c in 0..columns - 1 {
+                                let a = i * columns + c;
+                                let b = a + columns;
+                                indices.extend([a, b, a + 1, b, b + 1, a + 1]);
+                            }
+                        }
+                    }
+                    geology
+                        .children
+                        .push(soil_strip(positions, indices, [1.05, 1.03, 1.0], soil));
+                    start = end;
+                }
+            }
+        }
+    }
+}
+
+/// Height of the boundary wall (`quarry_layout`).
+const WALL_HEIGHT: f64 = 1.2;
+
+/// Windblown sand caught on top of the boundary wall in drifts that come and go
+/// along it, so the long concrete crest reads as part of the dusty pit. Ankle
+/// deep and purely cosmetic; chunked like the drifts.
+fn wall_top_sand(geology: &mut Node, soil: &Arc<Material>) {
+    let centre = ARENA + BOUNDARY_THICKNESS / 2.0;
+    let outer = ARENA + BOUNDARY_THICKNESS;
+    // Across the crest: offset in units of the drift's half width, and height.
+    const PROFILE: [(f64, f64); 5] = [
+        (-1.0, 0.0),
+        (-0.5, 0.6),
+        (0.0, 1.0),
+        (0.5, 0.55),
+        (1.0, 0.0),
+    ];
+    for side in [-1.0f64, 1.0] {
+        for along_x in [false, true] {
+            let mut start = -outer;
+            while start < outer - 0.01 {
+                let end = (start + DRIFT_CHUNK).min(outer);
+                let segments = ((end - start) / 0.6).ceil() as u32;
+                let mut positions = Vec::new();
+                let mut indices = Vec::new();
+                let columns = PROFILE.len() as u32;
+                for i in 0..=segments {
+                    let t = start + (end - start) * f64::from(i) / f64::from(segments);
+                    let swell = (t * 0.17 + side * 2.3 + f64::from(u8::from(along_x))).sin() * 0.6
+                        + (t * 0.53 + side).sin() * 0.4;
+                    let amount = smoothstep(swell, -0.1, 0.7);
+                    let half = BOUNDARY_THICKNESS / 2.0 * (0.25 + 0.75 * amount);
+                    let lean = (t * 0.31 + side).sin() * 0.25 * (1.0 - amount);
+                    for &(across, height) in &PROFILE {
+                        let a = side * (centre + (across + lean) * half);
+                        let (x, z) = if along_x { (t, a) } else { (a, t) };
+                        let y = WALL_HEIGHT + 0.012 + height * 0.09 * amount;
+                        positions.extend([x, y, z]);
+                    }
+                    if i < segments {
+                        for c in 0..columns - 1 {
+                            let a = i * columns + c;
+                            let b = a + columns;
+                            indices.extend([a, b, a + 1, b, b + 1, a + 1]);
+                        }
+                    }
+                }
+                geology
+                    .children
+                    .push(soil_strip(positions, indices, [1.08, 1.05, 1.0], soil));
+                start = end;
+            }
+        }
+    }
+}
+
+/// How high dust stains climb the boundary wall's faces, in metres.
+const WALL_DUST_HEIGHT: f64 = 0.95;
+
+/// Dust kicked up by the tracks and blown against the boundary wall, staining
+/// both faces from the foot up and fading out in uneven tide marks. Soil-coloured
+/// through the sand drift's blend; merged into one draw.
+fn wall_dust(geology: &mut Node) {
+    let length = ARENA + BOUNDARY_THICKNESS;
+    let mut strips = Vec::new();
+    for side in [-1.0f64, 1.0] {
+        for along_x in [false, true] {
+            for (face, outward) in [(ARENA - 0.012, -1.0), (length + 0.012, 1.0)] {
+                let segments = (length * 2.0 / 1.5).ceil() as u32;
+                let mut positions = Vec::new();
+                let mut alpha = Vec::new();
+                let mut indices = Vec::new();
+                for i in 0..=segments {
+                    let t = -length + length * 2.0 * f64::from(i) / f64::from(segments);
+                    let tide = 0.55
+                        + 0.25 * (t * 0.37 + side * 1.3 + face).sin()
+                        + 0.2 * (t * 1.13 + side).sin();
+                    let across = side * face;
+                    let (x, z) = if along_x { (t, across) } else { (across, t) };
+                    for (y, a) in [
+                        (0.0, 0.95),
+                        (WALL_DUST_HEIGHT * tide * 0.45, 0.7),
+                        (WALL_DUST_HEIGHT * tide, 0.0),
+                    ] {
+                        positions.extend([x, y, z]);
+                        alpha.push(a);
+                    }
+                    if i < segments {
+                        let a = i * 3;
+                        for c in 0..2 {
+                            indices.extend([
+                                a + c,
+                                a + c + 3,
+                                a + c + 1,
+                                a + c + 1,
+                                a + c + 3,
+                                a + c + 4,
+                            ]);
+                        }
+                    }
+                }
+                let mut geometry = Mesh::from_f64(&positions, &[], &[], Some(indices));
+                geometry.compute_vertex_normals();
+                // Face away from the wall, into the open air on that side.
+                let facing = side * outward;
+                let normal_out: f32 = geometry
+                    .normals
+                    .iter()
+                    .map(|n| if along_x { n[2] } else { n[0] })
+                    .sum();
+                if f64::from(normal_out) * facing < 0.0 {
+                    let flipped: Vec<u32> = geometry
+                        .indices
+                        .as_ref()
+                        .map(|i| i.chunks(3).flat_map(|t| [t[0], t[2], t[1]]).collect())
+                        .unwrap_or_default();
+                    geometry.indices = Some(flipped);
+                    geometry.compute_vertex_normals();
+                }
+                soil_uvs(&mut geometry);
+                geometry.colors = vec![[1.0, 0.94, 0.86]; geometry.positions.len()];
+                geometry.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
+                strips.push(geometry);
+            }
+        }
+    }
+    // One mesh round the whole arena: a single blended draw from any view.
+    let merged = merge_geometries(&strips.iter().collect::<Vec<_>>()).expect("uniform strips");
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(merged), sand_drift_material()));
+}
+
+/// A soil-textured strip facing up, receiving shadows only.
+fn soil_strip(
+    positions: Vec<f64>,
+    indices: Vec<u32>,
+    tint: [f32; 3],
+    soil: &Arc<Material>,
+) -> Node {
+    let mut geometry = Mesh::from_f64(&positions, &[], &[], Some(indices));
+    // Face up whichever way the strip was laid out.
+    geometry.compute_vertex_normals();
+    if geometry.normals.iter().map(|n| n[1]).sum::<f32>() < 0.0 {
+        let flipped: Vec<u32> = geometry
+            .indices
+            .as_ref()
+            .map(|i| i.chunks(3).flat_map(|t| [t[0], t[2], t[1]]).collect())
+            .unwrap_or_default();
+        geometry.indices = Some(flipped);
+        geometry.compute_vertex_normals();
+    }
+    soil_uvs(&mut geometry);
+    geometry.colors = vec![tint; geometry.positions.len()];
+    shadow_receiver(Arc::new(geometry), soil.clone())
 }
 
 /// Survey stakes, hazard paint, buried footings and wall joints along the boundary.

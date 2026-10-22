@@ -15,7 +15,8 @@ use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_surfaces::{RubbleStone, sandstone_rubble};
+use super::quarry_soil::quarry_gravel_density;
+use super::quarry_surfaces::{RubbleStone, sandstone_pebbles, sandstone_rubble};
 use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::{hex_to_linear, js_hypot};
 use crate::sim::arena::spawn_positions;
@@ -48,6 +49,39 @@ const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
     [62.0, 77.0, 8.0, 28.0],      // haul truck bay
     [63.0, 86.0, 24.0, 70.0],     // east haul ramp
 ];
+
+/// Candidate spots tried for work-floor pebbles; the gravel density keeps a few
+/// thousand of them.
+const PEBBLE_TRIES: usize = 6_000;
+
+/// Centimetre pebbles sown where the baked soil reads gravelly, so the work floor
+/// has real grit at the follow camera. Spawn pads stay clean. Its own stream
+/// keeps the rest of the dressing where it was.
+fn work_floor_pebbles(pads: &[crate::sim::types::Vec2]) -> Vec<RubbleStone> {
+    let mut rng = Random::new(40417.0);
+    let mut pebbles = Vec::new();
+    for _ in 0..PEBBLE_TRIES {
+        let x = rng.range(-58.0, 58.0);
+        let z = rng.range(-58.0, 58.0);
+        let keep = quarry_gravel_density(x, z).powf(1.3) * 0.9 + 0.04;
+        let roll = rng.next();
+        if roll > keep || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.2) {
+            continue;
+        }
+        let size = rng.range(0.05, 0.15) * (1.0 + roll * 0.6);
+        pebbles.push(RubbleStone {
+            x,
+            y: 0.008,
+            z,
+            w: size,
+            h: size * rng.range(0.35, 0.6),
+            d: size * rng.range(0.6, 1.0),
+            rot_y: rng.range(-PI, PI),
+            shade: rng.range(0.5, 0.85),
+        });
+    }
+    pebbles
+}
 
 /// `quarrySiteDetails(equipment, gravel)`: append the site dressing to
 /// `equipment` and the work-floor gravel rubble to `gravel`.
@@ -104,6 +138,9 @@ pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
         }
     }
     gravel.children.push(sandstone_rubble(&stones));
+    gravel
+        .children
+        .push(sandstone_pebbles(&work_floor_pebbles(&pads)));
     equipment.children.push(scrub(&mut rng));
     conveyor_and_yard(equipment);
     site_sign(equipment);
