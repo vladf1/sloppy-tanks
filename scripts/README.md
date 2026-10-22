@@ -258,6 +258,8 @@ comfort or account billing capacity; impact-to-feedback excludes projectile flig
 These are manual evidence, not regression gates. Keep them out of `pnpm run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
+Time only release engines: `profile.mjs` and `frame-pacing-check.mjs` refuse a
+`pnpm run wasm:fast` build, and so does every `vite build`, debug bundles included.
 
 | Command                                                                                  | Measures                                                                               |
 | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |

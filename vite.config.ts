@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { baseRedirect } from "./scripts/base-redirect.ts";
+import { fastEngines } from "./scripts/engine-profile.mjs";
 import { pageHealth } from "./scripts/page-health.ts";
 import { startupHtml } from "./scripts/startup-html.ts";
 
@@ -30,6 +31,21 @@ export default defineConfig({
     baseRedirect(base),
     startupHtml(base),
     pageHealth(),
+    {
+      // A fast engine build (`pnpm run wasm:fast`) optimizes less: no bundle may ship it,
+      // and the debug bundles that builds are timed with must not hold one either.
+      name: "release-engine",
+      apply: "build",
+      buildStart() {
+        const fast = fastEngines();
+        if (fast.length) {
+          this.error(
+            `${fast.join(", ")}: fast engine build; rebuild with pnpm run wasm:all ` +
+              "(and pnpm run wasm:labs for the labs engine) before bundling",
+          );
+        }
+      },
+    },
     {
       // Start the engine binary's one real request in <head>, in parallel with the
       // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari

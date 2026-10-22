@@ -66,6 +66,18 @@ opt-level = "s"
 [profile.release.package.sloppy-render]
 opt-level = 3
 
+# A quicker browser build for iterating (`pnpm run wasm:fast`): the release settings, but
+# each crate is split into 16 code units that optimize on separate cores. On an M3 Max a
+# rebuild after a sloppy-core edit took 7 s instead of 13 s, after a renderer edit 4 s
+# instead of 10 s, for about 30% more CPU. The split, not LTO, is what costs: LTO off alone
+# changed neither the build time nor the binary, while 16 units made it 6% larger and its
+# simulation and render times up to 4% longer. Never ship this build or time performance
+# on it; scripts/engine-profile.mjs lets bundling and the timing scripts refuse it.
+[profile.wasm-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 # The native multiplayer server favors speed and keeps unwinding, so one room's
 # panic can be contained without ending every other room in the process.
 [profile.server]

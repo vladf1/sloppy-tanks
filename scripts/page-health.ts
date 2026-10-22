@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
 import { protocolVersion } from "./content-version.mjs";
+import { fastEngines } from "./engine-profile.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
 /**
@@ -20,6 +21,8 @@ export interface PageBuild {
   release: string;
   commit: string;
   dirty: boolean;
+  /** The dev server serves a `pnpm run wasm:fast` engine; bundles refuse one. */
+  fastEngine: boolean;
 }
 
 /** What this checkout builds: its release version and commit. */
@@ -29,12 +32,15 @@ export function pageBuild(): PageBuild {
     release: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
     commit: git("rev-parse", "--short", "HEAD"),
     dirty: Boolean(git("status", "--porcelain")),
+    fastEngine: fastEngines(["src/generated/engine", "src/generated/engine-webgl"]).length > 0,
   };
 }
 
-/** Battle Setup's footer line: `v1.1.0.628 · 696497f`, `+` marking local changes. */
-export function buildLabel({ release, commit, dirty }: PageBuild): string {
-  return `v${release} · ${commit}${dirty ? "+" : ""}`;
+/** Battle Setup's footer line: `v1.1.0.628 · 696497f`, `+` marking local changes, and
+ * `· fast engine` while the dev server serves one, so its frame rate is not mistaken
+ * for the game's. */
+export function buildLabel({ release, commit, dirty, fastEngine }: PageBuild): string {
+  return `v${release} · ${commit}${dirty ? "+" : ""}${fastEngine ? " · fast engine" : ""}`;
 }
 
 /** The page's `/health` body; `builtAt` is when the build ran or the dev server started. */

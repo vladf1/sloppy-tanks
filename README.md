@@ -106,6 +106,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ```sh
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
 pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
+pnpm run wasm:fast      # the same, built in about half the time but larger and slower; never time it
 pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
 pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
 pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
