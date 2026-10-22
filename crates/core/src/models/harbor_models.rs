@@ -10,11 +10,12 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
-use crate::geometry::math::scale_hex_color;
+use crate::geometry::math::{hex_to_linear, scale_hex_color};
 use crate::geometry::{Mesh, box_geometry};
 use crate::scene::{Material, Node, TextureRef, Wrap};
 
-use super::effects_scenery::{CONTAINER_LIVERIES, CONTAINER_LIVERY_TEXTURE};
+use super::effects_scenery::{ApronMode, CONTAINER_LIVERIES, CONTAINER_LIVERY_TEXTURE};
+use super::harbor_surfaces::apron_material;
 use super::model_primitives::{Cache, adopt_children, box_part, put, rotated, shadowed};
 
 /// `Pick<Cover, "w" | "d" | "h" | "color">`.
@@ -55,13 +56,40 @@ static WEAR_BOXES: Cache<[u64; 4], Mesh> = Cache::new();
 /// Container paint: the wear tile multiplied by the container's color.
 fn container_paint(color: u32) -> Arc<Material> {
     PAINT.get_or_insert(color, || Material {
-        map: Some(TextureRef {
-            wrap: Wrap::Repeat,
-            anisotropy: 4,
-            ..TextureRef::file(CONTAINER_TEXTURE)
-        }),
-        ..Material::standard(color, 0.25, 0.58)
+        map: Some(container_wear()),
+        ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
     })
+}
+
+/// The paint wear tile, repeated along a container's walls.
+pub(super) fn container_wear() -> TextureRef {
+    TextureRef {
+        wrap: Wrap::Repeat,
+        anisotropy: 4,
+        ..TextureRef::file(CONTAINER_TEXTURE)
+    }
+}
+pub(super) const CONTAINER_METALNESS: f32 = 0.25;
+pub(super) const CONTAINER_ROUGHNESS: f32 = 0.58;
+
+/// A cover container's part in its paint: the wear tile through the apron
+/// effect's container mode, which gives each box in the yard its own shade of the
+/// color. The color is baked into the part's vertex colors, so every container
+/// shares the one material as plain container paint did.
+fn in_cover_paint(mut part: Node, color: u32) -> Node {
+    static TINTED: Cache<(usize, u32), Mesh> = Cache::new();
+    if let Some(drawable) = &mut part.drawable {
+        let source = drawable.mesh.clone();
+        // The source meshes are cached for good, so their addresses are stable keys.
+        drawable.mesh = TINTED.get_or_insert((Arc::as_ptr(&source) as usize, color), || {
+            let mut mesh = (*source).clone();
+            let [r, g, b] = hex_to_linear(color);
+            mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
+            mesh
+        });
+        drawable.material = apron_material(ApronMode::Container, 0xffffff);
+    }
+    part
 }
 
 /// The livery decals of every container: the browser-drawn logo sheet.
@@ -339,7 +367,12 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     for (yaw, side) in [(0.0, 1.0), (PI, -1.0)] {
         put(
             group,
-            rotated(wall_panel(&wall, h, color), 0.0, yaw, 0.0),
+            rotated(
+                in_cover_paint(wall_panel(&wall, h, color), color),
+                0.0,
+                yaw,
+                0.0,
+            ),
             0.0,
             0.0,
             side * wall_z,
@@ -368,7 +401,7 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     put(
         group,
         rotated(
-            shadowed(roof_mesh, container_paint(color)),
+            in_cover_paint(shadowed(roof_mesh, container_paint(color)), color),
             -FRAC_PI_2,
             0.0,
             0.0,
@@ -389,7 +422,12 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     };
     put(
         group,
-        rotated(wall_panel(&front, h, color), 0.0, -FRAC_PI_2, 0.0),
+        rotated(
+            in_cover_paint(wall_panel(&front, h, color), color),
+            0.0,
+            -FRAC_PI_2,
+            0.0,
+        ),
         -half_l + RAIL / 2.0 + WALL_DEPTH,
         0.0,
         0.0,
@@ -404,7 +442,10 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
         let leaf_z = side * (leaf_width / 2.0 + 0.02);
         put(
             group,
-            wear_box(0.06, leaf_height, leaf_width, h, 0.24, color),
+            in_cover_paint(
+                wear_box(0.06, leaf_height, leaf_width, h, 0.24, color),
+                color,
+            ),
             door_x,
             0.24 + leaf_height / 2.0,
             leaf_z,

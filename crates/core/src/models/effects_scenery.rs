@@ -56,8 +56,12 @@ pub const WATER: &str = "water";
 /// grime against the fixed cover and rust under the container castings. Paint modes
 /// keep their color, dirty it and chip it with world-space wear that follows the
 /// traffic (markings alpha-test the chips away, labels fade their alpha).
-/// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs;
-/// ship hulls their plating's weathering; the far shore its own light and haze.
+/// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs,
+/// with sunlight thrown off the ripples dancing above the water (as on ship hulls,
+/// which add their plating's weathering); the far shore its own light and haze,
+/// windows on its towers and boxes in its container stacks; spawn pads their
+/// tread plate, team paint and chasing light ring; cover containers a shade of
+/// their line's color per box.
 /// Implemented in `effects/harbor_apron.wgsl`.
 pub const HARBOR_APRON: &str = "harbor-apron";
 
@@ -83,6 +87,15 @@ pub enum ApronMode {
     /// effect by its distance from the eye and emitted, so its layers keep their
     /// separation whatever the scene fog; pure red vertices are warning lights.
     Shore = 7,
+    /// A spawn pad: the team color is the vertex color and the uv is the pad's own
+    /// x/z over its radius. Its steel deck takes a tread plate, hazard rim,
+    /// chevrons and bolts; the light ring set into it (uv.x offset by 10) shines
+    /// in the team's color with a pulse chasing round it.
+    Pad = 8,
+    /// The paint of a cover container's walls, doors and roof (standard, over the
+    /// wear tile): each box standing in its own 20 m cell of the yard takes its own
+    /// shade of its line's color, so a row of one color never reads as clones.
+    Container = 10,
 }
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only
@@ -266,23 +279,49 @@ fn container_liveries() -> CanvasTexture {
     }
 }
 
-/// Painted harbor apron labels, their texture keys and paint: white on the asphalt
-/// lanes, traffic yellow in the concrete bays.
-const HARBOR_LABELS: [(&str, &str, &str); 5] = [
-    ("B1", "harbor-label-b1", "#f0c24a"),
-    ("B2", "harbor-label-b2", "#f0c24a"),
-    ("HARBOR HAVOC", "harbor-label-harbor-havoc", "#f1efe6"),
-    ("PORT 07", "harbor-label-port-07", "#f1efe6"),
-    ("LOADING", "harbor-label-loading", "#f0c24a"),
+/// Painted harbor apron labels and their paint: white on the asphalt lanes,
+/// traffic yellow in the concrete bays. They share one browser-drawn sheet,
+/// [`HARBOR_LABEL_TEXTURE`], a 1024 x 256 row each (row 0 at the top), so every
+/// label on the apron is one draw.
+const HARBOR_LABELS: [(&str, &str); 5] = [
+    ("B1", "#f0c24a"),
+    ("B2", "#f0c24a"),
+    ("HARBOR HAVOC", "#f1efe6"),
+    ("PORT 07", "#f1efe6"),
+    ("LOADING", "#f0c24a"),
 ];
+/// The generated texture key of the harbor label sheet.
+pub const HARBOR_LABEL_TEXTURE: &str = "harbor-labels";
+/// Rows of the label sheet.
+pub const HARBOR_LABEL_ROWS: usize = HARBOR_LABELS.len();
 
-/// The generated texture key of a harbor apron label.
-pub fn harbor_label_texture(text: &str) -> &'static str {
+/// The row of a harbor apron label on [`HARBOR_LABEL_TEXTURE`].
+pub fn harbor_label_row(text: &str) -> usize {
     HARBOR_LABELS
         .iter()
-        .find(|(label, ..)| *label == text)
-        .map(|(_, key, _)| *key)
+        .position(|(label, _)| *label == text)
         .unwrap_or_else(|| panic!("unknown harbor label {text}"))
+}
+
+fn harbor_label_sheet() -> CanvasTexture {
+    let ops = HARBOR_LABELS
+        .iter()
+        .enumerate()
+        .map(|(row, &(text, color))| CanvasOp::FillText {
+            color,
+            font: "900 140px sans-serif",
+            align: "center",
+            baseline: "middle",
+            text,
+            at: [512.0, 128.0 + row as f64 * 256.0],
+            max_width: Some(990.0),
+        })
+        .collect();
+    CanvasTexture {
+        width: 1024,
+        height: 256 * HARBOR_LABELS.len() as u32,
+        ops,
+    }
 }
 
 /// One Canvas 2D drawing step, replayed by the browser adapter in order on a
@@ -329,22 +368,8 @@ pub struct CanvasTexture {
 /// The canvas drawing behind a browser-drawn generated texture key.
 pub fn canvas_texture(key: &str) -> Option<CanvasTexture> {
     use CanvasOp::*;
-    if let Some((text, _, color)) = HARBOR_LABELS.iter().find(|(_, k, _)| *k == key) {
-        return Some(CanvasTexture {
-            width: 1024,
-            height: 256,
-            ops: vec![FillText {
-                color,
-                font: "900 140px sans-serif",
-                align: "center",
-                baseline: "middle",
-                text,
-                at: [512.0, 128.0],
-                max_width: Some(990.0),
-            }],
-        });
-    }
     match key {
+        HARBOR_LABEL_TEXTURE => Some(harbor_label_sheet()),
         CONTAINER_LIVERY_TEXTURE => Some(container_liveries()),
         VILLAGE_SIGN_TEXTURE => Some(CanvasTexture {
             width: 512,

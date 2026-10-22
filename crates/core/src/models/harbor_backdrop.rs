@@ -16,7 +16,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
 use crate::geometry::math::{hex_to_linear, scale_hex_color};
-use crate::geometry::{Mesh, cone_geometry, merge_geometries};
+use crate::geometry::{Mesh, merge_geometries};
 use crate::scene::{Material, Node};
 
 use super::batching::batch;
@@ -124,47 +124,108 @@ fn shore_radius(theta: f64) -> f64 {
 }
 
 /// Profile of the coast from the waterline inland: (metres past the shoreline,
-/// fraction of the ridge height, extra height, color).
-const PROFILE: [(f64, f64, f64, u32); 6] = [
-    (-3.0, 0.0, -1.2, 0x5d5a50),
-    (2.0, 0.0, 2.4, 0x9c9077),
+/// fraction of the ridge height, extra height, color). Surf breaks white on the
+/// waterline and pale sand rises from it, so the coast reads as a line at a glance.
+const PROFILE: [(f64, f64, f64, u32); PROFILE_ROWS] = [
+    (-3.0, 0.0, -1.2, 0x4f5650),
+    (0.0, 0.0, 0.35, 0xe4e8e2),
+    (2.0, 0.0, 2.4, 0xc2b28a),
     (9.0, 0.12, 3.0, 0x6f8a4e),
+    (19.0, 0.36, 2.6, 0x5a7c46),
     (30.0, 0.62, 2.0, 0x4f7040),
+    (42.0, 0.86, 1.0, 0x48683d),
     (55.0, 1.0, 0.0, 0x3f5e3a),
+    (80.0, 0.8, 0.0, 0x4a6744),
     (110.0, 0.55, 0.0, 0x58704f),
 ];
+const PROFILE_ROWS: usize = 10;
+/// The rows of [`PROFILE`] that are shoreline (rock foot, surf and sand, or the
+/// quay's wall and coping): they run true, and keep hard creases.
+const SHORELINE_ROWS: usize = 3;
+/// The rows whose ground can break into bare crags under a high ridge.
+const CRAG_ROWS: std::ops::RangeInclusive<usize> = 5..=7;
+/// Normals are smoothed across the coast's facets that meet at less than this
+/// angle, radians: rolling hills, with the quay walls and crags kept sharp.
+const COAST_CREASE: f64 = 0.7;
 /// Bare rock showing through on the steepest ground.
 const ROCK: u32 = 0x7d786c;
 
-/// One sector of the shore ring as a flat-shaded, vertex-colored mesh.
-fn shore_mesh(from: usize, to: usize) -> Option<Node> {
-    let rows = PROFILE.len();
+/// The shore ring, split into its four sectors: smooth-shaded, vertex-colored
+/// hills (creased at the quay walls and crags) flagged for the countryside.
+fn shore_meshes() -> [Option<Node>; 4] {
+    ring_sectors(
+        PROFILE_ROWS,
+        |step, row| {
+            let theta = step_angle(step);
+            let radius = shore_radius(theta);
+            let ridge = ridge_height(theta);
+            let (offset, height, color) = profile_row(theta, row);
+            let jitter = hash(step as u32 * 16 + row as u32, 11) - 0.5;
+            // The waterline rows stay in step so the surf and beach (or the quay
+            // wall) read as bands; the quay's rows run true; the hills behind it
+            // keep their roughness.
+            let rough = if row <= SHORELINE_ROWS + 2 {
+                1.0 - quay_amount(theta)
+            } else {
+                1.0
+            };
+            let r = radius + offset + jitter * rough * if row < SHORELINE_ROWS { 0.6 } else { 4.0 };
+            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.06;
+            let shade = 0.84 + hash(step as u32 * 16 + row as u32, 23) * 0.26;
+            let craggy = CRAG_ROWS.contains(&row) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
+            let color = if craggy && quay_amount(theta) == 0.0 {
+                ROCK
+            } else {
+                color
+            };
+            (
+                [r * theta.cos(), y, r * theta.sin()],
+                scale_hex_color(color, shade),
+            )
+        },
+        |theta, next| in_open_sea(theta) && in_open_sea(next),
+        TERRAIN_FLAG,
+    )
+}
+
+/// The angle of a ring step.
+fn step_angle(step: usize) -> f64 {
+    -PI + TAU * step as f64 / SEGMENTS as f64
+}
+
+/// A ring of `rows` vertices per step all round the bay, its normals smoothed
+/// across the whole ring (so no seam shows between sectors) and creased at sharp
+/// edges, then split into the quarter sectors. `vertex` gives a step and row's
+/// position and paint, `skip` the columns between two angles left out, and every
+/// vertex takes `flag` as its uv.y.
+fn ring_sectors(
+    rows: usize,
+    vertex: impl Fn(usize, usize) -> ([f64; 3], u32),
+    skip: impl Fn(f64, f64) -> bool,
+    flag: f32,
+) -> [Option<Node>; 4] {
     let mut positions = Vec::new();
     let mut colors = Vec::new();
-    for step in from..=to {
-        let theta = -PI + TAU * step as f64 / SEGMENTS as f64;
-        let radius = shore_radius(theta);
-        let ridge = ridge_height(theta);
-        for (row, &(offset, fraction, lift, color)) in PROFILE.iter().enumerate() {
-            let jitter = hash(step as u32 * 8 + row as u32, 11) - 0.5;
-            let r = radius + offset + jitter * 4.0;
-            let y = SEA_LEVEL
-                + (ridge * fraction + lift) * land_amount(theta).max(0.2)
-                + jitter * ridge * 0.08;
-            positions.extend([r * theta.cos(), y, r * theta.sin()]);
-            let shade = 0.82 + hash(step as u32 * 8 + row as u32, 23) * 0.3;
-            let craggy = (row == 3 || row == 4) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
-            let color = if craggy { ROCK } else { color };
-            let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
+    for step in 0..=SEGMENTS {
+        for row in 0..rows {
+            // The last step closes the ring on the first.
+            let (position, color) = vertex(step % SEGMENTS, row);
+            positions.extend(position);
+            let [cr, cg, cb] = hex_to_linear(color);
             colors.push([cr as f32, cg as f32, cb as f32]);
         }
     }
     let mut indices = Vec::new();
-    for column in 0..(to - from) {
-        let theta = -PI + TAU * (from + column) as f64 / SEGMENTS as f64;
-        let next = -PI + TAU * (from + column + 1) as f64 / SEGMENTS as f64;
-        if in_open_sea(theta) && in_open_sea(next) {
+    // The first triangle of each sector, in the de-indexed mesh.
+    let mut sector_starts = [usize::MAX; 4];
+    for column in 0..SEGMENTS {
+        let (theta, next) = (step_angle(column), step_angle(column + 1));
+        if skip(theta, next) {
             continue;
+        }
+        let sector = sector_of(theta);
+        if sector_starts[sector] == usize::MAX {
+            sector_starts[sector] = indices.len() / 3;
         }
         for row in 0..rows - 1 {
             let a = (column * rows + row) as u32;
@@ -172,28 +233,57 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
             indices.extend([a, b, a + 1, b, b + 1, a + 1]);
         }
     }
-    if indices.is_empty() {
-        return None;
-    }
+    let triangles = indices.len() / 3;
     let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
     mesh.colors = colors;
-    Some(flat_node(mesh))
+    let ring = mesh.to_creased_normals(COAST_CREASE);
+    std::array::from_fn(|sector| {
+        let start = sector_starts[sector];
+        if start == usize::MAX {
+            return None;
+        }
+        let end = sector_starts[sector + 1..]
+            .iter()
+            .copied()
+            .find(|&next| next != usize::MAX)
+            .unwrap_or(triangles);
+        let corners = start * 3..end * 3;
+        let part = Mesh {
+            positions: ring.positions[corners.clone()].to_vec(),
+            normals: ring.normals[corners.clone()].to_vec(),
+            colors: ring.colors[corners.clone()].to_vec(),
+            uvs: vec![[0.0, flag]; corners.len()],
+            ..Mesh::default()
+        };
+        Some(Node::mesh(
+            Arc::new(part),
+            Arc::new(Material {
+                vertex_colors: true,
+                ..Material::standard(0xffffff, 0.0, 1.0)
+            }),
+        ))
+    })
 }
 
-/// A vertex-colored mesh de-indexed into flat facets, as a backdrop part.
-fn flat_node(mesh: Mesh) -> Node {
-    let mut flat = mesh.to_non_indexed();
-    flat.compute_vertex_normals();
-    flat.uvs = vec![[0.0, 0.0]; flat.positions.len()];
-    Node::mesh(
-        Arc::new(flat),
-        Arc::new(Material {
-            vertex_colors: true,
-            flat_shading: true,
-            ..Material::standard(0xffffff, 0.0, 1.0)
-        }),
-    )
+/// Mark a part's faces for the far-shore effect by its uv.y (every other
+/// backdrop part keeps its uvs within 0..1): [`FACADE_FLAG`] draws a grid of
+/// windows over a tower's walls, [`STACK_FLAG`] the boxes of a container stack,
+/// each tier and bay its own line's color, and [`TERRAIN_FLAG`] the countryside
+/// (fields, woods and rock) over the green of the coast.
+fn flagged(mut part: Node, flag: f32) -> Node {
+    if let Some(drawable) = &mut part.drawable {
+        let mut mesh = (*drawable.mesh).clone();
+        mesh.uvs = vec![[0.0, flag]; mesh.positions.len()];
+        drawable.mesh = Arc::new(mesh);
+    }
+    part
 }
+fn facade(part: Node) -> Node {
+    flagged(part, FACADE_FLAG)
+}
+const FACADE_FLAG: f32 = 10.0;
+const STACK_FLAG: f32 = 20.0;
+const TERRAIN_FLAG: f32 = 30.0;
 
 /// Ridge height of the mountain range at an angle, metres above the sea.
 fn range_height(theta: f64) -> f64 {
@@ -201,68 +291,104 @@ fn range_height(theta: f64) -> f64 {
     (35.0 + peaks) * land_amount(theta)
 }
 
-/// One sector of the blue mountain range behind the coast: a foot, the ridge and
-/// the far slope, with darker gullies and paler crests.
-fn range_mesh(from: usize, to: usize) -> Option<Node> {
+/// The blue mountain range behind the coast, in its four sectors: a foot, the
+/// ridge and the far slope, with darker gullies and paler crests.
+fn range_meshes() -> [Option<Node>; 4] {
     const ROWS: [(f64, f64, u32); 4] = [
         (0.0, 0.0, 0x56656c),
         (0.45, 0.62, 0x4c5d68),
         (0.7, 1.0, 0x667a86),
         (1.0, 0.4, 0x5b6d79),
     ];
-    let mut positions = Vec::new();
-    let mut colors = Vec::new();
-    for step in from..=to {
-        let theta = -PI + TAU * step as f64 / SEGMENTS as f64;
-        let height = range_height(theta);
-        for (row, &(depth, fraction, color)) in ROWS.iter().enumerate() {
+    ring_sectors(
+        ROWS.len(),
+        |step, row| {
+            let theta = step_angle(step);
+            let (depth, fraction, color) = ROWS[row];
             let jitter = hash(step as u32 * 4 + row as u32, 131) - 0.5;
             let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 10.0;
-            let y = SEA_LEVEL - 4.0 + height * fraction * (1.0 + jitter * 0.25);
-            positions.extend([r * theta.cos(), y, r * theta.sin()]);
+            let y = SEA_LEVEL - 4.0 + range_height(theta) * fraction * (1.0 + jitter * 0.25);
             let shade = 0.85 + hash(step as u32 * 4 + row as u32, 137) * 0.3;
-            let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
-            colors.push([cr as f32, cg as f32, cb as f32]);
-        }
-    }
-    let rows = ROWS.len();
-    let mut indices = Vec::new();
-    for column in 0..(to - from) {
-        let theta = -PI + TAU * (from + column) as f64 / SEGMENTS as f64;
-        let next = -PI + TAU * (from + column + 1) as f64 / SEGMENTS as f64;
-        if land_amount(theta) <= 0.0 && land_amount(next) <= 0.0 {
-            continue;
-        }
-        for row in 0..rows - 1 {
-            let a = (column * rows + row) as u32;
-            let b = a + rows as u32;
-            indices.extend([a, b, a + 1, b, b + 1, a + 1]);
-        }
-    }
-    if indices.is_empty() {
-        return None;
-    }
-    let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
-    mesh.colors = colors;
-    Some(flat_node(mesh))
+            (
+                [r * theta.cos(), y, r * theta.sin()],
+                scale_hex_color(color, shade),
+            )
+        },
+        |theta, next| land_amount(theta) <= 0.0 && land_amount(next) <= 0.0,
+        0.0,
+    )
 }
 
 /// A point on the land `inland` metres past the shoreline at `theta`, at ground
 /// height.
 fn on_land(theta: f64, inland: f64) -> (f64, f64, f64) {
     let r = shore_radius(theta) + inland;
-    let ridge = ridge_height(theta);
-    let height = PROFILE
-        .windows(2)
-        .find(|pair| inland <= pair[1].0)
-        .map_or(0.55 * ridge, |pair| {
-            let (a, b) = (pair[0], pair[1]);
-            let t = ((inland - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
-            let ya = ridge * a.1 + a.2;
-            let yb = ridge * b.1 + b.2;
-            ya + (yb - ya) * t
-        });
+    let rows: [(f64, f64); PROFILE_ROWS] = std::array::from_fn(|row| {
+        let (offset, height, _) = profile_row(theta, row);
+        (offset, height)
+    });
+    let height =
+        rows.windows(2)
+            .find(|pair| inland <= pair[1].0)
+            .map_or(rows[PROFILE_ROWS - 1].1, |pair| {
+                let (a, b) = (pair[0], pair[1]);
+                let t = ((inland - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
+                a.1 + (b.1 - a.1) * t
+            });
     (r * theta.cos(), SEA_LEVEL + height, r * theta.sin())
+}
+
+/// The city's and the terminal's waterfront, east across the bay, as an angle
+/// range: a concrete quay with a sheer wall instead of a beach.
+const WATERFRONT: (f64, f64) = (-0.72, 1.16);
+
+/// How much of the waterfront's quay stands at this angle: 1 along it, easing to
+/// the natural shore over a tenth of a radian at each end.
+fn quay_amount(theta: f64) -> f64 {
+    let inside = (theta - WATERFRONT.0).min(WATERFRONT.1 - theta);
+    let t = (inside / 0.1).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Height of the waterfront's deck above the sea, metres.
+const QUAY_DECK: f64 = 2.8;
+
+/// The waterfront's profile, row for row with [`PROFILE`]: the wall's foot under
+/// water, its dark wet face and fender line, a pale coping, the deck the cranes and
+/// stacks stand on, then the hills behind. (offset, ridge fraction, extra height,
+/// color) as in [`PROFILE`].
+const QUAY_PROFILE: [(f64, f64, f64, u32); PROFILE_ROWS] = [
+    (-3.0, 0.0, -1.2, 0x3f4547),
+    (-2.8, 0.0, QUAY_DECK - 0.5, 0x2c3133),
+    (-2.6, 0.0, QUAY_DECK, 0xd2d0c6),
+    (6.0, 0.0, QUAY_DECK, 0xa9a89f),
+    (26.0, 0.0, QUAY_DECK, 0xa3a299),
+    (46.0, 0.0, QUAY_DECK, 0x9d9c94),
+    (54.0, 0.5, QUAY_DECK * 0.5, 0x48683d),
+    (62.0, 1.0, 0.0, 0x3f5e3a),
+    (85.0, 0.8, 0.0, 0x4a6744),
+    (110.0, 0.55, 0.0, 0x58704f),
+];
+
+/// Row `row` of the coast's profile at an angle: metres past the shoreline, height
+/// above the sea and color, the natural shore blended into the waterfront's quay.
+fn profile_row(theta: f64, row: usize) -> (f64, f64, u32) {
+    let ridge = ridge_height(theta);
+    let natural = PROFILE[row];
+    let quay = QUAY_PROFILE[row];
+    let q = quay_amount(theta);
+    let land = land_amount(theta).max(0.2);
+    let height = |(_, fraction, lift, _): (f64, f64, f64, u32)| (ridge * fraction + lift) * land;
+    let offset = natural.0 + (quay.0 - natural.0) * q;
+    // Knolls and saddles roll along the hills, the same for every structure
+    // standing on them as for the ground's own mesh.
+    let knolls = if row > SHORELINE_ROWS {
+        (wave(theta * 4.0 + row as f64 * 0.7, 2.9) - 0.5) * ridge * 0.35 * land
+    } else {
+        0.0
+    };
+    let y = height(natural) + (height(quay) - height(natural)) * q + knolls * (1.0 - q);
+    (offset, y, if q > 0.5 { quay.3 } else { natural.3 })
 }
 
 const CITY_PAINT: [u32; 7] = [
@@ -282,25 +408,14 @@ fn city(sectors: &mut Sectors) {
         let yaw = -theta + hash(i, 19) * 0.3;
         let mut tower = Node::group("");
         // Founded below the slope so no tower floats on the facets.
+        // Its floors of windows are the far-shore effect's, drawn on the walls.
         put(
             &mut tower,
-            box_part(w, height + FOOTING, d, color, 0.0),
+            facade(box_part(w, height + FOOTING, d, color, 0.0)),
             0.0,
             (height - FOOTING) / 2.0,
             0.0,
         );
-        let glass = scale_hex_color(color, 0.55);
-        let mut floor = 3.2;
-        while floor < height - 2.0 {
-            put(
-                &mut tower,
-                box_part(w + 0.3, 1.1, d + 0.3, glass, 0.0),
-                0.0,
-                floor,
-                0.0,
-            );
-            floor += 3.4;
-        }
         put(
             &mut tower,
             box_part(w * 0.4, 2.4, d * 0.4, 0x9aa0a0, 0.0),
@@ -358,7 +473,10 @@ fn terminal(sectors: &mut Sectors) {
         let levels = 1 + (hash(i, 41) * 4.0) as u32;
         let color = BOX_PAINT[(hash(i, 43) * 6.0) as usize % 6];
         let stack = rotated(
-            box_part(12.0, 2.6 * f64::from(levels), 2.5, color, 0.0),
+            flagged(
+                box_part(12.0, 2.6 * f64::from(levels), 2.5, color, 0.0),
+                STACK_FLAG,
+            ),
             0.0,
             -theta,
             0.0,
@@ -712,6 +830,27 @@ fn built_up(theta: f64) -> bool {
     (-0.75..0.52).contains(&theta) || (0.52..1.15).contains(&theta) || (1.3..1.95).contains(&theta)
 }
 
+/// A far pine: an open five-sided spire of unit radius and height standing on
+/// its base. Seen only from across the bay, it needs no base cap or more sides.
+fn pine_mesh() -> Arc<Mesh> {
+    static PINE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    PINE.get_or_init(|| {
+        let mut positions = vec![0.0, 1.0, 0.0];
+        for i in 0..5 {
+            let a = TAU * f64::from(i) / 5.0;
+            positions.extend([a.cos(), 0.0, a.sin()]);
+        }
+        let indices = (0..5u32)
+            .flat_map(|i| [0, 1 + (i + 1) % 5, 1 + i])
+            .collect();
+        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+        mesh.compute_vertex_normals();
+        mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+        Arc::new(mesh)
+    })
+    .clone()
+}
+
 /// Pine woods in clumps over the headlands: dark marks that give the hills their
 /// scale.
 fn woods(sectors: &mut Sectors) {
@@ -732,11 +871,9 @@ fn woods(sectors: &mut Sectors) {
         let (x, y, z) = on_land(theta, inland);
         let height = 3.6 + 3.4 * hash(i, 207);
         let color = [0x2c4a2e, 0x35543a, 0x3f5c33, 0x29402c][(hash(i, 211) * 4.0) as usize % 4];
-        let pine = Node::mesh(
-            Arc::new(cone_geometry(height * 0.3, height, 6)),
-            paint(color),
-        );
-        place_at(sectors, theta, pine, x, y + height / 2.0 - 0.5, z);
+        let mut pine = Node::mesh(pine_mesh(), paint(color));
+        pine.scale = glam::DVec3::new(height * 0.3, height, height * 0.3);
+        place_at(sectors, theta, pine, x, y - 0.5, z);
     }
 }
 
@@ -885,15 +1022,13 @@ fn finish(mut sector: Node) -> Node {
 /// The far shore around the harbor, as four batched sectors.
 pub fn harbor_backdrop() -> Node {
     let mut root = Node::group("harbor-backdrop");
-    let quarter = SEGMENTS / 4;
     let mut sectors: Sectors = std::array::from_fn(|_| Node::group(""));
-    for (index, sector) in sectors.iter_mut().enumerate() {
-        if let Some(shore) = shore_mesh(index * quarter, (index + 1) * quarter) {
-            sector.children.push(shore);
-        }
-        if let Some(range) = range_mesh(index * quarter, (index + 1) * quarter) {
-            sector.children.push(range);
-        }
+    for (sector, (shore, range)) in sectors
+        .iter_mut()
+        .zip(shore_meshes().into_iter().zip(range_meshes()))
+    {
+        sector.children.extend(shore);
+        sector.children.extend(range);
     }
     city(&mut sectors);
     terminal(&mut sectors);
