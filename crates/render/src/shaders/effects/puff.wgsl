@@ -17,11 +17,18 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let height = radius * 0.9;
     let to_eye_far = frame.camera_position.xyz - v.instance_origin;
     let to_eye = normalize(to_eye_far);
-    let lowest = v.instance_origin.y - abs(frame.camera_up.y) * height;
+    // The card keeps the world's up rather than the camera's, so a rolling or
+    // shaking camera does not turn every billow with it.
+    var up = vec3f(0.0, 1.0, 0.0) - to_eye * to_eye.y;
+    if dot(up, up) < 1e-4 {
+        up = frame.camera_up.xyz;
+    }
+    up = normalize(up);
+    let right = normalize(cross(up, to_eye));
+    let lowest = v.instance_origin.y - abs(up.y) * height;
     let lift = max(0.06 - lowest, 0.0) / max(to_eye.y, 0.2);
     let pull = min(max(radius * 0.6, lift), length(to_eye_far) * 0.4);
-    (*w).position = v.instance_origin + to_eye * pull + frame.camera_right.xyz * corner.x
-        + frame.camera_up.xyz * corner.y;
+    (*w).position = v.instance_origin + to_eye * pull + right * corner.x + up * corner.y;
 }
 
 fn puff_hash(p: vec2f) -> f32 {
@@ -76,10 +83,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let sn = sin(turn);
     let p = vec2f(c * point.x - sn * point.y, sn * point.x + c * point.y);
     let offset = vec2f(seed * 37.1, seed * 91.7);
-    let boil = vec2f(0.0, frame.camera_position.w * (0.35 + 0.5 * fiery));
+    // Slow enough that a billow's outline drifts rather than trembles.
+    let boil = vec2f(0.0, frame.camera_position.w * (0.16 + 0.3 * fiery));
     let n1 = puff_noise(p * 2.1 + offset - boil);
-    let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.8);
-    let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 2.5);
+    let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.5);
+    let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 1.8);
     let noise = n1 * 0.55 + n2 * 0.3 + n3 * 0.15;
 
     // Cauliflower silhouette: the noise pushes the rim in and out; haze is softer.
@@ -87,7 +95,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // into wisps from the outside instead of going full of holes. Fine noise
     // breaks the rim's outline so no billow reads as a clean disc.
     let lumpiness = mix(0.72, 0.42, softness);
-    let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.12
+    let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.06
         + erosion * (0.25 + 0.55 * (1.0 - noise));
     let rim = mix(0.8, 0.94, softness);
     let feather = mix(0.14, 0.5, softness * softness) + erosion * 0.16 + fiery * 0.04;
