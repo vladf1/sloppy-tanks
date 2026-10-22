@@ -29,6 +29,8 @@ const BENCH_COLUMN: f64 = 1.35;
 const BENCH_RELIEF: f64 = 0.42;
 /// Columns per culled chunk of a face (about 35 m).
 const BENCH_CHUNK: usize = 26;
+/// Mean spacing of the buttresses and gullies along a face, in metres.
+const GULLY_SPACING: f64 = 11.0;
 /// Chance that a run of crest columns has broken away, and how far it drops,
 /// in metres: the skyline steps down in blocks instead of running ruler-straight.
 const CREST_BREAK: f64 = 0.4;
@@ -45,6 +47,18 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
     let segments = (length / BENCH_COLUMN).ceil() as usize;
     // Each wall reads differently: overall lean plus long swells along its length.
     let lean = 1.0 + 0.1 * (seed * 2.3).sin() + 0.06 * (seed * 5.1).sin();
+    // Buttresses and gullies at irregular spacing: a smooth random profile along
+    // the face, so no stretch of it repeats another.
+    let knots: Vec<f64> = (0..=(length / GULLY_SPACING).ceil() as usize + 1)
+        .map(|_| rng.range(-1.0, 1.0))
+        .collect();
+    let gully_at = |x: f64| {
+        let t = ((x + length / 2.0) / GULLY_SPACING).clamp(0.0, (knots.len() - 2) as f64);
+        let i = (t.floor() as usize).min(knots.len() - 2);
+        let f = t - i as f64;
+        let f = f * f * (3.0 - 2.0 * f);
+        knots[i] + (knots[i + 1] - knots[i]) * f
+    };
     struct Column {
         x: f64,
         top: f64,
@@ -70,7 +84,9 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
                 + rng.range(-0.03, 0.03);
             // Blast blocks stand proud or break back as coherent columns, on
             // buttresses and gullies metres deep that model the face at range.
-            let gully = (x * 0.11 + seed).sin() * 1.1 + (x * 0.29 + seed * 1.3).sin() * 0.55;
+            let gully = (x * 0.11 + seed).sin() * 0.95
+                + (x * 0.29 + seed * 1.3).sin() * 0.5
+                + gully_at(x) * 0.45;
             let block = (x * 0.83 + seed * 3.1).sin() * 0.35 + rng.range(-0.2, 0.2) + gully;
             Column {
                 x,
@@ -520,7 +536,7 @@ pub fn quarry_mesas() -> Node {
     while angle < PI * 2.0 - 0.2 {
         mesas.push(Mesa {
             angle,
-            distance: rng.range(215.0, 275.0),
+            distance: rng.range(192.0, 240.0),
             radius: rng.range(18.0, 38.0),
             height: rng.range(14.0, 30.0),
             base: rng.range(8.0, 14.0),

@@ -26,7 +26,7 @@ const MIN_AREA: f64 = 1e-14;
 /// chassis material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Coat {
-    /// Darkened team paint: lower hull, add-on armor, frames.
+    /// Graphite trim: lower hull, mantlet, add-on armor, frames.
     Shade,
     /// Team paint: the main armor.
     Paint,
@@ -46,8 +46,6 @@ pub(super) enum Coat {
     Marking,
     /// Red tail-light lenses.
     TailLight,
-    /// Fluorescent team-colored air-recognition panel.
-    Signal,
 }
 
 fn finish_index<C: Finishes>(finish: C) -> usize {
@@ -76,7 +74,6 @@ impl Finishes for Coat {
         Coat::Wood,
         Coat::Marking,
         Coat::TailLight,
-        Coat::Signal,
     ];
 }
 

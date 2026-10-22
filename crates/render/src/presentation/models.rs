@@ -1,5 +1,5 @@
 //! Models presentation owns: world-space HUD (tank bars, reticle, player ring
-//! and spawn pulse), pickup pads and their collection glow, mines and debris
+//! and spawn pulse), pickup pallets and their ground markings, mines and debris
 //! pieces. Ports of `tank-bars.ts`, `reticle.ts` and the model parts of
 //! `presentation.ts`; pickup gems, flags, pads, floors and scenery come from
 //! `sloppy_core::models`.
@@ -15,13 +15,13 @@ use glam::{DVec2, DVec3};
 use sloppy_core::geometry::{
     Mesh, RingGeometry, Shape, circle_geometry, cylinder_geometry, merge_geometries,
     plane_geometry, ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
-    torus_geometry,
 };
 use sloppy_core::models::{
-    BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
-    shadowed, siding_box, trunk_fragment,
+    BarrelScrap, DEFAULT_BOX_RADIUS, PICKUP_ATLAS_PATH, PICKUP_PAINT_CELL, TEAM_COLORS,
+    atlas_cell_uv, barrel_scrap_geometry, cylinder_part, paint, pickup_pallet, put, shadowed,
+    siding_box, trunk_fragment,
 };
-use sloppy_core::scene::{Effect, Material, Node, Side};
+use sloppy_core::scene::{Effect, Material, Node, Side, TextureRef};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
@@ -43,12 +43,10 @@ pub mod joint {
     pub const RETICLE_READY: &str = "reticle-ready";
     pub const RETICLE_RELOADING: &str = "reticle-reloading";
     pub const RETICLE_CONFIRMED: &str = "reticle-confirmed";
-    /// Pickup ring at full or cooldown opacity, and the refill arc.
+    /// A supply drop's sprayed circle, full or faded, and its refill ticks.
     pub const PICKUP_RING: &str = "pickup-ring";
     pub const PICKUP_RING_DIM: &str = "pickup-ring-dim";
     pub const PICKUP_REFILL: &str = "pickup-refill";
-    /// The ring of dashes turning inside a waiting pickup's rim.
-    pub const PICKUP_DASH: &str = "pickup-dash";
     /// The blinking cap of a mine.
     pub const MINE_LIGHT: &str = "mine-light";
 }
@@ -56,9 +54,6 @@ pub mod joint {
 /// Custom effects presentation registers (WGSL beside this file).
 pub const FLAG_CLOTH_EFFECT: &str = sloppy_core::models::effects_props::FLAG_CLOTH;
 pub const PICKUP_REFILL_EFFECT: &str = "pickup-refill";
-pub const PICKUP_BEAM_EFFECT: &str = "pickup-beam";
-/// Segments of the refill arc; `instance_data.x` says how many draw.
-pub const REFILL_SEGMENTS: u32 = 48;
 
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
@@ -364,8 +359,14 @@ fn reticle_material(color: u32, opacity: f32) -> Arc<Material> {
 /// four ticks are one mesh, so each paint is a single draw.
 fn reticle_layer(outline: bool, ink: Arc<Material>, center: Option<Arc<Material>>) -> Vec<Node> {
     let order = if outline { 50 } else { 51 };
-    let (inner, outer) = if outline { (0.37, 0.67) } else { (0.46, 0.57) };
-    let (length, width) = if outline { (0.47, 0.21) } else { (0.31, 0.075) };
+    // The ink is bold enough to hold against a bright sky in the turret seat, and the dark
+    // outline frames it on every side.
+    let (inner, outer) = if outline {
+        (0.35, 0.69)
+    } else {
+        (0.445, 0.585)
+    };
+    let (length, width) = if outline { (0.49, 0.24) } else { (0.31, 0.095) };
     let ring = ring_geometry(inner, outer, 40);
     let ticks: Vec<Mesh> = [(-0.83, 0.0), (0.83, 0.0), (0.0, -0.83), (0.0, 0.83)]
         .into_iter()
@@ -460,147 +461,145 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// Paint of a pickup pad's steel housing and of the gunmetal deck set into it.
-const PICKUP_HOUSING: u32 = 0x75808a;
-const PICKUP_DECK: u32 = 0x46525e;
-/// The rim's unlit paint before the kind's tint: full, dimmed while the pad
-/// recharges, and the turning dashes inside it.
-const PICKUP_RIM_FULL: u32 = 0xffffff;
-const PICKUP_RIM_DIM: u32 = 0x8a8a8a;
-const PICKUP_DASH: u32 = 0xc8c8c8;
-/// Dashes of the turning inner ring and the share of each slot they fill.
-const PICKUP_DASHES: u32 = 10;
-const PICKUP_DASH_FILL: f64 = 0.55;
-/// Where a pickup pad's light stands: a centimetre above the deck's top (0.19) so
-/// the additive pool never depth-fights it.
-pub const PICKUP_LIGHT_HEIGHT: f64 = 0.2;
-/// The height of the rim's flat parts, the dashes and the refill arc, above the
-/// deck's top.
-pub const PICKUP_RIM_HEIGHT: f64 = 0.205;
+/// The supply drop's ground marking, sprayed in the kind's paint round its pallet:
+/// one bold hand-sprayed circle (its radii, crossing the tarp's corners, so
+/// neighbouring drops barely touch), darkened while the pickup is being restocked,
+/// and outside it a ring of tick marks (radii, count, the gap between ticks as a
+/// share of one, and how faint a tick still to fill is) sprayed in one by one until
+/// the supply returns. Paint on the ground, lit and shadowed like it, its ragged
+/// edges anti-aliased by alpha to coverage, never glowing.
+const MARKING_RADII: [f64; 2] = [1.0, 1.24];
+const MARKING_SEGMENTS: u32 = 64;
+/// The spent ring's darkening of the kind's paint (linear).
+const MARKING_FADED: u32 = 0x5a5a5a;
+const MARKING_CUTOFF: f32 = 0.35;
+const REFILL_RADII: [f64; 2] = [1.28, 1.38];
+pub const REFILL_TICKS: u32 = 24;
+const REFILL_GAP: f32 = 0.42;
+const REFILL_FAINT: f32 = 0.18;
+/// How high the paint lies over the ground; a depth bias keeps it there.
+const MARKING_HEIGHT: f64 = 0.012;
+const PAINT_ROUGHNESS: f32 = 0.95;
 
-/// A pickup pad's bevelled steel housing, one mesh shared by every kind.
-fn pickup_housing() -> Node {
-    static HOUSING: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-    let housing = HOUSING
-        .get_or_init(|| arc(cylinder_geometry(1.0, 1.14, 0.16, 32)))
-        .clone();
-    shadowed(housing, paint(PICKUP_HOUSING))
-}
-
-/// The pad under every pickup: a bevelled steel housing with a dark deck set into
-/// it. Its kind-colored lights are [`pickup_rim`] and [`pickup_beam`].
+/// The pallet under every pickup, shared by every kind: planks and a spent smoke
+/// grenade (`sloppy_core::models::pickup_pallet`).
 pub fn pickup_base() -> Node {
     let mut root = Node::group("pickup");
-    put(&mut root, pickup_housing(), 0.0, 0.08, 0.0);
-    put(
-        &mut root,
-        cylinder_part(0.9, 0.05, PICKUP_DECK, 24),
-        0.0,
-        0.165,
-        0.0,
-    );
+    root.children.push(pickup_pallet());
     root
 }
 
-/// Unlit, untone-mapped rim paint the instance tint colors by kind, opaque so
-/// every pad's rim draws in one instanced call.
-fn rim_material(color: u32) -> Arc<Material> {
-    Arc::new(Material {
-        tone_mapped: false,
-        ..Material::basic(color)
-    })
+/// The sprayed circle: the atlas's paint cell bent once round the pallet; the
+/// generator paints it seamless across the cell, its strokes, gaps and overspray in
+/// alpha.
+fn marking_geometry() -> Mesh {
+    let [inner, outer] = MARKING_RADII;
+    let mut mesh = Mesh::default();
+    for step in 0..=MARKING_SEGMENTS {
+        let along = f64::from(step) / f64::from(MARKING_SEGMENTS);
+        let (sin, cos) = (std::f64::consts::TAU * along).sin_cos();
+        for (radius, v) in [(inner, 0.0), (outer, 1.0)] {
+            mesh.positions
+                .push([(radius * cos) as f32, 0.0, (radius * sin) as f32]);
+            mesh.normals.push([0.0, 1.0, 0.0]);
+            let [u, v] = atlas_cell_uv(PICKUP_PAINT_CELL, along, v);
+            mesh.uvs.push([u as f32, v as f32]);
+        }
+    }
+    let mut indices = Vec::new();
+    for step in 0..MARKING_SEGMENTS {
+        let a = step * 2;
+        indices.extend([a, a + 2, a + 1, a + 2, a + 3, a + 1]);
+    }
+    mesh.indices = Some(indices);
+    mesh
 }
 
-/// A pad's lights: the neon ring on its rim (full, or dimmed while recharging), a
-/// ring of dashes turning inside it while the pickup waits, and the refill arc
-/// that grows back. White paint, so one model serves every kind: the instance
-/// tint is the kind's color.
+/// A part that takes shadows but casts none, as paint on the ground does.
+fn shadow_receiver(mesh: Arc<Mesh>, material: Arc<Material>) -> Node {
+    let mut node = Node::mesh(mesh, material);
+    if let Some(drawable) = &mut node.drawable {
+        drawable.receive_shadow = true;
+    }
+    node
+}
+
+/// Matte paint on the ground, white so the instance tint is the kind's colour,
+/// lying a little proud of whatever it is sprayed on.
+fn ground_paint(color: u32) -> Material {
+    Material {
+        polygon_offset: Some((-1.0, -4.0)),
+        ..Material::standard(color, 0.0, PAINT_ROUGHNESS)
+    }
+}
+
+/// A supply drop's marking: the sprayed circle, full or darkened while the pickup
+/// is restocked, and the refill ticks shown while it is
+/// (`instance_data.x`: ticks sprayed, its fraction the next tick's coverage).
 pub fn pickup_rim() -> Node {
     let mut root = Node::group("pickup-rim");
-    let torus = arc(torus_geometry(0.94, 0.045, 5, 32));
+    let circle = arc(marking_geometry());
+    let atlas = TextureRef {
+        wrap: sloppy_core::scene::Wrap::Clamp,
+        anisotropy: 4,
+        ..TextureRef::file(PICKUP_ATLAS_PATH)
+    };
     for (name, color) in [
-        (joint::PICKUP_RING, PICKUP_RIM_FULL),
-        (joint::PICKUP_RING_DIM, PICKUP_RIM_DIM),
+        (joint::PICKUP_RING, 0xffffff),
+        (joint::PICKUP_RING_DIM, MARKING_FADED),
     ] {
+        let material = Material {
+            map: Some(atlas.clone()),
+            alpha_test: MARKING_CUTOFF,
+            alpha_to_coverage: true,
+            ..ground_paint(color)
+        };
         let mut ring = named(
-            at(mesh(torus.clone(), rim_material(color), 0), 0.0, 0.2, 0.0),
+            at(
+                shadow_receiver(circle.clone(), Arc::new(material)),
+                0.0,
+                MARKING_HEIGHT,
+                0.0,
+            ),
             name,
         );
-        ring.set_rotation_euler(PI / 2.0, 0.0, 0.0);
         ring.visible = name == joint::PICKUP_RING;
         root.children.push(ring);
     }
-    let slot = PI * 2.0 / f64::from(PICKUP_DASHES);
-    let dashes: Vec<Mesh> = (0..PICKUP_DASHES)
-        .map(|i| {
-            RingGeometry {
-                inner_radius: 0.7,
-                outer_radius: 0.8,
-                theta_segments: 4,
-                theta_start: f64::from(i) * slot,
-                theta_length: slot * PICKUP_DASH_FILL,
-            }
-            .build()
-        })
-        .collect();
-    let dashes =
-        merge_geometries(&dashes.iter().collect::<Vec<_>>()).expect("rings share a layout");
-    let dash = named(
-        at(
-            flat(mesh(arc(dashes), rim_material(PICKUP_DASH), 0)),
-            0.0,
-            PICKUP_RIM_HEIGHT,
-            0.0,
-        ),
-        joint::PICKUP_DASH,
-    );
-    root.children.push(dash);
     let refill = RingGeometry {
-        inner_radius: 0.89,
-        outer_radius: 1.02,
-        theta_segments: REFILL_SEGMENTS,
+        inner_radius: REFILL_RADII[0],
+        outer_radius: REFILL_RADII[1],
+        theta_segments: REFILL_TICKS * 2,
         theta_start: PI / 2.0,
         theta_length: PI * 2.0,
     }
     .build();
-    // Opaque with an alpha test: the effect hides the segments not yet refilled.
-    let material = Arc::new(Material {
-        side: Side::Double,
-        tone_mapped: false,
+    // Opaque with an alpha test: the effect cuts the gaps between ticks and fades
+    // the ticks still to spray.
+    let material = Material {
         alpha_test: 0.5,
         effect: Effect::Custom {
             name: PICKUP_REFILL_EFFECT,
-            params: vec![REFILL_SEGMENTS as f32, 1.02],
+            params: vec![
+                REFILL_TICKS as f32,
+                REFILL_RADII[1] as f32,
+                REFILL_GAP,
+                REFILL_FAINT,
+            ],
         },
-        ..Material::basic(PICKUP_RIM_FULL)
-    });
+        ..ground_paint(0xffffff)
+    };
     let mut node = named(
-        at(flat(mesh(arc(refill), material, 0)), 0.0, 0.23, 0.0),
+        at(
+            flat(shadow_receiver(arc(refill), Arc::new(material))),
+            0.0,
+            MARKING_HEIGHT,
+            0.0,
+        ),
         joint::PICKUP_REFILL,
     );
     node.visible = false;
     root.children.push(node);
-    root
-}
-
-/// The local transform of the rim's dashes turned by `angle` about the pad's axis
-/// (the joint's rest pose turned, for `set_node_transform`).
-pub fn pickup_dash_transform(angle: f64) -> glam::Mat4 {
-    glam::Mat4::from_translation(glam::Vec3::new(0.0, PICKUP_RIM_HEIGHT as f32, 0.0))
-        * glam::Mat4::from_rotation_y(angle as f32)
-        * glam::Mat4::from_rotation_x(-PI as f32 / 2.0)
-}
-
-/// A pad's light (`effects::pickups::pickup_beam_geometry`): a pool of light on the
-/// deck, a column fading up past the gem and halo rings climbing it, colored by
-/// instance tint.
-pub fn pickup_beam() -> Node {
-    let mut root = Node::group("pickup-beam");
-    root.children.push(mesh(
-        arc(crate::effects::pickups::pickup_beam_geometry()),
-        Arc::new(crate::effects::pickups::beam_material()),
-        0,
-    ));
     root
 }
 
@@ -696,7 +695,6 @@ mod tests {
         for name in [
             joint::PICKUP_RING,
             joint::PICKUP_RING_DIM,
-            joint::PICKUP_DASH,
             joint::PICKUP_REFILL,
         ] {
             assert!(found.iter().any(|n| n == name), "{name}");

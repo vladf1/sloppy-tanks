@@ -22,7 +22,7 @@ use super::tank_kit::{
     Coat, Kit, KitMeshes, aim, chamfered_levels, inset, pose, prism_x, shift, sloped_ring,
 };
 use super::tank_model::Chassis;
-use super::{Team, VehicleKind};
+use super::{Team, VehicleKind, part};
 
 /// Hull roof height above the deck line.
 pub(super) const ROOF_RISE: f64 = 0.045;
@@ -36,8 +36,14 @@ const END_REACH: f64 = 0.022;
 const BELLY_Y: f64 = 0.07;
 /// Sides of the gun tube's turned sections.
 const GUN_SIDES: u32 = 10;
+/// The crew livery's variant number (see [`part::CREW_LIVERY`]).
+const CREW_LIVERY: u8 = part::CREW_LIVERY as u8;
 /// Turret-ring centre behind the hull centre, shared with the turret ring.
 pub(super) const RING_Z: f64 = -0.12;
+/// The Big Rig's turret, wedges and turret stowage are this much wider than their
+/// Type 99 proportions, so its turret mass reads heavier than the Bruiser's from
+/// any camera (the turret is not part of the hull's hit box).
+const HEAVY_TURRET_WIDTH: f64 = 1.1;
 
 /// The merged assemblies of a chassis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -75,9 +81,11 @@ pub(super) fn ring_radius(c: &Chassis) -> f64 {
     if c.scout { 0.59 } else { 0.76 }
 }
 
-/// Height of the turret roof above the deck.
+/// Height of the turret roof above the deck: the Skipper's turret crouches low
+/// over its gun, the Big Rig's stands tall behind its wedges, so the three
+/// classes part by silhouette as well as size.
 fn roof_rise(c: &Chassis) -> f64 {
-    c.pick(0.5, 0.56, 0.58)
+    c.pick(0.45, 0.56, 0.66)
 }
 
 /// Height of the gun axis above the deck.
@@ -262,7 +270,7 @@ fn hull(kit: &mut Kit, c: &Chassis, open_ring: bool) {
     ring_guard(kit, c, &f);
     driver_station(kit, c, &f);
     engine_deck(kit, c, &f);
-    recognition_panel(kit, c, &f);
+    deck_tarp(kit, c, &f);
     rear_plate(kit, c, &f);
     front_fittings(kit, c, &f);
     glacis_details(kit, c, &f);
@@ -423,21 +431,35 @@ fn grille(kit: &mut Kit, f: &HullFrame, center: DVec2, size: DVec2, slats: u32) 
     }
 }
 
-/// A dark weld seam or panel line lying on a flat roof at height `y`, from and
-/// to plan points (x, z).
-fn seam(kit: &mut Kit, y: f64, from: DVec2, to: DVec2) {
-    let across = (to - from).normalize().perp() * 0.005;
-    let at = |p: DVec2| v(p.x, y + 0.0025, p.y);
-    kit.quad(
-        Coat::Dark,
-        [
-            at(from - across),
-            at(to - across),
-            at(to + across),
-            at(from + across),
-        ],
-        DVec3::Y,
+/// A weld bead's width and how far it stands proud of its plate.
+const BEAD_WIDTH: f64 = 0.016;
+const BEAD_PROUD: f64 = 0.006;
+
+/// A raised weld bead in the team paint along a plate joint, from `from` to `to`
+/// on a face whose outward normal is `normal`: the paint shader's bevels light its
+/// edges, so the joint reads as relief rather than as a line drawn on.
+fn weld_bead(kit: &mut Kit, from: DVec3, to: DVec3, normal: DVec3) {
+    let along = (to - from).normalize();
+    let up = normal.normalize();
+    let across = up.cross(along).normalize();
+    let up = along.cross(across);
+    let centre = (from + to) / 2.0 + up * (BEAD_PROUD / 2.0 - 0.001);
+    let placement = DMat4::from_cols(
+        across.extend(0.0),
+        up.extend(0.0),
+        along.extend(0.0),
+        centre.extend(1.0),
     );
+    kit.block(
+        Coat::Paint,
+        v(BEAD_WIDTH, BEAD_PROUD + 0.002, from.distance(to)),
+        placement,
+    );
+}
+
+/// A weld seam lying on a flat roof at height `y`, from and to plan points (x, z).
+fn seam(kit: &mut Kit, y: f64, from: DVec2, to: DVec2) {
+    weld_bead(kit, v(from.x, y, from.y), v(to.x, y, to.y), DVec3::Y);
 }
 
 /// Side of a square bolt head and how far it stands proud.
@@ -462,21 +484,9 @@ fn bolt_row(kit: &mut Kit, from: DVec3, to: DVec3, count: u32, normal: DVec3) {
     }
 }
 
-/// A dark panel line on a flat face with outward `normal`, from `from` to `to`.
+/// A welded plate joint on a flat face with outward `normal`, from `from` to `to`.
 fn panel_line(kit: &mut Kit, from: DVec3, to: DVec3, normal: DVec3) {
-    let normal = normal.normalize();
-    let across = (to - from).cross(normal).normalize() * 0.005;
-    let lift = normal * 0.0025;
-    kit.quad(
-        Coat::Dark,
-        [
-            from - across + lift,
-            to - across + lift,
-            to + across + lift,
-            from + across + lift,
-        ],
-        normal,
-    );
+    weld_bead(kit, from, to, normal);
 }
 
 /// Welded and bolted glacis details: a bolt row along its top edge, the plate
@@ -623,11 +633,11 @@ fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     }
 }
 
-/// A fluorescent air-recognition panel tied over the rear of the engine deck,
-/// slightly askew: a flat sheet lying on the grilles at the hull's top height
-/// whose edges drape down to the roof. It keeps the team readable from above
-/// under the camouflage.
-fn recognition_panel(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
+/// An olive canvas tarp tied over the rear of the engine deck, slightly askew: a
+/// folded sheet lying on the grilles at the hull's top height whose edges drape
+/// down to the roof. From overhead it is the hull's second hue beside the team
+/// paint.
+fn deck_tarp(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     let size = DVec2::new(c.pick(0.92, 1.1, 1.16), c.pick(0.4, 0.5, 0.5));
     let center = DVec2::new(c.pick(-0.1, -0.12, 0.1), -f.half + c.pick(0.36, 0.42, 0.4));
     let yaw = c.pick(0.05, -0.06, 0.04);
@@ -646,7 +656,7 @@ fn recognition_panel(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     };
     let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
     kit.quad(
-        Coat::Signal,
+        Coat::Canvas,
         signs.map(|(sx, sz)| corner(sx, sz, 0.0, top)),
         DVec3::Y,
     );
@@ -655,7 +665,7 @@ fn recognition_panel(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         let mid = DVec2::new(a.0 + b.0, a.1 + b.1) / 2.0;
         let out = rotate(mid);
         kit.quad(
-            Coat::Signal,
+            Coat::Canvas,
             [
                 corner(a.0, a.1, 0.0, top),
                 corner(a.0, a.1, drape, low),
@@ -904,17 +914,26 @@ fn turret_plan(
     ])
 }
 
-/// The team recognition band painted round a turret's cheeks, sides and rear just
-/// under the roof edge: its height, the gap it leaves below the roof chamfer and how
-/// far it stands proud of the armor.
+/// The band painted round a turret's cheeks, sides and rear just under the roof
+/// edge, above the side stowage: its height, the gap it leaves below the roof
+/// chamfer and how far it stands proud of the armor. It is the deep trim; the crew
+/// livery (the human player's command tank) paints it over in white, standing a
+/// little prouder, so the band stays one draw with the turret paint.
 const BAND_HEIGHT: f64 = 0.075;
 const BAND_BELOW_ROOF: f64 = 0.01;
 const BAND_PROUD: f64 = 0.004;
+const COMMAND_BAND_PROUD: f64 = 0.008;
 
-/// A turret band on the wall between the `lower` and `upper` outline levels
-/// (matching outlines, front face from the last point to the first): every edge
-/// but the front face, where the mantlet sits.
-fn turret_band(kit: &mut Kit, lower: (&[DVec2], f64), upper: (&[DVec2], f64)) {
+/// The turret band on the wall between the `lower` and `upper` outline levels
+/// (matching outlines, front face from the last point to the first), `proud` of
+/// the armor: every edge but the front face, where the mantlet sits.
+fn turret_band(
+    kit: &mut Kit,
+    lower: (&[DVec2], f64),
+    upper: (&[DVec2], f64),
+    proud: f64,
+    coat: Coat,
+) {
     let ((low, low_y), (high, high_y)) = (lower, upper);
     let (top, bottom) = (
         high_y - BAND_BELOW_ROOF,
@@ -923,7 +942,7 @@ fn turret_band(kit: &mut Kit, lower: (&[DVec2], f64), upper: (&[DVec2], f64)) {
     let level = |y: f64| -> Vec<DVec3> {
         let t = (y - low_y) / (high_y - low_y);
         let outline: Vec<DVec2> = low.iter().zip(high).map(|(a, b)| a.lerp(*b, t)).collect();
-        inset(&outline, -BAND_PROUD)
+        inset(&outline, -proud)
             .into_iter()
             .map(|p| v(p.x, y, p.y))
             .collect()
@@ -935,7 +954,7 @@ fn turret_band(kit: &mut Kit, lower: (&[DVec2], f64), upper: (&[DVec2], f64)) {
         let (a, b) = (i, i + 1);
         let mid = (under[a] + under[b]) / 2.0;
         let out = DVec3::new(mid.x - centre.x, 0.0, mid.z - centre.z);
-        kit.quad(Coat::Signal, [under[a], under[b], over[b], over[a]], out);
+        kit.quad(coat, [under[a], under[b], over[b], over[a]], out);
     }
 }
 
@@ -959,10 +978,11 @@ fn turret(kit: &mut Kit, c: &Chassis) {
     }
 }
 
-/// Gun shield, canvas dust boot and coaxial machine-gun port.
+/// Gun shield in bare gun metal (the turret's second material beside the team
+/// paint), canvas dust boot and coaxial machine-gun port.
 fn mantlet(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3, tube: f64, coax_x: f64) {
     kit.chamfer_block(
-        Coat::Shade,
+        Coat::Gunmetal,
         size,
         0.025,
         shift(v(0.0, gun_y, face_z - size.z / 2.0)),
@@ -1080,31 +1100,50 @@ fn machine_gun(kit: &mut Kit, roof: f64, pivot: DVec3, yaw: f64, heavy: bool) {
         (v(0.055, 0.065, 0.24), 0.011, 0.46)
     };
     let local = |offset: DVec3| yawed(pivot, yaw, offset);
+    let turn = v(0.0, yaw, 0.0);
     kit.rod(Coat::Gunmetal, 0.02, v(pivot.x, roof, pivot.z), pivot, 6);
+    // The cradle the gun rides in on its pintle, and the receiver with its raised
+    // feed cover.
+    kit.block_at(
+        Coat::Steel,
+        v(receiver.x + 0.03, 0.03, receiver.z * 0.6),
+        local(v(0.0, 0.0, 0.0)),
+        turn,
+    );
+    kit.block_at(Coat::Gunmetal, receiver, local(v(0.0, 0.035, 0.0)), turn);
     kit.block_at(
         Coat::Gunmetal,
-        receiver,
-        local(v(0.0, 0.035, 0.0)),
-        v(0.0, yaw, 0.0),
+        v(receiver.x * 0.8, 0.02, receiver.z * 0.55),
+        local(v(0.0, 0.035 + receiver.y / 2.0 + 0.008, 0.02)),
+        turn,
     );
     let muzzle_from = local(v(0.0, 0.045, receiver.z / 2.0));
     let muzzle_to = local(v(0.0, 0.045, receiver.z / 2.0 + barrel_length));
     kit.rod(Coat::Gunmetal, barrel_radius, muzzle_from, muzzle_to, 6);
-    if heavy {
-        // Perforated barrel jacket of the .50 cal.
-        kit.rod(
-            Coat::Gunmetal,
-            0.026,
-            muzzle_from,
-            local(v(0.0, 0.045, receiver.z / 2.0 + 0.16)),
-            6,
-        );
-    }
+    // Flash hider at the muzzle.
+    kit.rod(
+        Coat::Gunmetal,
+        barrel_radius * 1.6,
+        local(v(0.0, 0.045, receiver.z / 2.0 + barrel_length - 0.05)),
+        muzzle_to,
+        6,
+    );
+    // The barrel's ventilated jacket (the .50 cal's) or heat shield (the M240's)
+    // in worn steel, so the gun reads as a machine gun rather than one dark rod.
+    let jacket = if heavy { 0.026 } else { 0.019 };
+    kit.rod(
+        Coat::Steel,
+        jacket,
+        muzzle_from,
+        local(v(0.0, 0.045, receiver.z / 2.0 + barrel_length * 0.38)),
+        6,
+    );
+    // Canvas ammunition bag on its tray beside the receiver.
     kit.block_at(
         Coat::Canvas,
         v(0.07, 0.09, 0.15),
         local(v(receiver.x / 2.0 + 0.04, 0.0, 0.0)),
-        v(0.0, yaw, 0.0),
+        turn,
     );
 }
 
@@ -1253,30 +1292,79 @@ fn stowage_rack(kit: &mut Kit, half_x: f64, z_front: f64, z_back: f64, floor: f6
     );
 }
 
-/// M1 Abrams: flat-faced wedge turret, long bustle with its rack, commander's
-/// cupola with the .50 cal, loader's M240, gunner's sight doghouse and CITV.
-fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
+/// The turret armor's plan outlines at its foot, its widest point and under the
+/// roof chamfer, with their heights.
+fn turret_levels(c: &Chassis) -> [(Vec<DVec2>, f64); 3] {
     let d = c.deck;
-    let levels = [
-        (
-            turret_plan(0.4, 0.8, 0.82, 0.22, -1.2, 0.74, -1.78),
-            d + 0.09,
-        ),
-        (
-            turret_plan(0.52, 1.12, 0.98, 0.3, -1.22, 0.86, -1.88),
-            d + 0.2,
-        ),
-        (
-            turret_plan(0.5, 1.05, 0.93, 0.26, -1.22, 0.82, -1.85),
-            roof - 0.03,
-        ),
-    ];
-    kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.03));
+    let roof = d + roof_rise(c);
+    if c.scout {
+        [
+            (
+                turret_plan(0.44, 0.8, 0.74, 0.5, -1.02, 0.68, -1.3),
+                d + 0.08,
+            ),
+            (
+                turret_plan(0.5, 0.97, 0.84, 0.63, -1.08, 0.78, -1.4),
+                d + 0.16,
+            ),
+            (
+                turret_plan(0.48, 0.9, 0.8, 0.58, -1.08, 0.76, -1.38),
+                roof - 0.025,
+            ),
+        ]
+    } else if c.heavy {
+        let w = HEAVY_TURRET_WIDTH;
+        [
+            (
+                turret_plan(0.48 * w, 0.55, 0.78 * w, 0.3, -1.1, 0.68 * w, -1.5),
+                d + 0.1,
+            ),
+            (
+                turret_plan(0.55 * w, 0.72, 0.86 * w, 0.4, -1.15, 0.74 * w, -1.58),
+                d + 0.16,
+            ),
+            (
+                turret_plan(0.5 * w, 0.66, 0.82 * w, 0.36, -1.15, 0.7 * w, -1.55),
+                roof - 0.03,
+            ),
+        ]
+    } else {
+        [
+            (
+                turret_plan(0.4, 0.8, 0.82, 0.22, -1.2, 0.74, -1.78),
+                d + 0.09,
+            ),
+            (
+                turret_plan(0.52, 1.12, 0.98, 0.3, -1.22, 0.86, -1.88),
+                d + 0.2,
+            ),
+            (
+                turret_plan(0.5, 1.05, 0.93, 0.26, -1.22, 0.82, -1.85),
+                roof - 0.03,
+            ),
+        ]
+    }
+}
+
+/// The turret armor and its band in the deep trim.
+fn turret_armor(kit: &mut Kit, c: &Chassis, bevel: f64) -> [(Vec<DVec2>, f64); 3] {
+    let levels = turret_levels(c);
+    kit.solid(Coat::Paint, &chamfered_levels(&levels, bevel));
     turret_band(
         kit,
         (&levels[1].0, levels[1].1),
         (&levels[2].0, levels[2].1),
+        BAND_PROUD,
+        Coat::Shade,
     );
+    levels
+}
+
+/// M1 Abrams: flat-faced wedge turret, long bustle with its rack, commander's
+/// cupola with the .50 cal, loader's M240, gunner's sight doghouse and CITV.
+fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
+    let d = c.deck;
+    let levels = turret_armor(kit, c, 0.03);
     roof_bolts(kit, &levels[2].0, roof, 0.08, 0.17);
     mantlet(kit, gun_y, 1.13, v(0.46, 0.32, 0.2), 0.068, -0.17);
     // Gunner's primary sight doghouse (right front) with open ballistic doors.
@@ -1317,10 +1405,12 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             );
         }
     }
-    // Roof plate welds: the bustle joint and the armor cavity covers.
+    // Roof plate welds at the bustle joint, and the bolted covers of the cheek
+    // armor cavities in the deep trim: the roof the gunner looks over reads as
+    // separate plates rather than one painted slab.
     seam(kit, roof, DVec2::new(-0.78, -1.12), DVec2::new(0.78, -1.12));
-    for x in [-0.2, 0.2] {
-        seam(kit, roof, DVec2::new(x, 0.95), DVec2::new(x * 3.4, 0.2));
+    for side in [-1.0, 1.0] {
+        cavity_cover(kit, roof, side);
     }
     // Bustle blow-out panels.
     for side in [-1.0, 1.0] {
@@ -1353,30 +1443,37 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     }
 }
 
+/// Thickness of an armor cavity cover on the turret roof.
+const COVER_THICKNESS: f64 = 0.016;
+
+/// The Abrams' bolted cover over one cheek's armor cavity (`side` -1 or +1): a
+/// low plate between the gun's roof seam and the cheek edge, a bolt at each
+/// corner.
+fn cavity_cover(kit: &mut Kit, roof: f64, side: f64) {
+    let outline: Vec<DVec2> = p2(&[(0.25, 0.93), (0.45, 0.96), (0.82, 0.3), (0.7, 0.22)])
+        .into_iter()
+        .map(|p| DVec2::new(p.x * side, p.y))
+        .collect();
+    let rings = vec![
+        sloped_ring(&outline, |_| roof - 0.002),
+        sloped_ring(&outline, |_| roof + COVER_THICKNESS - 0.006),
+        sloped_ring(&inset(&outline, 0.006), |_| roof + COVER_THICKNESS),
+    ];
+    kit.solid(Coat::Shade, &rings);
+    for corner in inset(&outline, 0.035) {
+        kit.block(
+            Coat::Steel,
+            v(0.022, 0.012, 0.022),
+            shift(v(corner.x, roof + COVER_THICKNESS + 0.004, corner.y)),
+        );
+    }
+}
+
 /// Type 99: welded centre turret behind arrowhead add-on wedges with bolted
 /// tiles, panoramic commander's sight, laser dazzler and the 12.7 mm HMG.
 fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     let d = c.deck;
-    let levels = [
-        (
-            turret_plan(0.48, 0.55, 0.78, 0.3, -1.1, 0.68, -1.5),
-            d + 0.1,
-        ),
-        (
-            turret_plan(0.55, 0.72, 0.86, 0.4, -1.15, 0.74, -1.58),
-            d + 0.16,
-        ),
-        (
-            turret_plan(0.5, 0.66, 0.82, 0.36, -1.15, 0.7, -1.55),
-            roof - 0.03,
-        ),
-    ];
-    kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.03));
-    turret_band(
-        kit,
-        (&levels[1].0, levels[1].1),
-        (&levels[2].0, levels[2].1),
-    );
+    let levels = turret_armor(kit, c, 0.03);
     roof_bolts(kit, &levels[2].0, roof, 0.08, 0.17);
     // Arrowhead wedges, their tops dipping toward the tips.
     for side in [-1.0, 1.0] {
@@ -1388,7 +1485,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             (0.88, -0.1),
         ])
         .into_iter()
-        .map(|p| DVec2::new(p.x * side, p.y))
+        .map(|p| DVec2::new(p.x * side * HEAVY_TURRET_WIDTH, p.y))
         .collect();
         let top = |z: f64| roof - 0.02 - 0.1 * (z.max(0.0) / 1.3);
         let bevel = 0.025;
@@ -1403,7 +1500,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         for i in 0..3 {
             let t = (f64::from(i) + 0.5) / 3.0;
             let at = DVec2::new(0.3, 1.02).lerp(DVec2::new(0.74, 0.22), t);
-            let (x, z) = (at.x * side, at.y);
+            let (x, z) = (at.x * side * HEAVY_TURRET_WIDTH, at.y);
             let slope = (0.1 / 1.3_f64).atan();
             let tile = pose(v(x, top(z) + 0.01, z), v(-slope, side * 0.5, 0.0));
             kit.chamfer_block(Coat::Shade, v(0.2, 0.025, 0.26), 0.008, tile);
@@ -1469,7 +1566,14 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     );
     // Smoke dischargers on the turret sides, stowage boxes behind them.
     for side in [-1.0, 1.0] {
-        smoke_cluster(kit, v(side * 0.86, d + 0.44, -0.52), side, 0.0, 1, 5);
+        smoke_cluster(
+            kit,
+            v(side * 0.86 * HEAVY_TURRET_WIDTH, d + 0.44, -0.52),
+            side,
+            0.0,
+            1,
+            5,
+        );
         let (box_at, box_size) = side_stowage(c, side);
         kit.chamfer_block(Coat::Paint, box_size, 0.03, shift(box_at));
         for dz in [-0.16, 0.16] {
@@ -1486,7 +1590,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     // Rear stowage box across the bustle.
     kit.chamfer_block(
         Coat::Shade,
-        v(1.2, 0.3, 0.26),
+        v(1.2 * HEAVY_TURRET_WIDTH, 0.3, 0.26),
         0.03,
         shift(v(0.0, d + 0.33, -1.7)),
     );
@@ -1500,7 +1604,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     wind_sensor(kit, v(0.1, roof, -1.12), 0.26);
     antenna(kit, v(0.56, roof, -1.36), 0.9);
     antenna(kit, v(-0.56, roof, -1.36), 0.7);
-    for (x, z) in [(0.7, -0.3), (-0.7, -0.3), (0.6, -1.45), (-0.6, -1.45)] {
+    for (x, z) in [(0.76, -0.3), (-0.76, -0.3), (0.66, -1.45), (-0.66, -1.45)] {
         lifting_eye(kit, v(x, roof, z));
     }
 }
@@ -1509,26 +1613,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
 /// heads, cupola with .50 cal, loader's M240 and a rear basket.
 fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     let d = c.deck;
-    let levels = [
-        (
-            turret_plan(0.44, 0.8, 0.74, 0.5, -1.02, 0.68, -1.3),
-            d + 0.08,
-        ),
-        (
-            turret_plan(0.5, 0.97, 0.84, 0.63, -1.08, 0.78, -1.4),
-            d + 0.16,
-        ),
-        (
-            turret_plan(0.48, 0.9, 0.8, 0.58, -1.08, 0.76, -1.38),
-            roof - 0.025,
-        ),
-    ];
-    kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.025));
-    turret_band(
-        kit,
-        (&levels[1].0, levels[1].1),
-        (&levels[2].0, levels[2].1),
-    );
+    let levels = turret_armor(kit, c, 0.025);
     roof_bolts(kit, &levels[2].0, roof, 0.07, 0.16);
     // Bolted side armor modules, leaning with the turret sides.
     for side in [-1.0, 1.0] {
@@ -1545,7 +1630,7 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             }
         }
     }
-    mantlet(kit, gun_y, 1.0, v(0.46, 0.3, 0.2), 0.062, -0.17);
+    mantlet(kit, gun_y, 1.0, v(0.46, 0.26, 0.2), 0.062, -0.17);
     sight_head(
         kit,
         v(-0.44, roof + 0.09, 0.5),
@@ -1596,7 +1681,14 @@ fn side_stowage(c: &Chassis, side: f64) -> (DVec3, DVec3) {
     if c.scout {
         (v(side * 0.865, d + 0.3, -0.42), v(0.07, 0.26, 0.86))
     } else if c.heavy {
-        (v(side * 0.93, d + 0.32, -1.18), v(0.24, 0.36, 0.62))
+        (
+            v(
+                side * (0.93 + 0.84 * (HEAVY_TURRET_WIDTH - 1.0)),
+                d + 0.32,
+                -1.18,
+            ),
+            v(0.24, 0.36, 0.62),
+        )
     } else {
         (v(side * 1.03, d + 0.33, -0.74), v(0.2, 0.3, 0.8))
     }
@@ -1635,22 +1727,33 @@ fn extra_stowage(kit: &mut Kit, c: &Chassis, variant: u8) {
 
 /// Team insignia on the turret roof (a diamond for blue, twin bars for red, big
 /// enough to read from the follow camera), stencilled unit numbers on both turret
-/// sides and the roof, and the livery's extra stowage.
+/// sides, the turret band and the livery's extra stowage. The crew livery (the one
+/// a human player's tank wears) paints its band white: the command tank's mark.
 fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     extra_stowage(kit, c, variant);
+    if variant == CREW_LIVERY {
+        let levels = turret_levels(c);
+        turret_band(
+            kit,
+            (&levels[1].0, levels[1].1),
+            (&levels[2].0, levels[2].1),
+            COMMAND_BAND_PROUD,
+            Coat::Marking,
+        );
+    }
     let roof = c.deck + roof_rise(c);
     let y = roof + 0.003;
     let z = c.pick(0.2, 0.18, 0.3);
     if team == Team::Blue {
         kit.block_at(
             Coat::Marking,
-            v(0.24, 0.006, 0.24),
+            v(0.4, 0.006, 0.4),
             v(0.0, y, z),
             v(0.0, PI / 4.0, 0.0),
         );
     } else {
-        for x in [-0.085, 0.085] {
-            kit.block(Coat::Marking, v(0.08, 0.006, 0.34), shift(v(x, y, z)));
+        for x in [-0.13, 0.13] {
+            kit.block(Coat::Marking, v(0.13, 0.006, 0.5), shift(v(x, y, z)));
         }
     }
     let number = unit_number(c.kind, team, variant);
@@ -1665,28 +1768,25 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
                 module.transform_vector3(DVec3::Y),
             )
         } else if c.heavy {
-            (v(side * 1.054, d + 0.27, -1.18), DVec3::Y)
+            let (box_at, size) = side_stowage(c, side);
+            (
+                v(box_at.x + side * (size.x / 2.0 + 0.004), d + 0.27, -1.18),
+                DVec3::Y,
+            )
         } else {
             (v(side * 1.134, d + 0.3, -0.74), DVec3::Y)
         };
         let right = v(0.0, 0.0, -side);
-        stencil_number(kit, number, center, right, up, c.pick(0.13, 0.15, 0.16));
+        stencil_number(kit, number, center, right, up, c.pick(0.2, 0.24, 0.27));
     }
-    // The number again, large on the turret roof behind the hatches, reading from
-    // the front quarter the Battle Setup cards and close-ups show.
-    let roof_number = v(c.pick(0.0, 0.0, 0.15), y, c.pick(-1.1, -0.85, -1.32));
-    stencil_number(
-        kit,
-        number,
-        roof_number,
-        v(1.0, 0.0, 0.0),
-        v(0.0, 0.0, -1.0),
-        c.pick(0.22, 0.26, 0.26),
-    );
 }
 
-/// The unit number a livery paints on a chassis of a team.
+/// The unit number a livery paints on a chassis of a team; the crew livery is
+/// the platoon commander's "01".
 fn unit_number(kind: VehicleKind, team: Team, variant: u8) -> &'static str {
+    if variant == CREW_LIVERY {
+        return "01";
+    }
     let numbers = match (kind, team) {
         (VehicleKind::Scout, Team::Blue) => ["17", "12", "19"],
         (VehicleKind::Heavy, Team::Blue) => ["31", "33", "38"],
@@ -1721,7 +1821,7 @@ fn digit_segments(digit: char) -> [bool; 7] {
 /// Segments stop short of each other, leaving the stencil's bridges.
 fn stencil_number(kit: &mut Kit, text: &str, center: DVec3, right: DVec3, up: DVec3, height: f64) {
     let width = height * 0.56;
-    let stroke = height * 0.17;
+    let stroke = height * 0.2;
     let bridge = height * 0.07;
     let pitch = width + height * 0.22;
     let normal = right.cross(up).normalize();
@@ -1786,22 +1886,41 @@ fn gun(kit: &mut Kit, c: &Chassis) {
     stops.push((evacuator[0], evacuator[1]));
     stops.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut from = 1.32;
+    let mut widest = (0.0, from, from);
     for &(start, end) in &stops {
         kit.turned(
-            Coat::Shade,
+            Coat::Paint,
             &p2(&[(sleeve, from), (sleeve, start)]),
             GUN_SIDES,
             axis,
         );
+        if start - from > widest.0 {
+            widest = (start - from, from, start);
+        }
         from = end;
     }
     let taper = r * 1.02;
     kit.turned(
-        Coat::Shade,
+        Coat::Paint,
         &p2(&[(sleeve, from), (taper, sleeve_end)]),
         GUN_SIDES,
         axis,
     );
+    // Class bands round the middle of the sleeve's longest run: one on the
+    // Skipper, two on the Bruiser, three on the Big Rig, readable from overhead.
+    let count = c.pick(1.0, 2.0, 3.0);
+    let span = count * ID_BAND_WIDTH + (count - 1.0) * ID_BAND_GAP;
+    let first = (widest.1 + widest.2 - span) / 2.0;
+    for i in 0..count as u32 {
+        let z = first + f64::from(i) * (ID_BAND_WIDTH + ID_BAND_GAP);
+        let band = sleeve + 0.003;
+        kit.turned(
+            Coat::Marking,
+            &p2(&[(band, z), (band, z + ID_BAND_WIDTH)]),
+            GUN_SIDES,
+            axis,
+        );
+    }
     for &z in bands {
         let band = r * 1.24;
         kit.turned(
@@ -1884,13 +2003,18 @@ fn gun(kit: &mut Kit, c: &Chassis) {
             }
         }
     } else {
+        // A plain muzzle that ends in a thickened lip, so the long gun finishes
+        // in a deliberate shape rather than a cut tube.
         let collar = r * 1.1;
+        let lip = r * 1.32;
         kit.turned(
             Coat::Gunmetal,
             &p2(&[
                 (taper, sleeve_end),
                 (collar, sleeve_end + 0.02),
-                (collar, muzzle),
+                (collar, muzzle - 0.09),
+                (lip, muzzle - 0.07),
+                (lip, muzzle),
                 (bore, muzzle),
                 (bore, muzzle - 0.08),
                 (0.0, muzzle - 0.08),
@@ -1908,6 +2032,10 @@ fn gun(kit: &mut Kit, c: &Chassis) {
         );
     }
 }
+
+/// The white class bands on a gun sleeve: their width and the gap between them.
+const ID_BAND_WIDTH: f64 = 0.08;
+const ID_BAND_GAP: f64 = 0.06;
 
 /// Outer radius of the bare gun tube.
 pub(super) fn tube_radius(c: &Chassis) -> f64 {

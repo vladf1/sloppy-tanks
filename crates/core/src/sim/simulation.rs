@@ -35,6 +35,7 @@ use super::pickups::collect_pickup;
 use super::projectiles::step_projectiles;
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
+use super::scenery_pieces::settle_house_pieces;
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
@@ -794,6 +795,7 @@ impl Simulation {
             }
         }
         prepare_debris_cleanup(self);
+        settle_house_pieces(self);
         let mut i = self.fragments.len();
         while i > 0 {
             i -= 1;

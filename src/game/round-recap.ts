@@ -3,7 +3,7 @@ import type { HudState, RecapMetric, RecapState, ScoreboardRow } from "./engine-
 /** Each metric's label and, on hover, its explanation, so the report itself reads at a
  * glance. In report order; the engine computes the values, feats and personal bests. */
 const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
-  kills: { label: "Kills", hint: "Enemy tanks wrecked" },
+  kills: { label: "Kills", hint: "Enemy tanks destroyed" },
   damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
   bestLife: { label: "Best spree", hint: "Most kills in a single life" },
   rank: { label: "Top rank", hint: "Peak rank across all lives" },
@@ -12,29 +12,44 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   multikill: { label: "Best multikill", hint: "Most kills within any 5 seconds" },
   clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
   revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
-  posthumousKills: { label: "Kills after wreck", hint: "Kills by a previous life's ordnance" },
+  posthumousKills: { label: "Kills after death", hint: "Kills by a previous life's ordnance" },
   mineKills: { label: "Mine kills", hint: "Kills from mine explosions" },
-  coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
+  coverDestroyed: { label: "Cover destroyed", hint: "Destructible objects you finished" },
   pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
 };
 /** The hero tile and the tiles beside it; peak rank shows on the hero tile with the
  * tank, and the rest of the metrics list below only when they happened. */
 const featuredMetrics: readonly RecapMetric[] = ["kills", "damage", "bestLife", "longestLife"];
 
-/** How often the viewer's tank was wrecked this round, for the report's opening line. */
+/** How often the viewer's tank was destroyed this round, for the report's opening line. */
 export function wreckLine(deaths: number): string {
   return deaths <= 0
-    ? "Never wrecked"
+    ? "Never destroyed"
     : deaths === 1
-      ? "Wrecked once"
+      ? "Destroyed once"
       : deaths === 2
-        ? "Wrecked twice"
-        : `Wrecked ${deaths} times`;
+        ? "Destroyed twice"
+        : `Destroyed ${deaths} times`;
 }
 
 /** "BLUE" as the report says it: "Blue team". */
 export function teamLabel(name: string): string {
   return `${name.charAt(0)}${name.slice(1).toLowerCase()} team`;
+}
+
+/** Where a team battle stands for the viewer's `team`: who leads and by how much. */
+export function standingLine(
+  scores: readonly number[],
+  team: number,
+  names: readonly string[],
+): string {
+  const [blue, red] = scores;
+  if (blue === red) {
+    return `Level at ${blue} each`;
+  }
+  const leader = blue > red ? 0 : 1;
+  const margin = Math.abs(blue - red);
+  return `${leader === team ? "Your team" : teamLabel(names[leader])} leads by ${margin}`;
 }
 
 export function duration(seconds: number): string {
@@ -151,6 +166,20 @@ function byScore(a: ScoreboardRow, b: ScoreboardRow): number {
   return b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name);
 }
 
+/** Where the viewer stands on their own team's scoreboard (by kills, then fewest
+ * wrecks): 1-based place and the team's size, or null when the viewer is not listed. */
+export function teamPlace(
+  rows: readonly ScoreboardRow[],
+  viewerId: number,
+): { place: number; of: number } | null {
+  const viewer = rows.find((row) => row.id === viewerId);
+  if (!viewer) {
+    return null;
+  }
+  const team = rows.filter((row) => row.team === viewer.team).sort(byScore);
+  return { place: team.indexOf(viewer) + 1, of: team.length };
+}
+
 /** The round's most valuable tank: the most kills, fewest wrecks breaking a tie; none
  * before anyone scores. */
 export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | null {
@@ -159,7 +188,8 @@ export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | nu
 }
 
 /** The battle report's team scoreboard: each team's tanks by kills, with their wrecks,
- * the viewer's row lit and the MVP marked. `teamNames` and `scores` are in team order. */
+ * the viewer's row lit and the MVP tagged in its row (no second MVP line repeats it).
+ * `teamNames` and `scores` are in team order. */
 export function scoreboardMarkup(
   rows: readonly ScoreboardRow[],
   viewerId: number,
@@ -186,8 +216,5 @@ export function scoreboardMarkup(
       .join("");
     return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}"><header><b>${teamNames[index]}</b><span>${scores[index]}</span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
   };
-  const spotlight = mvp
-    ? `<div class="board-mvp ${mvp.team === 0 ? "blue" : "red"}"><span>★ MVP</span><b>${mvp.id === viewerId ? "YOU" : escapeHtml(mvp.name)}</b><small>${mvp.kills} kill${mvp.kills === 1 ? "" : "s"} · ${mvp.deaths} wreck${mvp.deaths === 1 ? "" : "s"}</small></div>`
-    : "";
-  return `<div class="results-board">${team(0)}${team(1)}${spotlight}</div>`;
+  return `<div class="results-board">${team(0)}${team(1)}</div>`;
 }

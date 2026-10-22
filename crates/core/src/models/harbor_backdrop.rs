@@ -269,7 +269,8 @@ fn ring_sectors(
 /// backdrop part keeps its uvs within 0..1): [`FACADE_FLAG`] draws a grid of
 /// windows over a tower's walls, [`STACK_FLAG`] the boxes of a container stack,
 /// each tier and bay its own line's color, and [`TERRAIN_FLAG`] the countryside
-/// (fields, woods and rock) over the green of the coast.
+/// (fields, woods and rock) over the green of the coast; the pines carry
+/// [`TREE_FLAG`] in their own mesh.
 fn flagged(mut part: Node, flag: f32) -> Node {
     if let Some(drawable) = &mut part.drawable {
         let mut mesh = (*drawable.mesh).clone();
@@ -284,6 +285,8 @@ fn facade(part: Node) -> Node {
 const FACADE_FLAG: f32 = 10.0;
 const STACK_FLAG: f32 = 20.0;
 const TERRAIN_FLAG: f32 = 30.0;
+/// The far pines, lit mostly by the sky so the woods read as dark masses.
+const TREE_FLAG: f32 = 40.0;
 
 /// Ridge height of the mountain range at an angle, metres above the sea.
 fn range_height(theta: f64) -> f64 {
@@ -845,6 +848,7 @@ fn pine_mesh() -> Arc<Mesh> {
             .collect();
         let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
         soft_foliage_normals(&mut mesh);
+        mesh.uvs = vec![[0.0, TREE_FLAG]; mesh.positions.len()];
         Arc::new(mesh)
     })
     .clone()
@@ -938,15 +942,26 @@ const TREE_SITES: u32 = 3800;
 /// The [`woods_depth`] where trees start: just inside the painted woods' edge.
 const WOODS_EDGE: f64 = 0.5;
 
+/// The western headland's wind farm: (angle round the bay, metres inland, scale).
+/// A pair close together on the near ridge and two more spread further back, each
+/// its own size, so they read as a wind farm on the hills rather than a row of
+/// clones evenly spaced along the skyline.
+const TURBINES: [(f64, f64, f64); 4] = [
+    (2.4, 50.0, 0.72),
+    (2.53, 66.0, 0.6),
+    (3.0, 78.0, 0.52),
+    (3.42, 60.0, 0.64),
+];
+
 /// Wind turbines along the western headland ridge.
 fn turbines(sectors: &mut Sectors) {
-    for i in 0..7u32 {
-        let theta = 2.35 + 0.22 * f64::from(i) + 0.08 * hash(i, 61);
+    for (i, &(theta, inland, scale)) in TURBINES.iter().enumerate() {
+        let i = i as u32;
         let theta = if theta > PI { theta - TAU } else { theta };
         if in_open_sea(theta) || land_amount(theta) < 0.9 {
             continue;
         }
-        let (x, y, z) = on_land(theta, 55.0);
+        let (x, y, z) = on_land(theta, inland);
         let mut turbine = Node::group("");
         put(
             &mut turbine,
@@ -991,7 +1006,7 @@ fn turbines(sectors: &mut Sectors) {
             put(&mut turbine, arm, 0.0, 32.4, 1.5);
         }
         let mut turbine = rotated(turbine, 0.0, -theta - FRAC_PI_2, 0.0);
-        turbine.scale = glam::DVec3::splat(0.65);
+        turbine.scale = glam::DVec3::splat(scale);
         place_at(sectors, theta, turbine, x, y, z);
     }
 }
