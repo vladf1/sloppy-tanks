@@ -561,15 +561,15 @@ pub(super) const COVER_CASES: &[CoverCase] = &[
 #[rustfmt::skip]
 /// Every kind of a shape shares one mesh: the instance data picks its tile.
 pub(super) const PICKUP_CASES: &[(PickupKind, Summary)] = &[
-    (PickupKind::Spread, (1, 927, 504, 0xdad83c6d)),
-    (PickupKind::Rocket, (1, 840, 492, 0xe46638ef)),
+    (PickupKind::Spread, (1, 927, 504, 0x52ca9445)),
+    (PickupKind::Rocket, (1, 840, 492, 0x05a2cca3)),
     (PickupKind::Ricochet, (1, 496, 288, 0xa6e7036d)),
-    (PickupKind::Piercing, (1, 240, 120, 0x13706569)),
-    (PickupKind::Rapid, (1, 864, 432, 0x2e0ac39d)),
-    (PickupKind::Shield, (1, 336, 168, 0xd7736489)),
-    (PickupKind::Speed, (1, 480, 240, 0xd45da329)),
-    (PickupKind::Repair, (1, 404, 208, 0xb055cbc6)),
-    (PickupKind::Laser, (1, 298, 152, 0x261c6f59)),
+    (PickupKind::Piercing, (1, 240, 120, 0xc3d2dcad)),
+    (PickupKind::Rapid, (1, 864, 432, 0xece9b6d5)),
+    (PickupKind::Shield, (1, 336, 168, 0x905baa39)),
+    (PickupKind::Speed, (1, 480, 240, 0xf4188d49)),
+    (PickupKind::Repair, (1, 404, 208, 0x264096fe)),
+    (PickupKind::Laser, (1, 298, 152, 0xa076b621)),
 ];
 
 pub(super) const FLAGS: Summary = (3, 290, 416, 0xf4a0e350);

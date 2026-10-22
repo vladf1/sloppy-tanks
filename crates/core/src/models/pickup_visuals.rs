@@ -1,16 +1,18 @@
 //! Pickups as military supply (successor of `pickup-visuals.ts` and
 //! `pickup-atlas.ts`): every kind ships as its own piece of military stock in its
-//! own material (raw pine, olive drab, black fibre, rolled steel, gunmetal), so its
-//! silhouette names it from the gameplay camera, and one large block of worn enamel
-//! in its own colour on top of the load names it again: the lid slid back over an
-//! open rack of shells, a canvas tarp lashed over rocket tubes, the caps of shell
-//! canisters, a crate's lid, ammo can lids, the top armour plate, whole jerry cans,
-//! a tool chest's lid and a radio case's lid. Nine hues, one per kind, none
-//! repeated. Each stands on a raw wooden pallet in a scuffed patch of ground, with
-//! the smoke grenade that marks it standing at its back corner; no poles, flags,
-//! painted rings or pads. An emptied drop is just its bare pallet. Everything is
-//! painted from one atlas whose tile for the kind carries the body's surface, the
-//! kind's paint and its sprayed stencil.
+//! own drab material (raw pine, olive drab, black fibre, rolled steel, gunmetal), so
+//! its silhouette names it from the gameplay camera, and one broad band of worn
+//! enamel in its own colour names it again, with the kind's code sprayed in it:
+//! across the middle of a crate's lid and on down its faces, across a tarp lashed
+//! over rocket tubes, round shell canisters near their caps, over the tops of
+//! jerry cans. Nine hues, one per kind, none repeated. Each stands on a raw wooden
+//! pallet in a scuffed patch of ground, the smoke grenade that marks it standing on
+//! the pallet's back corner with its fuse; no poles, flags, painted rings or pads.
+//! An emptied drop is its bare pallet, its grenade still smoking thinly. Everything
+//! is painted from one atlas whose tile for the kind carries the body's surface,
+//! the kind's band and its sprayed stencil. A collected drop sends one of its own
+//! pieces aboard the tank that took it ([`pickup_parcel`]) and pops its lid off
+//! ([`pickup_board`]).
 //!
 //! Faces that show the kind map into the first kind's tile and the `pickup-face`
 //! effect moves them into the instance's tile (instance data `xy`); brass, steel,
@@ -46,25 +48,25 @@ pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
     }
 }
 
-/// The kind's signal colour: the smoke its grenade gives off, the paint's hue
-/// greyed toward smoke and lightened, so a field of drops wears nine soft tints
-/// rather than nine bright plumes, yet each still reads apart from dust and soot.
+/// The kind's signal colour: the smoke its grenade gives off where it leaves the
+/// fuse, the paint's hue a little stronger than the worn band but short of a
+/// flare's, so each wisp names its kind before it thins and greys as it climbs.
 pub fn pickup_signal(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xc880a8,
-        PickupKind::Rocket => 0xd88e66,
-        PickupKind::Rapid => 0xb2c272,
-        PickupKind::Speed => 0xe0c472,
-        PickupKind::Repair => 0x84bc8a,
-        PickupKind::Piercing => 0x78b8b0,
-        PickupKind::Shield => 0x94b4d2,
-        PickupKind::Ricochet => 0xa490cc,
-        PickupKind::Laser => 0xdcdad2,
+        PickupKind::Spread => 0xc8569a,
+        PickupKind::Rocket => 0xde7036,
+        PickupKind::Rapid => 0xa2c242,
+        PickupKind::Speed => 0xe6c23c,
+        PickupKind::Repair => 0x4cae5e,
+        PickupKind::Piercing => 0x30aa9e,
+        PickupKind::Shield => 0x74a6d4,
+        PickupKind::Ricochet => 0x8c68cc,
+        PickupKind::Laser => 0xe6e4dc,
     }
 }
 
 /// The kind's colour as supply paint (`PICKUP_PAINTS` in `scripts/asset-data.ts`):
-/// the big painted block on top of its load. Nine hues, none repeated (raspberry,
+/// the broad band on its load. Nine hues, none repeated (raspberry,
 /// burnt orange, violet, teal, lime, pale steel blue, fuel yellow, green and
 /// off-white), each the family of the kind's HUD colour where that does not collide
 /// with another kind's, worn military enamel rather than a toy colour; the
@@ -138,14 +140,17 @@ const KIND: Cell = (0, 0);
 
 /// Regions of a cell (u0, v0, u1, v1), `v` up; the generator paints the same
 /// layout (`TILE_ROWS` there). A kind tile has three bands, top to bottom: the
-/// body's side strip (its surface with a band of the kind's paint near the top,
-/// for side faces), a strip of plain paint (for tubes, caps, ends and edges in the
-/// kind's colour) and the painted lid with the stencil sprayed on it.
+/// body's side strip (for side faces: its surface, the kind's band down its middle
+/// or round it near the top, dark at its foot), a strip of plain paint (small parts
+/// in the kind's colour) and the lid, the band across its middle with the code
+/// sprayed in it. `BODY` is the bare surface beside the lid's band, for faces that
+/// show no paint; `BAND` is the middle of the lid, for a fragment of it.
 type Region = [f64; 4];
 const SIDE: Region = [0.0, 0.75, 1.0, 1.0];
-const PLAIN: Region = [0.1, 0.773, 0.9, 0.852];
+const BODY: Region = [0.1, 0.12, 0.27, 0.5];
 const PAINT: Region = [0.02, 0.633, 0.98, 0.742];
 const LID: Region = [0.0, 0.0, 1.0, 0.625];
+const BAND: Region = [0.2, 0.08, 0.8, 0.5];
 /// Swatches of the shared cell: dark gunmetal (straps, handles, latches), black
 /// rubber (caps, tyres), olive webbing and bright worn steel (masts, drawer pulls).
 const GUNMETAL: Region = [0.06, 0.56, 0.44, 0.94];
@@ -169,26 +174,26 @@ const CHOCK: Region = board(0);
 const MISSING_BOARD: u32 = 3;
 
 /// The pallet's size (x, z), its height, its deck boards and their width.
-pub const PALLET_SIZE: [f64; 2] = [1.6, 1.2];
+pub const PALLET_SIZE: [f64; 2] = [1.86, 1.3];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: usize = 5;
-const PALLET_BOARD_WIDTH: f64 = 0.27;
-/// The smoke grenade marking the drop, standing on the ground at the pallet's back
-/// right corner, where the overhead camera sees it past the load: its top (x,
-/// height, z) where the signal smoke leaves it, and its radius.
-pub const SMOKE_MARKER: [f64; 3] = [0.92, 0.32, -0.44];
-const MARKER_RADIUS: f64 = 0.1;
-/// The scuffed ground under the drop: darkness under the pallet, dust banked
-/// `DRIFT_BANK` out from its edges in `DRIFT_COLOR` (linear) at `DRIFT_OPACITY`,
-/// fading out `CONTACT_REACH` past them, at this height over the ground.
-const CONTACT_DARKNESS: f32 = 0.66;
-const CONTACT_REACH: f64 = 0.62;
+const PALLET_BOARD_WIDTH: f64 = 0.3;
+/// The smoke grenade marking the drop, standing on the pallet's back right corner
+/// clear of every load, where the overhead camera sees it: its top (x, height, z)
+/// where the signal smoke leaves it, and its radius.
+pub const SMOKE_MARKER: [f64; 3] = [0.84, 0.5, -0.54];
+const MARKER_RADIUS: f64 = 0.085;
+/// The scuffed ground under the drop: darkness under the pallet and just past its
+/// edges (`CONTACT_SPILL`), dust banked `DRIFT_BANK` out from its edges in
+/// `DRIFT_COLOR` (linear) at `DRIFT_OPACITY`, fading out `CONTACT_REACH` past them,
+/// at this height over the ground.
+const CONTACT_DARKNESS: f32 = 0.74;
+const CONTACT_SPILL: f64 = 0.03;
+const CONTACT_REACH: f64 = 0.72;
 const CONTACT_LIFT: f64 = 0.01;
-const DRIFT_BANK: f64 = 0.1;
-const DRIFT_OPACITY: f32 = 0.5;
+const DRIFT_BANK: f64 = 0.15;
+const DRIFT_OPACITY: f32 = 0.56;
 const DRIFT_COLOR: [f32; 3] = [0.2, 0.16, 0.11];
-/// The parcel's box (x, height, z), without its lid.
-pub const PARCEL_SIZE: [f64; 3] = [0.56, 0.3, 0.38];
 
 static SHARED: Cache<u8, Mesh> = Cache::new();
 static MATERIALS: Cache<u8, Material> = Cache::new();
@@ -381,32 +386,47 @@ fn straps(parts: &mut Vec<Part>, height: f64, depth: f64, x: f64) {
     }
 }
 
-/// Spread: an open crate racked with cartridges, its magenta lid slid back over
-/// one end with the stencil on it. From above, rows of brass heads beside the lid.
+/// The lid of a box `size` (x, height, z): the band down its edges, bare ends and
+/// underside, its top stencilled.
+fn lid(size: [f64; 3]) -> Part {
+    Part::cube(size, kind(SIDE))
+        .end(kind(BODY))
+        .bottom(kind(BODY))
+        .top(lid_on([size[0], size[2]]))
+}
+
+/// A box `size` (x, height, z) standing on y = 0: the band down its faces along
+/// z, bare ends, top and underside.
+fn body(size: [f64; 3]) -> Part {
+    Part::cube(size, kind(BODY))
+        .side(kind(SIDE))
+        .at(0.0, size[1] / 2.0, 0.0)
+}
+
+/// Spread: an open pine crate racked with cartridges, its lid slid back over one
+/// end with the band and code on it. From above, rows of brass heads beside it.
 fn shell_rack() -> Mesh {
     let [w, h, d] = [1.44, 0.38, 1.0];
     let wall = 0.05;
-    let mut parts = vec![Part::cube([w, 0.04, d], kind(PLAIN)).at(0.0, 0.02, 0.0)];
+    let mut parts = vec![Part::cube([w, 0.04, d], kind(BODY)).at(0.0, 0.02, 0.0)];
     for z in [-1.0, 1.0] {
-        parts.push(Part::cube([w, h, wall], kind(PLAIN)).side(kind(SIDE)).at(
+        parts.push(Part::cube([w, h, wall], kind(BODY)).side(kind(SIDE)).at(
             0.0,
             h / 2.0,
             z * (d - wall) / 2.0,
         ));
     }
     for x in [-1.0, 1.0] {
-        parts.push(
-            Part::cube([wall, h, d - 2.0 * wall], kind(PLAIN))
-                .end(kind(SIDE))
-                .at(x * (w - wall) / 2.0, h / 2.0, 0.0),
-        );
+        parts.push(Part::cube([wall, h, d - 2.0 * wall], kind(BODY)).at(
+            x * (w - wall) / 2.0,
+            h / 2.0,
+            0.0,
+        ));
     }
     // The lid, pushed back off the cartridges and lying a little askew; built
-    // lengthwise and turned, so its stencil runs across it.
-    let lid = [d + 0.06, 0.74];
+    // lengthwise and turned, so its band runs along the crate.
     parts.push(
-        Part::cube([lid[0], 0.06, lid[1]], kind(PAINT))
-            .top(lid_on(lid))
+        lid([d + 0.06, 0.06, 0.74])
             .turned(FRAC_PI_2 + 0.05)
             .at(-0.36, h + 0.03, 0.02),
     );
@@ -430,9 +450,9 @@ fn shell_rack() -> Mesh {
     build(parts)
 }
 
-/// Rocket: three olive drab launch tubes, longer than the pallet, stacked on a
-/// pair of wooden chocks, capped in rubber and collared in steel, a canvas tarp in
-/// the kind's paint lashed over the middle of the stack with webbing.
+/// Rocket: three olive drab launch tubes, as long as the pallet, stacked on a pair
+/// of wooden chocks, capped in rubber and collared in steel, a drab tarp lashed
+/// over the middle of the stack with webbing, the band painted across it.
 fn rocket_tubes() -> Mesh {
     let radius = 0.17;
     let length = 1.76;
@@ -445,7 +465,7 @@ fn rocket_tubes() -> Mesh {
     }
     for (z, y) in [(-0.18, low), (0.18, low), (0.0, high)] {
         parts.push(
-            Part::drum(radius, length, 10, kind(PLAIN))
+            Part::drum(radius, length, 10, kind(BODY))
                 .top(swatch(RUBBER))
                 .bottom(swatch(RUBBER))
                 .along_x()
@@ -465,14 +485,10 @@ fn rocket_tubes() -> Mesh {
     let [tw, td] = [0.98, 2.0 * (0.18 + radius) + 0.06];
     let top = high + radius + 0.02;
     let drape = top - low + 0.04;
-    parts.push(
-        Part::cube([tw, 0.05, td], kind(PAINT))
-            .top(lid_on([tw, td]))
-            .at(0.0, top, 0.0),
-    );
+    parts.push(lid([tw, 0.05, td]).at(0.0, top, 0.0));
     for z in [-1.0, 1.0] {
         parts.push(
-            Part::cube([tw - 0.04, drape, 0.03], kind(PAINT))
+            Part::cube([tw - 0.04, drape, 0.03], kind(SIDE))
                 .tipped(0.0, -z * 0.1)
                 .at(0.0, top - drape / 2.0, z * (td / 2.0 - 0.02)),
         );
@@ -490,8 +506,8 @@ fn rocket_tubes() -> Mesh {
     build(parts)
 }
 
-/// Ricochet: four black fibre shell canisters banded together, their caps painted
-/// purple with one stencil sprayed across the four of them.
+/// Ricochet: four black fibre shell canisters banded together, each painted round
+/// near its cap, the code sprayed across the four caps.
 fn shell_canisters() -> Mesh {
     let radius = 0.25;
     let height = 0.88;
@@ -529,20 +545,13 @@ fn shell_canisters() -> Mesh {
     build(parts)
 }
 
-/// Piercing: the classic ammunition crate, a pine box under an overhanging teal
-/// lid, two steel straps over it and steel handles at its ends.
+/// Piercing: the classic ammunition crate, a pine box under an overhanging lid,
+/// the band over both, two steel straps over it and steel handles at its ends.
 fn ammo_crate() -> Mesh {
-    let [w, h, d] = [1.5, 0.62, 1.0];
-    let lid = [w + 0.06, 0.09, d + 0.06];
-    let mut parts = vec![
-        Part::cube([w, h, d], kind(PLAIN))
-            .side(kind(SIDE))
-            .at(0.0, h / 2.0, 0.0),
-        Part::cube(lid, kind(PAINT))
-            .top(lid_on([lid[0], lid[2]]))
-            .at(0.0, h + lid[1] / 2.0, 0.0),
-    ];
-    straps(&mut parts, h + lid[1], lid[2], 0.52);
+    let [w, h, d] = [1.42, 0.62, 0.96];
+    let top = [w + 0.06, 0.09, d + 0.06];
+    let mut parts = vec![body([w, h, d]), lid(top).at(0.0, h + top[1] / 2.0, 0.0)];
+    straps(&mut parts, h + top[1], top[2], 0.52);
     for x in [-1.0, 1.0] {
         parts.push(Part::cube([0.05, 0.07, 0.42], swatch(GUNMETAL)).at(
             x * (w / 2.0 + 0.03),
@@ -553,20 +562,18 @@ fn ammo_crate() -> Mesh {
     build(parts)
 }
 
-/// Rapid: olive ammo cans with orange lids, six in the bottom layer and three
-/// across them, the stencil sprayed over the top three.
+/// Rapid: black ammo cans, each with the band down its faces, six in the bottom
+/// layer and three across them, the band and code sprayed over the top three.
 fn ammo_cans() -> Mesh {
     let [length, height, width] = [0.62, 0.36, 0.28];
     let lid = 0.05;
     let can = |parts: &mut Vec<Part>, at: [f64; 3], turn: f64, top: Paint| {
         let place = |part: Part| part.turned(turn).at(at[0], at[1], at[2]);
+        parts.push(place(body([length, height, width])));
         parts.push(place(
-            Part::cube([length, height, width], kind(PLAIN))
-                .side(kind(SIDE))
-                .at(0.0, height / 2.0, 0.0),
-        ));
-        parts.push(place(
-            Part::cube([length + 0.02, lid, width + 0.02], kind(PAINT))
+            Part::cube([length + 0.02, lid, width + 0.02], kind(SIDE))
+                .end(kind(BODY))
+                .bottom(kind(BODY))
                 .top(top)
                 .at(0.0, height + lid / 2.0, 0.0),
         ));
@@ -584,7 +591,7 @@ fn ammo_cans() -> Mesh {
     let mut parts = Vec::new();
     for x in [-0.33, 0.33] {
         for z in [-0.31, 0.0, 0.31] {
-            can(&mut parts, [x, 0.0, z], 0.0, kind(PAINT));
+            can(&mut parts, [x, 0.0, z], 0.0, kind(BODY));
         }
     }
     let stencil = lid_over([-0.47, -0.33, 0.47, 0.33]);
@@ -595,11 +602,11 @@ fn ammo_cans() -> Mesh {
 }
 
 /// Shield: a stack of armour plate on wooden spacers, strapped, and its top plate
-/// painted blue and propped up at one end on a chock, its face to the sky.
+/// propped up at one end on a chock, its face to the sky with the band across it.
 fn armour_plates() -> Mesh {
     let mut parts = Vec::new();
     let mut y = 0.0;
-    for (index, (size, turn)) in [([1.5, 0.12, 1.04], 0.0), ([1.42, 0.12, 0.98], 0.06)]
+    for (index, (size, turn)) in [([1.44, 0.12, 1.0], 0.0), ([1.38, 0.12, 0.94], 0.06)]
         .into_iter()
         .enumerate()
     {
@@ -609,29 +616,29 @@ fn armour_plates() -> Mesh {
         }
         y += spacer;
         parts.push(
-            Part::cube(size, kind(PLAIN))
+            Part::cube(size, kind(BODY))
                 .turned(turn)
                 .at(0.0, y + size[1] / 2.0, 0.0),
         );
         y += size[1];
     }
-    straps(&mut parts, y, 1.04, 0.36);
-    // The blue plate, its left end on the stack and its right end on a chock.
-    let [pw, ph, pd] = [1.46, 0.1, 1.0];
+    straps(&mut parts, y, 1.0, 0.36);
+    // The top plate, its left end on the stack and its right end on a chock.
+    let [pw, ph, pd] = [1.4, 0.1, 0.96];
     let chock = 0.2;
     parts.push(Part::cube([0.16, chock, 0.8], wood(CHOCK)).at(0.56, y + chock / 2.0, 0.0));
     let tilt = (chock / (pw * 0.9)).atan();
     parts.push(
-        Part::cube([pw, ph, pd], kind(PAINT))
-            .top(lid_on([pw, pd]))
+        lid([pw, ph, pd])
             .tipped(tilt, 0.0)
             .at(-0.02, y + ph / 2.0 + chock * 0.5, 0.0),
     );
     build(parts)
 }
 
-/// Speed: four yellow jerry cans standing two by two, their embossed faces out,
-/// each with its carry handles and spout, each turned a little against the next.
+/// Speed: four olive drab jerry cans standing two by two, their embossed faces
+/// out, each with its carry handles and spout, each turned a little against the
+/// next; their tops and the upper part of their faces painted, the code on them.
 fn jerry_cans() -> Mesh {
     let [w, h, d] = [0.66, 1.0, 0.34];
     let mut parts = Vec::new();
@@ -645,6 +652,7 @@ fn jerry_cans() -> Mesh {
         parts.push(place(
             Part::cube([w, h, d], kind(PAINT))
                 .side(kind(LID))
+                .bottom(kind(BODY))
                 .at(0.0, h / 2.0, 0.0),
         ));
         for (size, [px, py]) in [
@@ -659,21 +667,16 @@ fn jerry_cans() -> Mesh {
     build(parts)
 }
 
-/// Repair: a squat ribbed gunmetal tool chest under an overhanging green lid
-/// stencilled with a spanner, two rows of drawer pulls down its front and back, a
-/// carry bar over the lid and a pry bar and a sledge lying along the deck in front
-/// of it.
+/// Repair: a squat ribbed gunmetal tool chest under an overhanging lid, the band
+/// over both, two rows of drawer pulls down its front and back, a carry bar over
+/// the lid and a pry bar and a sledge lying along the deck in front of it.
 fn tool_chest() -> Mesh {
     let [w, h, d] = [1.12, 0.6, 0.74];
     let [tw, th, td] = [1.16, 0.09, 0.78];
     let cz = -0.1;
     let mut parts = vec![
-        Part::cube([w, h, d], kind(PLAIN))
-            .side(kind(SIDE))
-            .at(0.0, h / 2.0, cz),
-        Part::cube([tw, th, td], kind(PAINT))
-            .top(lid_on([tw, td]))
-            .at(0.0, h + th / 2.0, cz),
+        body([w, h, d]).at(0.0, 0.0, cz),
+        lid([tw, th, td]).at(0.0, h + th / 2.0, cz),
     ];
     for z in [-1.0, 1.0] {
         for (x, y) in [(-0.28, 0.34), (0.28, 0.34), (-0.28, 0.15), (0.28, 0.15)] {
@@ -706,20 +709,13 @@ fn tool_chest() -> Mesh {
     build(parts)
 }
 
-/// Laser: a ribbed olive drab radio transit case for the defence set under an
-/// off-white lid, latched, its whip antenna raised from one corner on its mount
-/// and a field handset in its cradle on the lid's other end.
+/// Laser: a ribbed olive drab radio transit case for the defence set, the band
+/// over its lid and down its faces, latched, its whip antenna raised from one
+/// corner on its mount and a field handset in its cradle on the lid's other end.
 fn transit_case() -> Mesh {
     let [w, h, d] = [1.28, 0.5, 0.86];
-    let lid = [w + 0.04, 0.12, d + 0.04];
-    let mut parts = vec![
-        Part::cube([w, h, d], kind(PLAIN))
-            .side(kind(SIDE))
-            .at(0.0, h / 2.0, 0.0),
-        Part::cube(lid, kind(PAINT))
-            .top(lid_on([lid[0], lid[2]]))
-            .at(0.0, h + lid[1] / 2.0, 0.0),
-    ];
+    let top = [w + 0.04, 0.12, d + 0.04];
+    let mut parts = vec![body([w, h, d]), lid(top).at(0.0, h + top[1] / 2.0, 0.0)];
     for x in [-0.4, 0.4] {
         for z in [-1.0, 1.0] {
             parts.push(Part::cube([0.12, 0.15, 0.035], swatch(GUNMETAL)).at(
@@ -729,7 +725,7 @@ fn transit_case() -> Mesh {
             ));
         }
     }
-    let top = h + lid[1];
+    let top = h + top[1];
     parts.push(Part::cube([0.12, 0.08, 0.12], swatch(GUNMETAL)).at(0.54, top + 0.04, -0.33));
     parts.push(Part::drum(0.02, 1.1, 5, swatch(BRIGHT)).at(0.54, top + 0.08 + 0.55, -0.33));
     // The handset lying in its cradle: a dark bar with an earpiece and mouthpiece.
@@ -742,9 +738,10 @@ fn transit_case() -> Mesh {
 }
 
 /// The pallet every pickup sits on, bare: three stringers and five deck boards of
-/// raw pine, one of which a worn pallet has lost, and the smoke grenade on the
-/// ground beside it, olive drab with its top in the kind's paint, as M18 grenades
-/// are marked. An emptied drop is just this.
+/// raw pine, one of which a worn pallet has lost, and the smoke grenade standing on
+/// its back corner, olive drab with its top in the kind's paint, as M18 grenades
+/// are marked, its steel fuse, spoon and pull ring catching the light. An emptied
+/// drop is just this.
 fn pallet_geometry() -> Mesh {
     let [w, d] = PALLET_SIZE;
     let deck = 0.035;
@@ -768,30 +765,37 @@ fn pallet_geometry() -> Mesh {
                 .at(x, stringer + deck / 2.0, 0.0),
         );
     }
-    // The smoke grenade: an olive canister, its top band in the kind's paint, its
-    // fuse head and lever.
+    // The smoke grenade on the deck: an olive canister, its top band in the kind's
+    // paint, its bright fuse head, the spoon down its side and the pull ring.
     let [mx, top, mz] = SMOKE_MARKER;
-    let fuse = 0.05;
+    let fuse = 0.06;
     let band = 0.07;
-    let body = top - fuse - band;
+    let body = top - PALLET_HEIGHT - fuse - band;
     parts.push(
         Part::drum(MARKER_RADIUS, body, 10, swatch(WEBBING))
             .bottom(swatch(GUNMETAL))
-            .at(mx, body / 2.0, mz),
+            .at(mx, PALLET_HEIGHT + body / 2.0, mz),
     );
     parts.push(
         Part::drum(MARKER_RADIUS, band, 10, kind(PAINT))
             .top(swatch(GUNMETAL))
-            .at(mx, body + band / 2.0, mz),
+            .at(mx, top - fuse - band / 2.0, mz),
     );
-    parts.push(
-        Part::drum(MARKER_RADIUS * 0.55, fuse, 8, swatch(GUNMETAL)).at(mx, top - fuse / 2.0, mz),
-    );
-    parts.push(Part::cube([0.024, top * 0.7, 0.03], swatch(GUNMETAL)).at(
-        mx + MARKER_RADIUS + 0.008,
-        top * 0.6,
+    parts.push(Part::drum(MARKER_RADIUS * 0.6, fuse, 8, swatch(BRIGHT)).at(
+        mx,
+        top - fuse / 2.0,
         mz,
     ));
+    parts.push(Part::cube([0.026, body * 0.8, 0.034], swatch(BRIGHT)).at(
+        mx + MARKER_RADIUS + 0.01,
+        top - fuse - body * 0.4,
+        mz,
+    ));
+    parts.push(
+        Part::cube([0.07, 0.012, 0.012], swatch(BRIGHT))
+            .tipped(0.5, 0.0)
+            .at(mx - MARKER_RADIUS * 0.7, top - 0.01, mz + 0.03),
+    );
     build(parts)
 }
 
@@ -807,7 +811,7 @@ fn contact_shade_geometry() -> Mesh {
     let mut alpha = Vec::new();
     let mut colors = Vec::new();
     let rings = [
-        (-0.05, 0.05, CONTACT_DARKNESS, [0.0, 0.0, 0.0], 0.0),
+        (CONTACT_SPILL, 0.05, CONTACT_DARKNESS, [0.0, 0.0, 0.0], 0.0),
         (DRIFT_BANK, 0.1, DRIFT_OPACITY, DRIFT_COLOR, 0.04),
         (CONTACT_REACH, CONTACT_REACH, 0.0, DRIFT_COLOR, 0.22),
     ];
@@ -862,23 +866,151 @@ fn contact_shade_geometry() -> Mesh {
     mesh
 }
 
-/// The parcel a collected drop sends aboard the tank that took it: a small ammo
-/// box with a lid in the kind's paint, its stencil, a strap and a handle, built
-/// about its middle so it can tumble.
-fn parcel_geometry() -> Mesh {
-    let [w, h, d] = PARCEL_SIZE;
-    let lid = [w + 0.03, 0.06, d + 0.03];
-    let mut parts = vec![
-        Part::cube([w, h, d], kind(PLAIN))
-            .side(kind(SIDE))
-            .at(0.0, -lid[1] / 2.0, 0.0),
-        Part::cube(lid, kind(PAINT))
-            .top(lid_on([lid[0], lid[2]]))
-            .at(0.0, h / 2.0, 0.0),
-    ];
-    parts.push(Part::cube([0.06, h + lid[1] + 0.01, d + 0.04], swatch(GUNMETAL)).at(0.0, 0.0, 0.0));
-    parts.push(Part::cube([0.22, 0.03, 0.05], swatch(GUNMETAL)).at(0.0, h / 2.0 + lid[1], 0.0));
-    build(parts)
+/// Build `parts` into one mesh centred on its bounds, so it can tumble about its
+/// middle and be stood on a deck by its half height.
+fn centred(parts: Vec<Part>) -> Mesh {
+    let mut mesh = build(parts);
+    let bounds = mesh.bounding_box();
+    let center = bounds.center();
+    mesh.apply_matrix4(&DMat4::from_translation(-center));
+    mesh
+}
+
+/// What a collected drop sends aboard the tank that took it: one piece of its own
+/// stock, small enough to stow on a rear deck, with the kind's band on it.
+fn parcel_geometry(supply: PickupKind) -> Mesh {
+    match supply {
+        // A bundle of cartridges lying along x, a painted strap round it.
+        PickupKind::Spread => {
+            let mut parts = Vec::new();
+            let case = 0.46;
+            for (z, y) in [(-0.1, 0.0), (0.1, 0.0), (0.0, 0.17)] {
+                parts.push(
+                    Part::drum(0.09, case, 8, brass(CASE))
+                        .bottom(brass(PRIMER))
+                        .along_x()
+                        .at(-0.08, y, z),
+                );
+                parts.push(
+                    Part::new(cone_geometry(0.085, 0.2, 8), brass(PROJECTILE))
+                        .along_x()
+                        .at(-0.08 + case / 2.0 + 0.1, y, z),
+                );
+            }
+            for x in [-0.2, 0.05] {
+                parts.push(
+                    Part::drum(0.2, 0.08, 10, kind(PAINT))
+                        .along_x()
+                        .at(x, 0.07, 0.0),
+                );
+            }
+            centred(parts)
+        }
+        // A launch tube, rubber capped, the band painted round its middle.
+        PickupKind::Rocket => {
+            let radius = 0.13;
+            centred(vec![
+                Part::drum(radius, 0.96, 10, kind(BODY))
+                    .top(swatch(RUBBER))
+                    .bottom(swatch(RUBBER))
+                    .along_x(),
+                Part::drum(radius + 0.008, 0.32, 10, kind(PAINT)).along_x(),
+                Part::drum(radius + 0.012, 0.06, 10, swatch(GUNMETAL))
+                    .along_x()
+                    .at(0.4, 0.0, 0.0),
+            ])
+        }
+        // A shell canister, standing, painted round near its cap.
+        PickupKind::Ricochet => {
+            let [radius, height] = [0.2, 0.66];
+            centred(vec![
+                Part::drum(radius, height, 12, kind(SIDE))
+                    .top(lid_on([2.0 * radius, 2.0 * radius]))
+                    .bottom(swatch(RUBBER)),
+            ])
+        }
+        // A long ammunition box under its lid, strapped.
+        PickupKind::Piercing => {
+            let [w, h, d] = [0.82, 0.24, 0.36];
+            let top = [w + 0.04, 0.05, d + 0.04];
+            let mut parts = vec![body([w, h, d]), lid(top).at(0.0, h + top[1] / 2.0, 0.0)];
+            straps(&mut parts, h + top[1], top[2], 0.28);
+            centred(parts)
+        }
+        // An ammo can with its latch and carry handle.
+        PickupKind::Rapid => {
+            let [w, h, d] = [0.52, 0.3, 0.24];
+            let top = [w + 0.02, 0.04, d + 0.02];
+            centred(vec![
+                body([w, h, d]),
+                lid(top).at(0.0, h + top[1] / 2.0, 0.0),
+                Part::cube([0.22, 0.025, 0.05], swatch(GUNMETAL)).at(0.0, h + top[1] + 0.02, 0.0),
+                Part::cube([0.035, 0.1, 0.1], swatch(GUNMETAL)).at(w / 2.0 + 0.015, h - 0.03, 0.0),
+            ])
+        }
+        // An armour plate, the band across its face.
+        PickupKind::Shield => centred(vec![lid([0.8, 0.07, 0.58])]),
+        // A jerry can lying on its face-down side, the painted end and code up.
+        PickupKind::Speed => {
+            let [w, h, d] = [0.46, 0.66, 0.24];
+            let mut parts = vec![
+                Part::cube([w, h, d], kind(PAINT))
+                    .side(kind(LID))
+                    .bottom(kind(BODY))
+                    .at(0.0, h / 2.0, 0.0),
+            ];
+            for (size, [px, py]) in [
+                ([0.28, 0.04, 0.07], [-0.04, h + 0.07]),
+                ([0.04, 0.07, 0.07], [-0.17, h + 0.035]),
+                ([0.04, 0.07, 0.07], [0.09, h + 0.035]),
+                ([0.08, 0.09, 0.08], [0.16, h + 0.045]),
+            ] {
+                parts.push(Part::cube(size, swatch(GUNMETAL)).at(px, py, 0.0));
+            }
+            let parts = parts
+                .into_iter()
+                .map(|part| part.tipped(0.0, -FRAC_PI_2))
+                .collect();
+            centred(parts)
+        }
+        // A tool box under its lid, a carry bar over it.
+        PickupKind::Repair => {
+            let [w, h, d] = [0.6, 0.26, 0.3];
+            let top = [w + 0.03, 0.05, d + 0.03];
+            let rise = h + top[1];
+            centred(vec![
+                body([w, h, d]),
+                lid(top).at(0.0, h + top[1] / 2.0, 0.0),
+                Part::cube([0.36, 0.03, 0.04], swatch(GUNMETAL)).at(0.0, rise + 0.07, 0.0),
+                Part::cube([0.03, 0.07, 0.04], swatch(GUNMETAL)).at(-0.17, rise + 0.035, 0.0),
+                Part::cube([0.03, 0.07, 0.04], swatch(GUNMETAL)).at(0.17, rise + 0.035, 0.0),
+            ])
+        }
+        // A field radio set under its lid, its short whip raised.
+        PickupKind::Laser => {
+            let [w, h, d] = [0.54, 0.3, 0.34];
+            let top = [w + 0.02, 0.06, d + 0.02];
+            let rise = h + top[1];
+            centred(vec![
+                body([w, h, d]),
+                lid(top).at(0.0, h + top[1] / 2.0, 0.0),
+                Part::drum(0.015, 0.5, 5, swatch(BRIGHT)).at(0.2, rise + 0.25, -0.1),
+                Part::cube([0.07, 0.05, 0.07], swatch(GUNMETAL)).at(0.2, rise + 0.025, -0.1),
+            ])
+        }
+    }
+}
+
+/// A board of a broken-open load: a plank of the lid, its top a piece of the band,
+/// centred so it can tumble; a collection throws it off and two thin splinters of
+/// it (the same board, scaled).
+fn board_geometry() -> Mesh {
+    centred(vec![
+        Part::cube([0.62, 0.045, 0.32], kind(SIDE))
+            .end(kind(BODY))
+            .bottom(kind(BODY))
+            .top(kind(BAND)),
+    ])
 }
 
 /// The atlas `v` above which a pallet-cell UV belongs to the board a worn pallet
@@ -927,11 +1059,12 @@ fn item_geometry(kind: PickupKind) -> Arc<Mesh> {
     })
 }
 
-/// The pallet's, its shade's and the parcel's keys in the mesh cache, clear of
-/// every kind's.
+/// The pallet's, its shade's and the board's keys in the mesh cache, and the
+/// first of the kinds' parcels', clear of every kind's item.
 const PALLET_KEY: u8 = 100;
 const SHADE_KEY: u8 = 101;
-const PARCEL_KEY: u8 = 102;
+const BOARD_KEY: u8 = 102;
+const PARCEL_KEYS: u8 = 110;
 
 fn part(mesh: Arc<Mesh>) -> Node {
     let mut node = Node::mesh(mesh, pickup_material());
@@ -972,13 +1105,23 @@ pub fn pickup_pallet() -> Node {
     group
 }
 
-/// The parcel a collected drop sends aboard, shared by every kind; its instance
-/// data's `xy` paints its lid for the kind.
-pub fn pickup_parcel() -> Node {
+/// The piece of `kind`'s stock a collected drop sends aboard, centred on its
+/// bounds; its instance data's `xy` paints it for the kind.
+pub fn pickup_parcel(kind: PickupKind) -> Node {
+    let mut group = Node::default();
+    group.children.push(part(
+        SHARED.get_or_insert(PARCEL_KEYS + kind as u8, || parcel_geometry(kind)),
+    ));
+    group
+}
+
+/// A board of a broken-open load, centred on its bounds, shared by every kind; its
+/// instance data's `xy` paints it for the kind.
+pub fn pickup_board() -> Node {
     let mut group = Node::default();
     group
         .children
-        .push(part(SHARED.get_or_insert(PARCEL_KEY, parcel_geometry)));
+        .push(part(SHARED.get_or_insert(BOARD_KEY, board_geometry)));
     group
 }
 
@@ -1023,7 +1166,10 @@ mod tests {
             assert!(inside(&item_geometry(kind)), "{kind:?}");
         }
         assert!(inside(&pallet_geometry()));
-        assert!(inside(&parcel_geometry()));
+        assert!(inside(&board_geometry()));
+        for kind in PickupKind::ALL {
+            assert!(inside(&parcel_geometry(kind)), "{kind:?}");
+        }
     }
 
     /// Only the pallet's edge board takes the board a worn pallet may lose, so the
