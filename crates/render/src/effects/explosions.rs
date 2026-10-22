@@ -40,6 +40,18 @@ pub const SCORCH_LIFETIME: f64 = 45.0;
 const BURNOUT_LIFETIME: f64 = 2.7;
 /// A dust collapse (timber) and a shell hit's puff.
 const COLLAPSE_LIFETIME: f64 = 2.2;
+/// A cottage's collapse dust: how long it hangs, when its roof and walls hit the
+/// ground (s after the break), how many billows they drive out round the
+/// footprint and how far (m) from its centre they start and roll out to, and the
+/// billows that hang over the heap.
+const HOUSE_DUST_LIFETIME: f64 = 7.0;
+const HOUSE_IMPACT: f64 = 0.55;
+const HOUSE_BILLOWS: usize = 14;
+const HOUSE_FOOT: f64 = 2.6;
+const HOUSE_ROLL: f64 = 3.6;
+const HOUSE_PALL: usize = 5;
+/// Plaster and mortar dust, paler than the ground's.
+const PLASTER_DUST: u32 = 0xb9ab95;
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
 const STONE_HIT_LIFETIME: f64 = 1.8;
@@ -164,6 +176,10 @@ enum Kind {
     Burnout,
     /// A collapse without fire (timber): dust only.
     Collapse,
+    /// A cottage coming down: a burst at its foot, then the dust its roof and walls
+    /// drive out as they hit, rolling out low round the footprint and hanging over
+    /// the heap for seconds.
+    HouseFall,
     Wood(WoodDust),
     Hit(Struck),
     /// Heavy debris slamming down: a skirt of the ground's dust.
@@ -318,6 +334,7 @@ impl Blast {
             Kind::Wood(WoodDust::Burst) => WOOD_BURST_LIFETIME,
             Kind::Burnout => BURNOUT_LIFETIME,
             Kind::Collapse => COLLAPSE_LIFETIME,
+            Kind::HouseFall => HOUSE_DUST_LIFETIME,
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
             Kind::Hit(Struck::Steel) => HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
@@ -562,6 +579,8 @@ impl ExplosionEffects {
             Kind::Barrel
         } else if fire {
             Kind::Blast
+        } else if event.cover_kind == Some(CoverKind::House) {
+            Kind::HouseFall
         } else {
             Kind::Collapse
         };
@@ -805,6 +824,15 @@ impl ExplosionEffects {
                 self.skirt(b, t, mixed(b.dust, dust, 0.5));
                 self.column(b, t, lifetime, &BLAST, scaled(dust, 1.1), false);
                 self.ring(b, t, b.scale);
+            }
+            Kind::HouseFall => {
+                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.4);
+                self.haze(b, t, lifetime, dust);
+                self.skirt(b, t, dust);
+                self.house_dust(b, t, lifetime, dust);
+                if t > HOUSE_IMPACT {
+                    self.ring(b, t - HOUSE_IMPACT, b.scale);
+                }
             }
             Kind::Blast | Kind::Tank | Kind::Barrel => {
                 let smoke = linear(look.smoke);
@@ -1355,6 +1383,67 @@ impl ExplosionEffects {
             [r, g, bl, 1.0],
             [t as f32, b.phase as f32, DUST_RING, 1.0],
         ));
+    }
+
+    /// The dust a falling cottage drives out where its roof and walls hit: billows
+    /// born round the footprint as the pieces land that roll out low and spread,
+    /// and a pall rising slowly over the heap, all thinning over seconds.
+    fn house_dust(&mut self, b: &Blast, t: f64, lifetime: f64, dust: [f64; 3]) {
+        let fade = 1.0 - smoothstep(t, lifetime * 0.35, lifetime);
+        for j in 0..HOUSE_BILLOWS {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 1.31 + jf * 2.113);
+            let r2 = hash(b.phase * 0.77 + jf * 0.919);
+            let r3 = hash(b.phase * 2.03 + jf * 1.447);
+            let age = t - HOUSE_IMPACT - r1 * 0.45;
+            if age <= 0.0 {
+                continue;
+            }
+            let angle = b.phase + jf * TAU / HOUSE_BILLOWS as f64 + (r2 - 0.5) * 0.5;
+            let reach = HOUSE_FOOT * (0.75 + 0.35 * r3) + HOUSE_ROLL * settle(age, 1.4 + r2);
+            let size = 1.0 + 0.6 * r2 + 1.7 * settle(age, 0.9);
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * reach + WIND[0] * age * 0.35,
+                    0.35 + size * 0.28 + 0.15 * age,
+                    b.z + angle.sin() * reach + WIND[1] * age * 0.35,
+                ],
+                size,
+                color: scaled(dust, 0.82 + 0.3 * r3),
+                opacity: (age / 0.12).min(1.0) * (0.34 + 0.16 * r1) * fade,
+                seed: b.phase * 0.43 + jf * 0.191,
+                heat: 0.0,
+                erosion: smoothstep(t, lifetime * 0.35, lifetime) * 0.85,
+                softness: 0.5 + 0.3 * r1,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..HOUSE_PALL {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 0.59 + jf * 3.71);
+            let r2 = hash(b.phase * 1.93 + jf * 0.37);
+            let age = t - HOUSE_IMPACT * 0.6 - jf * 0.12;
+            if age <= 0.0 {
+                continue;
+            }
+            let angle = b.phase * 2.0 + jf * 2.399;
+            let spread = 0.6 + 1.4 * r1;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * spread + WIND[0] * age * 0.55,
+                    1.2 + 0.35 * age + 0.5 * r2,
+                    b.z + angle.sin() * spread + WIND[1] * age * 0.55,
+                ],
+                size: 2.2 + 0.9 * age.sqrt() + r2,
+                color: scaled(dust, 0.9 + 0.2 * r1),
+                opacity: (age / 0.4).min(1.0) * 0.11 * fade,
+                seed: b.phase * 0.29 + jf * 0.311,
+                heat: 0.0,
+                erosion: smoothstep(t, lifetime * 0.3, lifetime) * 0.8,
+                softness: 0.9,
+                underglow: 0.0,
+            });
+        }
     }
 
     /// A cargo crate's dust, in the blast's puff slots.

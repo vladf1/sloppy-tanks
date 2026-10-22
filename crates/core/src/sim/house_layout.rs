@@ -16,7 +16,8 @@ use std::f64::consts::PI;
 use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 
-use super::math::js_round;
+use super::house_fracture::{Crack, EdgeKind, PartPlane, ShardRegion, Side};
+use super::math::{Random, js_round};
 
 /// Hit points of a cottage: fifteen standard shells, more than three watchtowers,
 /// so levelling one is a deliberate effort rather than the work of stray fire (in
@@ -29,8 +30,6 @@ const WRECKED: f64 = 0.35;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
-/// Wall top (the eave line) as a fraction of the ridge height.
-const WALL_FRACTION: f64 = 0.68;
 /// Horizontal roof overhang past the eave walls and past the gable walls.
 pub const EAVE_OVERHANG: f64 = 0.4;
 pub const RAKE_OVERHANG: f64 = 0.3;
@@ -163,11 +162,20 @@ pub struct HouseStyle {
     /// Door and shutter paint.
     pub accent: u32,
     pub roof: u32,
-    /// Dormer plan on a gable roof: 0 none, 1 a pair on one slope, 2 one each side.
+    /// Dormer plan on a gable roof: 0 none, 1 a pair on one slope, 2 one each side,
+    /// 3 one on the back slope.
     pub dormers: u32,
+    /// A cross gable over the door of a side-gable cottage: its wall rises past the
+    /// eave into a gable of its own whose roof runs back into the main slope, so
+    /// the roof reads as a T from above.
+    pub wing: bool,
     pub shutters: Shutters,
+    /// Wall top (the eave line) as a fraction of the ridge height: lower walls
+    /// under a steep attic roof, higher ones under a shallow one.
+    pub eave: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn style(
     form: RoofForm,
     door: DoorWall,
@@ -175,7 +183,9 @@ const fn style(
     walls: WallFinish,
     [siding, trim, accent, roof]: [u32; 4],
     dormers: u32,
+    wing: bool,
     shutters: Shutters,
+    eave: f64,
 ) -> HouseStyle {
     HouseStyle {
         form,
@@ -187,12 +197,17 @@ const fn style(
         accent,
         roof,
         dormers,
+        wing,
         shutters,
+        eave,
     }
 }
 
 /// The village's house types, ordered so neighbours in the table differ in form,
-/// finish and colour; [`HouseDesign::facing`] picks one per cottage.
+/// finish, colour and roof pitch; [`HouseDesign::facing`] picks one per cottage.
+/// The paints keep to one weathered coastal-village palette: chalky whites, cream,
+/// sage, ochre, slate blue and one oxblood, under charcoal, slate, cedar and
+/// rust-red roofs, so no two hues shout at each other across the green.
 #[rustfmt::skip]
 pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use DoorWall::{Eave, Gable as Front};
@@ -201,22 +216,23 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use Shutters::{Board, Louvred, None};
     use WallFinish::{Brick, Clapboard};
     [
-        // Cream clapboard, bottle-green plank shutters, charcoal shingles and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xf6f2e8, 0x2f5a40, 0x3d4652], 1, Board),
-        // Red brick under a slate hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xf2e2d2, 0xece4d2, 0x24385a, 0x58626e], 0, Louvred),
-        // Sage side-gable with an oxblood door and terracotta shingles.
-        style(Gable, Eave, Shingles, Clapboard, [0x8fa37c, 0xf1ead8, 0x6a2a24, 0xb24c34], 2, Board),
-        // Barn-red front gable under a green standing-seam roof.
-        style(Gable, Front, Seams, Clapboard, [0xa6402f, 0xf4f0e6, 0x2e2c2a, 0x2f6a48], 0, None),
-        // Butter-yellow hip cottage, umber shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xe0bd62, 0xf6f2e8, 0x5c3c22, 0x7a4c30], 0, Board),
-        // Powder-blue side-gable with navy louvres under charcoal.
-        style(Gable, Eave, Shingles, Clapboard, [0x88a6bf, 0xf6f2e8, 0x22314d, 0x383d46], 0, Louvred),
-        // White front gable under a red standing-seam roof, black plank shutters.
-        style(Gable, Front, Seams, Clapboard, [0xf0ece2, 0xffffff, 0x1d2622, 0xa83a2c], 2, Board),
-        // Brick side-gable with moss shingles and green louvres.
-        style(Gable, Eave, Shingles, Brick, [0xe6d2c0, 0xe8dfca, 0x2f4b3a, 0x4d6440], 0, Louvred),
+        // Cream clapboard, bottle-green plank shutters, a steep charcoal roof and dormers.
+        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, false, Board, 0.6),
+        // Soft red brick under a low slate hip roof, navy door and louvres.
+        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, 0.72),
+        // Sage side-gable with an oxblood door under a cross gable and weathered
+        // cedar shingles, a dormer lighting the back of the attic.
+        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 3, true, Board, 0.6),
+        // Oxblood front gable under a dark standing-seam roof.
+        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, false, None, 0.68),
+        // Ochre hip cottage, umber shingles.
+        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, false, Board, 0.7),
+        // Slate-blue side-gable with navy louvres and a cross gable under charcoal.
+        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, true, Louvred, 0.62),
+        // Chalk-white front gable under a rust-red standing-seam roof, black shutters.
+        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, false, Board, 0.6),
+        // Brick side-gable with mossy slate shingles, green louvres and a cross gable.
+        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, true, Louvred, 0.64),
     ]
 };
 
@@ -242,8 +258,8 @@ pub struct Roof {
 }
 
 impl Roof {
-    pub fn new(form: RoofForm, w: f64, d: f64, h: f64) -> Self {
-        let wall = h * WALL_FRACTION;
+    pub fn new(form: RoofForm, w: f64, d: f64, h: f64, eave: f64) -> Self {
+        let wall = h * eave;
         let pitch = (h - wall) / (w / 2.0);
         let eave_x = w / 2.0 + EAVE_OVERHANG;
         let (rake_z, ridge_half) = match form {
@@ -282,12 +298,13 @@ impl Roof {
     }
 }
 
-/// The parts a collapsing cottage breaks into, in the build frame: front is +z (the
-/// gable or hip end the ridge points at), right is +x. Hip roofs add the two end
-/// slopes; the plinth stays as the heap's footing.
+/// The parts a cottage is built of, in the build frame: front is +z (the gable or
+/// hip end the ridge points at), right is +x. Hip roofs add the two end slopes; the
+/// plinth stays as the heap's footing. A collapse breaks each wall and side slope
+/// into shards ([`HousePiece`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum HousePiece {
+pub enum HousePart {
     FrontWall,
     BackWall,
     RightWall,
@@ -299,7 +316,7 @@ pub enum HousePiece {
     Chimney,
 }
 
-impl HousePiece {
+impl HousePart {
     pub const ALL: [Self; 9] = [
         Self::FrontWall,
         Self::BackWall,
@@ -343,19 +360,122 @@ impl HousePiece {
             Self::RightRoof | Self::LeftRoof | Self::FrontRoof | Self::BackRoof
         )
     }
+
+    /// The wall's index in [`wall_frames`] order.
+    pub fn wall_index(self) -> Option<usize> {
+        match self {
+            Self::FrontWall => Some(0),
+            Self::BackWall => Some(1),
+            Self::RightWall => Some(2),
+            Self::LeftWall => Some(3),
+            _ => None,
+        }
+    }
+
+    /// The most shards a collapse breaks the part into.
+    pub const fn max_shards(self) -> u8 {
+        match self {
+            Self::FrontWall | Self::BackWall | Self::RightWall | Self::LeftWall => 3,
+            Self::RightRoof | Self::LeftRoof | Self::FrontRoof | Self::BackRoof => 2,
+            Self::Chimney => 1,
+        }
+    }
 }
 
-/// A collapse piece's collider: hull points in the build frame and their bounds.
+/// One shard a collapsing cottage breaks into: a part and which of its shards,
+/// counted along the part. It is named like its part with the shard's number
+/// (`front-wall-1`), the chimney plainly, as the scene codec names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
+pub struct HousePiece {
+    pub part: HousePart,
+    pub shard: u8,
+}
+
+impl From<HousePiece> for String {
+    fn from(piece: HousePiece) -> Self {
+        let part = serde_json::to_value(piece.part)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        if piece.part.max_shards() == 1 {
+            part
+        } else {
+            format!("{part}-{}", piece.shard)
+        }
+    }
+}
+
+impl TryFrom<String> for HousePiece {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|piece| String::from(*piece) == name)
+            .ok_or_else(|| format!("unknown house piece {name}"))
+    }
+}
+
+impl HousePiece {
+    pub const fn new(part: HousePart, shard: u8) -> Self {
+        Self { part, shard }
+    }
+
+    /// Every shard any cottage can break into, part by part.
+    pub const ALL: [Self; 21] = {
+        use HousePart::*;
+        let s = Self::new;
+        [
+            s(FrontWall, 0),
+            s(FrontWall, 1),
+            s(FrontWall, 2),
+            s(BackWall, 0),
+            s(BackWall, 1),
+            s(BackWall, 2),
+            s(RightWall, 0),
+            s(RightWall, 1),
+            s(RightWall, 2),
+            s(LeftWall, 0),
+            s(LeftWall, 1),
+            s(LeftWall, 2),
+            s(RightRoof, 0),
+            s(RightRoof, 1),
+            s(LeftRoof, 0),
+            s(LeftRoof, 1),
+            s(FrontRoof, 0),
+            s(FrontRoof, 1),
+            s(BackRoof, 0),
+            s(BackRoof, 1),
+            s(Chimney, 0),
+        ]
+    };
+}
+
+/// A collapse shard: where it lies in its part (the part's plane, its outline there
+/// and the shard's jagged region) and its collider, hull points in the build frame
+/// and their bounds. The collider is the shard's straight-edged core, so
+/// neighbouring shards start clear of each other however their cracks wander.
 #[derive(Clone, Debug)]
 pub struct PieceShape {
     pub piece: HousePiece,
+    pub plane: PartPlane,
+    /// The part's outline in its plane (convex), and the shard's share of it.
+    pub outline: Vec<DVec2>,
+    pub region: ShardRegion,
     pub hull: Vec<DVec3>,
     pub center: DVec3,
     pub size: DVec3,
 }
 
 impl PieceShape {
-    fn new(piece: HousePiece, hull: Vec<DVec3>) -> Self {
+    fn new(
+        piece: HousePiece,
+        plane: PartPlane,
+        outline: Vec<DVec2>,
+        region: ShardRegion,
+        hull: Vec<DVec3>,
+    ) -> Self {
         let min = hull
             .iter()
             .copied()
@@ -368,10 +488,80 @@ impl PieceShape {
             .expect("hull points");
         Self {
             piece,
+            plane,
+            outline,
+            region,
             hull,
             center: (min + max) / 2.0,
             size: max - min,
         }
+    }
+}
+
+/// Fractions of a wall's height (plinth to wall top) where its cracks change
+/// course, and of a slope's run (ridge to eave) where a roof crack does.
+const WALL_KNOTS: [f64; 3] = [0.3, 0.55, 0.8];
+const ROOF_KNOTS: [f64; 3] = [0.3, 0.6, 0.85];
+/// How far (m) a crack wanders either side of its line at each knot.
+const WALL_WANDER: f64 = 0.24;
+const ROOF_WANDER: f64 = 0.32;
+/// Walls this long or longer break into three shards, shorter ones into two.
+const LONG_WALL: f64 = 6.5;
+/// Where the back wall breaks off above the stub it leaves standing in the heap:
+/// between these heights above the plinth.
+const STUB: (f64, f64) = (0.3, 0.72);
+/// Clearance between neighbouring shards' colliders across a crack.
+const CRACK_GAP: f64 = 0.02;
+/// Rafters hang this far under a roof deck; a slab's collider takes them in only
+/// inside the wall line, clear of the wall tops it rests on.
+pub const RAFTER_DEPTH: f64 = 0.16;
+const RAFTER_INSET: f64 = 0.45;
+
+/// Widest half width (m) of a cross gable, and how far its ridge stays under the
+/// main ridge.
+const WING_HALF: f64 = 1.3;
+const WING_BELOW_RIDGE: f64 = 0.32;
+/// How far a cross gable's roof overhangs its face and its side walls.
+pub const WING_OVERHANG: f64 = 0.25;
+
+/// A side-gable cottage's cross gable on its right (+x) slope, in the build frame:
+/// its middle along the ridge and half width, its face's plane (x), the height its
+/// face starts at, the face's wall height below its gable and the gable's rise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wing {
+    pub z: f64,
+    pub half: f64,
+    pub face: f64,
+    pub base: f64,
+    pub wall: f64,
+    pub peak: f64,
+}
+
+impl Wing {
+    /// Height of its ridge, under the roof deck's top.
+    pub fn crest(&self) -> f64 {
+        self.base + self.wall + self.peak
+    }
+
+    /// How far in from its face its ridge runs before it meets the main slope.
+    pub fn ridge_end(&self, roof: &Roof) -> f64 {
+        ((roof.ridge + roof.thick - self.crest()) / roof.pitch).max(0.05)
+    }
+
+    /// Hull points of the gable over a roof slab's collider.
+    fn hull(&self, roof: &Roof) -> Vec<DVec3> {
+        let front = self.face + WING_OVERHANG;
+        let back = self.ridge_end(roof);
+        let eave = self.base + self.wall;
+        let reach = self.half + WING_OVERHANG;
+        vec![
+            DVec3::new(front, self.crest(), self.z),
+            DVec3::new(back, self.crest(), self.z),
+            DVec3::new(front, eave, self.z - reach),
+            DVec3::new(front, eave, self.z + reach),
+            DVec3::new(self.face, self.base, self.z - self.half),
+            DVec3::new(self.face, self.base, self.z + self.half),
+        ]
     }
 }
 
@@ -461,7 +651,7 @@ impl HouseDesign {
     }
 
     pub fn roof(&self) -> Roof {
-        Roof::new(self.style.form, self.w, self.d, self.h)
+        Roof::new(self.style.form, self.w, self.d, self.h, self.style.eave)
     }
 
     /// A build-frame offset carried into the world (about the cottage's centre).
@@ -507,17 +697,153 @@ impl HouseDesign {
         (low - roof.thick * 2.0, roof.ridge + CHIMNEY_TOP)
     }
 
-    /// Every piece the cottage collapses into, with its collider. The back wall
-    /// crumbles where it stood into the heap [`Self::heap`] leaves, so it has none.
+    /// Where a gable roof's dormers sit: (slope side, z along the ridge), for its
+    /// plan (0 none, 1 a pair on one slope, 2 one on each slope).
+    pub fn dormers(&self) -> Vec<(f64, f64)> {
+        let roof = self.roof();
+        if roof.form != RoofForm::Gable || roof.ridge - roof.wall < 1.3 {
+            return Vec::new();
+        }
+        let d = self.d;
+        match self.style.dormers {
+            1 => vec![(1.0, -d * 0.2), (1.0, d * 0.2)],
+            2 => vec![(1.0, d * 0.08), (-1.0, -d * 0.08)],
+            3 => vec![(-1.0, 0.0)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// A side-gable cottage's cross gable over its door: (z along the ridge, half
+    /// width), on the right (+x) slope over the door wall. It centres on the door
+    /// unless the chimney stands there, when it moves along clear of the stack.
+    pub fn wing(&self) -> Option<Wing> {
+        let roof = self.roof();
+        if !self.style.wing || roof.form != RoofForm::Gable || self.door_wall != 2 {
+            return None;
+        }
+        let half = (self.d * 0.21).clamp(1.0, WING_HALF);
+        let flue = self.flue();
+        let clear = half + CHIMNEY / 2.0 + 0.25;
+        let z = if flue.x > 0.0 && flue.z.abs() < clear {
+            flue.z - flue.z.signum() * clear
+        } else {
+            0.0
+        };
+        if z.abs() + half > self.d / 2.0 - 0.6 {
+            return None;
+        }
+        let base = roof.wall - 0.02;
+        let peak = half * roof.pitch;
+        let crest = roof.ridge - WING_BELOW_RIDGE;
+        let wall = crest - base - peak;
+        (wall > 0.25).then_some(Wing {
+            z,
+            half,
+            face: self.w / 2.0,
+            base,
+            wall,
+            peak,
+        })
+    }
+
+    /// A part's own crack stream, so each part breaks the same way whatever the
+    /// others do.
+    fn crack_random(&self, part: HousePart) -> Random {
+        let index = HousePart::ALL.iter().position(|&p| p == part).unwrap_or(0);
+        Random::new(f64::from(self.variant) * 31.0 + index as f64 * 7.0 + 101.0)
+    }
+
+    /// The cracks across the wall at `index` (half length `half`), left to right
+    /// along it, and for the back wall the line each shard breaks off along above
+    /// the stub it leaves, as (left end, right end) in the wall's plane.
+    pub fn wall_breaks(&self, index: usize) -> (Vec<Crack>, Vec<(DVec2, DVec2)>) {
+        let roof = self.roof();
+        let part = HousePart::wall(index);
+        let half = wall_frames(self.w, self.d)[index].3;
+        let mut rng = self.crack_random(part);
+        let rise = roof.wall - PLINTH;
+        let knots = WALL_KNOTS.map(|f| PLINTH + f * rise);
+        let shards = if 2.0 * half >= LONG_WALL { 3 } else { 2 };
+        let cracks: Vec<Crack> = (1..shards)
+            .map(|k| {
+                let s = -half
+                    + 2.0 * half * f64::from(k) / f64::from(shards)
+                    + rng.range(-0.12, 0.12) * half;
+                Crack::new(s, &knots, || rng.range(-WALL_WANDER, WALL_WANDER))
+            })
+            .collect();
+        let mut floors = Vec::new();
+        if part == HousePart::BackWall {
+            let mut from = -half;
+            for k in 0..shards as usize {
+                let to = cracks.get(k).map_or(half, |crack| crack.points[0].x);
+                floors.push((
+                    DVec2::new(from, PLINTH + rng.range(STUB.0, STUB.1)),
+                    DVec2::new(to, PLINTH + rng.range(STUB.0, STUB.1)),
+                ));
+                from = to;
+            }
+        }
+        (cracks, floors)
+    }
+
+    /// The crack across the right (`side` 1) or left roof slope, splitting it along
+    /// the ridge into two slabs: it runs down from the ridge, fanning out toward the
+    /// eave of a hip and wandering, clear of the dormers on the slope.
+    pub fn roof_cracks(&self, side: f64) -> Vec<Crack> {
+        let roof = self.roof();
+        let part = if side > 0.0 {
+            HousePart::RightRoof
+        } else {
+            HousePart::LeftRoof
+        };
+        let mut rng = self.crack_random(part);
+        let dormers: Vec<f64> = self
+            .dormers()
+            .into_iter()
+            .filter(|&(s, _)| s == side)
+            .map(|(_, z)| z)
+            .collect();
+        let ridge = roof.ridge_half.max(0.8);
+        // Dormers and a cross gable on this slope, as (z, half width).
+        let mut keep: Vec<(f64, f64)> = dormers.iter().map(|&z| (z, 0.62)).collect();
+        if let Some(wing) = self.wing().filter(|_| side > 0.0) {
+            keep.push((wing.z, wing.half + 0.2));
+        }
+        [rng.range(-0.35, 0.35)]
+            .into_iter()
+            .map(|offset| {
+                let mut z = offset * ridge;
+                // Past a dormer or the cross gable rather than through it.
+                if let Some(&(d, half)) = keep.iter().find(|(d, half)| (z - d).abs() < half + 0.28)
+                {
+                    let away = if z >= d { 1.0 } else { -1.0 };
+                    z = d + away * (half + 0.33);
+                }
+                let spread = (roof.rake_z / ridge - 1.0).max(0.0) * 0.6 + 0.15;
+                let mut points = vec![DVec2::new(z, -50.0)];
+                for f in ROOF_KNOTS {
+                    let s = z * (1.0 + spread * f) + rng.range(-ROOF_WANDER, ROOF_WANDER);
+                    points.push(DVec2::new(s, f * roof.eave_x));
+                }
+                let last = points[points.len() - 1].x;
+                points.insert(1, DVec2::new(z, 0.0));
+                points.push(DVec2::new(last, 50.0));
+                Crack { points }
+            })
+            .collect()
+    }
+
+    /// Every shard the cottage collapses into, with its collider: each wall in two
+    /// or three panels (the back wall above the stub it leaves standing in the
+    /// heap), each roof slope in two slabs and the chimney.
     pub fn pieces(&self) -> Vec<PieceShape> {
         let roof = self.roof();
         let mut pieces = Vec::new();
         for (index, (center, out, along, half)) in
             wall_frames(self.w, self.d).into_iter().enumerate()
         {
-            if HousePiece::wall(index) == HousePiece::BackWall {
-                continue;
-            }
+            let part = HousePart::wall(index);
             let gable = roof.form == RoofForm::Gable && index < 2;
             // Eave walls stop short of the end walls' inner faces.
             let reach = if index < 2 {
@@ -535,51 +861,190 @@ impl HouseDesign {
                 outline.push(DVec2::new(0.0, roof.ridge - GAP));
             }
             outline.push(DVec2::new(-reach, top));
-            let hull = outline
-                .iter()
-                .flat_map(|p| {
-                    let face = center + along * p.x + DVec3::Y * p.y;
-                    [face, face - out * WALL_DEPTH]
-                })
-                .collect();
-            pieces.push(PieceShape::new(HousePiece::wall(index), hull));
-        }
-        let lift = |p: DVec3| [p, p + DVec3::Y * (roof.thick + 0.03)];
-        let (xe, ye, ze, rh) = (roof.eave_x, roof.eave_y, roof.rake_z, roof.ridge_half);
-        let ridge = roof.ridge + GAP;
-        for side in [1.0, -1.0] {
-            let hull = [
-                DVec3::new(0.0, ridge, -rh),
-                DVec3::new(0.0, ridge, rh),
-                DVec3::new(side * xe, ye + GAP, -ze),
-                DVec3::new(side * xe, ye + GAP, ze),
-            ]
-            .into_iter()
-            .flat_map(lift)
-            .collect();
-            let piece = if side > 0.0 {
-                HousePiece::RightRoof
-            } else {
-                HousePiece::LeftRoof
+            let plane = PartPlane {
+                origin: center,
+                s: along,
+                t: DVec3::Y,
             };
-            pieces.push(PieceShape::new(piece, hull));
+            let (cracks, floors) = self.wall_breaks(index);
+            for shard in 0..=cracks.len() {
+                let (left, right) = (shard.checked_sub(1).map(|k| &cracks[k]), cracks.get(shard));
+                let floor = floors.get(shard).map(|&(a, b)| {
+                    Side::through(a, b, DVec2::new(a.x, roof.ridge), EdgeKind::Broken)
+                });
+                let region = ShardRegion::between(left, right, floor);
+                // The collider: the shard's straight core between its cracks' extremes.
+                let core = ShardRegion::between(
+                    left.map(|c| straight(c, true)).as_ref(),
+                    right.map(|c| straight(c, false)).as_ref(),
+                    floors.get(shard).map(|&(a, b)| {
+                        let level = a.y.max(b.y) + CRACK_GAP;
+                        Side::through(
+                            DVec2::new(0.0, level),
+                            DVec2::new(1.0, level),
+                            DVec2::new(0.0, roof.ridge),
+                            EdgeKind::Broken,
+                        )
+                    }),
+                );
+                let points = core.outline_points(&outline);
+                if points.len() < 3 {
+                    continue;
+                }
+                let hull = points
+                    .iter()
+                    .flat_map(|q| {
+                        let face = center + along * q.x + DVec3::Y * q.y;
+                        [face, face - out * WALL_DEPTH]
+                    })
+                    .collect();
+                pieces.push(PieceShape::new(
+                    HousePiece::new(part, shard as u8),
+                    plane,
+                    outline.clone(),
+                    region,
+                    hull,
+                ));
+            }
+        }
+        let (xe, ze, rh) = (roof.eave_x, roof.rake_z, roof.ridge_half);
+        // A slab's collider: its deck and shingles, and the rafters under it inside
+        // the wall line.
+        let lift = |x: f64, z: f64, inside: bool| {
+            let top = roof.top(x, z);
+            let low = top - roof.thick + GAP;
+            let low = if inside { low - RAFTER_DEPTH } else { low };
+            [DVec3::new(x, top + 0.08, z), DVec3::new(x, low, z)]
+        };
+        for side in [1.0, -1.0] {
+            let part = if side > 0.0 {
+                HousePart::RightRoof
+            } else {
+                HousePart::LeftRoof
+            };
+            // Plan coordinates: along the ridge, and out from it down the slope.
+            let plane = PartPlane {
+                origin: DVec3::ZERO,
+                s: DVec3::Z,
+                t: DVec3::X * side,
+            };
+            let gutter = xe + 0.17;
+            let outline = match roof.form {
+                RoofForm::Gable => vec![
+                    DVec2::new(-ze, 0.0),
+                    DVec2::new(ze, 0.0),
+                    DVec2::new(ze, gutter),
+                    DVec2::new(-ze, gutter),
+                ],
+                RoofForm::Hip => vec![
+                    DVec2::new(-rh, 0.0),
+                    DVec2::new(rh, 0.0),
+                    DVec2::new(ze, xe),
+                    DVec2::new(ze, gutter),
+                    DVec2::new(-ze, gutter),
+                    DVec2::new(-ze, xe),
+                ],
+            };
+            let cracks = self.roof_cracks(side);
+            let wall_line = self.w / 2.0 - RAFTER_INSET;
+            for shard in 0..=cracks.len() {
+                let (left, right) = (shard.checked_sub(1).map(|k| &cracks[k]), cracks.get(shard));
+                let region = ShardRegion::between(left, right, None);
+                let core = ShardRegion::between(
+                    left.map(|c| straight(c, true)).as_ref(),
+                    right.map(|c| straight(c, false)).as_ref(),
+                    None,
+                );
+                let points = core.outline_points(&outline);
+                // The rafters' reach, cut off at the wall line.
+                let rafters = core.outline_points(&[
+                    DVec2::new(-ze, 0.0),
+                    DVec2::new(ze, 0.0),
+                    DVec2::new(ze, wall_line),
+                    DVec2::new(-ze, wall_line),
+                ]);
+                let mut hull: Vec<DVec3> = points
+                    .iter()
+                    .flat_map(|q| lift(side * q.y, q.x, false))
+                    .chain(rafters.iter().map(|q| lift(side * q.y, q.x, true)[1]))
+                    .collect();
+                // The slab carrying the cross gable falls with it on top.
+                if let Some(wing) = self.wing().filter(|_| side > 0.0) {
+                    let (low, high) = points
+                        .iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), q| {
+                            (l.min(q.x), h.max(q.x))
+                        });
+                    if (low..high).contains(&wing.z) {
+                        hull.extend(wing.hull(&roof));
+                    }
+                }
+                pieces.push(PieceShape::new(
+                    HousePiece::new(part, shard as u8),
+                    plane,
+                    outline.clone(),
+                    region,
+                    hull,
+                ));
+            }
         }
         if roof.form == RoofForm::Hip {
             for end in [1.0, -1.0] {
-                let hull = [
-                    DVec3::new(0.0, ridge, end * rh),
-                    DVec3::new(-xe, ye + GAP, end * ze),
-                    DVec3::new(xe, ye + GAP, end * ze),
-                ]
-                .into_iter()
-                .flat_map(lift)
-                .collect();
-                let piece = if end > 0.0 {
-                    HousePiece::FrontRoof
+                let part = if end > 0.0 {
+                    HousePart::FrontRoof
                 } else {
-                    HousePiece::BackRoof
+                    HousePart::BackRoof
                 };
-                pieces.push(PieceShape::new(piece, hull));
+                let plane = PartPlane {
+                    origin: DVec3::ZERO,
+                    s: DVec3::X,
+                    t: DVec3::Z * end,
+                };
+                let outline = vec![
+                    DVec2::new(0.0, rh),
+                    DVec2::new(xe, ze),
+                    DVec2::new(xe, ze + 0.17),
+                    DVec2::new(-xe, ze + 0.17),
+                    DVec2::new(-xe, ze),
+                ];
+                // Split from the hip's peak down to the eave.
+                let mut rng = self.crack_random(part);
+                let foot = rng.range(-0.4, 0.4) * xe;
+                let mut points = vec![DVec2::new(0.0, -50.0), DVec2::new(0.0, rh)];
+                for f in ROOF_KNOTS {
+                    let s = foot * f + rng.range(-ROOF_WANDER, ROOF_WANDER) * f;
+                    points.push(DVec2::new(s, rh + f * (ze - rh)));
+                }
+                let last = points[points.len() - 1].x;
+                points.push(DVec2::new(last, 50.0));
+                let crack = Crack { points };
+                for shard in 0..2 {
+                    let (left, right) = if shard == 0 {
+                        (None, Some(&crack))
+                    } else {
+                        (Some(&crack), None)
+                    };
+                    let core = ShardRegion::between(
+                        left.map(|c| straight(c, true)).as_ref(),
+                        right.map(|c| straight(c, false)).as_ref(),
+                        None,
+                    );
+                    let hull: Vec<DVec3> = core
+                        .outline_points(&outline)
+                        .iter()
+                        .flat_map(|q| lift(q.x, end * q.y, false))
+                        .collect();
+                    if hull.len() < 6 {
+                        continue;
+                    }
+                    pieces.push(PieceShape::new(
+                        HousePiece::new(part, shard),
+                        plane,
+                        outline.clone(),
+                        ShardRegion::between(left, right, None),
+                        hull,
+                    ));
+                }
             }
         }
         let flue = self.flue();
@@ -592,14 +1057,31 @@ impl HouseDesign {
             .iter()
             .map(|c| roof.top(c.x, c.y))
             .fold(f64::NEG_INFINITY, f64::max)
-            + 0.03
+            + 0.1
             + 2.0 * GAP;
         let hull = corners
             .into_iter()
             .flat_map(|c| [bottom, top + 0.16].map(|y| DVec3::new(c.x, y, c.y)))
             .collect();
-        pieces.push(PieceShape::new(HousePiece::Chimney, hull));
+        pieces.push(PieceShape::new(
+            HousePiece::new(HousePart::Chimney, 0),
+            PartPlane {
+                origin: DVec3::ZERO,
+                s: DVec3::X,
+                t: DVec3::Z,
+            },
+            Vec::new(),
+            ShardRegion::between(None, None, None),
+            hull,
+        ));
         pieces
+    }
+
+    /// The top of the back wall's stub, left in the heap where its shards broke
+    /// off: a ragged line in the back wall's plane, from one end to the other.
+    pub fn back_stub(&self) -> Vec<DVec2> {
+        let (_, floors) = self.wall_breaks(1);
+        floors.into_iter().flat_map(|(a, b)| [a, b]).collect()
     }
 
     /// The heap's centre and size in the build frame.
@@ -632,6 +1114,22 @@ impl HouseDesign {
     pub fn open_floor(&self) -> f64 {
         self.d - HOUSE_HEAP.inset - HOUSE_HEAP.depth
     }
+}
+
+/// A straight crack at the extreme of `crack` on its far side from the shard it
+/// bounds (`left`: the shard lies to its right), moved clear by the crack gap.
+fn straight(crack: &Crack, left: bool) -> Crack {
+    let knots: Vec<f64> = crack.points[1..crack.points.len() - 1]
+        .iter()
+        .map(|p| p.y)
+        .collect();
+    let xs = crack.points.iter().map(|p| p.x);
+    let s = if left {
+        xs.fold(f64::NEG_INFINITY, f64::max) + CRACK_GAP
+    } else {
+        xs.fold(f64::INFINITY, f64::min) - CRACK_GAP
+    };
+    Crack::new(s, &knots, || 0.0)
 }
 
 /// The chimney pot's mouth relative to the cottage's ground centre in world axes
@@ -735,6 +1233,19 @@ mod tests {
         assert!(designs.iter().any(|d| d.door_wall == 2));
         assert!(designs.iter().any(|d| d.style.walls == WallFinish::Brick));
         assert!(designs.iter().any(|d| d.style.cover == RoofCover::Seams));
+        // Side-gable cottages raise a cross gable over the door, and the roof's
+        // crack runs clear of it.
+        let wings: Vec<&HouseDesign> = designs.iter().filter(|d| d.wing().is_some()).collect();
+        assert!(wings.len() >= 3, "{}", wings.len());
+        for design in wings {
+            let wing = design.wing().expect("wing");
+            assert!(wing.crest() < design.h, "under the main ridge");
+            assert!(wing.z.abs() + wing.half < design.d / 2.0);
+            for crack in design.roof_cracks(1.0) {
+                let z = crack.points[1].x;
+                assert!((z - wing.z).abs() > wing.half, "{z} {wing:?}");
+            }
+        }
     }
 
     #[test]
@@ -743,21 +1254,60 @@ mod tests {
             let design = HouseDesign::of(x, z, w, d, h);
             let pieces = design.pieces();
             let roof = design.roof();
-            // Three walls (the back one crumbles into the heap), two or four roof
-            // slopes and the chimney.
-            let expected = if roof.form == RoofForm::Hip { 8 } else { 6 };
-            assert_eq!(pieces.len(), expected);
-            assert!(
-                pieces
-                    .iter()
-                    .all(|piece| piece.piece != HousePiece::BackWall)
-            );
+            // Every wall in two or three panels, each side slope in two slabs, the
+            // hip ends whole and the chimney.
+            let walls = |length: f64| if length >= LONG_WALL { 3 } else { 2 };
+            let expected = 2 * walls(design.w)
+                + 2 * walls(design.d)
+                + 4
+                + if roof.form == RoofForm::Hip { 4 } else { 0 }
+                + 1;
+            assert_eq!(pieces.len(), expected, "{x} {z}");
+            assert!(pieces.len() <= HousePiece::ALL.len());
             for piece in &pieces {
+                assert!(HousePiece::ALL.contains(&piece.piece));
+                assert!(piece.piece.shard < piece.piece.part.max_shards());
                 for p in &piece.hull {
-                    assert!(p.x.abs() <= roof.eave_x + 1e-9 && p.z.abs() <= roof.rake_z + 1e-9);
+                    assert!(
+                        p.x.abs() <= roof.eave_x + 0.2 && p.z.abs() <= roof.rake_z + 0.2,
+                        "{:?} {p}",
+                        piece.piece
+                    );
                     assert!(p.y >= PLINTH - 1e-9 && p.y <= h + 1.0);
                 }
             }
+            // Neighbouring shards' colliders start clear of each other across their
+            // crack, however it wanders.
+            for part in HousePart::ALL {
+                let shards: Vec<&PieceShape> =
+                    pieces.iter().filter(|p| p.piece.part == part).collect();
+                for pair in shards.windows(2) {
+                    let s = |shape: &PieceShape, f: fn(f64, f64) -> f64, from: f64| {
+                        shape
+                            .hull
+                            .iter()
+                            .map(|p| shape.plane.project(*p).x)
+                            .fold(from, f)
+                    };
+                    assert!(
+                        s(pair[0], f64::max, f64::NEG_INFINITY)
+                            < s(pair[1], f64::min, f64::INFINITY),
+                        "{part:?}"
+                    );
+                }
+            }
+            // The back wall breaks off above the stub the heap keeps.
+            let (_, floors) = design.wall_breaks(1);
+            for shard in pieces
+                .iter()
+                .filter(|p| p.piece.part == HousePart::BackWall)
+            {
+                let (a, b) = floors[usize::from(shard.piece.shard)];
+                let lowest = shard.hull.iter().map(|q| q.y).fold(f64::INFINITY, f64::min);
+                assert!(lowest >= a.y.max(b.y), "{lowest} {a} {b}");
+            }
+            let stub = design.back_stub();
+            assert!(stub.iter().all(|q| q.y < HOUSE_HEAP.height + 0.05));
             let (center, size) = design.heap();
             assert!(
                 center.z + size.z / 2.0 < 0.0,

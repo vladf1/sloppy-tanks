@@ -7,8 +7,8 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use crate::geometry::math::hex_to_linear;
-use crate::geometry::{Mesh, box_geometry};
-use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
+use crate::geometry::{Mesh, box_geometry, merge_geometries};
+use crate::scene::{Effect, Material, Node, Side, TextureRef, Wrap};
 
 use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON};
 use super::harbor_models::{CONTAINER_METALNESS, CONTAINER_ROUGHNESS, container_wear};
@@ -144,6 +144,16 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
                 extra_textures,
                 ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
             },
+            // Walls cast shadows from their sun-facing side, as the shared
+            // concrete does, so no sliver of lit ground shows along a shaded foot.
+            ApronMode::Parapet => Material {
+                bump_map: Some(dock_tile(Wrap::Mirror)),
+                bump_scale: DOCK_BUMP,
+                shadow_side: Some(Side::Front),
+                effect,
+                extra_textures,
+                ..Material::standard(color, 0.0, APRON_ROUGHNESS)
+            },
             ApronMode::Shore => Material {
                 vertex_colors: true,
                 fog: false,
@@ -184,6 +194,35 @@ pub fn apron_box(w: f64, h: f64, d: f64, color: u32, mode: ApronMode) -> Node {
         tiled_box(HarborSurface::Dock, w, h, d),
         apron_material(mode, color),
     )
+}
+
+/// Depth of the parapet's capping beam and how far it overhangs the precast body
+/// on each face, metres: enough for its edge to throw a shadow line.
+const PARAPET_CAP: f64 = 0.14;
+const PARAPET_OVERHANG: f64 = 0.035;
+/// The parapet's precast concrete: warm and pale, as the quay's own.
+const PARAPET_CONCRETE: u32 = 0xb8b3a6;
+
+/// Harbor Havoc's sea wall parapet, `w` × `h` × `d` and centred on its middle
+/// like the concrete wall it replaces: a precast body under a capping beam that
+/// overhangs both long faces a little. Joints, stains and paint are the apron
+/// effect's ([`ApronMode::Parapet`]); the collider stays the cover's own box.
+pub fn harbor_parapet(w: f64, h: f64, d: f64) -> Node {
+    static PARAPETS: Cache<[u64; 3], Mesh> = Cache::new();
+    let mesh = PARAPETS.get_or_insert([w, h, d].map(f64::to_bits), || {
+        let along_x = w > d;
+        let mut body = box_geometry(w, h - PARAPET_CAP, d);
+        body.translate(0.0, -PARAPET_CAP / 2.0, 0.0);
+        let (cap_w, cap_d) = if along_x {
+            (w, d + 2.0 * PARAPET_OVERHANG)
+        } else {
+            (w + 2.0 * PARAPET_OVERHANG, d)
+        };
+        let mut cap = box_geometry(cap_w, PARAPET_CAP, cap_d);
+        cap.translate(0.0, (h - PARAPET_CAP) / 2.0, 0.0);
+        merge_geometries(&[&body, &cap]).expect("boxes share a layout")
+    });
+    shadowed(mesh, apron_material(ApronMode::Parapet, PARAPET_CONCRETE))
 }
 
 /// A thin painted marking on the apron (or a wall top), chipped by the effect.
