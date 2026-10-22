@@ -173,7 +173,7 @@ impl EffectSystems {
         if event.kind == T::Respawn {
             return;
         }
-        if matches!(event.kind, T::Pickup | T::Promotion) {
+        if event.kind == T::Promotion {
             self.pickups
                 .add(event.x, event.z, event.color.unwrap_or(WHITE));
         }
@@ -586,6 +586,7 @@ mod tests {
                 SimEventType::Explosion,
                 SimEventType::Death,
                 SimEventType::Pickup,
+                SimEventType::Promotion,
                 SimEventType::Shot,
                 SimEventType::Impact,
                 SimEventType::Ricochet,

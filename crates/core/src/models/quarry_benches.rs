@@ -35,6 +35,10 @@ const GULLY_SPACING: f64 = 11.0;
 /// in metres: the skyline steps down in blocks instead of running ruler-straight.
 const CREST_BREAK: f64 = 0.4;
 const CREST_DROP: (f64, f64) = (0.5, 1.9);
+/// How far a face's lowest row sinks below its base into the floor or shelf
+/// it stands on, in metres: deep enough to stay under the lower bench's
+/// shelf where that shelf's crest has broken low.
+const FOOT_BURIAL: f64 = 2.0;
 
 /// `quarryBench(length, height, depth, seed)`: a continuous blasted face with a
 /// safety berm along its crest and a shelf behind. The face is built bed by bed
@@ -190,10 +194,17 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
             let (joint_low, joint_high) = joint_beds[i];
             let jointed = column.joint && k >= joint_low && k < joint_high;
             for (u, offset, wear) in bed_rows(bed) {
-                let raw = bottom + u * thickness + undulate;
-                let y = raw.clamp(0.0, column.top);
+                // The face's foot is buried in the floor below it: the beds'
+                // undulation must never lift it and open a slot of sky under
+                // the cliff.
+                let raw = if k == 0 && u == 0.0 {
+                    -FOOT_BURIAL
+                } else {
+                    bottom + u * thickness + undulate
+                };
+                let y = raw.clamp(-FOOT_BURIAL, column.top);
                 let clamped = raw >= column.top;
-                let t = y / column.top;
+                let t = y.max(0.0) / column.top;
                 let (mut push, mut worn) = if clamped || raw <= 0.0 {
                     (0.0, 0.8 * f64::from(u8::from(clamped)))
                 } else {
@@ -536,7 +547,7 @@ pub fn quarry_mesas() -> Node {
     while angle < PI * 2.0 - 0.2 {
         mesas.push(Mesa {
             angle,
-            distance: rng.range(215.0, 275.0),
+            distance: rng.range(192.0, 240.0),
             radius: rng.range(18.0, 38.0),
             height: rng.range(14.0, 30.0),
             base: rng.range(8.0, 14.0),

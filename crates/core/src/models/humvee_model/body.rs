@@ -131,6 +131,33 @@ fn tub_and_cab(kit: &mut Kit) {
     );
     // Turret ring base: the ring itself turns with the turret.
     kit.block(Role::Shade, [1.3, 0.03, 1.15], at([0.0, ROOF + 0.045, 0.0]));
+    roof_chevron(kit);
+}
+
+/// The roof chevron behind the launcher ring: the tanks' class mark in the
+/// lamps' cream stencil paint (one draw with the lenses), pointing forward so
+/// the Humvee's heading reads from the overhead camera.
+const CHEVRON_TIP: f64 = -0.66;
+const CHEVRON_HALF_WIDTH: f64 = 0.6;
+const CHEVRON_DROP: f64 = 0.26;
+const CHEVRON_STROKE: f64 = 0.15;
+
+fn roof_chevron(kit: &mut Kit) {
+    let y = ROOF + 0.043;
+    let length = CHEVRON_HALF_WIDTH.hypot(CHEVRON_DROP);
+    let angle = CHEVRON_DROP.atan2(CHEVRON_HALF_WIDTH);
+    for side in [-1.0, 1.0] {
+        let centre = [
+            side * CHEVRON_HALF_WIDTH / 2.0,
+            y,
+            CHEVRON_TIP - CHEVRON_DROP / 2.0 - CHEVRON_STROKE / 2.0,
+        ];
+        kit.block(
+            Role::Headlamp,
+            [length, 0.006, CHEVRON_STROKE],
+            place(centre, [0.0, side * angle, 0.0]),
+        );
+    }
 }
 
 fn hood(kit: &mut Kit) {
@@ -162,8 +189,8 @@ fn hood(kit: &mut Kit) {
         let y = hood_y(FENDER_TOP, z);
         let vent = side * place([0.86, y, z], [-HOOD_SLOPE, 0.0, 0.0]);
         kit.block(Role::Gap, [0.28, 0.01, 0.34], vent);
-        for i in 0..6 {
-            let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.056], [0.5, 0.0, 0.0]);
+        for i in 0..5 {
+            let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.07], [0.5, 0.0, 0.0]);
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
         }
         // Rubber hood latch at the front of each fender.
@@ -182,14 +209,14 @@ fn hood(kit: &mut Kit) {
             );
         kit.torus(Role::Steel, 0.03, 0.009, eye);
     }
-    // A fluorescent air-recognition panel strapped across the hood's crown,
-    // slightly askew, with its tie-down straps over the edges.
+    // An olive canvas tarp folded across the hood's crown, slightly askew, with
+    // its tie-down straps over the edges.
     let z = 1.47;
     let panel = place(
         [0.04, hood_y(HOOD_CROWN, z) + 0.005, z],
         [-HOOD_SLOPE, 0.05, 0.0],
     );
-    kit.block(Role::Signal, [0.96, 0.008, 0.66], panel);
+    kit.block(Role::Canvas, [0.92, 0.035, 0.62], panel);
     for x in [-0.36, 0.36] {
         kit.block(Role::Gap, [0.035, 0.012, 0.7], panel * at([x, 0.002, 0.0]));
     }

@@ -54,6 +54,18 @@ const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
 const COLLAPSE_LIFETIME: f64 = 3.2;
 const COLLAPSE_DUST: f64 = 1.35;
+/// A cottage's collapse dust: how long it hangs, when its roof lands on the wreck
+/// (s after the break), how many billows the landing drives out in a ring round
+/// the footprint, how far (m) from its centre they start and roll out, and the
+/// puffs of the column rising off the heap.
+const HOUSE_DUST_LIFETIME: f64 = 6.0;
+const HOUSE_IMPACT: f64 = 0.6;
+const HOUSE_BILLOWS: usize = 16;
+const HOUSE_FOOT: f64 = 2.8;
+const HOUSE_ROLL: f64 = 3.0;
+const HOUSE_PALL: usize = 4;
+/// Plaster and mortar dust, paler than the ground's.
+const PLASTER_DUST: u32 = 0xb9ab95;
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
 const STONE_HIT_LIFETIME: f64 = 1.8;
@@ -257,6 +269,10 @@ enum Kind {
     Burnout,
     /// A collapse without fire (timber): dust only.
     Collapse,
+    /// A cottage coming down: a burst at its foot, then the dust its roof and walls
+    /// drive out as they hit, rolling out low round the footprint and hanging over
+    /// the heap for seconds.
+    HouseFall,
     Wood(WoodDust),
     Hit(Struck),
     /// Heavy debris slamming down: a skirt of the ground's dust.
@@ -484,6 +500,7 @@ impl Blast {
             Kind::Wood(WoodDust::Burst) => WOOD_BURST_LIFETIME,
             Kind::Burnout => BURNOUT_LIFETIME,
             Kind::Collapse => COLLAPSE_LIFETIME,
+            Kind::HouseFall => HOUSE_DUST_LIFETIME,
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
             Kind::Hit(Struck::Steel | Struck::Sheet) => HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
@@ -849,6 +866,8 @@ impl ExplosionEffects {
             Kind::Barrel
         } else if fire {
             Kind::Blast
+        } else if event.cover_kind == Some(CoverKind::House) {
+            Kind::HouseFall
         } else {
             Kind::Collapse
         };
@@ -1209,6 +1228,14 @@ impl ExplosionEffects {
                 self.skirt(b, t, mixed(b.dust, dust, 0.5));
                 self.column(b, t, lifetime, &BLAST, scaled(dust, 1.1), false);
                 self.ring(b, t, b.scale);
+            }
+            Kind::HouseFall => {
+                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.4);
+                self.skirt(b, t, dust);
+                self.house_dust(b, t, lifetime, dust);
+                if t > HOUSE_IMPACT {
+                    self.ring(b, t - HOUSE_IMPACT, b.scale);
+                }
             }
             Kind::Blast | Kind::Tank | Kind::Barrel => {
                 let smoke = linear(look.smoke);
@@ -1960,6 +1987,75 @@ impl ExplosionEffects {
             [r, g, bl, 1.0],
             [t as f32, b.phase as f32, DUST_RING, 1.0],
         ));
+    }
+
+    /// The dust a falling cottage drives out as its roof comes down: one ring of
+    /// low billows born round the footprint as the roof lands, rolling outward
+    /// along the ground and spreading as they thin, and a column of plaster dust
+    /// rising slowly off the heap and drifting downwind. No veil over the scene:
+    /// the wreck shows through it from the first second.
+    fn house_dust(&mut self, b: &Blast, t: f64, lifetime: f64, dust: [f64; 3]) {
+        for j in 0..HOUSE_BILLOWS {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 1.31 + jf * 2.113);
+            let r2 = hash(b.phase * 0.77 + jf * 0.919);
+            let r3 = hash(b.phase * 2.03 + jf * 1.447);
+            let age = t - HOUSE_IMPACT - r1 * 0.25;
+            if age <= 0.0 {
+                continue;
+            }
+            // Even steps round the ring with a little jitter, so the front reads as
+            // one rolling wave rather than scattered blobs.
+            let angle = b.phase + jf * TAU / HOUSE_BILLOWS as f64 + (r2 - 0.5) * 0.3;
+            let roll = settle(age, 1.1 + 0.4 * r2);
+            let reach = HOUSE_FOOT * (0.9 + 0.2 * r3) + HOUSE_ROLL * roll;
+            let size = 0.9 + 0.3 * r2 + 1.5 * roll;
+            let end = 3.2 + 1.2 * r3;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * reach + WIND[0] * age * 0.3,
+                    0.15 + size * 0.24,
+                    b.z + angle.sin() * reach + WIND[1] * age * 0.3,
+                ],
+                size,
+                color: scaled(dust, 0.86 + 0.22 * r3),
+                opacity: (age / 0.15).min(1.0)
+                    * (0.3 + 0.1 * r1)
+                    * (1.0 - smoothstep(age, 0.9, end)),
+                seed: b.phase * 0.43 + jf * 0.191,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.4, end) * 0.85,
+                softness: 0.6 + 0.25 * r1,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..HOUSE_PALL {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 0.59 + jf * 3.71);
+            let r2 = hash(b.phase * 1.93 + jf * 0.37);
+            let age = t - HOUSE_IMPACT * 0.8 - jf * 0.16;
+            if age <= 0.0 {
+                continue;
+            }
+            let angle = b.phase * 2.0 + jf * 2.399;
+            let spread = (0.4 + 1.1 * r1) * (0.6 + 0.4 * settle(age, 1.0));
+            let end = lifetime - jf * 0.3;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * spread + WIND[0] * age * 0.6,
+                    0.8 + 0.5 * age + 0.4 * r2,
+                    b.z + angle.sin() * spread + WIND[1] * age * 0.6,
+                ],
+                size: 1.3 + 0.7 * age + 0.5 * r2,
+                color: scaled(dust, 0.95 + 0.15 * r1),
+                opacity: (age / 0.35).min(1.0) * 0.16 * (1.0 - smoothstep(age, 1.2, end)),
+                seed: b.phase * 0.29 + jf * 0.311,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.6, end) * 0.85,
+                softness: 0.8,
+                underglow: 0.0,
+            });
+        }
     }
 
     /// A cargo crate's dust, in the blast's puff slots.

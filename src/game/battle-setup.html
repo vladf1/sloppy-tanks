@@ -330,7 +330,7 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Gentler bots · 10% less damage taken</small></span
+                ><b>Easy</b><small>Gentler bots · 10% less damage to you</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
@@ -338,7 +338,7 @@
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper bots · 15% more damage taken</small></span
+                ><b>Hard</b><small>Sharper bots · 15% more damage to you</small></span
               ></label
             >
           </div>
@@ -361,7 +361,7 @@
               />
             </svg>
           </svg>
-          <b>Team Battle</b><span>6 vs 6 · Easy bots · First to 100</span>
+          <b>Team Battle</b><span>6 vs 6 · Easy bots<br />First to 100</span>
           <svg
             class="briefing-tank red-tank"
             viewBox="58.5 32.5 560 300"
@@ -501,12 +501,16 @@
             <div class="segmented">
               <label class="segment team-auto"
                 ><input type="radio" name="playerTeam" value="auto" checked /><span
-                  >Auto</span
+                  ><b>Auto</b><small>Joins the side with fewer players</small></span
                 ></label
               ><label class="segment team-blue"
-                ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
+                ><input type="radio" name="playerTeam" value="0" /><span
+                  ><b>Blue</b><small>Always the blue team</small></span
+                ></label
               ><label class="segment team-red"
-                ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+                ><input type="radio" name="playerTeam" value="1" /><span
+                  ><b>Red</b><small>Always the red team</small></span
+                ></label
               >
             </div>
           </div>
@@ -547,10 +551,6 @@
       <span class="key-hint"
         ><span class="keys"><kbd>Right click</kbd></span
         >Mine</span
-      >
-      <span class="key-hint"
-        ><span class="keys"><kbd>Q</kbd><kbd>E</kbd></span
-        >Ammo</span
       >
       <span class="key-hint"
         ><span class="keys"><kbd>Esc</kbd></span

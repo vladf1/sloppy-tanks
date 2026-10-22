@@ -36,9 +36,10 @@ export const PICKUP_COLORS = {
 
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
 
-// The pickup atlas: one painted tile per kind in a 3x3 block, the pallet's bare
-// planks and the ground's spray paint in the fourth column; the engine maps UVs with
-// the same layout (`pickup_visuals.rs`).
+// The pickup atlas: one painted tile per kind in a 3x3 block; the pallet's bare
+// planks, the ground's spray paint and swatches of steel, rubber and webbing in the
+// fourth column; cartridge brass and the drop's tarp below the block. The engine maps
+// UVs with the same layout (`pickup_visuals.rs`).
 export const PICKUP_ATLAS_PATH = "textures/pickups/atlas.webp";
 export const PICKUP_ICON_SIZE = 256;
 export const PICKUP_ATLAS_PADDING = 16;
@@ -46,18 +47,39 @@ export const PICKUP_ATLAS_STRIDE = PICKUP_ICON_SIZE + PICKUP_ATLAS_PADDING * 2;
 export const PICKUP_ATLAS_SIZE = PICKUP_ATLAS_STRIDE * 4;
 export const PICKUP_PALLET_CELL = [3, 0] as const;
 export const PICKUP_PAINT_CELL = [3, 1] as const;
-/** What each kind is shipped in: wooden ammunition crates, a jerry can, steel cases. */
-export const PICKUP_SHAPES = {
-  spread: "crate",
-  rocket: "crate",
-  ricochet: "crate",
-  piercing: "crate",
-  rapid: "crate",
-  shield: "case",
+export const PICKUP_SWATCH_CELL = [3, 2] as const;
+export const PICKUP_BRASS_CELL = [0, 3] as const;
+export const PICKUP_TARP_CELL = [1, 3] as const;
+/** The surface each kind's supply shows: pine crates, olive drab tubes and ammo
+ * cans, black fibre shell canisters, rolled armour steel, the jerry can's pressed
+ * steel, a white medical case and a tan transit case. */
+export const PICKUP_SURFACES = {
+  spread: "planks",
+  rocket: "olive",
+  ricochet: "fibre",
+  piercing: "planks",
+  rapid: "can",
+  shield: "steel",
   speed: "jerry",
-  repair: "case",
-  laser: "case",
-} as const satisfies Record<PickupKind, "crate" | "jerry" | "case">;
+  repair: "white",
+  laser: "tan",
+} as const satisfies Record<
+  PickupKind,
+  "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "white" | "tan"
+>;
+/** Each kind's colour as supply paint (`pickup_paint` in `pickup_visuals.rs`): its
+ * signal smoke's colour family knocked back toward faded military paint. */
+export const PICKUP_PAINTS = {
+  spread: 0xcc4430,
+  rocket: 0xcc4430,
+  ricochet: 0x9068d0,
+  piercing: 0x4caa58,
+  rapid: 0xdc7c2a,
+  shield: 0x9068d0,
+  speed: 0xe2c43c,
+  repair: 0x4caa58,
+  laser: 0xe9ecee,
+} as const satisfies Record<PickupKind, number>;
 export const PICKUP_ATLAS_TILES = {
   spread: [0, 0],
   rocket: [1, 0],

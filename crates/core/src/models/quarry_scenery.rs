@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use crate::geometry::math::{js_round, smoothstep};
-use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
+use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, cylinder_geometry, merge_geometries};
 use crate::scene::{Material, Node};
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
 use crate::sim::data::ARENA;
@@ -22,6 +22,7 @@ use super::harbor_surfaces::steel_box;
 use super::model_primitives::{
     TEAM_COLORS, box_part, cylinder_part, put, rotated, shadow_receiver,
 };
+use super::quarry_barriers::cut_stone_block;
 use super::quarry_benches::{
     StockpileSpot, quarry_bench, quarry_butte, quarry_mesas, quarry_scree_spots,
     quarry_stockpile_geometry, quarry_stockpile_reach, quarry_stockpile_spot,
@@ -32,7 +33,7 @@ use super::quarry_ramp::{
     QUARRY_RAMP, quarry_ramp_boulders, quarry_ramp_geometry, quarry_ramp_height, quarry_ramp_spoil,
 };
 use super::quarry_scree::quarry_scree;
-use super::quarry_site_details::quarry_site_details;
+use super::quarry_site_details::{drill_holes, quarry_site_details};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, mesh_triangles, sand_drift_material, sandstone_rock,
     sandstone_rubble, sandstone_scatter, surface_height,
@@ -53,6 +54,24 @@ const DIG_HEAP: StockpileSpot = StockpileSpot {
     radius: 3.3,
     height: 1.9,
     seed: 7.0,
+};
+
+/// Crushed stone the west apron's wheel loader is working, just north of it.
+const WEST_HEAP: StockpileSpot = StockpileSpot {
+    x: -72.0,
+    z: 38.0,
+    radius: 3.8,
+    height: 2.2,
+    seed: 3.0,
+};
+
+/// Blasted spoil heaped on the south apron, waiting for the haul truck.
+const SOUTH_HEAP: StockpileSpot = StockpileSpot {
+    x: -23.0,
+    z: 73.2,
+    radius: 4.4,
+    height: 2.5,
+    seed: 11.0,
 };
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
@@ -386,6 +405,64 @@ pub fn quarry_scenery() -> Node {
         })
         .collect();
     geology.children.push(sandstone_scatter(&dig_stones));
+    // The south apron's spoil heap, blocks rolled off round its toe.
+    let mut south = quarry_stockpile_geometry(&SOUTH_HEAP);
+    south.translate(SOUTH_HEAP.x, APRON, SOUTH_HEAP.z);
+    let heaped = mesh_triangles(&south);
+    spoil_surface(&mut south, 0.4);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(south), spoil.clone()));
+    let mut south_rng = Random::new(7717.0);
+    let south_stones: Vec<RubbleStone> = (0..34)
+        .map(|i| {
+            let angle = south_rng.range(0.0, PI * 2.0);
+            let t = south_rng.range(0.35, 1.12);
+            let size = if i < 7 {
+                south_rng.range(0.5, 1.0)
+            } else {
+                south_rng.range(0.16, 0.45)
+            };
+            let reach = quarry_stockpile_reach(&SOUTH_HEAP, angle) * t;
+            let h = size * south_rng.range(0.5, 0.8);
+            let (x, z) = (
+                SOUTH_HEAP.x + angle.cos() * reach,
+                SOUTH_HEAP.z + angle.sin() * reach,
+            );
+            RubbleStone {
+                x,
+                y: rest_height(&heaped, x, z) + h * STONE_SEAT,
+                z,
+                w: size,
+                h,
+                d: size * south_rng.range(0.7, 1.1),
+                rot_y: south_rng.range(-PI, PI),
+                shade: south_rng.range(0.85, 1.08),
+            }
+        })
+        .collect();
+    geology.children.push(sandstone_scatter(&south_stones));
+    let mut west = quarry_stockpile_geometry(&WEST_HEAP);
+    west.translate(WEST_HEAP.x, APRON, WEST_HEAP.z);
+    spoil_surface(&mut west, 0.8);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(west), spoil.clone()));
+    // Pale cones of rock flour round the holes the drill rig has put down.
+    let cuttings: Vec<Mesh> = drill_holes()
+        .into_iter()
+        .map(|(x, z)| {
+            let mut cone = cylinder_geometry(0.1, 0.62, 0.24, 8);
+            cone.translate(x, 0.12 - quarry_ground_drop(x, z), z);
+            cone
+        })
+        .collect();
+    let mut cuttings =
+        merge_geometries(&cuttings.iter().collect::<Vec<_>>()).expect("drilled holes");
+    spoil_surface(&mut cuttings, 1.0);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(cuttings), spoil.clone()));
     // Local rubble stays outside the boundary; it never advertises nonexistent cover.
     for i in 0..BOUNDARY_ROCKS {
         let side = if i % 2 == 1 { -1.0 } else { 1.0 };
@@ -483,15 +560,7 @@ pub fn quarry_scenery() -> Node {
             -67.47,
         );
     }
-    for z in [-2.0, 2.0] {
-        put(
-            &mut geology,
-            sandstone_rock(5.0, 2.2, 3.5, 0, RockSetting::Ground),
-            -48.0,
-            -1.79,
-            68.0 + z,
-        );
-    }
+    cut_stone_yard(&mut geology);
     quarry_site_details(&mut equipment);
     // Geology stays unbatched: the renderer merges static scenery per material
     // and 60 m cell, so the long faces and drifts cull per cell instead of
@@ -612,6 +681,7 @@ fn flank_boulders(geology: &mut Node) {
         [64.0, 76.0, 10.0, 26.0],   // haul truck bay
         [69.0, 76.5, -23.0, -1.0],  // east scree runout
         [-76.5, -69.0, -6.0, 18.0], // west scree runout
+        [-77.0, -66.0, 24.0, 43.0], // wheel loader and its heap
         [r.x0, r.x1, r.z0, r.z1],   // east haul ramp
     ];
     let mut placed = 0;
@@ -636,6 +706,49 @@ fn flank_boulders(geology: &mut Node) {
         let y = 0.008 - quarry_ground_drop(x, z) - 0.14;
         put(geology, rock, x, y, z);
         placed += 1;
+    }
+}
+
+/// Spare cut blocks on the south-west apron, stacked two high where the loader
+/// left them: x, z, height above the apron, yaw, and the block's length,
+/// height and depth.
+const CUT_STONE_STACK: [[f64; 7]; 9] = [
+    [-51.2, 66.9, 0.0, 0.04, 2.6, 1.15, 1.5],
+    [-48.4, 66.8, 0.0, -0.03, 2.7, 1.1, 1.45],
+    [-45.5, 67.0, 0.0, 0.06, 2.5, 1.2, 1.5],
+    [-50.3, 68.8, 0.0, -0.05, 2.9, 1.05, 1.6],
+    [-47.2, 68.9, 0.0, 0.02, 2.6, 1.1, 1.5],
+    [-49.8, 67.0, 1.12, 0.1, 2.4, 1.0, 1.35],
+    [-46.9, 67.1, 1.18, -0.08, 2.3, 0.95, 1.3],
+    [-48.6, 68.85, 1.08, 0.05, 2.5, 1.0, 1.4],
+    [-42.6, 69.4, 0.0, 0.55, 2.2, 1.0, 1.3],
+];
+/// Blocks toppled off the boundary onto the bank outside it, east and west
+/// clear of the machinery: x, z, yaw, roll and the block's length, height and
+/// depth.
+const TOPPLED_BLOCKS: [[f64; 7]; 6] = [
+    [-63.4, -41.0, 0.35, 0.22, 2.1, 1.0, 1.6],
+    [-63.0, -14.5, -0.5, -0.3, 1.8, 0.9, 1.5],
+    [-63.2, 51.5, 1.2, 0.18, 2.3, 1.05, 1.5],
+    [63.3, -45.0, -0.3, 0.26, 2.0, 1.0, 1.6],
+    [63.1, -31.5, 0.9, -0.2, 1.7, 0.85, 1.4],
+    [63.4, 47.0, 0.6, 0.3, 1.9, 0.95, 1.5],
+];
+
+/// The quarry's cut stone outside the boundary: the stacked spares in the
+/// yard and the blocks toppled off the wall, in the wall's own stone.
+fn cut_stone_yard(geology: &mut Node) {
+    for (i, [x, z, lift, yaw, length, height, depth]) in CUT_STONE_STACK.into_iter().enumerate() {
+        let block = cut_stone_block(length, height, depth, 300.0 + i as f64 * 17.0);
+        let block = rotated(block, 0.0, yaw, 0.0);
+        put(geology, block, x, -1.8 + lift, z);
+    }
+    for (i, [x, z, yaw, roll, length, height, depth]) in TOPPLED_BLOCKS.into_iter().enumerate() {
+        let block = cut_stone_block(length, height, depth, 500.0 + i as f64 * 23.0);
+        let block = rotated(block, 0.0, yaw, roll);
+        // Tipped onto its edge, half sunk in the bank's loose fill.
+        let y = -quarry_ground_drop(x, z) - 0.18 - roll.abs() * length * 0.25;
+        put(geology, block, x, y, z);
     }
 }
 
@@ -706,13 +819,13 @@ fn wall_drifts(geology: &mut Node, soil: &Arc<Material>) {
     }
 }
 
-/// Sand fans spilled against the bastion wall's faces, where torn liners and
-/// the wind have heaped it.
+/// Sand fans spilled against the block wall's faces, where the wind has heaped
+/// it in the joints and lee.
 const WALL_SPILLS: u32 = 48;
 /// Segments round one spill fan.
-const SPILL_SEGMENTS: u32 = 8;
+const SPILL_SEGMENTS: u32 = 12;
 
-/// Soft fans of loose sand heaped against both faces of the bastion wall at
+/// Soft fans of loose sand heaped against both faces of the block wall at
 /// irregular intervals, feathering out over the floor. Soil-coloured through the
 /// sand drift's blend; one merged mesh, one draw.
 fn wall_spills(geology: &mut Node) {
@@ -819,22 +932,30 @@ fn soil_strip(
 /// Survey stakes and buried footings along the boundary.
 fn boundary_dressing(equipment: &mut Node) {
     for side in [-1.0f64, 1.0] {
-        // Survey stakes frame the arena without fencing in
-        // views. A few missing stakes and a slight lean keep the line from reading
-        // as a fence.
-        for step in 0..=14 {
-            if (step + if side < 0.0 { 2 } else { 0 }) % 7 == 3 {
-                continue;
+        // Survey stakes mark where the next cuts were set out: pairs and threes
+        // at irregular intervals, each a little out of true, never a fence line.
+        let mut stake_rng = Random::new(5303.0 + side * 17.0);
+        let mut stakes = Vec::new();
+        let mut at = -58.0 + stake_rng.range(0.0, 6.0);
+        while at < 57.0 {
+            let count = 2 + usize::from(stake_rng.next() < 0.4);
+            for k in 0..count {
+                stakes.push(at + k as f64 * stake_rng.range(1.3, 2.6));
             }
-            let x = -56.0 + f64::from(step) * 8.0;
-            let lean = 0.05 * (x * 2.3 + side).sin();
+            at += stake_rng.range(13.0, 24.0);
+        }
+        for x in stakes.into_iter().filter(|x| x.abs() < 58.5) {
+            let lean = 0.05 * (x * 2.3 + side).sin() + stake_rng.range(-0.06, 0.06);
             let stake = rotated(box_part(0.13, 1.8, 0.13, 0xb6aea0, 0.0), 0.0, 0.0, lean);
             put(equipment, stake, x, 0.8, side * (QUARRY_BANK_TOP + 0.2));
+            // A strip of sun-faded flagging tape tied below the stake's head,
+            // hanging off the wind side rather than a painted cap.
+            let tape = rotated(box_part(0.03, 0.42, 0.11, 0xc4845c, 0.0), 0.0, 0.0, 0.35);
             put(
                 equipment,
-                box_part(0.17, 0.32, 0.17, 0xa55e3f, 0.0),
-                x - lean * 0.65,
-                1.45,
+                tape,
+                x - lean * 0.6 + 0.1,
+                1.32,
                 side * (QUARRY_BANK_TOP + 0.2),
             );
         }

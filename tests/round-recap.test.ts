@@ -52,9 +52,10 @@ test("a first round reports its values without record callouts", () => {
   assert.match(markup, /<dt>Kills<\/dt><dd>3<\/dd>/);
   assert.match(markup, /<dt>Damage dealt<\/dt><dd>1,234<\/dd>/);
   assert.match(markup, /<dt>Longest life<\/dt><dd>1:35<\/dd>/);
-  // Peak rank rides on the kills tile; time played is not a stat worth a cell.
-  assert.match(markup, /PEAK RANK · ELITE/);
-  assert.doesNotMatch(markup, /Top rank|Time played/);
+  // The kills tile measures the round against the best; the peak rank is a detail.
+  assert.match(markup, /recap-progress is-record">.*Equals your best/);
+  assert.match(markup, /<dt>Top rank<\/dt><dd>Elite<\/dd>/);
+  assert.doesNotMatch(markup, /Time played/);
   assert.match(markup, /<dt>Accuracy<\/dt><dd>—<\/dd>/);
   assert.doesNotMatch(markup, /NEW BEST|BEST |recap-feats/);
   assert.match(markup, /<p class="recap-note"><\/p>/);
@@ -76,7 +77,7 @@ test("improved records are starred and unreached records show the best", () => {
   );
   assert.match(
     markup,
-    /recap-stat is-record" title="Enemy tanks wrecked"><dt>Kills<\/dt><dd>5<\/dd><span>★ NEW BEST/,
+    /recap-stat is-record" title="Enemy tanks destroyed"><dt>Kills<\/dt><dd>5<\/dd><em class="recap-progress is-record">.*★ NEW PERSONAL BEST/,
   );
   assert.match(markup, /<dd>400<\/dd><span>BEST 900<\/span>/);
   assert.match(markup, /recap-detail is-record[^>]*><dt>Mine kills<\/dt><dd>★ 2<\/dd>/);
@@ -91,12 +92,12 @@ test("storage that refuses records says so", () => {
   assert.match(markup, /<dt>Damage taken<\/dt><dd>250<\/dd>/);
 });
 
-test("the report counts wrecks in words and names the winning team plainly", () => {
+test("the report counts deaths in plain words and names the winning team plainly", () => {
   assert.deepEqual([0, 1, 2, 5].map(wreckLine), [
-    "Never wrecked",
-    "Wrecked once",
-    "Wrecked twice",
-    "Wrecked 5 times",
+    "Never destroyed",
+    "Destroyed once",
+    "Destroyed twice",
+    "Destroyed 5 times",
   ]);
   assert.equal(teamLabel("BLUE"), "Blue team");
 });
@@ -116,7 +117,7 @@ test("the scoreboard lists each team by kills, lights the viewer and crowns one 
   assert.equal(mostValuable([row(5, "A", 0, 1, 2), row(6, "B", 1, 1, 0)])?.name, "B");
   assert.equal(mostValuable([row(5, "A", 0, 0, 0)]), null);
   const markup = scoreboardMarkup(rows, 1, ["BLUE", "RED"], [2, 5]);
-  assert.match(markup, /<header><b>BLUE<\/b><span>2<\/span>/);
+  assert.match(markup, /aria-label="Blue team, 2"><header><b>BLUE<\/b><span><\/span>/);
   assert.match(
     markup,
     /Ace<\/span><b>2<\/b><small>0<\/small><\/li><li><span class="board-name">Bob &lt;b&gt;/,

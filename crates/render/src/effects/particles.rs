@@ -13,9 +13,7 @@ use super::explosions::ExplosionEffects;
 use super::explosions::blast_scale;
 use super::pool::{PoolBuffer, pose, record};
 use super::random::CosmeticRandom;
-use super::sparks::{
-    BLAST_SPARKS, Burst, EMBERS, METAL_SPARKS, PICKUP_SPARKS, STONE_SPARKS, Sparks,
-};
+use super::sparks::{BLAST_SPARKS, Burst, EMBERS, METAL_SPARKS, STONE_SPARKS, Sparks};
 use super::walls::{Strike, WallMaterial};
 use crate::color::hex_to_linear;
 
@@ -575,12 +573,6 @@ impl ParticleEffects {
                 self.sparks
                     .burst(at(1.0), Vec3::ZERO, 1.0, &STONE_SPARKS, random);
             }
-            T::Pickup => {
-                let mut burst = PICKUP_SPARKS;
-                let [r, g, b] = hex_to_linear(event.color.unwrap_or(0xffffff));
-                burst.color = [r * 2.6 + 0.4, g * 2.6 + 0.4, b * 2.6 + 0.4];
-                self.sparks.burst(at(1.2), Vec3::Y, 0.9, &burst, random);
-            }
             _ => {}
         }
     }
@@ -1016,9 +1008,9 @@ mod tests {
         assert_eq!(
             particles.particles.len(),
             stone + HURT.count as usize,
-            "a pickup throws light streaks, not confetti"
+            "a pickup throws no confetti"
         );
-        assert_eq!(particles.sparks.len(), sparks + PICKUP_SPARKS.count);
+        assert_eq!(particles.sparks.len(), sparks, "nor light");
         particles.event(&at(SimEventType::Promotion), &mut random);
         assert_eq!(
             particles.particles.len(),

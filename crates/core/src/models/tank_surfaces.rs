@@ -23,8 +23,8 @@ use std::sync::{Arc, OnceLock};
 
 use glam::{DMat4, DVec3};
 
-use super::Team;
 use super::model_primitives::Cache;
+use super::{Team, part};
 use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
@@ -33,7 +33,7 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// saturated color without a camouflage, so a tank's side reads at a glance. The
 /// blue stays bright enough not to fall to black in shade (the paint's own fill
 /// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x962c2a];
+pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x882b25];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -80,8 +80,8 @@ const MUD: u32 = 0x4e4031;
 const DUST_STRENGTH: f64 = 0.8;
 /// Tracks and tyres (already vertex-colored) take little dry dust and a lighter
 /// coat of mud than the hull, so wheels, tyres and links stay legible.
-const DUST_ON_RUNNING_GEAR: f64 = 0.12;
-const MUD_ON_RUNNING_GEAR: f64 = 0.5;
+const DUST_ON_RUNNING_GEAR: f64 = 0.05;
+const MUD_ON_RUNNING_GEAR: f64 = 0.3;
 const MUD_STRENGTH: f64 = 0.68;
 const MUD_BAND: f64 = 0.55;
 /// Darkening at the ground line and on the undersides.
@@ -92,14 +92,14 @@ const PLATE_VARIATION: f64 = 0.07;
 /// The hand-painted gradient down an upright plate: its paint value at the
 /// plate's foot and at its top edge. Plates shorter than `GRADIENT_MIN_HEIGHT`
 /// (chamfers, trim) keep their flat value.
-const GRADIENT_FOOT: f64 = 0.74;
+const GRADIENT_FOOT: f64 = 0.8;
 const GRADIENT_TOP: f64 = 1.04;
 const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
-const DECK_LOW: f64 = 0.66;
-const DECK_HIGH: f64 = 1.0;
+const DECK_LOW: f64 = 0.72;
+const DECK_HIGH: f64 = 1.1;
 const DECK_RAMP: f64 = 0.6;
 /// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
 /// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
@@ -116,12 +116,17 @@ const UPRIGHT: f64 = 0.6;
 /// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
-const RIM_STRENGTH: f32 = 0.4;
+const RIM_STRENGTH: f32 = 0.55;
 const PAINT_FILL: f32 = 0.08;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0x77746e;
+const BARE_STEEL: u32 = 0x75716a;
+/// The paint's value on the turret and on the hull: the turret a step lighter, so
+/// it stands off the deck from the overhead camera and its facing reads at a
+/// glance, the hull a step deeper beneath it.
+const TURRET_VALUE: f64 = 1.08;
+const HULL_VALUE: f64 = 0.9;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;
@@ -254,6 +259,38 @@ fn gear_material(source: &Material) -> Arc<Material> {
             }
         },
     )
+}
+
+/// Window and sight glass in `tint` (sRGB): the paint effect's glass mode, a dark
+/// tint that mirrors the sky toward grazing angles.
+pub fn vehicle_glass(tint: u32) -> Arc<Material> {
+    static GLASS: Cache<u32, Material> = Cache::new();
+    GLASS.get_or_insert(tint, || {
+        let mut params = vec![0.0; 16];
+        for (i, c) in hex_to_linear(tint).into_iter().enumerate() {
+            params[i] = c as f32;
+        }
+        params[11] = PAINT_REPEAT;
+        params[15] = 2.0;
+        Material {
+            effect: Effect::Custom {
+                name: VEHICLE_PAINT_EFFECT,
+                params,
+            },
+            ..Material::standard(tint, 0.0, 0.08)
+        }
+    })
+}
+
+/// A sooted wreck's stand-in for vehicle glass: the tint as plain, dull paint, so
+/// it batches with the wreck's other parts and mirrors no sky. `None` for any
+/// other material.
+pub fn sooted_glass(material: &Material) -> Option<Arc<Material>> {
+    let Effect::Custom { name, params } = &material.effect else {
+        return None;
+    };
+    (*name == VEHICLE_PAINT_EFFECT && params.get(15) == Some(&2.0))
+        .then(|| super::model_primitives::material(material.color.0, 0.0, 0.6))
 }
 
 /// The recognition material of a team's signal color: matte cloth.
@@ -391,22 +428,30 @@ fn is_opaque_standard(material: &Material) -> bool {
 pub fn apply_livery(root: &mut Node, livery: &Livery) {
     let mut weathered_meshes = HashMap::new();
     for child in &mut root.children {
-        repaint(child, DMat4::IDENTITY, livery, &mut weathered_meshes);
+        repaint(
+            child,
+            DMat4::IDENTITY,
+            livery,
+            HULL_VALUE,
+            &mut weathered_meshes,
+        );
     }
 }
 
 /// A shared part mesh placed at the same height and tilt (the Humvee's four
 /// wheels) weathers the same, so its copies keep sharing one weathered mesh:
 /// the source mesh and material, and the world matrix row that gives height.
-type WeatherKey = (usize, usize, [i64; 4]);
+/// The paint's value lift is part of the key: a turret part never shares a hull
+/// part's weathered mesh.
+type WeatherKey = (usize, usize, [i64; 5]);
 
-fn weather_key(mesh: &Arc<Mesh>, material: &Arc<Material>, world: DMat4) -> WeatherKey {
+fn weather_key(mesh: &Arc<Mesh>, material: &Arc<Material>, world: DMat4, lift: f64) -> WeatherKey {
     let row = world.row(1);
     let quantize = |value: f64| (value * 1e4).round() as i64;
     (
         Arc::as_ptr(mesh) as usize,
         Arc::as_ptr(material) as usize,
-        [row.x, row.y, row.z, row.w].map(quantize),
+        [row.x, row.y, row.z, row.w, lift].map(quantize),
     )
 }
 
@@ -414,9 +459,15 @@ fn repaint(
     node: &mut Node,
     parent: DMat4,
     livery: &Livery,
+    lift: f64,
     weathered_meshes: &mut HashMap<WeatherKey, (Arc<Mesh>, Arc<Material>)>,
 ) {
     let world = parent * node.local_matrix();
+    let lift = if node.name == part::TURRET {
+        TURRET_VALUE
+    } else {
+        lift
+    };
     if let Some(drawable) = &mut node.drawable
         && drawable.instances.is_none()
     {
@@ -425,7 +476,7 @@ fn repaint(
             && !drawable.mesh.colors.is_empty()
             && is_opaque_standard(&drawable.material);
         if finish.is_some() || regrimed {
-            let key = weather_key(&drawable.mesh, &drawable.material, world);
+            let key = weather_key(&drawable.mesh, &drawable.material, world, lift);
             let (mesh, material) = weathered_meshes
                 .entry(key)
                 .or_insert_with(|| match finish {
@@ -436,6 +487,7 @@ fn repaint(
                             Some(drawable.material.color.0),
                             finish,
                             livery.grime,
+                            lift,
                         )),
                         finish_material(finish),
                     ),
@@ -446,6 +498,7 @@ fn repaint(
                             None,
                             Finish::Matte,
                             livery.grime,
+                            1.0,
                         )),
                         gear_material(&drawable.material),
                     ),
@@ -456,7 +509,7 @@ fn repaint(
         }
     }
     for child in &mut node.children {
-        repaint(child, world, livery, weathered_meshes);
+        repaint(child, world, livery, lift, weathered_meshes);
     }
 }
 
@@ -573,7 +626,15 @@ fn paint_value_decoded(code: f32) -> (bool, f32) {
 /// stored positions stay in the part's frame). Paint gets the paint shader's
 /// vertex data and model-space wear UVs (`base` is the part's paint color); other
 /// finishes get weathered vertex colors (`None` weathers the mesh's own colors).
-fn weathered(mesh: &Mesh, world: DMat4, base: Option<u32>, finish: Finish, grime: Grime) -> Mesh {
+/// `lift` scales the paint's value (turret or hull).
+fn weathered(
+    mesh: &Mesh,
+    world: DMat4,
+    base: Option<u32>,
+    finish: Finish,
+    grime: Grime,
+    lift: f64,
+) -> Mesh {
     let mut out = mesh.to_non_indexed();
     let count = out.positions.len();
     let own_colors = std::mem::take(&mut out.colors);
@@ -620,7 +681,8 @@ fn weathered(mesh: &Mesh, world: DMat4, base: Option<u32>, finish: Finish, grime
             let index = t * 3 + k;
             if finish.is_paint() {
                 let (q, n) = faces[root];
-                let value = (1.0 + PLATE_VARIATION * plate_variation(plate_key(n, q[0])))
+                let value = lift
+                    * (1.0 + PLATE_VARIATION * plate_variation(plate_key(n, q[0])))
                     * gradient(point.y)
                     * deck_value(*point, face, grime)
                     * height_value(*point, grime)
