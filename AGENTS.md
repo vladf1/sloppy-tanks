@@ -328,6 +328,12 @@ These come from playing the game and are easy to undo with "more juice":
   per pixel, per instance or over a lifetime: the clock is large, so any change
   in the rate jumps the pattern every frame (cooling smoke flickered this way).
   Use one rate and vary the phase.
+- Everything on the field belongs on a tank battlefield. Power-ups are military
+  supply: steel ammo cans, wooden or steel supply crates, jerry cans, tool
+  chests, worn paint and stencilled markings, with the kind's colour as a
+  painted band or a wisp of signal smoke. No science fiction: no holograms,
+  neon panels, light beams or pillars, glowing pads or energy rings (they
+  looked like "some science fiction movie or game").
 
 ## Maps, extra levels, and authored data
 

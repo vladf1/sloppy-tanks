@@ -23,8 +23,8 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 use glow::HasContext;
 
 use super::{
-    BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, OcclusionUniform, OutputUniform,
-    RenderStats, Scene, WaterUniform, lut,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use context::{block, unit};
@@ -189,7 +189,7 @@ impl Drop for ColorTarget {
     }
 }
 
-/// The half-size ambient occlusion target and its framebuffer; the output pass
+/// The quarter-size ambient occlusion target and its framebuffer; the output pass
 /// samples it through a linear sampler. Dropping it deletes it.
 struct OcclusionTarget {
     gpu: Gpu,
@@ -201,7 +201,10 @@ struct OcclusionTarget {
 
 impl OcclusionTarget {
     fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
-        let (width, height) = ((width / 2).max(1), (height / 2).max(1));
+        let (width, height) = (
+            (width / OCCLUSION_DOWNSCALE).max(1),
+            (height / OCCLUSION_DOWNSCALE).max(1),
+        );
         let texture = storage(gpu, glow::R8, 1, width, height);
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
         check_framebuffer(gpu, "ambient occlusion");
@@ -233,7 +236,7 @@ struct BloomLevels {
 
 impl BloomLevels {
     fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
-        let levels = (1..=BLOOM_LEVELS)
+        let levels = (BLOOM_FIRST_SHIFT..BLOOM_FIRST_SHIFT + BLOOM_LEVELS)
             .map(|level| {
                 let (w, h) = ((width >> level).max(1), (height >> level).max(1));
                 let texture = storage(gpu, glow::RGBA16F, 1, w, h);
@@ -449,6 +452,8 @@ impl Frame {
         // The canvas's rows run bottom-up: HDR row = height - y.
         uniform.settings[1] = self.main.height as f32;
         uniform.settings[2] = -1.0;
+        // WebGL's weaker devices skip the sharpening's four extra taps per pixel.
+        uniform.detail[0] = 0.0;
         gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
@@ -633,7 +638,7 @@ impl Frame {
         1
     }
 
-    /// The half-size ambient occlusion from the resolved depth copy.
+    /// The quarter-size ambient occlusion from the resolved depth copy.
     fn draw_occlusion(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
         let pipeline = &scene.pipelines.fixed().occlusion;
         let Some(depth) = self.main.resolved_depth else {

@@ -12,7 +12,7 @@ use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 use super::explosions::ExplosionEffects;
 use super::pool::{PoolBuffer, pose, record};
 use super::random::CosmeticRandom;
-use super::sparks::{BLAST_SPARKS, EMBERS, METAL_SPARKS, STONE_SPARKS, Sparks};
+use super::sparks::{BLAST_SPARKS, EMBERS, METAL_SPARKS, PICKUP_SPARKS, STONE_SPARKS, Sparks};
 use crate::color::hex_to_linear;
 
 pub const MAX_PARTICLES: usize = 1200;
@@ -233,6 +233,10 @@ impl ParticleEffects {
             return false;
         }
         self.sparks_for(event, fiery, burnout, chip_hit, random);
+        // A pickup's light streaks carry the moment; no confetti.
+        if event.kind == T::Pickup {
+            return false;
+        }
         if fiery {
             if !burnout {
                 self.clods(event, random);
@@ -409,6 +413,12 @@ impl ParticleEffects {
             T::Ricochet => {
                 self.sparks
                     .burst(at(1.0), Vec3::ZERO, 1.0, &STONE_SPARKS, random);
+            }
+            T::Pickup => {
+                let mut burst = PICKUP_SPARKS;
+                let [r, g, b] = hex_to_linear(event.color.unwrap_or(0xffffff));
+                burst.color = [r * 2.6 + 0.4, g * 2.6 + 0.4, b * 2.6 + 0.4];
+                self.sparks.burst(at(1.2), Vec3::Y, 0.9, &burst, random);
             }
             _ => {}
         }
@@ -751,13 +761,21 @@ mod tests {
         assert_eq!(particles.sparks.len(), STONE_SPARKS.count);
         particles.event(&at(SimEventType::Hurt), &mut random);
         assert_eq!(particles.particles.len(), stone + HURT.count as usize);
+        let sparks = particles.sparks.len();
         particles.event(&at(SimEventType::Pickup), &mut random);
+        assert_eq!(
+            particles.particles.len(),
+            stone + HURT.count as usize,
+            "a pickup throws light streaks, not confetti"
+        );
+        assert_eq!(particles.sparks.len(), sparks + PICKUP_SPARKS.count);
+        particles.event(&at(SimEventType::Promotion), &mut random);
         assert_eq!(
             particles.particles.len(),
             stone + (HURT.count + PICKUP.count) as usize
         );
         for _ in 0..200 {
-            particles.event(&at(SimEventType::Pickup), &mut random);
+            particles.event(&at(SimEventType::Promotion), &mut random);
         }
         assert_eq!(particles.particles.len(), MAX_PARTICLES);
         particles.update(1.0 / 60.0, 1.0);

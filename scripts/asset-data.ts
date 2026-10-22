@@ -28,10 +28,10 @@ export type SpecialAmmo = (typeof SPECIAL_AMMO)[number]["weapon"];
 /** Accent colors of the pickups that are not ammunition. */
 export const PICKUP_COLORS = {
   rapid: 0xffcf54,
-  shield: 0x72dbef,
-  speed: 0xbbe574,
-  repair: 0x88ddb0,
-  laser: 0x7bfff2,
+  shield: 0x4f94ff,
+  speed: 0xc4ef4a,
+  repair: 0x3fdc78,
+  laser: 0xff3d55,
 };
 
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";

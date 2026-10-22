@@ -21,7 +21,7 @@ use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
     shadowed, siding_box, trunk_fragment,
 };
-use sloppy_core::scene::{Color, Effect, Material, Node, Side};
+use sloppy_core::scene::{Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
@@ -47,6 +47,8 @@ pub mod joint {
     pub const PICKUP_RING: &str = "pickup-ring";
     pub const PICKUP_RING_DIM: &str = "pickup-ring-dim";
     pub const PICKUP_REFILL: &str = "pickup-refill";
+    /// The ring of dashes turning inside a waiting pickup's rim.
+    pub const PICKUP_DASH: &str = "pickup-dash";
     /// The blinking cap of a mine.
     pub const MINE_LIGHT: &str = "mine-light";
 }
@@ -54,6 +56,7 @@ pub mod joint {
 /// Custom effects presentation registers (WGSL beside this file).
 pub const FLAG_CLOTH_EFFECT: &str = sloppy_core::models::effects_props::FLAG_CLOTH;
 pub const PICKUP_REFILL_EFFECT: &str = "pickup-refill";
+pub const PICKUP_BEAM_EFFECT: &str = "pickup-beam";
 /// Segments of the refill arc; `instance_data.x` says how many draw.
 pub const REFILL_SEGMENTS: u32 = 48;
 
@@ -457,14 +460,23 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// Paint of a pickup pad's steel housing and of the dark deck set into it, and
-/// how brightly its ring glows.
+/// Paint of a pickup pad's steel housing and of the gunmetal deck set into it.
 const PICKUP_HOUSING: u32 = 0x75808a;
-const PICKUP_DECK: u32 = 0x1d2e3d;
-const PICKUP_RING_GLOW: f32 = 0.45;
+const PICKUP_DECK: u32 = 0x46525e;
+/// The rim's unlit paint before the kind's tint: full, dimmed while the pad
+/// recharges, and the turning dashes inside it.
+const PICKUP_RIM_FULL: u32 = 0xffffff;
+const PICKUP_RIM_DIM: u32 = 0x8a8a8a;
+const PICKUP_DASH: u32 = 0xc8c8c8;
+/// Dashes of the turning inner ring and the share of each slot they fill.
+const PICKUP_DASHES: u32 = 10;
+const PICKUP_DASH_FILL: f64 = 0.55;
 /// Where a pickup pad's light stands: a centimetre above the deck's top (0.19) so
 /// the additive pool never depth-fights it.
 pub const PICKUP_LIGHT_HEIGHT: f64 = 0.2;
+/// The height of the rim's flat parts, the dashes and the refill arc, above the
+/// deck's top.
+pub const PICKUP_RIM_HEIGHT: f64 = 0.205;
 
 /// A pickup pad's bevelled steel housing, one mesh shared by every kind.
 fn pickup_housing() -> Node {
@@ -475,11 +487,9 @@ fn pickup_housing() -> Node {
     shadowed(housing, paint(PICKUP_HOUSING))
 }
 
-/// The pad under a pickup: a bevelled steel housing with a dark deck set into it,
-/// the kind-colored ring glowing on its rim (bright or dimmed while recharging)
-/// and the refill arc that grows back.
-pub fn pickup_base(kind: PickupKind) -> Node {
-    let color = pickup(kind).color;
+/// The pad under every pickup: a bevelled steel housing with a dark deck set into
+/// it. Its kind-colored lights are [`pickup_rim`] and [`pickup_beam`].
+pub fn pickup_base() -> Node {
     let mut root = Node::group("pickup");
     put(&mut root, pickup_housing(), 0.0, 0.08, 0.0);
     put(
@@ -489,20 +499,62 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         0.165,
         0.0,
     );
-    let torus = arc(torus_geometry(0.94, 0.045, 5, 24));
-    for (name, opacity) in [(joint::PICKUP_RING, 1.0), (joint::PICKUP_RING_DIM, 0.2)] {
-        let material = Arc::new(Material {
-            transparent: true,
-            opacity,
-            emissive: Color(color),
-            emissive_intensity: PICKUP_RING_GLOW * opacity,
-            ..(*paint(color)).clone()
-        });
-        let mut ring = named(at(mesh(torus.clone(), material, 0), 0.0, 0.2, 0.0), name);
+    root
+}
+
+/// Unlit, untone-mapped rim paint the instance tint colors by kind, opaque so
+/// every pad's rim draws in one instanced call.
+fn rim_material(color: u32) -> Arc<Material> {
+    Arc::new(Material {
+        tone_mapped: false,
+        ..Material::basic(color)
+    })
+}
+
+/// A pad's lights: the neon ring on its rim (full, or dimmed while recharging), a
+/// ring of dashes turning inside it while the pickup waits, and the refill arc
+/// that grows back. White paint, so one model serves every kind: the instance
+/// tint is the kind's color.
+pub fn pickup_rim() -> Node {
+    let mut root = Node::group("pickup-rim");
+    let torus = arc(torus_geometry(0.94, 0.045, 5, 32));
+    for (name, color) in [
+        (joint::PICKUP_RING, PICKUP_RIM_FULL),
+        (joint::PICKUP_RING_DIM, PICKUP_RIM_DIM),
+    ] {
+        let mut ring = named(
+            at(mesh(torus.clone(), rim_material(color), 0), 0.0, 0.2, 0.0),
+            name,
+        );
         ring.set_rotation_euler(PI / 2.0, 0.0, 0.0);
         ring.visible = name == joint::PICKUP_RING;
         root.children.push(ring);
     }
+    let slot = PI * 2.0 / f64::from(PICKUP_DASHES);
+    let dashes: Vec<Mesh> = (0..PICKUP_DASHES)
+        .map(|i| {
+            RingGeometry {
+                inner_radius: 0.7,
+                outer_radius: 0.8,
+                theta_segments: 4,
+                theta_start: f64::from(i) * slot,
+                theta_length: slot * PICKUP_DASH_FILL,
+            }
+            .build()
+        })
+        .collect();
+    let dashes =
+        merge_geometries(&dashes.iter().collect::<Vec<_>>()).expect("rings share a layout");
+    let dash = named(
+        at(
+            flat(mesh(arc(dashes), rim_material(PICKUP_DASH), 0)),
+            0.0,
+            PICKUP_RIM_HEIGHT,
+            0.0,
+        ),
+        joint::PICKUP_DASH,
+    );
+    root.children.push(dash);
     let refill = RingGeometry {
         inner_radius: 0.89,
         outer_radius: 1.02,
@@ -511,17 +563,16 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         theta_length: PI * 2.0,
     }
     .build();
+    // Opaque with an alpha test: the effect hides the segments not yet refilled.
     let material = Arc::new(Material {
-        transparent: true,
-        opacity: 0.9,
         side: Side::Double,
-        depth_write: false,
         tone_mapped: false,
+        alpha_test: 0.5,
         effect: Effect::Custom {
             name: PICKUP_REFILL_EFFECT,
             params: vec![REFILL_SEGMENTS as f32, 1.02],
         },
-        ..Material::basic(color)
+        ..Material::basic(PICKUP_RIM_FULL)
     });
     let mut node = named(
         at(flat(mesh(arc(refill), material, 0)), 0.0, 0.23, 0.0),
@@ -532,13 +583,22 @@ pub fn pickup_base(kind: PickupKind) -> Node {
     root
 }
 
+/// The local transform of the rim's dashes turned by `angle` about the pad's axis
+/// (the joint's rest pose turned, for `set_node_transform`).
+pub fn pickup_dash_transform(angle: f64) -> glam::Mat4 {
+    glam::Mat4::from_translation(glam::Vec3::new(0.0, PICKUP_RIM_HEIGHT as f32, 0.0))
+        * glam::Mat4::from_rotation_y(angle as f32)
+        * glam::Mat4::from_rotation_x(-PI as f32 / 2.0)
+}
+
 /// A pad's light (`effects::pickups::pickup_beam_geometry`): a pool of light on the
-/// deck and a column fading up toward the gem, colored by instance tint.
+/// deck, a column fading up past the gem and halo rings climbing it, colored by
+/// instance tint.
 pub fn pickup_beam() -> Node {
     let mut root = Node::group("pickup-beam");
     root.children.push(mesh(
         arc(crate::effects::pickups::pickup_beam_geometry()),
-        Arc::new(crate::effects::pickups::glow_material()),
+        Arc::new(crate::effects::pickups::beam_material()),
         0,
     ));
     root
@@ -632,8 +692,15 @@ mod tests {
         names(&reticle(), &mut found);
         assert!(found.iter().any(|n| n == joint::RETICLE_CONFIRMED));
         let mut found = Vec::new();
-        names(&pickup_base(PickupKind::Laser), &mut found);
-        assert!(found.iter().any(|n| n == joint::PICKUP_REFILL));
+        names(&pickup_rim(), &mut found);
+        for name in [
+            joint::PICKUP_RING,
+            joint::PICKUP_RING_DIM,
+            joint::PICKUP_DASH,
+            joint::PICKUP_REFILL,
+        ] {
+            assert!(found.iter().any(|n| n == name), "{name}");
+        }
     }
 
     #[test]
