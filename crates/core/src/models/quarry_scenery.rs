@@ -771,7 +771,7 @@ fn wall_drifts(geology: &mut Node, soil: &Arc<Material>) {
 /// it in the joints and lee.
 const WALL_SPILLS: u32 = 48;
 /// Segments round one spill fan.
-const SPILL_SEGMENTS: u32 = 8;
+const SPILL_SEGMENTS: u32 = 12;
 
 /// Soft fans of loose sand heaped against both faces of the block wall at
 /// irregular intervals, feathering out over the floor. Soil-coloured through the

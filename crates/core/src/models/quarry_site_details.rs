@@ -14,6 +14,7 @@ use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
+use super::quarry_machinery::{PAINT, weather_paint};
 use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
@@ -74,7 +75,7 @@ const DRILL_HOLE_SPACING: f64 = 2.6;
 /// head, rod carousel and dust hood at the collar. Painted in the colours the
 /// site's other steel already uses, so it joins their batches.
 fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
-    const YELLOW: u32 = 0xc69a4b;
+    const YELLOW: u32 = PAINT;
     const DARK: u32 = 0x4a4238;
     const FRAME: u32 = 0x5a564c;
     let mut rig = Node::group("");
@@ -93,7 +94,13 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
     }
     put(&mut rig, steel_box(4.8, 0.45, 2.5, FRAME), 0.0, 1.18, 0.0);
     // Compressor and engine house at the back, grille facing aft.
-    put(&mut rig, steel_box(2.7, 1.7, 2.4, YELLOW), -1.0, 2.25, 0.0);
+    put(
+        &mut rig,
+        box_part(2.7, 1.7, 2.4, YELLOW, 0.0),
+        -1.0,
+        2.25,
+        0.0,
+    );
     put(
         &mut rig,
         box_part(0.05, 1.15, 1.9, 0x3d413b, 0.0),
@@ -111,7 +118,7 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
     // Cab forward on one side, dark glass all round.
     put(
         &mut rig,
-        steel_box(1.45, 1.85, 1.3, YELLOW),
+        box_part(1.45, 1.85, 1.3, YELLOW, 0.0),
         1.25,
         2.33,
         -0.58,
@@ -141,11 +148,29 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
     let mast_x = 2.65;
     put(
         &mut rig,
-        steel_box(0.55, 10.2, 0.6, YELLOW),
+        box_part(0.55, 10.2, 0.6, YELLOW, 0.0),
         mast_x,
         6.0,
         0.55,
     );
+    // Lattice bracing zigzags up both sides of the mast.
+    for side in [0.2, 0.9] {
+        for k in 0..6 {
+            let y = 1.4 + f64::from(k) * 1.55;
+            let (from, to) = if k % 2 == 0 {
+                (-0.26, 0.26)
+            } else {
+                (0.26, -0.26)
+            };
+            steel_beam(
+                &mut rig,
+                [mast_x + from, y, side],
+                [mast_x + to, y + 1.55, side],
+                0.06,
+                FRAME,
+            );
+        }
+    }
     put(
         &mut rig,
         steel_box(0.16, 9.8, 0.2, 0x9a9a92),
@@ -202,6 +227,7 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
         0.07,
         0x343431,
     );
+    weather_paint(&mut rig);
     rig.set_rotation_euler(0.0, yaw, 0.0);
     rig.position = DVec3::new(x, -1.79, z);
     adopt_children(group, rig);

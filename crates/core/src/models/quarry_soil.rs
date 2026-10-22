@@ -128,6 +128,50 @@ const HAUL_RING: f64 = 71.6;
 /// The haul road's ruts across it: two lanes of dual-wheel tracks, metres.
 const HAUL_RING_RUTS: [f64; 4] = [-3.4, -1.1, 1.1, 3.4];
 
+/// Blast patterns set out on the open floor: centre x/z, turn (radians), rows
+/// and columns of holes. Mirrored like the layout, clear of cover and roads.
+const BLAST_PATTERNS: [(f64, f64, f64, usize, usize); 2] =
+    [(9.0, -19.0, 0.25, 3, 4), (-9.0, 19.0, 0.25, 3, 4)];
+/// Spacing of a pattern's holes, and the reach of each hole's cuttings, metres.
+const BLAST_SPACING: f64 = 3.0;
+const CUTTINGS_REACH: f64 = 0.85;
+
+/// A drilled blast pattern at (x, z): (hole collar, cuttings, paint mark), each
+/// 0..1. Each hole is a dark collar in a pale ring of rock flour, with a dab
+/// of orange marking paint beside it.
+fn blast_pattern(x: f64, z: f64) -> (f64, f64, f64) {
+    for (cx, cz, turn, rows, columns) in BLAST_PATTERNS {
+        let (dx, dz) = (x - cx, z - cz);
+        let (sin, cos) = turn.sin_cos();
+        let (u, v) = (dx * cos + dz * sin, -dx * sin + dz * cos);
+        let (half_u, half_v) = (
+            (columns as f64 - 1.0) * BLAST_SPACING / 2.0,
+            (rows as f64 - 1.0) * BLAST_SPACING / 2.0,
+        );
+        if u.abs() > half_u + 1.0 || v.abs() > half_v + 1.0 {
+            continue;
+        }
+        let (gu, gv) = (
+            ((u + half_u) / BLAST_SPACING)
+                .round()
+                .clamp(0.0, columns as f64 - 1.0),
+            ((v + half_v) / BLAST_SPACING)
+                .round()
+                .clamp(0.0, rows as f64 - 1.0),
+        );
+        let (ou, ov) = (
+            u + half_u - gu * BLAST_SPACING,
+            v + half_v - gv * BLAST_SPACING,
+        );
+        let d = js_hypot(&[ou, ov]);
+        let collar = 1.0 - smoothstep(d, 0.08, 0.15);
+        let cuttings = (1.0 - smoothstep(d, 0.15, CUTTINGS_REACH)).powf(0.7) * (1.0 - collar);
+        let paint = 1.0 - smoothstep(js_hypot(&[ou - 0.5, ov + 0.35]), 0.1, 0.16);
+        return (collar, cuttings, paint);
+    }
+    (0.0, 0.0, 0.0)
+}
+
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
 /// each a pair of ruts 1.9 m apart, 0..1 with a pressed tread.
 fn loader_tracks(x: f64, z: f64) -> f64 {
@@ -441,6 +485,14 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
                 - drift * 0.5 * (1.0 - shed),
         ));
         let occlusion = 1.0 - contact * 0.32;
+        let (collar, cuttings, paint) = blast_pattern(x, z);
+        r += (196.0 - r) * cuttings * 0.75;
+        g += (188.0 - g) * cuttings * 0.75;
+        b += (172.0 - b) * cuttings * 0.75;
+        r += (214.0 - r) * paint;
+        g += (98.0 - g) * paint;
+        b += (42.0 - b) * paint;
+        let occlusion = occlusion * (1.0 - collar * 0.6);
         let i = col * 4;
         out[i] = to_uint8_clamp((r + shade) * occlusion);
         out[i + 1] = to_uint8_clamp((g + shade) * occlusion);

@@ -364,8 +364,7 @@ fn cut_stone_geometry(w: f64, h: f64, d: f64) -> Mesh {
         };
         let n = outline.len();
         let mut rings: Vec<Vec<(DVec3, f64)>> = vec![Vec::new(); 4];
-        for k in 0..n {
-            let (a, b) = outline[k];
+        for (k, &(a, b)) in outline.iter().enumerate() {
             let corner = Some(corner_of(k));
             let face_top = surface_y(a, b, corner) - arris * rng.range(0.6, 1.5);
             // Split faces bulge unevenly; sawn ones stay nearly flat.
