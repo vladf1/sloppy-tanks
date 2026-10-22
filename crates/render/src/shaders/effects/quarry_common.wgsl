@@ -107,8 +107,10 @@ struct QuarryPebbles {
 // One layer of loose stones on a `cell` metre lattice: at most one stone per
 // cell, wholly inside it, so a single lookup finds it. `density` is the chance a
 // cell holds one. Stones are tinted relative to the soil so they sit in it, and
-// fade into the ground before they shrink to a pixel and shimmer.
-fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) -> QuarryPebbles {
+// fade into the ground before they shrink to a pixel and shimmer. `angular` (0
+// to 1) is how many of the stones are broken, faceted chips rather than
+// water-worn ovals.
+fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32, angular: f32) -> QuarryPebbles {
     let g = p / cell;
     let id = floor(g);
     let h = quarry_hash(id + salt);
@@ -135,7 +137,26 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let d0 = g - center;
     let local = vec2f(dot(d0, axis) / stretch, dot(d0, side)) / radius;
     let lump = 1.0 + 0.1 * sin(local.x * 2.7 + local.y * 1.3 + k.z * 6.0);
-    let r = length(local) / lump;
+    let round_r = length(local) / lump;
+    // A broken chip: the outline of three uneven pairs of fracture planes, its
+    // crown split into flat faces, each leaning out toward its own edge.
+    let m = quarry_hash(id * 1.31 + salt * 0.7 + 5.0);
+    let broken = step(1.0 - angular, m.x);
+    let turn = m.y * 3.14;
+    let e0 = vec2f(cos(turn), sin(turn));
+    let e1 = vec2f(cos(turn + 1.13), sin(turn + 1.13));
+    let e2 = vec2f(cos(turn + 2.2), sin(turn + 2.2));
+    let s0 = dot(local, e0) * (0.92 + 0.2 * k.x);
+    let s1 = dot(local, e1) * (0.9 + 0.25 * k.w);
+    let s2 = dot(local, e2) * (0.95 + 0.2 * k.y);
+    let a0 = abs(s0);
+    let a1 = abs(s1);
+    let a2 = abs(s2);
+    let facet_r = max(a0, max(a1, a2)) * 1.08;
+    var facet = e2 * sign(s2);
+    facet = select(facet, e1 * sign(s1), a1 >= max(a0, a2));
+    facet = select(facet, e0 * sign(s0), a0 >= max(a1, a2));
+    let r = mix(round_r, facet_r, broken);
     let present = step(h.x, density) * (1.0 - quarry_smoothstep(0.25, 0.7, pixel));
     let edge = max(pixel, 0.12);
     out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
@@ -150,7 +171,9 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     out.shadow = blocked * (1.0 - out.cover) * present;
     // A low dome: the normal leans out from the centre, steepest at the rim.
     let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
-    out.lean = (dome.x * axis + dome.y * side) * out.cover;
+    let faces = facet * (0.25 + 0.55 * quarry_smoothstep(0.15, 0.6, r));
+    let leaning = mix(dome, faces, broken);
+    out.lean = (leaning.x * axis + leaning.y * side) * out.cover;
     // The rim sinks into shade on the side turned from the sun.
     let from_sun = dot(d0 / max(length(d0), 0.0001), -normalize(sun.xz + vec2f(0.0001, 0.0)));
     out.rim = quarry_smoothstep(0.35, 1.0, r) * out.cover * (0.3 + 0.7 * clamp(from_sun * 0.6 + 0.5, 0.0, 1.0));

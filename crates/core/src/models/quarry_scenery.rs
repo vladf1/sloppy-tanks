@@ -946,11 +946,11 @@ fn boundary_dressing(equipment: &mut Node) {
         }
         for x in stakes.into_iter().filter(|x| x.abs() < 58.5) {
             let lean = 0.05 * (x * 2.3 + side).sin() + stake_rng.range(-0.06, 0.06);
-            let stake = rotated(box_part(0.13, 1.8, 0.13, 0xb6aea0, 0.0), 0.0, 0.0, lean);
+            let stake = rotated(box_part(0.13, 1.8, 0.13, 0x8d7856, 0.0), 0.0, 0.0, lean);
             put(equipment, stake, x, 0.8, side * (QUARRY_BANK_TOP + 0.2));
             // A strip of sun-faded flagging tape tied below the stake's head,
             // hanging off the wind side rather than a painted cap.
-            let tape = rotated(box_part(0.03, 0.42, 0.11, 0xc4845c, 0.0), 0.0, 0.0, 0.35);
+            let tape = rotated(box_part(0.03, 0.42, 0.11, 0xd8602e, 0.0), 0.0, 0.0, 0.35);
             put(
                 equipment,
                 tape,
