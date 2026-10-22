@@ -58,10 +58,10 @@ pub const PICKUP_REFILL_EFFECT: &str = "pickup-refill";
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
 const BAR_WIDTH: f64 = 1.7;
-const BAR_FILL_HEIGHT: f64 = 0.22;
+const BAR_FILL_HEIGHT: f64 = 0.18;
 /// The bar's outer width, which presentation keeps to a share of the screen.
 pub const BAR_RIM_WIDTH: f64 = 1.84;
-const BAR_RIM_HEIGHT: f64 = 0.36;
+const BAR_RIM_HEIGHT: f64 = 0.32;
 /// The team edge round a bar: the teams' colours a shade deeper than their paint, so
 /// the unlit edge names the side without glowing louder than the fill it frames.
 const BAR_EDGE_COLORS: [u32; 2] = [0x2a78d0, 0xc22c3c];
