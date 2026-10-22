@@ -730,7 +730,8 @@ fn backdrop(group: &mut Node) {
         grove(&mut forest, &mut rng, (x, z), radius, trees, age, 0.8, true);
     }
     // The near treeline outside the wall: small stands and single trees of mixed
-    // age with shrubs, leaving the lanes, the mill and the bridge open.
+    // age with shrubs, leaving the lanes, the mill and the bridge open. Mostly
+    // pines and spruces, so the village is ringed by the trees it is named for.
     for [x, z, radius, count] in TREELINE {
         let age = 7.0 + rng.next() * 4.0;
         grove(
@@ -740,7 +741,7 @@ fn backdrop(group: &mut Node) {
             radius,
             count as usize,
             age,
-            0.65,
+            0.85,
             true,
         );
     }

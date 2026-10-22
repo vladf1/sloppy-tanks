@@ -828,6 +828,14 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let dirt_luma = dot(dirt_near.rgb, VG_LUMA);
     let dirt_detail = dirt_luma / 0.36 * mix(1.0, dot(dirt_far.rgb, VG_LUMA) / 0.36, 0.5);
     let close_detail = mix(1.0, dot(dirt_close.rgb, VG_LUMA) / 0.36, fine);
+    // The earth's crumb, a few millimetres to a few centimetres across, only
+    // where a pixel is smaller than a centimetre.
+    let close_view = 1.0 - smoothstep(0.009, 0.02, footprint);
+    var earth_crumb = 0.5;
+    if close_view > 0.0 {
+        let q = vec2f(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
+        earth_crumb = vg_noise(q * 9.0 + 3.0) * 0.4 + vg_noise(p * 21.0 + 9.0) * 0.35 + vg_noise(q * 47.0) * 0.25 * (1.0 - smoothstep(0.006, 0.014, footprint));
+    }
 
     // ---- Where the grass wears through. The plan ramps the dirt over metres
     // (`village_ground::EDGE_RAMP`; near the edge a plan unit is about 3 m) and
@@ -1250,6 +1258,11 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Lumps a hand across lit on their sunward side, hollows between.
         soil = soil * mix(1.0, mix(0.86, 1.1, churn_light), mid);
         soil = soil * clamp(1.0 + (close_detail - 1.0) * 1.6, 0.55, 1.45);
+        // At a kneeling eye the earth shows its crumb: clods, grit and pores
+        // finer than any tile, lit by their own relief below.
+        if close_view > 0.0 {
+            soil = soil * mix(1.0, mix(0.74, 1.16, smoothstep(0.2, 0.8, earth_crumb)), close_view * (1.0 - packed * 0.35));
+        }
         let scratch = vg_noise(vec2f(lane.x * 34.0, lane.y * 0.8)) * 0.6 + vg_noise(vec2f(lane.x * 71.0, lane.y * 1.7)) * 0.4;
         soil = soil * mix(1.0, mix(0.9, 1.06, scratch), fine * packed);
         // The dark, damp earth along the turf's edge, in the stretches that
@@ -1515,7 +1528,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         mounds = vg_noise(p * 0.55 + 23.0) * 0.16 * (1.0 - packed * 0.5) * smoothstep(0.3, 0.8, worn) * (1.0 - paved);
     }
     // Detail tuned for the gameplay camera tilts by its height per pixel, so
-    // close up it would flatten out: nearer views keep their grain and lumps.
+    // close up it would flatten out: nearer views keep their grain and lumps,
+    // and the earth gains its crumb.
     let near_boost = clamp(0.045 / max(footprint, 1e-4), 1.0, 4.0);
     var relief = mix(grass_detail * 0.02 + 0.012 + VG_TURF_LIP * 0.25, dirt_detail * 0.02 + close_detail * 0.012 - rut * 0.1 + berm * 0.025 + clods * 0.012 + churn * 0.035 + hummocks, soft_dirt) * (1.0 - paved_soft * (1.0 - silted * 0.5))
         + paved_soft * VG_KERB_RISE * 0.4
@@ -1523,7 +1537,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         + tussocks.x * 0.02 + bed_relief * flower_bed + veg_relief * veg_plot
         + edging * 0.03 + crop.a * field + hedge * shrubs * 0.5 + road_berm * 0.05
         + clump_height;
-    relief = relief * near_boost + lawn_swell * 0.6;
+    relief = relief * near_boost + lawn_swell * 0.6 + earth_crumb * close_view * 0.012 * dirt * (1.0 - paved);
     let micro_normal = vg_bump(mix(relief, -0.08, puddle), f.world, (*s).normal, f.front_facing);
     // The lie of the land in true slopes: swells and hollows over the meadow,
     // the banks where lawns stand a little proud of their worn roads, the earth's
