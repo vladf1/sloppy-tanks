@@ -38,6 +38,29 @@ pub struct EffectDefinition {
     /// The vertex motion is a small cosmetic sway that leaves the cut-out alpha
     /// alone, so the caster may still merge into its model's still shadow.
     pub still_shadow: bool,
+    /// The hooks `wgsl` defines, found once when the registry takes the definition:
+    /// every model part registered asks, and searching a large snippet each time
+    /// added up.
+    hooks: Option<Hooks>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Hooks {
+    vertex: bool,
+    world: bool,
+    clip: bool,
+    surface: bool,
+}
+
+impl Hooks {
+    fn of(wgsl: &str) -> Self {
+        Self {
+            vertex: wgsl.contains("fn effect_vertex("),
+            world: wgsl.contains("fn effect_world("),
+            clip: wgsl.contains("fn effect_clip("),
+            surface: wgsl.contains("fn effect_surface("),
+        }
+    }
 }
 
 /// An effect with the default flags.
@@ -47,21 +70,34 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
         wgsl,
         shadow_fade: false,
         still_shadow: false,
+        hooks: None,
     }
 }
 
 impl EffectDefinition {
+    /// The definition with its hooks looked up.
+    fn with_hooks(self) -> Self {
+        Self {
+            hooks: Some(Hooks::of(self.wgsl)),
+            ..self
+        }
+    }
+
+    fn hooks(&self) -> Hooks {
+        self.hooks.unwrap_or_else(|| Hooks::of(self.wgsl))
+    }
+
     pub fn has_vertex(&self) -> bool {
-        self.wgsl.contains("fn effect_vertex(")
+        self.hooks().vertex
     }
     pub fn has_world(&self) -> bool {
-        self.wgsl.contains("fn effect_world(")
+        self.hooks().world
     }
     pub fn has_clip(&self) -> bool {
-        self.wgsl.contains("fn effect_clip(")
+        self.hooks().clip
     }
     pub fn has_surface(&self) -> bool {
-        self.wgsl.contains("fn effect_surface(")
+        self.hooks().surface
     }
 }
 
@@ -213,7 +249,7 @@ pub struct EffectRegistry {
 impl Default for EffectRegistry {
     fn default() -> Self {
         Self {
-            effects: BUILTIN_EFFECTS.to_vec(),
+            effects: BUILTIN_EFFECTS.map(EffectDefinition::with_hooks).to_vec(),
         }
     }
 }
@@ -221,6 +257,7 @@ impl Default for EffectRegistry {
 impl EffectRegistry {
     /// Register or replace an effect by name; returns its id.
     pub fn register(&mut self, effect: EffectDefinition) -> u16 {
+        let effect = effect.with_hooks();
         if let Some(index) = self.effects.iter().position(|e| e.name == effect.name) {
             self.effects[index] = effect;
             return index as u16 + 1;
@@ -248,6 +285,29 @@ mod tests {
     use super::*;
     use crate::presentation::PRESENTATION_EFFECTS;
     use crate::shader::webgl_check::validate_effect;
+
+    /// The hooks a registered definition keeps are the ones its WGSL defines.
+    #[test]
+    fn registered_hooks_match_the_snippet() {
+        let mut registry = EffectRegistry::default();
+        for effect in PRESENTATION_EFFECTS {
+            registry.register(effect);
+        }
+        for id in 1..=(BUILTIN_EFFECTS.len() + PRESENTATION_EFFECTS.len()) as u16 {
+            let effect = registry.get(id).expect("registered");
+            assert!(effect.hooks.is_some());
+            assert_eq!(
+                effect.has_vertex(),
+                effect.wgsl.contains("fn effect_vertex(")
+            );
+            assert_eq!(effect.has_world(), effect.wgsl.contains("fn effect_world("));
+            assert_eq!(effect.has_clip(), effect.wgsl.contains("fn effect_clip("));
+            assert_eq!(
+                effect.has_surface(),
+                effect.wgsl.contains("fn effect_surface(")
+            );
+        }
+    }
 
     /// Every builtin and presentation effect compiles in the variants its materials use.
     #[test]

@@ -641,11 +641,23 @@ impl LoadHeap {
         }
     }
 
-    /// Cells within `radius` of x/z, with their distance.
+    /// Cells within `radius` of x/z, with their distance, in row order.
     fn cells(&self, x: f64, z: f64, radius: f64) -> Vec<(usize, f64)> {
+        // Only cells whose centre lies within `radius` along both axes can be
+        // within it (a distance is never shorter than either offset): the span of
+        // those, a cell wider each way, instead of the whole bed.
+        let span = |centre: f64, start: f64, count: usize| {
+            let first = ((centre - radius - start) / LOAD_CELL - 1.5)
+                .floor()
+                .max(0.0);
+            let last = ((centre + radius - start) / LOAD_CELL + 0.5)
+                .ceil()
+                .max(0.0);
+            (first as usize).min(count)..(last as usize).min(count)
+        };
         let mut cells = Vec::new();
-        for row in 0..self.rows {
-            for column in 0..self.columns {
+        for row in span(z, -self.half, self.rows) {
+            for column in span(x, self.x0, self.columns) {
                 let cx = self.x0 + (column as f64 + 0.5) * LOAD_CELL;
                 let cz = -self.half + (row as f64 + 0.5) * LOAD_CELL;
                 let distance = (cx - x).hypot(cz - z);
