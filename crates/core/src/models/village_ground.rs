@@ -353,7 +353,7 @@ impl ArenaPlan {
             match c.kind {
                 CoverKind::Tree => trees.push(centre),
                 CoverKind::House => shades.push((centre, half, 1.7, 0.6)),
-                CoverKind::Timber => shades.push((centre, half, 0.6, 0.4)),
+                CoverKind::Timber => shades.push((centre, half, 1.0, 0.55)),
                 CoverKind::Boundary => shades.push((centre, half, 1.4, 0.45)),
                 // Drums and towers are left out: they break, and a contact
                 // shade baked under them would lie on the ground without a
