@@ -1,7 +1,7 @@
 //! Runtime visual effects: particles, blasts and scorches, sparks, muzzle
 //! flashes, shell tracers, burning wrecks, tread marks and dust, gravel,
 //! quarry wind dust, crate splinters and packing straw, falling leaves,
-//! projectiles in flight, laser defense and pickup rings, plus
+//! projectiles in flight, laser defense and supply drop smoke, plus
 //! the explosion and muzzle light flashes, and the WGSL effect registry their
 //! materials use.
 //!
@@ -175,7 +175,7 @@ impl EffectSystems {
         }
         if matches!(event.kind, T::Pickup | T::Promotion) {
             self.pickups
-                .add(event.x, event.z, event.color.unwrap_or(WHITE), event.id);
+                .add(event.x, event.z, event.color.unwrap_or(WHITE));
         }
         self.wood.event(event, &mut self.random);
         self.muzzle.event(event);
@@ -191,7 +191,7 @@ impl EffectSystems {
 
     /// Advance one rendered frame, in the order `presentation.ts` `render` used.
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, time: f64) {
-        self.pickups.update(state, alpha, dt);
+        self.pickups.update(dt);
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
         self.particles.explosions.walls.sync(state);
@@ -225,6 +225,7 @@ impl EffectSystems {
             &mut particles.sparks,
             &mut self.random,
         );
+        self.pickups.draw(state, &mut particles.explosions.puffs);
         // Every puff is written: keep the billows clear of the walls beside them.
         let explosions = &mut self.particles.explosions;
         explosions.walls.keep_puffs_clear(&mut explosions.puffs);
@@ -253,9 +254,6 @@ impl EffectSystems {
         visit(&mut self.laser.core);
         visit(&mut self.laser.mount);
         visit(&mut self.laser.lens);
-        visit(&mut self.pickups.rings);
-        visit(&mut self.pickups.glows);
-        visit(&mut self.pickups.flashes);
         visit(&mut self.particles.records);
         visit(&mut self.leaves.records);
         visit(&mut self.wood.wood_records);

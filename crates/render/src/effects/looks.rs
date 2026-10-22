@@ -18,10 +18,6 @@ use super::explosions::DECAL_CAPACITY;
 use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::{MAX_PARTICLES, shard_mesh};
-use super::pickups::{
-    MAX_PICKUP_EFFECTS, RING_CAPACITY, band_geometry, flash_geometry, glow_material,
-    shockwave_geometry,
-};
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
@@ -180,25 +176,6 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         icosahedron_geometry(0.105, 1),
         beam(laser, 1.0),
         LASER_CAPACITY,
-    ));
-
-    pools.push(PoolDesc::new(
-        "pickup rings",
-        shockwave_geometry(),
-        glow_material(),
-        RING_CAPACITY,
-    ));
-    pools.push(PoolDesc::new(
-        "pickup bands",
-        band_geometry(),
-        glow_material(),
-        MAX_PICKUP_EFFECTS,
-    ));
-    pools.push(PoolDesc::new(
-        "pickup flashes",
-        flash_geometry(),
-        glow_material(),
-        MAX_PICKUP_EFFECTS,
     ));
 
     // Faceted shards lit like the scene; sparky flecks and hot clods glow

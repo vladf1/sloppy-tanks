@@ -66,6 +66,24 @@ fn quarry_value(p: vec2f) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// Smooth value noise with its gradient: (value, d/dx, d/dy) on a unit lattice.
+fn quarry_value_grad(p: vec2f) -> vec3f {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = quarry_hash(i).x;
+    let b = quarry_hash(i + vec2f(1.0, 0.0)).x;
+    let c = quarry_hash(i + vec2f(0.0, 1.0)).x;
+    let d = quarry_hash(i + vec2f(1.0, 1.0)).x;
+    let k = a - b - c + d;
+    return vec3f(
+        a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y,
+        du.x * ((b - a) + k * u.y),
+        du.y * ((c - a) + k * u.x),
+    );
+}
+
 // The world-space metres one pixel spans on a surface: computed in uniform
 // control flow, before any branch, and passed to the detail layers that fade
 // out before they shrink below a pixel and shimmer.
@@ -74,10 +92,12 @@ fn quarry_footprint(world: vec3f) -> f32 {
 }
 
 struct QuarryPebbles {
-    // Coverage of a stone (0..1), the contact shade around it, the horizontal
-    // lean of its domed surface's normal (world x/z) and its tint over the soil.
+    // Coverage of a stone (0..1), the contact shade around it, the shadow it
+    // casts away from the sun, the horizontal lean of its domed surface's normal
+    // (world x/z) and its tint over the soil.
     cover: f32,
     contact: f32,
+    shadow: f32,
     lean: vec2f,
     tint: vec3f,
 }
@@ -107,6 +127,14 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     var out: QuarryPebbles;
     out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
     out.contact = quarry_smoothstep(1.55, 1.0, r) * (1.0 - out.cover) * present;
+    // The ground a stone's height shades: its outline seen from the sun, a low
+    // sun stretching it out across the soil.
+    let sun = frame.sun_direction.xyz;
+    let reach = radius * 0.55 * min(length(sun.xz) / max(sun.y, 0.15), 3.0);
+    let lit = d0 + normalize(sun.xz + vec2f(0.0001, 0.0)) * reach;
+    let lit_local = vec2f(dot(lit, axis) / stretch, dot(lit, side)) / radius;
+    let blocked = 1.0 - quarry_smoothstep(0.75, 1.05, length(lit_local) / lump);
+    out.shadow = blocked * (1.0 - out.cover) * present;
     // A low dome: the normal leans out from the centre, steepest at the rim.
     let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
     out.lean = (dome.x * axis + dome.y * side) * out.cover;
