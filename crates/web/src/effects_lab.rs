@@ -76,7 +76,9 @@ impl EffectsLab {
         asset_base: String,
     ) -> Result<EffectsLab, JsValue> {
         console_error_panic_hook::set_once();
-        let mut renderer = Renderer::new(canvas, asset_base).await.map_err(js_error)?;
+        let mut renderer = Renderer::new(canvas, asset_base, true)
+            .await
+            .map_err(js_error)?;
         let mut ground = plane_geometry(GROUND_SIZE, GROUND_SIZE);
         ground.rotate_x(-std::f64::consts::FRAC_PI_2);
         let mut node = Node::mesh(

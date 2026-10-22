@@ -20,7 +20,8 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
-use super::house_layout::HouseDesign;
+use super::house_layout::{HouseDesign, HousePart};
+
 use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
 use super::match_state::{new_match, tick_match};
@@ -811,8 +812,14 @@ impl Simulation {
             if !hold {
                 fragment.life -= STEP;
             }
-            if fragment.life <= DEBRIS_CLEANUP_SECONDS {
+            // A collapse's rubble mound keeps to the cottage's own shards as it sinks:
+            // as plain debris it would block the tanks it never meant to.
+            let mound = fragment
+                .house_piece
+                .is_some_and(|piece| piece.part == HousePart::Mound);
+            if fragment.life <= DEBRIS_CLEANUP_SECONDS && !mound {
                 let body = fragment.body;
+
                 let collider = self.world.bodies[body].colliders()[0];
                 let collider = &mut self.world.colliders[collider];
                 if packed_groups(collider.collision_groups()) != group::FRAGMENT {

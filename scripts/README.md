@@ -273,8 +273,12 @@ time on an otherwise idle machine, and report sample counts with outliers.
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
-- `frame-pacing-check.mjs` reads `SLOPPY_PACING_SECONDS`, `SLOPPY_MAX_FRAME_MS`
-  and `SLOPPY_ARTIFACT_DIR`.
+- `frame-pacing-check.mjs` reads `SLOPPY_PACING_SECONDS`, `SLOPPY_MAX_FRAME_MS`,
+  `SLOPPY_PACING_MAPS` (comma-separated) and `SLOPPY_ARTIFACT_DIR`. It reports the
+  animation-frame gaps, the gaps between frames that drew and each drawn frame's
+  submit-to-GPU-done latency. `SLOPPY_BROWSER=webkit` measures Playwright's WebKit,
+  `SLOPPY_TABLET=1` an iPad-sized touch screen (1180x820 CSS at 2x) and
+  `SLOPPY_CPU_THROTTLE=4` Chrome with a slowed CPU.
 - For a loading comparison, save each production `dist` under
   `artifacts/performance/loading/<label>/` and keep each snapshot unchanged while
   measuring. Compare first content, menu appearance, final download and

@@ -42,6 +42,7 @@ web-sys = { workspace = true, features = [
   "WebGl2RenderingContext",
   "Event",
   "EventTarget",
+  "Performance",
 ] }
 
 [dev-dependencies]

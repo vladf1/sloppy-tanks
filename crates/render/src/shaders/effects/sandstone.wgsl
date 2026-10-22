@@ -167,6 +167,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let blend = weights / max(weights.x + weights.y + weights.z, 0.0001);
     let p = f.world;
     let footprint = quarry_footprint(p);
+    // Graphics tiers without fine detail (`fine_detail`) skip the close-up grain,
+    // the frost cracks and the small chips, lichen and freckles; with it this is 1
+    // and every weight is what it always was.
+    let tier_detail = select(0.0, 1.0, fine_detail());
     // The cover rocks take the photo at a finer scale: its laminations shrink
     // to a sandy grain instead of stretching into timber figure.
     let cover_rock = f.uv.x > 0.5 && f.uv.x < 99.5;
@@ -196,7 +200,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Close up (the hero and first-person cameras) a centimetre grain from the
     // grit tile takes over where the photo has run out of texels.
     let micro = dot(textureSample(extra_texture1, extra_sampler1, dominant * 5.3 + 0.19).rgb, LUMA);
-    let close = quarry_smoothstep(0.02, 0.004, footprint);
+    let close = quarry_smoothstep(0.02, 0.004, footprint) * tier_detail;
     // The cover rocks' caps are weathered to a granular crust: the grit tile's
     // speckle, not the photo's laminations, which read as wood figure from above.
     // Faces take the grit on their own dominant plane, never the top's
@@ -287,8 +291,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             second = cap_joint_set(p.xz, second_dir, CAP_JOINT_SPACING.y * joint_scale, rock_layer * 1.3 + 40.0, footprint, 1.0);
             // Frost cracks: a third, finer set at an angle to both, mostly shut,
             // splitting the slabs between the open joints into smaller plates.
-            let turn3 = turn + 0.7 + cap_hash.z * 0.5;
-            hairline = cap_joint_set(p.xz, vec2f(cos(turn3), sin(turn3)), CAP_HAIRLINE_SPACING * joint_scale, rock_layer * 1.3 + 77.0, footprint, 0.35);
+            if tier_detail > 0.0 {
+                let turn3 = turn + 0.7 + cap_hash.z * 0.5;
+                hairline = cap_joint_set(p.xz, vec2f(cos(turn3), sin(turn3)), CAP_HAIRLINE_SPACING * joint_scale, rock_layer * 1.3 + 77.0, footprint, 0.35);
+            }
         }
         cap_cracks = vec2f(max(max(first.crack, second.crack), hairline.crack * 0.8),
             max(max(first.shoulder, second.shoulder), hairline.shoulder * 0.5)) * top;
@@ -533,7 +539,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     rock = mix(rock, rock * vec3f(0.78, 0.72, 0.68), aged * top * select(0.0, 0.8, rocky && !backdrop));
     // Crustose lichen spots the oldest caprock: grey-green rosettes and the odd
     // orange one. The joints themselves are cut into the mesh.
-    let lichen = quarry_pebbles(p.xz * 1.6 + rock_layer * 5.1, 0.5, select(0.0, 0.1, rocky && !backdrop && !cover_rock) * top * (1.0 - worked), footprint, 41.0, 0.0);
+    let lichen = quarry_pebbles(p.xz * 1.6 + rock_layer * 5.1, 0.5, select(0.0, 0.1, rocky && !backdrop && !cover_rock) * top * (1.0 - worked) * tier_detail, footprint, 41.0, 0.0);
     let lichen_tint = select(vec3f(0.62, 0.62, 0.5), vec3f(1.0, 0.62, 0.34), lichen.tint.x > 1.1);
     rock = mix(rock, rock * lichen_tint, lichen.cover * 0.55 * quarry_smoothstep(0.4, 0.75, mottle));
     // Joints and frost cracks craze the caprock into plates: dark lines choked
@@ -548,7 +554,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let patina_field = strata_noise(p.xz * 0.9 + rock_layer * 1.9) * 0.62 + strata_noise(p.xz * 3.3 + rock_layer) * 0.38;
     let patina = quarry_smoothstep(0.56, 0.6, patina_field) * top * rock_body * select(1.0, 0.0, loose);
     rock = mix(rock, vec3f(dot(rock, LUMA)) * vec3f(0.84, 0.8, 0.76), patina * 0.55);
-    let freckles = quarry_pebbles(p.xz * 2.2 + rock_layer * 7.3, 0.6, select(0.0, 0.16, cover_rock && !loose) * top, footprint, 29.0, 0.4);
+    let freckles = quarry_pebbles(p.xz * 2.2 + rock_layer * 7.3, 0.6, select(0.0, 0.16, cover_rock && !loose) * top * tier_detail, footprint, 29.0, 0.4);
     let freckle_tint = select(vec3f(0.66, 0.66, 0.56), vec3f(1.0, 0.66, 0.38), freckles.tint.x > 0.98);
     rock = mix(rock, rock * freckle_tint, freckles.cover * 0.6);
     // The weathered lips round off paler; the groove holds deep shade, and sand
@@ -587,7 +593,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // as a pale strip between the cliffs.
     let pavement = up * select(0.0, 1.0, backdrop && !mesa) * quarry_smoothstep(66.0, 100.0, length(p.xz));
     rock = mix(rock, rock * vec3f(0.72, 0.66, 0.61), pavement * 0.78);
-    let chips = quarry_pebbles(p.xz, 0.55, select(0.0, select(0.14, 0.05, !backdrop), rocky && !cover_rock) * up * (1.0 - worked), footprint, 17.0, 1.0);
+    let chips = quarry_pebbles(p.xz, 0.55, select(0.0, select(0.14, 0.05, !backdrop), rocky && !cover_rock) * up * (1.0 - worked) * tier_detail, footprint, 17.0, 1.0);
     // Blast rubble left lying on the benches' shelves: boulders a metre or so
     // across with their shadows, so a tread reads as worked ground from above.
     let rubble = quarry_pebbles(p.xz, 1.9, select(0.0, 0.12, backdrop && !mesa) * up, footprint, 53.0, 0.9);

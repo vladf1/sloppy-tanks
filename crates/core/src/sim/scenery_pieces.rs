@@ -557,9 +557,9 @@ fn topple_tower(simulation: &mut Simulation, breakup: &mut Breakup) {
 /// up under the roof instead of laying its plaster out round the footprint like
 /// an unfolded box. Likelier still on the wall the shot struck.
 const WALL_TIP: (f64, f64) = (2.0, 2.6);
-const FALLS_IN: f64 = 0.9;
+const FALLS_IN: f64 = 0.96;
 const STRUCK_FALLS_IN: f64 = 1.0;
-const FAR_FALLS_IN: f64 = 0.75;
+const FAR_FALLS_IN: f64 = 0.85;
 /// The lower shards stand on as ragged stubs of wall round the pile, leaning in
 /// against it this far (rad), over this long (s) from when they lean, and let
 /// go as loose debris once the pile has settled.
@@ -567,7 +567,8 @@ const STUB_LEAN: (f64, f64) = (0.12, 0.32);
 const STUB_LEAN_TIME: f64 = 0.3;
 const STUB_RELEASE: f64 = 3.5;
 /// The chance a gable wall's upper shard folds in under the roof's rake.
-const GABLE_FALLS_IN: f64 = 0.15;
+const GABLE_FALLS_IN: f64 = 0.4;
+
 /// How fast (m/s) an upper wall shard starts down as the wall under it gives way,
 /// and how fast it is carried clear of the stub under it falling in and out.
 const UPPER_DROP: f64 = 0.1;
@@ -577,10 +578,10 @@ const OUT_TIP: f64 = 0.6;
 /// When (s) a stub of wall, landed, starts to lean in.
 const STUB_LEAN_AT: f64 = 0.05;
 /// Brick spill from the snapped chimney: count, brick size and how hard they are
-/// thrown off the stack (m/s).
-const LOOSE_BRICKS: usize = 7;
+/// thrown off the stack (m/s): enough to rattle down the pile and spill round it.
+const LOOSE_BRICKS: usize = 12;
 const BRICK_SIZE: [f64; 3] = [0.24, 0.08, 0.12];
-const BRICK_THROW: (f64, f64) = (1.0, 2.6);
+const BRICK_THROW: (f64, f64) = (0.4, 1.6);
 /// Sideways drift (m/s) and twist (rad/s) that keep neighbouring shards from
 /// falling as one sheet.
 const WALL_DRIFT: f64 = 0.35;
@@ -609,10 +610,22 @@ const ROOF_HOLD: f64 = 0.9;
 /// fast (m/s) it starts down.
 const ROOF_GIVE: f64 = 0.2;
 const ROOF_GIVE_DROP: f32 = 0.5;
+/// How fast (m/s) the ridge slabs start down as the roof gives, ahead of the eave
+/// slabs held up on the walls: the ridge snaps and caves into the house first, so
+/// the roof comes down broken, not as one sheet that lands whole on the pile.
+const RIDGE_GIVE_DROP: f32 = 1.8;
+/// The twist (rad/s about its face's normal) a ridge slab takes as it is freed to
+/// turn, each strip the other way, so the broken ridge lies skewed, not straight.
+const RIDGE_SNAP_TWIST: f32 = 0.5;
 /// How fast the chimney topples off the roof, and how fast (m/s) it is carried
-/// over the eave: gently enough that its stack lands on the wreck's edge.
+/// into the wreck: gently, so its stack lands broken on the pile.
 const CHIMNEY_TIP: (f64, f64) = (2.0, 2.6);
-const CHIMNEY_THROW: f64 = 1.2;
+const CHIMNEY_THROW: f64 = 0.5;
+/// The rubble mound's paint (crushed plaster, brick and lath) and its grip, high
+/// enough that a shard rests on its slopes.
+const MOUND_RUBBLE: u32 = 0x8f8170;
+const MOUND_FRICTION: f32 = 1.3;
+
 /// How far the blast carries every piece along its direction (m/s).
 const BLAST_CARRY: f64 = 0.7;
 /// Rafters thrown loose from the roof: count, section and stain.
@@ -655,7 +668,14 @@ const ROOF_TOPPLES: u8 = 3;
 /// The spin (rad/s per unit of tilt) that starts a roof slab lying back when it
 /// is freed to turn.
 const ROOF_SETTLE_SPIN: f32 = 1.4;
+
 const TOPPLE_SPIN: f32 = 2.0;
+/// Tries at tipping a standing wall shard onto the pile before it is tipped out.
+const INWARD_TOPPLES: u8 = 3;
+/// How far (m) past the cover box a falling roof slab's or chimney's centre may
+/// slide.
+const CONTAINED: f64 = 0.5;
+
 const TOPPLE_SHOVE: f32 = 0.7;
 /// How far a standing shard's top must lean (sine of the angle) to fall that way,
 /// and how many times one is tipped before it is left as it rests.
@@ -695,6 +715,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             .collect();
         let (color, material) = match part {
             HousePart::Chimney => (CHIMNEY_BRICK, DebrisMaterial::Concrete),
+            HousePart::Mound => (MOUND_RUBBLE, DebrisMaterial::Concrete),
             _ if part.is_roof() => (design.style.roof, DebrisMaterial::Wood),
             _ => (design.style.siding, DebrisMaterial::Wood),
         };
@@ -712,6 +733,21 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         fragment.house_piece = Some(shape.piece);
         fragment.house_id = Some(cover.id);
         let body = fragment.body;
+        if part == HousePart::Mound {
+            // The rubble the walls crush into lies where it heaps: a fixed pile
+            // the shards come to rest on, which nothing else touches.
+            let rigid_body = &mut simulation.world.bodies[body];
+            rigid_body.set_body_type(RigidBodyType::Fixed, true);
+            rigid_body.set_rotation(to_rotation(turn), true);
+            let collider = rigid_body.colliders()[0];
+            let collider = &mut simulation.world.colliders[collider];
+            collider.set_collision_groups(interaction_groups(group::HOUSE_MOUND));
+            collider.set_friction(MOUND_FRICTION);
+            continue;
+        }
+        let collider = simulation.world.bodies[body].colliders()[0];
+        simulation.world.colliders[collider]
+            .set_collision_groups(interaction_groups(group::HOUSE_SHARD));
         if !shape.overhang.is_empty() {
             // The slab's reach over the walls, its eaves and gutter, joins it
             // once the roof gives way ([`settle_house_pieces`]).
@@ -724,7 +760,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             let surface = debris_material(material);
             simulation.world.insert_collider(
                 convex_hull(&reach)
-                    .collision_groups(interaction_groups(group::PUSHABLE_DEBRIS))
+                    .collision_groups(interaction_groups(group::HOUSE_SHARD))
                     .density(SHARD_DENSITY * OVERHANG_DENSITY)
                     .friction(surface.friction as f32)
                     .restitution(surface.restitution as f32)
@@ -819,8 +855,10 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
                 DVec3::Y.cross(away) * rng.range(0.3, 0.7),
             )
         } else {
-            let away = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or_zero();
-            let toward = if kick.is_some() { fall } else { away };
+            // The top topples into the wreck (or the way a blast drives it), to
+            // lie broken on the pile rather than bowl out across the yard.
+            let away = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or(DVec3::X);
+            let toward = if kick.is_some() { fall } else { -away };
             let tip = rng.range(CHIMNEY_TIP.0, CHIMNEY_TIP.1);
             (
                 toward * CHIMNEY_THROW - DVec3::Y * 0.4,
@@ -875,13 +913,15 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
     let toward = if kick.is_some() {
         fall
     } else {
-        DVec3::new(flue.x, 0.0, flue.z).normalize_or(DVec3::X)
+        -DVec3::new(flue.x, 0.0, flue.z).normalize_or(DVec3::X)
     };
     for i in 0..LOOSE_BRICKS {
         let around = i as f64 / LOOSE_BRICKS as f64 * PI * 2.0;
+        // Courses shed down the stack as well as at the snap.
+        let course = (i % 3) as f64 * 0.22;
         let local = DVec3::new(
             flue.x + around.cos() * 0.45,
-            snap + breakup.rng.range(-0.1, 0.25),
+            snap - course + breakup.rng.range(-0.1, 0.2),
             flue.z + around.sin() * 0.45,
         );
         let at = design.to_world(local);
@@ -1020,7 +1060,21 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         let Some(piece) = fragment.house_piece else {
             continue;
         };
+        if piece.part == HousePart::Mound {
+            continue;
+        }
         let age = full - fragment.life;
+        if piece.part.is_roof() || piece.part == HousePart::Chimney {
+            // The roof and chimney come down on the wreck, not across the yard: a
+            // slab sliding out past the footprint's edge is stopped there.
+            let cover = fragment
+                .house_id
+                .and_then(|id| simulation.covers.iter().find(|cover| cover.id == id));
+            if let Some(cover) = cover {
+                let body = &mut simulation.world.bodies[fragment.body];
+                contain(body, cover);
+            }
+        }
         if let Some(stub) = fragment.house_stub {
             let body = &mut simulation.world.bodies[fragment.body];
             if age >= STUB_RELEASE {
@@ -1047,7 +1101,12 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             let body = &mut simulation.world.bodies[fragment.body];
             if body.is_translation_locked() {
                 body.lock_translations(false, true);
-                body.set_linvel(Vector::Y * -ROOF_GIVE_DROP, true);
+                let drop = if piece.shard.is_multiple_of(2) {
+                    RIDGE_GIVE_DROP
+                } else {
+                    ROOF_GIVE_DROP
+                };
+                body.set_linvel(Vector::Y * -drop, true);
                 // Its eaves now rest on whatever stands under them.
                 for &collider in body.colliders() {
                     simulation.world.colliders[collider].set_enabled(true);
@@ -1069,7 +1128,19 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 });
                 if let Some(normal) = normal {
                     let axis = normal.cross(Vector::Y);
-                    body.set_angvel(body.angvel() + axis * ROOF_SETTLE_SPIN, true);
+                    let twist = if !piece.shard.is_multiple_of(2) {
+                        0.0
+                    } else if (piece.shard / 2).is_multiple_of(2)
+                        == (piece.part == HousePart::RightRoof)
+                    {
+                        RIDGE_SNAP_TWIST
+                    } else {
+                        -RIDGE_SNAP_TWIST
+                    };
+                    body.set_angvel(
+                        body.angvel() + axis * ROOF_SETTLE_SPIN + normal * twist,
+                        true,
+                    );
                 }
             }
         }
@@ -1126,18 +1197,21 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                         // A roof slab falls back shingles up, the way that turns
                         // its top toward the sky, harder each try.
                         -flat
-                    } else if tries > 0 {
-                        // Blocked: over onto the open ground outside, harder each
-                        // try; past the last it is left as it rests.
+                    } else if tries >= INWARD_TOPPLES {
+                        // Blocked by the pile: over onto the open ground outside,
+                        // harder each try; past the last it is left as it rests.
                         outward
+                    } else if tries > 0 {
+                        // Onto the pile, harder each try.
+                        -outward
                     } else {
                         // A wall falls the way it already leans; one balanced on
-                        // edge falls outward.
+                        // edge falls in, onto the pile.
                         let lean = (*body.rotation() * Vector::Y).dot(flat);
                         if lean.abs() > LEANING {
                             flat * lean.signum()
                         } else {
-                            outward
+                            -outward
                         }
                     };
                     fragment.house_topples += 1;
@@ -1176,6 +1250,31 @@ fn shard_damping(piece: HousePiece, age: f64) -> (f32, f32) {
         ROOF_DAMPING
     } else {
         SHARD_DAMPING
+    }
+}
+
+/// Stop a roof slab or the chimney sliding out past the footprint's edge (its
+/// centre more than [`CONTAINED`] outside the cover box): its outward motion
+/// there is taken away, as the rubble it ploughs into would.
+fn contain(body: &mut rapier3d::prelude::RigidBody, cover: &Cover) {
+    let p = body.translation();
+    let mut v = body.linvel();
+    let (dx, dz) = (p.x - cover.x as f32, p.z - cover.z as f32);
+    let (hx, hz) = (
+        (cover.w / 2.0 + CONTAINED) as f32,
+        (cover.d / 2.0 + CONTAINED) as f32,
+    );
+    let mut stopped = false;
+    if dx.abs() > hx && v.x * dx > 0.0 {
+        v.x = 0.0;
+        stopped = true;
+    }
+    if dz.abs() > hz && v.z * dz > 0.0 {
+        v.z = 0.0;
+        stopped = true;
+    }
+    if stopped {
+        body.set_linvel(v, true);
     }
 }
 

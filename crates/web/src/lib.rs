@@ -10,6 +10,7 @@
 #![recursion_limit = "256"]
 
 pub mod events;
+pub mod frame_clock;
 pub mod hud;
 pub mod lab_scene;
 

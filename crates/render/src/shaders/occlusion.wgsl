@@ -1,6 +1,7 @@
-// Screen-space ambient occlusion at quarter size (`OCCLUSION_SCALE`). The main view's depth comes from a
-// header (`shader::occlusion_source`): WebGPU reads the multisampled depth, WebGL2
-// (which cannot) a single-sample copy the resolve blits. The header also sets
+// Screen-space ambient occlusion at quarter size. The main view's depth comes from a
+// header (`shader::occlusion_source`): WebGPU reads a half-size depth pass of the main
+// view's opaque draws, WebGL2 a full-size single-sample copy the resolve blits. The
+// header also sets `OCCLUSION_SCALE`, depth texels per occlusion texel, and
 // `SAMPLES`, the probes per pixel: fewer on WebGL's weaker devices. Each pixel rebuilds its world position and normal from
 // the main view's depth, then tests eight points of a hemisphere a metre or so around
 // it against the depth buffer. The kernel's rotation follows a 4×4 Bayer pattern, so
@@ -26,9 +27,6 @@ fn vs_occlusion(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
     let corner = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
     return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
 }
-
-// Full-size pixels per occlusion texel (`OCCLUSION_DOWNSCALE` in gpu/mod.rs).
-const OCCLUSION_SCALE: i32 = 4;
 
 const BAYER: array<f32, 16> = array<f32, 16>(
     0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0,
@@ -97,17 +95,17 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let offset = (tangent * cos(angle) * spread + bitangent * sin(angle) * spread + normal * elevation) * reach;
         let probe = center + offset;
         let clip = occlusion.view_projection * vec4f(probe, 1.0);
-        if clip.w <= 0.0 {
-            continue;
-        }
-        let ndc = clip.xy / clip.w;
-        let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
-        let scene = view_distance(depth_at(at, size_i));
-        let gap = clip.w - scene;
-        // Behind the scene's surface: occluded, unless the surface stands so far in
-        // front that it is a different object (the range check).
-        if gap > bias {
-            occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
+        // Only probes in front of the camera; no `continue`, so the loop unrolls.
+        if clip.w > 0.0 {
+            let ndc = clip.xy / clip.w;
+            let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
+            let scene = view_distance(depth_at(at, size_i));
+            let gap = clip.w - scene;
+            // Behind the scene's surface: occluded, unless the surface stands so far
+            // in front that it is a different object (the range check).
+            if gap > bias {
+                occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
+            }
         }
     }
     let open = 1.0 - occluded / f32(SAMPLES);
