@@ -2543,8 +2543,11 @@ impl Presentation {
                         // (`wreck-aging.ts`), fed per instance to the aging effect.
                         let since = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
                         let brightness = wreck_brightness(since) as f32;
+                        // How upright the piece lies, so embers glow only in a
+                        // hull resting on its tracks, never out of an upturned belly.
+                        let upright = (rotation * Vec3::Y).y;
                         self.renderer
-                            .set_instance_data(view.instance, [brightness, 1.0, 0.0, 0.0]);
+                            .set_instance_data(view.instance, [brightness, 1.0, upright, 0.0]);
                     }
                 }
             }

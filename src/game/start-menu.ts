@@ -119,8 +119,8 @@ export class StartMenu {
 
   private showReady(): void {
     this.overlay.dataset.state = "ready";
-    this.status.textContent = "Ready to play";
-    this.hint("All set. Hit GO when you’re ready.");
+    this.status.textContent = "Arena ready";
+    this.hint("");
   }
 
   private showFailure(error: unknown): void {

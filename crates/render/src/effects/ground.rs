@@ -27,7 +27,7 @@ const LANE: Soil = Soil {
     clods: [0x6b4a2c, 0x8a6440, 0x4d3520],
 };
 const MEADOW: Soil = Soil {
-    dust: 0x8f8460,
+    dust: 0x8a7764,
     clods: [0x4a3a26, 0x3f5a26, 0x5c4a30],
 };
 const CONCRETE: Soil = Soil {
