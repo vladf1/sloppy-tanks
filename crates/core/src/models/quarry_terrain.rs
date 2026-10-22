@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::geometry::{Mesh, plane_geometry_segments};
+use crate::geometry::Mesh;
 use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
 use super::effects_scenery::{GRIT, GRIT_TEXTURE, QUARRY_SOIL, QUARRY_SOIL_TEXTURE};
@@ -19,8 +19,12 @@ use crate::sim::quarry_layout::quarry_layout;
 use crate::sim::types::CoverKind;
 
 const EXTENT: f64 = QUARRY_TERRAIN_EXTENT;
-/// Grid resolution of the floor mesh (1.5 m cells).
-const FLOOR_SEGMENTS: u32 = 140;
+/// Largest floor cell where the ground is flat, in metres. The floor only bends
+/// along the bank (`quarry_ground_drop`); flat ground needs no vertices for its
+/// look, which comes from the soil bake and the per-pixel shading.
+const FLOOR_FLAT_CELL: f64 = 6.5;
+/// Floor cell across the bank, in metres.
+const FLOOR_BANK_CELL: f64 = 1.0;
 
 /// `sandAccum()`: windblown sand piled against cover, splatted once per layout
 /// into an `ACCUM_CELLS`² grid (f32, like the Float32Array) and sampled per pixel.
@@ -137,16 +141,47 @@ pub fn quarry_ground_drop(x: f64, z: f64) -> f64 {
     (outside.max(0.0) * QUARRY_BANK_SLOPE).min(QUARRY_APRON_DEPTH)
 }
 
+/// Grid lines of the floor along one axis: coarse over the flat yard and apron,
+/// fine across the bank, with lines on its top and toe so the creases stay sharp.
+fn floor_lines() -> Vec<f64> {
+    let toe = QUARRY_BANK_TOP + QUARRY_APRON_DEPTH / QUARRY_BANK_SLOPE;
+    let mut lines = vec![-EXTENT / 2.0];
+    let mut span = |from: f64, to: f64, cell: f64| {
+        let count = ((to - from) / cell).ceil().max(1.0);
+        for i in 1..=count as u32 {
+            lines.push(from + (to - from) * f64::from(i) / count);
+        }
+    };
+    span(-EXTENT / 2.0, -toe, FLOOR_FLAT_CELL);
+    span(-toe, -QUARRY_BANK_TOP, FLOOR_BANK_CELL);
+    span(-QUARRY_BANK_TOP, QUARRY_BANK_TOP, FLOOR_FLAT_CELL);
+    span(QUARRY_BANK_TOP, toe, FLOOR_BANK_CELL);
+    span(toe, EXTENT / 2.0, FLOOR_FLAT_CELL);
+    lines
+}
+
 /// `quarryTerrain()`: the metre-scaled work yard floor, flat to the wall's outer face
 /// and banking down to the machinery apron ([`quarry_ground_drop`]). Generated once
 /// for the retained scenery, never during round reset or rendering.
 pub fn quarry_terrain() -> Node {
-    let mut geometry = plane_geometry_segments(EXTENT, EXTENT, FLOOR_SEGMENTS, FLOOR_SEGMENTS);
-    geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
-    for p in &mut geometry.positions {
-        p[1] = -quarry_ground_drop(f64::from(p[0]), f64::from(p[2])) as f32;
+    let lines = floor_lines();
+    let n = lines.len() as u32;
+    let mut positions = Vec::with_capacity(lines.len() * lines.len() * 3);
+    let mut indices = Vec::new();
+    for (row, &z) in lines.iter().enumerate() {
+        for (col, &x) in lines.iter().enumerate() {
+            positions.extend([x, -quarry_ground_drop(x, z), z]);
+            let (row, col) = (row as u32, col as u32);
+            if row + 1 < n && col + 1 < n {
+                let a = row * n + col;
+                let b = a + n;
+                indices.extend([a, b, a + 1, b, b + 1, a + 1]);
+            }
+        }
     }
+    let mut geometry = Mesh::from_f64(&positions, &[], &[], Some(indices));
     geometry.compute_vertex_normals();
+    soil_uvs(&mut geometry);
     plain_soil_colors(&mut geometry);
     let mut floor = shadow_receiver(Arc::new(geometry), Arc::new(soil_material()));
     floor.name = "quarry-compacted-haul-roads".into();

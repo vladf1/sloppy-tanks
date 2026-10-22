@@ -101,7 +101,7 @@ fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     (p - a - ab * t).length()
 }
 
-fn polyline_distance(p: DVec2, points: &[[f64; 2]]) -> f64 {
+pub(super) fn polyline_distance(p: DVec2, points: &[[f64; 2]]) -> f64 {
     points
         .windows(2)
         .map(|pair| segment_distance(p, DVec2::from(pair[0]), DVec2::from(pair[1])))

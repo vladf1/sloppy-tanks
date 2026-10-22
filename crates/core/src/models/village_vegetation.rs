@@ -10,7 +10,7 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
 use crate::geometry::math::{compose, hex_to_linear, quat_from_euler};
 use crate::geometry::{Attribute, Mesh};
@@ -20,7 +20,7 @@ use crate::sim::data::ARENA;
 use crate::sim::types::{CoverKind, Team};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
-use super::village_ground::{farmed, road_wear};
+use super::village_ground::{SHORTCUTS, farmed, polyline_distance, road_wear};
 use super::village_landscape::{creek_at, creek_distance, valley_height_at};
 use super::village_roads::village_roads;
 use crate::sim::math::Random;
@@ -37,6 +37,11 @@ const FRINGE_STEP: f64 = 0.42;
 const TUFT_TURN: f64 = 6.28;
 /// Tuft tints, matched to the ground shader's grass greens.
 const TUFT_COLORS: [u32; 4] = [0x5d9236, 0x7ea845, 0x98b04e, 0x4b7f32];
+/// Tints of the tall tufts in the long-grass stands, matched to the ground
+/// shader's long turf.
+const LONG_TUFT_COLORS: [u32; 3] = [0x4c7a36, 0x5a873c, 0x6a8f44];
+/// Spacing of the long-grass candidates across the arena lawns.
+const STAND_STEP: f64 = 0.9;
 /// Meadow flowers: daisy, buttercup, harebell and campion.
 const FLOWER_COLORS: [u32; 4] = [0xf4f1e4, 0xf2c94a, 0xa58be0, 0xe99ab4];
 
@@ -71,7 +76,11 @@ fn tuft_geometry() -> Mesh {
             let n = DVec3::new(x * 0.35, 1.0, z * 0.35).normalize();
             normals.extend([n.x, n.y, n.z]);
         }
-        colors.extend([[0.5f32, 0.56, 0.42], [0.5, 0.56, 0.42], [1.12, 1.1, 0.95]]);
+        colors.extend([
+            [0.62f32, 0.68, 0.52],
+            [0.62, 0.68, 0.52],
+            [1.15, 1.13, 0.96],
+        ]);
     }
     let mut geometry = Mesh::from_f64(&positions, &normals, &[], None);
     geometry.colors = colors;
@@ -186,6 +195,52 @@ impl Meadow {
                 matrix: compose(DVec3::new(x, y + size * 0.62, z), tilt, DVec3::splat(bloom)),
                 color: instance_color(color),
             });
+        }
+    }
+}
+
+/// Where long grass stands, positive in the stands: the ground shader's
+/// `vg_long_grass` (`meadow_sway.wgsl`), so the tall tufts grow where it paints
+/// the long grass.
+pub fn long_grass(x: f64, z: f64) -> f64 {
+    (x * 0.083 + z * 0.041).sin() * (z * 0.067 - x * 0.029).cos() * 0.65
+        + (x * 0.19 - z * 0.16 + 1.3).sin() * 0.35
+}
+
+/// Tall, darker tufts through the long-grass stands of the arena lawns, in
+/// loose clumps that thin toward the stands' edges and keep off the worn
+/// shortcuts tanks drive across the lawns.
+fn long_stands(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
+    let reach = ARENA - 1.0;
+    let candidates = ((2.0 * reach / STAND_STEP).powi(2)) as usize;
+    for _ in 0..candidates {
+        let (px, pz) = (rng.range(-reach, reach), rng.range(-reach, reach));
+        let stand = long_grass(px, pz);
+        if stand < 0.12 || rng.next() > (stand - 0.12) * 3.0 {
+            continue;
+        }
+        if road_wear(px, pz) > -1.5 || clearings.blocks(px, pz) {
+            continue;
+        }
+        let p = DVec2::new(px, pz);
+        if SHORTCUTS
+            .iter()
+            .any(|(points, width)| polyline_distance(p, points) < width + 1.6)
+        {
+            continue;
+        }
+        let count = 1 + (rng.next() * 3.0) as usize;
+        for _ in 0..count {
+            if meadow.tufts.len() >= MEADOW_TUFTS {
+                return;
+            }
+            let (tx, tz) = (px + rng.range(-0.35, 0.35), pz + rng.range(-0.35, 0.35));
+            let size = rng.range(0.3, 0.62) * (0.75 + stand.min(0.6) * 0.5);
+            let tint = LONG_TUFT_COLORS[(rng.next() * 3.0) as usize % 3];
+            meadow.tuft(rng, tx, 0.02, tz, size, None);
+            if let Some(last) = meadow.tufts.last_mut() {
+                last.color = instance_color(tint);
+            }
         }
     }
 }
@@ -339,6 +394,7 @@ pub fn village_vegetation() -> Node {
     }
     fringe(&mut meadow, &mut rng, &clearings);
     reed_beds(&mut meadow, &mut rng);
+    long_stands(&mut meadow, &mut rng, &clearings);
     let Meadow {
         tufts,
         origins,
