@@ -58,15 +58,12 @@ use tracks::TrackTrails;
 use wood_chips::WoodChips;
 use wreck_fire::WreckFires;
 
-use crate::presentation::view_settings::FEEDBACK;
-
-/// The explosion flash (`presentation.ts` `flash`): a warm point light that game
-/// presentation and the effects lab both draw from `EffectSystems::flash`.
-pub const FLASH_COLOR: u32 = 0xffb468;
-pub const FLASH_INTENSITY: f32 = 70.0;
-pub const FLASH_DISTANCE: f32 = 24.0;
+/// Blasts, hits and burning wrecks light their surroundings through this many
+/// point lights, the brightest of them each frame (`EffectSystems::lights`).
+pub const FIRE_LIGHTS: usize = 3;
 pub const FLASH_DECAY: f32 = 2.0;
-const FLASH_HEIGHT: f32 = 3.0;
+/// Below this a light is switched off rather than shading every pixel.
+pub const LIGHT_CUTOFF: f32 = 0.05;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
 /// The muzzle flash light's color.
@@ -80,6 +77,20 @@ pub const PUFF_CAPACITY: usize = explosions::MAX_EXPLOSIONS * explosions::PUFFS_
 pub struct Flash {
     pub position: Vec3,
     pub intensity: f32,
+    pub color: u32,
+}
+
+/// Keep `light` in `lights` if it outshines the dimmest one there.
+pub fn offer_light(lights: &mut [Flash], light: Flash) {
+    if light.intensity <= LIGHT_CUTOFF {
+        return;
+    }
+    let dimmest = lights
+        .iter_mut()
+        .min_by(|a, b| a.intensity.total_cmp(&b.intensity));
+    if let Some(slot) = dimmest.filter(|slot| slot.intensity < light.intensity) {
+        *slot = light;
+    }
 }
 
 /// Live effect counts, for tests and "Stats for nerds".
@@ -121,7 +132,8 @@ pub struct EffectSystems {
     pub wrecks: WreckFires,
     pub laser: LaserVisuals,
     pub pickups: PickupEffects,
-    pub flash: Flash,
+    /// This frame's brightest fire lights.
+    pub lights: [Flash; FIRE_LIGHTS],
 }
 
 impl EffectSystems {
@@ -139,7 +151,7 @@ impl EffectSystems {
         self.wrecks.reset();
         self.laser.reset();
         self.pickups.reset();
-        self.flash = Flash::default();
+        self.lights = [Flash::default(); FIRE_LIGHTS];
     }
 
     /// The visual response to one simulation event (`presentation.ts` `event`).
@@ -163,12 +175,7 @@ impl EffectSystems {
         self.wood.event(event, &mut self.random);
         self.muzzle.event(event);
         self.wrecks.event(event, &mut self.random);
-        if self.particles.event(event, &mut self.random) {
-            self.flash = Flash {
-                position: Vec3::new(event.x as f32, FLASH_HEIGHT, event.z as f32),
-                intensity: FLASH_INTENSITY,
-            };
-        }
+        self.particles.event(event, &mut self.random);
     }
 
     /// Leaves shaken from `crown` by a tree hit or felling, once presentation knows
@@ -186,7 +193,6 @@ impl EffectSystems {
         self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
-        self.flash.intensity *= (-dt * FEEDBACK.flash_decay).exp() as f32;
         self.projectiles.update(&state.shots, time, alpha);
         self.rocket_smoke
             .update(&state.shots, alpha, dt, &mut self.random);
@@ -206,10 +212,18 @@ impl EffectSystems {
             &mut particles.explosions.puffs,
             &mut self.random,
         );
-        self.wrecks
-            .update(state, dt, &mut particles.explosions.puffs);
+        self.wrecks.update(
+            state,
+            dt,
+            &mut particles.explosions.puffs,
+            &mut particles.sparks,
+            &mut self.random,
+        );
         self.leaves.update(dt, &mut self.random);
         self.wood.update(dt, &mut self.random);
+        self.lights = [Flash::default(); FIRE_LIGHTS];
+        self.particles.explosions.lights(&mut self.lights);
+        self.wrecks.lights(&mut self.lights);
     }
 
     /// Every pool buffer, in `looks::pool_descs` order.
@@ -278,14 +292,13 @@ mod browser {
     use super::muzzle::MUZZLE_LIGHT_DISTANCE;
     use glam::Vec3;
 
-    use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE, MUZZLE_FLASH_COLOR};
+    use super::explosions::BLAST_LIGHT_DISTANCE;
+    use super::{EffectSystems, FLASH_DECAY, LIGHT_CUTOFF, MUZZLE_FLASH_COLOR};
     use crate::gpu::{PointLight, PoolId, Renderer};
 
-    /// The point-light slots the explosion and muzzle flashes use.
-    const FLASH_LIGHT: usize = 0;
+    /// The point-light slots the fire lights and the muzzle flash use.
+    const FIRE_LIGHT_SLOTS: [usize; super::FIRE_LIGHTS] = [0, 2, 3];
     const MUZZLE_LIGHT: usize = 1;
-    /// Below this the light is switched off rather than shading every pixel.
-    const FLASH_CUTOFF: f32 = 0.01;
 
     /// The effect systems bound to renderer pools (created once, kept across rounds).
     pub struct Effects {
@@ -353,21 +366,22 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-            let flash = systems.flash;
-            renderer.set_point_light(
-                FLASH_LIGHT,
-                (flash.intensity > FLASH_CUTOFF).then_some(PointLight {
-                    position: flash.position,
-                    color: FLASH_COLOR,
-                    intensity: flash.intensity,
-                    distance: FLASH_DISTANCE,
-                    decay: FLASH_DECAY,
-                }),
-            );
+            for (slot, light) in FIRE_LIGHT_SLOTS.into_iter().zip(systems.lights) {
+                renderer.set_point_light(
+                    slot,
+                    (light.intensity > LIGHT_CUTOFF).then_some(PointLight {
+                        position: light.position,
+                        color: light.color,
+                        intensity: light.intensity,
+                        distance: BLAST_LIGHT_DISTANCE,
+                        decay: FLASH_DECAY,
+                    }),
+                );
+            }
             let muzzle = systems.muzzle.light;
             renderer.set_point_light(
                 MUZZLE_LIGHT,
-                (muzzle.intensity > FLASH_CUTOFF).then_some(PointLight {
+                (muzzle.intensity > LIGHT_CUTOFF).then_some(PointLight {
                     position: muzzle.position,
                     color: MUZZLE_FLASH_COLOR,
                     intensity: muzzle.intensity,
@@ -456,12 +470,18 @@ mod tests {
         promotion.color = Some(0xffcf54);
         systems.event(&promotion);
         assert_eq!(systems.pickups.len(), 1);
-        assert_eq!(systems.flash.intensity, 0.0);
+        systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        assert!(systems.lights.iter().all(|light| light.intensity == 0.0));
         let mut blast = SimEvent::at(SimEventType::Explosion, 5.0, -4.0);
         blast.size = Some(4.0);
         systems.event(&blast);
-        assert_eq!(systems.flash.intensity, FLASH_INTENSITY);
-        assert_eq!(systems.flash.position, Vec3::new(5.0, 3.0, -4.0));
+        systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        let lit = systems
+            .lights
+            .iter()
+            .find(|light| light.intensity > 10.0)
+            .expect("the blast lights its surroundings");
+        assert_eq!((lit.position.x, lit.position.z), (5.0, -4.0));
         let mut drum = SimEvent::at(SimEventType::Destroy, 0.0, 0.0);
         drum.cover_kind = Some(CoverKind::Drum);
         systems.event(&drum);
@@ -483,8 +503,8 @@ mod tests {
         }
         assert!(systems.particles.particles.is_empty());
         assert_eq!(systems.particles.explosions.active(), 2);
-        assert_eq!(systems.flash.intensity, 0.0);
         systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        assert!(systems.lights.iter().all(|light| light.intensity == 0.0));
         let stats = systems.stats();
         assert_eq!(stats.particles, 0);
         assert_eq!(stats.wood_chips as usize, systems.wood.len());

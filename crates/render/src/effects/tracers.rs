@@ -11,21 +11,26 @@ use sloppy_core::sim::render_state::RenderShot;
 
 use super::pool::PoolBuffer;
 use super::projectiles::{PROJECTILE_CAPACITY, shot_position};
-use super::sparks::{glow, streak};
+use super::sparks::{glow, tracer_streak};
 use crate::color::hex_to_linear;
 
 /// How hot a tracer burns over its team's color, and the white it adds.
-const TRACER_GAIN: f32 = 3.2;
-const TRACER_WHITE: f32 = 0.9;
-const TRACER_OPACITY: f32 = 0.85;
+const TRACER_GAIN: f32 = 3.6;
+const TRACER_WHITE: f32 = 0.7;
+const TRACER_OPACITY: f32 = 0.9;
+/// A tracer's width grows with its shell's speed: this many metres per m/s.
+const WIDTH_PER_SPEED: f32 = 0.0035;
+/// The head's hot halo, and the white-hot point inside it.
+const HALO_OPACITY: f32 = 0.55;
+const HEAD_WHITE: [f32; 4] = [3.2, 2.9, 2.4, 0.95];
 
-/// A munition's tracer: streak length and width, and head glow diameter (m).
+/// A munition's tracer: tail length and width, and head glow diameter (m).
 fn tracer(kind: Weapon) -> Option<(f32, f32, f32)> {
     match kind {
-        Weapon::Standard => Some((3.0, 0.2, 0.75)),
-        Weapon::Spread => Some((1.5, 0.15, 0.5)),
-        Weapon::Piercing => Some((4.0, 0.15, 0.6)),
-        Weapon::Ricochet => Some((1.8, 0.2, 0.75)),
+        Weapon::Standard => Some((5.5, 0.2, 1.1)),
+        Weapon::Spread => Some((2.4, 0.13, 0.65)),
+        Weapon::Piercing => Some((7.0, 0.14, 0.9)),
+        Weapon::Ricochet => Some((3.0, 0.18, 1.0)),
         // Missiles carry their own flame and smoke trail.
         Weapon::Rocket | Weapon::Tow => None,
     }
@@ -86,16 +91,18 @@ impl Tracers {
                 }
             };
             let length = length.min(position.distance(start)).max(width);
+            let width = width + speed as f32 * WIDTH_PER_SPEED;
             let [r, g, b] = self.colors[shot.team.index()];
-            streak(
+            tracer_streak(
                 streaks,
-                position - direction * (length * 0.5),
+                position,
                 direction,
                 width,
                 length,
                 [r, g, b, TRACER_OPACITY],
             );
-            glow(streaks, position, head, [r, g, b, TRACER_OPACITY]);
+            glow(streaks, position, head, [r, g, b, HALO_OPACITY]);
+            glow(streaks, position, head * 0.35, HEAD_WHITE);
         }
     }
 }
@@ -128,7 +135,7 @@ mod tests {
             shell(2, Weapon::Rocket, 0.0),
         ];
         tracers.update(&shots, 1.0, &mut streaks);
-        assert_eq!(streaks.len(), 2, "one shell's streak and head");
+        assert_eq!(streaks.len(), 3, "one shell's tail, halo and hot head");
         let first = streaks.records()[0].world().y_axis.length();
         streaks.clear();
         let shots = [shell(1, Weapon::Standard, 2.0)];
