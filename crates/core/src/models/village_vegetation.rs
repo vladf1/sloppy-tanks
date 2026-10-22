@@ -891,7 +891,7 @@ fn tuft_cells(tufts: Vec<Instance>, origins: Vec<f32>) -> Vec<(Vec<Instance>, Ve
     let across = (2.0 * ARENA / TUFT_CELL).ceil() as usize;
     let mut cells: Vec<(Vec<Instance>, Vec<f32>)> =
         vec![(Vec::new(), Vec::new()); across * across + 1];
-    for (tuft, origin) in tufts.into_iter().zip(origins.chunks_exact(2)) {
+    for (tuft, origin) in tufts.into_iter().zip(origins.as_chunks::<2>().0) {
         let (x, z) = (f64::from(origin[0]), f64::from(origin[1]));
         let cell = if x.abs() < ARENA && z.abs() < ARENA {
             let column = (((x + ARENA) / TUFT_CELL) as usize).min(across - 1);

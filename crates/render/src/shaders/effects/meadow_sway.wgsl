@@ -1279,9 +1279,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
             let lost = mix(lost_far, sett.lost, joint_view);
             paved = (1.0 - smoothstep(-aa, aa, -inward)) * (1.0 - lost);
             paved_soft = (1.0 - smoothstep(-0.06, 0.06, -inward)) * (1.0 - lost);
-            // Earth spills furthest in where the edge has broken.
-            let reach = max(mix(0.12, 2.6, smoothstep(0.35, 0.8, vg_noise(p * 0.16 + 3.0))), square_loss * 1.7);
-            let against = 1.0 - smoothstep(0.0, reach, inward + (vg_noise(p * 1.3 + 5.0) - 0.5) * 0.3);
+            // Earth drifts in from the paving's rim: the kerb where it stands,
+            // the ragged rim of the bites where the stones have gone, spilling
+            // furthest where the edge has broken.
+            let rim_in = inward - square_loss * 0.91;
+            let reach = mix(0.12, 2.6, smoothstep(0.35, 0.8, vg_noise(p * 0.16 + 3.0))) + square_loss * 0.6;
+            let against = 1.0 - smoothstep(0.0, reach, rim_in + (vg_noise(p * 1.3 + 5.0) - 0.5) * 0.3);
             let trodden = smoothstep(0.58, 0.86, vg_noise(p * 0.18 + 9.0) * 0.7 + vg_noise(p * 0.9 + 2.0) * 0.3) * (1.0 - packed * 0.4);
             let earth = max(against * mix(0.75, 1.15, vg_noise(p * 0.6 + 11.0)), trodden * 0.8);
             // The joints fill first and the proudest crowns last; far off the
@@ -1763,7 +1766,7 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // faces (the noise is stretched along y), broken outcrops on gentle ground.
     // Sharp blends between the three projections: a wide blend smudges two
     // stretched patterns into one smear.
-    var weights = pow(abs(smooth_normal), vec3f(7.0));
+    var weights = pow(abs(smooth_normal), vec3f(5.0));
     weights = weights / (weights.x + weights.y + weights.z);
     let fine = 1.0 - smoothstep(0.35, 1.2, footprint);
     // The ribs are only a little longer down the fall line than across it, so
@@ -1796,15 +1799,18 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // gullies, with a soft step between, rather than a smooth airbrush.
     let rock_value = crag * 0.85 + tone * 0.3;
     let rock_aa = max(fwidth(rock_value), 0.02);
-    let rock_step = smoothstep(0.3 - rock_aa, 0.3 + rock_aa, rock_value) * 0.3 + smoothstep(0.5 - rock_aa, 0.5 + rock_aa, rock_value) * 0.4
-        + smoothstep(0.72 - rock_aa, 0.72 + rock_aa, rock_value) * 0.3;
-    var rock = mix(vg_linear(0x615e57), vg_linear(0xb0a792), mix(smoothstep(0.15, 0.75, rock_value), rock_step, 0.7));
+    let rock_step = smoothstep(0.45 - rock_aa, 0.45 + rock_aa, rock_value) * 0.6 + smoothstep(0.7 - rock_aa, 0.7 + rock_aa, rock_value) * 0.4;
+    // The steps belong to the steep faces' ribs; on gentler ground they would
+    // outline the outcrops' noise like camouflage.
+    var rock = mix(vg_linear(0x6a675f), vg_linear(0xaca390), mix(smoothstep(0.15, 0.75, rock_value), rock_step, 0.4 * (1.0 - weights.y)));
     rock = rock * mix(0.96, 1.03, bedding * fine);
     rock = mix(rock, rock * vec3f(0.8, 0.84, 0.9), (1.0 - smoothstep(0.04, 0.4, crag)) * 0.25 * (1.0 - weights.y * 0.6));
     rock = mix(rock, vg_linear(0x5b684f), (1.0 - smoothstep(14.0, 30.0, p.y + crag * 6.0)) * 0.55);
 
     // Derivatives first, ahead of the woods' loop.
-    let snow_drive = (p.y - snowline) / 4.0 + (up - 0.55) * 2.6 + (0.45 - crag) * 2.2 + (tone - 0.5) * 1.6;
+    // The rock's ribs shape the snow's edge, not broad noise: fingers of snow
+    // down the gullies rather than islands dappling a face.
+    let snow_drive = (p.y - snowline) / 4.0 + (up - 0.55) * 2.6 + (0.45 - crag) * 2.6 + (tone - 0.5) * 0.7;
     let snow_aa = max(fwidth(snow_drive), 0.04);
 
     // Forest: a painted matte of conifer woods. Each stand is a dark mass of

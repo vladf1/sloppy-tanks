@@ -448,8 +448,8 @@ fn scenery_matches_typescript() {
 /// (`Math.round(n * 65536) >>> 0`, FNV-1a): how many batches the cells hold and
 /// the FNV-1a of their hashes in order, as the Pine Village art pass left them
 /// (one atlas batch per cell and compass sector; far conifers as solid whorls,
-/// a mostly conifer near treeline).
-const FOREST_NORMALS: (usize, u32) = (16, 0x7fef_0909);
+/// a mostly conifer near treeline, shrubs grown against the wall's outside).
+const FOREST_NORMALS: (usize, u32) = (16, 0x8800_3923);
 
 #[test]
 fn forest_normals_match_typescript_on_a_grid() {
