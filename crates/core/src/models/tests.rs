@@ -79,12 +79,12 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 133, 21204, 7094, 110, 12, 6, 0),
-        (VehicleKind::Scout, 1, 133, 21294, 7124, 110, 12, 6, 0),
-        (VehicleKind::Balanced, 0, 150, 22992, 7690, 126, 12, 7, 0),
-        (VehicleKind::Balanced, 1, 150, 23034, 7704, 126, 12, 7, 0),
-        (VehicleKind::Heavy, 0, 137, 23736, 7938, 113, 12, 7, 0),
-        (VehicleKind::Heavy, 1, 137, 23694, 7924, 113, 12, 7, 0),
+        (VehicleKind::Scout, 0, 133, 21156, 7086, 110, 12, 6, 0),
+        (VehicleKind::Scout, 1, 133, 21246, 7116, 110, 12, 6, 0),
+        (VehicleKind::Balanced, 0, 150, 22944, 7682, 126, 12, 7, 0),
+        (VehicleKind::Balanced, 1, 150, 22986, 7696, 126, 12, 7, 0),
+        (VehicleKind::Heavy, 0, 137, 23688, 7930, 113, 12, 7, 0),
+        (VehicleKind::Heavy, 1, 137, 23646, 7916, 113, 12, 7, 0),
         (VehicleKind::Humvee, 0, 32, 32634, 10904, 12, 6, 4, 4),
         (VehicleKind::Humvee, 1, 32, 32634, 10904, 12, 6, 4, 4),
     ];
@@ -106,9 +106,9 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (136, 21718, 7312)),
-        (VehicleKind::Balanced, (153, 23506, 7908)),
-        (VehicleKind::Heavy, (140, 24250, 8156)),
+        (VehicleKind::Scout, (136, 21670, 7304)),
+        (VehicleKind::Balanced, (153, 23458, 7900)),
+        (VehicleKind::Heavy, (140, 24202, 8148)),
         (VehicleKind::Humvee, (32, 32634, 10904)),
     ];
     for (kind, expected) in open {
@@ -216,31 +216,31 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3288, 0xdce2fdb4, 1895.8762, 0xa9da9e3f, 0xf0361396),
+            (3288, 0xdce2fdb4, 1895.8762, 0xa9da9e3f, 0xd49c34d2),
             (3522, 0xe910d1f9, 2351.8751, 0x3502a7c6, 0x92381cb9),
-            (666, 0x985c2eba, 279.3541, 0xaded77ac, 0x8a737151),
-            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0xc415b1ce),
+            (594, 0x1fdb38d4, 274.3541, 0xdee32360, 0xcf36a52b),
+            (180, 0x88dc8d75, 40.8671, 0x76c795e5, 0xa23f056c),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (4392, 0x4bdecb59, -17.7343, 0x1ed3cce5, 0x902aa900),
+            (4392, 0x4bdecb59, -17.7343, 0x1ed3cce5, 0x564f6348),
             (1344, 0x3d775bdd, 2.8138, 0xb6ce257d, 0x2add3aad),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x20c058ba),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xd6c2bec2),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x1593f5ea),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (5436, 0x019db6bd, 3799.2748, 0xa25cc151, 0x4522bcd3),
-            (7206, 0xe1047e7f, 1077.4550, 0x4826094f, 0x0bf2ddef),
-            (2268, 0x317b2488, 3230.5660, 0x9d30f92c, 0x605b0e50),
-            (468, 0xf62d1b53, -37.2676, 0x2cea9759, 0xa0daa990),
-            (3852, 0x85f249fd, 5.7848, 0xc66fb1b5, 0x35b80f2f),
+            (5436, 0xda42b3f8, 3748.4700, 0xfdf9f5e0, 0x60fc2b6f),
+            (7206, 0x73d12bf0, 1072.9551, 0x4826094f, 0x8109b9b1),
+            (2190, 0x9fb9195c, 3065.8377, 0xd9b17b40, 0xf80d7b96),
+            (540, 0xabdb0fb7, -64.5104, 0x54b5ab99, 0x4ee6d521),
+            (3852, 0x85f249fd, 5.7848, 0xc66fb1b5, 0x96fe6237),
             (1344, 0x546c08d5, 1.5827, 0x10f8f7cd, 0x234753be),
-            (384, 0xf38459b3, 3.9914, 0x7f59b8e5, 0x37d5e015),
+            (384, 0x13c12cb7, 3.9914, 0x7f59b8e5, 0x9618c970),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0xeee2f49e),
+            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x1a5dedd8),
             (936, 0x42d872bf, 290.0387, 0xf6fa33ae, 0xb9eee0c3),
             (300, 0x32eb4057, -4.8805, 0x5fe93231, 0xba882798),
         ]),

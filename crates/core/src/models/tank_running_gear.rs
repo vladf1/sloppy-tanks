@@ -22,9 +22,9 @@ use glam::{DVec2, DVec3};
 use super::super::Team;
 use super::super::model_primitives::{Cache, box_part, material, put, shadowed};
 use super::super::tank_kit::planar_uv;
-use super::super::tank_surfaces::{TRACK_BELT_PERIOD, track_belt_material};
+use super::super::tank_surfaces::{TRACK_BELT_PERIOD, track_belt_material, vehicle_glass};
 use super::super::vertex_material;
-use super::{Chassis, MARKING_WHITE};
+use super::{Chassis, GLASS_TINT, STENCIL};
 use crate::geometry::Mesh;
 use crate::geometry::math::hex_to_linear;
 use crate::scene::{Material, Node};
@@ -44,22 +44,21 @@ const WHEEL_SIDES: u32 = 10;
 const ROLLER_SIDES: u32 = 10;
 const HUB_BOLTS: u32 = 5;
 
-const HEADLIGHT: u32 = 0xd9e6df;
 /// Rubber pads and skirt edges: near black.
 const RUBBER: u32 = 0x202122;
 /// Road wheel tyres: a black rubber sidewall and a lighter, scuffed tread band,
 /// so each wheel reads as a rubber tyre round its painted disc.
 const TYRE_SIDEWALL: u32 = 0x232425;
-const TYRE_TREAD: u32 = 0x37383a;
+const TYRE_TREAD: u32 = 0x2e2f31;
 /// Dark worn track steel: the vertex-colored running gear's base color.
 const TRACK_STEEL: u32 = 0x4a4844;
-/// Road wheel discs: bare cast steel rather than the team paint, so the running
-/// gear reads as its own material under the painted armor, a row of grey discs
-/// ringed by black rubber over the dark belt. A brighter hub cap and bolt heads
-/// sit in their centre.
-const WHEEL_DISC: u32 = 0x5d605f;
-const HUB_STEEL: u32 = 0x5f5c56;
-const HUB_BOLT: u32 = 0x7f7b73;
+/// Road wheel discs: dark cast steel rather than the team paint, a step darker
+/// than the hull, so the running gear reads as its own material under the painted
+/// armor: a row of dark discs ringed by black rubber over the dark belt, each with
+/// a bright hub cap and bolt heads catching the light in its centre.
+const WHEEL_DISC: u32 = 0x404342;
+const HUB_STEEL: u32 = 0x7d7a73;
+const HUB_BOLT: u32 = 0x9c978d;
 /// The sprocket and return rollers: bare dark steel.
 const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a
@@ -834,7 +833,7 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
             }
         }
     }
-    // The team insignia, large and white, on one panel under the turret.
+    // The team's tactical sign, stencilled small on one panel under the turret.
     let insignia_panel = match gear.skirt {
         SkirtStyle::Booker => 1,
         SkirtStyle::Abrams => 2,
@@ -844,7 +843,7 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
         let height = (top - bottom) * INSIGNIA_HEIGHT;
         let part = shadowed(
             insignia_mesh(c.team, height, side),
-            material(MARKING_WHITE, 0.0, 0.85),
+            material(STENCIL, 0.0, 0.85),
         );
         put(
             hull,
@@ -877,7 +876,7 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
 
 /// The skirt insignia's height as a share of the skirt's, and how far it stands
 /// proud of the panel (still inside the fender edge).
-const INSIGNIA_HEIGHT: f64 = 0.5;
+const INSIGNIA_HEIGHT: f64 = 0.34;
 const INSIGNIA_PROUD: f64 = 0.003;
 
 static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new();
@@ -1057,17 +1056,17 @@ fn armour_blocks(
     }
 }
 
-/// A lamp in a steel housing behind a three-bar brush guard.
+/// A lamp in a steel housing behind a three-bar brush guard. The lens is the
+/// sights' glass, so it mirrors the sky like a lamp's glass rather than reading as
+/// a flat white block (it shares the hull's glass draw).
 fn headlight(hull: &mut Node, c: &Chassis, side: f64) {
     let (x, y, z) = (side * 0.65, c.deck - 0.1, c.length / 2.0 - 0.07);
     put(hull, box_part(0.17, 0.12, 0.1, c.steel, 0.0), x, y, z);
-    put(
-        hull,
-        box_part(0.12, 0.075, 0.012, HEADLIGHT, 0.0),
-        x,
-        y,
-        z + 0.052,
-    );
+    let mut lens = box_part(0.12, 0.075, 0.012, 0, 0.0);
+    if let Some(drawable) = &mut lens.drawable {
+        drawable.material = vehicle_glass(GLASS_TINT);
+    }
+    put(hull, lens, x, y, z + 0.052);
     // A brush guard: two uprights under a top bar that reaches back to the housing.
     for dx in [-0.1, 0.1] {
         put(

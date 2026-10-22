@@ -162,13 +162,13 @@ fn roof_chevron(kit: &mut Kit) {
     }
 }
 
-/// The team's insignia, large and white on the hood's raised centre, as on the
-/// tanks' turret roofs (a diamond for blue, a forward-pointing arrowhead for red),
-/// so a Humvee reads as its team from the overhead camera: centre station, half
-/// width and length, and how far it stands off the crown.
+/// The team's tactical sign, stencilled small in faded paint on the hood's raised
+/// centre, as on the tanks' turret roofs (a diamond for blue, a forward-pointing
+/// arrowhead for red): centre station, half width and length, and how far it
+/// stands off the crown.
 const INSIGNIA_Z: f64 = 1.44;
-const INSIGNIA_HALF_WIDTH: f64 = 0.4;
-const INSIGNIA_LENGTH: f64 = 0.7;
+const INSIGNIA_HALF_WIDTH: f64 = 0.2;
+const INSIGNIA_LENGTH: f64 = 0.36;
 const INSIGNIA_PROUD: f64 = 0.004;
 
 pub(super) fn hood_insignia(team: Team) -> Mesh {

@@ -1742,10 +1742,11 @@ fn extra_stowage(kit: &mut Kit, c: &Chassis, variant: u8) {
     }
 }
 
-/// The team's insignia, large and white on the turret roof, the same on every tank
-/// of a team (a diamond for blue, a forward-pointing arrowhead for red, like the
-/// skirts' triangle), so team and facing read from the overhead camera without relying on
-/// hue alone; a dark keyline round it keeps it crisp over the paint. Stencilled
+/// The team's tactical sign, small and stencilled in faded paint on the turret
+/// roof, the same on every tank of a team (a diamond for blue, a forward-pointing
+/// arrowhead for red, like the skirts' sign), so team and facing still read from
+/// the overhead camera without relying on hue alone, while the turret roof keeps
+/// its shape (a large white sign read as a hole in it). Stencilled
 /// unit numbers on both turret sides, the turret band and the livery's extra
 /// stowage. The crew livery (the one a human player's tank wears) paints its band
 /// white: the command tank's mark. The gun's white bands give the class.
@@ -1762,9 +1763,9 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         );
     }
     let roof = c.deck + roof_rise(c);
-    let length = c.pick(0.74, 0.88, 0.78);
-    let half_width = c.pick(0.34, 0.41, 0.4);
-    let centre = DVec2::new(0.0, c.pick(0.3, 0.36, 0.28));
+    let length = c.pick(0.34, 0.4, 0.42);
+    let half_width = c.pick(0.16, 0.19, 0.2);
+    let centre = DVec2::new(0.0, c.pick(0.34, 0.42, 0.34));
     let outline: Vec<DVec2> = if team == Team::Blue {
         p2(&[(0.0, 0.5), (-1.0, 0.0), (0.0, -0.5), (1.0, 0.0)])
     } else {
@@ -1773,13 +1774,7 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     .into_iter()
     .map(|p| centre + DVec2::new(p.x * half_width, p.y * length))
     .collect();
-    roof_sign(
-        kit,
-        Coat::Dark,
-        &inset(&outline, -INSIGNIA_KEYLINE),
-        roof + 0.002,
-    );
-    roof_sign(kit, Coat::Marking, &outline, roof + 0.004);
+    roof_sign(kit, Coat::Stencil, &outline, roof + 0.003);
     let number = unit_number(c.kind, team, variant);
     let d = c.deck;
     for side in [-1.0, 1.0] {
@@ -1804,9 +1799,6 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         stencil_number(kit, number, center, right, up, c.pick(0.2, 0.24, 0.27));
     }
 }
-
-/// The width of the dark keyline round the roof insignia.
-const INSIGNIA_KEYLINE: f64 = 0.035;
 
 /// A flat sign painted on a roof at height `y`, from its plan outline (fanned from
 /// its first corner, which must see every other).

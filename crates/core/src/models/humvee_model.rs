@@ -13,7 +13,7 @@
 use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
-use super::tank_model::LENS_ROUGHNESS;
+use super::tank_model::{LENS_ROUGHNESS, STENCIL};
 use super::tank_surfaces::vehicle_glass;
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
@@ -48,11 +48,9 @@ const RUBBER: u32 = 0x2d3031;
 const GLASS: u32 = 0x1f3a40;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
-const HEADLAMP: u32 = 0xe5ddbc;
+const HEADLAMP: u32 = 0x8f918b;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
-/// The hood insignia's white, the tanks' marking white.
-const INSIGNIA_WHITE: u32 = 0xdce7ee;
 /// Rubber, seals and canvas are matte.
 const MATTE_ROUGHNESS: f64 = 0.92;
 
@@ -91,7 +89,8 @@ impl Palette {
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
             Role::Glass => vehicle_glass(GLASS),
-            // Lamps draw with the matte fittings: three draws fewer per Humvee.
+            // Lamps draw with the matte fittings: three draws fewer per Humvee. The
+            // headlamp lenses are an unlit grey glass rather than white blocks.
             Role::Headlamp => material(HEADLAMP, 0.0, LENS_ROUGHNESS),
             Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
             Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
@@ -139,7 +138,7 @@ pub(super) fn humvee_model(team: Team, colors: [u32; 3]) -> Node {
     hull.children.extend(palette.parts(&shared.body));
     hull.children.push(shadowed(
         Arc::new(hood_insignia(team)),
-        material(INSIGNIA_WHITE, 0.0, MATTE_ROUGHNESS),
+        material(STENCIL, 0.0, MATTE_ROUGHNESS),
     ));
     root.children.push(hull);
     root.children.push(turret(&palette));

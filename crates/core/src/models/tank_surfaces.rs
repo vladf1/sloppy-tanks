@@ -29,11 +29,14 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a strong signal blue and a deep crimson, each one
-/// saturated color without a camouflage, so a tank's side reads at a glance. The
-/// blue stays bright enough not to fall to black in shade (the paint's own fill
-/// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x801b25];
+/// Service paint per team: a strong cobalt blue and a deep warm signal red, each
+/// one color without a camouflage, so a tank's side reads at a glance. Neither is
+/// a pure primary: the green and blue the red keeps (and the red and green the
+/// blue keeps) leave the grade room to show a lighter roof over darker sides
+/// instead of clipping every face to one flat slab, and keep the red off magenta
+/// in the menu and off maroon from overhead. The blue stays bright enough not to
+/// fall to black in shade.
+pub const VEHICLE_PAINT: [u32; 2] = [0x3462b8, 0x8a2c26];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -98,8 +101,8 @@ const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
-const DECK_LOW: f64 = 0.64;
-const DECK_HIGH: f64 = 1.1;
+const DECK_LOW: f64 = 0.6;
+const DECK_HIGH: f64 = 1.08;
 const DECK_RAMP: f64 = 0.6;
 /// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
 /// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
@@ -116,7 +119,7 @@ const UPRIGHT: f64 = 0.6;
 /// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
-const RIM_STRENGTH: f32 = 0.45;
+const RIM_STRENGTH: f32 = 0.55;
 const PAINT_FILL: f32 = 0.11;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
@@ -125,8 +128,8 @@ const BARE_STEEL: u32 = 0x5c5852;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
-const TURRET_VALUE: f64 = 1.0;
-const HULL_VALUE: f64 = 0.82;
+const TURRET_VALUE: f64 = 1.04;
+const HULL_VALUE: f64 = 0.84;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;

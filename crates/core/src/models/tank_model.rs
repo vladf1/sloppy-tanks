@@ -35,15 +35,19 @@ use running_gear::running_gear;
 /// reads as metal beside either team's paint rather than as a blue trim.
 pub(crate) const DARK: u32 = 0x13232c;
 pub(crate) const STEEL: u32 = 0x6f706c;
-/// The trim every vehicle wears with its team paint: a deep, greyed shade of the
-/// team color on the lower hull, mantlet, gun fittings, add-on armor and frames.
-/// The team color is the body and the deep trim frames it, so the paint reads as
-/// a designed two-tone livery, each class's add-on armor stands out as armor
-/// rather than as dark openings, and the trim still reads as its team.
-const TRIM: [u32; 2] = [0x252c38, 0x302526];
+/// The trim every vehicle wears with its team paint: a deep shade of the team color
+/// on the lower hull, mantlet, gun fittings, add-on armor and frames. The team
+/// color is the body and the deep trim frames it, so the paint reads as a designed
+/// two-tone livery and the trim still reads as its team rather than as a black
+/// outline round the hull.
+const TRIM: [u32; 2] = [0x1c2f57, 0x4a1a14];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
-const GLASS_TINT: u32 = 0x25505a;
+pub(super) const GLASS_TINT: u32 = 0x25505a;
 const MARKING_WHITE: u32 = 0xdce7ee;
+/// Tactical signs (the roof and skirt insignia): a faded, mid-value stencil
+/// paint, so a sign reads as a worn marking on the plate rather than as the
+/// brightest thing on the vehicle or a hole in its roof from overhead.
+pub(crate) const STENCIL: u32 = 0xa3a19a;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
 const GUNMETAL: u32 = 0x2c2e2f;
 /// Olive-drab canvas of tarps, bags and the mantlet's dust cover.
@@ -301,6 +305,7 @@ fn coat_material(coat: Coat, c: &Chassis) -> Arc<Material> {
         Coat::Canvas => material(CANVAS, 0.0, 0.92),
         Coat::Wood => material(WOOD, 0.0, 0.85),
         Coat::Marking => paint(MARKING_WHITE),
+        Coat::Stencil => paint(STENCIL),
         // Lenses a few centimetres across draw with the matte fittings (one
         // draw fewer per hull) rather than in a glossy material of their own.
         Coat::TailLight => material(TAIL_LIGHT, 0.0, LENS_ROUGHNESS),
@@ -384,7 +389,9 @@ pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
     }
     let c = chassis(kind, Team::Blue, [0; 3]);
     let mut embers = Node::group("embers");
+    let (stretch, face_z) = turret_stretch(&c);
     for (top, radius) in hatch_tops(&c) {
+        let top = top * stretch + DVec3::new(0.0, 0.0, face_z * (1.0 - stretch.z));
         let mut disc = cylinder_part(radius * EMBER_FILL, EMBER_DISC, 0x000000, 16);
         if let Some(drawable) = &mut disc.drawable {
             drawable.material = ember_material();
@@ -405,14 +412,31 @@ pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
 fn turret(c: &Chassis, team: Team) -> Node {
     let mut turret = Node::group(part::TURRET);
     add_assembly(&mut turret, c, Assembly::Turret);
-    turret.children.push(barrel(c));
     for (variant, name) in (0u8..).zip(part::LIVERIES) {
         let mut livery = Node::group(name);
         livery.visible = variant == 0;
         add_assembly(&mut livery, c, Assembly::Marking(team, variant));
         turret.children.push(livery);
     }
+    // The turret shell (not the gun, whose muzzle is the combat launch point)
+    // stretches per class in plan about the mantlet face, so the gun still leaves
+    // the mantlet where it did.
+    let (stretch, face_z) = turret_stretch(c);
+    for child in &mut turret.children {
+        child.scale = stretch;
+        child.position = DVec3::new(0.0, 0.0, face_z * (1.0 - stretch.z));
+    }
+    turret.children.push(barrel(c));
     turret
+}
+
+/// The turret shell's plan stretch (x across, z along) per class and the mantlet
+/// face it stretches about: the Skipper's turret is a small, tight box on its
+/// short hull and the Big Rig's a broad, long slab over its long one, so the
+/// three classes part by silhouette at card size and from the overhead camera.
+fn turret_stretch(c: &Chassis) -> (DVec3, f64) {
+    let (across, along) = (c.pick(0.9, 1.0, 1.1), c.pick(0.88, 1.0, 1.08));
+    (DVec3::new(across, 1.0, along), c.pick(1.0, 1.13, 1.3))
 }
 
 /// The gun (see `tank_details::gun`) and the bore disc named `muzzle` whose

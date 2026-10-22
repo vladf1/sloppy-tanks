@@ -77,11 +77,12 @@ const VEHICLE_BEVEL_TINT: f32 = 0.85;
 // round (the atmosphere on) the dust takes this share of its hue from the map's
 // ground light (sand in the quarry, brown earth in the village, grey concrete at
 // the harbor) at its own brightness; studio scenes keep the plain dust.
-const VEHICLE_DUST: vec3f = vec3f(0.29, 0.22, 0.135);
+const VEHICLE_DUST: vec3f = vec3f(0.12, 0.092, 0.06);
 const VEHICLE_DUST_LOCAL: f32 = 0.6;
 const VEHICLE_MUD: vec3f = vec3f(0.075, 0.053, 0.034);
 const VEHICLE_DUST_STRENGTH: f32 = 0.82;
-const VEHICLE_DUST_STUDIO: f32 = 0.5;
+const VEHICLE_DUST_STUDIO: f32 = 0.0;
+const VEHICLE_BELT_DUST_STUDIO: f32 = 0.6;
 const VEHICLE_MUD_STRENGTH: f32 = 0.7;
 // Grime in recesses: a dark brown multiplier.
 const VEHICLE_GRIME: vec3f = vec3f(0.34, 0.29, 0.24);
@@ -130,7 +131,7 @@ const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // than these sizes), drifted thicker into recesses, in the map's ground color where
 // the atmosphere is on.
 const VEHICLE_DECK_DUST_CELLS: f32 = 1.6;
-const VEHICLE_DECK_DUST_FILM: f32 = 0.55;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.7;
 const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
@@ -139,12 +140,27 @@ const VEHICLE_DECK_DUST_PIXEL_TO: f32 = 0.03;
 // falling by this much of the dusty band.
 const VEHICLE_SPLASH_CELLS: f32 = 1.3;
 const VEHICLE_SPLASH_RISE: f32 = 0.4;
+// Where the caked band's crisp edge sits on the band (0 its top, 1 the ground),
+// and the fine dust film over the paint just above it.
+const VEHICLE_SPLASH_EDGE: f32 = 0.2;
+const VEHICLE_DUST_FILM: f32 = 0.2;
 // Edge wear: how far toward a convex edge the chip field is exposed.
 const VEHICLE_CHIP_EXPOSURE: f32 = 0.5;
+// Cells per metre of the field that gathers chips into worn stretches.
+const VEHICLE_CHIP_CLUSTER: f32 = 2.2;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
 // much either way: broad enough never to read as speckle.
 const VEHICLE_FADE_CELLS: f32 = 2.4;
 const VEHICLE_FADE_VALUE: f32 = 0.09;
+// The turret roof's bleach (in a round, under the saturating grade; studio cards
+// keep the clean color): paint values from these (the turret's roof and its
+// highest decks; hull decks stay below) lose this share of their saturation
+// toward a warm grey and lighten by this much.
+const VEHICLE_ROOF_FROM: f32 = 0.95;
+const VEHICLE_ROOF_TO: f32 = 1.08;
+const VEHICLE_ROOF_BLEACH: f32 = 0.12;
+const VEHICLE_ROOF_LIFT: f32 = 0.12;
+const VEHICLE_ROOF_TINT: vec3f = vec3f(1.1, 0.96, 0.9);
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
@@ -252,8 +268,8 @@ const BELT_PIXEL_TO: f32 = 0.42;
 // How far the pads' and connectors' sloped ends tilt the normal.
 const BELT_RELIEF: f32 = 0.55;
 // Dust caked on the ground face and climbing the edges.
-const BELT_DUST_GROUND: f32 = 0.26;
-const BELT_DUST_EDGE: f32 = 0.14;
+const BELT_DUST_GROUND: f32 = 0.14;
+const BELT_DUST_EDGE: f32 = 0.07;
 
 fn belt_band(x: f32, low: f32, high: f32, soft: f32) -> f32 {
     return smoothstep(low - soft, low + soft, x) * (1.0 - smoothstep(high - soft, high + soft, x));
@@ -323,7 +339,7 @@ fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, li
     }
     color = mix(color, color * BELT_GAP, joint);
     color = mix(average, color, resolved) * f.vertex_color.rgb * f.tint.rgb;
-    let grime = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on());
+    let grime = select(VEHICLE_BELT_DUST_STUDIO, 1.0, atmosphere_on());
     color = mix(color, vehicle_dust() * 0.7, dust * grime);
     let normal = normalize((*s).normal - tangent * relief * BELT_RELIEF * resolved);
     (*s).color = color;
@@ -404,6 +420,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let metres = f.uv * VEHICLE_METRES_PER_UV;
     let fade = value_noise(metres * VEHICLE_FADE_CELLS) * 0.65 + value_noise(metres * VEHICLE_FADE_CELLS * 2.7 + 3.1) * 0.35;
     var color = base * (1.0 + (fade - 0.5) * 2.0 * VEHICLE_FADE_VALUE) * panel;
+    // The turret roof, the highest and lightest paint, is sun-bleached a little
+    // lighter and greyer than the decks below it: a pure team color clips to one
+    // flat slab under a saturating grade, while this keeps the turret's footprint
+    // standing off the hull from the overhead camera.
+    let roof = smoothstep(0.75, 0.92, (*s).normal.y) * smoothstep(VEHICLE_ROOF_FROM, VEHICLE_ROOF_TO, value) * team
+        * select(0.0, 1.0, atmosphere_on());
+    let luma = dot(color, vec3f(0.2126, 0.7152, 0.0722));
+    color = mix(color, vec3f(luma) * VEHICLE_ROOF_TINT, roof * VEHICLE_ROOF_BLEACH) * (1.0 + roof * VEHICLE_ROOF_LIFT);
     // Rubbed edges: a lighter band on each bevel and over chamfer strips.
     let lifted = color * VEHICLE_BEVEL_LIFT + VEHICLE_BEVEL_PALE;
     color = mix(color, lifted, max(bevel, chamfer * 0.45) * VEHICLE_BEVEL_TINT);
@@ -452,17 +476,22 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Dust and mud thrown up by the tracks, following the hull's shape rather than
     // a flat line: a splashed band along the lowest plates, drifts in the recesses
     // and on the ledges low on the hull (fender tops, skirt lips), and clean paint
-    // on the open upright panels above. Studio scenes (the menu cards) keep a
-    // lighter dusting: a tank fresh from the depot.
-    let dust_strength = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on()) * VEHICLE_DUST_STRENGTH;
+    // on the open upright panels above. Studio scenes (the menu cards) show the
+    // paint clean, a tank fresh from the depot: on a card's small, evenly lit hull
+    // the splash band read as stains.
+    let studio = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on());
+    let dust_strength = studio * VEHICLE_DUST_STRENGTH;
     let ledge = smoothstep(0.55, 0.85, (*s).normal.y) * smoothstep(0.3, 0.7, low);
-    // The splash line rises and falls along the hull, so the band reads as thrown
-    // dust rather than a flat fade.
+    // The splash line rises and falls along the hull and breaks up with the grime
+    // field, with a crisp edge: caked earth below it and only a thin film of fine
+    // dust above, so the band reads as thrown dirt rather than as faded paint.
     let splash = value_noise(metres * vec2f(VEHICLE_SPLASH_CELLS, VEHICLE_SPLASH_CELLS * 0.4) + 11.3);
-    let band = smoothstep(0.4, 0.78, low + (grime - 0.5) * 0.4 + (splash - 0.5) * VEHICLE_SPLASH_RISE);
+    let line = low + (grime - 0.5) * 0.55 + (splash - 0.5) * VEHICLE_SPLASH_RISE;
+    let caked = smoothstep(VEHICLE_SPLASH_EDGE, VEHICLE_SPLASH_EDGE + 0.07, line);
+    let band = max(caked * (0.82 + 0.18 * smoothstep(0.5, 0.8, line)), smoothstep(-0.05, 0.2, line) * VEHICLE_DUST_FILM * select(0.0, 1.0, atmosphere_on()));
     let drifted = edges.recess * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
     let dusty = clamp(max(band, max(drifted, ledge * (0.35 + 0.5 * grime))), 0.0, 1.0) * dust_strength;
-    let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH;
+    let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH * studio;
     let dust = vehicle_dust();
     color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
@@ -486,7 +515,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // lifted paint.
     let resolved = 1.0 - smoothstep(VEHICLE_CHIP_PIXEL_FROM, VEHICLE_CHIP_PIXEL_TO, pixel);
     let plate = smoothstep(VEHICLE_CHIP_PLATE_FROM, VEHICLE_CHIP_PLATE_TO, edges.narrowest);
-    let exposure = (edges.near_edge * VEHICLE_CHIP_EXPOSURE + low * 0.05) * (1.0 - dirt * 0.6) * resolved * plate;
+    // Wear clusters where hands, boots and branches rub: a broad field gathers the
+    // chips into worn stretches and leaves others intact, so they read as history
+    // rather than as one stamped size of fleck along every edge.
+    let rubbed = smoothstep(0.25, 0.75, value_noise(metres * VEHICLE_CHIP_CLUSTER + 17.9));
+    let exposure = (edges.near_edge * VEHICLE_CHIP_EXPOSURE * (0.35 + 1.1 * rubbed) + low * 0.05) * (1.0 - dirt * 0.6) * resolved * plate;
     let chip = 1.0 - smoothstep(exposure - 0.03, exposure, wear);
     // The rim only rings real chips: where nothing is exposed it would darken the
     // chip field's lowest spots into specks over the whole panel.
