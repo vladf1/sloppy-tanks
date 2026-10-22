@@ -823,6 +823,24 @@ pub struct Renderer {
     merged_draws: Vec<MergedDraw>,
     shadow_bases: Vec<u32>,
     stats: RenderStats,
+    /// Development switches a measurement flips within one page (`debug_set_off`).
+    pub debug_off: DebugOff,
+}
+
+/// Passes, lights and effect pools a same-page A/B measurement turns off.
+#[derive(Clone, Debug, Default)]
+pub struct DebugOff {
+    /// Labels of pools not drawn.
+    pub pools: Vec<String>,
+    pub bloom: bool,
+    pub occlusion: bool,
+    pub sky: bool,
+    pub lights: bool,
+    /// The whole atmosphere: sky, haze, cloud shadows, bloom, occlusion and grade.
+    pub atmosphere: bool,
+    /// Custom effects whose draws the main view skips; "lit" and "unlit" name
+    /// the plain standard and basic materials, "shadowed" every receiver.
+    pub effects: Vec<String>,
 }
 
 /// What one frame draws, for the backend's passes: the draw lists of every view and
@@ -908,6 +926,7 @@ impl Renderer {
             merged_draws: Vec::new(),
             shadow_bases: Vec::new(),
             stats: RenderStats::default(),
+            debug_off: DebugOff::default(),
             frame,
             gpu,
         })
@@ -1763,7 +1782,7 @@ impl Renderer {
         let world = view.inverse();
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
         for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
-            if let Some(light) = light {
+            if let (Some(light), false) = (light, self.debug_off.lights) {
                 let [r, g, b] = hex_to_linear_scaled(light.color, light.intensity);
                 *slot = [
                     light.position.x,
@@ -2311,6 +2330,33 @@ impl Renderer {
         }
     }
 
+    /// Drop main-view draws of the effects `debug_off.effects` names.
+    fn skip_debug_effects(&mut self) {
+        let hidden: Vec<u16> = self
+            .debug_off
+            .effects
+            .iter()
+            .filter_map(|name| self.effects.id(name))
+            .collect();
+        let names = &self.debug_off.effects;
+        let skip = |key: &PipelineKey| {
+            let shader = key.shader;
+            (shader.effect != 0 && hidden.contains(&shader.effect))
+                || (shader.effect == 0 && shader.lit && names.iter().any(|n| n == "lit"))
+                || (shader.effect == 0 && !shader.lit && names.iter().any(|n| n == "unlit"))
+                || (shader.receive_shadow && names.iter().any(|n| n == "shadowed"))
+        };
+        let classes = &self.classes;
+        let view = &mut self.views[MAIN_VIEW];
+        for list in [&mut view.opaque, &mut view.transparent] {
+            list.retain(|draw| {
+                classes
+                    .at(draw.class)
+                    .is_none_or(|class| !skip(&class.main_key))
+            });
+        }
+    }
+
     /// Compile pipelines for any class drawn this frame that warm-up missed.
     fn ensure_frame_pipelines(&mut self) {
         let gpu = &self.gpu;
@@ -2346,6 +2392,14 @@ impl Renderer {
 
     /// Draw one frame at `time` seconds (the effect and water clock).
     pub fn render(&mut self, time: f32) -> Result<(), String> {
+        let atmosphere = self.atmosphere.enabled;
+        self.atmosphere.enabled &= !self.debug_off.atmosphere;
+        let result = self.render_frame(time);
+        self.atmosphere.enabled = atmosphere;
+        result
+    }
+
+    fn render_frame(&mut self, time: f32) -> Result<(), String> {
         if let Some(error) = self.error() {
             return Err(error);
         }
@@ -2355,6 +2409,9 @@ impl Renderer {
         self.upload_static();
         self.update_culls();
         self.build_draws();
+        if !self.debug_off.effects.is_empty() {
+            self.skip_debug_effects();
+        }
         self.ensure_frame_pipelines();
         let base = self.static_records.len() as u32;
         let dynamic = base + self.builder.records.len() as u32;
@@ -2402,9 +2459,12 @@ impl Renderer {
             copy_static,
             reflection,
             // Warm-up draws every pass, so their pipelines are ready either way.
-            sky: warm_up || self.atmosphere.enabled,
-            bloom: warm_up || (self.atmosphere.enabled && self.atmosphere.bloom.strength > 0.0),
-            occlusion: warm_up || self.occlusion_on(),
+            sky: warm_up || (self.atmosphere.enabled && !self.debug_off.sky),
+            bloom: warm_up
+                || (self.atmosphere.enabled
+                    && self.atmosphere.bloom.strength > 0.0
+                    && !self.debug_off.bloom),
+            occlusion: warm_up || (self.occlusion_on() && !self.debug_off.occlusion),
         };
         let stats = &mut self.stats;
         stats.draw_calls = 0;

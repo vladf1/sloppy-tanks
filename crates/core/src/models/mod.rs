@@ -91,6 +91,7 @@ mod village_landmarks;
 mod village_landscape;
 mod village_roads;
 mod village_scenery;
+mod village_tracks;
 mod village_vegetation;
 
 // Shared building blocks.
@@ -110,8 +111,9 @@ pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
 pub use crate_model::crate_piece_model;
 pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
+pub use house_model::house_pieces;
 pub use pickup_visuals::pickup_cube;
-pub use timber_model::timber_part_model;
+pub use timber_model::{timber_debris_model, timber_part_model};
 pub use tower_model::tower_piece_model;
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,
@@ -132,7 +134,7 @@ pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;
 pub use scenery::{MapTheme, Scenery, build_scenery, create_arena_floor, create_spawn_pads};
 pub use village_atmosphere::{CHIMNEY_SMOKE_NODE, SmokeCover};
-pub use village_ground::{GROUND_PLAN_SIZE, bake_village_ground};
+pub use village_ground::{GROUND_PLAN_SIZE, PLAN_SQUARES, bake_village_ground};
 pub use village_landmarks::WATERWHEEL;
 pub use village_roads::is_village_dirt;
 pub use village_scenery::VillageScenery;

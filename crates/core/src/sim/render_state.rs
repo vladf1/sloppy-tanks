@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
+use super::house_layout::HousePiece;
 use super::map_options::MapId;
 use super::maps::GroundKind;
 use super::math::{Point3, Quat4, Vec2};
@@ -198,6 +199,8 @@ pub struct RenderFragment {
     pub timber_part: Option<TimberPart>,
     pub tower_piece: Option<TowerPiece>,
     pub crate_piece: Option<CratePiece>,
+    pub house_piece: Option<HousePiece>,
+    pub house_id: Option<u32>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub created_at: Option<f64>,
@@ -434,6 +437,8 @@ impl Simulation {
         view.timber_part.clone_from(&fragment.timber_part);
         view.tower_piece = fragment.tower_piece;
         view.crate_piece = fragment.crate_piece;
+        view.house_piece = fragment.house_piece;
+        view.house_id = fragment.house_id;
         view.tree_cover_id = fragment.tree_cover_id;
         view.tree_center_y = fragment.tree_center_y;
         view.created_at = fragment.created_at;
