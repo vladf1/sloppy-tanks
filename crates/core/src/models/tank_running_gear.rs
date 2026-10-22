@@ -1300,13 +1300,18 @@ mod tests {
     use super::super::tank_model;
     use super::TOP_RUN_PITCH;
     use crate::geometry::node_bounds;
+    use crate::models::tank_surfaces::is_signal_panel;
     use crate::models::{Team, VehicleKind, WreckPart, part, wreck_model};
     use crate::scene::Node;
 
+    /// Triangles of every part but the cloth recognition panels, which burn away
+    /// on wrecks.
     fn triangles(node: &Node) -> usize {
         let mut total = 0;
         node.traverse(DMat4::IDENTITY, &mut |part, _| {
-            if let Some(drawable) = &part.drawable {
+            if let Some(drawable) = &part.drawable
+                && !is_signal_panel(&drawable.material)
+            {
                 total += drawable.mesh.triangle_count();
             }
         });

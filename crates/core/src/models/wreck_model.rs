@@ -3,6 +3,11 @@
 //! Extract the part from a live model, center it, flatten every mesh into one
 //! group with its transform baked, and batch once. Bounded by chassis × teams ×
 //! assemblies; geometry is shared across rounds, instances clone the node.
+//!
+//! The batched paint is then scorched: soot blooms over most of the armor, heavier
+//! on upward faces where the fire licked, with rust-brown blistered patches and
+//! only a trace of the team paint left. Presentation darkens the whole wreck further
+//! as it ages.
 
 use std::sync::Arc;
 
@@ -11,8 +16,10 @@ use glam::{DMat4, DVec3};
 use super::batching::batch;
 use super::model_primitives::Cache;
 use super::tank_model::tank_model_variant;
+use super::tank_surfaces::is_signal_panel;
 use super::{Team, VehicleKind, part};
-use crate::geometry::math::{compose, decompose};
+use crate::geometry::Mesh;
+use crate::geometry::math::{compose, decompose, hex_to_linear};
 use crate::geometry::node_bounds;
 use crate::scene::Node;
 
@@ -67,8 +74,81 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
     }
     let mut flat = Node::group("wreck");
     collect_meshes(&result, DMat4::IDENTITY, &mut flat.children);
+    // Cloth recognition panels burn away with the vehicle.
+    flat.children.retain(|child| {
+        child
+            .drawable
+            .as_ref()
+            .is_none_or(|drawable| !is_signal_panel(&drawable.material))
+    });
     batch(&mut flat);
+    for child in &mut flat.children {
+        if let Some(drawable) = &mut child.drawable
+            && drawable.material.vertex_colors
+        {
+            let mut mesh = (*drawable.mesh).clone();
+            scorch(&mut mesh);
+            drawable.mesh = Arc::new(mesh);
+        }
+    }
     flat
+}
+
+/// Soot and blistered rust (sRGB) of a burnt-out hull.
+const SOOT: u32 = 0x1d1916;
+const RUST: u32 = 0x6b3b22;
+/// Soot coverage: the least any vertex gets, how much the blotches add and the
+/// extra on upward faces.
+const SOOT_MIN: f64 = 0.3;
+const SOOT_BLOTCH: f64 = 0.42;
+const SOOT_TOP: f64 = 0.12;
+/// Blotch scale (per metre) and how much of a rust patch shows.
+const SCORCH_FREQUENCY: f64 = 2.3;
+const RUST_STRENGTH: f64 = 0.55;
+
+/// Burn the vertex colors of a batched wreck mesh.
+fn scorch(mesh: &mut Mesh) {
+    let soot = hex_to_linear(SOOT);
+    let rust = hex_to_linear(RUST);
+    let normals = mesh.normals.clone();
+    for (i, color) in mesh.colors.iter_mut().enumerate() {
+        let p = DVec3::from(mesh.positions[i].map(f64::from)) * SCORCH_FREQUENCY;
+        let up = normals.get(i).map_or(0.0, |n| f64::from(n[1]).max(0.0));
+        let blotch = value_noise(p);
+        let rusty = smooth01((value_noise(p * 1.7 + DVec3::splat(19.3)) - 0.58) / 0.12);
+        let burnt = (SOOT_MIN + SOOT_BLOTCH * blotch + SOOT_TOP * up).min(0.95);
+        for c in 0..3 {
+            let paint = f64::from(color[c]);
+            let rusted = paint + (rust[c] - paint) * rusty * RUST_STRENGTH;
+            color[c] = (rusted + (soot[c] - rusted) * burnt) as f32;
+        }
+    }
+}
+
+fn smooth01(x: f64) -> f64 {
+    let t = x.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Smooth 3D value noise in [0, 1] on a unit lattice.
+fn value_noise(p: DVec3) -> f64 {
+    let cell = p.floor();
+    let f = p - cell;
+    let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
+    let corner = |dx: f64, dy: f64, dz: f64| {
+        let q = cell + DVec3::new(dx, dy, dz);
+        let mut h = (q.x as i64).wrapping_mul(73_856_093)
+            ^ (q.y as i64).wrapping_mul(19_349_663)
+            ^ (q.z as i64).wrapping_mul(83_492_791);
+        h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
+        (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
+    };
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+    let x00 = lerp(corner(0.0, 0.0, 0.0), corner(1.0, 0.0, 0.0), s.x);
+    let x10 = lerp(corner(0.0, 1.0, 0.0), corner(1.0, 1.0, 0.0), s.x);
+    let x01 = lerp(corner(0.0, 0.0, 1.0), corner(1.0, 0.0, 1.0), s.x);
+    let x11 = lerp(corner(0.0, 1.0, 1.0), corner(1.0, 1.0, 1.0), s.x);
+    lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
 }
 
 /// Every mesh in the tree, in traversal order, with its parent's world transform

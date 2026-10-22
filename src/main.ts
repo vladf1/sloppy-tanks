@@ -62,6 +62,7 @@ function startTextureDownloads(options: GameOptions): void {
   const downloads = (window.sloppyTextureDownloads ??= new Map());
   for (const path of [
     "textures/pickups/atlas.webp",
+    "textures/tanks/armor-camo.webp",
     "textures/tanks/armor-wear.webp",
     "textures/ground/packed-dirt.webp",
     "textures/houses/siding.webp",

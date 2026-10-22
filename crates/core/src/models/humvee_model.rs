@@ -6,8 +6,9 @@
 //! `muzzle` marker at the launcher mouth.
 //!
 //! Each assembly is merged once into one shared mesh per paint role (`kit`), so
-//! the body, a wheel and the launcher cost a few meshes each; every team reuses
-//! the same geometry with its own palette.
+//! the body, a wheel and the launcher cost a few meshes each; the livery then
+//! bakes each team's weathered paint into its own copy, the four wheels sharing
+//! one.
 
 use std::sync::{Arc, OnceLock};
 
@@ -67,11 +68,12 @@ fn assemblies() -> &'static Assemblies {
     })
 }
 
-/// Paint for one Humvee: its team's paint, shade and steel.
+/// Paint for one Humvee: its team's paint, shade, steel and recognition panel.
 struct Palette {
     base: u32,
     shade: u32,
     steel: u32,
+    signal: u32,
 }
 
 impl Palette {
@@ -88,6 +90,7 @@ impl Palette {
             Role::Headlamp => glossy(HEADLAMP),
             Role::Amber => glossy(AMBER),
             Role::Red => glossy(RED_LAMP),
+            Role::Signal => material(self.signal, 0.0, MATTE_ROUGHNESS),
         }
     }
 
@@ -99,11 +102,16 @@ impl Palette {
     }
 }
 
-/// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the vehicle
-/// scale and worn finish.
-pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
+/// `humveeModel(team, false)` in `colors` (paint, shade, steel) with its team's
+/// recognition panel, before the vehicle scale and worn finish.
+pub(super) fn humvee_model(colors: [u32; 3], signal: u32) -> Node {
     let [base, shade, steel] = colors;
-    let palette = Palette { base, shade, steel };
+    let palette = Palette {
+        base,
+        shade,
+        steel,
+        signal,
+    };
     let shared = assemblies();
     let mut root = Node::group(VehicleKind::Humvee.as_str());
     let mut hull = Node::group(part::HULL);
@@ -165,7 +173,7 @@ mod tests {
 
     /// Triangles allowed for a whole Humvee: body, four wheels, shields, launcher.
     const TRIANGLE_BUDGET: usize = 15_000;
-    /// Distinct meshes: one per paint role and assembly, one wheel for all four.
+    /// Distinct meshes: one per livery finish and assembly, one wheel for all four.
     const MESH_BUDGET: usize = 24;
 
     fn meshes(model: &Node) -> (usize, Vec<*const Mesh>) {
@@ -189,8 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn teams_share_one_geometry() {
-        let blue = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
-        assert_eq!(blue, meshes(&tank_model(VehicleKind::Humvee, Team::Red)));
+    fn teams_differ_only_in_paint() {
+        let (blue, blue_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
+        let (red, red_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Red));
+        assert_eq!((blue, blue_meshes.len()), (red, red_meshes.len()));
     }
 }
