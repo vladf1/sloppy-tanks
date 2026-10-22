@@ -109,13 +109,6 @@ fn expand_instance(row0: vec4f, row1: vec4f, row2: vec4f, tint: vec4f, data: vec
 @group(0) @binding(3) var dfg_lut: texture_2d<f32>;
 @group(0) @binding(4) var lut_sampler: sampler;
 
-// TSL `hash` (PCG-style integer hash) used by the debris shadow mask.
-fn tsl_hash(seed: f32) -> f32 {
-    let state = u32(seed) * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return f32((word >> 22u) ^ word) * (1.0 / 4294967296.0);
-}
-
 // ---------------------------------------------------------------- atmosphere
 
 fn atmosphere_on() -> bool {
@@ -418,6 +411,8 @@ fn haze_tint_over(sky: vec3f, ray: vec3f, amount: f32) -> vec3f {
     return no_mauve(mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0)));
 }
 
+// How much of its own colour a surface loses per share of the haze over it.
+const HAZE_DRAIN: f32 = 0.4;
 // How much brighter than the cool haze the sunward glow is, and the most of the sky
 // behind thick haze takes on.
 const HAZE_SUN_BRIGHTENING: f32 = 0.2;
@@ -444,9 +439,9 @@ fn sky_behind(sky: vec3f, ray: vec3f) -> vec3f {
 // The far haze layer thins up a slope at this share of the near layer's falloff, to
 // this share of its density on the highest crests.
 const FAR_HAZE_THINNING: f32 = 1.0;
-const FAR_HAZE_CREST_SHARE: f32 = 0.3;
+const FAR_HAZE_CREST_SHARE: f32 = 0.6;
 // The most the far layer hides: a distant range keeps this much of its own form.
-const FAR_HAZE_MOST: f32 = 0.62;
+const FAR_HAZE_MOST: f32 = 0.78;
 // Height in metres over which the low mist beyond the arena thins by e.
 const MIST_HEIGHT: f32 = 10.0;
 // Shares of the far plane's distance over which surfaces melt into the sky.
@@ -508,7 +503,12 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         // the surface shaders inline it, and a second copy grew the lit variants
         // past what WebGL's Metal translation compiles.
         let sky = sky_gradient(ray);
-        var hazed = mix(color, haze_tint_over(sky, ray, amount), amount);
+        // Air between eye and surface first drains a surface's colour and only then
+        // tints it: a warm mesa or green slope mixed straight into the cool aerial
+        // tint passed through mauve and read as a translucent card. Drained first, it
+        // steps back as an opaque, cooler and paler band.
+        let drained = mix(color, vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722))), amount * HAZE_DRAIN);
+        var hazed = mix(drained, haze_tint_over(sky, ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {
             // Late and short, so the far mesas and ranges keep their own form and

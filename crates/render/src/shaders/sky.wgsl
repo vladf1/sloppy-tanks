@@ -25,7 +25,7 @@ const CLOUD_HORIZON_LIFT: f32 = 0.1;
 const CLOUD_DRIFT: vec2f = vec2f(0.006, 0.0025);
 // Density above the coverage threshold over which a cloud goes from its soft rim
 // to its full body: small keeps the edges crisp and stylized.
-const CLOUD_EDGE: f32 = 0.13;
+const CLOUD_EDGE: f32 = 0.26;
 // Sunlit cloud tops over the sky's brightness, so they read as the whitest thing
 // in the sky.
 const CLOUD_BRIGHTNESS: f32 = 1.45;

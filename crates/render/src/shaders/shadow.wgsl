@@ -66,9 +66,19 @@ fn fs_shadow(input: ShadowOut, @builtin(front_facing) front_facing: bool) {
         }
     }
     if SHADOW_FADE {
-        // debris-fade.ts: a stable spatial mask thins the shadow as the piece fades.
-        if input.tint.a <= tsl_hash(dot(input.world * 100.0, input.world)) {
+        // A fading piece thins its shadow through an even mask: interleaved gradient
+        // noise over the shadow map's texels, which the receivers' tent filter
+        // averages into a smooth, partial shade rather than a speckle of hard
+        // texels. It is fixed to the map's texels, so the shade holds still as the
+        // piece moves.
+        let noise = fract(52.9829189 * fract(dot(input.clip.xy, vec2f(0.06711056, 0.00583715))));
+        // A piece only part faded (a supply the seated view sees through) still
+        // stands there in full and casts its whole shadow.
+        if smoothstep(0.0, SHADOW_FADE_SOLID, input.tint.a) <= noise {
             discard;
         }
     }
 }
+
+// The opacity from which a fading caster's shadow is whole.
+const SHADOW_FADE_SOLID: f32 = 0.6;
