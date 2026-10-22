@@ -162,10 +162,18 @@ const VG_WIND = vec2f(0.8, 0.6);
 const VG_GUST_SPEED = 0.55;
 // How far the wind's lines bend across the meadow, in metres of sideways warp.
 const VG_WIND_BEND = 7.0;
-// The turf stands this high (m) over the worn ground where its edge is cut
-// crisp, and this high where it crumbles: its bank shades the dirt below it.
-const VG_BANK_CRISP = 0.26;
-const VG_BANK_CRUMBLY = 0.13;
+// Inside the wall the turf stands this high (m) over the worn ground where its
+// edge is cut crisp, and this high where it crumbles. The floor mesh is flat for
+// the simulation, so the step is drawn by parallax: the view ray is followed up
+// to the turf's top, the bank's earth face shows where the ray enters its side,
+// and the bank shades the dirt away from the sun.
+const VG_BANK_CRISP = 0.34;
+const VG_BANK_CRUMBLY = 0.16;
+// The farthest the parallax follows a ray sideways per metre it climbs: lower
+// views keep this slope, so a grazing view does not step past thin turf.
+const VG_PARALLAX_REACH = 2.6;
+// How deep a fresh rut reads (m) for the shade its sunward wall casts.
+const VG_RUT_DEPTH = 0.1;
 // Tussock lumps per metre across the turf.
 const VG_TUSSOCKS = 1.9;
 
@@ -197,18 +205,19 @@ fn vg_cracks(p: vec2f) -> f32 {
 
 // Where the turf wears through at `p`, before trampled ground goes bald and
 // before the blades fray it: x the reveal (dirt above 0.5), y how far a clump
-// of turf left on the dirt has gone bald. `worn` is the plan's dirt there and
-// `band` how much of the plan's ramp the edge spreads over.
-fn vg_edge(p: vec2f, worn: f32, band: f32, aa: f32) -> vec2f {
+// of turf left on the dirt has gone bald, z how much of the reveal is a scuff
+// bitten into the turf (worn flat, not dug in). `worn` is the plan's dirt there
+// and `band` how much of the plan's ramp the edge spreads over.
+fn vg_edge(p: vec2f, worn: f32, band: f32, aa: f32) -> vec3f {
     let edge_noise = vg_fbm(p * 0.62) - 0.5;
     // Clumps of turf left on the dirt and scuffs bitten into the grass, in two
     // sizes; each disc stays well inside its scatter cell, so none is clipped.
     let tufts = vg_scatter(p, 0.45, 1.0, vec2f(0.09, 0.19), aa, 41.0);
     let sods = vg_scatter(p, 0.5, 0.45, vec2f(0.2, 0.42), aa, 43.0);
     let clumps = select(sods, tufts, tufts.x > sods.x);
-    let clump_sign = select(-1.0, 1.0, clumps.w > 0.55);
+    let clump_sign = select(-1.0, 1.0, clumps.w > 0.78);
     let reveal = worn + (edge_noise * 0.8 + clump_sign * clumps.x * 0.55) * band;
-    return vec2f(reveal, clumps.x * clumps.z);
+    return vec3f(reveal, clumps.x * clumps.z, max(clump_sign, 0.0) * clumps.x * 0.55 * band);
 }
 
 // The turf's height over the worn ground (0 on the dirt, 1 on the turf) from
@@ -221,6 +230,28 @@ fn vg_bank(reveal: f32) -> f32 {
 fn vg_plan_uv(p: vec2f, half: f32, square: f32) -> vec2f {
     let uv = clamp(p / half * 0.5 + 0.5, vec2f(0.5 / VG_PLAN_HEIGHT), vec2f(1.0 - 0.5 / VG_PLAN_HEIGHT));
     return vec2f((square + uv.x) / 3.0, uv.y);
+}
+
+// How deep a fresh rut is cut at `p`, 0 to 1, sampled at the top mip.
+fn vg_rut(p: vec2f) -> f32 {
+    let tracks = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(p, VG_ARENA_PLAN, 2.0), 0.0);
+    let tread = 1.0 - smoothstep(VG_TREAD_HALF - 0.03, VG_TREAD_HALF + 0.03, (1.0 - tracks.r) * VG_TREAD_REACH);
+    return tread * smoothstep(0.05, 0.6, tracks.g);
+}
+
+// How much the arena's turf stands at `p` (1 on the raised turf, 0 on the worn
+// ground): the shaded edge's reveal without its blade-scale fraying, the bald
+// trampled patches and the fresh ruts treads cut through the turf. Sampled at
+// the top mip, since it runs off the uniform path.
+fn vg_turf(p: vec2f, band: f32, aa: f32) -> f32 {
+    let plan = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(p, VG_ARENA_PLAN, 0.0), 0.0);
+    let edge = vg_edge(p, plan.r, band, aa);
+    var bald = 0.0;
+    if plan.g > 0.27 {
+        bald = smoothstep(0.62, 1.0, plan.g + (vg_fbm(p * 0.5 + 9.0) - 0.5) * 0.7) * 0.6;
+    }
+    let rut = vg_rut(p);
+    return vg_bank(max(max(edge.x - edge.z, bald + (edge.y - 0.3) * 0.3), 0.5 + (rut - 0.5) * 2.0));
 }
 
 // A crop field's look at `p`: rgb colour and a furrow height in metres. `code`
@@ -277,7 +308,7 @@ fn vg_crop(p: vec2f, code: f32, footprint: f32) -> vec4f {
 // the same (and derivatives of the relief stay continuous). Texture samples and
 // derivatives stay ahead of the branches, in uniform control flow.
 fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
-    let p = f.world.xz;
+    let ground = f.world.xz;
     let extent = material.params[0].y;
     let widths = material.params[3];
     // Pixel footprint in metres: sub-pixel detail fades instead of shimmering.
@@ -286,6 +317,55 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let fine = 1.0 - smoothstep(0.02, 0.06, footprint);
     // Detail a few centimetres across still reads from the gameplay camera.
     let mid = 1.0 - smoothstep(0.07, 0.16, footprint);
+
+    // ---- Raised turf. Inside the wall the turf stands a step above the worn
+    // ground; the view ray is followed up from the flat floor to find what it
+    // meets first: the turf's top (shaded at that point), the earth face of
+    // its bank, or the worn ground under it.
+    let inside = 1.0 - smoothstep(extent + 2.0, extent + 3.0, max(abs(ground.x), abs(ground.y)));
+    let base_plan = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(ground, VG_ARENA_PLAN, 0.0), 0.0);
+    let base_tracks = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(ground, VG_ARENA_PLAN, 2.0), 0.0);
+    // Trampled grass, and what survives in the quiet middle of a road, always
+    // breaks up; elsewhere the edge is crisp turf in some stretches and
+    // crumbles in others. The plan ramps the dirt over metres
+    // (`village_ground::EDGE_RAMP`); `band` is how much of that ramp the edge
+    // spreads over.
+    let crumbly = max(smoothstep(0.3, 0.78, vg_noise(ground * 0.045 + 5.0)), smoothstep(0.45, 0.9, base_plan.g * inside));
+    let band = mix(0.05, 0.4, crumbly);
+    let lift = mix(VG_BANK_CRISP, VG_BANK_CRUMBLY, crumbly) * inside;
+    let eye = frame.camera_position.xyz;
+    var toward = (eye.xz - ground) / max(eye.y - f.world.y, 0.3);
+    toward = toward * min(1.0, VG_PARALLAX_REACH / max(length(toward), 1e-4));
+    let sun_flat = normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0));
+    let sun_run = min(length(frame.sun_direction.xz) / max(frame.sun_direction.y, 0.2), VG_PARALLAX_REACH);
+    // Only near an edge, a bald patch or a fresh rut can the ray meet more than
+    // one thing; elsewhere the lawn is turf top and the road worn ground.
+    // The edge's reveal strays from the plan's ramp by at most 0.95 band plus
+    // the blades' fray, and the probes reach a metre at most, over which the
+    // ramp (4.8 m from turf to dirt) moves a fifth.
+    let probe_reach = lift * max(length(toward), sun_run);
+    // Trampled turf goes bald (below) only past 0.43 of the plan's trampling.
+    let edge_zone = abs(base_plan.r - 0.5) < band * 0.95 + 0.12 + probe_reach * 0.21 || base_plan.g > 0.38
+        || (base_tracks.g > 0.04 && (1.0 - base_tracks.r) * VG_TREAD_REACH < VG_TREAD_HALF + 0.65);
+    let parallax = lift > 0.0 && edge_zone;
+    var top = select(0.0, 1.0, base_plan.r < 0.5) * select(0.0, 1.0, lift > 0.0);
+    // The turf halfway up the ray; under the turf's top nothing else shows.
+    var turf_mid = 0.0;
+    if parallax {
+        top = vg_turf(ground + toward * lift, band, aa);
+        if top < 0.99 {
+            turf_mid = vg_turf(ground + toward * lift * 0.5, band, aa);
+        }
+    }
+    // Shade where the ray meets the ground or the turf's top.
+    let p = ground + toward * lift * top;
+    // Fresh ruts sink into the worn ground: where the ray meets the floor in a
+    // rut it runs on down, and where it would come out past the rut's bed it
+    // meets the rut's far wall instead.
+    var rut_wall = 0.0;
+    if top < 0.5 && base_tracks.g > 0.04 && (1.0 - base_tracks.r) * VG_TREAD_REACH < VG_TREAD_HALF + 0.05 {
+        rut_wall = vg_rut(ground) * (1.0 - vg_rut(ground - toward * VG_RUT_DEPTH));
+    }
 
     // ---- The baked plan: inside the wall the arena and its tracks, outside the
     // valley.
@@ -297,26 +377,15 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let tracks_z = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(p + vec2f(0.0, 0.25), VG_ARENA_PLAN, 2.0)).r;
     let valley_texel = vec2i(clamp(vg_plan_uv(p, VG_VALLEY_PLAN, 1.0) * vec2f(VG_PLAN_WIDTH, VG_PLAN_HEIGHT), vec2f(512.0, 0.0), vec2f(1023.0, 511.0)));
     let field_code = textureLoad(extra_texture1, valley_texel, 0).b * 255.0;
-    let inside = 1.0 - smoothstep(extent + 2.0, extent + 3.0, max(abs(p.x), abs(p.y)));
     let worn = mix(valley_plan.r, arena_plan.r, inside);
     let trampled = arena_plan.g * inside;
     let garden = arena_plan.b * inside;
-    let open = mix(1.0, arena_plan.a, inside);
+    // The contact shade stays at the foot of what stands on the floor.
+    let open = mix(1.0, base_plan.a, inside);
     let field = valley_plan.g * (1.0 - inside);
     let wet_bank = (1.0 - valley_plan.a) * (1.0 - inside);
-    // Trampled grass, and what survives in the quiet middle of a road, always
-    // breaks up; elsewhere the edge is crisp turf in some stretches and
-    // crumbles in others.
-    let crumbly = max(smoothstep(0.3, 0.78, vg_noise(p * 0.045 + 5.0)), smoothstep(0.45, 0.9, trampled));
-    // The turf stands above the worn ground. Its bank shades the dirt away from
-    // the sun: the plan where the sun's ray over this point crosses the bank's
-    // top tells whether turf stands between here and the sun.
-    let sun_flat = frame.sun_direction.xz;
-    let sun_run = length(sun_flat) / max(frame.sun_direction.y, 0.25);
-    let bank_height = mix(VG_BANK_CRISP, VG_BANK_CRUMBLY, crumbly);
-    let sun_point = p + sun_flat / max(length(sun_flat), 1e-4) * bank_height * sun_run;
-    let arena_sun = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(sun_point, VG_ARENA_PLAN, 0.0)).r;
-    let tracks_sun = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(sun_point, VG_ARENA_PLAN, 2.0));
+    // The tracks where the sun's ray over a rut's floor crosses its rim.
+    let tracks_sun = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(p + sun_flat * sun_run * VG_RUT_DEPTH, VG_ARENA_PLAN, 2.0));
 
     // ---- Treads (`village_tracks.rs`): metres to the nearest tread's centre,
     // how fresh it is, the traffic that packed the ground and standing water.
@@ -344,7 +413,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
 
     // ---- Textures: two scales of each tile, turned against each other.
     let turned = vec2f(p.x * 0.6 + p.y * 0.8, p.y * 0.6 - p.x * 0.8);
-    let grass_near = textureSample(map_texture, map_sampler, f.uv);
+    let grass_near = textureSample(map_texture, map_sampler, f.uv + (p - ground) / 8.0);
     let grass_far = textureSample(map_texture, map_sampler, turned / 21.0);
     let dirt_near = textureSample(extra_texture0, extra_sampler0, p / 3.1);
     let dirt_far = textureSample(extra_texture0, extra_sampler0, turned / 13.0);
@@ -356,9 +425,6 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // ---- Where the grass wears through. The edge is crisp turf with a lip in
     // some stretches and breaks into clumps and bald scuffs over a metre or two
     // in others; treads cut the turf wherever they cross it.
-    // The plan ramps the dirt over metres (`village_ground::EDGE_RAMP`); `band`
-    // is how much of that ramp the edge spreads over.
-    let band = mix(0.05, 0.4, crumbly);
     let edge = vg_edge(p, worn, band, aa);
     // Height blend: the tallest blades of the grass tile hold out over the
     // dirt and the dirt shows first between them, so the edge follows tufts
@@ -373,20 +439,20 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     }
     let scuffed = bald + (edge.y - 0.3) * 0.3;
     reveal = max(reveal, scuffed);
-    let bank_here = vg_bank(max(edge.x, scuffed));
     reveal = max(reveal, 0.5 + (rut - 0.5) * 2.0);
     let reveal_aa = max(fwidth(reveal), 0.02);
     let dirt = smoothstep(0.5 - reveal_aa, 0.5 + reveal_aa, reveal);
-    // The bank where the sun's ray over this point crosses the bank's top
-    // height: higher there than here, it shades this point; lower there, this
-    // point is the bank's sunward face. Only near an edge.
-    var bank_sun = bank_here;
-    if abs(edge.x - 0.5) < 0.4 {
-        let edge_sun = vg_edge(sun_point, mix(worn, arena_sun, inside), band, aa);
-        bank_sun = vg_bank(max(edge_sun.x, bald + (edge_sun.y - 0.3) * 0.3));
+    // Below the turf's top the ray meets the bank's earth face where turf
+    // stands halfway up it or at its foot (where it meets the floor, `p`).
+    let turf_foot = vg_bank(max(max(edge.x - edge.z, scuffed), 0.5 + (rut - 0.5) * 2.0));
+    let face = select(0.0, (1.0 - top) * max(turf_mid, turf_foot), parallax);
+    let face_upper = turf_mid;
+    // Turf between the worn ground and the sun shades it at the bank's foot.
+    var bank_turf = 0.0;
+    if parallax && dirt * (1.0 - top) * (1.0 - face) > 0.01 {
+        bank_turf = vg_turf(ground + sun_flat * sun_run * lift * 0.5, band, aa);
     }
-    let bank_shadow = dirt * smoothstep(0.2, 0.7, bank_sun - bank_here);
-    let bank_face = (1.0 - dirt) * smoothstep(0.2, 0.7, bank_here - bank_sun);
+    let bank_shadow = bank_turf * (1.0 - top) * (1.0 - face) * dirt;
     // Inside a rut, its sunward wall shades the floor.
     let rut_shadow = rut * (1.0 - rut_sun) * dirt * (1.0 - bank_shadow);
     // The turf lip: a raised, sunlit grass edge over a shaded undercut, only
@@ -477,7 +543,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         grass = mix(grass, grass * vec3f(0.9, 0.96, 0.9), smoothstep(0.0, -0.45, swell) * 0.15);
         grass = mix(grass, mix(vg_linear(0x9aa052), vg_linear(0xb0a861), meso), smoothstep(0.2, 0.65, swell) * 0.18 * (1.0 - long_grass * 0.5));
         // Walked grass dries toward straw and olive.
-        grass = mix(grass, mix(vg_linear(0x8d8a52), vg_linear(0xa39d5e), meso), wear * 0.6);
+        grass = mix(grass, mix(vg_linear(0x8d8a52), vg_linear(0xa39d5e), meso), smoothstep(0.2, 1.0, wear) * 0.45);
         let blades = mix(0.8, 1.2, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
         grass = grass * blades;
         // Tussocks: drifts of yellower and bluer clumps, their crowns lighter
@@ -497,10 +563,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // The last of the turf before the dirt: straw-dry where the edge
         // crumbles, lush and dark where the bank holds the damp.
         let fringe_tone = mix(mix(vg_linear(0x9c9455), vg_linear(0x8a9a4c), meso), vg_linear(0x4c7d34), crisp * 0.8);
-        grass = mix(grass, fringe_tone * blades, fringe * 0.55);
+        grass = mix(grass, fringe_tone * blades, fringe * 0.35);
         grass = mix(grass, grass * vec3f(1.12, 1.12, 0.9), lip * 0.6);
-        // The bank's sunlit face where the dirt lies toward the sun.
-        grass = mix(grass, grass * vec3f(1.28, 1.24, 0.98), bank_face * 0.8);
         // Flower drifts tint the lawn even where single blooms are too small to draw.
         let flowers = vg_fbm(p * 0.08 + 61.0);
         let drift = smoothstep(0.5, 0.78, flowers) * (1.0 - wear) * (1.0 - fine);
@@ -680,8 +744,28 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     }
     // The turf bank's shadow on the dirt below it and the rut walls' on their
     // floors: cool, since only the sky lights them.
-    let cast_shade = max(bank_shadow * 0.9, rut_shadow * 0.65) * (1.0 - puddle);
+    let cast_shade = max(bank_shadow * 0.85, rut_shadow * 0.45) * (1.0 - puddle);
     color = mix(color, color * vec3f(0.5, 0.52, 0.62), cast_shade);
+    // The bank's earth face: dark loam under the turf's mat of roots, paler and
+    // stonier toward its foot, with the turf's blades hanging over its rim.
+    var face_normal = vec3f(0.0, 1.0, 0.0);
+    if face > 0.0 {
+        let across = normalize(toward + vec2f(1e-4, 0.0));
+        let grain = vg_noise(vec2f(dot(ground, vec2f(-across.y, across.x)) * 7.0, face_upper * 2.0 + ground.x * 0.3));
+        var loam = mix(vg_linear(0x86684a), vg_linear(0x5a4430), face_upper) * mix(0.82, 1.12, grain);
+        let roots = smoothstep(0.62, 0.8, vg_noise(vec2f(dot(ground, vec2f(-across.y, across.x)) * 23.0, 1.7))) * face_upper;
+        loam = mix(loam, vg_linear(0xa38d68), roots * 0.45);
+        let overhang = smoothstep(0.7, 0.98, face_upper) * smoothstep(0.35, 0.7, vg_noise(vec2f(dot(ground, vec2f(-across.y, across.x)) * 11.0, 4.0)));
+        loam = mix(loam, vg_linear(0x4f7a30), overhang * 0.8);
+        color = mix(color, loam, face);
+        face_normal = normalize(vec3f(across.x * 0.7, 1.0, across.y * 0.7));
+    }
+    // A rut's far wall: the worn ground's crust over darker, damper earth.
+    if rut_wall > 0.0 {
+        let across = normalize(toward + vec2f(1e-4, 0.0));
+        color = mix(color, color * vec3f(0.9, 0.87, 0.84), rut_wall);
+        face_normal = normalize(mix(face_normal, vec3f(across.x * 0.7, 1.0, across.y * 0.7), rut_wall));
+    }
     // Contact shade at the foot of walls, cottages, timber and trunks.
     color = color * mix(0.52, 1.0, open);
 
@@ -690,11 +774,11 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         + pebbles.y * 0.6 + stones.y * 0.7 + weeds.x * 0.015 + grit.y * 0.4 + cleat * 0.012 * dirt + blooms.y * 0.3 * (1.0 - dirt)
         + bed_relief * flower_bed + veg_relief * veg_plot
         + edging * 0.03 + crop.a * field
-        + clump_height + swell * 0.35 + bank * inside + lawn_swell * 0.6 + bank_here * bank_height;
+        + clump_height + swell * 0.35 + bank * inside + lawn_swell * 0.6;
     let normal = vg_bump(mix(relief, -0.08, puddle), f.world, (*s).normal, f.front_facing);
 
     (*s).color = color * material.color.rgb * f.tint.rgb;
-    (*s).normal = normalize(mix(normal, (*s).normal, puddle));
+    (*s).normal = normalize(mix(mix(normal, (*s).normal, puddle), face_normal, max(face, rut_wall)));
     (*s).roughness = mix(mix(mix(mix(0.95, mix(0.92, 0.82, packed), dirt), 0.68, wet * 0.6), 0.55, damp * 0.8), 0.05, puddle);
     (*s).opacity = material.color.a * f.tint.a;
 }
@@ -710,11 +794,10 @@ fn vg_ridged(q: vec2f) -> f32 {
 // world height), trees root on staggered rows of `row` metres and the lowest
 // tree covering a point wins, since from the valley the lower trees stand in
 // front. x the coverage, y how far up its tree the point lies (1 at the tip),
-// z where across its crown the point lies (-1 to 1; 2 to 4 for a broadleaf,
-// offset by 3), w a random tone. `cap` is the height above which trees thin out; `aa` the pixel
-// footprint in metres. Trees stand tallest low on the slopes and shrink toward
-// the treeline, open into clearings where a slow field says so, and a few low
-// ones are rounded broadleaves among the pines.
+// z where across its crown the point lies (-1 to 1), w a random tone. `cap` is
+// the height above which trees thin out; `aa` the pixel footprint in metres.
+// Trees stand tallest and thickest low on the slopes and shrink and scatter
+// toward the treeline, and open into meadows where [`vg_forest_clearing`] says.
 fn vg_conifer_rows(u: f32, v: f32, seed: f32, cap: f32, aa: f32) -> vec4f {
     let width = 2.6;
     let row = 1.9;
@@ -730,43 +813,34 @@ fn vg_conifer_rows(u: f32, v: f32, seed: f32, cap: f32, aa: f32) -> vec4f {
             let c = cell + f32(j);
             let pick = vg_hash2(vec2f(c, r) + seed);
             let tone = vg_hash(vec2f(c * 1.7, r * 2.3) + seed + 5.0);
-            // Thinning above the cap: each tree stands or not as a whole.
-            let room = smoothstep(cap + 3.0, cap - 4.0, base);
+            // Thinning toward the cap: each tree stands or not as a whole, so
+            // the wood breaks into stands and single trees well below it.
+            let room = smoothstep(cap + 3.0, cap - 14.0, base);
             if (pick.y > room * 0.97 + 0.03 * (1.0 - step(cap + 6.0, base))) {
                 continue;
             }
             let axis = shift + (c + 0.25 + pick.x * 0.5) * width;
-            // Clearings and meadows open where a slow field over the face says
-            // so; a few single gaps let the dark forest floor through elsewhere.
-            let clearing = vg_noise(vec2f(axis * 0.028, base * 0.05) + seed * 3.1);
-            if (clearing < 0.3 || vg_hash(vec2f(c * 2.9, r * 1.3) + seed + 9.0) < 0.07) {
+            // Meadows open where a slow field over the face says so; a few
+            // single gaps let the forest floor through elsewhere.
+            if (vg_forest_clearing(axis, base, seed) > 0.5 || vg_hash(vec2f(c * 2.9, r * 1.3) + seed + 9.0) < 0.06) {
                 continue;
             }
             let altitude = smoothstep(0.0, cap, base);
-            let broadleaf = tone > 0.86 && base < cap - 12.0;
-            let h = tallest * mix(0.5, 1.0, fract(pick.y * 7.13)) * mix(0.7, 1.0, room) * mix(1.18, 0.72, altitude)
-                * select(1.0, 0.8, broadleaf);
+            let h = tallest * mix(0.5, 1.0, fract(pick.y * 7.13)) * mix(0.75, 1.0, room) * mix(1.2, 0.7, altitude);
             let foot = base + (tone - 0.5) * 1.8;
             let t = (v - foot) / h;
             if (t < 0.0 || t > 1.0) {
                 continue;
             }
             let offset = u - axis;
-            let girth = mix(0.82, 1.2, fract(pick.x * 5.31));
-            var half = 0.0;
-            if broadleaf {
-                // A rounded crown over a short trunk.
-                let round = (t - 0.58) / 0.42;
-                half = h * 0.36 * girth * sqrt(max(1.0 - round * round, 0.0)) + 0.06 * step(t, 0.2);
-            } else {
-                // Stylised tiers: each whorl of branches flares out and tucks in.
-                let tiers = fract(t * 4.0 + tone);
-                half = h * 0.3 * girth * (1.0 - t) * mix(0.72, 1.0, tiers) + 0.05;
-            }
+            // Stylised tiers: each whorl of branches flares out and tucks in;
+            // some trees are slim spires, some broad and full.
+            let girth = mix(0.78, 1.22, fract(pick.x * 5.31));
+            let tiers = fract(t * 4.0 + tone);
+            let half = h * 0.3 * girth * (1.0 - t) * mix(0.72, 1.0, tiers) + 0.05;
             let cover = 1.0 - smoothstep(half - aa, half + aa, abs(offset));
             if (cover > hit.x) {
-                let across = clamp(offset / max(half, 0.05), -1.0, 1.0);
-                hit = vec4f(cover, t, across + select(0.0, 3.0, broadleaf), tone);
+                hit = vec4f(cover, t, clamp(offset / max(half, 0.05), -1.0, 1.0), tone);
             }
         }
         if (hit.x > 0.99) {
@@ -774,6 +848,14 @@ fn vg_conifer_rows(u: f32, v: f32, seed: f32, cap: f32, aa: f32) -> vec4f {
         }
     }
     return hit;
+}
+
+// Where the wood on a face opens into a meadow, above 0.5: a slow field over
+// the face's rows (`u` along them, `v` the height), the same for each tree's
+// foot and for the ground between.
+fn vg_forest_clearing(u: f32, v: f32, seed: f32) -> f32 {
+    let field = vg_noise(vec2f(u * 0.026, v * 0.045) + seed * 3.1) * 0.75 + vg_noise(vec2f(u * 0.09, v * 0.12) + seed * 1.7) * 0.25;
+    return smoothstep(0.36, 0.28, field);
 }
 
 fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
@@ -802,7 +884,9 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // Bands, broken by the relief and broad noise so no contour line shows.
     let band_noise = vg_fbm(p.xz * 0.016 + 30.0);
     let treeline = 22.0 + band_noise * 15.0;
-    let snowline = 41.0 + band_noise * 12.0;
+    // The snow reaches lower down the shaded northern ranges and the big
+    // massifs than on the sunny shoulders, so no one contour runs across them.
+    let snowline = 41.0 + band_noise * 12.0 + (vg_noise(p.xz * 0.0055 + 12.0) - 0.5) * 18.0;
     let meadow = 1.0 - smoothstep(5.0, 11.0, p.y + (band_noise - 0.5) * 6.0);
 
     // Rock: light, warm ribs over cool, dark gullies, faint bedding across the
@@ -820,8 +904,8 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let strata = fract(p.y / 6.5 + vg_noise(p.xz * 0.03) * 1.6);
     let ledge = smoothstep(0.82, 0.88, strata) * (1.0 - smoothstep(0.93, 0.99, strata)) * (1.0 - weights.y) * relief_fade;
     let overhang = smoothstep(0.0, 0.05, strata) * (1.0 - smoothstep(0.08, 0.2, strata)) * (1.0 - weights.y) * relief_fade;
-    rock = mix(rock, rock * 1.18, ledge * 0.6);
-    rock = mix(rock, rock * vec3f(0.62, 0.66, 0.74), overhang * 0.55);
+    rock = mix(rock, rock * 1.12, ledge * 0.35);
+    rock = mix(rock, rock * vec3f(0.7, 0.73, 0.8), overhang * 0.35);
     rock = rock * mix(0.94, 1.04, bedding * fine);
     rock = mix(rock, rock * vec3f(0.62, 0.7, 0.82), (1.0 - smoothstep(0.08, 0.4, crag)) * 0.6);
     rock = mix(rock, vg_linear(0x5b684f), (1.0 - smoothstep(14.0, 30.0, p.y + crag * 6.0)) * 0.55);
@@ -865,6 +949,10 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     trees.x = max(rows_a.x * gate_a, rows_b.x * gate_b);
     let along_angle = select(angle0, angle1, b_wins);
     let along = vec3f(-sin(along_angle), 0.0, cos(along_angle));
+    // The meadows between the stands, on the nearer eighth's rows.
+    let near_sector = select(sector, sector + 1.0, turn > 0.5);
+    let near_angle = near_sector * 0.7853982;
+    let glade = vg_forest_clearing(dot(p.xz, vec2f(-sin(near_angle), cos(near_angle))), p.y, 11.0 + (near_sector % 4.0) * 7.0);
     // Far away the single trees blur into the canopy's average.
     let distant = smoothstep(0.3, 0.75, footprint);
     let below = smoothstep(-2.0, 4.0, treeline - p.y);
@@ -875,13 +963,17 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let floor_shade = vg_linear(0x0f1d14);
     let tree_tone = mix(0.85, 1.12, trees.w);
     // Low on the slopes the woods are warmer and lighter, near the treeline
-    // dark and blue; broadleaves stand out yellow-green among the pines.
+    // dark and blue; one tree in eight is a larch, yellow-green among the
+    // spruces.
     let height_tint = mix(vec3f(1.1, 1.08, 0.88), vec3f(0.84, 0.92, 1.06), smoothstep(4.0, treeline, p.y));
-    let broadleaf = trees.z > 1.5;
-    let leaves = mix(vg_linear(0x34562a), vg_linear(0x5f7d36), 0.3 + trees.y * 0.5);
-    let tree_color = select(mix(needles_dark, needles_lit, 0.35 + trees.y * 0.4) * height_tint, leaves, broadleaf) * tree_tone;
-    let near_forest = mix(floor_shade, tree_color, trees.x);
-    let far_forest = mix(floor_shade, mix(needles_dark, needles_lit, 0.5), 0.75);
+    let larch = smoothstep(0.86, 0.9, fract(trees.w * 7.7));
+    let needles = mix(mix(needles_dark, needles_lit, 0.35 + trees.y * 0.4), mix(vg_linear(0x3e5a26), vg_linear(0x7a8c3a), 0.3 + trees.y * 0.5), larch);
+    let tree_color = needles * height_tint * tree_tone;
+    // The ground between the trees: grass in the meadows, the forest floor
+    // under the stands.
+    let floor_tone = mix(floor_shade, vg_linear(0x587a3e) * mix(0.85, 1.1, vg_fbm(p.xz * 0.05)), glade);
+    let near_forest = mix(floor_tone, tree_color, trees.x);
+    let far_forest = mix(floor_tone, mix(needles_dark, needles_lit, 0.5), 0.75 * (1.0 - glade));
     let canopy = mix(near_forest, far_forest, distant);
     // Rock breaks through the wood on the sharpest ribs.
     let rock_through = smoothstep(0.66, 0.78, crag + (tone - 0.5) * 0.3) * (1.0 - weights.y * 0.5);
@@ -889,19 +981,16 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // Below the treeline the ground between trees is forest floor, above it
     // bare rock or alpine grass shows between them.
     let floor_amount = stand * below * (1.0 - distant);
-    var color = mix(rock, floor_shade * mix(0.9, 1.2, tone), floor_amount * 0.9);
+    var color = mix(rock, floor_tone * mix(0.9, 1.2, tone), floor_amount * 0.9);
     color = mix(color, canopy, forest);
     // Alpine grass above the wood and down the chutes.
-    let pasture = max(smoothstep(-6.0, 0.0, treeline - p.y) * slope_ok, chute * slope_ok * below)
+    let pasture = max(max(smoothstep(-6.0, 0.0, treeline - p.y) * slope_ok, chute * slope_ok * below), glade * stand * below)
         * (1.0 - forest);
     color = mix(color, vg_linear(0x5f7f45) * mix(0.85, 1.1, tone), pasture * 0.8);
     // Each tree is lit as a cone: the half toward the sun bright, the far half
     // in shade, so the rows read by their light like the near pines.
     let outward = normalize(vec3f(smooth_normal.x, 0.0, smooth_normal.z) + 1e-4);
-    // Pines split into a lit and a shaded half like the near ones; a broadleaf's
-    // round crown turns smoothly from one side to the other.
-    let side = select(sign(trees.z), (trees.z - 3.0) * 0.8, broadleaf);
-    let cone = normalize(outward * 0.55 + vec3f(0.0, 0.45, 0.0) + along * side * 0.7);
+    let cone = normalize(outward * 0.55 + vec3f(0.0, 0.45, 0.0) + along * sign(trees.z) * 0.7);
     var normal = normalize(mix(crag_normal, cone, forest * (1.0 - distant)));
     normal = normalize(mix(normal, normalize(smooth_normal + vec3f(0.0, 0.3, 0.0)), forest * distant));
 
@@ -915,7 +1004,7 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, base * mix(0.9, 1.08, vg_fbm(p.xz * 0.08)), meadow * 0.8);
     // The far ranges cool and pale into the air between, so the farthest
     // forest reads behind the nearer instead of as one dark carpet.
-    let air = smoothstep(180.0, 460.0, length(p - frame.camera_position.xyz)) * 0.22;
+    let air = smoothstep(220.0, 520.0, length(p - frame.camera_position.xyz)) * 0.16;
     color = mix(color, vg_linear(0x9db3bf) * mix(0.8, 1.05, up), air);
 
     (*s).color = color;

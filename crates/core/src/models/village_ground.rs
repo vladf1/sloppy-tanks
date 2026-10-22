@@ -28,6 +28,8 @@
 //! dirt and the fields are, so tufts line the painted edges and no tree grows in a
 //! field or a lane.
 
+use std::sync::OnceLock;
+
 use glam::DVec2;
 
 use super::house_model::{cottage_turns, door_direction};
@@ -451,6 +453,27 @@ impl ArenaPlan {
         }
         [dirt, trampled.min(1.0), garden, 1.0 - shade]
     }
+}
+
+/// Whether the turf stands whole around (x, z): inside a lawn, clear of its worn
+/// edge, the gardens, trampled patches and the treads cut across it, so a tuft
+/// planted there can stand on the raised turf the ground shader draws.
+pub fn deep_turf(x: f64, z: f64) -> bool {
+    static PLAN: OnceLock<ArenaPlan> = OnceLock::new();
+    let plan = PLAN.get_or_init(ArenaPlan::new);
+    let p = DVec2::new(x, z);
+    if SHORTCUTS
+        .iter()
+        .any(|(points, width)| polyline_distance(p, points) < width + 2.2)
+    {
+        return false;
+    }
+    [(0.0, 0.0), (0.6, 0.0), (-0.6, 0.0), (0.0, 0.6), (0.0, -0.6)]
+        .iter()
+        .all(|(dx, dz)| {
+            let [dirt, trampled, garden, _] = plan.sample(x + dx, z + dz, 0.0);
+            dirt < 0.01 && trampled < 0.25 && garden < 0.05
+        })
 }
 
 /// The cottages' vegetable plots: centre and half extents in world metres. The
