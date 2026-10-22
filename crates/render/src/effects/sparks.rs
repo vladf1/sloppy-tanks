@@ -112,7 +112,7 @@ pub const EMBERS: Burst = Burst {
 };
 /// A shell striking steel: a bright, quick spray glancing off the armour.
 pub const METAL_SPARKS: Burst = Burst {
-    count: 11,
+    count: 16,
     speed: [7.0, 15.0],
     lift: 0.45,
     life: [0.2, 0.42],
@@ -124,14 +124,15 @@ pub const METAL_SPARKS: Burst = Burst {
     hide: 0.0,
     cools: true,
 };
-/// A shell striking stone or concrete.
+/// A shell striking stone or concrete: a few white chips of light, not a
+/// shower of burning metal.
 pub const STONE_SPARKS: Burst = Burst {
-    count: 9,
+    count: 7,
     speed: [5.0, 11.0],
     lift: 0.5,
-    life: [0.15, 0.32],
-    width: 0.055,
-    color: [3.8, 1.8, 0.45],
+    life: [0.12, 0.26],
+    width: 0.05,
+    color: [3.2, 2.7, 2.1],
     gravity: 13.0,
     scatter: 0.1,
     stagger: 0.03,

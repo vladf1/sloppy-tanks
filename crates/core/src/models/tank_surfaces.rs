@@ -26,14 +26,17 @@ use glam::{DMat4, DVec3};
 use super::model_primitives::Cache;
 use super::{Team, part};
 use crate::geometry::math::hex_to_linear;
-use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
+use crate::geometry::{Attribute, Buckets, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a strong signal blue and a deep crimson, each one
-/// saturated color without a camouflage, so a tank's side reads at a glance. The
-/// blue stays bright enough not to fall to black in shade (the paint's own fill
-/// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x882b25];
+/// Service paint per team: a strong cobalt blue and a deep warm signal red, each
+/// one color without a camouflage, so a tank's side reads at a glance. Neither is
+/// a pure primary: the green and blue the red keeps (and the red and green the
+/// blue keeps) leave the grade room to show a lighter roof over darker sides
+/// instead of clipping every face to one flat slab, and keep the red off magenta
+/// in the menu and off maroon from overhead. The blue stays bright enough not to
+/// fall to black in shade.
+pub const VEHICLE_PAINT: [u32; 2] = [0x3462b8, 0x8a2c26];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -98,8 +101,8 @@ const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
-const DECK_LOW: f64 = 0.72;
-const DECK_HIGH: f64 = 1.1;
+const DECK_LOW: f64 = 0.6;
+const DECK_HIGH: f64 = 1.08;
 const DECK_RAMP: f64 = 0.6;
 /// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
 /// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
@@ -117,16 +120,16 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.55;
-const PAINT_FILL: f32 = 0.08;
+const PAINT_FILL: f32 = 0.11;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0x75716a;
+const BARE_STEEL: u32 = 0x5c5852;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
-const TURRET_VALUE: f64 = 1.08;
-const HULL_VALUE: f64 = 0.9;
+const TURRET_VALUE: f64 = 1.04;
+const HULL_VALUE: f64 = 0.84;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;
@@ -259,6 +262,34 @@ fn gear_material(source: &Material) -> Arc<Material> {
             }
         },
     )
+}
+
+/// The track belt's scroll wraps after this many model units of travel: every
+/// belt holds a whole number of links per period, so the wrap never jumps.
+pub const TRACK_BELT_PERIOD: f64 = 2.0;
+/// Dark worn track steel: satin enough for the polished faces to catch the light.
+const BELT_METALNESS: f32 = 0.4;
+const BELT_ROUGHNESS: f32 = 0.6;
+
+/// The track belt's material: the paint effect's belt mode, which draws the links
+/// from the belt's UVs and scrolls them `links_per_unit` links per model unit of
+/// the tank's travel (fed per instance), with the running gear's fill.
+pub fn track_belt_material(links_per_unit: f64) -> Arc<Material> {
+    static BELTS: Cache<u64, Material> = Cache::new();
+    BELTS.get_or_insert(links_per_unit.to_bits(), || {
+        let mut params = vec![0.0; 16];
+        params[0] = links_per_unit as f32;
+        params[7] = GEAR_FILL;
+        params[11] = PAINT_REPEAT;
+        params[15] = 3.0;
+        Material {
+            effect: Effect::Custom {
+                name: VEHICLE_PAINT_EFFECT,
+                params,
+            },
+            ..white_vertex_material(BELT_METALNESS, BELT_ROUGHNESS)
+        }
+    })
 }
 
 /// Window and sight glass in `tint` (sRGB): the paint effect's glass mode, a dark
@@ -546,15 +577,18 @@ fn plate_variation(key: PlateKey) -> f64 {
     (hash % 2001) as f64 / 1000.0 - 1.0
 }
 
+/// Dust and mud in linear RGB, converted once rather than for every vertex.
+fn grime_colors() -> &'static [[f64; 3]; 2] {
+    static COLORS: OnceLock<[[f64; 3]; 2]> = OnceLock::new();
+    COLORS.get_or_init(|| [hex_to_linear(DUST), hex_to_linear(MUD)])
+}
+
 /// Dust and mud on a fitting or the running gear at model-space `p`.
 fn grimed(base: [f64; 3], p: DVec3, n: DVec3, grime: Grime, dust_scale: f64) -> [f64; 3] {
+    let [dust, mud] = *grime_colors();
     let height = band_height(p, grime);
     let low = 1.0 - height;
-    let mut color = mix(
-        base,
-        hex_to_linear(DUST),
-        low.powf(1.7) * DUST_STRENGTH * dust_scale,
-    );
+    let mut color = mix(base, dust, low.powf(1.7) * DUST_STRENGTH * dust_scale);
     let mud_strength = if dust_scale < 1.0 {
         MUD_STRENGTH * MUD_ON_RUNNING_GEAR
     } else {
@@ -562,7 +596,7 @@ fn grimed(base: [f64; 3], p: DVec3, n: DVec3, grime: Grime, dust_scale: f64) -> 
     };
     color = mix(
         color,
-        hex_to_linear(MUD),
+        mud,
         (1.0 - height / MUD_BAND).clamp(0.0, 1.0).powi(2) * mud_strength,
     );
     color.map(|c| c * ground_shade(height, n))
@@ -662,16 +696,17 @@ fn weathered(
     let plates = finish.is_paint().then(|| Plates::new(&faces, &flat));
     let (heights, edges) = match &plates {
         Some(plates) => (plates.heights(&faces), plate_edges(&faces, &flat, plates)),
-        None => (HashMap::new(), Vec::new()),
+        None => (Vec::new(), Vec::new()),
     };
+    let base_linear = base.map(hex_to_linear);
     let is_trim = match finish {
         Finish::Paint { trim, paint } => base == Some(trim) && trim != paint,
         _ => false,
     };
     for (t, &(p, face)) in faces.iter().enumerate() {
         let root = plates.as_ref().map_or(t, |plates| plates.roots[t]);
-        let gradient = |y: f64| match heights.get(&root) {
-            Some(&(foot, top)) if top - foot >= GRADIENT_MIN_HEIGHT => {
+        let gradient = |y: f64| match heights.get(root).copied().flatten() {
+            Some((foot, top)) if top - foot >= GRADIENT_MIN_HEIGHT => {
                 GRADIENT_FOOT + (GRADIENT_TOP - GRADIENT_FOOT) * (y - foot) / (top - foot)
             }
             _ => 1.0,
@@ -693,8 +728,8 @@ fn weathered(
                 out.uvs[index] = [u as f32, v as f32];
                 alphas.push(paint_alpha(*point, grime, chamfer));
             } else {
-                let (paint, dust_scale) = match base {
-                    Some(hex) => (hex_to_linear(hex), 1.0),
+                let (paint, dust_scale) = match base_linear {
+                    Some(linear) => (linear, 1.0),
                     None => (
                         own_colors.get(index).map_or([1.0; 3], |c| c.map(f64::from)),
                         DUST_ON_RUNNING_GEAR,
@@ -826,27 +861,24 @@ fn edge_key(a: PointKey, b: PointKey) -> EdgeKey {
 /// root triangle.
 struct Plates {
     keys: Vec<[PointKey; 3]>,
-    /// The triangles on each edge.
-    shared: HashMap<EdgeKey, Vec<usize>>,
+    /// Triangle sides (side `i` of triangle `t` is item `3 * t + i`, running from
+    /// corner `i`) grouped by the edge they lie on.
+    sides: Buckets,
     roots: Vec<usize>,
 }
 
 impl Plates {
     fn new(faces: &[([DVec3; 3], DVec3)], flat: &[bool]) -> Self {
         let keys: Vec<[PointKey; 3]> = faces.iter().map(|(p, _)| p.map(point_key)).collect();
-        let mut shared: HashMap<EdgeKey, Vec<usize>> = HashMap::new();
-        for (t, k) in keys.iter().enumerate() {
-            for i in 0..3 {
-                shared
-                    .entry(edge_key(k[i], k[(i + 1) % 3]))
-                    .or_default()
-                    .push(t);
-            }
-        }
+        let sides = Buckets::new(
+            keys.iter()
+                .flat_map(|k| (0..3).map(move |i| edge_key(k[i], k[(i + 1) % 3]))),
+        );
         let mut parent: Vec<usize> = (0..faces.len()).collect();
-        for triangles in shared.values() {
-            for (i, &a) in triangles.iter().enumerate() {
-                for &b in &triangles[i + 1..] {
+        for edge in sides.groups() {
+            for (i, &a) in edge.iter().enumerate() {
+                for &b in &edge[i + 1..] {
+                    let (a, b) = (a / 3, b / 3);
                     if flat[a] && flat[b] && faces[a].1.dot(faces[b].1) > CONTINUOUS {
                         // The lower root wins, so a plate's root is its first
                         // triangle whatever order the edges come in.
@@ -859,23 +891,22 @@ impl Plates {
         let roots = (0..faces.len())
             .map(|t| find_root(&mut parent, t))
             .collect();
-        Self {
-            keys,
-            shared,
-            roots,
-        }
+        Self { keys, sides, roots }
     }
 
-    /// The height range of every upright plate (by root).
-    fn heights(&self, faces: &[([DVec3; 3], DVec3)]) -> HashMap<usize, (f64, f64)> {
-        let mut heights = HashMap::new();
+    /// The triangles on the edge of side `i` of triangle `t`, in order.
+    fn side(&self, t: usize, i: usize) -> impl Iterator<Item = usize> + Clone + '_ {
+        self.sides.with(3 * t + i).iter().map(|side| side / 3)
+    }
+
+    /// The height range of every upright plate, by root (`None` for other roots).
+    fn heights(&self, faces: &[([DVec3; 3], DVec3)]) -> Vec<Option<(f64, f64)>> {
+        let mut heights = vec![None; faces.len()];
         for (t, (p, face)) in faces.iter().enumerate() {
             if face.y.abs() >= UPRIGHT {
                 continue;
             }
-            let range = heights
-                .entry(self.roots[t])
-                .or_insert((f64::INFINITY, f64::NEG_INFINITY));
+            let range = heights[self.roots[t]].get_or_insert((f64::INFINITY, f64::NEG_INFINITY));
             for corner in p {
                 range.0 = range.0.min(corner.y);
                 range.1 = range.1.max(corner.y);
@@ -892,29 +923,26 @@ impl Plates {
 /// an upright plate, which stands on something), plain otherwise.
 fn plate_edges(faces: &[([DVec3; 3], DVec3)], flat: &[bool], plates: &Plates) -> Vec<[f32; 2]> {
     let count = faces.len();
-    let Plates {
-        keys,
-        shared,
-        roots,
-    } = plates;
-    let mut feet: HashMap<usize, f64> = HashMap::new();
+    let Plates { keys, roots, .. } = plates;
+    // Per plate root: its lowest corner, and its border segments.
+    let mut feet = vec![f64::INFINITY; count];
     for (t, (p, _)) in faces.iter().enumerate() {
         let low = p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min);
-        let foot = feet.entry(roots[t]).or_insert(f64::INFINITY);
+        let foot = &mut feet[roots[t]];
         *foot = foot.min(low);
     }
-    let mut sides: HashMap<usize, Vec<Segment>> = HashMap::new();
+    let mut sides: Vec<Vec<Segment>> = (0..count).map(|_| Vec::new()).collect();
     for t in (0..count).filter(|&t| flat[t]) {
         let (p, normal) = faces[t];
         for i in 0..3 {
             let (j, (a, b)) = ((i + 1) % 3, (p[i], p[(i + 1) % 3]));
-            let triangles = &shared[&edge_key(keys[t][i], keys[t][j])];
-            if triangles.iter().any(|&u| u != t && roots[u] == roots[t]) {
+            let triangles = plates.side(t, i);
+            if triangles.clone().any(|u| u != t && roots[u] == roots[t]) {
                 continue;
             }
             let mut border = Border::Plain;
             let mut open = true;
-            for &u in triangles.iter().filter(|&&u| u != t) {
+            for u in triangles.filter(|&u| u != t) {
                 open = false;
                 let Some(k) =
                     (0..3).find(|&k| keys[u][k] != keys[t][i] && keys[u][k] != keys[t][j])
@@ -943,23 +971,21 @@ fn plate_edges(faces: &[([DVec3; 3], DVec3)], flat: &[bool], plates: &Plates) ->
             // box's own floor): it gathers grime rather than chipping.
             let upright = normal.y.abs() < UPRIGHT;
             let level = (b.y - a.y).abs() < 0.3 * a.distance(b);
-            let foot = (a.y + b.y) / 2.0 < feet[&roots[t]] + 0.01;
+            let foot = (a.y + b.y) / 2.0 < feet[roots[t]] + 0.01;
             if border == Border::Edge && upright && level && foot {
                 border = Border::Recess;
             }
             if border != Border::Plain {
-                sides
-                    .entry(roots[t])
-                    .or_default()
-                    .push(Segment { a, b, border });
+                sides[roots[t]].push(Segment { a, b, border });
             }
         }
     }
     let mut out = vec![[NO_EDGES; 2]; count * 3];
     for t in (0..count).filter(|&t| flat[t]) {
-        let Some(segments) = sides.get(&roots[t]) else {
+        let segments = &sides[roots[t]];
+        if segments.is_empty() {
             continue;
-        };
+        }
         let lines = border_lines(&faces[t], segments);
         let mut used = vec![false; lines.len()];
         let mut channel = 0;

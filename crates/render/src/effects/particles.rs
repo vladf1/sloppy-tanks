@@ -18,7 +18,9 @@ use super::walls::{Strike, WallMaterial};
 use crate::color::hex_to_linear;
 
 pub const MAX_PARTICLES: usize = 1200;
-const PARTICLE_GRAVITY: f64 = 8.0;
+/// Heavier than real gravity, like the simulation's: chips and plates drop and
+/// land rather than drifting about like leaves.
+const PARTICLE_GRAVITY: f64 = 15.0;
 /// Particles never draw below the ground.
 const MIN_HEIGHT: f64 = 0.1;
 /// Splinters are long thin chips.
@@ -26,20 +28,20 @@ const SPLINTER_STRETCH: Vec3 = Vec3::new(0.4, 2.4, 0.4);
 /// Chips and clods are flattened, uneven lumps rather than round beads.
 const CHIP_STRETCH: Vec3 = Vec3::new(1.0, 0.62, 0.84);
 /// Torn plate and flakes of paint are thin and wide.
-const PLATE_STRETCH: Vec3 = Vec3::new(1.5, 0.16, 1.05);
+const PLATE_STRETCH: Vec3 = Vec3::new(1.5, 0.26, 1.05);
 /// A resting chip's or plate's centre stands this share of its size off the ground.
 const CHIP_REST: f64 = 0.55;
-const PLATE_REST: f64 = 0.16;
+const PLATE_REST: f64 = 0.26;
 /// A shell striking a container's steel: a hard shower of sparks off the face,
 /// and flakes of its paint and bare metal knocked off it ([minimum, span]).
 const SHEET_SPARKS: Burst = Burst {
     count: 48,
-    speed: [6.0, 17.0],
-    lift: 0.5,
-    life: [0.3, 0.7],
+    speed: [3.0, 18.0],
+    lift: 0.6,
+    life: [0.25, 0.95],
     width: 0.13,
     color: [3.8, 1.6, 0.36],
-    gravity: 13.0,
+    gravity: 17.0,
     scatter: 0.12,
     stagger: 0.04,
     hide: 0.0,
@@ -54,6 +56,8 @@ const SPALL: usize = 20;
 const SPALL_LIFE: [f64; 2] = [9.0, 5.0];
 const SPALL_SIZE: [f64; 2] = [0.06, 0.12];
 const SPALL_COLORS: [u32; 4] = [0x8a847a, 0xa49e93, 0x6c6862, 0x938b7f];
+/// Spall comes in every size, from grit to fist-sized lumps.
+const SPALL_SCALES: [f64; 5] = [2.8, 1.0, 1.7, 0.7, 1.25];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Particle {
@@ -436,7 +440,7 @@ impl ParticleEffects {
             let vy = 1.5 + random.next_f64() * 3.5;
             // A few heavy chunks among the grit.
             let size = (SPALL_SIZE[0] + random.next_f64() * SPALL_SIZE[1])
-                * if i % 4 == 0 { 2.8 } else { 1.0 };
+                * SPALL_SCALES[i % SPALL_SCALES.len()];
             let grey = hex_to_linear(SPALL_COLORS[i % SPALL_COLORS.len()]);
             let color = match skin {
                 Some(skin) => [0, 1, 2].map(|c| {
@@ -583,7 +587,7 @@ impl ParticleEffects {
             }
             let life = CLOD_LIFE[0] + random.next_f64() * CLOD_LIFE[1];
             let vx = (random.next_f64() - 0.5) * speed;
-            let vy = 4.0 + random.next_f64() * 6.0;
+            let vy = 3.5 + random.next_f64() * 5.0;
             let vz = (random.next_f64() - 0.5) * speed;
             let size = 0.1 + random.next_f64() * 0.2;
             self.particles.push(Particle {
@@ -630,7 +634,7 @@ impl ParticleEffects {
                 y: 0.8,
                 z: event.z,
                 vx: angle.cos() * speed,
-                vy: 3.0 + random.next_f64() * 4.0,
+                vy: 2.5 + random.next_f64() * 3.5,
                 vz: angle.sin() * speed,
                 life,
                 max: life,
@@ -690,7 +694,7 @@ impl ParticleEffects {
                 y: 1.0,
                 z: event.z,
                 vx: angle.cos() * speed,
-                vy: 2.5 + random.next_f64() * 3.0,
+                vy: 2.0 + random.next_f64() * 3.0,
                 vz: angle.sin() * speed,
                 life,
                 max: life,
@@ -912,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn burnout_rolls_a_small_gout_of_fire_with_no_shockwave_or_clods() {
+    fn burnout_bursts_a_contained_fireball_with_no_shockwave_or_clods() {
         let mut random = CosmeticRandom::default();
         let mut particles = ParticleEffects::default();
         let burnout = SimEvent {
@@ -934,13 +938,13 @@ mod tests {
                 .rings
                 .records()
                 .iter()
-                .all(|r| r.data[2] == 2.0),
-            "only the scorch: no dust ring or shock front"
+                .all(|r| r.data[2] != 1.0),
+            "a scorch and a ring of dust, but no shock front"
         );
-        assert_eq!(
-            particles.explosions.puffs.len(),
-            3 + 4,
-            "the smoke and the gout of fire rolling off the hull"
+        let puffs = particles.explosions.puffs.len();
+        assert!(
+            puffs > 3 + 4 && puffs <= super::super::explosions::PUFFS_PER_BLAST,
+            "a fireball out of the hull's seams beside the smoke and the gout: {puffs}"
         );
     }
 

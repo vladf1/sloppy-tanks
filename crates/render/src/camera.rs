@@ -224,6 +224,9 @@ impl ShadowReach {
     }
 }
 
+/// Metres a fitted shadow box reaches toward the sun beyond its highest corner.
+const FITTED_CASTER_HEADROOM: f32 = 30.0;
+
 /// The sun's orthographic shadow camera (Three `DirectionalLight.shadow.camera`):
 /// it sits at the light position, looks at the light target, and keeps its box
 /// fixed in light space, so the map does not swim when the view moves.
@@ -296,7 +299,10 @@ impl ShadowCamera {
                 }
             }
         }
-        let near = -max.z - 2.0;
+        // The box's near face stands well toward the sun: cliffs and towers taller
+        // than the fitted heights still cast their whole shadow instead of being
+        // clipped into straight-edged bands. The depth span keeps its tuned length.
+        let near = -max.z - FITTED_CASTER_HEADROOM;
         Self {
             position,
             target,

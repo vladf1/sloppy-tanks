@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HudState } from "../src/game/engine-api";
-import { menuMarkup, ordinal } from "../src/game/ui-markup";
+import { menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
 
 test("ordinals read as places: 1st, 2nd, 11th, 21st", () => {
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal), [
@@ -62,21 +62,23 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   assert.match(markup, /class="dialog-score"/);
   assert.doesNotMatch(markup, /KILL SHARE|share-bar/);
   assert.match(markup, /<dt>Objective<\/dt><dd>First to 100<\/dd>/);
-  assert.match(markup, /<dt>Your kills<\/dt><dd>2<small>Destroyed once<\/small><\/dd>/);
+  assert.match(markup, /<dt>Kills \/ deaths<\/dt><dd>2 \/ 1<\/dd>/);
   assert.match(markup, /<dt>Difficulty<\/dt><dd>Normal<\/dd>/);
+  // The line under the title adds what the plates do not say: the kills still to win.
   assert.match(
     markup,
-    /class="dialog-standing" data-tone="behind">Red team leads by 1|data-tone="ahead">Your team leads by 1/,
+    /class="dialog-standing" data-tone="ahead">Your team leads by 1 · 96 kills to win</,
   );
 });
 
-test("a battle ended early says so beside its outcome", () => {
+test("a battle ended early says who ended it and who was ahead", () => {
   const early = menuMarkup(teamBattle({ phase: "results", endedEarly: true }), null);
   assert.match(early, /<h2 id="results-title">VICTORY<\/h2>/);
-  assert.match(early, /class="ended-early">ENDED EARLY</);
-  assert.match(early, /Destroyed once/);
+  assert.match(early, /class="ended-early">ENDED BY YOU</);
+  assert.match(early, /You ended the battle with your team 1 ahead · 1 death</);
   const full = menuMarkup(teamBattle({ phase: "results" }), null);
-  assert.doesNotMatch(full, /ENDED EARLY/);
+  assert.doesNotMatch(full, /ENDED BY YOU/);
+  assert.match(full, /Your team took the round by 1 · 1 death</);
 });
 
 test("the respawn card names who destroyed the tank in plain words", () => {
@@ -86,4 +88,11 @@ test("the respawn card names who destroyed the tank in plain words", () => {
   });
   assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);
   assert.doesNotMatch(markup, /WRECKED/);
+});
+
+test("dialog score plates mark only the viewer's side, beside its name", () => {
+  const markup = scoreMarkup([3, 4], "Score", ["BLUE", "RED"], 1);
+  assert.match(markup, /<span class="red yours">4<small>RED<em> · YOU<\/em><\/small>/);
+  assert.match(markup, /<span class="blue">3<small>BLUE<\/small>/);
+  assert.equal(markup.match(/YOU/g)?.length, 1);
 });

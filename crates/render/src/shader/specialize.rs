@@ -9,6 +9,8 @@
 //! of each flag branch and the functions its entry points still reach, and drops the
 //! comments.
 
+use std::collections::HashMap;
+
 /// `code` with every `if FLAG { ... } [else ...]` whose condition is one of `flags`
 /// (optionally negated) replaced by the taken block, then without comments,
 /// unreachable functions and the declarations of flags nothing reads any more (so
@@ -117,7 +119,12 @@ fn ident_end(bytes: &[u8], i: usize) -> usize {
 
 /// Whether `word` starts at `i` as a whole identifier.
 fn word_at(bytes: &[u8], i: usize, word: &str) -> bool {
-    bytes[i..].starts_with(word.as_bytes())
+    // Every byte of every variant's source is tested: reject on the first byte
+    // before comparing the rest.
+    word.as_bytes()
+        .first()
+        .is_none_or(|first| bytes.get(i) == Some(first))
+        && bytes[i..].starts_with(word.as_bytes())
         && (i == 0 || !is_ident(bytes[i - 1]))
         && bytes.get(i + word.len()).is_none_or(|&b| !is_ident(b))
 }
@@ -236,19 +243,32 @@ fn prune_functions(code: &str) -> String {
         }
         i += 1;
     }
+    // A call is a whole identifier followed by `(`; each body is scanned once and
+    // its identifiers looked up, rather than searched once per function.
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, function) in functions.iter().enumerate() {
+        by_name.entry(&function.name).or_default().push(index);
+    }
     let calls = |function: &Function| -> Vec<usize> {
         let body = &bytes[function.start..function.end];
-        functions
-            .iter()
-            .enumerate()
-            .filter(|(_, callee)| {
-                (0..body.len()).any(|at| {
-                    word_at(body, at, &callee.name)
-                        && body.get(at + callee.name.len()) == Some(&b'(')
-                })
-            })
-            .map(|(index, _)| index)
-            .collect()
+        let mut callees = Vec::new();
+        let mut at = 0;
+        while at < body.len() {
+            if !is_ident(body[at]) {
+                at += 1;
+                continue;
+            }
+            let end = ident_end(body, at);
+            if body.get(end) == Some(&b'(')
+                && let Some(indices) = std::str::from_utf8(&body[at..end])
+                    .ok()
+                    .and_then(|name| by_name.get(name))
+            {
+                callees.extend_from_slice(indices);
+            }
+            at = end;
+        }
+        callees
     };
     let mut reached: Vec<bool> = functions.iter().map(|f| f.entry).collect();
     let mut pending: Vec<usize> = (0..functions.len()).filter(|&i| reached[i]).collect();
@@ -318,6 +338,18 @@ mod tests {
         assert!(pruned.contains("fn used(") && pruned.contains("fn helper("));
         assert!(!pruned.contains("fn unused("));
         assert!(pruned.contains("@fragment\nfn fs("));
+    }
+
+    #[test]
+    fn a_call_is_a_whole_identifier_before_a_parenthesis() {
+        let code = "fn helper() -> f32 { return 1.0; }\nfn helper_x() -> f32 { return 2.0; }\nfn my_helper() -> f32 { return 3.0; }\nfn named() -> f32 { return 4.0; }\n@fragment\nfn fs() -> @location(0) vec4f { let named = 1.0; return vec4f(helper_x() + my_helper (), named, 0.0, 1.0); }\n";
+        let pruned = prune_functions(code);
+        assert!(pruned.contains("fn helper_x(") && pruned.contains("@fragment\nfn fs("));
+        // `helper` only as part of longer names, `my_helper` not followed by `(`
+        // and `named` only as a variable: none of them is called.
+        assert!(!pruned.contains("fn helper("));
+        assert!(!pruned.contains("fn my_helper("));
+        assert!(!pruned.contains("fn named("));
     }
 
     #[test]

@@ -118,7 +118,8 @@ try {
   assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
   assert.equal(await page.locator(".recap-stat").count(), 5);
-  assert.equal(await page.locator(".recap-detail").count(), 11);
+  // The details are highlights, at most three of them, never the whole ledger.
+  assert.equal(await page.locator(".recap-detail").count(), 3);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();
