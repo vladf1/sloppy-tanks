@@ -430,7 +430,7 @@ pub fn quarry_butte() -> Node {
 }
 
 /// Sides of a distant mesa's outline.
-const MESA_SIDES: usize = 14;
+const MESA_SIDES: usize = 26;
 /// Bed bands per tier of a distant mesa.
 const MESA_BEDS: usize = 3;
 
@@ -496,7 +496,13 @@ pub fn quarry_mesas() -> Node {
             layer: f64,
             wear: f64,
             shift: DVec3,
+            /// How deep the cliff's gullies cut into this ring, as a fraction.
+            gullies: f64,
         }
+        // Rain gullies notch the cliffs between buttresses, at the same bearings
+        // from tier to tier so they run down the whole face.
+        let gully_count = rng.range(5.0, 9.0).floor();
+        let gully_phase = rng.range(0.0, PI * 2.0);
         let tiers = 1 + (rng.next() * 2.99) as usize;
         let layer_base = 300.0 + (m * 7) as f64;
         let mut shift = DVec3::ZERO;
@@ -507,6 +513,7 @@ pub fn quarry_mesas() -> Node {
             layer: layer_base,
             wear: 0.0,
             shift,
+            gullies: 0.0,
         }];
         let mut bottom = 0.0;
         for tier in 0..tiers {
@@ -526,6 +533,7 @@ pub fn quarry_mesas() -> Node {
                     layer,
                     wear: if t == 0.0 { -0.5 } else { 0.0 },
                     shift,
+                    gullies: if t == 0.0 { 0.0 } else { 0.08 },
                 });
             }
             scale *= 0.8;
@@ -537,6 +545,7 @@ pub fn quarry_mesas() -> Node {
                     layer: layer + bed as f64,
                     wear: if hard { 0.9 } else { 0.0 },
                     shift,
+                    gullies: if hard { 0.1 } else { 0.16 },
                 });
             }
             // A tread back to the next tier, off-centre.
@@ -550,6 +559,7 @@ pub fn quarry_mesas() -> Node {
                     layer: layer + MESA_BEDS as f64,
                     wear: -0.4,
                     shift,
+                    gullies: 0.05,
                 });
             }
             bottom = top;
@@ -559,8 +569,12 @@ pub fn quarry_mesas() -> Node {
             .map(|ring| {
                 outline
                     .iter()
-                    .map(|p| {
-                        centre + ring.shift + DVec3::new(p.x * ring.scale, ring.y, p.z * ring.scale)
+                    .enumerate()
+                    .map(|(s, p)| {
+                        let a = s as f64 / MESA_SIDES as f64 * PI * 2.0;
+                        let notch = (0.5 + 0.5 * (a * gully_count + gully_phase).sin()).powi(4);
+                        let scale = ring.scale * (1.0 - ring.gullies * notch);
+                        centre + ring.shift + DVec3::new(p.x * scale, ring.y, p.z * scale)
                     })
                     .collect()
             })

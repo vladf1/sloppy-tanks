@@ -61,6 +61,8 @@ const COLUMN_WIDTH: f64 = 1.3;
 /// The face beds climb to this fraction of the collision levels; the shoulder
 /// above steps back in terraces.
 const FACE_TOP: f64 = 0.86;
+/// How far a bed's blocks stand proud or sit back, in units of relief.
+const BLOCK_STEP: f64 = 0.42;
 /// Rocks narrower than this, in metres, are boulders: no terraces.
 const BOULDER_SPAN: f64 = 3.0;
 
@@ -170,7 +172,7 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
             n
         })
         .collect();
-    let relief = (0.045 * h).min(0.05 * w.min(d)).clamp(0.02, 0.16);
+    let relief = (0.05 * h).min(0.05 * w.min(d)).clamp(0.02, 0.22);
     // Beds: uneven thicknesses, hard caprock never twice in a row. The face beds
     // climb to the shoulder, which steps back in terraces to the cap.
     // Boulders and loose blocks stay rounded: only outcrops step into terraces.
@@ -263,6 +265,20 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
             }
         }
     }
+    // Each bed breaks into blocks a few columns long that stand proud or sit
+    // back as a unit, so courses read as stacked blocks, not contour lines.
+    let mut blocks = vec![0.0f64; strata * columns];
+    for k in 0..strata {
+        let mut c = 0;
+        while c < columns {
+            let run = 2 + (rng.next() * 4.0) as usize;
+            let offset = rng.range(-BLOCK_STEP, BLOCK_STEP);
+            for block in &mut blocks[k * columns + c..k * columns + (c + run).min(columns)] {
+                *block = offset;
+            }
+            c += run;
+        }
+    }
     let chips: Vec<f64> = (0..rows.len() * columns)
         .map(|_| rng.range(-0.3, 0.3))
         .collect();
@@ -287,8 +303,9 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
             let (count, phase, depth) = lobes[row.bed];
             let angle = c as f64 / columns as f64 * PI * 2.0;
             let lobe = ((angle * count + phase).sin() * 0.5 - 0.5) * depth;
-            let mut push = row.offset - hollowed + chips[r * columns + c] + lobe;
-            let mut worn = row.wear - hollowed * 0.6;
+            let block = blocks[row.bed * columns + c];
+            let mut push = row.offset - hollowed + chips[r * columns + c] + lobe + block;
+            let mut worn = row.wear - hollowed * 0.6 + block.max(0.0) * 0.5;
             if joints.contains(&c) && !toe {
                 push -= 1.25;
                 worn = -1.0;
@@ -371,7 +388,7 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
             .enumerate()
             .map(|(c, p)| {
                 let angle = c as f64 / columns as f64 * PI * 2.0;
-                let wander = (angle * lobes + phase).sin() * 0.04;
+                let wander = (angle * lobes + phase).sin() * 0.09;
                 let q = *p + (center - *p) * (reach + wander);
                 DVec3::new(q.x, p.y, q.z)
             })
@@ -383,8 +400,8 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
                 DVec3::new(p.x, settled.max(p.y + lift * 0.4), p.z)
             })
             .collect();
-        let cavity = vec![-0.6; columns];
-        let lip = vec![0.8; columns];
+        let cavity = vec![-0.3; columns];
+        let lip = vec![0.55; columns];
         band(&ring, &ring_wear, &tread, &cavity, bed);
         bed += 1;
         band(&tread, &cavity, &riser, &lip, bed);

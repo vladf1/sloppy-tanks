@@ -244,7 +244,7 @@ pub fn quarry_scenery() -> Node {
         spoil_surface(&mut talus, 0.0);
         geology
             .children
-            .push(Node::mesh(Arc::new(talus), spoil.clone()));
+            .push(shadow_receiver(Arc::new(talus), spoil.clone()));
         let (cos, sin) = (strip.rot_y.cos(), strip.rot_y.sin());
         let count = js_round((strip.x1 - strip.x0) * 3.4) as usize;
         for _ in 0..count {
@@ -280,7 +280,7 @@ pub fn quarry_scenery() -> Node {
     spoil_surface(&mut stockpile, 1.0);
     geology
         .children
-        .push(Node::mesh(Arc::new(stockpile), spoil.clone()));
+        .push(shadow_receiver(Arc::new(stockpile), spoil.clone()));
     for _ in 0..70 {
         let angle = talus_rng.range(0.0, PI * 2.0);
         let t = talus_rng.range(0.78, 1.02);
@@ -328,9 +328,10 @@ pub fn quarry_scenery() -> Node {
         geology.children.extend(quarry_scree(&spot, &soil));
     }
     // The haul ramp gives the parked machinery a believable way out of the pit.
-    geology
-        .children
-        .push(Node::mesh(Arc::new(quarry_ramp_geometry()), spoil.clone()));
+    geology.children.push(shadow_receiver(
+        Arc::new(quarry_ramp_geometry()),
+        spoil.clone(),
+    ));
     for (i, boulder) in quarry_ramp_boulders().into_iter().enumerate() {
         let rock = sandstone_rock(
             boulder.size,

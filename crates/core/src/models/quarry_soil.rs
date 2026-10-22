@@ -99,6 +99,39 @@ fn haul_road(table: &[f32], x: f64, z: f64) -> (f64, f64) {
     (1.0 - smoothstep(distance + edge, 4.2, 5.5), (-w * w).exp())
 }
 
+/// Loader tyre tracks across the open floor at (x, z): two wandering paths,
+/// each a pair of ruts 1.9 m apart, 0..1 with a pressed tread.
+fn loader_tracks(x: f64, z: f64) -> f64 {
+    // Each path is a gentle curve across the yard: the point's offset from it
+    // over the curve's local stretch approximates the distance.
+    let paths = [
+        (
+            z - (14.0 * (x * 0.043 + 0.7).sin() + 0.22 * x - 6.0),
+            14.0 * 0.043 * (x * 0.043 + 0.7).cos() + 0.22,
+            1.0,
+        ),
+        (
+            x - (17.0 * (z * 0.037 + 2.1).sin() - 0.18 * z + 9.0),
+            17.0 * 0.037 * (z * 0.037 + 2.1).cos() - 0.18,
+            1.0,
+        ),
+        (
+            z - (11.0 * (x * 0.051 - 1.3).sin() - 0.3 * x + 28.0),
+            11.0 * 0.051 * (x * 0.051 - 1.3).cos() - 0.3,
+            0.7,
+        ),
+    ];
+    let tread = 0.75 + 0.25 * ((x + z) * 7.0).sin();
+    paths
+        .into_iter()
+        .map(|(offset, slope, strength)| {
+            let across = offset / (1.0 + slope * slope).sqrt();
+            let rut = ((across.abs() - 0.95) / 0.28).powi(2);
+            (-rut).exp() * tread * strength
+        })
+        .fold(0.0, f64::max)
+}
+
 /// A per-pixel hash in [0, 1) for pebbles: a pure function of the pixel, so it
 /// leaves the seeded stream's draw pattern (and band replay) untouched.
 fn pixel_hash(col: usize, row: usize) -> f64 {
@@ -204,12 +237,12 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         g += (195.0 - g) * worn_sand;
         b += (163.0 - b) * worn_sand;
         let stony = (rocky + fill * 0.7).min(1.0) * off_road;
-        r += (168.0 - r) * stony;
-        g += (141.0 - g) * stony;
-        b += (109.0 - b) * stony;
-        r += (170.0 - r) * road;
-        g += (155.0 - g) * road;
-        b += (131.0 - b) * road;
+        r += (163.0 - r) * stony;
+        g += (134.0 - g) * stony;
+        b += (101.0 - b) * stony;
+        r += (161.0 - r) * road;
+        g += (144.0 - g) * road;
+        b += (119.0 - b) * road;
         r += (198.0 - r) * windrow * 0.55;
         g += (180.0 - g) * windrow * 0.55;
         b += (150.0 - b) * windrow * 0.55;
@@ -229,10 +262,10 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         g += (150.0 - g) * iron * 0.5;
         b += (106.0 - b) * iron * 0.5;
         let damp =
-            (1.0 - smoothstep(stain - bands * 0.08, 0.22, 0.36)) * (1.0 - worn_sand) * off_road;
-        r += (138.0 - r) * damp * 0.55;
-        g += (115.0 - g) * damp * 0.55;
-        b += (92.0 - b) * damp * 0.55;
+            (1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road;
+        r += (152.0 - r) * damp * 0.6;
+        g += (114.0 - g) * damp * 0.6;
+        b += (88.0 - b) * damp * 0.6;
         // Beds of loose grey gravel where spill has been graded out.
         let spill = noise(table, x * 0.09 + 11.0, z * 0.09 - 5.0);
         let gravel_bed =
@@ -240,6 +273,12 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (162.0 - r) * gravel_bed * 0.45;
         g += (150.0 - g) * gravel_bed * 0.45;
         b += (132.0 - b) * gravel_bed * 0.45;
+        // Twin tyre ruts of loaders that cut across the open floor between the
+        // haul roads, wandering, fading where sand has blown over them.
+        let tyres = loader_tracks(x, z) * off_road * (1.0 - worn_sand * 0.6) * (1.0 - apron);
+        r += (146.0 - r) * tyres * 0.6;
+        g += (124.0 - g) * tyres * 0.6;
+        b += (98.0 - b) * tyres * 0.6;
         let pebble = pixel_hash(col, row);
         let pebbles = if pebble > 0.78 - gravel_bed * 0.25 - stony * 0.08 {
             (pixel_hash(row + 7919, col) - 0.55) * (22.0 + gravel_bed * 26.0)
@@ -259,7 +298,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             0.0
         };
         let shade = (macro_field - 0.5) * 11.0 + (grit - 0.5) * 15.0 + fine + aggregate
-            - rut * 16.0
+            - rut * 26.0
+            - tyres * 16.0
             + ripple
             + pebbles
             - damp * 4.0;
@@ -283,7 +323,9 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         out[i] = to_uint8_clamp(r + shade);
         out[i + 1] = to_uint8_clamp(g + shade);
         out[i + 2] = to_uint8_clamp(b + shade);
-        out[i + 3] = to_uint8_clamp(128.0 + gravel * 127.0);
+        // Damp hollows dry out into cracked mud plates (alpha below 128).
+        let mud = smoothstep(damp, 0.25, 0.55);
+        out[i + 3] = to_uint8_clamp(128.0 + gravel * 127.0 * (1.0 - mud) - mud * 127.0);
     }
 }
 

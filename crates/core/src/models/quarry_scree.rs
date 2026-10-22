@@ -9,6 +9,7 @@ use glam::DVec3;
 use crate::geometry::{Mesh, icosahedron_geometry, merge_geometries, narrow, widen};
 use crate::scene::{Material, Node};
 
+use super::model_primitives::{shadow_receiver, shadowed};
 use super::quarry_benches::ScreeSpot;
 use super::quarry_surfaces::{roughen_stone, rubble_layer, sandstone_material};
 use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop, soil_uvs};
@@ -122,8 +123,10 @@ pub fn quarry_scree(spot: &ScreeSpot, soil: &Arc<Material>) -> [Node; 2] {
     }
     soil_uvs(&mut mound);
     plain_soil_colors(&mut mound);
+    // Both share their batches with the rest of the apron: the fan receives
+    // shadows like the floor, the rubble casts like the talus.
     [
-        Node::mesh(Arc::new(mound), soil.clone()),
-        Node::mesh(Arc::new(rubble), sandstone_material()),
+        shadow_receiver(Arc::new(mound), soil.clone()),
+        shadowed(Arc::new(rubble), sandstone_material()),
     ]
 }
