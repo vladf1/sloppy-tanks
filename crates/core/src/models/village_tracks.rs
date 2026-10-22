@@ -66,12 +66,12 @@ impl Path {
 
 /// Freshness along a line: some stretches cut deep, others faded to nothing.
 fn freshness(t: f64, seed: u64) -> f64 {
-    let stretch = smoothstep(noise(t * 0.03, 0.5, seed), 0.3, 0.7);
+    let stretch = smoothstep(noise(t * 0.03, 0.5, seed), 0.38, 0.72);
     stretch * (0.45 + 0.55 * noise(t * 0.12, 3.5, seed + 1))
 }
 
-/// Driving lines along every road: each wanders across its strip on long,
-/// lazy curves and drifts from lane to lane.
+/// Driving lines along every road: each keeps to its lane on long, lazy
+/// curves, so a road reads as a pair of worn wheel lines, not a scribble.
 fn road_paths() -> Vec<Path> {
     let mut paths = Vec::new();
     for (index, road) in village_roads().iter().enumerate() {
@@ -81,12 +81,8 @@ fn road_paths() -> Vec<Path> {
         } else {
             (road.d / 2.0, road.w)
         };
-        // Busy centre roads carry two drivers' lines, the outer ones one or two.
-        let lines: usize = if half > 5.5 || hash(index as i64, 9, 7) < 0.5 {
-            2
-        } else {
-            1
-        };
+        // Busy centre roads carry two drivers' lines, the outer ones one.
+        let lines: usize = if half > 5.5 { 2 } else { 1 };
         let room = half - 1.7;
         for line in 0..lines {
             let seed = (index * 8 + line) as u64 * 13 + 101;
@@ -95,16 +91,16 @@ fn road_paths() -> Vec<Path> {
             let phases = [0, 1, 2].map(|k| hash(seed as i64, k, 7) * std::f64::consts::TAU);
             // Each driver's own sway: a long drift across the road and a
             // shorter weave.
-            let drift = 0.05 + hash(seed as i64, 3, 7) * 0.05;
-            let weave = 0.16 + hash(seed as i64, 4, 7) * 0.12;
+            let drift = 0.03 + hash(seed as i64, 3, 7) * 0.03;
+            let weave = 0.12 + hash(seed as i64, 4, 7) * 0.08;
             let mut points = Vec::new();
             let mut fresh = Vec::new();
             let mut t = -length / 2.0;
             while t <= length / 2.0 {
                 let offset = base
-                    + (t * drift + phases[0]).sin() * room * 0.75
-                    + (t * weave + phases[1]).sin() * 0.55
-                    + (t * 0.43 + phases[2]).sin() * 0.06;
+                    + (t * drift + phases[0]).sin() * room * 0.4
+                    + (t * weave + phases[1]).sin() * 0.3
+                    + (t * 0.43 + phases[2]).sin() * 0.05;
                 let across = offset.clamp(-room, room);
                 points.push(if north_south {
                     DVec2::new(road.x + across, road.z + t)
@@ -133,7 +129,7 @@ fn turning_paths() -> Vec<Path> {
                 .enumerate()
             {
                 let seed = (i * 16 + j * 4 + k) as i64;
-                if hash(seed, 1, 211) > 0.36 {
+                if hash(seed, 1, 211) > 0.24 {
                     continue;
                 }
                 let radius = 5.0 + hash(seed, 2, 211) * 7.0;
