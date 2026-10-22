@@ -252,13 +252,16 @@ html:is(.phone, .home-screen-app) {
   align-items: stretch;
   filter: drop-shadow(0 6px 12px #0008);
 }
+/* Wide enough for a three-digit score beside either team's name (first to 100) or the
+   solo plates' KILLS and ACTIVE; a wider number grows the plate rather than running
+   under the clock. */
 .team {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 132px;
+  min-width: 156px;
   padding: 6px 18px 11px 24px;
   color: #fff;
   text-shadow: 0 2px 3px #0006;
@@ -288,7 +291,16 @@ html:is(.phone, .home-screen-app) {
     linear-gradient(180deg, #ffffff33, transparent 46%), linear-gradient(180deg, #ff5367, #b01b33);
   clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
 }
-/* Your side's plate says so: a small YOU tag beside its name. */
+/* Your side's plate says so: a small YOU tag under its name, so it never takes the
+   score's room. */
+.team.yours small {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.coral.yours small {
+  align-items: flex-end;
+}
 .team.yours small::after {
   content: "YOU";
   padding: 2px 4px 1px;
@@ -298,9 +310,6 @@ html:is(.phone, .home-screen-app) {
   font-size: 8.5px;
   letter-spacing: 1px;
   text-shadow: none;
-}
-.coral.yours small::after {
-  order: -1;
 }
 .team-progress {
   position: absolute;
