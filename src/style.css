@@ -991,18 +991,12 @@ body:has(#settings[open]) .hud-actions {
 /* Big screens scale the HUD up with them, so its type holds its size against the arena
    (desktop only: touch screens lay their HUD out round the thumbs). */
 @media (min-width: 1800px) and (min-height: 1000px) {
-  html:not(.phone)
-    :not(.touch-enabled)
-    > #hud
-    :is(.bottom, #feed, .scoreboard, .hud-actions) {
+  html:not(.phone) :not(.touch-enabled) > #hud :is(.bottom, #feed, .scoreboard, .hud-actions) {
     zoom: 1.2;
   }
 }
 @media (min-width: 2400px) and (min-height: 1300px) {
-  html:not(.phone)
-    :not(.touch-enabled)
-    > #hud
-    :is(.bottom, #feed, .scoreboard, .hud-actions) {
+  html:not(.phone) :not(.touch-enabled) > #hud :is(.bottom, #feed, .scoreboard, .hud-actions) {
     zoom: 1.5;
   }
 }
