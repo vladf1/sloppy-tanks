@@ -324,6 +324,10 @@ These come from playing the game and are easy to undo with "more juice":
 - Effects follow what their object is doing: a wreck burns only once its hull
   rests, smoke rises and drifts without trembling, and nothing reads as a flat
   cut-out card. Judge effects frame to frame, not from one still.
+- Shader animation never multiplies the running clock by a rate that varies
+  per pixel, per instance or over a lifetime: the clock is large, so any change
+  in the rate jumps the pattern every frame (cooling smoke flickered this way).
+  Use one rate and vary the phase.
 
 ## Maps, extra levels, and authored data
 

@@ -328,6 +328,73 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
     group
 }
 
+/// A member torn out of a collapsing wall: the standing member's model with
+/// both ends snapped into a fringe of pale splinters where it tore off its posts
+/// and neighbours. The splinters are the member's own textured wood, so they
+/// batch into its draw.
+pub fn timber_debris_model(p: &TimberPart) -> Node {
+    let mut rng = Random::new(f64::from(p.damage_seed) * 2.71 + 5.0);
+    let mut group = timber_part_model(p);
+    // The member's long axis: x for boards, y for posts.
+    let along = if p.h > p.w && p.h > p.d { 1 } else { 0 };
+    let size = [p.w, p.h, p.d];
+    let (across_a, across_b) = if along == 1 { (0, 2) } else { (1, 2) };
+    for end in [-1.0, 1.0] {
+        let mut positions = Vec::new();
+        let mut uvs = Vec::new();
+        for _ in 0..SPLINTERS_PER_END {
+            let half_a = size[across_a] * rng.range(0.1, 0.2);
+            let half_b = size[across_b] * rng.range(0.12, 0.22);
+            let ca = rng.range(-0.5, 0.5) * size[across_a] * 0.7;
+            let cb = rng.range(-0.5, 0.5) * size[across_b] * 0.7;
+            let reach = rng.range(0.05, 0.2) + size[along] * 0.02;
+            let lean = [rng.range(-0.4, 0.4), rng.range(-0.4, 0.4)];
+            // Base corners sunk just inside the end face, and the tip out past it.
+            let face = end * (size[along] / 2.0 - 0.01);
+            let point = |a: f64, b: f64, out: f64| {
+                let mut v = [0.0; 3];
+                v[along] = face + end * out;
+                v[across_a] = a;
+                v[across_b] = b;
+                v
+            };
+            let base = [
+                point(ca - half_a, cb - half_b, 0.0),
+                point(ca + half_a, cb - half_b, 0.0),
+                point(ca + half_a, cb + half_b, 0.0),
+                point(ca - half_a, cb + half_b, 0.0),
+            ];
+            let tip = point(
+                ca + lean[0] * half_a * 2.0,
+                cb + lean[1] * half_b * 2.0,
+                reach,
+            );
+            // Both windings, so every sliver shows whichever way it faces.
+            for i in 0..4 {
+                let (a, b) = (base[i], base[(i + 1) % 4]);
+                positions.extend(a.into_iter().chain(b).chain(tip));
+                positions.extend(b.into_iter().chain(a).chain(tip));
+                // A sliver of plank face, grain running out to the tip.
+                for _ in 0..2 {
+                    uvs.extend([0.1, 0.3, 0.14, 0.3, 0.12, 0.42]);
+                }
+            }
+        }
+        let mut mesh = Mesh::from_f64(&positions, &[], &uvs, None);
+        mesh.compute_vertex_normals();
+        group
+            .children
+            .push(Node::mesh(Arc::new(mesh), wood(SPLINTER_COLOR)));
+    }
+    batch(&mut group);
+    group
+}
+
+/// Splinters jutting from each snapped end of a fallen member, and their fresh,
+/// pale wood.
+const SPLINTERS_PER_END: usize = 6;
+const SPLINTER_COLOR: u32 = 0xd2ad78;
+
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers
 /// catch the light along every edge, and the wood darkens toward the ground
 /// where rain splashes it, greening with moss at the very foot. Each member
@@ -527,6 +594,44 @@ pub fn add_timber_parts(group: &mut Node, parts: &[TimberPart]) {
             child.position = DVec3::new(part.x, part.y, part.z);
             child.rotation = rotation;
             group.children.push(child);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::timber_layout::{TimberWall, timber_parts};
+
+    fn drawables(node: &Node) -> usize {
+        let mut count = 0;
+        node.traverse(glam::DMat4::IDENTITY, &mut |child, _| {
+            count += usize::from(child.drawable.is_some());
+        });
+        count
+    }
+
+    #[test]
+    fn snapped_members_draw_their_splinters_with_their_wood() {
+        let wall = TimberWall {
+            x: 0.0,
+            z: 0.0,
+            w: 6.0,
+            h: 2.2,
+            d: 0.5,
+            color: 0x8a5a36,
+            hits: &[],
+            join: None,
+        };
+        let parts = timber_parts(&wall, 0);
+        assert!(!parts.is_empty());
+        for part in &parts {
+            assert_eq!(
+                drawables(&timber_debris_model(part)),
+                drawables(&timber_part_model(part)),
+                "a torn {:?} costs no extra draw",
+                part.kind
+            );
         }
     }
 }

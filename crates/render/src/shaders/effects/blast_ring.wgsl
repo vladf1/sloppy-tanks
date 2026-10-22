@@ -80,7 +80,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let ring = smoothstep(0.24, 0.38, r) * (1.0 - smoothstep(0.38, 0.54, r));
         let speck = ring_noise(point * 15.0 + seed * 2.0);
         let flecks = smoothstep(0.72, 0.92, speck) * heart;
-        let flicker = 0.55 + 0.45 * sin(frame.camera_position.w * (4.0 + 5.0 * fine) + speck * 40.0);
+        // One rate for every ember, each with its own phase: a rate that varied
+        // across the decal would scale the running time into per-pixel sparkle.
+        let flicker = 0.55 + 0.45 * sin(frame.camera_position.w * 6.0 + speck * 40.0 + fine * 9.0);
         let cool = exp(-age / 1.8);
         let smoulder = 0.18 * (1.0 - smoothstep(4.0, 14.0, age)) * smoothstep(0.8, 0.95, speck);
         let embers = ((ring * smoothstep(0.45, 0.8, n) + flecks * 0.7) * cool + smoulder * heart) * flicker;

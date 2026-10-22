@@ -339,11 +339,25 @@ export async function prepareGame(
       }
     },
   });
-  // The hit marker lands on the aim: the pointer overhead, the gun sight in first person.
-  const reticle = { x: 0, y: 0 };
-  ui.aimPoint = () => (firstPerson ? reticle : { x: controls.nx, y: controls.ny });
-  const toggleView = () => {
+  // The hit marker lands on the drawn reticle (the ground aim overhead, the gun sight in
+  // first person), or on the pointer where no reticle shows; the damage ring wraps the
+  // tank on screen.
+  const reticle = { x: NaN, y: NaN };
+  const viewer = { x: NaN, y: NaN };
+  ui.aimPoint = () =>
+    Number.isFinite(reticle.x) ? reticle : firstPerson ? null : { x: controls.nx, y: controls.ny };
+  ui.viewerPoint = () => (Number.isFinite(viewer.x) ? viewer : null);
+  /** Switches the camera seat; the HUD's damage ring leaves the tank's screen spot at once. */
+  const switchSeat = () => {
     firstPerson = game.toggle_first_person();
+    if (firstPerson) {
+      viewer.x = viewer.y = NaN;
+    }
+    ui.replaceDamageRing();
+    return firstPerson;
+  };
+  const toggleView = () => {
+    switchSeat();
     saveCameraPreferences(game);
     holdPointer();
     controls.capturePointer();
@@ -423,6 +437,8 @@ export async function prepareGame(
       firstPerson = result[FRAME.firstPerson] === 1;
       reticle.x = result[FRAME.reticleX];
       reticle.y = result[FRAME.reticleY];
+      viewer.x = result[FRAME.viewerX];
+      viewer.y = result[FRAME.viewerY];
       holdPointer();
       if (result[FRAME.clearInput]) {
         controls.clear();
@@ -471,6 +487,7 @@ export async function prepareGame(
             exactResolution = exact;
             resize();
           },
+          switchSeat,
         },
         recorder,
         counters,

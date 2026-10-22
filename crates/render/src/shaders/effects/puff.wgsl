@@ -64,12 +64,12 @@ fn puff_fire(t: f32) -> vec3f {
 fn puff_bands(t: f32) -> f32 {
     let f = t * 4.0;
     let step = floor(f) + smoothstep(0.3, 0.7, fract(f));
-    return mix(t, step / 4.0, 0.6);
+    return mix(t, step / 4.0, 0.4);
 }
 
 // Below this heat a puff's fire never reaches the ramp's first glow (temperature
-// 0.03 after the bands' 0.4 floor and the core and noise gains of at most 1.3).
-const PUFF_FIRE_MIN_HEAT: f32 = 0.05;
+// 0.03 after the bands' 0.6 floor and the core and noise gains of at most 1.3).
+const PUFF_FIRE_MIN_HEAT: f32 = 0.038;
 
 // Smoke puffs pile up deep over a burning wreck and a blast, so most of a frame's
 // puff pixels are hidden or empty: the noise runs only inside the card's circle,
@@ -92,27 +92,31 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let sn = sin(turn);
         let p = vec2f(c * point.x - sn * point.y, sn * point.x + c * point.y);
         let offset = vec2f(seed * 37.1, seed * 91.7);
-        // Slow enough that a billow's outline drifts rather than trembles.
-        let boil = vec2f(0.0, frame.camera_position.w * (0.16 + 0.3 * fiery));
+        // Slow enough that a billow's outline drifts rather than trembles. A hot
+        // puff churns on as it cools, driven by its falling heat: a boil rate that
+        // changed with heat would scale the whole running time, so a cooling puff's
+        // noise would leap to a new pattern every frame and its density flicker,
+        // the more the longer the game has run.
+        let boil = vec2f(0.0, frame.camera_position.w * 0.16 - heat * 0.25);
         // Cauliflower silhouette: the noise pushes the rim in and out; haze is softer.
         // Erosion pulls the rim in, most where the noise is thin, so an old puff frays
         // into wisps from the outside instead of going full of holes. Fine noise
         // breaks the rim's outline so no billow reads as a clean disc.
-        let lumpiness = mix(0.72, 0.42, softness);
+        let lumpiness = mix(0.56, 0.32, softness);
         let rim = mix(0.8, 0.94, softness);
         let n1 = puff_noise(p * 2.1 + offset - boil);
         // The edge is linear in the finer octaves, each in 0..1: where even their
         // most favourable values leave it past the rim, the puff is empty.
         let slope = lumpiness - 0.55 * erosion;
-        let least_edge = radius - 0.5 * lumpiness - 0.03 + 0.8 * erosion + slope * 0.55 * n1
-            + min(0.3 * slope, 0.0) + min(0.15 * slope + 0.06, 0.0);
+        let least_edge = radius - 0.5 * lumpiness - 0.02 + 0.8 * erosion + slope * 0.55 * n1
+            + min(0.3 * slope, 0.0) + min(0.15 * slope + 0.04, 0.0);
         if least_edge < rim {
             let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.5);
             let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 1.8);
             let noise = n1 * 0.55 + n2 * 0.3 + n3 * 0.15;
-            let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.06
+            let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.04
                 + erosion * (0.25 + 0.55 * (1.0 - noise));
-            let feather = mix(0.14, 0.5, softness * softness) + erosion * 0.16 + fiery * 0.04;
+            let feather = mix(0.2, 0.56, softness) + erosion * 0.16 + fiery * 0.02;
             // The card's own edge is always clear, however far the noise pushes the
             // rim, so no puff shows the straight side of its quad.
             let window = 1.0 - smoothstep(0.8, 1.0, radius);
@@ -171,7 +175,7 @@ fn puff_color(
         let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
         // Broad noise only, so the bands cool in large lobes rather than speckles.
         let broad = n1 * 0.85 + n2 * 0.15;
-        let temperature = puff_bands(heat * (0.3 + 0.7 * core) * (0.35 + 0.95 * broad));
+        let temperature = puff_bands(heat * (0.18 + 0.82 * core * core) * (0.4 + 0.9 * broad));
         glow = smoothstep(0.03, 0.28, temperature);
         // Each lobe of a fireball is brighter on its upper face and deepens into
         // its folds, so the fire keeps its rolling volume.

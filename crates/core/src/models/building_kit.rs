@@ -155,6 +155,10 @@ fn finish(color: u32, (metalness, roughness): (f64, f64)) -> Arc<Material> {
 }
 
 /// Matte paint for small props (planting, soil) that join the buildings' batch.
+#[allow(
+    dead_code,
+    reason = "cottages now plant in their satin class; kept for other buildings' props"
+)]
 pub(super) fn matte(color: u32) -> Arc<Material> {
     finish(color, MATTE)
 }
@@ -243,7 +247,21 @@ pub(super) fn wall(
     openings: &[Opening],
     depth: f64,
 ) {
-    let holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+    wall_with_breaches(kit, frame, outline, openings, depth, &[]);
+}
+
+/// [`wall`] also cut by `breaches`: ragged holes (clockwise polygons) that the
+/// caller lines and backs itself, such as shell holes through a cottage's siding.
+pub(super) fn wall_with_breaches(
+    kit: &mut Kit<Surface>,
+    frame: DMat4,
+    outline: &[DVec2],
+    openings: &[Opening],
+    depth: f64,
+    breaches: &[Vec<DVec2>],
+) {
+    let mut holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+    holes.extend_from_slice(breaches);
     kit.face_with_holes(Surface::Siding, outline, &holes, frame);
     for opening in openings {
         let (u0, u1) = (
@@ -279,6 +297,12 @@ pub(super) fn wall(
 pub(super) struct Glazing {
     /// Two sashes with a meeting rail (double-hung) or one fixed sash.
     pub double_hung: bool,
+}
+
+/// [`casing`] for openings built without [`window`] or [`door`], such as a
+/// broken window or an empty doorway.
+pub(super) fn opening_casing(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, sill: bool) {
+    casing(kit, frame, opening, sill);
 }
 
 /// Exterior casing around an opening: side boards, a head with its drip cap and,
