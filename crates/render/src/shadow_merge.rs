@@ -77,8 +77,8 @@ pub fn shadow_merge_kind(
 ) -> MergeKind {
     let effect = match &material.effect {
         sloppy_core::scene::Effect::None => None,
-        sloppy_core::scene::Effect::Custom { name, .. } => {
-            effects.id(name).and_then(|id| effects.get(id))
+        sloppy_core::scene::Effect::Custom { name, params } => {
+            effects.id_for(name, params).and_then(|id| effects.get(id))
         }
     };
     let still = effect.is_some_and(|effect| effect.still_shadow);
