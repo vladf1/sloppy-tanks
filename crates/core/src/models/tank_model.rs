@@ -20,7 +20,7 @@ use super::tank_details::{
 };
 use super::tank_kit::Coat;
 use super::tank_surfaces::{
-    Grime, HUMVEE_PAINT, Livery, apply_livery, ember_material, vehicle_glass, vehicle_paint,
+    Grime, HUMVEE_PAINT, Livery, apply_vehicle_livery, ember_material, vehicle_glass, vehicle_paint,
 };
 use super::{Team, VehicleKind, part};
 use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
@@ -33,14 +33,14 @@ use running_gear::running_gear;
 
 /// The shared dark and steel trim colors: a neutral worn steel, so bare metal
 /// reads as metal beside either team's paint rather than as a blue trim.
-pub(crate) const DARK: u32 = 0x13232c;
+pub(crate) const DARK: u32 = 0x1b1c1d;
 pub(crate) const STEEL: u32 = 0x6f706c;
 /// The trim every vehicle wears with its team paint: a deep shade of the team color
 /// on the lower hull, mantlet, gun fittings, add-on armor and frames. The team
 /// color is the body and the deep trim frames it, so the paint reads as a designed
 /// two-tone livery and the trim still reads as its team rather than as a black
 /// outline round the hull.
-const TRIM: [u32; 2] = [0x1a2c54, 0x3e1813];
+const TRIM: [u32; 2] = [0x223a6a, 0x58211a];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
 pub(super) const GLASS_TINT: u32 = 0x25505a;
 pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;
@@ -134,7 +134,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
                 TRACKED_GRIME
             },
         };
-        apply_livery(&mut root, &livery);
+        apply_vehicle_livery(&mut root, &livery);
         root.children.push(contact_shadow(kind));
         root.scale = DVec3::splat(vehicle(kind).scale);
         root

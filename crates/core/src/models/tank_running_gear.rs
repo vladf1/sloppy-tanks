@@ -40,7 +40,7 @@ const BOLT_HEAD: f64 = 0.012;
 /// Seam between neighbouring skirt panels.
 const PANEL_SEAM: f64 = 0.014;
 /// Road wheel, idler and roller facets: enough to read round close up.
-const WHEEL_SIDES: u32 = 10;
+const WHEEL_SIDES: u32 = 9;
 const ROLLER_SIDES: u32 = 10;
 const HUB_BOLTS: u32 = 5;
 

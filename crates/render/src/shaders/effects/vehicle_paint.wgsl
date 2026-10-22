@@ -49,10 +49,10 @@ const VEHICLE_EDGE_SPAN: f32 = 0.92;
 const VEHICLE_VALUE_RANGE: f32 = 1.45;
 // The bevel band: about this many pixels wide, within these widths in metres, and
 // how far the normal rolls over in it.
-const VEHICLE_BEVEL_PIXELS: f32 = 3.2;
+const VEHICLE_BEVEL_PIXELS: f32 = 4.5;
 const VEHICLE_BEVEL_MIN: f32 = 0.016;
 const VEHICLE_BEVEL_MAX: f32 = 0.12;
-const VEHICLE_BEVEL_ROLL: f32 = 0.3;
+const VEHICLE_BEVEL_ROLL: f32 = 0.45;
 // Panel shading: paint along a plate's borders is this much darker, fading out over
 // this fraction of the plate's narrowest width (within these metres).
 const VEHICLE_PANEL_BORDER: f32 = 0.66;
@@ -71,10 +71,17 @@ const VEHICLE_CHIP_PIXEL_TO: f32 = 0.04;
 // strips would otherwise scatter grey specks evenly over every deck.
 const VEHICLE_CHIP_PLATE_FROM: f32 = 0.05;
 const VEHICLE_CHIP_PLATE_TO: f32 = 0.11;
-// Paint rubbed lighter on a bevel and on chamfer strips.
-const VEHICLE_BEVEL_LIFT: f32 = 1.65;
+// Paint rubbed lighter on a bevel and on chamfer strips: a painted edge highlight,
+// brightest where the edge turns toward the sun or the sky and still lifted on the
+// edges in shade, so every boxy form reads crafted from any side.
+const VEHICLE_BEVEL_LIFT: f32 = 1.4;
+const VEHICLE_BEVEL_LIFT_LIT: f32 = 3.0;
+// The lit highlight resolves while a pixel is smaller than these sizes: on a card or
+// from the overhead camera a wide, bright edge would wash narrow plates out.
+const VEHICLE_BEVEL_LIT_PIXEL_FROM: f32 = 0.006;
+const VEHICLE_BEVEL_LIT_PIXEL_TO: f32 = 0.015;
 const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.03, 0.022, 0.018);
-const VEHICLE_BEVEL_TINT: f32 = 0.7;
+const VEHICLE_BEVEL_TINT: f32 = 0.9;
 // Dust and wet mud (linear) and how strongly they cover the lowest armor. In a
 // round (the atmosphere on) the dust takes this share of its hue from the map's
 // ground light (sand in the quarry, brown earth in the village, grey concrete at
@@ -101,6 +108,8 @@ const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
 const VEHICLE_STEEL_ROUGHNESS: f32 = 0.55;
 const VEHICLE_STEEL_METALNESS: f32 = 0.45;
 const VEHICLE_ENAMEL_ROUGHNESS: f32 = 0.56;
+// A livery whose finish is rougher than the enamel by more than this is a truck's.
+const VEHICLE_ARMOR_FINISH: f32 = 0.09;
 // The team rim's brightness at a full-strength silhouette. In a round its hue
 // blends this far toward a cool sky white, so a hull's silhouette parts from warm
 // sand, brick and rust props of its own hue as well as from cool asphalt; studio
@@ -111,8 +120,18 @@ const VEHICLE_RIM_COOL_SHARE: f32 = 0.08;
 // In a round, team paint keeps this share of its saturation: the maps' grades
 // saturate, and a full-strength red clipped every sunlit plate to one value.
 const VEHICLE_ROUND_SATURATION: f32 = 0.9;
+// Paint lifted above its base value (the turret roof, sunlit decks) gains this much
+// saturation per unit of lift, so a lighter plate reads as a brighter red or blue
+// rather than paling toward salmon or sky under ACES's shoulder.
+const VEHICLE_LIFT_SATURATION: f32 = 0.5;
+// Light bounced off the ground onto upright and downward plates, strongest low on
+// the hull (a share of the hemisphere's ground light): the lower hull and the rear
+// plate in shade read as painted steel lit by the earth beside them, never as a
+// black hole. Studio cards keep some of it from their floor.
+const VEHICLE_BOUNCE: f32 = 0.42;
+const VEHICLE_BOUNCE_STUDIO: f32 = 0.5;
 // The paint's value on studio cards (the menu's previews).
-const VEHICLE_STUDIO_VALUE: f32 = 0.78;
+const VEHICLE_STUDIO_VALUE: f32 = 0.92;
 // And its saturation there: ACES's shoulder bleaches a lit red deck toward salmon.
 const VEHICLE_STUDIO_SATURATION: f32 = 1.18;
 // Rain streaks down upright plates: columns this many per paint UV across and this
@@ -128,12 +147,19 @@ const VEHICLE_METRES_PER_UV: f32 = 4.0;
 // Welded panel seams across broad plates: this far apart (metres), on plates at
 // least this wide, a groove this wide with a sunlit weld lip beside it, resolved
 // while a pixel is smaller than these sizes.
-const VEHICLE_SEAM_SPACING: f32 = 0.6;
-const VEHICLE_SEAM_MIN_PLATE: f32 = 0.4;
+const VEHICLE_SEAM_SPACING: f32 = 0.5;
+const VEHICLE_SEAM_MIN_PLATE: f32 = 0.25;
 const VEHICLE_SEAM_WIDTH: f32 = 0.01;
 const VEHICLE_SEAM_LIP: f32 = 0.014;
 const VEHICLE_SEAM_PIXEL_FROM: f32 = 0.012;
 const VEHICLE_SEAM_PIXEL_TO: f32 = 0.028;
+// On decks a second, wider set of seams runs the other way, so a broad plate reads
+// as bolted access panels, each a shade apart (this much either way); rivet heads
+// run beside every seam this far apart and this far out from its groove.
+const VEHICLE_SEAM_LONG: f32 = 0.8;
+const VEHICLE_PANEL_SHIFT: f32 = 0.07;
+const VEHICLE_SEAM_RIVET_PITCH: f32 = 0.11;
+const VEHICLE_SEAM_RIVET_SET: f32 = 0.03;
 // Rivet rows: heads this far apart along a plate's border and this far inside it,
 // this round with a shadow ring this wide, on plates at least this wide, resolved
 // while a pixel is smaller than these sizes (the hero and first-person cameras).
@@ -151,6 +177,16 @@ const VEHICLE_GRAIN_CELLS: f32 = 55.0;
 const VEHICLE_GRAIN_VALUE: f32 = 0.34;
 const VEHICLE_GRAIN_PIXEL_FROM: f32 = 0.003;
 const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
+// Tread plate on the trim's decks (fender tops, steps): raised lozenges in a cell
+// this many metres square, alternating their angle cell by cell, this long and
+// wide (shares of a cell), their tops scuffed toward bare steel, resolved while a
+// pixel is smaller than these sizes (the hero and first-person cameras).
+const VEHICLE_TREAD_CELL: f32 = 0.045;
+const VEHICLE_TREAD_LENGTH: f32 = 0.36;
+const VEHICLE_TREAD_WIDTH: f32 = 0.11;
+const VEHICLE_TREAD_WEAR: f32 = 0.55;
+const VEHICLE_TREAD_PIXEL_FROM: f32 = 0.0035;
+const VEHICLE_TREAD_PIXEL_TO: f32 = 0.008;
 // Dust settled on decks: a thin film over broad upward plates (patchy at this many
 // cells per metre, on plates at least this wide, resolved while a pixel is smaller
 // than these sizes), drifted thicker into recesses, in the map's ground color where
@@ -337,7 +373,7 @@ fn vehicle_gear_fill(n: vec3f) -> vec3f {
     let level = dot(vehicle_fill(n), luma);
     let ground = frame.ground_color.rgb;
     let tint = ground / max(dot(ground, luma), 1e-4);
-    return level * mix(vec3f(1.0, 0.96, 0.9), tint, 0.5);
+    return level * mix(vec3f(1.0, 0.97, 0.93), tint, 0.25);
 }
 
 // The track belt: dark worn steel shoes with rubber pads on the ground face, a
@@ -471,6 +507,15 @@ fn vehicle_rivets(c: f32, dcx: f32, dcy: f32, uv: vec2f, d_uv: vec4f, metres_wid
     return vec2f(head, ring);
 }
 
+// A welded seam's groove (x) and the weld lip beside it (y) at `offset` metres
+// from the seam's centre line.
+fn vehicle_seam(offset: f32, aa: f32) -> vec2f {
+    let groove = 1.0 - smoothstep(VEHICLE_SEAM_WIDTH * 0.5, VEHICLE_SEAM_WIDTH * 0.5 + aa, abs(offset));
+    let lip_centre = abs(offset - (VEHICLE_SEAM_WIDTH * 0.5 + VEHICLE_SEAM_LIP * 0.5));
+    let lip = 1.0 - smoothstep(VEHICLE_SEAM_LIP * 0.5, VEHICLE_SEAM_LIP * 0.5 + aa, lip_centre);
+    return vec2f(groove, lip);
+}
+
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Derivatives and the tile sample first, in uniform control flow.
     let tile = textureSample(extra_texture0, extra_sampler0, f.uv * material.params[2].w);
@@ -510,6 +555,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // (`PAINT_ROUGHNESS` in Rust) shifts every paint roughness, so the soft-skinned
     // Humvee's flatter paint reads apart from the tanks' satin.
     let finish = (*s).roughness - VEHICLE_ENAMEL_ROUGHNESS;
+    // Bolted plates, rivets and tread plate belong to armor: the soft-skinned
+    // Humvee's flatter paint (a rougher finish) keeps smooth panels.
+    let armor = step(finish, VEHICLE_ARMOR_FINISH);
     let coat = floor(f.vertex_color.b);
     let code = f.vertex_color.b - coat;
     let team = step(0.5, code);
@@ -520,7 +568,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // shoulder turns a bright red pink: they show it a step deeper.
     let round_paint = mix(vec3f(paint_luma), paint_rgb, select(VEHICLE_STUDIO_SATURATION, VEHICLE_ROUND_SATURATION, atmosphere_on()))
         * select(VEHICLE_STUDIO_VALUE, 1.0, atmosphere_on());
-    let base = mix(material.params[1].rgb, round_paint, team) * value * f.tint.rgb;
+    let lit_base = mix(material.params[1].rgb, round_paint, team) * value * f.tint.rgb;
+    let lift_saturation = 1.0 + VEHICLE_LIFT_SATURATION * max(value - 1.0, 0.0) * team;
+    let base = max(mix(vec3f(dot(lit_base, vec3f(0.2126, 0.7152, 0.0722))), lit_base, lift_saturation), vec3f(0.0));
     let chamfer = step(0.55, f.vertex_color.a);
     let low = clamp((f.vertex_color.a - 0.2 - 0.4 * chamfer) / 0.3, 0.0, 1.0);
     let grime = tile.r;
@@ -592,7 +642,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let fade = value_noise(metres * VEHICLE_FADE_CELLS) * 0.65 + value_noise(metres * VEHICLE_FADE_CELLS * 2.7 + 3.1) * 0.35;
     var color = base * (1.0 + (fade - 0.5) * 2.0 * VEHICLE_FADE_VALUE) * panel;
     // Rubbed edges: a lighter band on each bevel and over chamfer strips.
-    let lifted = color * VEHICLE_BEVEL_LIFT + VEHICLE_BEVEL_PALE;
+    let roll_length = length(edges.roll);
+    let roll_direction = edges.roll / max(roll_length, 1e-4);
+    let edge_light = select(0.0, clamp(max(dot(roll_direction, frame.sun_direction.xyz), roll_direction.y), 0.0, 1.0), roll_length > 1e-4);
+    let lit_resolved = 1.0 - smoothstep(VEHICLE_BEVEL_LIT_PIXEL_FROM, VEHICLE_BEVEL_LIT_PIXEL_TO, pixel);
+    let lifted = color * mix(VEHICLE_BEVEL_LIFT, VEHICLE_BEVEL_LIFT_LIT, edge_light * lit_resolved) + VEHICLE_BEVEL_PALE;
     color = mix(color, lifted, max(bevel, chamfer * 0.45) * VEHICLE_BEVEL_TINT);
     // Worn paint along convex edges of broad plates, in broken runs.
     let rub_resolved = 1.0 - smoothstep(VEHICLE_RUB_PIXEL_FROM, VEHICLE_RUB_PIXEL_TO, pixel);
@@ -609,7 +663,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Rivet heads in rows just inside the borders of broad plates, close up only: a
     // bright domed head in a dark ring of shadow, so a plate reads as bolted armor.
     let rivet_resolved = (1.0 - smoothstep(VEHICLE_RIVET_PIXEL_FROM, VEHICLE_RIVET_PIXEL_TO, pixel))
-        * smoothstep(VEHICLE_RIVET_MIN_PLATE, VEHICLE_RIVET_MIN_PLATE * 1.5, edges.narrowest) * (1.0 - chamfer);
+        * smoothstep(VEHICLE_RIVET_MIN_PLATE, VEHICLE_RIVET_MIN_PLATE * 1.5, edges.narrowest) * (1.0 - chamfer) * armor;
     var rivet = vec2f(0.0);
     if rivet_resolved > 0.0 {
         let d_uv = vec4f(dux, duy, dvx, dvy);
@@ -631,20 +685,45 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // with a lighter weld lip beside it.
     let seam_resolved = (1.0 - smoothstep(VEHICLE_SEAM_PIXEL_FROM, VEHICLE_SEAM_PIXEL_TO, pixel))
         * step(VEHICLE_SEAM_MIN_PLATE, edges.narrowest) * step(edges.narrowest, 100.0)
-        * (1.0 - chamfer);
+        * (1.0 - chamfer) * armor;
     var seam = 0.0;
     var lip = 0.0;
+    var seam_rivet = vec2f(0.0);
+    var panel_shift = 0.0;
     if seam_resolved > 0.0 {
         // Paint UVs run along the model's x and z on decks and across upright faces,
         // with v up the upright ones: v on a deck and u on an upright face cross it.
-        let q = select(f.uv.x, f.uv.y, (*s).normal.y > 0.6) * VEHICLE_METRES_PER_UV / VEHICLE_SEAM_SPACING;
-        let offset = (fract(q) - 0.5) * VEHICLE_SEAM_SPACING;
+        let on_deck = (*s).normal.y > 0.6;
+        let across = select(metres.x, metres.y, on_deck);
+        let along = select(metres.y, metres.x, on_deck);
         let aa = max(pixel, 1e-4);
-        seam = (1.0 - smoothstep(VEHICLE_SEAM_WIDTH * 0.5, VEHICLE_SEAM_WIDTH * 0.5 + aa, abs(offset))) * seam_resolved;
-        let lip_centre = abs(offset - (VEHICLE_SEAM_WIDTH * 0.5 + VEHICLE_SEAM_LIP * 0.5));
-        lip = (1.0 - smoothstep(VEHICLE_SEAM_LIP * 0.5, VEHICLE_SEAM_LIP * 0.5 + aa, lip_centre)) * seam_resolved;
+        let offset = (fract(across / VEHICLE_SEAM_SPACING) - 0.5) * VEHICLE_SEAM_SPACING;
+        var groove = vehicle_seam(offset, aa);
+        var long_offset = 1e3;
+        if on_deck {
+            long_offset = (fract(along / VEHICLE_SEAM_LONG) - 0.5) * VEHICLE_SEAM_LONG;
+            groove = max(groove, vehicle_seam(long_offset, aa));
+        }
+        seam = groove.x * seam_resolved;
+        lip = groove.y * seam_resolved;
+        // Rivet heads in a row either side of each seam.
+        let rivet_set = VEHICLE_SEAM_WIDTH * 0.5 + VEHICLE_SEAM_RIVET_SET;
+        let q_along = (fract(along / VEHICLE_SEAM_RIVET_PITCH) - 0.5) * VEHICLE_SEAM_RIVET_PITCH;
+        var r = length(vec2f(q_along, abs(offset) - rivet_set));
+        if on_deck {
+            let q_across = (fract(across / VEHICLE_SEAM_RIVET_PITCH) - 0.5) * VEHICLE_SEAM_RIVET_PITCH;
+            r = min(r, length(vec2f(q_across, abs(long_offset) - rivet_set)));
+        }
+        seam_rivet = vec2f(
+            1.0 - smoothstep(VEHICLE_RIVET_RADIUS - aa, VEHICLE_RIVET_RADIUS + aa, r),
+            1.0 - smoothstep(VEHICLE_RIVET_RADIUS, VEHICLE_RIVET_RADIUS + VEHICLE_RIVET_RING + aa, r),
+        ) * seam_resolved;
+        // Each panel a shade apart; the step hides in the seam's groove.
+        let cell = vec2i(floor(vec2f(across / VEHICLE_SEAM_SPACING, select(0.0, along / VEHICLE_SEAM_LONG, on_deck))));
+        panel_shift = (lattice_hash(cell + vec2i(37, 91)) - 0.5) * 2.0 * VEHICLE_PANEL_SHIFT * seam_resolved;
     }
-    color = color * (1.0 - seam * 0.65) * (1.0 + lip * 0.3);
+    color = color * (1.0 - seam * 0.65) * (1.0 + lip * 0.3) * (1.0 + panel_shift);
+    color = color * (1.0 - (seam_rivet.y - seam_rivet.x) * 0.55) * (1.0 + seam_rivet.x * 0.45);
 
     // Non-skid grain on decks close up.
     let deck = smoothstep(0.55, 0.8, (*s).normal.y);
@@ -654,6 +733,25 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         grain = value_noise(metres * VEHICLE_GRAIN_CELLS) * 0.6 + value_noise(metres * VEHICLE_GRAIN_CELLS * 2.3 + 1.7) * 0.4;
     }
     color *= 1.0 + (grain - 0.5) * 2.0 * VEHICLE_GRAIN_VALUE * grain_resolved;
+
+    // Tread plate on the trim's decks: each lozenge a scuffed steel top in a ring of
+    // shadow, so a fender reads as a steel walkway rather than painted card.
+    let tread_resolved = (1.0 - smoothstep(VEHICLE_TREAD_PIXEL_FROM, VEHICLE_TREAD_PIXEL_TO, pixel)) * deck * (1.0 - team) * (1.0 - chamfer) * armor;
+    var lug = 0.0;
+    var lug_ring = 0.0;
+    if tread_resolved > 0.0 {
+        let p = metres / VEHICLE_TREAD_CELL;
+        let cell = floor(p);
+        let local = fract(p) - 0.5;
+        let odd = fract((cell.x + cell.y) * 0.5) > 0.25;
+        let axis = select(vec2f(0.7071, 0.7071), vec2f(0.7071, -0.7071), odd);
+        let d = length(vec2f(dot(local, axis) / VEHICLE_TREAD_LENGTH, dot(local, vec2f(-axis.y, axis.x)) / VEHICLE_TREAD_WIDTH));
+        let soft = clamp(pixel / (VEHICLE_TREAD_CELL * VEHICLE_TREAD_WIDTH), 0.05, 1.0);
+        lug = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, d)) * tread_resolved;
+        lug_ring = (1.0 - smoothstep(1.0, 1.0 + 0.6 + soft, d)) * (1.0 - lug) * tread_resolved;
+    }
+    color *= 1.0 - lug_ring * 0.4;
+    color = mix(color, material.params[3].rgb * (0.7 + 0.5 * grime), lug * VEHICLE_TREAD_WEAR);
 
     // Rain streaks: thin dark runs down upright plates, broken along their length,
     // fading where a pixel grows past their width so far hulls stay clean.
@@ -749,9 +847,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         + (0.5 - grime) * VEHICLE_SHEEN_BREAKUP * (1.0 - deck) + streak * 0.08
         + (grain - 0.5) * 0.08 * grain_resolved + (fade - 0.5) * 2.0 * VEHICLE_ROUGHNESS_DRIFT;
     roughness = mix(roughness, VEHICLE_DIRT_ROUGHNESS, max(dirt, recess * 0.6));
-    roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, max(chip, chip_lip));
+    roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, max(max(chip, chip_lip), lug * VEHICLE_TREAD_WEAR));
     (*s).roughness = clamp(roughness + finish, 0.0, 1.0);
-    (*s).metalness = mix((*s).metalness, VEHICLE_STEEL_METALNESS, chip_lip * (1.0 - chip));
+    (*s).metalness = mix((*s).metalness, VEHICLE_STEEL_METALNESS, max(chip_lip * (1.0 - chip), lug * VEHICLE_TREAD_WEAR));
     (*s).normal = normal;
     (*s).color = color;
 
@@ -759,6 +857,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // side turned from the sun and on bevels that roll toward the view's edge.
     let paint = 1.0 - chip;
     (*s).emissive += color * paint_fill;
+    let bounce_facing = 1.0 - smoothstep(-0.2, 0.6, normal.y);
+    let bounce = VEHICLE_BOUNCE * select(VEHICLE_BOUNCE_STUDIO, 1.0, atmosphere_on()) * bounce_facing * (0.35 + 0.65 * low);
+    (*s).emissive += color * frame.ground_color.rgb * bounce;
     let grazing = 1.0 - clamp(dot(normal, f.view_direction), 0.0, 1.0);
     let away = 1.0 - clamp(dot(normal, frame.sun_direction.xyz), 0.0, 1.0);
     // Only upright plates take it: decks seen at a grazing angle from a low camera
