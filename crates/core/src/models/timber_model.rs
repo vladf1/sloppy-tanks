@@ -342,33 +342,42 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
     for end in [-1.0, 1.0] {
         let mut positions = Vec::new();
         let mut uvs = Vec::new();
-        for _ in 0..SPLINTERS_PER_END {
-            let half_a = size[across_a] * rng.range(0.1, 0.2);
-            let half_b = size[across_b] * rng.range(0.12, 0.22);
-            let ca = rng.range(-0.5, 0.5) * size[across_a] * 0.7;
-            let cb = rng.range(-0.5, 0.5) * size[across_b] * 0.7;
-            // Long, ragged slivers, so a snapped end reads as torn wood from the
-            // overhead camera rather than a sawn cut.
-            let reach = rng.range(0.12, 0.38) + size[along] * 0.03;
-            let lean = [rng.range(-0.4, 0.4), rng.range(-0.4, 0.4)];
-            // Base corners sunk just inside the end face, and the tip out past it.
-            let face = end * (size[along] / 2.0 - 0.01);
-            let point = |a: f64, b: f64, out: f64| {
-                let mut v = [0.0; 3];
-                v[along] = face + end * out;
-                v[across_a] = a;
-                v[across_b] = b;
-                v
+        // The break runs through the whole section: a grid of fibres covers the
+        // end face, most snapped short and a few torn out long, each leaning its
+        // own way, so the end reads as torn wood rather than a sawn cut with
+        // points stuck on it.
+        let long = [
+            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
+            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
+        ];
+        let face = end * (size[along] / 2.0 - 0.01);
+        let point = |a: f64, b: f64, out: f64| {
+            let mut v = [0.0; 3];
+            v[along] = face + end * out;
+            v[across_a] = a;
+            v[across_b] = b;
+            v
+        };
+        for cell in 0..SPLINTER_CELLS {
+            let (ia, ib) = (cell % SPLINTER_GRID[0], cell / SPLINTER_GRID[0]);
+            let cell_a = size[across_a] / SPLINTER_GRID[0] as f64;
+            let cell_b = size[across_b] / SPLINTER_GRID[1] as f64;
+            let a0 = -size[across_a] / 2.0 + cell_a * ia as f64;
+            let b0 = -size[across_b] / 2.0 + cell_b * ib as f64;
+            let reach = if long.contains(&cell) {
+                rng.range(0.32, 0.55) + size[along] * 0.03
+            } else {
+                rng.range(0.04, 0.2)
             };
             let base = [
-                point(ca - half_a, cb - half_b, 0.0),
-                point(ca + half_a, cb - half_b, 0.0),
-                point(ca + half_a, cb + half_b, 0.0),
-                point(ca - half_a, cb + half_b, 0.0),
+                point(a0, b0, 0.0),
+                point(a0 + cell_a, b0, 0.0),
+                point(a0 + cell_a, b0 + cell_b, 0.0),
+                point(a0, b0 + cell_b, 0.0),
             ];
             let tip = point(
-                ca + lean[0] * half_a * 2.0,
-                cb + lean[1] * half_b * 2.0,
+                a0 + cell_a * rng.range(-0.2, 1.2),
+                b0 + cell_b * rng.range(-0.2, 1.2),
                 reach,
             );
             // Both windings, so every sliver shows whichever way it faces.
@@ -392,9 +401,10 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
     group
 }
 
-/// Splinters jutting from each snapped end of a fallen member, and their fresh,
-/// pale wood.
-const SPLINTERS_PER_END: usize = 8;
+/// The fibres each snapped end of a fallen member breaks into (a grid across
+/// its section), and their fresh, pale wood.
+const SPLINTER_GRID: [usize; 2] = [3, 3];
+const SPLINTER_CELLS: usize = SPLINTER_GRID[0] * SPLINTER_GRID[1];
 const SPLINTER_COLOR: u32 = 0xd2ad78;
 
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers

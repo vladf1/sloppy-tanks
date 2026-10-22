@@ -85,7 +85,7 @@ const PUFF_WALL_SOFTNESS: f32 = 1.2;
 const PUFF_GROUND_SOFTNESS: f32 = 0.3;
 // Smoke this close to the camera (m) thins away, so a billow drifting up past a
 // low camera never becomes a flat curtain over the view.
-const PUFF_NEAR_FADE: vec2f = vec2f(1.5, 6.0);
+const PUFF_NEAR_FADE: vec2f = vec2f(2.5, 8.5);
 
 // How much of a puff survives at world point `p`: the ground's and the walls'
 // soft-particle fade along the view. The walls are material.params: up to three
