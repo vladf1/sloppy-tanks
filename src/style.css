@@ -588,7 +588,7 @@ body:has(#settings[open]) .hud-actions {
   border-radius: 4px;
   background: linear-gradient(180deg, var(--gold-hot), var(--gold));
   color: #1a2433;
-  font: 800 10px/1.3 var(--font-ui);
+  font: 800 12px/1.2 var(--font-ui);
   letter-spacing: 0.8px;
   pointer-events: auto;
   cursor: help;
@@ -597,6 +597,7 @@ body:has(#settings[open]) .hud-actions {
   background: #ffffff1c;
   color: #c3d4e6;
 }
+/* The readout changes tone at once, with the bar: a number never lags its own state. */
 .hull-readout {
   display: flex;
   align-items: baseline;
@@ -607,7 +608,6 @@ body:has(#settings[open]) .hud-actions {
   font: 400 32px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 2px 6px #0007;
-  transition: color 0.2s;
 }
 .hull-readout[data-tone="damaged"] b {
   color: #ffd56a;
@@ -628,7 +628,6 @@ body:has(#settings[open]) .hud-actions {
   margin-right: 1px;
   fill: #5fe39a;
   filter: drop-shadow(0 1px 2px #0009);
-  transition: fill 0.2s;
 }
 .hull-readout[data-tone="damaged"] .hull-icon {
   fill: #ffc23a;
@@ -703,6 +702,9 @@ body:has(#settings[open]) .hud-actions {
   flex: 1;
   align-items: stretch;
   gap: 4px;
+  border-radius: 8px;
+  background: #02081259;
+  box-shadow: inset 0 2px 6px #0009;
 }
 .ammo-slot {
   position: relative;
@@ -861,7 +863,7 @@ body:has(#settings[open]) .hud-actions {
   background: linear-gradient(180deg, #34588c, #1b3358);
   box-shadow: 0 1px 0 #050c18;
   color: #fff;
-  font: 800 10px/13px var(--font-ui);
+  font: 800 12px/14px var(--font-ui);
   letter-spacing: 0.6px;
   text-align: center;
   transform: translateX(-50%);
@@ -1373,7 +1375,7 @@ body:has(#settings[open]) .hud-actions {
 }
 .startup-hint {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .startup-track {
@@ -1464,9 +1466,9 @@ body:has(#settings[open]) .hud-actions {
 }
 .eyebrow {
   color: var(--text-label);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 3px;
+  letter-spacing: 2.4px;
 }
 h1 {
   font: 400 clamp(40px, 5vw, 72px) / 0.91 var(--font-display);
@@ -1504,7 +1506,7 @@ h2 {
   letter-spacing: 0.5px;
 }
 .vehicle small {
-  font-size: 10px;
+  font-size: 12px;
   color: #c0dbee;
 }
 
@@ -1513,7 +1515,7 @@ h2 {
   justify-content: space-between;
   border-top: 1px solid #b7c39738;
   padding-top: 10px;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1px;
   font-weight: 700;
 }
@@ -1644,9 +1646,18 @@ h2 {
   display: block;
   margin-top: 2px;
   color: #ffffffcc;
-  font: 800 8.5px/1 var(--font-ui);
+  font: 800 11px/1 var(--font-ui);
   letter-spacing: 1.6px;
   text-shadow: none;
+}
+.dialog-score .yours {
+  box-shadow:
+    inset 0 3px var(--gold),
+    inset 0 14px 16px -12px #ffcf3880;
+}
+.dialog-score .yours em {
+  color: var(--gold-hot);
+  font-style: normal;
 }
 .dialog-score .blue {
   background:
@@ -1846,7 +1857,7 @@ h2 {
   border-radius: 4px;
   background: linear-gradient(180deg, var(--gold-hot), var(--gold));
   color: #1a2233;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1.5px;
 }
 @media (max-width: 800px) {
@@ -1939,7 +1950,7 @@ h2 {
 }
 .wrecked-by small {
   color: #ff8592;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 2.4px;
 }
@@ -2024,7 +2035,7 @@ h2 {
 .respawn-timer h2 small {
   margin-bottom: 4px;
   color: var(--gold);
-  font: 800 11px/1.3 var(--font-ui);
+  font: 800 12px/1.3 var(--font-ui);
   letter-spacing: 2.4px;
 }
 /* The ring beats once a second with the count. */
@@ -2108,7 +2119,7 @@ h2 {
   border-radius: 4px;
   background: #ffffff14;
   color: #cfe0ef;
-  font: 800 10px/1.2 var(--font-ui);
+  font: 800 12px/1.2 var(--font-ui);
   letter-spacing: 1px;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2164,7 +2175,7 @@ html:not(.phone) #toast[data-tone="death"] {
   left: 5px;
   top: 3px;
   color: #e6f0fa;
-  font: 800 11px/1.1 var(--font-ui);
+  font: 800 12px/1.1 var(--font-ui);
   text-shadow: 0 1px 2px #000;
 }
 .ammo-slot:not(.selected) kbd {
@@ -2172,14 +2183,18 @@ html:not(.phone) #toast[data-tone="death"] {
   right: 0;
   text-align: center;
 }
-/* An uncarried round is an empty socket, recessed into the panel rather than a tile of
-   its own: its key, a faint silhouette and a small lock where the count would be, so
-   loading it never resizes the rack. */
+/* An uncarried round is an empty socket in the rack's channel rather than a tile of its
+   own: its key, a faint silhouette and a small lock where the count would be, so loading
+   it never resizes the rack. */
 .ammo-slot.empty {
-  border-color: #ffffff0a;
-  background: #02081266;
-  box-shadow: inset 0 2px 6px #000a;
+  border-color: transparent;
+  background: none;
   color: #7f93a8;
+}
+/* Sockets side by side share the rack's one recessed channel, split by hairlines, so
+   rounds not yet carried read as one quiet rail rather than a row of dead tiles. */
+.ammo-slot.empty + .ammo-slot.empty {
+  box-shadow: -2.5px 0 0 -1.5px #ffffff14;
 }
 .ammo-slot.empty b {
   display: none;
@@ -2234,7 +2249,7 @@ html:not(.phone) #toast[data-tone="death"] {
   background: var(--glass-hud);
   box-shadow: 0 6px 16px #0007;
   color: var(--gold-hot);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1.4;
 }
@@ -2399,7 +2414,7 @@ html:not(.phone) #toast[data-tone="death"] {
   background: linear-gradient(180deg, #34588c, #1b3358);
   box-shadow: 0 1px 0 #050c18;
   color: #fff;
-  font: 800 10px/13px var(--font-ui);
+  font: 800 11px/13px var(--font-ui);
   text-align: center;
 }
 .touch-enabled .compass-key {
@@ -2934,9 +2949,10 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 5px;
   background: #ffffff12;
   color: #cfe3f5;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
   text-align: right;
   text-transform: uppercase;
 }
@@ -2998,7 +3014,7 @@ html:not(.phone) #toast[data-tone="death"] {
   padding-top: 8px;
   border-top: 0;
   color: #dbe9f6;
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 1.2px;
 }
 .spec span {
@@ -3543,7 +3559,7 @@ html:not(.phone) #toast[data-tone="death"] {
   border: 1px solid var(--accent, #ffcf38);
   border-radius: 4px;
   color: var(--accent, #ffcf38);
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 1px;
@@ -3568,8 +3584,7 @@ html:not(.phone) #toast[data-tone="death"] {
   text-align: center;
 }
 /* Difficulty stacks its levels with their effects spelled out, matching the height of
-   the Battle cards beside it and of the name and team on the multiplayer tab. A signal
-   meter leads each level like an icon, ranking them at a glance. */
+   the Battle cards beside it and of the name and team on the multiplayer tab. */
 .difficulty-setting .segmented {
   flex: 1;
   grid-auto-flow: row;
@@ -3577,14 +3592,18 @@ html:not(.phone) #toast[data-tone="death"] {
 .difficulty-setting .segment {
   justify-items: start;
   min-height: 0;
-  padding: 5px 14px 5px 58px;
+  padding: 5px 72px 5px 16px;
   text-align: left;
 }
+/* The meter stands at the card's right, large enough to rank the levels across the
+   column at a glance, where the line beside it would otherwise leave the card empty. */
 .difficulty-setting .segment::after {
   content: "";
   position: absolute;
-  left: 15px;
+  right: 22px;
   top: calc(50% - 12px);
+  transform: scale(1.35);
+  transform-origin: 100% 50%;
   width: 28px;
   height: 24px;
   border-radius: 2px;
@@ -3924,9 +3943,9 @@ html:not(.phone) #toast[data-tone="death"] {
   display: flex;
 }
 .room-empty svg {
-  width: 42px;
-  height: 42px;
-  margin-bottom: 6px;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 8px;
   fill: none;
   stroke: #5f86ad;
   stroke-width: 2;
@@ -3934,10 +3953,10 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .room-empty b {
   color: #e2eef9;
-  font-size: 14px;
+  font-size: 16px;
 }
 .room-empty small {
-  font-size: 12px;
+  font-size: 13px;
 }
 /* The hint and the offline action share one height, so the list never grows between
    states. */
@@ -4042,7 +4061,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .room-row small {
   color: #b6cedf;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 /* An open room is one line, its details trimmed before its map and player count. */
@@ -4103,7 +4122,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .rule-label {
   color: #b6cedf;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -4326,7 +4345,7 @@ html:not(.phone) #toast[data-tone="death"] {
   height: auto;
   background: none;
   color: #a9bdd2;
-  font: 800 11px/1 var(--font-ui);
+  font: 800 12px/1 var(--font-ui);
   letter-spacing: 1.4px;
   transform: none;
 }
@@ -4626,8 +4645,9 @@ html:not(.phone) #toast[data-tone="death"] {
     --scale: 1;
   }
   html:not(.phone) .start .tank-setting .vehicle .spec {
-    font-size: 10.5px;
-    letter-spacing: 1px;
+    font-size: 11px;
+    letter-spacing: 0.6px;
+    white-space: nowrap;
   }
   /* The rooms column is narrower beside the garage: the new room's rules take a line of
      their own under its name. */
@@ -4671,8 +4691,8 @@ html:not(.phone) #toast[data-tone="death"] {
     bottom: auto;
   }
   html:not(.phone) .start .team-art .versus {
-    left: 25%;
-    top: 30%;
+    left: 50%;
+    top: 50%;
     transform: translate(-50%, -50%);
   }
   html:not(.phone) .start .tank-setting .vehicle .spec {
@@ -4843,7 +4863,7 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 4px;
   background: #ffcf381f;
   color: var(--gold-hot);
-  font: 800 10.5px/1.2 var(--font-ui);
+  font: 800 12px/1.2 var(--font-ui);
   letter-spacing: 1.6px;
 }
 .results .dialog-title h2 {
@@ -4961,7 +4981,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .board-team header i {
   color: #ffffffcc;
-  font: 800 11px/1 var(--font-ui);
+  font: 800 12px/1 var(--font-ui);
   letter-spacing: 0.5px;
 }
 .board-team ol {
@@ -5005,7 +5025,7 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 4px;
   background: #ffffff1a;
   color: #e6f1f9;
-  font: 800 10px/1.2 var(--font-ui);
+  font: 800 11px/1.2 var(--font-ui);
   letter-spacing: 0.5px;
 }
 .board-team li.you {
@@ -5209,7 +5229,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .recap-stat dt {
   color: #a6c4d8;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -5227,7 +5247,7 @@ html:not(.phone) #toast[data-tone="death"] {
 .recap-stat > span {
   display: block;
   color: #8fb3cb;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 13px;
 }
 .recap-stat.is-record > span {
@@ -5261,7 +5281,7 @@ html:not(.phone) #toast[data-tone="death"] {
   padding: 9px 6px 10px;
   background: #060f1fe6;
   color: #9dbbd2;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -5565,7 +5585,7 @@ body:has(#settings[open]) #overlay > .menu {
   height: 16px;
   margin-top: 1px;
   color: #7f9bb5;
-  font: 700 11px/16px var(--font-ui);
+  font: 700 12px/16px var(--font-ui);
   letter-spacing: 0.3px;
 }
 .slider-scale i {
@@ -5705,7 +5725,7 @@ body:has(#settings[open]) #overlay > .menu {
   background: #ffffff0f;
   box-shadow: inset 0 0 0 1px #8bc2ec55;
   color: #d9eaf8;
-  font: 800 10px/1 var(--font-ui);
+  font: 800 12px/1 var(--font-ui);
   letter-spacing: 1.5px;
   transition:
     background 0.12s,
@@ -5935,7 +5955,14 @@ html.phone,
 .hull-pill-icon {
   width: 16px;
   height: 16px;
-  fill: #dff0ff;
+  fill: #5fe39a;
+}
+/* The pill's cross takes the hull's state from its bar, as the tank panel's does. */
+#hull-pill:has(.hull-bar[data-tone="damaged"]) .hull-pill-icon {
+  fill: #ffc23a;
+}
+#hull-pill:has(.hull-bar[data-tone="critical"]) .hull-pill-icon {
+  fill: #ff4d5e;
 }
 #hull-pill b {
   min-width: 2.2ch;
@@ -6015,7 +6042,7 @@ html.phone,
     justify-self: start;
     max-width: 100%;
     padding: 2px 6px;
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0;
     text-align: left;
     white-space: nowrap;
@@ -6036,7 +6063,7 @@ html.phone,
     display: grid;
     gap: 5px;
     padding-top: 0;
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.2px;
     white-space: nowrap;
   }
@@ -6438,7 +6465,7 @@ html.phone,
 }
 .pause-objective.solo small {
   color: #9dbbd2;
-  font: 800 11px/1 var(--font-ui);
+  font: 800 12px/1 var(--font-ui);
   letter-spacing: 1.4px;
 }
 .pause-facts {
@@ -6471,7 +6498,7 @@ html.phone,
 }
 .pause-facts dt {
   color: #8fb3cb;
-  font: 800 11px/1.2 var(--font-ui);
+  font: 800 12px/1.2 var(--font-ui);
   letter-spacing: 1.4px;
   text-transform: uppercase;
 }

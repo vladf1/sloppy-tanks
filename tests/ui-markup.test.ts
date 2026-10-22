@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HudState } from "../src/game/engine-api";
-import { menuMarkup, ordinal } from "../src/game/ui-markup";
+import { menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
 
 test("ordinals read as places: 1st, 2nd, 11th, 21st", () => {
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal), [
@@ -88,4 +88,11 @@ test("the respawn card names who destroyed the tank in plain words", () => {
   });
   assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);
   assert.doesNotMatch(markup, /WRECKED/);
+});
+
+test("dialog score plates mark only the viewer's side, beside its name", () => {
+  const markup = scoreMarkup([3, 4], "Score", ["BLUE", "RED"], 1);
+  assert.match(markup, /<span class="red yours">4<small>RED<em> · YOU<\/em><\/small>/);
+  assert.match(markup, /<span class="blue">3<small>BLUE<\/small>/);
+  assert.equal(markup.match(/YOU/g)?.length, 1);
 });

@@ -177,8 +177,17 @@ export interface DeathNotice {
 
 /** The live or final score on team plates named under the numbers, for pause and the
  * battle report. */
-function scoreMarkup(scores: readonly number[], label: string, names: readonly string[]): string {
-  return `<div class="dialog-score" aria-label="${label}"><span class="blue">${scores[0]}<small>${names[0]}</small></span><i>:</i><span class="red">${scores[1]}<small>${names[1]}</small></span></div>`;
+/** Both teams' scores as a pair of plates; the viewer's side carries the in-match
+ * scoreboard's gold rim and says YOU beside its name. */
+export function scoreMarkup(
+  scores: readonly number[],
+  label: string,
+  names: readonly string[],
+  team: number,
+): string {
+  const plate = (index: number, side: string) =>
+    `<span class="${side}${index === team ? " yours" : ""}">${scores[index]}<small>${names[index]}${index === team ? "<em> · YOU</em>" : ""}</small></span>`;
+  return `<div class="dialog-score" aria-label="${label}">${plate(0, "blue")}<i>:</i>${plate(1, "red")}</div>`;
 }
 
 /** How a team battle came out for the viewer's team. A battle ended early goes to the
@@ -263,7 +272,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
   if (phase === "paused") {
     return `
       <section class="menu compact pause-menu" aria-labelledby="pause-title">
-        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames)}</div>${solo ? `<p class="dialog-lede">The battle waits until you resume.</p>` : `<p class="dialog-standing" data-tone="${standingTone(hud.match.scores, hud.humanTeam)}">${pauseStanding(hud)}</p>`}</header>
+        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames, hud.humanTeam)}</div>${solo ? `<p class="dialog-lede">The battle waits until you resume.</p>` : `<p class="dialog-standing" data-tone="${standingTone(hud.match.scores, hud.humanTeam)}">${pauseStanding(hud)}</p>`}</header>
         <div class="dialog-tabs" role="tablist" aria-label="Pause"><button type="button" role="tab" id="pause-tab-battle" aria-selected="true" aria-controls="pause-battle">BATTLE</button><button type="button" role="tab" id="pause-tab-controls" aria-selected="false" aria-controls="pause-controls" tabindex="-1">CONTROLS</button></div>
         <div class="dialog-pane" id="pause-battle" role="tabpanel" aria-labelledby="pause-tab-battle">${pauseOverviewMarkup(hud)}</div>
         <div class="dialog-pane" id="pause-controls" role="tabpanel" aria-labelledby="pause-tab-controls" hidden>${controlsMarkup()}</div>
@@ -311,7 +320,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
       <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly ? `<span class="ended-early">ENDED BY YOU</span>` : ""}</div>
-      <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames)}</div>
+      <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
       <p class="dialog-lede">${lede}</p></header>
       <div class="results-body${solo ? "" : " with-board"}"><div class="results-you">${hud.recap ? recapMarkup(hud, hud.recap) : ""}</div>${solo ? "" : scoreboardMarkup(hud.scoreboard, viewer.id, hud.teamNames, scores)}</div>
       <div class="menu-actions"><button id="play-again" class="primary">${ACTION_ICONS.again}PLAY AGAIN</button>
