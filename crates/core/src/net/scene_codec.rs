@@ -105,28 +105,49 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("ladder", TowerPiece::Ladder),
 ];
 /// Every shard a cottage breaks into, part by part (as [`HousePiece::ALL`]).
-pub const HOUSE_PIECES: [(&str, HousePiece); 21] = [
+pub const HOUSE_PIECES: [(&str, HousePiece); 42] = [
     ("front-wall-0", HousePiece::new(HousePart::FrontWall, 0)),
     ("front-wall-1", HousePiece::new(HousePart::FrontWall, 1)),
     ("front-wall-2", HousePiece::new(HousePart::FrontWall, 2)),
+    ("front-wall-3", HousePiece::new(HousePart::FrontWall, 3)),
+    ("front-wall-4", HousePiece::new(HousePart::FrontWall, 4)),
+    ("front-wall-5", HousePiece::new(HousePart::FrontWall, 5)),
     ("back-wall-0", HousePiece::new(HousePart::BackWall, 0)),
     ("back-wall-1", HousePiece::new(HousePart::BackWall, 1)),
     ("back-wall-2", HousePiece::new(HousePart::BackWall, 2)),
+    ("back-wall-3", HousePiece::new(HousePart::BackWall, 3)),
+    ("back-wall-4", HousePiece::new(HousePart::BackWall, 4)),
+    ("back-wall-5", HousePiece::new(HousePart::BackWall, 5)),
     ("right-wall-0", HousePiece::new(HousePart::RightWall, 0)),
     ("right-wall-1", HousePiece::new(HousePart::RightWall, 1)),
     ("right-wall-2", HousePiece::new(HousePart::RightWall, 2)),
+    ("right-wall-3", HousePiece::new(HousePart::RightWall, 3)),
+    ("right-wall-4", HousePiece::new(HousePart::RightWall, 4)),
+    ("right-wall-5", HousePiece::new(HousePart::RightWall, 5)),
     ("left-wall-0", HousePiece::new(HousePart::LeftWall, 0)),
     ("left-wall-1", HousePiece::new(HousePart::LeftWall, 1)),
     ("left-wall-2", HousePiece::new(HousePart::LeftWall, 2)),
+    ("left-wall-3", HousePiece::new(HousePart::LeftWall, 3)),
+    ("left-wall-4", HousePiece::new(HousePart::LeftWall, 4)),
+    ("left-wall-5", HousePiece::new(HousePart::LeftWall, 5)),
     ("right-roof-0", HousePiece::new(HousePart::RightRoof, 0)),
     ("right-roof-1", HousePiece::new(HousePart::RightRoof, 1)),
+    ("right-roof-2", HousePiece::new(HousePart::RightRoof, 2)),
+    ("right-roof-3", HousePiece::new(HousePart::RightRoof, 3)),
     ("left-roof-0", HousePiece::new(HousePart::LeftRoof, 0)),
     ("left-roof-1", HousePiece::new(HousePart::LeftRoof, 1)),
+    ("left-roof-2", HousePiece::new(HousePart::LeftRoof, 2)),
+    ("left-roof-3", HousePiece::new(HousePart::LeftRoof, 3)),
     ("front-roof-0", HousePiece::new(HousePart::FrontRoof, 0)),
     ("front-roof-1", HousePiece::new(HousePart::FrontRoof, 1)),
+    ("front-roof-2", HousePiece::new(HousePart::FrontRoof, 2)),
+    ("front-roof-3", HousePiece::new(HousePart::FrontRoof, 3)),
     ("back-roof-0", HousePiece::new(HousePart::BackRoof, 0)),
     ("back-roof-1", HousePiece::new(HousePart::BackRoof, 1)),
-    ("chimney", HousePiece::new(HousePart::Chimney, 0)),
+    ("back-roof-2", HousePiece::new(HousePart::BackRoof, 2)),
+    ("back-roof-3", HousePiece::new(HousePart::BackRoof, 3)),
+    ("chimney-0", HousePiece::new(HousePart::Chimney, 0)),
+    ("chimney-1", HousePiece::new(HousePart::Chimney, 1)),
 ];
 pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
     ("wall", CratePiece::Wall),
@@ -261,7 +282,7 @@ const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
-const HOUSE_NAMES: [&str; 21] = names(&HOUSE_PIECES);
+const HOUSE_NAMES: [&str; 42] = names(&HOUSE_PIECES);
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);

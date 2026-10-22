@@ -54,14 +54,16 @@ const BURNOUT_BILLOWS: usize = 4;
 const COLLAPSE_LIFETIME: f64 = 2.2;
 /// A cottage's collapse dust: how long it hangs, when its roof lands on the wreck
 /// (s after the break), how many billows the landing drives out in a ring round
-/// the footprint, how far (m) from its centre they start and roll out, and the
-/// puffs of the column rising off the heap.
-const HOUSE_DUST_LIFETIME: f64 = 6.0;
-const HOUSE_IMPACT: f64 = 0.6;
-const HOUSE_BILLOWS: usize = 16;
+/// the footprint, how far (m) from its centre they start and roll out, the puffs
+/// of the column rising off the heap and the dark billows over the pile.
+const HOUSE_DUST_LIFETIME: f64 = 8.0;
+const HOUSE_IMPACT: f64 = 0.55;
+const HOUSE_BILLOWS: usize = 18;
 const HOUSE_FOOT: f64 = 2.8;
-const HOUSE_ROLL: f64 = 3.0;
+const HOUSE_ROLL: f64 = 3.2;
 const HOUSE_PALL: usize = 4;
+/// Dark billows boiling up inside the footprint over the pile.
+const HOUSE_CORE: usize = 7;
 /// Plaster and mortar dust, paler than the ground's.
 const PLASTER_DUST: u32 = 0xb9ab95;
 const HIT_LIFETIME: f64 = 1.1;
@@ -1133,7 +1135,8 @@ impl ExplosionEffects {
                 self.ring(b, t, b.scale);
             }
             Kind::HouseFall => {
-                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.4);
+                // Plaster and mortar off the walls, not the ground the cottage stood on.
+                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.9);
                 self.skirt(b, t, dust);
                 self.house_dust(b, t, lifetime, dust);
                 if t > HOUSE_IMPACT {
@@ -1855,43 +1858,76 @@ impl ExplosionEffects {
         ));
     }
 
-    /// The dust a falling cottage drives out as its roof comes down: one ring of
+    /// The dust a falling cottage drives out as its roof comes down: a skirt of
     /// low billows born round the footprint as the roof lands, rolling outward
-    /// along the ground and spreading as they thin, and a column of plaster dust
-    /// rising slowly off the heap and drifting downwind. No veil over the scene:
-    /// the wreck shows through it from the first second.
+    /// along the ground and spreading as they thin, a darker billow of plaster
+    /// and soot boiling up inside the footprint and hanging over the pile, and a
+    /// column of plaster dust rising slowly off the heap and drifting downwind.
+    /// Everything settles over seconds; the wreck shows through from the first.
     fn house_dust(&mut self, b: &Blast, t: f64, lifetime: f64, dust: [f64; 3]) {
         for j in 0..HOUSE_BILLOWS {
             let jf = j as f64;
             let r1 = hash(b.phase * 1.31 + jf * 2.113);
             let r2 = hash(b.phase * 0.77 + jf * 0.919);
             let r3 = hash(b.phase * 2.03 + jf * 1.447);
-            let age = t - HOUSE_IMPACT - r1 * 0.25;
+            let age = t - HOUSE_IMPACT - r1 * 0.3;
             if age <= 0.0 {
                 continue;
             }
             // Even steps round the ring with a little jitter, so the front reads as
             // one rolling wave rather than scattered blobs.
             let angle = b.phase + jf * TAU / HOUSE_BILLOWS as f64 + (r2 - 0.5) * 0.3;
-            let roll = settle(age, 1.1 + 0.4 * r2);
-            let reach = HOUSE_FOOT * (0.9 + 0.2 * r3) + HOUSE_ROLL * roll;
-            let size = 0.9 + 0.3 * r2 + 1.5 * roll;
-            let end = 3.2 + 1.2 * r3;
+            let roll = settle(age, 0.9 + 0.4 * r2);
+            let reach = HOUSE_FOOT * (0.85 + 0.25 * r3) + HOUSE_ROLL * roll;
+            let size = 0.9 + 0.35 * r2 + 1.5 * roll;
+            let end = 5.8 + 1.6 * r3;
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * reach + WIND[0] * age * 0.3,
-                    0.15 + size * 0.24,
+                    0.12 + size * 0.2,
                     b.z + angle.sin() * reach + WIND[1] * age * 0.3,
                 ],
                 size,
-                color: scaled(dust, 0.86 + 0.22 * r3),
-                opacity: (age / 0.15).min(1.0)
-                    * (0.3 + 0.1 * r1)
-                    * (1.0 - smoothstep(age, 0.9, end)),
+                color: scaled(dust, 0.84 + 0.22 * r3),
+                opacity: (age / 0.12).min(1.0)
+                    * (0.26 + 0.1 * r1)
+                    * (1.0 - smoothstep(age, 1.6, end)),
                 seed: b.phase * 0.43 + jf * 0.191,
                 heat: 0.0,
+                erosion: smoothstep(age, 0.5, end) * 0.8,
+                softness: 0.55 + 0.25 * r1,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..HOUSE_CORE {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 0.83 + jf * 1.771);
+            let r2 = hash(b.phase * 1.57 + jf * 0.613);
+            let r3 = hash(b.phase * 2.41 + jf * 2.293);
+            // Born as the walls fold and the roof lands, over the pile.
+            let age = t - HOUSE_IMPACT * (0.4 + 0.7 * r1);
+            if age <= 0.0 {
+                continue;
+            }
+            let angle = b.phase * 1.7 + jf * TAU / HOUSE_CORE as f64 + (r2 - 0.5) * 0.6;
+            let spread = HOUSE_FOOT * (0.3 + 0.45 * r3) + 0.9 * settle(age, 0.8);
+            let size = 1.0 + 0.4 * r2 + 0.9 * settle(age, 0.7);
+            let end = 5.2 + 1.4 * r3;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * spread + WIND[0] * age * 0.35,
+                    0.35 + size * 0.25 + 0.6 * settle(age, 0.5) * r1,
+                    b.z + angle.sin() * spread + WIND[1] * age * 0.35,
+                ],
+                size,
+                color: scaled(dust, 0.62 + 0.14 * r2),
+                opacity: (age / 0.2).min(1.0)
+                    * (0.24 + 0.08 * r3)
+                    * (1.0 - smoothstep(age, 1.5, end)),
+                seed: b.phase * 0.61 + jf * 0.237,
+                heat: 0.0,
                 erosion: smoothstep(age, 0.4, end) * 0.85,
-                softness: 0.6 + 0.25 * r1,
+                softness: 0.5 + 0.2 * r1,
                 underglow: 0.0,
             });
         }
@@ -1909,12 +1945,12 @@ impl ExplosionEffects {
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * spread + WIND[0] * age * 0.6,
-                    0.8 + 0.5 * age + 0.4 * r2,
+                    1.0 + 0.5 * age + 0.4 * r2,
                     b.z + angle.sin() * spread + WIND[1] * age * 0.6,
                 ],
-                size: 1.3 + 0.7 * age + 0.5 * r2,
-                color: scaled(dust, 0.95 + 0.15 * r1),
-                opacity: (age / 0.35).min(1.0) * 0.16 * (1.0 - smoothstep(age, 1.2, end)),
+                size: 1.5 + 0.7 * age + 0.5 * r2,
+                color: scaled(dust, 0.92 + 0.15 * r1),
+                opacity: (age / 0.35).min(1.0) * 0.2 * (1.0 - smoothstep(age, 1.2, end)),
                 seed: b.phase * 0.29 + jf * 0.311,
                 heat: 0.0,
                 erosion: smoothstep(age, 0.6, end) * 0.85,
