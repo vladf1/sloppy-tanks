@@ -31,28 +31,28 @@ pub fn humvee_tumble(seed: f64, id: u32, deaths: u32) -> HumveeTumble {
     let direction = if hash & 4 != 0 { 1.0 } else { -1.0 };
     let profiles = [
         HumveeTumble {
-            height: 0.5,
+            height: 0.7,
             pitch: 0.0,
             roll: 5.5,
             yaw: 0.0,
             damping: 1.1,
         },
         HumveeTumble {
-            height: 1.0,
+            height: 1.5,
             pitch: 0.6,
             roll: 6.0,
             yaw: 0.5,
             damping: 0.65,
         },
         HumveeTumble {
-            height: 1.6,
+            height: 2.6,
             pitch: 4.7,
             roll: 0.7,
             yaw: 0.4,
             damping: 0.5,
         },
         HumveeTumble {
-            height: 1.3,
+            height: 2.0,
             pitch: 2.8,
             roll: 3.8,
             yaw: 1.4,

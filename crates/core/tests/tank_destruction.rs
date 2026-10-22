@@ -51,7 +51,7 @@ fn quiet_kills_keep_one_grounded_wreck_and_dramatic_kills_retain_launched_pieces
             assert_eq!(wreck.part, Some(WreckPart::Intact));
             assert_eq!(wreck.created_at, Some(sim.elapsed));
             let lift = sim.body_linvel(wreck.body).y;
-            assert!(lift > 3.8 && lift < 4.8, "{lift}");
+            assert!(lift > 6.0 && lift < 7.1, "{lift}");
             let spin = sim.world.bodies[wreck.body].angvel();
             assert!((spin.x as f64).hypot(spin.z as f64) > 0.5);
             let start_y = sim.body_translation(wreck.body).y;
@@ -61,8 +61,8 @@ fn quiet_kills_keep_one_grounded_wreck_and_dramatic_kills_retain_launched_pieces
                 peak_y = peak_y.max(sim.body_translation(wreck.body).y);
             }
             assert!(
-                peak_y - start_y > 0.25 && peak_y - start_y < 0.6,
-                "a burnout jolts the hull about half a metre: {}",
+                peak_y - start_y > 0.8 && peak_y - start_y < 1.2,
+                "hop stays around one metre: {}",
                 peak_y - start_y
             );
             let p = sim.body_translation(wreck.body);
@@ -115,7 +115,7 @@ fn barrel_detonation_events_carry_their_source_without_tagging_shell_blasts() {
 }
 
 #[test]
-fn tank_breakup_varies_assemblies_throws_the_turret_clear_and_lands_after_flight() {
+fn tank_breakup_varies_assemblies_travels_widely_and_lands_after_flight() {
     let mut variants = BTreeSet::new();
     let mut axes = BTreeSet::new();
     let mut high_launches = 0;
@@ -141,12 +141,12 @@ fn tank_breakup_varies_assemblies_throws_the_turret_clear_and_lands_after_flight
         assert!(has(WreckPart::TurretBarrel) || (has(WreckPart::Turret) && has(WreckPart::Barrel)));
         variants.insert(format!("{parts:?}"));
         assert!(pieces.len() <= 3);
-        if s.body_linvel(pieces[1].body).y.powi(2) / 44.0 >= 4.0 {
+        if s.body_linvel(pieces[1].body).y.powi(2) / 44.0 >= 20.0 {
             high_launches += 1;
         }
         assert!(
-            s.body_linvel(pieces[0].body).y.powi(2) / 44.0 <= 1.21,
-            "a hull jumps, it does not fly"
+            s.body_linvel(pieces[0].body).y.powi(2) / 44.0 <= 8.01,
+            "hulls keep normal arcs"
         );
         for piece in &pieces {
             let v = s.world.bodies[piece.body].angvel();
@@ -154,12 +154,7 @@ fn tank_breakup_varies_assemblies_throws_the_turret_clear_and_lands_after_flight
             let speed =
                 (components[0].1.powi(2) + components[1].1.powi(2) + components[2].1.powi(2))
                     .sqrt();
-            let range = if piece.part == Some(WreckPart::Hull) {
-                0.31..=1.61
-            } else {
-                3.99..=8.01
-            };
-            assert!(range.contains(&speed), "spin {speed}");
+            assert!((6.99..=14.01).contains(&speed), "spin {speed}");
             // The first of equally large components wins, like the stable sort it replaces.
             let dominant = components
                 .into_iter()
@@ -177,12 +172,12 @@ fn tank_breakup_varies_assemblies_throws_the_turret_clear_and_lands_after_flight
             })
             .collect();
         assert!(
-            (targets[0].x - targets[1].x).hypot(targets[0].z - targets[1].z) > 3.0,
-            "launch throws the turret clear of the hull; later contacts may deflect them"
+            (targets[0].x - targets[1].x).hypot(targets[0].z - targets[1].z) > 12.0,
+            "launch aims hull and turret several tank lengths apart; later contacts may deflect them"
         );
         let longest = pieces
             .iter()
-            .map(|f| f.life - 9.5)
+            .map(|f| f.life - 3.2)
             .fold(f64::NEG_INFINITY, f64::max);
         let landing_steps = (longest * 60.0).ceil() as usize + 60;
         for _ in 0..landing_steps {
@@ -197,10 +192,7 @@ fn tank_breakup_varies_assemblies_throws_the_turret_clear_and_lands_after_flight
         );
     }
     assert_eq!(variants.len(), 2);
-    assert!(
-        highest > 4.0,
-        "an ammunition cook-off throws its turret high"
-    );
+    assert!(highest > 20.0, "some turrets take spectacular high arcs");
     assert!(
         high_launches > 0 && high_launches < seeds.len(),
         "high launches are occasional"
@@ -274,7 +266,7 @@ fn humvee_deaths_alternate_between_quiet_burnouts_and_bounded_whole_vehicle_tumb
         let w = simulation.world.bodies[pieces[0].body].angvel();
         let spin = ((w.x as f64).powi(2) + (w.y as f64).powi(2) + (w.z as f64).powi(2)).sqrt();
         if quiet {
-            assert!(lift > 3.8 && lift < 4.8, "{lift}");
+            assert!(lift > 6.0 && lift < 7.1, "{lift}");
             assert!(spin < 1.0, "{spin}");
         } else {
             assert!(lift > 4.0 && lift < 11.0, "{lift}");

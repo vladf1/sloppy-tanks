@@ -477,10 +477,10 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
     let cases: [(CoverKind, &[FragmentShape], usize); 5] = [
         (
             CoverKind::Cargo,
-            // This seed's break: walls and lid in eleven panels, a skid and two planks.
+            // This seed's break: walls and lid in ten panels, a skid and two planks.
             &[
-                Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam,
-                Beam, Beam,
+                Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Panel, Beam, Beam,
+                Beam,
             ],
             33,
         ),

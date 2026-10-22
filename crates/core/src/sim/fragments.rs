@@ -9,14 +9,6 @@ use super::physics::{interaction_groups, vector};
 use super::simulation::Simulation;
 use super::types::{Fragment, FragmentShape};
 
-/// A fragment's throw: horizontal speed either way and upward speed (m/s); a
-/// shard of armour clears the hull and lands a few metres off, not across the map.
-const THROW_SPEED: f64 = 4.5;
-const THROW_LIFT: [f64; 2] = [3.0, 7.5];
-/// Seconds a fragment lies where it landed before it sinks away (times the
-/// caller's scale), so a kill's remains outlast the smoke.
-const FRAGMENT_REST: [f64; 2] = [5.0, 8.0];
-
 impl Simulation {
     /// A small cosmetic physics fragment.
     pub fn fragment(
@@ -34,9 +26,9 @@ impl Simulation {
         let rng = &mut self.rng;
         let y = rng.range(1.0, 3.0);
         let linvel = vector(
-            rng.range(-THROW_SPEED, THROW_SPEED),
-            rng.range(THROW_LIFT[0], THROW_LIFT[1]),
-            rng.range(-THROW_SPEED, THROW_SPEED),
+            rng.range(-7.0, 7.0),
+            rng.range(5.0, 14.0),
+            rng.range(-7.0, 7.0),
         );
         let angvel = vector(
             rng.range(-6.0, 6.0),
@@ -67,8 +59,7 @@ impl Simulation {
             Some(body),
         );
         let id = self.allocate_id();
-        let life = self.rng.range(FRAGMENT_REST[0], FRAGMENT_REST[1]) * lifetime_scale
-            + DEBRIS_CLEANUP_SECONDS;
+        let life = self.rng.range(1.6, 2.6) * lifetime_scale + DEBRIS_CLEANUP_SECONDS - 0.5;
         let mut fragment = Fragment::new(id, body, life, size, color);
         fragment.shape = Some(shape);
         self.fragments.push(fragment);
