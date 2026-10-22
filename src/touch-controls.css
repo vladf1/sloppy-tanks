@@ -419,6 +419,14 @@ html:not(.phone) .touch-enabled .coral {
   width: 100%;
   min-width: 440px;
 }
+/* The standard shell, carried every life, keeps a double-width key, so the rack reads
+   as the round in hand plus the four that crates bring, and its name always fits. */
+html:not(.phone) .touch-enabled #ammo-standard {
+  flex-grow: 2;
+}
+html:not(.phone) .touch-enabled .ammo-rail-note {
+  left: calc((100% - 16px) / 3 + 4px);
+}
 .touch-enabled .ammo-slot,
 .touch-enabled .ammo-slot.selected {
   flex: 1 1 0;

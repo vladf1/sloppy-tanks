@@ -1109,26 +1109,40 @@ body:has(#settings[open]) .hud-actions {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-/* The viewer's own rows keep the same plate; one gold stroke on the square right edge
-   marks them, and the viewer's name stays in its team's colour, a shade brighter. */
+/* The kill feed is the game's only kill confirmation, so the viewer's own rows are the
+   one loud thing in it: a solid gold plate for a kill, a red one for the viewer's own
+   wreck, with dark names and icon on it, while every other row stays steel. */
 #feed :is(.own-kill, .own-death) {
-  background:
-    linear-gradient(270deg, #ffcf383d, #ffcf3812 55%, transparent),
-    linear-gradient(180deg, #172b52fa, #0a152ffa);
+  height: 31px;
+  background: linear-gradient(180deg, #ffe07a, #f5b828 55%, #e39a12);
   box-shadow:
-    inset -4px 0 var(--gold),
-    inset 0 1px #ffe58a40,
-    inset 0 -1px #00000080;
+    inset 0 1px #fff6c8,
+    inset 0 -2px #a8680a,
+    0 2px 10px #0008;
+  text-shadow: none;
 }
-/* The viewer's own wreck is tinted red instead of gold. */
+#feed > div:is(.own-kill, .own-death) .feed-name.feed-name {
+  color: #142039;
+  opacity: 1;
+}
+#feed :is(.own-kill, .own-death) .feed-weapon {
+  fill: #142039;
+  filter: none;
+  opacity: 1;
+}
 #feed .own-death {
-  background:
-    linear-gradient(270deg, #ff4d5e40, #ff4d5e12 55%, transparent),
-    linear-gradient(180deg, #172b52fa, #0a152ffa);
+  background: linear-gradient(180deg, #ff7683, #e23a4c 55%, #b9222f);
   box-shadow:
-    inset -4px 0 var(--red),
-    inset 0 1px #ff9aa440,
-    inset 0 -1px #00000080;
+    inset 0 1px #ffc4ca,
+    inset 0 -2px #7d1520,
+    0 2px 10px #0008;
+}
+#feed > div.own-death .feed-name.feed-name {
+  color: #fff;
+  text-shadow: 0 1px 1px #5a0c14;
+}
+#feed .own-death .feed-weapon {
+  fill: #fff;
 }
 #feed .feed-name.you {
   font-weight: 900;
@@ -1145,12 +1159,15 @@ body:has(#settings[open]) .hud-actions {
     own-kill-pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1),
     own-kill-recent 3.2s ease-out;
 }
+/* A fresh own row flashes white along its plate, then settles to its gold. */
 @keyframes own-kill-recent {
   0%,
-  45% {
-    background:
-      linear-gradient(270deg, #ffcf3870, #ffcf3826 60%, transparent),
-      linear-gradient(180deg, #213f74fa, #0e1e44fa);
+  30% {
+    box-shadow:
+      inset 0 1px #fff,
+      inset 0 -2px #a8680a,
+      0 0 0 2px #fff8,
+      0 0 18px #ffd65a99;
   }
 }
 @keyframes own-kill-pop {
@@ -1964,8 +1981,8 @@ h2 {
   backdrop-filter: none;
   place-items: end center;
   pointer-events: none;
-  /* On the HUD's bottom line, where the tank panel stood. */
-  padding-bottom: max(16px, calc(env(safe-area-inset-bottom) + 12px));
+  /* A little over the HUD's bottom line, so the card's foot is plainly whole. */
+  padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 20px));
 }
 /* The card is there at once, legible from its first frame; a red glint runs along its
    top edge as it lands. */
@@ -2297,9 +2314,7 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 8px;
   padding: 0 6px;
   border-radius: 7px;
-  background:
-    repeating-linear-gradient(135deg, #ffffff07 0 6px, transparent 6px 12px),
-    #040b18b0;
+  background: repeating-linear-gradient(135deg, #ffffff07 0 6px, transparent 6px 12px), #040b18b0;
   box-shadow: inset 0 0 0 1px #9fd0ff1f;
   color: #c4d5e7;
   pointer-events: none;
@@ -4088,6 +4103,16 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 4px;
   min-height: 0;
 }
+/* Beside the other tab the room well takes the height single player's choices give the
+   shared cell and never asks for more: its content (a long list, the offline state's
+   action) scrolls inside it, so opening Multiplayer or a change of server state never
+   makes Battle Setup taller. */
+@media (min-width: 601px) {
+  html:not(.phone) .start .room-list-body {
+    contain: size;
+    overflow: hidden;
+  }
+}
 /* Taller screens show more rooms; the tray grows, and the single-player tab with it. */
 #room-list {
   display: grid;
@@ -4122,9 +4147,10 @@ html:not(.phone) #toast[data-tone="death"] {
   display: flex;
 }
 .room-empty svg {
-  width: 54px;
-  height: 54px;
-  margin-bottom: 8px;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 4px;
   fill: none;
   stroke: #5f86ad;
   stroke-width: 2;
@@ -4143,8 +4169,8 @@ html:not(.phone) #toast[data-tone="death"] {
 .room-empty .offline-action {
   display: none;
   min-width: 220px;
-  min-height: 44px;
-  margin-top: 12px;
+  min-height: 40px;
+  margin-top: 8px;
   padding: 0 22px;
   border: 1px solid #ffcf38;
   border-radius: 10px;
@@ -4539,8 +4565,13 @@ html:not(.phone) #toast[data-tone="death"] {
   box-shadow: inset 0 0 0 1px #b7d7ed1f;
   color: #8ea4ba;
 }
+/* The reason replaces the button's shine sweep, so it sits in the grid, not over it. */
 #multiplayer-panel:has(.room-status[data-state="error"]) #create-room::after {
-  content: "Needs the game server";
+  content: "Waits for the game server";
+  position: static;
+  width: auto;
+  background: none;
+  transform: none;
   color: #b9cde0;
   font: 700 12px/1 var(--font-ui);
   letter-spacing: 0.6px;
@@ -4616,16 +4647,17 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 12.5px;
   line-height: 1.65;
 }
-/* The build line stands outside the panel, under its bottom-right corner, apart from
-   the legend and every choice. */
+/* The build line has a slim row of its own at the panel's foot, right-aligned under the
+   key strip, so the two never meet at any width; tucked into the panel's bottom padding,
+   it stays on screen whenever the panel does. */
 .start .menu-build {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 14px;
-  margin: 0;
+  grid-column: 1 / -1;
+  justify-self: end;
+  margin: calc(4px - var(--setup-gap)) 2px -4px 0;
   color: #b4c8db;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  line-height: 14px;
   letter-spacing: 0.3px;
   pointer-events: none;
 }
@@ -4635,14 +4667,9 @@ html:not(.phone) #toast[data-tone="death"] {
     padding-inline: 0;
   }
 }
-/* A phone keeps every row for the choices: the build line sits in the panel's bottom
-   padding, under the tray's corner. */
+/* A phone's build line ends the sheet under GO, clear of the logo and every choice. */
 .phone .start .menu-build {
-  position: absolute;
-  top: 14px;
-  right: 18px;
-  bottom: auto;
-  margin: 0;
+  margin: -4px 4px 0 0;
   font-size: 11px;
 }
 /* Held sideways, the panels drop the empty row their hidden formats and room list
@@ -4796,6 +4823,7 @@ html:not(.phone) #toast[data-tone="death"] {
   }
   html:not(.phone) .start .menu-build {
     grid-area: 5 / 1 / 6 / -1;
+    margin-top: 4px;
   }
   html:not(.phone) .start .menu-footer {
     margin-top: 14px;
@@ -4908,7 +4936,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 /* An upright tablet's three tank cards are narrow: the class takes its one-word name on
    a line of its own under the tank's name, and the stats keep to one line each. */
-@media (min-width: 601px) and (max-width: 900px) {
+@media (max-width: 900px) {
   html:not(.phone) .start .tank-setting .vehicle {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 4px;
@@ -6199,6 +6227,18 @@ html.phone,
   width: 18px;
   height: 18px;
 }
+/* Pause is its own key at the bar's end: a recessed steel cap a step apart from zoom and
+   view, so a thumb aiming for the view never stops the battle. */
+@media (orientation: landscape) {
+  .phone .hud-actions > #pause {
+    margin-left: 8px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #0b1a33, #050d1c);
+    box-shadow:
+      inset 0 0 0 1px #9fd0ff33,
+      inset 0 2px 4px #0009;
+  }
+}
 .phone .hud-actions > .touch-zoom {
   color: #c9d9ea;
   font-size: 18px;
@@ -6229,6 +6269,11 @@ html.phone,
     inset 0 0 0 1px var(--plate-edge),
     inset 0 -2px #00000066;
   transform: translateX(-50%);
+}
+/* Mid-battle the phone pill is the hull alone: the tank's name was chosen in Battle
+   Setup and only spent the pill's width. */
+.phone #hull-pill small {
+  display: none;
 }
 #hull-pill small {
   margin-right: 2px;
@@ -6881,18 +6926,4 @@ html.phone,
 .dialog-standing[data-tone="behind"]::before {
   background: #ff4d5e;
   box-shadow: 0 0 8px #ff4d5e;
-}
-
-/* With room to spare, the build line sits in the panel's bottom padding at its right
-   corner, under the key strip's row rather than beside it, so the two never meet and
-   the header stays the logo's. */
-@media (min-width: 1240px) and (min-height: 771px) {
-  html:not(.phone) .start .menu-build {
-    position: absolute;
-    /* A grid area would be its containing block; the panel's corner is. */
-    grid-area: auto;
-    right: 26px;
-    bottom: 8px;
-    margin: 0;
-  }
 }
