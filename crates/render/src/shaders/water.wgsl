@@ -73,9 +73,9 @@ const WATER_PI = 3.14159265;
 // against the quays through the basin's teal to the dredged channel's blue.
 const FOAM_COLOR = vec3f(0.8, 0.85, 0.85);
 const CREST_COLOR = vec3f(0.04, 0.24, 0.21);
-const HARBOR_SHALLOW = vec3f(0.035, 0.135, 0.105);
-const HARBOR_BASIN = vec3f(0.011, 0.082, 0.1);
-const HARBOR_DEEP = vec3f(0.004, 0.03, 0.068);
+const HARBOR_SHALLOW = vec3f(0.024, 0.108, 0.105);
+const HARBOR_BASIN = vec3f(0.01, 0.074, 0.092);
+const HARBOR_DEEP = vec3f(0.005, 0.04, 0.07);
 // Fresnel reflectance of the harbor water seen straight down: real water's 2%
 // lifted a little so the sky still tints it from above.
 const HARBOR_F0 = 0.06;
@@ -91,6 +91,13 @@ const HARBOR_GLOSSY_FAR = 190.0;
 const HARBOR_SMEAR = 0.011;
 const HARBOR_SKY_SHARE = 0.45;
 const HARBOR_MIRROR_MAX = 0.86;
+
+// Texels between the taps of the water's sun shadow lookup: wide enough that the
+// swell never shows the map's texels where hulls and cranes shade the basin.
+const WATER_SHADOW_SPREAD = 1.6;
+// Share of the water body's light that is sunlight scattered up through it, which
+// a shadow takes away; the sky's fill keeps the rest.
+const WATER_SUN_SCATTER = 0.42;
 
 fn rounded_box_distance(p: vec2f, footprint: vec4f, radius: f32) -> f32 {
     let q = abs(p - footprint.xy) - footprint.zw + radius;
@@ -230,6 +237,21 @@ fn tug_wakes(p: vec2f, time: f32) -> vec3f {
     return out;
 }
 
+// The sun's shadow on the water, from four hardware-filtered taps of the shadow map
+// (the surface is flat, so no normal offset), lit outside the map.
+fn water_sun_shadow(world: vec3f) -> f32 {
+    let position = frame.shadow_matrix * vec4f(world, 1.0);
+    let projected = position.xyz / position.w;
+    let coord = vec3f(projected.x, 1.0 - projected.y, projected.z + frame.shadow.x);
+    let texel = WATER_SHADOW_SPREAD / frame.shadow.z;
+    let sum = textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + vec2f(-texel, -texel * 0.5), coord.z)
+        + textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + vec2f(texel, -texel * 0.5), coord.z)
+        + textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + vec2f(-texel * 0.5, texel), coord.z)
+        + textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + vec2f(texel * 0.5, texel), coord.z);
+    let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
+    return select(1.0, sum * 0.25, inside);
+}
+
 @vertex
 fn vs_water(@location(0) position: vec3f, @location(2) uv: vec2f) -> WaterOut {
     let world = position + vec3f(0.0, water.shore.z, 0.0);
@@ -276,11 +298,17 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
     let sun = water.sun_direction.xyz;
     let sun_color = water.sun_color.rgb;
 
-    let specular = pow(max(0.0, dot(eye, normalize(reflect(-sun, normal)))), 100.0) * sun_color * 2.0;
+    // Hulls, cranes and passing clouds shade the harbor's water: no glint and less
+    // of the sunlight scattered up through it.
+    var sunlit = 1.0;
+    if harbor {
+        sunlit = water_sun_shadow(input.world) * cloud_shadow(input.world);
+    }
+    let specular = pow(max(0.0, dot(eye, normalize(reflect(-sun, normal)))), 100.0) * sun_color * 2.0 * sunlit;
     // Glitter: tiny facets of the fast ripples catch the sun one by one.
     let facet = max(0.0, dot(eye, normalize(reflect(-sun, glitter_normal))));
-    let glitter = pow(facet, 1400.0) * 14.0 * sun_color * select(0.0, 0.5 + gust, harbor);
-    let diffuse = max(dot(sun, normal), 0.0) * sun_color * 0.5;
+    let glitter = pow(facet, 1400.0) * 14.0 * sun_color * select(0.0, 0.5 + gust, harbor) * sunlit;
+    let diffuse = max(dot(sun, normal), 0.0) * sun_color * 0.5 * sunlit;
     let distortion = normal.xz * (0.001 + 1.0 / length(world_to_eye)) * water.settings.y;
     let screen = input.clip.xy * frame.viewport.zw;
     let mirror_uv = vec2f(1.0 - screen.x, screen.y) + distortion;
@@ -303,7 +331,8 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         let crest = clamp(noise.y * 0.9 + 0.15, 0.0, 1.0) * max(dot(-sun.xz, normal.xz) * 4.0 + 0.4, 0.0);
         // Churned wash is aerated: paler and greener under the foam.
         let aerated = clamp(wake.z * 1.4, 0.0, 1.0);
-        var scatter = body * (vec3f(0.8) + diffuse * 0.35) + CREST_COLOR * (crest * 0.35 + wake.y * 0.12);
+        var scatter = body * (vec3f(0.8) + diffuse * 0.35) * mix(1.0 - WATER_SUN_SCATTER, 1.0, sunlit)
+            + CREST_COLOR * (crest * 0.35 * sunlit + wake.y * 0.12);
         scatter = mix(scatter, CREST_COLOR * 1.6 + vec3f(0.02), aerated * 0.45);
         // Far off, one pixel holds many facets of the swell: the mirror smears
         // into streaks down the view, and the facets tilted toward the eye show
@@ -332,9 +361,10 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // outwards in rings, streaks trailing off the hulls' ends and the tugs'
         // wakes. The lace breaks it up where the pixels can resolve it.
         let churn = near.y;
-        let line = 1.0 - smoothstep(0.04, 0.16 + breakup * 0.12 + footprint, shore);
-        let collar = (1.0 - smoothstep(0.1, 0.35 + churn * (0.5 + breakup * 0.9), shore))
-            * smoothstep(0.3, 0.55, breakup + lace * 0.45 - churn * 0.15);
+        let line = 1.0 - smoothstep(0.03, 0.12 + breakup * 0.1 + footprint, shore);
+        // The collar frays into soft lace rather than a serrated white band.
+        let collar = (1.0 - smoothstep(0.08, 0.3 + churn * (0.4 + breakup * 0.7), shore))
+            * smoothstep(0.35, 0.75, breakup + lace * 0.45 - churn * 0.15);
         let ring = sin(shore * 2.1 - t * 2.4 + breakup * 2.5) * 0.5 + 0.5;
         let wash = smoothstep(0.6, 0.92, ring) * (1.0 - smoothstep(0.2, 1.0 + churn * 3.0, shore))
             * smoothstep(0.4, 0.64, lace) * detail;
@@ -344,7 +374,7 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // flat white band.
         let wake_lace = mix(smoothstep(0.3, 0.75, breakup * 0.8 + gust * 0.4), smoothstep(0.25, 0.6, lace * 0.6 + breakup * 0.6), detail);
         let wake_foam = wake.x * wake_lace;
-        let foam = clamp(line * 0.85 + collar * 0.8 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam, 0.0, 1.0);
+        let foam = clamp(line * 0.75 + collar * 0.6 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0));
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {

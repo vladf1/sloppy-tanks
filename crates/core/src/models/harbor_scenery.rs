@@ -103,7 +103,7 @@ fn spawn_pad(details: &mut Node, team: Team, x: f64, z: f64) {
 const PAD_LIGHT_FLAG: f32 = 10.0;
 /// Radius of a spawn pad's deck and its steel.
 const PAD_RADIUS: f64 = 2.65;
-const PAD_STEEL: u32 = 0x3a4850;
+const PAD_STEEL: u32 = 0x474d50;
 
 /// Merge a group of ground-level parts, which receive shadows but cast none.
 fn batch_receivers(group: &mut Node) {
@@ -138,7 +138,7 @@ const HAZARD_DARK: u32 = 0x1f2224;
 
 /// Floor of the transit sheds on the outer quays.
 const WAREHOUSE_FLOOR: f64 = -0.5;
-const WAREHOUSE_CLADDING: u32 = 0x6a8f9c;
+const WAREHOUSE_CLADDING: u32 = 0x8a9182;
 const WAREHOUSE_ROOF: u32 = 0x7d8a8c;
 const SKYLIGHT: u32 = 0xa9c4c8;
 const ROLLER_DOOR: u32 = 0x8f9a9b;
@@ -730,7 +730,7 @@ fn container_block(
     }
 }
 const YARD_PAINT: [u32; 7] = [
-    0xc96f3b, 0x3d8a8c, 0x5f7fa6, 0xb7a26e, 0x9b4f45, 0xe0dccd, 0x4f6b3f,
+    0xc4642c, 0x2c7a72, 0x5c676c, 0xc2b99e, 0x7a3f31, 0xd9d4c4, 0x35524c,
 ];
 
 /// A reefer: a white box with the refrigeration unit's grille and fan at one end.
