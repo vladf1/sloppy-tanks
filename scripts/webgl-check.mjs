@@ -41,6 +41,8 @@ const STILL_LARGE_TOLERANCE = 0.15;
  * every later reset must leave the same GL objects and Wasm memory. */
 const SETTLING_RESETS = 16;
 const RESETS = 32;
+/** Draws allowed for the arena's warm-up sections to finish registering. */
+const WARM_UP_DRAW_LIMIT = 600;
 /** More frames than the backend draws between `getError` checks
  * (`ERROR_CHECK_FRAMES` in `crates/render/src/gpu/webgl/mod.rs`). */
 const ERROR_CHECK_DRAWS = 320;
@@ -323,6 +325,20 @@ try {
       assert.equal(sample.error, null);
       assert.equal(sample.draws, settled.draws);
     }
+    // The arena keeps registering its warm-up sections a frame at a time after the
+    // last reset, and one may open a new mesh page; let that finish before resizing,
+    // so the comparison sees only what a resize creates and deletes.
+    const warmed = await page.evaluate(
+      ({ pose, limit }) => {
+        let models = -1;
+        for (let frame = 0; frame < limit && window.sloppy.stats().models !== models; frame++) {
+          models = window.sloppy.stats().models;
+          window.engine.draw(pose);
+        }
+        return window.glObjects();
+      },
+      { pose: STILL_POSE, limit: WARM_UP_DRAW_LIMIT },
+    );
     const sizes = [];
     for (const [width, height] of [
       [1100, 700],
@@ -342,7 +358,7 @@ try {
     }
     console.log(JSON.stringify({ sizes }));
     for (const size of sizes) {
-      assert.deepEqual(size.objects, settled.objects, "a resize deletes the targets it replaces");
+      assert.deepEqual(size.objects, warmed, "a resize deletes the targets it replaces");
       assert.equal(size.error, null);
     }
     const lost = await page.evaluate(async () => {

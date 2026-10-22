@@ -8,6 +8,7 @@ const textures = [
   ["quarry/sandstone.webp", "quarry/sandstone.webp", 75, 768],
   ["tanks/armor-wear.webp", "tanks/armor-wear.webp", 85],
   ["tanks/armor-camo.webp", "tanks/armor-camo.webp", 85],
+  ["tanks/armor-scorch.webp", "tanks/armor-scorch.webp", 82],
   ["trees/conifer-spray.webp", "trees/conifer-spray.webp", 90],
   // Leaf colour bled under the cut-out is kept (`-exact`) so mipmaps stay green.
   ["trees/leaf-sprigs.webp", "trees/leaf-sprigs.webp", 90, 512, ["-exact"]],

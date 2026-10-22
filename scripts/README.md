@@ -328,8 +328,8 @@ guarantees for other devices.
   builds that engine first) and packs `public/previews/tanks.webp`.
   `SLOPPY_PREVIEWS_OUT` writes a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and
-  each tank is drawn over black and over white to recover its coverage. The
-  checked-in sheet is still the Three.js rendering: the engine's differs by about 13
-  of 255 on tank pixels (brighter sides), so it has not been regenerated.
+  each tank is drawn over black and over white to recover its coverage; a soft
+  contact shadow, the track footprint projected through the same view, is painted
+  under each tank.
 - `startup-html.ts` inlines the Battle Setup menu into `index.html`, and
   `dev-site.ts` plus `deploy-dev.mjs` build and publish the dev site.

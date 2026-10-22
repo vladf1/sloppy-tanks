@@ -106,6 +106,10 @@ mod debug;
 const MAX_CATCH_UP_STEPS: u32 = 5;
 /// The round the browser's first arena prepares (it seeds bot names).
 const FIRST_ROUND: u32 = 3;
+/// Autoplay's reticle: how far ahead of the turret it rests with no target in
+/// view, and how far beside the gun line an enemy may stand to draw it.
+const AUTOPLAY_RETICLE_RANGE: f64 = 11.0;
+const AUTOPLAY_RETICLE_LANE: f64 = 2.5;
 
 /// Slots of `frame`'s result.
 pub mod frame_slot {
@@ -439,6 +443,9 @@ impl Game {
             }
         } else {
             self.accumulator = 0.0;
+        }
+        if self.autoplay && playing {
+            self.place_autoplay_reticle();
         }
         let human = self.human_index();
         let clear_input =
@@ -833,6 +840,31 @@ impl Game {
 impl Game {
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
+    }
+
+    /// Autoplay drives the player's tank without a pointer, whose ground pick would
+    /// leave the reticle on the tank itself. Put it where the turret points instead:
+    /// on the nearest live enemy close to the gun line, or a typical range out.
+    fn place_autoplay_reticle(&mut self) {
+        let tank = self.sim.human();
+        let (x, z) = self.human_position();
+        let (sin, cos) = tank.aim.sin_cos();
+        let range = self
+            .sim
+            .tanks
+            .iter()
+            .filter(|other| other.alive && other.team != tank.team)
+            .filter_map(|other| {
+                let p = self.sim.tank_position(other);
+                let (dx, dz) = (p.x - x, p.z - z);
+                let along = dx * sin + dz * cos;
+                let across = (dx * cos - dz * sin).abs();
+                (along > 0.0 && across < AUTOPLAY_RETICLE_LANE).then_some(along)
+            })
+            .fold(AUTOPLAY_RETICLE_RANGE, f64::min);
+        let aim = &mut self.view.rig.aim_point;
+        aim.x = (x + sin * range) as f32;
+        aim.z = (z + cos * range) as f32;
     }
 
     /// The listener and aim origin: the body, or where the tank died.

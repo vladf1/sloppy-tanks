@@ -47,15 +47,24 @@ const ROLLER_SIDES: u32 = 10;
 const HUB_BOLTS: u32 = 5;
 
 const HEADLIGHT: u32 = 0xd9e6df;
-/// Rubber tyres, pads and skirt edges.
-const RUBBER: u32 = 0x27292a;
-/// Track shoes and their end connectors: dark worn steel, not paint.
-const TRACK_STEEL: u32 = 0x605f5b;
-const TRACK_CONNECTOR: u32 = 0x76736d;
-/// Dirty track steel and rubber share one matte vertex-colored material, so a
-/// tank's links, tyres and rubber edges draw together.
-const TRACK_METALNESS: f64 = 0.2;
-const TRACK_ROUGHNESS: f64 = 0.8;
+/// Rubber tyres, pads and skirt edges: near black, so every wheel reads as a dark
+/// ring round its steel disc.
+const RUBBER: u32 = 0x1d1e1f;
+/// Track shoes and their end connectors and guide horns: worn steel, the
+/// connectors and horn faces polished bright where the wheels and ground rub.
+const TRACK_STEEL: u32 = 0x67645d;
+const TRACK_CONNECTOR: u32 = 0xa29d91;
+/// Road wheel discs: a dark steel web, a lighter hub cap and bright bolt heads.
+const WHEEL_STEEL: u32 = 0x464a4b;
+const HUB_STEEL: u32 = 0x85857f;
+const HUB_BOLT: u32 = 0xaaa79e;
+/// The sprocket and return rollers: bare dark steel.
+const SPROCKET_STEEL: u32 = 0x55585a;
+/// Dirty track steel, wheels and rubber share one vertex-colored material, so a
+/// tank's links, wheels, tyres and rubber edges draw together; satin enough for
+/// the worn steel to catch the light.
+const TRACK_METALNESS: f64 = 0.35;
+const TRACK_ROUGHNESS: f64 = 0.6;
 
 /// How a chassis dresses its sides.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -175,39 +184,30 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     // The outer face of every wheel sits just inside the end connectors.
     let wheel_face = track_x + side * (gear.track_width / 2.0 - link.connector_width - 0.004);
     let wheel_width = gear.track_width - link.connector_width - 0.03;
-    let wheel = wheel_meshes(gear.wheel_radius, wheel_width);
-    let paint = material(c.shade, 0.2, 0.65);
+    let wheel = wheel_mesh(gear.wheel_radius, wheel_width);
+    let steel = material(SPROCKET_STEEL, 0.55, 0.45);
     let rubber = track_material();
     let wheel_y = wheel_height(&gear);
     for j in 0..gear.road_wheels {
         let t = f64::from(j) / f64::from(gear.road_wheels - 1);
         let z = gear.wheel_span[0] + t * (gear.wheel_span[1] - gear.wheel_span[0]);
-        place_wheel(
-            hull,
-            &wheel,
-            &paint,
-            &rubber,
-            [wheel_face, wheel_y, z],
-            side,
-            1.0,
-        );
+        place_wheel(hull, &wheel, &rubber, [wheel_face, wheel_y, z], side, 1.0);
     }
     // The idler is a road wheel on a raised, adjustable arm.
     let idler_scale = gear.idler_radius / gear.wheel_radius;
     place_wheel(
         hull,
         &wheel,
-        &paint,
         &rubber,
         [wheel_face, path.idler.y, path.idler.x],
         side,
         idler_scale,
     );
-    sprocket(hull, &paint, &gear, &link, wheel_face, path.sprocket, side);
+    sprocket(hull, &steel, &gear, &link, wheel_face, path.sprocket, side);
     let drum = roller_mesh(gear.roller_radius, wheel_width * 0.55);
     for &z in gear.rollers {
         let y = path.top_run_surface(z, &link) - gear.roller_radius;
-        let mut roller = shadowed(drum.clone(), paint.clone());
+        let mut roller = shadowed(drum.clone(), steel.clone());
         roller.set_rotation_euler(0.0, if side < 0.0 { PI } else { 0.0 }, 0.0);
         put(hull, roller, wheel_face, y, z);
     }
@@ -224,22 +224,19 @@ fn wheel_height(gear: &GearLayout) -> f64 {
 /// A road wheel (or the idler, scaled radially) with its outer face at `at.x`.
 fn place_wheel(
     hull: &mut Node,
-    wheel: &WheelMeshes,
-    paint: &Arc<Material>,
+    wheel: &Arc<Mesh>,
     rubber: &Arc<Material>,
     at: [f64; 3],
     side: f64,
     radial_scale: f64,
 ) {
-    for (mesh, material) in [(&wheel.disc, paint), (&wheel.tyre, rubber)] {
-        let mut part = shadowed(mesh.clone(), material.clone());
-        part.scale = DVec3::new(1.0, radial_scale, radial_scale);
-        part.set_rotation_euler(0.0, if side < 0.0 { PI } else { 0.0 }, 0.0);
-        put(hull, part, at[0], at[1], at[2]);
-    }
+    let mut part = shadowed(wheel.clone(), rubber.clone());
+    part.scale = DVec3::new(1.0, radial_scale, radial_scale);
+    part.set_rotation_euler(0.0, if side < 0.0 { PI } else { 0.0 }, 0.0);
+    put(hull, part, at[0], at[1], at[2]);
 }
 
-/// The painted drive sprocket at a hub centre, one tooth per link around it.
+/// The steel drive sprocket at a hub centre, one tooth per link around it.
 fn sprocket(
     hull: &mut Node,
     paint: &Arc<Material>,
@@ -663,49 +660,40 @@ fn track_material() -> Arc<Material> {
 // ---------------------------------------------------------------------------
 // Wheels.
 
-struct WheelMeshes {
-    /// Painted disc: hub cap, bolt circle and dished web.
-    disc: Arc<Mesh>,
-    /// Rubber tyre: sidewall and the tread band across both wheels of the pair.
-    tyre: Arc<Mesh>,
-}
-
-static WHEELS: Cache<[u64; 2], WheelMeshes> = Cache::new();
+static WHEELS: Cache<[u64; 2], Mesh> = Cache::new();
 
 /// A twin road wheel about the x axis with its outer face at x = 0 and the pair
-/// reaching back to -`width`: a raised hub cap ringed by bolts, a web dished in
-/// toward the rim, and a rubber tyre (vertex-colored, drawn with the track).
-fn wheel_meshes(radius: f64, width: f64) -> Arc<WheelMeshes> {
+/// reaching back to -`width`, vertex-colored and drawn with the track: a raised
+/// steel hub cap ringed by bright bolts, a dark web dished in toward the rim, and
+/// a black rubber tyre whose sidewall rolls over into the tread band.
+fn wheel_mesh(radius: f64, width: f64) -> Arc<Mesh> {
     WHEELS.get_or_insert([radius, width].map(f64::to_bits), || {
         let r = radius;
         let cap = [r * 0.3, -0.01];
         let rim = [r * 0.78, -0.04];
-        let mut disc = MeshBuilder::default();
-        disc.revolve(&[[0.0, 0.0], cap, rim], WHEEL_SIDES, None, UNCOLORED);
+        let mut wheel = MeshBuilder::default();
+        wheel.revolve(&[[0.0, 0.0], cap], WHEEL_SIDES, None, HUB_STEEL);
+        wheel.revolve(&[cap, rim], WHEEL_SIDES, None, WHEEL_STEEL);
         // Bolt heads stand on the web just outside the cap.
         let bolt_r = r * 0.38;
         let along = (bolt_r - cap[0]) / (rim[0] - cap[0]);
         let bolt_x = cap[1] + along * (rim[1] - cap[1]);
         for i in 0..HUB_BOLTS {
             let angle = (f64::from(i) + 0.5) * TAU / f64::from(HUB_BOLTS);
-            disc.stud(
+            wheel.stud(
                 DVec3::new(bolt_x, bolt_r * angle.cos(), bolt_r * angle.sin()),
                 r * 0.06,
                 r * 0.07,
+                HUB_BOLT,
             );
         }
-        let mut tyre = MeshBuilder::default();
-        // The sidewall rolls over into the tread band (shared normal).
-        tyre.revolve(
+        wheel.revolve(
             &[rim, [r, -0.012], [r, -width]],
             WHEEL_SIDES,
             Some(1),
             RUBBER,
         );
-        WheelMeshes {
-            disc: Arc::new(disc.finish_uncolored()),
-            tyre: Arc::new(tyre.finish()),
-        }
+        wheel.finish()
     })
 }
 
@@ -748,6 +736,7 @@ fn sprocket_mesh(radius: f64, teeth: u32, depth: f64) -> Arc<Mesh> {
                 DVec3::new(0.0, bolt_r * angle.cos(), bolt_r * angle.sin()),
                 radius * 0.045,
                 radius * 0.05,
+                UNCOLORED,
             );
         }
         let step = TAU / f64::from(teeth);
@@ -978,7 +967,7 @@ static BOLT: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
 fn bolt_mesh() -> Arc<Mesh> {
     BOLT.get_or_init(|| {
         let mut b = MeshBuilder::default();
-        b.stud(DVec3::ZERO, 0.016, BOLT_HEAD - 0.001);
+        b.stud(DVec3::ZERO, 0.016, BOLT_HEAD - 0.001, UNCOLORED);
         Arc::new(b.finish_uncolored())
     })
     .clone()
@@ -1200,7 +1189,7 @@ impl MeshBuilder {
     }
 
     /// A low four-sided bolt head standing out of a +x face at `base`.
-    fn stud(&mut self, base: DVec3, half: f64, height: f64) {
+    fn stud(&mut self, base: DVec3, half: f64, height: f64, color: u32) {
         let tip = base + DVec3::X * height;
         let corners = [
             base + DVec3::new(0.0, half, 0.0),
@@ -1211,7 +1200,7 @@ impl MeshBuilder {
         for i in 0..4 {
             let (a, b) = (corners[i], corners[(i + 1) % 4]);
             let outward = (a + b) / 2.0 - base + DVec3::X * height;
-            self.oriented_tri([a, b, tip], outward, UNCOLORED);
+            self.oriented_tri([a, b, tip], outward, color);
         }
     }
 
@@ -1300,22 +1289,26 @@ mod tests {
     use super::super::tank_model;
     use super::TOP_RUN_PITCH;
     use crate::geometry::node_bounds;
-    use crate::models::tank_surfaces::is_signal_panel;
+    use crate::models::tank_surfaces::{ember_material, is_signal_panel};
     use crate::models::{Team, VehicleKind, WreckPart, part, wreck_model};
     use crate::scene::Node;
 
-    /// Triangles of every part but the cloth recognition panels, which burn away
-    /// on wrecks.
+    /// Triangles of every shown part but the recognition panels and turret bands,
+    /// which burn away on wrecks, and the embers wrecks add in their hatches.
     fn triangles(node: &Node) -> usize {
-        let mut total = 0;
-        node.traverse(DMat4::IDENTITY, &mut |part, _| {
-            if let Some(drawable) = &part.drawable
-                && !is_signal_panel(&drawable.material)
-            {
-                total += drawable.mesh.triangle_count();
+        if !node.visible {
+            return 0;
+        }
+        let own = node.drawable.as_ref().map_or(0, |drawable| {
+            let burnt = is_signal_panel(&drawable.material)
+                || drawable.material.emissive.0 == ember_material().emissive.0;
+            if burnt {
+                0
+            } else {
+                drawable.mesh.triangle_count()
             }
         });
-        total
+        own + node.children.iter().map(triangles).sum::<usize>()
     }
 
     /// Wrecks merge parts per material and drop any batch whose meshes disagree on

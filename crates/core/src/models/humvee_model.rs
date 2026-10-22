@@ -37,9 +37,11 @@ const FRONT_AXLE: f64 = 1.3;
 /// The launcher mouth, where missiles appear.
 const MUZZLE_Z: f64 = 1.7;
 
-/// Tire rubber: dark grey, light enough for the sidewall's shape to show.
-const RUBBER: u32 = 0x25292a;
-const GLASS: u32 = 0x29444b;
+/// Tire rubber: dark grey, light enough for the sidewall and lugs to show.
+const RUBBER: u32 = 0x2d3031;
+/// Armored glass: a light blue-green tint under a strong mirror finish, so the
+/// windows read as glass reflecting the sky rather than as painted panels.
+const GLASS: u32 = 0x5a8290;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
 const HEADLAMP: u32 = 0xe5ddbc;
@@ -47,8 +49,8 @@ const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
 /// Rubber, seals and canvas are matte; glass and lenses are glossy.
 const MATTE_ROUGHNESS: f64 = 0.92;
-const GLASS_METALNESS: f64 = 0.5;
-const GLASS_ROUGHNESS: f64 = 0.08;
+const GLASS_METALNESS: f64 = 0.85;
+const GLASS_ROUGHNESS: f64 = 0.05;
 
 /// Geometry shared by every Humvee, one mesh per role and assembly.
 struct Assemblies {

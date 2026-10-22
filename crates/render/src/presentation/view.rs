@@ -149,6 +149,9 @@ fn lowest(bounds: &Aabb, world: &Mat4) -> f32 {
 struct TankModel {
     model: ModelId,
     joints: usize,
+    /// The turret's alternative liveries (none on the Humvee); a tank shows the one
+    /// its id picks.
+    liveries: [Option<usize>; part::LIVERIES.len()],
     hull: JointBasis,
     turret: JointBasis,
     barrel: JointBasis,
@@ -223,6 +226,7 @@ impl Library {
             TankModel {
                 model,
                 joints: renderer.model_nodes(model).len(),
+                liveries: part::LIVERIES.map(|name| renderer.model_node(model, name)),
                 hull: basis(renderer, model, &source, part::HULL),
                 turret: basis(renderer, model, &source, part::TURRET),
                 barrel: basis(renderer, model, &source, part::BARREL),
@@ -944,15 +948,23 @@ impl Presentation {
     // -------------------------------------------------------------- views
 
     fn add_tank(&mut self, tank: &RenderTank) {
-        let (model, joints) = {
+        let (model, joints, liveries) = {
             let tank_model = self.library.tank(&mut self.renderer, tank.kind, tank.team);
-            (tank_model.model, tank_model.joints)
+            (tank_model.model, tank_model.joints, tank_model.liveries)
         };
         let bar_model = self.library.bar(&mut self.renderer, tank.team).model;
         let instance = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("tank model");
+        // Team-mates of one chassis wear different unit numbers and stowage.
+        let worn = tank.id as usize % liveries.len();
+        for (index, joint) in liveries.into_iter().enumerate() {
+            if let Some(joint) = joint {
+                self.renderer
+                    .set_node_visible(instance, joint, index == worn);
+            }
+        }
         let bar = self
             .renderer
             .add_instance(bar_model, Mat4::IDENTITY, Lifetime::Round)
