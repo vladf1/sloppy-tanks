@@ -292,6 +292,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Faces turned from the sky catch warm light bounced off the sunlit floor,
     // so undercuts read as warm shade instead of blue-black holes.
     let away = quarry_smoothstep(0.35, -0.8, n.y);
-    let bounce = (0.05 + 0.22 * away) * select(1.0, 0.0, skirt) * (1.0 - far);
+    // Upright faces turned from the sun take the most of it: the sunlit floor
+    // in front of them is what lights their shade.
+    let sun_side = quarry_smoothstep(0.15, -0.55, dot(n, frame.sun_direction.xyz)) * upright;
+    let bounce = (0.05 + 0.22 * away + 0.1 * sun_side) * select(1.0, 0.0, skirt) * (1.0 - far);
     (*s).emissive += (*s).color * FLOOR_BOUNCE * bounce;
 }

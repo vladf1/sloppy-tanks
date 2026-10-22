@@ -55,6 +55,15 @@ const DIG_HEAP: StockpileSpot = StockpileSpot {
     seed: 7.0,
 };
 
+/// Crushed stone the west apron's wheel loader is working, just north of it.
+const WEST_HEAP: StockpileSpot = StockpileSpot {
+    x: -72.0,
+    z: 38.0,
+    radius: 3.8,
+    height: 2.2,
+    seed: 3.0,
+};
+
 /// Blasted spoil heaped on the south apron, waiting for the haul truck.
 const SOUTH_HEAP: StockpileSpot = StockpileSpot {
     x: -23.0,
@@ -432,6 +441,12 @@ pub fn quarry_scenery() -> Node {
         })
         .collect();
     geology.children.push(sandstone_scatter(&south_stones));
+    let mut west = quarry_stockpile_geometry(&WEST_HEAP);
+    west.translate(WEST_HEAP.x, APRON, WEST_HEAP.z);
+    spoil_surface(&mut west, 0.8);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(west), spoil.clone()));
     // Pale cones of rock flour round the holes the drill rig has put down.
     let cuttings: Vec<Mesh> = drill_holes()
         .into_iter()
@@ -673,6 +688,7 @@ fn flank_boulders(geology: &mut Node) {
         [64.0, 76.0, 10.0, 26.0],   // haul truck bay
         [69.0, 76.5, -23.0, -1.0],  // east scree runout
         [-76.5, -69.0, -6.0, 18.0], // west scree runout
+        [-77.0, -66.0, 24.0, 43.0], // wheel loader and its heap
         [r.x0, r.x1, r.z0, r.z1],   // east haul ramp
     ];
     let mut placed = 0;

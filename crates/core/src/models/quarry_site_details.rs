@@ -36,8 +36,9 @@ fn site_sign(group: &mut Node) {
 }
 
 /// Machinery, stockpiles and haul lanes on the apron that scrub never grows on.
-const SCRUB_KEEP_OUT: [[f64; 4]; 9] = [
+const SCRUB_KEEP_OUT: [[f64; 4]; 10] = [
     [-31.0, -16.0, -76.0, -60.0], // excavator
+    [-77.0, -65.0, 24.0, 44.0],   // wheel loader and its heap
     [3.0, 26.0, 65.0, 76.0],      // drill rig and its drilled line
     [-31.0, -15.0, 65.0, 78.0],   // south spoil heap
     [-66.0, -38.0, -74.0, -65.0], // screening conveyor and hopper
@@ -62,6 +63,147 @@ pub fn quarry_site_details(equipment: &mut Node) {
     // A blast-hole drill works the south apron, its mast up over the line of
     // holes it has drilled (their cuttings are the scenery's spoil).
     drill_rig(equipment, DRILL_RIG[0], DRILL_RIG[1], DRILL_RIG[2]);
+    // A wheel loader works the west apron's heap, bucket down at its toe.
+    wheel_loader(equipment, WHEEL_LOADER[0], WHEEL_LOADER[1], WHEEL_LOADER[2]);
+}
+
+/// The wheel loader's spot on the west apron: x, z and yaw (its bucket faces
+/// the heap beside it, toward +z).
+const WHEEL_LOADER: [f64; 3] = [-70.6, 29.5, -1.6];
+
+/// `wheelLoader(group, x, z, yaw)`: an articulated wheel loader in fleet yellow,
+/// bucket lowered: rear engine bay and counterweight, cab over the hinge, lift
+/// arms and a toothed bucket out front on four big tyres. Built along +x.
+fn wheel_loader(group: &mut Node, x: f64, z: f64, yaw: f64) {
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    let mut loader = Node::group("");
+    for (wx, wz) in [(-1.7, -1.15), (-1.7, 1.15), (1.6, -1.15), (1.6, 1.15)] {
+        let tyre = rotated(cylinder_part(0.85, 0.7, 0x343431, 12), FRAC_PI_2, 0.0, 0.0);
+        put(&mut loader, tyre, wx, 0.85, wz);
+        let hub = rotated(cylinder_part(0.36, 0.74, 0x7e4a2c, 8), FRAC_PI_2, 0.0, 0.0);
+        put(&mut loader, hub, wx, 0.85, wz);
+    }
+    put(&mut loader, steel_box(5.6, 0.5, 1.5, FRAME), 0.0, 1.05, 0.0);
+    // Engine bay and counterweight at the back, a grille in its tail.
+    put(
+        &mut loader,
+        box_part(2.6, 1.3, 1.9, PAINT, 0.0),
+        -1.75,
+        1.95,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(0.5, 0.9, 2.1, PAINT, 0.0),
+        -3.1,
+        1.55,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(0.05, 0.75, 1.5, 0x3d413b, 0.0),
+        -3.37,
+        1.65,
+        0.0,
+    );
+    put(
+        &mut loader,
+        cylinder_part(0.08, 0.9, 0x7e4a2c, 8),
+        -1.2,
+        3.0,
+        0.6,
+    );
+    // Cab over the hinge, dark glass all round under a pale roof.
+    put(
+        &mut loader,
+        box_part(1.5, 1.7, 1.6, PAINT, 0.0),
+        0.05,
+        2.65,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(1.25, 1.0, 1.66, 0x42483c, 0.0),
+        0.08,
+        2.85,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(1.56, 1.0, 1.35, 0x42483c, 0.0),
+        0.05,
+        2.85,
+        0.0,
+    );
+    put(
+        &mut loader,
+        steel_box(1.75, 0.12, 1.8, DARK),
+        0.05,
+        3.56,
+        0.0,
+    );
+    // Front frame, lift arms down to the bucket and the tilt ram.
+    put(
+        &mut loader,
+        box_part(1.6, 0.9, 1.4, PAINT, 0.0),
+        1.6,
+        1.6,
+        0.0,
+    );
+    for side in [-0.55, 0.55] {
+        steel_beam(
+            &mut loader,
+            [1.1, 2.2, side],
+            [3.55, 0.75, side],
+            0.28,
+            FRAME,
+        );
+    }
+    steel_beam(
+        &mut loader,
+        [1.6, 2.0, 0.0],
+        [3.3, 1.35, 0.0],
+        0.18,
+        0x9a9a92,
+    );
+    put(
+        &mut loader,
+        steel_box(1.15, 0.12, 2.8, DARK),
+        3.95,
+        0.2,
+        0.0,
+    );
+    put(
+        &mut loader,
+        steel_box(0.14, 1.05, 2.8, DARK),
+        3.4,
+        0.68,
+        0.0,
+    );
+    for side in [-1.0, 1.0] {
+        put(
+            &mut loader,
+            steel_box(1.1, 0.95, 0.1, DARK),
+            3.9,
+            0.62,
+            side * 1.35,
+        );
+    }
+    for k in 0..6 {
+        let tooth_z = -1.15 + f64::from(k) * 0.46;
+        put(
+            &mut loader,
+            steel_box(0.32, 0.08, 0.16, 0x9a9a92),
+            4.6,
+            0.17,
+            tooth_z,
+        );
+    }
+    weather_paint(&mut loader);
+    loader.set_rotation_euler(0.0, yaw, 0.0);
+    loader.position = DVec3::new(x, -1.79, z);
+    adopt_children(group, loader);
 }
 
 /// The drill rig's spot on the south apron: x, z and yaw.
