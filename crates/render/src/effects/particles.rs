@@ -1,5 +1,6 @@
-//! Chips, sparks and embers (`particle-effects.ts`): one bounded instanced
-//! draw of small icosahedra, plus the pooled blasts it forwards events to.
+//! Chips, clods and flecks (`particle-effects.ts`): one bounded instanced draw
+//! of small icosahedra, plus the pooled blasts and glowing sparks it forwards
+//! events to.
 
 use glam::{Mat4, Quat, Vec3};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
@@ -7,6 +8,7 @@ use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 use super::explosions::ExplosionEffects;
 use super::pool::{PoolBuffer, pose, record};
 use super::random::CosmeticRandom;
+use super::sparks::{BLAST_SPARKS, METAL_SPARKS, STONE_SPARKS, Sparks};
 use crate::color::hex_to_linear;
 
 pub const MAX_PARTICLES: usize = 1200;
@@ -80,6 +82,8 @@ const EXPLOSION: Style = Style {
     height: 0.8,
     lift: 0.0,
 };
+/// Clods of the ground a fiery blast throws, beside its sparks.
+const CLODS: usize = 12;
 const HURT: Style = Style {
     count: 12,
     life: [0.22, 0.16],
@@ -90,7 +94,7 @@ const HURT: Style = Style {
     lift: 1.5,
 };
 const IMPACT: Style = Style {
-    count: 8,
+    count: 4,
     life: [0.1, 0.2],
     size: [0.04, 0.09],
     speed: 4.0,
@@ -104,13 +108,13 @@ const TIMBER_COLORS: [u32; 4] = [0x805336, 0xb47a49, 0xc99a65, 0x947958];
 const TREE_CHIP_COLORS: [u32; 3] = [0x6b5038, 0x8a6a4a, 0xc9a978];
 const EXPLOSION_COLORS: [u32; 6] = [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250];
 const HURT_COLORS: [u32; 3] = [0xffffff, 0xffcb58, 0xffcb58];
-const EMBER_COLORS: [u32; 2] = [0xffde82, 0xffa238];
 const SPARK_COLOR: u32 = 0xffdf91;
 
 #[derive(Clone, Debug)]
 pub struct ParticleEffects {
     pub particles: Vec<Particle>,
     pub explosions: ExplosionEffects,
+    pub sparks: Sparks,
     pub records: PoolBuffer,
 }
 
@@ -119,6 +123,7 @@ impl Default for ParticleEffects {
         Self {
             particles: Vec::with_capacity(MAX_PARTICLES),
             explosions: ExplosionEffects::default(),
+            sparks: Sparks::default(),
             records: PoolBuffer::new(MAX_PARTICLES),
         }
     }
@@ -127,6 +132,7 @@ impl Default for ParticleEffects {
 impl ParticleEffects {
     pub fn reset(&mut self) {
         self.explosions.reset();
+        self.sparks.reset();
         self.particles.clear();
         self.records.clear();
     }
@@ -164,33 +170,33 @@ impl ParticleEffects {
         } else {
             &IMPACT
         };
-        // The fire/smoke billboards carry blast volume; keep a few hot flecks.
+        // The fire/smoke billboards carry blast volume; sparks and clods the rest.
         let tank_death = event.kind == T::Death;
         let burnout = tank_death && event.death_style == Some(DeathStyle::Burnout);
         let fiery = event.kind == T::Explosion || tank_death;
         if explosion && !tree && !timber && !fiery {
             return false;
         }
+        // A gun's own flash and smoke are the muzzle flashes' (`muzzle.rs`).
+        if event.kind == T::Shot {
+            return false;
+        }
+        self.sparks_for(event, fiery, burnout, chip_hit, random);
+        if fiery {
+            if !burnout {
+                self.clods(event, random);
+            }
+            return !burnout;
+        }
         // The real beams carry a collapse; add only a hit-sized handful of chips.
         let count = if timber {
             style.count as i64 - 2
                 + (random.next_f64() * 5.0).floor() as i64
                 + if explosion { 2 } else { 0 }
-        } else if burnout {
-            3
-        } else if fiery {
-            8
-        } else if event.kind == T::Shot {
-            5
         } else {
             style.count as i64
         };
-        let speed = style.speed
-            * if explosion && !tree && !timber {
-                event.size.unwrap_or(3.0)
-            } else {
-                1.0
-            };
+        let speed = style.speed;
         let accent = event.color;
         let color_at = |i: usize| -> u32 {
             if timber {
@@ -221,11 +227,7 @@ impl ParticleEffects {
         let mut i = 0usize;
         while (i as i64) < count && self.particles.len() < MAX_PARTICLES {
             // Draw order matches the former object literal: life, x, y, z, vx, vy, vz, size.
-            let life = if tank_death {
-                0.8 + random.next_f64() * 0.4
-            } else {
-                (style.life[0] + random.next_f64() * style.life[1]) * life_scale
-            };
+            let life = (style.life[0] + random.next_f64() * style.life[1]) * life_scale;
             let x = event.x + (random.next_f64() - 0.5) * style.scatter;
             let y = if chip_hit && tree {
                 0.7 + random.next_f64() * 0.4
@@ -234,25 +236,11 @@ impl ParticleEffects {
             };
             let z = event.z + (random.next_f64() - 0.5) * style.scatter;
             let vx = (random.next_f64() - 0.5) * speed;
-            let vy = if tank_death {
-                (if burnout { 1.5 } else { 3.5 }) + random.next_f64() * 2.8
-            } else {
-                style.lift + random.next_f64() * speed
-            };
+            let vy = style.lift + random.next_f64() * speed;
             let vz = (random.next_f64() - 0.5) * speed;
-            let size = if fiery {
-                0.05 + random.next_f64() * 0.06
-            } else {
-                style.size[0] + random.next_f64() * style.size[1]
-            };
-            let splinter = timber || tree;
-            let hex = if fiery {
-                EMBER_COLORS[i % 2]
-            } else {
-                color_at(i)
-            };
+            let size = style.size[0] + random.next_f64() * style.size[1];
             self.particles.push(Particle {
-                splinter,
+                splinter: timber || tree,
                 x,
                 y,
                 z,
@@ -262,15 +250,90 @@ impl ParticleEffects {
                 life,
                 max: life,
                 size,
-                color: hex_to_linear(hex),
+                color: hex_to_linear(color_at(i)),
             });
             i += 1;
         }
-        fiery && !burnout
+        false
+    }
+
+    /// Glowing sparks: a blast's spray, steel struck by a shell, or grit off a
+    /// wall or a ricochet.
+    fn sparks_for(
+        &mut self,
+        event: &SimEvent,
+        fiery: bool,
+        burnout: bool,
+        chip_hit: bool,
+        random: &mut CosmeticRandom,
+    ) {
+        use SimEventType as T;
+        let at = |y: f64| Vec3::new(event.x as f32, y as f32, event.z as f32);
+        if fiery {
+            let size = event.size.unwrap_or(3.0) as f32;
+            let mut burst = BLAST_SPARKS;
+            burst.speed = burst.speed.map(|v| v * (size / 4.5).clamp(0.6, 1.4));
+            if burnout {
+                burst.count = 6;
+            } else if event.kind == T::Death {
+                burst.count = 34;
+            }
+            self.sparks.burst(at(0.9), Vec3::ZERO, 1.0, &burst, random);
+            return;
+        }
+        match event.kind {
+            T::Hurt if event.size.unwrap_or(0.0) > 0.0 => {
+                let mut burst = METAL_SPARKS;
+                burst.count = 8;
+                self.sparks.burst(at(1.4), Vec3::ZERO, 1.0, &burst, random);
+            }
+            T::Impact if !chip_hit && event.cover_kind.is_none() => {
+                let (burst, y) = match event.height {
+                    Some(y) => (&METAL_SPARKS, y),
+                    None => (&STONE_SPARKS, 1.0),
+                };
+                self.sparks.burst(at(y), Vec3::ZERO, 1.0, burst, random);
+            }
+            T::Ricochet => {
+                self.sparks
+                    .burst(at(1.0), Vec3::ZERO, 1.0, &STONE_SPARKS, random);
+            }
+            _ => {}
+        }
+    }
+
+    /// Clods of the ground a blast throws up and out; they fall back and roll.
+    fn clods(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let soil = self.explosions.ground.soil(event.x, event.z);
+        let speed = 1.4 * event.size.unwrap_or(3.0).min(7.0);
+        for i in 0..CLODS {
+            if self.particles.len() >= MAX_PARTICLES {
+                return;
+            }
+            let life = 0.9 + random.next_f64() * 0.6;
+            let vx = (random.next_f64() - 0.5) * speed;
+            let vy = 4.0 + random.next_f64() * 5.0;
+            let vz = (random.next_f64() - 0.5) * speed;
+            let size = 0.1 + random.next_f64() * 0.14;
+            self.particles.push(Particle {
+                splinter: false,
+                x: event.x,
+                y: 0.6,
+                z: event.z,
+                vx,
+                vy,
+                vz,
+                life,
+                max: life,
+                size,
+                color: hex_to_linear(soil.clods[i % soil.clods.len()]),
+            });
+        }
     }
 
     pub fn update(&mut self, dt: f64, time: f64) {
-        self.explosions.update(dt);
+        self.sparks.update(dt);
+        self.explosions.update(dt, &mut self.sparks.records);
         self.particles.retain_mut(|q| {
             q.life -= dt;
             if q.life <= 0.0 {
@@ -337,9 +400,11 @@ mod tests {
         };
         assert!(particles.event(&blast, &mut random));
         particles.update(0.06, 0.12);
-        assert_eq!(particles.explosions.rings.len(), 1);
-        assert_eq!(particles.particles.len(), 8);
-        assert_eq!(particles.records.len(), 8);
+        // A dust ring, a shock front and a scorch; clods and glowing sparks.
+        assert_eq!(particles.explosions.rings.len(), 3);
+        assert_eq!(particles.particles.len(), CLODS);
+        assert_eq!(particles.records.len(), CLODS);
+        assert!(!particles.sparks.is_empty());
         particles.reset();
         assert!(!particles.event(
             &with_cover(SimEventType::Destroy, CoverKind::Timber),
@@ -389,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn tank_deaths_throw_upward_embers() {
+    fn tank_deaths_throw_clods_and_sparks() {
         let mut random = CosmeticRandom::constant(0.5);
         let mut particles = ParticleEffects::default();
         particles.event(
@@ -399,13 +464,14 @@ mod tests {
             },
             &mut random,
         );
-        assert_eq!(particles.particles.len(), 8);
+        assert_eq!(particles.particles.len(), CLODS);
         assert!(
             particles
                 .particles
                 .iter()
-                .all(|p| p.vy >= 3.5 && p.life >= 0.8)
+                .all(|p| p.vy >= 4.0 && p.life >= 0.9)
         );
+        assert_eq!(particles.sparks.len(), 34);
     }
 
     #[test]
@@ -418,9 +484,18 @@ mod tests {
             ..at(SimEventType::Death)
         };
         assert!(!particles.event(&burnout, &mut random));
-        assert_eq!(particles.particles.len(), 3);
+        assert!(particles.particles.is_empty());
+        assert_eq!(particles.sparks.len(), 6, "a few sparks, no clods");
         particles.update(0.5, 0.5);
-        assert_eq!(particles.explosions.rings.len(), 0);
+        assert!(
+            particles
+                .explosions
+                .rings
+                .records()
+                .iter()
+                .all(|r| r.data[2] == 2.0),
+            "only the scorch: no dust ring or shock front"
+        );
         assert_eq!(particles.explosions.puffs.len(), 3);
     }
 
@@ -468,13 +543,24 @@ mod tests {
         let mut shot = at(SimEventType::Shot);
         shot.color = Some(0x008cff);
         particles.event(&shot, &mut random);
-        assert_eq!(particles.particles.len(), 5);
+        assert_eq!(
+            particles.particles.len(),
+            0,
+            "muzzle flashes are muzzle.rs's"
+        );
         particles.event(&at(SimEventType::Ricochet), &mut random);
-        assert_eq!(particles.particles.len(), 13);
+        assert_eq!(particles.particles.len(), IMPACT.count as usize);
+        assert_eq!(particles.sparks.len(), STONE_SPARKS.count);
         particles.event(&at(SimEventType::Hurt), &mut random);
-        assert_eq!(particles.particles.len(), 25);
+        assert_eq!(
+            particles.particles.len(),
+            (IMPACT.count + HURT.count) as usize
+        );
         particles.event(&at(SimEventType::Pickup), &mut random);
-        assert_eq!(particles.particles.len(), 49);
+        assert_eq!(
+            particles.particles.len(),
+            (IMPACT.count + HURT.count + PICKUP.count) as usize
+        );
         for _ in 0..200 {
             particles.event(&at(SimEventType::Pickup), &mut random);
         }

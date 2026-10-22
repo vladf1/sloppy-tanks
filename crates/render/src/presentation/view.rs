@@ -1440,6 +1440,8 @@ impl Presentation {
         self.update_fragments(state);
         self.warm_section();
         self.update_mines(state);
+        // The camera is final here; the effects order smoke by this frame's eye.
+        self.renderer.set_camera(self.rig.camera);
         self.effects
             .update(&mut self.renderer, state, alpha, dt, self.time);
         // A destroyed player in first person keeps the view without aiming, and
@@ -1453,7 +1455,6 @@ impl Presentation {
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer
             .set_transform(self.reticle.instance, self.crosshair);
-        self.renderer.set_camera(self.rig.camera);
         self.renderer.render(self.time as f32)
     }
 

@@ -14,7 +14,8 @@ use sloppy_core::sim::PickupKind;
 use sloppy_core::sim::ammunition::PROJECTILE_ORDER;
 use sloppy_core::sim::data::pickup;
 
-use super::explosions::{MAX_EXPLOSIONS, PUFFS_PER_BLAST};
+use super::PUFF_CAPACITY;
+use super::explosions::DECAL_CAPACITY;
 use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::MAX_PARTICLES;
@@ -22,15 +23,19 @@ use super::pickups::MAX_PICKUP_EFFECTS;
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
-use super::registry::{BLAST_RING, DUST, PUFF, TRACK_MARK};
+use super::registry::{BLAST_RING, DUST, PUFF, STREAK, TRACK_MARK};
 use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
+use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
 use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
 
-/// Tread marks draw after the ground decals they lie on (`renderOrder = 1`).
+/// Tread marks draw after the ground decals they lie on (`renderOrder = 1`),
+/// and blast decals with them; smoke draws over both, glows over the smoke.
 const TRACK_RENDER_ORDER: i32 = 1;
+const PUFF_RENDER_ORDER: i32 = 2;
+const STREAK_RENDER_ORDER: i32 = 3;
 const TRACK_COLOR: u32 = 0x283222;
 const TRACK_OPACITY: f32 = 0.38;
 const GRAVEL_COLOR: u32 = 0xb09c7b;
@@ -238,20 +243,39 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             MAX_STRAW,
         )
     });
-    pools.push(PoolDesc::new(
-        "blast rings",
-        ground_quad(),
-        Material {
-            polygon_offset: Some(DECAL_POLYGON_OFFSET),
-            ..soft_billboard(BLAST_RING.name)
-        },
-        MAX_EXPLOSIONS,
-    ));
-    pools.push(PoolDesc::new(
-        "blast puffs",
-        plane_geometry(2.0, 2.0),
-        soft_billboard(PUFF.name),
-        MAX_EXPLOSIONS * PUFFS_PER_BLAST,
-    ));
+    pools.push(PoolDesc {
+        render_order: TRACK_RENDER_ORDER,
+        ..PoolDesc::new(
+            "blast rings",
+            ground_quad(),
+            Material {
+                polygon_offset: Some(DECAL_POLYGON_OFFSET),
+                ..soft_billboard(BLAST_RING.name)
+            },
+            DECAL_CAPACITY,
+        )
+    });
+    pools.push(PoolDesc {
+        render_order: PUFF_RENDER_ORDER,
+        ..PoolDesc::new(
+            "blast puffs",
+            plane_geometry(2.0, 2.0),
+            soft_billboard(PUFF.name),
+            PUFF_CAPACITY,
+        )
+    });
+    pools.push(PoolDesc {
+        render_order: STREAK_RENDER_ORDER,
+        ..PoolDesc::new(
+            "streaks",
+            plane_geometry(1.0, 1.0),
+            Material {
+                blending: Blending::Additive,
+                tone_mapped: false,
+                ..soft_billboard(STREAK.name)
+            },
+            STREAK_CAPACITY,
+        )
+    });
     pools
 }

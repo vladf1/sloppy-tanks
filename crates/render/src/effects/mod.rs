@@ -1,7 +1,9 @@
-//! Runtime visual effects: particles, blasts, tread marks and dust, gravel,
+//! Runtime visual effects: particles, blasts and scorches, sparks, muzzle
+//! flashes, shell tracers, burning wrecks, tread marks and dust, gravel,
 //! quarry wind dust, crate splinters and packing straw, falling leaves,
 //! projectiles in flight, laser defense and pickup rings, plus
-//! the explosion light flash, and the WGSL effect registry their materials use.
+//! the explosion and muzzle light flashes, and the WGSL effect registry their
+//! materials use.
 //!
 //! Every effect is a bounded CPU system that writes instance records into a
 //! [`PoolBuffer`]; the renderer draws each pool as one instanced call from a
@@ -12,9 +14,11 @@
 //! tested); `Effects` binds it to the renderer's pools.
 
 pub mod explosions;
+pub mod ground;
 pub mod laser;
 pub mod leaves;
 pub mod looks;
+pub mod muzzle;
 pub mod particles;
 pub mod pickups;
 pub mod pool;
@@ -23,11 +27,14 @@ pub mod quarry_dust;
 pub mod random;
 pub mod registry;
 pub mod rocket_smoke;
+pub mod sparks;
 pub mod spawn_pad_decks;
+pub mod tracers;
 pub mod track_dust;
 pub mod track_gravel;
 pub mod tracks;
 pub mod wood_chips;
+pub mod wreck_fire;
 
 use glam::Vec3;
 use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
@@ -36,28 +43,38 @@ pub use pool::{PoolBuffer, PoolDesc};
 pub use random::CosmeticRandom;
 pub use registry::*;
 
+use ground::Ground;
 use laser::LaserVisuals;
 use leaves::LeafFall;
+use muzzle::MuzzleFlashes;
 use particles::ParticleEffects;
 use pickups::PickupEffects;
 use projectiles::ProjectileVisuals;
 use quarry_dust::QuarryDust;
 use rocket_smoke::RocketSmoke;
+use tracers::Tracers;
 use track_dust::TrackDust;
 use tracks::TrackTrails;
 use wood_chips::WoodChips;
+use wreck_fire::WreckFires;
 
 use crate::presentation::view_settings::FEEDBACK;
 
 /// The explosion flash (`presentation.ts` `flash`): a warm point light that game
 /// presentation and the effects lab both draw from `EffectSystems::flash`.
-pub const FLASH_COLOR: u32 = 0xffc178;
-pub const FLASH_INTENSITY: f32 = 45.0;
-pub const FLASH_DISTANCE: f32 = 20.0;
+pub const FLASH_COLOR: u32 = 0xffb468;
+pub const FLASH_INTENSITY: f32 = 70.0;
+pub const FLASH_DISTANCE: f32 = 24.0;
 pub const FLASH_DECAY: f32 = 2.0;
 const FLASH_HEIGHT: f32 = 3.0;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
+/// The muzzle flash light's color.
+pub const MUZZLE_FLASH_COLOR: u32 = 0xffc070;
+/// Every puff the shared puff pool may hold: blasts, muzzle smoke, burning wrecks.
+pub const PUFF_CAPACITY: usize = explosions::MAX_EXPLOSIONS * explosions::PUFFS_PER_BLAST
+    + muzzle::MAX_MUZZLE_FLASHES * muzzle::PUFFS_PER_MUZZLE
+    + wreck_fire::MAX_BURNING_WRECKS * wreck_fire::PUFFS_PER_WRECK;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Flash {
@@ -68,7 +85,8 @@ pub struct Flash {
 /// Live effect counts, for tests and "Stats for nerds".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectStats {
-    /// Chips, sparks, embers and falling leaves: every exported "particles" count.
+    /// Chips, clods and falling leaves: every exported "particles" count
+    /// (glowing sparks are streak instances).
     pub particles: u32,
     /// Crate splinters and packing straw (their pools' instances).
     pub wood_chips: u32,
@@ -97,7 +115,10 @@ pub struct EffectSystems {
     pub track_dust: TrackDust,
     pub quarry_dust: QuarryDust,
     pub projectiles: ProjectileVisuals,
+    pub tracers: Tracers,
     pub rocket_smoke: RocketSmoke,
+    pub muzzle: MuzzleFlashes,
+    pub wrecks: WreckFires,
     pub laser: LaserVisuals,
     pub pickups: PickupEffects,
     pub flash: Flash,
@@ -112,7 +133,10 @@ impl EffectSystems {
         self.track_dust.reset();
         self.quarry_dust.reset();
         self.projectiles.reset();
+        self.tracers.reset();
         self.rocket_smoke.reset();
+        self.muzzle.reset();
+        self.wrecks.reset();
         self.laser.reset();
         self.pickups.reset();
         self.flash = Flash::default();
@@ -137,6 +161,8 @@ impl EffectSystems {
                 .add(event.x, event.z, event.color.unwrap_or(WHITE), event.id);
         }
         self.wood.event(event, &mut self.random);
+        self.muzzle.event(event);
+        self.wrecks.event(event, &mut self.random);
         if self.particles.event(event, &mut self.random) {
             self.flash = Flash {
                 position: Vec3::new(event.x as f32, FLASH_HEIGHT, event.z as f32),
@@ -156,6 +182,8 @@ impl EffectSystems {
         self.pickups.update(state, alpha, dt);
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
+        let ground = Ground::from_theme(&state.map_theme);
+        self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
         self.flash.intensity *= (-dt * FEEDBACK.flash_decay).exp() as f32;
@@ -163,7 +191,23 @@ impl EffectSystems {
         self.rocket_smoke
             .update(&state.shots, alpha, dt, &mut self.random);
         self.laser.update(state, alpha, dt);
+        // The sparks and blasts rebuild the streak and puff pools; tracers,
+        // muzzle flashes and burning wrecks add theirs after them.
         self.particles.update(dt, time);
+        let particles = &mut self.particles;
+        self.tracers
+            .update(&state.shots, alpha, &mut particles.sparks.records);
+        self.muzzle.update(
+            state,
+            alpha,
+            dt,
+            ground,
+            &mut particles.sparks,
+            &mut particles.explosions.puffs,
+            &mut self.random,
+        );
+        self.wrecks
+            .update(state, dt, &mut particles.explosions.puffs);
         self.leaves.update(dt, &mut self.random);
         self.wood.update(dt, &mut self.random);
     }
@@ -194,6 +238,7 @@ impl EffectSystems {
         visit(&mut self.wood.straw_records);
         visit(&mut self.particles.explosions.rings);
         visit(&mut self.particles.explosions.puffs);
+        visit(&mut self.particles.sparks.records);
     }
 
     pub fn stats(&mut self) -> EffectStats {
@@ -230,11 +275,15 @@ pub use browser::Effects;
 mod browser {
     use sloppy_core::sim::RenderState;
 
-    use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE};
+    use super::muzzle::MUZZLE_LIGHT_DISTANCE;
+    use glam::Vec3;
+
+    use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE, MUZZLE_FLASH_COLOR};
     use crate::gpu::{PointLight, PoolId, Renderer};
 
-    /// The point-light slot the explosion flash uses.
+    /// The point-light slots the explosion and muzzle flashes use.
     const FLASH_LIGHT: usize = 0;
+    const MUZZLE_LIGHT: usize = 1;
     /// Below this the light is switched off rather than shading every pixel.
     const FLASH_CUTOFF: f32 = 0.01;
 
@@ -276,6 +325,19 @@ mod browser {
             time: f64,
         ) {
             self.systems.update(state, alpha, dt, time);
+            // Smoke puffs overlap heavily: composite them back to front from this
+            // frame's eye (presentation sets the camera before effects update).
+            let eye = renderer.camera().position;
+            let puffs = &mut self.systems.particles.explosions.puffs;
+            puffs.sort_back_to_front(eye);
+            if let Some(viewer) = state.viewer().filter(|tank| tank.alive) {
+                let target = Vec3::new(
+                    viewer.position.x as f32,
+                    viewer.position.y as f32 + 0.4,
+                    viewer.position.z as f32,
+                );
+                super::explosions::clear_sight_line(puffs, eye, target);
+            }
             self.sync(renderer);
         }
 
@@ -299,6 +361,17 @@ mod browser {
                     color: FLASH_COLOR,
                     intensity: flash.intensity,
                     distance: FLASH_DISTANCE,
+                    decay: FLASH_DECAY,
+                }),
+            );
+            let muzzle = systems.muzzle.light;
+            renderer.set_point_light(
+                MUZZLE_LIGHT,
+                (muzzle.intensity > FLASH_CUTOFF).then_some(PointLight {
+                    position: muzzle.position,
+                    color: MUZZLE_FLASH_COLOR,
+                    intensity: muzzle.intensity,
+                    distance: MUZZLE_LIGHT_DISTANCE,
                     decay: FLASH_DECAY,
                 }),
             );
