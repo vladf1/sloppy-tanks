@@ -77,25 +77,40 @@ fn hull_band(outline: &[[f64; 2]], bottom: f64, top: f64, lower_scale: f64, colo
 const CARGO_PAINT: [u32; 5] = [0xcb7d43, 0x3b9394, 0x6e8eae, 0xbaad7c, 0xa76155];
 const GRATING_DARK: u32 = 0x3d4548;
 const SHIP_WHITE: u32 = 0xf0ebdc;
+/// Antifouling red of the boot-top along every waterline.
+const BOOT_TOP: u32 = 0x9a3a2b;
+/// Deck paint, one per ship: deck green, red oxide and a worn grey.
+const DECK_PAINT: [u32; 3] = [0x5f765b, 0x81493b, 0x777a72];
 /// The shipping lines' funnel colors, one per ship.
 const FUNNEL_BAND: [u32; 3] = [0x2f6fa8, 0xc8473b, 0x2f8a6a];
 
 fn container_ship(color: u32, variant: usize) -> Node {
     let mut ship = Node::group("container-ship");
     ship.children.push(hull_section(-3.8, -1.3, 0.85, 0xa95443));
+    // The boot-top: antifouling red standing sheer from below the waterline, so
+    // the water meets the hull at its full outline and the red reads as a band.
+    ship.children.push(hull_section(-2.45, -1.3, 1.0, BOOT_TOP));
     ship.children.push(hull_section(-1.3, 2.6, 1.0, color));
     // A white sheer strake along the top of the hull.
     ship.children.push(hull_section(2.6, 3.05, 1.0, SHIP_WHITE));
+    // The main deck in its line's deck paint, worn to the steel along the walkways.
     put(
         &mut ship,
-        steel_box(58.0, 0.2, 12.7, 0xbbbaa5),
+        steel_box(58.0, 0.2, 12.7, DECK_PAINT[variant % DECK_PAINT.len()]),
         -2.0,
         2.72,
         0.0,
     );
     for bay in 0..4 {
         for row in [-1.0, 1.0] {
-            let levels = if bay == variant % 4 { 1 } else { 2 };
+            // Stowed to different heights bay by bay and side by side, as the
+            // terminal loaded them: a stepped skyline, never one even block.
+            let levels = match (bay * 2 + usize::from(row > 0.0) + variant * 3) % 5 {
+                0 => 1,
+                1 | 3 => 2,
+                _ if bay == variant % 4 => 1,
+                _ => 3,
+            };
             for level in 0..levels {
                 let mut cargo = Node::group("");
                 let paint_index = (bay + level * 2 + variant + usize::from(row > 0.0)) % 5;
@@ -490,9 +505,8 @@ fn container_ship(color: u32, variant: usize) -> Node {
 const DECK_CRANE: u32 = 0xe2b443;
 
 const CRANE_GOLD: u32 = 0xe9b347;
-/// The side berths' older pair, in a deeper, weathered safety yellow: industrial
-/// paint that stands off the teal water without reading as a team's red or blue.
-const CRANE_AMBER: u32 = 0xd59a36;
+/// The side berths' older pair, in a signal red that stands off the teal water.
+const CRANE_SIGNAL: u32 = 0xbd4a2e;
 /// Machinery house roof and the walkway grating around it.
 const ROOF_GREY: u32 = 0xb4b9b4;
 const GRATING: u32 = 0x5d676a;
@@ -909,7 +923,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_AMBER,
+            steel: CRANE_SIGNAL,
             trolley: -17.0,
             cargo: 0xd8d2c4,
         },
@@ -920,7 +934,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         -FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_AMBER,
+            steel: CRANE_SIGNAL,
             trolley: -12.0,
             cargo: 0x3f8f6a,
         },

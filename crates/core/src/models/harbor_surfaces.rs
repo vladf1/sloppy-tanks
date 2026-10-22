@@ -196,30 +196,109 @@ pub fn apron_box(w: f64, h: f64, d: f64, color: u32, mode: ApronMode) -> Node {
     )
 }
 
-/// Depth of the parapet's capping beam and how far it overhangs the precast body
-/// on each face, metres: enough for its edge to throw a shadow line.
-const PARAPET_CAP: f64 = 0.14;
-const PARAPET_OVERHANG: f64 = 0.035;
+/// Depth of the parapet's capping beam, how far it overhangs the precast body on
+/// each face (enough for its edge to throw a shadow line) and the chamfer worn
+/// along both its top arrises, metres: the bevel the hazard paint runs along.
+const PARAPET_CAP: f64 = 0.22;
+const PARAPET_OVERHANG: f64 = 0.05;
+const PARAPET_CHAMFER: f64 = 0.12;
 /// The parapet's precast concrete: warm and pale, as the quay's own.
 const PARAPET_CONCRETE: u32 = 0xb8b3a6;
 
+/// The parapet's capping beam, `length` long and `depth` across, from `bottom` to
+/// `top`, its long axis along x or z: a vertical face each side up to a chamfer
+/// along each top arris, and the flat top between them. Flat-shaded, each face its
+/// own vertices; no underside, which sits on the body.
+fn chamfered_cap(length: f64, depth: f64, bottom: f64, top: f64, along_x: bool) -> Mesh {
+    let half = depth / 2.0;
+    let c = PARAPET_CHAMFER;
+    // The profile across the beam as (across, height), round from one foot.
+    let profile = [
+        (-half, bottom),
+        (-half, top - c),
+        (-half + c, top),
+        (half - c, top),
+        (half, top - c),
+        (half, bottom),
+    ];
+    let point = |along: f64, (across, y): (f64, f64)| {
+        if along_x {
+            [along, y, across]
+        } else {
+            [across, y, along]
+        }
+    };
+    let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::<u32>::new());
+    let mut quad = |corners: [[f64; 3]; 4], normal: [f64; 3]| {
+        let base = (positions.len() / 3) as u32;
+        for corner in corners {
+            positions.extend(corner);
+            normals.extend(normal);
+        }
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    };
+    let ends = [-length / 2.0, length / 2.0];
+    for pair in profile.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        // Outward normal of the profile edge a -> b (the profile runs clockwise
+        // seen from +along when along is x, so the outward side is to the left).
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        let (nx, ny) = (-dy / len, dx / len);
+        let normal = point(0.0, (nx, ny));
+        let corners = [
+            point(ends[0], a),
+            point(ends[1], a),
+            point(ends[1], b),
+            point(ends[0], b),
+        ];
+        quad(corners, normal);
+    }
+    // End caps, fanned from the profile's first corner.
+    for (end, sign) in [(ends[0], -1.0), (ends[1], 1.0)] {
+        let normal = point(sign, (0.0, 0.0));
+        let base = (positions.len() / 3) as u32;
+        for &corner in &profile {
+            positions.extend(point(end, corner));
+            normals.extend(normal);
+        }
+        for i in 1..profile.len() as u32 - 1 {
+            indices.extend([base, base + i, base + i + 1]);
+        }
+    }
+    let mut mesh = Mesh::from_f64(&positions, &normals, &[], Some(indices));
+    mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+    // Wind every triangle to face its normal, whichever way the profile ran.
+    let indices = mesh.indices.as_mut().expect("indexed");
+    for triangle in indices.as_chunks_mut::<3>().0 {
+        let [a, b, c] = triangle.map(|i| glam::Vec3::from(mesh.positions[i as usize]));
+        let normal = glam::Vec3::from(mesh.normals[triangle[0] as usize]);
+        if (b - a).cross(c - a).dot(normal) < 0.0 {
+            triangle.swap(1, 2);
+        }
+    }
+    mesh
+}
+
 /// Harbor Havoc's sea wall parapet, `w` × `h` × `d` and centred on its middle
 /// like the concrete wall it replaces: a precast body under a capping beam that
-/// overhangs both long faces a little. Joints, stains and paint are the apron
-/// effect's ([`ApronMode::Parapet`]); the collider stays the cover's own box.
+/// overhangs both long faces and is chamfered along both top arrises. Joints,
+/// stains and paint are the apron effect's ([`ApronMode::Parapet`]); the collider
+/// stays the cover's own box.
 pub fn harbor_parapet(w: f64, h: f64, d: f64) -> Node {
     static PARAPETS: Cache<[u64; 3], Mesh> = Cache::new();
     let mesh = PARAPETS.get_or_insert([w, h, d].map(f64::to_bits), || {
         let along_x = w > d;
         let mut body = box_geometry(w, h - PARAPET_CAP, d);
         body.translate(0.0, -PARAPET_CAP / 2.0, 0.0);
-        let (cap_w, cap_d) = if along_x {
-            (w, d + 2.0 * PARAPET_OVERHANG)
-        } else {
-            (w + 2.0 * PARAPET_OVERHANG, d)
-        };
-        let mut cap = box_geometry(cap_w, PARAPET_CAP, cap_d);
-        cap.translate(0.0, (h - PARAPET_CAP) / 2.0, 0.0);
+        let (length, depth) = if along_x { (w, d) } else { (d, w) };
+        let cap = chamfered_cap(
+            length,
+            depth + 2.0 * PARAPET_OVERHANG,
+            h / 2.0 - PARAPET_CAP,
+            h / 2.0,
+            along_x,
+        );
         merge_geometries(&[&body, &cap]).expect("boxes share a layout")
     });
     shadowed(mesh, apron_material(ApronMode::Parapet, PARAPET_CONCRETE))

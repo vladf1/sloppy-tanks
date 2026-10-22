@@ -384,8 +384,8 @@ fn lane_markings(markings: &mut Node) {
 const QUAY_EDGE: f64 = ARENA + BOUNDARY_THICKNESS;
 /// Top of the harbor's boundary wall (`harbor_layout`).
 const WALL_TOP: f64 = 1.2;
-/// Mooring bollards along the wall top, just inside the quay face.
-const BOLLARD_LINE: f64 = QUAY_EDGE - 0.6;
+/// Mooring bollards down the middle of the wall top, clear of its chamfers.
+const BOLLARD_LINE: f64 = QUAY_EDGE - 0.5;
 const BOLLARD_DARK: u32 = 0x262d30;
 const BOLLARD_CAP: u32 = 0xe1b64d;
 /// Flood-light masts at the quay corners.
@@ -394,8 +394,8 @@ const LAMP_HOUSING: u32 = 0x4b585e;
 const LAMP_LENS: u32 = 0xfff1c4;
 /// Mooring lines: hemp color, thickness, sag at mid-span as a fraction of the
 /// span, and the segments a line is drawn with.
-const ROPE: u32 = 0xbaa377;
-const ROPE_WIDTH: f64 = 0.085;
+const ROPE: u32 = 0x9c8862;
+const ROPE_WIDTH: f64 = 0.13;
 const ROPE_SAG: f64 = 0.06;
 const ROPE_SEGMENTS: usize = 8;
 
@@ -701,49 +701,112 @@ fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
     put(details, rotated(ring, 0.0, yaw, 0.0), x, WALL_TOP + 0.85, z);
 }
 
-/// A flood-light mast standing at (x, z), its two lamps on a crossarm across
-/// `toward` (a unit vector on the ground toward the apron), and its beacon.
-fn flood_mast(details: &mut Node, beacons: &mut Node, x: f64, z: f64, toward: [f64; 2]) {
+/// A flood-light mast standing at (x, floor, z) on its concrete plinth: a tapered
+/// galvanised pole, a headframe with a railed service platform and three
+/// floodlights in visored housings aimed down at `toward` (a unit vector on the
+/// ground toward the apron), and the beacon on top.
+fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], toward: [f64; 2]) {
+    static POLE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    let pole = POLE
+        .get_or_init(|| Arc::new(cylinder_geometry(0.12, 0.24, LAMP_HEIGHT, 10)))
+        .clone();
     let mut mast = Node::group("");
     put(
         &mut mast,
-        box_part(0.8, 0.3, 0.8, 0x7b8584, 0.0),
+        box_part(1.0, 0.4, 1.0, 0x8d8c84, 0.0),
         0.0,
-        0.15,
+        0.2,
         0.0,
     );
     put(
         &mut mast,
-        cylinder_part(0.17, LAMP_HEIGHT, 0x45575c, 12),
+        Node::mesh(pole, paint(MAST_GALVANISED)),
         0.0,
         LAMP_HEIGHT / 2.0,
         0.0,
     );
+    // Headframe: the platform's grating, its toe rail and the lamp bar.
     put(
         &mut mast,
-        box_part(2.6, 0.16, 0.2, 0x45575c, 0.0),
+        box_part(3.0, 0.1, 1.1, GRATING_STEEL, 0.0),
         0.0,
-        LAMP_HEIGHT - 0.2,
+        LAMP_HEIGHT - 0.35,
         0.0,
     );
-    for dx in [-1.05, 1.05] {
-        let head = rotated(box_part(0.7, 0.42, 0.55, LAMP_HOUSING, 0.0), 0.35, 0.0, 0.0);
-        put(&mut mast, head, dx, LAMP_HEIGHT - 0.5, 0.15);
-        let lens = rotated(box_part(0.6, 0.05, 0.44, LAMP_LENS, 0.0), 0.35, 0.0, 0.0);
-        put(&mut mast, lens, dx, LAMP_HEIGHT - 0.73, 0.07);
+    for (dz, w, d) in [(-0.55, 3.0, 0.05), (0.55, 3.0, 0.05)] {
+        put(
+            &mut mast,
+            box_part(w, 0.05, d, MAST_GALVANISED, 0.0),
+            0.0,
+            LAMP_HEIGHT + 0.45,
+            dz,
+        );
+    }
+    for dx in [-1.45, 1.45] {
+        for dz in [-0.55, 0.55] {
+            put(
+                &mut mast,
+                box_part(0.05, 0.8, 0.05, MAST_GALVANISED, 0.0),
+                dx,
+                LAMP_HEIGHT + 0.05,
+                dz,
+            );
+        }
+    }
+    put(
+        &mut mast,
+        box_part(3.0, 0.14, 0.14, LAMP_HOUSING, 0.0),
+        0.0,
+        LAMP_HEIGHT - 0.2,
+        0.5,
+    );
+    for dx in [-1.05, 0.0, 1.05] {
+        let mut lamp = Node::group("");
+        put(
+            &mut lamp,
+            box_part(0.8, 0.62, 0.32, LAMP_HOUSING, 0.0),
+            0.0,
+            0.0,
+            0.0,
+        );
+        // The visor over the lens, and the lens itself glowing on the front.
+        put(
+            &mut lamp,
+            box_part(0.86, 0.06, 0.3, LAMP_HOUSING, 0.0),
+            0.0,
+            0.33,
+            0.28,
+        );
+        put(
+            &mut lamp,
+            box_part(0.66, 0.48, 0.04, LAMP_LENS, 0.0),
+            0.0,
+            0.0,
+            0.17,
+        );
+        put(
+            &mut mast,
+            rotated(lamp, 0.6, 0.0, 0.0),
+            dx,
+            LAMP_HEIGHT - 0.6,
+            0.72,
+        );
     }
     // The lamps face local +z; turn them toward the apron.
     let mut mast = rotated(mast, 0.0, toward[0].atan2(toward[1]), 0.0);
-    mast.position = glam::DVec3::new(x, 0.0, z);
+    mast.position = glam::DVec3::new(x, floor, z);
     adopt_children(details, mast);
     put(
         beacons,
         cylinder_part(0.18, 0.3, 0xffb54a, 8),
         x,
-        LAMP_HEIGHT + 0.15,
+        floor + LAMP_HEIGHT + 0.65,
         z,
     );
 }
+/// Galvanised steel of the masts and their rails, and the platforms' grating.
+const MAST_GALVANISED: u32 = 0x8e979a;
+const GRATING_STEEL: u32 = 0x4d575b;
 
 /// A yard block of boxes along z on an outer quay: `columns` of them end to end
 /// from (x, z), `rows` side by side toward +x, each stack up to `tiers` high as the
@@ -785,6 +848,87 @@ fn container_block(
         }
     }
 }
+/// A rubber-tyred gantry straddling a yard block from (x, z) (its `rows` of boxes
+/// toward +x, `columns` toward +z, as [`container_block`] lays them): four legs on
+/// bogies, sill beams, the girders across the top, the trolley and the driver's
+/// cab hanging under it, clear of the block's highest tier.
+fn yard_gantry(details: &mut Node, origin: [f64; 2], columns: u32, rows: u32, tiers: u32) {
+    let [x, z] = origin;
+    let (left, right) = (x - 1.35 - 1.3, x + f64::from(rows) * 2.7 - 1.35 + 1.3);
+    let centre_z = z + (f64::from(columns) - 1.0) * 3.2;
+    let top = WAREHOUSE_FLOOR + f64::from(tiers) * 2.62 + 3.4;
+    let span = right - left;
+    let mid = (left + right) / 2.0;
+    for leg_x in [left, right] {
+        for dz in [-3.4, 3.4] {
+            put(
+                details,
+                box_part(0.6, top - WAREHOUSE_FLOOR - 0.9, 0.6, RTG_PAINT, 0.0),
+                leg_x,
+                (top + WAREHOUSE_FLOOR + 0.9) / 2.0,
+                centre_z + dz,
+            );
+            put(
+                details,
+                box_part(0.9, 1.0, 1.3, BOLLARD_DARK, 0.0),
+                leg_x,
+                WAREHOUSE_FLOOR + 0.5,
+                centre_z + dz,
+            );
+        }
+        put(
+            details,
+            box_part(0.8, 0.7, 7.6, RTG_PAINT, 0.0),
+            leg_x,
+            WAREHOUSE_FLOOR + 1.25,
+            centre_z,
+        );
+        // The engine house on one sill.
+        if leg_x == left {
+            put(
+                details,
+                box_part(1.6, 1.8, 2.6, RTG_TRIM, 0.0),
+                leg_x - 0.9,
+                WAREHOUSE_FLOOR + 2.4,
+                centre_z,
+            );
+        }
+    }
+    for dz in [-3.4, 3.4] {
+        put(
+            details,
+            box_part(span + 0.6, 0.9, 0.7, RTG_PAINT, 0.0),
+            mid,
+            top,
+            centre_z + dz,
+        );
+    }
+    put(
+        details,
+        box_part(2.6, 1.1, 7.4, RTG_TRIM, 0.0),
+        mid - span * 0.15,
+        top + 0.9,
+        centre_z,
+    );
+    put(
+        details,
+        box_part(1.5, 1.6, 1.6, RTG_TRIM, 0.0),
+        right - 0.6,
+        top - 1.4,
+        centre_z - 2.4,
+    );
+    put(
+        details,
+        box_part(1.52, 0.7, 1.2, 0x335b6c, 0.0),
+        right - 0.6,
+        top - 1.2,
+        centre_z - 2.3,
+    );
+}
+/// The yard gantries' paint and the trim of their trolley and cab.
+const RTG_PAINT: u32 = 0xdcae3c;
+const RTG_TRIM: u32 = 0xe6e2d6;
+
 const YARD_PAINT: [u32; 7] = [
     0xc96f3b, 0x3d8a8c, 0x5f7fa6, 0xb7a26e, 0x9b4f45, 0xe0dccd, 0x4f6b3f,
 ];
@@ -965,11 +1109,27 @@ fn quay_dressing(details: &mut Node, beacons: &mut Node) {
                 life_ring(details, side * (QUAY_EDGE - 1.0), along * -side, FRAC_PI_2);
             }
         }
-        flood_mast(details, beacons, side * 62.0, -side * 30.0, [-side, 0.0]);
+        flood_mast(
+            details,
+            beacons,
+            [side * 62.0, 0.0, -side * 30.0],
+            [-side, 0.0],
+        );
     }
     // The outer quays' yards: container blocks either side of the transit sheds,
     // stacked and painted differently on each.
     container_block(details, [-125.0, 44.0], 2, 4, 3, 1);
+    yard_gantry(details, [-125.0, 44.0], 2, 4, 3);
+    yard_gantry(details, [109.0, -58.0], 2, 4, 3);
+    // Light masts down the outer quays, aimed at their yards.
+    for (x, z) in [
+        (-104.8, 30.0),
+        (-104.8, -42.0),
+        (104.8, 52.0),
+        (104.8, -26.0),
+    ] {
+        flood_mast(details, beacons, [x, WAREHOUSE_FLOOR, z], [x.signum(), 0.0]);
+    }
     for z in [45.0, 38.6] {
         reefer(details, -110.0, WAREHOUSE_FLOOR, z);
     }
@@ -1078,65 +1238,13 @@ impl HarborScenery {
                     if side < 0.0 { PI } else { 0.0 },
                 );
             }
-            // Flood-light masts at the quay corners: a crossarm with two lamps
-            // aimed down at the apron, and the blinking beacon on top.
+            // Flood-light masts at the quay corners, aimed in at the apron.
             for x in [-54.0, 54.0] {
-                let z = side * 62.0;
-                put(
+                flood_mast(
                     &mut details,
-                    box_part(0.8, 0.3, 0.8, 0x7b8584, 0.0),
-                    x,
-                    0.15,
-                    z,
-                );
-                put(
-                    &mut details,
-                    cylinder_part(0.17, LAMP_HEIGHT, 0x45575c, 12),
-                    x,
-                    LAMP_HEIGHT / 2.0,
-                    z,
-                );
-                put(
-                    &mut details,
-                    box_part(2.6, 0.16, 0.2, 0x45575c, 0.0),
-                    x,
-                    LAMP_HEIGHT - 0.2,
-                    z,
-                );
-                for dx in [-1.05, 1.05] {
-                    let head = rotated(
-                        box_part(0.7, 0.42, 0.55, LAMP_HOUSING, 0.0),
-                        -side * 0.35,
-                        0.0,
-                        0.0,
-                    );
-                    put(
-                        &mut details,
-                        head,
-                        x + dx,
-                        LAMP_HEIGHT - 0.5,
-                        z - side * 0.15,
-                    );
-                    let lens = rotated(
-                        box_part(0.6, 0.05, 0.44, LAMP_LENS, 0.0),
-                        -side * 0.35,
-                        0.0,
-                        0.0,
-                    );
-                    put(
-                        &mut details,
-                        lens,
-                        x + dx,
-                        LAMP_HEIGHT - 0.73,
-                        z - side * 0.07,
-                    );
-                }
-                put(
                     &mut beacons,
-                    cylinder_part(0.18, 0.3, 0xffb54a, 8),
-                    x,
-                    LAMP_HEIGHT + 0.15,
-                    z,
+                    [x, 0.0, side * 62.0],
+                    [0.0, -side],
                 );
             }
         }

@@ -51,7 +51,7 @@ const APRON_SECTION = 23.0;
 // Harbor water level (`harbor_water::HARBOR_WATER_HEIGHT`) and how far the tide
 // stains the quay wall above it.
 const APRON_SEA_LEVEL = -2.2;
-const APRON_TIDE = 0.75;
+const APRON_TIDE = 1.0;
 // Spacing of the quay wall's vertical expansion joints, metres.
 const APRON_WALL_JOINT = 12.0;
 // Farthest a container's casting rust reaches from the casting, metres (with a
@@ -86,7 +86,7 @@ const APRON_END_BARRIERS = array<vec4f, 2>(
 );
 // Far shore haze: metres of air that hide half of a color beyond the first
 // clear stretch, and how much less haze the high ground gets.
-const SHORE_HAZE_DISTANCE = 340.0;
+const SHORE_HAZE_DISTANCE = 470.0;
 const SHORE_HAZE_CLEAR = 45.0;
 const SHORE_HAZE_LIFT = 0.25;
 // A far-shore vertex painted exactly this red is a warning light, and how
@@ -108,6 +108,12 @@ const SHORE_CROPS = array<vec3f, 4>(
     vec3f(0.15, 0.19, 0.07),
 );
 const SHORE_FOREST = vec3f(0.024, 0.064, 0.022);
+// The far woods' crowns, and the share of the hillside's haze in front of them.
+const SHORE_CANOPY = vec3f(0.03, 0.058, 0.04);
+const SHORE_CANOPY_HAZE = 0.45;
+// The share of the scene's low sea mist the far shore takes: enough to seat the
+// coast in it, little enough that the terminal and the woods keep their colour.
+const SHORE_MIST = 0.6;
 // How much of its saturation the headlands' countryside keeps.
 const SHORE_GRASS_SATURATION = 0.78;
 const SHORE_ROCK = vec3f(0.2, 0.19, 0.165);
@@ -148,13 +154,21 @@ const CONTAINER_BOUNCE = 0.045;
 // cap, and the pitch and reach of the bollards on its top (`harbor_scenery`), whose
 // bases weep rust down both faces.
 const PARAPET_TOP = 1.2;
-const PARAPET_CAP = 0.14;
-// How far the capping beam overhangs the panels, metres.
-const PARAPET_OVERHANG = 0.035;
+const PARAPET_CAP = 0.22;
+// How far the capping beam overhangs the panels, and the chamfer along its top
+// arrises (`harbor_surfaces::PARAPET_CHAMFER`), metres.
+const PARAPET_OVERHANG = 0.05;
+const PARAPET_CHAMFER = 0.12;
+// Length of a run of the wall painted (or not) in one go, metres, and where the
+// corners start, which are always painted.
+const PARAPET_PAINT_RUN = 9.0;
+const PARAPET_CORNER = 47.0;
 const PARAPET_STONE = 2.0;
 const PARAPET_PANEL = 4.0;
 const PARAPET_KERB = 0.32;
-const PARAPET_MIDDLE = 60.5;
+const PARAPET_MIDDLE = 61.0;
+// Half the wall's thickness (`sim::arena::BOUNDARY_THICKNESS`), metres.
+const PARAPET_HALF = 1.0;
 const PARAPET_BOLLARDS = 24.0;
 const PARAPET_BOLLARD_REACH = 48.0;
 // Heights of the two rows of form-tie plugs down each panel, their pitch along it
@@ -162,11 +176,11 @@ const PARAPET_BOLLARD_REACH = 48.0;
 const PARAPET_TIE_ROWS = vec2f(0.5, 0.84);
 const PARAPET_TIE_PITCH = 1.0;
 const PARAPET_TIE_RADIUS = 0.022;
-// Period of the diagonal hazard stripes along the kerb band and along the top,
-// metres, and the linear hazard paints (`harbor_scenery::LINE_YELLOW` and a near
+// Period of the diagonal hazard stripes along the kerb band and along the inner
+// chamfer, metres, and the linear hazard paints (`harbor_scenery::LINE_YELLOW` and a near
 // black).
 const PARAPET_KERB_STRIPE = 0.55;
-const PARAPET_TOP_STRIPE = 0.8;
+const PARAPET_TOP_STRIPE = 0.6;
 const HAZARD_YELLOW = vec3f(0.807, 0.479, 0.048);
 const HAZARD_BLACK = vec3f(0.016, 0.017, 0.019);
 
@@ -273,7 +287,11 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let y = f.world.y;
     let top = n.y > 0.5;
     let face = select(1.0, 0.0, top);
-    let inner = select(0.0, 1.0, outward < PARAPET_MIDDLE) * face;
+    let inner_side = select(0.0, 1.0, outward < PARAPET_MIDDLE);
+    let inner = inner_side * face;
+    // The chamfers along the cap's top arrises, and the flat top between them.
+    let chamfer = select(0.0, 1.0, top && n.y < 0.95);
+    let flat_top = select(0.0, 1.0, n.y >= 0.95);
     let outer = face - inner;
     // Which of the four walls: so no two walls wear alike.
     let wall = select(0.0, 2.0, runs_z) + select(0.0, 1.0, f.world.x + f.world.z > 0.0);
@@ -292,10 +310,9 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let stone_edge = (0.5 - abs(fract(along / PARAPET_STONE + 0.5) - 0.5)) * PARAPET_STONE;
     let stone_aa = max(fwidth(stone_edge), 1e-4);
     let y_aa = max(fwidth(y), 1e-4);
-    let out_aa = max(fwidth(outward), 1e-4);
     let kerb_u = (along + y) / PARAPET_KERB_STRIPE;
     let kerb_aa = max(fwidth(kerb_u), 1e-3);
-    let top_u = (along + outward) / PARAPET_TOP_STRIPE;
+    let top_u = (along + (PARAPET_TOP - y) * 4.0) / PARAPET_TOP_STRIPE;
     let top_aa = max(fwidth(top_u), 1e-3);
     let tie_x = fract(along / PARAPET_TIE_PITCH) * PARAPET_TIE_PITCH - PARAPET_TIE_PITCH * 0.5;
     let tie_row = select(PARAPET_TIE_ROWS.x, PARAPET_TIE_ROWS.y, y > (PARAPET_TIE_ROWS.x + PARAPET_TIE_ROWS.y) * 0.5);
@@ -341,24 +358,33 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let salt = smoothstep(0.58, 0.82, apron_noise(vec2f(along * 1.1 + 4.0, y * 0.35)) + (grain_luma - 1.0) * 0.2)
         * (1.0 - smoothstep(0.3, 1.1, y)) * outer;
 
-    // Hazard paint: a kerb band of diagonal stripes on the apron side and stripes
-    // down the middle of the top, each panel painted in its own year.
-    let kerb = (1.0 - smoothstep(PARAPET_KERB - y_aa, PARAPET_KERB + y_aa, y)) * inner;
-    let top_band = (1.0 - smoothstep(0.3 - out_aa, 0.3 + out_aa, abs(outward - PARAPET_MIDDLE))) * (1.0 - face);
+    // Hazard paint: a kerb band of diagonal stripes on the apron side and along
+    // the cap's inner chamfer, laid in runs: the corners always, other stretches
+    // by the year the gang came round, the rest left to ghosts of the old coat.
+    let run = apron_hash(vec2f(floor(along / PARAPET_PAINT_RUN + wall * 0.37), wall * 13.0 + 5.0));
+    let corner_run = smoothstep(PARAPET_CORNER - 1.0, PARAPET_CORNER + 1.0, abs(along));
+    let bevel_coat = max(step(0.4, run.x), corner_run);
+    let kerb_coat = max(step(0.62, run.y), corner_run);
+    let kerb_zone = (1.0 - smoothstep(PARAPET_KERB - y_aa, PARAPET_KERB + y_aa, y)) * inner;
+    let bevel_zone = chamfer * inner_side;
+    let kerb = kerb_zone * kerb_coat;
+    let top_band = bevel_zone * bevel_coat;
     let age = smoothstep(0.1, 0.95, select(panel.y, stone.y, top));
     // Wear goes where things hit the paint: the kerb's foot and the corners of the
-    // panels, where tracks and hulls catch them; the edges of the top band, where
-    // boots step up onto the wall; round the bollards, where mooring lines chafe;
-    // and the joints between the stones. The open middle of a stripe keeps its coat.
-    let band_edge = 1.0 - smoothstep(0.0, 0.14, 0.3 - abs(outward - PARAPET_MIDDLE));
+    // panels, where tracks and hulls catch them; the bevel's arrises, where boots
+    // step up onto the wall; round the bollards, where mooring lines chafe; and
+    // the joints between the stones. The open middle of a stripe keeps its coat.
+    let bevel_mid = PARAPET_TOP - PARAPET_CHAMFER * 0.5;
+    let band_edge = smoothstep(PARAPET_CHAMFER * 0.25, PARAPET_CHAMFER * 0.5, abs(y - bevel_mid));
     let kerb_foot = 1.0 - smoothstep(0.0, 0.14, y);
     let corners = 1.0 - smoothstep(0.0, 0.35, select(panel_edge, stone_edge, top));
     let chafe = 1.0 - smoothstep(0.4, 1.6, abs(along - bollard_at));
-    let wear = select(kerb_foot * 0.7 + corners * 0.45, band_edge * 0.5 + corners * 0.4 + chafe * 0.5, top);
+    let wear = select(kerb_foot * 0.7 + corners * 0.45, band_edge * 0.45 + corners * 0.4 + chafe * 0.5, top);
     let threshold = 0.04 + age * 0.12 + wear * 0.42 + scuff * 0.45 + rain * 0.05;
     let painted = smoothstep(threshold - flake_aa, threshold + flake_aa, flakes) * max(kerb, top_band);
-    // Ghost of the paint left in the scrapes: stained concrete, not bare white.
-    let paint_ghost = max(kerb, top_band) * (1.0 - painted);
+    // Ghost of the paint left in the scrapes and on the runs not repainted:
+    // stained concrete, not bare white.
+    let paint_ghost = max(kerb_zone * mix(0.45, 1.0, kerb_coat), bevel_zone * mix(0.45, 1.0, bevel_coat)) * (1.0 - painted);
     // Where a pixel spans a stripe the pair blends to its mean, so the band never
     // breaks into a crawling dotted line from the air.
     let stripe_raw = select(
@@ -388,9 +414,17 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = color * (1.0 - panel_joint * 0.7) * (1.0 - stone_joint * 0.6);
     // The cap's arrises, rounded and worn smooth, catch the light along the top of
     // the wall: a bevel that draws the wall's edge, not a flat painted band.
-    let cap_edge = select(PARAPET_TOP - y, 0.5 + PARAPET_OVERHANG - abs(outward - PARAPET_MIDDLE), top);
+    let cap_edge = select(PARAPET_TOP - PARAPET_CHAMFER - y, PARAPET_HALF + PARAPET_OVERHANG - PARAPET_CHAMFER - abs(outward - PARAPET_MIDDLE), top) + chamfer;
     let arris = (1.0 - smoothstep(0.0, 0.05 + footprint, cap_edge)) * (1.0 - painted);
     color = color * (1.0 + arris * 0.22);
+    // The flat top: dirt trodden along its middle and lichen in rosettes on the
+    // sea side, so the wall's top never reads as a clean painted band.
+    let trodden = (1.0 - smoothstep(0.15, 0.55, abs(outward - PARAPET_MIDDLE + (apron_noise(vec2f(along * 0.3, 1.0)) - 0.5) * 0.4)))
+        * smoothstep(0.3, 0.7, mottle);
+    let lichen = smoothstep(0.66, 0.78, apron_noise(p * vec2f(2.2, 9.0) + wall * 5.0) * 0.7 + (grain_luma - 1.0) * 0.3)
+        * smoothstep(PARAPET_MIDDLE + 0.2, PARAPET_MIDDLE + 0.7, outward);
+    color = color * mix(1.0, mix(0.74, 0.6, trodden) * mix(0.9, 1.05, mottle), flat_top);
+    color = mix(color, color * vec3f(0.62, 0.66, 0.5), lichen * flat_top * 0.7);
     // Contact shade at the apron and under the cap's overhang.
     color = color * mix(1.0, mix(0.6, 1.0, smoothstep(0.0, 0.32, y)), inner);
     color = color * (1.0 - 0.22 * smoothstep(PARAPET_TOP - PARAPET_CAP - 0.14, PARAPET_TOP - PARAPET_CAP, y) * body * face);
@@ -641,14 +675,16 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // Against the low sun they stand darker still, as backlit silhouettes
         // rather than taking its warm glow.
         let backlit = smoothstep(0.0, 0.75, dot((f.world - frame.camera_position.xyz) / max(distance, 1e-3), frame.sun_direction.xyz));
-        let wood_shade = mix(vec3f(0.6, 0.7, 0.9), vec3f(0.2, 0.23, 0.3), backlit);
-        let wood = dot(hazed, APRON_LUMA) * wood_shade * mix(0.82, 1.1, f.uv.x);
+        // The canopy keeps its own dark conifer green under a little less air than
+        // the open hillside, so near woods read green and far ones blue, in steps.
+        let canopy = SHORE_CANOPY * mix(0.5, 1.3, f.uv.x) * mix(1.0, 0.5, backlit);
+        let wood = mix(canopy, horizon, haze * SHORE_CANOPY_HAZE);
         hazed = mix(hazed, wood, tree);
         if atmosphere_on() {
             // The scene's low sea mist: thick at the waterline and thinning up the
             // slopes, so the headlands rise out of it with clear green crests.
             let ray = (f.world - frame.camera_position.xyz) / max(distance, 1e-4);
-            let mist = frame.haze_far.w * exp(-max(f.world.y, 0.0) / MIST_HEIGHT) * (1.0 - tree * 0.5);
+            let mist = frame.haze_far.w * SHORE_MIST * exp(-max(f.world.y, 0.0) / MIST_HEIGHT) * (1.0 - tree * 0.6);
             hazed = mix(hazed, haze_tint(ray, mist), mist);
         }
         // The painted warning lights are flagged by their vertex colour, since the
@@ -947,11 +983,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // barnacles and weed at the waterline, and rust and lime streaks running
         // down from the top.
         let height = f.world.y - APRON_SEA_LEVEL;
-        let ragged = (apron_noise(vec2f(along * 0.7, 0.0)) - 0.5) * 0.35 + (grain_luma - 1.0) * 0.08;
-        let wet = 1.0 - smoothstep(APRON_TIDE * 0.6, APRON_TIDE, height + ragged);
-        let weed = 1.0 - smoothstep(0.05, 0.38, height + ragged * 0.6);
+        // Fine detail fades where a pixel spans it, so the tide line stays a soft
+        // ragged edge from across the basin instead of breaking into speckle.
+        let resolved = 1.0 - smoothstep(0.03, 0.12, footprint);
+        let ragged = (apron_noise(vec2f(along * 0.7, 0.0)) - 0.5) * 0.35 + (grain_luma - 1.0) * 0.08 * resolved;
+        let wet = 1.0 - smoothstep(APRON_TIDE * 0.45, APRON_TIDE, height + ragged);
+        let weed = 1.0 - smoothstep(0.05, 0.45, height + ragged * 0.6);
         let barnacles = smoothstep(0.62, 0.72, apron_noise(vec2f(along * 6.0, f.world.y * 6.0)))
-            * (1.0 - smoothstep(0.25, 0.6, abs(height - 0.32 - ragged * 0.4)));
+            * (1.0 - smoothstep(0.25, 0.6, abs(height - 0.32 - ragged * 0.4))) * resolved;
         // Runs and joints belong to the faces; a quay's top only weathers.
         let face = select(0.0, 1.0, abs((*s).normal.y) < 0.5);
         let runs = apron_noise(vec2f(along * 1.3, f.world.y * 0.08));
@@ -961,8 +1000,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = material.color.rgb * f.tint.rgb * grain * grime;
         color = mix(color, color * vec3f(1.1, 1.08, 1.02), lime * (1.0 - wet));
         color = mix(color, color * vec3f(0.62, 0.42, 0.28), rust * (1.0 - wet));
-        color = mix(color, color * vec3f(0.36, 0.38, 0.36), wet);
-        color = mix(color, vec3f(0.035, 0.06, 0.035) * grain_luma, weed * 0.85);
+        color = mix(color, color * vec3f(0.3, 0.33, 0.31), wet);
+        color = mix(color, vec3f(0.03, 0.055, 0.032) * mix(1.0, grain_luma, resolved), weed * 0.85);
         color = mix(color, vec3f(0.42, 0.42, 0.38) * grain_luma, barnacles * 0.7);
         color = color * (1.0 - joint * 0.55);
         roughness = mix(roughness, 0.35, wet * (1.0 - barnacles));
@@ -1166,7 +1205,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
 
         color = material.color.rgb * f.tint.rgb * grain * tone * hue * pour * grime;
         color = mix(color, color * vec3f(1.08, 1.07, 1.03) + vec3f(0.012), ghost * 0.55);
-        color = color * (1.0 - fringe * 0.22) * mix(1.0, 1.1, chipped) * (1.0 - hairline * 0.4);
+        color = mix(color, color * vec3f(0.7, 0.66, 0.6), fringe * 0.42);
+        color = color * mix(1.0, 1.1, chipped) * (1.0 - hairline * 0.4);
         color = mix(color, color * vec3f(0.92, 0.9, 0.86) * mix(0.8, 1.3, chips * 0.5), spall);
         color = mix(color, color * old_tint, old_stain * select(0.45, 0.7, rusty));
         color = mix(color, color * old_rim, old_line * select(0.6, 0.35, rusty) + old_stain * 0.15);
@@ -1176,8 +1216,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = mix(color, color * vec3f(0.6, 0.55, 0.48), print_rim * 0.6);
         color = mix(color, color * vec3f(1.14, 1.12, 1.08) + vec3f(0.02), print_drag * 0.6);
         color = mix(color, color * vec3f(0.62, 0.36, 0.2), print_casting * 0.8);
-        color = mix(color, color * vec3f(0.62, 0.58, 0.53), corner_dirt * 0.45);
-        color = mix(color, color * vec3f(0.6, 0.58, 0.55), tracks * 0.66);
+        color = mix(color, color * vec3f(0.58, 0.54, 0.49), corner_dirt * 0.6);
+        color = mix(color, color * vec3f(0.52, 0.5, 0.48), tracks * 0.8);
         color = mix(color, color * vec3f(0.66, 0.6, 0.52), banked * 0.5);
         color = mix(color, color * vec3f(0.85, 0.55, 0.34), castings * 0.75);
         color = mix(color, color * vec3f(0.38, 0.37, 0.36), clamp(scuff, 0.0, 1.0) * 0.4);
@@ -1282,8 +1322,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         base = mix(base, fresh, patched * mix(0.6, 1.0, patch_hash.z));
         let stone_weight = mix(mix(0.32, 0.65, ravel), 0.12, patched);
         color = base * (1.0 + aggregate * stone_weight + stones * stone_weight * 0.7) * grime;
-        color = color * mix(1.0, 0.8, tyre * (0.35 + traffic.x * 0.65));
-        color = color * mix(1.0, 0.84, traffic.x);
+        // Braking and pulling away polish the wheel paths hardest in the last
+        // stretch before a crossing lane.
+        let crossing_off = select(offsets.x, offsets.y, along_z);
+        let crossing_half = select(offsets.z, offsets.w, along_z);
+        let braking = 1.0 - smoothstep(0.0, 9.0, abs(crossing_off) - crossing_half);
+        color = color * mix(1.0, 0.78, tyre * (0.35 + traffic.x * 0.65));
+        color = color * mix(1.0, 0.72, traffic.x * (0.75 + 0.25 * mottle)) * mix(1.0, 0.8, braking * traffic.x);
+        color = color * mix(1.0, 0.8, traffic.y * smoothstep(0.3, 0.7, mottle + worn * 0.4));
         color = mix(color, color * vec3f(0.42, 0.41, 0.4), skid * 0.55);
         color = mix(color, color * vec3f(0.5, 0.49, 0.48), drips * 0.6);
         color = color * (1.0 - seal * 0.28) * (1.0 - crack * 0.45) * (1.0 - crazing * 0.35) * (1.0 - centre_joint * 0.45)
@@ -1323,7 +1369,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // through sooner, and the tyres crossing it rub it away in their paths.
         let lettering = select(0.0, 1.0, mode > 3.5);
         let threshold = (0.1 + smoothstep(0.55, 0.9, age) * 0.22 + traffic * 0.2) * mix(0.8, 1.0, on_apron)
-            + lettering * (0.04 + traffic * 0.06);
+            + lettering * (0.22 + traffic * 0.3);
         let flake_aa = max(fwidth(flakes), 0.01);
         let worn = smoothstep(threshold - flake_aa, threshold + flake_aa, flakes);
         if mode < 3.5 {
@@ -1343,7 +1389,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         if mode < 3.5 {
             (*s).opacity = worn;
         } else {
-            (*s).opacity = (*s).opacity * mix(0.12, 0.94, worn) * mix(1.0, 0.75, age) * (1.0 - rubber * 0.3);
+            (*s).opacity = (*s).opacity * mix(0.1, 0.8, worn) * mix(1.0, 0.7, age) * (1.0 - rubber * 0.4);
         }
     }
     (*s).color = color;
