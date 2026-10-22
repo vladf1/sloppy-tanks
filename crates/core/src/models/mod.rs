@@ -101,7 +101,7 @@ pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
 pub use tank_model::{tank_model, tank_model_variant};
-pub use tank_surfaces::armor_wear_texture;
+pub use tank_surfaces::{VEHICLE_PAINT_EFFECT, armor_wear_texture};
 pub use wreck_model::{WreckPart, wreck_model};
 
 // Cover, trees and props.

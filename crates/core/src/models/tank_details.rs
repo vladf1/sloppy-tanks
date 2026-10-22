@@ -1708,17 +1708,6 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         let right = v(0.0, 0.0, -side);
         stencil_number(kit, number, center, right, up, c.pick(0.16, 0.19, 0.2));
     }
-    // The number again, large on the turret roof behind the hatches, reading from
-    // the front quarter the Battle Setup cards and close-ups show.
-    let roof_number = v(c.pick(0.0, 0.0, 0.15), y, c.pick(-1.1, -0.85, -1.32));
-    stencil_number(
-        kit,
-        number,
-        roof_number,
-        v(1.0, 0.0, 0.0),
-        v(0.0, 0.0, -1.0),
-        c.pick(0.28, 0.32, 0.32),
-    );
 }
 
 /// The unit number a livery paints on a chassis of a team; the crew livery is

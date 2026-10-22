@@ -168,10 +168,16 @@ pub const HARBOR_APRON: EffectDefinition = effect(
     include_str!("../shaders/effects/harbor_apron.wgsl"),
 );
 
+/// Worn, dirt-splashed vehicle paint with a team rim (`tank_surfaces.rs`).
+pub const VEHICLE_PAINT: EffectDefinition = effect(
+    sloppy_core::models::VEHICLE_PAINT_EFFECT,
+    include_str!("../shaders/effects/vehicle_paint.wgsl"),
+);
+
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 16] = [
     WAVE,
     PULSE,
     PUFF,
@@ -187,6 +193,7 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
     SANDSTONE,
     SAND_DRIFT,
     HARBOR_APRON,
+    VEHICLE_PAINT,
 ];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.

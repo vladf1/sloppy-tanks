@@ -33,11 +33,12 @@ use running_gear::running_gear;
 /// reads as metal beside either team's paint rather than as a blue trim.
 pub(crate) const DARK: u32 = 0x13232c;
 pub(crate) const STEEL: u32 = 0x6f706c;
-/// The trim every vehicle wears with its team paint: a graphite, faintly tinted
-/// toward the team, on the lower hull, mantlet, gun fittings, add-on armor and
-/// frames. The team color is the body and the dark trim frames it, so the paint
-/// reads as a designed two-tone livery and each class's add-on armor stands out.
-const TRIM: [u32; 2] = [0x2f3640, 0x3c3233];
+/// The trim every vehicle wears with its team paint: a deep, greyed shade of the
+/// team color on the lower hull, mantlet, gun fittings, add-on armor and frames.
+/// The team color is the body and the deep trim frames it, so the paint reads as
+/// a designed two-tone livery, each class's add-on armor stands out as armor
+/// rather than as dark openings, and the trim still reads as its team.
+const TRIM: [u32; 2] = [0x23476e, 0x6a2a25];
 const GLASS_TINT: u32 = 0x8adeec;
 const MARKING_WHITE: u32 = 0xdce7ee;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.

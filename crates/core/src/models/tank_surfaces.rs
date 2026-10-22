@@ -25,8 +25,8 @@ use glam::{DMat4, DVec3};
 
 use super::Team;
 use super::model_primitives::Cache;
-use crate::geometry::Mesh;
 use crate::geometry::math::hex_to_linear;
+use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
 /// Service paint per team: a bright cobalt and a deep signal crimson, less
@@ -34,7 +34,7 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// while staying instantly team-coded. The blue is kept light enough not to fall
 /// to black in shade, the red deep enough not to wash out to salmon in sun. The
 /// team colors stay on markings, flags, bars and projectiles.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2f80d8, 0xb4302e];
+pub const VEHICLE_PAINT: [u32; 2] = [0x2c78cc, 0xa3322b];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -56,7 +56,7 @@ const TEXTURE_ANISOTROPY: u8 = 4;
 /// 4 m), and how often the paint finish repeats over one UV unit: its chips and
 /// brush strokes are sized for 2 m, sharp from the first-person seat.
 const PAINT_UV_PER_METRE: f64 = 0.25;
-const PAINT_REPEAT: f32 = 2.0;
+const PAINT_REPEAT: f32 = 1.25;
 /// The paint tile's mean multiplier (its base tone); the vertex paint is divided
 /// by it so the base tone shows the intended team paint.
 const PAINT_TEXTURE_MEAN: f64 = 0.8;
@@ -94,24 +94,32 @@ const TOP_FILM: f64 = 0.05;
 const GROUND_SHADE: f64 = 0.7;
 const UNDERSIDE_SHADE: f64 = 0.62;
 /// Plate-to-plate paint value variation (fraction either way).
-const PLATE_VARIATION: f64 = 0.07;
+const PLATE_VARIATION: f64 = 0.1;
 /// The hand-painted gradient down an upright plate: its paint value at the
 /// plate's foot and at its top edge. Plates shorter than `GRADIENT_MIN_HEIGHT`
 /// (chamfers, trim) keep their flat value.
-const GRADIENT_FOOT: f64 = 0.72;
+const GRADIENT_FOOT: f64 = 0.62;
 const GRADIENT_TOP: f64 = 1.1;
 const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Faces leaning less than this (normal y) from vertical take the gradient.
 const UPRIGHT: f64 = 0.6;
-/// Worn paint on chamfered plate edges: the paint rubbed lighter toward a pale
-/// primer, a hand-painted bevel highlight that outlines every plate.
-const WORN_EDGE: u32 = 0xd8ccb8;
-const EDGE_WEAR: f64 = 0.5;
-const EDGE_LIFT: f64 = 1.45;
-/// Painted armor glows this little in its team paint's color, so a tank's side
-/// keeps its team hue in shade and against a backlit sky instead of falling to
-/// black; on the dark trim it reads as the trim's faint team tint.
-const PAINT_GLOW: f32 = 0.05;
+/// The custom shading of painted armor (`shaders/effects/vehicle_paint.wgsl`):
+/// chips to bare steel by the tile's wear field and the vertex's exposure, dust
+/// and mud splashed up the lower hull, roughness that follows the finish, a faint
+/// glow in the paint's own color and a team-colored fresnel rim. Params: team rim
+/// (linear rgb, strength), bare steel (linear rgb, ambient lift), dust (linear
+/// rgb, strength), mud (linear rgb, strength). The vertex alpha carries the
+/// chamfer flag and the height in the dusty band ([`paint_alpha`]).
+pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
+/// The team rim's strength at a silhouette, and how much painted armor glows in
+/// its own color so it keeps its hue in shade instead of falling to black.
+const RIM_STRENGTH: f32 = 0.55;
+const AMBIENT_LIFT: f32 = 0.07;
+/// Bare steel where the paint chipped through (sRGB).
+const BARE_STEEL: u32 = 0xa4a7a6;
+/// How strongly dust and mud cover the lowest painted armor.
+const DUST_ON_PAINT: f32 = 0.78;
+const MUD_ON_PAINT: f32 = 0.65;
 /// Recognition panels and turret bands glow this much in their team color.
 const SIGNAL_GLOW: f32 = 0.45;
 /// A chamfer strip: a flat triangle at least this long and at most this wide,
@@ -178,10 +186,12 @@ fn finish_material(finish: Finish) -> Arc<Material> {
     static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
     match finish {
         Finish::Paint { glow } => {
-            static GLOWING: Cache<u32, Material> = Cache::new();
-            return GLOWING.get_or_insert(glow, || Material {
-                emissive: Color(glow),
-                emissive_intensity: PAINT_GLOW,
+            static PAINTS: Cache<u32, Material> = Cache::new();
+            return PAINTS.get_or_insert(glow, || Material {
+                effect: Effect::Custom {
+                    name: VEHICLE_PAINT_EFFECT,
+                    params: paint_params(glow),
+                },
                 ..paint_material()
             });
         }
@@ -200,6 +210,24 @@ fn finish_material(finish: Finish) -> Arc<Material> {
         Finish::Signal(color) => return signal_material(color),
     }
     .clone()
+}
+
+/// The vehicle paint effect's params for a team paint: its rim is the paint's hue
+/// at full brightness.
+fn paint_params(team_paint: u32) -> Vec<f32> {
+    let hue = hex_to_linear(team_paint);
+    let peak = hue.iter().copied().fold(1e-6, f64::max);
+    let [steel, dust, mud] = [BARE_STEEL, DUST, MUD].map(hex_to_linear);
+    let mut params = Vec::with_capacity(16);
+    params.extend(hue.map(|c| (c / peak) as f32));
+    params.push(RIM_STRENGTH);
+    params.extend(steel.map(|c| c as f32));
+    params.push(AMBIENT_LIFT);
+    params.extend(dust.map(|c| c as f32));
+    params.push(DUST_ON_PAINT);
+    params.extend(mud.map(|c| c as f32));
+    params.push(MUD_ON_PAINT);
+    params
 }
 
 fn paint_material() -> Material {
@@ -433,19 +461,24 @@ fn grimed(
 ) -> [f64; 3] {
     let dust = hex_to_linear(DUST);
     let mud = hex_to_linear(MUD);
-    let height = ((p.y - grime.ground) / (grime.dust_top - grime.ground)).clamp(0.0, 1.0);
+    let height = band_height(p, grime);
     let low = 1.0 - height;
-    let mut color = mix(base, dust, low.powf(1.7) * DUST_STRENGTH * dust_scale);
-    let mud_strength = if dust_scale < 1.0 {
-        MUD_STRENGTH * MUD_ON_RUNNING_GEAR
-    } else {
-        MUD_STRENGTH
-    };
-    color = mix(
-        color,
-        mud,
-        (1.0 - height / MUD_BAND).clamp(0.0, 1.0).powi(2) * mud_strength,
-    );
+    let mut color = base;
+    // Painted armor takes its dust and mud in the paint shader, splashed and
+    // broken up; everything else bakes them here.
+    if !finish.is_paint() {
+        color = mix(color, dust, low.powf(1.7) * DUST_STRENGTH * dust_scale);
+        let mud_strength = if dust_scale < 1.0 {
+            MUD_STRENGTH * MUD_ON_RUNNING_GEAR
+        } else {
+            MUD_STRENGTH
+        };
+        color = mix(
+            color,
+            mud,
+            (1.0 - height / MUD_BAND).clamp(0.0, 1.0).powi(2) * mud_strength,
+        );
+    }
     if finish.is_paint() && n.y > 0.5 {
         color = mix(color, dust, TOP_FILM * (n.y - 0.5) * 2.0);
     }
@@ -454,6 +487,21 @@ fn grimed(
         shade *= 1.0 + (UNDERSIDE_SHADE - 1.0) * -n.y;
     }
     color.map(|c| c * shade)
+}
+
+/// How high a model-space point sits in the dusty band: 0 at the ground, 1 at its
+/// top and above.
+fn band_height(p: DVec3, grime: Grime) -> f64 {
+    ((p.y - grime.ground) / (grime.dust_top - grime.ground)).clamp(0.0, 1.0)
+}
+
+/// The vertex alpha the paint shader reads: 0.2 plus 0.3 x how low the vertex sits
+/// in the dusty band, raised by 0.4 on a chamfered plate edge. A chamfer flags
+/// whole triangles, so interpolation never mixes the two; the floor keeps the
+/// tile's alpha recoverable after standard shading multiplies the two.
+fn paint_alpha(p: DVec3, grime: Grime, edge: bool) -> f32 {
+    let flag = if edge { 0.4 } else { 0.0 };
+    (0.2 + flag + 0.3 * (1.0 - band_height(p, grime))) as f32
 }
 
 /// A non-indexed copy of `mesh` moved into the model frame for weathering (the
@@ -471,6 +519,7 @@ fn weathered(
     let count = out.positions.len();
     let own_colors = std::mem::take(&mut out.colors);
     let mut colors = Vec::with_capacity(count);
+    let mut alphas = Vec::with_capacity(if finish.is_paint() { count } else { 0 });
     let flip = world.determinant() < 0.0;
     out.uvs.resize(count, [0.0; 2]);
     let faces: Vec<([DVec3; 3], DVec3)> = out
@@ -512,23 +561,19 @@ fn weathered(
             let shade = variation * gradient(point.y);
             let mut color =
                 grimed(paint, *point, face, finish, grime, dust_scale).map(|c| c * shade);
-            if edge {
-                let lifted = paint.map(|c| c * EDGE_LIFT);
-                color = mix(
-                    mix(color, lifted, EDGE_WEAR),
-                    hex_to_linear(WORN_EDGE),
-                    EDGE_WEAR * 0.5,
-                );
-            }
             if finish.is_paint() {
                 color = color.map(|c| c / PAINT_TEXTURE_MEAN);
                 let (u, v) = paint_uv(*point, face);
                 out.uvs[index] = [u as f32, v as f32];
+                alphas.push(paint_alpha(*point, grime, edge));
             }
             colors.push(color.map(|c| c as f32));
         }
     }
     out.colors = colors;
+    if finish.is_paint() {
+        out.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alphas));
+    }
     out
 }
 
