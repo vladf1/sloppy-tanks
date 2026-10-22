@@ -253,24 +253,53 @@ const BLEACHED_TINT: vec3f = vec3f(1.06, 1.0, 0.86);
 // Sky brightness rises toward the horizon by this power of (1 - up).
 const SKY_HORIZON_EXPONENT: f32 = 3.2;
 
-// The sky without sun disc or clouds: overhead to horizon gradient and the sun's
-// forward-scattered halo. Distant surfaces fade into it and glossy ones reflect it,
-// so far hills meet the horizon without a seam.
-fn sky_gradient(direction: vec3f) -> vec3f {
+// The sky's dome alone: overhead to horizon, brighter on the sun's side of the sky
+// and deeper opposite it, so every view has a lit and a shaded quarter instead of
+// one even band around the horizon. Glossy finishes reflect just this (their lobe
+// blurs the halo away), which also keeps the largest surface variants, which inline
+// it beside the haze's full sky, small enough for WebGL's Metal translation.
+fn sky_dome(direction: vec3f) -> vec3f {
     let up = clamp(direction.y, 0.0, 1.0);
     let toward_horizon = pow(1.0 - up, SKY_HORIZON_EXPONENT);
     let sky = mix(frame.sky_zenith.rgb, frame.sky_horizon.rgb, toward_horizon);
+    let sunward = dot(normalize(direction.xz + vec2f(1e-5)), normalize(frame.sun_direction.xz + vec2f(1e-5))) * 0.5 + 0.5;
+    return sky * (1.0 + SKY_SUNWARD_GAIN * (sunward * sunward - 0.4) * (0.35 + 0.65 * toward_horizon));
+}
+
+// The sky without sun disc or clouds: the dome and the sun's forward-scattered halo,
+// with a broad warm glow along the sunward horizon. Distant surfaces fade into it, so
+// far hills meet the horizon without a seam.
+fn sky_gradient(direction: vec3f) -> vec3f {
+    let sky = sky_dome(direction);
+    let toward_horizon = pow(1.0 - clamp(direction.y, 0.0, 1.0), SKY_HORIZON_EXPONENT);
     let sun = max(dot(direction, frame.sun_direction.xyz), 0.0);
-    let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5;
+    let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5
+        + SKY_SUNWARD_WARMTH * pow(sun, 1.5) * toward_horizon;
     // Around the sun the blue gives way to the sun's own hue before its light adds
     // on top: warm light added over blue alone mixes to pink and lavender.
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
     let warmed = mix(sky, sun_hue * dot(sky, vec3f(0.2126, 0.7152, 0.0722)), min(halo * HALO_WARMING, 0.9));
-    return warmed + frame.sky_sun.rgb * halo;
+    return no_mauve(warmed + frame.sky_sun.rgb * halo);
 }
+
+// A blue zenith blended into a peach or sand horizon passes through mauve, which read
+// as lavender patches between clouds and magenta in-scatter over far hills. Green
+// keeps at least a share of the way from the lesser of red and blue to the greater,
+// as it does in a clear blue sky, so the blend turns through a soft grey instead.
+fn no_mauve(color: vec3f) -> vec3f {
+    let low = min(color.r, color.b);
+    let least_green = low + (max(color.r, color.b) - low) * NO_MAUVE_GREEN;
+    return vec3f(color.r, max(color.g, least_green), color.b);
+}
+
+const NO_MAUVE_GREEN: f32 = 0.3;
 
 // How quickly the sky's blue turns to the sun's hue under its halo.
 const HALO_WARMING: f32 = 2.5;
+// The sun-relative dome (`sky_gradient`): how much brighter the sky's sunward side
+// is than the side away from it, and the broad warm glow along the sunward horizon.
+const SKY_SUNWARD_GAIN: f32 = 0.35;
+const SKY_SUNWARD_WARMTH: f32 = 0.04;
 
 // The near range of the horizon's distant ranges stands this much lower than the far
 // one, and each takes this share of the ridge color over the sky behind it.
@@ -365,13 +394,19 @@ fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
 // replaces the cool tint's rather than adding warm light over blue, which turned
 // sunward hills lavender and pink.
 fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
+    return haze_tint_over(sky_gradient(ray), ray, amount);
+}
+
+// `haze_tint` over `sky`, the sky's own gradient along `ray`, which a caller that
+// also needs it computes once.
+fn haze_tint_over(sky: vec3f, ray: vec3f, amount: f32) -> vec3f {
     let sun = frame.sun_direction.xyz;
     let toward_sun = max(dot(ray, sun), 0.0);
     let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), normalize(sun.xz + vec2f(1e-5))), 0.0, 1.0);
     // The sky's own gradient, not the ranges drawn into it: those stand behind
     // every surface, and their azimuth-banded faces and crest line painted into the
     // haze over a nearer mountain drew vertical streaks and a horizontal smear.
-    let thick = mix(sky_gradient(ray), frame.aerial.rgb, HAZE_AWAY_COOL * away);
+    let thick = mix(sky, frame.aerial.rgb, HAZE_AWAY_COOL * away);
     // Even the thickest haze keeps a share of the aerial tint, so a far range or
     // headland stays a solid silhouette a step off the sky behind it, never a
     // translucent card.
@@ -379,13 +414,14 @@ fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
     let glow = frame.haze_far.z * toward_sun * toward_sun * amount;
     let level = dot(base, vec3f(0.2126, 0.7152, 0.0722));
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
-    return mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0));
+    // The cool aerial tint and the sun's warm hue meet through grey, never lavender.
+    return no_mauve(mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0)));
 }
 
 // How much brighter than the cool haze the sunward glow is, and the most of the sky
 // behind thick haze takes on.
 const HAZE_SUN_BRIGHTENING: f32 = 0.2;
-const HAZE_SKY_MOST: f32 = 0.8;
+const HAZE_SKY_MOST: f32 = 0.55;
 
 // The share of the cool aerial tint thick haze keeps looking straight away from the sun.
 const HAZE_AWAY_COOL: f32 = 0.35;
@@ -398,10 +434,11 @@ const STEEP_RAY_CLEAR: f32 = 0.5;
 // hint of air over the sea and far fields, never a veil.
 const STEEP_RAY_RESIDUAL: f32 = 0.3;
 
-// The sky as drawn behind a surface along `ray`, distant ranges included (no clouds
-// or sun disc), so surfaces that melt into it leave no lighter patch across them.
-fn sky_behind(ray: vec3f) -> vec3f {
-    return horizon_ridges(sky_gradient(ray), ray, FADED_RIDGE_EDGE);
+// The sky as drawn behind a surface along `ray` (`sky`, its gradient there), distant
+// ranges included (no clouds or sun disc), so surfaces that melt into it leave no
+// lighter patch across them.
+fn sky_behind(sky: vec3f, ray: vec3f) -> vec3f {
+    return horizon_ridges(sky, ray, FADED_RIDGE_EDGE);
 }
 
 // The far haze layer thins up a slope at this share of the near layer's falloff, to
@@ -467,7 +504,11 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         if amount <= 0.0 && distance < frame.haze_shape.w * FAR_FADE_START {
             return color;
         }
-        var hazed = mix(color, haze_tint(ray, amount), amount);
+        // The sky's gradient along the ray, once for both the haze and the far fade:
+        // the surface shaders inline it, and a second copy grew the lit variants
+        // past what WebGL's Metal translation compiles.
+        let sky = sky_gradient(ray);
+        var hazed = mix(color, haze_tint_over(sky, ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {
             // Late and short, so the far mesas and ranges keep their own form and
@@ -477,7 +518,7 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
             let depth = -(frame.view * vec4f(world, 1.0)).z;
             let fade = smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, depth);
             if fade > 0.0 {
-                hazed = mix(hazed, sky_behind(ray), fade);
+                hazed = mix(hazed, sky_behind(sky, ray), fade);
             }
         }
         return hazed;
@@ -490,11 +531,13 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.022;
+const CLOUD_SHADOW_SCALE: f32 = 0.018;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
-const CLOUD_SHADOW_LOW: f32 = 0.95;
-const CLOUD_SHADOW_HIGH: f32 = 1.35;
+const CLOUD_SHADOW_LOW: f32 = 1.0;
+const CLOUD_SHADOW_HIGH: f32 = 1.3;
+// Distances from the arena centre in metres over which cloud shadows fade out.
+const CLOUD_SHADOW_FAR: vec2f = vec2f(85.0, 125.0);
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.
@@ -511,5 +554,8 @@ fn cloud_shadow(world: vec3f) -> f32 {
     // Broad patches: about the sky's own share of the ground lies under a cloud, so
     // the field reads in large light and shade masses rather than one flat sheet.
     let cover = smoothstep(CLOUD_SHADOW_LOW - coverage, CLOUD_SHADOW_HIGH - coverage, n);
-    return 1.0 - strength * cover;
+    // On the far backdrop the patches shrink to blots that smudge mountain faces and
+    // snowfields like a painted card: they fade out beyond the arena's surroundings.
+    let far = smoothstep(CLOUD_SHADOW_FAR.x, CLOUD_SHADOW_FAR.y, length(world.xz));
+    return 1.0 - strength * cover * (1.0 - far);
 }
