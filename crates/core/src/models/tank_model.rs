@@ -38,7 +38,7 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// The team color is the body and the deep trim frames it, so the paint reads as
 /// a designed two-tone livery, each class's add-on armor stands out as armor
 /// rather than as dark openings, and the trim still reads as its team.
-const TRIM: [u32; 2] = [0x15335f, 0x4c1512];
+const TRIM: [u32; 2] = [0x183a6a, 0x5a1915];
 const GLASS_TINT: u32 = 0x8adeec;
 const MARKING_WHITE: u32 = 0xdce7ee;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.

@@ -42,12 +42,18 @@ const VEHICLE_BEVEL_PIXELS: f32 = 2.0;
 const VEHICLE_BEVEL_MIN: f32 = 0.016;
 const VEHICLE_BEVEL_MAX: f32 = 0.09;
 const VEHICLE_BEVEL_ROLL: f32 = 0.3;
+// Panel shading: paint along a plate's borders is this much darker, fading out over
+// this fraction of the plate's narrowest width (within these metres).
+const VEHICLE_PANEL_BORDER: f32 = 0.84;
+const VEHICLE_PANEL_REACH: f32 = 0.3;
+const VEHICLE_PANEL_MIN: f32 = 0.03;
+const VEHICLE_PANEL_MAX: f32 = 0.35;
 // How far from a convex edge chips reach, and from a recess its grime (metres).
 const VEHICLE_CHIP_REACH: f32 = 0.05;
 const VEHICLE_RECESS_REACH: f32 = 0.09;
 // Chips fade out as a pixel grows past their size, so distant hulls never sparkle.
-const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.012;
-const VEHICLE_CHIP_PIXEL_TO: f32 = 0.032;
+const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.006;
+const VEHICLE_CHIP_PIXEL_TO: f32 = 0.016;
 // Paint rubbed lighter on a bevel and on chamfer strips.
 const VEHICLE_BEVEL_LIFT: f32 = 1.6;
 const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.05, 0.042, 0.036);
@@ -60,12 +66,13 @@ const VEHICLE_MUD_STRENGTH: f32 = 0.7;
 // Grime in recesses: a dark brown multiplier.
 const VEHICLE_GRIME: vec3f = vec3f(0.34, 0.29, 0.24);
 const VEHICLE_GRIME_STRENGTH: f32 = 0.7;
-// Finish: satin paint, rough dirt, smooth bare steel.
+// Finish: satin paint, rough dirt, and bare steel scuffed matte, so a chip reads as
+// grey metal rather than as a mirror of the sky.
 const VEHICLE_PAINT_ROUGHNESS: f32 = 0.56;
 const VEHICLE_SHEEN_BREAKUP: f32 = 0.06;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
-const VEHICLE_STEEL_ROUGHNESS: f32 = 0.42;
-const VEHICLE_STEEL_METALNESS: f32 = 0.3;
+const VEHICLE_STEEL_ROUGHNESS: f32 = 0.62;
+const VEHICLE_STEEL_METALNESS: f32 = 0.2;
 // The team rim's brightness at a full-strength silhouette.
 const VEHICLE_RIM_GLOW: f32 = 0.4;
 
@@ -78,9 +85,15 @@ struct VehicleEdges {
     recess: f32,
     // Outward directions of the bevels the pixel lies in, weighted by the band.
     roll: vec3f,
+    // Metres to the nearest marked border, and the plate's narrowest width.
+    nearest: f32,
+    narrowest: f32,
 }
 
 fn vehicle_border(kind: f32, distance: f32, outward: vec3f, bevel_width: f32, e: ptr<function, VehicleEdges>) {
+    if kind > 0.5 {
+        (*e).nearest = min((*e).nearest, distance);
+    }
     if kind > 1.5 {
         (*e).recess = max((*e).recess, 1.0 - smoothstep(0.0, VEHICLE_RECESS_REACH, distance));
     } else if kind > 0.5 {
@@ -99,6 +112,7 @@ fn vehicle_channel(c: f32, gradient: vec3f, bevel_width: f32, e: ptr<function, V
     let state = floor(c);
     let t = clamp((c - state - VEHICLE_EDGE_MARGIN) / VEHICLE_EDGE_SPAN, 0.0, 1.0);
     let width = VEHICLE_EDGE_SPAN / g;
+    (*e).narrowest = min((*e).narrowest, width);
     let across = gradient / g;
     let far = floor(state / 3.0);
     let near = state - far * 3.0;
@@ -152,13 +166,19 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let pixel = max(length(dpx), length(dpy));
     let bevel_width = clamp(pixel * VEHICLE_BEVEL_PIXELS, VEHICLE_BEVEL_MIN, VEHICLE_BEVEL_MAX);
     var edges: VehicleEdges;
+    edges.nearest = 1e3;
+    edges.narrowest = 1e3;
     vehicle_channel(f.vertex_color.r, gradient_u, bevel_width, &edges);
     vehicle_channel(f.vertex_color.g, gradient_v, bevel_width, &edges);
     let bevel = edges.bevel * (1.0 - chamfer);
     let normal = normalize((*s).normal + edges.roll * (1.0 - chamfer) * VEHICLE_BEVEL_ROLL);
 
-    // Clean paint: only a whisper of the grime field's drift on open panels.
-    var color = base * (1.0 + (grime - 0.5) * 0.08);
+    // Clean paint: only a whisper of the grime field's drift on open panels, each
+    // panel a shade lighter in its middle than along its borders, so plates read
+    // as separate pieces of armor under flat light.
+    let panel_reach = clamp(edges.narrowest * VEHICLE_PANEL_REACH, VEHICLE_PANEL_MIN, VEHICLE_PANEL_MAX);
+    let panel = mix(VEHICLE_PANEL_BORDER, 1.0, smoothstep(0.0, panel_reach, edges.nearest));
+    var color = base * (1.0 + (grime - 0.5) * 0.08) * panel;
     // Rubbed edges: a lighter band on each bevel and over chamfer strips.
     let lifted = color * VEHICLE_BEVEL_LIFT + VEHICLE_BEVEL_PALE;
     color = mix(color, lifted, max(bevel, chamfer * 0.8) * VEHICLE_BEVEL_TINT);
@@ -196,7 +216,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // The paint's own fill, and its team rim at grazing angles, strongest on the
     // side turned from the sun and on bevels that roll toward the view's edge.
     let paint = 1.0 - chip;
-    (*s).emissive += color * vehicle_fill(normal) * material.params[1].w * paint;
+    (*s).emissive += color * vehicle_fill(normal) * material.params[1].w;
     let grazing = 1.0 - clamp(dot(normal, f.view_direction), 0.0, 1.0);
     let away = 1.0 - clamp(dot(normal, frame.sun_direction.xyz), 0.0, 1.0);
     let rim = grazing * grazing * (0.45 + 0.55 * away) * material.params[0].w * (1.0 - dirt) * paint;

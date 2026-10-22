@@ -43,7 +43,9 @@ for (let y = 0; y < SIZE; y++)
     const i = y * SIZE + x;
     // Splashes: two scales of fractal noise, the coarse one stretched along u so the
     // dust line climbs and falls in long waves.
-    grime[i] = 0.5 + 0.75 * (fbm(splash, u * 6, v * 9, 6, 4) - 0.5) +
+    grime[i] =
+      0.5 +
+      0.75 * (fbm(splash, u * 6, v * 9, 6, 4) - 0.5) +
       0.35 * (fbm(splash, u * 24 + 5, v * 24, 24, 3) - 0.5);
     // Broad scuffing along exposed edges: a fractal field, ragged at its fine end so a
     // worn run has broken ends rather than a soft fade.
@@ -79,7 +81,7 @@ for (let placed = 0, tries = 0; placed < CHIPS && tries < 100000; tries++) {
   const mask = fbm(cluster, (x0 / SIZE) * 6, (y0 / SIZE) * 6, 6, 3);
   if (random.next() > 0.2 + 0.8 * smooth(0.42, 0.62, mask)) continue;
   placed++;
-  const radius = random.next() < 0.12 ? 5 + random.next() * 6 : 1.5 + random.next() * 3;
+  const radius = random.next() < 0.12 ? 4 + random.next() * 3 : 1.5 + random.next() * 3;
   const floor = random.next() * 0.12;
   const lobes = [random.next() * 6.28, random.next() * 6.28, random.next() * 6.28];
   const reach = Math.ceil(radius * 1.6 + 2);

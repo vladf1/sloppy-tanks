@@ -112,11 +112,11 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.85;
-const PAINT_FILL: f32 = 0.16;
+const PAINT_FILL: f32 = 0.22;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 0.6;
+const GEAR_FILL: f32 = 0.9;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0xa9a9a3;
+const BARE_STEEL: u32 = 0xb0aca2;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;

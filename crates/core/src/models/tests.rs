@@ -216,7 +216,7 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0xf1edbc7f),
+            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0xdef2aefd),
             (3180, 0x459220d1, 1129.7989, 0xbb2cfc01, 0x14164759),
             (684, 0x68ef1928, 477.9712, 0xd89b25ac, 0x7b4617f0),
             (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x18233382),
@@ -224,13 +224,13 @@ fn wreck_batches_match_golden() {
             (10416, 0xc1d435a8, -1430.3675, 0x20db8229, 0x8db44051),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x5d100ea3),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x48ab4485),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x643434a7),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (6732, 0x3622f7ca, 4714.4587, 0x492764aa, 0xe461bb82),
+            (6732, 0x3622f7ca, 4714.4587, 0x492764aa, 0x9c72ed32),
             (5052, 0x0ae75746, 302.0712, 0x40f48be4, 0xbe78b71f),
             (2136, 0x8ebb0f70, 3214.4811, 0x68c98d4f, 0x975788c3),
             (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x7310fa1f),
