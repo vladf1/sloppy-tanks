@@ -57,9 +57,12 @@ impl InstanceSource {
     }
 }
 
-/// The frame declarations with this build's instance records.
+/// The frame declarations with this build's instance records, and `LITE`: true on
+/// the WebGL2 build (the texture source), whose weaker devices get cheaper shadow
+/// filters, sky noise and occlusion.
 fn frame_wgsl(source: InstanceSource) -> String {
-    format!("{COMMON_WGSL}{}", source.wgsl())
+    let lite = source == InstanceSource::Texture;
+    format!("const LITE: bool = {lite};\n{COMMON_WGSL}{}", source.wgsl())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -382,12 +385,15 @@ pub fn sky_source() -> String {
 /// The ambient occlusion shader reading the main view's `multisampled` depth
 /// (WebGPU) or the single-sample copy WebGL2 resolves.
 pub fn occlusion_source(multisampled: bool) -> String {
+    // Only the WebGL build reads a single-sample copy; it probes six points, not eight.
     let depth = if multisampled {
         "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n"
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
+         const SAMPLES: i32 = 8;\n"
     } else {
         "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n"
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
+         const SAMPLES: i32 = 6;\n"
     };
     format!("{depth}{OCCLUSION_WGSL}")
 }
