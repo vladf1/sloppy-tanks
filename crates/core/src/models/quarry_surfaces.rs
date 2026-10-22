@@ -770,7 +770,7 @@ fn sand_skirt(toe: &[DVec3], outward: &[DVec3], rng: &mut Random) -> Mesh {
     let corner =
         |i: usize| DVec3::new(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
     if (corner(1) - corner(0)).cross(corner(2) - corner(0)).y < 0.0 {
-        for triangle in positions.chunks_exact_mut(9) {
+        for triangle in positions.as_chunks_mut::<9>().0 {
             let second: [f64; 3] = [triangle[3], triangle[4], triangle[5]];
             triangle.copy_within(6..9, 3);
             triangle[6..9].copy_from_slice(&second);

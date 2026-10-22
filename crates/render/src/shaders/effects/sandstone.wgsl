@@ -134,7 +134,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     var layered = select(bench_color, bed_tint, rocky);
     // Sun-bleached caprock: flat tops weather to one pale cream whatever bed they
     // expose, so no top reads as a stamped patch of the face's colors.
-    let bleached = quarry_smoothstep(0.7, 0.95, n.y) * select(0.0, 0.7, rocky && !backdrop);
+    let bleached = quarry_smoothstep(0.7, 0.95, n.y) * select(0.0, 0.55, rocky && !backdrop);
     layered = mix(layered, srgb_hex(0xdbc4a0u), bleached);
     layered *= 0.97 + lamina * 0.05;
     // Iron oxide: thin wavy liesegang bands in patches, muted, never a painted
@@ -173,7 +173,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // off paler, with sand caught in the joints and hollows.
     let top = quarry_smoothstep(0.6, 0.9, n.y);
     let mottle = strata_noise(p.xz * 0.55 + rock_layer) * 0.6 + strata_noise(p.xz * 1.7) * 0.4;
-    rock *= mix(1.0, 0.86 + mottle * 0.22, top);
+    rock *= mix(1.0, 0.8 + mottle * 0.3, top);
+    // Weathering pans: shallow solution hollows in the caprock, rimmed in shade
+    // and floored with wind-blown sand.
+    let pans = quarry_pebbles(p.xz + rock_layer * 3.7, 2.1, select(0.0, 0.16, rocky && !backdrop) * top, footprint, 31.0);
+    rock *= 1.0 - pans.contact * 0.1;
     var joints = vec2f(0.0);
     // Joints open in patches of the caprock, not a uniform net over every top.
     let jointed = quarry_smoothstep(0.38, 0.62, strata_noise(p.xz * 0.22 + rock_layer * 1.3));
@@ -189,7 +193,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // the backdrop's broad treads hold sheets of it.
     let up = quarry_smoothstep(0.5, 0.9, n.y);
     let patchy = sin(p.x * 0.37 + sin(p.z * 0.29) * 1.7) * sin(p.z * 0.41 - p.x * 0.13) * 0.5 + 0.5;
-    let pockets = quarry_smoothstep(0.62, 0.8, mottle * 0.7 + sand_grit * 0.5) + joints.y * 0.6 + joints.x * 0.8;
+    let pockets = quarry_smoothstep(0.62, 0.8, mottle * 0.7 + sand_grit * 0.5) + joints.y * 0.6 + joints.x * 0.8 + pans.cover * 1.2;
     let sheets = quarry_smoothstep(0.35, 0.65, patchy * 0.6 + sand_grit * 0.7 + up * 0.25);
     let sand_cover = up * select(sheets, clamp(pockets, 0.0, 1.0) * 0.8, rocky && !backdrop);
     let sand = ground * (sand_grit * 0.35 + 0.9) * vec3f(1.06, 1.03, 0.98);
@@ -197,7 +201,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let chips = quarry_pebbles(p.xz, 0.55, select(0.0, 0.14, rocky) * up, footprint, 17.0);
     rock *= 1.0 - chips.contact * 0.2;
     rock = mix(rock, mix(rock, bed_tint, 0.6) * chips.tint, chips.cover);
-    bumped = normalize(bumped + vec3f(chips.lean.x, 0.0, chips.lean.y));
+    bumped = normalize(bumped + vec3f(chips.lean.x, 0.0, chips.lean.y) - vec3f(pans.lean.x, 0.0, pans.lean.y) * 0.25);
     // The distant mesas: dark, rust-stained caprock cliffs over pale talus, then
     // cooler and flatter with distance as the air between thickens.
     let cliff = quarry_smoothstep(0.75, 0.35, n.y) * select(0.0, 1.0, mesa);
