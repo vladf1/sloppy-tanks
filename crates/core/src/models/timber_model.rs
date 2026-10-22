@@ -380,12 +380,11 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
                 }
             }
         }
-        let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
+        let mut mesh = Mesh::from_f64(&positions, &[], &uvs, None);
         mesh.compute_vertex_normals();
-        group.children.push(Node::mesh(
-            Arc::new(mesh),
-            material(SPLINTER_COLOR, 0.0, 0.8),
-        ));
+        group
+            .children
+            .push(Node::mesh(Arc::new(mesh), wood(SPLINTER_COLOR)));
     }
     batch(&mut group);
     group
@@ -595,6 +594,44 @@ pub fn add_timber_parts(group: &mut Node, parts: &[TimberPart]) {
             child.position = DVec3::new(part.x, part.y, part.z);
             child.rotation = rotation;
             group.children.push(child);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::timber_layout::{TimberWall, timber_parts};
+
+    fn drawables(node: &Node) -> usize {
+        let mut count = 0;
+        node.traverse(glam::DMat4::IDENTITY, &mut |child, _| {
+            count += usize::from(child.drawable.is_some());
+        });
+        count
+    }
+
+    #[test]
+    fn snapped_members_draw_their_splinters_with_their_wood() {
+        let wall = TimberWall {
+            x: 0.0,
+            z: 0.0,
+            w: 6.0,
+            h: 2.2,
+            d: 0.5,
+            color: 0x8a5a36,
+            hits: &[],
+            join: None,
+        };
+        let parts = timber_parts(&wall, 0);
+        assert!(!parts.is_empty());
+        for part in &parts {
+            assert_eq!(
+                drawables(&timber_debris_model(part)),
+                drawables(&timber_part_model(part)),
+                "a torn {:?} costs no extra draw",
+                part.kind
+            );
         }
     }
 }

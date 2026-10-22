@@ -3,6 +3,8 @@
 //! glow through the chip effect's emissive), plus the pooled blasts and glowing
 //! sparks it forwards events to.
 
+use std::f64::consts::TAU;
+
 use glam::Vec3;
 use sloppy_core::geometry::{Mesh, icosahedron_geometry};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
@@ -24,7 +26,7 @@ const CHIP_STRETCH: Vec3 = Vec3::new(1.0, 0.62, 0.84);
 /// Concrete and stone spall knocked off a wall by a shell: count, life (s),
 /// size (m) and the grey it is (mixed with the ground's dust at the hit).
 const SPALL: usize = 12;
-const SPALL_LIFE: [f64; 2] = [1.1, 0.9];
+const SPALL_LIFE: [f64; 2] = [3.0, 2.0];
 const SPALL_SIZE: [f64; 2] = [0.06, 0.12];
 const SPALL_COLORS: [u32; 3] = [0x9d968b, 0xb8b2a6, 0x7c776f];
 
@@ -123,7 +125,15 @@ const CLODS: usize = 14;
 /// slide; it lies still for its last moments before it shrinks away.
 const CLOD_BOUNCE: f64 = 0.32;
 const CLOD_SLIDE: f64 = 0.55;
-const CLOD_SHRINK: f64 = 0.25;
+const CLOD_SHRINK: f64 = 0.2;
+/// Seconds a clod lies where it landed ([minimum, random span]).
+const CLOD_LIFE: [f64; 2] = [5.0, 3.0];
+/// Torn hull plate a kill scatters around its wreck: count, life (s), size (m),
+/// and the scorched steel it is; it lies in the scorch long after the smoke.
+const SCRAP: usize = 8;
+const SCRAP_LIFE: [f64; 2] = [8.0, 4.0];
+const SCRAP_SIZE: [f64; 2] = [0.07, 0.09];
+const SCRAP_COLORS: [u32; 3] = [0x55534d, 0x6a5444, 0x45433f];
 const CLOD_GLOW: [f32; 3] = [3.4, 1.05, 0.16];
 const HURT: Style = Style {
     count: 12,
@@ -412,7 +422,7 @@ impl ParticleEffects {
             if self.particles.len() >= MAX_PARTICLES {
                 return;
             }
-            let life = 1.8 + random.next_f64() * 1.2;
+            let life = CLOD_LIFE[0] + random.next_f64() * CLOD_LIFE[1];
             let vx = (random.next_f64() - 0.5) * speed;
             let vy = 4.0 + random.next_f64() * 6.0;
             let vz = (random.next_f64() - 0.5) * speed;
@@ -430,6 +440,38 @@ impl ParticleEffects {
                 size,
                 color: hex_to_linear(soil.clods[i % soil.clods.len()]),
                 hot: if i % 3 == 0 { 0.7 } else { 0.25 },
+                glow: 0.0,
+                rests: true,
+            });
+        }
+        if event.kind == SimEventType::Death {
+            self.scrap(event, random);
+        }
+    }
+
+    /// Plates and bolts torn off a killed hull: thrown low, glowing at first,
+    /// they land and lie scattered round the wreck.
+    fn scrap(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        for i in 0..SCRAP {
+            if self.particles.len() >= MAX_PARTICLES {
+                return;
+            }
+            let life = SCRAP_LIFE[0] + random.next_f64() * SCRAP_LIFE[1];
+            let angle = (i as f64 + random.next_f64() * 0.8) * TAU / SCRAP as f64;
+            let speed = 2.5 + random.next_f64() * 3.5;
+            self.particles.push(Particle {
+                splinter: false,
+                x: event.x,
+                y: 1.0,
+                z: event.z,
+                vx: angle.cos() * speed,
+                vy: 2.5 + random.next_f64() * 3.0,
+                vz: angle.sin() * speed,
+                life,
+                max: life,
+                size: SCRAP_SIZE[0] + random.next_f64() * SCRAP_SIZE[1],
+                color: hex_to_linear(SCRAP_COLORS[i % SCRAP_COLORS.len()]),
+                hot: 0.5,
                 glow: 0.0,
                 rests: true,
             });
@@ -615,12 +657,12 @@ mod tests {
             },
             &mut random,
         );
-        assert_eq!(particles.particles.len(), CLODS);
+        assert_eq!(particles.particles.len(), CLODS + SCRAP);
         assert!(
             particles
                 .particles
                 .iter()
-                .all(|p| p.vy >= 4.0 && p.life >= 0.9)
+                .all(|p| p.vy >= 2.5 && p.life >= 0.9)
         );
         assert_eq!(particles.sparks.len(), 40 + 22, "sparks and embers");
     }
@@ -723,7 +765,9 @@ mod tests {
         assert!(particles.records.records().iter().all(|r| {
             r.world_rows.as_flattened().iter().all(|v| v.is_finite()) && r.translation().y >= 0.1
         }));
-        for _ in 0..120 {
+        // Spall lies longest.
+        let longest = SPALL_LIFE[0] + SPALL_LIFE[1];
+        for _ in 0..(longest * 60.0) as usize + 1 {
             particles.update(1.0 / 60.0, 1.0);
         }
         assert!(particles.particles.is_empty());
