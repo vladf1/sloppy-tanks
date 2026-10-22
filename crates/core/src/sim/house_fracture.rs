@@ -155,6 +155,23 @@ impl ShardRegion {
         Self { cells }
     }
 
+    /// The region cut down to `other` (a union of convex cells too): every pair of
+    /// cells, one from each, as one cell bounded by the sides of both.
+    pub fn intersect(&self, other: &[Vec<Side>]) -> Self {
+        let cells = self
+            .cells
+            .iter()
+            .flat_map(|a| {
+                other.iter().map(move |b| {
+                    let mut cell = a.clone();
+                    cell.extend(b.iter().copied());
+                    cell
+                })
+            })
+            .collect();
+        Self { cells }
+    }
+
     /// Whether nothing cuts the part: the shard is all of it.
     pub fn is_whole(&self) -> bool {
         self.cells
@@ -274,6 +291,20 @@ pub fn clip_vertices<V: Copy>(
     mix: impl Fn(&V, &V, f64) -> V,
 ) -> Vec<V> {
     let mut out = Vec::with_capacity(polygon.len() + 2);
+    clip_vertices_into(polygon, side, project, mix, &mut out);
+    out
+}
+
+/// [`clip_vertices`] into `out`, replacing what it held, for loops that clip many
+/// polygons without allocating each one.
+pub fn clip_vertices_into<V: Copy>(
+    polygon: &[V],
+    side: &Side,
+    project: impl Fn(&V) -> DVec2,
+    mix: impl Fn(&V, &V, f64) -> V,
+    out: &mut Vec<V>,
+) {
+    out.clear();
     for i in 0..polygon.len() {
         let (a, b) = (&polygon[i], &polygon[(i + 1) % polygon.len()]);
         let (da, db) = (side.distance(project(a)), side.distance(project(b)));
@@ -286,7 +317,6 @@ pub fn clip_vertices<V: Copy>(
             out.push(mix(a, b, da / (da - db)));
         }
     }
-    out
 }
 
 #[cfg(test)]

@@ -91,26 +91,35 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         (*s).opacity *= fall * fall * (1.0 - smoothstep(0.85, 1.0, length(point)));
         return;
     } else if kind > 3.5 {
-        // A licking flame: a broad yellow root, licks that sway and split as they
-        // rise, burning out through orange to deep red at their ragged tips.
+        // A licking flame: a soft body of fire whose edge is eaten by noise
+        // scrolling upward at one rate, so its top tears into separate licks
+        // that dissolve as they climb; white-yellow where it is thickest and
+        // lowest, burning out through orange to deep red at its fringes. Its
+        // outline comes from the noise, never from a tapered card.
         let seed = (kind - 4.0) * 2.0 * 97.0;
         let time = frame.camera_position.w;
         let x = f.uv.x * 2.0 - 1.0;
-        let sway = sin(along * 5.0 - time * 7.0 + seed) * 0.22 + sin(along * 11.0 - time * 13.0 + seed * 1.7) * 0.08;
-        let lx = x + sway * along;
-        // Soft-edged, it dissolves upward instead of ending in cut-out teeth.
-        let half_width = (1.0 - pow(along, 1.1)) * (0.45 + 0.55 * smoothstep(0.0, 0.3, along)) * 0.7 + 0.03;
-        let licks = streak_noise(vec2f(lx * 2.4 + seed, along * 2.6 - time * 5.0 + seed * 0.3));
-        let fine = streak_noise(vec2f(lx * 5.0 - seed, along * 6.0 - time * 9.0));
-        let ragged = half_width - abs(lx) + (licks - 0.5) * 0.36 * along + (fine - 0.5) * 0.08;
-        let body = smoothstep(-0.04, 0.32, ragged) * smoothstep(0.0, 0.1, along);
-        let dissolve = 1.0 - smoothstep(0.35, 1.0, along + (licks - 0.5) * 0.35);
-        let inner = smoothstep(0.05, 0.55, ragged / max(half_width, 0.05));
-        let hot = 1.0 - smoothstep(0.0, 0.7, along + (licks - 0.5) * 0.4);
-        let root = vec3f(1.25, 0.46, 0.07);
-        let lick = vec3f(0.8, 0.13, 0.02);
-        (*s).color = mix(lick, root, hot) * (0.5 + 0.7 * inner) * (*s).color;
-        (*s).opacity *= body * dissolve * (0.3 + 0.7 * hot) * (0.45 + 0.55 * inner);
+        let rise = vec2f(0.0, time * 1.9);
+        let broad = streak_noise(vec2f(x * 1.3 + seed, along * 1.6) - rise * 0.8);
+        let mid = streak_noise(vec2f(x * 2.9 - seed * 0.7, along * 3.4) - rise * 1.3);
+        let fine = streak_noise(vec2f(x * 6.1 + seed * 1.3, along * 6.8) - rise * 2.1);
+        let n = broad * 0.55 + mid * 0.3 + fine * 0.15;
+        // The licks sway with the broad noise, more the higher they reach.
+        let lx = x + (broad - 0.5) * 0.7 * along;
+        // A rounded body, widest a little above its root and narrowing slowly.
+        let half_width = 0.82 * (1.0 - along * along * 0.8) * mix(0.75, 1.0, smoothstep(0.0, 0.3, along));
+        let field = 1.0 - abs(lx) / max(half_width, 0.05) - (n - 0.42) * (0.5 + 1.5 * along) - along * 0.45;
+        // The tips thin out into the air rather than ending in points.
+        let dissolve = 1.0 - smoothstep(0.4, 0.95, along + (n - 0.5) * 0.45);
+        let body = smoothstep(0.0, 0.5, field) * smoothstep(0.0, 0.14, along)
+            * (1.0 - smoothstep(0.84, 1.0, abs(x))) * dissolve;
+        let temperature = clamp(field * 1.3 * (1.05 - 0.75 * along) + (n - 0.5) * 0.3, 0.0, 1.0);
+        let red = vec3f(0.55, 0.07, 0.012);
+        let orange = vec3f(1.15, 0.36, 0.05);
+        let white = vec3f(1.7, 1.1, 0.42);
+        let fire = mix(mix(red, orange, smoothstep(0.05, 0.45, temperature)), white, smoothstep(0.55, 0.95, temperature));
+        (*s).color = fire * (*s).color;
+        (*s).opacity *= body * (0.3 + 0.7 * smoothstep(0.0, 0.6, temperature));
         return;
     } else {
         // A tracer: a slim white-hot core at the head, the team's glow widening

@@ -42,8 +42,10 @@ pub(super) enum Coat {
     Canvas,
     /// Tool handles.
     Wood,
-    /// White team insignia.
+    /// White unit numbers, gun bands and the command band.
     Marking,
+    /// Faded tactical signs.
+    Stencil,
     /// Red tail-light lenses.
     TailLight,
 }
@@ -73,6 +75,7 @@ impl Finishes for Coat {
         Coat::Canvas,
         Coat::Wood,
         Coat::Marking,
+        Coat::Stencil,
         Coat::TailLight,
     ];
 }

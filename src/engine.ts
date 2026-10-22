@@ -12,6 +12,7 @@ import * as webgpuGlue from "./generated/engine/engine.js";
 import type { Game, NetGame, WireView } from "./generated/engine/engine.js";
 import webgpuBinaryUrl from "./generated/engine/engine_bg.wasm?url";
 import webglBinaryUrl from "./generated/engine-webgl/engine-webgl_bg.wasm?url";
+import { framesInFlight } from "./game/engine-api";
 import { GraphicsUnavailableError } from "./game/startup-error";
 
 export type { Game, NetGame, WireView };
@@ -157,14 +158,18 @@ async function createWith<T>(create: (glue: EngineGlue) => Promise<T>): Promise<
   }
 }
 
+/** `config` as the engine's configuration JSON, with this browser's frame pacing. */
+const engineConfig = (config: object) =>
+  JSON.stringify({ framesInFlight: framesInFlight(navigator.userAgent), ...config });
+
 /** Create the engine's single-player game on `canvas`. */
 export function createGame(canvas: HTMLCanvasElement, config: object): Promise<Game> {
-  return createWith((glue) => glue.Game.create(canvas, JSON.stringify(config)));
+  return createWith((glue) => glue.Game.create(canvas, engineConfig(config)));
 }
 
-/** Create a room's game on `canvas` from `NetGame.create`'s configuration JSON. */
-export function createNetGame(canvas: HTMLCanvasElement, configJson: string): Promise<NetGame> {
-  return createWith((glue) => glue.NetGame.create(canvas, configJson));
+/** Create a room's game on `canvas` from `NetGame.create`'s configuration. */
+export function createNetGame(canvas: HTMLCanvasElement, config: object): Promise<NetGame> {
+  return createWith((glue) => glue.NetGame.create(canvas, engineConfig(config)));
 }
 
 /** How often, in frames, a page asks its engine for a recorded GPU error. */

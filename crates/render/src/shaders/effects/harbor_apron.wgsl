@@ -387,6 +387,11 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
 // branch.
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let mode = material.params[0].x;
+    // Graphics tiers without fine detail (`fine_detail`) drop the finest noise
+    // octaves (the asphalt's crazing, its skid and drip grain, the concrete's
+    // chipped arrises and wobbling tar, the containers' rust grain); with it every
+    // layer is what it always was.
+    let tier_detail = fine_detail();
     if mode > 10.5 {
         parapet_surface(s, f);
         return;
@@ -410,7 +415,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let along = select(f.world.x, f.world.z, abs(n.x) > abs(n.z));
         let run_noise = apron_noise(vec2f(along * 2.3, 3.0 + variant.w * 40.0));
         let run_length = 0.5 + 2.6 * apron_noise(vec2f(along * 0.9, 11.0 + variant.x * 20.0));
-        let wobble = apron_noise(vec2f(along * 7.0, y * 1.7)) * 0.35;
+        var wobble = 0.175;
+        if tier_detail {
+            wobble = apron_noise(vec2f(along * 7.0, y * 1.7)) * 0.35;
+        }
         let weep = smoothstep(0.58, 0.82, run_noise + wobble * 0.3)
             * smoothstep(CONTAINER_HEIGHT - 0.2 - run_length, CONTAINER_HEIGHT - 0.25, y + wobble)
             * (0.55 + 0.45 * variant.y);
@@ -440,7 +448,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // How far gone this box is: some lines keep their boxes painted, others
         // run them to rust.
         let age = smoothstep(0.15, 0.95, variant.w);
-        let fine = apron_noise(f.world.xz * 7.0 + vec2f(y * 5.0)) * 0.6 + apron_noise(vec2f(along * 13.0, y * 13.0)) * 0.4;
+        var fine = 0.5;
+        if tier_detail {
+            fine = apron_noise(f.world.xz * 7.0 + vec2f(y * 5.0)) * 0.6 + apron_noise(vec2f(along * 13.0, y * 13.0)) * 0.4;
+        }
         let broad = apron_noise(f.world.xz * 0.45 + variant.xy * 30.0 + vec2f(y * 0.3));
         if n.y > 0.5 {
             // Roof: rust eating in from the rails and heaviest round the castings,
@@ -607,7 +618,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     var streak_x = 0.0;
     var crack_noise = 0.0;
     var crack_width = 0.0;
-    var craze = 0.0;
+    // Far from a craze line unless the asphalt computes one.
+    var craze = 1.0;
     var craze_width = 0.0;
     if paved {
         chips = dot(textureSample(extra_texture0, extra_sampler0, p / 0.61 + 0.43).rgb, APRON_LUMA) / APRON_TILE_MEAN;
@@ -615,8 +627,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         streak_x = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.y / 1.9, p.x / 60.0) + 0.5).rgb, APRON_LUMA);
         crack_noise = apron_noise(p / 3.1 + 13.0) + apron_noise(p * 0.9) * 0.18;
         crack_width = max(fwidth(crack_noise), 1e-4);
-        // Only the asphalt lanes craze.
-        if mode > 0.5 {
+        // Only the asphalt lanes craze, and only with fine detail.
+        if mode > 0.5 && tier_detail {
             craze = min(abs(apron_noise(p * 2.3 + 5.0) - 0.5), abs(apron_noise(turned * 2.9 + 9.0) - 0.5));
             craze_width = max(fwidth(craze), 1e-4);
         }
@@ -903,7 +915,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let spall_radius = 0.08 + 0.3 * corner_hash.x;
         var spall = 0.0;
         if corner_hash.y >= 0.55 && corner_reach - 0.07 < spall_radius + aa {
-            let corner_d = corner_reach + (apron_noise(p * 5.0) - 0.5) * 0.12;
+            var corner_d = corner_reach;
+            if tier_detail {
+                corner_d += (apron_noise(p * 5.0) - 0.5) * 0.12;
+            }
             spall = (1.0 - smoothstep(spall_radius - aa, spall_radius + aa, corner_d)) * step(0.55, corner_hash.y);
         }
         // Hairline shrinkage cracks across some slabs, darker where dirt fills them.
@@ -917,7 +932,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // overbanded it, and run over the worst cracks instead of leaving them.
         let overband = step(0.55, fract(slab.z * 7.1 + slab.x * 3.3));
         let tar_width = APRON_JOINT * 1.6 + overband * (0.03 + 0.08 * apron_noise(p * 1.1 + slab.xy * 13.0));
-        let tar_edge = edge + (apron_noise(p * 7.0) - 0.5) * 0.014;
+        var tar_edge = edge;
+        if tier_detail {
+            tar_edge += (apron_noise(p * 7.0) - 0.5) * 0.014;
+        }
         var tar = (1.0 - smoothstep(tar_width - aa, tar_width + aa, tar_edge)) * min(1.0, 2.0 * tar_width / aa);
         if slab.z > 0.72 && slab.w > 0.45 && patched < 0.5 {
             let sealed = (1.0 - smoothstep(0.0, crack_width + 0.014, abs(crack_noise - 0.5)))
@@ -926,7 +944,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             hairline = 0.0;
         }
         tar = tar * mix(0.85, 0.45, smoothstep(0.08, 0.3, footprint));
-        var chipped = 1.0 - smoothstep(APRON_JOINT, APRON_JOINT * 3.5, edge);
+        var chipped = (1.0 - smoothstep(APRON_JOINT, APRON_JOINT * 3.5, edge)) * select(0.0, 1.0, tier_detail);
         if chipped > 0.0 {
             chipped = chipped * step(0.6, grain_luma * apron_noise(p * 6.0) * 1.4);
         }
@@ -1149,12 +1167,21 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let ravel = smoothstep(half - 1.1, half - 0.15, abs(across)) * (0.5 + 0.5 * mottle);
         let tyre = smoothstep(0.8, 1.35, streak) * mix(0.5, 1.0, mottle);
         let lane_along = select(p.x, p.y, along_z);
+        // Without fine detail the finer octave of the skids and drips is its average.
+        var skid_grain = 0.125;
+        if tier_detail {
+            skid_grain = apron_noise(vec2f(across * 9.0, lane_along * 0.6)) * 0.25;
+        }
         let skid = smoothstep(0.58, 0.8, apron_noise(vec2f(across * 3.2, lane_along * 0.09))
-            * 0.75 + apron_noise(vec2f(across * 9.0, lane_along * 0.6)) * 0.25) * traffic.x;
+            * 0.75 + skid_grain) * traffic.x;
         var drips = 0.0;
         if traffic.y > 0.0 {
+            var drip_grain = 0.15;
+            if tier_detail {
+                drip_grain = apron_noise(vec2f(across * 5.0, lane_along * 1.7)) * 0.3;
+            }
             drips = smoothstep(0.5, 0.7, apron_noise(vec2f(across * 2.2, lane_along * 0.31))
-                * 0.7 + apron_noise(vec2f(across * 5.0, lane_along * 1.7)) * 0.3) * traffic.y;
+                * 0.7 + drip_grain) * traffic.y;
         }
         let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
         let patch_size = vec2f(2.0, 1.4) + patch_hash.zw * vec2f(3.5, 3.0);

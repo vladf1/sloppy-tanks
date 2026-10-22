@@ -146,14 +146,17 @@ export function recapMarkup(
 export function bestProgress(kills: number, best: number, improved: boolean): string {
   const bar = (share: number) =>
     `<i class="recap-meter" style="--share:${Math.min(1, Math.max(0, share)).toFixed(3)}"></i>`;
+  // A meter only measures a gap: a record or a tie is named in gold, with no bar that
+  // fills toward nothing.
   if (improved) {
-    return `<em class="recap-progress is-record">${bar(1)}<b>★ NEW PERSONAL BEST</b></em>`;
+    return `<em class="recap-progress is-record"><b>★ NEW PERSONAL BEST</b></em>`;
   }
   if (best > kills) {
     return `<em class="recap-progress">${bar(kills / best)}<b>${best - kills} short of your best · ${best}</b></em>`;
   }
   if (kills > 0) {
-    return `<em class="recap-progress is-record">${bar(1)}<b>Equals your best · ${best}</b></em>`;
+    // The kills beside it already say the number: the line only names the record.
+    return `<em class="recap-progress is-record"><b>★ Ties your personal best</b></em>`;
   }
   return `<em class="recap-progress">${bar(0)}<b>No kills this round</b></em>`;
 }

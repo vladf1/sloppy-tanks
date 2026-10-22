@@ -6,7 +6,8 @@
 // rays, clumps of thrown dirt (tint the dust) and embers that flicker and cool,
 // faded out by `strength` as it ages. Kinds 3 and 4 stand on a wall's face where a
 // shell struck it: a chipped crater in stone (tint = the wall's color) and a sooty
-// dent in steel with a hot heart that cools within a second or two.
+// dent in steel with a hot heart that cools within a second or two. Kind 5 is the
+// pale powder a concrete hit spills on the ground at the wall's foot.
 fn ring_hash(p: vec2f) -> f32 {
     var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
     q += dot(q, q.yzx + 33.33);
@@ -54,49 +55,62 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let trough = smoothstep(0.5, 0.8, r) * (1.0 - smoothstep(0.8, 0.9, r));
         let fray = smoothstep(0.75 - 0.55 * strength, 1.0 - 0.45 * strength, ring_noise(point * 5.5 + seed) * 0.6 + n * 0.5);
         let hot = 1.0 - smoothstep(0.0, 0.07, age);
-        let pale = (*s).color * 1.5 + vec3f(0.1, 0.09, 0.07);
+        // The crest is lifted dust, a shade paler than the ground, never a
+        // bright drawn circle.
+        let pale = (*s).color * 1.12 + vec3f(0.03, 0.028, 0.024);
         let dark = (*s).color * 0.55;
         let mixed_color = mix(dark, pale, crest / max(crest + trough * 0.6, 1e-4));
-        (*s).color = mix(mixed_color, vec3f(1.6, 0.75, 0.28), hot * 0.6);
-        (*s).opacity = clamp(crest * 0.85 + trough * 0.45, 0.0, 1.0) * fray * strength * inside;
+        (*s).color = mix(mixed_color, vec3f(1.6, 0.75, 0.28), hot * 0.45);
+        (*s).opacity = clamp(crest * 0.55 + trough * 0.4, 0.0, 1.0) * fray * strength * inside;
+    } else if kind > 4.5 {
+        // Powder a concrete hit spilled at the wall's foot: a pale, patchy
+        // stain, feathered into the ground, grainy where the grit lies thick.
+        let r = length(point + warp * 0.55) + (n - 0.5) * 0.25;
+        let stain = 1.0 - smoothstep(0.15, 0.85, r);
+        let grain = smoothstep(0.35, 0.8, ring_noise(point * 11.0 + seed) * 0.6 + n * 0.4);
+        let settle_in = smoothstep(0.1, 0.6, age);
+        (*s).color *= 0.9 + 0.2 * grain;
+        (*s).opacity = stain * (0.32 + 0.28 * grain) * settle_in * strength * inside;
     } else if kind > 2.5 {
         wall_mark(s, point, radius, warp, n, seed, age, kind > 3.5, strength * inside);
     } else {
-        // Char: a burn darkest at its heart whose edge the noise breaks into
-        // lobes and soot rays, ringed by clumps of thrown dirt and embers that
-        // flicker as they cool.
+        // Char: a radial burn, sooty black at its heart and feathering out
+        // through brown soot into the ground, streaked by soot rays blown out
+        // from the blast, a soft rim of thrown dirt and embers that flicker and
+        // cool. No hard flecks: from overhead they read as noise, not burn.
         let fine = ring_noise(point * 9.0 - seed * 1.3);
-        let r = length(point + warp * 0.45) + (fine - 0.5) * 0.12;
+        let r = length(point + warp * 0.3) + (fine - 0.5) * 0.06;
         let around = point / max(radius, 1e-4);
-        let rays = smoothstep(0.45, 0.85, ring_noise(around * 2.2 + seed) * 0.7 + ring_noise(around * 4.5 - seed) * 0.3);
-        let heart = 1.0 - smoothstep(0.14, 0.74, r);
-        let reach = rays * (1.0 - smoothstep(0.25, 0.86, r + (n - 0.5) * 0.2)) * smoothstep(0.05, 0.3, r);
-        let burn = clamp(heart * (0.85 + 0.3 * n) + reach * 0.5, 0.0, 1.0) * (0.85 + 0.15 * fine);
-        let soot = mix(vec3f(0.075, 0.055, 0.04), vec3f(0.012, 0.011, 0.01), smoothstep(0.15, 0.85, heart));
-        let clumps = smoothstep(0.55, 0.8, ring_noise(point * 6.0 + seed * 0.4) * 0.65 + fine * 0.45);
-        let thrown = smoothstep(0.42, 0.6, r) * (1.0 - smoothstep(0.62, 0.92, r)) * clumps;
-        let dirt_alpha = thrown * 0.32 * (1.0 - burn);
-        let alpha = burn * 0.9 + dirt_alpha;
-        let dirt = (*s).color * 0.78;
-        var color = (soot * burn * 0.9 + dirt * dirt_alpha) / max(alpha, 1e-4);
-        // Embers ring the burn's edge and fleck its heart; each flickers on its
-        // own, the hottest die within seconds and a few smoulder on.
-        let ring = smoothstep(0.24, 0.38, r) * (1.0 - smoothstep(0.38, 0.54, r));
-        let speck = ring_noise(point * 15.0 + seed * 2.0);
-        let flecks = smoothstep(0.72, 0.92, speck) * heart;
+        let rays = smoothstep(0.35, 0.8, ring_noise(around * 2.6 + seed) * 0.65 + ring_noise(around * 6.0 - seed) * 0.35);
+        let heart = 1.0 - smoothstep(0.0, 0.62, r);
+        let reach = rays * (1.0 - smoothstep(0.3, 0.92, r + (n - 0.5) * 0.15)) * smoothstep(0.1, 0.35, r);
+        let burn = clamp(pow(heart, 0.7) * (0.9 + 0.15 * n) + reach * 0.45, 0.0, 1.0);
+        let soot = mix(vec3f(0.06, 0.047, 0.036), vec3f(0.01, 0.009, 0.008), smoothstep(0.1, 0.8, heart));
+        let clumps = smoothstep(0.45, 0.85, ring_noise(point * 4.5 + seed * 0.4) * 0.7 + fine * 0.3);
+        let thrown = smoothstep(0.45, 0.65, r) * (1.0 - smoothstep(0.65, 0.95, r)) * clumps;
+        let dirt_alpha = thrown * 0.16 * (1.0 - burn);
+        let alpha = burn * 0.92 + dirt_alpha;
+        let dirt = (*s).color * 0.8;
+        var color = (soot * burn * 0.92 + dirt * dirt_alpha) / max(alpha, 1e-4);
+        // Embers ring the burn's edge and glow through its heart; each flickers
+        // on its own, the hottest die within seconds and a few smoulder on.
+        let ring = smoothstep(0.2, 0.36, r) * (1.0 - smoothstep(0.36, 0.56, r));
+        let speck = ring_noise(point * 7.0 + seed * 2.0);
+        let flecks = smoothstep(0.6, 0.9, speck) * heart;
         // One rate for every ember, each with its own phase: a rate that varied
         // across the decal would scale the running time into per-pixel sparkle.
         // The phase drifts slowly across the scorch: a phase that ran steeply
         // with fine noise would draw its gradient as bands of light.
         let ember_phase = ring_noise(point * 4.0 + seed * 3.0) * 6.2831853;
-        let flicker = 0.55 + 0.45 * sin(frame.camera_position.w * 6.0 + ember_phase);
+        let flicker = 0.6 + 0.4 * sin(frame.camera_position.w * 6.0 + ember_phase);
         let cool = exp(-age / 1.8);
-        let smoulder = 0.18 * (1.0 - smoothstep(4.0, 14.0, age)) * smoothstep(0.8, 0.95, speck);
-        let embers = ((ring * smoothstep(0.45, 0.8, n) + flecks * 0.7) * cool + smoulder * heart) * flicker;
+        let smoulder = 0.14 * (1.0 - smoothstep(4.0, 14.0, age)) * smoothstep(0.7, 0.95, speck);
+        // Embers lie in patches, never a continuous glowing ring.
+        let embers = ((ring * smoothstep(0.58, 0.85, n) * 0.8 + flecks * 0.7) * cool + smoulder * heart) * flicker;
         let ember_color = mix(vec3f(1.1, 0.1, 0.02), vec3f(3.2, 0.95, 0.15), cool);
         color = color + ember_color * embers;
-        // The whole decal fades out toward its rim, never at a hard ellipse.
-        let edge = 1.0 - smoothstep(0.7, 0.95, r);
+        // The whole decal feathers out toward its rim, never at a hard ellipse.
+        let edge = 1.0 - smoothstep(0.5, 0.97, r);
         (*s).color = color;
         (*s).opacity = clamp(max(alpha, embers), 0.0, 1.0) * strength * inside * edge;
     }
@@ -133,7 +147,7 @@ fn wall_mark(
         // Petals: the breach's edge pushed in and out by angle, so the hole is a
         // torn star rather than a round punch.
         let petals = ring_noise(vec2f(angle * 2.2, 0.0) + seed) * 0.6 + ring_noise(vec2f(angle * 5.1, 1.7) - seed) * 0.4;
-        let breach = 0.2 + 0.16 * petals;
+        let breach = 0.17 + 0.24 * petals * petals;
         let hole = 1.0 - smoothstep(breach - 0.015, breach + 0.015, r);
         let lip = smoothstep(breach - 0.01, breach + 0.02, r) * (1.0 - smoothstep(breach + 0.05, breach + 0.15 + 0.08 * petals, r));
         // The dent: the sheet sags in toward the breach, darker on its shaded
@@ -152,7 +166,8 @@ fn wall_mark(
         color = mix(color, bare, lip);
         color += bare * shine * 0.6;
         color = mix(color, vec3f(0.004), hole);
-        let hot = exp(-age / 0.7) * (lip + 0.6 * hole * smoothstep(0.0, breach, r));
+        // The torn edges stay hot for a few seconds after the hit.
+        let hot = exp(-age / 1.8) * (lip + 0.6 * hole * smoothstep(0.0, breach, r));
         color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), exp(-age / 0.35)) * hot;
         let alpha = max(max(hole, lip), max(soot * 0.95, max(slope * 0.8, blister * 0.75)));
         (*s).color = color;

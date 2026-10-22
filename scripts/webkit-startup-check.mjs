@@ -40,6 +40,21 @@ try {
     await installEngineHelpers(context);
     const page = await context.newPage();
     collectErrors(page, errors, { consoleErrors: true, prefix: `${map}: ` });
+    // Frames the engine drew (its canvas's command buffer): WebKit's pacing and the
+    // engine's own frame limit keep them below the animation frames while the GPU is
+    // behind.
+    await page.addInitScript(() => {
+      window.drawnFrames = 0;
+      const submit = globalThis.GPUQueue?.prototype.submit;
+      if (submit) {
+        GPUQueue.prototype.submit = function (buffers) {
+          submit.call(this, buffers);
+          if (buffers.some((buffer) => buffer.label === "output")) {
+            window.drawnFrames++;
+          }
+        };
+      }
+    });
     // Every startup stage Battle Setup reports, to read the shader progress total.
     await page.addInitScript(() => {
       window.startupStages = [];
@@ -101,14 +116,14 @@ try {
     const before = await page.evaluate(() => window.sloppy.sim.human);
     await page.mouse.move(900, 300);
     const driveStart = await page.evaluate(() => ({
-      frames: window.sloppy.frames,
+      frames: window.drawnFrames,
       time: performance.now(),
     }));
     await page.keyboard.down("w");
     await page.waitForTimeout(DRIVE_MS);
     await page.keyboard.up("w");
     const driveEnd = await page.evaluate(() => ({
-      frames: window.sloppy.frames,
+      frames: window.drawnFrames,
       time: performance.now(),
     }));
     const driveFps =

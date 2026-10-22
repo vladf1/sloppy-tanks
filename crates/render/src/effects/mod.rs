@@ -199,6 +199,7 @@ impl EffectSystems {
         self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
+        self.particles.explosions.felled_trees(&state.fragments);
         self.projectiles.update(&state.shots, time, alpha);
         self.rocket_smoke
             .update(&state.shots, alpha, dt, &mut self.random);

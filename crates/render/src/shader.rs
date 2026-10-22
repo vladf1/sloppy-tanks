@@ -266,6 +266,9 @@ pub struct PipelineKey {
     pub depth_bias: DepthBias,
     /// The faces that are drawn (culling removes the others).
     pub side: Side,
+    /// A depth-only variant drawing into the sun's shadow map, rather than into
+    /// ambient occlusion's depth pass: their depth formats differ.
+    pub shadow_map: bool,
 }
 
 impl PipelineKey {
@@ -283,6 +286,7 @@ impl PipelineKey {
             depth_write: material.depth_write,
             depth_bias: DepthBias::of(material),
             side: material.side,
+            shadow_map: false,
         }
     }
 
@@ -296,6 +300,17 @@ impl PipelineKey {
             depth_write: true,
             depth_bias: DepthBias::default(),
             side: shadow_side(material),
+            shadow_map: true,
+        }
+    }
+
+    /// Ambient occlusion's depth pass draws an opaque material with its depth-only
+    /// shadow `shader`, but the faces the main view draws.
+    pub fn occlusion_depth(shader: ShaderKey, material: &Material) -> Self {
+        Self {
+            side: material.side,
+            shadow_map: false,
+            ..Self::shadow(shader, material)
         }
     }
 }
@@ -342,6 +357,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     if let Some(effect) = effect {
         code += effect.wgsl;
         code += "\n";
+        code += effect.entry;
     }
     if !effect.is_some_and(|e| e.has_vertex()) {
         code += "fn effect_vertex(v: ptr<function, EffectVertex>) {}\n";
@@ -382,12 +398,13 @@ pub fn sky_source() -> String {
     fixed_source(SKY_WGSL, InstanceSource::BUILD)
 }
 
-/// The ambient occlusion shader reading the main view's `multisampled` depth
-/// (WebGPU) or the single-sample copy WebGL2 resolves.
-pub fn occlusion_source(multisampled: bool) -> String {
-    // Only the WebGL build reads a single-sample copy; it probes six points, not eight.
-    let depth = if multisampled {
-        "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
+/// The ambient occlusion shader, `scale` depth texels per occlusion texel along each
+/// axis. WebGPU reads the depth texture of its own depth pass (`depth_pass`); WebGL2
+/// reads the full-size single-sample copy its resolve blits, as floats, and probes six
+/// points rather than eight on its weaker devices.
+pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
+    let depth = if depth_pass {
+        "@group(0) @binding(0) var depth: texture_depth_2d;\n\
          fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
          const SAMPLES: i32 = 8;\n"
     } else {
@@ -395,7 +412,13 @@ pub fn occlusion_source(multisampled: bool) -> String {
          fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
          const SAMPLES: i32 = 6;\n"
     };
-    format!("{depth}{OCCLUSION_WGSL}")
+    let scale = format!("const OCCLUSION_SCALE: i32 = {scale};\n");
+    specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
+}
+
+/// The output and bloom shader, its loops unrolled like every other shader's.
+pub fn output_source() -> String {
+    specialize::specialize(OUTPUT_WGSL, &[])
 }
 
 fn fixed_source(template: &str, source: InstanceSource) -> String {
@@ -677,10 +700,10 @@ mod tests {
         translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
         translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
-        translate_for_webgl("output", OUTPUT_WGSL);
+        translate_for_webgl("output", &output_source());
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
-        translate_for_webgl("occlusion", &occlusion_source(false));
+        translate_for_webgl("occlusion", &occlusion_source(false, 4));
     }
 
     #[test]
@@ -688,11 +711,73 @@ mod tests {
         validate("water", &water_source());
         validate("shadow merged", &shadow_merged_source());
         validate("shadow cutout", &shadow_cutout_source());
-        validate("output", OUTPUT_WGSL);
+        validate("output", &output_source());
         validate("mipmap", MIPMAP_WGSL);
         validate("sky", &sky_source());
-        validate("occlusion", &occlusion_source(true));
-        validate("occlusion single-sample", &occlusion_source(false));
+        validate("occlusion", &occlusion_source(true, 2));
+        validate(
+            "occlusion from the resolved copy",
+            &occlusion_source(false, 4),
+        );
+    }
+
+    /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
+    /// unrolling it (`specialize.rs`), which cost the village's main view 15 times
+    /// its GPU time there: every loop a shader runs is one the specializer unrolls.
+    #[test]
+    fn no_shader_keeps_a_loop() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let mut sources = vec![
+            ("water".to_owned(), water_source()),
+            ("sky".to_owned(), sky_source()),
+            ("output".to_owned(), output_source()),
+            ("occlusion".to_owned(), occlusion_source(true, 2)),
+            ("shadow merged".to_owned(), shadow_merged_source()),
+            ("shadow cutout".to_owned(), shadow_cutout_source()),
+        ];
+        let count =
+            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
+        for effect in 0..=count as u16 {
+            for (lit, alpha_test, receive_shadow) in [
+                (false, false, false),
+                (true, false, false),
+                (true, true, true),
+                (true, false, true),
+            ] {
+                let key = ShaderKey {
+                    lit,
+                    alpha_test,
+                    receive_shadow,
+                    effect,
+                    ..ShaderKey::default()
+                };
+                sources.push((format!("{key:?}"), shader_source(&key, &effects)));
+            }
+            let caster = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test: true,
+                shadow_fade: true,
+                effect,
+                ..ShaderKey::default()
+            };
+            sources.push((format!("{caster:?}"), shader_source(&caster, &effects)));
+        }
+        for (label, code) in sources {
+            let bytes = code.as_bytes();
+            let kept = (0..bytes.len()).find(|&i| {
+                ["for", "loop", "while"]
+                    .iter()
+                    .any(|word| specialize::word_at(bytes, i, word))
+            });
+            assert!(
+                kept.is_none(),
+                "{label} keeps a loop: {}",
+                &code[kept.unwrap_or(0)..(kept.unwrap_or(0) + 80).min(code.len())]
+            );
+        }
     }
 
     #[test]
@@ -862,6 +947,26 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(PipelineKey::shadow(a, &red).side, Side::Back);
         assert_eq!(PipelineKey::shadow(b, &green).side, Side::Double);
+    }
+
+    #[test]
+    fn occlusion_depth_draws_the_main_views_faces_apart_from_the_shadow() {
+        let effects = EffectRegistry::default();
+        let wall = Material::standard(0x808080, 0.8, 0.0);
+        let shader = ShaderKey::shadow(&wall, 0, false, &effects);
+        let depth = PipelineKey::occlusion_depth(shader, &wall);
+        assert_eq!(depth.side, Side::Front);
+        assert_eq!(depth.shader.pass, Pass::Shadow);
+        // Its own pipeline even where the faces match: the depth formats differ.
+        let double = Material {
+            side: Side::Double,
+            ..wall.clone()
+        };
+        assert_eq!(PipelineKey::shadow(shader, &double).side, Side::Double);
+        assert_ne!(
+            PipelineKey::occlusion_depth(shader, &double),
+            PipelineKey::shadow(shader, &double)
+        );
     }
 
     #[test]

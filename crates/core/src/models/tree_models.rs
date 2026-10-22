@@ -913,7 +913,18 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         );
         end.rotation = quat_from_euler(PI, twist, 0.0);
     }
-    let shape = if conifer {
+    let shape = if conifer && detail == TreeDetail::Distant {
+        distant_conifer(
+            &mut crown.node,
+            c,
+            &mut rng,
+            family,
+            twist,
+            height,
+            (lean_x, lean_z),
+            tints.map_or([1.0; 3], |(leaf, _)| leaf),
+        )
+    } else if conifer {
         add_conifer_crown(
             &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
         )
@@ -954,6 +965,106 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         into_atlas(&mut group, false);
     }
     group
+}
+
+/// A texel of [`TREE_ATLAS`]'s birch column with no marks within five texels,
+/// read the same way up or flipped (its column UV), and its linear colour: a far
+/// conifer's solid crown samples only it, so its vertex colours carry its green.
+const PLAIN_ATLAS_UV: [f64; 2] = [0.4585, 0.0957];
+const PLAIN_ATLAS_COLOR: [f64; 3] = [0.791, 0.753, 0.665];
+/// The conifer spray's average linear colour, which a far conifer's solid crown
+/// matches so it reads as the same wood as the card trees nearer by.
+const NEEDLE_COLOR: [f64; 3] = [0.29, 0.37, 0.18];
+/// Points round each whorl of a far conifer: alternately reaching boughs and the
+/// notches between them, so its silhouette is branchy rather than a cone.
+const DISTANT_WHORL_POINTS: u32 = 8;
+
+/// A far conifer's crown as solid whorls (its trunk is drawn by the caller):
+/// stacked, drooping skirts of boughs, lit at their tips and dark in their
+/// notches. Seen only across the valley, it keeps a crisp, branchy silhouette
+/// where a few crossed cards thinned into streaks, in a quarter of the triangles.
+#[allow(clippy::too_many_arguments)]
+fn distant_conifer(
+    crown: &mut Node,
+    c: &TreeShape,
+    rng: &mut Random,
+    family: u32,
+    twist: f64,
+    height: f64,
+    lean: (f64, f64),
+    tint: [f64; 3],
+) -> CrownShape {
+    // Pines carry a high, open crown of few whorls; spruce and fir skirt the
+    // ground in many.
+    let (tiers, base) = match family {
+        0 => (3, 0.34),
+        1 => (5, 0.07),
+        _ => (4, 0.11),
+    };
+    let width = c.w * (if family == 2 { 0.44 } else { 0.5 }) * 1.18;
+    let lean = DVec3::new(lean.0 / height, 0.0, lean.1 / height);
+    let color = |light: f64| {
+        [0, 1, 2].map(|k| (NEEDLE_COLOR[k] * tint[k] * light / PLAIN_ATLAS_COLOR[k]) as f32)
+    };
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices = Vec::new();
+    let mut vertex = |p: DVec3, n: DVec3, light: f64| {
+        positions.extend([p.x, p.y, p.z]);
+        normals.extend([n.x, n.y, n.z]);
+        uvs.extend(PLAIN_ATLAS_UV);
+        colors.push(color(light));
+        (positions.len() / 3 - 1) as u32
+    };
+    for i in 0..tiers {
+        let t = f64::from(i) / f64::from(tiers);
+        let bottom = height * (base + (0.86 - base) * t);
+        let top = if i == tiers - 1 {
+            height
+        } else {
+            bottom + (height - bottom) * 0.58
+        };
+        let reach = width * (1.0 - t * 0.78) * rng.range(0.9, 1.1);
+        // Lower whorls lie in the crown's shade.
+        let shade = 0.78 + 0.22 * t;
+        let apex = vertex(lean * top + DVec3::Y * top, DVec3::Y, shade);
+        let turn = twist + f64::from(i) * GOLDEN_ANGLE;
+        let first = apex + 1;
+        for k in 0..DISTANT_WHORL_POINTS {
+            let bough = k % 2 == 0;
+            let angle = turn
+                + f64::from(k) * std::f64::consts::TAU / f64::from(DISTANT_WHORL_POINTS)
+                + rng.range(-0.12, 0.12);
+            let out = if bough {
+                reach * rng.range(0.88, 1.12)
+            } else {
+                reach * rng.range(0.6, 0.72)
+            };
+            let radial = DVec3::new(angle.sin(), 0.0, angle.cos());
+            // The boughs droop at their tips.
+            let y = bottom - if bough { reach * 0.16 } else { -reach * 0.04 };
+            let p = lean * y + DVec3::Y * y + radial * out;
+            let normal = (radial * 0.72 + DVec3::Y * 0.6).normalize();
+            vertex(p, normal, shade * if bough { 0.72 } else { 0.5 });
+        }
+        for k in 0..DISTANT_WHORL_POINTS {
+            let next = (k + 1) % DISTANT_WHORL_POINTS;
+            indices.extend([apex, first + k, first + next]);
+        }
+    }
+    let mut mesh = Mesh::from_f64(&positions, &normals, &uvs, Some(indices));
+    mesh.colors = colors;
+    crown
+        .children
+        .push(shadowed(Arc::new(mesh), tinted_surface(TreeSurface::Birch)));
+    CrownShape::Cone {
+        lean,
+        base: height * (base - 0.08),
+        top: height * 1.02,
+        radius: width * 1.05,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

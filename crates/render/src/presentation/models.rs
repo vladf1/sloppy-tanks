@@ -56,6 +56,9 @@ const BAR_FILL_HEIGHT: f64 = 0.18;
 /// The bar's outer width, which presentation keeps to a share of the screen.
 pub const BAR_RIM_WIDTH: f64 = 1.84;
 const BAR_RIM_HEIGHT: f64 = 0.32;
+/// The team edge round a bar: the teams' colours a shade deeper than their paint, so
+/// the unlit edge names the side without glowing louder than the fill it frames.
+const BAR_EDGE_COLORS: [u32; 2] = [0x2a78d0, 0xc22c3c];
 /// Hull segments, as the page HUD's bar shows them.
 const BAR_SEGMENTS: usize = 4;
 const METER_FILL_WIDTH: f64 = 1.34;
@@ -228,7 +231,7 @@ pub fn tank_bar(team: Team) -> Node {
     bar.children.push(at(
         mesh(
             arc(shape_geometry(&[edge, pointer])),
-            hud_material(TEAM_COLORS[team.index()]),
+            hud_material(BAR_EDGE_COLORS[team.index()]),
             12,
         ),
         0.0,
