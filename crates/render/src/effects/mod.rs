@@ -250,6 +250,7 @@ impl EffectSystems {
         visit(&mut self.laser.lens);
         visit(&mut self.pickups.rings);
         visit(&mut self.pickups.glows);
+        visit(&mut self.pickups.flashes);
         visit(&mut self.particles.records);
         visit(&mut self.leaves.records);
         visit(&mut self.wood.wood_records);

@@ -235,7 +235,15 @@ fn cover_models_match_typescript() {
         if summary_with(&model, Precision::Exact).0.3 == case.exact {
             exact += 1;
         }
-        if actual != case.expected || parts != case.timber_parts || tree != case.tree {
+        // Living trees draw from the tree atlas (`tree_models::TREE_ATLAS`): their
+        // UVs and tints moved into it, so only their shape counts are compared.
+        let atlas_tree = case.kind == CoverKind::Tree && case.stage == 0;
+        let same = if atlas_tree {
+            (actual.0, actual.1, actual.2) == (case.expected.0, case.expected.1, case.expected.2)
+        } else {
+            actual == case.expected
+        };
+        if !same || parts != case.timber_parts || tree != case.tree {
             failures.push(format!(
                 "#{index} {:?} ({}, {}) stage {} background {}: {actual:?} vs {:?}, parts {parts:?} vs {:?}, tree {:?} vs {:?}, meshes {hashes:08x?}",
                 case.kind,
@@ -551,16 +559,17 @@ pub(super) const COVER_CASES: &[CoverCase] = &[
 ];
 
 #[rustfmt::skip]
+/// Every kind of a shape shares one mesh: the instance data picks its tile.
 pub(super) const PICKUP_CASES: &[(PickupKind, Summary)] = &[
-    (PickupKind::Spread, (2, 168, 84, 0x116f6655)),
-    (PickupKind::Rocket, (2, 168, 84, 0x6f66851d)),
-    (PickupKind::Ricochet, (2, 168, 84, 0x3dcba0b5)),
-    (PickupKind::Piercing, (2, 168, 84, 0xe30061f5)),
-    (PickupKind::Rapid, (1, 24, 12, 0xdc881a68)),
-    (PickupKind::Shield, (1, 24, 12, 0xd1096b10)),
-    (PickupKind::Speed, (1, 24, 12, 0x927352b0)),
-    (PickupKind::Repair, (1, 24, 12, 0x101f9b28)),
-    (PickupKind::Laser, (1, 24, 12, 0x2aac1510)),
+    (PickupKind::Spread, (2, 360, 180, 0x03d9cb06)),
+    (PickupKind::Rocket, (2, 360, 180, 0x03d9cb06)),
+    (PickupKind::Ricochet, (2, 360, 180, 0x03d9cb06)),
+    (PickupKind::Piercing, (2, 360, 180, 0x03d9cb06)),
+    (PickupKind::Rapid, (2, 216, 108, 0x8a59027e)),
+    (PickupKind::Shield, (2, 216, 108, 0x8a59027e)),
+    (PickupKind::Speed, (2, 216, 108, 0x8a59027e)),
+    (PickupKind::Repair, (2, 216, 108, 0x8a59027e)),
+    (PickupKind::Laser, (2, 216, 108, 0x8a59027e)),
 ];
 
 pub(super) const FLAGS: Summary = (3, 290, 416, 0xf4a0e350);
