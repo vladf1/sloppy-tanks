@@ -135,6 +135,10 @@ const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
 const VEHICLE_DECK_DUST_PIXEL_TO: f32 = 0.03;
+// The track splash's line: this many waves per metre along the hull, rising and
+// falling by this much of the dusty band.
+const VEHICLE_SPLASH_CELLS: f32 = 1.3;
+const VEHICLE_SPLASH_RISE: f32 = 0.4;
 // Edge wear: how far toward a convex edge the chip field is exposed.
 const VEHICLE_CHIP_EXPOSURE: f32 = 0.5;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
@@ -452,7 +456,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // lighter dusting: a tank fresh from the depot.
     let dust_strength = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on()) * VEHICLE_DUST_STRENGTH;
     let ledge = smoothstep(0.55, 0.85, (*s).normal.y) * smoothstep(0.3, 0.7, low);
-    let band = smoothstep(0.4, 0.78, low + (grime - 0.5) * 0.3);
+    // The splash line rises and falls along the hull, so the band reads as thrown
+    // dust rather than a flat fade.
+    let splash = value_noise(metres * vec2f(VEHICLE_SPLASH_CELLS, VEHICLE_SPLASH_CELLS * 0.4) + 11.3);
+    let band = smoothstep(0.4, 0.78, low + (grime - 0.5) * 0.4 + (splash - 0.5) * VEHICLE_SPLASH_RISE);
     let drifted = edges.recess * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
     let dusty = clamp(max(band, max(drifted, ledge * (0.35 + 0.5 * grime))), 0.0, 1.0) * dust_strength;
     let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH;

@@ -1014,7 +1014,7 @@ fn mantlet(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3, tube: f64, coax_
 /// A boxy sight head with a glass window in front, optionally with its two
 /// armored doors swung open.
 fn sight_head(kit: &mut Kit, center: DVec3, size: DVec3, yaw: f64, doors: bool) {
-    kit.chamfer_block(Coat::Paint, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
+    kit.chamfer_block(Coat::Shade, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
     let face = size.z / 2.0;
     let window = v(size.x * 0.7, size.y * 0.42, 0.012);
     let glass_at = yawed(center, yaw, v(0.0, size.y * 0.06, face));
@@ -1080,7 +1080,7 @@ fn cupola(kit: &mut Kit, base: DVec3, radius: f64, blocks: u32) {
         (radius - 0.025, height + 0.015),
         (radius - 0.05, height + 0.015),
     ]);
-    kit.turned(Coat::Paint, &body, 12, pose(base, v(-PI / 2.0, 0.0, 0.0)));
+    kit.turned(Coat::Shade, &body, 12, pose(base, v(-PI / 2.0, 0.0, 0.0)));
     for i in 0..blocks {
         let yaw = f64::from(i) / f64::from(blocks) * PI * 2.0;
         kit.block_at(
@@ -1762,8 +1762,8 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         );
     }
     let roof = c.deck + roof_rise(c);
-    let length = c.pick(0.66, 0.78, 0.66);
-    let half_width = c.pick(0.3, 0.36, 0.34);
+    let length = c.pick(0.74, 0.88, 0.78);
+    let half_width = c.pick(0.34, 0.41, 0.4);
     let centre = DVec2::new(0.0, c.pick(0.3, 0.36, 0.28));
     let outline: Vec<DVec2> = if team == Team::Blue {
         p2(&[(0.0, 0.5), (-1.0, 0.0), (0.0, -0.5), (1.0, 0.0)])
@@ -2079,7 +2079,7 @@ const ID_BAND_GAP: f64 = 0.06;
 
 /// Outer radius of the bare gun tube.
 pub(super) fn tube_radius(c: &Chassis) -> f64 {
-    c.pick(0.054, 0.068, 0.084)
+    c.pick(0.046, 0.068, 0.094)
 }
 
 /// z of the muzzle face; the bore disc sits just in front of it.

@@ -121,12 +121,12 @@ const PAINT_FILL: f32 = 0.08;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0x75716a;
+const BARE_STEEL: u32 = 0x5c5852;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
 const TURRET_VALUE: f64 = 1.0;
-const HULL_VALUE: f64 = 0.76;
+const HULL_VALUE: f64 = 0.82;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;

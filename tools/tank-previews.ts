@@ -4,8 +4,8 @@
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
 // The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
-// warm, shadow-casting key light from the front left (out of the decks' specular
-// reflection, which would wash them pink) and a lowered exposure that keeps the
+// warm, shadow-casting key light from the front, over the side the card shows (still
+// out of the decks' specular reflection, which would wash them pink) and a lowered exposure that keeps the
 // red paint below ACES's shoulder (it turns bright red pink), and a strong, near
 // white rim light from behind on the right that lifts the side the card shows off
 // the navy card and edges the silhouette (a distant point light without falloff,
@@ -71,8 +71,8 @@ const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xfff2e4, ground: 0x3a3f47, intensity: 0.6 },
-  sun: { color: 0xfff1de, intensity: 3.4, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xfff2e4, ground: 0x56606e, intensity: 0.72 },
+  sun: { color: 0xfff1de, intensity: 3.0, position: [3, 7, 6], target: [0, 0, 0] },
   // The key casts shadows, so the turret, mantlet and stowage shade the deck and
   // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {

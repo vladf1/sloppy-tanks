@@ -40,7 +40,7 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// The team color is the body and the deep trim frames it, so the paint reads as
 /// a designed two-tone livery, each class's add-on armor stands out as armor
 /// rather than as dark openings, and the trim still reads as its team.
-const TRIM: [u32; 2] = [0x1d3762, 0x561619];
+const TRIM: [u32; 2] = [0x252c38, 0x302526];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
 const GLASS_TINT: u32 = 0x25505a;
 const MARKING_WHITE: u32 = 0xdce7ee;
