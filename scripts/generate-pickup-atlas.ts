@@ -1,4 +1,4 @@
-import { createCanvas, loadImage, type Image } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type Canvas, type Image } from "@napi-rs/canvas";
 import { writeFile } from "node:fs/promises";
 import { encodeWebp } from "./encode-webp";
 import {
@@ -32,7 +32,7 @@ const EDGE_MIX = 0.22;
 /** A soft top-left sheen across the panel, as if lit from the sun's side. */
 const SHEEN = 0.07;
 
-function lightPanel(image: Image): ReturnType<typeof createCanvas> {
+function lightPanel(image: Image): Canvas {
   const size = PICKUP_ICON_SIZE;
   const canvas = createCanvas(size, size);
   const context = canvas.getContext("2d");
