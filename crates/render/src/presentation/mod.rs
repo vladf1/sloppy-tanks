@@ -46,5 +46,18 @@ pub const PICKUP_REFILL: EffectDefinition = effect(
     include_str!("shaders/pickup_refill.wgsl"),
 );
 
+/// Every pickup kind's faces from one mesh: the instance picks the atlas tile.
+pub const PICKUP_FACE: EffectDefinition = effect(
+    sloppy_core::models::PICKUP_FACE_EFFECT,
+    include_str!("shaders/pickup_face.wgsl"),
+);
+
+/// A pickup pad's light with halo rings climbing its column.
+pub const PICKUP_BEAM: EffectDefinition = effect(
+    models::PICKUP_BEAM_EFFECT,
+    include_str!("shaders/pickup_beam.wgsl"),
+);
+
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_REFILL];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 4] =
+    [FLAG_CLOTH, PICKUP_REFILL, PICKUP_FACE, PICKUP_BEAM];
