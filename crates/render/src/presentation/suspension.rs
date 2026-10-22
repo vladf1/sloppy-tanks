@@ -6,18 +6,18 @@
 
 use super::view_settings::TANK_FEEL;
 
-/// About 5 degrees of steady lean from driving, including sudden stops and knockback.
-const MAX_PITCH: f64 = 0.085;
-/// About 4 degrees of body roll in a hard turn.
-const MAX_ROLL: f64 = 0.07;
+/// About 6 degrees of steady lean from driving, including sudden stops and knockback.
+const MAX_PITCH: f64 = 0.1;
+/// About 5 degrees of body roll in a hard turn.
+const MAX_ROLL: f64 = 0.085;
 /// Kicks may throw the hull further than steady driving leans it.
-const MAX_KICK_ANGLE: f64 = 0.16;
+const MAX_KICK_ANGLE: f64 = 0.2;
 /// Spring angular frequency (rad/s) and damping ratio: one soft overshoot.
 const STIFFNESS: f64 = 11.0;
 const DAMPING_RATIO: f64 = 0.42;
 /// Radians of pitch and roll per m/s² of forward and sideways acceleration.
-const PITCH_PER_ACCELERATION: f64 = 0.0024;
-const ROLL_PER_ACCELERATION: f64 = 0.0024;
+const PITCH_PER_ACCELERATION: f64 = 0.0034;
+const ROLL_PER_ACCELERATION: f64 = 0.0034;
 /// The spring integrates in substeps no longer than this, so any frame rate
 /// gives the same motion.
 const SUBSTEP: f64 = 1.0 / 240.0;
@@ -149,6 +149,8 @@ pub struct TankMotion {
     pub pending_hit: Option<(f64, f64, f64)>,
     /// Signed metres driven, for the tread scroll.
     pub travel: f64,
+    /// Seconds since the drawn gun last fired (`None` before its first shot).
+    pub gun_age: Option<f64>,
 }
 
 impl TankMotion {
@@ -181,6 +183,10 @@ impl TankMotion {
             let shove = TANK_FEEL.fire_shove * self.pending_fire / TANK_FEEL.fire_rock;
             self.shove.kick(-aim_sin * shove, -aim_cos * shove);
             self.pending_fire = 0.0;
+            self.gun_age = Some(0.0);
+        }
+        if let Some(age) = self.gun_age.as_mut() {
+            *age += dt.max(0.0);
         }
         if let Some((dx, dz, rock)) = self.pending_hit.take() {
             self.suspension.kick(dx, dz, tank.heading, rock);
@@ -190,6 +196,31 @@ impl TankMotion {
         self.shove.step(dt);
         self.flash *= (-TANK_FEEL.flash_decay * dt.max(0.0)).exp();
         self.travel += (tank.vx * sin + tank.vz * cos) * dt.max(0.0);
+    }
+
+    /// The drawn gun's recoil (0..1): a slam back, a beat held, and an eased run
+    /// out, at least as far back as the simulation's own `recoil`.
+    pub fn gun_recoil(&self, recoil: f64) -> f64 {
+        let simulated = recoil.clamp(0.0, 1.0);
+        let simulated = simulated * simulated * (3.0 - 2.0 * simulated);
+        let Some(age) = self.gun_age else {
+            return simulated;
+        };
+        let (slam, hold, out) = (
+            TANK_FEEL.recoil_slam,
+            TANK_FEEL.recoil_hold,
+            TANK_FEEL.recoil_return,
+        );
+        let drawn = if age < slam {
+            age / slam
+        } else if age < slam + hold {
+            1.0
+        } else {
+            let t = ((age - slam - hold) / out).min(1.0);
+            // Ease out: quick at first, settling softly into battery.
+            (1.0 - t).powi(3)
+        };
+        drawn.max(simulated)
     }
 
     /// The top-run tread offset in model units.

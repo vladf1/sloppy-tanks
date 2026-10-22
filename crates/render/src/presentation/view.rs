@@ -46,7 +46,8 @@ use super::theme::{
     theme_look,
 };
 use super::view_settings::{
-    BAR_HEIGHT, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
+    BAR_HEIGHT, CAMERA, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, OVERHEAD_RETICLE_SCALE,
+    PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
 };
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
@@ -553,6 +554,9 @@ pub struct Presentation {
     pub time: f64,
     pub crosshair_visible: bool,
     pub crosshair: Mat4,
+    /// The reticle's resting size: it keeps its size on screen as the overhead
+    /// camera closes in, and confirmed hits pulse it larger.
+    reticle_size: f64,
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
@@ -633,6 +637,7 @@ impl Presentation {
             time: 0.0,
             crosshair_visible: false,
             crosshair: Mat4::IDENTITY,
+            reticle_size: 1.0,
             hide_reticle: false,
             theme: None,
             library: Library::default(),
@@ -1365,6 +1370,9 @@ impl Presentation {
                     let (dx, dz) = origin.map_or((0.0, 0.0), |(x, z)| (event.x - x, event.z - z));
                     self.rig.hurt(dx, dz, damage);
                 }
+                if player_hit && !viewer {
+                    self.hit_stop = self.hit_stop.max(FEEDBACK.hit_confirm_stop_seconds);
+                }
             }
             SimEventType::Explosion => {
                 self.rig.blast(event.x, event.z, event.size.unwrap_or(2.0));
@@ -1640,12 +1648,12 @@ impl Presentation {
             self.renderer.set_node_visible(instance, joint, shown);
         }
         let in_first_person = self.rig.in_first_person;
-        let scale = if confirmed { 1.2 } else { 1.0 }
-            * if in_first_person {
-                FIRST_PERSON.reticle_scale
-            } else {
-                1.0
-            };
+        self.reticle_size = if in_first_person {
+            FIRST_PERSON.reticle_scale
+        } else {
+            (self.rig.view_zoom / CAMERA.default_zoom).clamp(0.5, 1.6) * OVERHEAD_RETICLE_SCALE
+        };
+        let scale = if confirmed { 1.2 } else { 1.0 } * self.reticle_size;
         let scale = Vec3::splat(scale as f32);
         if !in_first_person {
             let aim = self.rig.aim_point;
@@ -1808,7 +1816,7 @@ impl Presentation {
             let turret_pose = turret.with_rotation(turret_rotation);
             // The gun slams back, holds a beat and runs out again, its muzzle
             // climbing with the kick.
-            let recoil = smoothstep(tank.recoil, 0.0, 1.0);
+            let recoil = motion.gun_recoil(tank.recoil);
             let barrel_pose = barrel.pose(
                 Vec3::new(
                     barrel.position.x,

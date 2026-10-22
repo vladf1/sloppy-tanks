@@ -22,9 +22,9 @@ use super::view_settings::{AIM_PLANE_HEIGHT, CAMERA, CAMERA_FEEL, FIRST_PERSON, 
 use crate::camera::PerspectiveCamera;
 
 /// Overhead camera offset per metre of zoom: up and back toward the player, at
-/// about 47 degrees, low enough to show the sides of tanks and houses.
-const OVERHEAD_HEIGHT: f64 = 0.76;
-const OVERHEAD_BACK: f64 = 0.7;
+/// about 44 degrees, low enough to show the sides of tanks and houses.
+const OVERHEAD_HEIGHT: f64 = 0.72;
+const OVERHEAD_BACK: f64 = 0.74;
 /// The overview looks down more steeply, to frame the whole arena. Wrecks land
 /// inside the same steady framing centred on the tank (`landing`), so the
 /// camera's lead, lag and shake never reach the simulation.
@@ -65,6 +65,9 @@ pub struct CameraShake {
     clock: f64,
     offset: DVec3,
     velocity: DVec3,
+    /// A sprung Dutch tilt (rad) that knocks the horizon on kills, hits and blasts.
+    roll: f64,
+    roll_velocity: f64,
 }
 
 /// Smooth noise in -1..1: two incommensurate sines.
@@ -82,6 +85,11 @@ impl CameraShake {
         self.velocity += kick;
     }
 
+    /// Knock the horizon with angular speed `speed` (rad/s, positive tilts left).
+    pub fn roll_kick(&mut self, speed: f64) {
+        self.roll_velocity += speed;
+    }
+
     fn step(&mut self, dt: f64) {
         self.trauma = (self.trauma - CAMERA_FEEL.trauma_decay * dt).max(0.0);
         self.clock += dt;
@@ -93,11 +101,23 @@ impl CameraShake {
                 -frequency * frequency * self.offset - 2.0 * damping * frequency * self.velocity;
             self.velocity += pull * h;
             self.offset += self.velocity * h;
+            let (roll_frequency, roll_damping) =
+                (CAMERA_FEEL.roll_frequency, CAMERA_FEEL.roll_damping);
+            self.roll_velocity += (-roll_frequency * roll_frequency * self.roll
+                - 2.0 * roll_damping * roll_frequency * self.roll_velocity)
+                * h;
+            self.roll = (self.roll + self.roll_velocity * h)
+                .clamp(-CAMERA_FEEL.max_roll, CAMERA_FEEL.max_roll);
             remaining -= h;
         }
         let max = CAMERA_FEEL.max_kick_offset;
         if self.offset.length() > max {
             self.offset = self.offset.normalize() * max;
+        }
+        // A spent knock rests level instead of trembling on.
+        if self.roll.abs() < 1e-5 && self.roll_velocity.abs() < 1e-4 {
+            self.roll = 0.0;
+            self.roll_velocity = 0.0;
         }
     }
 
@@ -109,7 +129,7 @@ impl CameraShake {
         let channel = |index: f64| shake_noise(t + index * SHAKE_CHANNEL_SPACING);
         let rotation = Quat::from_rotation_y((yaw * shake * channel(0.0)) as f32)
             * Quat::from_rotation_x((pitch * shake * channel(1.0)) as f32)
-            * Quat::from_rotation_z((roll * shake * channel(2.0)) as f32);
+            * Quat::from_rotation_z((roll * shake * channel(2.0) + self.roll * scale) as f32);
         (rotation, (self.offset * scale).as_vec3())
     }
 }
@@ -155,6 +175,15 @@ pub struct CameraRig {
     /// spring (`None` until the first follow).
     focus: Option<DVec3>,
     focus_velocity: DVec3,
+    /// The look-ahead toward the aim, the fight and blasts, on its own slower
+    /// spring so the frame glides between interests instead of twitching.
+    lead: DVec3,
+    lead_velocity: DVec3,
+    /// The share of the chosen zoom the follow camera frames at: calm when the
+    /// field is quiet, closing in as an enemy nears.
+    framing: f64,
+    /// The zoom the overhead camera is drawn at (metres).
+    pub view_zoom: f64,
     /// The eased speed fraction (0..1) that pulls the camera back.
     speed_zoom: f64,
     pub shake: CameraShake,
@@ -218,6 +247,10 @@ impl Default for CameraRig {
             follow: DVec3::ZERO,
             focus: None,
             focus_velocity: DVec3::ZERO,
+            lead: DVec3::ZERO,
+            lead_velocity: DVec3::ZERO,
+            framing: CAMERA_FEEL.calm_framing,
+            view_zoom: CAMERA.default_zoom * CAMERA_FEEL.calm_framing,
             speed_zoom: 0.0,
             shake: CameraShake::default(),
             punch: CameraPunch::default(),
@@ -320,8 +353,9 @@ impl CameraRig {
         let zoom = if overview {
             OVERVIEW_ZOOM
         } else {
-            self.zoom * (1.0 + CAMERA_FEEL.speed_zoom * self.speed_zoom)
+            self.zoom * self.framing * (1.0 + CAMERA_FEEL.speed_zoom * self.speed_zoom)
         };
+        self.view_zoom = zoom;
         let (height, back) = if overview {
             (OVERVIEW_HEIGHT, OVERVIEW_BACK)
         } else {
@@ -469,6 +503,20 @@ impl CameraRig {
         }
         let omega = CAMERA_FEEL.follow_frequency;
         let mut target = self.follow;
+        // Close in on a duel: frame the tank and the nearest enemy together, and
+        // ease back out when the field is clear.
+        let framing = match viewer.threat.filter(|_| viewer.alive) {
+            Some(enemy) => {
+                let distance = (enemy.x - self.follow.x).hypot(enemy.z - self.follow.z);
+                ((CAMERA_FEEL.framing_per_metre * distance + CAMERA_FEEL.framing_margin)
+                    / self.zoom)
+                    .clamp(CAMERA_FEEL.combat_framing, CAMERA_FEEL.calm_framing)
+            }
+            None => CAMERA_FEEL.calm_framing,
+        };
+        self.framing += (framing - self.framing) * (1.0 - (-CAMERA_FEEL.framing_rate * dt).exp());
+        let frame_zoom = self.zoom * self.framing;
+        let mut lead = DVec3::ZERO;
         if viewer.alive {
             // The view leans toward the aim in proportion to its reach: a pointer
             // near the tank leaves it centred. A fraction below one keeps the lead
@@ -476,8 +524,8 @@ impl CameraRig {
             let aim = DVec3::new(viewer.aim.sin(), 0.0, viewer.aim.cos());
             let reach = f64::from(self.aim_point.x - self.follow.x as f32)
                 .hypot(f64::from(self.aim_point.z - self.follow.z as f32));
-            let lead = (reach * CAMERA_FEEL.aim_look_ahead)
-                .min(CAMERA_FEEL.max_aim_look_ahead * self.zoom);
+            let aim_lead = (reach * CAMERA_FEEL.aim_look_ahead)
+                .min(CAMERA_FEEL.max_aim_look_ahead * frame_zoom);
             let travel = DVec3::new(viewer.velocity.x, 0.0, viewer.velocity.z);
             let ahead = travel * CAMERA_FEEL.travel_look_ahead_seconds;
             let ahead = ahead.clamp_length_max(CAMERA_FEEL.max_travel_look_ahead);
@@ -487,32 +535,48 @@ impl CameraRig {
             let threat = viewer.threat.map_or(DVec3::ZERO, |enemy| {
                 let toward = DVec3::new(enemy.x - self.follow.x, 0.0, enemy.z - self.follow.z);
                 (toward * CAMERA_FEEL.threat_look_ahead)
-                    .clamp_length_max(CAMERA_FEEL.max_threat_look_ahead * self.zoom)
+                    .clamp_length_max(CAMERA_FEEL.max_threat_look_ahead * frame_zoom)
             });
-            let frame = DVec3::new(0.0, 0.0, -CAMERA_FEEL.frame_ahead * self.zoom);
+            let frame = DVec3::new(0.0, 0.0, -CAMERA_FEEL.frame_ahead * frame_zoom);
             // A blast nearby draws the eye for a moment.
             let toward_blast = DVec3::new(
                 self.interest.x - self.follow.x,
                 0.0,
                 self.interest.z - self.follow.z,
             );
-            let blast = toward_blast
-                * (CAMERA_FEEL.blast_look_ahead * smoothstep(self.interest_weight, 0.0, 1.0));
-            let lead = (aim * lead + threat + frame + blast)
-                .clamp_length_max(CAMERA_FEEL.max_look_ahead * self.zoom);
+            let blast = (toward_blast * CAMERA_FEEL.blast_look_ahead)
+                .clamp_length_max(CAMERA_FEEL.max_blast_look_ahead * frame_zoom)
+                * smoothstep(self.interest_weight, 0.0, 1.0);
+            lead = (aim * aim_lead + threat + frame + blast)
+                .clamp_length_max(CAMERA_FEEL.max_look_ahead * frame_zoom);
             // The spring trails a steady target by 2v/ω; leading by as much keeps a
             // cruising tank centred while starts, stops and turns carry weight.
-            target += lead + ahead + travel * (2.0 / omega);
+            target += ahead + travel * (2.0 / omega);
         }
         let focus = match self.focus {
-            Some(focus) if focus.distance(target) < CAMERA_FEEL.snap_distance => {
+            Some(focus) if focus.distance(target + self.lead) < CAMERA_FEEL.snap_distance => {
+                follow_spring(
+                    &mut self.lead,
+                    &mut self.lead_velocity,
+                    lead,
+                    CAMERA_FEEL.lead_frequency,
+                    dt,
+                );
                 let mut focus = focus;
-                follow_spring(&mut focus, &mut self.focus_velocity, target, omega, dt);
+                follow_spring(
+                    &mut focus,
+                    &mut self.focus_velocity,
+                    target + self.lead,
+                    omega,
+                    dt,
+                );
                 focus
             }
             _ => {
                 self.focus_velocity = DVec3::ZERO;
-                target
+                self.lead = lead;
+                self.lead_velocity = DVec3::ZERO;
+                target + lead
             }
         };
         self.focus = Some(focus);
@@ -532,6 +596,9 @@ impl CameraRig {
     pub fn settle(&mut self) {
         self.focus = None;
         self.focus_velocity = DVec3::ZERO;
+        self.lead = DVec3::ZERO;
+        self.lead_velocity = DVec3::ZERO;
+        self.framing = CAMERA_FEEL.calm_framing;
         self.speed_zoom = 0.0;
         self.shake = CameraShake::default();
         self.punch = CameraPunch::default();
@@ -547,6 +614,9 @@ impl CameraRig {
         self.fov_kick.add(scale.min(1.0));
         let kick = CAMERA_FEEL.fire_kick * scale / length;
         self.shake.kick(DVec3::new(-dx * kick, 0.0, -dz * kick));
+        // The gun's side of the screen dips a touch.
+        self.shake
+            .roll_kick(-CAMERA_FEEL.fire_roll * scale * (dx / length).signum());
     }
 
     /// One of the viewer's shots destroyed an enemy at `(x, z)`: a hard knock and a
@@ -559,6 +629,9 @@ impl CameraRig {
         // The view lurches a little toward the kill.
         let kick = CAMERA_FEEL.fire_kick / distance;
         self.shake.kick(DVec3::new(dx * kick, 0.0, dz * kick));
+        // And the horizon knocks over, away from the kill, before it settles.
+        self.shake
+            .roll_kick(CAMERA_FEEL.kill_roll * if dx > 0.0 { 1.0 } else { -1.0 });
     }
 
     /// A reticle driven by the turret rather than the pointer (autoplay) glides to
@@ -582,6 +655,9 @@ impl CameraRig {
         if length > 1e-6 {
             let kick = CAMERA_FEEL.hurt_kick / length;
             self.shake.kick(DVec3::new(dx * kick, 0.0, dz * kick));
+            let strength = (damage / 30.0).min(1.5);
+            self.shake
+                .roll_kick(CAMERA_FEEL.hurt_roll * strength * (dx / length).signum());
         }
     }
 
@@ -611,6 +687,9 @@ impl CameraRig {
         let kick = CAMERA_FEEL.blast_kick * falloff * (radius / 3.0).min(2.0);
         self.shake
             .kick((away * 0.6 + DVec3::new(0.0, -1.0, 0.0)) * kick);
+        // A blast to one side tips the horizon away from it.
+        self.shake
+            .roll_kick(CAMERA_FEEL.blast_roll * strength * if dx > 0.0 { 1.0 } else { -1.0 });
     }
 
     /// A tank destroyed at `(x, z)` near the viewer pulls the camera in a little,
@@ -621,6 +700,10 @@ impl CameraRig {
         let falloff = (1.0 - distance / CAMERA_FEEL.blast_reach).max(0.0);
         self.punch
             .add(CAMERA_FEEL.nearby_death_punch * falloff * falloff);
+        let side = if self.follow.x > x { 1.0 } else { -1.0 };
+        self.shake.roll_kick(
+            CAMERA_FEEL.kill_roll * CAMERA_FEEL.nearby_death_punch * falloff * falloff * side,
+        );
     }
 
     /// The turret eye the seated camera last sat in, while fully seated. (The drawn
@@ -637,7 +720,14 @@ impl CameraRig {
             return None;
         }
         let eye = first_person_eye(kind);
-        let eye = turret.transform_point3(Vec3::new(0.0, eye.height as f32, eye.forward as f32));
+        // The commander's seat sits off the gun's axis, so the barrel runs in from
+        // a lower corner toward the reticle rather than splitting the view. Facing
+        // +Z, the turret's +X is to the left.
+        let eye = turret.transform_point3(Vec3::new(
+            FIRST_PERSON.eye_side as f32,
+            (eye.height - FIRST_PERSON.eye_drop) as f32,
+            (eye.forward + FIRST_PERSON.eye_ahead) as f32,
+        ));
         let flight = seat_flight(self.seat_blend) as f32;
         // The seated view rides part of the hull's pitch and roll: the turret's up
         // axis leans with the suspension.
@@ -648,8 +738,11 @@ impl CameraRig {
         let phase = self.sway_travel / CAMERA_FEEL.first_person_bob_metres * std::f64::consts::TAU;
         let sway = self.sway_speed * f64::from(flight);
         let roll = CAMERA_FEEL.first_person_sway_roll * sway * phase.sin();
+        // The engine rumbles even at a standstill, harder at speed.
+        let rumble =
+            lerp(CAMERA_FEEL.first_person_idle_rumble, 1.0, self.sway_speed) * f64::from(flight);
         let shudder =
-            CAMERA_FEEL.first_person_shudder * sway * shake_noise(self.shake.clock * 17.0);
+            CAMERA_FEEL.first_person_shudder * rumble * shake_noise(self.shake.clock * 17.0);
         let bob = CAMERA_FEEL.first_person_bob * sway * (phase * 2.0).cos().abs() + shudder;
         let forward = turret.z_axis.truncate().normalize_or(Vec3::Z);
         self.seat_tilt = Quat::IDENTITY.slerp(Quat::from_rotation_arc(Vec3::Y, up), share)
@@ -729,8 +822,9 @@ mod tests {
         // ahead (up the screen).
         rig.aim_point = Vec3::new(10.0, 1.0, -5.0);
         rig.update(&viewer(10.0, -5.0), 1.0, 0.0, false, true);
-        let zoom = CAMERA.default_zoom as f32;
-        let ahead = (CAMERA_FEEL.frame_ahead * CAMERA.default_zoom) as f32;
+        let framed = CAMERA.default_zoom * CAMERA_FEEL.calm_framing;
+        let zoom = framed as f32;
+        let ahead = (CAMERA_FEEL.frame_ahead * framed) as f32;
         let expected = Vec3::new(
             10.0,
             0.7 + zoom * OVERHEAD_HEIGHT as f32,
@@ -754,10 +848,7 @@ mod tests {
         led.aim_point = Vec3::new(10.0, 1.0, 25.0);
         led.update(&viewer(10.0, -5.0), 1.0, 0.0, false, true);
         let lead = led.overhead.target.z - rig.overhead.target.z;
-        assert!(
-            lead > 1.0
-                && f64::from(lead) <= CAMERA_FEEL.max_aim_look_ahead * CAMERA.default_zoom + 1e-4
-        );
+        assert!(lead > 1.0 && f64::from(lead) <= CAMERA_FEEL.max_aim_look_ahead * framed + 1e-4);
         // Screen up aims away from the camera (-Z).
         assert!(rig.aim(Vec2::new(0.0, 0.8)).z < -10.0);
         let view = rig.wreck_view;
@@ -787,11 +878,13 @@ mod tests {
         assert!(rig.in_first_person);
         let turret = Mat4::from_translation(Vec3::new(0.0, 0.25, 0.0));
         let eye = rig.place_eye(&turret, VehicleKind::Balanced).unwrap();
-        assert!(rig.camera.position.distance(eye) < 1e-5);
+        // Within the idling engine's rumble.
+        let rumble = CAMERA_FEEL.first_person_shudder as f32;
+        assert!(rig.camera.position.distance(eye) <= rumble);
         // Facing yaw 0 looks along +Z, tilted slightly down.
         let forward = (rig.camera.target - rig.camera.position).normalize();
         assert!(forward.z > 0.99 && forward.y < 0.0, "{forward:?}");
-        assert!((rig.camera.fov_y_degrees - 58.0).abs() < 1e-4);
+        assert!((f64::from(rig.camera.fov_y_degrees) - FIRST_PERSON.field_of_view).abs() < 1e-4);
         // Destroyed, the player stays in first person, steps back and up out of
         // the wreck along the look, and can still look around.
         let mut dead = viewer(0.0, 0.0);
@@ -819,7 +912,7 @@ mod tests {
         rig.update(&viewer(30.0, -12.0), 1.0, 0.016, false, true);
         let eye = rig.place_eye(&respawned, VehicleKind::Balanced).unwrap();
         assert!(rig.in_first_person);
-        assert!(rig.camera.position.distance(eye) < 1e-5);
+        assert!(rig.camera.position.distance(eye) <= rumble);
     }
 
     #[test]
@@ -844,7 +937,7 @@ mod tests {
         rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
         let moved = rig.overhead.position.x - start.x;
         assert!(moved > 0.0 && moved < 3.0, "{moved}");
-        for _ in 0..120 {
+        for _ in 0..360 {
             rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
         }
         assert!((rig.overhead.position.x - start.x - 3.0).abs() < 1e-3);
@@ -861,7 +954,7 @@ mod tests {
         let drawn_gaze = (rig.camera.target - rig.camera.position).normalize();
         assert!(drawn_gaze.distance(gaze) > 1e-5);
         // Its pull fades, and the focus settles back on the tank.
-        for _ in 0..240 {
+        for _ in 0..360 {
             rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
         }
         assert!(rig.overhead.position.distance(steady) < 1e-3);

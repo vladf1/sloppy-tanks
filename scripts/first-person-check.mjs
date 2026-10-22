@@ -155,7 +155,7 @@ try {
   // Destroyed, the view stays in the turret instead of flying overhead and back.
   assert.deepEqual(
     await page.evaluate(() => [window.sloppy.view.inFirstPerson, window.sloppy.view.camera.fov]),
-    [true, 58],
+    [true, 52],
     "a destroyed player keeps the first-person view",
   );
   await page.screenshot({ path: `${output}/destroyed.png` });

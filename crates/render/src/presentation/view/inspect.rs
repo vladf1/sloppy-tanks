@@ -14,6 +14,7 @@ pub struct ReticleInspection {
     pub confirmed: bool,
     pub ready: bool,
     pub reloading: bool,
+    /// Its scale over the resting size: 1, or larger while a hit is confirmed.
     pub scale: f32,
     pub position: Vec3,
 }
@@ -111,7 +112,7 @@ impl Presentation {
                 confirmed: joint_shown(&state, self.reticle.confirmed),
                 ready: joint_shown(&state, self.reticle.ready),
                 reloading: joint_shown(&state, self.reticle.reloading),
-                scale: scale.x,
+                scale: scale.x / self.reticle_size as f32,
                 position,
             };
         }
