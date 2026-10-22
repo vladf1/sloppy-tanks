@@ -909,20 +909,14 @@ body:has(#settings[open]) .hud-actions {
   filter: drop-shadow(0 1px 1px #000);
 }
 #feed .feed-new {
-  transform-origin: right center;
-  animation: feed-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+  animation: feed-in 0.35s ease-out;
 }
-/* Entrances grow from the row's right edge with a flash and never fade in: a row is
-   legible from its first frame, and never slides past the screen edge where it would
+/* Entrances flash in place and never fade or slide: a row is legible from its first
+   frame, keeps the column's edge, and never runs past the screen edge where it would
    read as cut off. */
 @keyframes feed-in {
   from {
-    opacity: 0;
-    transform: translateX(14px);
     filter: brightness(1.8);
-  }
-  40% {
-    opacity: 1;
   }
 }
 /* Spoken by screen readers, not drawn: the killer is already on screen in the toast. */
@@ -951,21 +945,11 @@ body:has(#settings[open]) .hud-actions {
   color: var(--gold-hot);
 }
 #feed .own-kill-new {
-  transform-origin: right center;
-  animation: own-kill-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1);
+  animation: own-kill-pop 0.5s ease-out;
 }
 @keyframes own-kill-pop {
   0% {
-    opacity: 0;
-    transform: translateX(14px) scale(0.94);
-    filter: brightness(2);
-  }
-  45% {
-    opacity: 1;
-    transform: none;
-  }
-  100% {
-    transform: none;
+    filter: brightness(2.2);
   }
 }
 @media (prefers-reduced-motion: reduce) {
