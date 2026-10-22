@@ -27,7 +27,7 @@ use super::{
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
-use context::{ColorTarget, DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT, texture_2d};
+use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
 /// Opaque draws group by mesh page before material. Every switch is a call Chrome
@@ -825,7 +825,7 @@ impl PostTargets {
             .map(|level| {
                 target(
                     "bloom",
-                    HDR_FORMAT,
+                    gpu.bloom_format,
                     size.width >> level,
                     size.height >> level,
                 )

@@ -187,15 +187,16 @@ fn post_spec(
     }
 }
 
-/// Bloom prefilter, downsample and upsample, the last adding onto its target.
-fn bloom_specs() -> [PipelineSpec; 3] {
+/// Bloom prefilter, downsample and upsample into levels of `format`, the last adding
+/// onto its target.
+fn bloom_specs(format: wgpu::TextureFormat) -> [PipelineSpec; 3] {
     let additive = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor: wgpu::BlendFactor::One,
         operation: wgpu::BlendOperation::Add,
     };
     let add = wgpu::ColorTargetState {
-        format: HDR_FORMAT,
+        format,
         blend: Some(wgpu::BlendState {
             color: additive,
             alpha: additive,
@@ -203,8 +204,8 @@ fn bloom_specs() -> [PipelineSpec; 3] {
         write_mask: wgpu::ColorWrites::ALL,
     };
     [
-        ("bloom prefilter", "fs_bloom_prefilter", HDR_FORMAT.into()),
-        ("bloom down", "fs_bloom_down", HDR_FORMAT.into()),
+        ("bloom prefilter", "fs_bloom_prefilter", format.into()),
+        ("bloom down", "fs_bloom_down", format.into()),
         ("bloom up", "fs_bloom_up", add),
     ]
     .map(|(label, entry, target)| post_spec(label, LayoutKind::Bloom, "vs_post", entry, target))
@@ -381,7 +382,7 @@ impl Pipelines {
             (output_spec(canvas_format), output_source()),
             (sky_spec(), sky_source()),
         ];
-        for spec in bloom_specs() {
+        for spec in bloom_specs(gpu.bloom_format) {
             jobs.push((spec, output_source()));
         }
         let scale = OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE;
