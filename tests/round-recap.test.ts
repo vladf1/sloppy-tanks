@@ -2,7 +2,7 @@
 // `crates/core/tests/round_recap.rs`; this checks how the battle report shows them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recapMarkup } from "../src/game/round-recap";
+import { recapMarkup, teamLabel, wreckLine } from "../src/game/round-recap";
 import type { RecapMetric, RecapState } from "../src/game/engine-api";
 
 const zero = (): Record<RecapMetric, number> => ({
@@ -80,4 +80,14 @@ test("storage that refuses records says so", () => {
   const markup = recapMarkup(round, recap({ persisted: false, damageTaken: 250.4 }));
   assert.match(markup, /Personal bests couldn't be saved in this browser/);
   assert.match(markup, /<dt>Damage taken<\/dt><dd>250<\/dd>/);
+});
+
+test("the report counts wrecks in words and names the winning team plainly", () => {
+  assert.deepEqual([0, 1, 2, 5].map(wreckLine), [
+    "Never wrecked",
+    "Wrecked once",
+    "Wrecked twice",
+    "Wrecked 5 times",
+  ]);
+  assert.equal(teamLabel("BLUE"), "Blue team");
 });

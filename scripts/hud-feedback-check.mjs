@@ -277,8 +277,10 @@ try {
   assert.equal(await critical(), true);
   await page.keyboard.press("Escape");
   await advance();
-  assert.match(await page.locator(".menu").innerText(), /Q \/ E \/ scroll/);
-  assert.match(await page.locator(".menu").innerText(), /Shift \+ scroll: zoom/);
+  // The pause menu's controls card lists each action with its keys.
+  const controls = await page.locator(".menu .keyboard-controls").innerText();
+  assert.match(controls, /Ammo\s+Q\s+E\s+1–5\s+or wheel/);
+  assert.match(controls, /Zoom\s+Shift\s+Wheel/);
   assert.equal(await animation(), "paused");
   await page.locator("#resume").click();
   await advance();

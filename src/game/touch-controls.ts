@@ -26,7 +26,7 @@ export class TouchControls {
       "beforeend",
       `<div class="touch-controls" hidden>
       <div class="touch-stick touch-drive" role="group" aria-label="Drive joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>DRIVE</span></div>
-      <button class="touch-mine" type="button" aria-label="Drop mine"><span>✹</span><small>MINE</small></button>
+      <button class="touch-mine" type="button" aria-label="Drop mine"><svg class="touch-mine-icon" aria-hidden="true" focusable="false"><use href="#hud-mine" /></svg><small>MINE</small></button>
       </div>`,
     );
     this.layer = root.querySelector(".touch-controls")!;

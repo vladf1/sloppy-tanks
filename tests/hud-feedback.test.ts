@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
 import {
   deathCause,
+  deathReport,
   effectsLabel,
   isOwnKill,
   killFeedNames,
@@ -44,8 +45,31 @@ test("missing damage details and departed killers still produce a useful death e
   assert.equal(deathCause(death, []), "You were destroyed by a rocket blast.");
   assert.equal(
     deathCause({ ...death, damageSource: undefined }, scoreboard),
-    "Bob <b>literal</b> killed you with an unknown weapon.",
+    "Bob <b>literal</b> destroyed you.",
   );
+  assert.equal(
+    deathCause({ ...death, owner: death.id, damageSource: undefined }, scoreboard),
+    "You destroyed yourself.",
+  );
+  assert.equal(
+    deathCause({ ...death, owner: undefined, damageSource: undefined }, scoreboard),
+    "You were destroyed.",
+  );
+});
+
+test("the respawn card names the killer and weapon apart, and nobody for self damage", () => {
+  assert.deepEqual(deathReport(death, scoreboard), {
+    killer: "Bob <b>literal</b>",
+    self: false,
+    cause: "rocket",
+    weapon: "Rocket blast",
+  });
+  assert.deepEqual(deathReport({ ...death, owner: 4, damageSource: undefined }, scoreboard), {
+    killer: null,
+    self: true,
+    cause: null,
+    weapon: null,
+  });
 });
 
 test("kill feed names the viewer as YOU and an ownerless kill as the yard", () => {

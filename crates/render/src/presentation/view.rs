@@ -1508,12 +1508,13 @@ impl Presentation {
         self.renderer.set_camera(self.rig.camera);
         self.effects
             .update(&mut self.renderer, state, alpha, dt, self.time);
-        // A destroyed player in first person keeps the view without aiming, and
+        // A destroyed player keeps the view without aiming, in either camera, and
         // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;
         let viewer_alive = state.viewer().is_some_and(|viewer| viewer.alive);
         self.crosshair_visible = state.match_state.phase == MatchPhase::Playing
-            && ((rig.in_first_person && viewer_alive)
+            && viewer_alive
+            && (rig.in_first_person
                 || (!self.hide_reticle && !rig.first_person.enabled && rig.seat_blend == 0.0));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);

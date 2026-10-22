@@ -4,20 +4,31 @@ import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-optio
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
 import {
+  type DeathReport,
   type FeedRow,
   deathCause,
+  deathReport,
   isOwnKill,
   killFeedNames,
+  killFeedSides,
   newFeedRow,
   setText,
   showFeed,
   showTankStatus,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import { hudMarkup, menuMarkup } from "./ui-markup";
+import { hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Ready when you are";
+/** Seconds the hit marker shows after the player's shell lands. */
+const HIT_MARKER_TIME = 0.28;
+/** Seconds the elimination banner shows after the player wrecks a tank. */
+const KILL_BANNER_TIME = 1.9;
+/** Seconds the red screen-edge flash fades over after the player's hull is hit. */
+const HURT_FLASH_TIME = 0.6;
+/** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
+const CRITICAL_HEALTH = 0.25;
 
 export interface UIActions {
   start(): void;
@@ -44,11 +55,22 @@ export class UI {
   toastTime = 0;
   ammoNoticeTime = 0;
   damageTime = 0;
+  hitTime = 0;
+  killBannerTime = 0;
+  hurtFlashTime = 0;
   deathCause = "";
+  /** The killer and weapon of the viewer's latest death, for the respawn card. */
+  deathReport: DeathReport | null = null;
+  /** The respawn countdown's length when it started, so its bar drains to zero. */
+  respawnTotal = 0;
   lastRound = 0;
+  /** Where the player aims on screen, in normalized device coordinates; null for the
+   * screen centre, as in first person. The hit marker appears there. */
+  aimPoint: () => { x: number; y: number } | null = () => null;
   /** The HUD state of the latest `update`. */
   state?: HudState;
   private readonly battleSetup: HTMLElement;
+  private readonly settings: SettingsDialog;
   private playModes?: { close(): void };
   feedRows: FeedRow[] = [];
   constructor(
@@ -94,7 +116,7 @@ export class UI {
     // Settings open only during play (the corner button hides behind menus): they pause
     // the battle, and closing them carries it on.
     let resumeAfterSettings = false;
-    new SettingsDialog(root, "SINGLE PLAYER", {
+    this.settings = new SettingsDialog(root, "SINGLE PLAYER", {
       touchMode: () => actions.touchMode(),
       setTouchMode: (mode) => actions.setTouchMode(mode),
       setVolume: (value) => actions.setting("volume", value),
@@ -121,7 +143,7 @@ export class UI {
     const syncFullscreen = () => {
       const active = document.fullscreenElement !== null;
       const label = active ? "Exit fullscreen" : "Enter fullscreen";
-      fullscreen.textContent = active ? "↘↙\n↗↖" : "⛶";
+      fullscreen.innerHTML = hudIcon(active ? "hud-collapse" : "hud-expand");
       fullscreen.setAttribute("aria-pressed", String(active));
       fullscreen.setAttribute("aria-label", label);
       fullscreen.title = label;
@@ -157,7 +179,7 @@ export class UI {
     } else {
       this.overlay.innerHTML = menuMarkup(
         state,
-        this.battleSetup.querySelector(".menu-help")!.innerHTML,
+        this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null,
       );
       this.overlay
         .querySelector(".respawn")
@@ -185,6 +207,9 @@ export class UI {
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#resume")?.addEventListener("click", () => actions.resume());
+    this.overlay
+      .querySelector("#pause-settings")
+      ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
     this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
   }
@@ -196,7 +221,11 @@ export class UI {
     this.lastRound = round;
     this.lastPhase = "";
     this.deathCause = "";
+    this.deathReport = null;
     this.damageTime = 0;
+    this.hitTime = 0;
+    this.killBannerTime = 0;
+    this.hurtFlashTime = 0;
     this.ammoNoticeTime = 0;
     this.toastTime = 0;
     this.toast.classList.remove("visible");
@@ -210,7 +239,13 @@ export class UI {
   event(event: EngineEvent, state: HudState): void {
     this.syncRound(state.match.round);
     const human = state.human;
+    if (event.playerHit) {
+      this.showHitMarker(event.type === "death");
+    }
     if (event.id === human.id) {
+      if (event.type === "hurt") {
+        this.hurtFlashTime = HURT_FLASH_TIME;
+      }
       if (event.type === "notice" && human.alive) {
         this.hud.querySelector("#ammo-notice")!.textContent = event.label ?? "";
         this.ammoNoticeTime = 3;
@@ -225,23 +260,59 @@ export class UI {
       }
       if (event.type === "death") {
         this.deathCause = deathCause(event, state.scoreboard);
+        this.deathReport = deathReport(event, state.scoreboard);
+        this.respawnTotal = 0;
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
       if (event.type === "respawn") {
         this.deathCause = "";
+        this.deathReport = null;
         this.damageTime = 0;
       }
       if (event.type === "pickup" || event.type === "promotion" || event.type === "death") {
         this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
+        this.toast.dataset.tone = event.type;
         this.toastTime = event.type === "pickup" ? 1.5 : 2;
+        this.toast.classList.remove("visible");
+        // Commit the hidden state so a toast replacing a visible one pops in again.
+        void this.toast.offsetWidth;
         this.toast.classList.add("visible");
       }
     }
     if (event.type === "death") {
+      const names = killFeedNames(event, human.id, state.scoreboard);
+      const ownKill = isOwnKill(event, human.id);
       this.feedRows.unshift(
-        newFeedRow(killFeedNames(event, human.id, state.scoreboard), isOwnKill(event, human.id)),
+        newFeedRow(names, ownKill, {
+          cause: event.damageSource?.cause,
+          sides: killFeedSides(event),
+        }),
       );
+      if (ownKill) {
+        this.showKillBanner(names[1]);
+      }
     }
+  }
+  /** The hit marker at the player's aim: four ticks that snap out, red on a kill. */
+  private showHitMarker(kill: boolean): void {
+    const marker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
+    const aim = this.hud.classList.contains("first-person") ? null : this.aimPoint();
+    marker.style.left = aim ? `${((aim.x + 1) / 2) * 100}%` : "50%";
+    marker.style.top = aim ? `${((1 - aim.y) / 2) * 100}%` : "50%";
+    marker.classList.remove("visible");
+    void marker.offsetWidth;
+    marker.classList.toggle("kill", kill);
+    marker.classList.add("visible");
+    this.hitTime = HIT_MARKER_TIME * (kill ? 1.6 : 1);
+  }
+  /** The elimination banner below the crosshair, naming the tank the player wrecked. */
+  private showKillBanner(victim: string): void {
+    const banner = this.hud.querySelector<HTMLElement>("#kill-banner")!;
+    banner.querySelector("b")!.textContent = victim;
+    banner.classList.remove("visible");
+    void banner.offsetWidth;
+    banner.classList.add("visible");
+    this.killBannerTime = KILL_BANNER_TIME;
   }
   update(state: HudState, dt: number): void {
     this.state = state;
@@ -252,7 +323,29 @@ export class UI {
     if (match.phase === "playing") {
       this.damageTime = Math.max(0, this.damageTime - dt);
       this.ammoNoticeTime = Math.max(0, this.ammoNoticeTime - dt);
+      this.hitTime = Math.max(0, this.hitTime - dt);
+      this.killBannerTime = Math.max(0, this.killBannerTime - dt);
+      this.hurtFlashTime = Math.max(0, this.hurtFlashTime - dt);
     }
+    const playing = match.phase === "playing";
+    // A wrecked tank aims at nothing: its hit marker and kill banner go with it, and the
+    // tank panel steps aside for the respawn card.
+    this.hud.classList.toggle("dead", dead && match.phase !== "ready");
+    if (this.hitTime <= 0 || !playing || dead) {
+      this.hud.querySelector("#hit-marker")!.classList.remove("visible");
+    }
+    if (this.killBannerTime <= 0 || !playing || dead) {
+      this.hud.querySelector("#kill-banner")!.classList.remove("visible");
+    }
+    const vignette = this.hud.querySelector<HTMLElement>("#damage-vignette")!;
+    const flash = playing ? (this.hurtFlashTime / HURT_FLASH_TIME).toFixed(2) : "0";
+    if (vignette.style.opacity !== flash) {
+      vignette.style.opacity = flash;
+    }
+    this.hud.classList.toggle(
+      "critical",
+      playing && tank.alive && tank.healthRatio < CRITICAL_HEALTH,
+    );
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
     indicator.hidden = this.damageTime <= 0 || match.phase !== "playing";
     indicator.style.opacity = String(Math.min(1, this.damageTime * 2));
@@ -266,8 +359,22 @@ export class UI {
     }
     const set = (id: string, text: string) => setText(document, id, text);
     const solo = state.gameMode === "solo";
-    set("label0", solo ? "KILLS" : "◆ BLUE");
-    set("label1", solo ? "ACTIVE" : "RED Ⅱ");
+    set("label0", solo ? "KILLS" : "BLUE");
+    set("label1", solo ? "ACTIVE" : "RED");
+    // Each side's bar fills toward the score limit; your side's plate is marked.
+    const scoreboard = this.hud.querySelector<HTMLElement>(".scoreboard")!;
+    scoreboard.classList.toggle("no-limit", solo || state.endlessMatch);
+    match.scores.forEach((score, team) => {
+      const fill = `${Math.min(1, score / Math.max(1, state.scoreLimit)) * 100}%`;
+      const bar = this.hud.querySelector<HTMLElement>(`#progress${team}`)!;
+      if (bar.style.width !== fill) {
+        bar.style.width = fill;
+      }
+      scoreboard
+        .querySelector(team === 0 ? ".mint" : ".coral")!
+        .classList.toggle("yours", !solo && team === state.humanTeam);
+    });
+    scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
     set(
       "objective",
       solo
@@ -282,8 +389,15 @@ export class UI {
     set("time", !state.endlessMatch && match.overtime ? "NEXT KILL" : duration(sec));
     showTankStatus(this.hud, tank, dead || match.phase !== "playing");
     set("respawn-count", String(Math.ceil(tank.respawn)));
+    if (dead) {
+      this.respawnTotal = Math.max(this.respawnTotal, tank.respawn);
+      const fill = this.overlay.querySelector<HTMLElement>("#respawn-fill");
+      const left = this.respawnTotal > 0 ? tank.respawn / this.respawnTotal : 0;
+      fill?.style.setProperty("--left", left.toFixed(3));
+    }
     this.hud.classList.toggle("paused", match.phase !== "playing");
-    this.toastTime -= dt;
+    // Notices belong to play: a menu or the battle report never shows one behind it.
+    this.toastTime = playing ? this.toastTime - dt : 0;
     if (this.toastTime <= 0) {
       this.toast.classList.remove("visible");
     }
