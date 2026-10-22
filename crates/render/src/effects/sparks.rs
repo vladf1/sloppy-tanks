@@ -12,20 +12,23 @@ use super::random::CosmeticRandom;
 pub const MAX_SPARKS: usize = 900;
 /// Every streak record a frame may hold: sparks, glows, tongues and tracers.
 pub const STREAK_CAPACITY: usize = 2048;
-const SPARK_GRAVITY: f32 = 11.0;
-/// Air drag (1/s): sparks shoot out fast and hang a moment before they fall.
-const SPARK_DRAG: f32 = 2.6;
-/// The ground bounces sparks back up with this share of their fall speed.
-const BOUNCE: f32 = 0.35;
+/// Air drag (1/s): sparks shoot out fast and arc down; embers hang in the air.
+const SPARK_DRAG: f32 = 1.5;
+const EMBER_DRAG: f32 = 2.2;
+/// The ground bounces sparks back up with this share of their fall speed, and a
+/// landed spark dies within this many seconds instead of lying there glowing.
+const BOUNCE: f32 = 0.3;
+const LANDED_LIFE: f32 = 0.09;
 const GROUND: f32 = 0.05;
 /// A streak is as long as this many seconds of its flight, within these bounds (m).
-const STRETCH_SECONDS: f32 = 0.045;
-const STRETCH: [f32; 2] = [0.08, 1.6];
+const STRETCH_SECONDS: f32 = 0.05;
+const STRETCH: [f32; 2] = [0.07, 1.5];
 
 /// The streak shader's kinds (`streak.wgsl`).
 const KIND_STREAK: f32 = 0.0;
 const KIND_GLOW: f32 = 1.0;
 const KIND_TONGUE: f32 = 2.0;
+const KIND_TRACER: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spark {
@@ -34,6 +37,10 @@ pub struct Spark {
     pub life: f32,
     max: f32,
     width: f32,
+    /// Downward acceleration (m/s²); negative for embers carried up on the heat.
+    gravity: f32,
+    /// Flicker phase; zero for a steady spark.
+    flicker: f32,
     /// Linear HDR color at birth; it cools toward deep red as the spark dies.
     color: [f32; 3],
 }
@@ -48,43 +55,60 @@ pub struct Burst {
     pub life: [f32; 2],
     pub width: f32,
     pub color: [f32; 3],
+    /// Downward acceleration (m/s²); negative makes buoyant embers.
+    pub gravity: f32,
 }
 
-/// A blast's hot sparks and embers.
+/// A blast's hot sparks: fast yellow-orange streaks that leave the fireball and
+/// arc down under gravity.
 pub const BLAST_SPARKS: Burst = Burst {
-    count: 26,
-    speed: [7.0, 19.0],
-    lift: 0.75,
-    life: [0.45, 0.9],
-    width: 0.09,
-    color: [5.0, 2.6, 0.7],
+    count: 22,
+    speed: [9.0, 24.0],
+    lift: 0.9,
+    life: [0.5, 1.1],
+    width: 0.13,
+    color: [4.6, 1.75, 0.32],
+    gravity: 13.0,
 };
-/// A shell striking steel: a bright, quick spray.
+/// Embers carried up on a fire's heat, flickering as they die.
+pub const EMBERS: Burst = Burst {
+    count: 14,
+    speed: [1.2, 4.5],
+    lift: 1.4,
+    life: [0.9, 2.0],
+    width: 0.08,
+    color: [4.2, 1.25, 0.2],
+    gravity: -1.8,
+};
+/// A shell striking steel: a bright, quick spray glancing off the armour.
 pub const METAL_SPARKS: Burst = Burst {
-    count: 16,
-    speed: [6.0, 15.0],
+    count: 11,
+    speed: [7.0, 15.0],
     lift: 0.45,
-    life: [0.18, 0.4],
-    width: 0.06,
-    color: [6.0, 4.4, 1.8],
+    life: [0.2, 0.42],
+    width: 0.075,
+    color: [4.2, 1.7, 0.35],
+    gravity: 13.0,
 };
 /// A shell striking stone or concrete.
 pub const STONE_SPARKS: Burst = Burst {
     count: 9,
-    speed: [4.0, 10.0],
+    speed: [5.0, 11.0],
     lift: 0.5,
     life: [0.15, 0.32],
     width: 0.055,
-    color: [5.0, 3.2, 1.1],
+    color: [4.6, 2.3, 0.6],
+    gravity: 13.0,
 };
 /// A muzzle's burning propellant flecks.
 pub const MUZZLE_SPARKS: Burst = Burst {
-    count: 5,
-    speed: [6.0, 13.0],
+    count: 4,
+    speed: [7.0, 14.0],
     lift: 0.2,
-    life: [0.12, 0.26],
-    width: 0.05,
-    color: [5.5, 3.0, 0.9],
+    life: [0.1, 0.22],
+    width: 0.045,
+    color: [4.4, 1.9, 0.4],
+    gravity: 13.0,
 };
 
 #[derive(Clone, Debug)]
@@ -143,12 +167,19 @@ impl Sparks {
             let speed = burst.speed[0] + (burst.speed[1] - burst.speed[0]) * next();
             let life = burst.life[0] + (burst.life[1] - burst.life[0]) * next();
             let shade = 0.75 + next() * 0.5;
+            let flicker = if burst.gravity < 0.0 {
+                1.0 + next() * 40.0
+            } else {
+                0.0
+            };
             self.sparks.push(Spark {
                 position: origin,
                 velocity: heading.normalize_or(Vec3::Y) * speed,
                 life,
                 max: life,
                 width: burst.width * (0.7 + next() * 0.6),
+                gravity: burst.gravity,
+                flicker,
                 color: burst.color.map(|c| c * shade),
             });
         }
@@ -158,20 +189,29 @@ impl Sparks {
     /// tongues and tracers are pushed after this.
     pub fn update(&mut self, dt: f64) {
         let dt = dt as f32;
-        let drag = (-SPARK_DRAG * dt).exp();
+        let spark_drag = (-SPARK_DRAG * dt).exp();
+        let ember_drag = (-EMBER_DRAG * dt).exp();
         self.sparks.retain_mut(|spark| {
             spark.life -= dt;
             if spark.life <= 0.0 {
                 return false;
             }
-            spark.velocity *= drag;
-            spark.velocity.y -= SPARK_GRAVITY * dt;
+            let ember = spark.flicker > 0.0;
+            spark.velocity *= if ember { ember_drag } else { spark_drag };
+            spark.velocity.y -= spark.gravity * dt;
+            if ember {
+                // Embers wander on the eddies of the hot air they ride.
+                let swirl = spark.flicker + spark.life * 3.0;
+                spark.velocity.x += swirl.sin() * 3.0 * dt;
+                spark.velocity.z += (swirl * 1.3).cos() * 3.0 * dt;
+            }
             spark.position += spark.velocity * dt;
             if spark.position.y < GROUND {
                 spark.position.y = GROUND;
                 spark.velocity.y = -spark.velocity.y * BOUNCE;
-                spark.velocity.x *= 0.6;
-                spark.velocity.z *= 0.6;
+                spark.velocity.x *= 0.5;
+                spark.velocity.z *= 0.5;
+                spark.life = spark.life.min(LANDED_LIFE);
             }
             true
         });
@@ -181,9 +221,14 @@ impl Sparks {
             let speed = spark.velocity.length();
             let length = (speed * STRETCH_SECONDS).clamp(STRETCH[0], STRETCH[1]);
             let direction = spark.velocity / speed.max(1e-4);
-            // White-hot sparks cool to orange and deep red as they die.
-            let cool = [1.0, 0.45 + 0.55 * fade, 0.15 + 0.85 * fade * fade];
-            let color = [0, 1, 2].map(|i| spark.color[i] * cool[i]);
+            // Hot sparks cool to orange and deep red as they die; embers flicker.
+            let cool = [1.0, 0.4 + 0.6 * fade, 0.1 + 0.9 * fade * fade];
+            let flicker = if spark.flicker > 0.0 {
+                0.55 + 0.45 * (spark.flicker + spark.life * 23.0).sin()
+            } else {
+                1.0
+            };
+            let color = [0, 1, 2].map(|i| spark.color[i] * cool[i] * flicker);
             streak(
                 &mut self.records,
                 spark.position - direction * (length * 0.5),
@@ -214,6 +259,28 @@ pub fn streak(
         world,
         tint,
         [direction.x, direction.y, direction.z, KIND_STREAK],
+    ))
+}
+
+/// A shell tracer: a tapered glowing tail `length` metres behind `head`, hottest
+/// at its head.
+pub fn tracer_streak(
+    records: &mut PoolBuffer,
+    head: Vec3,
+    direction: Vec3,
+    width: f32,
+    length: f32,
+    tint: [f32; 4],
+) -> bool {
+    let world = Mat4::from_scale_rotation_translation(
+        Vec3::new(width, length, 1.0),
+        Quat::IDENTITY,
+        head - direction * (length * 0.5),
+    );
+    records.push(record(
+        world,
+        tint,
+        [direction.x, direction.y, direction.z, KIND_TRACER],
     ))
 }
 
@@ -265,6 +332,13 @@ mod tests {
                 && r.translation().y >= GROUND - STRETCH[1]
         }));
         for _ in 0..80 {
+            sparks.update(1.0 / 60.0);
+        }
+        assert!(
+            sparks.len() < MAX_SPARKS / 4,
+            "most have landed or burnt out"
+        );
+        for _ in 0..10 {
             sparks.update(1.0 / 60.0);
         }
         assert!(sparks.is_empty() && sparks.records.is_empty());

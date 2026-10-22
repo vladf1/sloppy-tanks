@@ -13,7 +13,7 @@ use sloppy_core::sim::tank_dimensions::tank_visual_muzzle;
 use sloppy_core::sim::{RenderState, SimEvent, SimEventType, Weapon};
 
 use super::Flash;
-use super::explosions::smoke_puff;
+use super::explosions::{WIND, smoke_puff};
 use super::ground::Ground;
 use super::laser::HULL_OFFSET;
 use super::pool::PoolBuffer;
@@ -26,15 +26,17 @@ pub const PUFFS_PER_MUZZLE: usize = 6;
 /// Shots waiting for the frame's poses; more in one frame are dropped.
 const MAX_PENDING: usize = 64;
 /// The flame lasts a few frames; the smoke longer.
-const FLAME_SECONDS: f64 = 0.08;
+const FLAME_SECONDS: f64 = 0.07;
 const SMOKE_SECONDS: f64 = 1.2;
-const GUNSMOKE: u32 = 0xd2cdc4;
+const GUNSMOKE: u32 = 0xdcdcdc;
+/// The flame star's points around the bore (rad from the barrel's line).
+const STAR_ANGLES: [f32; 4] = [-1.15, -0.55, 0.55, 1.15];
 /// The muzzle light's peak intensity (times the shot size) and reach.
 pub const MUZZLE_LIGHT: f32 = 28.0;
 pub const MUZZLE_LIGHT_DISTANCE: f32 = 10.0;
 /// The light dies this fast (1/s).
 const LIGHT_DECAY: f64 = 32.0;
-const FLAME_COLOR: [f32; 3] = [5.0, 2.7, 0.9];
+const FLAME_COLOR: [f32; 3] = [4.8, 2.2, 0.55];
 
 #[derive(Clone, Copy, Debug)]
 struct Pending {
@@ -159,6 +161,7 @@ impl MuzzleFlashes {
             self.light = Flash {
                 position: origin + direction * 0.6 + Vec3::Y * 0.4,
                 intensity: MUZZLE_LIGHT * shot.size as f32,
+                color: super::MUZZLE_FLASH_COLOR,
             };
         }
         self.pending.clear();
@@ -192,70 +195,92 @@ fn draw(flash: &Muzzle, sparks: &mut Sparks, puffs: &mut PoolBuffer) {
         let [r, g, b] = FLAME_COLOR;
         let streaks = &mut sparks.records;
         if forward != Vec3::ZERO {
+            // A short, fat tongue out of the bore...
             tongue(
                 streaks,
                 base - forward * 0.1,
                 forward,
-                0.95 * s,
-                (1.7 + 0.9 * k) * s,
+                1.05 * s,
+                (1.25 + 0.6 * k) * s,
                 [r, g, b, fade],
             );
-            // The muzzle brake throws two short jets sideways.
+            // ...a star of flame points fanning around it...
+            for (i, angle) in STAR_ANGLES.into_iter().enumerate() {
+                let (sin, cos) = angle.sin_cos();
+                let direction = (forward * cos + side * sin + Vec3::Y * 0.12).normalize();
+                let length = (0.55 + 0.25 * ((flash.seed * 13.0 + i as f32 * 2.7).sin() + 1.0)) * s;
+                tongue(
+                    streaks,
+                    base,
+                    direction,
+                    0.32 * s,
+                    length * (0.8 + 0.4 * k),
+                    [r, g * 0.95, b, fade * 0.9],
+                );
+            }
+            // ...and two side jets out of the muzzle brake.
             for sign in [-1.0, 1.0] {
                 tongue(
                     streaks,
                     base - forward * 0.12,
-                    (side * sign + forward * 0.35).normalize(),
-                    0.42 * s,
-                    0.75 * s,
+                    (side * sign + forward * 0.3).normalize(),
+                    0.45 * s,
+                    0.8 * s,
                     [r, g * 0.9, b, fade * 0.85],
                 );
             }
         }
         glow(
             streaks,
-            base + forward * 0.25,
-            (2.3 + 1.0 * k) * s,
-            [5.0, 3.4, 1.6, fade * 0.9],
+            base + forward * 0.3,
+            (1.2 + 0.4 * k) * s,
+            [4.6, 3.6, 2.2, fade],
+        );
+        glow(
+            streaks,
+            base + forward * 0.4,
+            (3.4 + 1.2 * k) * s,
+            [3.0, 1.2, 0.25, fade * 0.4],
         );
     }
     let smoke = hex_to_linear(GUNSMOKE);
-    let fade = 1.0 - smoothstep(t, 0.15, SMOKE_SECONDS as f32);
-    let erosion = smoothstep(t, 0.1, SMOKE_SECONDS as f32) * 0.9;
+    let fade = 1.0 - smoothstep(t, 0.2, SMOKE_SECONDS as f32);
+    let erosion = smoothstep(t, 0.15, SMOKE_SECONDS as f32) * 0.9;
     let heat = 0.9 * (-t * 22.0).exp();
+    let wind = Vec3::new(WIND[0] as f32, 0.0, WIND[1] as f32);
     for j in 0..PUFFS_PER_MUZZLE {
         let jf = j as f32;
         let seed = flash.seed + jf * 0.137;
-        let wobble = (seed * TAU as f32).sin() * 0.15;
+        let wobble = (seed * TAU as f32).sin();
         let (position, size, color, opacity, softness) = match j {
-            // Rolling forward out of the barrel, each a little farther and bigger.
-            0..=2 => (
-                base + forward * ((0.35 + jf * 0.55) * settle(t, 6.5 - jf) * s)
-                    + side * wobble
-                    + Vec3::Y * (t * 0.35),
-                (0.4 + 0.15 * jf + 0.85 * t.sqrt()) * s,
+            // A cone of gunsmoke blown forward out of the bore: each puff flies a
+            // little farther, wider and slower, then rises and drifts.
+            0..=3 => (
+                base + forward * ((0.3 + jf * 0.75) * settle(t, 7.5 - jf * 1.3) * s)
+                    + side * (wobble * 0.18 * jf * settle(t, 4.0) * s)
+                    + Vec3::Y * (t * (0.45 + 0.1 * jf))
+                    + wind * t,
+                (0.3 + 0.12 * jf + (0.6 + 0.15 * jf) * t.sqrt()) * s,
                 smoke,
-                0.6 - jf * 0.08,
-                0.3,
+                0.62 - jf * 0.08,
+                0.25,
             ),
             // Blown sideways out of the muzzle brake.
-            3 | 4 => {
-                let sign = if j == 3 { -1.0 } else { 1.0 };
-                (
-                    base + side * (sign * (0.25 + 0.75 * settle(t, 7.0)) * s) - forward * 0.1
-                        + Vec3::Y * (t * 0.3),
-                    (0.3 + 0.7 * t.sqrt()) * s,
-                    smoke,
-                    0.45,
-                    0.35,
-                )
-            }
+            4 => (
+                base + side * (wobble.signum() * (0.25 + 0.7 * settle(t, 7.0)) * s)
+                    + Vec3::Y * (t * 0.35)
+                    + wind * t,
+                (0.28 + 0.6 * t.sqrt()) * s,
+                smoke,
+                0.4,
+                0.3,
+            ),
             // The blast kicks the ground's dust up under the muzzle.
             _ => (
-                Vec3::new(base.x, 0.35, base.z) + forward * (0.6 + 1.1 * settle(t, 5.0)) * s,
-                (0.6 + 1.0 * t.sqrt()) * s,
+                Vec3::new(base.x, 0.3, base.z) + forward * (0.7 + 1.0 * settle(t, 5.0)) * s,
+                (0.5 + 0.9 * t.sqrt()) * s,
                 flash.dust,
-                0.32,
+                0.2,
                 0.8,
             ),
         };
@@ -266,9 +291,10 @@ fn draw(flash: &Muzzle, sparks: &mut Sparks, puffs: &mut PoolBuffer) {
             color,
             (t / 0.02).min(1.0) * opacity * fade,
             seed,
-            if j < 3 { heat } else { heat * 0.5 },
+            if j < 2 { heat } else { 0.0 },
             erosion,
             softness,
+            if j < 4 { heat * 0.6 } else { 0.0 },
         );
     }
 }
@@ -322,7 +348,10 @@ mod tests {
         assert!(!sparks.is_empty());
         // The burst's sparks draw from the next update; these are the flames.
         let flames = sparks.records.len();
-        assert_eq!(flames, 4, "a tongue, two brake jets and a glow");
+        assert_eq!(
+            flames, 9,
+            "a tongue, a star of four points, two brake jets and two glows"
+        );
         assert_eq!(puffs.len(), PUFFS_PER_MUZZLE);
         for _ in 0..90 {
             puffs.clear();

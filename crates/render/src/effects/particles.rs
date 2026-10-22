@@ -8,7 +8,7 @@ use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 use super::explosions::ExplosionEffects;
 use super::pool::{PoolBuffer, pose, record};
 use super::random::CosmeticRandom;
-use super::sparks::{BLAST_SPARKS, METAL_SPARKS, STONE_SPARKS, Sparks};
+use super::sparks::{BLAST_SPARKS, EMBERS, METAL_SPARKS, STONE_SPARKS, Sparks};
 use crate::color::hex_to_linear;
 
 pub const MAX_PARTICLES: usize = 1200;
@@ -32,6 +32,8 @@ pub struct Particle {
     pub size: f64,
     /// Linear RGB.
     pub color: [f32; 3],
+    /// Seconds a clod flung out of a fireball glows before it cools to its color.
+    pub hot: f64,
 }
 
 /// Life and size pairs are [minimum, random span]. Chosen once per event.
@@ -82,8 +84,10 @@ const EXPLOSION: Style = Style {
     height: 0.8,
     lift: 0.0,
 };
-/// Clods of the ground a fiery blast throws, beside its sparks.
+/// Clods of the ground a fiery blast throws, beside its sparks; they leave the
+/// fireball glowing and cool to the ground's color.
 const CLODS: usize = 12;
+const CLOD_GLOW: [f32; 3] = [3.4, 1.05, 0.16];
 const HURT: Style = Style {
     count: 12,
     life: [0.22, 0.16],
@@ -107,7 +111,7 @@ const TIMBER_COLORS: [u32; 4] = [0x805336, 0xb47a49, 0xc99a65, 0x947958];
 /// Dark bark and pale fresh wood torn from a trunk.
 const TREE_CHIP_COLORS: [u32; 3] = [0x6b5038, 0x8a6a4a, 0xc9a978];
 const EXPLOSION_COLORS: [u32; 6] = [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250];
-const HURT_COLORS: [u32; 3] = [0xffffff, 0xffcb58, 0xffcb58];
+const HURT_COLORS: [u32; 3] = [0xffd9a0, 0xffa040, 0xff7a2a];
 const SPARK_COLOR: u32 = 0xffdf91;
 
 #[derive(Clone, Debug)]
@@ -251,6 +255,7 @@ impl ParticleEffects {
                 max: life,
                 size,
                 color: hex_to_linear(color_at(i)),
+                hot: 0.0,
             });
             i += 1;
         }
@@ -272,13 +277,17 @@ impl ParticleEffects {
         if fiery {
             let size = event.size.unwrap_or(3.0) as f32;
             let mut burst = BLAST_SPARKS;
-            burst.speed = burst.speed.map(|v| v * (size / 4.5).clamp(0.6, 1.4));
+            burst.speed = burst.speed.map(|v| v * (size / 4.5).clamp(0.7, 1.25));
+            let mut embers = EMBERS;
             if burnout {
                 burst.count = 6;
+                embers.count = 5;
             } else if event.kind == T::Death {
-                burst.count = 34;
+                burst.count = 40;
+                embers.count = 22;
             }
             self.sparks.burst(at(0.9), Vec3::ZERO, 1.0, &burst, random);
+            self.sparks.burst(at(1.3), Vec3::Y, 0.9, &embers, random);
             return;
         }
         match event.kind {
@@ -292,7 +301,11 @@ impl ParticleEffects {
                     Some(y) => (&METAL_SPARKS, y),
                     None => (&STONE_SPARKS, 1.0),
                 };
-                self.sparks.burst(at(y), Vec3::ZERO, 1.0, burst, random);
+                // Glancing back off the struck face toward the gun.
+                let back = event.from.map_or(Vec3::ZERO, |from| {
+                    Vec3::new((from.x - event.x) as f32, 0.4, (from.z - event.z) as f32)
+                });
+                self.sparks.burst(at(y), back, 0.85, burst, random);
             }
             T::Ricochet => {
                 self.sparks
@@ -305,7 +318,7 @@ impl ParticleEffects {
     /// Clods of the ground a blast throws up and out; they fall back and roll.
     fn clods(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         let soil = self.explosions.ground.soil(event.x, event.z);
-        let speed = 1.4 * event.size.unwrap_or(3.0).min(7.0);
+        let speed = 2.0 * event.size.unwrap_or(3.0).min(7.0);
         for i in 0..CLODS {
             if self.particles.len() >= MAX_PARTICLES {
                 return;
@@ -327,6 +340,7 @@ impl ParticleEffects {
                 max: life,
                 size,
                 color: hex_to_linear(soil.clods[i % soil.clods.len()]),
+                hot: if i % 3 == 0 { 0.7 } else { 0.25 },
             });
         }
     }
@@ -362,7 +376,12 @@ impl ParticleEffects {
             } else {
                 Mat4::from_scale_rotation_translation(Vec3::splat(size), chip_turn, position)
             };
-            let [r, g, b] = q.color;
+            let mut color = q.color;
+            if q.hot > 0.0 {
+                let glow = (1.0 - (q.max - q.life) / q.hot).clamp(0.0, 1.0) as f32;
+                color = [0, 1, 2].map(|c| color[c] + (CLOD_GLOW[c] - color[c]) * glow * glow);
+            }
+            let [r, g, b] = color;
             self.records.push(record(world, [r, g, b, 1.0], [0.0; 4]));
         }
     }
@@ -400,8 +419,9 @@ mod tests {
         };
         assert!(particles.event(&blast, &mut random));
         particles.update(0.06, 0.12);
-        // A dust ring, a shock front and a scorch; clods and glowing sparks.
-        assert_eq!(particles.explosions.rings.len(), 3);
+        // A dust ring, a shock front, a scorch and the fire's glow; clods and
+        // glowing sparks.
+        assert_eq!(particles.explosions.rings.len(), 4);
         assert_eq!(particles.particles.len(), CLODS);
         assert_eq!(particles.records.len(), CLODS);
         assert!(!particles.sparks.is_empty());
@@ -471,7 +491,7 @@ mod tests {
                 .iter()
                 .all(|p| p.vy >= 4.0 && p.life >= 0.9)
         );
-        assert_eq!(particles.sparks.len(), 34);
+        assert_eq!(particles.sparks.len(), 40 + 22, "sparks and embers");
     }
 
     #[test]
@@ -485,7 +505,11 @@ mod tests {
         };
         assert!(!particles.event(&burnout, &mut random));
         assert!(particles.particles.is_empty());
-        assert_eq!(particles.sparks.len(), 6, "a few sparks, no clods");
+        assert_eq!(
+            particles.sparks.len(),
+            6 + 5,
+            "a few sparks and embers, no clods"
+        );
         particles.update(0.5, 0.5);
         assert!(
             particles

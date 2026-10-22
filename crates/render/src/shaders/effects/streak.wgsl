@@ -1,10 +1,11 @@
-// Additive glowing streaks: sparks and shell tracers stretched along their
-// flight, round glows (flash cores, tracer heads) and muzzle flash tongues.
+// Additive glowing streaks: sparks stretched along their flight, round glows
+// (flash cores, tracer heads), muzzle and wreck flame tongues and shell tracers.
 // The mesh is a unit XY quad; the instance transform is translation × scale with
 // x the width and y the length (a glow's diameter on both). instance_data =
 // (direction xyz unit world, kind): kind 0 a streak centred on its origin with
-// its head along +direction, 1 a camera-facing glow, 2 a flash tongue whose base
-// sits on the origin. Tint = linear HDR color and opacity.
+// its head along +direction, 1 a camera-facing glow, 2 a flame tongue whose base
+// sits on the origin, 3 a tracer centred like a streak, white-hot at its head and
+// fading down a tapered tail. Tint = linear HDR color and opacity.
 fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let corner = (*w).position - v.instance_origin;
     let kind = v.instance_data.w;
@@ -24,7 +25,7 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     // Seen end on, a streak keeps a width-sized dot instead of collapsing.
     let screen_up = normalize(cross(to_camera, side));
     var along = v.position.y;
-    if kind > 1.5 {
+    if kind > 1.5 && kind < 2.5 {
         along += 0.5;
     }
     (*w).position = v.instance_origin + side * v.position.x * width + direction * along * extent
@@ -41,20 +42,32 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let body = 1.0 - smoothstep(0.0, 1.0, across);
         let taper = smoothstep(0.0, 0.75, along) * (1.0 - smoothstep(0.88, 1.0, along));
         shape = body * body * taper;
-        core = pow(body, 4.0) * smoothstep(0.4, 0.9, along);
+        core = pow(body, 6.0) * smoothstep(0.55, 0.92, along) * 0.35;
     } else if kind < 1.5 {
         let radius = length(f.uv * 2.0 - 1.0);
         let fall = clamp(1.0 - radius, 0.0, 1.0);
         shape = fall * fall;
-        core = pow(fall, 5.0);
+        core = pow(fall, 6.0);
+    } else if kind < 2.5 {
+        // A tongue of flame: wide and white at its base, ragged and licking to
+        // its tip.
+        let seed = f.instance_data.x * 40.0 + f.instance_data.z * 17.0;
+        let lick = frame.camera_position.w * 9.0 + seed;
+        let ragged = 0.72 + 0.28 * sin(along * 19.0 - lick) * sin(along * 7.0 + seed);
+        let half_width = (1.0 - pow(along, 0.75)) * ragged + 0.03;
+        let body = 1.0 - smoothstep(half_width * 0.35, half_width, across);
+        shape = body * smoothstep(0.0, 0.08, along) * (1.0 - smoothstep(0.7, 1.0, along));
+        core = body * (1.0 - smoothstep(0.0, 0.45, along)) * (1.0 - smoothstep(0.0, half_width * 0.5, across)) * 0.6;
     } else {
-        // A tongue of flame: wide and white at the muzzle, ragged to its tip.
-        let ragged = 0.75 + 0.25 * sin(along * 23.0 + f.instance_data.x * 40.0) * sin(along * 9.0);
-        let half_width = (1.0 - pow(along, 0.8)) * ragged + 0.04;
-        let body = 1.0 - smoothstep(half_width * 0.4, half_width, across);
-        shape = body * smoothstep(0.0, 0.06, along);
-        core = body * (1.0 - smoothstep(0.0, 0.55, along)) * (1.0 - smoothstep(0.0, half_width * 0.6, across));
+        // A tracer: a slim white-hot core at the head, the team's glow widening
+        // a little and dying away exponentially down the tail.
+        let tail = along;
+        let falloff = exp((tail - 1.0) * 3.2);
+        let half_width = 0.35 + 0.65 * tail;
+        let body = 1.0 - smoothstep(0.0, half_width, across);
+        shape = body * body * falloff * smoothstep(0.0, 0.08, tail) * (1.0 - smoothstep(0.97, 1.0, tail));
+        core = pow(body, 5.0) * smoothstep(0.6, 0.97, tail) * 0.8;
     }
-    (*s).color = (*s).color * (0.7 + 0.6 * shape) + vec3f(2.2, 2.0, 1.7) * core;
-    (*s).opacity *= shape;
+    (*s).color = (*s).color * (0.75 + 0.5 * shape) + vec3f(2.0, 1.8, 1.4) * core;
+    (*s).opacity *= max(shape, core);
 }
