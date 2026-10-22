@@ -118,6 +118,10 @@ fn vg_ruts(offset: f32, along: f32, half: f32, seed: f32) -> vec2f {
 // A disc on a jittered cell grid: x the coverage of this cell's disc (0 when the
 // cell has none), y its dome height in metres, zw two random numbers for its look.
 fn vg_scatter(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f32) -> vec4f {
+    // No cell has a disc: callers weight everything else by the coverage.
+    if density <= 0.0 {
+        return vec4f(0.0);
+    }
     let q = p * cells;
     let cell = floor(q);
     let jitter = vg_hash2(cell + seed);
@@ -203,6 +207,10 @@ fn vg_crop(p: vec2f, code: f32, footprint: f32) -> vec4f {
     return vec4f(color, windrow * 0.12);
 }
 
+// The ground is most of every frame's pixels, so each feature runs only where it
+// shows: a skipped feature's weight is exactly zero there, so the pixel comes out
+// the same (and derivatives of the relief stay continuous). Texture samples and
+// derivatives stay ahead of the branches, in uniform control flow.
 fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let p = f.world.xz;
     let extent = material.params[0].y;
@@ -225,43 +233,6 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let field = valley_plan.g * (1.0 - inside);
     let wet_bank = (1.0 - valley_plan.a) * (1.0 - inside);
 
-    // ---- Road strips for the ruts and the crown.
-    let along = vg_strip(p.x, p.y, material.params[1].xyz, widths.x, widths.y, extent);
-    let across = vg_strip(p.y, p.x, material.params[2].xyz, widths.z, widths.w, extent);
-    // Where the plan's dirt starts, frayed at pixel scale. Some stretches of edge
-    // crumble widely into the grass, others stay crisp.
-    let crumble = mix(0.1, 0.42, smoothstep(0.3, 0.75, vg_noise(p * 0.06 + 5.0)));
-    let clumps = vg_noise(p * 3.3 + 4.0) * 0.65 + vg_noise(p * 7.9) * 0.35;
-    let reveal = worn + (vg_fbm(p * 0.8) - 0.5) * crumble * 2.0 + (clumps - 0.5) * crumble;
-    let reveal_aa = max(fwidth(reveal), 0.02);
-    // Trampled ground goes bald in patches.
-    let bald = smoothstep(0.6, 1.0, trampled + (vg_fbm(p * 0.5 + 9.0) - 0.5) * 0.7) * 0.6;
-    let dirt = smoothstep(0.5 - reveal_aa, 0.5 + reveal_aa, max(reveal, bald + (clumps - 0.5) * 0.3));
-    let wear = smoothstep(0.0, 0.9, max(worn, trampled * 0.85));
-    // A gravel drip line along the foot of the perimeter wall.
-    let wall_gap = extent - max(abs(p.x), abs(p.y));
-    let verge = (1.0 - smoothstep(0.35, 1.1, wall_gap + (vg_noise(p * 1.7) - 0.5) * 0.5))
-        * step(-0.5, wall_gap);
-
-    // ---- Wheel ruts along both road families, softened where they cross.
-    let in_along = smoothstep(-0.4, 0.6, along.x);
-    let in_across = smoothstep(-0.4, 0.6, across.x);
-    let crossing = in_along * in_across;
-    let ruts_along = vg_ruts(along.y, p.y, along.z, 1.0 + along.z) * in_along;
-    let ruts_across = vg_ruts(across.y, p.x, across.z, 11.0 + across.z) * in_across;
-    let ruts = max(ruts_along, ruts_across) * (1.0 - crossing * 0.5) * inside;
-    let rut = ruts.x * dirt;
-    let berm = ruts.y * dirt;
-    // The crown between the lanes stays pale and hard; the shoulders darker.
-    let lane = select(vec2f(across.y / across.z, p.x), vec2f(along.y / along.z, p.y), along.x > across.x);
-    let crown = (1.0 - smoothstep(0.1, 0.75, abs(lane.x))) * max(in_along, in_across) * inside;
-    // Streaks combed along the direction of travel.
-    let streaks = vg_noise(vec2f(lane.x * 7.0, lane.y * 0.11)) * 0.6 + vg_noise(vec2f(lane.x * 19.0, lane.y * 0.3)) * 0.4;
-    // Rain lingers in the deepest stretches of rut.
-    let wet_patch = smoothstep(0.7, 0.82, vg_fbm(p * 0.21 + 40.0)) * smoothstep(0.5, 0.7, vg_noise(p * 0.9 + 3.0));
-    let wet = max(smoothstep(0.35, 0.7, rut) * wet_patch, wet_bank * dirt);
-    let puddle = smoothstep(0.6, 0.9, rut) * smoothstep(0.25, 0.6, wet_patch);
-
     // ---- Textures: two scales of each tile, turned against each other.
     let turned = vec2f(p.x * 0.6 + p.y * 0.8, p.y * 0.6 - p.x * 0.8);
     let grass_near = textureSample(map_texture, map_sampler, f.uv);
@@ -273,85 +244,159 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let dirt_luma = dot(dirt_near.rgb, VG_LUMA);
     let dirt_detail = dirt_luma / 0.36 * mix(1.0, dot(dirt_far.rgb, VG_LUMA) / 0.36, 0.5);
 
-    // ---- Grass: lush greens, sunlit and shaded drifts, dry and flattened where
-    // it is walked.
-    let macro_tone = vg_fbm(p * 0.045 + 3.0);
-    let meso = vg_fbm(p * 0.21 - 11.0);
-    var grass = mix(vg_linear(0x4a7d2e), vg_linear(0x7f9d40), smoothstep(0.3, 0.75, macro_tone));
-    grass = mix(grass, vg_linear(0x3c6e30), smoothstep(0.5, 0.8, meso) * 0.45);
-    grass = mix(grass, vg_linear(0x9c9d5a), wear * 0.55);
-    let blades = mix(0.74, 1.26, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
-    grass = grass * blades;
-    // Clover and dark clumps break the carpet.
-    let clover = smoothstep(0.66, 0.82, vg_noise(p * 1.3 + 2.0)) * (1.0 - wear);
-    grass = mix(grass, vg_linear(0x386b2b) * blades, clover * 0.35);
-    // Flower drifts tint the lawn even where single blooms are too small to draw.
-    let drift = smoothstep(0.5, 0.78, vg_fbm(p * 0.08 + 61.0)) * (1.0 - wear) * (1.0 - fine);
-    let drift_tint = mix(vg_linear(0xe9e6c8), vg_linear(0xe8c64a), smoothstep(0.4, 0.6, vg_noise(p * 0.05 + 7.0)));
-    grass = mix(grass, drift_tint, drift * 0.16);
-    // Keep the bank tint and the far hills' vertex shading.
-    grass = grass * f.vertex_color.rgb;
+    // ---- Road strips for the ruts and the crown.
+    let along = vg_strip(p.x, p.y, material.params[1].xyz, widths.x, widths.y, extent);
+    let across = vg_strip(p.y, p.x, material.params[2].xyz, widths.z, widths.w, extent);
+    // Where the plan's dirt starts, frayed at pixel scale. Some stretches of edge
+    // crumble widely into the grass, others stay crisp.
+    let crumble = mix(0.1, 0.42, smoothstep(0.3, 0.75, vg_noise(p * 0.06 + 5.0)));
+    let clumps = vg_noise(p * 3.3 + 4.0) * 0.65 + vg_noise(p * 7.9) * 0.35;
+    let reveal = worn + (vg_fbm(p * 0.8) - 0.5) * crumble * 2.0 + (clumps - 0.5) * crumble;
+    let reveal_aa = max(fwidth(reveal), 0.02);
+    // Trampled ground goes bald in patches; the noise can lift it at most 0.35,
+    // so ground trampled less than a quarter never goes bald.
+    var bald = 0.0;
+    if trampled > 0.25 {
+        bald = smoothstep(0.6, 1.0, trampled + (vg_fbm(p * 0.5 + 9.0) - 0.5) * 0.7) * 0.6;
+    }
+    let dirt = smoothstep(0.5 - reveal_aa, 0.5 + reveal_aa, max(reveal, bald + (clumps - 0.5) * 0.3));
+    let wear = smoothstep(0.0, 0.9, max(worn, trampled * 0.85));
+    // A gravel drip line along the foot of the perimeter wall (none past 1.35 m,
+    // where even the noise's 0.25 m reach leaves it at full distance).
+    let wall_gap = extent - max(abs(p.x), abs(p.y));
+    var verge = 0.0;
+    if wall_gap >= -0.5 && wall_gap < 1.35 {
+        verge = 1.0 - smoothstep(0.35, 1.1, wall_gap + (vg_noise(p * 1.7) - 0.5) * 0.5);
+    }
 
-    // ---- Dirt: a muted earth with a pale, packed crown between the wheel lanes,
-    // darker shoulders, combed streaks, damp ruts and loose berms.
-    let dirt_tex = mix(vec3f(dirt_luma), dirt_near.rgb, 0.45);
-    var soil = mix(vg_linear(0x7d6650), vg_linear(0x9c8466), smoothstep(0.3, 0.8, vg_fbm(p * 0.13 + 21.0)) * 0.6 + streaks * 0.4);
-    soil = mix(soil, vg_linear(0xb19c7e), crown * 0.55);
-    soil = soil * mix(0.66, 1.34, clamp((dirt_detail - 0.55) * 1.1, 0.0, 1.0))
-        * (dirt_tex / max(dirt_luma, 0.05) * 0.3 + 0.7);
-    // The worn margin, where grass roots hold damp soil.
-    soil = mix(soil * vec3f(0.8, 0.8, 0.78), soil, smoothstep(0.55, 0.95, worn));
-    // Damp hollows and dry, sun-bleached crusts.
-    let damp = vg_fbm(p * 0.6 + 7.0);
-    soil = soil * mix(vec3f(0.86, 0.85, 0.83), vec3f(1.08, 1.06, 1.03), smoothstep(0.3, 0.72, damp));
-    // Dark clods of turned earth.
-    let clods = smoothstep(0.72, 0.8, vg_noise(p * 5.3 + 1.7)) * fine;
-    soil = mix(soil, soil * 0.68, clods * 0.6);
-    soil = mix(soil, soil * vec3f(1.16, 1.12, 1.06), berm * 0.7);
-    soil = mix(soil, soil * vec3f(0.58, 0.55, 0.53), rut * 0.85);
-    // Sandy creek banks outside the wall, and damp mud by the water.
-    soil = mix(soil, vg_linear(0x9d917a) * mix(0.85, 1.12, dirt_detail * 0.5), (1.0 - inside) * 0.35);
-    soil = mix(soil, soil * vec3f(0.55, 0.53, 0.5), wet);
-    let gravel_tone = vg_linear(0x8e8676) * mix(0.75, 1.2, dirt_detail * 0.5);
+    // ---- Wheel ruts along both road families, softened where they cross.
+    let in_along = smoothstep(-0.4, 0.6, along.x);
+    let in_across = smoothstep(-0.4, 0.6, across.x);
+    let crossing = in_along * in_across;
+    var ruts_along = vec2f(0.0);
+    var ruts_across = vec2f(0.0);
+    if inside > 0.0 && in_along > 0.0 {
+        ruts_along = vg_ruts(along.y, p.y, along.z, 1.0 + along.z) * in_along;
+    }
+    if inside > 0.0 && in_across > 0.0 {
+        ruts_across = vg_ruts(across.y, p.x, across.z, 11.0 + across.z) * in_across;
+    }
+    let ruts = max(ruts_along, ruts_across) * (1.0 - crossing * 0.5) * inside;
+    let rut = ruts.x * dirt;
+    let berm = ruts.y * dirt;
+    // The crown between the lanes stays pale and hard; the shoulders darker.
+    let lane = select(vec2f(across.y / across.z, p.x), vec2f(along.y / along.z, p.y), along.x > across.x);
+    let crown = (1.0 - smoothstep(0.1, 0.75, abs(lane.x))) * max(in_along, in_across) * inside;
+    // Rain lingers in the deepest stretches of rut.
+    var wet_patch = 0.0;
+    if rut > 0.35 {
+        wet_patch = smoothstep(0.7, 0.82, vg_fbm(p * 0.21 + 40.0)) * smoothstep(0.5, 0.7, vg_noise(p * 0.9 + 3.0));
+    }
+    let wet = max(smoothstep(0.35, 0.7, rut) * wet_patch, wet_bank * dirt);
+    let puddle = smoothstep(0.6, 0.9, rut) * smoothstep(0.25, 0.6, wet_patch);
+
+    // ---- Grass: lush greens, sunlit and shaded drifts, dry and flattened where
+    // it is walked; and wildflowers in meadow drifts (daisies with gold hearts,
+    // buttercups, violets and campion). Neither shows on bare dirt.
+    var grass = vec3f(0.0);
+    var blooms = vec4f(0.0);
+    var bloom_color = vec3f(0.0);
+    if dirt < 1.0 {
+        let macro_tone = vg_fbm(p * 0.045 + 3.0);
+        let meso = vg_fbm(p * 0.21 - 11.0);
+        grass = mix(vg_linear(0x4a7d2e), vg_linear(0x7f9d40), smoothstep(0.3, 0.75, macro_tone));
+        grass = mix(grass, vg_linear(0x3c6e30), smoothstep(0.5, 0.8, meso) * 0.45);
+        grass = mix(grass, vg_linear(0x9c9d5a), wear * 0.55);
+        let blades = mix(0.74, 1.26, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
+        grass = grass * blades;
+        // Clover and dark clumps break the carpet.
+        let clover = smoothstep(0.66, 0.82, vg_noise(p * 1.3 + 2.0)) * (1.0 - wear);
+        grass = mix(grass, vg_linear(0x386b2b) * blades, clover * 0.35);
+        // Flower drifts tint the lawn even where single blooms are too small to draw.
+        let flowers = vg_fbm(p * 0.08 + 61.0);
+        let drift = smoothstep(0.5, 0.78, flowers) * (1.0 - wear) * (1.0 - fine);
+        if drift > 0.0 {
+            let drift_tint = mix(vg_linear(0xe9e6c8), vg_linear(0xe8c64a), smoothstep(0.4, 0.6, vg_noise(p * 0.05 + 7.0)));
+            grass = mix(grass, drift_tint, drift * 0.16);
+        }
+        // Keep the bank tint and the far hills' vertex shading.
+        grass = grass * f.vertex_color.rgb;
+
+        let meadow = smoothstep(0.45, 0.72, flowers) * (1.0 - smoothstep(0.1, 0.4, wear));
+        blooms = vg_scatter(p, (0.03 + meadow * 0.22) * fine, 1.9, vec2f(0.035, 0.06), aa, 27.0);
+        let bloom_pick = blooms.z;
+        var petals = vg_linear(0xf3f0e4);
+        petals = select(petals, vg_linear(0xf2c94a), bloom_pick > 0.55);
+        petals = select(petals, vg_linear(0xb08fe0), bloom_pick > 0.78);
+        petals = select(petals, vg_linear(0xec9fb8), bloom_pick > 0.92);
+        let heart = smoothstep(0.55, 0.3, blooms.y / 0.05) * select(0.0, 1.0, bloom_pick <= 0.55);
+        bloom_color = mix(petals, vg_linear(0xe7b52d), heart);
+    }
 
     // ---- Pebbles: thick along the road shoulders and the verge, sparse elsewhere.
     let shoulder = smoothstep(0.15, 0.45, wear) * (1.0 - smoothstep(0.7, 0.95, wear));
     let pebble_density = (0.02 + shoulder * 0.3 + dirt * 0.05 + verge * 0.6 + wet_bank * 0.4) * fine;
     let pebbles = vg_scatter(p, pebble_density, 2.4, vec2f(0.04, 0.11), aa, 3.0);
     let grit = vg_scatter(p, (0.12 + dirt * 0.25) * fine, 6.5, vec2f(0.014, 0.03), aa, 9.0);
+
+    // ---- Dirt: a muted earth with a pale, packed crown between the wheel lanes,
+    // darker shoulders, combed streaks, damp ruts and loose berms. Pebbles take
+    // their warmth from it, so it is shaded wherever either shows.
+    var soil = vec3f(0.0);
+    var clods = 0.0;
+    if dirt > 0.0 || pebbles.x > 0.0 {
+        // Streaks combed along the direction of travel.
+        let streaks = vg_noise(vec2f(lane.x * 7.0, lane.y * 0.11)) * 0.6 + vg_noise(vec2f(lane.x * 19.0, lane.y * 0.3)) * 0.4;
+        let dirt_tex = mix(vec3f(dirt_luma), dirt_near.rgb, 0.45);
+        soil = mix(vg_linear(0x7d6650), vg_linear(0x9c8466), smoothstep(0.3, 0.8, vg_fbm(p * 0.13 + 21.0)) * 0.6 + streaks * 0.4);
+        soil = mix(soil, vg_linear(0xb19c7e), crown * 0.55);
+        soil = soil * mix(0.66, 1.34, clamp((dirt_detail - 0.55) * 1.1, 0.0, 1.0))
+            * (dirt_tex / max(dirt_luma, 0.05) * 0.3 + 0.7);
+        // The worn margin, where grass roots hold damp soil.
+        soil = mix(soil * vec3f(0.8, 0.8, 0.78), soil, smoothstep(0.55, 0.95, worn));
+        // Damp hollows and dry, sun-bleached crusts.
+        let damp = vg_fbm(p * 0.6 + 7.0);
+        soil = soil * mix(vec3f(0.86, 0.85, 0.83), vec3f(1.08, 1.06, 1.03), smoothstep(0.3, 0.72, damp));
+        // Dark clods of turned earth.
+        clods = smoothstep(0.72, 0.8, vg_noise(p * 5.3 + 1.7)) * fine;
+        soil = mix(soil, soil * 0.68, clods * 0.6);
+        soil = mix(soil, soil * vec3f(1.16, 1.12, 1.06), berm * 0.7);
+        soil = mix(soil, soil * vec3f(0.58, 0.55, 0.53), rut * 0.85);
+        // Sandy creek banks outside the wall, and damp mud by the water.
+        soil = mix(soil, vg_linear(0x9d917a) * mix(0.85, 1.12, dirt_detail * 0.5), (1.0 - inside) * 0.35);
+        soil = mix(soil, soil * vec3f(0.55, 0.53, 0.5), wet);
+    }
+    let gravel_tone = vg_linear(0x8e8676) * mix(0.75, 1.2, dirt_detail * 0.5);
     let stone = mix(vg_linear(0x6f6a62), vg_linear(0xa29d90), pebbles.z);
     let stone_warm = mix(stone, soil * 1.15, 0.25 + pebbles.w * 0.4);
 
-    // ---- Wildflowers in meadow drifts: daisies with gold hearts, buttercups,
-    // violets and campion.
-    let meadow = smoothstep(0.45, 0.72, vg_fbm(p * 0.08 + 61.0)) * (1.0 - smoothstep(0.1, 0.4, wear));
-    let blooms = vg_scatter(p, (0.03 + meadow * 0.22) * fine, 1.9, vec2f(0.035, 0.06), aa, 27.0);
-    let bloom_pick = blooms.z;
-    var petals = vg_linear(0xf3f0e4);
-    petals = select(petals, vg_linear(0xf2c94a), bloom_pick > 0.55);
-    petals = select(petals, vg_linear(0xb08fe0), bloom_pick > 0.78);
-    petals = select(petals, vg_linear(0xec9fb8), bloom_pick > 0.92);
-    let heart = smoothstep(0.55, 0.3, blooms.y / 0.05) * select(0.0, 1.0, bloom_pick <= 0.55);
-    let bloom_color = mix(petals, vg_linear(0xe7b52d), heart);
-
     // ---- Cottage gardens: flower beds on dark mulch, vegetable rows, and a
-    // plank edging where a bed meets the lawn.
+    // plank edging where a bed meets the lawn. None below a garden level of 0.08.
     let flower_bed = smoothstep(0.72, 0.9, garden);
     let veg_plot = smoothstep(0.3, 0.42, garden) * (1.0 - smoothstep(0.6, 0.72, garden));
     let edging = smoothstep(0.08, 0.16, garden) * (1.0 - smoothstep(0.24, 0.32, garden)) * fine;
-    let mulch = vg_linear(0x3f3125) * mix(0.8, 1.2, vg_noise(p * 9.0));
-    let bed_leaves = vg_scatter(p, 0.95, 5.5, vec2f(0.07, 0.12), aa, 71.0);
-    let bed_blooms = vg_scatter(p, 0.8, 8.0, vec2f(0.035, 0.06), aa, 73.0);
-    var bed_flower = vg_linear(0xe0574e);
-    bed_flower = select(bed_flower, vg_linear(0xf2d04f), bed_blooms.z > 0.4);
-    bed_flower = select(bed_flower, vg_linear(0xf4f0ec), bed_blooms.z > 0.65);
-    bed_flower = select(bed_flower, vg_linear(0xc36fd0), bed_blooms.z > 0.85);
-    var bed = mix(mulch, vg_linear(0x3f6e2c) * mix(0.8, 1.15, bed_leaves.w), bed_leaves.x);
-    bed = mix(bed, bed_flower, bed_blooms.x);
-    let veg_row = sin(p.x * 11.4) * 0.5 + 0.5;
-    let heads = vg_scatter(vec2f(p.x, p.y), 0.9, 4.0, vec2f(0.1, 0.16), aa, 77.0);
-    var veg = mix(vg_linear(0x4a3828), vg_linear(0x5c8a33) * mix(0.85, 1.15, heads.w), smoothstep(0.45, 0.75, veg_row) * max(heads.x, 0.55));
-    let plank = vg_linear(0x7a5a3a) * mix(0.85, 1.1, vg_noise(p * 3.0));
+    var bed = vec3f(0.0);
+    var bed_relief = 0.0;
+    var veg = vec3f(0.0);
+    var veg_relief = 0.0;
+    var plank = vec3f(0.0);
+    if garden > 0.08 {
+        let mulch = vg_linear(0x3f3125) * mix(0.8, 1.2, vg_noise(p * 9.0));
+        let bed_leaves = vg_scatter(p, 0.95, 5.5, vec2f(0.07, 0.12), aa, 71.0);
+        let bed_blooms = vg_scatter(p, 0.8, 8.0, vec2f(0.035, 0.06), aa, 73.0);
+        var bed_flower = vg_linear(0xe0574e);
+        bed_flower = select(bed_flower, vg_linear(0xf2d04f), bed_blooms.z > 0.4);
+        bed_flower = select(bed_flower, vg_linear(0xf4f0ec), bed_blooms.z > 0.65);
+        bed_flower = select(bed_flower, vg_linear(0xc36fd0), bed_blooms.z > 0.85);
+        bed = mix(mulch, vg_linear(0x3f6e2c) * mix(0.8, 1.15, bed_leaves.w), bed_leaves.x);
+        bed = mix(bed, bed_flower, bed_blooms.x);
+        bed_relief = bed_leaves.y * 0.5 + bed_blooms.y * 0.4;
+        let veg_row = sin(p.x * 11.4) * 0.5 + 0.5;
+        let heads = vg_scatter(vec2f(p.x, p.y), 0.9, 4.0, vec2f(0.1, 0.16), aa, 77.0);
+        veg = mix(vg_linear(0x4a3828), vg_linear(0x5c8a33) * mix(0.85, 1.15, heads.w), smoothstep(0.45, 0.75, veg_row) * max(heads.x, 0.55));
+        veg_relief = veg_row * 0.05 + heads.y * 0.3;
+        plank = vg_linear(0x7a5a3a) * mix(0.85, 1.1, vg_noise(p * 3.0));
+    }
 
     // ---- Combine colour, height and finish.
     var color = mix(grass, soil, dirt);
@@ -363,17 +408,22 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, bed, flower_bed);
     color = mix(color, plank, edging * 0.85);
     // Crop fields outside the wall.
-    let crop = vg_crop(p, field_code, footprint);
-    color = mix(color, crop.rgb * mix(0.9, 1.0, f.vertex_color.g), field);
+    var crop = vec4f(0.0);
+    if field > 0.0 {
+        crop = vg_crop(p, field_code, footprint);
+        color = mix(color, crop.rgb * mix(0.9, 1.0, f.vertex_color.g), field);
+    }
     // Puddles: still water mirroring the pale sky, with a dark muddy floor.
-    let sky = mix(vg_linear(0x5d6f78), vg_linear(0xa9bcc4), vg_noise(p * 0.4));
-    color = mix(color, mix(color * 0.4, sky, 0.55), puddle);
+    if puddle > 0.0 {
+        let sky = mix(vg_linear(0x5d6f78), vg_linear(0xa9bcc4), vg_noise(p * 0.4));
+        color = mix(color, mix(color * 0.4, sky, 0.55), puddle);
+    }
     // Contact shade at the foot of walls, cottages, timber and trunks.
     color = color * mix(0.52, 1.0, open);
 
     let relief = mix(grass_detail * 0.02, dirt_detail * 0.02 - rut * 0.06 + berm * 0.015 + clods * 0.012 + crown * 0.01, dirt)
         + pebbles.y * 0.6 + grit.y * 0.4 + blooms.y * 0.3 * (1.0 - dirt)
-        + (bed_leaves.y * 0.5 + bed_blooms.y * 0.4) * flower_bed + (veg_row * 0.05 + heads.y * 0.3) * veg_plot
+        + bed_relief * flower_bed + veg_relief * veg_plot
         + edging * 0.03 + crop.a * field;
     let normal = vg_bump(mix(relief, -0.07, puddle), f.world, (*s).normal, f.front_facing);
 
