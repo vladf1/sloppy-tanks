@@ -407,12 +407,12 @@ impl HousePart {
         }
     }
 
-    /// The most shards a collapse breaks the part into: a wall's two or three
+    /// The most shards a collapse breaks the part into: a wall's three or four
     /// strips each in a lower and an upper shard, a slope's two strips each at the
     /// ridge (or the hip's peak) and at the eave, and the chimney's stack and top.
     pub const fn max_shards(self) -> u8 {
         match self {
-            Self::FrontWall | Self::BackWall | Self::RightWall | Self::LeftWall => 6,
+            Self::FrontWall | Self::BackWall | Self::RightWall | Self::LeftWall => 8,
             Self::RightRoof | Self::LeftRoof | Self::FrontRoof | Self::BackRoof => 4,
             Self::Chimney => 2,
             Self::Mound => 1,
@@ -463,8 +463,8 @@ impl HousePiece {
     /// Every shard any cottage can break into, part by part: a wall's strip `k`
     /// gives shards `2k` (below its split) and `2k + 1` (above it), a slope's strip
     /// `k` shards `2k` (at the ridge or peak) and `2k + 1` (at the eave).
-    pub const ALL: [Self; 43] = {
-        let mut all = [Self::new(HousePart::FrontWall, 0); 43];
+    pub const ALL: [Self; 51] = {
+        let mut all = [Self::new(HousePart::FrontWall, 0); 51];
         let mut next = 0;
         let mut part = 0;
         while part < HousePart::ALL.len() {
@@ -823,7 +823,7 @@ impl HouseDesign {
         let mut rng = self.crack_random(part);
         let rise = roof.wall - PLINTH;
         let knots = WALL_KNOTS.map(|f| PLINTH + f * rise);
-        let shards = if 2.0 * half >= LONG_WALL { 3 } else { 2 };
+        let shards = if 2.0 * half >= LONG_WALL { 4 } else { 3 };
         let cracks: Vec<Crack> = (1..shards)
             .map(|k| {
                 let s = -half
@@ -962,8 +962,8 @@ impl HouseDesign {
         (bottom, top + 0.16)
     }
 
-    /// Every shard the cottage collapses into, with its collider: each wall in two
-    /// or three strips, each broken into a lower and an upper shard (the back wall
+    /// Every shard the cottage collapses into, with its collider: each wall in three
+    /// or four strips, each broken into a lower and an upper shard (the back wall
     /// only above the stub it leaves standing in the heap), each side slope in two
     /// strips broken along a rafter line into ridge and eave slabs, each hip end in
     /// two, and the chimney's stack snapped under its top.
@@ -1630,11 +1630,11 @@ mod tests {
             let design = HouseDesign::of(x, z, w, d, h);
             let pieces = design.pieces();
             let roof = design.roof();
-            // Every wall in two or three strips, each split in two but the back
+            // Every wall in three or four strips, each split in two but the back
             // wall's above its stub; each side slope in two strips split at the
             // ridge and eave, each hip end likewise, the chimney in two and the
             // rubble mound.
-            let walls = |length: f64| if length >= LONG_WALL { 3 } else { 2 };
+            let walls = |length: f64| if length >= LONG_WALL { 4 } else { 3 };
             let expected = 3 * walls(design.w)
                 + 4 * walls(design.d)
                 + 8

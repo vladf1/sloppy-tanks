@@ -84,12 +84,16 @@ const DORMER_HALF: f64 = 0.62;
 
 /// Shell holes: radius per unit of mark size, the reveal depth of the torn edge
 /// and how far the dark interior sits behind the face.
-const HOLE_RADIUS: f64 = 0.42;
+const HOLE_RADIUS: f64 = 0.5;
 const HOLE_EDGE: f64 = 0.14;
 const HOLE_BACK: f64 = 0.16;
 /// How deep the fresh-split face of a hole's torn boards shows before the
 /// charred timber behind.
 const SPLIT_FACE: f64 = 0.03;
+/// How deep the charred boards and sheathing go before the plaster behind.
+const PLASTER_LIP: f64 = 0.08;
+/// Splintered boards bent out of the face round a hole.
+const BENT_BOARDS: usize = 3;
 /// What a breach tears back at a time, so its outline steps up its wall course by
 /// course with every board (or brick) broken off at its own length: a clapboard
 /// course, and two courses of brick.
@@ -128,6 +132,14 @@ const SHED_SHINGLES: usize = 5;
 const ROOF_HOLE: (f64, f64) = (1.25, 1.15);
 
 /// Leafy clumps and flowers in each window box.
+/// The kitchen garden behind a cottage: the longest its bed runs along the back
+/// wall and how deep it is (m), how far out from the wall it starts, the
+/// cabbages' spacing along a row, the bean poles' height and the cabbages' green.
+const GARDEN: (f64, f64) = (3.8, 1.8);
+const GARDEN_GAP: f64 = 0.85;
+const GARDEN_SPACING: f64 = 0.55;
+const BEAN_POLE: f64 = 1.15;
+const CABBAGE: u32 = 0x6f9257;
 const PLANT_CLUMPS: u32 = 4;
 const PLANT_BLOOMS: u32 = 5;
 const LEAVES: u32 = 0x3d6b3a;
@@ -175,7 +187,7 @@ const BOARDED_WINDOWS: f64 = 0.14;
 const PLANK: f64 = 0.05;
 /// Plaster and mortar dust over a collapse's pieces: its colour and how far it
 /// covers their paint.
-const COLLAPSE_DUST: (u32, f64) = (0xa89a84, 0.24);
+const COLLAPSE_DUST: (u32, f64) = (0xa89a84, 0.3);
 /// Patches of plaster fallen off each collapsed wall's lining.
 const PLASTER_FALLS: usize = 9;
 /// A standing shingle roof's weathering (linear shade at the eave and at the
@@ -1210,7 +1222,7 @@ fn torn_courses(
             let (y0, y1) = (bottom + k as f64 * step, bottom + (k + 1) as f64 * step);
             let mid = ((y0 + y1) / 2.0 - y) / radius;
             let span = (1.0 - mid * mid).max(0.0).sqrt();
-            let mut reach = || (radius * span * rng.range(0.55, 1.12)).clamp(0.09, radius * 1.08);
+            let mut reach = || (radius * span * rng.range(0.4, 1.2)).clamp(0.09, radius * 1.15);
             let (left, right) = (u - reach(), u + reach());
             (y0, y1, left, right)
         })
@@ -1279,6 +1291,18 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             [
                 at(a, -SPLIT_FACE),
                 at(b, -SPLIT_FACE),
+                at(b, -PLASTER_LIP),
+                at(a, -PLASTER_LIP),
+            ],
+            facing,
+        );
+        // The broken plaster behind the charred sheathing, pale where it faces
+        // the light round the dark of the room.
+        kit.quad(
+            Surface::Concrete,
+            [
+                at(a, -PLASTER_LIP),
+                at(b, -PLASTER_LIP),
                 at(b, -HOLE_EDGE),
                 at(a, -HOLE_EDGE),
             ],
@@ -1378,10 +1402,32 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             );
         }
     }
-    for k in 0..2 {
-        let p = outline[(k * 7 + 2) % outline.len()];
+    // Exposed lath across the back of the wall, snapped at its own length.
+    if standing {
+        let mut y = hole.y - hole.radius * 0.7;
+        while y < hole.y + hole.radius * 0.7 {
+            let left = hole.u - hole.radius * rng.range(0.5, 1.1);
+            let right = hole.u + hole.radius * rng.range(-0.3, 0.6);
+            if right - left > 0.12 {
+                let tilt = rng.range(-0.04, 0.04);
+                kit.quad(
+                    Surface::Splinters,
+                    [
+                        at(DVec2::new(left, y - 0.018 - tilt), -HOLE_EDGE + 0.01),
+                        at(DVec2::new(right, y - 0.018 + tilt), -HOLE_EDGE + 0.01),
+                        at(DVec2::new(right, y + 0.018 + tilt), -HOLE_EDGE + 0.01),
+                        at(DVec2::new(left, y + 0.018 - tilt), -HOLE_EDGE + 0.01),
+                    ],
+                    frame.transform_vector3(DVec3::Z),
+                );
+            }
+            y += rng.range(0.14, 0.24);
+        }
+    }
+    for k in 0..BENT_BOARDS {
+        let p = outline[(k * 5 + 2) % outline.len()];
         let inward = (center - p).normalize_or_zero();
-        let length = rng.range(0.22, 0.42);
+        let length = rng.range(0.26, 0.5);
         let mid = p + inward * length * 0.25;
         let yaw = rng.range(0.3, 0.6) * if inward.x > 0.0 { -1.0 } else { 1.0 };
         kit.block(
@@ -1397,7 +1443,7 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
     if standing {
         // What the shell knocked out lies on the ground under the hole: broken
         // boards, plaster and lath.
-        for k in 0..4 {
+        for k in 0..3 {
             let (coat, size) = match k % 4 {
                 0 | 1 => (
                     Surface::Siding,
@@ -2039,6 +2085,9 @@ fn build_house(
 
     if let Some(base) = parts.base() {
         yard(base, design);
+        let mut plants = Vec::new();
+        garden(base, &mut plants, design);
+        parts.nodes[0].extend(plants);
     }
     chimney(parts.kit(HousePart::Chimney), design, roof, wrecked);
     // Some cottages light their attics with dormers, so the roofscape varies.
@@ -3458,14 +3507,19 @@ fn yard(kit: &mut Kit<Surface>, design: &HouseDesign) {
         while u < half - 0.25 {
             let length = rng.range(0.9, 1.7).min(half - u);
             let width = rng.range(0.24, 0.36);
-            kit.block(
+            // Only its top shows over the splash band: a quad, not a block.
+            let skew = rng.range(-0.04, 0.04);
+            let (near, far) = (0.05, 0.05 + width);
+            kit.quad(
                 Surface::Stone,
-                DVec3::new(length, DRIP_STRIP, width),
-                frame
-                    * pose(
-                        DVec3::new(u + length / 2.0, DRIP_STRIP / 2.0, 0.05 + width / 2.0),
-                        DVec3::new(0.0, rng.range(-0.04, 0.04), 0.0),
-                    ),
+                [
+                    DVec3::new(u, DRIP_STRIP, near + skew),
+                    DVec3::new(u, DRIP_STRIP, far + skew),
+                    DVec3::new(u + length, DRIP_STRIP, far - skew),
+                    DVec3::new(u + length, DRIP_STRIP, near - skew),
+                ]
+                .map(|p| frame.transform_point3(p)),
+                frame.transform_vector3(DVec3::Y),
             );
             u += length + rng.range(0.02, 0.14);
         }
@@ -3506,6 +3560,115 @@ fn yard(kit: &mut Kit<Surface>, design: &HouseDesign) {
             kit.post(Surface::Iron, 0.285, 0.035, at + DVec3::Y * y, 10);
         }
         kit.post(Surface::Dark, 0.23, 0.01, at + DVec3::Y * 0.82, 10);
+    }
+}
+
+/// The kitchen garden behind a cottage, off its back wall (the one opposite the
+/// door): a bed of turned soil edged with boards, planted in rows of cabbages, or
+/// with bean poles and a compost heap, so every lot reads as lived in and no two
+/// neighbours' look alike from above. Low enough to drive over.
+fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) {
+    // A cottage stacking its firewood by the wall keeps no garden ([`yard`]).
+    if !design.variant.is_multiple_of(3) {
+        return;
+    }
+    let octahedron = OCTAHEDRON.get_or_insert((), || octahedron_geometry(1.0, 0));
+    let lot = (design.style.siding >> 3) ^ design.turns.rem_euclid(4) as u32;
+    let mut rng = Random::new(f64::from(design.variant) * 3.0 + f64::from(lot % 97) + 77.0);
+    let (frame, half) = wall_frames(design.w, design.d)[1];
+    let length = (2.0 * half - 0.9).min(GARDEN.0);
+    let offset = rng.range(-0.5, 0.5) * (2.0 * half - 0.6 - length).max(0.0);
+    let depth = GARDEN.1 + rng.range(-0.15, 0.2);
+    let (near, far) = (GARDEN_GAP, GARDEN_GAP + depth);
+    let at = |u: f64, out: f64, y: f64| frame.transform_point3(DVec3::new(u, y, out));
+    let (u0, u1) = (offset - length / 2.0, offset + length / 2.0);
+    // Turned soil inside boards laid round it.
+    kit.quad(
+        Surface::Wood,
+        [
+            at(u0, near, 0.05),
+            at(u1, near, 0.05),
+            at(u1, far, 0.05),
+            at(u0, far, 0.05),
+        ],
+        DVec3::Y,
+    );
+    for (size, center) in [
+        (
+            DVec3::new(length + 0.08, 0.1, 0.05),
+            DVec3::new(offset, 0.0, near),
+        ),
+        (
+            DVec3::new(length + 0.08, 0.1, 0.05),
+            DVec3::new(offset, 0.0, far),
+        ),
+        (
+            DVec3::new(0.05, 0.1, depth),
+            DVec3::new(u0, 0.0, (near + far) / 2.0),
+        ),
+        (
+            DVec3::new(0.05, 0.1, depth),
+            DVec3::new(u1, 0.0, (near + far) / 2.0),
+        ),
+    ] {
+        kit.block(
+            Surface::Splinters,
+            size,
+            frame * shift(center + DVec3::Y * 0.04),
+        );
+    }
+    let mut plant = |p: DVec3, r: f64, color: u32, rng: &mut Random| {
+        let mut clump = shadowed(octahedron.clone(), satin(color));
+        clump.scale = DVec3::new(r, r * 0.75, r);
+        clump.set_rotation_euler(rng.range(-0.3, 0.3), rng.range(0.0, PI), 0.0);
+        clump.position = p;
+        plants.push(clump);
+    };
+    if lot.is_multiple_of(2) {
+        // Rows of cabbages along the bed, each a little out of line.
+        let rows = if depth > 1.75 { 3 } else { 2 };
+        for row in 0..rows {
+            let out = near + depth * (row as f64 + 0.5) / rows as f64;
+            let count = (length / GARDEN_SPACING).floor() as usize;
+            for k in 0..count {
+                let u = u0 + (k as f64 + 0.5) * length / count as f64;
+                let r = rng.range(0.13, 0.18);
+                let color = if (k + row) % 3 == 0 {
+                    LEAVES_LIGHT
+                } else {
+                    CABBAGE
+                };
+                let p = at(
+                    u + rng.range(-0.05, 0.05),
+                    out + rng.range(-0.05, 0.05),
+                    r * 0.6,
+                );
+                plant(p, r, color, &mut rng);
+            }
+        }
+    } else {
+        // Bean poles in pairs leaning together with vines up them, and a heap of
+        // compost in the bed's far corner.
+        let count = (length / 0.8).floor().clamp(2.0, 4.0) as usize;
+        for k in 0..count {
+            let u = u0 + 0.3 + k as f64 * (length - 0.9) / (count - 1) as f64;
+            let top = at(u, (near + far) / 2.0, BEAN_POLE);
+            for side in [-1.0, 1.0] {
+                let foot = at(u, (near + far) / 2.0 + side * 0.3, 0.0);
+                kit.rod(Surface::Splinters, 0.02, foot, top, 4);
+                let p = foot.lerp(top, rng.range(0.4, 0.6));
+                plant(p, rng.range(0.16, 0.22), LEAVES, &mut rng);
+            }
+        }
+        kit.block(
+            Surface::Dark,
+            DVec3::new(0.6, 0.24, 0.5),
+            frame
+                * pose(
+                    DVec3::new(u1 - 0.4, 0.0, far - 0.35),
+                    DVec3::new(0.0, rng.range(-0.4, 0.4), 0.0),
+                ),
+        );
     }
 }
 
@@ -3905,6 +4068,11 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
             DVec3::new(0.0, things.range(0.0, PI), 0.0),
         ),
     );
+    // The lot outlives the cottage: its path, woodpile and garden stay round the
+    // ruin.
+    yard(&mut kit, &design);
+    let mut plants = Vec::new();
+    garden(&mut kit, &mut plants, &design);
     let mut node = Node::group("");
     add_cottage(
         &mut node,
@@ -3913,6 +4081,7 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
         walls,
         true,
     );
+    node.children.extend(plants);
     batch(&mut node);
     for child in &mut node.children {
         if let Some(drawable) = &mut child.drawable {
