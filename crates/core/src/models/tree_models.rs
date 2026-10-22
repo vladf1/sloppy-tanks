@@ -776,7 +776,14 @@ fn add_conifer_crown(
         1 => 0.17,
         _ => 0.23,
     };
-    let width = c.w * (if family == 2 { 0.44 } else { 0.5 });
+    // Background forests keep their boughs lower and fuller, so the hills read
+    // as dense woods rather than rows of bare poles.
+    let (base, fullness) = if full {
+        (base, 1.0)
+    } else {
+        (base * 0.6, 1.12)
+    };
+    let width = c.w * (if family == 2 { 0.44 } else { 0.5 }) * fullness;
     for i in 0..tiers {
         let t = f64::from(i) / f64::from(tiers - 1);
         let y = height * (base + t * (0.87 - base));
@@ -879,6 +886,12 @@ fn add_broadleaf_crown(
     } else {
         (0.25, 0.38, 0.47)
     };
+    // Background woods carry fuller crowns lower on the trunk.
+    let (low_lobe, fullness) = if full {
+        (low_lobe, 1.0)
+    } else {
+        (low_lobe - 0.12, 1.18)
+    };
     let cells = if oak { &OAK_CELLS } else { &OVATE_CELLS };
     let (mut low, mut high) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
     for i in 0..count {
@@ -901,7 +914,7 @@ fn add_broadleaf_crown(
                 false,
             );
         }
-        let size = c.w * (if oak { 0.3 } else { 0.27 }) * rng.range(0.84, 1.09);
+        let size = c.w * (if oak { 0.3 } else { 0.27 }) * rng.range(0.84, 1.09) * fullness;
         // Overlapping clumps of sprigs give the crown an irregular, branching silhouette.
         let clumps = if full { 4 } else { 3 };
         for j in 0..clumps {

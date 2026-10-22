@@ -9,7 +9,8 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 
-use super::barrel_surfaces::explosive_barrel;
+use super::barrel_surfaces::{LID_DROP, explosive_barrel};
+use super::building_kit::fieldstone_wall;
 use super::concrete_surfaces::concrete_wall;
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
@@ -28,6 +29,10 @@ use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberWall, timber_damage_stage, timber_parts,
 };
 use crate::sim::types::CoverKind;
+
+/// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
+/// built in fieldstone, other maps' boundaries in concrete.
+const VILLAGE_WALL_COLOR: u32 = 0xa68c68;
 
 /// The cover fields the models read (`Pick<Cover, "kind" | "x" | ... >`).
 #[derive(Clone, Debug, PartialEq)]
@@ -134,20 +139,24 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
-            for y in [0.22, 1.35] {
-                put(group, cylinder_part(0.63, 0.1, 0x574e3e, 12), 0.0, y, 0.0);
+            // Screwed bung caps on the recessed lid, where the atlas paints them.
+            let lid = 1.6 - LID_DROP;
+            for (x, z, radius) in [(0.3, 0.0, 0.085), (-0.25, 0.16, 0.06)] {
+                put(
+                    group,
+                    cylinder_part(radius, 0.045, 0x3d3a35, 10),
+                    x,
+                    lid + 0.022,
+                    z,
+                );
             }
-            put(
-                group,
-                cylinder_part(0.15, 0.05, 0x343c31, 12),
-                0.25,
-                1.63,
-                0.0,
-            );
         }
         CoverKind::Tower => tower(group, c.color),
         CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
         CoverKind::Tree => unreachable!("trees return early"),
+        CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {
+            fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);
+        }
         CoverKind::Concrete | CoverKind::Boundary => {
             let block = if c.kind == CoverKind::Boundary {
                 concrete_wall(c.w, c.h, c.d)

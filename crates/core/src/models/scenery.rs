@@ -15,15 +15,15 @@ use crate::scene::{Material, Node};
 use crate::sim::arena::spawn_positions;
 use crate::sim::data::ARENA;
 use crate::sim::types::{Team, Vec2};
+use glam::DVec3;
 
 use super::batching::{batch, paint_mesh};
-use super::ground_surfaces::{GroundKind, ground_material, ground_uvs, road_geometry};
+use super::ground_surfaces::{GroundKind, ground_material, ground_uvs, village_ground_material};
 use super::harbor_scenery::HarborScenery;
 use super::model_primitives::{
-    TEAM_COLORS, box_part, cylinder_part, paint, put, rotated, shadow_receiver,
+    TEAM_COLORS, box_part, cylinder_part, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::quarry_scenery::quarry_scenery;
-use super::village_roads::village_roads;
 use super::village_scenery::VillageScenery;
 
 /// A standard map's scenery theme (`RenderState["mapTheme"]`).
@@ -196,76 +196,148 @@ pub fn create_arena_floor(kind: GroundKind, extent: f64, y: f64) -> Node {
 }
 
 /// `createTerrain(scene)` plus `createYardDetails`: the village board, the grass
-/// floor, roads, spawn pads and team fences, appended to `scene`. Returns the
-/// grass material, which the valley terrain shares.
+/// floor (whose shader wears the roads into it), spawn pads and team fences,
+/// appended to `scene`. Returns the ground material, which the valley terrain
+/// shares.
 pub(crate) fn create_terrain(scene: &mut Node) -> Arc<Material> {
     let mut board = box_part(ARENA * 2.0 + 6.0, 1.2, ARENA * 2.0 + 6.0, 0x947c4d, 0.4);
     paint_mesh(&mut board);
     put(scene, board, 0.0, -0.8, 0.0);
-    let floor = create_arena_floor(GroundKind::DryGrass, ARENA * 2.0, 0.008);
-    let grass = floor
-        .drawable
-        .as_ref()
-        .expect("floor mesh")
-        .material
-        .clone();
+    let extent = ARENA * 2.0;
+    let segments = crate::geometry::math::js_round(extent / 2.5) as u32;
+    let mut geometry = plane_geometry_segments(extent, extent, segments, segments);
+    geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
+    ground_uvs(&mut geometry, 0.0, 0.0);
+    geometry.colors = vec![[1.0; 3]; geometry.positions.len()];
+    let ground = village_ground_material();
+    let mut floor = shadow_receiver(Arc::new(geometry), ground.clone());
+    floor.position.y = 0.008;
     scene.children.push(floor);
     create_yard_details(scene);
-    grass
+    ground
 }
 
 /// `createYardDetails`: static village dressing; collidable objects are created
 /// separately from the arena layout.
 fn create_yard_details(scene: &mut Node) {
-    let mut roads = Node::group("");
-    let road_material = Arc::new(Material {
-        vertex_colors: true,
-        transparent: true,
-        depth_write: false,
-        ..ground_material(GroundKind::PackedDirt)
-    });
-    for road in village_roads() {
-        let geometry = road_geometry(road.w, road.d, road.x, road.z);
-        put(
-            &mut roads,
-            Node::mesh(Arc::new(geometry), road_material.clone()),
-            road.x,
-            road.y,
-            road.z,
-        );
-    }
-    batch(&mut roads);
-    for mesh in &mut roads.children {
-        if let Some(drawable) = &mut mesh.drawable {
-            drawable.cast_shadow = false;
-            // Ground blending must precede shields, pickup glows and track decals.
-            drawable.render_order = -1;
-        }
-    }
-    scene.children.push(roads);
     let mut details = Node::group("");
     details.children.push(create_spawn_pads(1.0));
-    for team in [0usize, 1] {
-        let side = if team == 0 { -1.0 } else { 1.0 };
-        let color = TEAM_COLORS[team];
-        for z in (-57..=57).step_by(2) {
-            let z = f64::from(z);
-            put(
-                &mut details,
-                box_part(0.16, 1.7, 0.16, color, 0.015),
-                side * ARENA,
-                2.7,
-                z,
-            );
-            put(
-                &mut details,
-                box_part(0.13, 0.16, 2.2, color, 0.01),
-                side * ARENA,
-                3.0,
-                z,
-            );
-        }
-    }
     batch(&mut details);
     scene.children.push(details);
+    scene.children.push(team_bunting());
+}
+
+/// Bunting poles stand this high above a pier's weathering, and the line sags
+/// this far between them.
+const BUNTING_POLE: f64 = 0.95;
+const BUNTING_SAG: f64 = 0.38;
+/// Pennants along the line: spacing, width along it and drop.
+const PENNANT_STEP: f64 = 0.74;
+const PENNANT_WIDTH: f64 = 0.56;
+const PENNANT_DROP: f64 = 0.68;
+const BUNTING_HEIGHT: f64 = 2.2;
+
+/// Each team's side wall flies its colours: short poles on the buttress piers
+/// carry a sagging line of pennants, team paint alternating with a paler tint of
+/// it, so the
+/// sides read from every camera. Poles skip the piers where team flags stand.
+fn team_bunting() -> Node {
+    use super::building_kit::{PIER_RISE, Palette, Surface, add_building, wall_piers};
+    use super::tank_kit::Kit;
+    use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
+    let x_wall = ARENA + BOUNDARY_THICKNESS / 2.0;
+    let pole_base = BUNTING_HEIGHT + PIER_RISE + 0.18;
+    let line = pole_base + BUNTING_POLE - 0.06;
+    let flags: Vec<f64> = spawn_positions(Team::Blue, 1.0)
+        .iter()
+        .map(|s| s.z)
+        .collect();
+    let length = ARENA * 2.0 + BOUNDARY_THICKNESS * 2.0;
+    let poles: Vec<f64> = wall_piers(length)
+        .into_iter()
+        .filter(|z| flags.iter().all(|f| (f - z).abs() > 1.5))
+        .collect();
+    let mut kit: Kit<Surface> = Kit::new();
+    let mut positions: Vec<f64> = Vec::new();
+    let mut colors: Vec<[f32; 3]> = Vec::new();
+    for team in [Team::Blue, Team::Red] {
+        let side = if team == Team::Blue { -1.0 } else { 1.0 };
+        let x = side * x_wall;
+        let paint =
+            crate::geometry::math::hex_to_linear(TEAM_COLORS[team.index()]).map(|c| c as f32);
+        let pale = paint.map(|c| c * 0.45 + 0.55 * 0.9);
+        for &z in &poles {
+            kit.post(
+                Surface::Wood,
+                0.045,
+                BUNTING_POLE,
+                DVec3::new(x, pole_base, z),
+                6,
+            );
+            kit.post(
+                Surface::Brass,
+                0.07,
+                0.1,
+                DVec3::new(x, pole_base + BUNTING_POLE, z),
+                6,
+            );
+        }
+        let mut pennant = 0usize;
+        for pair in poles.windows(2) {
+            let (z0, z1) = (pair[0], pair[1]);
+            let span = z1 - z0;
+            let at =
+                |t: f64| DVec3::new(x, line - BUNTING_SAG * 4.0 * t * (1.0 - t), z0 + span * t);
+            let segments = 8;
+            for i in 0..segments {
+                let (a, b) = (
+                    f64::from(i) / f64::from(segments),
+                    f64::from(i + 1) / f64::from(segments),
+                );
+                kit.rod(Surface::Iron, 0.012, at(a), at(b), 4);
+            }
+            let count = (span / PENNANT_STEP).floor() as usize;
+            for k in 0..count {
+                let t = (k as f64 + 0.5) / count as f64;
+                let half = PENNANT_WIDTH / 2.0 / span;
+                let (left, right) = (at(t - half), at(t + half));
+                let mut tip = at(t);
+                tip.y -= PENNANT_DROP;
+                // A little flutter out of the line's plane.
+                tip.x += side * 0.05 * ((pennant as f64) * 1.7).sin();
+                let color = if pennant.is_multiple_of(2) {
+                    paint
+                } else {
+                    pale
+                };
+                for p in [left, right, tip] {
+                    positions.extend([p.x, p.y - 0.015, p.z]);
+                    colors.push(color);
+                }
+                pennant += 1;
+            }
+        }
+    }
+    let mut group = Node::group("");
+    let palette = Palette {
+        siding: 0xffffff,
+        trim: 0xffffff,
+        accent: 0xffffff,
+        roof: 0xffffff,
+    };
+    add_building(&mut group, kit.finish(), &palette);
+    let normals: Vec<f64> = (0..positions.len() / 3)
+        .flat_map(|_| [1.0, 0.0, 0.0])
+        .collect();
+    let mut cloth = crate::geometry::Mesh::from_f64(&positions, &normals, &[], None);
+    cloth.colors = colors;
+    let material = Material {
+        vertex_colors: true,
+        side: crate::scene::Side::Double,
+        ..Material::standard(0xffffff, 0.0, 0.85)
+    };
+    group
+        .children
+        .push(shadowed(Arc::new(cloth), Arc::new(material)));
+    group
 }
