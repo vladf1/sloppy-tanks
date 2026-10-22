@@ -21,7 +21,6 @@ use super::tank_details::{
 use super::tank_kit::Coat;
 use super::tank_surfaces::{Grime, Livery, apply_livery, ember_material, vehicle_paint};
 use super::{Team, VehicleKind, part};
-use crate::geometry::math::scale_hex_color;
 use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
 use crate::scene::{Material, Node};
 use crate::sim::data::vehicle;
@@ -34,8 +33,12 @@ use running_gear::running_gear;
 /// reads as metal beside either team's paint rather than as a blue trim.
 pub(crate) const DARK: u32 = 0x13232c;
 pub(crate) const STEEL: u32 = 0x6f706c;
-/// Shade paint is team paint darkened in linear space by this factor.
-pub(crate) const SHADE_FACTOR: f64 = 0.62;
+/// The trim every vehicle wears with its team paint: a deep, greyed shade of the
+/// team color on the lower hull, mantlet, gun fittings, add-on armor and frames.
+/// The team color is the body and the deep trim frames it, so the paint reads as
+/// a designed two-tone livery, each class's add-on armor stands out as armor
+/// rather than as dark openings, and the trim still reads as its team.
+const TRIM: [u32; 2] = [0x1d3762, 0x5a201f];
 const GLASS_TINT: u32 = 0x8adeec;
 const MARKING_WHITE: u32 = 0xdce7ee;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
@@ -44,6 +47,9 @@ const GUNMETAL: u32 = 0x2c2e2f;
 const CANVAS: u32 = 0x4f5236;
 const WOOD: u32 = 0x6a4c30;
 const TAIL_LIGHT: u32 = 0x9a2016;
+/// Lamp lenses: just rough enough for the livery to draw them with the matte
+/// fittings.
+pub(super) const LENS_ROUGHNESS: f64 = 0.45;
 /// Fluorescent air-recognition panels per team: brighter and more saturated than
 /// the service paint, so a tank's team reads from the overhead camera even under
 /// camouflage. Not the glowing `TEAM_COLORS`: the panel is lit cloth.
@@ -58,11 +64,6 @@ const HUMVEE_GRIME: Grime = Grime {
     ground: -0.24,
     dust_top: 0.8,
 };
-
-/// The darker variant of a team paint (`new THREE.Color(c).multiplyScalar(0.62)`).
-pub(crate) fn shade_of(color: u32) -> u32 {
-    scale_hex_color(color, SHADE_FACTOR)
-}
 
 static MODELS: Cache<(VehicleKind, Team, bool), Node> = Cache::new();
 
@@ -101,9 +102,8 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
 /// keep the team paint; presentation darkens them.
 pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool) -> Arc<Node> {
     MODELS.get_or_insert((kind, team, open_turret_ring), || {
-        // Team paint, its shade and bare steel: the colors the worn finish recognises.
-        let team_paint = vehicle_paint(team);
-        let colors = [team_paint, shade_of(team_paint), STEEL];
+        // Team paint, trim and bare steel: the colors the worn finish recognises.
+        let colors = [vehicle_paint(team), TRIM[team.index()], STEEL];
         let mut root = if kind == VehicleKind::Humvee {
             humvee_model(colors, SIGNAL_PANEL[team.index()])
         } else {
@@ -128,6 +128,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
 /// Chassis measurements shared by the hull and turret builders.
 pub(super) struct Chassis {
     pub(super) kind: VehicleKind,
+    pub(super) team: Team,
     pub(super) scout: bool,
     pub(super) heavy: bool,
     pub(super) color: u32,
@@ -163,6 +164,7 @@ fn chassis(kind: VehicleKind, team: Team, colors: [u32; 3]) -> Chassis {
     };
     Chassis {
         kind,
+        team,
         scout: kind == VehicleKind::Scout,
         heavy: kind == VehicleKind::Heavy,
         color,
@@ -199,7 +201,9 @@ fn coat_material(coat: Coat, c: &Chassis) -> Arc<Material> {
         Coat::Canvas => material(CANVAS, 0.0, 0.92),
         Coat::Wood => material(WOOD, 0.0, 0.85),
         Coat::Marking => paint(MARKING_WHITE),
-        Coat::TailLight => material(TAIL_LIGHT, 0.1, 0.35),
+        // Lenses a few centimetres across draw with the matte fittings (one
+        // draw fewer per hull) rather than in a glossy material of their own.
+        Coat::TailLight => material(TAIL_LIGHT, 0.0, LENS_ROUGHNESS),
         Coat::Signal => material(c.signal, 0.0, SIGNAL_ROUGHNESS),
     }
 }

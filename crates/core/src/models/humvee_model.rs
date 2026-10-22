@@ -13,6 +13,7 @@
 use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
+use super::tank_model::LENS_ROUGHNESS;
 use super::{VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
@@ -89,9 +90,10 @@ impl Palette {
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
             Role::Glass => glossy(GLASS),
-            Role::Headlamp => glossy(HEADLAMP),
-            Role::Amber => glossy(AMBER),
-            Role::Red => glossy(RED_LAMP),
+            // Lamps draw with the matte fittings: three draws fewer per Humvee.
+            Role::Headlamp => material(HEADLAMP, 0.0, LENS_ROUGHNESS),
+            Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
+            Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
             Role::Signal => material(self.signal, 0.0, MATTE_ROUGHNESS),
         }
     }
