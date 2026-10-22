@@ -119,8 +119,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let lamina_phase = p.y + face_along * set_dip;
     let lamina = sin(lamina_phase * 21.0 + sin(along * 0.9) * 1.2) * 0.5 + 0.5;
     // Drill traces: everywhere on sawn faces, in bands on the blasted benches.
-    let bench_band = quarry_smoothstep(0.55, 0.7, strata_noise(vec2f(face_along * 0.05, 3.0)));
-    let bench_drilled = select(0.0, bench_band, backdrop && !mesa);
+    // Each layer below works out its noise only where the rest of its weight
+    // can be non-zero, so a skipped pixel keeps the value it had.
+    var bench_drilled = 0.0;
+    if backdrop && !mesa {
+        bench_drilled = quarry_smoothstep(0.55, 0.7, strata_noise(vec2f(face_along * 0.05, 3.0)));
+    }
     let drilled = max(sawn, bench_drilled) * upright;
     let drill = drill_traces(face_along, p.y, rock_layer + floor(face_along / 9.0), footprint) * drilled;
     let height = luma * mix(0.8, 0.35, sawn) + lamina * (0.06 + 0.06 * close) * (1.0 - worked * 0.8)
@@ -134,9 +138,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let face_wear = select(f.uv.y - sawn * 3.0, 0.0, skirt);
     let soft_bed = quarry_smoothstep(0.05, 0.5, -face_wear);
     let bedded_uv = vec2f(face_along * 0.55, p.y * 1.6);
-    let cluster = strata_noise(bedded_uv * 0.42 + vec2f(rock_layer * 3.1, 0.0));
-    let pit_density = quarry_smoothstep(0.5, 0.85, cluster) * upright * select(0.55, 0.3, rocky) * (1.0 - sawn)
-        * mix(0.3, 1.7, soft_bed);
+    var pit_density = 0.0;
+    if upright != 0.0 && sawn != 1.0 {
+        let cluster = strata_noise(bedded_uv * 0.42 + vec2f(rock_layer * 3.1, 0.0));
+        pit_density = quarry_smoothstep(0.5, 0.85, cluster) * upright * select(0.55, 0.3, rocky) * (1.0 - sawn)
+            * mix(0.3, 1.7, soft_bed);
+    }
     let pits = quarry_pebbles(bedded_uv, 0.34, pit_density, footprint, 5.0);
     bumped = normalize(bumped - (face_side * pits.lean.x + vec3f(0.0, pits.lean.y, 0.0)) * 0.9);
     // Rocks color by their geometric beds; benches by world height.
@@ -184,10 +191,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     rock *= 1.0 - drill.x * 0.28;
     // Desert varnish: dark streaks running down from ledges on steep faces.
     let steep = quarry_smoothstep(0.55, 0.15, abs(n.y));
-    let varnish_column = strata_noise(vec2f(along * 1.6, p.y * 0.18));
-    let varnish_drip = strata_noise(vec2f(along * 0.35, p.y * 0.9 + 3.0));
-    let varnish = quarry_smoothstep(0.6 - worked * 0.12, 0.88, varnish_column) * steep
-        * mix(0.45, 1.0, varnish_drip) * select(0.4, 0.7, backdrop || !rocky) * (1.0 - sawn * (1.0 - worked * 0.6));
+    let varnish_weathered = 1.0 - sawn * (1.0 - worked * 0.6);
+    var varnish = 0.0;
+    if steep != 0.0 && varnish_weathered != 0.0 {
+        let varnish_column = strata_noise(vec2f(along * 1.6, p.y * 0.18));
+        let varnish_drip = strata_noise(vec2f(along * 0.35, p.y * 0.9 + 3.0));
+        varnish = quarry_smoothstep(0.6 - worked * 0.12, 0.88, varnish_column) * steep
+            * mix(0.45, 1.0, varnish_drip) * select(0.4, 0.7, backdrop || !rocky) * varnish_weathered;
+    }
     rock = mix(rock, rock * vec3f(0.55, 0.45, 0.38), varnish);
     let mottle_uv = select(face_uv, p.xz, n.y > 0.7);
     let block_mottle = strata_noise(mottle_uv * 1.9 + rock_layer * 5.3) * 0.6
@@ -218,7 +229,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let band_tint = mix(vec3f(0.9, 0.8, 0.72), vec3f(1.04, 1.0, 0.95), band_tone);
     let band_edge = 1.0 - quarry_smoothstep(0.0, 0.09 + bedding_blur, fract(bedding));
     rock = mix(rock, rock * band_tint * (1.0 - band_edge * 0.13), contour_fade * 0.75);
-    let mottle = strata_noise(p.xz * 0.55 + rock_layer) * 0.6 + strata_noise(p.xz * 1.7) * 0.4;
+    // Read by the tops and, through the sand pockets and lichen, by up-facing
+    // cover rock.
+    let up = quarry_smoothstep(0.5, 0.9, n.y);
+    var mottle = 0.0;
+    if top != 0.0 || (rocky && !backdrop && up != 0.0) {
+        mottle = strata_noise(p.xz * 0.55 + rock_layer) * 0.6 + strata_noise(p.xz * 1.7) * 0.4;
+    }
     rock *= mix(1.0, 0.72 + mottle * 0.42, top);
     // Weathered caprock darkens in broad patches of varnish and grime, so a top
     // reads as old stone rather than fresh plaster.
@@ -243,7 +260,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     rock *= mix(1.0, 0.72, under);
     // Windblown sand settles on ledges and in the caprock's joints and hollows;
     // the backdrop's broad treads hold sheets of it.
-    let up = quarry_smoothstep(0.5, 0.9, n.y);
     let patchy = sin(p.x * 0.37 + sin(p.z * 0.29) * 1.7) * sin(p.z * 0.41 - p.x * 0.13) * 0.5 + 0.5;
     let pockets = quarry_smoothstep(0.62, 0.8, mottle * 0.7 + sand_grit * 0.5) + pans.cover * 1.2;
     let sheets = quarry_smoothstep(0.35, 0.65, patchy * 0.6 + sand_grit * 0.7 + up * 0.25);
